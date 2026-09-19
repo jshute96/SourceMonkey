@@ -26,7 +26,7 @@ import {
 } from './script-store.js';
 import { dlog } from './debug-log.js';
 import { makeCopyButton } from './copy-button.js';
-import { missingFiles } from './missing-files.js';
+import { missingFiles } from './file-changes.js';
 import { isFileSchemeAccessAllowed } from './file-access.js';
 
 export interface DeleteDialogRequest {

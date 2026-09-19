@@ -325,10 +325,15 @@ memoize for the life of the page — see the caveats under
 roots as an ordered array of canonical `file://` directory URLs — see
 [Configured roots](#configured-roots).
 
-Both `StoredRequire` and `StoredResource` gain one field:
+Both `StoredRequire` and `StoredResource` gain these fields:
 
 - `localUrl?` — the `file://` URL actually read, present only when a
   stand-in was used. Its presence *is* "this entry was overridden".
+- `fsMtime?` — the stand-in's directory-listing mtime when it was
+  read, set beside `localUrl` (one listing per folder per pass, from
+  the same cache the candidate gate uses). With the entry's `size`, it
+  lets a page report the file edited without re-reading it
+  ([file-changes.md](file-changes.md)).
 - `url` keeps the **declared** URL either way. It is the dedup key, it
   is what the script says it depends on, and it is what the entry falls
   back to when the local file goes away.
@@ -401,11 +406,12 @@ be silent, so several surfaces say so:
   Gated on
   `contentHash`, so an unchanged stand-in stays quiet across the many
   opportunistic refreshes between edits.
-- **A stand-in that has been deleted but not yet noticed** — the row
-  still names it until the next refresh. A `deleted` chip beside the
-  path in the `Local overrides` row says so, with the tooltip *This
-  file has been deleted. The next refresh will reload the remote
-  version.* See [missing-files.md](missing-files.md).
+- **A stand-in that has been deleted or edited but not yet noticed** —
+  the row still names it, and holds its old bytes, until the next
+  refresh. A `deleted` or `modified` chip beside the path in the
+  `Local overrides` row says so (the entry records the file's listing
+  mtime as `fsMtime` for the comparison). See
+  [file-changes.md](file-changes.md).
 
 The install preview does all of this too: the parse check resolves every
 declared file anyway, and a not-yet-published `@require` is exactly the

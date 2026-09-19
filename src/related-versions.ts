@@ -19,7 +19,7 @@
 //
 // See [docs/script-identity.md].
 
-import { isContainerCollection, isFileUrl, scriptAbsolutePath } from './directories.js';
+import { isContainerCollection, scriptAbsolutePath } from './directories.js';
 import {
   appendWithSlashBreaks,
   displayLocation,
@@ -40,7 +40,7 @@ import { getValue } from './userscript-header.js';
 import { guardSelectOpeningClick } from './select-open-guard.js';
 import { setDeleteIcon } from './delete-icon.js';
 import { setGlyphButton } from './glyph.js';
-import { markMissingFiles, scriptFileMissingHint, tagLocalFile } from './missing-files.js';
+import { markFileChanges, scriptFileTag, tagLocalFile } from './file-changes.js';
 import {
   allRelatedRows,
   enableChanges,
@@ -360,10 +360,10 @@ export function renderRelatedVersions(
   // the fit is across all of them, and a column measured before its
   // widest row existed would be too narrow for it.
   fitColumns(container);
-  // And after that: a "deleted" chip on any local row whose file has
-  // gone (missing-files.ts). Async, so it lands after the fit; the
+  // And after that: a chip on any local row whose file has gone or
+  // changed (file-changes.ts). Async, so it lands after the fit; the
   // chip is short and the column has room for it.
-  void markMissingFiles(container);
+  void markFileChanges(container);
 }
 
 // Whether the installed viewer's panel is folded down to its heading
@@ -853,14 +853,10 @@ function locationCell(
   const text = displayLocation(rel.script.relativePath);
   const title = locationTitle(rel, text);
   // The element carrying the path is tagged with the file it names, so
-  // a deleted file gets its chip (see `markMissingFiles`).
+  // a deleted or changed file gets its chip (see `markFileChanges`).
   const tagFile = (el: HTMLElement): void => {
-    if (!rel.collection || !isFileUrl(rel.script.fileUrl)) return;
-    tagLocalFile(
-      el,
-      scriptAbsolutePath(rel.collection.path, rel.script.relativePath),
-      scriptFileMissingHint(rel.collection.path),
-    );
+    const tag = rel.collection && scriptFileTag(rel.script, rel.collection.path);
+    if (tag) tagLocalFile(el, tag);
   };
   if (isCurrent || mode === 'installed') {
     const span = document.createElement('span');

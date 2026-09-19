@@ -562,11 +562,14 @@ The wording depends on who made the row go (`removedHere`):
 - One of this page's own trash cans: *This script has been removed*,
   plus anything the removal could not finish.
 - This page's Refresh, on a local script whose file had been deleted:
-  *This script has been removed because its file was deleted* — the
-  check drops such a row itself ([missing-files.md](missing-files.md)).
-  The wording is set before the check runs, because the removal's
-  storage event reaches the listener first; a check that returns a
-  row clears it again.
+  the check drops such a row itself ([file-changes.md](file-changes.md)),
+  and the page moves to the next copy in the versions table, exactly
+  as the panel's trash can does. Only when there is no other copy does
+  it land on the not-found state, saying *This script has been removed
+  because its file was deleted*. Both the wording and the successor
+  are decided before the check runs, because the removal's storage
+  event reaches the listener first; a check that returns a row clears
+  them again.
 
 ### Switching copies in place
 

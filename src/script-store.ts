@@ -52,13 +52,18 @@ import {
   isHttpUrl,
   isLocalDirectoryCollection,
   isSingleFileInput,
-  joinPath,
+  baseName,
+  isFileUrl,
+  isManifestCollection,
+  parentDir,
   type ListingEntry,
   newContainerPath,
   normalizeCollectionInput,
   SINGLE_SCRIPT_USE_ADD_FIELD,
   scanForUserScripts,
   scriptFileUrl,
+  statFileByListing,
+  collectionCanonicalUrl,
   locationFsPath,
   statFromListing,
   hasCachedListing,
@@ -122,7 +127,7 @@ import { startPhaseTimer, timePhase, formatMs, timingNow } from './phase-timing.
 // surface in the UI as INVALID (the user-facing label) because from
 // the user's perspective the script can't run. A script whose own file
 // has vanished from its listing is not a status: the row is dropped
-// (docs/missing-files.md).
+// (docs/file-changes.md).
 export type ScriptStatus = 'ok' | 'invalid';
 
 export interface ScriptMatching {
@@ -299,6 +304,12 @@ export interface StoredCollection {
   // sitting next to a script should NOT quietly stand in for the
   // library it names.
   localFiles?: boolean;
+  // A `file://` manifest's own listing size and mtime at the last
+  // successful scan, so a page can tell the manifest was edited without
+  // re-reading it (file-changes.ts). Absent for every other kind, and
+  // when the manifest's folder wouldn't list.
+  manifestSize?: number;
+  manifestMtime?: number;
 }
 
 // Treat any pre-`localFiles`-era stored entry as enabled, the same way
@@ -2854,16 +2865,37 @@ export async function refreshCollection(
 
   let scan: { relativePath: string; size?: number; mtime?: number }[] = [];
   let scanError: string | undefined;
+  let manifestStat: ListingEntry | null = null;
   if (isContainerCollection(collection.path)) {
     // Container collections have no scan step — their child scripts are
     // explicit. Build a synthetic scan from the existing rows so the
-    // rest of the pipeline can refetch each URL/path. No size/mtime
-    // hints; HTTP entries skip via conditional GET, file:// entries
-    // always refetch.
-    scan = existingScripts.map((s) => ({ relativePath: s.relativePath }));
+    // rest of the pipeline can refetch each URL/path. A `file://` child
+    // gets the same listing stat a directory scan would give it (one
+    // listing per folder), so an unchanged one is skipped and a page
+    // can tell an edited one; HTTP children skip via conditional GET.
+    const listings: DirectoryListingCache = new Map();
+    scan = await Promise.all(existingScripts.map(async (s) => {
+      const entry: { relativePath: string; size?: number; mtime?: number } = { relativePath: s.relativePath };
+      if (isFileUrl(s.fileUrl)) {
+        const stat = await statFileByListing(locationFsPath(s.fileUrl), listings);
+        if (stat?.size !== undefined) entry.size = stat.size;
+        if (stat?.mtime !== undefined) entry.mtime = stat.mtime;
+      }
+      return entry;
+    }));
   } else {
+    // A `file://` manifest's own stat, recorded beside the scan it
+    // produced so the collections page can tell the manifest was
+    // edited since. Taken BEFORE the read: an edit landing between the
+    // two then shows as a change rather than being silently folded
+    // into this refresh. The listing is shared with the scan, whose
+    // entries usually sit in the same folder.
+    const listings: DirectoryListingCache = new Map();
+    if (isManifestCollection(collection.path) && isFileUrl(collectionCanonicalUrl(collection.path))) {
+      manifestStat = await statFileByListing(locationFsPath(collection.path), listings);
+    }
     try {
-      scan = await scanForUserScripts(collection.path);
+      scan = await scanForUserScripts(collection.path, 0, '', listings);
     } catch (err) {
       scanError = describeError(err);
     }
@@ -3030,6 +3062,15 @@ export async function refreshCollection(
       // only reaches here when the scan succeeded (the early-return above
       // handles the failure case).
       delete nextCollection.scanError;
+      // Both or neither, like a script row's size + fsMtime: a lone
+      // value can't be compared against a listing.
+      if (manifestStat?.size !== undefined && manifestStat.mtime !== undefined) {
+        nextCollection.manifestSize = manifestStat.size;
+        nextCollection.manifestMtime = manifestStat.mtime;
+      } else {
+        delete nextCollection.manifestSize;
+        delete nextCollection.manifestMtime;
+      }
 
       // Drop rows whose IDs are no longer referenced — an entry that
       // fell off the listing, or a manifest entry the user removed. Of
@@ -3203,9 +3244,10 @@ export interface ScriptRefreshOptions extends RefreshOptions {
 // directory-level Refresh would drop it: the listing is the directory
 // saying what it holds now, and this path lists it anyway for the
 // size+mtime skip. Only a listing that was read — a failed listing
-// leaves the scan bare and the row alone, and a manifest or
-// single-file collection has no listing to consult, so a vanished
-// file there fails its fetch and keeps running from the cached body
+// leaves the scan bare and the row alone — and only in a directory
+// collection: a manifest entry or a single file is listed for the
+// skip too, but its row is the manifest's or the user's to drop, so a
+// vanished one fails its fetch and keeps running from the cached body
 // with a `refreshError`. The read is required too because this path
 // runs on every navigation and tab focus, so it can catch a file in
 // the gap of an unlink-and-rename save; one that reads fine is not
@@ -3259,32 +3301,25 @@ export async function refreshScript(
   timer.note(prior.relativePath);
   timer.note(() => `${Math.round((prior.size ?? 0) / 1024)} KB row`);
 
-  // Build a single-entry scan. Only local-directory collections support
-  // the targeted size+mtime listing lookup; HTTP, manifest, and
-  // container collections rely on the per-entry skip strategy inside
-  // fetchOrSkipInParallel (conditional GETs for HTTP entries, always-
-  // fetch for file:// entries reached through a manifest or container).
+  // Build a single-entry scan. Any `file://` script gets the targeted
+  // size+mtime listing lookup, the same stat its collection's refresh
+  // would give it; HTTP entries rely on the conditional GET inside
+  // fetchOrSkipInParallel.
   const scan: { relativePath: string; size?: number; mtime?: number }[] = [
     { relativePath: prior.relativePath },
   ];
-  const usesListingStat = isLocalDirectoryCollection(collectionRow.path);
+  const fileUrl = scriptFileUrl(collectionRow.path, prior.relativePath);
+  const usesListingStat = isFileUrl(fileUrl);
   // The parent listing was read and does not show the file.
   let unlisted = false;
   if (usesListingStat) {
-    const slash = prior.relativePath.lastIndexOf('/');
-    const subDir = slash >= 0 ? prior.relativePath.slice(0, slash) : '';
-    const fileName = slash >= 0 ? prior.relativePath.slice(slash + 1) : prior.relativePath;
-    // The "scan directory" is the collection path plus any subDir
-    // prefix from the relativePath. Normalise any file:// URL form back
-    // to a raw fs path before doing path arithmetic so
-    // parentDir/joinPath behave correctly.
-    const fsRoot = locationFsPath(collectionRow.path);
-    const dirAbs = subDir ? joinPath(fsRoot, subDir) : fsRoot;
+    const fsPath = locationFsPath(fileUrl);
+    const dirAbs = parentDir(fsPath);
     // Read BEFORE the call, which is what populates the cache.
     const sharedListing = hasCachedListing(opts.batch?.listings, dirAbs);
     let stat: ListingEntry | null | undefined;
     try {
-      stat = await statFromListing(dirAbs, fileName, opts.batch?.listings);
+      stat = await statFromListing(dirAbs, baseName(fsPath), opts.batch?.listings);
     } catch {
       /* listing failed; scan stays bare → always-fetch */
     }
@@ -3315,7 +3350,11 @@ export async function refreshScript(
     return one && 'unchanged' in one ? 'unchanged' : 'refetched';
   });
   const fetched = fetchResults.get(prior.relativePath);
-  if (unlisted && fetched && 'ok' in fetched && !fetched.ok) {
+  // Only a directory collection mirrors the disk. A manifest entry
+  // whose file is gone is still the manifest's to keep or drop, so it
+  // stays — running from its cached body with a `refreshError`.
+  if (unlisted && isLocalDirectoryCollection(collectionRow.path)
+    && fetched && 'ok' in fetched && !fetched.ok) {
     // The directory doesn't list it and it can't be read: the file is
     // gone. Dropped the way the collection-level refresh drops it
     // (row, storage key, logs) — see the header comment. Callers
@@ -3519,8 +3558,8 @@ export function sameStoredValue(a: unknown, b: unknown): boolean {
 //     Last-Modified as If-None-Match / If-Modified-Since; a server 304
 //     becomes `unchanged`, a 200 carries new validators back through
 //     FetchResult.ok for rebuildCollection to persist.
-//   - file://: direct fetch. If the scan supplied size+mtime (only
-//     local-directory scans do — manifests don't), we apply the
+//   - file://: direct fetch. If the scan supplied size+mtime (every
+//     scan does for a local file whose folder listed), we apply the
 //     pre-fetch listing skip when those match the prior row.
 //
 // In both modes a prior error/missing entry always refetches so it has

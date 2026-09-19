@@ -880,9 +880,22 @@ the items with a trade-off worth recording:
   readability probe — unlike the search-roots box above it, which
   checks. Same probe would do.
 
-## Deleted files — follow-ups
+## Changed files on disk — follow-ups
 
-See [docs/missing-files.md](docs/missing-files.md).
+See [docs/file-changes.md](docs/file-changes.md).
+
+- **New files in a new subdirectory aren't seen.** The "refresh
+  pending" probe lists a directory collection's root and the folders
+  its known scripts sit in; a `.user.js` dropped into a subdirectory
+  nothing is known in yet only shows up on refresh. Listing recursively
+  would match the scan, at the scan's cost.
+- **A same-size edit within one second is invisible** — to the chip
+  and to the refresh's skip alike, since both compare the listing's
+  whole-second mtime. A content hash would need the read the skip
+  exists to avoid.
+- **Showing what changed.** A `MODIFIED` chip says a file differs; a
+  diff against the stored copy is the natural next step, and the
+  stored body is already there to diff against.
 
 - **http(s) files that are really gone.** A 404 on refresh is treated
   as a transient failure (`REFRESH FAILED`, keep running), because a
@@ -893,7 +906,7 @@ See [docs/missing-files.md](docs/missing-files.md).
 - **`@icon` stand-ins get no chip.** Same reasoning as their missing
   `local` marker (docs/local-file-overrides.md): a 16×16 slot has no
   room, and a wrong icon is cosmetic.
-- **The collections page only re-probes for deleted files on a
+- **The collections page only re-probes for changed files on a
   repaint.** Listings are memoised for a few seconds, so a burst of
   storage writes costs one listing per folder — but a file deleted
   while the page just sits there isn't noticed until something writes

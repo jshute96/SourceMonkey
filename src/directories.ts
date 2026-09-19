@@ -894,6 +894,9 @@ export async function scanForUserScripts(
   absolutePath: string,
   depth = 0,
   prefix = '',
+  // Listings to share with the caller — a manifest refresh stats the
+  // manifest file from the same folder its entries usually sit in.
+  listings?: DirectoryListingCache,
 ): Promise<FoundScript[]> {
   // Collection-kind dispatch. Container collections don't have a
   // scannable backing store — refreshCollection builds a synthetic scan
@@ -908,7 +911,7 @@ export async function scanForUserScripts(
       );
     }
     if (isManifestCollection(absolutePath)) {
-      return scanManifest(collectionCanonicalUrl(absolutePath));
+      return scanManifest(collectionCanonicalUrl(absolutePath), listings);
     }
     if (isGithubDirCollection(absolutePath)) {
       return scanGithubDir(absolutePath);
@@ -1054,7 +1057,11 @@ export function resolveManifestEntryUrl(entry: string, canonicalUrl: string): UR
   return resolved;
 }
 
-async function scanManifest(canonicalUrl: string): Promise<FoundScript[]> {
+async function scanManifest(
+  canonicalUrl: string,
+  // One listing per folder the entries sit in, for the stat below.
+  listings: DirectoryListingCache = new Map(),
+): Promise<FoundScript[]> {
   const body = await fetchManifestText(canonicalUrl);
   const rawEntries = parseManifest(body);
   const seen = new Set<string>();
@@ -1074,9 +1081,33 @@ async function scanManifest(canonicalUrl: string): Promise<FoundScript[]> {
     // Use urlBaseName on the resolved URL so percent-encoded segments
     // come out human-readable, mirroring scanSingleFile's HTTP path.
     const name = urlBaseName(resolved.href) || entry;
-    results.push({ name, relativePath: entry });
+    const found: FoundScript = { name, relativePath: entry };
+    // A `file://` entry gets the same listing stat a directory scan
+    // gives its files, so the refresh can skip an unchanged one and a
+    // page can tell an edited one (file-changes.ts). Best effort: an
+    // entry whose folder won't list just stays always-fetch.
+    if (resolved.protocol === 'file:') {
+      const stat = await statFileByListing(locationFsPath(resolved.href), listings);
+      if (stat?.size !== undefined) found.size = stat.size;
+      if (stat?.mtime !== undefined) found.mtime = stat.mtime;
+    }
+    results.push(found);
   }
   return results;
+}
+
+// The listing entry for one file by absolute path — its parent folder
+// listed once per `cache` — or null when it isn't listed or the folder
+// can't be read.
+export async function statFileByListing(
+  absolutePath: string,
+  cache?: DirectoryListingCache,
+): Promise<ListingEntry | null> {
+  try {
+    return await statFromListing(parentDir(absolutePath), baseName(absolutePath), cache);
+  } catch {
+    return null;
+  }
 }
 
 // Build the fetchable URL for a specific scanned script. One branch per

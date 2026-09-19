@@ -626,17 +626,17 @@ select.install-target {
 .copy-btn.copied .copy-icon { display: none; }
 .copy-btn.copied .check-icon { display: block; }
 
-/* "deleted" chip after a local file path whose file is no longer on
-   disk (src/missing-files.ts). Sized like `.scheme-chip` above but
-   square-cornered like the viewer's tab marks, so it reads as a
-   remark on the path rather than a collection kind; red, because the
-   row is describing something that isn't there. */
-.missing-file-chip {
+/* "deleted" / "modified" chip after a local file path whose file has
+   gone or changed on disk since it was read (src/file-changes.ts).
+   Sized like `.scheme-chip` above but square-cornered like the
+   viewer's tab marks, so it reads as a remark on the path rather than
+   a collection kind. Red for a file that isn't there; amber for one
+   that is, but differs from what is loaded. */
+.file-change-chip {
   display: inline-block;
   margin-left: 0.5em;
   padding: 0 0.4em;
   border-radius: 3px;
-  background: #b91c1c;
   color: #fff;
   font-size: 10px;
   font-weight: 600;
@@ -648,9 +648,22 @@ select.install-target {
      word out of the chip on the collections page's hanging-indent
      name cells. */
   text-indent: 0;
+  /* A chip is one word and never breaks: in a flex row it must not
+     shrink (the path beside it wraps instead), and inherited
+     `overflow-wrap: anywhere` / `word-break` must not split it. */
+  flex: 0 0 auto;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
 }
+.file-change-chip-missing { background: #b91c1c; }
+/* Teal for "differs from what is loaded": a modified file, and the
+   collection whose refresh would pick such changes up. Chosen to be
+   unlike the amber the FILE-DIR bubble wears, which sits inches away. */
+.file-change-chip-modified,
+.file-change-chip-pending { background: #0f766e; }
 /* Inside a flex row that already spaces its children with `gap` (the
    viewer's Location and Local overrides rows), the margin would double
    the gap on the chip's left only. */
-.filename-cell > .missing-file-chip,
-.local-override-cell > .missing-file-chip { margin-left: 0; }
+.filename-cell > .file-change-chip,
+.local-override-cell > .file-change-chip { margin-left: 0; }

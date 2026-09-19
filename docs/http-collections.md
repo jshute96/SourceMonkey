@@ -201,15 +201,16 @@ strategy:
   surfaces as `FetchResult.unchanged` and `rebuildCollection` keeps the
   prior content + validators verbatim — no re-parse, no `loadedAt`
   bump. A `200` response replaces both the body and the validators.
-- **file://** entries reached through a manifest are always re-fetched
-  (file:// fetches are cheap; there's no listing-step skip the way
-  local-directory collections have).
-- **Local-directory** collections keep their existing pre-fetch listing
-  skip: if Chrome's `addRow(...)` listing reports the same `size +
-  mtime` as the stored entry, no fetch happens at all.
+- **file://** entries — in a local-directory collection, reached
+  through a manifest, or added on their own into the file container —
+  take the pre-fetch listing skip: if Chrome's `addRow(...)` listing
+  reports the same `size + mtime` as the stored entry, no fetch happens
+  at all. (A manifest or container refresh lists each entry's folder
+  once to get that stat; an entry whose folder won't list just
+  re-fetches.)
 
-When none of the cheap pre-fetch skips fire (manifest entries; HTTP
-servers that don't return validators), `buildScriptFromText` falls
+When none of the cheap pre-fetch skips fire (HTTP servers that don't
+return validators; a local file whose folder wouldn't list), `buildScriptFromText` falls
 back to a content-hash compare against the prior row's `contentHash`
 and preserves `loadedAt` if the bytes are identical. So the
 "unchanged → no flash" outcome is uniform across every collection/scheme
@@ -246,7 +247,10 @@ collection row is tracked in `TODO.md`.
     `{"path": "foo.user.js"}` keeps the same row, and editing the
     other fields on an object entry changes nothing.
 - **Scripts in a container can't vanish**: the URL either fetches or
-  errors; there's no listing for it to disappear from.
+  errors, and the row stays either way — the user added it, so the
+  user removes it. (A `file://` one is still stat'ed from its folder's
+  listing, for the skip and for the `deleted` / `modified` chips, but
+  a listing that lacks it never drops it.)
 
 ## Unreadable manifest
 

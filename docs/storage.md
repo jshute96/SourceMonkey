@@ -84,6 +84,10 @@ keys would look like a wiped profile.
 - `lastRefreshedAt` — epoch ms of the most recent refresh.
 - `scriptIds` — child script IDs in display order.
 - `scanError?` — set when the directory listing itself failed.
+- `manifestSize?` / `manifestMtime?` — a `file://` manifest's own
+  listing stat at its last successful scan, for the collections page's
+  "refresh pending" chip ([file-changes.md](file-changes.md)). Absent
+  for every other kind.
 - `enabled` — user-controlled on/off toggle. When `false`, every
   script under this collection is treated as effectively disabled by the
   match index (independent of each script's own `enabled`).
@@ -416,23 +420,22 @@ Every load path goes through the same pipeline:
 1. List the collection:
    - **Container collections** skip `scanForUserScripts` entirely. The
      synthetic scan is built from the existing `scriptIds`, one entry
-     per child with `relativePath` set to the child's URL/path. No
-     size/mtime hints are carried, so the per-entry skip strategy in
-     `fetchOrSkipInParallel` (conditional GET for HTTP, always-fetch
-     for file://) is what decides whether to re-download each child.
+     per child with `relativePath` set to the child's URL/path. A
+     `file://` child gets its folder's listing stat (`size` + `mtime`),
+     one listing per folder; an HTTP child carries none and relies on
+     the conditional GET in `fetchOrSkipInParallel`.
    - **All other collections** call `scanForUserScripts` (see
      [file-access.md](file-access.md) for local directories and
      [http-collections.md](http-collections.md) for HTTP manifests of any
      scheme). Local-directory scans carry each file's `size` and
-     `mtime`; URL-style scans (manifest entries) don't have a
-     pre-fetch stat step.
+     `mtime` from the listing; a manifest scan lists each `file://`
+     entry's folder for the same; http(s) entries have no stat.
 2. For each scanned file, decide whether to fetch — *per resolved
    entry URL*, not per collection (so a manifest can mix schemes):
    - **file:// skip** (emit `{ unchanged: true }`) if the prior
      stored entry is `status: 'ok'` AND the listing's size+mtime
-     match the prior `size` and `fsMtime`. Only local-directory
-     scans supply these; file:// entries reached via a manifest
-     always fetch.
+     match the prior `size` and `fsMtime`. Every local file whose
+     folder listed has these; one whose folder wouldn't list fetches.
    - **http skip** (also `{ unchanged: true }`) when the server
      answers `304` to a conditional GET driven by the prior row's
      `httpEtag` / `httpLastModified`.
@@ -499,7 +502,7 @@ An entry in the prior state that the scan no longer reports is
   `refreshError`.
 - **Before any refresh runs**, every page that names a local file
   probes the disk and marks a deleted one with a chip — see
-  [missing-files.md](missing-files.md).
+  [file-changes.md](file-changes.md).
 - **Container collections** never observe a vanished entry: the
   synthetic scan is built from the existing scripts. Per-script removal
   goes through `removeScript` instead.
@@ -768,13 +771,14 @@ content, no header) before the refresh that loads it — see
   pipeline as the collection-level Refresh (so the two paths can't
   drift on skip rules, fsMtime handling, enabled preservation, error
   shape — they share the per-file logic), but with a single-element
-  scan. For file:// collections it does a targeted directory-listing
-  lookup to populate the scan's size+mtime; for http(s):// and
-  manifest collections it skips that step and relies on the conditional
-  GET inside `fetchOrSkipInParallel` instead. When that listing is
-  read and no longer shows the file, and the fetch fails too, the row
-  is dropped right there (see [Vanished entries](#vanished-entries)); other files that went
-  are the collection-level Refresh's to notice.
+  scan. For any `file://` script it does a targeted directory-listing
+  lookup to populate the scan's size+mtime; for http(s):// entries it relies on the conditional GET
+  inside `fetchOrSkipInParallel` instead. In a directory collection,
+  when that listing is read and no longer shows the file, and the
+  fetch fails too, the row is dropped right there (see
+  [Vanished entries](#vanished-entries)); other files that went are
+  the collection-level Refresh's to notice. A manifest entry is never
+  dropped by this path — the manifest decides what it lists.
 - `setCollectionEnabled(id, enabled)` / `setScriptEnabled(id, enabled)` —
   flip the per-collection / per-script `enabled` flag with a single-row
   write. The match index picks up the change via `storage.onChanged`.
@@ -1261,8 +1265,8 @@ different questions:
 
 Rows whose state was unchanged are not tagged — this covers all three
 "no change" paths uniformly: the cheap pre-fetch skips (size+mtime,
-HTTP 304) and the post-fetch content-hash compare (manifest entries,
-servers without validators). See
+HTTP 304) and the post-fetch content-hash compare (servers without
+validators). See
 [change detection](#change-detection-the-last-change-token).
 
 The tags stay until the next refresh **of that collection**, which

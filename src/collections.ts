@@ -130,15 +130,26 @@ import {
 } from './refresh-targets.js';
 import {
   canonicalCollectionInput,
+  collectionCanonicalUrl,
   isContainerCollection,
   isFileUrl,
+  isManifestCollection,
   isValidLocationShape,
   LOCATION_SHAPES,
   isSingleFileInput,
+  isLocalDirectoryCollection,
   locationFsPath,
   normalizeCollectionInput,
 } from './directories.js';
-import { markMissingFiles, scriptFileMissingHint, tagLocalFile } from './missing-files.js';
+import {
+  markFileChanges,
+  newScriptFiles,
+  probeFiles,
+  refreshPendingHint,
+  scriptFileTag,
+  syncRefreshPendingChip,
+  tagLocalFile,
+} from './file-changes.js';
 import {
   installGithubAuthListener,
   loadGithubAuthToken,
@@ -589,24 +600,78 @@ async function repaintFromStorage(): Promise<void> {
     for (const section of ordered) collectionsEl.appendChild(section);
   }
   refreshMoveButtons();
-  markDeletedFiles();
+  markDiskChanges();
 }
 
-// A "deleted" chip after the name of every local script whose file has
-// gone (missing-files.ts). Run after each paint and repaint: a
-// repaint follows every storage write, including the refresh that will
-// drop such a row, so the chip is short-lived by design — it is the
-// gap between the file going and SourceMonkey noticing.
+// What the disk says that storage doesn't yet (file-changes.ts): a
+// chip after the name of every local script whose file has gone or
+// changed, and a "refresh pending" chip on a directory collection
+// whose heading tooltip sums up what a refresh would do — deleted and
+// modified rows, plus `.user.js` files on disk that no row accounts
+// for. Run after each paint and repaint: a repaint follows every
+// storage write, including the refresh that applies these, so the
+// chips are short-lived by design — the gap between the disk changing
+// and SourceMonkey noticing.
 //
 // One directory listing per folder on the page — but not per repaint:
 // a repaint also follows an enable toggle, a log write, a refresh of
 // another collection, none of which touch the disk, so a listing read
-// in the last few seconds is reused. A deletion shows up on the first
+// in the last few seconds is reused. A change shows up on the first
 // repaint after that window, or on reload.
-function markDeletedFiles(): void {
-  void markMissingFiles(collectionsEl, DELETED_FILES_LISTING_MAX_AGE_MS);
+function markDiskChanges(): void {
+  void (async () => {
+    const states = await markFileChanges(collectionsEl, DISK_LISTING_MAX_AGE_MS);
+    for (const section of collectionsEl.querySelectorAll<HTMLElement>('section.collection')) {
+      const collectionPath = section.dataset.collectionPath;
+      if (!collectionPath) continue;
+      const isDirectory = isLocalDirectoryCollection(collectionPath);
+      const isFileManifest = isManifestCollection(collectionPath) && section.dataset.manifestFsPath;
+      if (!isDirectory && !isFileManifest) continue;
+      const rows = [...section.querySelectorAll<HTMLElement>('tr[data-script-id] [data-fs-path]')];
+      const counts = { modified: 0, deleted: 0, added: 0, manifest: false };
+      for (const el of rows) {
+        const state = states.get(el);
+        if (state === 'missing') counts.deleted += 1;
+        else if (state === 'modified') counts.modified += 1;
+      }
+      if (isDirectory) {
+        const root = locationFsPath(collectionPath).replace(/\/+$/, '');
+        const known = rows.map((el) => el.dataset.fsPath!.slice(root.length + 1));
+        counts.added = (await newScriptFiles(collectionPath, known, DISK_LISTING_MAX_AGE_MS)).length;
+      } else {
+        // The manifest file itself, against the stat its last scan
+        // recorded (`manifestSize` / `manifestMtime`).
+        const { manifestFsPath, manifestSize, manifestMtime } = section.dataset;
+        const probe = {
+          path: manifestFsPath!,
+          size: manifestSize === undefined ? undefined : Number(manifestSize),
+          mtime: manifestMtime === undefined ? undefined : Number(manifestMtime),
+        };
+        const [state] = await probeFiles([probe], DISK_LISTING_MAX_AGE_MS);
+        counts.manifest = state === 'modified';
+      }
+      const nameEl = section.querySelector<HTMLElement>('.collection-header .collection-display-name');
+      if (nameEl) syncRefreshPendingChip(nameEl, refreshPendingHint(counts));
+    }
+  })();
 }
-const DELETED_FILES_LISTING_MAX_AGE_MS = 5000;
+const DISK_LISTING_MAX_AGE_MS = 5000;
+
+// A `file://` manifest's path and last-scanned stat, on the section for
+// `markDiskChanges`. Kept current on every sync: a refresh rewrites
+// the stat, and the chip has to compare against the new one.
+function syncManifestStatDataset(section: HTMLElement, collection: StoredCollection): void {
+  const ds = section.dataset;
+  if (isManifestCollection(collection.path) && isFileUrl(collectionCanonicalUrl(collection.path))) {
+    ds.manifestFsPath = locationFsPath(collection.path);
+  } else {
+    delete ds.manifestFsPath;
+  }
+  if (collection.manifestSize !== undefined) ds.manifestSize = String(collection.manifestSize);
+  else delete ds.manifestSize;
+  if (collection.manifestMtime !== undefined) ds.manifestMtime = String(collection.manifestMtime);
+  else delete ds.manifestMtime;
+}
 
 // Update one already-rendered section from its stored collection row.
 // The section element itself is never replaced — that would take the
@@ -622,11 +687,16 @@ async function syncSectionFromStorage(
   // The type bubble is derived from `collection.path`, which is the
   // collection's identity and never rewritten, so only the display name
   // can move.
+  syncManifestStatDataset(section, collection);
+  // Compared against what was painted, not `textContent`: the name
+  // element can also hold the "refresh pending" chip (file-changes.ts),
+  // whose text would make every repaint look like a rename.
   const nameEl = section.querySelector<HTMLElement>('.collection-display-name');
   const displayName = effectiveDisplayName(collection);
-  if (nameEl && nameEl.textContent !== displayName) {
+  if (nameEl && nameEl.dataset.displayName !== displayName) {
     nameEl.textContent = '';
     appendWithSlashBreaks(nameEl, displayName);
+    nameEl.dataset.displayName = displayName;
   }
 
   syncSectionMessage(section, 'scan', scanErrorText(collection));
@@ -658,7 +728,7 @@ function syncSectionMessage(
   text: string,
 ): void {
   const prior = section.querySelector<HTMLElement>(
-    `:scope > p.error[data-message-kind="${kind}"]`,
+    `:scope > p[data-message-kind="${kind}"]`,
   );
   if (!text) {
     prior?.remove();
@@ -675,7 +745,7 @@ function syncSectionMessage(
   for (const earlier of SECTION_MESSAGE_KINDS) {
     if (earlier === kind) break;
     anchor = section.querySelector<HTMLElement>(
-      `:scope > p.error[data-message-kind="${earlier}"]`,
+      `:scope > p[data-message-kind="${earlier}"]`,
     ) ?? anchor;
   }
   anchor?.after(makeSectionMessage(kind, text));
@@ -878,6 +948,12 @@ function nameCellKey(script: StoredScript, localFiles: LocalFileScope): string {
     // on the scope object's property order.
     localFiles.enabled,
     localFiles.collectionPath ?? '',
+    // The size and mtime the name link is tagged with for the
+    // "modified" chip (file-changes.ts): a refresh that re-reads the
+    // file moves them, and the tag has to move too or the chip would
+    // outlive the refresh that applied it.
+    script.size,
+    script.fsMtime,
   ]);
 }
 
@@ -1200,7 +1276,7 @@ async function render(): Promise<void> {
     collectionsEl.appendChild(await renderCollectionSection(collection));
   }
   refreshMoveButtons();
-  markDeletedFiles();
+  markDiskChanges();
 }
 
 function emptyPlaceholder(): HTMLElement {
@@ -1218,6 +1294,9 @@ async function renderCollectionSection(collection: StoredCollection): Promise<HT
   const section = document.createElement('section');
   section.className = 'collection';
   section.dataset.collectionId = collection.id;
+  // For `markDiskChanges`, which works from the DOM after a paint.
+  section.dataset.collectionPath = collection.path;
+  syncManifestStatDataset(section, collection);
   // Stable per-collection anchor; lets deep links (and the post-add
   // `jumpToCollection` helper) scroll directly to this section.
   section.id = collectionAnchorId(collection.id);
@@ -1243,6 +1322,7 @@ async function renderCollectionSection(collection: StoredCollection): Promise<HT
   const nameEl = document.createElement('span');
   nameEl.className = 'collection-display-name';
   appendWithSlashBreaks(nameEl, effectiveDisplayName(collection));
+  nameEl.dataset.displayName = effectiveDisplayName(collection);
   // Tooltip surfaces the raw stored path so the user can still see the
   // canonical URL / fs path behind a shortened display name. Container
   // collections have a synthetic identifier as their path, which would
@@ -1567,15 +1647,11 @@ function fillNameCell(
   a.href = viewerUrl(script.id);
   a.target = '_blank';
   a.rel = 'noopener noreferrer';
-  // A local file that has been deleted gets a chip after the name,
-  // painted by `markMissingFiles` once the section is on screen.
-  if (isFileUrl(script.fileUrl)) {
-    tagLocalFile(
-      a,
-      locationFsPath(script.fileUrl),
-      scriptFileMissingHint(collectionPath),
-    );
-  }
+  // A local file that has been deleted or changed gets a chip after
+  // the name, painted by `markDiskChanges` once the section is on
+  // screen.
+  const tag = scriptFileTag(script, collectionPath);
+  if (tag) tagLocalFile(a, tag);
   nameCell.appendChild(a);
   // Dupe-suffix span, populated from currentLogIds. Empty for unique
   // basenames so the column stays clean; non-empty (e.g. " #2") only

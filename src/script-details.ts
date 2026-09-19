@@ -36,7 +36,7 @@
 
 import { openInNewTabAnchor } from './code-links.js';
 import { makeCopyButton } from './copy-button.js';
-import { STAND_IN_MISSING_HINT, tagLocalFile } from './missing-files.js';
+import { standInTag, tagLocalFile, type LocalFileTag } from './file-changes.js';
 import { rowTooltip, type DetailsMode } from './details-tooltips.js';
 import { matchTargetInfo, sameDirLinkUrl } from './match-targets.js';
 import { renderPatternIconInto } from './site-icon.js';
@@ -65,10 +65,10 @@ export interface LocationRow {
   // Optional trailing control, e.g. the viewer's copy-to-clipboard
   // button. Moved into the cell on every render.
   trailing?: HTMLElement;
-  // For a `file://` location: the absolute path and what its deletion
-  // would mean, so the caller can run `markMissingFiles` over the
-  // panel after the render (see missing-files.ts).
-  localFile?: { fsPath: string; missingHint: string };
+  // For a `file://` location: the file, as `markFileChanges` wants it
+  // tagged, so the caller can run that over the panel after the render
+  // (see file-changes.ts).
+  localFile?: LocalFileTag;
   // Intercepts activation of the location anchor. Both viewer modes
   // use it, because a plain navigation to a `.user.js` URL — http(s)
   // or file:// — is captured straight back into a preview (see
@@ -374,14 +374,14 @@ function addLink(dl: HTMLDListElement, label: string, value: string | undefined)
 // tab to fall back on — so for a resource stand-in before install this
 // row is the only surface there is.
 function addLocalFiles(dl: HTMLDListElement, files: DetailsModel['files']): void {
-  const entries: { kind: string; declared: string; localUrl: string }[] = [];
+  const entries: { kind: string; declared: string; file: LoadedFile & { localUrl: string } }[] = [];
   const groups: readonly [string, readonly LoadedFile[] | undefined][] = [
     ['@require', files?.requires],
     ['@resource', files?.resources],
   ];
   for (const [kind, list] of groups) {
     for (const f of list ?? []) {
-      if (f.localUrl) entries.push({ kind, declared: f.url, localUrl: f.localUrl });
+      if (f.localUrl) entries.push({ kind, declared: f.url, file: { ...f, localUrl: f.localUrl } });
     }
   }
   if (entries.length === 0) return;
@@ -405,16 +405,17 @@ function addLocalFiles(dl: HTMLDListElement, files: DetailsModel['files']): void
     // thing. The code tab's tooltip keeps the URL form deliberately —
     // there it sits directly under the declared URL, and the pair reads
     // as "asked for this, got that".
-    const localPath = locationFsPath(e.localUrl);
+    const localPath = locationFsPath(e.file.localUrl);
     const path = document.createElement('span');
     path.className = 'local-override-path';
     appendWithSlashBreaks(path, displayLocation(localPath));
     // Which declaration it stood in for rides along as the tooltip,
     // in the URL display form every other declared ref uses.
     path.title = `Stands in for ${displayLocation(stripSriFragment(e.declared))}`;
-    // A stand-in the user has since deleted gets a chip saying so —
-    // until the next refresh, this row is still claiming to load it.
-    tagLocalFile(path, localPath, STAND_IN_MISSING_HINT);
+    // A stand-in the user has since deleted or edited gets a chip
+    // saying so — until the next refresh, this row is still claiming
+    // to load the bytes it holds.
+    tagLocalFile(path, standInTag(localPath, e.file));
     span.appendChild(path);
 
     // Copies the same path the row shows — for a local file that IS the
@@ -468,6 +469,9 @@ interface LoadedFile {
   size?: number;
   // Present exactly when this entry was overridden from local disk.
   localUrl?: string;
+  // The stand-in's listing mtime when it was read, for the "modified"
+  // chip (file-changes.ts).
+  fsMtime?: number;
 }
 
 // `@match` / `@include` / `@exclude` row: each pattern that resolves to
@@ -632,7 +636,7 @@ function locationCell(row: LocationRow): Node {
       });
     }
   }
-  if (row.localFile) tagLocalFile(pathEl, row.localFile.fsPath, row.localFile.missingHint);
+  if (row.localFile) tagLocalFile(pathEl, row.localFile);
   cell.appendChild(pathEl);
 
   // The caller's button is a single long-lived element; appendChild

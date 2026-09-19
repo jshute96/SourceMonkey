@@ -42,7 +42,13 @@ import {
   type ResolveFailure,
 } from './file-loader.js';
 import { presentLocalFileCandidates } from './local-file-overrides.js';
-import type { DirectoryListingCache } from './directories.js';
+import {
+  baseName,
+  locationFsPath,
+  parentDir,
+  statFromListing,
+  type DirectoryListingCache,
+} from './directories.js';
 import { splitResourceValue } from './script-links.js';
 import { sha256Hex, bytesToBase64, base64ToBytes } from './bytes.js';
 import { timePhase } from './phase-timing.js';
@@ -214,6 +220,10 @@ interface SharedFileFields {
   // key, it is what the script says it depends on, and it is what the
   // entry falls back to the moment the local file goes away.
   localUrl?: string;
+  // The stand-in's listing mtime when it was read, so a page can tell
+  // an edited stand-in from the one it holds without re-reading it
+  // (file-changes.ts). Only ever set beside `localUrl`.
+  fsMtime?: number;
   // Server-reported (lowercased) Content-Type, or '' when not
   // available (file:// XHR often omits it). Optional on
   // StoredRequire because pre-this-change stored rows won't carry
@@ -521,7 +531,19 @@ interface LoadedBytes {
   // declared URL, so callers can record it without re-deriving the
   // comparison. Absent means "the declared URL was fetched".
   localUrl?: string;
+  // The stand-in's listing mtime, when its folder listed.
+  fsMtime?: number;
   got: FetchedFile | FileFailure;
+}
+
+// The stored fields that say a stand-in was read, and its stat. Empty
+// on the ordinary path, so nothing is written for a declared-URL fetch.
+function standInFields(loaded: LoadedBytes): Pick<SharedFileFields, 'localUrl' | 'fsMtime'> {
+  if (!loaded.localUrl) return {};
+  return {
+    localUrl: loaded.localUrl,
+    ...(loaded.fsMtime !== undefined ? { fsMtime: loaded.fsMtime } : {}),
+  };
 }
 
 // Read a declared file, preferring a local stand-in when one exists.
@@ -554,7 +576,19 @@ async function readLocalStandIn(
     const got = await ensureFetch(fetchCache, candidate);
     // A candidate that doesn't read isn't a failure — it just isn't
     // there. Only an actual hit ends the search.
-    if (!isFailure(got)) return { localUrl: candidate, got };
+    if (!isFailure(got)) {
+      // Its listing stat too, for the "modified" chip: one listing per
+      // folder per pass, shared through the same cache the candidate
+      // gate used. A listing that fails just leaves the stat off.
+      const fsPath = locationFsPath(candidate);
+      let fsMtime: number | undefined;
+      try {
+        fsMtime = (await statFromListing(parentDir(fsPath), baseName(fsPath), listingsFor(fetchCache)))?.mtime;
+      } catch {
+        /* no stat; the entry can still be reported deleted, not modified */
+      }
+      return { localUrl: candidate, got, ...(fsMtime !== undefined ? { fsMtime } : {}) };
+    }
   }
   return null;
 }
@@ -709,7 +743,7 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
       // `undefined`) on the ordinary path — stored rows are compared
       // and JSON-round-tripped, and an explicit `undefined` would
       // survive as a key in some of those comparisons.
-      ...(loaded.localUrl ? { localUrl: loaded.localUrl } : {}),
+      ...standInFields(loaded),
       ...validatorFields(got),
     },
   };
@@ -855,7 +889,7 @@ async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredRe
       contentHash,
       contentType: got.contentType,
       loadedAt,
-      ...(loaded.localUrl ? { localUrl: loaded.localUrl } : {}),
+      ...standInFields(loaded),
       ...validatorFields(got),
     },
   };

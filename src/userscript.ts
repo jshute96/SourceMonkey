@@ -195,7 +195,7 @@ import { USER_SOURCE_START_LINE, composeSource } from './composed-source.js';
 import { buildRequireSourceUrl, buildSourceUrl } from './script-source-url.js';
 import { CodeTabsView, type CodeTab } from './code-tabs.js';
 import { makeCopyButton } from './copy-button.js';
-import { markMissingFiles, missingFiles, scriptFileMissingHint } from './missing-files.js';
+import { markFileChanges, missingFiles, scriptFileTag } from './file-changes.js';
 import { renderDetails } from './script-details.js';
 
 // Install and Refresh run the load pipeline here in the page, so this
@@ -607,7 +607,7 @@ async function onRefresh(): Promise<void> {
     // 'force': this is a real Refresh click, so check upstream now
     // rather than waiting out the probe interval.
     // A local script's check can find its file gone and drop the row
-    // itself (docs/missing-files.md) — the outcome the `deleted`
+    // itself (docs/file-changes.md) — the outcome the `deleted`
     // chip's tooltip promised. The storage event for that removal
     // reaches `rehydrateAfterStorageChange` before `updateScript`
     // returns, so the wording it should paint is set in advance rather
@@ -622,6 +622,14 @@ async function onRefresh(): Promise<void> {
     const local = !!currentScript && isFileUrl(currentScript.fileUrl)
       && (await missingFiles([currentFilenamePath])).has(currentFilenamePath);
     if (local) removedHereMessage = REMOVED_FILE_GONE;
+    // And where the page goes if the row does get dropped: the next
+    // copy in the versions table, the same way the panel's trash can
+    // moves on rather than stranding the page on the not-found line.
+    // Picked before the check, for the reason the trash can gives —
+    // the removal's storage event reaches the listener first, and the
+    // flag is what holds back its not-found paint.
+    const successor = local ? await survivingRowAfter(lastRelatedRows, wanted) : undefined;
+    if (successor) swappingAfterRemoval = true;
     let next: StoredScript | null;
     try {
       next = await updateScript(wanted, 'manual', 'force');
@@ -630,15 +638,28 @@ async function onRefresh(): Promise<void> {
       // not be painted as this refresh's doing.
       // Only our own claim: a trash can may have set its own meanwhile.
       if (local && removedHereMessage === REMOVED_FILE_GONE) removedHereMessage = null;
+      if (successor) swappingAfterRemoval = false;
       throw err;
     }
-    if (scriptId !== wanted) return;
+    if (scriptId !== wanted) {
+      if (successor) swappingAfterRemoval = false;
+      return;
+    }
     if (!next) {
+      if (successor) {
+        try {
+          await swapToScript(successor, { replace: true });
+        } finally {
+          swappingAfterRemoval = false;
+        }
+        return;
+      }
       // Driven from here too: `removeScript` writes nothing when the
       // row was already gone, so there may be no event to wait for.
       await rehydrateAfterStorageChange();
       return;
     }
+    if (successor) swappingAfterRemoval = false;
     await refreshLogId(wanted);
     render(next);
     // Re-anchor highlight + URL after the repaint. Scroll skipped so
@@ -814,12 +835,7 @@ function render(script: StoredScript): void {
           text: displayLocation(currentFilenamePath),
           href: locationHref,
           trailing: filenameCopyBtn,
-          localFile: isFileUrl(script.fileUrl) && collectionPath
-            ? {
-                fsPath: currentFilenamePath,
-                missingHint: scriptFileMissingHint(collectionPath),
-              }
-            : undefined,
+          localFile: collectionPath ? scriptFileTag(script, collectionPath) ?? undefined : undefined,
           // This href is a `.user.js` URL for nearly every installed
           // script, so a plain navigation would be captured and land
           // the user in a preview of the script they are already
@@ -834,9 +850,9 @@ function render(script: StoredScript): void {
     status: buildStatusCell(script),
     versionProbes: script.versionProbes,
   });
-  // After the panel is on screen: a "deleted" chip on the Location row
-  // or a Local overrides entry whose file has gone (missing-files.ts).
-  void markMissingFiles(summaryEl);
+  // After the panel is on screen: a chip on the Location row or a Local
+  // overrides entry whose file has gone or changed (file-changes.ts).
+  void markFileChanges(summaryEl);
 
   if (!panelAnchorId) panelAnchorId = script.id;
   void repaintRelatedVersions({
@@ -1179,6 +1195,7 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
   const related = findRelatedVersions({ ...snapshot, ...anchored });
   const rows = allRelatedRows(related);
   lastRelatedIds = new Set(rows.map((r) => r.script.id));
+  lastRelatedRows = rows;
   // The anchor decides how the TABLE is filed, and nothing else. Two
   // things on this page are about the copy actually on screen — the
   // Move picker's targets and the enable toggle's sweep — and after an
@@ -1612,6 +1629,9 @@ let lastRelatedPaint: RelatedVersionsPaint | null = null;
 // The ids the panel last drew a Status cell for. Kept so a session
 // change can be tested against what is actually on screen.
 let lastRelatedIds = new Set<string>();
+// The rows themselves, in table order, for a Refresh that drops the
+// copy on screen and wants the next one (`survivingRowAfter`).
+let lastRelatedRows: readonly RelatedScript[] = [];
 
 // Whether a `storage.session` change carries anything a Status cell
 // currently on screen reads.

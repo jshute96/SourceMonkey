@@ -44,7 +44,10 @@ export interface SmApi {
     options: { displayName?: string; localFiles?: boolean },
   ): Promise<unknown>;
   removeCollection(id: string): Promise<void>;
-  getCollections(): Promise<{ id: string; path: string; enabled: boolean; scriptIds: string[] }[]>;
+  getCollections(): Promise<{
+    id: string; path: string; enabled: boolean; scriptIds: string[];
+    manifestSize?: number; manifestMtime?: number;
+  }[]>;
   getCollectionWithScripts(id: string): Promise<{
     collection: { id: string; path: string; enabled: boolean; scriptIds: string[]; scanError?: string };
     scripts: StoredScriptLike[];
@@ -216,6 +219,7 @@ export interface StoredScriptLike {
   errorLocation?: DiagnosticLocationLike;
   refreshError?: string;
   size: number | null;
+  fsMtime?: number;
   loadedAt: number;
   parseCheckedHash?: string;
   enabled: boolean;
@@ -236,6 +240,7 @@ export interface StoredScriptLike {
     // Set when a local file stood in for `url` — see
     // docs/local-file-overrides.md.
     localUrl?: string;
+    fsMtime?: number;
     // Validators for the next refresh's conditional GET (http(s) only).
     httpEtag?: string;
     httpLastModified?: string;
@@ -250,6 +255,7 @@ export interface StoredScriptLike {
     contentHash?: string;
     loadedAt: number;
     localUrl?: string;
+    fsMtime?: number;
     httpEtag?: string;
     httpLastModified?: string;
   }[];

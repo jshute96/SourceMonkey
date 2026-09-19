@@ -246,6 +246,7 @@
          which is the whole reason that fact isn't left to the
          tooltip. */
       .tab-mark {
+        white-space: nowrap;
         padding: 0 0.4em;
         border-radius: 3px;
         background: #d97706;
@@ -352,7 +353,7 @@
          same kind of value (a path plus its copy button). */
       .local-override-cell {
         display: flex;
-        align-items: baseline;
+        align-items: center;
         gap: 0.4em;
         min-width: 0;
       }
@@ -371,9 +372,6 @@
         word-break: normal;
         min-width: 0;
       }
-      /* The copy button sits on the text baseline in a flex row that
-         otherwise aligns on it; nudge it back to optical centre. */
-      .local-override-cell .copy-btn { align-self: center; }
       /* Anchors in the details panel (Match patterns, Location)
          read as plain text by default; underline only on hover so
          the rows stay calm. The bubble is excluded so its `color:#fff`

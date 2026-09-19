@@ -97,7 +97,7 @@ files are deletable is on screen before anything is pressed.
   going), and Delete is on: it skips the script file, deletes those
   dependencies, and removes the entry.
   - Found by probing the disk (`missingFiles` in
-    [missing-files.md](missing-files.md): one directory listing per
+    [file-changes.md](file-changes.md): one directory listing per
     folder), not from the stored row, which says `ok` until the next
     refresh drops it.
   - **The dialog watches every file it lists.** For as long as it is

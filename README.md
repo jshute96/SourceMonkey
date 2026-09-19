@@ -79,7 +79,11 @@ collection has a section listing its scripts, with enable toggles (per
 collection and per script), reorder buttons, a trash can that removes
 the collection, a gear that opens its rename/options dialog, and a
 circular arrow that refreshes it. **Refresh All**, in the header bar at
-the top of the page, re-checks everything at once.
+the top of the page, re-checks everything at once. A local script whose
+file has been deleted or edited since it was read gets a `DELETED` /
+`MODIFIED` chip, and a local directory or manifest collection with
+changes on disk (files modified, deleted, or new; the manifest itself
+edited) wears `REFRESH PENDING`.
 
 Each script row shows a status, linking to that script's log, where there
 are usually more details:
