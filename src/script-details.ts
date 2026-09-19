@@ -489,27 +489,56 @@ function addPatterns(
   scriptUrl: string | undefined,
 ): void {
   if (values.length === 0) return;
-  const ul = document.createElement('ul');
-  for (const p of values) {
-    const li = document.createElement('li');
-    li.appendChild(patternValueNode(p, scriptUrl));
-    ul.appendChild(li);
-  }
-  appendRow(dl, label, ul);
+  appendRow(dl, label, bulletList(values, (p) => patternValueNode(p, scriptUrl)));
 }
 
-// One value renders inline; several render as a `<ul>`. Generic in the
-// item type so the rows whose items aren't plain strings (Local
-// overrides) share the same one-vs-many rule rather than
-// reimplementing it.
+// One value renders inline; several render as a `<ul>` (folded when
+// long — see `bulletList`). Generic in the item type so the rows whose
+// items aren't plain strings (Local overrides) share the same
+// one-vs-many rule rather than reimplementing it.
 function listNode<T>(values: readonly T[], make: (v: T) => Node): Node {
   if (values.length === 1) return make(values[0]);
+  return bulletList(values, make);
+}
+
+// How many items a details-panel list shows before folding the rest
+// behind a "(N more)" link. Long enough that ordinary scripts never
+// fold; short enough that a fifty-site `@match` block doesn't push the
+// code box off the screen.
+const LIST_FOLD_AT = 10;
+
+// A `<ul>` of `values`, folded past `LIST_FOLD_AT`: the tail is hidden
+// behind a last bullet reading "(N more)", which swaps the whole list
+// in and turns into "(show fewer)". All items are rendered up front —
+// the fold is display only — so a per-item side effect (a favicon
+// fetch) happens once, whether or not the reader ever expands.
+function bulletList<T>(values: readonly T[], make: (v: T) => Node): HTMLUListElement {
   const ul = document.createElement('ul');
+  const items: HTMLLIElement[] = [];
   for (const v of values) {
     const li = document.createElement('li');
     li.appendChild(make(v));
     ul.appendChild(li);
+    items.push(li);
   }
+  // A "(1 more)" bullet takes the line it would save; show the item.
+  const hidden = items.slice(LIST_FOLD_AT);
+  if (hidden.length < 2) return ul;
+
+  const toggleLi = document.createElement('li');
+  toggleLi.className = 'list-fold';
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'list-fold-toggle';
+  toggleLi.appendChild(toggle);
+  ul.appendChild(toggleLi);
+  const setFolded = (folded: boolean): void => {
+    for (const li of hidden) li.hidden = folded;
+    toggle.textContent = folded ? `(${hidden.length} more)` : '(show fewer)';
+    toggle.setAttribute('aria-expanded', String(!folded));
+  };
+  toggle.addEventListener('click', () => setFolded(!hidden[0].hidden));
+  setFolded(true);
   return ul;
 }
 

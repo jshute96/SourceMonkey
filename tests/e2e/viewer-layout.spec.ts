@@ -83,6 +83,9 @@ test.describe('viewer layout', () => {
       body: Array.from({ length: 100 }, (_, i) => `// line ${i}`).join('\n'),
     });
     const page = await openViewer(extensionContext, extensionId, sm);
+    // The Match list folds past `LIST_FOLD_AT` items; unfold it so the
+    // panel is as tall as the script makes it.
+    await page.click('#header-summary .list-fold-toggle');
 
     const box = await measure(page, 'pre.code-box');
     expect(box.pageScrollHeight).toBeGreaterThan(box.viewportHeight);

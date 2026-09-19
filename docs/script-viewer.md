@@ -1099,6 +1099,15 @@ so the body header and the details panel agree.
     same-directory fallback applies, inert otherwise.
   - Always a bulleted list, even for a single pattern, so these rows
     read alike.
+- **Long lists fold.** Any details-panel list (the pattern rows,
+  `Network access`, `Local overrides`) past `LIST_FOLD_AT` items shows
+  the first ones and a final `(N more)` bullet; clicking it shows the
+  rest in place and offers `(show fewer)`. `bulletList` in
+  `script-details.ts`.
+  - Never `(1 more)` — the bullet would take the line it saves, so a
+    list one over the limit is shown whole.
+  - Every item is rendered up front and merely hidden, so per-item
+    work (a favicon fetch) happens once regardless.
 - `Location` — anchor wrapping the path text. Href is the resolved
   location, except for `file://` scripts where it's `script.fileUrl`
   (the bare fs path isn't navigable). Display text stays that bare fs

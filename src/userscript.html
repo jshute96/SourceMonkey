@@ -297,6 +297,19 @@
         margin: 0;
         padding-left: 1.1em;
       }
+      /* The "(N more)" / "(show fewer)" bullet that folds a long list
+         (see `bulletList` in script-details.ts). A button styled as
+         text: muted like the row labels so it reads as an aside, not an
+         item, with an underline on hover to say it's clickable. */
+      .list-fold { list-style: none; }
+      .list-fold-toggle {
+        all: unset;
+        cursor: pointer;
+        color: #555;
+        font: inherit;
+      }
+      .list-fold-toggle:hover { text-decoration: underline; }
+      .list-fold-toggle:focus-visible { outline: 2px solid #4a90e2; outline-offset: 1px; }
       /* Match row: each pattern is led by its site's favicon (a globe
          when the pattern names no site), between the bullet and the
          URL. The slot is a flex item so a wrapping pattern's
