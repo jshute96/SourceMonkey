@@ -66,9 +66,14 @@
         <code>unsafeWindow</code> can only be real when the script runs
         in the page&rsquo;s realm.</li>
       <li>Managers therefore treat <code>@grant unsafeWindow</code> as a
-        request for the page realm. In Chrome
-        <code>unsafeWindow === window</code> there; on Firefox they
-        differ (the manager hands out a wrapper).</li>
+        request for the page realm. Whether
+        <code>unsafeWindow === window</code> there is up to the manager:
+        SourceMonkey runs the script in the page, so they are one
+        object, while Tampermonkey hands out a wrapper around the
+        page&rsquo;s <code>window</code> even on Chrome. Either way the
+        page&rsquo;s own variables are reachable, which is what the
+        grant is for &mdash; so read a page variable, not this
+        comparison, to find out where you are.</li>
       <li>Two scripts run here, and the log says which is which.
         <code>unsafe-window.user.js</code> grants
         <code>unsafeWindow</code> and nothing else, so it runs in the

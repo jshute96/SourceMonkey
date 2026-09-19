@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        SourceMonkey example: unsafeWindow outside the page
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.1.0
+// @version     1.1.2
 // @description The other corner: @inject-into content keeps the script out of the page, so unsafeWindow is not the page's window.
 // @match       *://*/unsafe-window/unsafe-window.html
 // @match       file:///*/unsafe-window/unsafe-window.html
@@ -56,22 +56,38 @@
     '    script sees from there.',
   ]);
 
+  // The `means` lines below are derived from what actually came back,
+  // not written for the expected answer. Managers disagree about this
+  // script: Tampermonkey has no `@inject-into` (its equivalent is
+  // `@sandbox`), so it honours the grant and runs this in the page,
+  // where the reads succeed. A hard-coded "reads as undefined" would
+  // then be a log that contradicts the line above it.
+  const pageApp = unsafeWindow.__PAGE_APP__;
   logStep(
     'isolated-read',
     'read the same variable the page defined',
     'unsafeWindow.__PAGE_APP__',
-    `unsafeWindow.__PAGE_APP__ = ${String(unsafeWindow.__PAGE_APP__)}`,
-    "an isolated script cannot see main page content, so the page's "
-      + 'variables read as undefined. This is the failure the grant exists to avoid',
+    `unsafeWindow.__PAGE_APP__ = ${JSON.stringify(pageApp && { name: pageApp.name, version: pageApp.version })}`,
+    pageApp
+      ? 'this manager reached the page anyway, so it ignored @inject-into '
+        + 'content and honoured the grant instead'
+      : "an isolated script cannot see main page content, so the page's "
+        + 'variables read as undefined. This is the failure the grant exists to avoid',
   );
 
+  const sameWindow = unsafeWindow === window;
   logStep(
     'isolated-identity',
     "compare unsafeWindow with this script's own window",
     'unsafeWindow === window',
-    `unsafeWindow === window: ${unsafeWindow === window}`,
-    "both are this script's own window, so this comparison is true when "
-      + 'isolated too. It cannot tell you whether you reached the page; '
-      + 'reading a page variable, as above, is what tells you',
+    `unsafeWindow === window: ${sameWindow}`,
+    sameWindow
+      ? 'there is one window object here. On its own that says nothing '
+        + 'about whether the page was reached, since an isolated script '
+        + "gets the same answer for its own window; the read above is "
+        + 'what tells you'
+      : 'the two differ, so this manager wrapped window rather than '
+        + 'handing over the raw one. Which window it wrapped is what the '
+        + 'read above tells you, not this line',
   );
 })();

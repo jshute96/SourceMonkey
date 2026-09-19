@@ -368,6 +368,22 @@ fetch via the SW). Highlights:
   page-forged bridge GM call for a USER_SCRIPT-world script is
   refused; and an isolated script's cross-tab value broadcast is not
   relayed into the page.
+- `tests/e2e/gm-main-world-surface.spec.ts` — the rest of the GM_*
+  surface from MAIN world, which every other spec exercises only in
+  USER_SCRIPT world. Two reasons a surface is in here:
+  - **It installs itself on the world's `window`**, which in MAIN is the
+    *page's*: `window.onurlchange` (the `=== null` feature test has to
+    hold, and the page can see the accessor too — pinned deliberately,
+    see TODO.md) and `window.close` / `window.focus` (the override
+    replaces the page's method, and the tab really closes).
+  - **It depends on an unprompted SW push**, which MAIN world can only
+    receive via `wrapper-bridge.js` re-posting it: `sm:url-change`,
+    `sm:gm-value-update` (cross-tab listener), `sm:gm-menu-fire`,
+    `sm:gm-tab-closed`. Gutting the bridge's push lists fails four of
+    the five tests, which is how the coverage was checked.
+  - Not covered because they aren't drivable headlessly:
+    `sm:gm-notification-event` (no way to click a Chrome notification)
+    and `sm:gm-download-event` (needs a real download).
 
 The XHR tests use `UserscriptServer` (see
 `tests/fixtures/userscript-server.ts`) to serve test endpoints

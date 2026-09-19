@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        SourceMonkey example: unsafeWindow
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.1.0
+// @version     1.1.1
 // @description Reads and writes the page's real window through unsafeWindow, while still using GM storage.
 // @match       *://*/unsafe-window/unsafe-window.html
 // @match       file:///*/unsafe-window/unsafe-window.html
@@ -87,16 +87,24 @@
     "if the page sees it, the write landed in the page and not in some other window",
   );
 
-  // 4. On Chrome the script runs in the page's realm, so the two are
-  //    the same object. On Firefox they differ. Scripts that branch on
-  //    this need the answer to be honest.
+  // 4. Whether the two are the same object is up to the manager, so
+  //    the line reports what it found. SourceMonkey meets the grant by
+  //    running the script in the page, so they are one object;
+  //    Tampermonkey hands out its sandbox's wrapper around the page's
+  //    window even on Chrome, so they are not. Both reach the page —
+  //    step 1 is what proves that. Scripts that branch on this
+  //    comparison need the answer to be honest.
+  const sameWindow = unsafeWindow === window;
   logStep(
     'identity',
     "compare unsafeWindow with this script's own window",
     'unsafeWindow === window',
-    `unsafeWindow === window: ${unsafeWindow === window}`,
-    'on Chrome the grant is met by running in the page, so there is only '
-      + 'one window object here. Firefox managers hand out a separate wrapper',
+    `unsafeWindow === window: ${sameWindow}`,
+    sameWindow
+      ? 'this manager met the grant by running the script in the page, so '
+        + 'there is only one window object here'
+      : "this manager handed out a wrapper around the page's window. The "
+        + 'reads above still worked, so the wrapper reaches the page',
   );
 
   // 5. GM_* still works. Reaching the page realm must not cost the

@@ -114,6 +114,34 @@ stays enforced in an SM-only spec.
     everything else in that spec, including the page-world half, still
     runs under both. SM's rule stays enforced by the same spec on the
     `sourcemonkey` project.
+- **`unsafe-window/`** (`unsafeWindow === window`, and the
+  `@inject-into content` variant) — measured under TM 5.5.0 and VM
+  2.48.0.
+  - **Identity is SM-only.** SM answers `true`: it satisfies the grant
+    by running the script in MAIN world and binding
+    `unsafeWindow = window`, with nothing in between. TM and VM both
+    answer `false` on Chrome — each hands out its sandbox's wrapper
+    rather than the raw window. VM answers `false` in its isolated mode
+    too: `unsafeWindow` there is neither this script's own `window` nor a
+    way into the page, since its `isolated-read` still came back
+    `undefined`.
+    - This corrects an earlier assumption in our docs that only Firefox
+      managers wrap. Both Chrome managers wrap; SM is the one that
+      doesn't.
+    - All three reach the page's own variables under the plain grant,
+      which is the contract, so the read / call / write assertions are
+      unconditional. The identity row is only required to *exist* under
+      TM and VM — what it says there is a report.
+  - **The isolated variant under TM.** Same cause as
+    `headers-inject-into/` below: TM has no `@inject-into`, so it
+    honours the `@grant unsafeWindow` and runs `isolated.user.js` in the
+    page, where the page's globals are visible. VM implements the header
+    and is held to the assertion. The example script derives its
+    explanation from what it observed, so its log stays true under all
+    three.
+  - **Stored values persist across TM runs.** The SM fixture wipes
+    storage per test; TM keeps the installed script's values, so the
+    visit counter is asserted as counting up rather than starting at 0.
 - **`gm-dom/`** (default parent, no-parent form) — all three managers
   disagree, and the TM docs don't pin the default parent down, so none
   is wrong.

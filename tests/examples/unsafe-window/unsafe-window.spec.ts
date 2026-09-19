@@ -5,11 +5,21 @@
 // are reachable, and what the script writes there is visible to the
 // page) rather than SourceMonkey's mechanism for getting there.
 //
-// The `identity` assertion is deliberately Chrome-shaped —
-// `unsafeWindow === window` because Chrome managers satisfy the grant
-// by running the script in the page realm. Firefox managers hand out a
-// distinct wrapper, so this line would need relaxing if the suite ever
-// runs there.
+// Two things are manager-specific, and measured rather than assumed
+// (see docs/cross-manager-test-results.md):
+//
+//   - **Whether `unsafeWindow === window`.** SourceMonkey is the only
+//     one where it is: it binds `unsafeWindow = window` in MAIN world,
+//     with no wrapper in between. TM and VM both hand out a wrapper on
+//     Chrome (measured), so both answer `false` — including VM in its
+//     isolated mode, where it is still not a way into the page.
+//     All of them meet the contract that matters — the page's globals
+//     are reachable — which is why the `read` / `call` / write
+//     assertions are unconditional and this one is SM-only.
+//   - **The starting value of the GM storage counter.** SourceMonkey's
+//     fixture wipes storage per test; TM keeps the installed script's
+//     stored values across runs. So the counter is asserted as
+//     counting up, never as starting from 0.
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,12 +42,21 @@ test.describe('examples / unsafe-window', () => {
     // Call: a page-defined function runs and returns the page's answer.
     await expect(page.locator('#log li[data-script="call"]'))
       .toContainText('hello userscript from the page');
-    // Identity: Chrome managers run the script in the page realm.
-    await expect(page.locator('#log li[data-script="identity"]'))
-      .toContainText('unsafeWindow === window: true');
+    // Identity: SM-only. SM runs the script in the page realm and
+    // aliases `unsafeWindow` to `window`; TM and VM both wrap. The row
+    // is still required to exist everywhere — what it says there is a
+    // report, not a contract. See the header comment.
+    if (setup.manager === 'sourcemonkey') {
+      await expect(page.locator('#log li[data-script="identity"]'))
+        .toContainText('unsafeWindow === window: true');
+    } else {
+      await expect(page.locator('#log li[data-script="identity"]')).toHaveCount(1);
+    }
     // Storage still works from a script that also reaches the page.
+    // The value is whatever this profile has accumulated; that it
+    // advances is the next test's job.
     await expect(page.locator('#log li[data-script="gm"]'))
-      .toContainText("GM_getValue('visits') = 0");
+      .toContainText(/GM_getValue\('visits'\) = \d+/);
 
     // Write: the page's own polling loop read back what the script put
     // on the page's window. This is checked from the page's side, so it
@@ -58,11 +77,31 @@ test.describe('examples / unsafe-window', () => {
 
     // The isolated variant sees nothing of the page's realm — the
     // failure mode the grant exists to avoid, made explicit.
-    await expect(page.locator('#log li[data-script="isolated-read"]'))
-      .toContainText('unsafeWindow.__PAGE_APP__ = undefined');
-    // It is still a window, just not the page's.
-    await expect(page.locator('#log li[data-script="isolated-identity"]'))
-      .toContainText('unsafeWindow === window: true');
+    //
+    // Not asserted under TM, which doesn't implement `@inject-into` at
+    // all (it's a Violentmonkey/SourceMonkey header; TM's equivalent is
+    // `@sandbox`). TM ignores the header and honours the
+    // `@grant unsafeWindow`, so the script legitimately reaches the
+    // page there and this variant stops being the isolated case. A
+    // difference in what the header means, not an isolation bug. VM does
+    // implement the header, so it is held to this assertion.
+    if (setup.manager !== 'tampermonkey') {
+      await expect(page.locator('#log li[data-script="isolated-read"]'))
+        .toContainText('unsafeWindow.__PAGE_APP__ = undefined');
+    } else {
+      await expect(page.locator('#log li[data-script="isolated-read"]')).toHaveCount(1);
+    }
+    // It is still a window, just not the page's — and under SM it is
+    // this script's own, since SM has no wrapper to put in between. VM
+    // answers false even here, and its read above still came back
+    // undefined, so its unsafeWindow is neither this window nor the
+    // page's. SM-only for the same reason as in the first test.
+    if (setup.manager === 'sourcemonkey') {
+      await expect(page.locator('#log li[data-script="isolated-identity"]'))
+        .toContainText('unsafeWindow === window: true');
+    } else {
+      await expect(page.locator('#log li[data-script="isolated-identity"]')).toHaveCount(1);
+    }
 
     await page.close();
   });
@@ -77,15 +116,19 @@ test.describe('examples / unsafe-window', () => {
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/unsafe-window/unsafe-window.html`);
-    await expect(page.locator('#log li[data-script="gm"]'))
-      .toContainText("GM_getValue('visits') = 0");
+    // Read the starting value instead of assuming 0: TM keeps an
+    // installed script's stored values across runs, so only the
+    // increment is portable.
+    const first = await page.locator('#log li[data-script="gm"]').textContent();
+    const start = Number(/GM_getValue\('visits'\) = (\d+)/.exec(first ?? '')?.[1]);
+    expect(Number.isNaN(start)).toBe(false);
 
     // Give the manager's debounced write a chance to persist.
     await page.waitForTimeout(600);
     await page.reload();
 
     await expect(page.locator('#log li[data-script="gm"]'))
-      .toContainText("GM_getValue('visits') = 1");
+      .toContainText(`GM_getValue('visits') = ${start + 1}`);
 
     await page.close();
   });

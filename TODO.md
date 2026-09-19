@@ -756,6 +756,13 @@ during cumulative review of the GM_* phases:
   ReferenceError at runtime + SW logs dropped name.
 - **`GM_notification`**: image-less notification falls back to
   `icons/icon-128.png` correctly.
+- **MAIN-world pushes with no headless driver.**
+  `tests/e2e/gm-main-world-surface.spec.ts` proves every SW→page push
+  the bridge relays reaches MAIN world except two, which nothing can
+  drive headlessly: `sm:gm-notification-event` (no way to click a Chrome
+  notification) and `sm:gm-download-event` (needs a real download). Both
+  go through the same world-gated relay as the covered ones, so the risk
+  is low; a manual check with a real browser is what's left.
 - **Live repaint** (collections page): a `collections`-index reorder arriving
   from another origin, and the `.busy-spinner` guards that stop a
   repaint from overwriting a control the user just clicked. The reorder
@@ -1172,6 +1179,21 @@ Rough edges left:
   blocker is that `manual` currently means "not rate-limited", not
   "the user clicked", so the fast-path can't be told apart from a
   Refresh click.
+  - Restating parse-time diagnostics rides on the same gate, so a
+    permanently-misconfigured script (e.g. `@grant unsafeWindow` with
+    `@inject-into content`) now repeats its warning once per reload as
+    well. `probe === 'force'` is the signal the rest of the file uses
+    for "the user clicked Refresh" — threading it into
+    `emitScriptOutcomeLog` would gate both rows properly.
+- **Parse-time diagnostics live only in the Log.** A script whose
+  header can't do what it asks (the `@grant unsafeWindow` +
+  `@inject-into content` case) is badged, but the sentence explaining
+  why is a Log row the user has to go find — and one that only gets
+  written on boot replay, on new content, or on a manual refresh.
+  Showing the current `startupLogs` in the detail panel next to Status
+  would make the explanation as durable as the badge, and would remove
+  the reason for restating the rows at all (see the poll-noise item
+  above).
 - **`refreshAllCollections` uses `Promise.all`**, so one collection throwing
   rejects the whole batch — contradicting its own docstring, which
   claims a failed collection doesn't take the rest down. `allSettled`
@@ -1367,6 +1389,13 @@ they follow are in
   separate — the refresh still does its own conditional GET. Worth
   little for hosts that return ETags; worth more for a large script on
   a host that doesn't.
+- show which world a script runs in ("runs in page" vs "runs
+  isolated") in the viewer. The world is decided by the header
+  (`@grant none` or `@grant unsafeWindow` or `@inject-into` — see
+  [docs/injection-modes.md](docs/injection-modes.md)), so today the
+  user has to read the grants and know the rules to predict whether
+  the script can see page globals. It's also the fact that explains
+  the `@inject-into content` + `unsafeWindow` warning.
 - surface `GM_download` / `GM_openInTab` in the details panel. The
   panel dropped the `@grant` row on the grounds that `@connect` already
   carries the network story and the rest of the GM surface acts within
