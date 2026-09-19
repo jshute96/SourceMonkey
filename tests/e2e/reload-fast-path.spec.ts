@@ -389,6 +389,22 @@ test.describe('reload fast-path', () => {
       runAt: 'document-end' as const,
       injectInto: 'content' as const,
     };
+    // A sibling that always grants storage, so the shared `__SM_GM__`
+    // runtime stays registered in USER_SCRIPT world for every version
+    // below. The runtime follows the scripts that need it, and the SW
+    // defers a swap whose body would land on a document without it —
+    // a real behavior, but not the one under test here.
+    scriptsDir.write({
+      relativePath: 'keeps-runtime.user.js',
+      meta: {
+        name: 'KeepsRuntime',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end' as const,
+        injectInto: 'content' as const,
+        grant: ['GM_setValue'],
+      },
+      body: 'void 0;',
+    });
     scriptsDir.write({
       relativePath: 'grantadd.user.js',
       meta: { ...meta, grant: ['GM_setValue', 'GM_getValue'] },
@@ -508,6 +524,56 @@ test.describe('reload fast-path', () => {
     // The refresh that ran during that reload landed the new row.
     // syncNow flushes the registration debounce it queued, which a
     // fast-following reload would otherwise out-race.
+    await sm.syncNow();
+    await page.reload();
+    await expect(page).toHaveTitle('v2:init');
+    await page.close();
+  });
+
+  test('a refresh that first needs the GM runtime defers to the next reload', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // The shared `__SM_GM__` runtime is registered only in worlds that
+    // have a script granting a runtime-backed API, so a page whose
+    // only script grants nothing carries no runtime. Adding the first
+    // such grant produces a body whose GM_* bindings would resolve to
+    // nothing on the document already open — the SW marks the reply
+    // `needsRuntime`, and the wrapper, finding no runtime when the body
+    // is about to run, runs the baked-in body instead.
+    //
+    // `injectInto: 'content'` pins the world across both versions, so
+    // this asserts the runtime check and not the world change (which
+    // would defer for its own reason and prove nothing).
+    const meta = {
+      name: 'RuntimeAdd',
+      match: [`${fixtureServer.baseUrl}/*`],
+      runAt: 'document-end' as const,
+      injectInto: 'content' as const,
+    };
+    scriptsDir.write({
+      relativePath: 'runtimeadd.user.js',
+      meta,
+      body: `document.title = 'v1-no-runtime';`,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page).toHaveTitle('v1-no-runtime');
+
+    scriptsDir.write({
+      relativePath: 'runtimeadd.user.js',
+      meta: { ...meta, grant: ['GM_setValue', 'GM_getValue'] },
+      body: `document.title = 'v2:' + GM_getValue('marker', 'init');`,
+    });
+    await page.reload();
+    // Deferred: the baked-in body ran again. A swap here would have
+    // thrown on `window.__SM_GM__` being undefined.
+    await expect(page).toHaveTitle('v1-no-runtime');
+
+    // That reload's refresh landed the new row; syncNow flushes the
+    // registration debounce so the next reload gets the runtime.
     await sm.syncNow();
     await page.reload();
     await expect(page).toHaveTitle('v2:init');

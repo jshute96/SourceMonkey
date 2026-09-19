@@ -394,25 +394,28 @@ Adding any of these is a catalog entry + a body — nothing structural.
     the clipboard item above — `reasons` is fixed at creation time,
     so both consumers' reasons (`BLOBS`, and `WORKERS` if the encode
     moves to a worker) have to be added in the same change.
-- **`unsafeWindow` cross-world bridge.** Today it's a passthrough to
-  USER_SCRIPT world's own `window`, not the page's. A real bridge
-  would need a MAIN-world helper + postMessage protocol, or a
-  per-call DOM-event ferry à la VM's `MouseEvent.relatedTarget`
-  trick.
 - **`window.close` / `window.focus` failures are filed under the
   first granting script.** The override closes over the scriptId of
   whichever script installed it, so a sibling script's refused close
   lands on the wrong Log tab. Cosmetic, and it disappears with
   per-script worlds (below).
-- **`window.*` grant scope is per-document.** Once any script on a
-  page grants `window.onurlchange`, the `urlchange` surface exists on
-  the shared USER_SCRIPT-world `window`, so a sibling script that did
-  NOT grant it can also feature-detect and subscribe. `@grant
-  window.close` / `window.focus` leak the same way — their overrides
-  replace the methods on that same shared `window`. TM sandboxes each
-  script's `window` and gets exact per-script gating. Same
-  shared-realm root cause as the storage-spoofing entry below; a
-  real fix needs per-script worlds.
+- **`window.*` grant scope is per-document-and-world.** Once any
+  script on a page grants `window.onurlchange`, the `urlchange`
+  surface exists on that world's shared `window`, so a sibling script
+  in the same world that did NOT grant it can also feature-detect and
+  subscribe. `@grant window.close` / `window.focus` leak the same way
+  — their overrides replace the methods on that same shared `window`.
+  TM sandboxes each script's `window` and gets exact per-script
+  gating. Same shared-realm root cause as the storage-spoofing entry
+  below; a real fix needs per-script worlds.
+  - In MAIN world the shared `window` is the **page's**, so the page
+    sees these too: it can subscribe to `urlchange`, and its own
+    `window.close()` reaches our override. The override is
+    scriptId-scoped SW-side (`bridgeMayActAs`), so the page gets no
+    more than the MAIN-world script it shares a realm with already
+    had — but "the page can close its own tab" is a behavior change
+    worth knowing about. TM has the same exposure in its page-context
+    mode.
 - **`window.*` reload-fast-path coverage.** The stated reason the
   `urlchange.enable` and `windowControl.enable` calls live in the
   emitter's `js` (rather than `prelude`) is that a hot-swapped body
@@ -422,13 +425,95 @@ Adding any of these is a catalog entry + a body — nothing structural.
   for the same reason and now has that e2e
   (`reload-fast-path.spec.ts`), so these are the eager calls whose
   swap behaviour is unasserted.
-- **`window.onurlchange` in MAIN world.** `@inject-into page` +
-  `@grant window.onurlchange` gets nothing, since MAIN-world scripts
-  get no bindings at all. Folded into the general "GM_* in MAIN
-  world" item in
-  [docs/GM-API-strategy.md](docs/GM-API-strategy.md#things-to-revisit-later),
-  but note this one is harder: installing the event surface in MAIN
-  means patching the *page's* `window.addEventListener`.
+- **CSP-exempt DOM injection for MAIN-world scripts.** `GM_addStyle` /
+  `GM_addElement` bypass page CSP from USER_SCRIPT world but not from
+  MAIN, so a `@grant unsafeWindow` script on a site with a strict
+  `style-src` inserts a `<style>` whose rules never apply. The block
+  is detected (`el.sheet === null` once connected) and reported as a
+  Log warning; the fallback would be an async bridge request asking
+  the USER_SCRIPT-world runtime to insert a CSP-exempt copy, at the
+  cost of the returned element no longer being the live one, and of
+  registering that runtime on pages that otherwise don't need it.
+  TM/VM have the same limitation today. Build it when a real site
+  shows up where the style matters.
+- **Frame-scope the remaining SW pushes.** `sm:gm-xhr-event` now goes
+  to `sender.frameId`, but `sm:gm-tab-closed`,
+  `sm:gm-notification-event` and `sm:gm-menu-fire` still go tab-wide,
+  and `sm:gm-value-update` is inherently tab-scoped (the openers table
+  keys on tabId). Harmless while nothing registers with `allFrames` —
+  the bridge only exists in the top frame — but the day `@noframes`
+  work turns that on, a MAIN-world script's events would be posted
+  into every subframe's realm. Needs a per-frame openers table.
+- **Gate `sm:start` over the bridge too.** It's what populates the
+  `gmOpeners` table, i.e. who receives value broadcasts. A forged one
+  can only name an id the page can already see, and the push relay is
+  world-gated, so there's no live hole — but `bridgeMayActAs` exists
+  now and applying it would close the shape rather than relying on id
+  entropy.
+- **Shim-cache `setTimeout` / `clearTimeout` in the GM runtime.** Every
+  other primitive it uses is captured at init; timers are still read
+  off the live global, which a MAIN-world page can replace. No impact
+  today (the runtime installs at `document_start`), just inconsistent
+  with the file's stated discipline.
+- **Bridge gate vs. matcher divergence.** `bridgeMayActAs` re-runs
+  our own `url-match.ts` against the sender's URL, while Chrome
+  decided whether to inject with its matcher. A disagreement refuses
+  a legitimate script — fatal for a storage-granting one — but loudly
+  (a Log line), and the badge depends on the same agreement.
+  - The recheck can't be dropped: the SW can't observe which scripts
+    Chrome injected, and a MAIN-world script's own report arrives
+    over the page-forgeable bridge. Keying off the tab's `expected`
+    set uses the same matcher; a per-document token isn't a secret in
+    MAIN world.
+  - The divergence-proof fix is a USER_SCRIPT-world *witness*
+    registered with each MAIN-world GM script's own patterns,
+    reporting "X is here" over trusted `chrome.runtime`. Costs a
+    registration per script and a document-start race the SW would
+    hold early requests for.
+  - Do it only if divergence shows up in practice; a matcher bug is
+    the cheaper fix.
+- **Bridge gate and push stamping read the stored world, not the
+  live one.** `scriptWorld` / `bridgeMayActAs` answer from the current
+  row, but a document that loaded before an edit flipped the script's
+  world keeps running the old one until reload. USER_SCRIPT → MAIN:
+  the open isolated document's pushes are stamped MAIN and re-posted
+  into the page until reload. MAIN → USER_SCRIPT: the open MAIN
+  document's bridged calls are refused. Both self-heal on reload; the
+  per-document token above would fix both.
+- **The bridge gate can lag a grant-adding edit by one navigation.**
+  `scriptGrantsSubsystem` answers from the match-index cache, which
+  learns about a refreshed row through storage's `onChanged` — after
+  the refresh that `handleCheckPending` just ran. A MAIN-world script
+  whose refresh added its first storage grant (with another
+  runtime-backed grant already there, so `needsRuntime` doesn't fall
+  back) can be refused its snapshot on that one navigation: `run-new`
+  with `seedValues` and no `gmValues`, so the previous version runs
+  with a console line. Self-heals on reload. Either await the cache's
+  own update in the handler, or pin it with an e2e in
+  `reload-fast-path.spec.ts` (the "adds a storage grant" case there is
+  USER_SCRIPT-world).
+- **The hidden-tab flush skips the confirmation check.** `flushAll`
+  passes `"pagehide"` for `visibilitychange → hidden` too, so in MAIN
+  world a merely-backgrounded tab's flush goes fire-and-forget and the
+  "storage flush not confirmed" line is never printed for it. Correct
+  (the document may be going away), just one diagnostic less; a
+  distinct reason would keep it.
+- **A failed own-spec retry leaves its fingerprint recorded.**
+  `runIncrementalSync` stores `nextScopes` before `applyPlan`; if an
+  own spec is refused and `retryRefusedOwnSpecs` can't rebuild it, the
+  fingerprint stays while `state.registered` lacks the id. Harmless
+  while `alreadyPlaced` also requires presence, which is the clause
+  carrying the invariant.
+- **Move every bridge request onto the synchronous DOM-event path.**
+  The `pagehide` storage flush already goes as a `CustomEvent` the
+  bridge handles in the same task (it had to: a postMessage is read
+  on a later task the dying document never gets, and `GM_setValue();
+  location.href = …` lost the write every time). Every other page→SW
+  request still pays that task hop, `sm:check-pending` on the
+  document-start critical path included. Switching the request
+  direction wholesale (replies can stay postMessage) removes a hop
+  per call with no change to the security model — same allowlist,
+  same stamp, same gate. Filed as issue #24.
 - **XHR `onprogress` events.** Needs a streaming wire format from
   the SW (chunked sends or a per-request port).
 - **`GM_download` follow-ups.**
@@ -613,11 +698,6 @@ Adding any of these is a catalog entry + a body — nothing structural.
   Worth one line in `supported-GM-APIs.md` calling out
   `src=javascript:`, event-handler attributes, and `<script src>`
   as deliberately un-sanitized sinks.
-- **`unsafeWindow` USER_SCRIPT-world clarity.** Currently a quiet
-  passthrough to USER_SCRIPT-world `window`. Either throw with a
-  "use `@inject-into page`" hint on access, or document the
-  passthrough more loudly so the gotcha is obvious. Today
-  `unsafeWindow.<page-global>` returns undefined with no signal.
 - **Listener-id contract.** `addValueChangeListener` returns the id
   as a `String(numericCounter)`. TM returns numeric IDs. Pin the
   contract in `GM-APIs.md` — id should be opaque to callers, but
@@ -676,6 +756,13 @@ during cumulative review of the GM_* phases:
   ReferenceError at runtime + SW logs dropped name.
 - **`GM_notification`**: image-less notification falls back to
   `icons/icon-128.png` correctly.
+- **MAIN-world pushes with no headless driver.**
+  `tests/e2e/gm-main-world-surface.spec.ts` proves every SW→page push
+  the bridge relays reaches MAIN world except two, which nothing can
+  drive headlessly: `sm:gm-notification-event` (no way to click a Chrome
+  notification) and `sm:gm-download-event` (needs a real download). Both
+  go through the same world-gated relay as the covered ones, so the risk
+  is low; a manual check with a real browser is what's left.
 - **Live repaint** (collections page): a `collections`-index reorder arriving
   from another origin, and the `.busy-spinner` guards that stop a
   repaint from overwriting a control the user just clicked. The reorder
@@ -1092,6 +1179,21 @@ Rough edges left:
   blocker is that `manual` currently means "not rate-limited", not
   "the user clicked", so the fast-path can't be told apart from a
   Refresh click.
+  - Restating parse-time diagnostics rides on the same gate, so a
+    permanently-misconfigured script (e.g. `@grant unsafeWindow` with
+    `@inject-into content`) now repeats its warning once per reload as
+    well. `probe === 'force'` is the signal the rest of the file uses
+    for "the user clicked Refresh" — threading it into
+    `emitScriptOutcomeLog` would gate both rows properly.
+- **Parse-time diagnostics live only in the Log.** A script whose
+  header can't do what it asks (the `@grant unsafeWindow` +
+  `@inject-into content` case) is badged, but the sentence explaining
+  why is a Log row the user has to go find — and one that only gets
+  written on boot replay, on new content, or on a manual refresh.
+  Showing the current `startupLogs` in the detail panel next to Status
+  would make the explanation as durable as the badge, and would remove
+  the reason for restating the rows at all (see the poll-noise item
+  above).
 - **`refreshAllCollections` uses `Promise.all`**, so one collection throwing
   rejects the whole batch — contradicting its own docstring, which
   claims a failed collection doesn't take the rest down. `allSettled`
@@ -1287,6 +1389,13 @@ they follow are in
   separate — the refresh still does its own conditional GET. Worth
   little for hosts that return ETags; worth more for a large script on
   a host that doesn't.
+- show which world a script runs in ("runs in page" vs "runs
+  isolated") in the viewer. The world is decided by the header
+  (`@grant none` or `@grant unsafeWindow` or `@inject-into` — see
+  [docs/injection-modes.md](docs/injection-modes.md)), so today the
+  user has to read the grants and know the rules to predict whether
+  the script can see page globals. It's also the fact that explains
+  the `@inject-into content` + `unsafeWindow` warning.
 - surface `GM_download` / `GM_openInTab` in the details panel. The
   panel dropped the `@grant` row on the grounds that `@connect` already
   carries the network story and the rest of the GM surface acts within

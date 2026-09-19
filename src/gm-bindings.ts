@@ -166,11 +166,22 @@ function emitGmInfo(info: GmInfoInput): string {
 // __SM_GM__.sendAsync. The call-site shape is stable across phases —
 // landing a new API only changes the SW-side dispatch.
 function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
-  // unsafeWindow is a passthrough binding, not a function. In
-  // USER_SCRIPT world there's no direct page-window access; expose
-  // `window` for now (Phase X will handle the real cross-world bridge
-  // if it ever lands). This matches "ungated" behavior — calling code
-  // gets a usable object — but it does NOT reach the page's globals.
+  // unsafeWindow is a passthrough binding, not a function — the same
+  // `const unsafeWindow = window;` in both worlds, because what makes
+  // it correct is the WORLD, not the binding.
+  //
+  //   - MAIN world: `window` IS the page's window, so this is the real
+  //     thing. `resolveWorld` sends every `@grant unsafeWindow` script
+  //     here for exactly that reason.
+  //   - USER_SCRIPT world: reachable only when the script also declared
+  //     `@inject-into content`, i.e. explicitly asked for isolation.
+  //     `window` is then the isolated realm's, NOT the page's — matching
+  //     Violentmonkey's content mode. `extractStartupLogs` emits a
+  //     warning for that combination so it isn't a silent wrong answer.
+  //
+  // No cross-world proxy is possible: property access on unsafeWindow is
+  // synchronous and Chrome exposes no synchronous channel between an
+  // isolated world and the page's realm.
   if (spec.subsystem === 'unsafe-window') {
     return `const unsafeWindow = window;`;
   }
@@ -222,9 +233,9 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   if (spec.subsystem === 'dom') {
     switch (spec.name) {
       case 'GM_addStyle':
-        return `const GM_addStyle = function (css) { return window.__SM_GM__.dom.addStyle(css); };`;
+        return `const GM_addStyle = function (css) { return window.__SM_GM__.dom.addStyle(${jsLit(scriptId)}, css); };`;
       case 'GM_addElement':
-        return `const GM_addElement = function (parentOrTag, tagOrAttrs, attrs) { return window.__SM_GM__.dom.addElement(parentOrTag, tagOrAttrs, attrs); };`;
+        return `const GM_addElement = function (parentOrTag, tagOrAttrs, attrs) { return window.__SM_GM__.dom.addElement(${jsLit(scriptId)}, parentOrTag, tagOrAttrs, attrs); };`;
     }
   }
   // Clipboard subsystem: navigator.clipboard.writeText via the
@@ -523,13 +534,18 @@ export function emitGmBindings(
     // userscript that started with stale data would silently
     // overwrite the user's real values with defaults.
     //
-    // When the snapshot is missing (SW unreachable past the
-    // wrapper's safety timeout, or handleCheckPending errored): log
-    // via console.info (not .error — see userscript-prelude.js;
-    // injected .error/.warn leak into chrome://extensions/?errors),
-    // send sm:error so the failure surfaces on the per-script log +
-    // badge, and `return` from the @run-at callback so the user body
-    // never runs. The user can recover by reloading.
+    // When the snapshot is missing: log via console.info (not .error —
+    // see userscript-prelude.js; injected .error/.warn leak into
+    // chrome://extensions/?errors), send sm:error so the failure
+    // surfaces on the per-script log + badge, and `return` from the
+    // @run-at callback so the user body never runs. The user can
+    // recover by reloading.
+    //
+    // Several ways to get here, which is why the message doesn't assert
+    // one cause: the SW was unreachable past the wrapper's safety
+    // timeout, `handleCheckPending` errored, or — for a MAIN-world
+    // script only — the SW's `bridgeMayActAs` gate refused to hand the
+    // values over the bridge (see docs/injection.md#gm_-in-main-world).
     //
     // One string in both places. As two literals they had already
     // drifted — the Log copy lost the "reload" half, which is the only

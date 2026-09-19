@@ -76,9 +76,9 @@ globalThis.chrome = globalThis.chrome ?? {
 import {
   BRIDGE_SCRIPT_ID,
   GM_RUNTIME_SCRIPT_ID,
+  GM_RUNTIME_MAIN_SCRIPT_ID,
   registerWithFallback,
   buildBridgeSpec,
-  buildGmRuntimeSpec,
   buildConfigBlob,
   buildRegistrationSpec,
   buildSwapEvalBody,
@@ -1319,7 +1319,7 @@ test('resolveWorld: @inject-into auto falls through to @grant logic', () => {
   );
 });
 
-test('resolveWorld: multi @grant — all "none" → MAIN, any real grant → USER_SCRIPT', () => {
+test('resolveWorld: multi @grant — "none" anywhere → MAIN, real grants only → USER_SCRIPT', () => {
   assert.equal(
     resolveWorld(makeHeader([
       { tag: 'grant', value: 'none' },
@@ -1327,9 +1327,17 @@ test('resolveWorld: multi @grant — all "none" → MAIN, any real grant → USE
     ])),
     'MAIN',
   );
+  // `none` wins, as it does for the bindings in resolveGrants.
   assert.equal(
     resolveWorld(makeHeader([
       { tag: 'grant', value: 'none' },
+      { tag: 'grant', value: 'GM_setValue' },
+    ])),
+    'MAIN',
+  );
+  assert.equal(
+    resolveWorld(makeHeader([
+      { tag: 'grant', value: 'GM_getValue' },
       { tag: 'grant', value: 'GM_setValue' },
     ])),
     'USER_SCRIPT',
@@ -1449,40 +1457,27 @@ test('buildBridgeSpec: returns null on an empty active set', () => {
   assert.equal(buildBridgeSpec([]), null);
 });
 
-test('buildBridgeSpec: emits a USER_SCRIPT spec at <all_urls> when any MAIN-world script exists', () => {
+test('buildBridgeSpec: emits a USER_SCRIPT spec on the union of the MAIN-world scripts\' patterns', () => {
+  // Every MAIN-world script counts, granted or not (telemetry and the
+  // reload handshake ride the bridge too); USER_SCRIPT-world scripts
+  // don't, and neither does the bridge land anywhere else — a whole
+  // isolated world per document is not free.
   const specs = [
     { id: 'a', world: 'USER_SCRIPT', matches: ['https://x/*'], js: [{ code: '' }], runAt: 'document_idle' },
     { id: 'b', world: 'MAIN', matches: ['https://y/*'], js: [{ code: '' }], runAt: 'document_idle' },
+    { id: 'c', world: 'MAIN', matches: ['https://y/*', 'https://z/*'], includeGlobs: ['*://g/*'], js: [{ code: '' }], runAt: 'document_idle' },
   ];
   const bridge = buildBridgeSpec(specs);
   assert.ok(bridge, 'expected a bridge spec');
   assert.equal(bridge.id, BRIDGE_SCRIPT_ID);
   assert.equal(bridge.world, 'USER_SCRIPT');
-  assert.deepEqual(bridge.matches, ['<all_urls>']);
+  assert.deepEqual(bridge.matches, ['https://y/*', 'https://z/*']);
+  assert.deepEqual(bridge.includeGlobs, ['*://g/*']);
   assert.equal(bridge.runAt, 'document_start');
   assert.match(bridge.js[0].code, /sourcemonkey-bridge/);
   // Tagged with a page-wide sourceURL so devtools shows it under a
   // friendly name rather than a UUID.
   assert.match(bridge.js[0].code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/__bridge\.js/);
-});
-
-// ---------- buildGmRuntimeSpec ----------
-
-test('buildGmRuntimeSpec: emitted only when a USER_SCRIPT-world script is active', () => {
-  const main = { id: 'a', world: 'MAIN', matches: ['https://x/*'], js: [{ code: '' }], runAt: 'document_idle' };
-  const isolated = { ...main, id: 'b', world: 'USER_SCRIPT' };
-  assert.equal(buildGmRuntimeSpec([]), null);
-  assert.equal(buildGmRuntimeSpec([main]), null, 'MAIN world has no window.__SM_GM__ to install');
-
-  const runtime = buildGmRuntimeSpec([main, isolated]);
-  assert.ok(runtime, 'expected a GM-runtime spec');
-  assert.equal(runtime.id, GM_RUNTIME_SCRIPT_ID);
-  assert.equal(runtime.world, 'USER_SCRIPT');
-  assert.deepEqual(runtime.matches, ['<all_urls>']);
-  // document_start, so the global is in place before any wrapper that
-  // compiled GM_* bindings against it runs.
-  assert.equal(runtime.runAt, 'document_start');
-  assert.match(runtime.js[0].code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/__gm-runtime\.js/);
 });
 
 // ---------- wrapPreludeEntry ----------
@@ -1514,21 +1509,29 @@ function setupBridgeHarness() {
     },
   };
   let listener = null;
+  let syncListener = null;
   const fakeWindow = {
     addEventListener(type, fn, _capture) {
       if (type === 'message') listener = fn;
     },
   };
+  const fakeDocument = {
+    addEventListener(type, fn, _capture) {
+      if (type === 'sourcemonkey-bridge-sync') syncListener = fn;
+    },
+  };
   // eslint-disable-next-line no-new-func
-  new Function('window', 'chrome', WRAPPER_BRIDGE)(fakeWindow, fakeChrome);
+  new Function('window', 'document', 'chrome', WRAPPER_BRIDGE)(fakeWindow, fakeDocument, fakeChrome);
   if (!listener) throw new Error('bridge did not install a message listener');
+  if (!syncListener) throw new Error('bridge did not install the synchronous DOM-event listener');
   const dispatch = (event) => listener(event);
+  const dispatchSync = (detail) => syncListener({ detail });
   const goodEvent = (overrides = {}) => ({
     source: fakeWindow,
     data: { __sm: 'sourcemonkey-bridge', payload: { type: 'sm:start', id: 'x', url: 'https://e/' } },
     ...overrides,
   });
-  return { sent, dispatch, goodEvent, fakeWindow };
+  return { sent, dispatch, dispatchSync, goodEvent, fakeWindow };
 }
 
 test('wrapper-bridge: forwards well-formed sm:start events', () => {
@@ -1570,6 +1573,22 @@ test('wrapper-bridge: ignores messages whose payload is missing or non-object', 
   assert.equal(sent.length, 0);
 });
 
+test('wrapper-bridge: the synchronous DOM-event path forwards an allowlisted payload, stamped', () => {
+  // What the pagehide storage flush rides. Same allowlist and stamp as
+  // the postMessage path; the difference is that the sendMessage
+  // happens inside the dispatch, before the caller returns.
+  const { sent, dispatchSync } = setupBridgeHarness();
+  dispatchSync(JSON.stringify({ type: 'sm:gm-batch-write', scriptId: 's1', writes: [], __viaBridge: false }));
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].type, 'sm:gm-batch-write');
+  assert.equal(sent[0].__viaBridge, true);
+  // Not on the allowlist, not a string, not JSON: all dropped.
+  dispatchSync(JSON.stringify({ type: 'sm:not-a-thing' }));
+  dispatchSync({ type: 'sm:gm-batch-write' });
+  dispatchSync('{not json');
+  assert.equal(sent.length, 1);
+});
+
 test('wrapper-bridge: only forwards sm:start / sm:error payload types', () => {
   const { sent, dispatch, goodEvent } = setupBridgeHarness();
   dispatch(goodEvent({
@@ -1606,7 +1625,7 @@ function makeCollection(over = {}) {
 
 test('collectActiveSpecs: invalid scripts never run; missing scripts run only when explicitly enabled', async () => {
   const collections = new Map([['collection-1', makeCollection()]]);
-  const specs = await collectActiveSpecs([
+  const { specs } = await collectActiveSpecs([
     makeScript({ id: 's1', status: 'invalid', errorMessage: 'x' }),
     makeScript({ id: 's2', status: 'missing', enabled: false }),
     makeScript({ id: 's3', status: 'missing', enabled: true }),
@@ -1617,7 +1636,7 @@ test('collectActiveSpecs: invalid scripts never run; missing scripts run only wh
 
 test('collectActiveSpecs: skips disabled scripts', async () => {
   const collections = new Map([['collection-1', makeCollection()]]);
-  const specs = await collectActiveSpecs([
+  const { specs } = await collectActiveSpecs([
     makeScript({ id: 's1', enabled: false }),
     makeScript({ id: 's2' }),
   ], collections);
@@ -1626,7 +1645,7 @@ test('collectActiveSpecs: skips disabled scripts', async () => {
 
 test('collectActiveSpecs: skips every script under a disabled collection', async () => {
   const collections = new Map([['collection-1', makeCollection({ enabled: false })]]);
-  const specs = await collectActiveSpecs([
+  const { specs } = await collectActiveSpecs([
     makeScript({ id: 's1' }),
     makeScript({ id: 's2' }),
   ], collections);
@@ -1635,7 +1654,7 @@ test('collectActiveSpecs: skips every script under a disabled collection', async
 
 test('collectActiveSpecs: skips scripts whose collection is missing entirely', async () => {
   const collections = new Map();
-  const specs = await collectActiveSpecs([makeScript()], collections);
+  const { specs } = await collectActiveSpecs([makeScript()], collections);
   assert.deepEqual(specs, []);
 });
 
@@ -1644,7 +1663,7 @@ test('collectActiveSpecs: treats undefined `enabled` as true (back-compat)', asy
   delete script.enabled;
   const collection = makeCollection();
   delete collection.enabled;
-  const specs = await collectActiveSpecs([script], new Map([['collection-1', collection]]));
+  const { specs } = await collectActiveSpecs([script], new Map([['collection-1', collection]]));
   assert.equal(specs.length, 1);
 });
 
@@ -1906,7 +1925,7 @@ const {
 
 // The retry rebuilds specs from the store, so it needs a script row to
 // find. Only the fields collectActiveSpecs reads matter here.
-function seedStore(scriptId) {
+function seedStore(scriptId, { matches = ['https://e/*'], grants = [] } = {}) {
   const script = {
     id: scriptId,
     collectionId: 'src-1',
@@ -1918,8 +1937,11 @@ function seedStore(scriptId) {
     bodyText: 'x',
     headerText: '',
     leadingText: '',
-    matching: { matches: ['https://e/*'], includes: [], excludes: [] },
-    header: { tags: [{ tag: 'name', value: 'Bad' }], startLine: 1 },
+    matching: { matches, includes: [], excludes: [] },
+    header: {
+      tags: [{ tag: 'name', value: 'Bad' }, ...grants.map((value) => ({ tag: 'grant', value }))],
+      startLine: 1,
+    },
   };
   localStore.set(`script:${scriptId}`, script);
   const collection = localStore.get('collection:src-1')
@@ -2255,6 +2277,87 @@ test('syncRegistrations: a scoped sync re-registers only the scripts that moved'
   assert.deepEqual(chrome_.calls, ['update:b'], 'only the edited script is re-offered');
   assert.deepEqual(chrome_.ids(), ['a', 'b', BRIDGE_SCRIPT_ID].sort(), 'the set is unchanged');
   assert.equal(reads.full, 0, 'a scoped sync must not read every row');
+});
+
+test('syncRegistrations: our own specs go in first, runtimes before the bridge', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a', { matches: ['https://a.example/*'], grants: ['unsafeWindow', 'GM_setValue'] });
+  seedStore('b', { matches: ['https://b.example/*'], grants: ['GM_setValue'] });
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+  assert.deepEqual(chrome_.order(), [GM_RUNTIME_SCRIPT_ID, GM_RUNTIME_MAIN_SCRIPT_ID, BRIDGE_SCRIPT_ID, 'a', 'b']);
+  // Scoped: each own spec on the patterns of the scripts that need it.
+  assert.deepEqual(chrome_.spec(GM_RUNTIME_MAIN_SCRIPT_ID).matches, ['https://a.example/*']);
+  assert.deepEqual(chrome_.spec(GM_RUNTIME_SCRIPT_ID).matches, ['https://b.example/*']);
+  assert.deepEqual(chrome_.spec(BRIDGE_SCRIPT_ID).matches, ['https://a.example/*']);
+});
+
+test('syncRegistrations: a scoped sync re-offers the MAIN runtime and the bridge when their union moves', async (t) => {
+  // The MAIN runtime is registered under its own id, and every piece of
+  // own-spec bookkeeping has to know it — a predicate that only knew
+  // the USER_SCRIPT id once left this script with `GM_setValue` bound
+  // to a `window.__SM_GM__` that never reached its page.
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a', { matches: ['https://a.example/*'], grants: ['unsafeWindow', 'GM_setValue'] });
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+  chrome_.reset();
+
+  seedStore('b', { matches: ['https://b.example/*'], grants: ['unsafeWindow', 'GM_setValue'] });
+  await syncRegistrations({ scriptIds: ['b'], collectionIds: [] });
+
+  assert.deepEqual(
+    chrome_.calls.slice().sort(),
+    [`register:b`, `update:${BRIDGE_SCRIPT_ID}`, `update:${GM_RUNTIME_MAIN_SCRIPT_ID}`],
+  );
+  assert.deepEqual(chrome_.spec(GM_RUNTIME_MAIN_SCRIPT_ID).matches.sort(), ['https://a.example/*', 'https://b.example/*']);
+  assert.deepEqual(chrome_.spec(BRIDGE_SCRIPT_ID).matches.sort(), ['https://a.example/*', 'https://b.example/*']);
+
+  // An edit that doesn't move the union re-offers neither.
+  chrome_.reset();
+  await syncRegistrations({ scriptIds: ['b'], collectionIds: [] });
+  assert.deepEqual(chrome_.calls, ['update:b']);
+
+  // The last MAIN-world script leaving takes both own specs with it.
+  chrome_.reset();
+  localStore.set('script:a', { ...localStore.get('script:a'), enabled: false });
+  localStore.set('script:b', { ...localStore.get('script:b'), enabled: false });
+  await syncRegistrations({ scriptIds: ['a', 'b'], collectionIds: [] });
+  assert.deepEqual(chrome_.ids(), []);
+});
+
+test('syncRegistrations: a refused own spec is rebuilt from what Chrome accepted, and never filed as a script', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a', { matches: ['https://a.example/*'], grants: ['unsafeWindow', 'GM_setValue'] });
+  seedStore('bad', { matches: ['https://bad.example/*'], grants: ['unsafeWindow', 'GM_setValue'] });
+  const chrome_ = fakeRegistrationSet();
+  // Chrome refuses any spec carrying bad.example — the script itself,
+  // and the own specs whose union it is part of.
+  const inner = userScripts.register;
+  userScripts.register = async (batch) => {
+    for (const s of batch) {
+      if ((s.matches ?? []).includes('https://bad.example/*')) throw new Error(`bad pattern in ${s.id}`);
+    }
+    return inner(batch);
+  };
+  await syncRegistrations();
+
+  // Retried on the accepted union, and in place.
+  assert.deepEqual(chrome_.ids(), ['a', BRIDGE_SCRIPT_ID, GM_RUNTIME_MAIN_SCRIPT_ID].sort());
+  assert.deepEqual(chrome_.spec(GM_RUNTIME_MAIN_SCRIPT_ID).matches, ['https://a.example/*']);
+  assert.deepEqual(chrome_.spec(BRIDGE_SCRIPT_ID).matches, ['https://a.example/*']);
+  // Only the script is REJECTED; our own ids are not scripts.
+  const rejections = sessionStore.get('injector-rejections') ?? {};
+  assert.deepEqual(Object.keys(rejections), ['bad']);
 });
 
 test('syncRegistrations: a scoped sync unregisters only what left the set', async (t) => {

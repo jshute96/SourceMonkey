@@ -82,7 +82,7 @@ import {
 } from './external-files.js';
 import { localSearchRoots, localRootsReady, type LocalFileScope } from './local-file-overrides.js';
 import { scanAllStorage } from './storage-scan.js';
-import { resolveGrants } from './gm-api-catalog.js';
+import { canonicalizeGrant, resolveGrants } from './gm-api-catalog.js';
 import {
   ignoredMatchMessage,
   matchPatternProblem,
@@ -345,12 +345,21 @@ export function distillMatching(header: ParsedHeader | null): ScriptMatching {
   };
 }
 
-// Derive parse-time diagnostics from the metadata block. Today this
-// only flags unknown `@grant` names; add other producers here as
-// they come up (e.g. deprecated header tags, soft `@resource`
-// failures, `@grant`-but-never-called dead grants). Anything that
-// blocks `validateHeader` belongs in there instead — error rows skip
-// the startup-logs attachment in `buildScriptFromText`.
+// Derive parse-time diagnostics from the metadata block. Producers so
+// far: unknown `@grant` names, and `@grant unsafeWindow` combined with
+// `@inject-into content`. Add others here as they come up (e.g.
+// deprecated header tags, soft `@resource` failures,
+// `@grant`-but-never-called dead grants). Anything that blocks
+// `validateHeader` belongs in there instead — error rows skip the
+// startup-logs attachment in `buildScriptFromText`.
+// Said when a script grants `unsafeWindow` and also declares
+// `@inject-into content`. Exported so the tests and any other surface
+// recognize it by identity rather than by matching its wording.
+export const ISOLATED_UNSAFE_WINDOW_WARNING =
+  'This script cannot reach the page through unsafeWindow. '
+  + '@inject-into content makes the script run isolated from main page content, so the '
+  + "page's variables read as undefined. Remove @inject-into content to reach them.";
+
 export function extractStartupLogs(
   header: ParsedHeader | null,
   relativePath: string,
@@ -360,6 +369,25 @@ export function extractStartupLogs(
   const grants = getValues(header, 'grant');
   if (grants.length > 0) {
     const resolved = resolveGrants(grants);
+    // `none` wins over every other `@grant` line — no bindings, MAIN
+    // world — in both `resolveGrants` and `resolveWorld`. The author
+    // probably meant the other lines, so say what happened to them.
+    // Only the grants we'd otherwise have honored; a typo'd name gets
+    // its own "unsupported" line below and shouldn't be counted twice.
+    const overridden = grants
+      .map((g) => g.trim())
+      .filter((g) => g !== '' && g.toLowerCase() !== 'none' && canonicalizeGrant(g) !== null);
+    if (resolved.hasNone && overridden.length > 0) {
+      const log: StartupLog = {
+        level: 'warn',
+        message:
+          `@grant none overrides @grant ${overridden.join(', ')} — the script runs in the ` +
+          'page with no GM APIs. Remove the none line to use them.',
+      };
+      const line = headerTagLine(header, 'grant', 'none');
+      if (line !== undefined) log.location = { file: relativePath, line };
+      logs.push(log);
+    }
     if (resolved.unknown.length > 0) {
       const log: StartupLog = {
         level: 'warn',
@@ -372,6 +400,19 @@ export function extractStartupLogs(
       const line = headerTagLine(header, 'grant', resolved.unknown[0]);
       if (line !== undefined) log.location = { file: relativePath, line };
       logs.push(log);
+    }
+    // `unsafeWindow` means "the page's real window". That only exists
+    // in MAIN world, and `@inject-into content` pins the script to the
+    // isolated USER_SCRIPT world, where `unsafeWindow` can only be the
+    // isolated realm's own `window` — page globals read as `undefined`.
+    // We keep the binding (matching Violentmonkey's content mode) but
+    // say so out loud, because the alternative is a script that quietly
+    // does nothing. See docs/injection.md#unsafewindow-forces-main-world.
+    if (
+      resolved.granted.has('unsafeWindow') &&
+      (getValue(header, 'inject-into') ?? '').trim().toLowerCase() === 'content'
+    ) {
+      logs.push({ level: 'warn', message: ISOLATED_UNSAFE_WINDOW_WARNING });
     }
   }
   // A `@match` Chrome's grammar refuses. One of these would take the

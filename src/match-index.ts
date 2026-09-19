@@ -29,18 +29,29 @@ import {
   type StoredCollection,
 } from './script-store.js';
 import { urlMatchesScript } from './url-match.js';
+import { grantedSubsystems, resolveWorld, type InjectionWorld } from './injector.js';
+import type { ApiSubsystem } from './gm-api-catalog.js';
 
 export interface MatchedScript {
   id: string;
   name: string;       // @name, or the readable relativePath as a fallback
   matching: ScriptMatching;
   collectionId: string;
+  // Which execution world the script would be injected into. Cached
+  // here because the SW's bridge gate (`bridgeMayActAs` in
+  // background.ts) has to answer "does this script run in MAIN world on
+  // this URL?" synchronously per GM_* call; re-reading the header from
+  // chrome.storage.local on every call would put I/O on that path.
+  world: InjectionWorld;
 }
 
 const SCRIPT_PREFIX = 'script:';
 const COLLECTION_PREFIX = 'collection:';
 
 interface CacheEntry extends MatchedScript {
+  // The GM subsystems the script's grants reach, for the same gate:
+  // a relayed request is honored only through an API the script has.
+  subsystems: ReadonlySet<ApiSubsystem>;
   enabled: boolean;   // the script's own toggle (not the collection's)
   // Loaded from disk rather than over the network. Cached here so the
   // focus-triggered refresh can pick the local rows out of a tab's
@@ -113,6 +124,8 @@ function toEntry(script: StoredScript): CacheEntry | null {
     name,
     matching: script.matching,
     collectionId: script.collectionId,
+    world: resolveWorld(script.header),
+    subsystems: grantedSubsystems(script.header),
     enabled: isScriptEnabled(script),
     local: isFileUrl(script.fileUrl),
   };
@@ -277,6 +290,7 @@ export function findMatchesForUrl(url: string): MatchedScript[] {
         name: entry.name,
         matching: entry.matching,
         collectionId: entry.collectionId,
+        world: entry.world,
       });
     }
   }
@@ -313,6 +327,34 @@ export function hasLocalScripts(): boolean {
 
 export function cacheSize(): number {
   return cache.size;
+}
+
+// The execution world a script would be injected into, or null when the
+// id isn't in the injectable cache at all.
+//
+// Used by the SW to stamp every push it sends into a tab with the world
+// the receiving script lives in. `wrapper-bridge.js` re-posts pushes
+// into MAIN world, where the page can read them, so it must relay only
+// what is addressed to a MAIN-world script — otherwise an isolated
+// script's stored values and XHR response bodies would become
+// page-visible on any page that happens to also run a MAIN-world
+// script. Callers treat `null` as "not MAIN" (fail closed).
+export function scriptWorld(id: string): InjectionWorld | null {
+  return cache.get(id)?.world ?? null;
+}
+
+// True iff the script's `@grant` lines reach one of the given
+// subsystems. The second half of the bridge gate: being a MAIN-world
+// script on the page only makes the APIs it granted page-reachable, so
+// a request through any other API is refused even for that script.
+// Unknown ids fail closed.
+export function scriptGrantsSubsystem(
+  id: string,
+  subsystems: readonly ApiSubsystem[],
+): boolean {
+  const granted = cache.get(id)?.subsystems;
+  if (!granted) return false;
+  return subsystems.some((s) => granted.has(s));
 }
 
 // Test/debug: dump the current cache contents. Lets e2e tests

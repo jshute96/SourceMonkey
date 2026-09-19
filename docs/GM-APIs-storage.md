@@ -138,9 +138,45 @@ When could this trigger:
 - For MAIN-world scripts: the wrapper-bridge round-trip didn't
   reply (page navigated away mid-handshake, bridge wasn't
   installed yet, etc.).
+- For MAIN-world scripts: the SW's `bridgeMayActAs` gate refused
+  to hand the values over the bridge. See
+  [MAIN-world storage](#main-world-storage) below.
 
-In every case the failure mode is a clear console error rather
+In every case the failure mode is a clear console message rather
 than a silently-misbehaving script.
+
+## MAIN-world storage
+
+A script that grants `unsafeWindow` runs in the page's own world (see
+[injection.md](injection.md#unsafewindow-forces-main-world)), and takes
+its storage grants with it. Same cache, same batching, same snapshot
+contract — only the transport differs, and that has consequences.
+
+- **The snapshot is gated.** MAIN world has no `chrome.runtime`, so
+  the `sm:check-pending` request rides `wrapper-bridge.js`, where a
+  hostile page could forge it. The SW hands `gmValues` back only for a
+  script that actually runs in MAIN world on the sending page and
+  granted a storage API — the set whose values that page can already
+  read out of the MAIN-world `window.__SM_GM__`. A refusal is a missing snapshot, i.e. the hard
+  abort above.
+- **The page can read and write the cache.** `window.__SM_GM__` is a
+  global in the page's realm. This is inherent to `@grant unsafeWindow`
+  and matches TM/VM; it is also why the gate can concede the snapshot
+  without conceding anything new.
+- **Teardown flushes take the synchronous path.** An ordinary bridge
+  request is a `postMessage` the bridge reads on a later task, and a
+  document in `pagehide` never gets one — `GM_setValue(); location.href
+  = …` would lose the write every time. So the `pagehide` /
+  `visibilitychange → hidden` flush is dispatched as a DOM
+  `CustomEvent` (`sourcemonkey-bridge-sync`, JSON in `detail`), which
+  runs the bridge's listener in the same task; the bridge's
+  `chrome.runtime.sendMessage` is then as durable as a USER_SCRIPT
+  script's own. Pinned by `tests/e2e/gm-storage-teardown-main.spec.ts`.
+
+Cross-tab broadcasts reach MAIN-world scripts too: the SW stamps each
+push with the destination script's world and the bridge re-posts only
+the MAIN-addressed ones, so an isolated script's writes never become
+page-visible.
 
 ## Propagating writes to other live documents
 

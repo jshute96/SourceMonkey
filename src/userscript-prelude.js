@@ -121,10 +121,24 @@
 
   /* Dual transport: chrome.runtime.sendMessage in USER_SCRIPT world,
      window.postMessage bridge in MAIN world. The bridge listener
-     lives in wrapper-bridge.js (registered separately). */
+     lives in wrapper-bridge.js (registered separately).
+
+     "Are we in the isolated world?" is `chrome.runtime.id` being a
+     string. A web page listed in some extension's
+     `externally_connectable` has `chrome.runtime.sendMessage` in MAIN
+     world too (for talking to that extension), and calling it without
+     an extension id throws — so the presence of `sendMessage` alone is
+     the wrong test. Same rule in wrapper-gm-runtime.js. */
+  function hasOwnRuntimeChannel() {
+    try {
+      return typeof chrome !== "undefined" && !!chrome.runtime &&
+        typeof chrome.runtime.id === "string" &&
+        typeof chrome.runtime.sendMessage === "function";
+    } catch (_e) { return false; }
+  }
   function send(payload) {
     try {
-      if (typeof chrome !== "undefined" && chrome.runtime && typeof chrome.runtime.sendMessage === "function") {
+      if (hasOwnRuntimeChannel()) {
         var p = chrome.runtime.sendMessage(payload);
         if (p && typeof p.catch === "function") p.catch(function () {});
         return;
@@ -133,6 +147,21 @@
     try {
       window.postMessage({ __sm: "sourcemonkey-bridge", payload: payload }, "*");
     } catch (_e2) {}
+  }
+
+  /* Is the shared GM runtime installed in THIS world on THIS document?
+     Decides whether a hot-swap body that needs it (`needsRuntime` on
+     the SW's reply) can run: the runtime is registered only where some
+     active script grants a runtime-backed API, so a refresh that ADDS
+     the first such grant produces a body whose GM_* bindings have no
+     `window.__SM_GM__` to dereference until the next reload
+     re-registers it. Asked at the moment the body is about to run (see
+     runMain), not at wrapper start: the runtime is its own
+     document_start registration and may sit after this wrapper in
+     Chrome's order — an updated registration moves to the end — but by
+     run time every document_start registration has executed. */
+  function hasGmRuntime() {
+    try { return !!window.__SM_GM__; } catch (_e) { return false; }
   }
 
   /* Round-trip sm:check-pending and hand the SW's decision (or a 2s
@@ -153,7 +182,7 @@
       finish(decision);
     };
     try {
-      if (typeof chrome !== "undefined" && chrome.runtime && typeof chrome.runtime.sendMessage === "function") {
+      if (hasOwnRuntimeChannel()) {
         var p = chrome.runtime.sendMessage({
           type: "sm:check-pending",
           id: cfg.id,
@@ -580,7 +609,17 @@
       var evalRefused = false;
       var evalErr = null;
       var swapReady = true;
-      if (decision.seedValues) {
+      if (decision.needsRuntime && !hasGmRuntime()) {
+        /* The new body grants a runtime-backed API and this world has
+           no runtime — the refresh added the first such grant on this
+           page, and the next reload registers it. Run the baked-in
+           (previous) body instead. */
+        swapReady = false;
+        try {
+          console.info("[SourceMonkey] " + cfg.name + ": The updated copy needs the GM runtime, which this page does not have yet, so the previous version ran — reload the page to pick it up");
+        } catch (_smNR) {}
+      }
+      if (swapReady && decision.seedValues) {
         swapReady = false;
         var swapSnap = decision.gmValues;
         if (swapSnap && typeof swapSnap === "object") {

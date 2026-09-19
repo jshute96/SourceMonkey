@@ -795,8 +795,7 @@ export function emitScriptOutcomeLog(
     }
     // Replay parse-time diagnostics whenever a new version lands. They
     // appear AFTER the "Loaded new content" line so it's clear which
-    // version the warning belongs to. One entry per content version —
-    // a refresh that doesn't change content adds nothing.
+    // version the warning belongs to.
     for (const entry of next.startupLogs ?? []) {
       logScriptEvent(scriptId, startupLogEntry(entry));
     }
@@ -804,6 +803,18 @@ export function emitScriptOutcomeLog(
   }
   if (mode === 'manual') {
     logScriptEvent(scriptId, { level: 'info', source, message: NO_CHANGE_MESSAGE });
+    // A manual refresh is the user asking what state this script is in,
+    // so a parse-time problem that is STILL TRUE gets restated — the
+    // same reason `replayScriptLogsAtBoot` restates load state and
+    // OUTDATED rather than leaving a badge over a silent Log. Without
+    // it the only line a permanently misconfigured script ever gets is
+    // the one from the refresh that first loaded it: it scrolls away,
+    // Clear log wipes it, and nothing brings it back until the next
+    // Chrome restart. Manual only, like the line above — a background
+    // check nobody asked for stays silent.
+    for (const entry of next.startupLogs ?? []) {
+      logScriptEvent(scriptId, startupLogEntry(entry));
+    }
   }
 }
 

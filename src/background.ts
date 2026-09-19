@@ -25,8 +25,11 @@ import {
   installStorageListener,
   localScriptIds,
   onCacheChanged,
+  scriptGrantsSubsystem,
+  scriptWorld,
   type MatchedScript,
 } from './match-index.js';
+import type { ApiSubsystem } from './gm-api-catalog.js';
 import {
   dlog,
   installDebugLoggingListener,
@@ -69,6 +72,7 @@ import {
 } from './script-log-id.js';
 import {
   buildSwapEvalBody,
+  needsGmRuntime,
   resolveWorld,
   forgetRegistrationState,
   isUserScriptsAvailable,
@@ -81,8 +85,10 @@ import {
   SM_ERROR_MSG,
   SM_FOCUS_MSG,
   SM_GM_LOG_MSG,
+  SM_GM_DOM_BLOCKED_MSG,
   SM_START_MSG,
   SM_SWAPPED_MSG,
+  type InjectionWorld,
   type SyncScope,
 } from './injector.js';
 import {
@@ -1376,6 +1382,7 @@ async function dispatchActionMenuCommand(
   try {
     await chrome.tabs.sendMessage(tabId, {
       type: 'sm:gm-menu-fire',
+      smWorld: pushWorld(scriptId),
       scriptId,
       commandId,
     });
@@ -1498,6 +1505,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   if (taken) {
     void chrome.tabs.sendMessage(taken.originatorTabId, {
       type: 'sm:gm-tab-closed',
+      smWorld: pushWorld(taken.scriptId),
       requestId: taken.requestId,
     }).catch(() => undefined);
   }
@@ -2007,10 +2015,8 @@ interface CheckPendingPayload {
   // cannot call chrome.runtime.sendMessage itself, so the only way it
   // reaches us is through the bridge — meaning a request WITHOUT this
   // flag came over a USER_SCRIPT-world script's own direct channel and
-  // is trustworthy. We use it to refuse handing back another script's
-  // gmValues snapshot (the read-leak fix). storage-granting scripts
-  // are always USER_SCRIPT world and always use the direct path, so
-  // legitimate value reads never carry it.
+  // is trustworthy. Flagged requests go through `bridgeMayActAs` before
+  // we hand back a `gmValues` snapshot (the read-leak fix).
   __viaBridge?: boolean;
 }
 
@@ -2030,6 +2036,17 @@ interface CheckPendingPayload {
 // in the gm prelude, which the swap path doesn't run. It describes
 // the new row, so it can be true even when the wrapper asked for no
 // snapshot (the refresh added the grant).
+//
+// `needsRuntime` says the swapped body grants some runtime-backed API,
+// so it can only run where `window.__SM_GM__` exists. The shared
+// runtime is registered only where some active script grants one, so a
+// refresh that adds the first such grant on a page produces a body
+// with nothing to dereference until the next reload registers it. The
+// wrapper checks at the moment the body is about to run — not here,
+// and not at its own start: the runtime is a separate document_start
+// registration that may sit after the wrapper in Chrome's order (an
+// updated registration moves to the end), and by run time every
+// document_start registration has executed.
 type CheckPendingReply =
   | { action: 'run'; gmValues?: Record<string, unknown> }
   | {
@@ -2037,6 +2054,7 @@ type CheckPendingReply =
       body: string;
       loadedAt: number;
       seedValues?: boolean;
+      needsRuntime?: boolean;
       gmValues?: Record<string, unknown>;
     }
   | { action: 'skip'; reason: string };
@@ -2134,9 +2152,11 @@ async function handleCheckPending(
   // dropping the last one (or adding `@inject-into page`) takes it
   // back. The running wrapper is stuck in the world Chrome injected
   // it into, so a swap across that line runs the new body in the
-  // wrong one — USER_SCRIPT bindings dereference `window.__SM_GM__`,
-  // which MAIN doesn't have, and a body that expects page context
-  // silently can't see the page's globals from the isolated world.
+  // wrong one — a body that expects page context silently can't see
+  // the page's globals from the isolated world, and one that expects
+  // isolation gets a `window` the page can reach. The shared
+  // `__SM_GM__` runtime is registered per world too, so the new body's
+  // GM_* calls may also land in a world that doesn't have it.
   // Defer to the next reload, which re-registers into the right one.
   //
   // `__viaBridge` is what tells the two apart: MAIN wrappers have no
@@ -2197,17 +2217,24 @@ async function handleCheckPending(
   // one here would be latency on the document-start critical path for
   // a value that gets discarded.
   //
-  // The `__viaBridge` refusal is the same read-leak guard the message
-  // handler applies: a swap reply carrying `gmValues` is a value read
-  // like any other, and a bridge-relayed request may be a page forging
-  // another script's id. It can't fire in practice — a storage grant
-  // resolves to USER_SCRIPT world, so the world check above turned
-  // every bridge request away already — but the guard belongs where
-  // the values are handed out, not two screens up in a check that
-  // exists for another reason.
-  const handlerWillAttach = payload.needsValues === true && payload.__viaBridge !== true;
+  // The bridge gate is the same read-leak guard the message handler
+  // applies: a swap reply carrying `gmValues` is a value read like any
+  // other, and a bridge-relayed request may be a page forging another
+  // script's id. It DOES fire in practice now — `@grant unsafeWindow`
+  // puts a storage-granting script in MAIN world, whose only route in
+  // is the bridge — so it asks `bridgeMayActAs` rather than refusing
+  // outright. The guard belongs where the values are handed out, not
+  // two screens up in a check that exists for another reason.
+  // Only asked when a value read is actually in play: this handler is
+  // on the document-start critical path of every MAIN-world script,
+  // and the message handler asks the same question for its own
+  // attachment.
+  const bridgeValuesOk = payload.__viaBridge !== true
+    || (!swap.needsValues && payload.needsValues !== true)
+    || await bridgeMayActAs(payload.id, sender, STORAGE_SUBSYSTEMS);
+  const handlerWillAttach = payload.needsValues === true && bridgeValuesOk;
   let gmValues: Record<string, unknown> | undefined;
-  if (swap.needsValues && !handlerWillAttach && payload.__viaBridge !== true) {
+  if (swap.needsValues && !handlerWillAttach && bridgeValuesOk) {
     try {
       gmValues = await loadSnapshotForCheckPending(refreshed.id);
     } catch (err) {
@@ -2236,6 +2263,9 @@ async function handleCheckPending(
     body: swap.body,
     loadedAt: refreshed.loadedAt,
     seedValues: swap.needsValues,
+    // The wrapper decides at run time whether its world has the
+    // runtime this body needs — see CheckPendingReply.
+    ...(needsGmRuntime(refreshed.header) ? { needsRuntime: true } : {}),
     // Only set on the grant-added path; otherwise the message
     // handler's enrichment supplies the same field from its own
     // concurrent read.
@@ -2431,7 +2461,9 @@ async function handleXhrStart(
   if ('reason' in policy) {
     // Not `connectBlockedMessage`: we never got as far as reading the
     // script's rules, so blaming them would be wrong.
-    await sendXhrError(tabId, payload.id, gmXhrError(policy.reason));
+    await sendXhrError(
+      sender, tabId, payload.scriptId, payload.id, gmXhrError(policy.reason),
+    );
     return;
   }
   const initial = policy.check(payload.request.url);
@@ -2439,7 +2471,9 @@ async function handleXhrStart(
     // `denied` separates "the header forbids this host" from "that URL
     // never parsed" — only the first is the script's rules refusing.
     await sendXhrError(
+      sender,
       tabId,
+      payload.scriptId,
       payload.id,
       initial.denied ? connectBlockedMessage(initial.reason) : gmXhrError(initial.reason),
     );
@@ -2455,11 +2489,17 @@ async function handleXhrStart(
     tabId,
   );
   try {
+    // Frame-scoped: the response body is the sensitive part of the API,
+    // and `chrome.tabs.sendMessage` with no frameId hands it to every
+    // frame in the tab. Only the frame that asked needs it. (Moot while
+    // nothing registers with `allFrames`, but it stops being moot the
+    // day something does.)
     await chrome.tabs.sendMessage(tabId, {
       type: 'sm:gm-xhr-event',
+      smWorld: pushWorld(payload.scriptId),
       id: payload.id,
       event,
-    });
+    }, senderFrameOptions(sender));
   } catch {
     // Sender tab closed or otherwise unreachable. Drop quietly —
     // there's nobody to deliver to.
@@ -2469,14 +2509,30 @@ async function handleXhrStart(
 // Ship a synthesized XHR error event back to the originating tab. Used
 // for @connect denials, which the userscript's onerror handles just
 // like a network failure.
-async function sendXhrError(tabId: number, id: string, message: string): Promise<void> {
+async function sendXhrError(
+  sender: chrome.runtime.MessageSender,
+  tabId: number,
+  scriptId: string,
+  id: string,
+  message: string,
+): Promise<void> {
   try {
     await chrome.tabs.sendMessage(tabId, {
       type: 'sm:gm-xhr-event',
+      smWorld: pushWorld(scriptId),
       id,
       event: { kind: 'error', message },
-    });
+    }, senderFrameOptions(sender));
   } catch { /* tab gone */ }
+}
+
+// Address a reply at the exact frame that sent the request, when Chrome
+// told us which one that was. Older senders (or a missing frameId) fall
+// back to the tab-wide send rather than dropping the message.
+function senderFrameOptions(
+  sender: chrome.runtime.MessageSender,
+): { frameId?: number } {
+  return typeof sender.frameId === 'number' ? { frameId: sender.frameId } : {};
 }
 
 // Load a script's `@connect` policy once and return a reusable
@@ -2565,6 +2621,7 @@ function installNotificationListeners(): void {
     if (!taken) return;
     void chrome.tabs.sendMessage(taken.originatorTabId, {
       type: 'sm:gm-notification-event',
+      smWorld: pushWorld(taken.scriptId),
       requestId: taken.requestId,
       event: 'clicked',
     }).catch(() => undefined);
@@ -2574,6 +2631,7 @@ function installNotificationListeners(): void {
     if (!taken) return;
     void chrome.tabs.sendMessage(taken.originatorTabId, {
       type: 'sm:gm-notification-event',
+      smWorld: pushWorld(taken.scriptId),
       requestId: taken.requestId,
       event: 'closed',
     }).catch(() => undefined);
@@ -2593,13 +2651,16 @@ async function handleWindowControl(
   sender: chrome.runtime.MessageSender,
   which: 'close' | 'focus',
 ): Promise<WindowControlResult> {
-  // Refuse a bridge-relayed request, as `handleGmResync` does: closing
-  // the user's tab is the most destructive thing a GM handler can be
-  // asked to do, and the bridge's allowlist not carrying these types
-  // today shouldn't be the only thing standing in front of it. See
-  // wrapper-bridge.js.
-  if (msg.__viaBridge === true) return { ok: false, error: NO_ORIGINATOR_TAB };
   const scriptId = msg.scriptId;
+  // A bridge-relayed request goes through the same gate as every other
+  // script-scoped one: only a script running in MAIN world on the
+  // sending page may be acted for. The blast radius is bounded to that
+  // page's own tab, and in MAIN world the override lives on the page's
+  // own `window` — so the page could make this call through the script
+  // regardless. See `bridgeMayActAs` and wrapper-bridge.js.
+  if (viaBridge(msg) && !(await bridgeMayActAs(scriptId, sender, ['window-control']))) {
+    return { ok: false, error: NO_ORIGINATOR_TAB };
+  }
   const tabId = sender.tab?.id;
   if (tabId == null) {
     return { ok: false, error: NO_ORIGINATOR_TAB };
@@ -2659,6 +2720,7 @@ function sendDownloadEvent(
   }
   void chrome.tabs.sendMessage(tabId, {
     type: 'sm:gm-download-event',
+    smWorld: pushWorld(scriptId),
     requestId,
     event,
   }).catch(() => undefined);
@@ -3026,6 +3088,7 @@ async function broadcastValueUpdate(
       sent++;
       void chrome.tabs.sendMessage(tabId, {
         type: 'sm:gm-value-update',
+        smWorld: pushWorld(scriptId),
         scriptId,
         writes,
       }).catch(() => undefined);
@@ -3067,15 +3130,15 @@ async function handleGmResync(
   payload: { scriptId?: unknown; __viaBridge?: unknown },
   sender: chrome.runtime.MessageSender,
 ): Promise<{ ok: boolean; values?: Record<string, unknown> }> {
-  // Refuse a bridge-relayed request, exactly as the check-pending
-  // value read does: this hands back another script's whole value map,
-  // and a MAIN-world page can forge the scriptId on anything it gets
-  // the bridge to forward. The bridge's allowlist doesn't carry
-  // `sm:gm-resync` today — this keeps that from being the only thing
-  // standing between a page and the values. See wrapper-bridge.js.
-  if (payload.__viaBridge === true) return { ok: false };
+  // A bridge-relayed request hands back a whole value map, and a
+  // MAIN-world page can forge the scriptId on anything it gets the
+  // bridge to forward — so it goes through the same gate every other
+  // script-scoped bridge call does. `bridgeMayActAs` allows only a
+  // script running in MAIN world on the sending page, whose values are
+  // reachable from that page's own realm anyway. See wrapper-bridge.js.
   const scriptId = payload.scriptId;
   if (typeof scriptId !== 'string' || !scriptId) return { ok: false };
+  if (viaBridge(payload) && !(await bridgeMayActAs(scriptId, sender, STORAGE_SUBSYSTEMS))) return { ok: false };
   const tabId = sender.tab?.id;
   if (tabId != null) registerOpener(scriptId, tabId);
   const values = await loadSnapshotForCheckPending(scriptId);
@@ -3126,6 +3189,153 @@ async function nudgeGmResyncAfterWorkerStart(): Promise<void> {
     // direction, so fall through rather than skipping the sweep.
   }
   await nudgeGmResync();
+}
+
+// ---------- bridge gate ----------
+//
+// `wrapper-bridge.js` stamps `__viaBridge: true` on everything it
+// relays for a MAIN-world wrapper. MAIN world shares its realm with the
+// page, so any such message MAY have been forged by the page: it can
+// see our postMessages, learn script ids, and post its own.
+//
+// The gate: a bridge-relayed, script-scoped request is honored only
+// when that script actually runs in MAIN world on the sending frame's
+// URL. That is exactly the set of scripts whose GM surface the page can
+// already drive directly — their `window.__SM_GM__` is a global in the
+// page's own realm, and no secret can be hidden from MAIN world (a
+// token baked into the registered source is readable via
+// `Function.prototype.toString` once the page steals a reference to the
+// wrap function). So the gate concedes nothing new, and it still
+// refuses:
+//
+//   - every USER_SCRIPT-world script (isolated; page can't touch it),
+//   - every MAIN-world script that doesn't match this page (a script
+//     scoped to bank.example can't be driven from evil.example), and
+//   - every API the script didn't grant. "Page-reachable anyway" only
+//     holds for the bindings the script has; a `@grant none` script
+//     with `@match *://*/*` has none, and must not become a handle the
+//     page can open tabs, show notifications, or start downloads with.
+//     `subsystems` names what the request exercises (in catalog terms);
+//     any one of them granted is enough.
+//
+// Direct (non-bridge) requests skip the gate entirely — they can only
+// come from USER_SCRIPT world, which the page cannot reach.
+//
+// Fails CLOSED: an unknown id, an unmatched URL, or a missing sender
+// URL all deny.
+async function bridgeMayActAs(
+  scriptId: unknown,
+  sender: chrome.runtime.MessageSender,
+  subsystems: readonly ApiSubsystem[],
+): Promise<boolean> {
+  if (typeof scriptId !== 'string' || scriptId === '') return false;
+  // `sender.url` is the URL of the frame that sent the message — the
+  // page the bridge is running on, not the tab's top-level URL.
+  const url = sender.url ?? sender.tab?.url;
+  if (!url) return false;
+  await ensureLoaded();
+  // URL-based, so this answers "could this script run here?" rather
+  // than "did it?". Frame-level gating (`@noframes`) isn't reflected.
+  if (!findMatchesForUrl(url).some((m) => m.id === scriptId && m.world === 'MAIN')) return false;
+  return scriptGrantsSubsystem(scriptId, subsystems);
+}
+
+// What a request that reads or writes a script's stored values has to
+// have granted: any storage API, or a value-change listener (its
+// snapshot seeds the listener's remote-change detection).
+const STORAGE_SUBSYSTEMS: readonly ApiSubsystem[] = ['storage', 'storage-listener'];
+
+const BRIDGE_DENIED = 'This page is not allowed to act for that userscript';
+
+// The Log line for a style the page's CSP refused. The runtime prints
+// the same wording to the page console (`reportBlockedStyle`).
+function cspBlockedStyleMessage(api: 'GM_addStyle' | 'GM_addElement'): string {
+  return `The page's Content Security Policy blocked the style ${api} added, so its rules don't apply. ` +
+    'A script running in the page (unsafeWindow, @inject-into page, or @grant none) gets no CSP exemption; ' +
+    'only an isolated script does.';
+}
+
+// Which world an SW->page push is addressed to. Every `chrome.tabs
+// .sendMessage` we aim at a userscript carries this as `smWorld`.
+//
+// It exists for `wrapper-bridge.js`, which re-posts pushes into MAIN
+// world so the MAIN copy of the GM runtime can hear them. That relay
+// makes the payload readable by the page, so it must fire only for
+// pushes addressed to a MAIN-world script — a page could otherwise read
+// an isolated script's stored values off a `sm:gm-value-update`, or its
+// cross-origin response body off a `sm:gm-xhr-event`, just by also
+// running any MAIN-world script on the same page.
+//
+// Unknown ids resolve to USER_SCRIPT so the bridge fails closed.
+function pushWorld(scriptId: string): InjectionWorld {
+  return scriptWorld(scriptId) ?? 'USER_SCRIPT';
+}
+
+function viaBridge(msg: unknown): boolean {
+  return (msg as { __viaBridge?: unknown } | null)?.__viaBridge === true;
+}
+
+// Run `work` for a fire-and-forget message that may have come through
+// the bridge, applying `bridgeMayActAs` first when it did. Keeps the
+// common USER_SCRIPT-world path fully synchronous (no extra turn on the
+// document-start critical path) while making the bridge path await the
+// gate. Mirrors the sync-ack handlers' contract: returns false when the
+// reply already went out, true when it will go out later.
+//
+// No log on the refused branch on purpose: a legitimate script never
+// reaches it, and a page can spam forged requests — logging each would
+// be a page-triggerable console flood with no diagnostic value.
+function guardBridgeCall(
+  msg: unknown,
+  scriptId: unknown,
+  subsystems: readonly ApiSubsystem[],
+  sender: chrome.runtime.MessageSender,
+  work: () => void,
+  sendResponse: (reply: unknown) => void,
+): boolean {
+  if (!viaBridge(msg)) {
+    work();
+    try { sendResponse({ ok: true }); } catch { /* receiver gone */ }
+    return false;
+  }
+  bridgeMayActAs(scriptId, sender, subsystems).then(
+    (allowed) => {
+      // `work` runs inside a promise here, so a throw would otherwise
+      // be an unhandled rejection with the channel left open.
+      let ok = allowed;
+      if (allowed) {
+        try { work(); } catch (err) {
+          ok = false;
+          console.info('[SourceMonkey] bridge call failed:', err);
+        }
+      }
+      try {
+        sendResponse(ok ? { ok: true } : { ok: false, error: BRIDGE_DENIED });
+      } catch { /* receiver gone */ }
+    },
+    (err) => {
+      // The gate itself failed (a chrome.storage read rejected). We
+      // returned true, so the channel stays open until we answer —
+      // answer, and don't run the work.
+      console.info('[SourceMonkey] bridge gate threw:', err);
+      try { sendResponse({ ok: false, error: BRIDGE_DENIED }); } catch { /* gone */ }
+    },
+  );
+  return true;
+}
+
+// Same gate for the handlers whose reply carries real data (the
+// assigned tab id, the notification id), so they can't just ack.
+async function guardBridgeAsync<T>(
+  msg: unknown,
+  scriptId: unknown,
+  subsystems: readonly ApiSubsystem[],
+  sender: chrome.runtime.MessageSender,
+  work: () => Promise<T>,
+): Promise<T | { ok: false; error: string }> {
+  if (!viaBridge(msg)) return work();
+  if (!(await bridgeMayActAs(scriptId, sender, subsystems))) return { ok: false, error: BRIDGE_DENIED };
+  return work();
 }
 
 // Shared async-reply plumbing for the onUserScriptMessage handlers that
@@ -3184,21 +3394,21 @@ function installScriptMessageListener(): void {
       // above for the snapshot's role.
       const payload = msg as CheckPendingPayload;
       const decisionP = handleCheckPending(sender, payload);
-      // Only attach the GM_setValue snapshot for a DIRECT request — one
-      // that did NOT come through the page-facing bridge. A bridge-
-      // relayed request (`__viaBridge`) may be a hostile page forging
-      // another script's id to read its values back through the reply;
-      // refuse it. Legit storage scripts are USER_SCRIPT world and use
-      // the direct path, so this never withholds values they're owed.
-      // No log on the refused branch on purpose: a legit script never
-      // reaches it (it's only hit by forged/misused bridge requests),
-      // and a page can spam forged requests — logging each would be a
-      // page-triggerable console flood with no diagnostic value.
-      const valueReadAllowed = payload.needsValues && payload.__viaBridge !== true;
+      // A DIRECT request (no `__viaBridge`) can only have come from
+      // USER_SCRIPT world, which the page cannot reach — attach the
+      // snapshot unconditionally. A bridge-relayed one may be a hostile
+      // page forging another script's id to read its values back
+      // through the reply, so it goes through the gate: values are
+      // handed over only for a MAIN-world script that runs on this
+      // page, whose values that page can already read out of its own
+      // `window.__SM_GM__`. See `bridgeMayActAs`.
+      const valueReadAllowed: Promise<boolean> = payload.needsValues
+        ? (payload.__viaBridge === true
+            ? bridgeMayActAs(payload.id, sender, STORAGE_SUBSYSTEMS)
+            : Promise.resolve(true))
+        : Promise.resolve(false);
       const snapshotP: Promise<Record<string, unknown> | undefined> =
-        valueReadAllowed
-          ? loadSnapshotForCheckPending(payload.id)
-          : Promise.resolve(undefined);
+        valueReadAllowed.then((ok) => (ok ? loadSnapshotForCheckPending(payload.id) : undefined));
       Promise.all([decisionP, snapshotP]).then(
         ([reply, gmValues]) => {
           const enriched: CheckPendingReply =
@@ -3228,18 +3438,25 @@ function installScriptMessageListener(): void {
       return false;
     }
     if (type === 'sm:gm-xhr-start') {
-      // GM_xmlhttpRequest dispatch. Ack the start synchronously so
-      // the message channel doesn't stay pinned open for the entire
-      // request (a long XHR would otherwise hold the port for
-      // minutes). The actual load/error/abort event arrives later
-      // via chrome.tabs.sendMessage. Fire-and-forget the SW work.
-      try { sendResponse({ ok: true }); } catch { /* gone */ }
-      void handleXhrStart(sender, msg as XhrStartPayload).catch((err) => {
-        console.info('[SourceMonkey] gm-xhr-start handler threw:', err);
-      });
-      return false;
+      // GM_xmlhttpRequest dispatch. Ack the start without waiting for
+      // the request so the message channel doesn't stay pinned open
+      // for its whole lifetime (a long XHR would otherwise hold the
+      // port for minutes). The actual load/error/abort event arrives
+      // later via chrome.tabs.sendMessage. Fire-and-forget the SW work.
+      const xhrPayload = msg as XhrStartPayload;
+      return guardBridgeCall(msg, xhrPayload.scriptId, ['xhr'], sender, () => {
+        void handleXhrStart(sender, xhrPayload).catch((err) => {
+          console.info('[SourceMonkey] gm-xhr-start handler threw:', err);
+        });
+      }, sendResponse);
     }
     if (type === 'sm:gm-xhr-abort') {
+      // Deliberately ungated: the payload names a request id, not a
+      // script, and those ids are per-call random strings the SW never
+      // publishes. A page would have to guess one to cancel a request,
+      // and cancelling a request it can already observe (it shares the
+      // realm with the script that made it) gains it nothing.
+      // `sm:gm-tab-close` is ungated for the same reason.
       const payload = msg as { id?: string };
       if (typeof payload.id === 'string') abortXhr(payload.id);
       // Synchronous ack — no async reply follows, so return false to
@@ -3250,7 +3467,12 @@ function installScriptMessageListener(): void {
     if (type === 'sm:gm-tab-open') {
       // Async dispatch — page side awaits the reply (need the assigned
       // chrome tab id back to populate the control object).
-      return respondAsync('gm-tab-open', handleTabOpen(sender, msg as GmTabOpenPayload), sendResponse);
+      const tabPayload = msg as GmTabOpenPayload;
+      return respondAsync(
+        'gm-tab-open',
+        guardBridgeAsync(msg, tabPayload.scriptId, ['tab'], sender, () => handleTabOpen(sender, tabPayload)),
+        sendResponse,
+      );
     }
     if (type === 'sm:gm-tab-close') {
       const payload = msg as { requestId?: string };
@@ -3271,15 +3493,21 @@ function installScriptMessageListener(): void {
       );
     }
     if (type === 'sm:gm-download-start') {
-      // Ack immediately — the transfer can run for minutes and the
-      // message channel shouldn't stay pinned open for it. Terminal +
-      // progress events arrive later via chrome.tabs.sendMessage, the
-      // same shape as GM_xmlhttpRequest.
-      try { sendResponse({ ok: true }); } catch { /* gone */ }
-      void handleDownloadStart(sender, msg as GmDownloadStartPayload).catch((err) => {
-        console.info('[SourceMonkey] gm-download-start handler threw:', err);
-      });
-      return false;
+      // Ack without waiting for the transfer — it can run for minutes
+      // and the message channel shouldn't stay pinned open for it.
+      // Terminal + progress events arrive later via
+      // chrome.tabs.sendMessage, the same shape as GM_xmlhttpRequest.
+      // The bridge gate runs before the ack (a page can forge the
+      // scriptId on anything it gets the bridge to forward, and the id
+      // decides which Log tab a failed download is filed under), so a
+      // refusal reaches the caller instead of leaving it waiting for
+      // events that never come.
+      const dlPayload = msg as GmDownloadStartPayload;
+      return guardBridgeCall(msg, dlPayload.scriptId, ['download'], sender, () => {
+        void handleDownloadStart(sender, dlPayload).catch((err) => {
+          console.info('[SourceMonkey] gm-download-start handler threw:', err);
+        });
+      }, sendResponse);
     }
     if (type === 'sm:gm-download-abort') {
       const payload = msg as { requestId?: string };
@@ -3288,9 +3516,13 @@ function installScriptMessageListener(): void {
       return false;
     }
     if (type === 'sm:gm-notification-show') {
+      const notifPayload = msg as GmNotificationShowPayload;
       return respondAsync(
         'gm-notification-show',
-        handleNotificationShow(sender, msg as GmNotificationShowPayload),
+        guardBridgeAsync(
+          msg, notifPayload.scriptId, ['notification'], sender,
+          () => handleNotificationShow(sender, notifPayload),
+        ),
         sendResponse,
       );
     }
@@ -3299,7 +3531,15 @@ function installScriptMessageListener(): void {
       // doesn't actually await the reply today (fire-and-forget), but
       // returning a real {ok} keeps the channel honest for future error
       // surfacing.
-      return respondAsync('gm-batch-write', handleBatchWrite(msg as BatchWritePayload, sender), sendResponse);
+      const writePayload = msg as BatchWritePayload;
+      return respondAsync(
+        'gm-batch-write',
+        guardBridgeAsync(
+          msg, writePayload.scriptId, STORAGE_SUBSYSTEMS, sender,
+          () => handleBatchWrite(writePayload, sender),
+        ),
+        sendResponse,
+      );
     }
     if (type === 'sm:gm-resync') {
       // Recovery path for a document that missed a value broadcast.
@@ -3329,44 +3569,63 @@ function installScriptMessageListener(): void {
       // registry is keyed by document: we pass the sender's documentId
       // and the navigation clear only drops another document's state.
       const payload = msg as { scriptId?: unknown; commandId?: unknown; name?: unknown };
-      if (
-        typeof payload.scriptId === 'string' &&
-        typeof payload.commandId === 'string' &&
-        typeof payload.name === 'string'
-      ) {
-        const changed = registerMenuCommand(tabId, menuDocId, payload.scriptId, payload.commandId, payload.name);
-        if (changed && tabId === activeTabId) void refreshActiveTabMenu();
-      }
-      try { sendResponse({ ok: true }); } catch { /* gone */ }
-      return false;
+      return guardBridgeCall(msg, payload.scriptId, ['menu'], sender, () => {
+        if (
+          typeof payload.scriptId === 'string' &&
+          typeof payload.commandId === 'string' &&
+          typeof payload.name === 'string'
+        ) {
+          const changed = registerMenuCommand(tabId, menuDocId, payload.scriptId, payload.commandId, payload.name);
+          if (changed && tabId === activeTabId) void refreshActiveTabMenu();
+        }
+      }, sendResponse);
     }
     if (type === 'sm:gm-menu-unregister') {
       const payload = msg as { scriptId?: unknown; commandId?: unknown };
-      if (typeof payload.scriptId === 'string' && typeof payload.commandId === 'string') {
-        const changed = unregisterMenuCommand(tabId, menuDocId, payload.scriptId, payload.commandId);
-        // Unknown ids (silent no-op contract) don't change visible
-        // state; skip the rebuild so a noisy unregister loop doesn't
-        // churn chrome.contextMenus.
-        if (changed && tabId === activeTabId) void refreshActiveTabMenu();
-      }
-      try { sendResponse({ ok: true }); } catch { /* gone */ }
-      return false;
+      return guardBridgeCall(msg, payload.scriptId, ['menu'], sender, () => {
+        if (typeof payload.scriptId === 'string' && typeof payload.commandId === 'string') {
+          const changed = unregisterMenuCommand(tabId, menuDocId, payload.scriptId, payload.commandId);
+          // Unknown ids (silent no-op contract) don't change visible
+          // state; skip the rebuild so a noisy unregister loop doesn't
+          // churn chrome.contextMenus.
+          if (changed && tabId === activeTabId) void refreshActiveTabMenu();
+        }
+      }, sendResponse);
+    }
+    if (type === SM_GM_DOM_BLOCKED_MSG) {
+      // The runtime's once-per-script CSP report (see
+      // `reportBlockedStyle` in wrapper-gm-runtime.js). A warning, not
+      // an error: the script ran, one of its styles didn't take. Worded
+      // here, not on the page: the request can come over the bridge,
+      // and a page-authored string in the Log would be a page-authored
+      // Log line.
+      const payload = msg as { scriptId?: unknown; api?: unknown };
+      return guardBridgeCall(msg, payload.scriptId, ['dom'], sender, () => {
+        if (typeof payload.scriptId === 'string' && typeof payload.api === 'string') {
+          logScriptEvent(payload.scriptId, {
+            level: 'warning',
+            source: 'gm-dom',
+            tabId,
+            message: cspBlockedStyleMessage(payload.api === 'GM_addElement' ? 'GM_addElement' : 'GM_addStyle'),
+          });
+        }
+      }, sendResponse);
     }
     if (type === SM_GM_LOG_MSG) {
       // Fan-out from the page-side GM_log helper. Fire-and-forget; the
       // wrapper doesn't await this. We still ack so the message channel
       // doesn't stay pinned open.
       const payload = msg as { scriptId?: unknown; message?: unknown };
-      if (typeof payload.scriptId === 'string' && typeof payload.message === 'string') {
-        logScriptEvent(payload.scriptId, {
-          level: 'info',
-          source: 'gm-log',
-          tabId,
-          message: payload.message,
-        });
-      }
-      try { sendResponse({ ok: true }); } catch { /* gone */ }
-      return false;
+      return guardBridgeCall(msg, payload.scriptId, ['log'], sender, () => {
+        if (typeof payload.scriptId === 'string' && typeof payload.message === 'string') {
+          logScriptEvent(payload.scriptId, {
+            level: 'info',
+            source: 'gm-log',
+            tabId,
+            message: payload.message,
+          });
+        }
+      }, sendResponse);
     }
     if (
       type !== SM_START_MSG &&

@@ -131,7 +131,7 @@ Load pipeline (service-worker side, never carries a `tabId`):
 | `background-refresh` | same | An opportunistic check, triggered by a page navigation. |
 | `add` | `emitInitialLoadLog` | Failed on its first load, when the script was added. |
 | `extension-startup` | `ensureLoadStateInLogTab`, `ensureOutdatedInLogTab` | Restated after a browser restart — see below. |
-| `parser` | `ensureStartupLogsInLogTab` | Parse-time diagnostics from `script.startupLogs`. |
+| `parser` | `ensureStartupLogsInLogTab`, and the refresh paths | Parse-time diagnostics from `script.startupLogs`: when new content lands, restated on a manual no-change refresh, and replayed at boot. |
 | `version-probe` | `probeOneScript` | An `@updateURL` / `@downloadURL` elsewhere declares a newer `@version`. |
 
 Registration:
@@ -146,6 +146,7 @@ Runtime — always carries a `tabId`, so these render as `tab 17 · …`:
 | --- | --- | --- |
 | `script-wrapper` | the `sm:*` handlers in `background.ts` | Start, reload-swap, abandon, and uncaught script errors. |
 | `gm-log` | the `SM_GM_LOG_MSG` handler | A `GM_log()` call from the script itself. |
+| `gm-dom` | the `SM_GM_DOM_BLOCKED_MSG` handler | The page's CSP refused a style `GM_addStyle` / `GM_addElement` added — only possible for a script running in the page (MAIN world). Once per script per document. |
 | `gm-download` | `sendDownloadEvent` in `background.ts` | A `GM_download()` call that was refused, interrupted, or timed out. Successful downloads are not logged — a batch downloader would flood the capped log. |
 | `gm-window` | `handleWindowControl` in `background.ts` | A granted `window.close()` / `window.focus()` the browser refused. A successful close takes the page (and its console) with it, so only failures land here. |
 
@@ -505,10 +506,16 @@ tracked in `TODO.md`.
     once per loaded content version, immediately after the
     `Loaded new content` row. Detection happens at parse time and is
     persisted on `StoredScript.startupLogs`, so SW restarts don't
-    re-fire the row. A refresh that doesn't change the bytes adds
-    nothing. Also mirrored into the page DevTools console via the
-    wrapper's [startup-log channel](logging.md#page-console-startup-logs)
+    re-fire the row. Also mirrored into the page DevTools console via
+    the wrapper's [startup-log channel](logging.md#page-console-startup-logs)
     on every matching page load.
+  - A **manual** refresh that finds no change restates them, after
+    its `Checked for updates — no change` line. They describe the
+    installed content, not an event, so they stay true until it
+    changes; logging them only when content lands left a permanently
+    misconfigured script with no Log line at all once that row
+    scrolled away or `Clear log` wiped it. A background check restates
+    nothing, same as the no-change line itself.
   - On the first SW boot of a fresh Chrome session, a
     [boot-replay pass](logging.md#boot-replay) appends parser rows
     for every persisted script — without this the Log tab would be

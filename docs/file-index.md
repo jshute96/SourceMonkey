@@ -110,7 +110,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/script-url-hash.ts` | Pure `parseHash` / `buildHash` for the viewer's `#<filename>[:<line>[:<col>]]` / `#Log` URL fragment |
 | `src/userscript-header.ts` | Parser for the `// ==UserScript== … // ==/UserScript==` metadata block + header/body splitter, with per-tag line numbers |
 | `src/url-match.ts` | Pure URL-matching predicate for `@match` / `@include` / `@exclude` patterns, plus the `@match` grammar check and its lenient rewrites |
-| `src/match-index.ts` | In-memory cache of injectable scripts' matching info and which load from disk, kept in sync with `chrome.storage.local`; reports which rows moved, skipping probe-only writes |
+| `src/match-index.ts` | In-memory cache of injectable scripts' matching info, execution world, and which load from disk, kept in sync with `chrome.storage.local`; reports which rows moved, skipping probe-only writes |
 | `src/injector.ts` | Incrementally syncs the enabled script set into `chrome.userScripts`, re-checking unverified rows first, and wraps each body with an activation/error shim |
 | `src/composed-source.ts` | Concatenates `@require` bodies ahead of the script body; owns the injected entry's line layout for both run paths |
 | `src/tab-status.ts` | Pure helpers for per-tab badge view (expected ∪ actual classification incl. NOT LOADED, color, row-label formatter) and per-tab document LRU |
@@ -132,11 +132,11 @@ One-line descriptions of every source file, grouped by directory.
 | `src/external-files.ts` | `@require` + `@resource` orchestrator: resolve, fetch, dedup (cross-script + cross-kind), attach typed entries, word the failures |
 | `src/local-file-overrides.ts` | Local stand-ins for `@require` / `@resource` / `@icon` declared by absolute URL: search roots (script folder, collection root, configured), host/path suffix candidates, listing-gated probing, containment |
 | `src/userscript-prelude.js` | Static per-world prelude (matcher, check-pending round-trip, @run-at gate, async-error listeners, focus signal); minified to WRAPPER_PRELUDE and spliced into each script's js[] as a `{code}` entry |
-| `src/wrapper-bridge.js` | USER_SCRIPT-world bridge that forwards `window.postMessage` sm:* events from MAIN-world wrappers to the SW |
+| `src/wrapper-bridge.js` | USER_SCRIPT-world bridge relaying sm:* + GM_* traffic between MAIN-world wrappers and the SW, in both directions, plus a same-task DOM-event path for teardown flushes |
 | `src/gm-api-catalog.ts` | Catalog of supported `GM_*` / `GM.*` APIs: name, async/sync kind, subsystem; helpers for resolving `@grant` lines |
 | `src/gm-bindings.ts` | Per-script `GM_*` / `GM.*` binding emitter — generates compile-in `const GM_X = ...` source spliced into the wrapper |
 | `src/source-map.ts` | Source Map v3 generator for the concatenated injection entry, plus the reverse lookup the Log tab maps stack refs with |
-| `src/wrapper-gm-runtime.js` | USER_SCRIPT-world shared runtime — installs `window.__SM_GM__` (shim cache, async sendMessage helper, storage cache + stored-value codec + batched writes) |
+| `src/wrapper-gm-runtime.js` | Shared per-world `GM_*` runtime — installs `window.__SM_GM__` (shim cache, dual transport, storage cache + stored-value codec + batched writes) |
 | `src/gm-values.ts` | SW-side persistent storage for `GM_*` values — `gmval:<scriptId>:<key>` rows in `chrome.storage.local`, batched writes |
 | `src/gm-xhr.ts` | SW-side `GM_xmlhttpRequest` runner — fetch + AbortController, text/json/blob/arraybuffer/document, cookies, timeout |
 | `src/gm-xhr-headers.ts` | Forbidden-request-header surgery for `GM_xmlhttpRequest` — classify, tag the URL, compile to a DNR session rule, stale-rule sweep |
@@ -176,6 +176,8 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/fixtures/pages/other.html` | Fixture page used to verify scripts skip non-matching URLs |
 | `tests/fixtures/pages/run-at.html` | Fixture page with a slow-blocker script + `#log` list used by the @run-at readyState-window test |
 | `tests/fixtures/pages/slow-dcl.html` | Fixture page held at readyState=loading for ~1s, so DOMContentLoaded lands well after the reload fast-path window |
+| `tests/fixtures/pages/page-globals.html` | Fixture page defining page-realm globals, so MAIN-vs-isolated world access can be asserted |
+| `tests/fixtures/pages/strict-csp.html` | Fixture page with `style-src 'none'`, for the MAIN-world CSP-blocked-style report |
 | `tests/e2e/smoke.spec.ts` | Smoke test: SW loads, collections page renders, fixture server responds |
 | `tests/e2e/exclude-globs.spec.ts` | E2E for `@exclude`: excluded pages stay untouched, a later-added `@exclude` takes effect, plus a Chrome `update`-vs-globs probe |
 | `tests/e2e/include-only.spec.ts` | E2E for `@match`-less scripts: a glob-only `@include` injects and stays in its glob, plus a Chrome `includeGlobs` semantics probe |
@@ -184,7 +186,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/badge.spec.ts` | Per-tab badge classifications: green/red/orange/purple plus MISSING and post-update RELOAD |
 | `tests/e2e/reload-without-scripts.spec.ts` | "Reload page with no userscripts": one-shot skip, grey NOT LOADED badge, info Log entry, row presence |
 | `tests/e2e/focus-refresh.spec.ts` | Focus-triggered refresh: a tab switch or a page's own focus report picks up a local edit; http scripts stay unfetched |
-| `tests/e2e/reload-fast-path.spec.ts` | Reload triggers sm:check-pending → swap to fresh body on this reload; non-reload navs don't swap |
+| `tests/e2e/reload-fast-path.spec.ts` | Reload triggers sm:check-pending → swap to fresh body on this reload; non-reload navs, world changes, and a newly-needed runtime don't |
 | `tests/e2e/reload-fast-path-parse-check.spec.ts` | The reload swap doesn't wait for the parse verdict, and the verdict still lands on the row afterwards |
 | `tests/e2e/reload-fast-path-sharing.spec.ts` | Navigation-triggered checks share one folder listing across the page's scripts, and still catch a per-script edit |
 | `tests/e2e/collections.spec.ts` | Collection lifecycle (add/refresh/remove/vanished files) via the real file:// scan pipeline |
@@ -270,19 +272,24 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/source-map.test.mjs` | Unit tests for VLQ encoding, line-level mappings, and inline-map encoding |
 | `tests/unit/gm-api-catalog.test.mjs` | Unit tests for the GM_* / GM.* catalog: lookup, alias resolution, `@grant` canonicalization, `none` precedence |
 | `tests/unit/gm-bindings.test.mjs` | Unit tests for the per-script GM_* / GM.* binding emitter — granted output, sync stub routing, async sendMessage envelope, GM4 alias shape |
+| `tests/unit/unsafe-window.test.mjs` | Unit tests for the `unsafeWindow` grant — world resolution, per-world GM runtime need, isolated-world warning, bridge wire markers |
 | `tests/unit/gm-value-codec.test.mjs` | Unit tests for the page-side stored-value codec — type fidelity, raw storage of JSON-clean values, legacy-row decoding |
+| `tests/unit/gm-runtime-transport.test.mjs` | Unit tests for the runtime's transport choice — direct channel only with `chrome.runtime.id`, bridge on an `externally_connectable` page |
 | `tests/unit/gm-values.test.mjs` | Unit tests for the SW-side `gmval:` storage helpers — key composition, batch apply with last-write-wins, sentinel deletes, namespace isolation |
 | `tests/unit/script-identity.test.mjs` | Unit tests for the related-versions lookup — identity key rules, absolute-URL matching, list disjointness, install / move target cases |
 | `tests/e2e/gm-grants.spec.ts` | E2E tests: `@grant` gating, ungranted APIs return undefined, GM_info shape, `GM.` alias namespace, `GM.setValue` granted form |
 | `tests/e2e/gm-storage.spec.ts` | E2E tests for `GM_setValue`/`GM_getValue`/`GM_deleteValue`/`GM_listValues` round-trip, persistence across reloads, per-script namespace isolation, `GM.` promised forms |
 | `tests/e2e/versions-navigation.spec.ts` | E2E for the panel's place on the page, its keyboard walk, and selecting copies from it in place: click / Enter / Space / new-tab, where focus lands, sticky sections, Back, the preview's merged box |
 | `tests/e2e/other-versions.spec.ts` | E2E tests for the other-versions panel: absolute-URL matching across collection kinds, per-row toggle, Refresh all, removing the copy on screen, the preview's callout / banner / install-offer section, the heading fold |
-| `tests/e2e/gm-dom.spec.ts` | E2E tests for `GM_addStyle` / `GM_addElement` — CSS application, tag-aware default parent (head/body), explicit-parent form, GM4 alias, permission gating |
+| `tests/e2e/gm-dom.spec.ts` | E2E tests for `GM_addStyle` / `GM_addElement` — CSS application, tag-aware default parent (head/body), explicit-parent form, GM4 alias, permission gating, the MAIN-world CSP-blocked report |
 | `tests/e2e/gm-clipboard.spec.ts` | E2E tests for `GM_setClipboard` via `navigator.clipboard.writeText` — text round-trip, GM4 alias, permission gating |
 | `tests/e2e/gm-broadcast.spec.ts` | E2E tests for cross-tab `GM_setValue` broadcast — tab B sees tab A's write, survives an SW restart, re-syncs after a missed write or delete |
 | `tests/e2e/gm-storage-types.spec.ts` | E2E: `Date`/`Map`/`Set`/`NaN`/binary/`Error` survive a reload, plain values stay untagged, pre-codec rows still read |
 | `tests/e2e/gm-storage-freshness.spec.ts` | E2E: fresh documents see the latest `GM_setValue` (same-tab nav, fresh tab, write-then-navigate race) |
+| `tests/e2e/gm-storage-teardown-main.spec.ts` | E2E: a MAIN-world `GM_setValue` right before a script-driven navigation or a tab close still reaches the next document |
 | `tests/e2e/gm-storage-read-leak.spec.ts` | E2E: a page-forged bridge `sm:check-pending` can't read another script's `GM_setValue` snapshot (`__viaBridge` gate) |
+| `tests/e2e/gm-main-world-surface.spec.ts` | E2E: the GM_* surfaces that only ran isolated before — `window.onurlchange`, `window.close`/`focus`, value-change listeners, menu fires, `GM_openInTab` onclose — working from MAIN world |
+| `tests/e2e/gm-unsafe-window.spec.ts` | E2E: `@grant unsafeWindow` reaches real page globals, GM_* works over the MAIN-world bridge (also for `@inject-into page`), and forged bridge calls are refused per world and per grant |
 | `tests/e2e/gm-value-listeners.spec.ts` | E2E tests for `GM_addValueChangeListener` / `GM_removeValueChangeListener` — local fire with remote=false, delete fire, remove-by-id, cross-tab remote=true, permission gating |
 | `tests/e2e/gm-xhr.spec.ts` | E2E tests for `GM_xmlhttpRequest` text path — GET text, JSON, POST body, HTTP errors firing onload, network failure → onerror, abort, permission gating |
 | `tests/e2e/gm-xhr-credentials.spec.ts` | E2E tests for `GM_xmlhttpRequest` cookies — credentialed by default, withheld by a truthy `anonymous` |
@@ -330,6 +337,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/examples/window-close-focus/` | `@grant window.close` / `window.focus` example — buttons that close this tab and raise the browser window |
 | `tests/examples/headers-run-at/` | `@run-at` header example with one userscript per value (`document-start`/`-end`/`-idle`) on a shared page |
 | `tests/examples/headers-inject-into/` | `@inject-into` header example: MAIN-world (`page`) vs USER_SCRIPT-world (`content`) userscripts showing window-isolation |
+| `tests/examples/unsafe-window/` | `unsafeWindow` example: reading/calling/writing page globals, plus the isolated-world variant where it can't work |
 | `tests/examples/require-scope/` | `@require` scope example: a shared lib's top-level class/const/function reaching both injection worlds |
 | `tests/examples/xmlhttp-denied/` | Negative cases for `@connect`: scripts with no `@connect`, mismatched host, and explicit allow show blocked-vs-allowed outcomes |
 | `tests/bad-examples/` | Deliberately broken `*.user.js` files (plus the `@require` libraries some of them need, and the ones that merely warn) for the SM-only spec; outside `tests/examples/` so the TM loader doesn't see them |
