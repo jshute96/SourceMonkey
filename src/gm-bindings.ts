@@ -171,8 +171,10 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   // it correct is the WORLD, not the binding.
   //
   //   - MAIN world: `window` IS the page's window, so this is the real
-  //     thing. `resolveWorld` sends every `@grant unsafeWindow` script
-  //     here for exactly that reason.
+  //     thing. `resolveWorld` sends every script that asks for
+  //     `unsafeWindow` here for exactly that reason — whether it asked
+  //     with a `@grant` line or just by naming it (see
+  //     src/unsafe-window-use.ts).
   //   - USER_SCRIPT world: reachable only when the script also declared
   //     `@inject-into content`, i.e. explicitly asked for isolation.
   //     `window` is then the isolated realm's, NOT the page's — matching

@@ -21,8 +21,8 @@ Update this doc when a result changes.
 
 ## Status
 
-- **TM**: 28 passed, 0 failed, 6 skipped (TM 5.5.0).
-- **VM**: 29 passed, 0 failed, 5 skipped (VM 2.48.0).
+- **TM**: 32 passed, 0 failed, 6 skipped (TM 5.5.0).
+- **VM**: 33 passed, 0 failed, 5 skipped (VM 2.49.0).
 
 ## Intentional skips
 
@@ -142,6 +142,17 @@ stays enforced in an SM-only spec.
   - **Stored values persist across TM runs.** The SM fixture wipes
     storage per test; TM keeps the installed script's values, so the
     visit counter is asserted as counting up rather than starting at 0.
+  - **`ungranted.user.js`** uses `unsafeWindow` with no grant line for
+    it, and its assertions are unconditional: every manager here is
+    expected to define the name and reach the page through it. This is
+    the premise SourceMonkey's own implicit handling rests on (see
+    [injection.md](injection.md#unsafewindow-forces-main-world)), so it
+    is measured rather than assumed.
+    - **Both confirm it** (TM 5.5.0, VM 2.49.0): `typeof unsafeWindow` is
+      `object` with no `@grant` line for it, and the read reaches the
+      page's own object. Nothing in this variant is manager-conditional —
+      it sets no `@inject-into`, so TM's lack of that header doesn't
+      change what it measures.
 - **`gm-dom/`** (default parent, no-parent form) — all three managers
   disagree, and the TM docs don't pin the default parent down, so none
   is wrong.

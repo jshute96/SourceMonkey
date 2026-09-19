@@ -196,9 +196,12 @@ still drives the Log-tab mirror.
   entry 0), which the prelude reads back as `cfg.startupLogs`. No
   rederivation at sync time — SW restarts produce the same config-blob
   bytes for the same script version, no log spam.
-- Today's only producer is the unknown-`@grant` check (emits `warn`).
-  Future detectors (partial `@resource` failures, header validation
-  warnings, deprecation notices, etc.) extend `extractStartupLogs`.
+- Producers today: unknown `@grant` names, `@grant none` overriding
+  other grants, a `@match` Chrome's grammar refuses, `unsafeWindow`
+  pinned to the isolated world by `@inject-into content` (all `warn`),
+  and an ungranted `unsafeWindow` reference moving the script into the
+  page (`info`). Future detectors (partial `@resource` failures,
+  deprecation notices, etc.) extend `extractStartupLogs`.
 
 ### Properties
 

@@ -112,6 +112,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/url-match.ts` | Pure URL-matching predicate for `@match` / `@include` / `@exclude` patterns, plus the `@match` grammar check and its lenient rewrites |
 | `src/match-index.ts` | In-memory cache of injectable scripts' matching info, execution world, and which load from disk, kept in sync with `chrome.storage.local`; reports which rows moved, skipping probe-only writes |
 | `src/injector.ts` | Incrementally syncs the enabled script set into `chrome.userScripts`, re-checking unverified rows first, and wraps each body with an activation/error shim |
+| `src/unsafe-window-use.ts` | Text scan for an ungranted `unsafeWindow` reference (and for a source that declares the name itself) |
 | `src/composed-source.ts` | Concatenates `@require` bodies ahead of the script body; owns the injected entry's line layout for both run paths |
 | `src/tab-status.ts` | Pure helpers for per-tab badge view (expected ∪ actual classification incl. NOT LOADED, color, row-label formatter) and per-tab document LRU |
 | `src/debug-log.ts` | Debug-logging gate for verbose lifecycle messages; off by default, toggled via `chrome.storage.local.smDebugLogging` |
@@ -272,7 +273,8 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/source-map.test.mjs` | Unit tests for VLQ encoding, line-level mappings, and inline-map encoding |
 | `tests/unit/gm-api-catalog.test.mjs` | Unit tests for the GM_* / GM.* catalog: lookup, alias resolution, `@grant` canonicalization, `none` precedence |
 | `tests/unit/gm-bindings.test.mjs` | Unit tests for the per-script GM_* / GM.* binding emitter — granted output, sync stub routing, async sendMessage envelope, GM4 alias shape |
-| `tests/unit/unsafe-window.test.mjs` | Unit tests for the `unsafeWindow` grant — world resolution, per-world GM runtime need, isolated-world warning, bridge wire markers |
+| `tests/unit/unsafe-window.test.mjs` | Unit tests for `unsafeWindow` — world resolution (granted and ungranted), per-world GM runtime need, isolated-world warning, bridge wire markers |
+| `tests/unit/unsafe-window-use.test.mjs` | Unit tests for the ungranted-`unsafeWindow` source scan: comments, strings, templates, declarations, limits |
 | `tests/unit/gm-value-codec.test.mjs` | Unit tests for the page-side stored-value codec — type fidelity, raw storage of JSON-clean values, legacy-row decoding |
 | `tests/unit/gm-runtime-transport.test.mjs` | Unit tests for the runtime's transport choice — direct channel only with `chrome.runtime.id`, bridge on an `externally_connectable` page |
 | `tests/unit/gm-values.test.mjs` | Unit tests for the SW-side `gmval:` storage helpers — key composition, batch apply with last-write-wins, sentinel deletes, namespace isolation |
@@ -290,6 +292,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/gm-storage-read-leak.spec.ts` | E2E: a page-forged bridge `sm:check-pending` can't read another script's `GM_setValue` snapshot (`__viaBridge` gate) |
 | `tests/e2e/gm-main-world-surface.spec.ts` | E2E: the GM_* surfaces that only ran isolated before — `window.onurlchange`, `window.close`/`focus`, value-change listeners, menu fires, `GM_openInTab` onclose — working from MAIN world |
 | `tests/e2e/gm-unsafe-window.spec.ts` | E2E: `@grant unsafeWindow` reaches real page globals, GM_* works over the MAIN-world bridge (also for `@inject-into page`), and forged bridge calls are refused per world and per grant |
+| `tests/e2e/gm-unsafe-window-implicit.spec.ts` | E2E: `unsafeWindow` used without granting it — MAIN world, binding, startup log, and the cases we leave alone |
 | `tests/e2e/gm-value-listeners.spec.ts` | E2E tests for `GM_addValueChangeListener` / `GM_removeValueChangeListener` — local fire with remote=false, delete fire, remove-by-id, cross-tab remote=true, permission gating |
 | `tests/e2e/gm-xhr.spec.ts` | E2E tests for `GM_xmlhttpRequest` text path — GET text, JSON, POST body, HTTP errors firing onload, network failure → onerror, abort, permission gating |
 | `tests/e2e/gm-xhr-credentials.spec.ts` | E2E tests for `GM_xmlhttpRequest` cookies — credentialed by default, withheld by a truthy `anonymous` |
@@ -337,7 +340,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/examples/window-close-focus/` | `@grant window.close` / `window.focus` example — buttons that close this tab and raise the browser window |
 | `tests/examples/headers-run-at/` | `@run-at` header example with one userscript per value (`document-start`/`-end`/`-idle`) on a shared page |
 | `tests/examples/headers-inject-into/` | `@inject-into` header example: MAIN-world (`page`) vs USER_SCRIPT-world (`content`) userscripts showing window-isolation |
-| `tests/examples/unsafe-window/` | `unsafeWindow` example: reading/calling/writing page globals, plus the isolated-world variant where it can't work |
+| `tests/examples/unsafe-window/` | `unsafeWindow` example: reading/calling/writing page globals, the isolated-world variant where it can't work, and the ungranted-reference variant |
 | `tests/examples/require-scope/` | `@require` scope example: a shared lib's top-level class/const/function reaching both injection worlds |
 | `tests/examples/xmlhttp-denied/` | Negative cases for `@connect`: scripts with no `@connect`, mismatched host, and explicit allow show blocked-vs-allowed outcomes |
 | `tests/bad-examples/` | Deliberately broken `*.user.js` files (plus the `@require` libraries some of them need, and the ones that merely warn) for the SM-only spec; outside `tests/examples/` so the TM loader doesn't see them |

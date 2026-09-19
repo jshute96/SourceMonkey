@@ -147,7 +147,8 @@ than a silently-misbehaving script.
 
 ## MAIN-world storage
 
-A script that grants `unsafeWindow` runs in the page's own world (see
+A script that asks for `unsafeWindow` — by `@grant` or by using the
+name — runs in the page's own world (see
 [injection.md](injection.md#unsafewindow-forces-main-world)), and takes
 its storage grants with it. Same cache, same batching, same snapshot
 contract — only the transport differs, and that has consequences.

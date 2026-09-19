@@ -124,6 +124,10 @@ output ships whether the script lands in USER_SCRIPT or MAIN.
 - `unsafeWindow` is a plain `const unsafeWindow = window;` in both
   worlds. What makes it correct is the world, not the binding — see
   [injection.md](injection.md#unsafewindow-forces-main-world).
+  - Emitted for a script that only *uses* the name too, with no
+    `@grant` line for it (`StoredScript.usesUnsafeWindow`). Suppressed
+    when a `@require` declares the name itself, since ours would be a
+    duplicate `const` in the same scope.
 - Everything else — including the `window.onurlchange` event surface
   and the `window.close` / `window.focus` overrides — delegates to
   `window.__SM_GM__`, which is registered in whichever worlds have a
@@ -159,9 +163,10 @@ output ships whether the script lands in USER_SCRIPT or MAIN.
 
 ## Caveats and Phase-2 limitations
 
-- **`unsafeWindow` is real, and it moves the script.** Granting it
-  resolves the script to MAIN world, where `window` already is the
-  page's. The only case where it can't be the page's window is
+- **`unsafeWindow` is real, and it moves the script.** Granting it —
+  or just using it — resolves the script to MAIN world, where `window`
+  already is the page's. The only case where it can't be the page's
+  window is
   `@inject-into content`, which pins the script to the isolated world;
   that combination gets a startup-log warning instead of a silent
   wrong answer. See

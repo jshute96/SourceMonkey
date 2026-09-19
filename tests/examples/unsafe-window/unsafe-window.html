@@ -74,7 +74,7 @@
         page&rsquo;s own variables are reachable, which is what the
         grant is for &mdash; so read a page variable, not this
         comparison, to find out where you are.</li>
-      <li>Two scripts run here, and the log says which is which.
+      <li>Three scripts run here, and the log says which is which.
         <code>unsafe-window.user.js</code> grants
         <code>unsafeWindow</code> and nothing else, so it runs in the
         page. <code>isolated.user.js</code> adds
@@ -82,6 +82,13 @@
         from main page content and wins over the grant, so its
         <code>unsafeWindow</code> is <em>not</em> the page&rsquo;s and
         every page variable reads as <code>undefined</code>.</li>
+      <li><code>ungranted.user.js</code> grants no
+        <code>unsafeWindow</code> at all &mdash; it just uses the name,
+        the way many published scripts do, because Tampermonkey and
+        Violentmonkey both expose it without a grant line. SourceMonkey
+        scans the body for the reference and runs that script in the
+        page too, so the log entry says what each manager handed
+        over.</li>
     </ul>
 
     <p id="runStatus" class="status">Waiting for userscripts&hellip;</p>
@@ -93,8 +100,8 @@
     <p class="hint">One entry per thing a script tried. Each names the
       script it came from, then what it asked for
       (<code>tried</code>), what came back (<code>got</code>), and what
-      that tells you (<code>means</code>). The two scripts can run in
-      either order.</p>
+      that tells you (<code>means</code>). The scripts can run in any
+      order.</p>
     <ul id="log" class="blocks"></ul>
   </main>
   <footer>
@@ -103,6 +110,8 @@
     <a href="unsafe-window.user.js">unsafe-window.user.js</a>
     &nbsp;|&nbsp;
     <a href="isolated.user.js">isolated.user.js</a>
+    &nbsp;|&nbsp;
+    <a href="ungranted.user.js">ungranted.user.js</a>
   </footer>
 </body>
 </html>

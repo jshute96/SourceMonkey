@@ -83,6 +83,7 @@ import {
 import { localSearchRoots, localRootsReady, type LocalFileScope } from './local-file-overrides.js';
 import { scanAllStorage } from './storage-scan.js';
 import { canonicalizeGrant, resolveGrants } from './gm-api-catalog.js';
+import { sourceUsesUnsafeWindow } from './unsafe-window-use.js';
 import {
   ignoredMatchMessage,
   matchPatternProblem,
@@ -251,6 +252,19 @@ export interface StoredScript {
   // them — and so the Log-tab emission at content-change time can read
   // them straight off the freshly built row.
   startupLogs?: readonly StartupLog[];
+  // True when the script's own body names `unsafeWindow`
+  // (`sourceUsesUnsafeWindow`) — derived from the body alone, with no
+  // regard to `@grant`; every consumer re-checks the grant itself. When
+  // there is no grant line for it, both halves of the grant apply
+  // anyway: the script resolves to MAIN world and
+  // gets the `const unsafeWindow = window;` binding, which is what
+  // Tampermonkey and Violentmonkey do — neither keys the name off a
+  // grant line. Derived from `bodyText`, and persisted rather than
+  // recomputed: `resolveScriptWorld` sits on the per-sync spec-build
+  // path, and every caller has to get the same answer. Absent on rows
+  // written before this existed and on error rows (which never run), and
+  // reads as false there until the next refresh.
+  usesUnsafeWindow?: boolean;
   // What the script's `@updateURL` / `@downloadURL` last claimed, when
   // those point somewhere other than where we load the script from.
   // Purely an annotation: nothing here affects whether the script runs,
@@ -345,30 +359,50 @@ export function distillMatching(header: ParsedHeader | null): ScriptMatching {
   };
 }
 
-// Derive parse-time diagnostics from the metadata block. Producers so
-// far: unknown `@grant` names, and `@grant unsafeWindow` combined with
-// `@inject-into content`. Add others here as they come up (e.g.
+// Derive parse-time diagnostics from the metadata block (plus one fact
+// about the body: whether it names `unsafeWindow` ungranted). Producers
+// so far: unknown `@grant` names, `unsafeWindow` combined with
+// `@inject-into content`, and an ungranted `unsafeWindow` reference
+// moving the script into the page. Add others here as they come up (e.g.
 // deprecated header tags, soft `@resource` failures,
 // `@grant`-but-never-called dead grants). Anything that blocks
 // `validateHeader` belongs in there instead — error rows skip the
 // startup-logs attachment in `buildScriptFromText`.
-// Said when a script grants `unsafeWindow` and also declares
-// `@inject-into content`. Exported so the tests and any other surface
-// recognize it by identity rather than by matching its wording.
+// Said when a script asks for `unsafeWindow` — by `@grant` or by using
+// the name — and also declares `@inject-into content`. Exported so the
+// tests and any other surface recognize it by identity rather than by
+// matching its wording.
 export const ISOLATED_UNSAFE_WINDOW_WARNING =
   'This script cannot reach the page through unsafeWindow. '
   + '@inject-into content makes the script run isolated from main page content, so the '
   + "page's variables read as undefined. Remove @inject-into content to reach them.";
 
+// Said when a script uses `unsafeWindow` with no grant for it and that
+// is what put it in the page's world. Exported for the same reason as
+// the warning above: recognized by identity, never by its wording.
+export const IMPLICIT_UNSAFE_WINDOW_INFO =
+  'This script uses unsafeWindow without declaring @grant unsafeWindow. '
+  + 'The script runs directly in the page, without isolation.';
+
 export function extractStartupLogs(
   header: ParsedHeader | null,
   relativePath: string,
+  // `sourceUsesUnsafeWindow(bodyText)` — the body names `unsafeWindow`,
+  // grant or no grant. Passed in rather than derived here so the scan
+  // happens once per load, on the same text the row stores.
+  usesUnsafeWindow = false,
 ): StartupLog[] {
   if (!header) return [];
   const logs: StartupLog[] = [];
   const grants = getValues(header, 'grant');
+  const resolved = resolveGrants(grants);
+  const injectInto = (getValue(header, 'inject-into') ?? '').trim().toLowerCase();
+  const pinnedIsolated = injectInto === 'content';
+  // The two ways a script asks for the page's window: the grant line,
+  // and naming `unsafeWindow` in its body without one. Everything below
+  // treats them alike — what the script needs is the same either way.
+  const wantsUnsafeWindow = resolved.granted.has('unsafeWindow') || usesUnsafeWindow;
   if (grants.length > 0) {
-    const resolved = resolveGrants(grants);
     // `none` wins over every other `@grant` line — no bindings, MAIN
     // world — in both `resolveGrants` and `resolveWorld`. The author
     // probably meant the other lines, so say what happened to them.
@@ -401,19 +435,35 @@ export function extractStartupLogs(
       if (line !== undefined) log.location = { file: relativePath, line };
       logs.push(log);
     }
-    // `unsafeWindow` means "the page's real window". That only exists
-    // in MAIN world, and `@inject-into content` pins the script to the
-    // isolated USER_SCRIPT world, where `unsafeWindow` can only be the
-    // isolated realm's own `window` — page globals read as `undefined`.
-    // We keep the binding (matching Violentmonkey's content mode) but
-    // say so out loud, because the alternative is a script that quietly
-    // does nothing. See docs/injection.md#unsafewindow-forces-main-world.
-    if (
-      resolved.granted.has('unsafeWindow') &&
-      (getValue(header, 'inject-into') ?? '').trim().toLowerCase() === 'content'
-    ) {
-      logs.push({ level: 'warn', message: ISOLATED_UNSAFE_WINDOW_WARNING });
-    }
+  }
+  // `unsafeWindow` means "the page's real window". That only exists in
+  // MAIN world, and `@inject-into content` pins the script to the
+  // isolated USER_SCRIPT world, where `unsafeWindow` can only be the
+  // isolated realm's own `window` — page globals read as `undefined`.
+  // We keep the binding (matching Violentmonkey's content mode) but say
+  // so out loud, because the alternative is a script that quietly does
+  // nothing. See docs/injection.md#unsafewindow-forces-main-world.
+  if (wantsUnsafeWindow && pinnedIsolated) {
+    logs.push({ level: 'warn', message: ISOLATED_UNSAFE_WINDOW_WARNING });
+  }
+  // An ungranted reference moved the script into the page. Said at
+  // `info` because nothing is wrong — this is what TM/VM do with the
+  // same source — but the world is worth knowing: the script is no
+  // longer isolated from page content, and in MAIN world the page can
+  // see (and call) the GM runtime the script's other grants need.
+  //
+  // Only when the reference is what moved it. A script already headed
+  // for MAIN (`@inject-into page`, no grants, `@grant none`) gains the
+  // binding and stays where it was, so there is nothing to report.
+  const movedByReference =
+    usesUnsafeWindow
+    && !resolved.granted.has('unsafeWindow')
+    && !pinnedIsolated
+    && injectInto !== 'page'
+    && grants.length > 0
+    && !resolved.hasNone;
+  if (movedByReference) {
+    logs.push({ level: 'info', message: IMPLICIT_UNSAFE_WINDOW_INFO });
   }
   // A `@match` Chrome's grammar refuses. One of these would take the
   // whole registration down (Chrome refuses the spec, not the pattern),
@@ -621,7 +671,11 @@ export async function buildScriptFromText(args: BuildArgs): Promise<StoredScript
   // would just be dead bytes in storage. Same shape filter for the
   // empty case keeps the persisted row free of empty arrays.
   if (status === 'ok') {
-    const startupLogs = extractStartupLogs(header, args.relativePath);
+    // Derived once, here, from the text this row stores — the world
+    // decision and the emitted bindings both read the persisted flag.
+    const usesUnsafeWindow = sourceUsesUnsafeWindow(split.bodyText);
+    if (usesUnsafeWindow) entry.usesUnsafeWindow = true;
+    const startupLogs = extractStartupLogs(header, args.relativePath, usesUnsafeWindow);
     if (startupLogs.length > 0) entry.startupLogs = startupLogs;
   }
   return entry;
@@ -2472,6 +2526,38 @@ export async function backfillCollectionDisplayNames(): Promise<void> {
   if (Object.keys(toSet).length > 0) {
     await chrome.storage.local.set(toSet);
   }
+}
+
+// One-time pass over stored script rows to fill `usesUnsafeWindow` for
+// rows written before the field existed. Returns how many rows changed.
+//
+// Why it can't wait for a refresh: `buildScriptFromText` derives the flag
+// on every load, but a row is only rebuilt when a fetch actually happens.
+// The cheap-skip paths (unchanged size+mtime on disk, a conditional GET
+// answered 304) keep an untouched script's row exactly as it was, so a
+// script that uses `unsafeWindow` ungranted could sit broken
+// indefinitely after the upgrade that would have fixed it.
+//
+// Idempotent and cheap to repeat: every row whose body doesn't contain
+// the name at all costs one `indexOf`. Rows that already carry the flag,
+// and error rows (which never run), are skipped. `startupLogs` is
+// re-derived for the rows that change so the row stays self-consistent
+// with what the injector will do with it.
+export async function backfillUsesUnsafeWindow(): Promise<number> {
+  const scripts = await getAllScripts();
+  const toSet: Record<string, unknown> = {};
+  for (const script of scripts) {
+    if (script.status !== 'ok' || script.usesUnsafeWindow === true) continue;
+    if (!sourceUsesUnsafeWindow(script.bodyText)) continue;
+    const next: StoredScript = { ...script, usesUnsafeWindow: true };
+    const logs = extractStartupLogs(script.header, script.relativePath, true);
+    if (logs.length > 0) next.startupLogs = logs;
+    else delete next.startupLogs;
+    toSet[scriptKey(script.id)] = next;
+  }
+  const changed = Object.keys(toSet).length;
+  if (changed > 0) await chrome.storage.local.set(toSet);
+  return changed;
 }
 
 // Reorder the collections index by moving the given collection one

@@ -81,6 +81,7 @@ import {
   WRAPPER_PRELUDE,
 } from './generated-wrappers.js';
 import { findApi, resolveGrants, type ApiSubsystem } from './gm-api-catalog.js';
+import { sourceDeclaresUnsafeWindow } from './unsafe-window-use.js';
 import { scanAllStorage } from './storage-scan.js';
 import { canonicalMatchPatterns, matchPatternProblem } from './url-match.js';
 import { dlog } from './debug-log.js';
@@ -154,9 +155,10 @@ export const BRIDGE_SCRIPT_ID = 'sourcemonkey-bridge';
 export const GM_RUNTIME_SCRIPT_ID = 'sourcemonkey-gm-runtime';
 
 // MAIN-world flavor of the same runtime source. Needed whenever an
-// active MAIN-world script grants a runtime-backed API — which now
-// includes every `@grant unsafeWindow` script, since that grant forces
-// MAIN world. Its SW traffic rides `wrapper-bridge.js`.
+// active MAIN-world script grants a runtime-backed API — which includes
+// every script that asks for `unsafeWindow`, by grant or by reference,
+// since either forces MAIN world. Its SW traffic rides
+// `wrapper-bridge.js`.
 export const GM_RUNTIME_MAIN_SCRIPT_ID = 'sourcemonkey-gm-runtime-main';
 
 export type RegistrationSpec = chrome.userScripts.RegisteredUserScript;
@@ -227,9 +229,11 @@ export function grantsUnsafeWindow(header: ParsedHeader | null | undefined): boo
 //                                          window.X globals)
 //   - `@inject-into content`     → USER_SCRIPT (isolated)
 //   - default / `auto` / unset   → MAIN when there are no @grant entries
-//                                  or a `none` line is present, and MAIN
-//                                  when `unsafeWindow` is granted;
-//                                  otherwise USER_SCRIPT.
+//                                  or a `none` line is present, MAIN when
+//                                  `unsafeWindow` is granted, and MAIN
+//                                  when the body names `unsafeWindow`
+//                                  with no grant for it; otherwise
+//                                  USER_SCRIPT.
 //
 // Why `@grant none` defaults to MAIN: scripts that opt out of GM_* (the
 // `@grant none` convention) expect direct page access — `window.map`,
@@ -257,7 +261,27 @@ export function grantsUnsafeWindow(header: ParsedHeader | null | undefined): boo
 // isolated realm's), matching Violentmonkey's content mode, plus a
 // startup-log warning so the mismatch is visible rather than silent —
 // see `extractStartupLogs` in script-store.ts.
-export function resolveWorld(header: ParsedHeader | null | undefined): InjectionWorld {
+//
+// Why an UNGRANTED `unsafeWindow` does the same: TM and VM both expose
+// the name with no grant line, so a script written against either has
+// no reason to declare one — 112 of the GreasyFork top 2000 use it
+// ungranted. Honoring only the grant leaves those scripts with a
+// ReferenceError on a name their author saw working. The reference is
+// found by a text scan of the body at load time
+// (`sourceUsesUnsafeWindow`, persisted as `StoredScript
+// .usesUnsafeWindow`), not by parsing — see src/unsafe-window-use.ts
+// for what that can and can't see.
+//
+// `@inject-into content` and `@inject-into page` both still win, and a
+// script already headed for MAIN (`@grant none`, no grants) just gains
+// the binding.
+export function resolveWorld(
+  header: ParsedHeader | null | undefined,
+  // `StoredScript.usesUnsafeWindow` — the body names the name, grant or
+  // no grant, per the note above. Production callers go through
+  // `resolveScriptWorld` so they can't forget it.
+  usesUnsafeWindow = false,
+): InjectionWorld {
   if (!header) return 'MAIN';
   const injectInto = (getValue(header, 'inject-into') ?? '').trim().toLowerCase();
   if (injectInto === 'page') return 'MAIN';
@@ -267,7 +291,19 @@ export function resolveWorld(header: ParsedHeader | null | undefined): Injection
   const { granted, hasNone } = resolveGrants(grants);
   if (hasNone) return 'MAIN';
   if (granted.has('unsafeWindow')) return 'MAIN';
+  if (usesUnsafeWindow) return 'MAIN';
   return 'USER_SCRIPT';
+}
+
+// The world for a stored row — the form every production caller uses.
+// One function, one input: the spec build, the match index and the
+// reload-swap world check all have to agree, and a call site that read
+// the header alone would silently answer USER_SCRIPT for a script the
+// other two put in MAIN.
+export function resolveScriptWorld(
+  script: Pick<StoredScript, 'header' | 'usesUnsafeWindow'>,
+): InjectionWorld {
+  return resolveWorld(script.header, script.usesUnsafeWindow === true);
 }
 
 // True iff the script needs the shared `__SM_GM__` runtime registered in
@@ -631,7 +667,30 @@ export async function buildGmBindingsForScript(
   // for @grant none / no-grants); GM_info is implicit and not
   // reflected here.
   const grantedNames = resolved.hasNone ? [] : [...resolved.granted];
-  return emitGmBindings(grantedNames, buildGmInfoInput(script, scriptHandlerVersion, grantedNames));
+  // A body that names `unsafeWindow` with no grant for it gets the
+  // binding anyway — `resolveScriptWorld` has already put the script in
+  // MAIN world for it, and without the `const` the reference is a
+  // ReferenceError. TM and VM both expose the name ungranted, so this is
+  // what a script written against either already expects.
+  //
+  // It joins the EMITTED set only. `GM_info.script.grant` keeps
+  // reporting the `@grant` lines the file actually declares — a script
+  // reading its own metadata must see its own metadata. And the name
+  // buys nothing on the SW side: `unsafeWindow` has no subsystem the
+  // bridge gate can be asked for (`grantedSubsystems` is header-derived
+  // and unchanged), so this adds no capability, only a `window` alias.
+  //
+  // Suppressed when a `@require` declares the name itself: the requires
+  // and the body are one program (Mode A — see injection-modes.md), so
+  // our `const` beside the library's would be a SyntaxError that takes
+  // the whole entry down. The script still runs in MAIN, which is where
+  // the library's own `window.wrappedJSObject || window` wants to be.
+  const emittedNames = script.usesUnsafeWindow === true
+    && !grantedNames.includes('unsafeWindow')
+    && !(script.requires ?? []).some((r) => sourceDeclaresUnsafeWindow(r.source))
+    ? [...grantedNames, 'unsafeWindow']
+    : grantedNames;
+  return emitGmBindings(emittedNames, buildGmInfoInput(script, scriptHandlerVersion, grantedNames));
 }
 
 // The exact text the registered entry compiles as a function body,
@@ -913,7 +972,7 @@ export async function buildRegistrationSpec(
   const needsWrapperFilter = hasRegexInclude || hasRegexExclude || usedAllUrlsFallback;
   const sourceUrl = buildSourceUrl(logLabel);
 
-  const world = resolveWorld(script.header);
+  const world = resolveScriptWorld(script);
   // GM_info is implicit in TM/VM — available in every world, with or
   // without an `@grant` line — and the rest of the granted surface is
   // emitted the same way in both worlds. The shared `__SM_GM__` runtime

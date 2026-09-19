@@ -288,6 +288,11 @@ Consequences of the shared scope, all matching TM/VM:
   `GM_*`, `unsafeWindow`, `__sm*` — is a redeclaration `SyntaxError`.
   `const unsafeWindow = window.wrappedJSObject || window;` is a real
   userscript-library idiom that this now rejects.
+  - That one case is handled for the *implicit* `unsafeWindow` binding:
+    when a require declares the name, the binding an ungranted
+    reference would have added is suppressed
+    (`sourceDeclaresUnsafeWindow`). A declared `@grant unsafeWindow`
+    still collides — the author asked for the binding by name.
 - A require declaring top-level `self` or `window` also breaks the
   wrap, whose own preamble dereferences both. See
   [injection-modes.md](injection-modes.md#cons--caveats).

@@ -6,6 +6,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  IMPLICIT_UNSAFE_WINDOW_INFO,
+  backfillUsesUnsafeWindow,
   distillMatching,
   extractStartupLogs,
   validateHeader,
@@ -1253,4 +1255,87 @@ test('sameStoredValue sees a real content change on a full row', async () => {
     ...base, text: VALID_SCRIPT + '\nconsole.log("more");\n', prior: first,
   });
   assert.equal(sameStoredValue(first, edited), false);
+});
+
+// ---------- backfillUsesUnsafeWindow ----------
+//
+// The one storage-touching function tested here, because what it exists
+// for can't be seen from the pure helpers: a row is only rebuilt when a
+// fetch happens, so a script installed before `usesUnsafeWindow` existed
+// would keep failing on the name indefinitely.
+
+const USES_UNSAFE_WINDOW = `// ==UserScript==
+// @name        Implicit
+// @match       https://example.com/*
+// @grant       GM_setValue
+// ==/UserScript==
+unsafeWindow.__PAGE_APP__.go();
+`;
+
+function legacyRow(over = {}) {
+  // A row as it would have been stored before the field existed: no
+  // `usesUnsafeWindow`, whatever `startupLogs` its header alone produced.
+  const text = over.text ?? USES_UNSAFE_WINDOW;
+  const body = text.slice(text.indexOf('==/UserScript==') + '==/UserScript=='.length);
+  const row = {
+    id: over.id ?? 'script-1',
+    collectionId: 'c',
+    relativePath: 'a.user.js',
+    fileUrl: 'file:///a.user.js',
+    status: 'ok',
+    size: text.length,
+    headerText: '',
+    bodyText: body,
+    header: parseHeader(text),
+    matching: { matches: ['https://example.com/*'], excludes: [], includes: [] },
+    loadedAt: 0,
+    enabled: true,
+  };
+  delete over.text;
+  return { ...row, ...over };
+}
+
+function stubStorage(rows) {
+  const store = Object.fromEntries(rows.map((r) => [`script:${r.id}`, r]));
+  globalThis.chrome = {
+    storage: {
+      local: {
+        get: async (key) => (key === null ? { ...store } : {}),
+        set: async (obj) => { Object.assign(store, obj); },
+      },
+    },
+  };
+  return store;
+}
+
+test('backfillUsesUnsafeWindow flips a pre-field row and gives it the startup log', async () => {
+  const store = stubStorage([legacyRow()]);
+  assert.equal(await backfillUsesUnsafeWindow(), 1);
+  const row = store['script:script-1'];
+  assert.equal(row.usesUnsafeWindow, true);
+  // Re-derived, so the row says what the injector will now do with it.
+  assert.deepEqual(row.startupLogs.map((l) => [l.level, l.message]), [
+    ['info', IMPLICIT_UNSAFE_WINDOW_INFO],
+  ]);
+});
+
+test('backfillUsesUnsafeWindow leaves rows it has nothing to add to', async () => {
+  const store = stubStorage([
+    // Already carries the flag.
+    legacyRow({ id: 'has-flag', usesUnsafeWindow: true }),
+    // Never runs, so it never reaches the injector.
+    legacyRow({ id: 'broken', status: 'invalid', errorMessage: 'The file is empty' }),
+    // Doesn't name unsafeWindow at all.
+    legacyRow({ id: 'plain', text: VALID_SCRIPT }),
+  ]);
+  assert.equal(await backfillUsesUnsafeWindow(), 0);
+  assert.equal(store['script:broken'].usesUnsafeWindow, undefined);
+  assert.equal(store['script:plain'].usesUnsafeWindow, undefined);
+});
+
+test('backfillUsesUnsafeWindow is idempotent', async () => {
+  const store = stubStorage([legacyRow()]);
+  assert.equal(await backfillUsesUnsafeWindow(), 1);
+  assert.equal(await backfillUsesUnsafeWindow(), 0);
+  assert.equal(store['script:script-1'].usesUnsafeWindow, true);
 });

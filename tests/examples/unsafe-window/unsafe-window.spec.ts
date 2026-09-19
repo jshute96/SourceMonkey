@@ -106,6 +106,34 @@ test.describe('examples / unsafe-window', () => {
     await page.close();
   });
 
+  test('unsafeWindow with no grant line for it still reaches the page', async ({
+    extensionContext, fixtureServer, setup,
+  }) => {
+    // The premise of SourceMonkey's implicit handling, measured rather
+    // than assumed: TM and VM don't key `unsafeWindow` off `@grant`, so
+    // a script can use it undeclared — and many do. SourceMonkey finds
+    // the reference by scanning the body and treats the script as
+    // though it had granted it.
+    //
+    // Asserted unconditionally: if any manager here left the name
+    // undeclared, a script written against another would throw a
+    // ReferenceError on it, which is the failure this exists to remove.
+    await setup.installScriptsFrom(__dirname);
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/unsafe-window/unsafe-window.html`);
+
+    await expect(page.locator('#log li[data-script="ungranted-defined"]'))
+      .toContainText('typeof unsafeWindow = object');
+    await expect(page.locator('#log li[data-script="ungranted-read"]'))
+      .toContainText('"name":"page-app"');
+    // And the script keeps the grants it did declare.
+    await expect(page.locator('#log li[data-script="ungranted-gm"]'))
+      .toContainText(/GM_getValue\('ungrantedVisits'\) = \d+/);
+
+    await page.close();
+  });
+
   test('GM storage persists across reloads for a page-realm script', async ({
     extensionContext, fixtureServer, setup,
   }) => {

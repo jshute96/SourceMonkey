@@ -93,6 +93,24 @@ What is still unmapped:
 
 ## Injection payload
 
+- **The ungranted-`unsafeWindow` scan doesn't read `@require` bodies.**
+  `sourceUsesUnsafeWindow` (`src/unsafe-window-use.ts`) looks at the
+  script's own body only, so a script whose reference lives entirely in
+  a library still lands in the isolated world with no binding. The
+  requires arrive on a later pipeline step (`attachFiles`) than the flag
+  is derived on, and a require refresh would have to re-derive it.
+  - The related half is already handled: a `@require` that *declares*
+    the name suppresses our binding at emission time, so the library's
+    own `const unsafeWindow = …` isn't a duplicate declaration.
+  - The scan also has no regex-literal state, so a `/['"]/` opens a
+    string, and a literal ending in `\/\/` reads as a line comment;
+    either can swallow a later reference. Normally that just leaves the
+    script behaving as it did before the feature. The one bad case is a
+    swallowed *declaration* with a visible use after it: the binding is
+    then emitted beside the script's own and the install-time parse check
+    fails the row. No corpus script hits it; a real tokenizer (or the one
+    the parse check already has in its sandbox) would close it.
+
 - **Find the real `chrome.userScripts.register()` size limit.** One
   script with four 90 KB requires measures ~1 MB of `js[]` (the source
   map runs ~1.6x the code it maps). Nothing caps require count × size,

@@ -584,6 +584,8 @@ default:
   - MAIN when there are no `@grant` entries or a `@grant none` line
     is present,
   - MAIN when `unsafeWindow` is granted (see below),
+  - MAIN when the body names `unsafeWindow` with no grant for it (see
+    below),
   - USER_SCRIPT otherwise.
 
 Why a `@grant none` script defaults to MAIN: scripts that opt out of
@@ -637,6 +639,89 @@ Scale of the change: of the top 2000 GreasyFork scripts, 224 grant
 way to opt into MAIN world themselves. 158 of the 213 also grant real
 `GM_*` APIs — which is why moving them required bringing the GM
 runtime along, below.
+
+##### An ungranted reference asks for the same thing
+
+Neither TM nor VM keys `unsafeWindow` off a grant line, so a script
+written against either may use the name and never declare it. Honoring
+only the grant left those scripts with a `ReferenceError` on the one
+name that was supposed to reach the page.
+
+That premise is measured, not read off their docs:
+`tests/examples/unsafe-window/ungranted.user.js` uses the name with no
+grant and reports what it got, and both TM 5.5.0 and VM 2.49.0 hand over
+the page's own object — see
+[cross-manager-test-results.md](cross-manager-test-results.md).
+
+- **Same outcome as the grant**: MAIN world, and the same
+  `const unsafeWindow = window;` binding.
+- **Measured** over the GreasyFork top 2000: 313 scripts mention the
+  name, 187 grant it. Of the remaining 126, 112 are real references —
+  75 that resolved to the isolated world (where the name did not exist
+  at all) and 37 already in MAIN but with no binding, so throwing too.
+  Of the rest, 13 mention it only in a comment or a string and one
+  declares the name itself.
+- **`GM_info.script.grant` is unchanged.** A script reading its own
+  metadata sees its own metadata, and the name itself buys nothing at
+  the SW gate — `bridgeMayActAs` checks header-derived subsystems and
+  `unsafeWindow` has none.
+- **The world move costs what any MAIN-world script's does**, and that
+  part is real: the page can see `window.__SM_GM__` (when the script's
+  other grants need it) and can forge bridge requests for the
+  subsystems that script genuinely granted, exactly as it can for a
+  script that declared `@grant unsafeWindow`. See
+  [Trust model](#trust-model).
+  - For a genuine reference that is the cost of the script working at
+    all — the alternative is the `ReferenceError` it has today.
+  - But unlike the grant, this decision is *inferred*, so a false
+    positive de-isolates a script whose author never asked. That is why
+    the scan errs towards leaving a script alone, and why its
+    false-positive cases (a property key, a `#private` member, a
+    declaration the source makes itself) are the ones it works hardest
+    to exclude.
+- **Reported, not silent**: an `info`-level startup log says the script
+  now runs in the page and is no longer isolated from page content.
+  Only when the reference is what moved it — a script already headed
+  for MAIN says nothing.
+- **`@inject-into content` and `@inject-into page` still win.** The
+  pinned-isolated case gets the same `warning` as the granted one; the
+  grant was never what made that combination broken.
+
+###### How the reference is found
+
+`sourceUsesUnsafeWindow` (`src/unsafe-window-use.ts`) scans the body at
+load time; the answer is persisted as `StoredScript.usesUnsafeWindow`
+and read by `resolveScriptWorld`. It is a text scan, not a parse — the
+extension has no JS parser (the install-time check compiles in a
+sandboxed page and returns a verdict, see
+[parse-check.md](parse-check.md)).
+
+- Comments and string literals are stripped first, and `${…}` inside a
+  template is scanned as code.
+- `foo.unsafeWindow` and `unsafeWindows` don't count; `typeof
+  unsafeWindow` does.
+- A source that **declares** the name — `const unsafeWindow =
+  window.wrappedJSObject || window;`, a real cross-browser idiom — is
+  left alone. Our binding is a `const` in the same scope, so adding one
+  beside it would turn a working script into a SyntaxError. The same
+  check runs over `@require` bodies at emission time, where a library
+  declaring the name is what the main body is usually referencing.
+- Two limits, both erring towards today's behavior: regex literals are
+  not recognized (a `/['"]/` opens a string state, and a literal ending
+  in `\/\/` reads as a line comment, either of which can swallow a
+  later reference), and only the script's own body is scanned, not its
+  `@require` bodies — see TODO.md.
+
+Persisted rather than recomputed: `resolveScriptWorld` runs on the
+per-sync spec-build path, and the spec build, the match index and the
+reload-swap world check all have to give the same answer.
+
+- A row stored before the field existed reads as false, and a row is
+  only rebuilt when a fetch actually happens — the cheap-skip paths
+  (unchanged size+mtime, a 304) leave it exactly as it was. So
+  `backfillUsesUnsafeWindow` (`src/script-store.ts`) fills those rows in
+  on `onInstalled` and re-syncs when any changed; without it the feature
+  would never reach an already-installed script that doesn't change.
 
 #### `GM_*` in MAIN world
 

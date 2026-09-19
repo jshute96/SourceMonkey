@@ -368,6 +368,13 @@ fetch via the SW). Highlights:
   page-forged bridge GM call for a USER_SCRIPT-world script is
   refused; and an isolated script's cross-tab value broadcast is not
   relayed into the page.
+- `tests/e2e/gm-unsafe-window-implicit.spec.ts` — `unsafeWindow` used
+  with no `@grant` line for it: a `GM_*`-granting script reaches page
+  globals and keeps its storage, a grant-free script gets the binding
+  without pulling `__SM_GM__` onto the page, a mention in a comment or
+  a string leaves the script isolated, a script that declares the name
+  itself still installs `ok` (our binding would be a duplicate `const`),
+  and `@inject-into content` still wins and warns.
 - `tests/e2e/gm-main-world-surface.spec.ts` — the rest of the GM_*
   surface from MAIN world, which every other spec exercises only in
   USER_SCRIPT world. Two reasons a surface is in here:

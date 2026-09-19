@@ -180,6 +180,16 @@ keys would look like a wiped profile.
   loadedAt, httpEtag?, httpLastModified?}`) in declaration order,
   deduped by canonical URL. Absent when the script declares no
   `@require`. See [requires.md](requires.md).
+- `usesUnsafeWindow?` — the body names `unsafeWindow`, derived from
+  `bodyText` alone with no regard to `@grant`. When there is no grant
+  line for it, that is what resolves the script to MAIN world and emits
+  the binding anyway (TM and VM both expose the name ungranted).
+  Persisted rather than recomputed because the world decision sits on
+  the per-sync spec-build path. Absent on error rows and on rows written
+  before the field existed — `backfillUsesUnsafeWindow` fills those in
+  on the next `onInstalled`, since an unchanged script's row is never
+  rebuilt. See
+  [injection.md](injection.md#unsafewindow-forces-main-world).
 - `versionProbes?` — what the script's `@updateURL` / `@downloadURL`
   last claimed, as `{kinds, url, version?, error?, checkedAt}` rows.
   Written only by `setVersionProbes`, never by the load pipeline —

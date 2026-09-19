@@ -74,6 +74,10 @@ the same scope as the user program, so a library doing
 `const unsafeWindow = window.wrappedJSObject || window;` — a real idiom
 — is a duplicate declaration and a genuine parse failure.
 
+- The one binding that steps aside is the *implicit* `unsafeWindow`
+  one: a script that merely uses the name gets no binding when a
+  `@require` declares it, so that idiom keeps compiling.
+
 Not included: the wrap head, its `var` preamble, the `__smE` parameter,
 and the GM prelude. The head is ours and always valid, and on its own
 it leaves an unbalanced brace.

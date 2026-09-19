@@ -172,7 +172,7 @@ details live in the topic-specific docs linked below.
   with terminal-event dispatch, value-change listener registry.
   Captures a small shim cache of native references at init time so
   sibling userscripts that monkey-patch builtins can't subvert GM
-  calls. In MAIN world (where `@grant unsafeWindow` scripts run) its
+  calls. In MAIN world (where scripts that ask for `unsafeWindow` run) its
   service-worker traffic rides `src/wrapper-bridge.js` in both
   directions.
 - **GM_* SW storage** (`src/gm-values.ts`) — persistent

@@ -29,7 +29,7 @@ import {
   type StoredCollection,
 } from './script-store.js';
 import { urlMatchesScript } from './url-match.js';
-import { grantedSubsystems, resolveWorld, type InjectionWorld } from './injector.js';
+import { grantedSubsystems, resolveScriptWorld, type InjectionWorld } from './injector.js';
 import type { ApiSubsystem } from './gm-api-catalog.js';
 
 export interface MatchedScript {
@@ -124,7 +124,7 @@ function toEntry(script: StoredScript): CacheEntry | null {
     name,
     matching: script.matching,
     collectionId: script.collectionId,
-    world: resolveWorld(script.header),
+    world: resolveScriptWorld(script),
     subsystems: grantedSubsystems(script.header),
     enabled: isScriptEnabled(script),
     local: isFileUrl(script.fileUrl),

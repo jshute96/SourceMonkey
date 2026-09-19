@@ -11,6 +11,9 @@
 //   3. The one case that can't work — `@inject-into content` pinning
 //      the script to the isolated world — is diagnosed instead of
 //      silently answering with the wrong window.
+//   4. A body that names `unsafeWindow` with NO grant line gets the same
+//      treatment, because TM and VM both expose the name ungranted. The
+//      scan itself is tested in unsafe-window-use.test.mjs.
 //
 // See docs/injection.md#unsafewindow-forces-main-world.
 
@@ -43,15 +46,22 @@ globalThis.chrome = globalThis.chrome ?? {
 import {
   GM_RUNTIME_MAIN_SCRIPT_ID,
   GM_RUNTIME_SCRIPT_ID,
+  buildGmBindingsForScript,
   buildGmRuntimeSpecs,
   buildRegistrationSpec,
   collectActiveSpecs,
+  grantedSubsystems,
   grantsUnsafeWindow,
   needsGmRuntime,
+  resolveScriptWorld,
   resolveWorld,
 } from '../../dist/injector.js';
 import { emitGmBindings } from '../../dist/gm-bindings.js';
-import { ISOLATED_UNSAFE_WINDOW_WARNING, extractStartupLogs } from '../../dist/script-store.js';
+import {
+  IMPLICIT_UNSAFE_WINDOW_INFO,
+  ISOLATED_UNSAFE_WINDOW_WARNING,
+  extractStartupLogs,
+} from '../../dist/script-store.js';
 import { WRAPPER_BRIDGE, WRAPPER_GM_RUNTIME } from '../../dist/generated-wrappers.js';
 
 function makeHeader(tags) {
@@ -380,6 +390,154 @@ test('extractStartupLogs: silent for the combinations that do work', () => {
     { tag: 'inject-into', value: 'content' },
     { tag: 'grant', value: 'GM_setValue' },
   ])), []);
+});
+
+// ---------- unsafeWindow without a grant ----------
+//
+// TM and VM both hand out `unsafeWindow` with no `@grant` line, so a
+// script written against either may never declare it — 112 of the
+// GreasyFork top 2000 don't. `StoredScript.usesUnsafeWindow` (from the
+// load-time body scan) makes those scripts behave as though they had.
+
+test('resolveScriptWorld: an ungranted reference moves the script to MAIN', () => {
+  const script = makeScript({ header: grantHeader('GM_setValue'), usesUnsafeWindow: true });
+  assert.equal(resolveScriptWorld(script), 'MAIN');
+  // Without the flag it is the isolated world, as before.
+  assert.equal(resolveScriptWorld({ ...script, usesUnsafeWindow: undefined }), 'USER_SCRIPT');
+  // And the header-only form still answers on the header alone, which is
+  // why production code goes through resolveScriptWorld.
+  assert.equal(resolveWorld(script.header), 'USER_SCRIPT');
+});
+
+test('resolveScriptWorld: @inject-into content still beats the reference', () => {
+  const script = makeScript({
+    header: makeHeader([
+      { tag: 'inject-into', value: 'content' },
+      { tag: 'grant', value: 'GM_setValue' },
+    ]),
+    usesUnsafeWindow: true,
+  });
+  assert.equal(resolveScriptWorld(script), 'USER_SCRIPT');
+});
+
+test('buildRegistrationSpec: the spec Chrome gets says MAIN', async () => {
+  // The world reaches Chrome through the spec, so the flag has to
+  // survive the whole build, not just resolveScriptWorld.
+  const spec = await buildRegistrationSpec(
+    makeScript({ header: grantHeader('GM_setValue'), usesUnsafeWindow: true }),
+    '0.0.0',
+    'a',
+  );
+  assert.equal(spec.world, 'MAIN');
+});
+
+test('buildGmBindingsForScript: an ungranted reference still gets the binding', async () => {
+  // Without it the script would reach MAIN world and then throw a
+  // ReferenceError on the name that took it there.
+  const { js } = await buildGmBindingsForScript(
+    makeScript({ header: grantHeader('GM_setValue'), usesUnsafeWindow: true }),
+    '0.0.0',
+  );
+  assert.match(js, /const unsafeWindow = window;/);
+  // GM_info reports the script's own metadata, not our inference.
+  assert.doesNotMatch(js, /"grant":\[[^\]]*unsafeWindow/);
+  assert.match(js, /"grant":\["GM_setValue"\]/);
+});
+
+test('buildGmBindingsForScript: @grant none plus a reference gets the alias and nothing else', async () => {
+  // `@grant none` is already MAIN world, so the only thing missing was
+  // the binding. It must not drag any GM_* API back in.
+  const { js } = await buildGmBindingsForScript(
+    makeScript({ header: grantHeader('none', 'GM_setValue'), usesUnsafeWindow: true }),
+    '0.0.0',
+  );
+  assert.match(js, /const unsafeWindow = window;/);
+  assert.doesNotMatch(js, /const GM_setValue/);
+});
+
+test('buildGmBindingsForScript: a @require that declares the name suppresses ours', async () => {
+  // The requires and the body are one program, so two `const
+  // unsafeWindow` declarations in it is a SyntaxError that takes the
+  // whole registered entry down — including the parse check at install.
+  const script = makeScript({
+    header: grantHeader('GM_setValue'),
+    usesUnsafeWindow: true,
+    requires: [{ url: 'https://lib/x.js', source: 'const unsafeWindow = window.wrappedJSObject || window;' }],
+  });
+  const { js } = await buildGmBindingsForScript(script, '0.0.0');
+  assert.doesNotMatch(js, /const unsafeWindow = window;/);
+  // The script still runs in MAIN, which is where that library's own
+  // `window` needs to be.
+  assert.equal(resolveScriptWorld(script), 'MAIN');
+});
+
+test('an ungranted reference grants no SW-side capability', () => {
+  // The bridge gate (`bridgeMayActAs`) checks a relayed request against
+  // the script's granted subsystems, and those stay header-derived.
+  // `unsafeWindow` has no subsystem to ask for anyway — it is a `window`
+  // alias — so this adds a binding and a world, never an API.
+  const header = grantHeader('GM_setValue');
+  assert.deepEqual([...grantedSubsystems(header)], ['storage']);
+});
+
+test('extractStartupLogs: says so at info level when the reference moved the script', () => {
+  const logs = extractStartupLogs(grantHeader('GM_setValue'), 'x.user.js', true);
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].level, 'info');
+  assert.equal(logs[0].message, IMPLICIT_UNSAFE_WINDOW_INFO);
+});
+
+test('extractStartupLogs: silent when the script was headed for MAIN anyway', () => {
+  // Nothing moved — these scripts only gained a `window` alias.
+  assert.deepEqual(extractStartupLogs(makeHeader([{ tag: 'name', value: 'X' }]), 'x.user.js', true), []);
+  assert.deepEqual(extractStartupLogs(grantHeader('none'), 'x.user.js', true), []);
+  assert.deepEqual(extractStartupLogs(makeHeader([
+    { tag: 'inject-into', value: 'page' },
+    { tag: 'grant', value: 'GM_setValue' },
+  ]), 'x.user.js', true), []);
+  // A declared grant is the author saying it out loud already.
+  assert.deepEqual(extractStartupLogs(grantHeader('unsafeWindow', 'GM_setValue'), 'x.user.js', true), []);
+});
+
+test('extractStartupLogs: a grant-free script pinned isolated is warned too', () => {
+  // Reachable only through the implicit path: with no `@grant` lines
+  // there was nothing for the old check (which lived inside the
+  // grants-present branch) to fire on, and the script still ends up with
+  // a binding that is the isolated realm's own window.
+  const logs = extractStartupLogs(makeHeader([
+    { tag: 'name', value: 'X' },
+    { tag: 'inject-into', value: 'content' },
+  ]), 'x.user.js', true);
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].level, 'warn');
+  assert.equal(logs[0].message, ISOLATED_UNSAFE_WINDOW_WARNING);
+});
+
+test('buildGmBindingsForScript: a @require that only READS the name keeps our binding', async () => {
+  // The suppression is for a require that declares the name. A library
+  // that merely uses it needs the binding as much as the body does.
+  const { js } = await buildGmBindingsForScript(makeScript({
+    header: grantHeader('GM_setValue'),
+    usesUnsafeWindow: true,
+    requires: [{ url: 'https://lib/x.js', source: 'unsafeWindow.hookedByLib = 1;' }],
+  }), '0.0.0');
+  assert.match(js, /const unsafeWindow = window;/);
+});
+
+test('extractStartupLogs: the isolated dead end is one message, grant or not', () => {
+  const pinned = makeHeader([
+    { tag: 'inject-into', value: 'content' },
+    { tag: 'grant', value: 'GM_setValue' },
+  ]);
+  const logs = extractStartupLogs(pinned, 'x.user.js', true);
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].message, ISOLATED_UNSAFE_WINDOW_WARNING);
+  // And it isn't said twice when the script both grants and uses it.
+  const both = extractStartupLogs(makeHeader([
+    { tag: 'inject-into', value: 'content' },
+    { tag: 'grant', value: 'unsafeWindow' },
+  ]), 'x.user.js', true);
+  assert.equal(both.length, 1);
 });
 
 // ---------- wrapper plumbing ----------

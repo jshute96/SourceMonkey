@@ -73,7 +73,7 @@ import {
 import {
   buildSwapEvalBody,
   needsGmRuntime,
-  resolveWorld,
+  resolveScriptWorld,
   forgetRegistrationState,
   isUserScriptsAvailable,
   lastSyncKindForTests,
@@ -149,6 +149,7 @@ import {
   type CollectionOptions,
   type InstallTarget,
   type NewCollectionSpec,
+  backfillUsesUnsafeWindow,
   type StoredScript,
   type StoredCollection,
   setParseChecker,
@@ -730,6 +731,23 @@ async function openCollectionsPage(windowId: number | null): Promise<void> {
 // without the flag check every dev reload would reopen the tab.
 chrome.runtime.onInstalled.addListener((details) => {
   console.log(`[SourceMonkey] onInstalled (reason=${details.reason})`);
+  // Fill in a derived field older rows don't carry. Runs on update as
+  // well as install (and before the first-run check below, which returns
+  // early for every existing profile) because a stored row is only
+  // rebuilt when a fetch happens: an unchanged script keeps whatever its
+  // row said, so without this the ungranted-`unsafeWindow` handling
+  // would never reach the scripts already installed. Re-syncs only when
+  // something actually changed, since the flag decides a script's world.
+  void (async () => {
+    try {
+      const changed = await backfillUsesUnsafeWindow();
+      if (changed === 0) return;
+      console.log(`[SourceMonkey] backfilled usesUnsafeWindow on ${changed} script row(s)`);
+      await syncRegistrations();
+    } catch (err) {
+      console.info('[SourceMonkey] usesUnsafeWindow backfill failed:', err);
+    }
+  })();
   if (details.reason !== 'install') return;
   void (async () => {
     if (await isFirstRunComplete()) {
@@ -2169,7 +2187,7 @@ async function handleCheckPending(
   // what that costs for a require-heavy script), and a page can forge
   // bridge requests. Nothing here needs the built body.
   const wrapperWorld = payload.__viaBridge === true ? 'MAIN' : 'USER_SCRIPT';
-  if (wrapperWorld !== resolveWorld(refreshed.header)) {
+  if (wrapperWorld !== resolveScriptWorld(refreshed)) {
     console.log(
       `[SourceMonkey] reload swap deferred: ${payload.name ?? payload.id} changed injection world (next reload will pick it up)`,
     );
