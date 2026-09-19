@@ -535,6 +535,34 @@ async function isReadableFile(absolutePath: string): Promise<boolean> {
   return await canReadFileUrl(pathToFileUrl(absolutePath));
 }
 
+// Cheap "is there a file at this path" probe: the response is dropped
+// as soon as it arrives, so the file's bytes are never read. For the
+// delete dialog, which polls this while telling the user to delete a
+// file by hand (docs/local-delete.md).
+//
+// The caller acts on `false` — a file reported gone is dropped from
+// what it offers to delete — so false is only ever a rejected fetch,
+// which is how a page-context `file://` fetch reports a missing file.
+// Any response at all counts as present, whatever its status: the
+// sibling `fetchFileUrlTextFetch` sees status 0 on some `file://`
+// legs, and an unreadable-but-present file should stay listed rather
+// than be declared deleted. With file access off every fetch rejects,
+// so callers must not trust false without checking that first.
+export async function fileExists(absolutePath: string): Promise<boolean> {
+  let response: Response;
+  try {
+    response = await fetch(pathToFileUrl(absolutePath));
+  } catch {
+    return false;
+  }
+  try {
+    await response.body?.cancel();
+  } catch {
+    // The body was never wanted; a cancel that fails changes nothing.
+  }
+  return true;
+}
+
 // ---------- HTTP fetch (with conditional GETs) ----------
 
 export interface HttpFetchOptions {

@@ -75,12 +75,12 @@ One-line descriptions of every source file, grouped by directory.
 | `src/move-dialog.ts` | The move-script dialog opened from the viewer's Collection row: destination dropdown, live refusals, runs the move itself |
 | `src/copy-dialog.ts` | The local-copy dialog opened from the viewer's controls row: filename, header fields, dependency checkbox, existing-file checks, runs the copy |
 | `src/delete-icon.ts` | Paints the two removal glyphs: plain trash can for a record, trash can + disk badge for a file delete |
-| `src/delete-dialog.ts` | The delete-local-script-file confirmation: the file and its path, the three dependency lists, runs the deletion |
+| `src/delete-dialog.ts` | The delete-local-script-file confirmation: the file and its path, the dependency lists, an on-disk watch, runs the deletion |
 | `src/local-delete.ts` | Deleting a local copy from disk: which scripts qualify, what goes with them, download-history lookup and removal |
 | `src/local-copy.ts` | Local copies of a script: the Downloads collection + setting, name rules, header rewriting, dependency layout, the `chrome.downloads` write |
 | `src/script-details.ts` | Builds the viewer's curated details `<dl>` — chosen header fields, the resolved provenance rows, and the Collection row's trailing slot — for both modes |
 | `src/details-tooltips.ts` | The one table of tooltip text for the details panel's row labels, plus the mode/site-name lookups |
-| `src/copy-button.ts` | The viewer's square copy-to-clipboard button: sprite glyphs, per-button "Copied" flash, text read at click time |
+| `src/copy-button.ts` | The square copy-to-clipboard button beside a path (viewer rows, delete dialog): sprite glyphs, per-button "Copied" flash, text read at click time |
 | `src/script-identity.ts` | Finds other installed copies of a script — match by absolute `fileUrl`, and by `@namespace`+`@name`; the exclusive-enable rule; the install / move target options |
 | `src/select-open-guard.ts` | Opens a `<select>`'s list on the mouse release, so the click that opens it can't also pick from it |
 | `src/related-versions.ts` | Renders the "Other versions" panel: a section per relationship, per-copy controls, the preview's install-offer section, the fold toggle, and the collection dropdown Install and Move share |
@@ -198,7 +198,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/collection-dialog.spec.ts` | The collection dialog from the collections page: Add-field routing, inferred type / name, readability probe, live refusals, Edit rename and options, scheme chips |
 | `tests/e2e/install-target.spec.ts` | The install page's "Install into" dropdown: groups and order, renamed / missing default, install into a chosen or new collection, second copy of one URL |
 | `tests/e2e/move-script.spec.ts` | The move-script dialog from the viewer's Collection row: destination list, id preserved, stacked create dialog, disabled destination, button placement |
-| `tests/e2e/local-delete.spec.ts` | Deleting a local copy: own dependencies go, shared ones are kept, an untracked file blocks, from every trash can that offers it, control placement |
+| `tests/e2e/local-delete.spec.ts` | Deleting a local copy: own dependencies go, shared ones are kept, an untracked file blocks until deleted by hand, files gone from disk, from every trash can that offers it, control placement |
 | `tests/e2e/local-copy.spec.ts` | Local copies: first copy creates the Downloads collection and takes over, Replace for files and installed scripts, name rules, dependency files, cleanup after a refused write, a copy refusing its own name |
 | `tests/e2e/script-log-relay.spec.ts` | The page→worker Log-write relay end to end: the viewer's Clear log is performed by the worker |
 | `tests/e2e/membership.spec.ts` | Collection membership vs. the script rows: moves and removals that land mid-refresh, and the repair sweep |

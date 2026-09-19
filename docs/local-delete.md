@@ -31,7 +31,8 @@ file beside a script is used at all).
     does.
 - **Delete local script file** names the file, its full path, and every
   dependency file the copy is loading from the collection's directory,
-  under a heading per outcome.
+  under a heading per outcome. Each path has a copy-to-clipboard
+  button, for the case where the user has to delete it by hand.
 - **Delete** removes the files from disk, then removes the script's
   record, the way every other trash can in the UI does.
 
@@ -66,6 +67,15 @@ deletable.
   refuses is the deletion reported as failed.
 - **No download record → nothing we can do.** The user cleared their
   downloads, or the file arrived some other way.
+- **Records live in memory for the session and in the History database
+  across restarts.** `search` answers from the in-memory list, which
+  Chrome rebuilds from the database at startup. Observed: *Remove from
+  list* on `chrome://downloads` did not stop a deletion until Chrome
+  was restarted — so the two can disagree until then, and a record that
+  is gone after a restart may still answer during the session it was
+  removed in. To see what `search` sees, run
+  `chrome.downloads.search({ filename: '<absolute path>' })` in the
+  service worker's console.
 
 ### Asked before Delete, not after
 
@@ -75,9 +85,37 @@ files are deletable is on screen before anything is pressed.
 - **The script's own file has no usable record** → Delete is off, and
   the blocking message takes the slot the warning would use: *Script
   file is no longer in Chrome download history, so SourceMonkey cannot
-  delete it.* It names no path — the file and its full path are two
-  rows above it. The dependency lists still say what would have
-  happened.
+  delete it. Delete the file by hand, and Delete will then remove this
+  script.* It names no path — the file and its full path are two
+  rows above it — and it says what to do next, because the row has no
+  other way out (a refresh alone scans the file back in). The
+  dependency lists still say what would have happened.
+- **The script's own file has no record and is not on disk** → the
+  user deleted it by hand, most likely because the dialog said to. The
+  line reads *Script file has already been deleted. Delete will remove
+  this script from SourceMonkey* (and any own dependency files still
+  going), and Delete is on: it skips the script file, deletes those
+  dependencies, and removes the entry.
+  - Found by probing the file (`fileExists`, which opens it without
+    reading its bytes), not from the row's `missing` status — that is
+    set by the next refresh, which hasn't happened yet.
+  - **The dialog watches every file it lists.** For as long as it is
+    up, it re-probes each file about once a second — and at once when
+    the window regains focus or its tab becomes visible, since the
+    deleting is usually done in another window. A file that goes moves to **Files already deleted**, and
+    one that comes back (an undo in the file manager) moves out again;
+    the script file going flips the dialog to this state, so the user
+    can delete it in a file manager and press Delete without closing
+    the dialog.
+  - Not only the files the user was told to delete: a file with a
+    record can be deleted by hand too, and Chrome's `exists` flag is
+    only as fresh as its last check, so a deletion attempted on it
+    would fail after the fact.
+  - Only when file access is on. With the toggle off a present file
+    fails to read the same way, so the dialog stays blocked rather than
+    drop the entry for a file that is still there — and the blocked
+    message then only says the file can be deleted by hand, without
+    promising that Delete will follow.
 - **A dependency has no record** → it lands under the third heading and
   is left alone. Its being unreachable is no reason to refuse the
   deletion the user asked for.
@@ -172,6 +210,10 @@ state, so there is nothing to put to the user:
 - **Not deleting files no longer in Chrome download history** — the
   browser can't be asked to remove them (below). Left on disk and said
   so, rather than blocking the deletion that was asked for.
+- **Files already deleted** — not on disk any more, own or shared.
+  Nothing to do, but listed rather than dropped: a file the user was
+  just told to delete by hand moving here is how they see the dialog
+  noticed.
 
 Each heading is hidden when nothing is filed under it, and the whole
 row with it.
@@ -195,8 +237,8 @@ row with it.
 1. The **script file first** — it is what the user asked for. A failure
    here stops everything: the dependencies stay, and the dialog stays
    open with the reason in its error slot.
-2. Then each dependency under the first heading. A failure here is reported but does not
-   undo anything: the script is gone, which is what was asked, and a
+2. Then each dependency under the first heading. A failure here is
+   reported but does not undo anything: the script is gone, which is what was asked, and a
    leftover library file is a smaller problem than a half-deleted state.
    The caller shows those messages beside "This script has been removed".
 3. Then `removeScript`, which takes the row and its logs.

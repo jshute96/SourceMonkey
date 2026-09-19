@@ -709,30 +709,8 @@
          with the versions table's row buttons now that those hold a
          glyph. Only the padding is here. */
       .collection-move { padding: 0 0.7em; }
-      /* Square icon-only button. Swaps the copy icon for a checkmark
-         while the .copied class is on it (set briefly after a
-         successful clipboard write). */
-      .copy-btn {
-        flex: 0 0 auto;
-        width: 1.6em;
-        height: 1.6em;
-        padding: 0;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        border: 1px solid #bbb;
-        border-radius: 3px;
-        background: #fff;
-        color: #444;
-        cursor: pointer;
-      }
-      .copy-btn:hover { background: #eee; }
-      .copy-btn:active { background: #ddd; }
-      .copy-btn:focus-visible { outline: 2px solid #4a90e2; outline-offset: 1px; }
-      .copy-btn svg { width: 14px; height: 14px; display: block; }
-      .copy-btn .check-icon { display: none; color: #166534; }
-      .copy-btn.copied .copy-icon { display: none; }
-      .copy-btn.copied .check-icon { display: block; }
+      /* `.copy-btn` (the square copy-to-clipboard button) is in
+         styles.css: the delete dialog uses it on every page. */
       /* Tab strip above the code box: one tab per source file (main
          script + each @require). Always rendered. The strip sits
          entirely above the code box (no overlap, no negative margin

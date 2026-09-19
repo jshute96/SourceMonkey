@@ -919,12 +919,14 @@ with a trade-off worth recording:
   file is on disk, `removeFile` refuses it, and the row has no plain
   trash can of its own (a directory collection's rows are removed by
   refreshing, which would scan it straight back in). The user is told
-  to delete the file by hand, and the next refresh then drops the row.
-  The overwrite trick above would close this; a record-only "forget
-  this script" would not, since the scan undoes it.
-- **`exists` is only as fresh as Chrome's last check.** A file Chrome
-  believes is there but isn't still reaches `removeFile`, which fails
-  and is reported. Nothing is erased on that path, so a later attempt
+  to delete the file by hand; the dialog watches for that and then
+  offers to remove the entry itself. The overwrite trick above would
+  close the by-hand step.
+- **`exists` is only as fresh as Chrome's last check.** The dialog
+  probes the disk itself while it is open, so a file deleted by hand
+  is listed as gone rather than attempted. A file that goes between
+  the last probe and the click still reaches `removeFile`, which fails
+  and is reported; nothing is erased on that path, so a later attempt
   has the same handles it had.
 
 ## Collections page — follow-ups

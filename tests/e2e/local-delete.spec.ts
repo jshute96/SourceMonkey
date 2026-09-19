@@ -21,10 +21,10 @@ const COPY_CONFIRM = `${COPY_DIALOG} #copy-confirm-btn`;
 
 const DELETE_BTN = '#delete-copy-btn';
 const DIALOG = 'dialog.delete-dialog';
-// The three headed lists, in the order the dialog draws them: going,
-// kept because another script loads them, kept because Chrome has no
-// record of them. A group with nothing in it is hidden, not removed,
-// so the indices are stable.
+// The headed lists, in the order the dialog draws them: going, kept
+// because another script loads them, kept because Chrome has no record
+// of them, already gone from disk. A group with nothing in it is
+// hidden, not removed, so the indices are stable.
 const GROUP = (n: number) => `${DIALOG} .dlg-dep-group >> nth=${n}`;
 const ERROR = `${DIALOG} .dlg-error`;
 const CONFIRM = `${DIALOG} #delete-confirm-btn`;
@@ -299,7 +299,7 @@ test.describe('deleting a local copy', () => {
     // says "files" because the dependency was going with it.
     await expect(page.locator(ERROR)).toHaveText(
       'Script file is no longer in Chrome download history, so SourceMonkey cannot delete it.\n'
-      + 'You can delete the files manually.',
+      + 'Delete the files by hand, and Delete will then remove this script.',
     );
     await expect(page.locator(ERROR)).not.toHaveClass(/warn/);
     await expect(page.locator(CONFIRM)).toBeDisabled();
@@ -308,6 +308,74 @@ test.describe('deleting a local copy', () => {
     expect(fs.existsSync(path.join(copiesDir, 'lib', 'util.js'))).toBe(true);
     const copies = (await sm.getCollections()).find((c) => c.path === copiesDir)!;
     expect((await sm.getCollectionWithScripts(copies.id))!.scripts.map((x) => x.id)).toContain(copyId);
+
+    // The user does what the message said, with the dialog still up.
+    // Its watch notices, the line changes, and Delete now clears the
+    // entry — taking the own dependency that Chrome can still delete
+    // with it.
+    fs.rmSync(file);
+    await expect(page.locator(ERROR)).toHaveText(
+      'Script file has already been deleted.\n'
+      + 'Delete will remove this script from SourceMonkey and 1 dependency file from disk.',
+    );
+    await expect(page.locator(ERROR)).toHaveClass(/warn/);
+    await expect(page.locator(CONFIRM)).toBeEnabled();
+    // A dependency deleted by hand — with a record, even — moves to the
+    // last list rather than being attempted and failing.
+    fs.rmSync(path.join(copiesDir, 'lib', 'util.js'));
+    await expect(page.locator(GROUP(3))).toContainText('Files already deleted');
+    await expect(page.locator(GROUP(3)).locator('li')).toHaveText('lib/util.js');
+    await expect(page.locator(GROUP(0))).toBeHidden();
+    await expect(page.locator(ERROR)).toHaveText(
+      'Script file has already been deleted.\nDelete will remove this script from SourceMonkey.',
+    );
+    await page.locator(CONFIRM).click();
+    await expect(page.locator(DIALOG)).toBeHidden();
+    await expect(page.locator('#message')).toHaveText('This script has been removed');
+    expect((await sm.getCollectionWithScripts(copies.id))!.scripts.map((x) => x.id)).not.toContain(copyId);
+    await page.close();
+  });
+
+  test('a dependency Chrome has forgotten is listed for the user, and moves once they delete it', async ({
+    extensionContext, extensionId, sm, downloadsDir, getServiceWorker,
+  }) => {
+    const libUrl = `${server.baseUrl}/lib/util.js`;
+    server.setRoute('/lib/util.js', 'window.__util = 1;\n');
+    server.setRoute('/hello.user.js', scriptWith({ name: 'Hello', extra: [`// @require ${libUrl}`] }));
+    const def = await sm.addCollection(`${server.baseUrl}/hello.user.js`);
+    const originalId = (await sm.getCollectionWithScripts(def!.id))!.scripts[0].id;
+
+    const page = await extensionContext.newPage();
+    await page.goto(viewerUrl(extensionId, originalId));
+    const copyId = await copyWithDeps(page, originalId);
+    const copiesDir = path.join(downloadsDir!, 'SourceMonkey');
+    const lib = path.join(copiesDir, 'lib', 'util.js');
+
+    const sw = await getServiceWorker();
+    await sw.evaluate((filename) => chrome.downloads.erase({ filename }), lib);
+
+    await page.goto(viewerUrl(extensionId, copyId));
+    await page.locator(DELETE_BTN).click();
+    await expect(page.locator(DIALOG)).toBeVisible();
+    // The script itself is fine to delete; only the dependency is left
+    // for the user, under the heading that says why.
+    await expect(page.locator(GROUP(2))).toContainText('Not deleting files no longer in Chrome download history');
+    await expect(page.locator(GROUP(2)).locator('li')).toHaveText('lib/util.js');
+    await expect(page.locator(GROUP(0))).toBeHidden();
+    await expect(page.locator(ERROR)).toHaveText('Delete will remove 1 file from disk.\nThis cannot be undone.');
+    await expect(page.locator(CONFIRM)).toBeEnabled();
+    // Deleted by hand while the dialog is up: it moves to the last list.
+    fs.rmSync(lib);
+    await expect(page.locator(GROUP(3)).locator('li')).toHaveText('lib/util.js');
+    await expect(page.locator(GROUP(2))).toBeHidden();
+    // And back again when the file is put back (an undo).
+    fs.writeFileSync(lib, 'window.__util = 1;\n');
+    await expect(page.locator(GROUP(2)).locator('li')).toHaveText('lib/util.js');
+    await expect(page.locator(GROUP(3))).toBeHidden();
+    await page.locator(CONFIRM).click();
+    await expect(page.locator(DIALOG)).toBeHidden();
+    await expect(page.locator('#message')).toHaveText('This script has been removed');
+    expect(fs.existsSync(path.join(copiesDir, 'hello.user.js'))).toBe(false);
     await page.close();
   });
 

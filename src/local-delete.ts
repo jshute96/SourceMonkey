@@ -220,11 +220,25 @@ export async function trackedFiles(paths: readonly string[]): Promise<Set<string
 // `alsoOthers` when the same block would have taken other files with
 // it — the copy's own dependencies. They are all still on disk, so the
 // second line names them all rather than just the one it reports on.
+//
+// The second line says what to do next, not just that we can't. With
+// `watched`, the dialog is showing this for the script file with its
+// Delete disabled, and the row has no other trash can (a directory
+// collection's rows are removed by refreshing, which scans the file
+// straight back in) — so without it the user is looking at a dead
+// end. The dialog watches for the file going and then offers to
+// remove the entry (`watchDisk` in the dialog), which is what the
+// line promises. Without `watched` — a dependency reported after the
+// script has already gone, or a dialog that can't watch because file
+// access is off — the line promises nothing.
 export const SCRIPT_FILE = 'Script file';
 
-export function noDownloadRecord(subject: string, alsoOthers = false): string {
+export function noDownloadRecord(subject: string, alsoOthers = false, watched = false): string {
+  const files = alsoOthers ? 'files' : 'file';
   return `${subject} is no longer in Chrome download history, so SourceMonkey cannot delete it.\n`
-    + `You can delete the ${alsoOthers ? 'files' : 'file'} manually.`;
+    + (watched
+      ? `Delete the ${files} by hand, and Delete will then remove this script.`
+      : `You can delete the ${files} by hand.`);
 }
 
 // Ends with a period, unlike most messages: it is joined with the
@@ -297,7 +311,9 @@ async function deleteDownloadedFile(
 export interface DeleteFilesRequest {
   // The copy's own file. Deleted first: it is what the user asked for,
   // and a failure there stops the dependencies from going with it.
-  script: { path: string; relativePath: string };
+  // Null when the dialog found it already gone from disk: there is
+  // nothing to delete, and the dependencies go on their own.
+  script: { path: string; relativePath: string } | null;
   // The files to take with it — already narrowed to this script's own
   // dependencies that Chrome still holds a record for (`trackedFiles`),
   // which is what the dialog showed the user.
@@ -314,16 +330,18 @@ export interface DeleteFilesResult {
 }
 
 export async function deleteCopyFiles(request: DeleteFilesRequest): Promise<DeleteFilesResult> {
-  const scriptError = await deleteDownloadedFile(
-    request.script.path,
-    request.script.relativePath,
-    'Script',
-    // The dependencies were going with it and are staying too, so the
-    // message says so — the same answer the dialog gives when it knows
-    // up front that the script's record has gone.
-    request.dependencies.length > 0,
-  );
-  if (scriptError) return { scriptError, dependencyErrors: [] };
+  if (request.script) {
+    const scriptError = await deleteDownloadedFile(
+      request.script.path,
+      request.script.relativePath,
+      'Script',
+      // The dependencies were going with it and are staying too, so the
+      // message says so — the same answer the dialog gives when it knows
+      // up front that the script's record has gone.
+      request.dependencies.length > 0,
+    );
+    if (scriptError) return { scriptError, dependencyErrors: [] };
+  }
   const dependencyErrors: string[] = [];
   for (const dep of request.dependencies) {
     const err = await deleteDownloadedFile(dep.path, dep.relativePath);

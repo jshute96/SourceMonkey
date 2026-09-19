@@ -1,10 +1,11 @@
-// The small square "copy this to the clipboard" button the viewer puts
+// The small square "copy this to the clipboard" button that sits
 // beside a path.
 //
-// Shared because it appears on more than one row now — the Location
-// row's resolved path, and each entry in the Local overrides row — and
-// the two must not drift into different icons, different flash durations,
-// or different failure behavior.
+// Shared because it appears in more than one place — the viewer's
+// Location row and each entry in its Local overrides row, and the
+// delete dialog's file path — and they must not drift into different
+// icons, different flash durations, or different failure behavior.
+// Its CSS (`.copy-btn`) is in styles.css for the same reason.
 //
 // The text is supplied as a callback rather than a string: a button
 // can outlive the render that made it (the Location row's is one

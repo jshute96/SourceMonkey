@@ -260,6 +260,18 @@ dialog.sm-dialog.delete-dialog { width: 680px; }
 .delete-dialog .dlg-deps[hidden] { display: none; }
 .delete-dialog .dlg-dep-group[hidden] { display: none; }
 .delete-dialog .dlg-dep-group .dlg-hint { margin-top: 0; }
+/* A path + its copy button on one line: the script file's full path,
+   and each dependency file in the lists below it. */
+.delete-dialog .dlg-path-row { display: flex; align-items: center; gap: 0.4em; }
+.delete-dialog .dlg-path-row > span { overflow-wrap: anywhere; }
+/* `display: flex` on an `li` drops its marker; `list-item` inside the
+   flex row would break the layout, so the bullet comes back as a
+   pseudo-element. */
+.delete-dialog li.dlg-path-row { list-style: none; position: relative; }
+.delete-dialog li.dlg-path-row::before { content: '•'; position: absolute; left: -1em; }
+/* One size everywhere in the dialog: the rows differ in font size, so
+   the button's `em` sizing would otherwise differ with them. */
+.delete-dialog .dlg-path-row .copy-btn { width: 20px; height: 20px; }
 .sm-dialog .dlg-deps-list {
   margin: 4px 0 0;
   padding-left: 1.2em;
@@ -587,3 +599,29 @@ select.install-target {
   margin: 0 auto;
   padding: 24px 16px;
 }
+
+/* Square icon-only copy-to-clipboard button (src/copy-button.ts), beside
+   a path in the viewer's Location row and the delete dialog's file row.
+   Swaps the copy icon for a checkmark while the .copied class is on it
+   (set briefly after a successful clipboard write). */
+.copy-btn {
+  flex: 0 0 auto;
+  width: 1.6em;
+  height: 1.6em;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #bbb;
+  border-radius: 3px;
+  background: #fff;
+  color: #444;
+  cursor: pointer;
+}
+.copy-btn:hover { background: #eee; }
+.copy-btn:active { background: #ddd; }
+.copy-btn:focus-visible { outline: 2px solid #4a90e2; outline-offset: 1px; }
+.copy-btn svg { width: 14px; height: 14px; display: block; }
+.copy-btn .check-icon { display: none; color: #166534; }
+.copy-btn.copied .copy-icon { display: none; }
+.copy-btn.copied .check-icon { display: block; }
