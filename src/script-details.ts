@@ -328,11 +328,12 @@ function addSitePage(dl: HTMLDListElement, locationUrl: string, h: ParsedHeader 
   appendRow(dl, row.label, openInNewTabAnchor(row.url, row.url));
 }
 
-// The header's own claim about where the script lives. Read in two
-// places — the Homepage row and the hosting-site row's duplicate check
-// — which have to agree on what counts, or the check silently stops
-// matching when this grows a tag.
-function declaredHomepage(h: ParsedHeader): string | undefined {
+// The header's own claim about where the script lives: the two
+// spellings of the tag, first one wins. Read in three places — the
+// Homepage row here and on the compare page, and the hosting-site
+// row's duplicate check — which have to agree on what counts, or the
+// check silently stops matching when this grows a tag.
+export function declaredHomepage(h: ParsedHeader): string | undefined {
   return getValue(h, 'homepage') ?? getValue(h, 'homepageURL');
 }
 
@@ -580,8 +581,9 @@ function logIdCell(logId: string): Node {
 // Collection-row cell: colored type bubble on the left (linking out to
 // the underlying file:// / http(s):// URL), followed by the
 // collection's display name as a back-link to the collections page
-// anchored at this collection's section.
-function collectionCell(collection: StoredCollection, trailing?: Node): Node {
+// anchored at this collection's section. Also each side's Collection
+// cell on the compare page.
+export function collectionCell(collection: StoredCollection, trailing?: Node): Node {
   const cell = document.createElement('span');
   cell.className = 'collection-cell';
 

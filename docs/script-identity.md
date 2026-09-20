@@ -507,10 +507,14 @@ hides it.
       that row's verdict comes from a separate read. The alternative,
       one column reading from two sources, is worse.
 
-- **Content** says whether a row holds the same loaded code as the copy
-  the panel is about: `SAME` (green, Status's OK) or `DIFFERENT` (blue —
-  not the `modified` chip's teal, which is a near twin of green on this
-  card).
+- **Compare** says whether a row holds the same loaded code as the copy
+  the panel is about: `SAME` (green, Status's OK) or a `DIFF` button
+  (blue — not the `modified` chip's teal, which is a near twin of green
+  on this card). A button rather than a coloured word, because a word
+  in a column of verdicts did not read as clickable: it opens the
+  compare page for that row against the base, in a new tab
+  (`compareUrl`; see [compare.md](compare.md)). A row that differs but
+  has no base to compare with reads `DIFFERENT` as plain text.
   - **What is compared** is `contentFingerprint` in
     `script-identity.ts`: the row's `contentHash` plus each stored
     `@require`'s, in declaration order. Requires count because they are
@@ -523,9 +527,11 @@ hides it.
     says Same until it is refreshed; the Location cell's `modified` chip
     is what reports the disk.
   - **`BASE`**, uncoloured, on the row being compared against — the
-    current row, or the preview's offer row. A copy is neither the same
-    as nor different from itself, and a blank cell read as missing data
-    rather than as the reference.
+    current row; on a preview the offer row is the reference and reads
+    **`NEW`**, since it is the download the installed copies would be
+    replaced by. A copy is neither the same as nor different from
+    itself, and a blank cell read as missing data rather than as the
+    reference.
   - **Em dash** when either side has no content: a row that never
     loaded, or one whose header declares `@require`s it holds none of —
     a dependency that would not load, or a preview whose parse check
@@ -533,8 +539,6 @@ hides it.
     (`recordPreviewFiles`), so those dashes resolve rather than a Same
     flipping to Different; a check that fails leaves them. The em dash
     means "not compared", as in Status.
-  - A diff view behind `DIFFERENT` is the planned follow-up — see
-    [TODO.md](../TODO.md).
 
 ### Layout
 
@@ -544,7 +548,7 @@ hides it.
   as unrelated grids.
 - **Status does not shed** either: it says whether a copy works, and
   its link is the only route from here to that copy's log.
-- **Status, Version, Content, and the actions column are measured, not
+- **Status, Version, Compare, and the actions column are measured, not
   guessed.** `fitColumns` sizes each to its own widest cell across every
   section table and writes the result to the panel as custom properties;
   Location absorbs everything left over.
@@ -561,7 +565,7 @@ hides it.
   - The stylesheet's widths remain as fallbacks, for the first paint
     and for a panel measured while hidden (which reports zero).
 - Narrow windows shed **Version** below 640px rather than wrapping
-  every cell to a ribbon. Content stays: it is the panel's one answer to
+  every cell to a ribbon. Compare stays: it is the panel's one answer to
   whether the copies actually differ, which Version only hints at. It is the least load-bearing: nothing acts on
   it, and the copies it distinguishes are still told apart by collection
   and location. Zeroing the `<col>` width alongside `display: none` on
@@ -785,7 +789,7 @@ what it adds.
   `@namespace`** are treated as one. Inherited from the convention; see
   above.
 - **Neither match compares content.** Two rows at the same URL can hold
-  different bytes if one has not been refreshed. The Content column
+  different bytes if one has not been refreshed. The Compare column
   reports that; it does not change which rows are listed.
 - **A row's version is not necessarily the newest published one.** The
   `@updateURL` / `@downloadURL` upstream is tracked separately by

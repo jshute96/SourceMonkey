@@ -35,7 +35,7 @@ import {
   collectionAnchorId,
   collectionHasManifest,
 } from './collection-display.js';
-import { wireNamedTabLink } from './page-links.js';
+import { openExtensionTab, wireNamedTabLink } from './page-links.js';
 import { getValue } from './userscript-header.js';
 import { guardSelectOpeningClick } from './select-open-guard.js';
 import { setDeleteIcon } from './delete-icon.js';
@@ -152,12 +152,18 @@ export interface RelatedVersionsModel extends RelatedVersions {
   // what exists instead. Whether the install offer appears is decided
   // by `actions.install`, not by this.
   mode: 'installed' | 'preview';
-  // What the Content column compares each row against: the
+  // What the Compare column compares each row against: the
   // `contentFingerprint` of the script on screen (viewer) or of the
   // download being shown (preview). Undefined when that side has no
   // content yet — every row then shows an em dash rather than a
   // verdict that would flip once it arrives.
   content?: string;
+  // Where a differing row's DIFF button leads: the compare page for
+  // that row against the copy the panel is about (`compareUrl` in
+  // script-display.ts). Built by the caller because only it knows
+  // whether the base is a stored script or a preview's location. With
+  // no builder the verdict is the plain word.
+  compareHref?: (other: StoredScript) => string;
   // `@version` of the script on screen, used to fill the Version cell
   // of the install-offer row. Without it that one row
   // would read as version-less next to copies that all show one,
@@ -447,7 +453,7 @@ function collapseToggle(container: HTMLElement, model: RelatedVersionsModel): HT
 // Only the columns whose content has a natural width. Collection and
 // Location are the flexible pair that absorb the remainder, and the
 // two icon columns are already exactly a control wide.
-const FITTED_COLUMNS = ['col-status', 'col-version', 'col-content', 'col-actions'] as const;
+const FITTED_COLUMNS = ['col-status', 'col-version', 'col-compare', 'col-actions'] as const;
 
 // Measured by switching the tables to `auto` layout at `max-content`
 // width — the one state where a cell reports what its content actually
@@ -616,7 +622,7 @@ function makeTable(
     'col-location',
     'col-status',
     'col-version',
-    'col-content',
+    'col-compare',
     'col-actions',
     'col-remove',
   ]) {
@@ -644,7 +650,7 @@ function appendHeadings(
     ['Location', 'col-location'],
     ['Status', 'col-status'],
     ['Version', 'col-version'],
-    ['Content', 'col-content'],
+    ['Compare', 'col-compare'],
     ['', 'col-actions'],
     ['', 'col-remove'],
   ] as const) {
@@ -733,7 +739,7 @@ function versionRow(
   tr.appendChild(locationCell(rel, isCurrent, mode));
   tr.appendChild(statusCell(script.id, status));
   tr.appendChild(versionCell(script));
-  tr.appendChild(contentCell(isCurrent ? undefined : script, model.content, mode));
+  tr.appendChild(contentCell(isCurrent ? undefined : script, model));
   tr.appendChild(actionsCell(rel, actions, isCurrent, verb, mode));
   tr.appendChild(removeCell(rel, actions, deletesFile));
   return tr;
@@ -982,10 +988,12 @@ function versionCellFor(version: string | undefined, noneTitle: string): HTMLTab
 // `contentFingerprint` — matches the copy the panel compares against:
 // the script on screen, or the download a preview is showing.
 //
-// `BASE` for the reference row itself (`script` undefined): a copy is
-// neither the same as nor different from itself, and a blank there
-// read as a missing value rather than as the row the others are
-// measured against. An em dash when either side has no content to
+// The reference row itself (`script` undefined) is labelled rather
+// than left blank: a copy is neither the same as nor different from
+// itself, and a blank there read as a missing value rather than as the
+// row the others are measured against. `BASE` on the viewer; `NEW` on
+// a preview, where the reference is the download and the installed
+// rows are what it would replace. An em dash when either side has no content to
 // compare (see `contentFingerprint`: never loaded, or `@require`s it
 // does not hold) — for the same reason the Status cell shows one:
 // absent is not a claim.
@@ -995,34 +1003,57 @@ function versionCellFor(version: string | undefined, noneTitle: string): HTMLTab
 // refreshed, and the Location cell's `modified` chip is what says so.
 function contentCell(
   script: StoredScript | undefined,
-  reference: string | undefined,
-  mode: RelatedVersionsModel['mode'],
+  model: RelatedVersionsModel,
 ): HTMLTableCellElement {
-  const td = cell('col-content');
+  const { mode } = model;
+  const td = cell('col-compare');
   if (!script) {
     const span = document.createElement('span');
     span.className = 'content-base';
-    span.textContent = 'BASE';
+    span.textContent = mode === 'preview' ? 'NEW' : 'BASE';
     span.title = mode === 'preview'
-      ? 'The script being previewed, which the other rows are compared against'
+      ? 'The script being previewed, which the installed copies are compared against'
       : 'The copy on screen, which the other rows are compared against';
     td.appendChild(span);
     return td;
   }
   const own = contentFingerprint(script);
-  if (own === undefined || reference === undefined) {
+  if (own === undefined || model.content === undefined) {
     td.textContent = '—';
     return td;
   }
-  const same = own === reference;
   const other = mode === 'preview' ? 'the script being previewed' : 'the copy on screen';
-  const span = document.createElement('span');
-  span.className = same ? 'content-same' : 'content-different';
-  span.textContent = same ? 'SAME' : 'DIFFERENT';
-  span.title = same
-    ? `This copy\u2019s code and @require files match ${other}`
-    : `This copy\u2019s code or @require files differ from ${other}`;
-  td.appendChild(span);
+  if (own === model.content) {
+    const span = document.createElement('span');
+    span.className = 'content-same';
+    span.textContent = 'SAME';
+    span.title = `This copy\u2019s code and @require files match ${other}`;
+    td.appendChild(span);
+    return td;
+  }
+  // A copy that differs gets a DIFF button, which opens the compare
+  // page in a new tab: the panel is where the user is working, and the
+  // compare page is a look at one copy from it. A button rather than a
+  // coloured word, because a word in a column of verdicts does not read
+  // as something to click. Without a page to link to, the verdict is
+  // the plain word.
+  const href = model.compareHref?.(script);
+  if (!href) {
+    const span = document.createElement('span');
+    span.className = 'content-different';
+    span.textContent = 'DIFFERENT';
+    span.title = `This copy\u2019s code or @require files differ from ${other}`;
+    td.appendChild(span);
+    return td;
+  }
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'content-diff';
+  btn.textContent = 'DIFF';
+  btn.title = `This copy\u2019s code or @require files differ from ${other} — show the differences`;
+  btn.dataset.href = href;
+  btn.addEventListener('click', () => { void openExtensionTab(href); });
+  td.appendChild(btn);
   return td;
 }
 
@@ -1220,7 +1251,7 @@ function installRow(
 
   // The offer IS the download the other rows are compared against, so
   // it is the base row here — same as the current row on the viewer.
-  tr.appendChild(contentCell(undefined, undefined, 'preview'));
+  tr.appendChild(contentCell(undefined, model));
 
   // Nothing to refetch and nothing to remove: the copy does not exist
   // yet. Empty cells rather than disabled controls, which would imply

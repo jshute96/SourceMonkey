@@ -328,8 +328,8 @@ duplicated bytes). Two measures keep it bounded:
   `src/glyph-sprite.svg`, which the build inlines once per page (see
   *Glyph sprite* in [architecture.md](architecture.md)); each slot
   renders a tiny `<svg class="site-icon-globe"><use href="#sm-globe">`.
-  Stroke/fill styling lives in CSS on `.site-icon-globe` so it still
-  inherits `currentColor`.
+  Stroke/fill styling lives in CSS on `.site-icon-globe` (styles.css,
+  shared by every page with a slot) so it still inherits `currentColor`.
 - **Deduped blob: URLs for large icons.** `iconImgSrc` converts a
   cached icon `data:` URL above `ICON_INLINE_MAX_LEN` (512 chars) into
   a `blob:` URL once — via `dataUrlToBlob` + `URL.createObjectURL` —

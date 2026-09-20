@@ -333,7 +333,7 @@ function collectionSortKey(r: RelatedScript): string {
   return r.collection ? effectiveDisplayName(r.collection) : '';
 }
 
-// What the panel's Content column compares: a copy's own source text
+// What the panel's Compare column compares: a copy's own source text
 // plus every `@require` body it loaded, in declaration order. Built
 // from the hashes the store already keeps for each (`contentHash` on
 // the row and on each require entry), so it is string assembly, not

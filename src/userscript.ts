@@ -119,12 +119,13 @@ import {
 import { updateScript } from './script-updater.js';
 import {
   appendWithSlashBreaks,
-  decodeForDisplay,
+  compareUrl,
   scriptLabel,
   displayLocation,
   formatBytes,
   formatScriptSize,
-  leafName,
+  fullSource,
+  requireBasename,
   scriptBasename,
   scriptStatusView,
   stripSriFragment,
@@ -133,16 +134,15 @@ import {
 } from './script-display.js';
 import {
   getValue,
-  joinFullSource,
   parseHeader,
   splitHeaderBody,
   type ParsedHeader,
 } from './userscript-header.js';
 import {
   canonicalCollectionInput,
-  fetchScriptFileUrlText,
-  fetchHttpText,
+  fetchSingleFileText,
   isContainerCollection,
+  isSingleFileLocation,
   isFileUrl,
   isHttpUrl,
   LOCATION_SHAPES,
@@ -154,7 +154,7 @@ import {
 import {
   COLLECTION_OFF_TITLE,
 } from './collection-display.js';
-import { renderSiteIconInto } from './site-icon.js';
+import { HEADING_SITE_ICONS, renderSiteIconInto } from './site-icon.js';
 // Also the page's early heading paint — see src/page-heading.ts. The
 // module runs once, so importing it here does not repeat that.
 import {
@@ -199,6 +199,7 @@ import { CodeTabsView, type CodeTab } from './code-tabs.js';
 import { makeCopyButton } from './copy-button.js';
 import { markFileChanges, missingFiles, scriptFileTag } from './file-changes.js';
 import { renderDetails } from './script-details.js';
+import { installSelectAll } from './select-all.js';
 
 // Install and Refresh run the load pipeline here in the page, so this
 // page needs its own parse checker — without one, Install would store
@@ -914,6 +915,16 @@ function render(script: StoredScript): void {
 // `resolveAnchor`.
 let panelAnchorId = '';
 
+// What the compare page is told the base is: the copy on screen, or
+// the download this preview is showing — the same side the Content
+// column's `content` was computed from. Nothing when an installed paint
+// has no current script, which is also when there is no verdict to
+// link from.
+function compareBase(args: RelatedVersionsPaint): { script: string } | { preview: string } | undefined {
+  if (args.mode === 'preview') return { preview: previewLocation };
+  return args.currentScriptId ? { script: args.currentScriptId } : undefined;
+}
+
 // The row the next panel paint should put focus on: set when a
 // selection is made from the table, consumed by that paint. Held
 // across the paint rather than restored inline because the paint is
@@ -1045,32 +1056,10 @@ versionsEl.addEventListener('keydown', (ev: KeyboardEvent) => {
 });
 
 // Ctrl/Cmd-A anywhere on the page selects the file content — or the
-// Log table when that tab is showing — instead of the whole page. The
-// only thing worth copying out of the viewer is the script (or the
-// log), and a page-wide selection drags the header, details rows and
-// button labels along with it, which nobody wants to paste. Wherever
-// focus is, Ctrl-A then Ctrl-C copies the file.
-//
-// Left alone inside a text control or an open dialog, where select-all
-// means what it always did.
-document.addEventListener('keydown', (ev: KeyboardEvent) => {
-  if (ev.defaultPrevented) return;
-  // `code` as well as `key`: on a non-Latin layout the A key reports
-  // its own letter, and Chrome's select-all still fires on it.
-  if (ev.key.toLowerCase() !== 'a' && ev.code !== 'KeyA') return;
-  if (!(ev.ctrlKey || ev.metaKey) || ev.altKey || ev.shiftKey) return;
-  const target = ev.target;
-  if (target instanceof Element && target.closest('input, textarea, select, [contenteditable], dialog[open]')) return;
-  const pane = selectAllTarget();
-  if (!pane) return;
-  ev.preventDefault();
-  const selection = window.getSelection();
-  if (!selection) return;
-  const range = document.createRange();
-  range.selectNodeContents(pane);
-  selection.removeAllRanges();
-  selection.addRange(range);
-});
+// Log table when that tab is showing — instead of the whole page
+// (src/select-all.ts). Wherever focus is, Ctrl-A then Ctrl-C copies the
+// file.
+installSelectAll(selectAllTarget);
 
 // What Ctrl-A selects: the code element (its text is exactly the file —
 // the line-number gutter and the line-flash overlay hold no text), or
@@ -1483,15 +1472,17 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
   const toggleFocused = document.activeElement !== null
     && document.activeElement === versionsEl.querySelector('.versions-collapse');
 
-  // The copy the Content column compares every other row against.
+  // The copy the Compare column compares every other row against.
   const shownScript = args.mode === 'installed'
     ? snapshot.scripts.find((s) => s.id === args.currentScriptId)
     : undefined;
+  const base = compareBase(args);
   renderRelatedVersions(versionsEl, {
     ...related,
     actions,
     status,
     content: shownScript ? contentFingerprint(shownScript) : previewContent(),
+    compareHref: base && ((other) => compareUrl(base, other.id)),
     mode: args.mode,
     location: args.location,
     version: args.header ? getValue(args.header, 'version') : undefined,
@@ -1938,7 +1929,7 @@ function storedTabs(script: StoredScript): CodeTab[] {
   const tabs: CodeTab[] = [{
     kind: 'code',
     label: scriptBasename(script.relativePath),
-    body: buildMainTabBody(script),
+    body: fullSource(script),
     fileUrl: script.fileUrl,
     sourceUrl: mainSourceUrl,
     ...codeTabProvenance({ url: script.fileUrl }),
@@ -1970,24 +1961,6 @@ function storedTabs(script: StoredScript): CodeTab[] {
   return tabs;
 }
 
-// Reconstruct the original on-disk source from the stored split.
-// Same string the injector splices into the registered code, so the
-// viewer's main tab line N matches the file line N AND injected line
-// N (modulo any @require sections that sit before the main script).
-function buildMainTabBody(script: StoredScript): string {
-  return joinFullSource(
-    script.leadingText ?? '',
-    script.headerText ?? '',
-    script.bodyText,
-  );
-}
-
-// Pull a display basename off a require's resolved URL. Falls back to
-// the verbatim ref if URL parsing fails — won't happen for entries we
-// stored (the resolver wouldn't have accepted the URL otherwise), but
-// the fallback keeps a future shape change from breaking the tab UI.
-// Not `scriptBasename`: that one falls back to the whole URL, and a
-// require tab labeled with a full CDN URL would wreck the tab strip.
 // Tooltip + chip for a code tab, saying where its body came from.
 //
 // Every code tab gets the tooltip — the main script's as much as a
@@ -2020,16 +1993,6 @@ function codeTabProvenance(
     title: `${url}\n\nLoaded from ${displayLocation(file.localUrl)}`,
     mark: 'local',
   };
-}
-
-function requireBasename(url: string, ref: string): string {
-  let name: string;
-  try {
-    name = leafName(new URL(url).pathname);
-  } catch {
-    return ref;
-  }
-  return name ? decodeForDisplay(name) : ref;
 }
 
 // Build the Status row content: an anchor whose href is `#Log` so
@@ -2124,7 +2087,7 @@ async function loadPreview(): Promise<void> {
     // turns anything that isn't already http(s)/file:// into a
     // file:// URL, so an `ftp://…` param would otherwise fail with a
     // baffling `file:///ftp%3A//…` error instead of being named.
-    if (!isPreviewableInput(input)) {
+    if (!isSingleFileLocation(input)) {
       badInput = true;
       // A whole sentence, not a fragment: the catch renders it as-is
       // rather than under the `Could not fetch this script: ` prefix
@@ -2137,7 +2100,7 @@ async function loadPreview(): Promise<void> {
     // collapses to its bare path.
     previewLocation = canonicalCollectionInput(await normalizeCollectionInput(input));
     previewFileUrl = collectionCanonicalUrl(previewLocation);
-    text = await fetchPreviewText(previewFileUrl);
+    text = await fetchSingleFileText(previewFileUrl);
   } catch (err) {
     // The URL answered with a web page, and we only came here because
     // the capture guessed it was a script. That guess is wrong, so
@@ -2209,26 +2172,6 @@ function previewContent(): string | undefined {
     header: previewHeader,
     requires: previewFiles?.requires ?? [],
   });
-}
-
-// Shapes we know how to preview, checked against the raw input. Mirrors
-// what the collections page's Add field accepts for a single script: an
-// http(s) or file:// URL, or an absolute local path.
-function isPreviewableInput(input: string): boolean {
-  return isHttpUrl(input) || isFileUrl(input) || input.startsWith('/');
-}
-
-// Fetch the text to preview. By this point the location has been
-// canonicalized, so it is http(s) or file:// — the two shapes a
-// single-file location can take.
-async function fetchPreviewText(url: string): Promise<string> {
-  if (isFileUrl(url)) return fetchScriptFileUrlText(url);
-  const result = await fetchHttpText(url);
-  // `unchanged` needs a conditional request to happen, and we send
-  // none — but the type includes it, so fail loudly rather than
-  // rendering an empty page if that ever changes.
-  if (result.kind !== 'ok') throw new Error('No content returned');
-  return result.text;
 }
 
 function renderPreview(text: string): void {
@@ -2683,7 +2626,7 @@ function recordPreviewFiles(files: AttachFilesResult): void {
   previewLocalFiles.clear();
   for (const [ref, url] of next) previewLocalFiles.set(ref, url);
 
-  // The panel's Content column compares against these too — see
+  // The panel's Compare column compares against these too — see
   // `previewContent`. Repainted only when its answer moved: the first
   // time the requires land (the column was showing dashes for them),
   // or a re-check that fetched a library with new content.
@@ -3458,10 +3401,6 @@ function renderHeading(
   );
 }
 
-// The heading shows more sites than a collections row: it is the one
-// place a script's whole target list is worth a glance, and nothing
-// beside it needs to line up.
-const HEADING_SITE_ICONS = 10;
 
 function setMessage(text: string, kind: '' | 'error' | 'refresh-failed' = ''): void {
   messageEl.textContent = text;

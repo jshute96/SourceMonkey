@@ -168,7 +168,7 @@ test.describe('other-versions panel', () => {
 
     // Status sits between Location and Version; Content follows.
     const headings = await page.locator(`${PANEL} thead th`).allTextContents();
-    expect(headings.slice(2, 6)).toEqual(['Location', 'Status', 'Version', 'Content']);
+    expect(headings.slice(2, 6)).toEqual(['Location', 'Status', 'Version', 'Compare']);
 
     const cell = page.locator(`${PANEL} tr[data-script-id="${inFolder.id}"] td.col-status a`);
     await expect(cell).toHaveText('OK');
@@ -1089,9 +1089,9 @@ test.describe('other-versions panel', () => {
     await page.close();
   });
 
-  // The Content column says whether each other copy holds the same
+  // The Compare column says whether each other copy holds the same
   // loaded code as the copy on screen — body and `@require`s together.
-  test('the Content column compares each copy against the one on screen', async ({
+  test('the Compare column compares each copy against the one on screen', async ({
     extensionContext, extensionId, sm,
   }) => {
     const ns = 'https://example.com/ns';
@@ -1109,7 +1109,7 @@ test.describe('other-versions panel', () => {
     const page = await extensionContext.newPage();
     await page.goto(`chrome-extension://${extensionId}/${viewer(standalone.id)}`);
 
-    const content = (id: string) => page.locator(`${ROWS}[data-script-id="${id}"] td.col-content`);
+    const content = (id: string) => page.locator(`${ROWS}[data-script-id="${id}"] td.col-compare`);
     // The copy on screen is compared against, not with itself.
     await expect(content(standalone.id)).toHaveText('BASE');
     await expect(content(inFolder.id)).toHaveText('SAME');
@@ -1121,20 +1121,35 @@ test.describe('other-versions panel', () => {
     write('b.user.js', 'Twin Script', { namespace: ns, version: '2.0.1' });
     await expect(content(twin.id)).toHaveText('SAME');
     await page.locator(`${PANEL} th.col-actions button`).click();
-    await expect(content(twin.id)).toHaveText('DIFFERENT');
-    await expect(content(twin.id).locator('span')).toHaveClass('content-different');
+    await expect(content(twin.id)).toHaveText('DIFF');
+    // A copy that differs gets a button to the diff: the compare page,
+    // with the copy on screen as the base and this row as the other
+    // side, in a new tab.
+    const diffBtn = content(twin.id).locator('button.content-diff');
+    await expect(diffBtn).toHaveAttribute(
+      'data-href',
+      `compare.html?script=${standalone.id}&other=${twin.id}`,
+    );
+    const [comparePage] = await Promise.all([
+      extensionContext.waitForEvent('page'),
+      diffBtn.click(),
+    ]);
+    await expect(comparePage).toHaveURL(
+      `chrome-extension://${extensionId}/compare.html?script=${standalone.id}&other=${twin.id}`,
+    );
+    await comparePage.close();
     await expect(content(inFolder.id)).toHaveText('SAME');
 
     // Switching copies in place moves the comparison with the page.
     await page.locator(`${ROWS}[data-script-id="${twin.id}"] td.col-version`).click();
     await expect(page.locator(`${PANEL} tr.is-current`)).toHaveAttribute('data-script-id', twin.id);
     await expect(content(twin.id)).toHaveText('BASE');
-    await expect(content(standalone.id)).toHaveText('DIFFERENT');
-    await expect(content(inFolder.id)).toHaveText('DIFFERENT');
+    await expect(content(standalone.id)).toHaveText('DIFF');
+    await expect(content(inFolder.id)).toHaveText('DIFF');
     await page.close();
   });
 
-  test('the Content column counts a differing @require', async ({
+  test('the Compare column counts a differing @require', async ({
     extensionContext, extensionId, sm,
   }) => {
     // Two directories, each with an identical script that requires its
@@ -1163,13 +1178,13 @@ test.describe('other-versions panel', () => {
       const [shown, rest] = scripts;
       const page = await extensionContext.newPage();
       await page.goto(`chrome-extension://${extensionId}/${viewer(shown.id)}`);
-      await expect(page.locator(`${ROWS}[data-script-id="${rest.id}"] td.col-content`))
-        .toHaveText('DIFFERENT');
+      await expect(page.locator(`${ROWS}[data-script-id="${rest.id}"] td.col-compare`))
+        .toHaveText('DIFF');
 
       // Bring the libraries into line; the refresh picks the change up.
       other.writeRaw('lib.js', 'window.__lib = 1;\n');
       await page.locator(`${ROWS}[data-script-id="${rest.id}"] td.col-actions button`).click();
-      await expect(page.locator(`${ROWS}[data-script-id="${rest.id}"] td.col-content`))
+      await expect(page.locator(`${ROWS}[data-script-id="${rest.id}"] td.col-compare`))
         .toHaveText('SAME');
       await page.close();
     } finally {
@@ -1204,11 +1219,11 @@ test.describe('other-versions panel', () => {
       await page.goto(`chrome-extension://${extensionId}/${viewer(healthy.id)}`);
       // Body-only would call it DIFFERENT; with its library missing
       // there is nothing to compare, so the cell says so.
-      await expect(page.locator(`${ROWS}[data-script-id="${broken.id}"] td.col-content`))
+      await expect(page.locator(`${ROWS}[data-script-id="${broken.id}"] td.col-compare`))
         .toHaveText('\u2014');
       // Standing on the broken copy, no row can be compared either.
       await page.goto(`chrome-extension://${extensionId}/${viewer(broken.id)}`);
-      await expect(page.locator(`${ROWS}[data-script-id="${healthy.id}"] td.col-content`))
+      await expect(page.locator(`${ROWS}[data-script-id="${healthy.id}"] td.col-compare`))
         .toHaveText('\u2014');
       await page.close();
     } finally {
@@ -1227,15 +1242,22 @@ test.describe('other-versions panel', () => {
     const page = await extensionContext.newPage();
     const preview = `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`file://${path}`)}`;
     await page.goto(preview);
-    const content = page.locator(`${ROWS}[data-script-id="${installed.id}"] td.col-content`);
+    const content = page.locator(`${ROWS}[data-script-id="${installed.id}"] td.col-compare`);
     await expect(content).toHaveText('SAME');
-    // The offer row IS the download: the base the rest are compared with.
-    await expect(page.locator(`${PANEL} tr.is-offer td.col-content`)).toHaveText('BASE');
+    // The offer row IS the download: what the installed rows are
+    // compared with, and what would replace them.
+    await expect(page.locator(`${PANEL} tr.is-offer td.col-compare`)).toHaveText('NEW');
 
     // The file moves on; a fresh preview shows the stored copy behind.
     write('hello.user.js', 'Shared Script', { version: '1.0.1' });
     await page.goto(preview);
-    await expect(content).toHaveText('DIFFERENT');
+    await expect(content).toHaveText('DIFF');
+    // The button compares this row against the download, named by the
+    // preview's normalized location.
+    await expect(content.locator('button.content-diff')).toHaveAttribute(
+      'data-href',
+      `compare.html?preview=${encodeURIComponent(path)}&other=${installed.id}`,
+    );
     await page.close();
   });
 

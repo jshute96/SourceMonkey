@@ -9,7 +9,7 @@
 // `version-probe-fetch.js` and is deliberately not reachable here.)
 
 import type { StoredScript } from './script-store.js';
-import { getValue, type ParsedHeader } from './userscript-header.js';
+import { getValue, joinFullSource, type ParsedHeader } from './userscript-header.js';
 import { outdatedProbe, probeLabel, type VersionProbe } from './version-probe.js';
 import { describeDiagnostic } from './diagnostic-location.js';
 
@@ -286,6 +286,20 @@ export function viewerUrl(scriptId: string, tab?: 'log'): string {
   return `userscript.html?${params.toString()}${tab === 'log' ? '#Log' : ''}`;
 }
 
+// The compare page for two copies of a script (src/compare.ts). The
+// right-hand side is the base: the copy on screen, or the download a
+// preview is showing; `other` is the copy to hold up against it.
+export function compareUrl(
+  base: { script: string } | { preview: string },
+  other: string,
+): string {
+  const params = new URLSearchParams(
+    'script' in base ? { script: base.script } : { preview: base.preview },
+  );
+  params.set('other', other);
+  return `compare.html?${params.toString()}`;
+}
+
 // The install-preview URL for a location the user typed or pasted.
 // Page-relative for the same reason `viewerUrl` is; callers that need
 // the absolute form wrap it in `chrome.runtime.getURL`.
@@ -375,4 +389,34 @@ export function stripSriFragment(urlOrRef: string): string {
   if (!fragment) return urlOrRef;
   if (!fragment.split(',').every((part) => SRI_PART_RE.test(part))) return urlOrRef;
   return urlOrRef.slice(0, hash);
+}
+
+// A stored script's text as it was on disk, rebuilt from the stored
+// split: what is above the header, the header, the body. The same
+// string the injector splices into the registered code, so the viewer's
+// main tab line N matches the file's line N AND the injected line N
+// (modulo any @require sections that sit before the main script). The
+// compare page diffs this too.
+export function fullSource(script: StoredScript): string {
+  return joinFullSource(
+    script.leadingText ?? '',
+    script.headerText ?? '',
+    script.bodyText,
+  );
+}
+
+// Pull a display basename off a require's resolved URL. Falls back to
+// the verbatim ref if URL parsing fails — won't happen for entries we
+// stored (the resolver wouldn't have accepted the URL otherwise), but
+// the fallback keeps a future shape change from breaking the tab UI.
+// Not `scriptBasename`: that one falls back to the whole URL, and a
+// require tab labeled with a full CDN URL would wreck the tab strip.
+export function requireBasename(url: string, ref: string): string {
+  let name: string;
+  try {
+    name = leafName(new URL(url).pathname);
+  } catch {
+    return ref;
+  }
+  return name ? decodeForDisplay(name) : ref;
 }

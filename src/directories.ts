@@ -558,6 +558,31 @@ export type HttpFetchResult =
   | { kind: 'ok'; text: string; etag?: string; lastModified?: string }
   | { kind: 'unchanged' };  // 304
 
+// Whether an input names one script file, checked against the raw
+// input before any canonicalization: an http(s) or file:// URL, or an
+// absolute local path — the same shapes the collections page's Add
+// field accepts for a single script. Checked before canonicalizing
+// because `collectionCanonicalUrl` turns anything else into a file://
+// URL, and an `ftp://…` would otherwise fail with a baffling
+// `file:///ftp%3A//…` error instead of being named.
+export function isSingleFileLocation(input: string): boolean {
+  return isHttpUrl(input) || isFileUrl(input) || input.startsWith('/');
+}
+
+// The text at a single-file location — the two shapes one can take once
+// canonicalized, http(s) or file://. What the install preview fetches,
+// and what the compare page fetches to stand a download against an
+// installed copy.
+export async function fetchSingleFileText(url: string): Promise<string> {
+  if (isFileUrl(url)) return fetchScriptFileUrlText(url);
+  const result = await fetchHttpText(url);
+  // `unchanged` needs a conditional request to happen, and we send
+  // none — but the type includes it, so fail loudly rather than
+  // rendering an empty page if that ever changes.
+  if (result.kind !== 'ok') throw new Error('No content returned');
+  return result.text;
+}
+
 // What the caller is going to do with the bytes, for the one message
 // that has to name it: this fetcher reads both script bodies and
 // collection manifests, and "not JavaScript" is the wrong complaint

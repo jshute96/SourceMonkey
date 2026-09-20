@@ -70,40 +70,10 @@
         overflow-wrap: anywhere;
         word-break: normal;
       }
-      /* Slot for the site favicons, sitting between the heading's
-         product prefix and the script's name. Always present, and at
-         least one icon wide, so the name starts at the same offset past
-         the prefix whether or not a favicon resolves. Holds one
-         clickable <a> per distinct site the script's @match names
-         (side by side, 2px gap), or one inert <span> when it names
-         none.
-         Inner content is a globe placeholder until the real favicon
-         loads. */
-      h1 .site-icon {
-        display: inline-flex;
-        gap: 2px;
-        min-width: 16px;
-        height: 16px;
-        margin-right: 0.4em;
-        /* Centred on the heading's CAP band, not on its baseline or its
-           descender line. `text-bottom` sits the 16px square on the
-           font's descender, which puts its centre ~1.4px below the
-           centre of the letters beside it — visible as a favicon
-           hanging low. The heading is 16.1px with a 12px cap height, so
-           2px of the square below the baseline centres the two. */
-        vertical-align: -2px;
-      }
-      .site-icon-inner {
-        display: block;
-        width: 16px;
-        height: 16px;
-        flex: 0 0 auto;
-        color: #888;
-      }
-      a.site-icon-inner { text-decoration: none; }
-      a.site-icon-inner:hover { color: #444; }
-      .site-icon img { width: 16px; height: 16px; display: block; }
-      .site-icon-globe { width: 16px; height: 16px; display: block; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+      /* The heading's favicon slot (`h1 .site-icon`) is shared with the
+         compare page — see styles.css. */
+      /* The icons inside the slot (`.site-icon-inner`, the globe, the
+         <img>) are styled once for every page in styles.css. */
       /* Controls row: everything that acts on the script itself —
          the enable toggle, Local copy…, the delete trash can, Refresh.
          The filename, size, and status moved into the details panel
@@ -509,7 +479,7 @@
       .versions-table col.col-collection { width: 26%; }
       .versions-table col.col-status   { width: var(--w-col-status, 8em); }
       .versions-table col.col-version  { width: var(--w-col-version, 7em); }
-      .versions-table col.col-content  { width: var(--w-col-content, 7em); }
+      .versions-table col.col-compare  { width: var(--w-col-compare, 7em); }
       .versions-table col.col-actions  { width: var(--w-col-actions, 6em); }
       .versions-table col.col-remove   { width: 2.4em; }
       /* Same #444 as the section heading above the table: the panel's
@@ -557,7 +527,7 @@
          measured width, so the gutter survives the fit. */
       .versions-table .col-status,
       .versions-table .col-version,
-      .versions-table .col-content { padding-right: 1.1em; }
+      .versions-table .col-compare { padding-right: 1.1em; }
       /* Status reuses the `status-*` colours the controls row and the
          collections page already use, so one verdict is one colour
          everywhere, and styles its link as status text — see
@@ -570,16 +540,28 @@
         white-space: nowrap;
       }
       .versions-table .col-status a:hover { text-decoration: underline; }
-      /* Content is a verdict like Status and dressed like one. Green is
+      /* Compare is a verdict like Status and dressed like one. Green is
          Status's own OK. DIFFERENT is blue, not the `modified` chip's
          teal: on this panel's green card teal and green are near twins
          down a column, and the two words have to be told apart at a
-         glance. BASE marks the row the rest are compared against and
-         carries no colour — it is a label, not a verdict. */
-      .versions-table td.col-content { font-size: 12px; white-space: nowrap; }
-      .versions-table td.col-content span { font-weight: 600; }
+         glance. BASE (NEW on a preview) marks the row the rest are
+         compared against and carries no colour — it is a label, not a
+         verdict. */
+      .versions-table td.col-compare { font-size: 12px; white-space: nowrap; }
+      /* Flush left, all of it: the heading, the words, and the DIFF
+         button's EDGE — not its label — start on the column's line. */
+      .versions-table td.col-compare span { font-weight: 600; }
       .versions-table .content-same { color: #166534; }
       .versions-table .content-different { color: #1d4ed8; }
+      /* DIFF: the verdict as a button, since it opens the compare page.
+         The shared button surface (styles.css), in DIFFERENT's blue and
+         the column's weight, sized like the row's other buttons. */
+      .versions-table button.content-diff {
+        padding: 0 0.6em;
+        font-size: 12px;
+        font-weight: 600;
+        color: #1d4ed8;
+      }
       .versions-table .content-base { color: #555; }
       /* Slash-aware wrap; see the h1 rule above. `min-width: 0` lets
          a long URL shrink its column rather than widening the table. */
@@ -771,42 +753,9 @@
          entirely above the code box (no overlap, no negative margin
          tricks) so the layout is robust against the body's flex
          column constraints. */
-      .tabs {
-        display: flex;
-        flex: 0 0 auto;
-        gap: 3px;
-        margin: 0;
-        padding: 0;
-        overflow-x: auto;
-      }
-      .tab {
-        /* Its own height: a tab sizes to its label and the strip's
-           bottom edge, and the shared button height squeezes the
-           label's line box. */
-        height: auto;
-        font: inherit;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        font-size: 12px;
-        line-height: 1.2;
-        padding: 0.45em 0.9em;
-        border: 1px solid #ccc;
-        border-radius: 4px 4px 0 0;
-        background: #e4e4e4;
-        color: #555;
-        cursor: pointer;
-        white-space: nowrap;
-      }
-      .tab:hover { background: #efefef; }
-      /* Hover lightens a tab toward the selected look, so pressing
-         goes the other way to stay a press. */
-      .tab:active:not(.active) { background: #d4d4d4; }
-      .tab.active {
-        background: #fafafa;
-        color: #222;
-        font-weight: 600;
-        border-bottom-color: #fafafa;
-      }
-      .tab:focus-visible { outline: 2px solid #4a90e2; outline-offset: -2px; }
+      /* The tab strip itself (`.tabs`, `.tab`) is shared with the
+         compare page — see styles.css. Only the chip's placement in a
+         tab is this page's own. */
       /* Positioning only — the chip's own look is above. */
       .tab-mark { margin-left: 0.5em; vertical-align: 1px; }
       /* The code box fills the rest of the viewport and scrolls. The

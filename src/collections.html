@@ -115,17 +115,8 @@
            display:block. */
         text-indent: 0;
       }
-      .site-icon-inner {
-        display: block;
-        width: 16px;
-        height: 16px;
-        flex: 0 0 auto;
-        color: #888;
-      }
-      a.site-icon-inner { text-decoration: none; }
-      a.site-icon-inner:hover { color: #444; }
-      .site-icon img { width: 16px; height: 16px; display: block; }
-      .site-icon-globe { width: 16px; height: 16px; display: block; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+      /* The icons inside the slot (`.site-icon-inner`, the globe, the
+         <img>) are styled once for every page in styles.css. */
       /* Script names come from the file/URL and can be arbitrarily long
          (web-installed scripts often carry a whole marketing title).
          Let them wrap rather than force the table wider than its

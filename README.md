@@ -126,7 +126,10 @@ viewer lists the copies in an **Other versions** panel at the top of the page,
 where each one can be enabled, updated, opened, or removed. Clicking another
 copy's row switches the page to it in place, leaving the panel as it is. Enabling one
 copy disables the others, since two enabled copies of a script both run —
-ctrl-click a checkbox (cmd-click on a Mac) to override that.
+ctrl-click a checkbox (cmd-click on a Mac) to override that. The panel's
+**Compare** column says whether each copy's code matches the one on screen,
+and a **DIFF** button opens a **compare page** showing the two copies'
+header fields side by side and a diff of each file.
 
 The **Options** link at the top, beside Refresh All, covers `.user.js` link capture,
 debug logging, local file override directories, the Downloads folder
@@ -136,6 +139,7 @@ higher API rate limit).
 Details: [docs/storage.md](docs/storage.md) (status model),
 [docs/script-viewer.md](docs/script-viewer.md),
 [docs/script-identity.md](docs/script-identity.md),
+[docs/compare.md](docs/compare.md),
 [docs/local-copy.md](docs/local-copy.md),
 [docs/local-delete.md](docs/local-delete.md),
 [docs/script-log.md](docs/script-log.md),

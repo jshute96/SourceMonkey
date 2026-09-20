@@ -378,5 +378,6 @@ path those differ.
   our `tabs.update`.
 - **No `@version` comparison logic** beyond the Version column of the
   versions table — Update always refetches, and nothing says which copy
-  is newer. The Content column says whether a copy differs from the
-  download; a diff view is planned, see TODO.md.
+  is newer. The Compare column says whether a copy differs from the
+  download, and its DIFF button opens the compare page
+  ([compare.md](compare.md)) with the download as the base.

@@ -896,9 +896,17 @@ See [docs/file-changes.md](docs/file-changes.md).
 - **Showing what changed.** A `MODIFIED` chip says a file differs; a
   diff against the stored copy is the natural next step, and the
   stored body is already there to diff against.
-  - Same for the versions panel's Content column: `DIFFERENT` should
-    become a button that opens a diff of that copy (body and
-    `@require`s) against the one on screen.
+  - The versions panel's Compare column has this: its `DIFF` button
+    opens the compare page. The `MODIFIED` chip's diff would be the same page
+    with the file on disk as one side.
+- **Compare page** (docs/compare.md) follow-ups:
+  - Intra-line highlighting: mark the changed span within a replaced
+    line pair, the way GitHub does. A common prefix / suffix per pair
+    is most of it.
+  - Syntax colouring in the diff, with the viewer's Prism setup.
+  - Function names in the `@@` seams, git-style: the nearest preceding
+    line that looks like a declaration.
+  - Follow the store: repaint when either copy is refreshed.
 
 - **http(s) files that are really gone.** A 404 on refresh is treated
   as a transient failure (`REFRESH FAILED`, keep running), because a

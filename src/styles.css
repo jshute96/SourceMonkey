@@ -667,3 +667,89 @@ select.install-target {
    the gap on the chip's left only. */
 .filename-cell > .file-change-chip,
 .local-override-cell > .file-change-chip { margin-left: 0; }
+
+/* ---- Tab strip over a code box (src/code-tabs.ts, src/compare.ts) ---- */
+
+/* One file per tab: the viewer's main script, `@require`s and Log; the
+   compare page's per-file diffs. The active tab's bottom border takes
+   the box's own colour so it "opens into" the box below, which sits
+   1px up to meet it (each page's own `margin-top: -1px`). */
+.tabs {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+}
+/* An author `display` outranks the UA's `[hidden] { display: none }`. */
+.tabs[hidden] { display: none; }
+.tab {
+  /* Its own height: a tab sizes to its label and the strip's bottom
+     edge, and the shared button height squeezes the label's line box. */
+  height: auto;
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.2;
+  padding: 0.45em 0.9em;
+  border: 1px solid #ccc;
+  border-radius: 4px 4px 0 0;
+  background: #e4e4e4;
+  color: #555;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tab:hover { background: #efefef; }
+/* Hover lightens a tab toward the selected look, so pressing goes the
+   other way to stay a press. */
+.tab:active:not(.active) { background: #d4d4d4; }
+.tab.active {
+  background: #fafafa;
+  color: #222;
+  font-weight: 600;
+  border-bottom-color: #fafafa;
+}
+.tab:focus-visible { outline: 2px solid #4a90e2; outline-offset: -2px; }
+
+/* ---- Site favicons (src/site-icon.ts) ---- */
+
+/* The icons inside a slot: one clickable <a> (or inert <span>) per
+   site, each a globe until the real favicon lands. The slot itself is
+   each page's own — a table's fixed-width column on the collections
+   page, the heading's on the viewer and compare pages (below). */
+.site-icon-inner {
+  display: block;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: #888;
+}
+a.site-icon-inner { text-decoration: none; }
+a.site-icon-inner:hover { color: #444; }
+.site-icon img { width: 16px; height: 16px; display: block; }
+.site-icon-globe { width: 16px; height: 16px; display: block; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Slot for the site favicons, sitting between the heading's
+   product prefix and the script's name. Always present, and at
+   least one icon wide, so the name starts at the same offset past
+   the prefix whether or not a favicon resolves. Holds one
+   clickable <a> per distinct site the script's @match names
+   (side by side, 2px gap), or one inert <span> when it names
+   none.
+   Inner content is a globe placeholder until the real favicon
+   loads. */
+.page-header h1 .site-icon {
+  display: inline-flex;
+  gap: 2px;
+  min-width: 16px;
+  height: 16px;
+  margin-right: 0.4em;
+  /* Centred on the heading's CAP band, not on its baseline or its
+     descender line. `text-bottom` sits the 16px square on the
+     font's descender, which puts its centre ~1.4px below the
+     centre of the letters beside it — visible as a favicon
+     hanging low. The heading is 16.1px with a 12px cap height, so
+     2px of the square below the baseline centres the two. */
+  vertical-align: -2px;
+}

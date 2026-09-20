@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>SourceMonkey | Compare</title>
+    <link rel="stylesheet" href="styles.css" />
+    <style>
+      html { height: 100%; margin: 0; }
+      body {
+        min-height: 100%;
+        margin: 0;
+        font: 14px system-ui, sans-serif;
+        color: #222;
+        display: flex;
+        flex-direction: column;
+        box-sizing: border-box;
+      }
+      /* Same full-bleed column as the viewer: the header bar and the
+         page share a 16px inset and nothing else constrains the width —
+         two files side by side want all of it. */
+      .page-main {
+        flex: 1 1 auto;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        padding: 16px;
+        box-sizing: border-box;
+      }
+      h1 { overflow-wrap: anywhere; word-break: normal; }
+      .message { margin: 0 0 11px; }
+      .message:empty { display: none; }
+      .message.error { color: #b00020; }
+
+      /* ---- The fields table: Field | one side | swap | other side ---- */
+      /* The viewer's details card, with a third column. */
+      #fields {
+        margin: 0 0 11px;
+        padding: 8px 11px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        background: #f5f7fa;
+      }
+      #fields:empty { display: none; }
+      table.fields { border-collapse: collapse; width: 100%; }
+      table.fields th,
+      table.fields td {
+        text-align: left;
+        vertical-align: top;
+        padding: 0.15em 0.8em 0.15em 0;
+      }
+      table.fields th { font-weight: 600; color: #555; white-space: nowrap; }
+      /* The head is the two rows that tell the copies apart — the
+         collection, in the heading's weight, and the location under it
+         — ruled off from the fields below. */
+      table.fields thead tr.side-collection td { font-weight: 600; }
+      table.fields thead tr.side-location td { font-size: 12.5px; color: #555; }
+      /* When the two differ these rows take only the background tint:
+         the collection name and the path stay in their own colours,
+         readable beside the bubble, which keeps its own too. */
+      table.fields thead tr.side-collection.differs td.value { color: #222; }
+      table.fields thead tr.side-location.differs td.value { color: #555; }
+      table.fields thead tr.side-location th,
+      table.fields thead tr.side-location td { padding-bottom: 6px; border-bottom: 1px solid #d5dae2; }
+      table.fields tbody tr:first-child th,
+      table.fields tbody tr:first-child td { padding-top: 6px; }
+      /* The "not installed" side of a preview comparison. */
+      .side-preview { font-style: italic; color: #555; }
+      /* Both value columns take the same share; the swap column is as
+         narrow as its button. */
+      table.fields td.value { width: 45%; overflow-wrap: anywhere; word-break: normal; }
+      table.fields .swap-col { width: 1px; padding: 0 0.5em; text-align: center; vertical-align: middle; }
+      /* A row whose two values differ wears the diff's own colours, so
+         the table reads as the diff of the header. */
+      tr.differs td.value.left { background: var(--diff-del-bg); color: var(--diff-del-fg); }
+      tr.differs td.value.right { background: var(--diff-add-bg); color: var(--diff-add-fg); }
+      /* A list value: one item per line, and an item the other side
+         lacks is what carries the row's tint. */
+      table.fields ul { margin: 0; padding-left: 1.1em; }
+      tr.differs td.value.left li.only { background: #f7c4c4; }
+      tr.differs td.value.right li.only { background: #bfe8c9; }
+      /* A field one side declares and the other does not. */
+      .none { color: #999; }
+      /* The collection's bubble and name, as the viewer's Collection
+         row draws them (`collectionCell`, script-details.ts). */
+      .collection-cell { display: inline-flex; align-items: baseline; gap: 0.5em; min-width: 0; }
+      /* Not the type bubble: it is a link too, and keeps its own white
+         text on its own colour, tinted row or not. */
+      .collection-cell a:not(.collection-type-bubble),
+      tr.side-location a { color: inherit; text-decoration: none; }
+      .collection-cell a:not(.collection-type-bubble):hover,
+      tr.side-location a:hover { text-decoration: underline; }
+
+      /* ---- View controls, right-aligned on their own row above the tabs ---- */
+      .view-row {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 0.8em;
+        margin: 0 0 6px;
+        font-size: 12.5px;
+        color: #555;
+      }
+      .view-row:empty { display: none; }
+      /* A segmented control: the shared button surface (styles.css),
+         the segments joined edge to edge, and the chosen one held
+         down — pressed darker, sunk with an inset shadow — so which
+         state is in force reads as the button that stays pushed. */
+      .seg { display: inline-flex; }
+      .seg button {
+        font-size: 12.5px;
+        padding: 0 10px;
+        border-radius: 0;
+      }
+      .seg button:first-child { border-radius: 3px 0 0 3px; }
+      .seg button:last-child { border-radius: 0 3px 3px 0; }
+      .seg button + button { margin-left: -1px; }
+      .seg button.on {
+        background: var(--btn-bg-active);
+        border-color: #999;
+        box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.2);
+        font-weight: 600;
+        /* The pressed one stays on top so its darker border shows on
+           both sides where the segments overlap. */
+        position: relative;
+        z-index: 1;
+      }
+
+      /* ---- Tabs: one per file, each with its verdict chip ---- */
+      /* The strip itself is shared with the viewer (styles.css). */
+      .tab .chip {
+        margin-left: 0.6em;
+        padding: 0 0.4em;
+        border-radius: 3px;
+        font-family: system-ui, sans-serif;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: #fff;
+        vertical-align: 1px;
+      }
+      /* The versions panel's SAME green and DIFFERENT blue; amber for a
+         file only one side has, the colour of "not the same thing"
+         elsewhere on these pages. */
+      .chip-same { background: #166534; }
+      .chip-different { background: #1d4ed8; }
+      .chip-added, .chip-removed { background: #b67200; }
+
+      /* ---- The diff box ---- */
+      :root {
+        --diff-del-bg: #fde8e8;
+        --diff-del-fg: #8a1c1c;
+        --diff-add-bg: #e3f6e8;
+        --diff-add-fg: #14532d;
+      }
+      /* The box fills what is left of the window and the lines scroll
+         inside it, as the viewer's code box does: that puts the scroll
+         bars at the window's edge, where they can be reached, rather
+         than under a page's worth of code. Basis 0 so its content never
+         sizes the page; the floor below keeps a useful number of lines
+         in view under a tall fields table, letting the PAGE scroll then
+         — the one case this page accepts a page-level scroll bar.
+         20 lines at this box's line height, plus the summary strip and
+         the border. Meets the active tab the way the viewer's box does. */
+      .page-main { --code-box-min: calc(20 * 1.5 * 13px + 30px + 2px); }
+      .diff-box {
+        flex: 1 1 0;
+        min-height: var(--code-box-min);
+        display: flex;
+        flex-direction: column;
+        box-sizing: border-box;
+        margin-top: -1px;
+        border: 1px solid #ccc;
+        border-radius: 0 4px 4px 4px;
+        background: #fafafa;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 13px;
+        line-height: 1.5;
+        overflow: hidden;
+      }
+      .diff-box[hidden] { display: none; }
+      .diff-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
+      .diff-body:focus, .diff-body .pane:focus { outline: 2px solid #4a90e2; outline-offset: -2px; }
+      /* Side by side: two panes, each its own scroller, split down the
+         middle so both are always in view. */
+      .diff-body.split { display: flex; overflow: hidden; }
+      /* Sideways scroll bars always, in both: one pane with a bar and
+         one without would have different heights to scroll, and the
+         linked scroll would hit the end in one before the other. */
+      .diff-body.split .pane { flex: 1 1 50%; min-width: 0; overflow: auto; overflow-x: scroll; }
+      .diff-body.split .pane.right { border-left: 1px solid #ccc; }
+      /* The one line of summary: the counts, right-aligned. */
+      .diff-summary {
+        flex: 0 0 auto;
+        display: flex;
+        justify-content: flex-end;
+        gap: 1.2em;
+        padding: 6px 12px;
+        border-bottom: 1px solid #e3e3e3;
+        background: #f3f4f6;
+        font-family: system-ui, sans-serif;
+        font-size: 12.5px;
+        color: #555;
+      }
+      .diff-summary .removed { color: var(--diff-del-fg); font-weight: 600; }
+      .diff-summary .added { color: var(--diff-add-fg); font-weight: 600; }
+      table.diff { border-collapse: collapse; width: 100%; }
+      table.diff td { padding: 0 8px; white-space: pre; vertical-align: top; }
+      /* Line-number gutters: fixed, dim, not selectable, so copying a
+         run of lines copies the code. */
+      table.diff td.num {
+        width: 3ch;
+        min-width: 3ch;
+        text-align: right;
+        color: #999;
+        user-select: none;
+        padding-right: 4px;
+        border-right: 1px solid #e5e5e5;
+      }
+      table.diff td.sign { width: 1ch; color: #888; user-select: none; text-align: center; padding: 0 2px; }
+      table.diff tr.del td { background: var(--diff-del-bg); }
+      table.diff tr.del td.code { color: var(--diff-del-fg); }
+      table.diff tr.add td { background: var(--diff-add-bg); }
+      table.diff tr.add td.code { color: var(--diff-add-fg); }
+      table.diff tr.del td.num, table.diff tr.add td.num { color: inherit; opacity: 0.6; }
+      /* `@@ -a,n +b,m @@`: the seam between two hunks. */
+      table.diff tr.hunk td { background: #eef2f7; color: #4b5563; font-size: 12px; padding: 2px 8px; }
+      /* A pane's blank across from a line only the other side has. Its
+         cells are all empty, and a row of empty cells has no height —
+         which would put the two panes' rows out of step by exactly the
+         lines one side lacks. The no-break space gives it a line. */
+      table.diff tr.filler td { background: #f3f3f3; }
+      table.diff tr.filler td.code::after { content: "\00a0"; }
+    </style>
+  </head>
+  <body>
+    <!--#include glyph-sprite-->
+    <header class="page-header">
+      <div class="page-header-inner">
+        <a class="page-home page-icon-link" href="collections.html" target="_blank"
+           rel="noopener" tabindex="-1" aria-hidden="true">
+          <img class="page-icon" src="icons/icon-48.png" alt="" />
+        </a>
+        <!-- The same brand run the viewer ships in its markup, so the bar
+             reads "SourceMonkey | Compare |" from the first paint. -->
+        <h1 id="heading"><a class="heading-prefix brand page-home" href="collections.html"
+             target="_blank" rel="noopener" title="Open the collections page">SourceMonkey</a><span class="heading-prefix brand"> | </span><span class="heading-prefix">Compare</span><span class="heading-prefix brand"> | </span></h1>
+      </div>
+    </header>
+    <div class="page-main">
+      <p id="message" class="message"></p>
+      <div id="fields"></div>
+      <div id="view-row" class="view-row"></div>
+      <div id="tabs" class="tabs" role="tablist" hidden></div>
+      <div id="diff" class="diff-box" hidden></div>
+    </div>
+    <script src="compare.js" type="module"></script>
+  </body>
+</html>

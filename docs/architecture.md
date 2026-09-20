@@ -132,6 +132,10 @@ details live in the topic-specific docs linked below.
   (`src/code-tabs.ts`), and code linkifier (`src/code-links.ts`) are
   separate modules so both modes render identically. See
   [script-viewer.md](script-viewer.md).
+- **Compare page** (`src/compare.html` + `src/compare.ts`) — two
+  copies of one script side by side: header fields in one table, a
+  diff per file (`src/line-diff.ts`). Linked from the viewer's versions
+  panel. See [compare.md](compare.md).
 - **Log IDs** (`src/script-log-id.ts`) — assigns each script a short
   file-derived label (basename, with `#N` suffix on dupes) used in
   every SW log line and shown in the collections/viewer UI so users can
@@ -227,6 +231,9 @@ details live in the topic-specific docs linked below.
   - The viewer names a script, so it puts the script first — that way
     the name survives a narrow tab strip. See
     [script-viewer.md](script-viewer.md#heading-and-page-title).
+  - The compare page does the same once it has a script to name:
+    `Compare: <script> | SourceMonkey`, with the heading
+    `SourceMonkey | Compare | <script>`.
   - `offscreen.html` and `parse-sandbox.html` are exempt: no user ever
     sees them.
 - `|`, not an em dash: it reads as a separator at a glance in a crowded

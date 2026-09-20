@@ -577,6 +577,12 @@ interface ScriptWithMatching {
   header?: { tags: { tag: string; locale?: string; value: string }[] } | null;
 }
 
+// How many sites a page heading shows — the viewer's and the compare
+// page's. More than a collections row: the heading is the one place a
+// script's whole target list is worth a glance, and nothing beside it
+// needs to line up.
+export const HEADING_SITE_ICONS = 10;
+
 // Build the favicon slot for a script row / viewer header. Always
 // renders something synchronously: one clickable `<a>` per distinct
 // site the script's @match set names (opening that site's linkUrl in
