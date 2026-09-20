@@ -37,6 +37,35 @@ test.describe('examples / gm-info', () => {
     await page.close();
   });
 
+  test('SourceMonkey reports the declared refs and the browser snapshot', async ({
+    extensionContext, fixtureServer, setup,
+  }) => {
+    test.skip(setup.manager !== 'sourcemonkey', 'Checks SM-specific GM_info values');
+    await setup.installScriptsFrom(__dirname);
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/gm-info/gm-info.html`);
+    await expect(page.locator('#runStatus')).toHaveText(/ran 1 time/);
+
+    const info = JSON.parse(
+      (await page.locator('#dumps script.gm-info-dump').textContent())!,
+    );
+    // Refs as written in the header, not resolved URLs.
+    expect(info.script.require).toEqual(['./lib.js']);
+    expect(info.script.resources).toEqual([{ name: 'note', url: './resource.txt' }]);
+    expect(info.script.icon).toBe('./icon.svg');
+    // Header-tag spelling for keys TM and VM disagree on.
+    expect(info.script['run-at']).toBe('document-end');
+    expect(info.script.connect).toEqual(['example.com']);
+    expect(info.script.noframes).toBe(true);
+    // `@homepageURL` folds into TM's `homepage` key.
+    expect(info.script.homepage).toBe('https://github.com/jshute96/SourceMonkey');
+    expect(info.script.updateURL).toBeNull();
+    expect(info.userAgentData.brands.length).toBeGreaterThan(0);
+
+    await page.close();
+  });
+
   test('merges a second manager run into the same table', async ({
     extensionContext, fixtureServer, setup,
   }) => {

@@ -222,6 +222,31 @@ output ships whether the script lands in USER_SCRIPT or MAIN.
   instead (VM's `GM_info.script` is its parsed metadata object —
   deduped, not rewritten). Worth revisiting if any real compat
   reports come in.
+- **`GM_info` carries the fields TM and VM both expose.** Beyond
+  `script.{name,version,namespace,description,matches,includes,excludes,grant,run-at}`,
+  `scriptHandler`, `version`, `scriptMetaStr` and `uuid`:
+  - Where TM and VM disagree on a key (TM `run-at` vs VM `runAt`, TM
+    `connects` vs VM `connect`), the spelling that matches the header
+    tag wins.
+  - `script.require` — `@require` refs; `script.resources` — `{name,
+    url}` per `@resource`. Both carry the ref as written (`./lib.js`),
+    like TM/VM, not the resolved URL; they list the loaded files
+    (deduped, and the prior good set after a failed refresh).
+  - `script.connect` — `@connect` hosts; `script.noframes` — whether
+    `@noframes` is present.
+  - `script.author` / `homepage` / `icon` / `icon64` / `supportURL` /
+    `updateURL` / `downloadURL` / `copyright` / `license` — header
+    values, `null` when absent (TM's shape; TM's aliases fold in —
+    `@homepageURL` / `@website` / `@source` → `homepage`, `@iconURL` /
+    `@defaulticon` → `icon`, `@icon64URL` → `icon64`).
+  - `scriptWillUpdate: true` (scripts are re-read from their
+    collection on refresh) and `userAgentData` (a snapshot of
+    `navigator.userAgentData`, taken in the SW at bake time).
+  - Not provided: `isIncognito` (GM_info is baked per script, not per
+    tab, so the value isn't knowable at bake time), `downloadMode`,
+    and the manager-internal `script.options` blob.
+  - The `gm-info` example page shows each manager's output side by
+    side.
 - **Unknown `@grant` names log a console warning.** A typo like
   `@grant GM_setvalue` (lowercase) is dropped from the binding set
   and the script gets a `ReferenceError` at call time. The injector

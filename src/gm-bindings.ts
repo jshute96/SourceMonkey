@@ -57,6 +57,26 @@ export interface GmInfoInput {
   excludes: readonly string[];
   grants: readonly string[];
   runAt?: string;
+  // Plain single-value headers TM exposes on `GM_info.script`
+  // (`author`, `homepage`, `icon`, `supportURL`, ...). `null` when the
+  // header is absent, matching TM.
+  passthrough: Record<GmInfoPassthroughTag, string | null>;
+  // `@require` refs in declaration order, under VM's key
+  // `script.require` (TM spells it `requires`; the header tag wins).
+  requires: readonly string[];
+  // `@resource` name → declared ref for `GM_info.script.resources`.
+  // Both TM and VM expose this list with the ref as written (not the
+  // resolved URL), and scripts iterate it to discover what was
+  // declared. (TM adds `content`/`meta`, VM's `url` is a blob.)
+  resourceList: readonly { name: string; url: string }[];
+  // `@connect` hosts.
+  connects: readonly string[];
+  // `@noframes` present. VM exposes it as `script.noframes`.
+  noframes: boolean;
+  // Snapshot of `navigator.userAgentData` (brands / mobile / platform),
+  // which TM and VM both put on GM_info. Read once by the caller in
+  // the SW; `null` where the API is missing (unit tests under Node).
+  userAgentData: UserAgentDataSnapshot | null;
   // Raw `// ==UserScript== ... // ==/UserScript==` block text. Many
   // scripts re-parse this to read metadata our parser doesn't expose,
   // so passing it through verbatim matches TM/VM behavior.
@@ -70,6 +90,20 @@ export interface GmInfoInput {
   // `GM_getResourceURL` resolve synchronously without an SW round-
   // trip. Empty object when the script declares no `@resource`.
   resources: Record<string, { b64: string; ct: string }>;
+}
+
+// Single-value headers exposed verbatim on `GM_info.script`, under
+// the keys TM uses. Shared with the injector so the two sides agree.
+export const GM_INFO_PASSTHROUGH_TAGS = [
+  'author', 'homepage', 'icon', 'icon64', 'supportURL', 'updateURL',
+  'downloadURL', 'copyright', 'license',
+] as const;
+export type GmInfoPassthroughTag = (typeof GM_INFO_PASSTHROUGH_TAGS)[number];
+
+export interface UserAgentDataSnapshot {
+  brands: { brand: string; version: string }[];
+  mobile: boolean;
+  platform: string;
 }
 
 // The compile-in result.
@@ -136,7 +170,12 @@ function emitGmInfo(info: GmInfoInput): string {
   // matches VM's behavior (TM exposes the raw declared form). Worth
   // revisiting if real compat reports show up. `matches` / `includes`
   // / `excludes` pass through verbatim.
+  //
+  // Key names: where TM and VM disagree (`run-at` vs `runAt`,
+  // `connects` vs `connect`) we use whichever matches the header tag.
   const scriptObject = {
+    // Passthrough first so the canonical keys below always win.
+    ...info.passthrough,
     name: info.name,
     version: info.version ?? '',
     namespace: info.namespace ?? '',
@@ -145,7 +184,11 @@ function emitGmInfo(info: GmInfoInput): string {
     includes: info.includes.slice(),
     excludes: info.excludes.slice(),
     grant: info.grants.slice(),
-    runAt: info.runAt ?? '',
+    'run-at': info.runAt ?? '',
+    require: info.requires.slice(),
+    resources: info.resourceList.map((r) => ({ name: r.name, url: r.url })),
+    connect: info.connects.slice(),
+    noframes: info.noframes,
   };
   const gmInfo = {
     script: scriptObject,
@@ -153,6 +196,10 @@ function emitGmInfo(info: GmInfoInput): string {
     version: info.scriptHandlerVersion,
     scriptMetaStr: info.scriptMetaStr,
     uuid: info.scriptId,
+    // Every SourceMonkey script is re-read from its collection source
+    // on refresh, so from the script's point of view it will update.
+    scriptWillUpdate: true,
+    userAgentData: info.userAgentData,
   };
   return `const GM_info = Object.freeze(${jsLit(gmInfo)});`;
 }

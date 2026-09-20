@@ -197,6 +197,12 @@ const INFO = {
   scriptMetaStr: '',
   scriptHandlerVersion: '0.0.0',
   resources: {},
+  passthrough: {},
+  requires: [],
+  resourceList: [],
+  connects: [],
+  noframes: false,
+  userAgentData: null,
 };
 
 test('emitGmBindings: unsafeWindow is a plain window alias, not a stub', () => {

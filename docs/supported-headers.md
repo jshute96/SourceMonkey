@@ -15,7 +15,7 @@ inventory of which tags downstream modules consult today.
 |:------:|---------|
 | ✅ | **Honored** — SourceMonkey reads the value and changes behavior accordingly. |
 | 👁 | **Displayed only** — parsed and surfaced in the script viewer or logs, but not acted on. |
-| ⚪ | **Ignored** — parser accepts it; no module currently reads it. Safe to put in your script; will simply have no effect. |
+| ⚪ | **Ignored** — parser accepts it; no module acts on it. Safe to put in your script; will simply have no effect. Several are still readable by the script itself through `GM_info.script` (see [GM-APIs.md](GM-APIs.md)). |
 
 ## "Also in" columns
 

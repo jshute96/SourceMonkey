@@ -74,7 +74,7 @@ import {
   type StoredScript,
   type StoredCollection,
 } from './script-store.js';
-import { getValue, getValues, type ParsedHeader } from './userscript-header.js';
+import { getValue, getValues, hasTag, type ParsedHeader } from './userscript-header.js';
 import {
   WRAPPER_BRIDGE,
   WRAPPER_GM_RUNTIME,
@@ -86,7 +86,11 @@ import { scanAllStorage } from './storage-scan.js';
 import { canonicalMatchPatterns, matchPatternProblem } from './url-match.js';
 import { dlog } from './debug-log.js';
 import { startPhaseTimer } from './phase-timing.js';
-import { emitGmBindings, type GmBindingEmit, type GmInfoInput } from './gm-bindings.js';
+import {
+  emitGmBindings, GM_INFO_PASSTHROUGH_TAGS,
+  type GmBindingEmit, type GmInfoInput, type GmInfoPassthroughTag, type UserAgentDataSnapshot,
+} from './gm-bindings.js';
+import { iconRefFromHeader } from './site-icon.js';
 import {
   buildSourceMap,
   inlineSourceMapComment,
@@ -622,6 +626,16 @@ function buildGmInfoInput(
   for (const r of script.resources ?? []) {
     resources[r.name] = { b64: r.bytesBase64, ct: r.contentType };
   }
+  // Headers TM copies onto `GM_info.script` by name. Absent → null.
+  const passthrough = {} as Record<GmInfoPassthroughTag, string | null>;
+  for (const tag of GM_INFO_PASSTHROUGH_TAGS) {
+    passthrough[tag] = getValue(header, tag) ?? null;
+  }
+  // TM folds its aliases into the canonical key; do the same so
+  // GM_info agrees with what the viewer shows for the icon.
+  passthrough.homepage ??= firstValue(header, ['homepageURL', 'website', 'source']);
+  passthrough.icon = iconRefFromHeader(header);
+  passthrough.icon64 ??= getValue(header, 'icon64URL') ?? null;
   return {
     scriptId: script.id,
     name,
@@ -636,7 +650,43 @@ function buildGmInfoInput(
     scriptMetaStr: script.headerText,
     scriptHandlerVersion,
     resources,
+    passthrough,
+    // `.ref`, not `.url`: report the ref as written in the header, as
+    // TM/VM do, rather than the resolved (possibly local file://) URL.
+    // These are the *loaded* lists (deduped; and after a failed
+    // refresh, the prior good set — same as the body they go with).
+    requires: (script.requires ?? []).map((r) => r.ref),
+    resourceList: (script.resources ?? []).map((r) => ({ name: r.name, url: r.ref })),
+    connects: getValues(header, 'connect'),
+    noframes: hasTag(header, 'noframes'),
+    userAgentData: readUserAgentData(),
   };
+}
+
+function firstValue(header: ParsedHeader, tags: readonly string[]): string | null {
+  for (const tag of tags) {
+    const v = getValue(header, tag);
+    if (v !== undefined) return v;
+  }
+  return null;
+}
+
+// Snapshot `navigator.userAgentData` once per SW lifetime. It
+// describes the browser, not the page, so every script gets the same
+// value. `null` where the API is missing (unit tests under Node).
+let uaDataSnapshot: UserAgentDataSnapshot | null | undefined;
+function readUserAgentData(): UserAgentDataSnapshot | null {
+  if (uaDataSnapshot !== undefined) return uaDataSnapshot;
+  const nav = (globalThis as { navigator?: { userAgentData?: UserAgentDataSnapshot } }).navigator;
+  const data = nav?.userAgentData;
+  uaDataSnapshot = data
+    ? {
+      brands: data.brands.map((b) => ({ brand: b.brand, version: b.version })),
+      mobile: data.mobile,
+      platform: data.platform,
+    }
+    : null;
+  return uaDataSnapshot;
 }
 
 // Build the full GM-binding source string for one script: a const
