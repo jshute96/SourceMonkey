@@ -157,6 +157,19 @@ console call at all, and each has its own countermeasure:
   open-in-a-tab paths return their promises and report the failure into
   the message bar (plus the file-access banner) instead of dropping
   them.
+- **`chrome.*` calls cut off by service-worker shutdown.**
+  - When Chrome destroys the SW — every reload of the unpacked
+    extension, plus idle termination — each in-flight `chrome.*` call
+    rejects with `Error: No SW`.
+  - SW startup fires many `void someStorageRead()` calls, so a reload
+    mid-startup would list one entry per read. Nothing is broken: the
+    next wake starts over and redoes them.
+  - `src/sw-teardown.ts` installs an `unhandledrejection` handler
+    (first thing in `background.ts`) that marks exactly that rejection
+    handled and notes it at `console.info`. Every other rejection
+    still surfaces.
+  - `Unchecked runtime.lastError: No SW` with no context or stack is
+    Chrome-internal for the same teardown and can't be caught.
 - **A registered userscript entry that doesn't compile.** V8's
   `SyntaxError` is raised before any of our code runs, so nothing can
   catch it. The answer is to never register such an entry — the parse

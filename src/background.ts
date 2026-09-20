@@ -70,6 +70,7 @@ import {
   getScriptLogLabel,
   installScriptLogIdListener,
 } from './script-log-id.js';
+import { installSwTeardownHandler } from './sw-teardown.js';
 import {
   buildSwapEvalBody,
   needsGmRuntime,
@@ -3936,6 +3937,9 @@ async function recordScriptReport(
   }
 }
 
+// First, so the startup reads below can't leak a teardown rejection
+// into the Errors panel if the SW is killed while they're in flight.
+installSwTeardownHandler();
 // Log-ID listener and its initial load come first so subsequent
 // startup paths (sm:start arriving from a pre-existing wrapper, the
 // first navigation-driven log line) can hit the populated map. The
