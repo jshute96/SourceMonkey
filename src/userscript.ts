@@ -1044,6 +1044,48 @@ versionsEl.addEventListener('keydown', (ev: KeyboardEvent) => {
   next.focus();
 });
 
+// Ctrl/Cmd-A anywhere on the page selects the file content — or the
+// Log table when that tab is showing — instead of the whole page. The
+// only thing worth copying out of the viewer is the script (or the
+// log), and a page-wide selection drags the header, details rows and
+// button labels along with it, which nobody wants to paste. Wherever
+// focus is, Ctrl-A then Ctrl-C copies the file.
+//
+// Left alone inside a text control or an open dialog, where select-all
+// means what it always did.
+document.addEventListener('keydown', (ev: KeyboardEvent) => {
+  if (ev.defaultPrevented) return;
+  // `code` as well as `key`: on a non-Latin layout the A key reports
+  // its own letter, and Chrome's select-all still fires on it.
+  if (ev.key.toLowerCase() !== 'a' && ev.code !== 'KeyA') return;
+  if (!(ev.ctrlKey || ev.metaKey) || ev.altKey || ev.shiftKey) return;
+  const target = ev.target;
+  if (target instanceof Element && target.closest('input, textarea, select, [contenteditable], dialog[open]')) return;
+  const pane = selectAllTarget();
+  if (!pane) return;
+  ev.preventDefault();
+  const selection = window.getSelection();
+  if (!selection) return;
+  const range = document.createRange();
+  range.selectNodeContents(pane);
+  selection.removeAllRanges();
+  selection.addRange(range);
+});
+
+// What Ctrl-A selects: the code element (its text is exactly the file —
+// the line-number gutter and the line-flash overlay hold no text), or
+// the Log tab's table, skipping the toolbar buttons. An empty log
+// selects its "No log entries yet" line, and a Log pane that hasn't
+// painted yet selects itself: either way the key never reaches the
+// whole page. Null — the browser's own select-all — only on the
+// not-found page, where the code box is empty and the status box's
+// message is the one thing worth copying.
+function selectAllTarget(): Element | null {
+  if (!codePaneEl.hidden) return contentEl.textContent ? contentEl : null;
+  if (!logPaneEl.hidden) return logPaneEl.querySelector('table, .log-empty') ?? logPaneEl;
+  return null;
+}
+
 // The rows the walk steps between: every body row that can be stood
 // on, in the order they are read. Both sections are separate tables
 // and the walk crosses between them — to the user they are one list

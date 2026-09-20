@@ -432,6 +432,13 @@ Both name the script the same way, pivoted for where they're read.
    - The Log pane subscribes to `chrome.storage.session` changes for
      this script's `log:<id>` key, so events flowing in while the user
      is looking at the tab repaint live.
+   - **Ctrl/Cmd-A anywhere on the page** selects the visible pane's
+     content rather than the whole page, so Ctrl-A, Ctrl-C copies the
+     script from wherever focus is:
+     - Code tab: the code element — exactly the file text.
+     - Log tab: the table (not its toolbar), or an empty log's
+       placeholder line.
+     - Text controls and open dialogs keep the browser's own select-all.
 
 ### Refresh
 

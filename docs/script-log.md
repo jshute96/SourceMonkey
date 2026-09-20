@@ -620,7 +620,9 @@ tracked in `TODO.md`.
 ## Export
 
 The Log tab's **Save** and **Copy** buttons hand out the same CSV text,
-built by `formatLogCsv` in `src/log-format.ts`.
+built by `formatLogCsv` in `src/log-format.ts`. (Ctrl-A on the tab
+selects the table itself instead — see
+[script-viewer.md](script-viewer.md#layout).)
 
 Format:
 
