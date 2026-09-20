@@ -112,7 +112,11 @@ is handled by the harness:
   `Preferences` by `scripts/e2e-manager-preflight.mjs`, which runs
   before the browser starts. VM needs no equivalent — it only reaches
   for `chrome.downloads` when the permission is already granted, and
-  falls back to an anchor download otherwise.
+  falls back to an anchor download otherwise. (That fallback is what
+  crashes headless Chromium 153, so the download-completing
+  `gm-download` tests are skipped under VM; granting the permission
+  doesn't help. See
+  [cross-manager-test-results.md](cross-manager-test-results.md).)
 - **TM's own permission prompts** (`ask.html`) are auto-OK'd by the
   driver.
 

@@ -21,8 +21,8 @@ Update this doc when a result changes.
 
 ## Status
 
-- **TM**: 32 passed, 0 failed, 6 skipped (TM 5.5.0).
-- **VM**: 33 passed, 0 failed, 5 skipped (VM 2.49.0).
+- **TM**: 33 passed, 0 failed, 7 skipped (TM 5.5.0).
+- **VM**: 32 passed, 0 failed, 8 skipped (VM 2.49.0).
 
 ## Intentional skips
 
@@ -70,6 +70,22 @@ Specs that opt out of a manager via
     install both variants; TM prefetches `@require` URLs at the install
     prompt, so expect that install to error or stall rather than
     complete.
+- **`gm-download/`** (the two tests that let a download complete) —
+  skipped under **VM**. Not a VM bug: a Chromium one.
+  - VM saves a download by clicking an anchor on a
+    `blob:chrome-extension://` URL from its own extension page.
+  - In headless Chromium 153 (Playwright's bundled build and system
+    Chrome alike), the browser process segfaults about half the time
+    right as such a download completes, and every open page goes with
+    it (`Protocol error … session closed`, or `browser has been closed`
+    on the next test).
+  - Nothing on our side avoids it: `Browser.setDownloadBehavior`
+    (`allow`, `default`, `deny`), download-UI feature flags, and
+    pre-granting VM the `downloads` permission were all tried. TM,
+    which downloads through `chrome.downloads`, is unaffected.
+  - The `file://` refusal test still runs under VM — no download
+    starts, so nothing crashes.
+  - Re-check when the bundled Chromium moves past 153.
 
 ## Failing specs (untriaged divergences)
 
@@ -236,11 +252,11 @@ one.
 
 ## Loose-by-design assertions
 
-- **`gm-download/`** — passes under TM (as of TM 5.5.0). The
-  assertions stay at "some
-  callback fired" rather than a specific value, because TM applies its
-  own file-extension allowlist and can answer `not_whitelisted` where
-  SM answers `onload`.
+- **`gm-download/`** — passes under TM (as of TM 5.5.0); under VM only
+  the `file://` refusal runs (see "Intentional skips"). The assertions
+  stay at "some callback fired" rather than a specific value, because
+  TM applies its own file-extension allowlist and can answer
+  `not_whitelisted` where SM answers `onload`.
   - The `file://` case asserts only that `onload` did **not** fire —
     neither manager should quietly pull a local file onto disk on a
     userscript's say-so; the refusal shape differs.

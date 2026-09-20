@@ -324,8 +324,8 @@ extension `Origin` is removed by default. What's still open:
   `Sec-Fetch-*` is left alone unless a script asks. Whether to match
   Tampermonkey's defaults instead needs TM's actual wire headers,
   which `tests/examples/gm-xmlhttp/gm-xmlhttp-wire-headers.spec.ts`
-  will report once a TM profile exists on the machine
-  (`docs/cross-manager-testing.md`).
+  reports as a test attachment under the `tampermonkey` project
+  (`SM_PRINT_WIRE_HEADERS=1` prints it; see `docs/testing.md`).
 - **Redirects skip the surgery.** The rule matches the original URL,
   so a 30x hop goes out without the overrides and without the `Origin`
   removal. Fixing it means predicting the target (can't) or rewriting

@@ -9,6 +9,10 @@
 // This is the measurement behind issue #21 — endpoints that gate on
 // `Sec-Fetch-Site` refuse anything a service worker sends, and the
 // defaults we should adopt are whatever Tampermonkey adopted.
+//
+// The report is a test attachment (`wire-headers.txt`, visible in
+// the HTML report) rather than console output, so a normal run stays
+// quiet. Set `SM_PRINT_WIRE_HEADERS=1` to print it to the terminal.
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -69,7 +73,9 @@ test.describe('examples / gm-xmlhttp wire headers', () => {
     const report = OF_INTEREST
       .map((h) => `  ${h}: ${headers[h] ?? '(absent)'}`)
       .join('\n');
-    console.log(`[${manager}] GM_xmlhttpRequest wire headers:\n${report}`);
+    const body = `[${manager}] GM_xmlhttpRequest wire headers:\n${report}`;
+    await test.info().attach('wire-headers.txt', { body, contentType: 'text/plain' });
+    if (process.env.SM_PRINT_WIRE_HEADERS === '1') console.log(body);
     await page.close();
   });
 });

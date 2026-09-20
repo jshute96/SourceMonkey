@@ -54,6 +54,11 @@ or the GreasyFork corpus. See
 - SW console forwarding (debugging only): set
   `SM_FORWARD_SW_CONSOLE=1` — every SW `console.log` lands in test
   stderr. Off by default because it's noisy.
+- Wire-header report: `gm-xmlhttp-wire-headers.spec.ts` records the
+  headers a manager puts on a `GM_xmlhttpRequest` as a test attachment
+  (`wire-headers.txt`, in the HTML report), so it doesn't clutter the
+  run. Set
+  `SM_PRINT_WIRE_HEADERS=1` to print it to the console as well.
 
 ### Retries and traces
 
