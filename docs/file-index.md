@@ -327,7 +327,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/examples/index.html` | Index page linking the per-example subdirs |
 | `tests/examples/examples.css` | Shared styling for all example pages |
 | `tests/examples/<api>/` | Each example dir holds `<api>.html`, `<api>.user.js`, and `<api>.spec.ts` — the page, the userscript that drives it, and its Playwright e2e |
-| `tests/examples/gm-info/` | `GM_info` dump example; every running copy adds a column to a cross-manager comparison table |
+| `tests/examples/gm-info/` | `GM_info` example: a header-heavy script hands its `GM_info` to the page, which renders a cross-manager comparison table |
 | `tests/examples/gm-log/` | `GM_log` per-script-prefix demo |
 | `tests/examples/gm-storage/` | `GM_setValue`/`getValue`/`deleteValue`/`listValues` examples (form-driven) |
 | `tests/examples/gm-value-listeners/` | `GM_addValueChangeListener` / `GM_removeValueChangeListener` examples |
