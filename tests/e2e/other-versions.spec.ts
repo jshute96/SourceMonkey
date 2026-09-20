@@ -166,9 +166,9 @@ test.describe('other-versions panel', () => {
     await page.goto(`chrome-extension://${extensionId}/${viewer(standalone.id)}`);
     await expect(page.locator(ROWS)).toHaveCount(2);
 
-    // Status sits between Location and Version.
+    // Status sits between Location and Version; Content follows.
     const headings = await page.locator(`${PANEL} thead th`).allTextContents();
-    expect(headings.slice(2, 5)).toEqual(['Location', 'Status', 'Version']);
+    expect(headings.slice(2, 6)).toEqual(['Location', 'Status', 'Version', 'Content']);
 
     const cell = page.locator(`${PANEL} tr[data-script-id="${inFolder.id}"] td.col-status a`);
     await expect(cell).toHaveText('OK');
@@ -979,7 +979,7 @@ test.describe('other-versions panel', () => {
     // and takes it off screen, rather than dropping it.
     const offerHead = page.locator(`${PANEL} table`).last().locator('thead');
     await expect(offerHead).toHaveClass(/visually-hidden/);
-    await expect(offerHead.locator('th')).toHaveCount(7);
+    await expect(offerHead.locator('th')).toHaveCount(8);
     await expect(offerHead).not.toBeInViewport();
     // The dropdown is labelled, and the callout's own copy of it is not
     // in the document twice over.
@@ -1086,6 +1086,156 @@ test.describe('other-versions panel', () => {
       const b = (await allScripts(sm)).find((s) => s.relativePath === 'b.user.js');
       return /@version\s+(\S+)/.exec(b?.headerText ?? '')?.[1];
     }).toBe('2.0.1');
+    await page.close();
+  });
+
+  // The Content column says whether each other copy holds the same
+  // loaded code as the copy on screen — body and `@require`s together.
+  test('the Content column compares each copy against the one on screen', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const ns = 'https://example.com/ns';
+    const a = write('a.user.js', 'Twin Script', { namespace: ns, version: '1.0' });
+    // Same text at a different path: same content, different URL.
+    write('b.user.js', 'Twin Script', { namespace: ns, version: '1.0' });
+    await sm.addCollection(a);
+    await sm.addCollection(dir.path);
+    await sm.syncNow();
+
+    const scripts = await allScripts(sm);
+    const standalone = scripts.find((s) => s.relativePath === a)!;
+    const inFolder = scripts.find((s) => s.relativePath === 'a.user.js')!;
+    const twin = scripts.find((s) => s.relativePath === 'b.user.js')!;
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/${viewer(standalone.id)}`);
+
+    const content = (id: string) => page.locator(`${ROWS}[data-script-id="${id}"] td.col-content`);
+    // The copy on screen is compared against, not with itself.
+    await expect(content(standalone.id)).toHaveText('BASE');
+    await expect(content(inFolder.id)).toHaveText('SAME');
+    await expect(content(inFolder.id).locator('span')).toHaveClass('content-same');
+    await expect(content(twin.id)).toHaveText('SAME');
+
+    // The twin's file changes; the column follows the STORED copy, so
+    // it says Same until a refresh loads the new text.
+    write('b.user.js', 'Twin Script', { namespace: ns, version: '2.0.1' });
+    await expect(content(twin.id)).toHaveText('SAME');
+    await page.locator(`${PANEL} th.col-actions button`).click();
+    await expect(content(twin.id)).toHaveText('DIFFERENT');
+    await expect(content(twin.id).locator('span')).toHaveClass('content-different');
+    await expect(content(inFolder.id)).toHaveText('SAME');
+
+    // Switching copies in place moves the comparison with the page.
+    await page.locator(`${ROWS}[data-script-id="${twin.id}"] td.col-version`).click();
+    await expect(page.locator(`${PANEL} tr.is-current`)).toHaveAttribute('data-script-id', twin.id);
+    await expect(content(twin.id)).toHaveText('BASE');
+    await expect(content(standalone.id)).toHaveText('DIFFERENT');
+    await expect(content(inFolder.id)).toHaveText('DIFFERENT');
+    await page.close();
+  });
+
+  test('the Content column counts a differing @require', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // Two directories, each with an identical script that requires its
+    // own `lib.js` — only the libraries differ.
+    const other = ScriptsDir.create();
+    try {
+      const ns = 'https://example.com/ns';
+      const spec = {
+        relativePath: 'lib.user.js',
+        meta: { name: 'Lib Script', match: ['https://example.com/*'], extra: [
+          `// @namespace   ${ns}`,
+          '// @require     lib.js',
+        ] },
+        body: 'console.log("hi");\n',
+      };
+      dir.writeRaw('lib.js', 'window.__lib = 1;\n');
+      other.writeRaw('lib.js', 'window.__lib = 2;\n');
+      dir.write(spec);
+      other.write(spec);
+      await sm.addCollection(dir.path);
+      await sm.addCollection(other.path);
+      await sm.syncNow();
+
+      const scripts = await allScripts(sm);
+      expect(scripts).toHaveLength(2);
+      const [shown, rest] = scripts;
+      const page = await extensionContext.newPage();
+      await page.goto(`chrome-extension://${extensionId}/${viewer(shown.id)}`);
+      await expect(page.locator(`${ROWS}[data-script-id="${rest.id}"] td.col-content`))
+        .toHaveText('DIFFERENT');
+
+      // Bring the libraries into line; the refresh picks the change up.
+      other.writeRaw('lib.js', 'window.__lib = 1;\n');
+      await page.locator(`${ROWS}[data-script-id="${rest.id}"] td.col-actions button`).click();
+      await expect(page.locator(`${ROWS}[data-script-id="${rest.id}"] td.col-content`))
+        .toHaveText('SAME');
+      await page.close();
+    } finally {
+      other.cleanup();
+    }
+  });
+
+  test('a copy whose @require did not load is not compared', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const other = ScriptsDir.create();
+    try {
+      const spec = {
+        relativePath: 'lib.user.js',
+        meta: { name: 'Lib Script', match: ['https://example.com/*'], extra: [
+          '// @namespace   https://example.com/ns',
+          '// @require     lib.js',
+        ] },
+        body: 'console.log("hi");\n',
+      };
+      dir.writeRaw('lib.js', 'window.__lib = 1;\n');
+      dir.write(spec);
+      other.write(spec);  // no lib.js beside it
+      await sm.addCollection(dir.path);
+      await sm.addCollection(other.path);
+      await sm.syncNow();
+
+      const scripts = await allScripts(sm);
+      const healthy = scripts.find((s) => s.status === 'ok')!;
+      const broken = scripts.find((s) => s.status !== 'ok')!;
+      const page = await extensionContext.newPage();
+      await page.goto(`chrome-extension://${extensionId}/${viewer(healthy.id)}`);
+      // Body-only would call it DIFFERENT; with its library missing
+      // there is nothing to compare, so the cell says so.
+      await expect(page.locator(`${ROWS}[data-script-id="${broken.id}"] td.col-content`))
+        .toHaveText('\u2014');
+      // Standing on the broken copy, no row can be compared either.
+      await page.goto(`chrome-extension://${extensionId}/${viewer(broken.id)}`);
+      await expect(page.locator(`${ROWS}[data-script-id="${healthy.id}"] td.col-content`))
+        .toHaveText('\u2014');
+      await page.close();
+    } finally {
+      other.cleanup();
+    }
+  });
+
+  test('a preview compares the installed copies against the download', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const path = write('hello.user.js', 'Shared Script', { version: '1.0.0' });
+    await sm.addCollection(dir.path);
+    await sm.syncNow();
+    const [installed] = await allScripts(sm);
+
+    const page = await extensionContext.newPage();
+    const preview = `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`file://${path}`)}`;
+    await page.goto(preview);
+    const content = page.locator(`${ROWS}[data-script-id="${installed.id}"] td.col-content`);
+    await expect(content).toHaveText('SAME');
+    // The offer row IS the download: the base the rest are compared with.
+    await expect(page.locator(`${PANEL} tr.is-offer td.col-content`)).toHaveText('BASE');
+
+    // The file moves on; a fresh preview shows the stored copy behind.
+    write('hello.user.js', 'Shared Script', { version: '1.0.1' });
+    await page.goto(preview);
+    await expect(content).toHaveText('DIFFERENT');
     await page.close();
   });
 

@@ -48,7 +48,7 @@ import {
 } from './directories.js';
 import { isScriptEnabled, isCollectionEnabled, type StoredScript, type StoredCollection } from './script-store.js';
 import { CONTAINER_DISPLAY_NAMES, effectiveDisplayName } from './collection-display.js';
-import { getValue, type ParsedHeader } from './userscript-header.js';
+import { getValue, getValues, type ParsedHeader } from './userscript-header.js';
 
 // The ecosystem identity key: `@namespace` and `@name`, trimmed and
 // joined by a separator that can't occur in either.
@@ -331,4 +331,35 @@ export function allRelatedRows(related: RelatedVersions): RelatedScript[] {
 // a string the user never sees, so the table would look unsorted.
 function collectionSortKey(r: RelatedScript): string {
   return r.collection ? effectiveDisplayName(r.collection) : '';
+}
+
+// What the panel's Content column compares: a copy's own source text
+// plus every `@require` body it loaded, in declaration order. Built
+// from the hashes the store already keeps for each (`contentHash` on
+// the row and on each require entry), so it is string assembly, not
+// hashing — and it is comparable across pages: a preview's download
+// gets the same shape from its text hash and the parse check's
+// requires.
+//
+// Requires are part of it because they are part of what runs: two
+// copies with the same body but a library that moved on behave
+// differently. `@resource` is not: it is data the script reads, not
+// code that runs.
+//
+// `undefined` when there is no content to compare: the row never
+// loaded, or its header declares `@require`s and none is stored — a
+// dependency that would not load leaves the list empty, and a preview
+// has none until its parse check lands. A body-only answer there would
+// call a broken copy DIFFERENT from a healthy twin with the same text,
+// or two broken copies SAME.
+export function contentFingerprint(script: {
+  contentHash?: string;
+  header: ParsedHeader | null;
+  requires?: readonly { contentHash: string }[];
+}): string | undefined {
+  if (!script.contentHash) return undefined;
+  const requires = script.requires ?? [];
+  const declared = script.header ? getValues(script.header, 'require').length > 0 : false;
+  if (declared && requires.length === 0) return undefined;
+  return [script.contentHash, ...requires.map((r) => r.contentHash)].join('\n');
 }

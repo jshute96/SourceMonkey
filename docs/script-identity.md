@@ -463,7 +463,7 @@ hides it.
 ### Row layout
 
 - Columns: enable toggle, collection, location, status, version,
-  actions, remove.
+  content, actions, remove.
 - **Collection cell leads with the type bubble**, then the name — the same
   order as the details panel's Collection row and the collections page's
   headings. The bubble is fixed-width and the name is the variable
@@ -507,6 +507,35 @@ hides it.
       that row's verdict comes from a separate read. The alternative,
       one column reading from two sources, is worse.
 
+- **Content** says whether a row holds the same loaded code as the copy
+  the panel is about: `SAME` (green, Status's OK) or `DIFFERENT` (blue —
+  not the `modified` chip's teal, which is a near twin of green on this
+  card).
+  - **What is compared** is `contentFingerprint` in
+    `script-identity.ts`: the row's `contentHash` plus each stored
+    `@require`'s, in declaration order. Requires count because they are
+    part of what runs; `@resource` is data, not code, and is left out.
+  - **Against what**: on the viewer, the copy on screen — the
+    comparison moves with an in-page switch. On a preview, the download
+    being shown (`previewContent` in `userscript.ts`): its text hash
+    plus the parse check's requires.
+  - **Loaded, not on disk.** A local file edited since it was read still
+    says Same until it is refreshed; the Location cell's `modified` chip
+    is what reports the disk.
+  - **`BASE`**, uncoloured, on the row being compared against — the
+    current row, or the preview's offer row. A copy is neither the same
+    as nor different from itself, and a blank cell read as missing data
+    rather than as the reference.
+  - **Em dash** when either side has no content: a row that never
+    loaded, or one whose header declares `@require`s it holds none of —
+    a dependency that would not load, or a preview whose parse check
+    has not fetched them yet. The check's landing repaints the panel
+    (`recordPreviewFiles`), so those dashes resolve rather than a Same
+    flipping to Different; a check that fails leaves them. The em dash
+    means "not compared", as in Status.
+  - A diff view behind `DIFFERENT` is the planned follow-up — see
+    [TODO.md](../TODO.md).
+
 ### Layout
 
 - One `<table>` per section, not one for the panel, but a shared
@@ -515,7 +544,7 @@ hides it.
   as unrelated grids.
 - **Status does not shed** either: it says whether a copy works, and
   its link is the only route from here to that copy's log.
-- **Status, Version, and the actions column are measured, not
+- **Status, Version, Content, and the actions column are measured, not
   guessed.** `fitColumns` sizes each to its own widest cell across every
   section table and writes the result to the panel as custom properties;
   Location absorbs everything left over.
@@ -532,7 +561,8 @@ hides it.
   - The stylesheet's widths remain as fallbacks, for the first paint
     and for a panel measured while hidden (which reports zero).
 - Narrow windows shed **Version** below 640px rather than wrapping
-  every cell to a ribbon. It is the least load-bearing: nothing acts on
+  every cell to a ribbon. Content stays: it is the panel's one answer to
+  whether the copies actually differ, which Version only hints at. It is the least load-bearing: nothing acts on
   it, and the copies it distinguishes are still told apart by collection
   and location. Zeroing the `<col>` width alongside `display: none` on
   the cells is what reclaims the space — under `table-layout: fixed`
@@ -755,8 +785,8 @@ what it adds.
   `@namespace`** are treated as one. Inherited from the convention; see
   above.
 - **Neither match compares content.** Two rows at the same URL can hold
-  different bytes if one has not been refreshed. The Version column is
-  the only hint the panel gives.
+  different bytes if one has not been refreshed. The Content column
+  reports that; it does not change which rows are listed.
 - **A row's version is not necessarily the newest published one.** The
   `@updateURL` / `@downloadURL` upstream is tracked separately by
   `versionProbes` ([updates.md](updates.md)). The …all button refetches

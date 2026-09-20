@@ -43,6 +43,7 @@ import { setGlyphButton } from './glyph.js';
 import { markFileChanges, scriptFileTag, tagLocalFile } from './file-changes.js';
 import {
   allRelatedRows,
+  contentFingerprint,
   enableChanges,
   otherRunningCopies,
   type InstallOption,
@@ -151,6 +152,12 @@ export interface RelatedVersionsModel extends RelatedVersions {
   // what exists instead. Whether the install offer appears is decided
   // by `actions.install`, not by this.
   mode: 'installed' | 'preview';
+  // What the Content column compares each row against: the
+  // `contentFingerprint` of the script on screen (viewer) or of the
+  // download being shown (preview). Undefined when that side has no
+  // content yet — every row then shows an em dash rather than a
+  // verdict that would flip once it arrives.
+  content?: string;
   // `@version` of the script on screen, used to fill the Version cell
   // of the install-offer row. Without it that one row
   // would read as version-less next to copies that all show one,
@@ -313,15 +320,7 @@ export function renderRelatedVersions(
     });
     for (const rel of sameLocation) {
       table.tBodies[0].appendChild(
-        versionRow(
-          rel,
-          model.actions,
-          verb,
-          allRows,
-          model.status?.get(rel.script.id),
-          model.mode,
-          model.canDeleteFile?.(rel.script, rel.collection) ?? false,
-        ),
+        versionRow(rel, model, verb, allRows),
       );
     }
     container.appendChild(table);
@@ -334,15 +333,7 @@ export function renderRelatedVersions(
     const table = makeTable();
     for (const rel of sameIdentity) {
       table.tBodies[0].appendChild(
-        versionRow(
-          rel,
-          model.actions,
-          refetchVerb(model.mode),
-          allRows,
-          model.status?.get(rel.script.id),
-          model.mode,
-          model.canDeleteFile?.(rel.script, rel.collection) ?? false,
-        ),
+        versionRow(rel, model, refetchVerb(model.mode), allRows),
       );
     }
     container.appendChild(table);
@@ -456,7 +447,7 @@ function collapseToggle(container: HTMLElement, model: RelatedVersionsModel): HT
 // Only the columns whose content has a natural width. Collection and
 // Location are the flexible pair that absorb the remainder, and the
 // two icon columns are already exactly a control wide.
-const FITTED_COLUMNS = ['col-status', 'col-version', 'col-actions'] as const;
+const FITTED_COLUMNS = ['col-status', 'col-version', 'col-content', 'col-actions'] as const;
 
 // Measured by switching the tables to `auto` layout at `max-content`
 // width — the one state where a cell reports what its content actually
@@ -625,6 +616,7 @@ function makeTable(
     'col-location',
     'col-status',
     'col-version',
+    'col-content',
     'col-actions',
     'col-remove',
   ]) {
@@ -652,6 +644,7 @@ function appendHeadings(
     ['Location', 'col-location'],
     ['Status', 'col-status'],
     ['Version', 'col-version'],
+    ['Content', 'col-content'],
     ['', 'col-actions'],
     ['', 'col-remove'],
   ] as const) {
@@ -679,16 +672,16 @@ function appendHeadings(
 
 function versionRow(
   rel: RelatedScript,
-  actions: RelatedVersionsActions,
+  model: RelatedVersionsModel,
   verb: string,
   allRows: readonly RelatedScript[],
-  status: ScriptStatusView | undefined,
-  mode: RelatedVersionsModel['mode'],
-  // This row is a local copy whose file the page can delete — see
-  // `RelatedVersionsModel.canDeleteFile`.
-  deletesFile: boolean,
 ): HTMLTableRowElement {
   const { script } = rel;
+  const { actions, mode } = model;
+  const status = model.status?.get(script.id);
+  // This row is a local copy whose file the page can delete — see
+  // `RelatedVersionsModel.canDeleteFile`.
+  const deletesFile = model.canDeleteFile?.(script, rel.collection) ?? false;
   const isCurrent = script.id === actions.currentScriptId;
   const tr = document.createElement('tr');
   if (isCurrent) {
@@ -740,6 +733,7 @@ function versionRow(
   tr.appendChild(locationCell(rel, isCurrent, mode));
   tr.appendChild(statusCell(script.id, status));
   tr.appendChild(versionCell(script));
+  tr.appendChild(contentCell(isCurrent ? undefined : script, model.content, mode));
   tr.appendChild(actionsCell(rel, actions, isCurrent, verb, mode));
   tr.appendChild(removeCell(rel, actions, deletesFile));
   return tr;
@@ -984,6 +978,54 @@ function versionCellFor(version: string | undefined, noneTitle: string): HTMLTab
   return td;
 }
 
+// Whether this row's loaded content — body and `@require`s, see
+// `contentFingerprint` — matches the copy the panel compares against:
+// the script on screen, or the download a preview is showing.
+//
+// `BASE` for the reference row itself (`script` undefined): a copy is
+// neither the same as nor different from itself, and a blank there
+// read as a missing value rather than as the row the others are
+// measured against. An em dash when either side has no content to
+// compare (see `contentFingerprint`: never loaded, or `@require`s it
+// does not hold) — for the same reason the Status cell shows one:
+// absent is not a claim.
+//
+// Compared against what is LOADED, not what is on disk or at the URL:
+// a local file edited since it was read still says Same until it is
+// refreshed, and the Location cell's `modified` chip is what says so.
+function contentCell(
+  script: StoredScript | undefined,
+  reference: string | undefined,
+  mode: RelatedVersionsModel['mode'],
+): HTMLTableCellElement {
+  const td = cell('col-content');
+  if (!script) {
+    const span = document.createElement('span');
+    span.className = 'content-base';
+    span.textContent = 'BASE';
+    span.title = mode === 'preview'
+      ? 'The script being previewed, which the other rows are compared against'
+      : 'The copy on screen, which the other rows are compared against';
+    td.appendChild(span);
+    return td;
+  }
+  const own = contentFingerprint(script);
+  if (own === undefined || reference === undefined) {
+    td.textContent = '—';
+    return td;
+  }
+  const same = own === reference;
+  const other = mode === 'preview' ? 'the script being previewed' : 'the copy on screen';
+  const span = document.createElement('span');
+  span.className = same ? 'content-same' : 'content-different';
+  span.textContent = same ? 'SAME' : 'DIFFERENT';
+  span.title = same
+    ? `This copy\u2019s code and @require files match ${other}`
+    : `This copy\u2019s code or @require files differ from ${other}`;
+  td.appendChild(span);
+  return td;
+}
+
 function actionsCell(
   rel: RelatedScript,
   actions: RelatedVersionsActions,
@@ -1175,6 +1217,10 @@ function installRow(
   // Not a copy — an offer — so the no-version tooltip has to be about
   // the file being previewed, not about a row that doesn't exist.
   tr.appendChild(versionCellFor(model.version, 'This script declares no @version'));
+
+  // The offer IS the download the other rows are compared against, so
+  // it is the base row here — same as the current row on the viewer.
+  tr.appendChild(contentCell(undefined, undefined, 'preview'));
 
   // Nothing to refetch and nothing to remove: the copy does not exist
   // yet. Empty cells rather than disabled controls, which would imply

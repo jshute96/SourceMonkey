@@ -498,9 +498,9 @@
         border-spacing: 0;
         table-layout: fixed;
       }
-      /* Status, Version, and the actions column are sized to their own
-         widest content by `fitColumns` (related-versions.ts), which
-         writes the three custom properties below onto the panel. The
+      /* Status, Version, Content, and the actions column are sized to
+         their own widest content by `fitColumns` (related-versions.ts),
+         which writes the custom properties below onto the panel. The
          fallbacks are what the first paint uses and what a measurement
          of a hidden panel falls back to: wide enough for REFRESH
          FAILED and a date-shaped @version. Everything left over goes to
@@ -509,6 +509,7 @@
       .versions-table col.col-collection { width: 26%; }
       .versions-table col.col-status   { width: var(--w-col-status, 8em); }
       .versions-table col.col-version  { width: var(--w-col-version, 7em); }
+      .versions-table col.col-content  { width: var(--w-col-content, 7em); }
       .versions-table col.col-actions  { width: var(--w-col-actions, 6em); }
       .versions-table col.col-remove   { width: 2.4em; }
       /* Same #444 as the section heading above the table: the panel's
@@ -555,7 +556,8 @@
          well, so heading and values share an edge, and inside the
          measured width, so the gutter survives the fit. */
       .versions-table .col-status,
-      .versions-table .col-version { padding-right: 1.1em; }
+      .versions-table .col-version,
+      .versions-table .col-content { padding-right: 1.1em; }
       /* Status reuses the `status-*` colours the controls row and the
          collections page already use, so one verdict is one colour
          everywhere, and styles its link as status text — see
@@ -568,6 +570,17 @@
         white-space: nowrap;
       }
       .versions-table .col-status a:hover { text-decoration: underline; }
+      /* Content is a verdict like Status and dressed like one. Green is
+         Status's own OK. DIFFERENT is blue, not the `modified` chip's
+         teal: on this panel's green card teal and green are near twins
+         down a column, and the two words have to be told apart at a
+         glance. BASE marks the row the rest are compared against and
+         carries no colour — it is a label, not a verdict. */
+      .versions-table td.col-content { font-size: 12px; white-space: nowrap; }
+      .versions-table td.col-content span { font-weight: 600; }
+      .versions-table .content-same { color: #166534; }
+      .versions-table .content-different { color: #1d4ed8; }
+      .versions-table .content-base { color: #555; }
       /* Slash-aware wrap; see the h1 rule above. `min-width: 0` lets
          a long URL shrink its column rather than widening the table. */
       .versions-table .col-collection,

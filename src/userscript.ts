@@ -38,6 +38,7 @@ import {
   getScript,
   getCollection,
   getCollections,
+  hashSource,
   isScriptEnabled,
   isCollectionEnabled,
   removeScript,
@@ -49,6 +50,7 @@ import {
 } from './script-store.js';
 import {
   allRelatedRows,
+  contentFingerprint,
   enableChanges,
   findRelatedVersions,
   installOptionsFor,
@@ -332,17 +334,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   // after the gate is about the one installed script this page is
   // showing, which a preview doesn't have.
   if (areaName === 'session' && panelStatusChanged(changes)) {
-    // Held back while the offer section's dropdown is open — see
-    // `panelPaintDeferred`. Nothing is lost: the flush repaints from
-    // the latest args once the dropdown is done with.
-    if (lastRelatedPaint) {
-      if (panelSelectIsOpen()) {
-        panelPaintDeferred = true;
-      } else {
-        panelPaintDeferred = false;
-        void repaintRelatedVersions(lastRelatedPaint);
-      }
-    }
+    repaintPanelFromLastArgs();
   }
   if (!scriptId) return;
   if (areaName === 'local') {
@@ -1449,10 +1441,15 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
   const toggleFocused = document.activeElement !== null
     && document.activeElement === versionsEl.querySelector('.versions-collapse');
 
+  // The copy the Content column compares every other row against.
+  const shownScript = args.mode === 'installed'
+    ? snapshot.scripts.find((s) => s.id === args.currentScriptId)
+    : undefined;
   renderRelatedVersions(versionsEl, {
     ...related,
     actions,
     status,
+    content: shownScript ? contentFingerprint(shownScript) : previewContent(),
     mode: args.mode,
     location: args.location,
     version: args.header ? getValue(args.header, 'version') : undefined,
@@ -1764,6 +1761,22 @@ function panelSelectIsOpen(): boolean {
   return active instanceof HTMLSelectElement && versionsEl.contains(active);
 }
 
+// Repaint the panel as it was last asked for, unless the offer
+// section's dropdown is open — then hold the paint back (see
+// `panelPaintDeferred`). Nothing is lost: the flush repaints from the
+// latest args once the dropdown is done with. For repaints the panel's
+// inputs trigger on their own, not for its actions, which paint from
+// their own args.
+function repaintPanelFromLastArgs(): void {
+  if (!lastRelatedPaint) return;
+  if (panelSelectIsOpen()) {
+    panelPaintDeferred = true;
+  } else {
+    panelPaintDeferred = false;
+    void repaintRelatedVersions(lastRelatedPaint);
+  }
+}
+
 // Flush whatever was held back, once the dropdown is done with.
 //
 // Two triggers, because focus alone doesn't cover it. Picking an entry
@@ -2022,6 +2035,10 @@ let previewLocation = '';
 let previewFileUrl = '';
 // The fetched body. Empty until the fetch lands.
 let previewText = '';
+// `hashSource` of `previewText`: the download's half of the panel's
+// Content comparison, in the same terms a stored row's `contentHash`
+// is. Empty until the text is in hand.
+let previewContentHash = '';
 let previewHeader: ParsedHeader | null = null;
 // Per-page cache shared by every lazily-loaded `@require` tab, so
 // re-opening a tab (or two refs pointing at one URL) fetches once.
@@ -2135,7 +2152,21 @@ async function loadPreview(): Promise<void> {
 
   setMessage('');
   previewText = text;
+  previewContentHash = await hashSource(text);
   renderPreview(text);
+}
+
+// What the panel compares its rows against on a preview: the download
+// on screen, in `contentFingerprint` terms — which also answers
+// undefined until the parse check has fetched the `@require`s the
+// header declares, so no row says Same only to flip once they land.
+function previewContent(): string | undefined {
+  if (!previewContentHash) return undefined;
+  return contentFingerprint({
+    contentHash: previewContentHash,
+    header: previewHeader,
+    requires: previewFiles?.requires ?? [],
+  });
 }
 
 // Shapes we know how to preview, checked against the raw input. Mirrors
@@ -2610,8 +2641,14 @@ function recordPreviewFiles(files: AttachFilesResult): void {
   previewLocalFiles.clear();
   for (const [ref, url] of next) previewLocalFiles.set(ref, url);
 
+  // The panel's Content column compares against these too — see
+  // `previewContent`. Repainted only when its answer moved: the first
+  // time the requires land (the column was showing dashes for them),
+  // or a re-check that fetched a library with new content.
+  const contentBefore = previewContent();
   previewFiles = { requires: files.requires, resources: files.resources };
   renderPreviewDetails();
+  if (previewContent() !== contentBefore) repaintPanelFromLastArgs();
   if (changed) tabsView.setTabs(previewTabs(previewText, previewHeader));
 }
 
