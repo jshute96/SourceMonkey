@@ -18,6 +18,10 @@ import { hasAllowedScheme, WEB_SCHEMES } from './gm-url-scheme.js';
 
 interface RequestEntry {
   originatorTabId: number;
+  // Which userscript called GM_openInTab. Kept so the SW can stamp the
+  // close event with that script's execution world — see `pushWorld`
+  // in background.ts.
+  scriptId: string;
   // Assigned once chrome.tabs.create resolves. Until then the
   // request is "creating".
   tabId: number | null;
@@ -79,6 +83,7 @@ export async function openGmTab(
   // could theoretically close the new tab manually that fast.
   requestState.set(payload.requestId, {
     originatorTabId,
+    scriptId: payload.scriptId,
     tabId: null,
     closeRequested: false,
   });
@@ -148,6 +153,10 @@ export async function closeGmTab(requestId: string): Promise<void> {
 export function takeRequestForClosedTab(tabId: number): {
   originatorTabId: number;
   requestId: string;
+  // Which script asked for the tab. The SW needs it to stamp the
+  // close event with the script's execution world — see `pushWorld`
+  // in background.ts.
+  scriptId: string;
 } | null {
   const requestId = tabIdToRequest.get(tabId);
   if (!requestId) return null;
@@ -155,7 +164,7 @@ export function takeRequestForClosedTab(tabId: number): {
   const entry = requestState.get(requestId);
   if (!entry) return null;
   requestState.delete(requestId);
-  return { originatorTabId: entry.originatorTabId, requestId };
+  return { originatorTabId: entry.originatorTabId, requestId, scriptId: entry.scriptId };
 }
 
 // Drop every entry pointing at this originator tab — used when a tab

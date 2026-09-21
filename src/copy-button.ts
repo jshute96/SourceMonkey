@@ -1,10 +1,11 @@
-// The small square "copy this to the clipboard" button the viewer puts
+// The small square "copy this to the clipboard" button that sits
 // beside a path.
 //
-// Shared because it appears on more than one row now — the Location
-// row's resolved path, and each entry in the Local overrides row — and
-// the two must not drift into different icons, different flash durations,
-// or different failure behavior.
+// Shared because it appears in more than one place — the viewer's
+// Location row and each entry in its Local overrides row, and the
+// delete dialog's file path — and they must not drift into different
+// icons, different flash durations, or different failure behavior.
+// Its CSS (`.copy-btn`) is in styles.css for the same reason.
 //
 // The text is supplied as a callback rather than a string: a button
 // can outlive the render that made it (the Location row's is one
@@ -12,20 +13,18 @@
 // flash survives a repaint), and it must copy what the row says NOW,
 // not what it said when the button was built.
 
-// Static markup for the Lucide-style copy / check icons. Safe to embed
-// via innerHTML because there's no interpolation; the strings ship as
-// part of the extension bundle.
+// The copy / check glyphs. Both live in the shared sprite
+// (src/glyph-sprite.svg) and are referenced here rather than inlined,
+// so every icon in the extension is defined in one place. Safe to
+// embed via innerHTML: no interpolation, and the strings ship as part
+// of the extension bundle.
+//
+// Both are always in the button; `.copied` on the button swaps which
+// one is displayed, so the flash needs no re-render.
 const COPY_ICON_SVG =
-  '<svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"' +
-  ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>' +
-  '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>' +
-  '</svg>';
+  '<svg class="copy-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#sm-copy"/></svg>';
 const CHECK_ICON_SVG =
-  '<svg class="check-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"' +
-  ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<polyline points="20 6 9 17 4 12"/>' +
-  '</svg>';
+  '<svg class="check-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#sm-check"/></svg>';
 
 // How long the checkmark stays up after a successful copy.
 const COPIED_FLASH_MS = 1200;

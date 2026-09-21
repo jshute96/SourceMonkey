@@ -18,6 +18,11 @@ import { ScriptsDir } from '../fixtures/scripts-dir';
 
 const SECTION_MESSAGE = 'could not be saved';
 const BANNER = 'SourceMonkey is out of storage space';
+// Chrome's own wording for the rejection (it has varied across
+// versions; this is the current one), and what the store turns it
+// into wherever the reason is shown.
+const CHROME_REJECTION = 'Resource::kQuotaBytes quota exceeded';
+const STORAGE_FULL = 'SourceMonkey is out of storage space';
 
 test.describe('a refresh that cannot be saved', () => {
   let scriptsDir: ScriptsDir;
@@ -39,11 +44,11 @@ test.describe('a refresh that cannot be saved', () => {
     const collection = await sm.addCollection(scriptsDir.path);
     expect(await sm.getRefreshErrors()).toEqual({});
 
-    await sm.failCollectionWrites('QUOTA_BYTES quota exceeded');
+    await sm.failCollectionWrites(CHROME_REJECTION);
     await sm.updateCollection(collection!.id, 'manual').catch(() => {});
 
     const errors = await sm.getRefreshErrors();
-    expect(errors[collection!.id]).toContain('QUOTA_BYTES quota exceeded');
+    expect(errors[collection!.id]).toContain(STORAGE_FULL);
   });
 
   test('the prior scripts keep running — a failed save changes nothing', async ({ sm }) => {
@@ -57,7 +62,7 @@ test.describe('a refresh that cannot be saved', () => {
       meta: { name: 'Hello Renamed', match: ['https://example.com/*'] },
       body: 'console.log("changed");',
     });
-    await sm.failCollectionWrites('QUOTA_BYTES quota exceeded');
+    await sm.failCollectionWrites(CHROME_REJECTION);
     await sm.updateCollection(collection!.id, 'manual').catch(() => {});
 
     const after = (await sm.getCollectionWithScripts(collection!.id))!.scripts;
@@ -66,7 +71,7 @@ test.describe('a refresh that cannot be saved', () => {
 
   test('a later successful refresh clears the record', async ({ sm }) => {
     const collection = await sm.addCollection(scriptsDir.path);
-    await sm.failCollectionWrites('QUOTA_BYTES quota exceeded');
+    await sm.failCollectionWrites(CHROME_REJECTION);
     await sm.updateCollection(collection!.id, 'manual').catch(() => {});
     expect(await sm.getRefreshErrors()).not.toEqual({});
 
@@ -89,7 +94,7 @@ test.describe('a refresh that cannot be saved', () => {
       const a = await sm.addCollection(scriptsDir.path);
       const b = await sm.addCollection(other.path);
 
-      await sm.failCollectionWrites('QUOTA_BYTES quota exceeded');
+      await sm.failCollectionWrites(CHROME_REJECTION);
       // Deliberately NOT caught: the pass records each collection's
       // failure and resolves. Rejecting here would mean the caller
       // couldn't tell a total failure from a partial one, and the
@@ -109,7 +114,7 @@ test.describe('a refresh that cannot be saved', () => {
     extensionContext, extensionId, sm,
   }) => {
     const collection = await sm.addCollection(scriptsDir.path);
-    await sm.failCollectionWrites('QUOTA_BYTES quota exceeded');
+    await sm.failCollectionWrites(CHROME_REJECTION);
     await sm.updateCollection(collection!.id, 'manual').catch(() => {});
     await sm.syncNow();
 
@@ -130,7 +135,7 @@ test.describe('a refresh that cannot be saved', () => {
     extensionContext, extensionId, sm,
   }) => {
     const collection = await sm.addCollection(scriptsDir.path);
-    await sm.failCollectionWrites('QUOTA_BYTES quota exceeded');
+    await sm.failCollectionWrites(CHROME_REJECTION);
     await sm.updateCollection(collection!.id, 'manual').catch(() => {});
 
     const page = await extensionContext.newPage();
@@ -157,13 +162,13 @@ test.describe('a refresh that cannot be saved', () => {
     const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     await sm.clearScriptLog(script!.id);
 
-    await sm.failCollectionWrites('QUOTA_BYTES quota exceeded');
+    await sm.failCollectionWrites(CHROME_REJECTION);
     await sm.updateAllCollections('manual');
 
     const log = await sm.getScriptLog(script!.id);
     const saved = log.filter((e) => e.message.includes('could not be saved'));
     expect(saved.length).toBeGreaterThan(0);
-    expect(saved[0]!.message).toContain('QUOTA_BYTES quota exceeded');
+    expect(saved[0]!.message).toContain(STORAGE_FULL);
   });
 
   // The single-collection path logs through a different branch, so the
@@ -175,13 +180,13 @@ test.describe('a refresh that cannot be saved', () => {
     const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
     await sm.clearScriptLog(script!.id);
 
-    await sm.failCollectionWrites('QUOTA_BYTES quota exceeded');
+    await sm.failCollectionWrites(CHROME_REJECTION);
     await sm.updateCollection(collection!.id, 'manual').catch(() => {});
 
     const log = await sm.getScriptLog(script!.id);
     const saved = log.filter((e) => e.message.includes(SECTION_MESSAGE));
     expect(saved.length).toBeGreaterThan(0);
-    expect(saved[0]!.message).toContain('QUOTA_BYTES quota exceeded');
+    expect(saved[0]!.message).toContain(STORAGE_FULL);
   });
 
   // The first thing the original report hit: an add whose refresh
@@ -199,7 +204,7 @@ test.describe('a refresh that cannot be saved', () => {
   test('an add whose refresh cannot be saved leaves a recoverable section', async ({
     extensionContext, extensionId, sm,
   }) => {
-    await sm.failCollectionWrites('QUOTA_BYTES quota exceeded');
+    await sm.failCollectionWrites(CHROME_REJECTION);
     await sm.addCollection(scriptsDir.path).catch(() => {});
 
     // The seeded row is committed before the refresh, so the collection
@@ -207,7 +212,7 @@ test.describe('a refresh that cannot be saved', () => {
     const collections = await sm.getCollections();
     expect(collections).toHaveLength(1);
     const id = collections[0]!.id;
-    expect((await sm.getRefreshErrors())[id]).toContain('QUOTA_BYTES quota exceeded');
+    expect((await sm.getRefreshErrors())[id]).toContain(STORAGE_FULL);
 
     const page = await extensionContext.newPage();
     await page.goto(`chrome-extension://${extensionId}/collections.html`);
@@ -218,15 +223,68 @@ test.describe('a refresh that cannot be saved', () => {
     // That section's Refresh is a real way out: once storage accepts
     // writes again, the same button completes what the add started.
     await sm.failCollectionWrites(null);
-    await section.getByRole('button', { name: 'Refresh' }).click();
+    await section.getByRole('button', { name: 'Refresh this collection' }).click();
     await expect(section.locator('p.error[data-message-kind="refresh"]')).toHaveCount(0);
     await expect(section.locator('tr[data-script-id]')).toHaveCount(1);
     await page.close();
   });
 
+  // The other thing the original report hit: a single-script install
+  // whose refresh couldn't be saved. Unlike an added collection, the
+  // seed here is a placeholder with no content and no header — a row
+  // that matches nothing and says "Not loaded yet" — so it is taken
+  // back out rather than left for the user to find.
+  test('an install whose load cannot be saved leaves nothing behind', async ({ sm }) => {
+    const path = `${scriptsDir.path}/hello.user.js`;
+    await sm.failCollectionWrites(CHROME_REJECTION);
+    let failure = '';
+    await sm.installScript(path, { schemeDefault: true }).catch((err: Error) => {
+      failure = err.message;
+    });
+    expect(failure).toContain(STORAGE_FULL);
+    expect(failure).not.toContain(CHROME_REJECTION);
+
+    // No placeholder row, no container created for it, and no banner
+    // pointing at a section that isn't there.
+    expect(await sm.getCollections()).toEqual([]);
+    expect(await sm.getRefreshErrors()).toEqual({});
+
+    // Once storage accepts writes again, the same install goes through
+    // as a first install — not as a duplicate of the rolled-back seed.
+    await sm.failCollectionWrites(null);
+    const result = await sm.installScript(path, { schemeDefault: true });
+    expect(result).not.toBeNull();
+    const scripts = (await sm.getCollectionWithScripts(result!.id))!.scripts;
+    expect(scripts).toHaveLength(1);
+    expect(scripts[0]!.status).toBe('ok');
+  });
+
+  // Into a container that already has a script: the sibling and the
+  // container survive, only the new seed goes.
+  test('a failed install into an existing container keeps its siblings', async ({ sm }) => {
+    scriptsDir.write({
+      relativePath: 'second.user.js',
+      meta: { name: 'Second', match: ['https://example.org/*'] },
+      body: '',
+    });
+    const first = await sm.installScript(`${scriptsDir.path}/hello.user.js`, { schemeDefault: true });
+    const containerId = first!.id;
+
+    await sm.failCollectionWrites(CHROME_REJECTION);
+    await sm.installScript(`${scriptsDir.path}/second.user.js`, { collectionId: containerId })
+      .catch(() => {});
+
+    const after = (await sm.getCollectionWithScripts(containerId))!;
+    expect(after.scripts.map((s) => s.relativePath)).toEqual([`${scriptsDir.path}/hello.user.js`]);
+    expect(after.collection.scriptIds).toHaveLength(1);
+    // The container's own refresh really did fail to save, so its
+    // section says so — the same record any refresh leaves.
+    expect((await sm.getRefreshErrors())[containerId]).toContain(STORAGE_FULL);
+  });
+
   test('removing a collection clears its record', async ({ sm }) => {
     const collection = await sm.addCollection(scriptsDir.path);
-    await sm.failCollectionWrites('QUOTA_BYTES quota exceeded');
+    await sm.failCollectionWrites(CHROME_REJECTION);
     await sm.updateCollection(collection!.id, 'manual').catch(() => {});
     expect(await sm.getRefreshErrors()).not.toEqual({});
 

@@ -56,6 +56,11 @@ test('userscript.html forwards script id', () => {
   );
 });
 
+// Debug pages are for developers typing the URL, not for public links.
+test('debug/icons.html is not an allowed deep-link page', () => {
+  assert.equal(buildDeepLinkTarget(`${PREFIX}?page=debug/icons.html`), null);
+});
+
 test('page param is stripped from passthrough query', () => {
   const out = buildDeepLinkTarget(`${PREFIX}?page=collections.html&a=1&b=2`);
   assert.ok(out);

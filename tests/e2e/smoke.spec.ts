@@ -23,7 +23,7 @@ test('collections page loads', async ({
 }) => {
   const page = await extensionContext.newPage();
   await page.goto(`chrome-extension://${extensionId}/collections.html`);
-  await expect(page.locator('h1')).toHaveText('SourceMonkey');
+  await expect(page.locator('h1')).toHaveText('SourceMonkey | Collections');
   await page.close();
 });
 
@@ -33,7 +33,7 @@ test('options page renders', async ({
 }) => {
   const page = await extensionContext.newPage();
   await page.goto(`chrome-extension://${extensionId}/options.html`);
-  await expect(page.locator('h1')).toHaveText('SourceMonkey');
+  await expect(page.locator('h1')).toHaveText('SourceMonkey | Options');
   await page.close();
 });
 

@@ -93,6 +93,24 @@ What is still unmapped:
 
 ## Injection payload
 
+- **The ungranted-`unsafeWindow` scan doesn't read `@require` bodies.**
+  `sourceUsesUnsafeWindow` (`src/unsafe-window-use.ts`) looks at the
+  script's own body only, so a script whose reference lives entirely in
+  a library still lands in the isolated world with no binding. The
+  requires arrive on a later pipeline step (`attachFiles`) than the flag
+  is derived on, and a require refresh would have to re-derive it.
+  - The related half is already handled: a `@require` that *declares*
+    the name suppresses our binding at emission time, so the library's
+    own `const unsafeWindow = …` isn't a duplicate declaration.
+  - The scan also has no regex-literal state, so a `/['"]/` opens a
+    string, and a literal ending in `\/\/` reads as a line comment;
+    either can swallow a later reference. Normally that just leaves the
+    script behaving as it did before the feature. The one bad case is a
+    swallowed *declaration* with a visible use after it: the binding is
+    then emitted beside the script's own and the install-time parse check
+    fails the row. No corpus script hits it; a real tokenizer (or the one
+    the parse check already has in its sandbox) would close it.
+
 - **Find the real `chrome.userScripts.register()` size limit.** One
   script with four 90 KB requires measures ~1 MB of `js[]` (the source
   map runs ~1.6x the code it maps). Nothing caps require count × size,
@@ -195,12 +213,6 @@ The compile-only check is in (see
   whose offscreen document never works pays that build for every
   candidate on every sync. Asking the breaker first would make the
   degraded case free.
-- **Re-verify `missing` rows too.** The `runSync` gate only re-checks
-  candidates whose status is `ok`; a `missing` row re-enabled from its
-  cached body registers on whatever verdict it last had. Those bodies
-  were checked when they were `ok`, so the hole is narrow — but a row
-  stored before the check existed and then flipped to `missing` skips
-  it entirely.
 - **Don't fetch dependencies twice on install-from-preview.** The
   preview fills `previewFetchCache` to run its check; clicking Install
   then runs `addCollection` → `attachFiles` against the store's own cache,
@@ -260,15 +272,38 @@ gates, or the emitted wrap — the rate is the regression signal.
 - **No `tests/examples/` script exercises `@require` under
   Tampermonkey.** `require-scope/` covers both injection worlds, but
   skips under `--project=tampermonkey`: it uses a relative `@require`,
-  which is a SourceMonkey extension, and TM installs these examples
-  from a local file so there's no base URL to resolve against. Baking
-  in an absolute URL doesn't work either — the fixture server's port
-  is assigned per run.
-- Closing this needs either a fixed-port fixture server for the TM
-  project, or a rewrite step that stamps the server URL into a
-  generated copy of the script before TM installs it. Until then the
-  TM-compatibility claim for `@require` — the whole premise of the
-  concatenated arrangement — rests on unit and SM-only e2e coverage.
+  which TM doesn't resolve, and TM installs these examples from a
+  local file so there's no base URL to resolve against. Baking in an
+  absolute URL doesn't work either — the fixture server's port is
+  assigned per run.
+  - Closing it needs either a fixed-port fixture server for the TM
+    project, or a rewrite step that stamps the server URL into a
+    generated copy of the script before TM installs it. Until then
+    the TM-compatibility claim for `@require` — the whole premise of
+    the concatenated arrangement — rests on unit and SM-only e2e
+    coverage, plus the VM project below.
+  - The `violentmonkey` project does exercise it: VM installs from
+    the fixture server's URL and resolves the relative ref against it.
+- **VM doesn't inject into `file://` pages in the test profile**, so
+  `gm-info`'s file:// case is skipped there. Verified it isn't the
+  file-access toggle: the grant is live, the script is installed with
+  its `file://` `@match`, and a reloaded VM still doesn't run it. VM
+  registers one `chrome.userScripts` entry matching `<all_urls>` and
+  matches internally, so whether the cause is VM, Chrome's MV3
+  `userScripts` API, or that registration's persistence is unresolved.
+  Worth pinning down before we claim anything about VM and local
+  files. See
+  [docs/cross-manager-test-results.md](docs/cross-manager-test-results.md).
+- **`gm-info`'s stub `@require` / `@resource` / `@icon` refs are
+  relative**, so when the script is installed by hand into TM/VM
+  (rather than through the sync script's local server) TM reports a
+  "forbidden URL" error in `GM_info.script.resources` and VM fails to
+  fetch them. Once the repo is public, point them at raw GitHub URLs
+  for `tests/examples/gm-info/{lib.js,resource.txt,icon.svg}` so the
+  comparison shows a clean fetch under every manager.
+- The known divergences to expect across managers are catalogued in
+  [docs/supported-GM-APIs.md](docs/supported-GM-APIs.md) and
+  [docs/supported-headers.md](docs/supported-headers.md).
 
 ## `GM_*` — deferred surface
 
@@ -289,8 +324,8 @@ extension `Origin` is removed by default. What's still open:
   `Sec-Fetch-*` is left alone unless a script asks. Whether to match
   Tampermonkey's defaults instead needs TM's actual wire headers,
   which `tests/examples/gm-xmlhttp/gm-xmlhttp-wire-headers.spec.ts`
-  will report once a TM profile exists on the machine
-  (`docs/cross-manager-testing.md`).
+  reports as a test attachment under the `tampermonkey` project
+  (`SM_PRINT_WIRE_HEADERS=1` prints it; see `docs/testing.md`).
 - **Redirects skip the surgery.** The rule matches the original URL,
   so a 30x hop goes out without the overrides and without the `Origin`
   removal. Fixing it means predicting the target (can't) or rewriting
@@ -313,8 +348,14 @@ extension `Origin` is removed by default. What's still open:
 Adding any of these is a catalog entry + a body — nothing structural.
 
 - `GM_cookie.list` / `.set` / `.delete` — `chrome.cookies` wrapped
-  with per-script `@match` validation. VM's `checkCookieOpts` is
-  the reference shape.
+  with per-script `@match` validation. VM's `checkCookieOpts`
+  (`src/background/utils/cookies.js`, shipped in VM 2.35.1) is the
+  reference shape: validate the target URL against the calling
+  script's `@match`, and hide `httpOnly` cookies unless the user
+  opted in.
+- `GM_getValues` / `GM_setValues` / `GM_deleteValues` — bulk storage
+  calls that both TM (5.x) and VM (2.19.1+) have. Convenience over our
+  existing per-key APIs, which already batch writes.
 
 ### GM_* implementation follow-ups
 
@@ -346,25 +387,54 @@ Adding any of these is a catalog entry + a body — nothing structural.
   `clipboardWrite` in the manifest and `CLIPBOARD` added to the
   `reasons` array in `parse-check.ts`, which is fixed at creation
   time.
-- **`unsafeWindow` cross-world bridge.** Today it's a passthrough to
-  USER_SCRIPT world's own `window`, not the page's. A real bridge
-  would need a MAIN-world helper + postMessage protocol, or a
-  per-call DOM-event ferry à la VM's `MouseEvent.relatedTarget`
-  trick.
+- **Binary XHR encoding monopolizes the SW loop.** `runXhr` buffers
+  the whole body and calls `bytesToBase64` once (`src/gm-xhr.ts`),
+  bounded only by the 50 MB `MAX_RESPONSE_BYTES` cap.
+  `String.fromCharCode` is chunked at 32 KB but the closing `btoa` is
+  a single call over the whole string, and the worker holds the bytes
+  and the string at once.
+  - It matters because that same loop answers `sm:check-pending` on
+    the document-start critical path, so one script pulling a large
+    binary can delay injection in unrelated tabs.
+  - VM doesn't have the problem: its XHR and encoding run in the
+    offscreen document, chunked at 1 MB precisely so neither the
+    extension nor the page stops responding
+    (`src/offscreen/xhr.js`).
+  - Two ways out. Cheap: chunk the encode and yield between chunks,
+    which keeps it in the worker but stops the monopolization.
+    Thorough: move the binary path to our offscreen document, which
+    also gets us `xhr.upload` progress events — `fetch` can't report
+    upload progress at all, so that's the one part of the
+    `GM_xmlhttpRequest` surface the worker cannot reach.
+  - Either way, measure first: we have no data on real-world
+    response sizes, and most `GM_xmlhttpRequest` payloads are small
+    enough that this never fires.
+  - If it goes to the offscreen document, it shares the host with
+    the clipboard item above — `reasons` is fixed at creation time,
+    so both consumers' reasons (`BLOBS`, and `WORKERS` if the encode
+    moves to a worker) have to be added in the same change.
 - **`window.close` / `window.focus` failures are filed under the
   first granting script.** The override closes over the scriptId of
   whichever script installed it, so a sibling script's refused close
   lands on the wrong Log tab. Cosmetic, and it disappears with
   per-script worlds (below).
-- **`window.*` grant scope is per-document.** Once any script on a
-  page grants `window.onurlchange`, the `urlchange` surface exists on
-  the shared USER_SCRIPT-world `window`, so a sibling script that did
-  NOT grant it can also feature-detect and subscribe. `@grant
-  window.close` / `window.focus` leak the same way — their overrides
-  replace the methods on that same shared `window`. TM sandboxes each
-  script's `window` and gets exact per-script gating. Same
-  shared-realm root cause as the storage-spoofing entry below; a
-  real fix needs per-script worlds.
+- **`window.*` grant scope is per-document-and-world.** Once any
+  script on a page grants `window.onurlchange`, the `urlchange`
+  surface exists on that world's shared `window`, so a sibling script
+  in the same world that did NOT grant it can also feature-detect and
+  subscribe. `@grant window.close` / `window.focus` leak the same way
+  — their overrides replace the methods on that same shared `window`.
+  TM sandboxes each script's `window` and gets exact per-script
+  gating. Same shared-realm root cause as the storage-spoofing entry
+  below; a real fix needs per-script worlds.
+  - In MAIN world the shared `window` is the **page's**, so the page
+    sees these too: it can subscribe to `urlchange`, and its own
+    `window.close()` reaches our override. The override is
+    scriptId-scoped SW-side (`bridgeMayActAs`), so the page gets no
+    more than the MAIN-world script it shares a realm with already
+    had — but "the page can close its own tab" is a behavior change
+    worth knowing about. TM has the same exposure in its page-context
+    mode.
 - **`window.*` reload-fast-path coverage.** The stated reason the
   `urlchange.enable` and `windowControl.enable` calls live in the
   emitter's `js` (rather than `prelude`) is that a hot-swapped body
@@ -374,13 +444,85 @@ Adding any of these is a catalog entry + a body — nothing structural.
   for the same reason and now has that e2e
   (`reload-fast-path.spec.ts`), so these are the eager calls whose
   swap behaviour is unasserted.
-- **`window.onurlchange` in MAIN world.** `@inject-into page` +
-  `@grant window.onurlchange` gets nothing, since MAIN-world scripts
-  get no bindings at all. Folded into the general "GM_* in MAIN
-  world" item in
-  [docs/GM-API-strategy.md](docs/GM-API-strategy.md#things-to-revisit-later),
-  but note this one is harder: installing the event surface in MAIN
-  means patching the *page's* `window.addEventListener`.
+- **CSP-exempt DOM injection for MAIN-world scripts.** `GM_addStyle` /
+  `GM_addElement` bypass page CSP from USER_SCRIPT world but not from
+  MAIN, so a `@grant unsafeWindow` script on a site with a strict
+  `style-src` inserts a `<style>` whose rules never apply. The block
+  is detected (`el.sheet === null` once connected) and reported as a
+  Log warning; the fallback would be an async bridge request asking
+  the USER_SCRIPT-world runtime to insert a CSP-exempt copy, at the
+  cost of the returned element no longer being the live one, and of
+  registering that runtime on pages that otherwise don't need it.
+  TM/VM have the same limitation today. Build it when a real site
+  shows up where the style matters.
+- **Frame-scope the remaining SW pushes.** `sm:gm-xhr-event` now goes
+  to `sender.frameId`, but `sm:gm-tab-closed`,
+  `sm:gm-notification-event` and `sm:gm-menu-fire` still go tab-wide,
+  and `sm:gm-value-update` is inherently tab-scoped (the openers table
+  keys on tabId). Harmless while nothing registers with `allFrames` —
+  the bridge only exists in the top frame — but the day `@noframes`
+  work turns that on, a MAIN-world script's events would be posted
+  into every subframe's realm. Needs a per-frame openers table.
+- **Gate `sm:start` over the bridge too.** It's what populates the
+  `gmOpeners` table, i.e. who receives value broadcasts. A forged one
+  can only name an id the page can already see, and the push relay is
+  world-gated, so there's no live hole — but `bridgeMayActAs` exists
+  now and applying it would close the shape rather than relying on id
+  entropy.
+- **Shim-cache `setTimeout` / `clearTimeout` in the GM runtime.** Every
+  other primitive it uses is captured at init; timers are still read
+  off the live global, which a MAIN-world page can replace. No impact
+  today (the runtime installs at `document_start`), just inconsistent
+  with the file's stated discipline.
+- **Bridge gate vs. matcher divergence.** `bridgeMayActAs` re-runs
+  our own `url-match.ts` against the sender's URL, while Chrome
+  decided whether to inject with its matcher. A disagreement refuses
+  a legitimate script — fatal for a storage-granting one — but loudly
+  (a Log line), and the badge depends on the same agreement.
+  - The recheck can't be dropped: the SW can't observe which scripts
+    Chrome injected, and a MAIN-world script's own report arrives
+    over the page-forgeable bridge. Keying off the tab's `expected`
+    set uses the same matcher; a per-document token isn't a secret in
+    MAIN world.
+  - The divergence-proof fix is a USER_SCRIPT-world *witness*
+    registered with each MAIN-world GM script's own patterns,
+    reporting "X is here" over trusted `chrome.runtime`. Costs a
+    registration per script and a document-start race the SW would
+    hold early requests for.
+  - Do it only if divergence shows up in practice; a matcher bug is
+    the cheaper fix.
+- **Bridge gate and push stamping read the stored world, not the
+  live one.** `scriptWorld` / `bridgeMayActAs` answer from the current
+  row, but a document that loaded before an edit flipped the script's
+  world keeps running the old one until reload. USER_SCRIPT → MAIN:
+  the open isolated document's pushes are stamped MAIN and re-posted
+  into the page until reload. MAIN → USER_SCRIPT: the open MAIN
+  document's bridged calls are refused. Both self-heal on reload; the
+  per-document token above would fix both.
+- **The bridge gate can lag a grant-adding edit by one navigation.**
+  `scriptGrantsSubsystem` answers from the match-index cache, which
+  learns about a refreshed row through storage's `onChanged` — after
+  the refresh that `handleCheckPending` just ran. A MAIN-world script
+  whose refresh added its first storage grant (with another
+  runtime-backed grant already there, so `needsRuntime` doesn't fall
+  back) can be refused its snapshot on that one navigation: `run-new`
+  with `seedValues` and no `gmValues`, so the previous version runs
+  with a console line. Self-heals on reload. Either await the cache's
+  own update in the handler, or pin it with an e2e in
+  `reload-fast-path.spec.ts` (the "adds a storage grant" case there is
+  USER_SCRIPT-world).
+- **The hidden-tab flush skips the confirmation check.** `flushAll`
+  passes `"pagehide"` for `visibilitychange → hidden` too, so in MAIN
+  world a merely-backgrounded tab's flush goes fire-and-forget and the
+  "storage flush not confirmed" line is never printed for it. Correct
+  (the document may be going away), just one diagnostic less; a
+  distinct reason would keep it.
+- **A failed own-spec retry leaves its fingerprint recorded.**
+  `runIncrementalSync` stores `nextScopes` before `applyPlan`; if an
+  own spec is refused and `retryRefusedOwnSpecs` can't rebuild it, the
+  fingerprint stays while `state.registered` lacks the id. Harmless
+  while `alreadyPlaced` also requires presence, which is the clause
+  carrying the invariant.
 - **XHR `onprogress` events.** Needs a streaming wire format from
   the SW (chunked sends or a per-request port).
 - **`GM_download` follow-ups.**
@@ -468,11 +610,21 @@ Adding any of these is a catalog entry + a body — nothing structural.
 - **Storage quota error surfacing.** A `chrome.storage.local.set`
   rejection (quota exceeded) only `console.warn`s; the userscript
   sees no error. Surface on the per-script log.
-- **Storage value type-tag encoding.** Today we round-trip values
-  through `chrome.storage.local`'s JSON-ish serialization. VM/TM
-  encode with type tags (`o`/`n`/`b`/`s`/`u`) so `Date` and other
-  non-JSON-clean values survive. Add when a real userscript needs
-  it.
+- **Tagged-string storage as a read-path optimization.** VM/TM store
+  each value as a tagged *string* — VM's `dumpScriptValue`
+  (`src/common/util.js`) writes `s`/`n`/`b` plus the literal for
+  primitives and `o` plus JSON for everything else — so reads of
+  primitives skip `JSON.parse` entirely.
+  - Not a correctness gap: type fidelity is handled, by a different
+    scheme that stores values structurally rather than as strings.
+    See
+    [docs/GM-APIs-storage.md](docs/GM-APIs-storage.md#value-type-fidelity).
+  - Also worth being clear that VM's own tags don't buy fidelity:
+    `Date` and other non-JSON-clean values go through
+    `JSON.stringify` there too.
+  - Copy only if storage reads ever show up in a profile, and note
+    the win is smaller for us — `chrome.storage.local` deserializes
+    the row either way.
 - **Cache the gmValues snapshot in SW memory.** Every storage-
   granting script's `sm:check-pending` reply triggers a
   `chrome.storage.local.get(null)` on the document-start critical
@@ -555,11 +707,6 @@ Adding any of these is a catalog entry + a body — nothing structural.
   Worth one line in `supported-GM-APIs.md` calling out
   `src=javascript:`, event-handler attributes, and `<script src>`
   as deliberately un-sanitized sinks.
-- **`unsafeWindow` USER_SCRIPT-world clarity.** Currently a quiet
-  passthrough to USER_SCRIPT-world `window`. Either throw with a
-  "use `@inject-into page`" hint on access, or document the
-  passthrough more loudly so the gotcha is obvious. Today
-  `unsafeWindow.<page-global>` returns undefined with no signal.
 - **Listener-id contract.** `addValueChangeListener` returns the id
   as a `String(numericCounter)`. TM returns numeric IDs. Pin the
   contract in `GM-APIs.md` — id should be opaque to callers, but
@@ -647,11 +794,12 @@ Adding any of these is a catalog entry + a body — nothing structural.
   Same root cause as the bare-host port issue above.
 - **`@connect *` install-time warning.** A wildcard `@connect`
   effectively asks for cross-origin fetch reach against any host.
-  TM prompts for it. Surface a "this script wants to talk to any
-  host" signal in the collections-page row at install / refresh time —
-  the same signal fits a script that grants `GM_xmlhttpRequest` and
-  declares no `@connect` at all, which is where the strict default
-  will bite.
+  TM prompts the user at request time; VM doesn't enforce `@connect`
+  at all, it just lists the declared hosts on its install-confirm
+  page. Surface a "this script wants to talk to any host" signal in
+  the collections-page row at install / refresh time — the same
+  signal fits a script that grants `GM_xmlhttpRequest` and declares
+  no `@connect` at all, which is where the strict default will bite.
 
 ## Test coverage gaps
 
@@ -672,6 +820,13 @@ during cumulative review of the GM_* phases:
   ReferenceError at runtime + SW logs dropped name.
 - **`GM_notification`**: image-less notification falls back to
   `icons/icon-128.png` correctly.
+- **MAIN-world pushes with no headless driver.**
+  `tests/e2e/gm-main-world-surface.spec.ts` proves every SW→page push
+  the bridge relays reaches MAIN world except two, which nothing can
+  drive headlessly: `sm:gm-notification-event` (no way to click a Chrome
+  notification) and `sm:gm-download-event` (needs a real download). Both
+  go through the same world-gated relay as the covered ones, so the risk
+  is low; a manual check with a real browser is what's left.
 - **Live repaint** (collections page): a `collections`-index reorder arriving
   from another origin, and the `.busy-spinner` guards that stop a
   repaint from overwriting a control the user just clicked. The reorder
@@ -681,6 +836,40 @@ during cumulative review of the GM_* phases:
   collapses into one pass, and that `await repaintPage()` observes the
   caller's own write. The add / remove / refresh tests depend on it but
   only cover it incidentally.
+- **`chrome.userScripts.update` behaviours with no live probe.** Two
+  facts the registration path is built on are modelled by the fake in
+  `tests/unit/injector.test.mjs` but never re-measured against Chrome:
+  that `matches: []` is refused (so `matches` can be changed but not
+  cleared), and that an updated registration moves to the END of
+  Chrome's set. The glob half now has a probe in
+  `tests/e2e/exclude-globs.spec.ts`; these two should join it, so a
+  Chrome change that invalidates them fails a test rather than silently
+  changing injection order or leaving a stale match set.
+
+## Concurrency — accepted races
+
+The write mutex in `script-store.ts` is per JS context. The interleaves
+that leaves are catalogued in
+[docs/storage.md](docs/storage.md#the-lock-is-per-context) rather than
+here — they are decisions, not proposals.
+
+One thing does have a concrete fix we chose not to make:
+
+- **`setRefreshError` is a lost update waiting on a rare trigger.**
+  `src/refresh-error.ts` read-modify-writes one whole map, with nothing
+  serializing it, and `refreshAllCollections` runs collections two at a
+  time. Two collections failing in one pass can drop each other's entry;
+  a healthy collection's clear can resurrect a sibling's error.
+  - The fix is to stop sharing the map: one `refresherror:<cid>` key per
+    collection, which makes every write independent and deletes the
+    read-modify-write entirely. The collections page would read them
+    with one prefix scan, as it already does for log levels.
+  - Not done because the map only ever fills when a refresh **write**
+    fails — in practice an exhausted `chrome.storage.local` quota — so
+    reaching it means the profile is already degraded, and what is lost
+    is a diagnostic message rather than any state. Worth doing if the
+    banner ever becomes load-bearing, or alongside any other change to
+    that module.
 
 ## Storage-key migration — remove after 2026-09-01
 
@@ -699,7 +888,172 @@ during cumulative review of the GM_* phases:
   still on the old spelling by then re-adds its collections by hand,
   which is a one-time cost paid by nobody in practice.
 
+## Local copies — follow-ups
+
+See [docs/local-copy.md](docs/local-copy.md#whats-next) for the list;
+the items with a trade-off worth recording:
+
+- **Destinations outside Downloads.** The FSA directory picker is the
+  only one-dialog way to write N files anywhere, and its missing
+  absolute path is recoverable by reading the expected paths back over
+  `file://`. Costs the user one navigate-to-the-folder pick per
+  collection, and whether a stored handle's grant survives a restart on
+  an extension origin is unverified.
+- **The "Ask where to save each file" preference.** Chrome honours it
+  regardless of `saveAs: false` (verified), so those users get a Save As
+  box per file. A copy with dependencies then means N boxes; the
+  dialog could warn when the setting is on, but nothing exposes it —
+  the first cancelled download is the only signal.
+- **`@icon` beside the copy.** The cached icon is on hand; the layout
+  rule is the same. Left out until someone edits an icon.
+- **Provenance** (`copiedFrom`) needs an explicit carry through
+  `rebuildCollection`, which keeps only `enabled` from a prior row.
+- **The dialog checks the OLD copies directory after Chrome's download
+  location moves.** `OpenContext.copiesDir` comes from the stored
+  setting, which is only corrected by a completed write — so the
+  existence check, the Replace wording and the copy-of-itself guard all
+  run against the stale path, and a file already at the NEW location is
+  found only by Chrome uniquifying around it. The write reports that
+  clearly now; detecting it up front needs a way to ask where Downloads
+  is, which no API offers.
+- **Two dependency URLs can collapse onto one file.** `mirrorPath`
+  falls back to a shorter suffix when the host carries a `:`, so
+  `localhost:8080/lib/util.js` and `localhost:9090/lib/util.js` both
+  become `lib/util.js`; the second is dropped by the dedupe and both
+  `@require`s then resolve to the first one's bytes. The dialog should
+  flag the collision rather than dropping a row.
+- **A `@require` whose URL ends in `.user.js`** is written into the
+  copies collection and scanned in as a script of its own on the next
+  refresh. A dependency subdirectory the scan skips would fix it, but
+  that is exactly what the local-override suffix rule searches.
+- **Windows paths.** `downloadsDirFromSaved` and `dirKey` assume `/`
+  separators, so every copy on Windows would report "saved outside the
+  collection directory". The rest of the extension is POSIX-first too
+  (`isNonPosixFileUrl` aside), so this is a note rather than a
+  regression.
+- **The Downloads-folder field takes any absolute path**, with no
+  readability probe — unlike the search-roots box above it, which
+  checks. Same probe would do.
+
+## Changed files on disk — follow-ups
+
+See [docs/file-changes.md](docs/file-changes.md).
+
+- **New files in a new subdirectory aren't seen.** The "refresh
+  pending" probe lists a directory collection's root and the folders
+  its known scripts sit in; a `.user.js` dropped into a subdirectory
+  nothing is known in yet only shows up on refresh. Listing recursively
+  would match the scan, at the scan's cost.
+- **A same-size edit within one second is invisible** — to the chip
+  and to the refresh's skip alike, since both compare the listing's
+  whole-second mtime. A content hash would need the read the skip
+  exists to avoid.
+- **Showing what changed.** A `MODIFIED` chip says a file differs; a
+  diff against the stored copy is the natural next step, and the
+  stored body is already there to diff against.
+  - The versions panel's Compare column has this: its `DIFF` button
+    opens the compare page. The `MODIFIED` chip's diff would be the same page
+    with the file on disk as one side.
+- **Compare page** (docs/compare.md) follow-ups:
+  - Intra-line highlighting: mark the changed span within a replaced
+    line pair, the way GitHub does. A common prefix / suffix per pair
+    is most of it.
+  - Syntax colouring in the diff, with the viewer's Prism setup.
+  - Function names in the `@@` seams, git-style: the nearest preceding
+    line that looks like a declaration.
+  - Follow the store: repaint when either copy is refreshed.
+
+- **http(s) files that are really gone.** A 404 on refresh is treated
+  as a transient failure (`REFRESH FAILED`, keep running), because a
+  404 is not proof — but a script whose URL has 404'd on every refresh
+  for weeks is probably removed. A count of consecutive 404s on the
+  row could escalate the badge's wording to "probably removed" without
+  changing what runs.
+- **`@icon` stand-ins get no chip.** Same reasoning as their missing
+  `local` marker (docs/local-file-overrides.md): a 16×16 slot has no
+  room, and a wrong icon is cosmetic.
+- **The collections page only re-probes for changed files on a
+  repaint.** Listings are memoised for a few seconds, so a burst of
+  storage writes costs one listing per folder — but a file deleted
+  while the page just sits there isn't noticed until something writes
+  to storage or the page is reloaded. A `visibilitychange` / `focus`
+  re-probe like the delete dialog's would close that.
+
+## Deleting local copies — follow-ups
+
+See [docs/local-delete.md](docs/local-delete.md#whats-next); the items
+with a trade-off worth recording:
+
+- **A copy with no download record can't be deleted.** `removeFile`
+  needs a download-history entry, which the user can clear. The way
+  round it is to `download` a one-line "deleted by SourceMonkey"
+  comment over the file with `conflictAction: 'overwrite'` and then
+  remove that download — deliberately not done yet: it destroys the
+  file's content *before* it can fail, Chrome's "Ask where to save each
+  file" turns it into a Save As box aimed at a file we are erasing, and
+  it writes to a path we only believe is the file's (see the stale
+  copies-directory item above). A comment rather than zero bytes,
+  because an empty `.user.js` reads as a broken script.
+- **Shared dependency files are never deleted**, only listed. So the
+  last copy to go leaves the library behind for whichever sibling
+  claimed it — until that one is deleted too, when the file counts as
+  its own. Cleaning up a file nothing claims needs a sweep of the
+  collection, not a per-script plan.
+- **No control over what goes.** The dialog reports three outcomes and
+  offers no choice, because each follows from a fact it can state.
+  Keeping a file that only this script uses, or deleting a shared one
+  anyway, would need a control — and a reason to want one.
+- **Empty directories are left behind.** `removeFile` deletes files;
+  nothing in the extension can remove a directory, so a mirrored
+  `cdn.example.com/lib/` outlives the file it held.
+- **Only the copies collection's own rows can be deleted.** Eligibility
+  needs the row to sit in the directory collection at
+  `<Downloads>/SourceMonkey`, not just to have its file there, because
+  the shared/own split is computed from that collection's scripts. An
+  individual-file row pointing into the directory, a second directory
+  collection overlapping it, or a manifest listing the same files would
+  each make "which scripts read this file?" a different question — and
+  getting it wrong deletes a library another copy needs. Widening this
+  means answering that question globally first.
+- **A copy Chrome has marked deleted cannot be removed at all.** The
+  file is on disk, `removeFile` refuses it, and the row has no plain
+  trash can of its own (a directory collection's rows are removed by
+  refreshing, which would scan it straight back in). The user is told
+  to delete the file by hand; the dialog watches for that and then
+  offers to remove the entry itself. The overwrite trick above would
+  close the by-hand step.
+- **`exists` is only as fresh as Chrome's last check.** The dialog
+  probes the disk itself while it is open, so a file deleted by hand
+  is listed as gone rather than attempted. A file that goes between
+  the last probe and the click still reaches `removeFile`, which fails
+  and is reported; nothing is erased on that path, so a later attempt
+  has the same handles it had.
+
 ## Collections page — follow-ups
+
+- **No way to move a script between scripts collections.** Today it is
+  install-into-the-other-then-remove (two clicks on two pages), which
+  loses the row's enabled state and log. A "Move to…" on the per-row
+  remove button's spot, or on the viewer's Collection row, would be the
+  natural home; the store side is a `scriptIds` splice plus a
+  `collectionId` rewrite under `mutate`.
+
+- **Creating from a location scans it twice.** The dialog's
+  `probeCollectionLocation` lists the directory / fetches the manifest /
+  calls the GitHub Contents API, and `createCollection` then refreshes
+  and does it again. Cheap for local; for GitHub it is a second
+  unauthenticated API call against the rate limit. Threading the probe's
+  scan into the first refresh would need `refreshCollection` to accept a
+  pre-computed scan.
+
+- **A `file://` row inside an http(s) collection can't be targeted.**
+  `?refresh_file=` decides "local" from the collection's own location,
+  so a `script_manifest.json` served over http that lists a `file://`
+  entry is skipped — the caller gets "No local collection or script
+  covers …" for a path that really is on disk. Refreshing just that row
+  (`updateScript`) would avoid re-reading the manifest over the network,
+  but the shape is rare enough that the extra branch hasn't earned its
+  keep yet. See `src/refresh-targets.ts`.
 
 - **`setToggleBusy` is not re-entrant.** Two quick clicks on the same
   toggle produce overlapping `onToggleScript` calls sharing one spinner
@@ -769,13 +1123,14 @@ during cumulative review of the GM_* phases:
 ## Local file overrides — follow-ups
 
 Shipped design in [docs/local-file-overrides.md](docs/local-file-overrides.md). Search
-roots today: the host script's own folder, then the global list from
-the options page.
+roots today: the host script's own folder, then the collection's own
+root, then the global list from the options page.
 
-- **Per-collection search roots.** The global list covers the common `lib/`
-  layout; a per-collection list would let one directory of scripts search
-  somewhere the rest don't. `StoredCollection.localRoots?: string[]`,
-  ordered implicit-folder → collection → global.
+- **Extra per-collection search roots.** A collection already searches
+  its own root; a configurable per-collection list would let one
+  directory of scripts also search somewhere the rest don't.
+  `StoredCollection.localRoots?: string[]`, ordered implicit-folder →
+  collection root → collection list → global.
   - Roots are absolute paths the user types, for the same reason
     collections are: `<input type="file">` gives no absolute path in
     Chrome, and `webkitdirectory` only gives relative ones, so a
@@ -826,11 +1181,6 @@ that need doing *here* rather than describing there:
   is named properly. The `file://` leg of `fetchManifestText` has no
   such check, and a directory read there surfaces as a `JSON.parse`
   complaint about `<`.
-- **Drop the Chrome < 152 download workaround** once 152 is the
-  supported floor. The DNR session rule, `needsDownloadWorkaround`,
-  `parseChromeMajor`, and their tests go together, and the
-  `declarativeNetRequestWithHostAccess` permission can come out of the
-  manifest with them.
 
 ## Script preview — follow-ups
 
@@ -892,6 +1242,16 @@ The preview (`userscript.html?preview=<url>`) is where a captured
 - Editing path: if we ever want in-app edits, we'll need either FSA
   handles (re-introduces per-session re-grant) or a Native Messaging
   helper. `file://` URLs are read-only from the extension side.
+- **Identity across a file that bounces.** A refresh drops a script
+  the scan no longer reports — the per-script refresh on a navigation
+  or tab focus included, which widens the window — and the row's UUID
+  goes with it, so a file that vanishes and comes back (branch switch,
+  an editor that saves by unlink+rename, a sync client rewriting in
+  place) returns as a fresh row: `enabled: true`, empty Log, and its `gmval:` values orphaned
+  rather than restored (`gm-values.ts` deliberately keeps them for
+  exactly that restore). Remembering `relativePath → id` for recently
+  dropped rows on the collection row would close it; the cost is a
+  tombstone list to bound and expire, which is what we just got rid of.
 
 ## Missing script functionality
 
@@ -903,18 +1263,25 @@ The preview (`userscript.html?preview=<url>`) is where a captured
 
 Every failure the UI surfaces now lands in the script's Log (see
 [docs/script-log.md](docs/script-log.md#every-surfaced-failure-lands-in-the-log)).
-Two rough edges are left:
+Rough edges left:
 
-- **The `loglevel:` sentinel is monotonic.** A script that hit
-  WARNING/ERROR keeps that badge for the rest of the Chrome session
-  even after the Log's newest entry says it recovered. Now that
-  recoveries are logged, the badge is the only thing still lying.
-  - It is also why collection-level fan-out rows are logged at `info`:
-    anything higher would badge every script under a collection from one
-    transient listing failure.
-  - Recomputing the max on every append is too expensive. A recovery
-    entry could reset it — but only if the reset can tell "the failure
-    this supersedes" from an unrelated `sm:error` still in the log.
+- **The `loglevel:` sentinel is monotonic within one version.** A
+  script whose own code hit WARNING/ERROR keeps that badge until the
+  log is cleared or a refresh loads new content.
+  - Load-state transitions (REFRESH FAILED, INVALID, REJECTED,
+    OUTDATED…) don't feed it: they carry a `state` on the log entry and
+    are badged by the row, which clears on recovery.
+  - `Loaded new content` resets it, which covers the edit-and-retry
+    loop. What's left is a script that keeps running the same code,
+    where "sticky until cleared" is the intended meaning.
+  - A second tab still running the old version undoes the reset with
+    its next error, and reloading it doesn't reset again. Tagging
+    runtime reports with the content hash they ran under would let the
+    sentinel ignore reports from a superseded version.
+  - Siblings that changed on disk during an add-to-existing-container
+    pass get neither a `Loaded new content` row nor a reset (that path
+    bypasses `emitScriptOutcomeLog`) — same gap as the missing recovery
+    rows noted below.
 - **Poll noise still fills the cap.** The reload fast-path runs in
   `manual` mode for every matched script on every tab reload, so
   ordinary browsing appends `Checked for updates — no change` per
@@ -923,14 +1290,26 @@ Two rough edges are left:
   blocker is that `manual` currently means "not rate-limited", not
   "the user clicked", so the fast-path can't be told apart from a
   Refresh click.
+  - Restating parse-time diagnostics rides on the same gate, so a
+    permanently-misconfigured script (e.g. `@grant unsafeWindow` with
+    `@inject-into content`) now repeats its warning once per reload as
+    well. `probe === 'force'` is the signal the rest of the file uses
+    for "the user clicked Refresh" — threading it into
+    `emitScriptOutcomeLog` would gate both rows properly.
+- **Parse-time diagnostics live only in the Log.** A script whose
+  header can't do what it asks (the `@grant unsafeWindow` +
+  `@inject-into content` case) is badged, but the sentence explaining
+  why is a Log row the user has to go find — and one that only gets
+  written on boot replay, on new content, or on a manual refresh.
+  Showing the current `startupLogs` in the detail panel next to Status
+  would make the explanation as durable as the badge, and would remove
+  the reason for restating the rows at all (see the poll-noise item
+  above).
 - **`refreshAllCollections` uses `Promise.all`**, so one collection throwing
   rejects the whole batch — contradicting its own docstring, which
   claims a failed collection doesn't take the rest down. `allSettled`
   would make the doc true; the updater currently compensates by
   fanning the throw out to every script.
-- **Vanished manifest entries leak their log rows.** `refreshCollection`
-  drops the `script:` key but not the `log:` / `loglevel:` session
-  rows; only `removeScript` cleans both up.
 - **The add-to-existing-container path emits no recovery rows.** It
   refreshes every sibling but only restates load failures, so a
   sibling that recovered during that refresh never logs it (and the
@@ -1014,25 +1393,15 @@ itself once a sync places it. What's missing:
   from an extension PAGE, where `chrome.offscreen` isn't available and
   the check fails open, so it needs the page→SW channel above rather
   than a call in place.
-- **A glob-only `@include` script can't be registered at all** —
-  [#22](https://github.com/jshute96/SourceMonkey/issues/22).
-  `buildRegistrationSpec` omits `matches` when the script has no
-  `@match` but does have glob `@include`s, and Chrome refuses a
-  `register` without it: *"must specify 'matches'"*. The `<all_urls>`
-  fallback beside it covers only the regex-`@include` case. Pre-existing
-  and unrelated to the incremental sync, but it means those scripts sit
-  REJECTED.
-  - Not blocked by the OR question below, contrary to what this entry
-    first said. With `<all_urls>` as the only match pattern, filtering
-    it by `includeGlobs` yields exactly the glob set — Chrome's AND is
-    the right answer here, and only bites when a script declares both
-    `@match` and `@include`.
-- **`@match` + `@include` may be AND where userscripts mean OR.**
-  Chrome applies `includeGlobs` as a filter *within* `matches` (the
-  content-script rule), while `@match` and `@include` in a userscript
-  header are alternatives. A script declaring both would then run on
-  fewer pages than its header says, and fewer than our own matcher
-  (badge, tab status) predicts. Not measured — measure before acting.
+- **A no-`@match` script is registered on every page.**
+  Chrome ORs `includeGlobs` with `matches` (measured — see
+  [docs/injection.md](docs/injection.md#how-chrome-reads-includeglobs)),
+  so `matches: ['<all_urls>']` can't be narrowed by the globs beside
+  it, and the wrapper's in-page matcher is what holds an `@include`-only
+  script to its header. Correct, but it costs a wrapper run on every
+  page such a script's collection is enabled for. Narrowing it means
+  translating globs into `@match` patterns where they convert, and
+  falling back to `<all_urls>` only for the ones that don't.
 - **The message is Chrome's, so it speaks Chrome's coordinates.**
   `matches[1]: Invalid port` counts within the spec we built, not the
   lines of the file. Deliberate — the alternative is inventing a
@@ -1112,8 +1481,15 @@ they follow are in
 ### Other
 
 - auto-reload any page if scripts on it have updated (maybe just for manual focused refresh, and do double-refresh if a new script is discovered but not ready)
+  - the detection half shipped: switching to a tab re-checks its local
+    scripts, so the new body is ready and the badge is purple before
+    the user reloads — see
+    [docs/updates.md](docs/updates.md#focus-triggered-refresh). What's
+    left is doing the reload for them.
 - relative paths for dev, absolute paths for release (for requires & resources)
-- download a script to local disk for editing / debugging
+- ~~download a script to local disk for editing / debugging~~ — shipped
+  as **Local copy…** ([docs/local-copy.md](docs/local-copy.md)); what's
+  left is destinations outside Downloads.
 - keep links between local and remote version of a script, select which
   to run. (The *reporting* half shipped — see
   [docs/updates.md](docs/updates.md); picking a different copy to run
@@ -1124,6 +1500,13 @@ they follow are in
   separate — the refresh still does its own conditional GET. Worth
   little for hosts that return ETags; worth more for a large script on
   a host that doesn't.
+- show which world a script runs in ("runs in page" vs "runs
+  isolated") in the viewer. The world is decided by the header
+  (`@grant none` or `@grant unsafeWindow` or `@inject-into` — see
+  [docs/injection-modes.md](docs/injection-modes.md)), so today the
+  user has to read the grants and know the rules to predict whether
+  the script can see page globals. It's also the fact that explains
+  the `@inject-into content` + `unsafeWindow` warning.
 - surface `GM_download` / `GM_openInTab` in the details panel. The
   panel dropped the `@grant` row on the grounds that `@connect` already
   carries the network story and the rest of the GM surface acts within
@@ -1154,3 +1537,24 @@ they follow are in
     `emitInitialLoadLog` over a freshly added collection
     (`src/script-store.ts`), and the boot log replay in
     `src/script-updater.ts`. Both want `mapWithConcurrency`.
+- a collection whose refresh drops its LAST script says nothing about it.
+  The tombstone rows the collections page leaves for dropped scripts
+  (`docs/storage.md`, "Tombstones") hang off the script table, and a
+  collection with no scripts left shows the "no scripts" message
+  instead — so the one case where the whole table emptied out is the one
+  case with no explanation on screen. Wants the empty message to carry
+  the reason when the refresh that emptied it is the one being shown
+  ("the last refresh removed the scripts this collection had"), which
+  means the message needs to know what the refresh just did rather than
+  only what is stored now. Reachable for any collection kind now that
+  an empty scan drops rows too.
+- site icons: passively capture `tab.favIconUrl` from live tabs (`chrome.tabs.onUpdated`).
+  - Chrome's `/_favicon/` database covers visited URLs directly, so we declined the added service-worker listener and matching plumbing for now.
+  - Worth revisiting if scripts whose synthetic `linkUrl` (e.g. `https://host/issues/`) is never visited directly — only deep URLs like `https://host/issues/12345` — miss in `/_favicon/` AND their unauthenticated HTML probe redirects to SSO.
+- site icons: Chrome's `/_favicon/` DB can still hand back an SSO (single
+  sign-on) host's icon for an app URL — Chrome maps the icon onto every URL
+  of the redirect chain, so a tab that bounced to login and never signed in
+  poisons the app URL. `isSameHostRedirect` can't see that (no redirect
+  happened on our side). Options: compare the DB hit against the DB's own
+  answer for the known SSO host, or skip the DB tier for hosts whose HTML
+  probe redirected cross-host.

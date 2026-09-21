@@ -5,34 +5,12 @@
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
-import { waitForTabState, type TabStateSnapshot } from '../fixtures/sw-api';
+import { waitForTabState, activeTabId, hasBadgeColor } from '../fixtures/sw-api';
 
 const GREEN = '#2e7d32';
 const ORANGE = '#f57c00';
 const RED = '#d32f2f';
 const PURPLE = '#d500f9';
-
-function hasColor(snapshot: TabStateSnapshot, hex: string): boolean {
-  // chrome.action.getBadgeBackgroundColor returns [r, g, b, a].
-  if (!Array.isArray(snapshot.badgeColor)) return false;
-  const [r, g, b] = snapshot.badgeColor as number[];
-  const expectedR = parseInt(hex.slice(1, 3), 16);
-  const expectedG = parseInt(hex.slice(3, 5), 16);
-  const expectedB = parseInt(hex.slice(5, 7), 16);
-  return r === expectedR && g === expectedG && b === expectedB;
-}
-
-// `chrome.tabs.Tab.id` is the same numeric ID Chrome uses for tabId in
-// the action APIs. Playwright doesn't expose it directly on Page, so we
-// query the SW for the active tab right after opening the page.
-async function activeTabId(getServiceWorker: () => Promise<import('@playwright/test').Worker>): Promise<number> {
-  const sw = await getServiceWorker();
-  return sw.evaluate(async () => {
-    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    if (!tab?.id) throw new Error('no active tab');
-    return tab.id;
-  });
-}
 
 test.describe('badge', () => {
   let scriptsDir: ScriptsDir;
@@ -65,7 +43,7 @@ test.describe('badge', () => {
     const snap = await waitForTabState(
       sm,
       tabId,
-      (s) => s.badgeText === '1' && hasColor(s, GREEN) && s.title.includes('Hello | OK'),
+      (s) => s.badgeText === '1' && hasBadgeColor(s, GREEN) && s.title.includes('Hello | OK'),
       'badge green=1 + OK title',
     );
     expect(snap.badgeText).toBe('1');
@@ -95,7 +73,7 @@ test.describe('badge', () => {
     const snap = await waitForTabState(
       sm,
       tabId,
-      (s) => hasColor(s, RED) && s.title.includes('Boom | ERROR'),
+      (s) => hasBadgeColor(s, RED) && s.title.includes('Boom | ERROR'),
       'badge red + ERROR tooltip',
     );
     expect(snap.title).toContain('Boom | ERROR');
@@ -117,7 +95,7 @@ test.describe('badge', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page).toHaveTitle('v1');
     const tabId = await activeTabId(getServiceWorker);
-    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasColor(s, GREEN), 'initial green');
+    await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasBadgeColor(s, GREEN), 'initial green');
 
     // Simulate an external edit: rewrite the file body, then trigger a
     // manual refresh through the updater. The SW's storage.onChanged
@@ -132,7 +110,7 @@ test.describe('badge', () => {
     const snap = await waitForTabState(
       sm,
       tabId,
-      (s) => hasColor(s, PURPLE) && s.title.includes('Live | Reload to update'),
+      (s) => hasBadgeColor(s, PURPLE) && s.title.includes('Live | Reload to update'),
       'purple + RELOAD title after update',
     );
     expect(snap.title).toContain('Live | Reload to update');
@@ -145,7 +123,7 @@ test.describe('badge', () => {
     await sm.syncNow();
     await page.reload();
     await expect(page).toHaveTitle('v2');
-    await waitForTabState(sm, tabId, (s) => hasColor(s, GREEN), 'green after reload');
+    await waitForTabState(sm, tabId, (s) => hasBadgeColor(s, GREEN), 'green after reload');
     await page.close();
   });
 
@@ -205,7 +183,7 @@ test.describe('badge', () => {
     const snap = await waitForTabState(
       sm,
       tabId,
-      (s) => hasColor(s, ORANGE) && s.title.includes('Ghost | MISSING'),
+      (s) => hasBadgeColor(s, ORANGE) && s.title.includes('Ghost | MISSING'),
       'orange + MISSING tooltip',
     );
     expect(snap.title).toContain('Ghost | MISSING');

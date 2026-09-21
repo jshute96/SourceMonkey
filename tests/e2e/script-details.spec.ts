@@ -127,7 +127,7 @@ test.describe('userscript viewer details panel', () => {
     await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${script.id}`);
     // Anchored AND scoped: a bare `hasText: 'Version'` also catches
     // `Version at update URL`, and a page-wide `getByText` also catches
-    // the Existing-versions panel's `Version` column header.
+    // the versions panel's `Version` column header.
     await expect(page.locator('#header-summary dt').filter({ hasText: /^Version$/ }))
       .toHaveAttribute('title', 'The @version of the script that is installed and running');
     // A two-sentence tooltip breaks across lines and ends both.

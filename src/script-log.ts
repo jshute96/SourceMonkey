@@ -18,10 +18,15 @@
 // small enough that a runaway error loop can't fill storage.
 //
 // Alongside the log we maintain a sibling `loglevel:<scriptId>` row
-// recording the highest level any entry has carried so far. Bumped
-// only when an append carries a strictly higher level; cleared on
-// `clearScriptLog`. It lives in session storage (not on the
-// StoredScript row) because:
+// recording the highest level any SCRIPT-ORIGINATED entry has carried
+// so far — a runtime error, a refused `GM_download`, a parse-time
+// diagnostic.
+// Bumped only when an append carries a strictly higher level; cleared
+// on `clearScriptLog` and by an entry that `resetsLogLevel` (new content
+// loaded). Entries that record a load-state transition
+// (`state` set — see `LogEntry.state`) never touch it: their badge
+// comes from the row and clears with it. It lives in session storage
+// (not on the StoredScript row) because:
 //   - Lifetime matches the log itself — Chrome shutdown drops both
 //     together, so a WARNING/ERROR badge can't outlive its entries.
 //   - One bulk `get(null)` yields every script's level in O(scripts)
@@ -29,6 +34,8 @@
 //     to render the Status column cheaply.
 
 import { validLocation, type DiagnosticLocation } from './diagnostic-location.js';
+import { isPageContext } from './run-context.js';
+import { isLoadState, type LoadState } from './script-display.js';
 
 export type LogLevel = 'info' | 'warning' | 'error';
 
@@ -57,6 +64,30 @@ export interface LogEntry {
   // Human-readable message. Multiline is fine; the log pane preserves
   // newlines.
   message: string;
+  // The load state as of this event, when the entry records a
+  // load-state / registration / probe transition rather than something
+  // the script itself did: `refresh-failed`, `invalid`, `missing`,
+  // `rejected`, `outdated`, or `ok` for the matching recovery (and for
+  // new content loading cleanly). The Log tab shows it in place of the
+  // level, in the same words as the Status badge, so the event that put
+  // a badge there reads like the badge. It is what THIS event knows: an
+  // `ok` row can sit under a badge that is still REJECTED or OUTDATED
+  // for a reason this event didn't touch.
+  //
+  // Two separate things, deliberately: the row (`status`,
+  // `refreshError`, the rejection map, the probes) is the durable
+  // truth of what state the script is in; this is the session-scoped
+  // record of when it got there. An entry with `state` never bumps the
+  // `loglevel:` sentinel — the badge it explains already comes from the
+  // row and clears with it, so the sentinel is left to script-originated
+  // warnings and errors.
+  state?: LoadState;
+  // This entry marks a fresh start: the `loglevel:` sentinel is cleared
+  // as it is written, so only what happens from here on counts toward
+  // WARNING / ERROR. Earlier entries stay in the Log; only the badge
+  // resets. Set on the `Loaded new content` row — see
+  // `emitScriptOutcomeLog` for why.
+  resetsLogLevel?: boolean;
   // Where in the script's own files the entry is about, when it was
   // derived from their content (a bad header line, a syntax error).
   // The log pane renders it as a link into the matching code tab.
@@ -85,6 +116,22 @@ export const LOG_LEVEL_KEY_PREFIX = 'loglevel:';
 // overwrite the first append. Chaining serializes them; the map entry
 // is dropped once its chain drains so long-running sessions don't
 // accumulate dead Promises.
+//
+// The map is module state, so the chain only orders writes made in THIS
+// context — and both contexts write: the worker logs every injection
+// and refresh event, while a page logs through the same `script-store`
+// code it shares (an install's first-load line) and clears the log from
+// the viewer's button. Two chains would interleave on one key and lose
+// entries, or resurrect ones a clear had just removed. So every MUTATION
+// from a page hops to the worker (`writeViaWorker`) and the worker's
+// chain is the only one that touches the key. Reads don't hop: they
+// aren't read-modify-write.
+//
+// What that guarantees is "the worker's chain orders everything that
+// reaches it", NOT "a page's appends are ordered": two writes from one
+// page are two messages, ordered by the IPC rather than by a chain, and
+// a write that fell back to the local chain (see `writeViaWorker`) isn't
+// ordered against the relayed ones at all.
 const queues = new Map<string, Promise<unknown>>();
 function enqueue<T>(scriptId: string, task: () => Promise<T>): Promise<T> {
   const prev = queues.get(scriptId) ?? Promise.resolve();
@@ -107,6 +154,10 @@ export interface AppendLogInput {
   // persisted and later turned into click targets, so a malformed line
   // number is dropped here rather than discovered at render time.
   location?: DiagnosticLocation;
+  // See `LogEntry.state`.
+  state?: LoadState;
+  // See `LogEntry.resetsLogLevel`.
+  resetsLogLevel?: boolean;
   // Optional override for the timestamp (tests use this to keep output
   // deterministic). Production callers omit it and get Date.now().
   timestamp?: number;
@@ -121,7 +172,53 @@ export async function appendScriptLog(
   scriptId: string,
   input: AppendLogInput,
 ): Promise<void> {
+  if (isPageContext()) return writeViaWorker({ op: 'append', scriptId, input });
   return enqueue(scriptId, () => writeEntry(scriptId, input));
+}
+
+// ---------- Page → worker relay ----------
+
+export const SCRIPT_LOG_WRITE_MESSAGE = 'sm:script-log-write';
+
+export type ScriptLogWriteRequest =
+  | { op: 'append'; scriptId: string; input: AppendLogInput }
+  | { op: 'clear'; scriptId: string };
+
+// Worker side. Runs the write on the worker's own per-script chain,
+// which is the point of the hop.
+export async function handleScriptLogWrite(req: ScriptLogWriteRequest): Promise<void> {
+  if (req.op === 'append') return enqueue(req.scriptId, () => writeEntry(req.scriptId, req.input));
+  return enqueue(req.scriptId, () => removeEntries(req.scriptId));
+}
+
+// Page side. Falls back to writing locally unless the worker
+// ACKNOWLEDGED the write — a log line the user can see beats a lost one,
+// and the interleaving it risks is what happened on every write before
+// this relay existed.
+//
+// The ack has to be READ, not just awaited: a message nothing handled,
+// and a handler that threw, both RESOLVE `sendMessage` (with
+// `undefined`); only an unreachable worker rejects it. So `true` — sent
+// by the listener once the write has landed — is the one answer that
+// means "don't write this yourself".
+//
+// The fallback can duplicate an entry: a port that closes after the
+// worker acted (the page navigating away mid-write) is indistinguishable
+// from one that was never there, so the write may already be persisted.
+// A doubled log line is the better failure of the two on offer. It can
+// also reorder: a fallen-back `resetsLogLevel` row isn't ordered against
+// relayed rows, so the reset could land after the rows it was meant to
+// precede and erase a fresh warning.
+async function writeViaWorker(req: ScriptLogWriteRequest): Promise<void> {
+  try {
+    const ack = await chrome.runtime.sendMessage({ type: SCRIPT_LOG_WRITE_MESSAGE, ...req });
+    if (ack === true) return;
+  } catch { /* no receiving end */ }
+  if (req.op === 'append') {
+    await enqueue(req.scriptId, () => writeEntry(req.scriptId, req.input));
+    return;
+  }
+  await enqueue(req.scriptId, () => removeEntries(req.scriptId));
 }
 
 // Shared read-modify-write body. Always called from inside `enqueue`.
@@ -143,12 +240,29 @@ async function writeEntry(
   if (input.tabId !== undefined) entry.tabId = input.tabId;
   const location = validLocation(input.location);
   if (location) entry.location = location;
+  // Checked like `location`: the input may have crossed the page →
+  // worker message boundary, and a bad value here would render an
+  // empty badge.
+  if (isLoadState(input.state)) entry.state = input.state;
+  if (input.resetsLogLevel === true) entry.resetsLogLevel = true;
   const next = prior.length >= LOG_CAP
     ? [...prior.slice(prior.length - LOG_CAP + 1), entry]
     : [...prior, entry];
   const toSet: Record<string, unknown> = { [lk]: next };
-  if (isHigher(input.level, priorLevel)) toSet[mk] = input.level;
+  // A load-state transition is badged by the row, not the sentinel —
+  // otherwise a `refresh-failed` entry would leave WARNING behind for
+  // the rest of the session after the row had already recovered. A
+  // resetting entry doesn't count itself either: it's the boundary,
+  // not the first event past it.
+  const counts = entry.state === undefined && !entry.resetsLogLevel;
+  if (counts && isHigher(input.level, priorLevel)) toSet[mk] = input.level;
   await chrome.storage.session.set(toSet);
+  // The reset rides on the same queued write as the entry, so it lands
+  // exactly between the rows before it and the rows after it: parse
+  // diagnostics replayed for the new version come next and bump the
+  // sentinel afresh. Skipped when there is nothing to clear — the
+  // common case, since most new content lands on a clean badge.
+  if (entry.resetsLogLevel && priorLevel !== undefined) await chrome.storage.session.remove(mk);
 }
 
 export async function getScriptLog(scriptId: string): Promise<LogEntry[]> {
@@ -158,18 +272,38 @@ export async function getScriptLog(scriptId: string): Promise<LogEntry[]> {
 }
 
 export async function clearScriptLog(scriptId: string): Promise<void> {
-  return enqueue(scriptId, async () => {
-    await chrome.storage.session.remove([logKey(scriptId), levelKey(scriptId)]);
-  });
+  if (isPageContext()) return writeViaWorker({ op: 'clear', scriptId });
+  return enqueue(scriptId, () => removeEntries(scriptId));
+}
+
+// Shared removal body, the counterpart of `writeEntry`. Always called
+// from inside `enqueue`.
+async function removeEntries(scriptId: string): Promise<void> {
+  await chrome.storage.session.remove([logKey(scriptId), levelKey(scriptId)]);
+}
+
+// Drop the logs of scripts whose rows are going away — otherwise an
+// orphaned session-storage entry would outlive the script it described
+// and confuse any later renderer that scans log levels. Goes through
+// `clearScriptLog` (and therefore the per-script queue, in whichever
+// context owns it), so an append still in flight can't land after the
+// removal and resurrect the row.
+// Best-effort: a script whose log was never written isn't an error, and
+// nothing that deletes a row should fail because of its log.
+export async function forgetScriptLogs(scriptIds: readonly string[]): Promise<void> {
+  await Promise.all(scriptIds.map(
+    (id) => clearScriptLog(id).catch(() => { /* best-effort */ }),
+  ));
 }
 
 // Read the persisted "highest log level seen" sentinel for one script.
-// Returns undefined only when the log is empty (no entries have ever
-// been appended this session, or `clearScriptLog` ran). The sentinel
-// is monotonic within a session — LOG_CAP rotation does NOT decrease
-// it. Once a script has hit ERROR, subsequent rotation that drops the
-// only error entry leaves the badge at ERROR until the user clicks
-// "Clear log" or Chrome shuts down. We accept that drift because
+// Returns undefined when no script-originated entry has been appended
+// since the last reset — a `clearScriptLog`, a `resetsLogLevel` entry
+// (new content loaded), or the start of the Chrome session. Load-state
+// entries don't count (see `LogEntry.state`). Between resets it only
+// goes up — LOG_CAP rotation does NOT decrease it. Once a script has
+// hit ERROR, rotation that drops the only error entry leaves the badge
+// at ERROR until the next reset. We accept that drift because
 // recomputing on every rotation would dominate the cost of an append
 // and the log itself is session-scoped anyway.
 export async function getMaxLogLevel(

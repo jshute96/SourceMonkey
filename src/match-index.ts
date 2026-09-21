@@ -1,8 +1,7 @@
 // In-memory index of every injectable userscript's matching info so the
 // background service worker can find matching scripts for a URL without
 // touching chrome.storage.local on every navigation. "Injectable" means
-// `status: 'ok'` or `status: 'missing'` (the latter participates only if
-// the user explicitly re-enables it — see toEntry).
+// `status: 'ok'` (see toEntry).
 //
 // Built once on first access (ensureLoaded()), then kept fresh by a
 // chrome.storage.local.onChanged listener. Storage I/O cost scales with
@@ -16,6 +15,7 @@
 // collection flips every script under it in O(1) without rewalking
 // storage.
 
+import { isFileUrl } from './directories.js';
 import { scriptDisplayName } from './script-display.js';
 import { scanAllStorage } from './storage-scan.js';
 import {
@@ -28,19 +28,34 @@ import {
   type StoredCollection,
 } from './script-store.js';
 import { urlMatchesScript } from './url-match.js';
+import { grantedSubsystems, resolveScriptWorld, type InjectionWorld } from './injector.js';
+import type { ApiSubsystem } from './gm-api-catalog.js';
 
 export interface MatchedScript {
   id: string;
   name: string;       // @name, or the readable relativePath as a fallback
   matching: ScriptMatching;
   collectionId: string;
+  // Which execution world the script would be injected into. Cached
+  // here because the SW's bridge gate (`bridgeMayActAs` in
+  // background.ts) has to answer "does this script run in MAIN world on
+  // this URL?" synchronously per GM_* call; re-reading the header from
+  // chrome.storage.local on every call would put I/O on that path.
+  world: InjectionWorld;
 }
 
 const SCRIPT_PREFIX = 'script:';
 const COLLECTION_PREFIX = 'collection:';
 
 interface CacheEntry extends MatchedScript {
+  // The GM subsystems the script's grants reach, for the same gate:
+  // a relayed request is honored only through an API the script has.
+  subsystems: ReadonlySet<ApiSubsystem>;
   enabled: boolean;   // the script's own toggle (not the collection's)
+  // Loaded from disk rather than over the network. Cached here so the
+  // focus-triggered refresh can pick the local rows out of a tab's
+  // match set without reading storage — see `localScriptIds`.
+  local: boolean;
 }
 
 let cache = new Map<string, CacheEntry>();
@@ -92,23 +107,19 @@ async function loadAll(): Promise<void> {
 }
 
 function toEntry(script: StoredScript): CacheEntry | null {
-  // `ok` scripts always participate. `missing` scripts participate too
-  // when the user has explicitly re-enabled them — their cached header /
-  // matching / body were captured the last time the file loaded
-  // cleanly, so the user is opting in to "run the last good copy". The
-  // per-script `enabled` defaults to false on the missing transition,
-  // so unattended missing rows still stay out of the cache via the
-  // enabled check in findMatchesForUrl.
-  // `error` rows never participate — their header may be unparsed or
-  // the file failed validation.
-  if (script.status !== 'ok' && script.status !== 'missing') return null;
+  // Only `ok` scripts participate. `invalid` rows never do — their
+  // header may be unparsed or the file failed validation.
+  if (script.status !== 'ok') return null;
   const name = scriptDisplayName(script);
   return {
     id: script.id,
     name,
     matching: script.matching,
     collectionId: script.collectionId,
+    world: resolveScriptWorld(script),
+    subsystems: grantedSubsystems(script.header),
     enabled: isScriptEnabled(script),
+    local: isFileUrl(script.fileUrl),
   };
 }
 
@@ -271,6 +282,7 @@ export function findMatchesForUrl(url: string): MatchedScript[] {
         name: entry.name,
         matching: entry.matching,
         collectionId: entry.collectionId,
+        world: entry.world,
       });
     }
   }
@@ -279,8 +291,62 @@ export function findMatchesForUrl(url: string): MatchedScript[] {
   return out;
 }
 
+// Narrow a set of script ids to the ones loaded from `file://`.
+//
+// Keyed on each script's own `fileUrl`, not on its collection's
+// location: a container collection holds individually-installed scripts
+// of both kinds, so the collection is the wrong unit for this question.
+// (`isLocalCollection` in refresh-targets.ts answers the collection-level
+// version, and has to special-case containers for exactly this reason.)
+//
+// Ids the cache doesn't hold — a script that isn't injectable, or one
+// deleted since the tab last matched — are dropped rather than assumed
+// local: there is nothing to refresh either way.
+export function localScriptIds(ids: readonly string[]): string[] {
+  return ids.filter((id) => cache.get(id)?.local === true);
+}
+
+// Does the profile hold ANY injectable local script?
+//
+// The cheap gate in front of the focus-triggered refresh: it runs on
+// every tab switch and window focus change, and a profile with only
+// http collections has nothing for it to do. Answering from the
+// in-memory cache keeps that case off `chrome.storage.session`.
+export function hasLocalScripts(): boolean {
+  for (const entry of cache.values()) if (entry.local) return true;
+  return false;
+}
+
 export function cacheSize(): number {
   return cache.size;
+}
+
+// The execution world a script would be injected into, or null when the
+// id isn't in the injectable cache at all.
+//
+// Used by the SW to stamp every push it sends into a tab with the world
+// the receiving script lives in. `wrapper-bridge.js` re-posts pushes
+// into MAIN world, where the page can read them, so it must relay only
+// what is addressed to a MAIN-world script — otherwise an isolated
+// script's stored values and XHR response bodies would become
+// page-visible on any page that happens to also run a MAIN-world
+// script. Callers treat `null` as "not MAIN" (fail closed).
+export function scriptWorld(id: string): InjectionWorld | null {
+  return cache.get(id)?.world ?? null;
+}
+
+// True iff the script's `@grant` lines reach one of the given
+// subsystems. The second half of the bridge gate: being a MAIN-world
+// script on the page only makes the APIs it granted page-reachable, so
+// a request through any other API is refused even for that script.
+// Unknown ids fail closed.
+export function scriptGrantsSubsystem(
+  id: string,
+  subsystems: readonly ApiSubsystem[],
+): boolean {
+  const granted = cache.get(id)?.subsystems;
+  if (!granted) return false;
+  return subsystems.some((s) => granted.has(s));
 }
 
 // Test/debug: dump the current cache contents. Lets e2e tests

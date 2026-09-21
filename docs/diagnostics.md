@@ -111,9 +111,9 @@ one fact in two fields, and a location left behind by a previous
 failure would point the reader at a line that has nothing to do with
 what the row now says.
 
-- `applyFetchError` and `applyMissing` route through it too, so a
-  content-derived location can't survive into a message about a file
-  that wouldn't load.
+- `applyFetchError` routes through it too, so a content-derived
+  location can't survive into a message about a file that wouldn't
+  load.
 - `validLocation` checks the shape on the way in, at the store and at
   the log. These rows are persisted and later become click targets; a
   malformed line number is not something to discover at render time.
@@ -213,6 +213,14 @@ verdict about a script's *fate* rather than its content.
 - **One string, one place**: `describeRefreshError` in
   `src/refresh-error.ts`, listed under
   [One string, one place](#one-string-one-place).
+- **The reason is ours, not Chrome's.** An out-of-quota write rejects
+  with `Resource::kQuotaBytes quota exceeded` (the exact text varies by
+  Chrome version), which is internal vocabulary.
+  - `writeLocal` in `script-store.ts` replaces it with
+    `storageFullMessage()` before it reaches any surface — see
+    [storage.md](storage.md#write-failure-report-dont-lose-it).
+  - Its heading matches the page banner's, so the two read as one
+    condition rather than two.
 
 Where it shows up:
 
@@ -250,6 +258,12 @@ One message per problem, phrased to survive every place it lands.
     dropped onto a verb.
     - Dropping the old `could not be fetched: ` half also removed a
       second colon from a string that already lands after one.
+  - **A multi-sentence banner is the one exception**, because the rule's
+    reasons don't reach it: it lands in exactly one place, takes no
+    prefix, and carries no `(in <where>)`. Ordinary punctuation wins
+    over a rule about strings that get spliced — see the viewer's
+    *This script is already installed. Select which instance to update or install.*
+    Anything that can be spliced still takes no period.
 - **No prefix the location already carries.** The parse check says
   `Syntax error: …`, not `Script source has a syntax error: …` — the
   location names the file, which is routinely a `@require`.
@@ -297,8 +311,7 @@ verdicts about a script's content:
 
 - **Log rows about our own machinery** (`script-updater.ts`,
   `background.ts`, `injector.ts`) — `Could not check for updates`, not
-  `update check threw`; `This script was removed while it was being
-  refreshed`, not `row vanished`.
+  `update check threw`.
 - **Collection-level failures** — `This collection did not load`, not `scan
   failed`. "Scan" is the pipeline stage's name; the collections page never
   shows it.
@@ -319,14 +332,20 @@ One capitalization convention, with carve-outs:
   - "No period" is about a *single-sentence* message. Copy that is
     genuinely two sentences punctuates all of them, last one included —
     `Syntax error: … (in a.user.js, line 12). Installing it will store
-    it as INVALID.` Prefer an em-dash and one sentence where that works
-    (`Script not found in storage — open it from the collections page`).
+    it as INVALID.`
+  - **A statement plus a fix is two sentences**, not one joined by an
+    em-dash: `This location is a manifest. Choose Manifest as the type.`
+    The dash reads as an aside, where the fix is the half the user acts
+    on. (An em-dash still fits a genuine aside, and the
+    subject-plus-shapes messages — `Location must be a URL or absolute
+    file path` — stay one sentence with no period.) Same for `Script not found in storage.
+    Open it from the collections page.`
   - Wrapping doesn't change that. `This file cannot be installed: No
     @name in the metadata block` is the intended reading: the prefix is
     its own clause, and the message keeps its capital wherever it lands.
 - **The carve-out is mid-*sentence* splices, not post-colon tails.**
   `LOCATION_SHAPES` stays lowercase because it completes a sentence we
-  wrote — `A location must be an http(s):// or file:// URL…`. A capital
+  wrote — `Location must be a URL or absolute file path`. A capital
   there would land inside the sentence. A tail after `: ` is not that
   case: it starts its own clause, so it gets a capital, and if it can't
   take one grammatically it wants rewriting rather than exempting.
@@ -357,6 +376,7 @@ constant, so the copies can't drift:
 | `gmValuesFailure` (`gm-bindings.ts`) | the injected console line and the `sm:error` payload |
 | `describeRejection` (`script-rejection.ts`) | the refused-registration sentence, in the Log row and the viewer's message bar |
 | `describeRefreshError` (`refresh-error.ts`) | the could-not-be-saved sentence, in the collection's section message |
+| `storageFullMessage` (`script-store.ts`) | the out-of-storage reason, wherever a refused `chrome.storage.local` write is reported |
 | `HTTP_STATUS_PREFIX` (`external-files.ts`, private) | shared by `describeFetchFailure` and `isFetchFailureMessage`, so printing and recognizing can't disagree |
 | `markupResponseMessage` (`markup-response.ts`) | "we got a web page, not JavaScript", from the script fetchers and the `@require` gate alike |
 

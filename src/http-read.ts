@@ -37,6 +37,7 @@
 // honoured exactly as it was before the hop existed.
 
 import { base64ToBytes, bytesToBase64 } from './bytes.js';
+import { isPageContext } from './run-context.js';
 import { ensureGithubAuthTokenLoaded, githubAuthHeaders } from './github-auth.js';
 
 export const HTTP_READ_MESSAGE = 'sm:http-read';
@@ -143,9 +144,10 @@ export async function handleHttpReadRequest(req: HttpReadRequest): Promise<HttpR
   }
 }
 
-// True when this context must not fetch http(s) itself.
+// True when this context must not fetch http(s) itself — i.e. it is a
+// page rather than the service worker.
 export function mustHopToWorker(): boolean {
-  return typeof document !== 'undefined';
+  return isPageContext();
 }
 
 // Page side. Returns null — not an error — when the request got no

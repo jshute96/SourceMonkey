@@ -23,6 +23,9 @@
       <li>
         <a href="gm-info/gm-info.html">GM_info</a>
         &mdash; dump the metadata object every userscript receives.
+        <strong>Shows a side-by-side comparison of <code>GM_info</code>
+        from every running copy of the script, for comparison across
+        userscript managers.</strong>
       </li>
       <li>
         <a href="gm-log/gm-log.html">GM_log</a>
@@ -86,6 +89,13 @@
         <a href="window-close-focus/window-close-focus.html">window.close / window.focus</a>
         &mdash; close this tab and raise the browser window through the
         manager, where the page&rsquo;s own calls are refused.
+      </li>
+      <li>
+        <a href="unsafe-window/unsafe-window.html">unsafeWindow</a>
+        &mdash; reading, calling, and writing the page&rsquo;s own
+        variables, plus a script that asks to stay out of the page and
+        so can&rsquo;t reach them, and one that never granted
+        <code>unsafeWindow</code> but uses it anyway.
       </li>
       <li>
         <a href="headers-run-at/headers-run-at.html">@run-at</a>

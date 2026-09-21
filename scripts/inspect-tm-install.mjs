@@ -6,7 +6,7 @@
 // action button (Install / Reinstall / Update / Downgrade).
 //
 // When to run it
-//   - `sync-tm-scripts.mjs` reports "Install button not found" on
+//   - `sync-manager-scripts.mjs` reports "Install button not found" on
 //     some script (selector drift, or a confirmation-page state we
 //     hadn't seen before — TM uses different button labels for
 //     install vs reinstall vs update vs downgrade).
@@ -15,7 +15,7 @@
 //
 // How to run it
 //   1. Start the TM test browser:
-//      `scripts/open-test-browser-with-Tampermonkey.sh`
+//      `scripts/open-test-browser.sh tampermonkey`
 //   2. Make sure TM is installed and the script you want to inspect
 //      is on disk. Default target: tests/examples/gm-info/gm-info.user.js.
 //      Set SCRIPT=<absolute or repo-relative path> to inspect a
@@ -43,10 +43,11 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { managerCdpPort, managerExtensionId } from '../tests/fixtures/managers.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const TM_ID = process.env.TM_EXTENSION_ID || 'dhdgffkkebhmkfjojejmpbldmpobfkfo';
-const PORT = Number(process.env.TM_CDP_PORT || 9223);
+const TM_ID = managerExtensionId('tampermonkey');
+const PORT = managerCdpPort('tampermonkey');
 const SCRIPT = process.env.SCRIPT
   || path.resolve(__dirname, '../tests/examples/gm-info/gm-info.user.js');
 

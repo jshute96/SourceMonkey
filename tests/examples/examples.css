@@ -123,3 +123,39 @@ code {
   border-radius: 2px;
   font-size: 0.9em;
 }
+
+/* Side-by-side field comparison (gm-info). */
+.comparison {
+  border-collapse: collapse;
+  font-size: 0.85em;
+  /* Break out of the body's max-width so wide values get room: span
+     the viewport minus the body's 1em side padding. */
+  width: calc(100vw - 2em);
+  margin-left: calc(50% - 50vw + 1em);
+}
+
+.comparison th,
+.comparison td {
+  border: 1px solid #ddd;
+  padding: 0.3em 0.5em;
+  text-align: left;
+  vertical-align: top;
+  font-family: monospace;
+  word-break: break-all;
+}
+
+.comparison tbody th {
+  min-width: 12em;
+  /* Only break where the script inserted <wbr> (after dots). */
+  word-break: keep-all;
+}
+
+.comparison thead th {
+  background: #f0f0f0;
+  font-family: inherit;
+}
+
+.comparison .missing {
+  color: #aaa;
+  text-align: center;
+}

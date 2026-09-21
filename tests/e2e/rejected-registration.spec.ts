@@ -233,8 +233,8 @@ test.describe('rejected registrations', () => {
   }) => {
     // The pure classifier is unit-tested; this is the wiring — that the
     // badge path actually reads the rejection map. Without it the row
-    // reads MISSING/amber, which shares a word with "the file vanished"
-    // and reads as "still waiting" when nothing is coming.
+    // reads MISSING/amber (the badge's "expected but never reported"
+    // state), which reads as "still waiting" when nothing is coming.
     dir.write({
       relativePath: 'bad-match.user.js',
       meta: {
@@ -314,15 +314,15 @@ test.describe('rejected registrations', () => {
     expect(recovery).toHaveLength(1);
     expect(recovery[0].message).toMatch(/Chrome accepted this script's registration/);
 
-    // The displayed status must stop saying REJECTED. It reads ERROR,
-    // not OK, because `loglevel:` is monotonic within a session and the
-    // refusal's error rows still hold it there until "Clear log" — the
-    // same residual badge every recovered failure leaves. Pinned here
-    // so a change to that rule is a deliberate one.
+    // The displayed status must stop saying REJECTED — and read OK, not
+    // ERROR: the refusal's error rows carry `state: 'rejected'`, so they
+    // never touched the `loglevel:` sentinel and nothing residual is
+    // left once the rejection map clears.
+    expect(recovery[0].state).toBe('ok');
     const page = await extensionContext.newPage();
     await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${bad.id}`);
     await expect(page.locator('.meta-status')).not.toHaveText('REJECTED');
-    await expect(page.locator('.meta-status')).toHaveText('ERROR');
+    await expect(page.locator('.meta-status')).toHaveText('OK');
     await page.close();
   });
 

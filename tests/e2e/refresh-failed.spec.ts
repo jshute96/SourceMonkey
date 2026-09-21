@@ -133,6 +133,11 @@ test.describe('refresh failed (keep prior good copy)', () => {
     const failures = afterFirst.filter((e) => /Refresh failed/.test(e.message));
     expect(failures.length).toBe(1);
     expect(failures[0].level).toBe('warning');
+    // The entry carries the state the badge shows, and — because it
+    // does — leaves the script-originated max level untouched (the
+    // `Checking for updates` preamble seeds it at info).
+    expect(failures[0].state).toBe('refresh-failed');
+    expect(await sm.getMaxLogLevel(scriptId)).toBe('info');
 
     // 2. Still down two refreshes later → one entry per check. Each
     //    refresh really re-fetched and re-validated, so every one of
@@ -151,6 +156,7 @@ test.describe('refresh failed (keep prior good copy)', () => {
     const recovery = afterRecovery.filter((e) => /Refresh succeeded again/.test(e.message));
     expect(recovery.length).toBe(1);
     expect(recovery[0].level).toBe('info');
+    expect(recovery[0].state).toBe('ok');
     expect(afterRecovery.some((e) => /Loaded new content/.test(e.message))).toBe(true);
   });
 

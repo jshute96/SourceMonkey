@@ -14,9 +14,9 @@ test('the storage key is the documented one', () => {
 });
 
 test('the message names the consequence and carries the reason', () => {
-  const msg = describeRefreshError('QUOTA_BYTES quota exceeded');
+  const msg = describeRefreshError('The disk is full');
   assert.match(msg, /could not be saved/);
-  assert.match(msg, /QUOTA_BYTES quota exceeded/);
+  assert.match(msg, /The disk is full/);
   // House style: capitalized, no trailing period — the same string is
   // rendered alone and after prefixes.
   assert.match(msg, /^[A-Z]/);

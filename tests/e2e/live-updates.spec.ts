@@ -209,7 +209,7 @@ test.describe('collections page live updates', () => {
     // Change the file, then refresh from THIS page so the row picks up
     // the green "updated" highlight.
     scriptsDir.rewriteBody('a.user.js', '/* v2 */\n');
-    await section.locator('button', { hasText: 'Refresh' }).click();
+    await section.locator('button.refresh-collection').click();
     await expect(row).toHaveClass(/row-updated/);
 
     // A second script appears elsewhere: `scriptIds` changes, which is
@@ -255,7 +255,7 @@ test.describe('collections page live updates', () => {
     const section = page.locator(`section.collection[data-collection-id="${collection!.id}"]`);
     const rowA = page.locator(`tr[data-script-id="${a.id}"]`);
     const rowB = page.locator(`tr[data-script-id="${b.id}"]`);
-    const refresh = section.locator('button', { hasText: 'Refresh' });
+    const refresh = section.locator('button.refresh-collection');
 
     // Only a changed → only a is highlighted.
     scriptsDir.rewriteBody('a.user.js', '/* v2 */\n');
@@ -279,7 +279,7 @@ test.describe('collections page live updates', () => {
     // Two things at once. The table and the "no scripts" message are
     // different elements, so this is the one path a repaint can't update
     // in place — it swaps the block whole. And the copy has to be the
-    // CONTAINER's ("No scripts here yet"), not the
+    // CONTAINER's ("No scripts added yet"), not the
     // directory-scan one: the per-row Remove button only exists on
     // container rows, so hand-rolling that message here got it wrong on
     // every row that has the button.
@@ -301,7 +301,7 @@ test.describe('collections page live updates', () => {
 
     await expect(section.locator('table.script-table')).toHaveCount(0);
     await expect(section.locator('p.empty'))
-      .toHaveText('No scripts here yet — add one above.');
+      .toHaveText('No scripts added yet');
 
     await page.close();
   });
@@ -416,6 +416,13 @@ test.describe('collections page live updates', () => {
     // own append. Exactly one section must exist, not two.
     await page.locator('#add-path').fill(scriptsDir.path);
     await page.locator('#add-form button[type="submit"]').click();
+    // The field hands a location to the create dialog, prefilled;
+    // Create is what adds it.
+    const dialog = page.locator('dialog.collection-dialog');
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator('#collection-dialog-location')).toHaveValue(scriptsDir.path);
+    await dialog.locator('button.primary').click();
+    await expect(dialog).toBeHidden();
 
     await expect(page.locator('section.collection')).toHaveCount(1);
     await expect(page.locator('section.collection tbody tr')).toHaveCount(1);
@@ -442,7 +449,7 @@ test.describe('collections page live updates', () => {
     // removeCollection writes `collections: []`; that echo makes the watcher add
     // the empty placeholder. The handler must not add a second one.
     page.once('dialog', (dialog) => void dialog.accept());
-    await section.locator('button', { hasText: 'Remove' }).click();
+    await section.locator('.collection-buttons .remove-script').click();
 
     await expect(section).toHaveCount(0);
     await expect(page.locator('.empty-placeholder')).toHaveCount(1);
@@ -492,13 +499,14 @@ test.describe('collections page live updates (refresh failures)', () => {
     await expect(row).not.toHaveAttribute('data-script-refresh-error');
     await expect(row.locator('td.status-cell')).not.toHaveClass(/status-refresh-failed/);
 
-    // The badge still reads WARNING, because the failure and recovery
-    // are both in the script's Log and the level promotes the cell.
-    // Clearing the log drops the promotion — and that clear goes through
-    // `applyStatusCellsToDom`, the repaint that recomputes purely from
-    // the row datasets. It's the path a stale snapshot used to poison,
-    // so this is where REFRESH FAILED would come back from the dead.
-    await expect(statusLink).toHaveText('WARNING');
+    // Straight back to OK: the failure and recovery are both in the
+    // script's Log, but as state-carrying entries they never promote
+    // the cell (see `LogEntry.state`). Clearing the log then goes
+    // through `applyStatusCellsToDom`, the repaint that recomputes
+    // purely from the row datasets. It's the path a stale snapshot used
+    // to poison, so this is where REFRESH FAILED would come back from
+    // the dead.
+    await expect(statusLink).toHaveText('OK');
     await sm.clearScriptLog(script.id);
     await expect(statusLink).toHaveText('OK');
 
