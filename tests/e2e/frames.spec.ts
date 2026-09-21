@@ -256,9 +256,11 @@ test.describe('frames', () => {
       .map(([, allFrames]) => allFrames)
       .sort();
     expect(values).toEqual([false, true]);
-    // One frame-running script is enough to pull the helpers into frames.
-    expect(byId.get('sourcemonkey-bridge')).toBe(true);
+    // Each helper follows the scripts IT serves: the runtime the
+    // frame-running USER_SCRIPT-world script, the bridge the MAIN-world
+    // one — which is @noframes, so the bridge stays out of frames.
     expect(byId.get('sourcemonkey-gm-runtime')).toBe(true);
+    expect(byId.get('sourcemonkey-bridge')).toBe(false);
   });
 
   // The incremental sync only rebuilds the rows that moved, so the
