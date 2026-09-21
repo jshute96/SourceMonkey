@@ -136,7 +136,7 @@ events.
 | `window-close-focus/`      | `@grant window.close` / `@grant window.focus`                     | button-driven |
 | `headers-run-at/`          | `@run-at` (`document-start` / `-end` / `-idle` variants)           | multi-script  |
 | `headers-inject-into/`     | `@inject-into` (`page` MAIN-world vs `content` USER_SCRIPT-world)  | multi-script  |
-| `require-scope/`           | `@require` scope in both worlds, plus an SM-only relative ref      | multi-script  |
+| `require-scope/`           | `@require` scope in both worlds, plus a relative ref TM can't use  | multi-script  |
 | `xmlhttp-denied/`          | `GM_xmlhttpRequest` + `@connect` denial vs allow                  | multi-script  |
 
 ## Page conventions

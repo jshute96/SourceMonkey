@@ -71,13 +71,13 @@ Specs that opt out of a manager via
     starts, so nothing crashes.
   - Re-check when the bundled Chromium moves past 153.
 
-## Split expectations (runs under TM, asserts a different result)
+## Split expectations (runs under every manager, asserts a different result)
 
 Specs that run under every manager but expect a manager-dependent
 outcome, rather than skipping.
 
 - **`require-scope/`** — the example is split into a portable pair and
-  a SourceMonkey-only script.
+  a script that keeps a relative ref.
   - `page-world` / `content-world` `@require` `lib.js` by its absolute
     raw.githubusercontent.com URL, the only form TM accepts.
   - `relative-require` uses `./relative-lib.js`, a relative ref TM
