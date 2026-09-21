@@ -385,17 +385,20 @@ test.describe('compare page', () => {
     await expect(starts).toHaveCount(3);
     const prev = page.locator('.diff-summary .block-prev');
     const next = page.locator('.diff-summary .block-next');
-    // Each click lands the block's first row at the top of the box —
-    // the first block too, a few header lines down from the top.
-    // (Within a pixel: rows are 19.5px tall, so half the offsets are
-    // fractional, and the box lands on a whole pixel.)
-    const rowTop = (i: number) => starts.nth(i).evaluate((tr) => (tr as HTMLElement).offsetTop);
+    // Each click lands the block five lines down from the top of the
+    // box. The first block is a few header lines from the top of the
+    // file, so its landing spot is the top — where the box already is
+    // — and the first click goes to the second block. (Within a
+    // pixel: rows are 19.5px tall, so half the offsets are fractional,
+    // and the box lands on a whole pixel.)
+    const rowTop = (i: number) => starts.nth(i).evaluate((tr) => {
+      let row = tr;
+      for (let n = 0; n < 5; n++) row = row.previousElementSibling ?? row;
+      return (row as HTMLElement).offsetTop;
+    });
     const scrollTop = () => body.evaluate((el) => el.scrollTop);
     await expect(prev).toBeDisabled();
     await expect(next).toBeEnabled();
-    await next.click();
-    expect(await scrollTop()).toBeCloseTo(await rowTop(0), 0);
-    await expect(prev).toBeDisabled();
     await next.click();
     expect(await scrollTop()).toBeCloseTo(await rowTop(1), 0);
     await expect(prev).toBeEnabled();
@@ -405,7 +408,7 @@ test.describe('compare page', () => {
     await prev.click();
     expect(await scrollTop()).toBeCloseTo(await rowTop(1), 0);
     await prev.click();
-    expect(await scrollTop()).toBeCloseTo(await rowTop(0), 0);
+    expect(await scrollTop()).toBe(0);
     await expect(prev).toBeDisabled();
     // Scrolled by hand past the last block, Down has nowhere to go.
     await body.evaluate((el) => { el.scrollTop = el.scrollHeight; });

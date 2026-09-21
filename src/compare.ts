@@ -715,18 +715,36 @@ function summaryRow(counts: { removed: number; added: number }, body: HTMLElemen
 // between those rows in whichever element scrolls: the unified body,
 // or the left pane, whose scroll the right pane follows.
 //
+// A jump lands a few lines of context ABOVE the block at the top of
+// the box, not the block's first row: a changed line flush with the
+// top edge does not read as the start of anything, and the lines
+// before it are what say what the change is to. The rest of the box
+// is then the block and what follows it.
+//
 // "Where we are" is read off the scroll position each click rather
 // than kept as a block index: the user scrolls by hand too, and a
 // counter would send the next click somewhere unrelated to what is on
-// screen. The rows are measured from the scroller's top so that a row
+// screen. The positions compared are the landing spots, so a block
 // counts as "current" only once it has been scrolled to.
+const CONTEXT_ABOVE = 5;
+
 function blockNav(body: HTMLElement): HTMLButtonElement[] {
   const up = arrowButton('up', 'Previous change');
   const down = arrowButton('down', 'Next change');
   const scroller = () => body.querySelector<HTMLElement>('.pane.left') ?? body;
-  // A row's offsetTop is from its table, which sits at the top of the
-  // scroller — so it is the scrollTop that puts the row at the top.
-  const starts = () => [...scroller().querySelectorAll<HTMLElement>('tr.block-start')].map((tr) => tr.offsetTop);
+  // Each block's landing spot is the row CONTEXT_ABOVE rows above its
+  // first — found by walking, not by row height, since a `@@` seam is
+  // not as tall as a line. A row's offsetTop is from its table, which
+  // sits at the top of the scroller, so it is the scrollTop that puts
+  // that row at the top. A block within reach of the top of the file
+  // lands at the top.
+  const starts = () => [...scroller().querySelectorAll<HTMLElement>('tr.block-start')].map((tr) => {
+    let row: HTMLElement = tr;
+    for (let n = 0; n < CONTEXT_ABOVE && row.previousElementSibling; n++) {
+      row = row.previousElementSibling as HTMLElement;
+    }
+    return row.offsetTop;
+  });
   const refresh = () => {
     const el = scroller();
     const offsets = starts();

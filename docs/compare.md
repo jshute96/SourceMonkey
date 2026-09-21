@@ -79,8 +79,10 @@ table, then a diff of each file they run. `src/compare.html` +
   `No differences`, then Up/Down arrows (the collections page's move
   arrows, by glyph) that jump between change blocks.
   - A block is a run of changed rows between unchanged ones; a jump
-    puts its first row at the top of the box. Side by side, the left
-    pane is driven and the right follows.
+    puts it near the top of the box with a few lines of context above
+    it, so its start is plain and the rest of the box shows the block
+    and what follows. Side by side, the left pane is driven and the
+    right follows.
   - Where you are is read off the scroll position, not a counter, so
     scrolling by hand and then clicking goes to the next block from
     what is on screen. Up is off with no block above; Down is off with
