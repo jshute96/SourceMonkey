@@ -462,8 +462,8 @@ function emitGmObject(grantedSpecs: readonly GmApiSpec[]): string {
 //     gets GM_info — every other emitted artifact is keyed off the
 //     resolved-spec set.
 //   - For each known granted API: a `const GM_x = ...` binding.
-//   - The GM4 `GM` object covers granted APIs with gmDotName, plus
-//     `GM.info`.
+//   - The GM4 `GM` object covers every `GM.` spelling of each granted
+//     API (`gmDotSpellings`), plus `GM.info`.
 //   - Granted names not in the catalog (resolveGrants should have
 //     filtered these but be defensive) are skipped.
 //

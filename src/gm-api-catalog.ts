@@ -60,6 +60,12 @@ export interface GmApiSpec {
   name: string;
   // The GM4-style alias under the `GM.` namespace, if any. Some APIs
   // (e.g. unsafeWindow, GM_info itself) don't have a GM. alias.
+  //
+  // Omitting it does NOT keep a `GM_*` entry out of the namespace:
+  // `gmDotSpellings` always adds the literal prefix rewrite (`GM_foo`
+  // → `GM.foo`) for any `GM_`-named API, so this field only matters
+  // where GM4 re-cased the name. Only non-`GM_` names (`unsafeWindow`)
+  // get no `GM.` spelling at all.
   gmDotName?: string;
   // `sync` resolves in USER_SCRIPT world without an SW round-trip
   // (storage reads, addStyle, etc.). `async` always goes to the SW.

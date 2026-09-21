@@ -42,9 +42,10 @@ script gets the page's `window` directly (MAIN world).
 
 Strict gating: every other `@grant` name is canonicalized through
 the catalog. Names we don't recognize (TM-only `GM_audio`, typos
-like `GM_setvalue`) are silently dropped from the binding set —
-the script sees a `ReferenceError` at call time, and the SW logs a
-`console.info` with the dropped names.
+like `GM_setvalue`) are dropped from the binding set — the script
+sees a `ReferenceError` at call time, and the Log tab gets a warning
+naming the dropped names (with a case-only near miss spelled out;
+see below).
 
 ### Name matching is byte-exact
 
