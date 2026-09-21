@@ -38,7 +38,8 @@ import { getValue } from './userscript-header.js';
 // render instead of waiting out its TTL.
 
 // Schema version for discovered icons (`siteIcon:` / `pathIcon:`).
-// Bumped when a discovery bug (like accepting cross-host SSO redirects)
+// Bumped when a discovery bug (like accepting cross-host SSO — single
+// sign-on — redirects)
 // could have poisoned cached rows with another host's icon.
 const DISCOVERED_ICON_CACHE_VERSION = 2;
 
@@ -228,7 +229,7 @@ export function usableCacheHit(
 // to the origin-level cache rather than retrying.
 async function fetchAndCachePathIcon(pageUrl: string): Promise<string | null> {
   const dataUrl =
-    (await fetchChromeFavicon(pageUrl)) ??
+    (await fetchChromeFavicon(pageUrl, { exactPage: true })) ??
     (await tryDiscoverIconViaHtml(pageUrl));
   await storePathIcon(pageUrl, { dataUrl, fetchedAt: Date.now() });
   return dataUrl;
@@ -245,12 +246,21 @@ async function fetchAndCacheOriginIcon(origin: string): Promise<string | null> {
   return dataUrl;
 }
 
+// Fetch a script-declared (`@icon`) URL and cache it under
+// `iconUrl:<url>`. No discovery, no redirect policy: the script author
+// named this URL, so wherever it lands is what they asked for.
+async function fetchAndCacheUrlIcon(url: string): Promise<string | null> {
+  const dataUrl = await fetchIconAt(url);
+  await storeUrlIcon(url, { dataUrl, fetchedAt: Date.now() });
+  return dataUrl;
+}
+
 async function fetchOriginFallbackAsDataUrl(origin: string): Promise<string | null> {
   const fromChrome = await fetchChromeFavicon(origin + '/');
   if (fromChrome) return fromChrome;
   const fromRoot = await tryDiscoverIconViaHtml(origin + '/');
   if (fromRoot) return fromRoot;
-  const fromIco = await fetchIconAt(`${origin}/favicon.ico`, { rejectCrossSiteRedirect: true });
+  const fromIco = await fetchIconAt(`${origin}/favicon.ico`, { rejectCrossHostRedirect: true });
   if (fromIco) return fromIco;
   // Google S2 is the only leg that touches a third party. The host
   // name is already public via the @match; the request still leaks
@@ -289,15 +299,15 @@ async function tryDiscoverIconViaHtml(pageUrl: string): Promise<string | null> {
 
   let absUrl: string;
   try {
-    // Resolve against the post-redirect URL so same-site path / scheme
+    // Resolve against the post-redirect URL so same-host path / scheme
     // / `www.` redirects resolve relative hrefs against where the page
-    // actually lives (`fetchHtml` already rejected cross-site redirects).
+    // actually lives (`fetchHtml` already rejected cross-host redirects).
     absUrl = new URL(best.href, got.finalUrl).toString();
   } catch {
     return null;
   }
   if (absUrl.startsWith('data:')) return usableDataUrl(absUrl);
-  return await fetchIconAt(absUrl, { rejectCrossSiteRedirect: true });
+  return await fetchIconAt(absUrl, { rejectCrossHostRedirect: true });
 }
 
 // Pull out every `<link rel="...icon...">` tag from an HTML string.
@@ -408,12 +418,19 @@ function normalizeSiteHost(url: string): string | null {
 }
 
 // True when a fetch that started at `requestedUrl` and ended at
-// `finalUrl` stayed on the same site (allowing a leading `www.`
-// difference). False when it bounced across hosts — e.g. to an SSO
-// login page (`login.corp.google.com`, `accounts.google.com`) or a
-// marketing portal (`workspace.google.com`), whose `<link rel="icon">`
-// belongs to that other host rather than the site we asked about.
-export function isSameSiteRedirect(requestedUrl: string, finalUrl: string): boolean {
+// `finalUrl` stayed on the same host (allowing a leading `www.`
+// difference; scheme may change, port may not). False when it bounced
+// across hosts — e.g. to an SSO (single sign-on) login page
+// (`login.corp.google.com`, `accounts.google.com`) or a marketing
+// portal (`workspace.google.com`), whose `<link rel="icon">` belongs
+// to that other host rather than the site we asked about.
+//
+// Deliberately host-level, not registrable-domain (eTLD+1): a looser
+// check would re-admit `app.corp.google.com` → `login.corp.google.com`,
+// which is the exact case this exists to reject. The cost is that a
+// legitimate `example.com` → `app.example.com` bounce also misses,
+// and that layer then falls through to the next strategy.
+export function isSameHostRedirect(requestedUrl: string, finalUrl: string): boolean {
   const reqHost = normalizeSiteHost(requestedUrl);
   const finHost = normalizeSiteHost(finalUrl);
   return reqHost !== null && reqHost === finHost;
@@ -421,32 +438,58 @@ export function isSameSiteRedirect(requestedUrl: string, finalUrl: string): bool
 
 // ---------- Chrome `_favicon` database lookup ----------
 //
-// Chrome's MV3 `favicon` permission exposes `chrome-extension://<id>/_favicon/`,
-// backed by Chrome's internal Favicon database (populated when the user visits
-// pages in real tabs — after SSO authentication and after client-side JS updates
+// Chrome's Manifest V3 `favicon` permission exposes
+// `chrome-extension://<id>/_favicon/`, backed by Chrome's internal
+// favicon database (populated when the user visits pages in real tabs —
+// after SSO authentication and after client-side JS updates
 // `<link rel="icon">`).
 //
-// Quirk: `/_favicon/` never 404s when a URL is unknown to Chrome's DB; it
-// returns 200 with Chrome's default monochrome globe PNG. We fetch a known-miss
-// sentinel URL once per context to learn those exact bytes and reject any
-// response that matches them.
+// Quirk: `/_favicon/` never 404s when a URL is unknown to Chrome's DB;
+// it returns 200 with Chrome's default globe PNG. We fetch a known-miss
+// sentinel URL once per context to learn those exact bytes and reject
+// any response that matches them. (The handler ignores
+// `forceEmptyDefaultFavicon`, so there is no cleaner miss signal.)
+//
+// Chrome's `fallbackToHost` parameter defaults to on: an unvisited page
+// URL then answers with the host's icon. The path-scoped tier turns it
+// off so it only ever reports a page-specific hit — otherwise every
+// deep URL on a host would cache the host icon and HTML discovery at
+// that page would never run.
+//
+// Known gap: Chrome maps an icon onto every URL of the redirect chain
+// that led to it, so a tab that bounced to SSO and never signed in
+// leaves the SSO icon on the original URL. The DB tier then returns it
+// and the 7-day TTL is the only way out (see TODO.md).
 
 const CHROME_FAVICON_SIZE = 32;
 const CHROME_FAVICON_MISS_SENTINEL = 'http://sm-favicon-miss-sentinel.invalid/';
 let chromeFallbackGlobePromise: Promise<string | null> | null = null;
 
-export function chromeFaviconUrl(pageUrl: string, size = CHROME_FAVICON_SIZE): string {
+export interface ChromeFaviconOptions {
+  // Only answer for this exact page URL; never Chrome's host-level icon.
+  exactPage?: boolean;
+}
+
+export function chromeFaviconUrl(
+  pageUrl: string,
+  opts?: ChromeFaviconOptions,
+  size = CHROME_FAVICON_SIZE,
+): string {
   const u = new URL(chrome.runtime.getURL('/_favicon/'));
   u.searchParams.set('pageUrl', pageUrl);
   u.searchParams.set('size', String(size));
+  if (opts?.exactPage) u.searchParams.set('fallbackToHost', '0');
   return u.toString();
 }
 
-async function fetchChromeFaviconRaw(pageUrl: string): Promise<string | null> {
+async function fetchChromeFaviconRaw(
+  pageUrl: string,
+  opts?: ChromeFaviconOptions,
+): Promise<string | null> {
   if (typeof chrome === 'undefined' || !chrome.runtime?.getURL) return null;
   let url: string;
   try {
-    url = chromeFaviconUrl(pageUrl);
+    url = chromeFaviconUrl(pageUrl, opts);
   } catch {
     return null;
   }
@@ -481,9 +524,12 @@ function getChromeFallbackGlobe(): Promise<string | null> {
   return chromeFallbackGlobePromise;
 }
 
-export async function fetchChromeFavicon(pageUrl: string): Promise<string | null> {
+export async function fetchChromeFavicon(
+  pageUrl: string,
+  opts?: ChromeFaviconOptions,
+): Promise<string | null> {
   const [candidate, fallbackGlobe] = await Promise.all([
-    fetchChromeFaviconRaw(pageUrl),
+    fetchChromeFaviconRaw(pageUrl, opts),
     getChromeFallbackGlobe(),
   ]);
   if (!candidate) return null;
@@ -500,7 +546,7 @@ async function fetchHtml(url: string): Promise<{ text: string; finalUrl: string 
   // — but it is in the return type, and narrowing it here is cheaper
   // than a cast that would go stale if one ever did.
   if ('failed' in res || isNotModified(res)) return null;
-  if (!isSameSiteRedirect(url, res.finalUrl)) return null;
+  if (!isSameHostRedirect(url, res.finalUrl)) return null;
   // Decode as UTF-8. Real-world HTML in non-UTF-8 charsets is rare
   // enough today that we accept the occasional mojibake — and even
   // then the icon link tags are ASCII attributes that decode fine.
@@ -514,7 +560,7 @@ async function fetchHtml(url: string): Promise<{ text: string; finalUrl: string 
 // chrome-extension → file:// opaque-response trap is sidestepped.
 async function fetchIconAt(
   url: string,
-  opts?: { rejectCrossSiteRedirect?: boolean },
+  opts?: { rejectCrossHostRedirect?: boolean },
 ): Promise<string | null> {
   const res = await fetchResourceBytes(url, {
     maxBytes: MAX_ICON_BYTES,
@@ -523,7 +569,7 @@ async function fetchIconAt(
   // Icons fail quietly — a missing favicon is cosmetic, and there is
   // no surface that would show a reason.
   if ('failed' in res || isNotModified(res)) return null;
-  if (opts?.rejectCrossSiteRedirect && !isSameSiteRedirect(url, res.finalUrl)) {
+  if (opts?.rejectCrossHostRedirect && !isSameHostRedirect(url, res.finalUrl)) {
     return null;
   }
   // Strip any `; charset=…` parameter; default to image/x-icon when
@@ -679,11 +725,7 @@ async function ensureIconAt(url: string): Promise<string | null> {
   const racing = inflight.get(key);
   if (racing) return racing;
 
-  const p = (async () => {
-    const dataUrl = await fetchIconAt(url);
-    await storeUrlIcon(url, { dataUrl, fetchedAt: Date.now() });
-    return dataUrl;
-  })().finally(() => {
+  const p = fetchAndCacheUrlIcon(url).finally(() => {
     inflight.delete(key);
   });
   inflight.set(key, p);
@@ -1058,12 +1100,11 @@ export async function deleteCachedIcon(storageKey: string): Promise<void> {
   await chrome.storage.local.remove(storageKey);
 }
 
-export async function deleteAllCachedIcons(): Promise<number> {
+export async function deleteAllCachedIcons(): Promise<void> {
   const keys = (await chrome.storage.local.getKeys()).filter(isIconCacheKey);
   if (keys.length > 0) {
     await chrome.storage.local.remove(keys);
   }
-  return keys.length;
 }
 
 export async function refreshCachedIcon(storageKey: string): Promise<string | null> {
@@ -1076,12 +1117,7 @@ export async function refreshCachedIcon(storageKey: string): Promise<string | nu
   } else if (storageKey.startsWith(PATH_ICON_KEY_PREFIX)) {
     p = fetchAndCachePathIcon(storageKey.slice(PATH_ICON_KEY_PREFIX.length));
   } else if (storageKey.startsWith(URL_ICON_KEY_PREFIX)) {
-    const url = storageKey.slice(URL_ICON_KEY_PREFIX.length);
-    p = (async () => {
-      const dataUrl = await fetchIconAt(url);
-      await storeUrlIcon(url, { dataUrl, fetchedAt: Date.now() });
-      return dataUrl;
-    })();
+    p = fetchAndCacheUrlIcon(storageKey.slice(URL_ICON_KEY_PREFIX.length));
   } else {
     return null;
   }

@@ -15,7 +15,7 @@
 - `/debug/icons.html` ([`src/debug/icons.html`](../src/debug/icons.html) +
   [`src/debug/icons.ts`](../src/debug/icons.ts)) inspects and manages cached
   icons in `chrome.storage.local`.
-- Displays a table of every cached row (`siteIcon:*`, `pathIcon:*`, and
+- Displays a table of all cached rows (`siteIcon:*`, `pathIcon:*`, and
   `iconUrl:*`) with icon preview, target site/URL, scope chip,
   MIME/byte-size details, schema version, freshness status, and
   fetched/expiry timestamps.
@@ -214,27 +214,36 @@ the first one discovered for the host.
 ### Discovery strategies
 
 - **Chrome `/_favicon/` database (`chrome-extension://<id>/_favicon/`)**:
-  reads directly from Chrome's internal Favicon database (populated
-  when the user visits pages in real tabs — after SSO authentication
-  and after client-side JS updates `<link rel="icon">`).
+  reads directly from Chrome's internal favicon database (populated
+  when the user visits pages in real tabs — after SSO (single sign-on)
+  authentication and after client-side JS updates `<link rel="icon">`).
   - Because `/_favicon/` returns `200 OK` with Chrome's default globe
     PNG on cache misses rather than 404ing, `fetchChromeFavicon` probes
     a known-miss sentinel URL once per context and treats any response
     matching those bytes as a miss (`null`).
+  - Chrome falls back to the host's icon for an unvisited page URL by
+    default. The path layer asks with `fallbackToHost=0` (`exactPage`)
+    so it only reports page-specific hits; the origin layer keeps the
+    fallback.
+  - Not redirect-proof: Chrome maps an icon onto every URL of the
+    redirect chain that led to it, so a tab that bounced to SSO without
+    signing in leaves the SSO icon on the app URL, and the DB tier
+    returns it. Only the 7-day TTL clears that (see TODO.md).
 - **HTML discovery (page URL or origin root)**: fetch the page and
   scan the `<head>` for `<link rel="icon">` (also `shortcut icon`,
   `apple-touch-icon`).
-  - **Cross-site redirects are rejected** (`isSameSiteRedirect`): if the
-    fetch bounces to a different host (e.g. an SSO portal like
+  - **Cross-host redirects are rejected** (`isSameHostRedirect`): if the
+    fetch bounces to a different host — `www.` aside, ports and
+    subdomains included (e.g. an SSO portal like
     `login.corp.google.com` or `accounts.google.com`, or a marketing
     portal like `workspace.google.com`), the HTML's `<link rel="icon">`
     belongs to that other host and is discarded as `null`.
-  - Same-site redirects (including scheme upgrades and `www.` differences)
+  - Same-host redirects (including scheme upgrades and `www.` differences)
     are allowed, and relative hrefs resolve against `finalUrl`.
   - The best candidate is selected by [pickBestIconCandidate](#scoring-link-rel-icon-candidates).
     A non-empty `data:` URL declared inline is used verbatim.
 - **`/favicon.ico` fallback**: conventional path (`fetchIconAt` with
-  `rejectCrossSiteRedirect: true`). Origin-layer only.
+  `rejectCrossHostRedirect: true`). Origin-layer only.
 - **Google S2 fallback**:
   `https://www.google.com/s2/favicons?domain=<host>&sz=64`. The only
   leg that touches a third party — the host name (already public via
@@ -253,7 +262,7 @@ the first one discovered for the host.
     A site's HTML routinely carries `Link: rel=preload; as=script`
     headers, and a document-initiated fetch acts on them — see
     [logging.md](logging.md#keeping-the-errors-panel-clean).
-- On any failure (network error, cross-site redirect, non-icon
+- On any failure (network error, cross-host redirect, non-icon
   `Content-Type`, oversized body) the layer caches a `null` entry so
   the same broken page or host doesn't get hammered on every render.
 - Successful entries are cached for 7 days; `null` entries for 24h.
@@ -267,7 +276,7 @@ the first one discovered for the host.
   counts as a miss, so it is hidden immediately and the refetch
   overwrites it.
   - The check exists because rows written before the empty-`data:`
-    rule or before cross-site redirect rejection stored invalid /
+    rule or before cross-host redirect rejection stored invalid /
     redirected icons, and only the 7-day TTL would ever have cleared
     them.
   - It defaults *closed*: the point is distrusting rows written by

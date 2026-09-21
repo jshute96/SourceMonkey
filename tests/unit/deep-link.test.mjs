@@ -56,11 +56,9 @@ test('userscript.html forwards script id', () => {
   );
 });
 
-test('debug/icons.html resolves to debug/icons.html', () => {
-  assert.equal(
-    buildDeepLinkTarget(`${PREFIX}?page=debug/icons.html`),
-    `${EXT}/debug/icons.html`,
-  );
+// Debug pages are for developers typing the URL, not for public links.
+test('debug/icons.html is not an allowed deep-link page', () => {
+  assert.equal(buildDeepLinkTarget(`${PREFIX}?page=debug/icons.html`), null);
 });
 
 test('page param is stripped from passthrough query', () => {

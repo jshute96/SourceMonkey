@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArNbW+80WaO+UYytZvOH8QUNsetRrXCZGW269V7QSUjS2bz2Wz+luQ6CkawHQPSFbkhi4O/ku23YmUOGizHkc68hhv5MtgKV3Rg4+hJYLuI2fHuzI8S8LTIZp3DLELmkfORRC6YKQJkYTizZcNNSzfDwGOJANMXbbz4qiWXSLWxJ4DT3Hb5u2SS0J6BV7YOcu1Kw+XmkZNyL1ujBKtxaMocfOGqxvEUQt87SrrnW12XYj2p9eJoF9G6PlQ8ttV+dw8kJJ+358GefecnvNs90Df8n2uHwYfGCiSw1jvWhsgcBdqqqOmP0zVEi1a3uFE2z54p2j1DY525vaalRkrGpciwIDAQAB",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAz489IORbDHpXULZNmgwvQrAgfyIMG4VxLaOdUWkL5yivNBhOK3eQ+IwZAFjn9i9JVlHncxhO36RCNT2HFU00+JSj/urcNxWBZJzTrgBScptOTiyfVzqIv1+9ce7owWUauy3kRiJTl1x6RmqhBv/YDQCn057vmmRylL9h/LXY5K8knMInKEXGaE3S/5A9d9lOc9ynUKsmTtY5rZ9bygg/toE84fKftEFmOERP3D9qvBAcnevPlhfkhMD0DQt0bx/kKy/t8YfTYHWTbnnnhdjAavGayVKy5IaL1cTNrFEpygjOmWxYBzBKYhzSXZNKvMKgxyxGw2Iv2Q8/iHpNi88pDwIDAQAB",
   "name": "SourceMonkey",
   "version": "0.0.1",
   "description": "Userscript manager that treats userscripts like source code, built and managed with real coding tools",

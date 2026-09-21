@@ -3,6 +3,7 @@ import {
   setGlyphButton,
   setGlyphButtonBusy,
 } from '../glyph.js';
+import { formatLogTimestamp } from '../log-format.js';
 import { installHomeLinkHandler } from '../page-links.js';
 import { formatBytes } from '../script-display.js';
 import {
@@ -27,11 +28,18 @@ const REFRESH_LABELS = {
 const refreshingKeys = new Set<string>();
 let renderGeneration = 0;
 
+// The log's local-time spelling, without its milliseconds: cache
+// timestamps are days apart, so the tail is noise here.
 function formatTimestamp(ms: number): string {
-  const d = new Date(ms);
-  if (Number.isNaN(d.getTime())) return '—';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  if (Number.isNaN(new Date(ms).getTime())) return '—';
+  return formatLogTimestamp(ms).replace(/\.\d{3}$/, '');
+}
+
+// Storage failures on this page have no surface of their own; an
+// unhandled rejection would land in chrome://extensions/?errors, where
+// it reads as SourceMonkey being broken.
+function report(what: string): (err: unknown) => void {
+  return (err) => console.info(`[SourceMonkey] debug icons: ${what} failed`, err);
 }
 
 function formatIso(ms: number): string {
@@ -40,14 +48,7 @@ function formatIso(ms: number): string {
 }
 
 function kindLabel(kind: CachedIconRow['kind']): string {
-  switch (kind) {
-    case 'origin':
-      return 'origin';
-    case 'path':
-      return 'path';
-    case 'url':
-      return '@icon';
-  }
+  return kind === 'url' ? '@icon' : kind;
 }
 
 function renderRow(row: CachedIconRow): HTMLTableRowElement {
@@ -147,13 +148,16 @@ function renderRow(row: CachedIconRow): HTMLTableRowElement {
   if (refreshingKeys.has(row.storageKey)) {
     setGlyphButtonBusy(refreshBtn, true, REFRESH_LABELS);
   }
+  // The storage write at the end of a refresh re-renders the table via
+  // `onChanged`, so this button is replaced rather than un-busied; the
+  // explicit render covers the refresh that stored nothing new.
   refreshBtn.addEventListener('click', () => {
     refreshingKeys.add(row.storageKey);
     setGlyphButtonBusy(refreshBtn, true, REFRESH_LABELS);
     void refreshCachedIcon(row.storageKey)
+      .catch(report('refresh'))
       .finally(() => {
         refreshingKeys.delete(row.storageKey);
-        setGlyphButtonBusy(refreshBtn, false, REFRESH_LABELS);
         void render();
       });
   });
@@ -164,9 +168,11 @@ function renderRow(row: CachedIconRow): HTMLTableRowElement {
   setGlyphButton(deleteBtn, '#sm-trash', 'Delete cached icon');
   deleteBtn.addEventListener('click', () => {
     deleteBtn.disabled = true;
-    void deleteCachedIcon(row.storageKey).finally(() => {
-      void render();
-    });
+    void deleteCachedIcon(row.storageKey)
+      .catch(report('delete'))
+      .finally(() => {
+        void render();
+      });
   });
 
   wrap.append(refreshBtn, deleteBtn);
@@ -192,9 +198,11 @@ installHomeLinkHandler();
 
 deleteAllBtn.addEventListener('click', () => {
   deleteAllBtn.disabled = true;
-  void deleteAllCachedIcons().finally(() => {
-    void render();
-  });
+  void deleteAllCachedIcons()
+    .catch(report('delete all'))
+    .finally(() => {
+      void render();
+    });
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {

@@ -15,7 +15,7 @@ import {
   iconRefFromHeader,
   isCacheFresh,
   isIconCacheKey,
-  isSameSiteRedirect,
+  isSameHostRedirect,
   parseCachedIconRow,
   parseIconLinks,
   pickBestIconCandidate,
@@ -172,37 +172,52 @@ test('usableCacheHit: rejects rows from an older discovery schema version', () =
   assert.equal(usableCacheHit(current, 2), current);
 });
 
-// ---------- isSameSiteRedirect ----------
+// ---------- isSameHostRedirect ----------
 
-test('isSameSiteRedirect: allows same-host, scheme, and www. redirects', () => {
-  assert.equal(isSameSiteRedirect('https://example.com/', 'https://example.com/home'), true);
-  assert.equal(isSameSiteRedirect('http://example.com/', 'https://example.com/'), true);
-  assert.equal(isSameSiteRedirect('https://example.com/', 'https://www.example.com/'), true);
-  assert.equal(isSameSiteRedirect('https://www.example.com/a', 'https://example.com/b'), true);
-  assert.equal(isSameSiteRedirect('http://localhost:3000/', 'http://localhost:3000/app'), true);
+test('isSameHostRedirect: allows same-host, scheme, and www. redirects', () => {
+  assert.equal(isSameHostRedirect('https://example.com/', 'https://example.com/home'), true);
+  assert.equal(isSameHostRedirect('http://example.com/', 'https://example.com/'), true);
+  assert.equal(isSameHostRedirect('https://example.com/', 'https://www.example.com/'), true);
+  assert.equal(isSameHostRedirect('https://www.example.com/a', 'https://example.com/b'), true);
+  assert.equal(isSameHostRedirect('http://localhost:3000/', 'http://localhost:3000/app'), true);
 });
 
-test('isSameSiteRedirect: rejects cross-host SSO and marketing redirects', () => {
+test('isSameHostRedirect: host-level, so a port change or a subdomain is another host', () => {
+  assert.equal(isSameHostRedirect('http://localhost:3000/', 'http://localhost:8080/'), false);
+  assert.equal(isSameHostRedirect('https://example.com/', 'https://app.example.com/'), false);
+  // Registrable domain is not enough: this is the SSO case itself.
   assert.equal(
-    isSameSiteRedirect('http://localhost:3000/', 'http://localhost:8080/login'),
+    isSameHostRedirect('https://app.corp.google.com/', 'https://login.corp.google.com/'),
+    false,
+  );
+});
+
+test('isSameHostRedirect: an unparsable URL on either side is a mismatch', () => {
+  assert.equal(isSameHostRedirect('not a url', 'https://example.com/'), false);
+  assert.equal(isSameHostRedirect('https://example.com/', ''), false);
+});
+
+test('isSameHostRedirect: rejects cross-host SSO and marketing redirects', () => {
+  assert.equal(
+    isSameHostRedirect('http://localhost:3000/', 'http://localhost:8080/login'),
     false,
   );
   assert.equal(
-    isSameSiteRedirect(
+    isSameHostRedirect(
       'https://campus.corp.google.com/',
       'https://login.corp.google.com/request?authLevel=2000000',
     ),
     false,
   );
   assert.equal(
-    isSameSiteRedirect(
+    isSameHostRedirect(
       'https://calendar.google.com/calendar/',
       'https://accounts.google.com/v3/signin/identifier',
     ),
     false,
   );
   assert.equal(
-    isSameSiteRedirect(
+    isSameHostRedirect(
       'https://docs.google.com/presentation/',
       'https://workspace.google.com/products/slides/',
     ),

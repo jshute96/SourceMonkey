@@ -48,6 +48,10 @@ details live in the topic-specific docs linked below.
   settings page: `.user.js` link-capture toggle, debug-logging toggle,
   local-file-override search roots, and GitHub auth token entry.
   Reached via the Options link at the top of the collections page.
+- **Debug icons page** (`src/debug/icons.html` + `src/debug/icons.ts`) —
+  inspects the cached site icons in `chrome.storage.local`, with per-row
+  refresh / delete. Not linked from the UI; open it by URL. See
+  [site-icons.md](site-icons.md#debug-page).
 - **Install capture** (`src/install-capture.ts`) — turns a navigation
   to a `.user.js` URL (`http(s)://` or `file://`) into the userscript
   viewer's preview mode
