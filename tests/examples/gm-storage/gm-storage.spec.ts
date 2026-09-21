@@ -13,11 +13,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 test.describe('examples / gm-storage', () => {
   test.beforeEach(({ setup }) => {
-    // The explorer library arrives via a relative `@require`, which is
-    // a SourceMonkey extension — TM/VM/GM take absolute URLs only, and
-    // TM installs these examples from a local file so it has no base
-    // URL to resolve against even in principle. Same reason
-    // require-scope and gm-resource skip.
+    // The explorer library arrives via a relative `@require`. TM takes
+    // absolute URLs only, and installs these examples from a local
+    // file so it has no base URL to resolve against even in
+    // principle; VM resolves the ref against the install URL and runs
+    // this. Same reason require-scope and gm-resource skip.
     test.skip(setup.manager === 'tampermonkey',
       'TM requires absolute @require URLs; this example @requires the explorer library by relative path');
   });

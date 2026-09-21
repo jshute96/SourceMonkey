@@ -1,8 +1,8 @@
 // E2E coverage for the gm-download userscript example.
 //
-// SourceMonkey only: the page's explorer arrives via a relative
-// `@require`, which TM/VM/GM don't support (see the skip below).
-// SourceMonkey's exact GM_download contract is asserted in
+// Skipped under Tampermonkey: the page's explorer arrives via a
+// relative `@require`, which TM can't resolve (see the skip below).
+// SM and VM both run it. SourceMonkey's exact GM_download contract is asserted in
 // tests/e2e/gm-download.spec.ts; what's pinned here is that the
 // example page drives it.
 //
@@ -10,7 +10,8 @@
 // presets fetch from an external host (www.gnu.org) so their behavior
 // doesn't depend on how the page was opened. The specs here click only
 // `btn-file`, `btn-data` and `btn-scheme`, which stay on the fixture
-// server or need no network at all. Don't add assertions that depend
+// server or need no network at all — plus `#submit-download` on an
+// empty form, which never reaches the network. Don't add assertions that depend
 // on `btn-http`, `btn-404`, `btn-positional`, `btn-saveas`,
 // `btn-abort` or `btn-traversal` completing — that would put the suite
 // on the internet.
@@ -35,9 +36,10 @@ const VM_DOWNLOAD_CRASH =
 
 test.describe('examples / gm-download', () => {
   test.beforeEach(({ setup }) => {
-    // Relative `@require` is a SourceMonkey extension, and TM installs
-    // these examples from a local file so it has no base URL to
-    // resolve against. Same reason require-scope and gm-resource skip.
+    // TM takes absolute `@require` URLs only, and installs these
+    // examples from a local file so it has no base URL to resolve
+    // against. VM resolves the ref against the install URL and runs
+    // this. Same reason require-scope and gm-resource skip.
     test.skip(setup.manager === 'tampermonkey',
       'TM requires absolute @require URLs; this example @requires the explorer library by relative path');
   });
@@ -112,11 +114,13 @@ test.describe('examples / gm-download', () => {
 
     // The form doesn't police required arguments — an empty field is
     // an omitted one, and the API's own refusal is the thing worth
-    // seeing. `url` is documented as throwing synchronously.
+    // seeing. SM throws synchronously for a missing `url` (pinned in
+    // tests/e2e/gm-download.spec.ts); another manager may report it
+    // through `onerror` instead, and either counts as "failed there".
     await page.locator('#submit-download').click();
     await expect(page.locator('[data-box="download"] .explorer-error')).toBeHidden();
     await expect(page.locator('#log li').first()).toContainText('GM_download()');
-    await expect(page.locator('#log li').first()).toContainText('threw:');
+    await expect(page.locator('#log li').first()).toContainText(/threw:|onerror/);
 
     await page.close();
   });

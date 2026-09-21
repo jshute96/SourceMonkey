@@ -347,7 +347,9 @@ class ApiExplorerBox {
         this.explorer.logCall(this.render(args), `threw preparing arguments: ${e.message}`, 'error');
         return;
       }
-      if (effective !== args) this.fill(effective);
+      // `prepare` gets a copy, so compare by content, not identity —
+      // otherwise every preset with a `prepare` re-fills the form.
+      if (JSON.stringify(effective) !== JSON.stringify(args)) this.fill(effective);
     }
 
     const entry = this.explorer.logCall(this.render(effective), preset && preset.note);

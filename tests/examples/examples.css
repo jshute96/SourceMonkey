@@ -179,7 +179,9 @@ ul#log li.explorer-entry {
   border-top: 1px solid #eee;
 }
 
-.explorer-entry:last-child {
+/* Entries are prepended (newest on top), so the first has no rule
+   above it. Same specificity as the rule above, so it wins by order. */
+ul#log li.explorer-entry:first-child {
   border-top: 0;
 }
 

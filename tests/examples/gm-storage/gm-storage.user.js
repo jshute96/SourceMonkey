@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        SourceMonkey example: GM storage
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.1.0
+// @version     1.1.1
 // @description Explore the GM storage APIs: preset calls, editable argument forms, and a log of every call.
 // @match       *://*/gm-storage/gm-storage.html
 // @match       file:///*/gm-storage/gm-storage.html
@@ -13,8 +13,8 @@
 // @require     ./api-explorer.js
 // ==/UserScript==
 
-// The @require is a relative path — a SourceMonkey extension, so this
-// example is SM-only. See tests/examples/README.md.
+// The @require is a relative path, which Tampermonkey can't resolve —
+// so this example skips under TM. See tests/examples/README.md.
 
 (function () {
   'use strict';

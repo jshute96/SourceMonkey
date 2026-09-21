@@ -21,8 +21,8 @@ All three files share the directory's stem (e.g.
 
 ### The API explorer (`lib/api-explorer.js`)
 
-Most examples drive their API through a shared explorer UI rather than
-hand-rolled buttons. One declarative spec per API fills three sections
+Examples converted to the explorer (`gm-download/`, `gm-storage/`)
+drive their API through a shared UI rather than hand-rolled buttons. One declarative spec per API fills three sections
 of the page:
 
 - **Examples** — a preset button per canned call. Each runs the call
@@ -57,16 +57,17 @@ Conventions the library fixes for every example:
 - **Stable ids** for specs to target: `#btn-<preset>`,
   `#submit-<box>`, `#clear-<box>`, `#field-<box>-<field>`.
 
-The library is not itself a userscript. Example scripts pull it in with
-`@require ./api-explorer.js`, resolved through a per-directory
-**symlink** back to `lib/api-explorer.js` — SourceMonkey's relative
-require rule confines a ref to the script's own folder, so `../lib/…`
-would be refused. Two consequences:
+The library is not itself a userscript. Example scripts pull it in
+with `@require ./api-explorer.js`, resolved through a per-directory
+**symlink** back to `lib/api-explorer.js`:
 
+- SourceMonkey's relative require rule confines a `file://` script's
+  ref to its own folder, so `../lib/…` would be refused.
 - The symlink is a stopgap; a shared-library layout is planned.
-- Relative `@require` is a SourceMonkey extension, so **every explorer
-  example is SM-only** and its spec must
-  `test.skip(setup.manager === 'tampermonkey', …)`. Same rule as
+- Relative `@require` is not portable to Tampermonkey, so **every
+  explorer example skips under TM** — its spec must
+  `test.skip(setup.manager === 'tampermonkey', …)`. SM and VM run it
+  (VM resolves the ref against the install URL). Same rule as
   `require-scope/` and `gm-resource/`.
 - Editing `lib/api-explorer.js` doesn't surface on the next
   navigation: opportunistic refresh reuses cached require bodies. Hit
@@ -178,19 +179,19 @@ events.
 | -------------------------- | ----------------------------------------------------------------- | ------------- |
 | `gm-info/`                 | `GM_info`                                                         | pure read     |
 | `gm-log/`                  | `GM_log`                                                          | button-driven |
-| `gm-storage/`              | `GM_setValue` / `GM_getValue` / `GM_deleteValue` / `GM_listValues` | explorer (SM) |
+| `gm-storage/`              | `GM_setValue` / `GM_getValue` / `GM_deleteValue` / `GM_listValues` | explorer (SM+VM) |
 | `gm-value-listeners/`      | `GM_addValueChangeListener` / `GM_removeValueChangeListener`       | form-driven   |
 | `gm-dom/`                  | `GM_addStyle` / `GM_addElement`                                   | button-driven |
 | `gm-clipboard/`            | `GM_setClipboard`                                                 | form-driven   |
 | `gm-xmlhttp/`              | `GM_xmlhttpRequest`                                               | form-driven   |
 | `gm-open-in-tab/`          | `GM_openInTab`                                                    | form-driven   |
 | `gm-notification/`         | `GM_notification`                                                 | button-driven |
-| `gm-download/`             | `GM_download`                                                     | explorer (SM) |
+| `gm-download/`             | `GM_download`                                                     | explorer (SM+VM) |
 | `window-onurlchange/`      | `@grant window.onurlchange` (the `urlchange` event)               | page-wired    |
 | `window-close-focus/`      | `@grant window.close` / `@grant window.focus`                     | button-driven |
 | `headers-run-at/`          | `@run-at` (`document-start` / `-end` / `-idle` variants)           | multi-script  |
 | `headers-inject-into/`     | `@inject-into` (`page` MAIN-world vs `content` USER_SCRIPT-world)  | multi-script  |
-| `require-scope/`           | `@require` scope in both worlds (SM-only: relative ref)            | multi-script  |
+| `require-scope/`           | `@require` scope in both worlds, plus a relative ref TM can't use  | multi-script  |
 | `xmlhttp-denied/`          | `GM_xmlhttpRequest` + `@connect` denial vs allow                  | multi-script  |
 
 ## Page conventions

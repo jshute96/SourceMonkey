@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        SourceMonkey example: GM_download
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.1.0
+// @version     1.1.1
 // @description Explore GM_download: preset calls, an editable argument form, and a log of every call.
 // @match       *://*/gm-download/gm-download.html
 // @match       file:///*/gm-download/gm-download.html
@@ -16,8 +16,8 @@
 // declared; SourceMonkey's download path doesn't consult @connect, so
 // it's there for cross-manager parity.
 //
-// The @require is a relative path — a SourceMonkey extension, so this
-// example is SM-only. See tests/examples/README.md.
+// The @require is a relative path, which Tampermonkey can't resolve —
+// so this example skips under TM. See tests/examples/README.md.
 
 (function () {
   'use strict';

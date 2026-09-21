@@ -338,7 +338,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/examples/README.md` | Overview of the interactive userscript example pages; how to serve and use as a cross-manager compliance reference |
 | `tests/examples/index.html` | Index page linking the per-example subdirs |
 | `tests/examples/examples.css` | Shared styling for all example pages, including the API explorer's boxes, forms, and log |
-| `tests/examples/lib/api-explorer.js` | Shared API-explorer library `@require`d by example userscripts: builds preset buttons + an editable argument form from a spec, and logs every call |
+| `tests/examples/lib/api-explorer.js` | Shared API-explorer library `@require`d (via per-dir symlink) by example scripts: preset buttons, argument form, call log |
 | `tests/examples/<api>/` | Each example dir holds `<api>.html`, `<api>.user.js`, and `<api>.spec.ts` — the page, the userscript that drives it, and its Playwright e2e |
 | `tests/examples/gm-info/` | `GM_info` example: a header-heavy script hands its `GM_info` to the page, which renders a cross-manager comparison table |
 | `tests/examples/gm-log/` | `GM_log` per-script-prefix demo |

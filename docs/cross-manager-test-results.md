@@ -261,11 +261,12 @@ one.
 
 ## Loose-by-design assertions
 
-- **`gm-download/`** — passes under TM (as of TM 5.5.0); under VM only
-  the `file://` refusal runs (see "Intentional skips"). The assertions
-  stay at "some callback fired" rather than a specific value, because
-  TM applies its own file-extension allowlist and can answer
-  `not_whitelisted` where SM answers `onload`.
+- **`gm-download/`** — skipped under TM since the explorer conversion
+  (see "Intentional skips"); under VM only the `file://` refusal and
+  the missing-`url` test run. The assertions stay at "some callback
+  fired" rather than a specific value, so a manager that answers
+  differently (TM's file-extension allowlist gives `not_whitelisted`
+  where SM gives `onload`) would still pass if it ran.
   - The `file://` case asserts only that `onload` did **not** fire —
     neither manager should quietly pull a local file onto disk on a
     userscript's say-so; the refusal shape differs.
