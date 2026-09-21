@@ -220,14 +220,18 @@ function serializeHeaders(headers: Headers): string {
 // fires its own `onabort` immediately as well, so a script sees that
 // one first.
 //
-// `isFinalUrlAllowed`, when supplied, re-checks the response's URL
-// against the script's `@connect` policy after redirects. A response
-// that landed on a disallowed host (via a redirect the initial check
+// `checkFinalUrl`, when supplied, re-checks the response's URL against
+// the script's `@connect` policy after redirects. A response that
+// landed on a disallowed host (via a redirect the initial check
 // couldn't see) is dropped with an error event rather than returned.
+// It hands back `undeclared` too, so the error blames the right thing
+// — a script with no `@connect` lines has no rules to be blocked BY.
+export type FinalUrlCheck = (url: string) => { allowed: boolean; undeclared: boolean };
+
 export async function runXhr(
   id: string,
   request: GmXhrRequestPayload,
-  isFinalUrlAllowed?: (url: string) => boolean,
+  checkFinalUrl?: FinalUrlCheck,
   tabId: number | null = null,
 ): Promise<GmXhrEvent> {
   const controller = new AbortController();
@@ -348,12 +352,13 @@ export async function runXhr(
     // prevented here.) We only check on actual redirects — an
     // un-redirected response is on the host the initial check already
     // approved.
-    if (res.redirected && isFinalUrlAllowed && !isFinalUrlAllowed(res.url)) {
+    const final = res.redirected && checkFinalUrl ? checkFinalUrl(res.url) : null;
+    if (final && !final.allowed) {
       let host = res.url;
       try { host = new URL(res.url).hostname; } catch { /* keep full url */ }
       return {
         kind: 'error',
-        message: connectBlockedMessage(`redirect to ${host} not allowed`),
+        message: connectBlockedMessage(`redirect to ${host} not allowed`, final.undeclared),
       };
     }
     const rt = request.responseType ?? 'text';

@@ -107,10 +107,11 @@ export function hostMatchesRule(
     case 'wildcard':
       return true;
     case 'self':
-      // TM/VM both treat `self` as "the script's own origins or
-      // their subdomains". We're conservative: exact match only.
-      // See TODO.md "@connect self subdomain handling" — known
-      // cross-manager divergence pending a real compat report.
+      // TM treats `self` as "the script's own origins or their
+      // subdomains" (VM doesn't enforce `@connect` at all). We're
+      // conservative: exact match only. See TODO.md "@connect self
+      // subdomain handling" — known divergence pending a real compat
+      // report.
       return selfHosts.has(h);
     case 'exact':
       return rule.host === h;
@@ -201,7 +202,9 @@ export function decideConnect(url: string, ctx: ConnectContext): ConnectVerdict 
       allowed: false,
       denied: false,
       undeclared: false,
-      reason: `${url} is not a valid URL — GM_xmlhttpRequest needs an absolute one`,
+      // Query string dropped: the reason lands in the Log tab, which
+      // never carries one (see `logConnectVerdict`).
+      reason: `${url.split('?')[0]} is not a valid URL — GM_xmlhttpRequest needs an absolute one`,
     };
   }
   // Same-origin first, and independent of the declared rules: a

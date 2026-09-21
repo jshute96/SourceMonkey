@@ -2539,7 +2539,9 @@ async function handleXhrStart(
     (finalUrl) => {
       const verdict = policy.check(finalUrl);
       logConnectVerdict(payload.scriptId, tabId, finalUrl, verdict, 'redirect');
-      return verdict.allowed;
+      return verdict.allowed
+        ? { allowed: true, undeclared: false }
+        : { allowed: false, undeclared: verdict.undeclared };
     },
     tabId,
   );

@@ -42,7 +42,8 @@
         substring.</li>
       <li>The denial happens in the service worker before any
         <code>fetch</code> is issued, so a blocked request never
-        leaves the browser.</li>
+        leaves the browser. (A redirect to a denied host is caught
+        after the hop instead; its body is dropped unread.)</li>
       <li>Every denial also lands in the script&rsquo;s Log tab, naming
         the host and the <code>@connect</code> line that would allow
         it.</li>

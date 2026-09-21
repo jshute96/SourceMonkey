@@ -252,6 +252,59 @@ test.describe('GM_xmlhttpRequest default @connect policy', () => {
     await page.close();
   });
 
+  test('a redirect denial for a no-@connect script blames the missing header, on the page and in the Log', async ({
+    extensionContext,
+    sm,
+  }) => {
+    // The page lives on the data server so the request is same-origin
+    // and the allowance gets it out; the 302 lands cross-origin. The
+    // script wrote no @connect, so neither surface may say its "rules"
+    // blocked it — both take the undeclared wording.
+    const blockedHost = dataServer.baseUrl.replace('127.0.0.1', 'localhost');
+    dataServer.setRoute('/page.html', '<!doctype html><title>t</title><body></body>', { contentType: 'text/html' });
+    dataServer.setRoute('/secret', 'leaked', { contentType: 'text/plain' });
+    dataServer.setRedirect('/redirect', `${blockedHost}/secret`);
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'RedirectUndeclared',
+        match: [`${dataServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_xmlhttpRequest'],
+      },
+      body: `
+        GM_xmlhttpRequest({
+          method: 'GET',
+          url: '${dataServer.baseUrl}/redirect',
+          onload: (res) => { document.body.dataset.smLeaked = res.responseText; },
+          onerror: (e) => { document.body.dataset.smErr = String(e && e.error || ''); },
+        });
+      `,
+    });
+    const added = await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+    const collections = await sm.getCollections();
+    const scriptId = collections.find((s) => s.id === added!.id)!.scriptIds[0];
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${dataServer.baseUrl}/page.html`);
+    await expect(page.locator('body')).toHaveAttribute(
+      'data-sm-err', /blocked because this script declares no @connect: redirect to .* not allowed/,
+    );
+    expect(await page.locator('body').getAttribute('data-sm-leaked')).toBeNull();
+
+    const log = await waitFor(
+      () => sm.getScriptLog(scriptId),
+      (entries) => entries.some((e) => e.source === 'gm-xhr'),
+      { label: 'a gm-xhr redirect entry' },
+    );
+    const rows = log.filter((e) => e.source === 'gm-xhr');
+    expect(rows.length).toBe(1);
+    expect(rows[0].message).toContain('(after redirect)');
+    expect(rows[0].message).toContain('blocked because this script declares no @connect');
+    await page.close();
+  });
+
   test('repeated denials on one host are logged once, whatever the path', async ({
     extensionContext,
     fixtureServer,

@@ -369,7 +369,7 @@ constant, so the copies can't drift:
 | Helper | Covers |
 |--------|--------|
 | `gmXhrError` (`gm-connect.ts`) | every failure `GM_xmlhttpRequest` hands back to a script |
-| `connectBlockedMessage` (`gm-connect.ts`) | the pre-flight and post-redirect `@connect` denials |
+| `connectDenialClause` (`gm-connect.ts`) | the pre-flight and post-redirect `@connect` denials, on the page (via `connectBlockedMessage`) and in the Log row |
 | `NO_ORIGINATOR_TAB` (`background.ts`) | the GM handlers that reply when the calling tab can't be identified |
 | `NOTIFICATIONS_UNAVAILABLE` (`gm-notification.ts`) | both guards on `chrome.notifications` |
 | `LOCATION_SHAPES` (`directories.ts`) | the Add-field and preview validators' description of a valid location |

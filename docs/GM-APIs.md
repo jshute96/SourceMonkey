@@ -518,8 +518,10 @@ Grammar (lower-case before matching):
 
 The check runs in `handleXhrStart` before `fetch`: the SW looks up the
 script's stored header, calls `parseConnectRules` + `extractSelfHosts`,
-and hands the lot to `decideConnect`. A denied request never leaves the
-browser.
+and hands the lot to `decideConnect`. A request denied there never
+leaves the browser. (A redirect to a denied host is different: the hop
+has already happened by the time it is re-checked — see "Redirect
+re-check blocks reads, not the outbound hop" below.)
 
 The policy is resolved once into a reusable predicate
 (`loadConnectPolicy`) that is applied to **both** the initial URL and

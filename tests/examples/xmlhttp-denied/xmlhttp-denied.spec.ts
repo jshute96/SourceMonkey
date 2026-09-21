@@ -53,7 +53,7 @@ test.describe('examples / xmlhttp-denied', () => {
     // (network reachable) or onerror with a non-policy error
     // (network unreachable in CI), but the substring must not appear.
     const allowed = page.locator('#log li[data-script="connect-allowed"]');
-    await expect(allowed).not.toContainText('blocked b');
+    await expect(allowed).not.toContainText(/blocked (by|because)/);
 
     await page.close();
   });
