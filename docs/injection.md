@@ -640,7 +640,7 @@ Injection is per frame, so the wrapper runs per frame. Deliberately
   [TODO.md](../TODO.md).
 
 Everything else — the `sm:check-pending` round trip, the `@run-at`
-gate, the regex matcher recheck, GM storage — runs independently in
+gate, the regex matcher recheck — runs independently in
 each frame, which is what TM/VM do too.
 
 ### Execution world

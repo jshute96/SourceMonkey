@@ -47,6 +47,9 @@ function reason(err: unknown): string {
 // `tabs.query({windowType:'normal'})`, then "refused to close last
 // tab!" when one or fewer come back).
 export const LAST_TAB_NOT_CLOSABLE = 'The last open tab cannot be closed';
+// A frame asking to close the tab it is embedded in. Refused for the
+// reason the browser refuses a frame's own `window.close()`.
+export const SUB_FRAME_CLOSE_REFUSED = 'A frame cannot close the tab that contains it';
 
 // `window.close()` → close the sender's tab.
 //

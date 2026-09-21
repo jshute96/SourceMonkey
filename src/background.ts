@@ -226,6 +226,7 @@ import { openNamedTab } from './page-links.js';
 import {
   closeGmWindow,
   focusGmWindow,
+  SUB_FRAME_CLOSE_REFUSED,
   SM_WINDOW_CLOSE_MSG,
   SM_WINDOW_FOCUS_MSG,
   type WindowControlResult,
@@ -1399,12 +1400,16 @@ async function dispatchActionMenuCommand(
     return { ok: false, error: 'this menu command is no longer registered' };
   }
   try {
+    // Top frame only: the registry only ever holds top-frame commands
+    // (see the `sm:gm-menu-register` handler), but a script running in
+    // several frames registers the same `{ id }` page-side in each, so
+    // a tab-wide send would fire its callback once per frame.
     await chrome.tabs.sendMessage(tabId, {
       type: 'sm:gm-menu-fire',
       smWorld: pushWorld(scriptId),
       scriptId,
       commandId,
-    });
+    }, { frameId: 0 });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: String((err as Error)?.message ?? err) };
@@ -2524,9 +2529,7 @@ async function handleXhrStart(
   try {
     // Frame-scoped: the response body is the sensitive part of the API,
     // and `chrome.tabs.sendMessage` with no frameId hands it to every
-    // frame in the tab. Only the frame that asked needs it. (Moot while
-    // nothing registers with `allFrames`, but it stops being moot the
-    // day something does.)
+    // frame in the tab. Only the frame that asked needs it.
     await chrome.tabs.sendMessage(tabId, {
       type: 'sm:gm-xhr-event',
       smWorld: pushWorld(payload.scriptId),
@@ -2698,15 +2701,23 @@ async function handleWindowControl(
   if (tabId == null) {
     return { ok: false, error: NO_ORIGINATOR_TAB };
   }
+  // A sub-frame's `window.close()` is a no-op in the browser, and TM
+  // keeps it one (its override is top-frame only). Closing the whole
+  // tab from an iframe would be a bigger capability than the page's
+  // own, and — for a MAIN-world script matching the frame's URL — one
+  // any third-party frame could forge through the bridge.
+  const subFrameClose = which === 'close' && isSubFrameSender(sender);
   // Only the focus path needs the window; a close with a tab id but no
   // window id would otherwise be refused for no reason.
   const windowId = sender.tab?.windowId;
   if (which === 'focus' && windowId == null) {
     return { ok: false, error: NO_ORIGINATOR_TAB };
   }
-  const result = which === 'close'
-    ? await closeGmWindow(tabId)
-    : await focusGmWindow(tabId, windowId as number);
+  const result: WindowControlResult = subFrameClose
+    ? { ok: false, error: SUB_FRAME_CLOSE_REFUSED }
+    : which === 'close'
+      ? await closeGmWindow(tabId)
+      : await focusGmWindow(tabId, windowId as number);
   if (!result.ok && typeof scriptId === 'string') {
     logScriptEvent(scriptId, {
       // `warning`, not `error`, for the same reason GM_download uses
@@ -2815,9 +2826,13 @@ interface BatchWritePayload {
 // Openers table: scriptId -> set of tabIds that currently have a
 // wrapper for this script running. Updated on sm:start / sm:swapped
 // (recordScriptReport, below), on a resync request, and on tab close.
-// We don't track per-frame because chrome.tabs.sendMessage broadcasts
-// to every frame in a tab — frame-level filtering can land later if
-// it's worth it.
+// Not tracked per frame: chrome.tabs.sendMessage broadcasts to every
+// frame in a tab and each frame's runtime dispatches by scriptId. Now
+// that scripts run in sub-frames this has two costs — a write in one
+// frame never reaches its siblings in the same tab (the tab is the
+// exclusion unit), and a MAIN-world script's values are posted into
+// every frame the bridge reaches. Both want `(tabId, frameId)` keys;
+// see TODO.md "Frames".
 //
 // Mirrored into chrome.storage.session so it survives a service-worker
 // restart. It has to: the table is only filled at document start, an
@@ -3815,6 +3830,19 @@ function composeWrapperErrorMessage(
 // LRU entries, but the badge keeps working. The opposite default would
 // classify EVERY sender as a sub-frame, so no `sm:start` would ever
 // reach the badge and every script would read MISSING.
+// A URL without its `#fragment`, for comparisons where one side may
+// carry one and the other never does. Falls back to a string split when
+// the URL doesn't parse.
+function stripFragment(url: string): string {
+  try {
+    const u = new URL(url);
+    u.hash = '';
+    return u.href;
+  } catch {
+    return url.split('#')[0];
+  }
+}
+
 function isSubFrameSender(sender: chrome.runtime.MessageSender): boolean {
   const frameId = (sender as { frameId?: number }).frameId;
   return typeof frameId === 'number' && frameId !== 0;
@@ -4070,9 +4098,15 @@ async function recordScriptReport(
   // off the badge. Same-URL reloads slip through; they're indistinguishable
   // without a parent-document id, which MessageSender doesn't carry.
   // See TODO.md.
+  //
+  // Compared without the fragment: `state.url` comes from `onCommitted`
+  // / `onHistoryStateUpdated`, which a `#hash` change never fires, while
+  // `sender.tab.url` carries the hash — so on any hash-routed page a
+  // byte comparison would drop every sub-frame error after the first
+  // anchor click.
   if (subFrame) {
     const senderTopUrl = sender.tab?.url;
-    if (senderTopUrl && senderTopUrl !== state.url) return;
+    if (senderTopUrl && stripFragment(senderTopUrl) !== stripFragment(state.url)) return;
   }
   // The document we're writing to: the sender's own for a top-frame
   // report (unchanged from before frames existed), the tab's current

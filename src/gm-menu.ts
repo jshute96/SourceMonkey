@@ -18,11 +18,11 @@
 //
 // PRECONDITION: one document per tab. A tab holds commands for exactly
 // one `documentId` (see `byTab` below), which is sound only because
-// scripts run in the top frame only — we never set `allFrames`. If
-// that changes, subframe and top-frame wrappers will name different
-// documents and replace each other's commands here; this needs to be
-// re-keyed by (tabId, documentId) first, with the menu render merging
-// across a tab's live documents.
+// the SW ignores `sm:gm-menu-register` from sub-frames (`isSubFrameSender`
+// in background.ts): scripts do run in sub-frames, but only the top
+// frame's commands reach here. Honoring sub-frame commands means
+// re-keying by (tabId, documentId) first, with the menu render merging
+// across a tab's live documents — see TODO.md "Frames".
 
 
 

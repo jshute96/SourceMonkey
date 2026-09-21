@@ -181,7 +181,7 @@ What fires it — matched against Tampermonkey 5.5.0:
 | `history.replaceState` to the *same* URL | ✅ (no de-duplication — TM doesn't suppress these either) |
 | initial document load | ❌ (handle the starting URL directly, then listen — matches TM's own examples) |
 | full cross-document navigation / reload | ❌ (a new document runs the script again) |
-| a *sub-frame's* navigation, seen from the top frame | ❌ (events are frame-scoped, as in TM — and SourceMonkey doesn't run scripts in sub-frames at all today) |
+| a *sub-frame's* navigation, seen from the top frame | ❌ (events are frame-scoped, as in TM — the frame's own script instance hears it) |
 
 Differences from TM, detailed in
 [GM-APIs.md](GM-APIs.md#windowonurlchange):

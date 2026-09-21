@@ -237,6 +237,26 @@ export function grantsUnsafeWindow(header: ParsedHeader | null | undefined): boo
   return granted.has('unsafeWindow');
 }
 
+// Decide whether a script runs in sub-frames as well as the top frame,
+// i.e. what to pass as `allFrames` to chrome.userScripts.register.
+//
+// TM/VM/GM all inject into every frame whose URL matches, and offer
+// `@noframes` as the opt-out ("only run on main page, not in iframes").
+// So the default is `true` and the tag flips it off — the inverse of
+// Chrome's own `allFrames` default, which is why we always set the
+// field explicitly rather than letting it default.
+//
+// `@noframes` is a flag tag: TM documents it with no value, and the
+// header parser gives flag tags `value: ""`. We therefore test for
+// *presence* — `@noframes false` still disables frames, matching TM
+// (which likewise never parses a value here). A headerless script
+// (unit-test-only; validateHeader rejects these upstream) gets the
+// default.
+export function resolveAllFrames(header: ParsedHeader | null | undefined): boolean {
+  if (!header) return true;
+  return !hasTag(header, 'noframes');
+}
+
 // Decide which execution world a script should run in. Mirrors
 // Violentmonkey's `@inject-into` semantics (and Tampermonkey's default
 // for `@grant none`):
@@ -291,26 +311,6 @@ export function grantsUnsafeWindow(header: ParsedHeader | null | undefined): boo
 // `@inject-into content` and `@inject-into page` both still win, and a
 // script already headed for MAIN (`@grant none`, no grants) just gains
 // the binding.
-// Decide whether a script runs in sub-frames as well as the top frame,
-// i.e. what to pass as `allFrames` to chrome.userScripts.register.
-//
-// TM/VM/GM all inject into every frame whose URL matches, and offer
-// `@noframes` as the opt-out ("only run on main page, not in iframes").
-// So the default is `true` and the tag flips it off — the inverse of
-// Chrome's own `allFrames` default, which is why we always set the
-// field explicitly rather than letting it default.
-//
-// `@noframes` is a flag tag: TM documents it with no value, and the
-// header parser gives flag tags `value: ""`. We therefore test for
-// *presence* — `@noframes false` still disables frames, matching TM
-// (which likewise never parses a value here). A headerless script
-// (unit-test-only; validateHeader rejects these upstream) gets the
-// default.
-export function resolveAllFrames(header: ParsedHeader | null | undefined): boolean {
-  if (!header) return true;
-  return !hasTag(header, 'noframes');
-}
-
 export function resolveWorld(
   header: ParsedHeader | null | undefined,
   // `StoredScript.usesUnsafeWindow` — the body names the name, grant or
@@ -690,7 +690,7 @@ function buildGmInfoInput(
     requires: (script.requires ?? []).map((r) => r.ref),
     resourceList: (script.resources ?? []).map((r) => ({ name: r.name, url: r.ref })),
     connects: getValues(header, 'connect'),
-    noframes: hasTag(header, 'noframes'),
+    noframes: !resolveAllFrames(header),
     userAgentData: readUserAgentData(),
   };
 }

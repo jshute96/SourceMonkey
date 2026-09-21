@@ -71,9 +71,8 @@ export interface UrlChangeDetails {
 // Sub-frames pass the filter, but the targeting below is what
 // actually matters for them: a sub-frame's navigation must never
 // be delivered to the top frame's listeners as if the document had
-// moved. No userscript runs in a sub-frame today anyway — we never set
-// `allFrames` (see docs/injection.md "No frame control") — so the
-// sub-frame send simply finds no receiver.
+// moved. Scripts run in sub-frames too (see docs/injection.md
+// "Frames"), so a sub-frame's listeners are real receivers.
 export function shouldNotifyUrlChange(details: UrlChangeDetails): boolean {
   if (typeof details.tabId !== 'number' || details.tabId < 0) return false;
   if (typeof details.frameId !== 'number' || details.frameId < 0) return false;

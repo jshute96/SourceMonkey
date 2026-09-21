@@ -351,6 +351,10 @@
 
   function installFocusSignal() {
     if (focusSignalInstalled) return;
+    /* Top frame only: `visibilitychange` fires in every frame on a tab
+       switch, and the signal is about the tab, not this frame — a page
+       full of iframes would send it once per frame. */
+    if (!isTopFrame()) return;
     focusSignalInstalled = true;
     try {
       /* `focus` is the one that fires when the window comes back from

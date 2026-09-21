@@ -1219,11 +1219,10 @@ too.
   unavailable) is reported both to the page console and, from the SW
   side, to the script's Log tab at `warning` level. There is nothing
   to report on success: a successful close takes the document with it.
-- **The target is the sender's whole tab, frames included.** A
-  granting script inside a sub-frame closes the tab, where the
-  frame's own `window.close()` is a no-op. Reachable: scripts run in
-  sub-frames unless they declare `@noframes` (see
-  [injection.md](injection.md#frames)).
+- **The target is the sender's whole tab** — but only a top-frame
+  sender gets it. A granting script inside a sub-frame is refused, so
+  a frame's `window.close()` stays the no-op it is in the browser (see
+  "Sub-frames" below).
 - **The `@grant` line is the whole gate** — no confirmation prompt at
   call time, same as TM. Closing the user's tab out from under them is
   a real capability, and the only thing standing in front of it is
@@ -1243,9 +1242,10 @@ too.
 - **Sub-frames.** TM only overrides `window.close` in the **top**
   frame (`page.js` hands a sub-frame the page's own `close`); its
   `window.focus` has no such guard. We override in every frame we
-  inject into, which is only ever the top frame today — so the two
-  agree in practice, and TM's guard is the thing to copy if frame
-  injection ever lands.
+  inject into, but the SW refuses a `close` from a sub-frame sender
+  (`A frame cannot close the tab that contains it`, logged at
+  `warning`), so the two agree: a frame's `window.close()` stays a
+  no-op. `window.focus` from a frame focuses the tab, as in TM.
 - **MAIN world is unsupported**, as with every other non-`GM_info`
   binding. `@grant window.close` on its own puts the script in
   USER_SCRIPT world, so only the explicit `@inject-into page`

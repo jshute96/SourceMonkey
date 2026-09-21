@@ -474,6 +474,79 @@ test.describe('frames', () => {
     await page.close();
   });
 
+  test('a sub-frame error still reaches the badge after a #fragment navigation', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    // The stale-report guard compares the sender's top-level URL with
+    // the tab record's. A hash change updates the former but never the
+    // latter (no `onCommitted`), so the comparison has to ignore it —
+    // otherwise every sub-frame error after an anchor click is dropped.
+    scriptsDir.write({
+      relativePath: 'late-thrower.user.js',
+      meta: { name: 'Late Frame Thrower', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
+      body: `
+        if (window.top !== window) {
+          window.addEventListener('message', (e) => {
+            if (e.data === 'boom') throw new Error('late frame boom');
+          });
+        }
+      `,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/frames.html`);
+    const sw = await getServiceWorker();
+    const tabId = await sw.evaluate(async () => {
+      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      if (!tab?.id) throw new Error('no active tab');
+      return tab.id;
+    });
+    await waitForTabState(sm, tabId, (s) => s.title.includes('Late Frame Thrower'), 'script started');
+
+    await page.evaluate(() => { location.hash = 'section-2'; });
+    await page.evaluate(() => {
+      for (const f of Array.from(window.frames)) f.postMessage('boom', '*');
+    });
+
+    const snap = await waitForTabState(
+      sm, tabId,
+      (s) => s.title.includes('Late Frame Thrower | ERROR'),
+      'sub-frame error after a hash change reaches the badge',
+    );
+    expect(snap.badgeText).toBe('1');
+    await page.close();
+  });
+
+  test('window.close() from a sub-frame is refused, and logged', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // A frame's own window.close() is a no-op in the browser, and TM
+    // keeps it one. Closing the containing tab from an iframe would be
+    // a bigger capability than the page's own.
+    scriptsDir.write({
+      relativePath: 'frame-closer.user.js',
+      meta: {
+        name: 'Frame Closer', match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end', grant: ['window.close'],
+      },
+      body: `if (window.top !== window && window.name === 'kid1') window.close();`,
+    });
+    const collection = await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+    const scriptId = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].id;
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/frames.html`);
+    await expect.poll(async () => {
+      const log = await sm.getScriptLog(scriptId);
+      return log.filter((e) => e.source === 'gm-window').map((e) => e.message);
+    }).toEqual(['window.close — A frame cannot close the tab that contains it']);
+    expect(page.isClosed()).toBe(false);
+    await page.close();
+  });
+
   test('GM_registerMenuCommand from a sub-frame is not added to the tab menu', async ({
     extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {
