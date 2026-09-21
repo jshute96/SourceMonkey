@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name        SourceMonkey example: relative @require (SourceMonkey only)
+// @name        SourceMonkey example: relative @require (not portable to Tampermonkey)
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.0
-// @description A relative @require path resolved against the script's own URL — a SourceMonkey extension no other manager implements.
+// @version     1.0.1
+// @description A relative @require path, resolved against the script's own URL (SourceMonkey) or its install URL (Violentmonkey). Tampermonkey takes absolute URLs only.
 // @match       *://*/require-scope/require-scope.html
 // @match       file:///*/require-scope/require-scope.html
 // @run-at      document-end
@@ -15,13 +15,14 @@
 (function () {
   'use strict';
 
-  // Deliberately NOT portable. Relative `@require` paths resolve
-  // against this script's own URL, which TM/VM/GM don't implement —
-  // they take absolute URLs only. Under those managers this script
-  // either fails to install or installs and then throws on the first
-  // missing binding, so it appends no row and the status line settles
-  // one short. That gap is the point: it's what makes the example
-  // show the SourceMonkey extension rather than just assert it.
+  // Deliberately NOT portable to Tampermonkey. Relative `@require`
+  // paths resolve against this script's own URL under SourceMonkey and
+  // against the install URL under Violentmonkey; TM takes absolute
+  // URLs only. Under TM this script either fails to install or
+  // installs and then throws on the first missing binding, so it
+  // appends no row and the status line settles one short. That gap is
+  // the point: it's what makes the example show the difference rather
+  // than just assert it.
   //
   // Two requires, so this also pins that they're prepended to the body
   // in header ORDER and land in one scope with each other and with the

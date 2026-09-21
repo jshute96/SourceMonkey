@@ -274,12 +274,12 @@ gates, or the emitted wrap — the rate is the regression signal.
 `require-scope/` no longer skips under `--project=tampermonkey`. It is
 split into a portable pair (absolute raw.githubusercontent.com URL) and
 one script that keeps a relative ref. The spec asserts `3 of 3` under
-SM and `2 of 3` under TM.
+SM and VM, `2 of 3` under TM.
 
 - **Blocked: the repo is private.** raw.githubusercontent.com 404s
   without a token.
-- An unfetchable `@require` is fatal in SourceMonkey, so this takes the
-  portable pair down under *both* managers, not just TM.
+- An unfetchable `@require` is fatal in SourceMonkey, so the 404 takes
+  the portable pair down under SM as well as TM/VM.
 - The spec is `test.fixme`-d for that reason. Dropping the fixme is
   step one once it's unblocked.
 - **Unblock by** making the repo public, or moving the absolute URL to
@@ -295,12 +295,12 @@ unwanted:
 - A rewrite step that stamps the live server URL into a generated copy
   of the script before TM installs it.
 
-**Unverified: TM's actual behavior.** Whether TM installs
-`relative-require.user.js` and merely fails at runtime (the expected
-`2 of 3`), or chokes at the install prompt while prefetching the
-unresolvable ref, has not been observed. The latter would error out of
-`syncTampermonkeyScripts` instead of asserting. See
-[docs/cross-manager-test-results.md](docs/cross-manager-test-results.md).
+- **Unverified: TM's actual behavior** with `relative-require.user.js`
+  — installs and fails at runtime (the expected `2 of 3`), or chokes
+  at the install prompt while prefetching the unresolvable ref? The
+  latter would error out of `syncTampermonkeyScripts` instead of
+  asserting. See
+  [docs/cross-manager-test-results.md](docs/cross-manager-test-results.md).
 
 ### `@resource` under Tampermonkey — still uncovered
 

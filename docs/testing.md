@@ -103,7 +103,7 @@ reach the internet.
   portable userscripts `@require` `lib.js` by absolute
   `https://raw.githubusercontent.com/...` URL, since that is the only
   `@require` form Tampermonkey/Violentmonkey accept.
-- This affects `pnpm run test:e2e`, not just the TM project — SourceMonkey
+- This affects `pnpm run test:e2e`, not just the TM/VM projects — SourceMonkey
   fetches the same URL. Offline, it fails slowly (a 5s `file-loader`
   timeout per fetch).
 - An unfetchable `@require` is fatal: the script is marked `invalid`

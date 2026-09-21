@@ -26,7 +26,7 @@
 //     TM cannot (2 of 3).
 //
 // NETWORK DEPENDENCY: because the portable pair name an absolute URL,
-// both managers now fetch lib.js from raw.githubusercontent.com at
+// every manager now fetches lib.js from raw.githubusercontent.com at
 // install time. This spec fails offline, and it fails while the repo
 // is private — the raw URL 404s without a token. SourceMonkey treats
 // an unfetchable @require as fatal (the script is marked invalid and

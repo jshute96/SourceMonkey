@@ -8,10 +8,11 @@
 //     at this repo's `main` branch on raw.githubusercontent.com, which
 //     means the copy a foreign manager fetches is whatever is on
 //     `main` — not whatever is in the working tree.
-//   - This file is only ever reached through a relative path, which is
-//     a SourceMonkey extension. Nothing outside SourceMonkey fetches
-//     it, so it is the safe place to put behavior that has to change
-//     in lockstep with the example.
+//   - This file is only ever reached through a relative path, which
+//     SourceMonkey and Violentmonkey resolve locally (against the
+//     script's own URL / the install URL). Nothing fetches it from
+//     `main`, so it is the safe place to put behavior that has to
+//     change in lockstep with the example.
 //
 // The declarations mirror `lib.js`'s shape on purpose: a script-scoped
 // `const` and a `function`. If the relative ref resolved but the

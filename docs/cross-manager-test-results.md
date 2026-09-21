@@ -22,7 +22,8 @@ Update this doc when a result changes.
 ## Status
 
 - **TM**: 33 passed, 0 failed, 7 skipped (TM 5.5.0).
-- **VM**: 32 passed, 0 failed, 8 skipped (VM 2.49.0).
+- **VM**: 31 passed, 0 failed, 9 skipped (VM 2.49.0). A `test.fixme`
+  counts as skipped.
 
 ## Intentional skips
 
@@ -101,7 +102,9 @@ outcome, rather than skipping.
   the repo is private this spec fails under *every* manager.
 - **`main`, not the working tree.** A foreign manager fetches whatever
   `lib.js` is on `main`. Behavioral edits to `lib.js` are invisible to
-  TM until they merge, so a pre-merge TM run exercises the old copy.
+  TM and VM until they merge, so a pre-merge run exercises the old
+  copy.
+
 ### UNVERIFIED: what TM does with `relative-require.user.js`
 
 Nobody has watched a real TM run of this yet. Two outcomes are
@@ -126,9 +129,9 @@ The second outcome is not graceful:
 If that's what happens, the fixture needs a tolerated-failure path, or
 the spec needs to install only the portable pair under TM.
 
-### Manual `sync-tm-scripts.mjs` runs
+### Manual `sync-manager-scripts.mjs` runs
 
-`scripts/sync-tm-scripts.mjs` walks `tests/examples/` recursively, so a
+`scripts/sync-manager-scripts.mjs` walks `tests/examples/` recursively, so a
 manual sync now attempts all three scripts in this directory:
 
 - The two portable ones point at a URL that 404s while the repo is

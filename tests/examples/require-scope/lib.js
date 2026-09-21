@@ -1,11 +1,11 @@
 // Shared library every script in this example pulls in: the two
 // portable scripts by absolute raw.githubusercontent.com URL, the
-// SourceMonkey-only script by relative `@require ./lib.js`.
+// third by relative `@require ./lib.js`.
 //
-// COMMENTS ONLY below this point may be edited freely; the executable
-// declarations must not change without care. Foreign managers fetch
-// this file from `main`, so a working-tree edit isn't visible to them
-// until it merges.
+// Only comments are safe to edit here. Foreign managers fetch this
+// file from `main`, so a behavioral change is invisible to them until
+// it merges — put such changes in `relative-lib.js`, which is only
+// ever fetched locally.
 //
 // The declaration forms here are the point. Requires are concatenated
 // ahead of the script body into a single injected entry, so all three

@@ -24,8 +24,9 @@
         scripts are portable to any manager.</li>
       <li><code>@require ./relative-lib.js</code> &mdash;
         <code>relative-require</code> uses a relative path instead,
-        resolved against the script&rsquo;s own URL. That is a
-        SourceMonkey extension, so this script runs only here.</li>
+        resolved against the script&rsquo;s own URL (SourceMonkey) or
+        the install URL (Violentmonkey). Tampermonkey takes absolute
+        URLs only, so this script runs everywhere but there.</li>
       <li><code>@inject-into page</code> vs
         <code>@inject-into content</code> &mdash; the portable pair run
         in different worlds, using the same library.</li>
@@ -55,8 +56,8 @@
         <code>0 of 3</code> stays on the page if the manager injected
         none.</li>
       <li>So the expected reading is manager-dependent: SourceMonkey
-        resolves both <code>@require</code> spellings and reaches
-        <code>3 of 3</code>, while a manager that understands only
+        and Violentmonkey resolve both <code>@require</code> spellings
+        and reach <code>3 of 3</code>, while a manager that understands only
         absolute URLs runs the portable pair and stops at
         <code>2 of 3</code>.</li>
       <li><code>relative-require</code> requires <em>both</em>

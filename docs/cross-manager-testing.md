@@ -252,8 +252,8 @@ example page and asset locally). One exception:
 - Consequences: the spec **fails offline**, and it **fails while the
   repo is private** (raw.githubusercontent.com 404s without a token).
 - Managers fetch from `main`, so an unmerged edit to `lib.js` is not
-  what TM runs. Keep behavioral changes out of `lib.js` — put them in
-  `relative-lib.js`, which only SourceMonkey fetches.
+  what TM or VM runs. Keep behavioral changes out of `lib.js` — put
+  them in `relative-lib.js`, which is only ever fetched locally.
 
 ## Script-list state across tests
 
