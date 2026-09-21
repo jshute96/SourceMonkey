@@ -11,8 +11,8 @@
 // Tags whose value is a single resource reference. The body-linkifier
 // passes the value through file-loader's `resolveScriptResource`,
 // which both linkifies absolute http(s) URLs and resolves relative
-// paths against the script's parent directory (the same rule the
-// `@icon` favicon path uses). Anything the resolver rejects falls
+// paths against the script's own URL (the same rule the `@icon`
+// favicon path uses). Anything the resolver rejects falls
 // back to plain text.
 //
 // `@resource` is *not* in this set even though its second token is a

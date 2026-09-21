@@ -1,13 +1,18 @@
 // What a manager actually puts on the wire for a GM_xmlhttpRequest.
 //
-// Runs under both the `sourcemonkey` and `tampermonkey` projects, so
-// the same request is measured against both. The page can't see any of
-// this: Origin, Referer and the `Sec-Fetch-*` set are forbidden to JS,
-// so the fixture server's `/__echo` route reports them instead.
+// Runs under the `sourcemonkey`, `tampermonkey`, and `violentmonkey`
+// projects, so the same request is measured against each. The page
+// can't see any of this: Origin, Referer and the `Sec-Fetch-*` set are
+// forbidden to JS, so the fixture server's `/__echo` route reports
+// them instead.
 //
 // This is the measurement behind issue #21 — endpoints that gate on
 // `Sec-Fetch-Site` refuse anything a service worker sends, and the
 // defaults we should adopt are whatever Tampermonkey adopted.
+//
+// The report is a test attachment (`wire-headers.txt`, visible in
+// the HTML report) rather than console output, so a normal run stays
+// quiet. Set `SM_PRINT_WIRE_HEADERS=1` to print it to the terminal.
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -68,7 +73,9 @@ test.describe('examples / gm-xmlhttp wire headers', () => {
     const report = OF_INTEREST
       .map((h) => `  ${h}: ${headers[h] ?? '(absent)'}`)
       .join('\n');
-    console.log(`[${manager}] GM_xmlhttpRequest wire headers:\n${report}`);
+    const body = `[${manager}] GM_xmlhttpRequest wire headers:\n${report}`;
+    await test.info().attach('wire-headers.txt', { body, contentType: 'text/plain' });
+    if (process.env.SM_PRINT_WIRE_HEADERS === '1') console.log(body);
     await page.close();
   });
 });

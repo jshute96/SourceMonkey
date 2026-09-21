@@ -1,9 +1,8 @@
 // End-to-end coverage of the `.user.js` link capture.
 //
-// Chrome never renders a `.user.js` URL as an installable page (see
-// src/install-capture.ts for the version-by-version detail), so the
-// extension intercepts the navigation and lands the tab on the
-// userscript viewer in preview mode. These tests drive that from a
+// Chrome never renders a `.user.js` URL as an installable page — it is
+// just source text — so the extension intercepts the navigation and
+// lands the tab on the userscript viewer in preview mode. These tests drive that from a
 // real navigation: point a tab at a `.user.js` URL and assert where it
 // ends up, what the preview says, and what Install actually registers.
 //
@@ -11,40 +10,16 @@
 // is what runs `resetAllState()` around each test, and this file writes
 // both a settings row (`smCaptureUserJsLinks`) and userscript collections.
 
-import type { Page, Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
 import { UserscriptServer, userscriptText } from '../fixtures/userscript-server';
 import { startCapturedNavigation, waitForInstallPrompt } from '../fixtures/capture-nav';
+import { LOCATION_ROW } from '../fixtures/viewer-selectors';
 
 const CAPTURE_KEY = 'smCaptureUserJsLinks';
-
-// The Chrome milestone that removed `.user.js` download special-casing;
-// mirrors CHROME_USERJS_FIX_VERSION in src/install-capture.ts. Several
-// behaviors legitimately differ across it, so the tests branch on the
-// browser they actually got rather than pinning today's Chromium.
-const CHROME_USERJS_FIX_VERSION = 152;
-
-function chromeMajor(page: Page): Promise<number> {
-  return page.evaluate(() => Number(/Chrom(?:e|ium)\/(\d+)/.exec(navigator.userAgent)?.[1] ?? 0));
-}
 
 // The viewer URL an Install / Update lands on, as distinct from the
 // preview URL the tab is already sitting at.
 const INSTALLED_VIEWER_URL = /userscript\.html\?script=/;
-
-// Read back the download-workaround rule the SW registered, if any.
-interface SessionRule {
-  id: number;
-  condition: Record<string, unknown>;
-  action: Record<string, unknown>;
-}
-async function workaroundRules(getServiceWorker: () => Promise<Worker>): Promise<SessionRule[]> {
-  const sw = await getServiceWorker();
-  return sw.evaluate(async () => {
-    const rules = await chrome.declarativeNetRequest.getSessionRules();
-    return JSON.parse(JSON.stringify(rules));
-  });
-}
 
 test.describe('.user.js link capture', () => {
   let server: UserscriptServer;
@@ -64,13 +39,16 @@ test.describe('.user.js link capture', () => {
     await waitForInstallPrompt(page);
 
     // The preview carries the clicked URL and describes the script,
-    // using the same panels an installed script gets.
+    // using the same panels an installed script gets. The heading is the
+    // script's `@name`; the URL is the Location row's job.
     expect(new URL(page.url()).searchParams.get('preview')).toBe(scriptUrl);
-    await expect(page.locator('h1#filename')).toContainText(scriptUrl);
+    await expect(page.locator('h1#filename')).toHaveText('SourceMonkey | Install | Hello From The Web');
+    await expect(page.locator(LOCATION_ROW)).toHaveText(scriptUrl);
     await expect(page.locator('#header-summary')).toContainText('Hello From The Web');
     await expect(page.locator('#header-summary')).toContainText('https://example.com/*');
     await expect(page.locator('#content')).toContainText('==UserScript==');
-    await expect(page.locator('#banner-slot')).toContainText('not installed yet');
+    await expect(page.locator('#install-callout')).toBeVisible();
+    await expect(page.locator('#install-target option:checked')).toHaveText('Scripts from web (new)');
     await expect(page.locator('#install-btn')).toBeEnabled();
     // Nothing has run, so there is no Log tab to offer.
     await expect(page.locator('#tabs')).not.toContainText('Log');
@@ -120,19 +98,18 @@ test.describe('.user.js link capture', () => {
     const page = await extensionContext.newPage();
     await startCapturedNavigation(page, scriptUrl);
     await waitForInstallPrompt(page);
-    // The preview's heading and Location row read plainly, but the
-    // href is still the URL the browser would request.
-    await expect(page.locator('h1#filename')).toContainText(decodedName);
-    expect(await page.locator('.filename-text').getAttribute('href')).toBe(scriptUrl);
+    // The preview's Location row reads plainly, but the href is still
+    // the URL the browser would request.
+    await expect(page.locator(LOCATION_ROW)).toContainText(decodedName);
+    expect(await page.locator(LOCATION_ROW).getAttribute('href')).toBe(scriptUrl);
 
     await page.locator('#install-btn').click();
     await page.waitForURL(INSTALLED_VIEWER_URL);
 
-    // Heading and tab label both show the decoded name…
-    await expect(page.locator('h1#filename')).toContainText(decodedName);
+    // The code tab's label shows the decoded name…
     await expect(page.locator('#tabs')).toContainText(decodedName);
     // …and so does the Location row, while its href stays encoded.
-    const location = page.locator('.filename-text');
+    const location = page.locator(LOCATION_ROW);
     await expect(location).toHaveText(scriptUrl.replace(encodedPath, `/${decodedName}`));
     expect(await location.getAttribute('href')).toBe(scriptUrl);
     // What we stored — and would refetch — is the real URL.
@@ -145,7 +122,7 @@ test.describe('.user.js link capture', () => {
   test('a second install joins the existing container and opens the new script', async ({
     extensionContext, sm,
   }) => {
-    // Exercises addCollection's `existingContainer` branch — the one that
+    // Exercises the store's `existingContainer` branch — the one that
     // has to pick the newly added script's id, not the container's
     // first. A single-install test can't tell those apart.
     server.setRoute('/first.user.js', userscriptText('First Script'));
@@ -169,7 +146,7 @@ test.describe('.user.js link capture', () => {
     await page.close();
   });
 
-  test('an already-installed script offers Open / Update instead of Install', async ({
+  test('an already-installed script offers its copy in the table instead of Install', async ({
     extensionContext, sm,
   }) => {
     server.setRoute('/hello.user.js', userscriptText('Hello From The Web'));
@@ -181,9 +158,9 @@ test.describe('.user.js link capture', () => {
     await waitForInstallPrompt(page);
 
     await expect(page.locator('#banner-slot')).toContainText('already installed');
-    await expect(page.locator('#install-btn')).toBeHidden();
-    await expect(page.locator('#open-btn')).toBeVisible();
-    await expect(page.locator('#update-btn')).toBeVisible();
+    await expect(page.locator('#install-callout')).toBeHidden();
+    await expect(page.locator('#other-versions td.col-actions button', { hasText: 'Update' })).toHaveCount(1);
+    await expect(page.locator('#other-versions tr.is-offer button')).toBeDisabled();
     await page.close();
   });
 
@@ -248,11 +225,9 @@ test.describe('.user.js link capture', () => {
     const page = await extensionContext.newPage();
     await startCapturedNavigation(page, pageUrl);
 
-    // Landing on the URL is the whole assertion. What the tab then
-    // RENDERS is version-dependent: below Chrome 152 the download
-    // workaround rewrites this response to `text/html` and it paints as
-    // a page; at 152+ the rule isn't registered and the same bytes
-    // render as source text.
+    // Landing on the URL is the whole assertion; what the tab renders
+    // is Chrome's business (source text, since the response claims
+    // JavaScript).
     await expect.poll(() => page.url()).toBe(pageUrl);
     await page.close();
   });
@@ -292,23 +267,13 @@ test.describe('.user.js link capture', () => {
       extensionContext.waitForEvent('page'),
       page.locator('#view-source-btn').click(),
     ]);
-    await rawPage.waitForLoadState();
 
-    if (await chromeMajor(page) < CHROME_USERJS_FIX_VERSION) {
-      // The browser can't render a `.user.js` response as text on these
-      // versions, so the prompt shows its own fetched copy on raw.html,
-      // titled with the filename rather than an opaque URL.
-      expect(rawPage.url()).toContain('raw.html');
-      await expect(rawPage).toHaveTitle('hello.user.js');
-      expect(await rawPage.locator('#raw').innerText()).toBe(body);
-    } else {
-      // Chrome renders it itself here, so the raw view navigates for
-      // real — which also proves the bypass held and the capture didn't
-      // pull the tab back to the prompt.
-      await rawPage.waitForURL(scriptUrl);
-      expect(await rawPage.locator('body').innerText()).toContain('==UserScript==');
-    }
-    // Either way the file arrives line-for-line, not collapsed onto one.
+    // Chrome renders a `.user.js` response as source text itself, so
+    // View raw source navigates for real — which also proves the bypass
+    // held and the capture didn't pull the tab back to the prompt.
+    await rawPage.waitForURL(scriptUrl);
+    expect(await rawPage.locator('body').innerText()).toContain('==UserScript==');
+    // The file arrives line-for-line, not collapsed onto one.
     expect((await rawPage.locator('body').innerText()).split('\n').length).toBeGreaterThan(3);
     // The preview stays open behind it.
     expect(page.url()).toContain('userscript.html?preview=');
@@ -326,49 +291,15 @@ test.describe('.user.js link capture', () => {
     }, CAPTURE_KEY);
     // The SW mirrors the flag through a storage.onChanged listener, so
     // the write resolving is not the same as the mirror being updated.
-    // The workaround rule is synced by that same code path, which makes
-    // its removal an observable proxy for "the toggle has landed".
-    // (Skipped past Chrome 152, where the rule is never registered.)
-    const page = await extensionContext.newPage();
-    if (await chromeMajor(page) < CHROME_USERJS_FIX_VERSION) {
-      await expect.poll(() => workaroundRules(getServiceWorker)).toHaveLength(0);
-    }
+    // Poll the mirror itself before navigating.
+    await expect.poll(() => sm.isCaptureEnabled()).toBe(false);
 
+    const page = await extensionContext.newPage();
     await startCapturedNavigation(page, scriptUrl);
-    // With capture off Chrome does its own thing (download, or render
-    // as text depending on version) — either way the tab must not end
-    // up on the preview.
+    // With capture off Chrome renders the script as source text — what
+    // matters is only that the tab does not end up on the preview.
     await page.waitForTimeout(500);
     expect(page.url()).not.toContain('userscript.html');
     await page.close();
-  });
-
-  test('the download workaround rule is path-anchored, and absent past Chrome 152', async ({
-    extensionContext, getServiceWorker, sm,
-  }) => {
-    const page = await extensionContext.newPage();
-    const major = await chromeMajor(page);
-    await page.close();
-
-    const rules = await workaroundRules(getServiceWorker);
-    if (major >= CHROME_USERJS_FIX_VERSION) {
-      // Past the fix the rewrite would garble a perfectly good collection
-      // view, so it must not be registered at all.
-      expect(rules).toHaveLength(0);
-      return;
-    }
-    expect(rules).toHaveLength(1);
-    const rule = rules[0];
-    expect(rule.condition.resourceTypes).toEqual(['main_frame']);
-    expect(rule.condition.requestMethods).toEqual(['get']);
-    expect(rule.condition.isUrlFilterCaseSensitive).toBe(true);
-    // Anchored to the path: `…/view?f=a.user.js` is a page that links to
-    // a script, and rewriting its Content-Type would HTML-parse it.
-    const regex = new RegExp(rule.condition.regexFilter as string);
-    expect(regex.test('https://host/foo.user.js')).toBe(true);
-    expect(regex.test('https://host/foo.user.js?v=2')).toBe(true);
-    expect(regex.test('https://host/view?f=a.user.js')).toBe(false);
-    // The rewrite keeps a charset so a UTF-8 script isn't mojibaked.
-    expect(JSON.stringify(rule.action)).toContain('charset=utf-8');
   });
 });

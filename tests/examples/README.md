@@ -194,11 +194,14 @@ by relative ref — `gm-resource/` has `resource.css` / `resource.json` /
 - The TM sync only walks `*.user.js`, so these files are never
   installed on their own. They're fetched by the manager when it
   resolves the ref.
-- Relative refs are a SourceMonkey extension — TM/VM/GM take absolute
+- Relative refs don't survive the trip to TM: TM and GM take absolute
   URLs only, and TM installs these examples from a local file, so it
-  has no base URL to resolve against. A spec relying on one must
+  has no base URL to resolve against. VM does resolve them — the
+  harness installs into VM from the fixture server's URL — so a spec
+  relying on one needs
   `test.skip(setup.manager === 'tampermonkey', ...)` with the reason
-  stated. The `*.user.js` still syncs to TM harmlessly.
+  stated, not a blanket non-SM skip. The `*.user.js` still syncs to TM
+  harmlessly.
 
 For a **multi-script directory** (see above): replace step 1 with
 a single `<dir>.html` + single `<dir>.spec.ts` + one
@@ -213,7 +216,7 @@ When you change the body or metadata of an existing `*.user.js`,
 **bump its `@version`**. Version-sensitive managers (Tampermonkey,
 Violentmonkey, …) install by `@namespace`+`@name` and only update
 when the installed version is older than the file. Without a bump,
-the cross-manager sync (`scripts/sync-tm-scripts.mjs`) classifies
+the cross-manager sync (`scripts/sync-manager-scripts.mjs`) classifies
 your edit as `SKIP` and TM keeps running the stale copy. SourceMonkey
 re-reads source files directly so it doesn't care, but the cross-
 manager workflow does.

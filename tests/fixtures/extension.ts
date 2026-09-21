@@ -6,6 +6,8 @@
 // calls into `self.SourceMonkey` (set up in src/background.ts).
 
 import { test as base, type BrowserContext, type Worker } from '@playwright/test';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extensionIdFromPath } from './extension-id';
@@ -41,6 +43,11 @@ export const EXTENSION_ID = extensionIdFromPath(EXTENSION_PATH);
 // between tests, which invalidates any previously-captured Worker
 // handle. Re-resolving per test gives each test a live handle.
 type WorkerFixtures = {
+  // Where Chrome's own download manager saves files in this worker's
+  // browser. Only set by `testWithBrowserDownloads`; the default `test`
+  // leaves downloads to Playwright's interception (see
+  // `launchSourceMonkeyContext`), where this is undefined.
+  downloadsDir: string | undefined;
   // Local HTTP server fixture: serves fixture HTML pages out of
   // tests/fixtures/pages/. We need a real http:// origin (rather than
   // file:// or data:) because unpacked extensions don't get file://
@@ -63,7 +70,14 @@ type TestFixtures = {
   sm: ReturnType<typeof makeSwApi>;
 };
 
-export const test = base.extend<TestFixtures, WorkerFixtures>({
+// Two flavours of the same fixture set, differing only in who handles
+// downloads. Most specs want Playwright's interception (`test`), which
+// is what `page.waitForEvent('download')` needs. Specs that observe
+// downloads through `chrome.downloads` — the local-copy feature reads
+// the saved file's real path back from the download item — need
+// Chrome's own download manager instead (`testWithBrowserDownloads`).
+function makeTest(browserDownloads: boolean) {
+  return base.extend<TestFixtures, WorkerFixtures>({
   fixtureServer: [
     async ({}, use) => {
       const server = await createFixtureServer(FIXTURE_PAGES_DIR, EXAMPLES_DIR);
@@ -73,11 +87,25 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     { scope: 'worker' },
   ],
 
-  extensionContext: [
+  downloadsDir: [
     async ({}, use) => {
+      if (!browserDownloads) {
+        await use(undefined);
+        return;
+      }
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sourcemonkey-downloads-'));
+      await use(dir);
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+    },
+    { scope: 'worker' },
+  ],
+
+  extensionContext: [
+    async ({ downloadsDir }, use) => {
       const launched = await launchSourceMonkeyContext({
         extensionPath: EXTENSION_PATH,
         extensionId: EXTENSION_ID,
+        downloads: downloadsDir ? { dir: downloadsDir } : undefined,
       });
       await use(launched.ctx);
       await launched.ctx.close();
@@ -109,6 +137,10 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     // sibling tests' bootstrap.
     try { await api.resetAllState(); } catch {}
   },
-});
+  });
+}
+
+export const test = makeTest(false);
+export const testWithBrowserDownloads = makeTest(true);
 
 export const expect = test.expect;

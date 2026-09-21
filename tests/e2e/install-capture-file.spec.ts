@@ -19,22 +19,12 @@
 // is what runs `resetAllState()` around each test.
 
 import fs from 'node:fs';
-import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 import { startCapturedNavigation, waitForInstallPrompt } from '../fixtures/capture-nav';
+import { LOCATION_ROW } from '../fixtures/viewer-selectors';
 
 const CAPTURE_KEY = 'smCaptureUserJsLinks';
-
-// Mirrors CHROME_USERJS_FIX_VERSION in src/install-capture.ts. Below
-// it, a `.user.js` navigation is forced into a download on every
-// scheme — including `file://` (verified on Chrome 148), which is
-// exactly why a local script needs the capture too.
-const CHROME_USERJS_FIX_VERSION = 152;
-
-function chromeMajor(page: Page): Promise<number> {
-  return page.evaluate(() => Number(/Chrom(?:e|ium)\/(\d+)/.exec(navigator.userAgent)?.[1] ?? 0));
-}
 
 const INSTALLED_VIEWER_URL = /userscript\.html\?script=/;
 
@@ -69,11 +59,12 @@ test.describe('.user.js capture for local files', () => {
     // be keyed on the URL the browser would actually navigate to.
     expect(new URL(page.url()).searchParams.get('preview')).toBe(url);
     // …but everything user-facing shows the bare path.
-    await expect(page.locator('h1#filename')).toContainText('/hello.user.js');
-    await expect(page.locator('h1#filename')).not.toContainText('file://');
+    await expect(page.locator(LOCATION_ROW)).toContainText('/hello.user.js');
+    await expect(page.locator(LOCATION_ROW)).not.toContainText('file://');
     await expect(page.locator('#header-summary')).toContainText('Hello From Disk');
     await expect(page.locator('#content')).toContainText('==UserScript==');
-    await expect(page.locator('#banner-slot')).toContainText('not installed yet');
+    await expect(page.locator('#install-callout')).toBeVisible();
+    await expect(page.locator('#install-target option:checked')).toHaveText('Scripts from local disk (new)');
     await expect(page.locator('#install-btn')).toBeEnabled();
     await page.close();
   });
@@ -127,13 +118,16 @@ test.describe('.user.js capture for local files', () => {
     await waitForInstallPrompt(page);
 
     await expect(page.locator('#banner-slot')).toContainText('already installed');
-    await expect(page.locator('#install-btn')).toBeHidden();
-    await expect(page.locator('#open-btn')).toBeVisible();
-    await expect(page.locator('#update-btn')).toBeVisible();
+    // The table carries the copy's Update and its viewer link; the
+    // offer row keeps the (now installed) default selected with Install
+    // off, so no second row can come from a stray click.
+    await expect(page.locator('#install-callout')).toBeHidden();
+    await expect(page.locator('#other-versions td.col-actions button', { hasText: 'Update' })).toHaveCount(1);
+    await expect(page.locator('#other-versions tr.is-offer button')).toBeDisabled();
     await page.close();
   });
 
-  test('View raw source shows the local file without navigating', async ({
+  test('View raw source opens the local file itself, as http does', async ({
     extensionContext, sm,
   }) => {
     const { url } = writeScript('hello.user.js', 'Hello From Disk');
@@ -146,13 +140,13 @@ test.describe('.user.js capture for local files', () => {
       extensionContext.waitForEvent('page'),
       page.locator('#view-source-btn').click(),
     ]);
-    await rawPage.waitForLoadState();
 
-    // We already hold a copy, so it renders on raw.html — titled with
-    // the filename, and line-for-line rather than collapsed.
-    expect(rawPage.url()).toContain('raw.html');
-    await expect(rawPage).toHaveTitle('hello.user.js');
-    const text = await rawPage.locator('#raw').innerText();
+    // A real navigation to the `file://` URL, same as the http half of
+    // this feature — which also proves the bypass held and the capture
+    // didn't pull the new tab into a second preview. Chrome renders it
+    // line-for-line as source text.
+    await rawPage.waitForURL(url);
+    const text = await rawPage.locator('body').innerText();
     expect(text).toContain('==UserScript==');
     expect(text.split('\n').length).toBeGreaterThan(3);
     // The preview stays open behind it.
@@ -177,32 +171,12 @@ test.describe('.user.js capture for local files', () => {
     await expect(page.locator('#banner-slot')).toContainText('No // ==UserScript== metadata block');
     await expect(page.locator('#install-btn')).toBeHidden();
     await expect(page.locator('#continue-btn')).toHaveText('Continue to file');
-    // Read before the click: a lost bypass re-navigates this tab, and
-    // the resulting "execution context destroyed" would mask the real
-    // assertion.
-    const major = await chromeMajor(page);
-
-    // Stamp the document so a re-capture (which re-navigates this tab to
-    // the preview URL it is already on) is distinguishable from the
-    // browser simply handling the file itself.
-    await page.evaluate(() => { (window as Window & { __mark?: number }).__mark = 1; });
     await page.locator('#continue-btn').click();
 
-    if (major >= CHROME_USERJS_FIX_VERSION) {
-      // The browser renders the file as text, so the tab really lands
-      // on it — proof enough that the capture stood down.
-      await page.waitForURL(url);
-      expect(await page.locator('body').innerText()).toContain('not a userscript');
-    } else {
-      // The legacy path downloads the file instead, leaving this
-      // document in place. A capture would have replaced it — so a
-      // surviving stamp is what proves the bypass held.
-      await page.waitForTimeout(1500);
-      const mark = await page
-        .evaluate(() => (window as Window & { __mark?: number }).__mark)
-        .catch(() => undefined);
-      expect(mark).toBe(1);
-    }
+    // The browser renders the file as text, so the tab really lands on
+    // it — proof enough that the capture stood down.
+    await page.waitForURL(url);
+    expect(await page.locator('body').innerText()).toContain('not a userscript');
     await page.close();
   });
 
@@ -241,10 +215,11 @@ test.describe('.user.js capture for local files', () => {
   test('View raw source falls back to the file itself when the fetch failed', async ({
     extensionContext, extensionId, sm,
   }) => {
-    // Nothing to render locally, so the raw view navigates for real —
-    // the one path that reaches `navigateRaw` with a `file://` URL. It
-    // must carry a bypass, or the new tab is captured straight back
-    // into another preview.
+    // View raw source navigates whether or not the fetch landed. This
+    // is the case where there is nothing to land on either, so it
+    // proves the button doesn't quietly depend on a successful fetch —
+    // and that the navigation still carries a bypass, or the new tab
+    // is captured straight back into another preview.
     const missing = `file://${dir.path}/gone.user.js`;
     const page = await extensionContext.newPage();
     await page.goto(
@@ -296,7 +271,7 @@ test.describe('.user.js capture for local files', () => {
     );
     const [opened] = await Promise.all([
       extensionContext.waitForEvent('page'),
-      page.locator('.filename-text').click(),
+      page.locator(LOCATION_ROW).click(),
     ]);
     await page.waitForTimeout(1000);
     expect(opened.url()).not.toContain('userscript.html');
@@ -316,14 +291,8 @@ test.describe('.user.js capture for local files', () => {
     const page = await extensionContext.newPage();
     // The SW mirrors the flag through a storage.onChanged listener, so
     // the write resolving isn't the same as the mirror being updated.
-    // Below Chrome 152 the download-workaround rule is synced by that
-    // same code path, which makes its removal an observable proxy.
-    if (await chromeMajor(page) < CHROME_USERJS_FIX_VERSION) {
-      await expect.poll(async () => {
-        const worker = await getServiceWorker();
-        return worker.evaluate(() => chrome.declarativeNetRequest.getSessionRules().then((r) => r.length));
-      }).toBe(0);
-    }
+    // Poll the mirror itself before navigating.
+    await expect.poll(() => sm.isCaptureEnabled()).toBe(false);
 
     await startCapturedNavigation(page, url);
     await page.waitForTimeout(500);

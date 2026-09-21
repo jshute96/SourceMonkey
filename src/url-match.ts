@@ -288,7 +288,7 @@ function canonicalPatternProblem(pattern: string): MatchPatternProblem | null {
     return {
       pattern,
       what: 'has no path',
-      fix: 'add a trailing "/*" to match every page on that host',
+      fix: 'add a trailing "/*" to match all pages on that host',
     };
   }
 

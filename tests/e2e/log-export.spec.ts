@@ -17,7 +17,7 @@ const AT = new Date(2026, 7, 5, 14, 3, 22, 17).getTime();
 // What both buttons hand out for the log `installWithLog` seeds:
 // header row, then the entries newest-first, matching the table.
 const EXPECTED_CSV = [
-  'Time,Level,Source,Message',
+  'Time,Status,Source,Message',
   `"2026-08-05 14:03:23.017",error,"tab 4 · script-wrapper","Boom, it ""broke"""`,
   '"2026-08-05 14:03:22.017",info,manual-refresh,Loaded',
   '',

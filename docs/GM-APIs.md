@@ -20,20 +20,28 @@ SourceMonkey actually does today.
   each granted legacy name; emits a `const GM = Object.freeze({...})`
   GM4 namespace covering the granted APIs with `gmDotName` plus
   `GM.info`.
-- **`src/wrapper-gm-runtime.js`** — USER_SCRIPT-world shared runtime
-  (`window.__SM_GM__`). Registered once per page at `document_start`
-  like the MAIN-world bridge. Provides:
+- **`src/wrapper-gm-runtime.js`** — shared runtime (`window.__SM_GM__`),
+  registered once per page **per execution world** at `document_start`.
+  The same source runs in USER_SCRIPT and in MAIN; it picks its
+  transport at init (direct `chrome.runtime` vs. the DOM-event
+  bridge). Provides:
   - Shim cache of native references (Promise, Error, JSON.parse/
     stringify, etc.) — defends against sibling userscripts that
     monkey-patch builtins.
-  - `sendAsync(payload)` — chrome.runtime.sendMessage helper that
-    routes through a captured `bind`-ed reference.
+  - `sendAsync(payload)` — SW round-trip helper. In USER_SCRIPT world
+    it routes through a captured `bind`-ed
+    `chrome.runtime.sendMessage`; in MAIN world it dispatches a
+    `sourcemonkey-bridge-sync` event that `wrapper-bridge.js` forwards,
+    keyed on a per-call `requestId`.
+  - `onPush(handler)` — SW-originated events (XHR settling, value
+    broadcasts, menu fires). `chrome.runtime.onMessage` in USER_SCRIPT
+    world; `sourcemonkey-bridge-push` postMessages in MAIN.
   - `notImplemented(name)` — Phase 2 placeholder; later phases
     replace per-subsystem methods.
 - **`src/injector.ts`** — wires the emitter and runtime into the
   registration pipeline. `buildGmBindingsForScript` produces the
-  per-script collection; `buildGmRuntimeSpec` returns the runtime
-  registration alongside `buildBridgeSpec`.
+  per-script collection; `buildGmRuntimeSpecs` returns one runtime
+  registration per world that needs it, alongside `buildBridgeSpec`.
 - **`src/gm-url-change.ts`** — SW-side driver for
   `@grant window.onurlchange`. Forwards
   `chrome.webNavigation.onHistoryStateUpdated` to the document that
@@ -107,20 +115,28 @@ Scope notes:
 
 ## World gating
 
-- `GM_info` is emitted in **every** world (USER_SCRIPT and MAIN) and
-  for every script regardless of `@grant`. It's a baked literal with
-  no runtime dependency, so it works in MAIN with no `__SM_GM__`
-  needed. Matches TM/VM (both expose GM_info implicitly).
-- The rest of the GM_* surface — including the `window.onurlchange`
-  event surface and the `window.close` / `window.focus` overrides — is
-  emitted ONLY in `USER_SCRIPT` world.
-  Scripts with an explicit `@inject-into page` or otherwise running
-  in MAIN don't get the non-info bindings — they'd be unable to reach
-  `__SM_GM__` (different world) or `chrome.runtime` (undefined in
-  MAIN). Calls to any non-info GM_* name in such a script throw a
-  natural `ReferenceError`. This is a known limitation; the TODO in
-  [GM-API-strategy.md](GM-API-strategy.md#things-to-revisit-later)
-  tracks bridging the rest of the surface into MAIN.
+Binding emission is world-independent — the same `emitGmBindings`
+output ships whether the script lands in USER_SCRIPT or MAIN.
+
+- `GM_info` is emitted for every script regardless of `@grant`. It's a
+  baked literal with no runtime dependency. Matches TM/VM (both expose
+  GM_info implicitly).
+- `unsafeWindow` is a plain `const unsafeWindow = window;` in both
+  worlds. What makes it correct is the world, not the binding — see
+  [injection.md](injection.md#unsafewindow-forces-main-world).
+  - Emitted for a script that only *uses* the name too, with no
+    `@grant` line for it (`StoredScript.usesUnsafeWindow`). Suppressed
+    when a `@require` declares the name itself, since ours would be a
+    duplicate `const` in the same scope.
+- Everything else — including the `window.onurlchange` event surface
+  and the `window.close` / `window.focus` overrides — delegates to
+  `window.__SM_GM__`, which is registered in whichever worlds have a
+  script granting a runtime-backed API (`buildGmRuntimeSpecs`). A
+  `@grant none` MAIN-world script needs none of it, so its page stays
+  free of `__SM_GM__`.
+- MAIN-world SW traffic rides `wrapper-bridge.js` in both directions,
+  and script-scoped requests are gated SW-side by `bridgeMayActAs`.
+  See [`GM_*` in MAIN world](injection.md#gm_-in-main-world).
 
 ## `@grant` resolution
 
@@ -147,14 +163,14 @@ Scope notes:
 
 ## Caveats and Phase-2 limitations
 
-- **`unsafeWindow` is the USER_SCRIPT world's `window`, not the
-  page's.** Userscripts in MAIN world (`@inject-into page` or
-  `@grant none`) get the page's `window` directly anyway, so they
-  don't need (and don't get) `unsafeWindow`. Scripts in USER_SCRIPT
-  world that grant `unsafeWindow` currently receive a passthrough to
-  the local isolated `window` — no cross-world reach into page
-  globals. A future phase can bridge to MAIN via postMessage if
-  needed.
+- **`unsafeWindow` is real, and it moves the script.** Granting it —
+  or just using it — resolves the script to MAIN world, where `window`
+  already is the page's. The only case where it can't be the page's
+  window is
+  `@inject-into content`, which pins the script to the isolated world;
+  that combination gets a startup-log warning instead of a silent
+  wrong answer. See
+  [injection.md](injection.md#unsafewindow-forces-main-world).
 - **Runtime ordering safety rests on the wrap function, not on
   laziness.** Everything the emitter produces — the `const GM_X = ...`
   declarations, the eager `urlchange.enable` /
@@ -202,8 +218,35 @@ Scope notes:
   one without stays behind until its next document.
 - **`GM_info.script.grant` is the canonicalized set, not the raw
   `@grant` lines.** `@grant GM.setValue` shows up as `GM_setValue` in
-  `GM_info.script.grant`. Matches VM; TM exposes the raw declared
-  form. Worth revisiting if any real compat reports come in.
+  `GM_info.script.grant`. TM and VM both report the raw declared form
+  instead (VM's `GM_info.script` is its parsed metadata object —
+  deduped, not rewritten). Worth revisiting if any real compat
+  reports come in.
+- **`GM_info` carries the fields TM and VM both expose.** Beyond
+  `script.{name,version,namespace,description,matches,includes,excludes,grant,run-at}`,
+  `scriptHandler`, `version`, `scriptMetaStr` and `uuid`:
+  - Where TM and VM disagree on a key (TM `run-at` vs VM `runAt`, TM
+    `connects` vs VM `connect`), the spelling that matches the header
+    tag wins.
+  - `script.require` — `@require` refs; `script.resources` — `{name,
+    url}` per `@resource`. Both carry the ref as written (`./lib.js`),
+    like TM/VM, not the resolved URL; they list the loaded files
+    (deduped, and the prior good set after a failed refresh).
+  - `script.connect` — `@connect` hosts; `script.noframes` — whether
+    `@noframes` is present.
+  - `script.author` / `homepage` / `icon` / `icon64` / `supportURL` /
+    `updateURL` / `downloadURL` / `copyright` / `license` — header
+    values, `null` when absent (TM's shape; TM's aliases fold in —
+    `@homepageURL` / `@website` / `@source` → `homepage`, `@iconURL` /
+    `@defaulticon` → `icon`, `@icon64URL` → `icon64`).
+  - `scriptWillUpdate: true` (scripts are re-read from their
+    collection on refresh) and `userAgentData` (a snapshot of
+    `navigator.userAgentData`, taken in the SW at bake time).
+  - Not provided: `isIncognito` (GM_info is baked per script, not per
+    tab, so the value isn't knowable at bake time), `downloadMode`,
+    and the manager-internal `script.options` blob.
+  - The `gm-info` example page shows each manager's output side by
+    side.
 - **Unknown `@grant` names log a console warning.** A typo like
   `@grant GM_setvalue` (lowercase) is dropped from the binding set
   and the script gets a `ReferenceError` at call time. The injector
@@ -256,7 +299,7 @@ Architecture:
 - Page-side `GM_xmlhttpRequest(details)` returns `{abort}`
   synchronously. The runtime stores the callbacks
   (`onload`/`onerror`/`ontimeout`/`onabort`) keyed by a generated
-  request id (callbacks aren't serializable across postMessage), and
+  request id (callbacks aren't serializable across the bridge), and
   ships a `sm:gm-xhr-start` envelope to the SW with the serializable
   request fields.
 - SW (`src/gm-xhr.ts`) runs `fetch(url, init)` against an
@@ -352,16 +395,30 @@ base64 + `responseMimeType`. The page-side runtime decodes:
   read the raw text.
 
 No offscreen document is involved — the SW serializes response bytes
-and the page rebuilds them. TM uses an offscreen doc to get a real
-`Blob` constructor; we don't need one because USER_SCRIPT world has
-`new Blob(...)` directly. The base64 round-trip costs ~33% wire
-overhead vs raw bytes but is robust across the SW/page boundary.
+and the page rebuilds them.
+
+- TM uses an offscreen doc to get a real `Blob` constructor, and
+  VM's MV3 build does too: its `XMLHttpRequest` runs there and
+  leases blob URLs, falling back to base64 chunks in incognito,
+  where Chrome won't fetch a blob URL.
+- We don't need one because USER_SCRIPT world has `new Blob(...)`
+  directly.
+- The base64 round-trip costs ~33% wire overhead vs raw bytes but is
+  robust across the SW/page boundary.
 
 ## `@connect` URL gating (Phase 10)
 
-VM-style strict-by-default: a script with no `@connect` lines
-in its header is **blocked** from every `GM_xmlhttpRequest`. Scripts
-must declare the hosts they intend to reach.
+Strict-by-default: a script with no `@connect` lines in its header
+is **blocked** from every `GM_xmlhttpRequest`. Scripts must declare
+the hosts they intend to reach.
+
+Stricter than either reference manager:
+
+- TM prompts the user when a script reaches an undeclared host.
+- VM doesn't enforce `@connect` at all — its install-confirm page
+  lists the declared hosts, and nothing checks them at request time.
+- The cost is that a VM script which omitted `@connect` has to gain
+  one here; the benefit is that the header means what it says.
 
 Grammar (lower-case before matching):
 
@@ -499,6 +556,12 @@ its own dispatch doesn't corrupt iteration.
   userscript B's data", not a privilege escalation against the
   user — and it matches what TM/VM actually provide (same-world
   userscripts aren't isolated from each other).
+  - VM raises the bar a little without changing the model: each
+    script gets its own bound `GM` wrapper, and the script id lives
+    in that closure inside VM's injected bundle — the content side
+    neither binds nor checks it. A sibling has to reach the wrapper
+    (or the module-scoped bridge) rather than just name another id in
+    a message. Sharing a realm still means sharing everything else.
   - Why it has no cheap fix: every USER_SCRIPT-world script shares
     ONE world per frame (one `configureWorld`, no per-script
     `worldId`) and can read sibling ids straight from
@@ -529,11 +592,24 @@ its own dispatch doesn't corrupt iteration.
     added in USER_SCRIPT world) and can't reach the SW any other way
     (no `chrome.runtime` in MAIN world), so any potentially-page-forged
     request carries it.
-  - The check-pending handler refuses to attach `gmValues` to a
-    `__viaBridge` request. Storage scripts are always USER_SCRIPT world
-    and request values over their own direct `chrome.runtime` path (no
-    marker), so nothing legitimate is withheld.
-  - Regression coverage: `tests/e2e/gm-storage-read-leak.spec.ts`.
+  - The check-pending handler runs every `__viaBridge` request through
+    `bridgeMayActAs` before attaching `gmValues`: only a script that
+    actually runs in MAIN world on the sending page, with a storage
+    grant, gets its snapshot.
+    That set is exactly the scripts whose values the page can already
+    read out of the MAIN-world `__SM_GM__`, so the gate concedes
+    nothing — and a USER_SCRIPT-world script is never in it.
+  - USER_SCRIPT-world scripts request values over their own direct
+    `chrome.runtime` path (no marker) and skip the gate entirely, so
+    nothing legitimate is withheld.
+  - The push direction is gated symmetrically: `wrapper-bridge.js`
+    re-posts an SW push into MAIN world only when the SW stamped it
+    `smWorld: 'MAIN'`, so a page running any MAIN-world script can't
+    read an isolated script's `sm:gm-value-update` writes or
+    `sm:gm-xhr-event` response bodies off its own window.
+  - Regression coverage: `tests/e2e/gm-storage-read-leak.spec.ts`, plus
+    the forged-GM-call and broadcast-relay cases in
+    `tests/e2e/gm-unsafe-window.spec.ts`.
 
 ## Clipboard (`GM_setClipboard`)
 
@@ -552,9 +628,11 @@ Known limitations:
   on documents that lack focus / transient activation. Most user-
   initiated GM_setClipboard calls (button click, keyboard shortcut)
   have transient activation; idle-timer scripts may need to wait
-  for an interaction. TM/VM use an offscreen-doc + `execCommand
-  ('copy')` workaround that doesn't require focus — we may revisit
-  if real reports come in.
+  for an interaction. TM and VM both use an offscreen-doc +
+  `execCommand('copy')` workaround that doesn't require focus (VM's
+  is `src/common/clipboard.js`, run in its MV3 offscreen document,
+  and it honors the `type` argument through
+  `clipboardData.setData`) — we may revisit if real reports come in.
 
 ## `GM_log`
 
@@ -820,8 +898,9 @@ Why the split:
   registered commands appended as `↳ <name>` entries.
 - **Overflow planner (`src/action-menu.ts`,
   `planActionMenu`)** — caps the top level at Chrome's 6-item limit
-  by reserving one slot for a "More" submenu when the (script row +
-  N commands) totals would exceed it. Splits happen between groups,
+  by reserving one slot for the fixed "Reload page with no
+  userscripts" row and one more for a "More" submenu when the (script
+  row + N commands) totals would exceed it. Splits happen between groups,
   never within one — see [matching.md](matching.md#per-tab-badge--tooltip) for the rules.
 - **Click routing** — `chrome.contextMenus.onClicked` for an
   `sm-menucmd:<scriptId>:<commandId>` item sends `sm:gm-menu-fire`
@@ -879,13 +958,16 @@ Why the split:
   `tests/e2e/gm-menu.spec.ts` to assert on registration state
   without driving the real Chrome UI.
 - `self.SourceMonkey.getActionContextMenuPlan(tabId)` returns the
-  planned `{ top, more }` layout the SW would hand to
+  planned `{ top, more, reloadWithoutScripts }` layout the SW would hand to
   `chrome.contextMenus`. Lets tests verify overflow packing without
   inspecting the real Chrome menu (which Playwright can't reach).
 - `self.SourceMonkey.fireActionContextMenuItem(tabId, scriptId,
   commandId)` synthesizes a click on a specific entry by sending
   the same `sm:gm-menu-fire` message the real click handler does.
   Returns `{ok:false}` for stale or unknown ids.
+- `self.SourceMonkey.reloadWithoutScripts(tabId)` stands in for a
+  click on the "Reload page with no userscripts" row — see
+  [matching.md](matching.md#reload-with-no-userscripts).
 
 ## `window.onurlchange`
 
@@ -992,8 +1074,9 @@ world's `window`:
 TM lands in the same place from the other direction: it dispatches no
 real event either, so nothing outside its own sandbox `window` — not
 `unsafeWindow`, not `document` — can subscribe. Ours is a superset in
-one narrow way: `unsafeWindow` is a passthrough to the isolated
-`window`, which is the object we patch, so
+one narrow way: the runtime patches the `window` of whichever world
+the script runs in, and a script that grants `unsafeWindow` runs in
+MAIN world where `unsafeWindow === window`, so
 `unsafeWindow.addEventListener('urlchange', …)` does work here.
 `document.addEventListener('urlchange', …)` is dead in both.
 
@@ -1186,9 +1269,11 @@ into pages that ship strict `Content-Security-Policy: script-src
   the element.
 - `GM_addElement(tagName, attrs?)` — tag-aware default parent:
   `<head>` for `script`/`style`/`link`/`meta`/`title`/`base`,
-  `<body>` for everything else (matches TM/VM). Falls back through
-  head / documentElement when body doesn't exist yet (very-early
-  `runAt`). Returns the element.
+  `<body>` for everything else. VM routes by tag the same way with a
+  shorter head list (`script`/`style`/`link`/`meta`), so `title` and
+  `base` differ; TM always uses `<head>`. Falls back through head /
+  documentElement when body doesn't exist yet (very-early `runAt`).
+  Returns the element.
 - `GM_addElement(parent, tagName, attrs?)` — appends to the given
   parent node. Two-arg vs three-arg signatures are distinguished by
   whether `arg1` has a `.nodeType`.

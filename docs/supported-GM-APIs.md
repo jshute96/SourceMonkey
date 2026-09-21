@@ -111,8 +111,42 @@ which rejects those grants — see
 
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
-| `GM_info` / `GM.info` | ✅ | ✓ | ✓ | ✓ | Implicit — exposed in every script regardless of `@grant` (including `@grant none` and scripts with no `@grant` line), and in both MAIN and USER_SCRIPT worlds. Also spliced into every `@require` entry. Baked into the wrapper at registration time. Surface: `script.{name, version, namespace, description, matches, includes, excludes, grant, runAt}`, `scriptHandler: "SourceMonkey"`, `version: <extension version>`, `scriptMetaStr` (raw `==UserScript==` block), `uuid` (stored script id). `script.grant` is the **canonicalized** set we emitted bindings for, not the raw `@grant` lines — `@grant GM.setValue` shows up as `GM_setValue`. Matches VM. |
-| `unsafeWindow` | 🟡 | ✓ | ✓ |   | Currently a passthrough to USER_SCRIPT world's own `window`, **not** the page's. Userscripts that wanted to poke `window.jQuery` etc. should use `@inject-into page` (MAIN world) instead; a cross-world bridge could land later. |
+| `GM_info` / `GM.info` | ✅ | ✓ | ✓ | ✓ | Implicit — exposed in every script regardless of `@grant` (including `@grant none` and scripts with no `@grant` line), and in both MAIN and USER_SCRIPT worlds. Also spliced into every `@require` entry. Baked into the wrapper at registration time. Surface: `script.{name, version, namespace, description, matches, includes, excludes, grant, runAt}`, `scriptHandler: "SourceMonkey"`, `version: <extension version>`, `scriptMetaStr` (raw `==UserScript==` block), `uuid` (stored script id). `script.grant` is the **canonicalized** set we emitted bindings for, not the raw `@grant` lines — `@grant GM.setValue` shows up as `GM_setValue`. TM and VM both report the raw lines instead. |
+| `unsafeWindow` | ✅ | ✓ | ✓ |   | The page's real `window`. Granting it puts the script in MAIN world (see below), where `unsafeWindow === window` — we bind the page's own `window`, with no wrapper in between. TM and VM reach the page too but both answer `false` on Chrome, handing out a sandbox wrapper instead (measured; see [cross-manager-test-results.md](cross-manager-test-results.md)). Either way the page's own variables are reachable, which is what the grant is for; the comparison itself is not portable. Reads, writes, and calls all reach the page's realm. **No grant needed:** a script whose body names `unsafeWindow` without granting it gets the same treatment — TM and VM both expose the name ungranted, so plenty of real scripts never declare it (see below). **Exception:** `@inject-into content` pins the script to the isolated world, where it can only be that world's own `window`; that combination is flagged with a startup-log warning. |
+
+### `unsafeWindow` and the execution world
+
+- `unsafeWindow` is defined as *the page's* window. In Chrome that
+  object exists only in MAIN world, and property access on it is
+  synchronous — there is no async bridge that could stand in.
+- So the grant is a **world request**: `@grant unsafeWindow` resolves
+  the script to MAIN world, exactly as `@inject-into page` does.
+  Tampermonkey and Violentmonkey make the same trade.
+- The rest of the script's `@grant`s follow it there. The shared
+  `__SM_GM__` runtime is registered in MAIN as well, and routes its
+  service-worker traffic over the existing bridge.
+- `@inject-into content` still wins — it's an explicit request for
+  isolation. The binding stays (matching VM's content mode) but every
+  page global reads as `undefined`, so SourceMonkey emits a
+  `warning`-level startup log rather than letting that be silent.
+- **A reference with no grant line counts as the request.** Neither TM
+  nor VM keys `unsafeWindow` off `@grant`, so a script written against
+  either may use it and never declare it — 112 of the GreasyFork top
+  2000 do exactly that. SourceMonkey scans the body at load time and
+  treats those scripts as though they had granted it: MAIN world, same
+  binding, and an `info`-level startup log saying the script is no
+  longer isolated from page content.
+  - `GM_info.script.grant` still reports the `@grant` lines the file
+    declares. The inference changes the world and adds a `window`
+    alias; it grants no API.
+  - What the scan can and can't see — comments and strings are
+    stripped, a source that declares the name itself is left alone —
+    is in [injection.md](injection.md#unsafewindow-forces-main-world)
+    and `src/unsafe-window-use.ts`.
+- Running in MAIN world has costs the isolated world doesn't: the page
+  can see and interfere with the script, and DOM injection is subject
+  to the page's CSP. See
+  [injection.md](injection.md#gm_-in-main-world).
 
 ---
 
@@ -129,8 +163,8 @@ set TM's own bundled linter validates against, so anything else
 
 | Grant | Status | TM | VM | GM | Notes |
 |-------|:------:|:--:|:--:|:--:|-------|
-| `none` | ✅ | ✓ | ✓ | ✓ | Opts the script out of the whole GM surface and puts it in MAIN world. Wins over every other `@grant` line on the same script (matches TM/VM). `GM_info` is still exposed. See [supported-headers.md](supported-headers.md). |
-| `unsafeWindow` | 🟡 | ✓ | ✓ |   | Emitted, but bound to the USER_SCRIPT world's own `window` — it does **not** reach the page's globals. See the row above. |
+| `none` | ✅ | ✓ | ✓ | ✓ | Opts the script out of the whole GM surface and puts it in MAIN world. Wins over every other `@grant` line on the same script, for both the bindings and the world — Violentmonkey does exactly this (`grant.includes('none')` gates both its API wrapper and its page-context path) and warns at install time with "`@grant none` disables all other `@grant` keys"; we say the same in a startup-log warning naming the overridden grants. `GM_info` is still exposed. See [supported-headers.md](supported-headers.md). |
+| `unsafeWindow` | ✅ | ✓ | ✓ |   | The page's real `window`; asking for it — by `@grant` or just by naming it — moves the script to MAIN world to make that so. See [`unsafeWindow` and the execution world](#unsafewindow-and-the-execution-world). |
 | `window.onurlchange` | ✅ | ✓ |   |   | SPA navigation hook. `window.onurlchange === null` feature-detects; `window.addEventListener('urlchange', info => …)` and the `window.onurlchange = fn` slot both work. See below. VM has never implemented it (feature request closed unimplemented), so scripts already carry the `=== null` guard. |
 | `window.close` | ✅ | ✓ | ✓ (2.6.2+) |   | Closes the tab the script runs in, via the extension — the plain page API refuses to close a tab the script didn't open. See below. |
 | `window.focus` | ✅ | ✓ | ✓ (2.12.10+) |   | Selects this tab and raises (un-minimizing) its browser window, neither of which page JS can do. See below. |
@@ -226,7 +260,7 @@ Differences from TM, detailed in
 
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
-| `GM_log` / `GM.log` | ✅ | ✓ |   | ✓ | Thin `console.log` wrapper prefixed with `[SourceMonkey:<scriptId>]`. Arguments are passed through unchanged so Chrome's `%c` / `%o` formatters and DevTools object inspection still work. Returns `undefined`. |
+| `GM_log` / `GM.log` | ✅ | ✓ | ✓ | ✓ | Thin `console.log` wrapper prefixed with `[SourceMonkey:<scriptId>]`. Arguments are passed through unchanged so Chrome's `%c` / `%o` formatters and DevTools object inspection still work. Returns `undefined`. |
 
 ---
 
@@ -237,12 +271,22 @@ read from a per-document in-memory cache; the cache is seeded at
 document start from a snapshot the SW attaches to the wrapper's
 `sm:check-pending` reply. `GM.setValue` returns a Promise per GM4
 spec. Per-script namespace — `GM_listValues` from script A never
-returns script B's keys. See
-[GM-APIs-storage.md](GM-APIs-storage.md) for the full story.
+returns script B's keys.
+
+**Stored values keep their type.** TM and VM both require the value to
+be JSON-serializable; we tag the ones JSON would mangle, so `Date`,
+`RegExp`, `Map`, `Set`, `undefined`, `NaN`, `±Infinity`, `-0`,
+`BigInt`, typed arrays, `ArrayBuffer`, `DataView` and `Error` all come
+back as themselves on the next page load. Class prototypes,
+`Blob`/`File` and shared-reference identity are not preserved, and a
+circular reference throws. See
+[GM-APIs-storage.md](GM-APIs-storage.md) for the full story, including
+the [comparison with
+VM](GM-APIs-storage.md#compared-with-violentmonkey).
 
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
-| `GM_setValue` / `GM.setValue` | ✅ | ✓ | ✓ | ✓ | Sync return on `GM_x`, Promise on `GM.x`. Writes batched (150 ms debounce, 1 s hard cap) and flushed on `pagehide` / `visibilitychange → hidden`. |
+| `GM_setValue` / `GM.setValue` | ✅ | ✓ | ✓ | ✓ | Sync return on `GM_x`, Promise on `GM.x`. Writes batched (150 ms debounce, 1 s hard cap) and flushed on `pagehide` / `visibilitychange → hidden`. Accepts more than JSON — see above; throws on a circular reference. |
 | `GM_getValue` / `GM.getValue` | ✅ | ✓ | ✓ | ✓ | Sync read from the in-page cache; returns `defaultValue` for unknown keys. |
 | `GM_deleteValue` / `GM.deleteValue` | ✅ | ✓ | ✓ | ✓ | Same flush/batching shape as `setValue`. |
 | `GM_listValues` / `GM.listValues` | ✅ | ✓ | ✓ | ✓ | Returns the list of currently-known keys. |
@@ -278,10 +322,21 @@ USER_SCRIPT world's DOM mutations are CSP-exempt (the same
 dispensation content scripts get), so these work even on pages with
 strict `Content-Security-Policy: script-src 'self'`.
 
+**Not so in MAIN world.** A script that granted `unsafeWindow` (or
+declared `@inject-into page`) runs in the page's realm, where its
+`<style>` / `<script>` elements are the page's own and the page's CSP
+applies. On a site with a `style-src` that omits `'unsafe-inline'`,
+`GM_addStyle` will insert the element and the rules simply won't take
+effect. TM/VM have the same limitation for page-context scripts. The
+runtime detects the block (`el.sheet === null` once connected) and
+reports it once per script per document as a warning in the script's
+Log; see [TODO.md](../TODO.md) for the fall-back idea (an isolated-world
+copy inserted over the bridge).
+
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
 | `GM_addStyle` / `GM.addStyle` | ✅ | ✓ | ✓ |   | Creates a `<style>` and appends to `document.head` (or `documentElement` if head isn't there yet). Returns the element. |
-| `GM_addElement` / `GM.addElement` | ✅ | ✓ |   |   | Two signatures: `GM_addElement(tag, attrs?)` appends to `<head>` for `script`/`style`/`link`/`meta`/`title`/`base` and to `<body>` for everything else (matches VM; TM differs — see below); `GM_addElement(parent, tag, attrs?)` appends to the given parent. `attrs.textContent` is a recognized pseudo-attribute. Boolean `false` attrs are omitted (avoids the `disabled="false"` foot-gun); `true` serializes as `""` per HTML spec. `innerHTML` is **not** recognized as a pseudo-attribute by design — call it on the returned element if you need it. **Cross-manager note:** TM appends to `<head>` regardless of tag in the no-parent form, so a `GM_addElement('p', ...)` lands in `<head>` under TM but in `<body>` under SM/VM. The TM docs don't pin the default parent down, so neither rule is wrong — SM picks VM's rule because it's more useful for non-head tags. |
+| `GM_addElement` / `GM.addElement` | ✅ | ✓ | ✓ |   | Two signatures: `GM_addElement(tag, attrs?)` appends to `<head>` for `script`/`style`/`link`/`meta`/`title`/`base` and to `<body>` for everything else (routing by tag as VM does; TM differs — see below); `GM_addElement(parent, tag, attrs?)` appends to the given parent. `attrs.textContent` is a recognized pseudo-attribute. Boolean `false` attrs are omitted (avoids the `disabled="false"` foot-gun); `true` serializes as `""` per HTML spec. `innerHTML` is **not** recognized as a pseudo-attribute by design — call it on the returned element if you need it. **Cross-manager note:** TM appends to `<head>` regardless of tag in the no-parent form, so a `GM_addElement('p', ...)` lands in `<head>` under TM but in `<body>` under SM/VM. The TM docs don't pin the default parent down, so neither rule is wrong — SM routes by tag as VM does, because that's more useful for non-head tags. SM's head list is a superset: VM's stops at `script`/`style`/`link`/`meta`, so `title` and `base` land in `<body>` there and in `<head>` here. |
 
 ---
 
@@ -744,7 +799,12 @@ only — matching itself stays byte-exact (see
 
 [logging]: logging.md#page-console-startup-logs
 
-- `GM_cookie` (and `GM.cookie`) — TM's cross-origin cookie store.
+- `GM_cookie` (and `GM.cookie`) — cross-origin cookie store.
+  TM's, and VM's too since 2.35.1: `.list` / `.set` / `.delete`, with
+  the calling script's `@match` validated against the target URL.
+- `GM_getValues` / `GM_setValues` / `GM_deleteValues` — bulk storage
+  reads and writes (TM 5.x, VM 2.19.1+). Our per-call storage APIs
+  already batch writes, so these are convenience, not throughput.
 - `GM_audio`, `GM_webRequest`, `GM_getTab`, `GM_saveTab`,
   `GM_getTabs` — TM-specific surface.
 - `GM.bootstrap`, `GM_NEXT_API_FROM_TM`, etc. — moving targets.

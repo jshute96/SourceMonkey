@@ -46,6 +46,13 @@ test.describe('collections page', () => {
 
     await page.locator('#add-path').fill(scriptsDir.path);
     await page.locator('#add-form button[type="submit"]').click();
+    // The field hands a location to the create dialog, prefilled;
+    // Create is what adds it.
+    const dialog = page.locator('dialog.collection-dialog');
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator('#collection-dialog-location')).toHaveValue(scriptsDir.path);
+    await dialog.locator('button.primary').click();
+    await expect(dialog).toBeHidden();
 
     // Section appears with the new script row.
     await expect(page.locator('section.collection')).toHaveCount(1);
@@ -76,7 +83,7 @@ test.describe('collections page', () => {
 
     // Collection has 1 script, so Remove now prompts a confirm.
     page.once('dialog', (dialog) => void dialog.accept());
-    await section.locator('button', { hasText: 'Remove' }).click();
+    await section.locator('.collection-buttons .remove-script').click();
     await expect(section).toHaveCount(0);
     await expect(page.locator('.empty-placeholder')).toBeVisible();
 
@@ -97,6 +104,13 @@ test.describe('collections page', () => {
     const url = new URL(`chrome-extension://${extensionId}/collections.html`);
     url.searchParams.set('add', scriptsDir.path);
     await page.goto(url.toString());
+
+    // The param opens the dialog prefilled, exactly as typing would;
+    // Create is what adds it.
+    const dialog = page.locator('dialog.collection-dialog');
+    await expect(dialog.locator('#collection-dialog-location')).toHaveValue(scriptsDir.path);
+    await dialog.locator('button.primary').click();
+    await expect(dialog).toBeHidden();
 
     // Section gets rendered, URL hash points to it, query param is scrubbed.
     const section = page.locator('section.collection').first();
@@ -131,22 +145,25 @@ test.describe('collections page', () => {
     url.searchParams.set('add', scriptsDir.path);
     await page.goto(url.toString());
 
+    // The dialog opens prefilled and already says why Create is off.
+    const dialog = page.locator('dialog.collection-dialog');
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator('.dlg-error')).toContainText('already registered');
+    await expect(dialog.locator('button.primary')).toBeDisabled();
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+
     // Still exactly one collection — no duplicate row.
     await expect(page.locator('section.collection')).toHaveCount(1);
     expect(await sm.getCollections()).toHaveLength(1);
-
-    // URL hash points at the existing collection.
-    await expect.poll(() => page.evaluate(() => location.hash))
-      .toBe(`#collection-${existing!.id}`);
-
-    // User is told why nothing new appeared.
-    await expect(page.locator('#add-error')).toBeVisible();
-    await expect(page.locator('#add-error')).toContainText('already registered');
+    expect((await sm.getCollections())[0].id).toBe(existing!.id);
 
     await page.close();
   });
 
-  test('?add with invalid input shows an error and does not add', async ({
+  // Text that is neither a URL nor a path is the NAME of a new scripts
+  // collection; the dialog opens on it and nothing is added until
+  // Create.
+  test('?add with plain text opens the dialog as a scripts-collection name', async ({
     extensionContext, extensionId, sm,
   }) => {
     const page = await extensionContext.newPage();
@@ -154,14 +171,17 @@ test.describe('collections page', () => {
     url.searchParams.set('add', 'not-a-valid-path-or-url');
     await page.goto(url.toString());
 
-    const errorEl = page.locator('#add-error');
-    await expect(errorEl).toBeVisible();
-    await expect(errorEl).toContainText(/absolute path|http\(s\):\/\/|file:\/\//);
+    const dialog = page.locator('dialog.collection-dialog');
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator('.dlg-type .collection-type-bubble')).toHaveText('scripts');
+    await expect(dialog.locator('#collection-dialog-name')).toHaveValue('not-a-valid-path-or-url');
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
 
     expect(await sm.getCollections()).toHaveLength(0);
     await expect(page.locator('section.collection')).toHaveCount(0);
 
-    // URL preserves `add` so the user can edit/retry/reload.
+    // A cancelled dialog leaves `add` in the URL so the user can
+    // edit/retry/reload.
     await expect.poll(() => page.evaluate(() => location.search))
       .toContain('add');
 
@@ -176,7 +196,14 @@ test.describe('collections page', () => {
     url.searchParams.set('add', '/');
     await page.goto(url.toString());
 
-    await expect(page.locator('#add-error')).toBeVisible();
+    // Shaped like a location, so it goes in as one — and fails the
+    // shape check there, with Create off.
+    const dialog = page.locator('dialog.collection-dialog');
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator('#collection-dialog-location')).toHaveValue('/');
+    await expect(dialog.locator('.dlg-error')).toContainText('Location must be a URL or absolute file path');
+    await expect(dialog.locator('button.primary')).toBeDisabled();
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
     expect(await sm.getCollections()).toHaveLength(0);
 
     await page.close();
@@ -208,7 +235,7 @@ test.describe('collections page', () => {
       expect(dialog.message()).toBe('Remove collection with 2 scripts?');
       await dialog.dismiss();
     });
-    await section.locator('button', { hasText: 'Remove' }).click();
+    await section.locator('.collection-buttons .remove-script').click();
 
     await expect(section).toBeVisible();
     expect(await sm.getCollections()).toHaveLength(1);
@@ -236,7 +263,7 @@ test.describe('collections page', () => {
       expect(dialog.message()).toBe('Remove collection with 1 script?');
       await dialog.accept();
     });
-    await section.locator('button', { hasText: 'Remove' }).click();
+    await section.locator('.collection-buttons .remove-script').click();
 
     await expect(section).toHaveCount(0);
     expect(await sm.getCollections()).toHaveLength(0);
@@ -262,7 +289,7 @@ test.describe('collections page', () => {
       dialogFired = true;
       await dialog.dismiss();
     });
-    await section.locator('button', { hasText: 'Remove' }).click();
+    await section.locator('.collection-buttons .remove-script').click();
 
     await expect(section).toHaveCount(0);
     expect(dialogFired).toBe(false);

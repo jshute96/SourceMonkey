@@ -109,18 +109,23 @@ test.describe('GM storage cross-script read leak', () => {
           resolve(d.reply ?? null);
         };
         window.addEventListener('message', onMsg, true);
-        window.postMessage({
-          __sm: 'sourcemonkey-bridge',
-          requestId: rid,
-          payload: {
-            type: 'sm:check-pending',
-            id,
-            name: 'Victim',
-            loadedAt: 0,
-            url: location.href,
-            needsValues: true,
-          },
-        }, '*');
+        // The page -> SW direction is a DOM event; replies still come
+        // back as a postMessage. A page can dispatch the event as
+        // easily as it could post the message, which is the point of
+        // the SW-side gate this test exercises.
+        document.dispatchEvent(new CustomEvent('sourcemonkey-bridge-sync', {
+          detail: JSON.stringify({
+            requestId: rid,
+            payload: {
+              type: 'sm:check-pending',
+              id,
+              name: 'Victim',
+              loadedAt: 0,
+              url: location.href,
+              needsValues: true,
+            },
+          }),
+        }));
         setTimeout(() => { window.removeEventListener('message', onMsg, true); resolve(null); }, 2500);
       });
     }, victimId);
