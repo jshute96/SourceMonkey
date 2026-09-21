@@ -1493,3 +1493,13 @@ they follow are in
   means the message needs to know what the refresh just did rather than
   only what is stored now. Reachable for any collection kind now that
   an empty scan drops rows too.
+- site icons: passively capture `tab.favIconUrl` from live tabs (`chrome.tabs.onUpdated`).
+  - Chrome's `/_favicon/` database covers visited URLs directly, so we declined the added service-worker listener and matching plumbing for now.
+  - Worth revisiting if scripts whose synthetic `linkUrl` (e.g. `https://host/issues/`) is never visited directly — only deep URLs like `https://host/issues/12345` — miss in `/_favicon/` AND their unauthenticated HTML probe redirects to SSO.
+- site icons: Chrome's `/_favicon/` DB can still hand back an SSO (single
+  sign-on) host's icon for an app URL — Chrome maps the icon onto every URL
+  of the redirect chain, so a tab that bounced to login and never signed in
+  poisons the app URL. `isSameHostRedirect` can't see that (no redirect
+  happened on our side). Options: compare the DB hit against the DB's own
+  answer for the known SSO host, or skip the DB tier for hosts whose HTML
+  probe redirected cross-host.

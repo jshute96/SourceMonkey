@@ -582,4 +582,207 @@ test.describe('site-icon slot', () => {
       await extensionContext.unroute('https://www.google.com/**');
     }
   });
+
+  test('a cached row from an older discovery schema is refetched', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // Rows written before cross-host redirect rejection may hold the
+    // SSO host's icon under the app's key. They carry no `v`, so the
+    // read counts them as a miss and the refetch overwrites them with
+    // whatever the current discovery finds — here the site's own icon.
+    const POISONED = 'data:image/png;base64,SSOROBOT';
+    await extensionContext.route('https://healed.sm-schema.invalid/**', async (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname === '/favicon.png') {
+        await route.fulfill({ contentType: 'image/png', body: PNG_BYTES });
+        return;
+      }
+      await route.fulfill({
+        contentType: 'text/html; charset=utf-8',
+        body: '<html><head><link rel="icon" type="image/png" href="/favicon.png"></head></html>',
+      });
+    });
+    await extensionContext.route('https://www.google.com/**', (route) => route.abort());
+    try {
+      scriptsDir.write({
+        relativePath: 'healed.user.js',
+        meta: { name: 'Healed', match: ['https://healed.sm-schema.invalid/*'] },
+        body: '',
+      });
+      const collection = await sm.addCollection(scriptsDir.path);
+
+      const page = await extensionContext.newPage();
+      await page.goto(`chrome-extension://${extensionId}/collections.html`);
+      const key = 'siteIcon:https://healed.sm-schema.invalid';
+      await page.evaluate(
+        ([k, poisoned]) => chrome.storage.local.set({ [k]: { dataUrl: poisoned, fetchedAt: Date.now() } }),
+        [key, POISONED],
+      );
+      await page.reload();
+
+      await expect
+        .poll(async () => page.evaluate(
+          ([k]) => chrome.storage.local.get(k).then((got) => got[k]),
+          [key],
+        ))
+        .toMatchObject({ dataUrl: `data:image/png;base64,${PNG_BASE64}`, v: 2 });
+
+      const slot = page
+        .locator(`section.collection[data-collection-id="${collection!.id}"] tbody tr`)
+        .first()
+        .locator('.site-icon');
+      await expect(slot.locator('a.site-icon-inner img')).toHaveCount(1);
+      await expect(slot.locator('img')).not.toHaveAttribute('src', POISONED);
+      await page.close();
+    } finally {
+      await extensionContext.unroute('https://healed.sm-schema.invalid/**');
+      await extensionContext.unroute('https://www.google.com/**');
+    }
+  });
+
+  test('rejects cross-host SSO redirects instead of caching the login host\'s icon', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const SSO_ICON = 'data:image/png;base64,SSOROBOT';
+    await extensionContext.route('https://app.sm-sso.invalid/**', async (route) => {
+      await route.fulfill({
+        status: 302,
+        headers: { Location: 'https://login.sm-sso.invalid/request?d=app' },
+      });
+    });
+    await extensionContext.route('https://login.sm-sso.invalid/**', async (route) => {
+      await route.fulfill({
+        contentType: 'text/html; charset=utf-8',
+        body: `<html><head><link rel="icon" href="${SSO_ICON}"></head></html>`,
+      });
+    });
+    await extensionContext.route('https://www.google.com/**', (route) => route.abort());
+
+    try {
+      scriptsDir.write({
+        relativePath: 'corp.user.js',
+        meta: { name: 'CorpApp', match: ['https://app.sm-sso.invalid/issues/*'] },
+        body: '',
+      });
+      const collection = await sm.addCollection(scriptsDir.path);
+
+      const page = await extensionContext.newPage();
+      await page.goto(`chrome-extension://${extensionId}/collections.html`);
+
+      // Wait until the origin fallback has finished probing and written its
+      // settled cache entry (`dataUrl: null`) rather than storing SSO_ICON.
+      await expect
+        .poll(async () => page.evaluate(
+          () => chrome.storage.local.get('siteIcon:https://app.sm-sso.invalid').then(
+            (got) => ('siteIcon:https://app.sm-sso.invalid' in got
+              ? got['siteIcon:https://app.sm-sso.invalid'].dataUrl
+              : 'absent'),
+          ),
+        ))
+        .toBe(null);
+
+      const slot = page
+        .locator(`section.collection[data-collection-id="${collection!.id}"] tbody tr`)
+        .first()
+        .locator('.site-icon');
+      await expect(slot.locator('svg.site-icon-globe')).toBeVisible();
+      await expect(slot.locator('img')).toHaveCount(0);
+      await page.close();
+    } finally {
+      await extensionContext.unroute('https://app.sm-sso.invalid/**');
+      await extensionContext.unroute('https://login.sm-sso.invalid/**');
+      await extensionContext.unroute('https://www.google.com/**');
+    }
+  });
+
+  test('uses Chrome\'s _favicon database for visited pages even when network fetches redirect to SSO', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // Serve a real 1x1 PNG icon when a user tab visits the page so
+    // Chromium records the icon in its internal Favicon database.
+    let ssoGateOpen = true;
+    await extensionContext.route('https://visited.sm-chrome-db.invalid/**', async (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname === '/favicon.png') {
+        await route.fulfill({ contentType: 'image/png', body: PNG_BYTES });
+        return;
+      }
+      if (!ssoGateOpen) {
+        await route.fulfill({
+          status: 302,
+          headers: { Location: 'https://login.sm-sso.invalid/request' },
+        });
+        return;
+      }
+      await route.fulfill({
+        contentType: 'text/html; charset=utf-8',
+        body: '<html><head><link rel="icon" type="image/png" href="/favicon.png"></head><body>ok</body></html>',
+      });
+    });
+    await extensionContext.route('https://login.sm-sso.invalid/**', async (route) => {
+      await route.fulfill({
+        contentType: 'text/html; charset=utf-8',
+        body: '<html><head><link rel="icon" href="data:image/png;base64,SSOROBOT"></head></html>',
+      });
+    });
+    await extensionContext.route('https://www.google.com/**', (route) => route.abort());
+
+    try {
+      // Visit the target URL in a real tab and wait for Chromium's
+      // internal favicon DB (`/_favicon/`) to report a non-default icon.
+      const tab = await extensionContext.newPage();
+      await tab.goto('https://visited.sm-chrome-db.invalid/app/');
+      const extProbe = await extensionContext.newPage();
+      await extProbe.goto(`chrome-extension://${extensionId}/collections.html`);
+      // `fetchChromeFavicon` is the production lookup: it already
+      // compares against the miss sentinel, so a non-null answer is a
+      // real DB hit.
+      const chromeFavicon = (pageUrl: string, exactPage: boolean) => extProbe.evaluate(
+        async ([u, exact]) => {
+          const mod = await import('/site-icon.js') as typeof import('../../src/site-icon');
+          return mod.fetchChromeFavicon(u as string, { exactPage: exact as boolean });
+        },
+        [pageUrl, exactPage],
+      );
+      await expect
+        .poll(() => chromeFavicon('https://visited.sm-chrome-db.invalid/app/', true))
+        .not.toBe(null);
+      await tab.close();
+
+      // An unvisited page on the same host: Chrome's default host
+      // fallback answers with the host icon, the exact-page lookup the
+      // path tier uses does not (it would otherwise pin the host icon
+      // onto every deep URL before HTML discovery ever ran there).
+      const unvisited = 'https://visited.sm-chrome-db.invalid/other/';
+      expect(await chromeFavicon(unvisited, false)).not.toBe(null);
+      expect(await chromeFavicon(unvisited, true)).toBe(null);
+      // A host Chrome has never seen: the globe sentinel filters the
+      // default PNG so the lookup reports a miss, not an icon.
+      expect(await chromeFavicon('https://never-visited.sm-chrome-db.invalid/', false)).toBe(null);
+
+      // Now close the SSO gate so any direct network fetch to
+      // `visited.sm-chrome-db.invalid` bounces to `login.sm-sso.invalid`.
+      ssoGateOpen = false;
+
+      scriptsDir.write({
+        relativePath: 'visited.user.js',
+        meta: { name: 'VisitedApp', match: ['https://visited.sm-chrome-db.invalid/app/*'] },
+        body: '',
+      });
+      const collection = await sm.addCollection(scriptsDir.path);
+
+      await extProbe.reload();
+      const slot = extProbe
+        .locator(`section.collection[data-collection-id="${collection!.id}"] tbody tr`)
+        .first()
+        .locator('.site-icon');
+      // The row must paint the icon from Chrome's `/_favicon/` DB.
+      await expect(slot.locator('a.site-icon-inner img')).toHaveCount(1);
+      await extProbe.close();
+    } finally {
+      await extensionContext.unroute('https://visited.sm-chrome-db.invalid/**');
+      await extensionContext.unroute('https://login.sm-sso.invalid/**');
+      await extensionContext.unroute('https://www.google.com/**');
+    }
+  });
 });

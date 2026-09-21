@@ -10,6 +10,23 @@
     matched sites themselves (see [Multiple sites](#multiple-sites)).
 - Implemented in [`src/site-icon.ts`](../src/site-icon.ts).
 
+## Debug page
+
+- `/debug/icons.html` ([`src/debug/icons.html`](../src/debug/icons.html) +
+  [`src/debug/icons.ts`](../src/debug/icons.ts)) inspects and manages cached
+  icons in `chrome.storage.local`.
+- Displays a table of all cached rows (`siteIcon:*`, `pathIcon:*`, and
+  `iconUrl:*`) with icon preview, target site/URL, scope chip,
+  MIME/byte-size details, schema version, freshness status, and
+  fetched/expiry timestamps.
+- The status badge reads `ok`, `miss` (cached "no icon"), `expired`,
+  `stale schema` (written under an older discovery version — its tooltip
+  names the row's version and the current one), or `unpaintable`
+  (a value `usableCacheHit` would refuse). All but `ok` / `miss` read as
+  misses, so the next render that needs the row refetches it.
+- Supports per-row **Refresh** and **Delete** buttons, plus a **Delete All**
+  action in the header bar.
+
 ## Header override (`@icon`)
 
 - Tag priority, smaller-resolution variants first:
@@ -189,36 +206,58 @@ section of a big site) each get their own icon instead of all sharing
 the first one discovered for the host.
 
 - **Path-scoped layer** (`pathIcon:<pageUrl>`): when the page URL is
-  deeper than `<origin>/`, try HTML discovery there first. Positive
-  hits are returned immediately; a null result (no usable icon on
-  that page) falls through to the origin layer instead of refetching.
+  deeper than `<origin>/`, try Chrome's `/_favicon/` DB and then HTML
+  discovery there first. Positive hits are returned immediately; a null
+  result (no usable icon on that page) falls through to the origin layer
+  instead of refetching.
 - **Origin fallback** (`siteIcon:<origin>`): shared across every
-  script on the host. Runs origin-root HTML → `/favicon.ico` →
-  Google S2 in order and caches whichever wins.
+  script on the host. Runs Chrome's `/_favicon/` DB → origin-root HTML
+  → `/favicon.ico` → Google S2 in order and caches whichever wins.
 - When the page URL is already the origin root the path layer is
-  skipped — it would just duplicate the origin-root HTML fetch.
+  skipped — it would just duplicate the origin-root lookup.
 
 ### Discovery strategies
 
-- **HTML discovery (page URL or origin root)**: fetch the page,
+- **Chrome `/_favicon/` database (`chrome-extension://<id>/_favicon/`)**:
+  reads directly from Chrome's internal favicon database (populated
+  when the user visits pages in real tabs — after SSO (single sign-on)
+  authentication and after client-side JS updates `<link rel="icon">`).
+  - Because `/_favicon/` returns `200 OK` with Chrome's default globe
+    PNG on cache misses rather than 404ing, `fetchChromeFavicon` probes
+    a known-miss sentinel URL once per context and treats any response
+    matching those bytes as a miss (`null`).
+  - Chrome falls back to the host's icon for an unvisited page URL by
+    default. The path layer asks with `fallbackToHost=0` (`exactPage`)
+    so it only reports page-specific hits; the origin layer keeps the
+    fallback.
+  - Not redirect-proof: Chrome maps an icon onto every URL of the
+    redirect chain that led to it, so a tab that bounced to SSO without
+    signing in leaves the SSO icon on the app URL, and the DB tier
+    returns it. Only the 7-day TTL clears that (see TODO.md).
+- **HTML discovery (page URL or origin root)**: fetch the page and
   scan the `<head>` for `<link rel="icon">` (also `shortcut icon`,
-  `apple-touch-icon`). The fetch follows redirects, so even when the
-  server bounces us to an SSO host we still get that page's icon
-  tag. Relative hrefs resolve against the final post-redirect URL.
-  The best candidate is selected by [pickBestIconCandidate](#scoring-link-rel-icon-candidates).
-  A non-empty `data:` URL declared inline is used verbatim.
-- **`/favicon.ico` fallback**: conventional path. Origin-layer only.
+  `apple-touch-icon`).
+  - **Cross-host redirects are rejected** (`isSameHostRedirect`): if the
+    fetch bounces to a different host — `www.` aside, ports and
+    subdomains included (e.g. an SSO portal like
+    `login.corp.google.com` or `accounts.google.com`, or a marketing
+    portal like `workspace.google.com`), the HTML's `<link rel="icon">`
+    belongs to that other host and is discarded as `null`.
+  - Same-host redirects (including scheme upgrades and `www.` differences)
+    are allowed, and relative hrefs resolve against `finalUrl`.
+  - The best candidate is selected by [pickBestIconCandidate](#scoring-link-rel-icon-candidates).
+    A non-empty `data:` URL declared inline is used verbatim.
+- **`/favicon.ico` fallback**: conventional path (`fetchIconAt` with
+  `rejectCrossHostRedirect: true`). Origin-layer only.
 - **Google S2 fallback**:
   `https://www.google.com/s2/favicons?domain=<host>&sz=64`. The only
   leg that touches a third party — the host name (already public via
   the `@match`) is sent to www.google.com. Reached only when every
-  direct strategy has failed. Google returns a generic globe for
-  hosts it can't resolve; we cache that as "better than nothing."
-  Origin-layer only.
+  local and direct strategy has failed. Origin-layer only.
 
 ### Bounds and freshness
 
-- Every fetch is bounded:
+- Every network fetch is bounded:
   - 5s timeout, follows redirects.
   - Allowed by the extension's `<all_urls>` host permission.
   - HTML body capped at 1MB; icon body at 128KB.
@@ -228,20 +267,23 @@ the first one discovered for the host.
     A site's HTML routinely carries `Link: rel=preload; as=script`
     headers, and a document-initiated fetch acts on them — see
     [logging.md](logging.md#keeping-the-errors-panel-clean).
-- On any failure (network error, non-icon `Content-Type`, oversized
-  body) the layer caches a `null` entry so the same broken page or
-  host doesn't get hammered on every render.
+- On any failure (network error, cross-host redirect, non-icon
+  `Content-Type`, oversized body) the layer caches a `null` entry so
+  the same broken page or host doesn't get hammered on every render.
 - Successful entries are cached for 7 days; `null` entries for 24h.
   After that the next render triggers a refetch — so sites that swap
   their favicon, or hosts that briefly fell back to Google's globe
   placeholder, self-heal without the user clearing storage.
-- A row is only a cache *hit* if it is fresh **and** holds something
-  we would paint (`usableCacheHit`). Anything other than a
-  payload-bearing `data:` URL counts as a miss, so it is hidden
-  immediately and the refetch overwrites it.
+- A row is only a cache *hit* if it is fresh, matches the current
+  discovery schema version (`DISCOVERED_ICON_CACHE_VERSION` for
+  `pathIcon:` / `siteIcon:`), **and** holds something we would paint
+  (`usableCacheHit`). Anything other than a payload-bearing `data:` URL
+  counts as a miss, so it is hidden immediately and the refetch
+  overwrites it.
   - The check exists because rows written before the empty-`data:`
-    rule existed stored example.com's `data:,` as though it were an
-    icon, and only the 7-day TTL would ever have cleared them.
+    rule or before cross-host redirect rejection stored invalid /
+    redirected icons, and only the 7-day TTL would ever have cleared
+    them.
   - It defaults *closed*: the point is distrusting rows written by
     other builds, so an unrecognized shape is refetched rather than
     painted.
@@ -272,16 +314,16 @@ the first one discovered for the host.
 ## Storage shape
 
 Parallel cache rows for the icon-collection paths, sharing the same
-`{ dataUrl, fetchedAt }` shape and TTLs:
+`{ dataUrl, fetchedAt, v? }` shape and TTLs:
 
-- `pathIcon:<pageUrl>` — HTML-discovery result for a specific
-  deep page. Key is the full page URL; lets two scripts on the
-  same host but different sections keep distinct icons. A null entry
+- `pathIcon:<pageUrl>` — discovery result (`/_favicon/` DB + HTML) for
+  a specific deep page. Key is the full page URL; lets two scripts on
+  the same host but different sections keep distinct icons. A null entry
   here means "no icon on this page" — the lookup falls through to
   the origin row.
-- `siteIcon:<origin>` — origin-level fallback favicons (root HTML
-  + `/favicon.ico` + Google S2). Key is the full `scheme://host`
-  string; every script on that host shares the row.
+- `siteIcon:<origin>` — origin-level fallback favicons (`/_favicon/` DB
+  + root HTML + `/favicon.ico` + Google S2). Key is the full
+  `scheme://host` string; every script on that host shares the row.
 - `iconUrl:<url>` — `@icon`-declared icons. Key is the literal header
   URL; scripts pinning the same icon share one fetch.
 - A local stand-in is NOT written here — it's memoized for the life of

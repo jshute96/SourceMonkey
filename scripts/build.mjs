@@ -6,9 +6,9 @@
 //      16/48/128 sizes referenced by manifest.json).
 //   3. Copies src/manifest.json -> dist/manifest.json verbatim. Chrome loads
 //      the unpacked extension from dist/, so the manifest must live there.
-//   4. Copies src/*.html -> dist/*.html (extension pages such as
-//      collections.html), inlining the shared glyph sprite where a page
-//      writes `<!--#include glyph-sprite-->`.
+//   4. Copies src/**/*.html -> dist/**/*.html (extension pages such as
+//      collections.html and debug/icons.html), inlining the shared glyph
+//      sprite where a page writes `<!--#include glyph-sprite-->`.
 //   5. Runs the TypeScript compiler (tsc) to compile src/*.ts -> dist/*.js.
 //      With --watch, tsc keeps running and rebuilds on change.
 //
@@ -60,9 +60,10 @@ await cp(
 //    unpacked from dist/.
 await cp(resolve(src, 'manifest.json'), resolve(dist, 'manifest.json'));
 
-// 4. Copy every top-level HTML / CSS asset (collections.html, etc., plus
-//    any shared *.css the pages <link> in). Iterate so new pages and
-//    stylesheets get picked up automatically without editing this script.
+// 4. Copy every HTML / CSS asset under src/, keeping its subdirectory
+//    (collections.html, debug/icons.html, plus any shared *.css the pages
+//    <link> in). Iterate so new pages and stylesheets get picked up
+//    automatically without editing this script.
 //
 //    HTML gets one substitution on the way through: `<!--#include
 //    glyph-sprite-->` is replaced with src/glyph-sprite.svg. The sprite
@@ -91,21 +92,28 @@ if (sprite.slice(0, rootAt).split('-->').length > 2) {
   );
 }
 
-for (const entry of await readdir(src, { withFileTypes: true })) {
+for (const entry of await readdir(src, { withFileTypes: true, recursive: true })) {
   if (!entry.isFile()) continue;
   const ext = extname(entry.name);
+  if (ext !== '.css' && ext !== '.html') continue;
+  const relDir = entry.parentPath.slice(src.length).replace(/^[/\\]/, '');
+  const relFile = relDir ? `${relDir}/${entry.name}` : entry.name;
+  const srcFile = resolve(entry.parentPath, entry.name);
+  const dstDir = relDir ? resolve(dist, relDir) : dist;
+  await mkdir(dstDir, { recursive: true });
+  const dstFile = resolve(dstDir, entry.name);
   if (ext === '.css') {
-    await cp(resolve(src, entry.name), resolve(dist, entry.name));
+    await cp(srcFile, dstFile);
   } else if (ext === '.html') {
-    const html = await readFile(resolve(src, entry.name), 'utf8');
+    const html = await readFile(srcFile, 'utf8');
     // One marker per page at most: a second would emit a second copy of
     // every symbol id, and `<use>` / `url(#…)` would silently bind to
     // whichever came first.
     const parts = html.split(SPRITE_MARKER);
     if (parts.length > 2) {
-      throw new Error(`${entry.name} writes the glyph-sprite marker more than once.`);
+      throw new Error(`${relFile} writes the glyph-sprite marker more than once.`);
     }
-    await writeFile(resolve(dist, entry.name), parts.join(sprite));
+    await writeFile(dstFile, parts.join(sprite));
   }
 }
 
