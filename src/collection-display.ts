@@ -184,6 +184,8 @@ export function collectionHasManifest(path: string): boolean {
 // visible text.
 export function collectionBubbleKey(path: string): string {
   if (isContainerCollection(path)) return SCRIPTS_BUBBLE_KEY;
+  // An import is neither a directory nor a manifest: no suffix.
+  if (isImportCollection(path)) return 'imported';
   const t = inferCollectionType(path);
   return collectionHasManifest(path) ? `${t}-manifest` : `${t}-dir`;
 }
