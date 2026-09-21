@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>SourceMonkey | Debug | Icons</title>
+    <link rel="stylesheet" href="../styles.css" />
+    <style>
+      body { font: 14px system-ui, sans-serif; margin: 0; color: #222; --page-width: 1120px; }
+      button { font: inherit; padding: 0 11px; cursor: pointer; }
+      .toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin: 14px 0 10px;
+        gap: 12px;
+      }
+      .summary { color: #555; font-size: 0.92em; margin: 0; }
+      .empty-state {
+        margin: 24px 0;
+        padding: 18px;
+        border: 1px dashed #ccc;
+        border-radius: 6px;
+        color: #666;
+        text-align: center;
+      }
+      table.icons-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      table.icons-table th,
+      table.icons-table td {
+        padding: 6px 8px;
+        border-bottom: 1px solid #eee;
+        text-align: left;
+        vertical-align: middle;
+      }
+      table.icons-table th {
+        font-weight: 600;
+        color: #444;
+        border-bottom: 2px solid #ddd;
+        white-space: nowrap;
+      }
+      td.col-icon { width: 28px; text-align: center; }
+      td.col-icon img,
+      td.col-icon svg {
+        width: 16px;
+        height: 16px;
+        vertical-align: middle;
+      }
+      td.col-target {
+        max-width: 360px;
+        overflow-wrap: anywhere;
+      }
+      td.col-target a {
+        color: #0969da;
+        text-decoration: none;
+      }
+      td.col-target a:hover { text-decoration: underline; }
+      .kind-chip {
+        display: inline-block;
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        background: #f0f2f5;
+        color: #444;
+      }
+      .kind-chip.kind-origin { background: #e6f4ea; color: #137333; }
+      .kind-chip.kind-path { background: #e8f0fe; color: #1967d2; }
+      .kind-chip.kind-url { background: #fef7e0; color: #b06000; }
+      .status-badge {
+        display: inline-block;
+        padding: 1px 5px;
+        border-radius: 3px;
+        font-size: 11px;
+        margin-left: 4px;
+      }
+      .status-ok { background: #e6f4ea; color: #137333; }
+      .status-miss { background: #f1f3f4; color: #5f6368; }
+      .status-stale { background: #fce8e6; color: #c5221f; }
+      td.col-time {
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+        color: #444;
+      }
+      td.col-actions {
+        white-space: nowrap;
+        text-align: right;
+      }
+      .row-actions {
+        display: inline-flex;
+        gap: 4px;
+        align-items: center;
+      }
+    </style>
+  </head>
+  <body>
+    <!--#include glyph-sprite-->
+    <header class="page-header">
+      <div class="page-header-inner">
+        <a class="page-home page-icon-link" href="../collections.html" target="_blank"
+           rel="noopener" tabindex="-1" aria-hidden="true">
+          <img class="page-icon" src="../icons/icon-48.png" alt="" />
+        </a>
+        <h1><a class="page-home brand" href="../collections.html" target="_blank" rel="noopener"
+             title="Open the collections page">SourceMonkey</a><span class="brand"> |</span> Debug <span class="brand">|</span> Icons</h1>
+        <div class="page-header-actions">
+          <button id="delete-all" type="button" title="Delete all cached icons">Delete All</button>
+        </div>
+      </div>
+    </header>
+
+    <div class="page-body">
+      <div class="toolbar">
+        <p id="icons-summary" class="summary"></p>
+      </div>
+      <div id="icons-empty" class="empty-state" hidden>No cached icons in storage.</div>
+      <table id="icons-table" class="icons-table" hidden>
+        <thead>
+          <tr>
+            <th>Icon</th>
+            <th>Site / Target</th>
+            <th>Scope</th>
+            <th>Details</th>
+            <th>Fetched</th>
+            <th>Expires</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="icons-tbody"></tbody>
+      </table>
+    </div>
+
+    <script src="icons.js" type="module"></script>
+  </body>
+</html>

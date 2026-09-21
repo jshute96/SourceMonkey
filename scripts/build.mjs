@@ -91,13 +91,19 @@ if (sprite.slice(0, rootAt).split('-->').length > 2) {
   );
 }
 
-for (const entry of await readdir(src, { withFileTypes: true })) {
+for (const entry of await readdir(src, { withFileTypes: true, recursive: true })) {
   if (!entry.isFile()) continue;
   const ext = extname(entry.name);
+  if (ext !== '.css' && ext !== '.html') continue;
+  const relDir = entry.parentPath.slice(src.length).replace(/^[/\\]/, '');
+  const srcFile = resolve(entry.parentPath, entry.name);
+  const dstDir = relDir ? resolve(dist, relDir) : dist;
+  await mkdir(dstDir, { recursive: true });
+  const dstFile = resolve(dstDir, entry.name);
   if (ext === '.css') {
-    await cp(resolve(src, entry.name), resolve(dist, entry.name));
+    await cp(srcFile, dstFile);
   } else if (ext === '.html') {
-    const html = await readFile(resolve(src, entry.name), 'utf8');
+    const html = await readFile(srcFile, 'utf8');
     // One marker per page at most: a second would emit a second copy of
     // every symbol id, and `<use>` / `url(#…)` would silently bind to
     // whichever came first.
@@ -105,7 +111,7 @@ for (const entry of await readdir(src, { withFileTypes: true })) {
     if (parts.length > 2) {
       throw new Error(`${entry.name} writes the glyph-sprite marker more than once.`);
     }
-    await writeFile(resolve(dist, entry.name), parts.join(sprite));
+    await writeFile(dstFile, parts.join(sprite));
   }
 }
 

@@ -74,6 +74,8 @@ One-line descriptions of every source file, grouped by directory.
 | `src/userscript.ts` | Userscript viewer controller — installed mode (`?script=`), preview mode (`?preview=`), in-page switching between copies, the Collection row's Move button, the controls row's Local copy / delete-copy buttons, live `storage` watchers, log pane |
 | `src/compare.html` | Compare page markup: header bar, the fields table slot, view controls, tab strip, diff box |
 | `src/compare.ts` | Compare page controller — loads two copies (stored, or a preview's download), the fields table with its swap, per-file tabs, unified / side-by-side diff rendering, change-block arrows |
+| `src/debug/icons.html` | Debug icons page markup: common header bar with Delete All action and cached-icons inspection table |
+| `src/debug/icons.ts` | Debug icons controller — lists all cached icons with scope, expiry, per-row refresh/delete, and Delete All |
 | `src/select-all.ts` | The Ctrl/Cmd-A that selects a page's content rather than the page, given what each page wants selected |
 | `src/line-diff.ts` | Pure line diff (Myers) plus hunk folding and change counts, behind the compare page |
 | `src/move-dialog.ts` | The move-script dialog opened from the viewer's Collection row: destination dropdown, live refusals, runs the move itself |
@@ -213,6 +215,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/options.spec.ts` | Options-page UI flows: add-directory form, collection removal, per-script toggle |
 | `tests/e2e/page-links.spec.ts` | E2E for cross-page links: new-tab-ness, named-tab reuse, and the header bar's home link |
 | `tests/e2e/site-icons.spec.ts` | E2E tests for the favicon slot: DOM contract, one icon per site + collapse + column fit, `@icon` override, relative paths, two-tier cache, blob-URL de-dup |
+| `tests/e2e/debug-icons.spec.ts` | E2E test for `/debug/icons.html`: header bar, cached-icon rows, per-row refresh + delete, and Delete All |
 | `tests/e2e/viewer-layout.spec.ts` | E2E tests for the viewer's height: the code box / Log pane fill the viewport, keep a 20-line minimum, and let the page scroll past a tall details panel |
 | `tests/e2e/viewer-select-all.spec.ts` | E2E for the viewer's Ctrl-A: selects exactly the file text from anywhere on the page, or the Log table without its toolbar |
 | `tests/e2e/details-list-fold.spec.ts` | E2E test for the details panel's long-list fold: first items + `(N more)` toggle, expand and fold back |

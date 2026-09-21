@@ -56,6 +56,13 @@ test('userscript.html forwards script id', () => {
   );
 });
 
+test('debug/icons.html resolves to debug/icons.html', () => {
+  assert.equal(
+    buildDeepLinkTarget(`${PREFIX}?page=debug/icons.html`),
+    `${EXT}/debug/icons.html`,
+  );
+});
+
 test('page param is stripped from passthrough query', () => {
   const out = buildDeepLinkTarget(`${PREFIX}?page=collections.html&a=1&b=2`);
   assert.ok(out);
