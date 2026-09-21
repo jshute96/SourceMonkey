@@ -96,6 +96,7 @@ import {
   formatBytes,
   formatScriptSize,
   formatScriptStatusLabel,
+  IMPORT_NO_REFRESH_TITLE,
   logIdDupeSuffix,
   previewUrl,
   scriptBasename,
@@ -141,6 +142,7 @@ import {
   canonicalCollectionInput,
   collectionCanonicalUrl,
   isFileUrl,
+  isImportCollection,
   isManifestCollection,
   isValidLocationShape,
   LOCATION_SHAPES,
@@ -249,6 +251,105 @@ refreshAllBtn.addEventListener('click', () => void onRefreshAll());
 openOptionsBtn.addEventListener('click', () => {
   void openNamedTab('options');
 });
+
+// Read the chosen backup and turn it into a collection.
+//
+// Everything the user can get wrong here produces a message in the
+// dialog and leaves it open with their file still selected — a closed
+// dialog and an unchanged page would leave them guessing whether
+// anything happened.
+async function onImport(): Promise<void> {
+  const file = importFileInput.files?.[0];
+  if (!file) return;
+
+  setImportBusy(true);
+  try {
+    // One catch around the whole thing, not just the parse. Reading the
+    // file can fail too (it may have moved or been deleted since the
+    // picker recorded it), and so can the store write. Any of those
+    // escaping would leave the dialog open with a re-enabled button and
+    // nothing said — the one outcome worse than an error message.
+    let result;
+    let collection;
+    try {
+      result = parseTampermonkeyBackup(await file.text());
+      collection = (
+        await importCollection(result.scripts, importCollectionName(new Date()))
+      ).collection;
+    } catch (err) {
+      // A format complaint already says what the user should do about
+      // it. Anything else got here from the file read or the store, so
+      // it needs the prefix to make clear the backup was not the
+      // problem.
+      showImportError(
+        err instanceof ImportFormatError
+          ? err.message
+          : `This backup could not be imported: ${describeError(err)}`,
+      );
+      return;
+    }
+    // Same sequence as the add flow: the write is the source of truth,
+    // the repaint builds the section from it, then we land on it.
+    await repaintPage();
+    importDialog.close();
+    jumpToCollection(collection.id);
+
+    // Warnings survive the dialog closing, because the import DID
+    // happen — a scrolled-to new section that is quietly short a few
+    // scripts is worse than being told which ones didn't make it.
+    showImportWarnings(result.warnings);
+  } finally {
+    setImportBusy(false);
+  }
+}
+
+function resetImportDialog(): void {
+  importFileInput.value = '';
+  importRunBtn.disabled = true;
+  showImportError(null);
+  showImportWarnings([]);
+}
+
+function showImportError(message: string | null): void {
+  importErrorEl.textContent = message ?? '';
+  importErrorEl.hidden = message === null;
+}
+
+// Rendered onto the page, not into the dialog — the import succeeded,
+// so these have to still be readable once the dialog is gone and the
+// user is looking at the section that appeared.
+function showImportWarnings(warnings: readonly string[]): void {
+  importWarningsEl.replaceChildren();
+  importWarningsEl.hidden = warnings.length === 0;
+  if (warnings.length === 0) return;
+
+  const intro = document.createElement('div');
+  intro.textContent =
+    warnings.length === 1
+      ? 'One script in this backup could not be imported:'
+      : `${warnings.length} scripts in this backup could not be imported:`;
+  importWarningsEl.appendChild(intro);
+
+  const list = document.createElement('ul');
+  for (const w of warnings) {
+    const li = document.createElement('li');
+    li.textContent = w;
+    list.appendChild(li);
+  }
+  importWarningsEl.appendChild(list);
+}
+
+// Whether an import is in flight. Read by the dialog's `cancel`
+// handler, which has to refuse an Escape that would otherwise leave the
+// work running behind a closed dialog.
+let importBusy = false;
+
+function setImportBusy(busy: boolean): void {
+  importBusy = busy;
+  importRunBtn.disabled = busy || !importFileInput.files?.length;
+  importCancelBtn.disabled = busy;
+  importFileInput.disabled = busy;
+}
 
 // Resolved once the first render has finished painting, which is what
 // repaints wait for. `render()` empties the container and refills it
@@ -1405,7 +1506,18 @@ async function renderCollectionSection(collection: StoredCollection): Promise<HT
   const refreshBtn = document.createElement('button');
   refreshBtn.className = 'refresh-collection';
   setGlyphButton(refreshBtn, '#sm-refresh', REFRESH_COLLECTION_LABELS.idle);
-  refreshBtn.addEventListener('click', () => void onRefreshCollection(collection.id, refreshBtn));
+  if (isImportCollection(collection.path)) {
+    // `refreshCollection` returns an import collection untouched (no
+    // scan, no upstream), so the button would spin and change nothing.
+    // Disabled with the reason rather than hidden, same as the viewer's
+    // Refresh on a pinned row. Located rows still refresh one at a time
+    // from the viewer and on navigation.
+    refreshBtn.disabled = true;
+    refreshBtn.title = IMPORT_NO_REFRESH_TITLE;
+    refreshBtn.setAttribute('aria-label', IMPORT_NO_REFRESH_TITLE);
+  } else {
+    refreshBtn.addEventListener('click', () => void onRefreshCollection(collection.id, refreshBtn));
+  }
   buttons.appendChild(refreshBtn);
 
   header.appendChild(buttons);
@@ -2276,105 +2388,6 @@ async function onRefreshSubset(targets: RefreshTargets): Promise<void> {
 //     cached body keeps running) → row-failed, no chip: nothing was
 //     re-read, so there is no update to announce
 //   - refresh recovered (refreshError cleared) → row-updated, even when
-// Read the chosen backup and turn it into a collection.
-//
-// Everything the user can get wrong here produces a message in the
-// dialog and leaves it open with their file still selected — a closed
-// dialog and an unchanged page would leave them guessing whether
-// anything happened.
-async function onImport(): Promise<void> {
-  const file = importFileInput.files?.[0];
-  if (!file) return;
-
-  setImportBusy(true);
-  try {
-    // One catch around the whole thing, not just the parse. Reading the
-    // file can fail too (it may have moved or been deleted since the
-    // picker recorded it), and so can the store write. Any of those
-    // escaping would leave the dialog open with a re-enabled button and
-    // nothing said — the one outcome worse than an error message.
-    let result;
-    let collection;
-    try {
-      result = parseTampermonkeyBackup(await file.text());
-      collection = (
-        await importCollection(result.scripts, importCollectionName(new Date()))
-      ).collection;
-    } catch (err) {
-      // A format complaint already says what the user should do about
-      // it. Anything else got here from the file read or the store, so
-      // it needs the prefix to make clear the backup was not the
-      // problem.
-      showImportError(
-        err instanceof ImportFormatError
-          ? err.message
-          : `This backup could not be imported: ${describeError(err)}`,
-      );
-      return;
-    }
-    // Same sequence as the add flow: the write is the source of truth,
-    // the repaint builds the section from it, then we land on it.
-    await repaintPage();
-    importDialog.close();
-    jumpToCollection(collection.id);
-
-    // Warnings survive the dialog closing, because the import DID
-    // happen — a scrolled-to new section that is quietly short a few
-    // scripts is worse than being told which ones didn't make it.
-    showImportWarnings(result.warnings);
-  } finally {
-    setImportBusy(false);
-  }
-}
-
-function resetImportDialog(): void {
-  importFileInput.value = '';
-  importRunBtn.disabled = true;
-  showImportError(null);
-  showImportWarnings([]);
-}
-
-function showImportError(message: string | null): void {
-  importErrorEl.textContent = message ?? '';
-  importErrorEl.hidden = message === null;
-}
-
-// Rendered onto the page, not into the dialog — the import succeeded,
-// so these have to still be readable once the dialog is gone and the
-// user is looking at the section that appeared.
-function showImportWarnings(warnings: readonly string[]): void {
-  importWarningsEl.replaceChildren();
-  importWarningsEl.hidden = warnings.length === 0;
-  if (warnings.length === 0) return;
-
-  const intro = document.createElement('div');
-  intro.textContent =
-    warnings.length === 1
-      ? 'One script in this backup could not be imported:'
-      : `${warnings.length} scripts in this backup could not be imported:`;
-  importWarningsEl.appendChild(intro);
-
-  const list = document.createElement('ul');
-  for (const w of warnings) {
-    const li = document.createElement('li');
-    li.textContent = w;
-    list.appendChild(li);
-  }
-  importWarningsEl.appendChild(list);
-}
-
-// Whether an import is in flight. Read by the dialog's `cancel`
-// handler, which has to refuse an Escape that would otherwise leave the
-// work running behind a closed dialog.
-let importBusy = false;
-
-function setImportBusy(busy: boolean): void {
-  importBusy = busy;
-  importRunBtn.disabled = busy || !importFileInput.files?.length;
-  importCancelBtn.disabled = busy;
-  importFileInput.disabled = busy;
-}
-
 //     the body is unchanged (304 / size+mtime skip preserve loadedAt)
 //   - otherwise           → no tag (unchanged path: cheap-skip
 //                            optimization, OR genuine no-op)

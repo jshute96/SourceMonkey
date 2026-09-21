@@ -76,11 +76,6 @@
   color: #fff;
   text-decoration: none;
   /* Whole px: 1.5 x 11px = 16.5 would make its whole row fractional. */
-/* Imported collections have no location, so this is the one bubble
-   that is never a link. Slate keeps it visually apart from the three
-   location-backed hues rather than reading as a fourth kind of
-   source. */
-.bubble-imported        { background: #475569; }
   line-height: 16px;
   white-space: nowrap;
   flex: 0 0 auto;
@@ -98,6 +93,11 @@
 .bubble-http-manifest   { background: #1e3a8a; }
 .bubble-github-dir      { background: #6f42c1; }
 .bubble-github-manifest { background: #4c2889; }
+/* Imported collections have no location, so this is the one bubble
+   that is never a link. Slate keeps it visually apart from the three
+   location-backed hues rather than reading as a fourth kind of
+   source. */
+.bubble-imported        { background: #475569; }
 .bubble-scripts         { background: #4b5563; }
 /* Form states, not collection kinds — only the collection dialog's Type
    row ever wears these: red for a location (or an empty form) that

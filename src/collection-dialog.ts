@@ -119,6 +119,7 @@ const CHECKING_BUBBLE_KEY = 'checking';
 // first-time reader gets only an uppercase token.
 const TYPE_BUBBLE_TITLES: Record<string, string> = {
   [SCRIPTS_BUBBLE_KEY]: 'Scripts installed one at a time, from anywhere',
+  imported: 'Scripts imported from a backup file',
   [INVALID_BUBBLE_KEY]: 'Invalid collection specification',
   [CHECKING_BUBBLE_KEY]: 'Reading this location…',
 };
@@ -505,7 +506,12 @@ async function runDialog(
   const refresh = (): void => {
     const state = evaluate();
     const loc = showLocation ? ui.location.value.trim() : '';
-    const supportsLocal = !loc || collectionSupportsLocalFiles(loc);
+    // An existing row with no editable location (a container, an
+    // import) is judged by its stored path: a container may hold local
+    // files, an import collection never does.
+    const supportsLocal = loc
+      ? collectionSupportsLocalFiles(loc)
+      : editing ? collectionSupportsLocalFiles(editing.path) : true;
     ui.localFiles.disabled = !supportsLocal;
     ui.localFilesLabel.classList.toggle('off', !supportsLocal);
     ui.localFilesHint.textContent = supportsLocal ? `— ${LOCAL_FILES_HINT}` : `— ${localFilesUnavailableHint(loc)}`;

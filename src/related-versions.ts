@@ -19,9 +19,10 @@
 //
 // See [docs/script-identity.md].
 
-import { isPinnedScriptUrl, scriptAbsolutePath } from './directories.js';
+import { isImportCollection, isPinnedScriptUrl, storedScriptLocation } from './directories.js';
 import {
   appendWithSlashBreaks,
+  pinnedLocationText,
   displayLocation,
   ENABLE_TITLE,
   viewerUrl,
@@ -887,7 +888,13 @@ function locationCell(
   mode: RelatedVersionsModel['mode'],
 ): HTMLTableCellElement {
   const td = cell('col-location');
-  const text = displayLocation(rel.script.relativePath);
+  // An import row's location lives on `fileUrl`, not `relativePath`
+  // (which is only a synthesized filename there); a pinned row says so.
+  const text = rel.collection && isImportCollection(rel.collection.path)
+    ? (isPinnedScriptUrl(rel.script.fileUrl)
+      ? pinnedLocationText(rel.script.importedFrom?.manager)
+      : displayLocation(storedScriptLocation(rel.collection.path, rel.script)))
+    : displayLocation(rel.script.relativePath);
   const title = locationTitle(rel, text);
   // The element carrying the path is tagged with the file it names, so
   // a deleted or changed file gets its chip (see `markFileChanges`).
@@ -938,10 +945,8 @@ function locationCell(
 // text already on screen, which is the common `https://…/foo.user.js`
 // case. A tooltip repeating its own cell is noise.
 function locationTitle(rel: RelatedScript, shown: string): string {
-  const full = rel.collection
-    ? scriptAbsolutePath(rel.collection.path, rel.script.relativePath)
-    : rel.script.relativePath;
-  return full === shown ? '' : full;
+  const full = storedScriptLocation(rel.collection?.path, rel.script);
+  return full === shown || full === '' ? '' : full;
 }
 
 // Status, linking to that copy's Log tab. Every row links, including

@@ -167,13 +167,6 @@
       .toggle:has(.busy-spinner) input[type="checkbox"] { opacity: 0.3; }
       /* While a collection is being removed, dim the whole section and block further clicks. */
       .collection.removing { opacity: 0.5; pointer-events: none; }
-      /* Highlight rows that changed during a refresh. The color
-         persists until the next refresh clears it, so the
-         user can leave the page and come back without losing the
-         what-changed signal.
-
-         Two independent signals: `row-added` / `row-updated` say what
-         happened, `row-failed` says how it came out. `row-failed` is
       /* Import dialog. Sized so the instruction list reads as prose
          rather than a wrapped column, and centered by the native
          <dialog> so it doesn't have to compete with the page's own
@@ -192,6 +185,13 @@
       .import-warnings ul { margin: 0.3em 0 0; padding-left: 1.2em; }
       .import-actions { display: flex; justify-content: flex-end; gap: 0.5em; margin-top: 1.2em; }
 
+      /* Highlight rows that changed during a refresh. The color
+         persists until the next refresh clears it, so the
+         user can leave the page and come back without losing the
+         what-changed signal.
+
+         Two independent signals: `row-added` / `row-updated` say what
+         happened, `row-failed` says how it came out. `row-failed` is
          listed after both so it wins the wash — a script that arrived
          broken is red, and keeps its "New" chip to say it is also new.
          (`row-removed` sits last and never shares a row with any of

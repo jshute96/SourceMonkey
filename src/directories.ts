@@ -1212,6 +1212,26 @@ export function scriptFileUrl(collectionPath: string, relativePath: string): str
   return pathToFileUrl(joinPath(locationFsPath(collectionPath), relativePath));
 }
 
+// The display location of a STORED script — `scriptAbsolutePath` for
+// every collection that can derive one from its path, and the row's own
+// `fileUrl` for an import collection, whose path holds no location. A
+// pinned row (imported with no upstream) has none, and reads as ''.
+//
+// The one entry point every surface that shows a stored script's
+// location uses (viewer, compare page, "Other versions" panel), so an
+// import row can't read differently on one of them.
+export function storedScriptLocation(
+  collectionPath: string | null | undefined,
+  script: { relativePath: string; fileUrl: string },
+): string {
+  if (!collectionPath) return script.relativePath;
+  if (!isImportCollection(collectionPath)) {
+    return scriptAbsolutePath(collectionPath, script.relativePath);
+  }
+  if (isPinnedScriptUrl(script.fileUrl)) return '';
+  return githubRawToBlobUrl(script.fileUrl) ?? script.fileUrl;
+}
+
 // Human-displayable location for a specific scanned script. Three
 // distinct shapes:
 //   - file:// → bare fs path (more readable than the percent-encoded
@@ -1225,6 +1245,13 @@ export function scriptFileUrl(collectionPath: string, relativePath: string): str
 // This is what the viewer's Location row shows for every collection kind
 // without each collection-kind needing its own special case.
 export function scriptAbsolutePath(collectionPath: string, relativePath: string): string {
+  if (isImportCollection(collectionPath)) {
+    // Never reached with a real import row — callers go through
+    // `storedScriptLocation`, which has the row's `fileUrl`. The path
+    // alone can't name a location, so say nothing rather than fake
+    // a `/import:<uuid>/…` path.
+    return '';
+  }
   if (isGithubDirCollection(collectionPath)) {
     return githubDirScriptDisplayUrl(collectionPath, relativePath);
   }

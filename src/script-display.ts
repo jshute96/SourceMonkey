@@ -445,3 +445,8 @@ export function pinnedLocationText(manager?: string): string {
 // spin and change nothing.
 export const PINNED_NO_REFRESH_TITLE =
   'This script was imported and has no location to refresh from';
+
+// Why the collections page offers no Refresh on an import section: the
+// collection has no location of its own to re-list.
+export const IMPORT_NO_REFRESH_TITLE =
+  'This collection was imported from a backup and has no location to refresh from';

@@ -183,9 +183,10 @@ dialog and its scripts arrive as a new collection.
 
 What comes across: each script's source, whether it was enabled, its
 dashboard order, and its stored `GM_setValue` data. Scripts installed
-from the web keep their address and update from it as usual; ones you
-wrote or edited inside Tampermonkey have nowhere to update from, and
-say so.
+from the web keep their address, so the viewer's Refresh (and the
+check on each visit) can pull a newer copy; ones you wrote or edited
+inside Tampermonkey have nowhere to update from, and say so. The
+collection itself has no location, so Refresh All leaves it alone.
 
 Each import makes its own collection, so importing twice gives you two.
 

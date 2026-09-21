@@ -2304,8 +2304,12 @@ export async function importCollection(
   // Shared across the whole import so two scripts naming the same
   // `@require` URL fetch it once, exactly as a collection refresh does.
   const fetchCache: FileFetchCache = new Map();
-  const scripts = await Promise.all(
-    planned.map(async (p) => {
+  // Bounded like a collection refresh: each row may fetch its
+  // `@require` / `@resource` bodies, and a big backup is exactly where
+  // an unbounded fan-out hurts.
+  const scripts = await mapWithConcurrency(
+    planned, FETCH_SCRIPTS_PER_COLLECTION_CONCURRENCY,
+    async (p) => {
       const built = await buildScriptFromText({
         id: p.id,
         collectionId,
@@ -2329,7 +2333,7 @@ export async function importCollection(
       // No local stand-ins: nothing under an import collection ever has a
       // `file://` URL to resolve them against (`collectionSupportsLocalFiles`).
       return await applyFiles(built, undefined, 'all', fetchCache, now, { enabled: false, collectionPath: path });
-    }),
+    },
   );
 
   const collection: StoredCollection = {
@@ -2353,7 +2357,7 @@ export async function importCollection(
       [collectionKey(collectionId)]: collection,
     };
     for (const s of scripts) rows[scriptKey(s.id)] = s;
-    await chrome.storage.local.set(rows);
+    await writeLocal(rows);
   });
 
   // GM_setValue data lives in its own key space, so it's written after

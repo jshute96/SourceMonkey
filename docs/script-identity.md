@@ -201,14 +201,14 @@ the *other* rows.
 - **A copy under a disabled collection is spared.** It isn't running, so it
   isn't competing — and its own checkbox is rendered disabled, so a
   flip made here could not be undone from this panel at all. Turning it
+  off would silently destroy the user's stored intent for whenever they
+  re-enable that collection.
 - **No refetch on a pinned row** — one imported from another manager's
   backup with no upstream at all (see
   [import-export-tampermonkey.md](import-export-tampermonkey.md)).
   `refreshScript` returns such a row untouched, so the button would do
   nothing. Same conclusion as the rule above, reached the other way:
   there is no upstream rather than the wrong one.
-  off would silently destroy the user's stored intent for whenever they
-  re-enable that collection.
 - **Ctrl/Cmd-click opts out** and toggles only that box, for the rare
   case where two copies really are meant to run together (say, two
   `@match`-disjoint edits of one script). Read from the `click` event,

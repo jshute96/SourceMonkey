@@ -38,6 +38,7 @@ import {
   isImportCollection,
   isPinnedScriptUrl,
   pinnedScriptUrl,
+  storedScriptLocation,
 } from '../../dist/directories.js';
 
 test('parseListing extracts files and directories, skipping ..', () => {
@@ -845,4 +846,22 @@ test('isPinnedScriptUrl: recognises our own stand-ins and nothing else', () => {
   // The injector's devtools URLs share the scheme but not the host, and
   // must not read as a location-less script.
   assert.equal(isPinnedScriptUrl('sourcemonkey://SourceMonkey/x/x.user.js'), false);
+});
+
+test('storedScriptLocation: import rows read from fileUrl, pinned rows read as nothing', () => {
+  const path = importCollectionPath('abc-123');
+  const located = { relativePath: 'Foo.user.js', fileUrl: 'https://example.com/foo.user.js' };
+  assert.equal(storedScriptLocation(path, located), 'https://example.com/foo.user.js');
+  // Raw GitHub URLs display as the blob page, like every other surface.
+  const raw = { relativePath: 'Bar.user.js', fileUrl: 'https://raw.githubusercontent.com/o/r/main/bar.user.js' };
+  assert.equal(storedScriptLocation(path, raw), 'https://github.com/o/r/blob/main/bar.user.js');
+  const pinned = { relativePath: 'Baz.user.js', fileUrl: pinnedScriptUrl('id', 'Baz.user.js') };
+  assert.equal(storedScriptLocation(path, pinned), '');
+  // Every other collection derives it from the path, as before.
+  assert.equal(
+    storedScriptLocation('/srv/scripts', { relativePath: 'a.user.js', fileUrl: 'file:///srv/scripts/a.user.js' }),
+    '/srv/scripts/a.user.js',
+  );
+  // No collection row: the relative path is all there is.
+  assert.equal(storedScriptLocation(null, located), 'Foo.user.js');
 });

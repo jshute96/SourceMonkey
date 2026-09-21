@@ -67,10 +67,10 @@ export class ImportFormatError extends Error {}
 // these, and routing one through import too would give the same file
 // two different install paths with two different results.
 export const IMPORT_IS_USERSCRIPT =
-  'This is a userscript, not a backup file. Add it with the Add field instead';
+  'This is a userscript, not a backup file. Add it with the Add field instead.';
 
 export const IMPORT_NOT_A_BACKUP =
-  'This is not a Tampermonkey backup file. Export one with File → Export on Tampermonkey\'s Utilities page';
+  'This is not a Tampermonkey backup file. Export one with File → Export on Tampermonkey\'s Utilities page.';
 
 export const IMPORT_NO_SCRIPTS = 'This backup contains no userscripts';
 

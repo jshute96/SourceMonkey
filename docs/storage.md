@@ -80,13 +80,13 @@ keys would look like a wiped profile.
     collection the user created — for a collection of individually
     installed scripts. Container collections have no scan step; their
     `scriptIds` list is the source of truth. See
+    [Container collections](#container-collections).
   - `import:<uuid>` for an **import** collection — scripts handed to us
     in another manager's backup file rather than fetched. Like a
     container it has no scan step; unlike one it has no upstream at all,
     so the collection never refreshes. A fresh id per import run, so
     repeat imports each get their own section. See
     [import-export-tampermonkey.md](import-export-tampermonkey.md).
-    [Container collections](#container-collections).
 - `lastRefreshedAt` — epoch ms of the most recent refresh.
 - `scriptIds` — child script IDs in display order.
 - `scanError?` — set when the directory listing itself failed.
@@ -115,12 +115,6 @@ keys would look like a wiped profile.
   - The three built-in defaults' names are **reserved**, whether or not
     their rows exist yet — only the default that owns one may carry it
     (`mayUseReservedName`). Otherwise a user collection could take
-  - Import collection: `relativePath` is a filename synthesized from the
-    script's `@name`, deduped within the import. `fileUrl` is the URL the
-    backup named, or a synthetic `sourcemonkey://imported/…` stand-in
-    when it named none — the row's own value either way, since the
-    collection path can't derive it. See
-    [import-export-tampermonkey.md](import-export-tampermonkey.md#per-script-location).
     "Scripts from web", and the next web install would auto-create
     `container:http` under the same name: two identical entries in the
     install dropdown, in a state that couldn't be re-created afterwards.
@@ -140,6 +134,12 @@ keys would look like a wiped profile.
     the user added, in its canonical spelling (`canonicalCollectionInput`:
     a `file://` URL collapses to its bare path, so one file on disk
     can't land as two rows); `fileUrl` is its URL form.
+  - Import collection: `relativePath` is a filename synthesized from the
+    script's `@name`, deduped within the import. `fileUrl` is the URL the
+    backup named, or a synthetic `sourcemonkey://imported/…` stand-in
+    when it named none — the row's own value either way, since the
+    collection path can't derive it. See
+    [import-export-tampermonkey.md](import-export-tampermonkey.md#per-script-location).
 - `status` — `'ok' | 'invalid'`. A script whose file has vanished is
   not a status — the row is dropped (see
   [Vanished entries](#vanished-entries)).
@@ -978,13 +978,6 @@ match set as usual, then hands the matched script IDs to
   on the floor (the in-flight one will produce a fresh storage row).
 - Else if a previous check completed less than 10s ago, drop on the
   floor.
-An **Import** button sits beside Add. It opens a dialog explaining how
-to export from Tampermonkey, takes the resulting file, and creates one
-import collection from it — see
-[import-export-tampermonkey.md](import-export-tampermonkey.md#importing-into-sourcemonkey).
-Per-script problems in a partly-readable backup are listed on the page
-after the dialog closes, since the import itself succeeded.
-
 - Else `refreshScript(id)` runs in the background. The directory
   listing supplies the file's `size` + `mtime`; if both still match the
   stored row, no fetch happens (see `fetchOrSkipInParallel`). When they
@@ -1097,6 +1090,15 @@ Routes by what was typed (trimmed):
 
 Creating from a location loads it immediately — no need to click
 Refresh after adding.
+
+### The Import button
+
+An **Import** button sits beside Add. It opens a dialog explaining how
+to export from Tampermonkey, takes the resulting file, and creates one
+import collection from it — see
+[import-export-tampermonkey.md](import-export-tampermonkey.md#importing-into-sourcemonkey).
+Per-script problems in a partly-readable backup are listed on the page
+after the dialog closes, since the import itself succeeded.
 
 ### The collection dialog
 

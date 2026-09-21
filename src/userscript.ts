@@ -147,11 +147,10 @@ import {
   isSingleFileLocation,
   isFileUrl,
   isHttpUrl,
-  isImportCollection,
   isPinnedScriptUrl,
   LOCATION_SHAPES,
   normalizeCollectionInput,
-  scriptAbsolutePath,
+  storedScriptLocation,
   collectionCanonicalUrl,
   isSingleFileInput,
 } from './directories.js';
@@ -845,13 +844,7 @@ function render(script: StoredScript): void {
   // answer.
   refreshBtn.disabled = pinnedLocation;
   refreshBtn.title = pinnedLocation ? PINNED_NO_REFRESH_TITLE : '';
-  currentFilenamePath = pinnedLocation
-    ? ''
-    : isImportCollection(collectionPath)
-      ? script.fileUrl
-      : collectionPath
-        ? scriptAbsolutePath(collectionPath, script.relativePath)
-        : '';
+  currentFilenamePath = collectionPath ? storedScriptLocation(collectionPath, script) : '';
 
   // Anchor href: for file:// collections we use the file:// URL (the
   // display string is the bare fs path, not navigable). For everything
