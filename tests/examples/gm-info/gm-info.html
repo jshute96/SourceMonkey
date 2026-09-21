@@ -20,21 +20,154 @@
 
     <h2>Details</h2>
     <ul>
-      <li>This page prints <code>GM_info</code> verbatim as JSON so
-        you can compare what each manager populates.</li>
+      <li><strong>Use case: compare <code>GM_info</code> across
+        userscript managers.</strong> Install this script in several
+        managers at once (SourceMonkey, Tampermonkey, Violentmonkey,
+        &hellip;) and load this page; every running copy adds itself
+        to the comparison table and the raw dumps below.</li>
+      <li>Each copy&rsquo;s <code>GM_info</code> is printed verbatim as
+        JSON, so you can see exactly what each manager populates.</li>
       <li>Doubles as a sanity check that the userscript is running
-        at all &mdash; if the dump appears, the script ran.</li>
+        at all &mdash; if a dump appears, the script ran.</li>
+      <li>The userscript itself only drops its <code>GM_info</code>
+        JSON into the page; the script below in this page does the
+        rendering, so formatting changes never require reinstalling
+        the userscript.</li>
     </ul>
 
     <p id="runStatus" class="status">Waiting for userscript&hellip;</p>
 
-    <h2>Output</h2>
-    <pre id="output">(userscript has not loaded yet)</pre>
+    <h2>Comparison</h2>
+    <p>One column per manager that ran the script; one row per field
+      path in its <code>GM_info</code>. Arrays are shown whole.</p>
+    <table id="comparison" class="comparison"></table>
+
+    <h2>Raw Output</h2>
+    <div id="output">(userscript has not loaded yet)</div>
+
+    <!-- Each running copy of the userscript appends one
+         <script type="application/json" class="gm-info-dump"> here. -->
+    <div id="dumps" hidden></div>
   </main>
   <footer>
     <a href="../index.html">&larr; all examples</a>
     &nbsp;|&nbsp;
     <a href="gm-info.user.js">userscript source</a>
   </footer>
+
+  <script>
+    (function () {
+      'use strict';
+
+      const status = document.getElementById('runStatus');
+      const out = document.getElementById('output');
+      const table = document.getElementById('comparison');
+      const dumps = document.getElementById('dumps');
+
+      // Collect every dump the userscript copies have dropped so far,
+      // parse, and sort by handler label so the page reads the same
+      // regardless of which manager ran first.
+      function collect() {
+        const runs = [];
+        for (const node of dumps.querySelectorAll('script.gm-info-dump')) {
+          let info;
+          try { info = JSON.parse(node.textContent); } catch { continue; }
+          const handler = info?.scriptHandler || '(unknown handler)';
+          const version = info?.version ? ` ${info.version}` : '';
+          runs.push({ label: `${handler}${version}`, info });
+        }
+        runs.sort((a, b) => a.label.localeCompare(b.label));
+        return runs;
+      }
+
+      function render() {
+        const runs = collect();
+        if (runs.length === 0) return;
+
+        status.classList.add('ran');
+        status.textContent =
+          `Userscript ran ${runs.length} time(s). GM_info dumped below — ` +
+          'note scriptHandler and version.';
+
+        out.textContent = '';
+        for (const run of runs) {
+          const section = document.createElement('section');
+          section.className = 'dump';
+          const h3 = document.createElement('h3');
+          h3.textContent = run.label;
+          const pre = document.createElement('pre');
+          pre.textContent = JSON.stringify(run.info, null, 2);
+          section.append(h3, pre);
+          out.append(section);
+        }
+
+        renderComparison(runs);
+      }
+
+      // Flatten an object into { 'a.b.c': value } rows. Arrays are
+      // leaves (kept whole), so a row like `script.matches` shows the
+      // full list. An empty object is a leaf too, so it shows as `{}`
+      // rather than vanishing and looking like a missing field.
+      function flatten(value, prefix, rows) {
+        if (value && typeof value === 'object' && !Array.isArray(value)
+            && Object.keys(value).length > 0) {
+          for (const key of Object.keys(value)) {
+            flatten(value[key], prefix ? `${prefix}.${key}` : key, rows);
+          }
+        } else {
+          rows[prefix] = value;
+        }
+        return rows;
+      }
+
+      function renderComparison(runs) {
+        const columns = runs.map((r) => ({
+          label: r.label,
+          rows: flatten(r.info, '', {}),
+        }));
+        const paths = [...new Set(columns.flatMap((c) => Object.keys(c.rows)))]
+          .sort((a, b) => a.localeCompare(b));
+
+        table.textContent = '';
+        const head = table.createTHead().insertRow();
+        head.append(cell('th', 'Field path'));
+        for (const c of columns) head.append(cell('th', c.label));
+
+        const body = table.createTBody();
+        for (const path of paths) {
+          const row = body.insertRow();
+          row.append(pathCell(path));
+          for (const c of columns) {
+            const present = path in c.rows;
+            const td = cell('td', present ? JSON.stringify(c.rows[path]) : '—');
+            if (!present) td.className = 'missing';
+            row.append(td);
+          }
+        }
+      }
+
+      // Field-path header: allow line breaks only after the dots, so
+      // a long path wraps as `script.` / `namespace`, not mid-word.
+      function pathCell(path) {
+        const th = document.createElement('th');
+        path.split('.').forEach((part, i) => {
+          if (i > 0) th.append('.', document.createElement('wbr'));
+          th.append(part);
+        });
+        return th;
+      }
+
+      function cell(tag, text) {
+        const el = document.createElement(tag);
+        el.textContent = text;
+        return el;
+      }
+
+      // Copies may land before or after this script runs (document-end
+      // vs. inline), so render what's already there and watch for more.
+      new MutationObserver(() => render()).observe(dumps, { childList: true });
+      render();
+    })();
+  </script>
 </body>
 </html>

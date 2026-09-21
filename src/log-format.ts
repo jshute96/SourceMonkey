@@ -1,7 +1,7 @@
 // Formatting for the per-script event log.
 //
 // Two consumers, one set of strings:
-//   - the viewer's Log pane table (Time / Level / Source / Message)
+//   - the viewer's Log pane table (Time / Status / Source / Message)
 //   - the CSV the pane's Save and Copy buttons hand out
 //
 // Keeping both here is what makes an exported row read the same as the
@@ -17,10 +17,10 @@
 // default here is the honest fallback for a caller that has no source
 // map to consult.
 //
-// Pure and dependency-light so unit tests can drive it directly.
+// Pure (no DOM, no chrome.*) so unit tests can drive it directly.
 
 import { describeDiagnostic } from './diagnostic-location.js';
-import { logIdDupeSuffix } from './script-display.js';
+import { formatScriptStatusLabel, logIdDupeSuffix } from './script-display.js';
 import type { LogEntry } from './script-log.js';
 
 // Local wall-clock time, sortable spelling: `2026-08-05 14:03:22.017`.
@@ -44,6 +44,21 @@ export function formatLogSource(entry: LogEntry): string {
   return entry.tabId !== undefined ? `tab ${entry.tabId} · ${entry.source}` : entry.source;
 }
 
+// The Status cell: the state the entry moved the script into, in the
+// Status badge's own words (`REFRESH FAILED`, `INVALID`, `OK`), or the
+// bare level (`info` / `warning` / `error`) for an entry about
+// something the script itself did. See `LogEntry.state`.
+export function formatLogStatus(entry: LogEntry): string {
+  return entry.state !== undefined ? formatScriptStatusLabel(entry.state) : entry.level;
+}
+
+// The CSS class the pane colours the Status cell by: the display state
+// when the entry carries one, the level otherwise (`userscript.html`
+// defines both families).
+export function logStatusClass(entry: LogEntry): string {
+  return entry.state !== undefined ? `log-state-${entry.state}` : `log-level-${entry.level}`;
+}
+
 // The Message cell as plain text, with a derived location flattened
 // into the same sentence the pane renders as a link.
 //
@@ -57,7 +72,7 @@ export function formatLogMessage(entry: LogEntry): string {
 
 // Column headings, in order — the pane's `<th>` row and the CSV's
 // header row are the same four.
-export const LOG_COLUMNS: readonly string[] = ['Time', 'Level', 'Source', 'Message'];
+export const LOG_COLUMNS: readonly string[] = ['Time', 'Status', 'Source', 'Message'];
 
 // ---------- CSV ----------
 
@@ -117,7 +132,7 @@ export function formatLogCsv(
     const e = entries[i];
     lines.push(csvRow([
       formatLogTimestamp(e.timestamp),
-      e.level,
+      formatLogStatus(e),
       formatLogSource(e),
       renderMessage(e),
     ]));

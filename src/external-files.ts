@@ -23,7 +23,8 @@
 // Shared semantics:
 //   - resolveScriptResource rules from file-loader: absolute
 //     http(s):// or relative-against-script. file:// only reachable
-//     via relative resolution; no traversal. data: rejected.
+//     via relative resolution, and a local script's relative ref may
+//     not climb out of its own folder. data: rejected.
 //   - Same byte fetcher with size cap.
 //   - Same per-refresh cross-script fetch cache: two scripts (and
 //     two refs of either kind) pointing at the same URL share one
@@ -40,7 +41,14 @@ import {
   type FetchFailure,
   type ResolveFailure,
 } from './file-loader.js';
-import { localFileCandidates } from './local-file-overrides.js';
+import { presentLocalFileCandidates } from './local-file-overrides.js';
+import {
+  baseName,
+  locationFsPath,
+  parentDir,
+  statFromListing,
+  type DirectoryListingCache,
+} from './directories.js';
 import { splitResourceValue } from './script-links.js';
 import { sha256Hex, bytesToBase64, base64ToBytes } from './bytes.js';
 import { timePhase } from './phase-timing.js';
@@ -177,9 +185,14 @@ export function describeResolveFailure(failure: ResolveFailure): string {
       // is parenthesized rather than leading, so the sentence can open
       // with a capital of ours instead of a verbatim value.
       return `That URL scheme (${failure.scheme}) is not supported — ` +
-        'use an http(s) URL, or a relative path inside the script\'s folder';
+        'use an http(s) URL, or a relative path resolved against the script\'s own location';
     case 'outside-script-folder':
-      return 'That path points outside the script\'s own folder — a relative path has to stay inside it';
+      // Only reachable for a script loaded from `file://`: a relative
+      // ref in a script served over http(s) may climb, the way it does
+      // in Violentmonkey. So the message names the case it applies to
+      // rather than stating a rule that isn't universal.
+      return 'That path points outside the script\'s own folder — ' +
+        'a relative path in a local script has to stay inside it';
   }
 }
 
@@ -207,6 +220,10 @@ interface SharedFileFields {
   // key, it is what the script says it depends on, and it is what the
   // entry falls back to the moment the local file goes away.
   localUrl?: string;
+  // The stand-in's listing mtime when it was read, so a page can tell
+  // an edited stand-in from the one it holds without re-reading it
+  // (file-changes.ts). Only ever set beside `localUrl`.
+  fsMtime?: number;
   // Server-reported (lowercased) Content-Type, or '' when not
   // available (file:// XHR often omits it). Optional on
   // StoredRequire because pre-this-change stored rows won't carry
@@ -514,17 +531,29 @@ interface LoadedBytes {
   // declared URL, so callers can record it without re-deriving the
   // comparison. Absent means "the declared URL was fetched".
   localUrl?: string;
+  // The stand-in's listing mtime, when its folder listed.
+  fsMtime?: number;
   got: FetchedFile | FileFailure;
+}
+
+// The stored fields that say a stand-in was read, and its stat. Empty
+// on the ordinary path, so nothing is written for a declared-URL fetch.
+function standInFields(loaded: LoadedBytes): Pick<SharedFileFields, 'localUrl' | 'fsMtime'> {
+  if (!loaded.localUrl) return {};
+  return {
+    localUrl: loaded.localUrl,
+    ...(loaded.fsMtime !== undefined ? { fsMtime: loaded.fsMtime } : {}),
+  };
 }
 
 // Read a declared file, preferring a local stand-in when one exists.
 //
 // Candidates are tried in order and the first that READS wins — the
 // probe and the real read are the same fetch, so a hit costs nothing
-// extra. A total miss costs one local read PER CANDIDATE, i.e. one per
-// path segment of the declared URL plus one for the host-qualified
-// form, not one overall. `ensureFetch`
-// caches those for the rest of the pass, misses included.
+// extra. A total miss costs one listing per root plus one local read
+// per candidate the listing couldn't rule out (see
+// `presentLocalFileCandidates`). `ensureFetch` caches the reads for
+// the rest of the pass, misses included.
 //
 // Returns `null` when no stand-in was found, so the caller can take its
 // `recheck: 'preserve'` shortcut on the declared URL. That ordering is
@@ -542,13 +571,53 @@ async function readLocalStandIn(
   localRoots: readonly string[],
   fetchCache: FileFetchCache,
 ): Promise<LoadedBytes | null> {
-  for (const candidate of localFileCandidates(declaredUrl, localRoots)) {
+  const candidates = await presentLocalFileCandidates(declaredUrl, localRoots, listingsFor(fetchCache));
+  for (const candidate of candidates) {
     const got = await ensureFetch(fetchCache, candidate);
     // A candidate that doesn't read isn't a failure — it just isn't
     // there. Only an actual hit ends the search.
-    if (!isFailure(got)) return { localUrl: candidate, got };
+    if (!isFailure(got)) {
+      // Its listing stat too, for the "modified" chip: one listing per
+      // folder per pass, shared through the same cache the candidate
+      // gate used. A listing that fails just leaves the stat off.
+      const fsPath = locationFsPath(candidate);
+      let fsMtime: number | undefined;
+      try {
+        fsMtime = (await statFromListing(parentDir(fsPath), baseName(fsPath), listingsFor(fetchCache)))?.mtime;
+      } catch {
+        /* no stat; the entry can still be reported deleted, not modified */
+      }
+      return { localUrl: candidate, got, ...(fsMtime !== undefined ? { fsMtime } : {}) };
+    }
   }
   return null;
+}
+
+// The root-directory listings `presentLocalFileCandidates` gates on,
+// given the same lifetime as the fetch cache they sit beside: one
+// refresh pass, or the page for the install preview's page-lifetime
+// cache, which memoizes misses for that long anyway. Keyed off the fetch cache
+// rather than threaded as another parameter because every entry point
+// that builds a `FileFetchCache` would otherwise have to build this one
+// too, and the two must never outlive each other — a listing that
+// outlived its pass would hide a stand-in created after it was taken.
+const listingCaches = new WeakMap<FileFetchCache, DirectoryListingCache>();
+
+// A pass that already keeps directory listings (the navigation
+// `RefreshBatch`) registers them here, so the stat it took of the
+// script's own folder and the gate's read of that same folder are one
+// listing rather than two.
+export function bindListingCache(fetchCache: FileFetchCache, listings: DirectoryListingCache): void {
+  listingCaches.set(fetchCache, listings);
+}
+
+function listingsFor(fetchCache: FileFetchCache): DirectoryListingCache {
+  let listings = listingCaches.get(fetchCache);
+  if (!listings) {
+    listings = new Map();
+    listingCaches.set(fetchCache, listings);
+  }
+  return listings;
 }
 
 interface LoadRequireArgs {
@@ -674,7 +743,7 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
       // `undefined`) on the ordinary path — stored rows are compared
       // and JSON-round-tripped, and an explicit `undefined` would
       // survive as a key in some of those comparisons.
-      ...(loaded.localUrl ? { localUrl: loaded.localUrl } : {}),
+      ...standInFields(loaded),
       ...validatorFields(got),
     },
   };
@@ -820,7 +889,7 @@ async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredRe
       contentHash,
       contentType: got.contentType,
       loadedAt,
-      ...(loaded.localUrl ? { localUrl: loaded.localUrl } : {}),
+      ...standInFields(loaded),
       ...validatorFields(got),
     },
   };

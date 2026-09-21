@@ -35,7 +35,7 @@ import {
   BRIDGE_SCRIPT_ID,
   GM_RUNTIME_SCRIPT_ID,
   buildBridgeSpec,
-  buildGmRuntimeSpec,
+  buildGmRuntimeSpecs,
   buildRegistrationSpec,
   collectActiveSpecs,
   resolveAllFrames,
@@ -132,7 +132,7 @@ test('buildRegistrationSpec: frame targeting is independent of world and run-at'
 
 test('collectActiveSpecs: per-script frame targeting survives the batch build', async () => {
   const collections = new Map([['collection-1', { id: 'collection-1', enabled: true }]]);
-  const specs = await collectActiveSpecs([
+  const { specs } = await collectActiveSpecs([
     makeScript({ id: 'frames' }),
     makeScript({ id: 'noframes', header: header({ tag: 'noframes', value: '' }) }),
   ], collections);
@@ -174,13 +174,39 @@ test('buildBridgeSpec: one frame-running script is enough', () => {
   assert.equal(bridge.allFrames, true);
 });
 
-test('buildGmRuntimeSpec: follows the active set into frames', () => {
-  const rt = buildGmRuntimeSpec([spec({})]);
+// The runtime's scope is the per-world union `collectActiveSpecs`
+// derives from the scripts that need it, so frame scope is asserted on
+// that union and on the spec built from it.
+const grantsStorage = ({ tags = [], ...over } = {}) => makeScript({
+  header: header({ tag: 'grant', value: 'GM_getValue' }, ...tags),
+  ...over,
+});
+
+test('buildGmRuntimeSpecs: follows the active set into frames', async () => {
+  const collections = new Map([['collection-1', { id: 'collection-1', enabled: true }]]);
+  const { gmRuntimeScope } = await collectActiveSpecs([grantsStorage()], collections);
+  assert.equal(gmRuntimeScope.get('USER_SCRIPT').allFrames, true);
+  const [rt] = buildGmRuntimeSpecs(gmRuntimeScope);
   assert.equal(rt.id, GM_RUNTIME_SCRIPT_ID);
   assert.equal(rt.allFrames, true);
 });
 
-test('buildGmRuntimeSpec: stays top-frame-only when every script is @noframes', () => {
-  const rt = buildGmRuntimeSpec([spec({ allFrames: false })]);
+test('buildGmRuntimeSpecs: stays top-frame-only when every script is @noframes', async () => {
+  const collections = new Map([['collection-1', { id: 'collection-1', enabled: true }]]);
+  const { gmRuntimeScope } = await collectActiveSpecs([
+    grantsStorage({ tags: [{ tag: 'noframes', value: '' }] }),
+  ], collections);
+  assert.equal(gmRuntimeScope.get('USER_SCRIPT').allFrames, false);
+  const [rt] = buildGmRuntimeSpecs(gmRuntimeScope);
   assert.equal(rt.allFrames, false);
+});
+
+test('buildGmRuntimeSpecs: one frame-running script is enough', async () => {
+  const collections = new Map([['collection-1', { id: 'collection-1', enabled: true }]]);
+  const { gmRuntimeScope } = await collectActiveSpecs([
+    grantsStorage({ id: 'a', tags: [{ tag: 'noframes', value: '' }] }),
+    grantsStorage({ id: 'b' }),
+  ], collections);
+  const [rt] = buildGmRuntimeSpecs(gmRuntimeScope);
+  assert.equal(rt.allFrames, true);
 });

@@ -32,8 +32,12 @@ test.describe('examples / gm-clipboard', () => {
 
     await expect(page.locator('#log')).toContainText('resolved');
 
-    const pasted = await page.evaluate(() => navigator.clipboard.readText());
-    expect(pasted).toBe('round-trip via clipboard');
+    // A manager's "resolved" can land before the bytes reach the system
+    // clipboard (VM writes through its own extension page), and a read
+    // that races it sees the old contents. Poll rather than read once.
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()), { timeout: 5000 })
+      .toBe('round-trip via clipboard');
 
     await page.close();
   });

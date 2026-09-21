@@ -8,6 +8,7 @@
 // Pure DOM helpers: everything takes the elements it operates on. No
 // chrome.* calls, no module state.
 
+import { appendWithSlashBreaks } from './script-display.js';
 import { resolveScriptResource } from './file-loader.js';
 import { matchTargetInfo, sameDirLinkUrl } from './match-targets.js';
 import {
@@ -17,7 +18,6 @@ import {
   splitResourceValue,
   splitTextByUrls,
 } from './script-links.js';
-import { appendWithSlashBreaks } from './collection-display.js';
 
 export function openInNewTabAnchor(
   href: string,

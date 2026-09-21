@@ -17,18 +17,7 @@ import type { BrowserContext, Page, Worker } from '@playwright/test';
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
-import { waitFor, waitForTabState, type SmApi } from '../fixtures/sw-api';
-
-async function activeTabId(
-  getServiceWorker: () => Promise<import('@playwright/test').Worker>,
-): Promise<number> {
-  const sw = await getServiceWorker();
-  return sw.evaluate(async () => {
-    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    if (!tab?.id) throw new Error('no active tab');
-    return tab.id;
-  });
-}
+import { waitFor, waitForTabState, type SmApi, activeTabId } from '../fixtures/sw-api';
 
 async function readFires(page: import('@playwright/test').Page): Promise<string[]> {
   const raw = await page.evaluate(() => document.body.dataset.smFires ?? '[]');

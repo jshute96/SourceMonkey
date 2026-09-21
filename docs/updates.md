@@ -30,6 +30,123 @@ loads (rate-limited; see `UPDATE_MIN_INTERVAL_MS` in
 `script-updater.ts`). So a local edit and a published update both land
 without the user doing anything.
 
+## Focus-triggered refresh
+
+Bringing a tab to the front also checks the **local** scripts running
+on it. `installFocusRefresh` in `src/background.ts`.
+
+### Why
+
+- The edit-and-reload loop is: edit the file somewhere else, come back
+  to the browser, reload.
+- Nothing noticed the edit until that reload, which then had to win the
+  [reload fast path](injection.md#reload-fast-path)'s 500 ms race or
+  ask for a second reload.
+- Checking on focus moves the work into the seconds the user spends
+  switching windows, so the RELOAD badge is already up and the new body
+  already registered before they reach for the reload key.
+- The fast path stays, as the backstop for an edit that lands while the
+  tab is already in front.
+
+### What signals a switch
+
+Each covers a case the others don't, so all of them feed
+`refreshLocalScriptsOnTab`:
+
+- **`chrome.tabs.onActivated`** — another tab in this window came to
+  the front. Silent when Chrome itself regains focus.
+- **`chrome.windows.onFocusChanged`** — focus moved to a different
+  Chrome window. Silent on a tab switch.
+- **`sm:focus` from the page** — the injected prelude's own `focus` /
+  `visibilitychange` listener, reported to the SW.
+
+Why the page reports at all, when Chrome has events for this:
+
+- Returning to Chrome from **another application** is the case the
+  feature exists for — edit in an editor, alt-tab back.
+- Measured on Linux/X11, that gesture raises **no** `chrome.*` event:
+  not `onFocusChanged`, not `onActivated`.
+- Whether it does is platform- and window-manager-dependent, so the
+  page is the only signal that behaves the same everywhere.
+
+Details of the page-side half (`installFocusSignal` in
+`src/userscript-prelude.js`):
+
+- One listener per execution world per document — the prelude IIFE is
+  idempotent — armed only once some script has matched this URL. A page
+  running scripts in both worlds therefore reports twice per gesture,
+  each with its own floor. Scripts never register with `allFrames`, so
+  subframes add nothing.
+- A 5 s floor per document, below the SW's own interval so it never
+  becomes the binding limit. It exists to stop focus churn from waking
+  the worker, not to rate-limit checks.
+- MAIN-world scripts reach the SW through `wrapper-bridge.js`, so
+  `sm:focus` is on its allowlist. A page can therefore forge one; what
+  that buys is a check the tab's own navigation already does, bounded
+  by the same 10 s interval, returning nothing to the page. See the
+  bridge's trust-model comment.
+
+Several signals can describe one gesture:
+
+- A per-tab guard in the SW drops one that arrives while another is
+  still reading. It is held only across those reads, so two signals a
+  few milliseconds apart both get through.
+- What actually collapses their *work* is the updater's gate — it
+  coalesces onto a check already in flight, and skips one inside the
+  interval.
+- Deliberately no time-window debounce on the SW side: it would also
+  swallow a genuine second switch, and the interval that should decide
+  whether to re-check belongs in the updater.
+
+`dlog` lines name each signal as it arrives (enable debug logging in
+Options), so "the event never came" and "it came and we filtered it"
+stay distinguishable — the distinction that found the Linux gap.
+
+### What gets checked
+
+- The scripts the tab's **current document** matched — the same set the
+  badge is computed from. An older document in the tab is off screen.
+- **Local rows only**, keyed on each script's own `fileUrl`, not on its
+  collection's location: a container collection holds scripts of both
+  kinds. `localScriptIds` in `src/match-index.ts`.
+  - An http(s) script would mean a conditional GET to a third party on
+    every alt-tab, for a script the user is unlikely to be editing.
+- `@require` / `@resource` follow the ordinary opportunistic policy: a
+  local stand-in is re-read, a remote dependency keeps its cached copy
+  until an explicit Refresh. See
+  [requires.md](requires.md#refresh-policy).
+
+### What it costs
+
+- The two `chrome.*` listeners are registered at the top level, as MV3
+  requires, so **every tab switch and window focus change now starts
+  the service worker if it was idle** — on every profile, including one
+  with no local scripts at all. That is the price of hearing about the
+  switch; there is no way to register conditionally.
+- So the handler answers the cheap question first: `hasLocalScripts()`
+  reads the in-memory match index, and a profile with only http
+  collections returns before touching `chrome.storage.session`.
+- The page-side signal costs nothing on a page we run nothing on — no
+  script matched, no listener installed.
+
+### Rate limiting
+
+`UPDATE_MIN_INTERVAL_MS` (10 s, per script) is the only limit — the
+same gate every opportunistic check passes through. So a burst of
+window switching costs one check per script per 10 s, and a switch back
+inside that window is a no-op.
+
+### What it doesn't do
+
+- **A backgrounded tab is not checked.** Nothing polls; the trigger is
+  the user arriving at the page. A tab they never switch to learns
+  about the edit on its next navigation.
+- **A page with no SourceMonkey scripts reports nothing**, so the
+  page-side signal costs nothing where there is nothing to check.
+- **It doesn't reload anything.** The page keeps running the old body
+  until the user reloads — see [TODO.md](../TODO.md) for the auto-reload
+  idea this is the conservative half of.
+
 ## Probe: what `@updateURL` / `@downloadURL` claim
 
 ### Why we don't update from them
@@ -190,6 +307,11 @@ Under the `Version` row, one row per probe:
   of an up-to-date script.
 - Three things each earn a row:
   - **The versions differ** (`newer` / `older`).
+  - **Ours is a local edit of theirs** (`edited`): our `@version` is
+    theirs plus a `-local` tail, the mark a local copy gets (see
+    [local-copy.md](local-copy.md#the--local-suffix)). By the
+    prerelease rule alone their release would rank *above* us and the
+    copy would read OUTDATED against the version it was copied from.
   - **Exactly one side declares a `@version`.** We can't rank them, but
     "they publish 2.0 and we declare nothing" is still a difference
     worth seeing. The `Version` row above then reads `<none>`, so both
@@ -205,6 +327,7 @@ Under the `Version` row, one row per probe:
     a good check, which is the more common way this breaks.
 - Value and tooltip split by which of the two is the news:
   - versions differ → value `2.1 (Newer)` / `1.0 (Older)`.
+  - a local edit → value `2.0 (Base of this local edit)`.
   - only they have a version → value is the bare number, no qualifier.
   - versions agree, check failed → value is the error, tooltip adds
     `last known version 2.0`.

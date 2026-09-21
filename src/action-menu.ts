@@ -8,9 +8,14 @@
 // (each script's row + all of its indented `GM_registerMenuCommand`
 // rows) into it as a unit. Splitting a group across the two levels
 // would orphan commands from their script in the UI.
+//
+// A fixed "Reload page with no userscripts" row closes the menu
+// whenever at least one script row is shown. It counts against the
+// same cap, so script groups get one slot fewer when it's present.
 
 export const ACTION_MENU_LIMIT = 6;
 export const ACTION_MENU_MORE_LABEL = 'More';
+export const ACTION_MENU_RELOAD_LABEL = 'Reload page with no userscripts';
 
 export interface ActionMenuCommand {
   commandId: string;
@@ -37,6 +42,10 @@ export interface ActionMenuPlan {
   // creates a single "More" parent at the top level and nests these
   // groups beneath it.
   more: ActionMenuScript[];
+  // True when the menu ends with the "Reload page with no userscripts"
+  // row — i.e. whenever there is at least one script row. Rendered
+  // after everything else, at the top level, never inside More.
+  reloadWithoutScripts: boolean;
 }
 
 // Cost of a group in menu rows: one for the script + one per command.
@@ -50,13 +59,17 @@ function groupCost(g: ActionMenuScript): number {
 // the visible order would scramble (e.g. a small later group jumping
 // ahead of a big earlier one).
 export function planActionMenu(scripts: ActionMenuScript[]): ActionMenuPlan {
+  const reloadWithoutScripts = scripts.length > 0;
+  // The reload row is fixed at the top level, so it takes one of the
+  // slots before any script group is placed.
+  const limit = ACTION_MENU_LIMIT - (reloadWithoutScripts ? 1 : 0);
   let total = 0;
   for (const g of scripts) total += groupCost(g);
-  if (total <= ACTION_MENU_LIMIT) {
-    return { top: scripts.slice(), more: [] };
+  if (total <= limit) {
+    return { top: scripts.slice(), more: [], reloadWithoutScripts };
   }
-  // Reserve one of the six top slots for the "More" parent itself.
-  const budget = ACTION_MENU_LIMIT - 1;
+  // Reserve one more top slot for the "More" parent itself.
+  const budget = limit - 1;
   const top: ActionMenuScript[] = [];
   const more: ActionMenuScript[] = [];
   let used = 0;
@@ -71,5 +84,5 @@ export function planActionMenu(scripts: ActionMenuScript[]): ActionMenuPlan {
       more.push(g);
     }
   }
-  return { top, more };
+  return { top, more, reloadWithoutScripts };
 }

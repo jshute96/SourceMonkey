@@ -138,9 +138,51 @@ When could this trigger:
 - For MAIN-world scripts: the wrapper-bridge round-trip didn't
   reply (page navigated away mid-handshake, bridge wasn't
   installed yet, etc.).
+- For MAIN-world scripts: the SW's `bridgeMayActAs` gate refused
+  to hand the values over the bridge. See
+  [MAIN-world storage](#main-world-storage) below.
 
-In every case the failure mode is a clear console error rather
+In every case the failure mode is a clear console message rather
 than a silently-misbehaving script.
+
+## MAIN-world storage
+
+A script that asks for `unsafeWindow` — by `@grant` or by using the
+name — runs in the page's own world (see
+[injection.md](injection.md#unsafewindow-forces-main-world)), and takes
+its storage grants with it. Same cache, same batching, same snapshot
+contract — only the transport differs, and that has consequences.
+
+- **The snapshot is gated.** MAIN world has no `chrome.runtime`, so
+  the `sm:check-pending` request rides `wrapper-bridge.js`, where a
+  hostile page could forge it. The SW hands `gmValues` back only for a
+  script that actually runs in MAIN world on the sending page and
+  granted a storage API — the set whose values that page can already
+  read out of the MAIN-world `window.__SM_GM__`. A refusal is a missing snapshot, i.e. the hard
+  abort above.
+- **The page can read and write the cache.** `window.__SM_GM__` is a
+  global in the page's realm. This is inherent to `@grant unsafeWindow`
+  and matches TM/VM; it is also why the gate can concede the snapshot
+  without conceding anything new.
+- **Teardown flushes survive because the bridge path is synchronous.**
+  - Every page→SW request is a DOM `CustomEvent`
+    (`sourcemonkey-bridge-sync`, JSON in `detail`), whose listeners all
+    run in the dispatching task — so the bridge's
+    `chrome.runtime.sendMessage` is as durable as a USER_SCRIPT
+    script's own.
+  - With the `postMessage` this replaced, the bridge read the request
+    on a later task that a document in `pagehide` never gets:
+    `GM_setValue(); location.href = …` lost the write every time.
+  - The `pagehide` / `visibilitychange → hidden` flush additionally
+    skips the reply (`transportSendNow`), since nothing would be left
+    to read it.
+  - Pinned by `tests/e2e/gm-storage-teardown-main.spec.ts`; deferring
+    the flush to a later task fails both of its tests.
+
+Cross-tab broadcasts reach MAIN-world scripts too: the SW stamps each
+push with the destination script's world and the bridge re-posts only
+the MAIN-addressed ones, so an isolated script's writes never become
+page-visible.
 
 ## Propagating writes to other live documents
 
@@ -324,6 +366,170 @@ Implementation details below the freshness layer:
 - **GM4 promise forms.** `GM.setValue` / `GM.getValue` / etc are
   emitted by the binding emitter as Promise wrappers around the
   legacy `GM_x` calls — same behavior, async return.
+
+## Value type fidelity
+
+Both hops to disk — `chrome.runtime.sendMessage`, then
+`chrome.storage.local` — serialize JSON-style. Left alone that
+rewrites values a userscript is entitled to store, with no error:
+
+| stored | read back without the codec |
+| --- | --- |
+| `Date` | ISO string |
+| `NaN` / `Infinity` | `null` |
+| `Map` / `Set` | `{}` |
+| `undefined` | key absent |
+| `Uint8Array` etc. | `{"0":1,"1":2,…}` |
+| `ArrayBuffer` / `DataView` | `{}` |
+| `Error` | `{}` |
+| `RegExp` | `{}` |
+| `-0`, `BigInt` | `0`, throws on write |
+
+### Where the codec lives
+
+- **Page-side**, in `wrapper-gm-runtime.js` (`encodeValue` /
+  `decodeValue`). It has to be: the message hop mangles the value
+  before the SW ever sees it.
+- `storage.set` encodes; `storage.init`, `applyRemoteUpdate` and
+  `applyResyncSnapshot` decode.
+- The SW and `gm-values.ts` treat the stored form as opaque JSON.
+
+### The format
+
+- A value JSON already round-trips exactly is stored **raw**.
+- Anything else is wrapped once: `{ __smv__: 1, v: <node> }`.
+- Inside the envelope every node is a `[tag, …payload]` **array**, so
+  a tag can never collide with a userscript's object key.
+
+#### Node tags
+
+Every value inside `v` is one of these. An unrecognized tag decodes to
+`undefined`, so a row written by a newer build degrades rather than
+throwing.
+
+| node | value |
+| --- | --- |
+| `["p", v]` | string, boolean, finite number, or `null` — carried as-is |
+| `["u"]` | `undefined` |
+| `["nan"]` / `["inf"]` / `["-inf"]` / `["-0"]` | `NaN`, `±Infinity`, `-0` |
+| `["big", "123"]` | `BigInt`, as its decimal string |
+| `["d", ms]` | `Date`; `ms` is `"nan"` for an Invalid Date |
+| `["re", source, flags]` | `RegExp` |
+| `["a", [node, …]]` | array |
+| `["o", [[key, node], …]]` | object — entries, so key order survives |
+| `["m", [[keyNode, valNode], …]]` | `Map` |
+| `["s", [node, …]]` | `Set` |
+| `["ab", base64]` | `ArrayBuffer` |
+| `["dv", base64]` | `DataView` |
+| `["ta", ctorName, base64]` | typed array, e.g. `["ta", "Uint8Array", …]` |
+| `["err", name, message, stack, [[key, node], …]]` | `Error`; `stack` may be `null` |
+
+#### Encoding notes
+
+- Binary values carry their bytes as **base64** — JSON has no better
+  option, and the ~33% growth beats the ~4x of an array of decimal
+  numbers. `String.fromCharCode.apply` is chunked at 32k so a large
+  buffer doesn't overflow the argument stack.
+- An `["err", …]` node's trailing entries are the own enumerable
+  properties the script attached (`err.code = 42`); `message` and
+  `stack` are non-enumerable, hence their own slots. The standard
+  error constructors are revived as themselves; a subclass name
+  survives on a plain `Error`.
+- A `["ta", …]` node with a constructor name this build doesn't know
+  decodes to the raw `Uint8Array` bytes rather than to nothing.
+- **Brand checks can't trust `Object.prototype.toString`** — it
+  reports whatever `Symbol.toStringTag` says, so `{[Symbol.toStringTag]:
+  'Map'}` claims to be a `Map`. Each tagged branch confirms the brand
+  by calling a native accessor that needs the real internal slot
+  (`RegExp.prototype.source`'s getter, `%TypedArray%.prototype.length`'s,
+  and so on), and a failure falls through to the ordinary object walk
+  — which is what such a value always got. `Error`, which has no such
+  slot, is discriminated by its prototype.
+- **Decoding is `__proto__`-safe.** A stored own `__proto__` key is
+  reinstated with `Object.defineProperty`, so it becomes a property
+  rather than replacing the decoded object's prototype.
+- A row that fails to decode is handed back **as-is** rather than as
+  `undefined`, so the script can inspect it — and so `GM_getValue`'s
+  default isn't defeated by a key that is present.
+
+### Why that is backwards compatible
+
+- Old rows are plain values, and `decodeValue` returns anything
+  without the `__smv__` marker untouched.
+- New writes of plain values are byte-identical to what older builds
+  wrote, so a downgrade still reads them.
+- The one ambiguity — a raw value that itself contains a `__smv__`
+  key — is closed by treating such a value as not-plain, so it goes
+  through the wrapped path.
+
+### Deliberate limits
+
+- **Class instances** keep their own enumerable properties but lose
+  their prototype. Nothing else is possible — the class isn't
+  reachable from the codec at decode time. Structured clone has the
+  same limit. Tagged types *nested inside* an instance still revive.
+- **`Blob` / `File`** would need an async read, and `GM_setValue` is
+  synchronous.
+- **Object identity is not preserved.** Two references to one object
+  decode as two objects; two typed arrays over one `ArrayBuffer`
+  decode over two buffers. A `DataView`'s `byteOffset` is dropped —
+  it decodes over a fresh, exactly-sized buffer.
+- **Circular references throw**, at the `GM_setValue` call site.
+  That is the case where copying-twice actually breaks the value
+  rather than just duplicating it. They were previously lost
+  silently in the async flush.
+- **`toJSON` is still honoured** for anything without a tag, in the
+  same position `JSON.stringify` would call it.
+- **Encoding happens at `set` time**, so an unstorable value throws
+  at the `GM_setValue` call site instead of vanishing in the async
+  flush. It does *not* make mutating a stored object safe: a
+  JSON-clean value encodes to itself, so the pending write still
+  holds the live object. Mutating what you stored was already
+  unsupported.
+
+### Compared with Violentmonkey
+
+Checked **2026-08-29** against Violentmonkey `master` @ `a3ed56b`
+(nearest release v2.48.0) — specifically `dumpScriptValue` in
+`src/common/util.js` @ `1b925f6` and `decodeValue` in
+`src/injected/web/gm-values.js` @ `8667f7d`. VM may have moved since;
+re-read those two functions before trusting the table.
+
+VM's codec is a one-character tag — `s`, `n`, `b` — plus the raw
+string for top-level primitives, and `o` + `JSON.stringify` for
+everything else. Past that primitive/object split it round-trips
+exactly what JSON does, by design — VM's API docs require the value to
+be "JSON serializable".
+
+Ours is a superset:
+
+| | VM | SourceMonkey |
+| --- | --- | --- |
+| string / number / boolean / `null` / plain arrays & objects | yes | yes |
+| top-level `NaN`, `±Infinity` | yes | yes |
+| **nested** `NaN`, `±Infinity` | no — `null` | yes |
+| `Date` | no — ISO string | yes |
+| `RegExp` | no — `{}` | yes |
+| `Map` / `Set` | no — `{}` | yes |
+| `undefined` | no — not stored | yes |
+| `-0` | no — `0` | yes |
+| `BigInt` | no — throws | yes |
+| typed arrays / `ArrayBuffer` / `DataView` | no — `{}` or `{"0":…}` | yes |
+| `Error` | no — `{}` | yes |
+| class instance prototype | no | no |
+| `Blob` / `File` | no | no |
+| object identity / cycles | no | no — cycles throw |
+
+Two notes on the corners:
+
+- VM *does* round-trip a **top-level** `NaN` / `Infinity`, because
+  primitives are interpolated into a string rather than JSON-encoded:
+  `"nNaN"` decodes via `+"NaN"`. Nested in an object it hits
+  `JSON.stringify` and becomes `null`. We handle both positions.
+- The stored formats are unrelated — VM writes a tagged string, we
+  write a raw JSON value or a `{ __smv__: 1, … }` envelope — so
+  neither manager can read the other's rows. That has always been
+  true and isn't something we support.
 
 ## Cross-script isolation
 

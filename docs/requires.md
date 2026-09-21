@@ -11,15 +11,25 @@ Resolution goes through [`src/file-loader.ts`](../src/file-loader.ts) —
 same rules as `@icon`:
 
 - Absolute `http(s)://` URL.
-- Relative path — resolved against the parent directory of the host
-  script's own URL. Works for both file:// and HTTP-loaded scripts.
-- **Not accepted:** absolute `file://`, `data:`, `tampermonkey://vendor/`,
-  `..` / `%2e%2e` / leading `/` (escape rules from file-loader).
+- Relative path — resolved against the host script's own URL. Works
+  for both file:// and HTTP-loaded scripts.
+  - From an **HTTP-loaded** script it may climb (`../lib/util.js`,
+    `/lib/util.js`, `//cdn.example.com/util.js`), matching
+    Violentmonkey.
+  - From a **local** (`file://`) script it must stay at or under the
+    script's own folder — see
+    [local-file-overrides.md](local-file-overrides.md#relative-paths-and-containment).
+- **Not accepted:** absolute `file://`, `data:`,
+  `tampermonkey://vendor/`.
 
-Extension over TM/VM/GM: relative paths. None of the major managers
-support them — a script that relies on this will only work in
-SourceMonkey. To keep a script portable *and* develop it locally, write
-the absolute URL and let a file on disk stand in for it — see
+Extension over TM/GM: relative paths at all — neither resolves one,
+from a local script or a remote one, so a script that relies on them
+loses those two managers. VM resolves relative refs against the URL a
+script was installed from, which for a remote install is the same
+directory we use — so a remote script's relative ref works there, and a
+local script's works only here. To keep a script portable *and*
+develop it locally, write the
+absolute URL and let a file on disk stand in for it — see
 [local-file-overrides.md](local-file-overrides.md).
 
 ## `.js` suffix gate
@@ -278,6 +288,11 @@ Consequences of the shared scope, all matching TM/VM:
   `GM_*`, `unsafeWindow`, `__sm*` — is a redeclaration `SyntaxError`.
   `const unsafeWindow = window.wrappedJSObject || window;` is a real
   userscript-library idiom that this now rejects.
+  - That one case is handled for the *implicit* `unsafeWindow` binding:
+    when a require declares the name, the binding an ungranted
+    reference would have added is suppressed
+    (`sourceDeclaresUnsafeWindow`). A declared `@grant unsafeWindow`
+    still collides — the author asked for the binding by name.
 - A require declaring top-level `self` or `window` also breaks the
   wrap, whose own preamble dereferences both. See
   [injection-modes.md](injection-modes.md#cons--caveats).

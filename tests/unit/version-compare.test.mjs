@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { compareVersions, versionRelation } from '../../dist/version-compare.js';
+import {
+  compareVersions,
+  isLocalEditVersion,
+  localEditVersion,
+  versionRelation,
+} from '../../dist/version-compare.js';
 
 // Helper so the assertions read as an ordering rather than as three
 // separate -1/0/1 checks that could disagree with each other.
@@ -80,4 +85,29 @@ test('versionRelation: a missing @version on either side is unknown', () => {
   assert.equal(versionRelation('1.0', undefined), 'unknown');
   assert.equal(versionRelation('', '1.0'), 'unknown');
   assert.equal(versionRelation('1.0', '  '), 'unknown');
+});
+
+test('localEditVersion: a plain -local append, recognised afterwards', () => {
+  assert.equal(localEditVersion('13.2'), '13.2-local');
+  assert.equal(localEditVersion(' 1.0-beta '), '1.0-beta-local');
+  assert.ok(isLocalEditVersion('13.2-local'));
+  assert.ok(isLocalEditVersion('13.2-local.2'));
+  assert.ok(isLocalEditVersion('1.0-beta-local'));
+  assert.ok(!isLocalEditVersion('13.2'));
+  assert.ok(!isLocalEditVersion('1.0-beta'));
+  assert.ok(!isLocalEditVersion('1.0-localhost'));
+});
+
+test('versionRelation: a -local edit of the probed version is edited, not newer', () => {
+  // The prerelease rule alone would put 13.2 above 13.2-local and
+  // report the copy outdated against the version it was copied from.
+  assert.equal(versionRelation('13.2-local', '13.2'), 'edited');
+  assert.equal(versionRelation('13.2-local', '13.2.0'), 'edited');
+  assert.equal(versionRelation('1.0-beta-local', '1.0'), 'edited');
+  // Upstream moved on: genuinely newer.
+  assert.equal(versionRelation('13.2-local', '13.3'), 'newer');
+  // The copy runs ahead of a prerelease source, the ordinary case.
+  assert.equal(versionRelation('1.0-beta-local', '1.0-beta'), 'older');
+  // A real prerelease whose release has shipped stays outdated.
+  assert.equal(versionRelation('1.0-beta', '1.0'), 'newer');
 });

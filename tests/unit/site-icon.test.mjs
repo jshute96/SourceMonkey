@@ -14,8 +14,12 @@ import {
   ensureIconForUrl,
   iconRefFromHeader,
   isCacheFresh,
+  isIconCacheKey,
+  isSameHostRedirect,
+  parseCachedIconRow,
   parseIconLinks,
   pickBestIconCandidate,
+  sitesTooltip,
   maxDeclaredSize,
   usableCacheHit,
 } from '../../dist/site-icon.js';
@@ -157,6 +161,68 @@ test('usableCacheHit: missing and stale rows are misses', () => {
   assert.equal(usableCacheHit(undefined), null);
   const old = { dataUrl: 'data:image/png;base64,SGk=', fetchedAt: 0 };
   assert.equal(usableCacheHit(old), null);
+});
+
+test('usableCacheHit: rejects rows from an older discovery schema version', () => {
+  const unversioned = { dataUrl: 'data:image/png;base64,SGk=', fetchedAt: Date.now() };
+  const older = { dataUrl: 'data:image/png;base64,SGk=', fetchedAt: Date.now(), v: 1 };
+  const current = { dataUrl: 'data:image/png;base64,SGk=', fetchedAt: Date.now(), v: 2 };
+  assert.equal(usableCacheHit(unversioned, 2), null);
+  assert.equal(usableCacheHit(older, 2), null);
+  assert.equal(usableCacheHit(current, 2), current);
+});
+
+// ---------- isSameHostRedirect ----------
+
+test('isSameHostRedirect: allows same-host, scheme, and www. redirects', () => {
+  assert.equal(isSameHostRedirect('https://example.com/', 'https://example.com/home'), true);
+  assert.equal(isSameHostRedirect('http://example.com/', 'https://example.com/'), true);
+  assert.equal(isSameHostRedirect('https://example.com/', 'https://www.example.com/'), true);
+  assert.equal(isSameHostRedirect('https://www.example.com/a', 'https://example.com/b'), true);
+  assert.equal(isSameHostRedirect('http://localhost:3000/', 'http://localhost:3000/app'), true);
+});
+
+test('isSameHostRedirect: host-level, so a port change or a subdomain is another host', () => {
+  assert.equal(isSameHostRedirect('http://localhost:3000/', 'http://localhost:8080/'), false);
+  assert.equal(isSameHostRedirect('https://example.com/', 'https://app.example.com/'), false);
+  // Registrable domain is not enough: this is the SSO case itself.
+  assert.equal(
+    isSameHostRedirect('https://app.corp.google.com/', 'https://login.corp.google.com/'),
+    false,
+  );
+});
+
+test('isSameHostRedirect: an unparsable URL on either side is a mismatch', () => {
+  assert.equal(isSameHostRedirect('not a url', 'https://example.com/'), false);
+  assert.equal(isSameHostRedirect('https://example.com/', ''), false);
+});
+
+test('isSameHostRedirect: rejects cross-host SSO and marketing redirects', () => {
+  assert.equal(
+    isSameHostRedirect('http://localhost:3000/', 'http://localhost:8080/login'),
+    false,
+  );
+  assert.equal(
+    isSameHostRedirect(
+      'https://campus.corp.google.com/',
+      'https://login.corp.google.com/request?authLevel=2000000',
+    ),
+    false,
+  );
+  assert.equal(
+    isSameHostRedirect(
+      'https://calendar.google.com/calendar/',
+      'https://accounts.google.com/v3/signin/identifier',
+    ),
+    false,
+  );
+  assert.equal(
+    isSameHostRedirect(
+      'https://docs.google.com/presentation/',
+      'https://workspace.google.com/products/slides/',
+    ),
+    false,
+  );
 });
 
 // ---------- parseIconLinks ----------
@@ -341,3 +407,54 @@ test('dataUrlToBlob: returns null (never throws) on malformed base64', () => {
 test('dataUrlToBlob: returns null for a data: URL with no comma', () => {
   assert.equal(dataUrlToBlob('data:image/png;base64'), null);
 });
+
+// ---------- sitesTooltip ----------
+
+test('sitesTooltip: one URL per line up to the cap, then a count', () => {
+  assert.equal(sitesTooltip(['https://a/', 'https://b/']), 'https://a/\nhttps://b/');
+  const many = Array.from({ length: 13 }, (_, i) => `https://s${i}.example/`);
+  const lines = sitesTooltip(many).split('\n');
+  assert.equal(lines.length, 11);
+  assert.equal(lines[9], 'https://s9.example/');
+  assert.equal(lines[10], '(and 3 more)');
+  // Exactly at the cap: no count line.
+  assert.equal(sitesTooltip(many.slice(0, 10)).split('\n').length, 10);
+});
+
+// ---------- Debug cache inspection helpers ----------
+
+test('isIconCacheKey: matches only icon cache prefixes', () => {
+  assert.equal(isIconCacheKey('siteIcon:https://example.com'), true);
+  assert.equal(isIconCacheKey('pathIcon:https://example.com/a/'), true);
+  assert.equal(isIconCacheKey('iconUrl:https://example.com/i.png'), true);
+  assert.equal(isIconCacheKey('script:abc'), false);
+  assert.equal(isIconCacheKey('collection:abc'), false);
+});
+
+test('parseCachedIconRow: extracts kind, target, expiry, and usability', () => {
+  const now = 1_000_000_000_000;
+  const originRow = parseCachedIconRow(
+    'siteIcon:https://example.com',
+    { dataUrl: 'data:image/png;base64,SGk=', fetchedAt: now - 1000, v: 2 },
+    now,
+  );
+  assert.ok(originRow);
+  assert.equal(originRow.kind, 'origin');
+  assert.equal(originRow.target, 'https://example.com');
+  assert.equal(originRow.isFresh, true);
+  assert.equal(originRow.isUsable, true);
+  assert.equal(originRow.mimeType, 'image/png');
+  assert.equal(originRow.byteLength, 2);
+
+  // Older schema version on a discovered icon is marked unusable.
+  const staleSchema = parseCachedIconRow(
+    'pathIcon:https://example.com/app/',
+    { dataUrl: 'data:image/png;base64,SGk=', fetchedAt: now - 1000, v: 1 },
+    now,
+  );
+  assert.ok(staleSchema);
+  assert.equal(staleSchema.kind, 'path');
+  assert.equal(staleSchema.isFresh, true);
+  assert.equal(staleSchema.isUsable, false);
+});
+
