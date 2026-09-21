@@ -721,12 +721,22 @@ function summaryRow(counts: { removed: number; added: number }, body: HTMLElemen
 // before it are what say what the change is to. The rest of the box
 // is then the block and what follows it.
 //
-// "Where we are" is read off the scroll position each click rather
-// than kept as a block index: the user scrolls by hand too, and a
-// counter would send the next click somewhere unrelated to what is on
-// screen. The positions compared are the landing spots, so a block
-// counts as "current" only once it has been scrolled to.
+// Which block an arrow steps from: the marked one (the last jumped
+// to, `.current`) when any of it is on screen — so the blocks at the
+// ends of the file, whose landing spots are past the scroll range,
+// can still be stepped through by the mark alone, with the box
+// scrolled as far as it goes. When no marked block is on screen
+// (none yet, or the user has scrolled away by hand) the step is from
+// what is on screen instead: Down to the first block whose first row
+// is at or below the top edge, Up to the last one above it. A block
+// index alone would send the click somewhere unrelated to the view.
+// (After a hand scroll, Down can then land a block already near the
+// top by moving the box UP a few rows — the jump's context above —
+// which is the block's own place, not a wrong direction.)
 const CONTEXT_ABOVE = 5;
+
+// A block's first row and the scrollTop a jump to it lands on.
+interface Block { tr: HTMLTableRowElement; top: number }
 
 function blockNav(body: HTMLElement): HTMLButtonElement[] {
   const up = arrowButton('up', 'Previous change');
@@ -738,42 +748,81 @@ function blockNav(body: HTMLElement): HTMLButtonElement[] {
   // sits at the top of the scroller, so it is the scrollTop that puts
   // that row at the top. A block within reach of the top of the file
   // lands at the top.
-  const starts = () => [...scroller().querySelectorAll<HTMLElement>('tr.block-start')].map((tr) => {
+  const blocks = (): Block[] => [...scroller().querySelectorAll<HTMLTableRowElement>('tr.block-start')].map((tr) => {
     let row: HTMLElement = tr;
     for (let n = 0; n < CONTEXT_ABOVE && row.previousElementSibling; n++) {
       row = row.previousElementSibling as HTMLElement;
     }
-    return row.offsetTop;
+    return { tr, top: row.offsetTop };
   });
-  const refresh = () => {
+  // The index to step from, or -1 for "what is on screen": the marked
+  // block, when any of its rows is in view — its first row above the
+  // top edge with the rest still showing is still the block in hand.
+  const current = (all: Block[]): number => {
     const el = scroller();
-    const offsets = starts();
-    up.disabled = !offsets.some((o) => o < el.scrollTop - 1);
-    // Rows past the end of the scroll range can never be scrolled to,
-    // so the last few blocks are reached when the scroller is at its
-    // end, not when their row is at the top.
-    const maxTop = el.scrollHeight - el.clientHeight;
-    down.disabled = el.scrollTop >= maxTop - 1 || !offsets.some((o) => o > el.scrollTop + 1);
+    const i = all.findIndex((b) => b.tr.classList.contains('current'));
+    if (i < 0) return -1;
+    let last: HTMLElement = all[i].tr;
+    while (last.nextElementSibling?.classList.contains('current')) last = last.nextElementSibling as HTMLElement;
+    const top = all[i].tr.offsetTop;
+    const bottom = last.offsetTop + last.offsetHeight;
+    return bottom > el.scrollTop && top < el.scrollTop + el.clientHeight ? i : -1;
   };
-  up.addEventListener('click', () => {
-    const el = scroller();
-    const before = starts().filter((o) => o < el.scrollTop - 1);
-    if (before.length) el.scrollTop = before[before.length - 1];
-  });
-  down.addEventListener('click', () => {
-    const el = scroller();
-    const after = starts().find((o) => o > el.scrollTop + 1);
-    if (after !== undefined) el.scrollTop = after;
-  });
+  const target = (direction: 'up' | 'down'): Block | undefined => {
+    const all = blocks();
+    const i = current(all);
+    if (i >= 0) return all[direction === 'up' ? i - 1 : i + 1];
+    const top = scroller().scrollTop;
+    return direction === 'up'
+      ? all.filter((b) => b.tr.offsetTop < top).pop()
+      : all.find((b) => b.tr.offsetTop >= top);
+  };
+  const refresh = () => {
+    up.disabled = !target('up');
+    down.disabled = !target('down');
+  };
+  const step = (direction: 'up' | 'down') => {
+    const block = target(direction);
+    if (!block) return;
+    // Past the scroll range this is clamped: the mark alone moves.
+    scroller().scrollTop = block.top;
+    markCurrent(body, block.tr);
+    refresh();
+  };
+  up.addEventListener('click', () => step('up'));
+  down.addEventListener('click', () => step('down'));
   for (const el of body.classList.contains('split') ? body.querySelectorAll('.pane') : [body]) {
     el.addEventListener('scroll', refresh);
   }
   // The body is not in the layout yet — it is appended after this
   // returns — so the first refresh waits for it: the observer reports
-  // once on observe, after layout. A resize also changes where the
-  // scroll range ends, which the Down arrow's state depends on.
+  // once on observe, after layout. A resize also changes what is on
+  // screen, which the arrows' states depend on.
   new ResizeObserver(refresh).observe(body);
   return [up, down];
+}
+
+// Mark the block just jumped to, on every row of it and in both panes:
+// the landing spot has lines of context above the block, and often
+// another block in view, so nothing else says which one the arrow
+// went to. `.current` on the rows; the gutter is what wears it (the
+// line numbers, compare.html). The mark stays until the next jump, or
+// a redraw of the diff (view, scope, tab) — a stale one off screen
+// after a hand scroll costs nothing.
+//
+// The panes hold the same rows at the same indexes (splitPanes), so
+// the block is found by index in the given table and applied to each.
+function markCurrent(body: HTMLElement, start: HTMLTableRowElement): void {
+  for (const tr of body.querySelectorAll('tr.current')) tr.classList.remove('current');
+  const table = start.closest('table');
+  if (!table) return;
+  const from = [...table.rows].indexOf(start);
+  for (const t of body.querySelectorAll('table')) {
+    const rows = [...t.rows];
+    for (let i = from; i < rows.length && rows[i].matches('.del, .add, .filler'); i++) {
+      rows[i].classList.add('current');
+    }
+  }
 }
 
 // An Up or Down arrow, in the same character and box as the collections

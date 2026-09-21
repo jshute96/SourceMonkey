@@ -356,17 +356,19 @@ test.describe('compare page', () => {
     await page.close();
   });
 
-  test('the arrows jump between change blocks and stop at the ends', async ({
+  test('the arrows step through change blocks, the marked one first', async ({
     extensionContext, extensionId, sm,
   }) => {
-    // Three changes far enough apart that, whole file, each block is
-    // its own screenful: the header's version line, then two body
-    // lines. (The version differs in every test; here it is the first
-    // block.)
+    // Changes far enough apart that, whole file, each block is its own
+    // screenful: the header's version line, two body lines, and one
+    // by the end of the file that the box cannot scroll far enough to
+    // land on. (The version differs in every test; here it is the
+    // first block.)
     const lines = Array.from({ length: 300 }, (_, i) => `console.log(${i});`);
     const edited = [...lines];
     edited[100] = 'console.log("a");';
     edited[200] = 'console.log("b");';
+    edited[298] = 'console.log("c");';
     write(dir, { version: '1.0.0', body: lines.join('\n') + '\n' });
     write(other, { version: '1.1.0', body: edited.join('\n') + '\n' });
     await sm.addCollection(dir.path);
@@ -382,49 +384,82 @@ test.describe('compare page', () => {
     await page.locator('.seg button[data-value="unified"]').click();
     const body = page.locator('.diff-body');
     const starts = body.locator('tr.block-start');
-    await expect(starts).toHaveCount(3);
+    await expect(starts).toHaveCount(4);
     const prev = page.locator('.diff-summary .block-prev');
     const next = page.locator('.diff-summary .block-next');
-    // Each click lands the block five lines down from the top of the
-    // box. The first block is a few header lines from the top of the
-    // file, so its landing spot is the top — where the box already is
-    // — and the first click goes to the second block. (Within a
-    // pixel: rows are 19.5px tall, so half the offsets are fractional,
-    // and the box lands on a whole pixel.)
+    const current = body.locator('tr.current');
+    // A jump lands the block five lines down from the top of the box,
+    // or as near as the box can scroll. (Within a pixel: rows are
+    // 19.5px tall, so half the offsets are fractional, and the box
+    // lands on a whole pixel.)
     const rowTop = (i: number) => starts.nth(i).evaluate((tr) => {
       let row = tr;
       for (let n = 0; n < 5; n++) row = row.previousElementSibling ?? row;
       return (row as HTMLElement).offsetTop;
     });
     const scrollTop = () => body.evaluate((el) => el.scrollTop);
+    const maxTop = () => body.evaluate((el) => el.scrollHeight - el.clientHeight);
+    // Nothing marked yet: Down goes to the first block on screen — the
+    // version line, a few rows from the top, so the box stays put and
+    // the mark alone shows it. Marked, on both its rows (a line out, a
+    // line in) and no others.
     await expect(prev).toBeDisabled();
-    await expect(next).toBeEnabled();
+    await next.click();
+    expect(await scrollTop()).toBe(0);
+    await expect(current).toHaveCount(2);
+    await expect(current.first()).toHaveClass(/\bblock-start\b/);
+    await expect(current.first()).toHaveText(/1\.1\.0/);
+    await expect(prev).toBeDisabled();
     await next.click();
     expect(await scrollTop()).toBeCloseTo(await rowTop(1), 0);
+    await expect(current.filter({ hasText: '"a"' })).toHaveCount(1);
     await expect(prev).toBeEnabled();
     await next.click();
     expect(await scrollTop()).toBeCloseTo(await rowTop(2), 0);
+    await expect(current.filter({ hasText: '"b"' })).toHaveCount(1);
+    // The last block is past where the box can scroll: the box goes
+    // as far as it can and the mark steps on to it.
+    await expect(next).toBeEnabled();
+    await next.click();
+    expect(await scrollTop()).toBeCloseTo(await maxTop(), 0);
+    await expect(current.filter({ hasText: '"c"' })).toHaveCount(1);
     await expect(next).toBeDisabled();
+    // And back, from the mark.
     await prev.click();
-    expect(await scrollTop()).toBeCloseTo(await rowTop(1), 0);
+    expect(await scrollTop()).toBeCloseTo(await rowTop(2), 0);
+    await expect(current.filter({ hasText: '"b"' })).toHaveCount(1);
+    await prev.click();
     await prev.click();
     expect(await scrollTop()).toBe(0);
+    await expect(current.first()).toHaveText(/1\.1\.0/);
     await expect(prev).toBeDisabled();
-    // Scrolled by hand past the last block, Down has nowhere to go.
-    await body.evaluate((el) => { el.scrollTop = el.scrollHeight; });
-    await expect(next).toBeDisabled();
-    await expect(prev).toBeEnabled();
+    // Scrolled by hand to the middle, the mark is off screen, so the
+    // arrows go by what is in view: Down to the first block below the
+    // top edge, whichever was marked.
+    const mid = await rowTop(2);
+    await body.evaluate((el, top) => { el.scrollTop = top - 200; }, mid);
+    await expect(next).toBeEnabled();
+    await next.click();
+    expect(await scrollTop()).toBeCloseTo(mid, 0);
+    await expect(current.filter({ hasText: '"b"' })).toHaveCount(1);
 
     // Side by side the left pane is the one the arrows drive, and the
     // right follows it.
     await page.locator('.seg button[data-value="split"]').click();
     const left = page.locator('.diff-body .pane.left');
     const right = page.locator('.diff-body .pane.right');
-    await expect(left.locator('tr.block-start')).toHaveCount(3);
+    await expect(left.locator('tr.block-start')).toHaveCount(4);
+    // Twice: the first marks the header block without moving.
+    await page.locator('.diff-summary .block-next').click();
     await page.locator('.diff-summary .block-next').click();
     const leftTop = await left.evaluate((el) => el.scrollTop);
     expect(leftTop).toBeGreaterThan(0);
     await expect.poll(() => right.evaluate((el) => el.scrollTop)).toBe(leftTop);
+    // The mark is on the same row of both panes: the edited line on
+    // the left (the base is the edited copy) and the original across
+    // from it.
+    await expect(left.locator('tr.current')).toHaveText(/"a"/);
+    await expect(right.locator('tr.current')).toHaveText(/console\.log\(100\)/);
     await page.close();
   });
 

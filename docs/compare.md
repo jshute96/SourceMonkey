@@ -83,10 +83,19 @@ table, then a diff of each file they run. `src/compare.html` +
     it, so its start is plain and the rest of the box shows the block
     and what follows. Side by side, the left pane is driven and the
     right follows.
-  - Where you are is read off the scroll position, not a counter, so
-    scrolling by hand and then clicking goes to the next block from
-    what is on screen. Up is off with no block above; Down is off with
-    none below, or when the box is scrolled to its end.
+  - The block landed on is marked in the gutter: its line numbers in
+    blue with a bar down the edge, on each of its rows in both panes.
+    - With context above it, and often another block in view, nothing
+      else says which block the arrow went to.
+    - The mark stays until the next jump or a redraw of the diff
+      (view, scope, tab).
+  - An arrow steps from the marked block when any of it is on screen.
+    - So the blocks at the ends of the file, past where the box can
+      scroll, are stepped through by the mark alone.
+    - With no marked block on screen (none yet, or scrolled away by
+      hand) it goes by the view: Down to the first block at or below
+      the top edge, Up to the last one above it.
+    - Each arrow is off when it has nowhere to go.
 - The box fills what is left of the window and the lines scroll inside
   it, like the viewer's code box, so the scroll bars sit at the window's
   edge rather than under a page of code. Under a tall fields table the

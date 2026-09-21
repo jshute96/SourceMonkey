@@ -143,11 +143,12 @@
          file only one side has, the colour of "not the same thing"
          elsewhere on these pages. */
       .chip-same { background: #166534; }
-      .chip-different { background: #1d4ed8; }
+      .chip-different { background: var(--chip-different); }
       .chip-added, .chip-removed { background: #b67200; }
 
       /* ---- The diff box ---- */
       :root {
+        --chip-different: #1d4ed8;
         --diff-del-bg: #fde8e8;
         --diff-del-fg: #8a1c1c;
         --diff-add-bg: #e3f6e8;
@@ -235,6 +236,19 @@
       table.diff tr.add td { background: var(--diff-add-bg); }
       table.diff tr.add td.code { color: var(--diff-add-fg); }
       table.diff tr.del td.num, table.diff tr.add td.num { color: inherit; opacity: 0.6; }
+      /* The block the arrows last jumped to: its line numbers in the
+         DIFFERENT chip's blue, with a bar down the gutter's edge, on
+         each of its rows (the blanks across from it too, side by
+         side). In the gutter and not on the lines, so the change's
+         own colours are what the block shows. An inset shadow rather
+         than a border: nothing moves. Same specificity as the del/add
+         gutter rule above, so this one has to come after it. */
+      table.diff tr.current td.num {
+        color: var(--chip-different);
+        opacity: 1;
+        font-weight: 600;
+        box-shadow: inset 3px 0 0 var(--chip-different);
+      }
       /* `@@ -a,n +b,m @@`: the seam between two hunks. */
       table.diff tr.hunk td { background: #eef2f7; color: #4b5563; font-size: 12px; padding: 2px 8px; }
       /* A pane's blank across from a line only the other side has. Its
