@@ -4,7 +4,8 @@
 // the 6-item action context-menu cap, spilling any overflow into a
 // "More" submenu. Each group (script row + its commands) is kept
 // together so the user never sees a script's commands orphaned from
-// the row they belong to.
+// the row they belong to. A fixed "Reload page with no userscripts"
+// row closes any non-empty menu and takes one of the six slots.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,42 +32,50 @@ test('limit constant matches Chrome behavior', () => {
   assert.equal(ACTION_MENU_LIMIT, 6);
 });
 
-test('empty input → empty top, no overflow', () => {
+test('empty input → empty top, no overflow, no reload row', () => {
   const plan = planActionMenu([]);
   assert.deepEqual(plan.top, []);
   assert.deepEqual(plan.more, []);
+  assert.equal(plan.reloadWithoutScripts, false);
 });
 
-test('total cost <= 6 → everything top-level, no More', () => {
+test('any script row brings the reload row', () => {
+  const plan = planActionMenu([mkGroup('a', 0)]);
+  assert.equal(plan.reloadWithoutScripts, true);
+});
+
+test('total cost <= 5 → everything top-level, no More', () => {
   const groups = [mkGroup('a', 0), mkGroup('b', 1), mkGroup('c', 0)];
   const plan = planActionMenu(groups);
-  // 1 + 2 + 1 = 4 rows total, well under the cap.
+  // 1 + 2 + 1 = 4 rows total, under the cap once the reload row is
+  // counted.
   assert.equal(plan.top.length, 3);
   assert.deepEqual(plan.more, []);
 });
 
-test('exactly 6 rows fits without overflow', () => {
-  const groups = [mkGroup('a', 2), mkGroup('b', 1), mkGroup('c', 0)];
-  // 3 + 2 + 1 = 6 — boundary; should not need More.
+test('exactly 5 rows + the reload row fits without overflow', () => {
+  const groups = [mkGroup('a', 2), mkGroup('b', 0), mkGroup('c', 0)];
+  // 3 + 1 + 1 = 5, plus the reload row = 6 — boundary; no More.
   const plan = planActionMenu(groups);
   assert.equal(plan.top.length, 3);
   assert.deepEqual(plan.more, []);
 });
 
-test('7 rows triggers More, one of six top slots reserved for the parent', () => {
-  const groups = [mkGroup('a', 6)];
-  // Single group of cost 7 cannot fit in the 5-slot top budget (6 - 1
-  // for More), so it all goes into More.
+test('6 rows triggers More: reload row + More parent leave four top slots', () => {
+  const groups = [mkGroup('a', 5)];
+  // Single group of cost 6 cannot fit in the 4-slot top budget (6 - 1
+  // for the reload row - 1 for More), so it all goes into More.
   const plan = planActionMenu(groups);
   assert.equal(plan.top.length, 0);
   assert.equal(plan.more.length, 1);
   assert.equal(plan.more[0].scriptId, 'a');
+  assert.equal(plan.reloadWithoutScripts, true);
 });
 
 test('split groups keep the early ones top-level, late ones in More', () => {
-  // Costs: 3, 2, 2  = 7 → overflow needed; budget = 5.
-  // a (3) fits, b (2) fits exactly to 5 used; c (2) spills to More.
-  const groups = [mkGroup('a', 2), mkGroup('b', 1), mkGroup('c', 1)];
+  // Costs: 2, 2, 2  = 6 → overflow needed; budget = 4.
+  // a (2) fits, b (2) fits exactly to 4 used; c (2) spills to More.
+  const groups = [mkGroup('a', 1), mkGroup('b', 1), mkGroup('c', 1)];
   const plan = planActionMenu(groups);
   assert.deepEqual(plan.top.map((g) => g.scriptId), ['a', 'b']);
   assert.deepEqual(plan.more.map((g) => g.scriptId), ['c']);
@@ -75,10 +84,10 @@ test('split groups keep the early ones top-level, late ones in More', () => {
 test('once a group spills, later groups stay in More even if they would fit', () => {
   // If we kept packing after the first spill, a small late group could
   // jump ahead of a big earlier one — scrambling visible order. Costs:
-  // 4, 3, 1 = 8. budget=5. a (4) fits; b (3) would exceed 5, spills;
+  // 3, 3, 1 = 7. budget=4. a (3) fits; b (3) would exceed 4, spills;
   // c (1) would technically still fit in the leftover top slot but
   // MUST also spill to preserve order.
-  const groups = [mkGroup('a', 3), mkGroup('b', 2), mkGroup('c', 0)];
+  const groups = [mkGroup('a', 2), mkGroup('b', 2), mkGroup('c', 0)];
   const plan = planActionMenu(groups);
   assert.deepEqual(plan.top.map((g) => g.scriptId), ['a']);
   assert.deepEqual(plan.more.map((g) => g.scriptId), ['b', 'c']);

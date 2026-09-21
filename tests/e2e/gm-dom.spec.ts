@@ -51,6 +51,73 @@ test.describe('GM_addStyle / GM_addElement (Phase 4)', () => {
     await page.close();
   });
 
+  test('a MAIN-world GM_addStyle blocked by page CSP is reported once in the Log', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // In MAIN world there is no CSP exemption, so a strict style-src
+    // accepts the <style> element and ignores its rules. We can't
+    // work around that; we say so — once per script per document,
+    // as a warning in the script's Log, not an error (the script ran).
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'CspStyle',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['unsafeWindow', 'GM_addStyle'],
+      },
+      body: `
+        GM_addStyle('#target { color: rgb(1, 2, 3); }');
+        GM_addStyle('#target { font-weight: bold; }');
+        document.body.dataset.smDone = '1';
+      `,
+    });
+    const added = await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+    const scriptId = (await sm.getCollectionWithScripts(added!.id))!.scripts[0].id;
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/strict-csp.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-done', '1');
+    // The style really was ignored by the page.
+    expect(await page.locator('#target').evaluate((el) => getComputedStyle(el).color)).not.toBe('rgb(1, 2, 3)');
+
+    await expect.poll(async () => (await sm.getScriptLog(scriptId)).filter((e) => e.source === 'gm-dom').length).toBe(1);
+    const entry = (await sm.getScriptLog(scriptId)).find((e) => e.source === 'gm-dom')!;
+    expect(entry.level).toBe('warning');
+    expect(entry.message).toMatch(/Content Security Policy blocked the style GM_addStyle added/);
+    await page.close();
+  });
+
+  test('an isolated-world GM_addStyle is exempt from page CSP, and nothing is reported', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'CspStyleIsolated',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_addStyle'],
+      },
+      body: `
+        GM_addStyle('#target { color: rgb(1, 2, 3); }');
+        document.body.dataset.smDone = '1';
+      `,
+    });
+    const added = await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+    const scriptId = (await sm.getCollectionWithScripts(added!.id))!.scripts[0].id;
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/strict-csp.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-done', '1');
+    await expect(page.locator('#target')).toHaveCSS('color', 'rgb(1, 2, 3)');
+    await page.waitForTimeout(300);
+    expect((await sm.getScriptLog(scriptId)).filter((e) => e.source === 'gm-dom')).toHaveLength(0);
+    await page.close();
+  });
+
   test('GM_addElement(tag, attrs) routes head-tags to <head>', async ({
     extensionContext,
     fixtureServer,

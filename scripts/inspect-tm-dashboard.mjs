@@ -2,18 +2,18 @@
 //
 // Diagnostic: dump the Tampermonkey dashboard's first visible script
 // row with cell-level class and id info, so we can pick stable
-// selectors for `listInstalled` in scripts/sync-tm-scripts.mjs and
-// tests/fixtures/tampermonkey.ts.
+// selectors for `listInstalled` in scripts/sync-manager-scripts.mjs and
+// tests/fixtures/tampermonkey-driver.mjs.
 //
 // When to run it
-//   - `sync-tm-scripts.mjs` reports 0 installed scripts even though
+//   - `sync-manager-scripts.mjs` reports 0 installed scripts even though
 //     the dashboard shows them (selector drift).
 //   - A TM upgrade landed and you want to verify the row / cell
 //     classes haven't changed before relying on them.
 //
 // How to run it
 //   1. Start the TM test browser:
-//      `scripts/open-test-browser-with-Tampermonkey.sh`
+//      `scripts/open-test-browser.sh tampermonkey`
 //   2. Have at least one userscript installed in TM (otherwise
 //      "first visible row" returns nothing useful).
 //   3. `node scripts/inspect-tm-dashboard.mjs`
@@ -27,9 +27,10 @@
 // `tr.querySelector(...)` calls.
 
 import { chromium } from 'playwright';
+import { managerCdpPort, managerExtensionId } from '../tests/fixtures/managers.mjs';
 
-const TM_ID = process.env.TM_EXTENSION_ID || 'dhdgffkkebhmkfjojejmpbldmpobfkfo';
-const PORT = Number(process.env.TM_CDP_PORT || 9223);
+const TM_ID = managerExtensionId('tampermonkey');
+const PORT = managerCdpPort('tampermonkey');
 
 const browser = await chromium.connectOverCDP(`http://127.0.0.1:${PORT}`);
 const ctx = browser.contexts()[0];

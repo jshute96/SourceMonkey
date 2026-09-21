@@ -1,14 +1,19 @@
-/* SourceMonkey GM_* shared runtime. Registered once per page in
-   USER_SCRIPT world at document_start, ahead of every userscript.
+/* SourceMonkey GM_* shared runtime. Registered once per page per
+   execution world at document_start, ahead of every userscript — in
+   USER_SCRIPT world, in MAIN world, or both, depending on which worlds
+   have a script granting a runtime-backed API (see buildGmRuntimeSpecs
+   in src/injector.ts). One source, two transports; see the transport
+   section below.
 
    Per-script wrappers compile in `const GM_X = function(...) { ... }`
    for every API the script @grants. Two delegation modes:
      - SYNC API bodies call into methods on `window.__SM_GM__` defined
        here. The runtime is shared across all userscripts in this
-       document (USER_SCRIPT world is one realm per extension per
-       document), so per-script state lives in keyed sub-objects.
-     - ASYNC API bodies don't go through here; they send messages
-       straight to the SW via chrome.runtime.sendMessage.
+       document and world (each world is one realm per document), so
+       per-script state lives in keyed sub-objects.
+     - ASYNC API bodies route through `__SM_GM__.sendAsync`, which
+       reaches the SW directly in USER_SCRIPT world and via
+       wrapper-bridge.js in MAIN.
 
    Build rules match userscript-prelude.js — block comments only, no
    `//` sequences in strings, the build minifies to one physical line.
@@ -17,11 +22,13 @@
    Shim cache. See docs/GM-API-strategy.md "Recommendation: a tiny
    'shim cache', not a full vault". We capture a small set of native
    references at runtime-init time so a sibling userscript that
-   monkey-patches builtins later can't break our GM_* impls. The
-   USER_SCRIPT world is isolated from the page so the page itself
-   can't reach in; the threat we mitigate here is "userscript A
-   stomps on Array.prototype.forEach and userscript B's GM_* call
-   then sees the stomped version." */
+   monkey-patches builtins later can't break our GM_* impls. In
+   USER_SCRIPT world that is the whole threat, since the page can't
+   reach in. In MAIN world the page CAN — but this runs at
+   document_start, before any page script, so the captures are still
+   pristine natives. What the cache does not (and cannot) buy in MAIN
+   is protection from a page that calls `window.__SM_GM__` itself; see
+   the transport section's trust note. */
 (function () {
   "use strict";
   if (typeof window === "undefined") return;
@@ -32,6 +39,87 @@
   var _now = Date.now.bind(Date);
   var _JSONStringify = JSON.stringify;
   var _ObjectKeys = Object.keys;
+  var _isArray = Array.isArray;
+  /* Captured for the stored-value codec below. `_objToString` is how
+     it brand-checks Date / RegExp / Map / Set: `instanceof` misses a
+     value that came from another realm (an <iframe>'s `Date`), and a
+     userscript can reassign the globals. */
+  var _objToString = Object.prototype.toString;
+  var _Date = Date;
+  var _DateGetTime = Date.prototype.getTime;
+  var _RegExp = RegExp;
+  var _Map = (typeof Map === "function") ? Map : null;
+  var _MapForEach = _Map ? Map.prototype.forEach : null;
+  var _Set = (typeof Set === "function") ? Set : null;
+  var _SetForEach = _Set ? Set.prototype.forEach : null;
+  var _BigInt = (typeof BigInt === "function") ? BigInt : null;
+  var _Uint8Array = (typeof Uint8Array === "function") ? Uint8Array : null;
+  var _DataViewCtor = (typeof DataView === "function") ? DataView : null;
+  var _fromCharCode = String.fromCharCode;
+  var _btoa = (typeof btoa === "function") ? btoa : null;
+  var _atob = (typeof atob === "function") ? atob : null;
+  var _ObjectGetPrototypeOf = Object.getPrototypeOf;
+  /* Native accessors off the prototypes, used by the codec BOTH to
+     read a value and to brand-check it: each one throws a TypeError
+     when called on something that lacks the internal slot, which is
+     the only reliable test — `Object.prototype.toString` reports
+     whatever `Symbol.toStringTag` says. */
+  var _RegExpSourceGet = null;
+  var _RegExpFlagsGet = null;
+  var _ArrayBufferByteLengthGet = null;
+  var _DataViewByteLengthGet = null;
+  var _TypedArrayLengthGet = null;
+  (function () {
+    function getter(obj, name) {
+      var d = Object.getOwnPropertyDescriptor(obj, name);
+      return (d && typeof d.get === "function") ? d.get : null;
+    }
+    try {
+      _RegExpSourceGet = getter(RegExp.prototype, "source");
+      _RegExpFlagsGet = getter(RegExp.prototype, "flags");
+    } catch (_reE) {}
+    try {
+      _ArrayBufferByteLengthGet = getter(ArrayBuffer.prototype, "byteLength");
+      _DataViewByteLengthGet = getter(DataView.prototype, "byteLength");
+      /* %TypedArray%.prototype is the shared prototype ABOVE
+         Uint8Array.prototype; its `length` getter accepts any typed
+         array and rejects everything else. */
+      _TypedArrayLengthGet = getter(_ObjectGetPrototypeOf(Uint8Array.prototype), "length");
+    } catch (_binE) {}
+  })();
+  /* Constructor tables for the codec's brand-keyed revival. Built from
+     the globals at init time for the same reason as the other shim
+     captures, and `typeof`-guarded per name so a browser missing one
+     (Float16Array is recent) just doesn't offer that entry. */
+  var TYPED_ARRAYS = {};
+  var ERROR_TYPES = {};
+  (function () {
+    var i;
+    var taNames = [
+      "Int8Array", "Uint8Array", "Uint8ClampedArray",
+      "Int16Array", "Uint16Array", "Int32Array", "Uint32Array",
+      "Float16Array", "Float32Array", "Float64Array",
+      "BigInt64Array", "BigUint64Array",
+    ];
+    for (i = 0; i < taNames.length; i++) {
+      try {
+        if (typeof window[taNames[i]] === "function") TYPED_ARRAYS[taNames[i]] = window[taNames[i]];
+      } catch (_taE) {}
+    }
+    /* AggregateError is left out on purpose: its constructor takes
+       (errors, message), so reviving one through the shared
+       `new C(message)` path would throw. It comes back as an Error
+       carrying the name instead. */
+    var errNames = [
+      "Error", "EvalError", "RangeError", "ReferenceError",
+      "SyntaxError", "TypeError", "URIError",
+    ];
+    for (i = 0; i < errNames.length; i++) {
+      try {
+        if (typeof window[errNames[i]] === "function") ERROR_TYPES[errNames[i]] = window[errNames[i]];
+      } catch (_erE) {}
+    }
+  })();
   var _ObjectCreate = Object.create;
   /* Captured for the window.onurlchange surface, which defines an
      accessor on the world's own `window`. */
@@ -71,14 +159,233 @@
   } catch (_urlE) {}
   /* Capture chrome.runtime.sendMessage now so an ASYNC API body still
      reaches a sane reference even if a sibling userscript reassigns
-     window.chrome or chrome.runtime later. We only do this when
-     chrome.runtime exists (true for USER_SCRIPT world; falsy in MAIN). */
+     window.chrome or chrome.runtime later.
+
+     Keyed on `chrome.runtime.id`, not on `sendMessage` existing: a web
+     page listed in some installed extension's `externally_connectable`
+     gets a partial `chrome.runtime` in MAIN world — `sendMessage` and
+     `connect`, nothing else — for talking to THAT extension. Taking it
+     for our own channel would throw "must specify an Extension ID" on
+     every call and leave no `onMessage` to hear replies on. `id` is a
+     string only in a real extension context (our USER_SCRIPT world). */
+  var _extensionId = null;
+  try { _extensionId = chrome.runtime.id; } catch (_idE) {}
   var _sendMessage = null;
   try {
-    if (typeof chrome !== "undefined" && chrome.runtime && typeof chrome.runtime.sendMessage === "function") {
+    if (typeof _extensionId === "string" && typeof chrome.runtime.sendMessage === "function") {
       _sendMessage = chrome.runtime.sendMessage.bind(chrome.runtime);
     }
   } catch (_e) {}
+
+  /* ---------- transport ----------
+
+     This one runtime source is registered in BOTH execution worlds
+     (see buildGmRuntimeSpecs in src/injector.ts). Everything above and
+     below this block is world-agnostic; only the two primitives here
+     differ:
+
+       transportSend(payload) -> Promise<reply>
+         USER_SCRIPT: chrome.runtime.sendMessage, straight to the SW.
+         MAIN:        a DOM CustomEvent on `document` that
+                      wrapper-bridge.js (USER_SCRIPT world, same
+                      document) hears and forwards, keyed on a per-call
+                      requestId nonce so concurrent calls don't cross
+                      replies. The reply comes back as a postMessage.
+                      An event, not a postMessage, because every
+                      world's listeners run in the DISPATCHING task:
+                      the bridge's sendMessage happens before we
+                      return, so a write issued while the document is
+                      tearing down still leaves. See wrapper-bridge.js.
+
+       onPush(handler)  — SW-originated messages we didn't ask for
+                          (value-update broadcasts, XHR events, tab /
+                          notification / menu callbacks).
+         USER_SCRIPT: chrome.runtime.onMessage, filtered to messages
+                      from our own SW.
+         MAIN:        the bridge re-posts those same messages into the
+                      page with a push marker; we read them here.
+
+     Why MAIN world needs this at all: `@grant unsafeWindow` forces a
+     script into MAIN (only there is `window` the page's window), and
+     such scripts routinely also @grant storage / XHR / menus. Without
+     a MAIN transport, fixing unsafeWindow would break everything else
+     they use.
+
+     Trust: in MAIN world the page can both READ our messages and
+     FORGE both directions. That is inherent — the page shares the realm
+     with the script and with this runtime. The SW-side gate is what
+     bounds the damage: it honors bridge-relayed, script-scoped requests
+     only for scripts that actually run in MAIN world on the sending
+     page. See docs/injection.md#gm_-in-main-world. */
+  var BRIDGE_REPLY_MARKER = "sourcemonkey-bridge-reply";
+  var BRIDGE_PUSH_MARKER = "sourcemonkey-bridge-push";
+  var BRIDGE_SYNC_MARKER = "sourcemonkey-bridge-sync";
+  /* How long a MAIN-world request waits for the bridge before we give
+     up and reject. The bridge always replies (even when the SW call
+     fails), so hitting this means the bridge never registered — a
+     rejected Promise is what each caller's own error path expects. */
+  var BRIDGE_TIMEOUT_MS = 30000;
+  var _bridgePending = null;   /* requestId -> {resolve, timer} */
+  var _bridgeSeq = 1;
+  var _pushHandlers = [];
+
+  function dispatchPush(msg) {
+    for (var i = 0; i < _pushHandlers.length; i++) {
+      try { _pushHandlers[i](msg); } catch (_phE) {}
+    }
+  }
+
+  /* One window listener serves both the reply and push paths in MAIN
+     world, so a page with many in-flight GM calls doesn't accumulate
+     listeners. Installed only in MAIN — in USER_SCRIPT world we have
+     the real chrome.runtime channels. */
+  function installBridgeListener() {
+    var pending = _ObjectCreate(null);
+    try {
+      window.addEventListener("message", function (ev) {
+        try {
+          if (!ev || ev.source !== window) return;
+          var d = ev.data;
+          if (!d) return;
+          if (d.__sm === BRIDGE_PUSH_MARKER) {
+            if (d.payload && typeof d.payload === "object") dispatchPush(d.payload);
+            return;
+          }
+          if (d.__sm !== BRIDGE_REPLY_MARKER) return;
+          if (typeof d.requestId !== "string") return;
+          var entry = pending[d.requestId];
+          if (!entry) return;
+          delete pending[d.requestId];
+          try { clearTimeout(entry.timer); } catch (_tE) {}
+          entry.resolve(d.reply);
+        } catch (_e) {}
+      }, true);
+    } catch (_lE) {
+      /* No listener means no reply can ever arrive. Leave
+         _bridgePending null so bridgeSend rejects immediately instead
+         of parking every call for the full timeout. */
+      return;
+    }
+    _bridgePending = pending;
+  }
+  if (!_sendMessage) installBridgeListener();
+
+  /* The page -> SW leg in MAIN world. Both natives are captured at
+     init — this runs at document_start, before any page script — so a
+     page that later replaces CustomEvent or document.dispatchEvent
+     can't silently swallow our traffic.
+
+     `detail` carries {requestId, payload} as a JSON string: event
+     details don't cross realms as objects, and JSON costs us nothing
+     the wire didn't already — chrome.runtime.sendMessage
+     JSON-serializes on the far side of the bridge regardless, so a
+     value that survives JSON.stringify here is exactly a value the SW
+     could have received. `requestId` is left off entirely (JSON drops
+     `undefined`) for fire-and-forget sends, which is what the bridge
+     reads to pick its path. */
+  var _CustomEvent = null;
+  var _dispatchEvent = null;
+  try { _CustomEvent = CustomEvent; } catch (_ceE) {}
+  try {
+    if (document && typeof document.dispatchEvent === "function") {
+      _dispatchEvent = document.dispatchEvent.bind(document);
+    }
+  } catch (_deE) {}
+  function bridgeDispatch(payload, requestId) {
+    if (!_CustomEvent || !_dispatchEvent) {
+      throw new _Error("[SourceMonkey] GM bridge unavailable");
+    }
+    var detail;
+    try {
+      detail = _JSONStringify({ requestId: requestId, payload: payload });
+    } catch (_jE) {
+      /* Circular structures, BigInt, a getter that throws. The raw V8
+         text ("Converting circular structure to JSON --> ...") ends up
+         in a userscript's onerror or rejected promise, so say what the
+         caller can act on instead. The USER_SCRIPT-world path fails on
+         the same values one step later, inside
+         chrome.runtime.sendMessage, so this is not a MAIN-world-only
+         restriction — just the only place we get to word it. */
+      throw new _Error("[SourceMonkey] This call carries a value SourceMonkey cannot send. "
+        + "Pass data that survives JSON: no circular references, functions, or BigInt");
+    }
+    _dispatchEvent(new _CustomEvent(BRIDGE_SYNC_MARKER, { detail: detail }));
+  }
+
+  function bridgeSend(payload) {
+    if (!_bridgePending) {
+      return _Promise.reject(new _Error("[SourceMonkey] GM bridge unavailable"));
+    }
+    var requestId = "gm-" + (_bridgeSeq++) + "-" + Math.random().toString(36).slice(2, 10);
+    return new _Promise(function (resolve, reject) {
+      var timer = setTimeout(function () {
+        delete _bridgePending[requestId];
+        reject(new _Error("[SourceMonkey] GM bridge timed out after " + BRIDGE_TIMEOUT_MS + "ms"));
+      }, BRIDGE_TIMEOUT_MS);
+      _bridgePending[requestId] = { resolve: resolve, timer: timer };
+      /* Registered before dispatching: the bridge's listener runs
+         inside this dispatch, so by the time it can post a reply the
+         entry it will be matched against already exists. */
+      try {
+        bridgeDispatch(payload, requestId);
+      } catch (e) {
+        delete _bridgePending[requestId];
+        try { clearTimeout(timer); } catch (_tE2) {}
+        reject(e);
+      }
+    });
+  }
+
+  /* Fire-and-forget send that completes before this call returns —
+     what `chrome.runtime.sendMessage` already does in USER_SCRIPT
+     world, and what the DOM-event dispatch does in MAIN. The one
+     caller is the teardown flush, where the reply would never be
+     read and a later task may never come. */
+  function transportSendNow(payload) {
+    if (_sendMessage) {
+      var p = _sendMessage(payload);
+      if (p && typeof p.catch === "function") p.catch(function () {});
+      return;
+    }
+    try { bridgeDispatch(payload); } catch (_snE) {}
+  }
+
+  /* The single send primitive every subsystem uses. */
+  function transportSend(payload) {
+    if (_sendMessage) {
+      try {
+        var p = _sendMessage(payload);
+        if (p && typeof p.then === "function") return p;
+        return _Promise.resolve(p);
+      } catch (e) {
+        return _Promise.reject(e);
+      }
+    }
+    return bridgeSend(payload);
+  }
+
+  /* Register a handler for SW-originated pushes. */
+  function onPush(handler) {
+    _pushHandlers.push(handler);
+  }
+  if (_sendMessage) {
+    /* Sender filter. A naive listener would happily process a forged
+       push from another userscript inside the same extension —
+       chrome.runtime.sendMessage from one USER_SCRIPT world fires
+       onMessage in every other context (incl. other tabs). We require:
+         - sender.id === chrome.runtime.id  (our extension only)
+         - sender.tab is undefined          (came from the SW, not a tab)
+       The combination ensures only the SW's own messages reach us. */
+    try {
+      if (chrome.runtime.onMessage && typeof chrome.runtime.onMessage.addListener === "function") {
+        chrome.runtime.onMessage.addListener(function (msg, sender /*, sendResponse */) {
+          if (!sender || sender.id !== _extensionId || sender.tab) return;
+          if (!msg || typeof msg !== "object") return;
+          dispatchPush(msg);
+        });
+      }
+    } catch (_pE) {}
+  }
 
   /* ---------- Storage subsystem ----------
 
@@ -104,6 +411,383 @@
   /* Deletion sentinel — paired with the SW-side gm-values.ts
      DELETED_SENTINEL. Compared by reference. */
   var DELETED_SENTINEL = {};
+
+  /* ---------- Stored-value codec ----------
+
+     Everything a value passes through on its way to disk serializes
+     JSON-style: chrome.runtime.sendMessage on the hop to the worker,
+     then chrome.storage.local itself. JSON silently rewrites values a
+     userscript is entitled to store — a Date reads back as an ISO
+     string, NaN and Infinity as null, a Map as {} — and the script
+     has no way to notice. TM and VM both tag the stored form to get
+     around this; so do we, under two rules:
+
+       - A value JSON already round-trips exactly is stored RAW,
+         unchanged from what older builds wrote. That is what makes
+         this backwards compatible: for such values the new encoder
+         emits the identical bytes, so old rows and new rows are the
+         same thing.
+       - Anything else is wrapped in one envelope object,
+         `{ __smv__: 1, v: <node> }`. `decodeValue` hands back
+         anything WITHOUT that own marker untouched, so a row written
+         before this existed decodes to itself.
+
+     Inside the envelope every node is a `[tag, ...payload]` array;
+     the full tag grammar is tabulated in
+     docs/GM-APIs-storage.md#node-tags. Tags therefore live in array
+     position 0, never in an object key,
+     so a userscript object with a key called `__smv__` (or `$`, or
+     any other name we might have picked) can't be mistaken for one.
+     The remaining ambiguity — a RAW value that itself contains the
+     `__smv__` marker — is closed from the other side: such a value
+     is deliberately treated as not-plain and wrapped.
+
+     Binary values (typed arrays, ArrayBuffer, DataView) carry their
+     bytes as base64 — JSON has no better option, and the ~33% growth
+     beats the ~4x of an array of decimal numbers.
+
+     Deliberately NOT represented:
+       - Class instances keep their own enumerable properties but
+         lose their prototype. Nothing else is possible: the class
+         isn't reachable from here at decode time. Structured clone
+         has the same limit.
+       - Blob / File would need an async read, and GM_setValue is
+         synchronous.
+       - Object identity is not preserved — two references to one
+         object decode as two objects, and two typed arrays over one
+         ArrayBuffer decode over two buffers. Circular references,
+         which are the case where that actually breaks a value
+         rather than just copying it twice, throw instead. */
+  var VALUE_ENVELOPE = "__smv__";
+  var VALUE_FORMAT = 1;
+
+  /* Returned by encodeNode for a value JSON would drop entirely
+     (function / symbol). The callers reproduce JSON's own handling:
+     omit the property, or write null into an array slot. */
+  var OMIT = {};
+
+  /* Returned by encodeBranded when the value isn't one of the types
+     it handles (or turned out not to really be one). */
+  var MISS = {};
+
+  /* Base64 for the binary branches. `apply` is chunked because one
+     call with a very large argument list overflows the argument
+     stack — 32k elements is the usual safe ceiling. */
+  var B64_CHUNK = 0x8000;
+
+  function bytesToBase64(bytes) {
+    var parts = [];
+    for (var i = 0; i < bytes.length; i += B64_CHUNK) {
+      parts.push(_fromCharCode.apply(null, bytes.subarray(i, i + B64_CHUNK)));
+    }
+    return _btoa(parts.join(""));
+  }
+
+  function base64ToBytes(b64) {
+    var bin = _atob(b64);
+    var out = new _Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  /* True when the binary branches can run at all. Everything they
+     need is standard in a page, but the codec falls back to the
+     generic object walk rather than throwing if something is
+     missing. */
+  var canEncodeBinary = !!(
+    _btoa && _atob && _Uint8Array &&
+    _ArrayBufferByteLengthGet && _DataViewByteLengthGet && _TypedArrayLengthGet
+  );
+
+  /* Encode one of the types we tag by brand, or MISS if `value`
+     isn't one. Split out from encodeNode so the caller can treat a
+     throw here as "not actually that type" — see the call site.
+     Sets `state.plain` on a hit; the caller undoes that on a miss. */
+  function encodeBranded(value, seen, state) {
+    var brand = _objToString.call(value);
+    if (brand === "[object Date]") {
+      state.plain = false;
+      var ms = _DateGetTime.call(value);
+      /* An Invalid Date's time is NaN, which JSON can't carry —
+         send the marker string and rebuild it on the way back. */
+      return ["d", ms === ms ? ms : "nan"];
+    }
+    if (brand === "[object RegExp]" && _RegExpSourceGet && _RegExpFlagsGet) {
+      /* These throw for anything that only claims to be a RegExp. */
+      var reSource = _RegExpSourceGet.call(value);
+      var reFlags = _RegExpFlagsGet.call(value);
+      state.plain = false;
+      return ["re", String(reSource), String(reFlags)];
+    }
+    if (canEncodeBinary && brand === "[object ArrayBuffer]") {
+      /* `new Uint8Array(notABuffer)` quietly yields an EMPTY array
+         rather than throwing, so the impostor has to be rejected
+         before we read any bytes. */
+      _ArrayBufferByteLengthGet.call(value);
+      state.plain = false;
+      return ["ab", bytesToBase64(new _Uint8Array(value))];
+    }
+    if (canEncodeBinary && brand === "[object DataView]") {
+      _DataViewByteLengthGet.call(value);
+      state.plain = false;
+      return ["dv", bytesToBase64(new _Uint8Array(value.buffer, value.byteOffset, value.byteLength))];
+    }
+    if (canEncodeBinary) {
+      /* "[object Uint8Array]" -> "Uint8Array". A non-typed-array
+         wearing that tag fails on `.buffer` and the caller falls
+         through to the object walk. */
+      var taName = brand.slice(8, brand.length - 1);
+      if (_hasOwn.call(TYPED_ARRAYS, taName)) {
+        _TypedArrayLengthGet.call(value);
+        state.plain = false;
+        return ["ta", taName, bytesToBase64(new _Uint8Array(value.buffer, value.byteOffset, value.byteLength))];
+      }
+    }
+    /* Error has no internal slot to probe, and reading `.name` /
+       `.message` off an impostor succeeds. The prototype is the
+       cheap discriminator that still works cross-realm: a real Error
+       (from any realm) inherits from an Error.prototype, never
+       straight from Object.prototype, which is what a
+       `{[Symbol.toStringTag]: "Error"}` literal has. */
+    if (brand === "[object Error]" && _ObjectGetPrototypeOf(value) !== Object.prototype) {
+      state.plain = false;
+      /* `message` and `stack` are non-enumerable own properties, so
+         Object.keys picks up only what the script attached itself
+         (`err.code = 42`) — worth carrying, and cheap. */
+      var errExtra = [];
+      var errKeys = _ObjectKeys(value);
+      for (var e = 0; e < errKeys.length; e++) {
+        var en = encodeNode(value[errKeys[e]], seen, state);
+        if (en !== OMIT) errExtra.push([errKeys[e], en]);
+      }
+      return [
+        "err",
+        String(value.name),
+        String(value.message),
+        value.stack === undefined ? null : String(value.stack),
+        errExtra,
+      ];
+    }
+    if (_Map && brand === "[object Map]") {
+      state.plain = false;
+      var mEntries = [];
+      _MapForEach.call(value, function (mv, mk) {
+        var kn = encodeNode(mk, seen, state);
+        var vn = encodeNode(mv, seen, state);
+        /* A Map key or value JSON would drop still has to occupy
+           its slot — dropping the entry would change the size. */
+        mEntries.push([kn === OMIT ? ["u"] : kn, vn === OMIT ? ["u"] : vn]);
+      });
+      return ["m", mEntries];
+    }
+    if (_Set && brand === "[object Set]") {
+      state.plain = false;
+      var sItems = [];
+      _SetForEach.call(value, function (sv) {
+        var sn = encodeNode(sv, seen, state);
+        sItems.push(sn === OMIT ? ["u"] : sn);
+      });
+      return ["s", sItems];
+    }
+
+    return MISS;
+  }
+
+  /* Walk `value`, building its node form and recording in
+     `state.plain` whether the raw value would have survived JSON
+     unchanged. `seen` is the ancestor chain, for cycle detection —
+     an array rather than a Set because it is only ever a few deep
+     and `indexOf` avoids depending on Set being unmolested. */
+  function encodeNode(value, seen, state) {
+    var t = typeof value;
+    if (value === null) return ["p", null];
+    if (t === "string" || t === "boolean") return ["p", value];
+    if (t === "number") {
+      /* NaN and the infinities all JSON to null; -0 JSONs to 0. */
+      if (value !== value) { state.plain = false; return ["nan"]; }
+      if (value === Infinity) { state.plain = false; return ["inf"]; }
+      if (value === -Infinity) { state.plain = false; return ["-inf"]; }
+      if (value === 0 && 1 / value === -Infinity) { state.plain = false; return ["-0"]; }
+      return ["p", value];
+    }
+    if (t === "undefined") { state.plain = false; return ["u"]; }
+    if (t === "bigint") { state.plain = false; return ["big", String(value)]; }
+    if (t === "function" || t === "symbol") return OMIT;
+    if (t !== "object") return OMIT;
+
+    for (var d = 0; d < seen.length; d++) {
+      if (seen[d] === value) {
+        throw new _Error("[SourceMonkey] GM_setValue: a stored value cannot contain a circular reference");
+      }
+    }
+    seen.push(value);
+    try {
+      if (_isArray(value)) {
+        var arr = [];
+        for (var i = 0; i < value.length; i++) {
+          var an = encodeNode(value[i], seen, state);
+          /* JSON writes null for an unserializable array slot. */
+          arr.push(an === OMIT ? ["p", null] : an);
+        }
+        return ["a", arr];
+      }
+
+      /* Brand checks read `Symbol.toStringTag`, which any object can
+         set: `{[Symbol.toStringTag]: "Map"}` reports "[object Map]"
+         without being one, and a Proxy over a real Map refuses the
+         internal slot its forEach needs. So a branded encoder is
+         allowed to FAIL — a throw drops through to the generic object
+         walk below, which is what such a value got before the codec
+         existed. `state.plain` rolls back with it, so a branch that
+         got halfway can't leave the value wrapped for no reason. */
+      var plainBefore = state.plain;
+      var branded;
+      try {
+        branded = encodeBranded(value, seen, state);
+      } catch (_brE) {
+        branded = MISS;
+      }
+      if (branded !== MISS) return branded;
+      state.plain = plainBefore;
+
+      /* `toJSON` before the generic object walk, because that is the
+         order JSON.stringify uses and some userscripts rely on it.
+         Date defines one too, which is why the brand checks come
+         first. Reading the property can throw on a Proxy; let that
+         surface the same way JSON.stringify would. */
+      var toJson = value.toJSON;
+      if (typeof toJson === "function") {
+        var replaced = encodeNode(toJson.call(value), seen, state);
+        return replaced === OMIT ? ["u"] : replaced;
+      }
+
+      var keys = _ObjectKeys(value);
+      var entries = [];
+      for (var k = 0; k < keys.length; k++) {
+        var pn = encodeNode(value[keys[k]], seen, state);
+        if (pn === OMIT) continue; /* JSON omits the property */
+        /* A raw value carrying our marker would decode as an
+           envelope, so force it through the wrapped path. */
+        if (keys[k] === VALUE_ENVELOPE) state.plain = false;
+        entries.push([keys[k], pn]);
+      }
+      return ["o", entries];
+    } finally {
+      seen.pop();
+    }
+  }
+
+  /* Public encoder: the raw value when JSON already round-trips it
+     (the common case, and the backwards-compatible one), otherwise
+     the envelope. */
+  function encodeValue(value) {
+    var state = { plain: true };
+    var node = encodeNode(value, [], state);
+    if (node === OMIT) { state.plain = false; node = ["u"]; }
+    if (state.plain) return value;
+    var env = {};
+    env[VALUE_ENVELOPE] = VALUE_FORMAT;
+    env.v = node;
+    return env;
+  }
+
+  /* Assign a decoded property. A stored own `__proto__` key would
+     otherwise set the decoded object's PROTOTYPE instead of becoming
+     a property of it — and an own `__proto__` key is reachable in
+     practice, since that is exactly what `JSON.parse` produces. */
+  function setDecoded(obj, key, value) {
+    if (key === "__proto__") {
+      _ObjectDefineProperty(obj, key, {
+        value: value, writable: true, enumerable: true, configurable: true,
+      });
+    } else {
+      obj[key] = value;
+    }
+  }
+
+  function decodeNode(n) {
+    if (!_isArray(n)) return undefined;
+    var i;
+    switch (n[0]) {
+      case "p": return n[1];
+      case "u": return undefined;
+      case "nan": return NaN;
+      case "inf": return Infinity;
+      case "-inf": return -Infinity;
+      case "-0": return -0;
+      case "big": return _BigInt ? _BigInt(n[1]) : n[1];
+      case "d": return new _Date(typeof n[1] === "number" ? n[1] : NaN);
+      case "re": return new _RegExp(n[1], n[2]);
+      case "ab": return base64ToBytes(n[1]).buffer;
+      case "dv": return new _DataViewCtor(base64ToBytes(n[1]).buffer);
+      case "ta": {
+        var bytes = base64ToBytes(n[2]);
+        /* An unknown constructor name means this row was written by a
+           build (or browser) that had a typed array this one doesn't.
+           Hand back the raw bytes rather than nothing. */
+        if (!_hasOwn.call(TYPED_ARRAYS, n[1])) return bytes;
+        return new TYPED_ARRAYS[n[1]](bytes.buffer);
+      }
+      case "err": {
+        var Ctor = _hasOwn.call(ERROR_TYPES, n[1]) ? ERROR_TYPES[n[1]] : _Error;
+        var err = new Ctor(n[2]);
+        /* A subclass name (or AggregateError) has no constructor in
+           the table; preserve the name on a plain Error instead. */
+        if (err.name !== n[1]) err.name = n[1];
+        if (n[3] !== null && n[3] !== undefined) {
+          try { err.stack = n[3]; } catch (_stE) {}
+        }
+        var extra = n[4];
+        if (_isArray(extra)) {
+          for (i = 0; i < extra.length; i++) setDecoded(err, extra[i][0], decodeNode(extra[i][1]));
+        }
+        return err;
+      }
+      case "a": {
+        var arr = [];
+        for (i = 0; i < n[1].length; i++) arr.push(decodeNode(n[1][i]));
+        return arr;
+      }
+      case "o": {
+        var obj = {};
+        for (i = 0; i < n[1].length; i++) setDecoded(obj, n[1][i][0], decodeNode(n[1][i][1]));
+        return obj;
+      }
+      case "m": {
+        var m = new _Map();
+        for (i = 0; i < n[1].length; i++) m.set(decodeNode(n[1][i][0]), decodeNode(n[1][i][1]));
+        return m;
+      }
+      case "s": {
+        var st = new _Set();
+        for (i = 0; i < n[1].length; i++) st.add(decodeNode(n[1][i]));
+        return st;
+      }
+      default: return undefined;
+    }
+  }
+
+  /* Public decoder. Anything that isn't one of our envelopes is
+     already the value: that covers every row written before the
+     codec existed AND every plain value written since. An envelope
+     stamped with a format we don't know comes back as-is too — a
+     downgrade should hand the script something inspectable rather
+     than throw inside its GM_getValue. */
+  function decodeValue(value) {
+    if (!value || typeof value !== "object" || _isArray(value)) return value;
+    if (!_hasOwn.call(value, VALUE_ENVELOPE)) return value;
+    if (value[VALUE_ENVELOPE] !== VALUE_FORMAT) return value;
+    try {
+      return decodeNode(value.v);
+    } catch (e) {
+      try { console.info("[SourceMonkey] stored value could not be decoded:", e); } catch (_dE) {}
+      /* Same reasoning as the unknown-format branch above: hand the
+         script something it can inspect. Returning undefined would
+         also defeat the caller's GM_getValue default, because the
+         key IS present. */
+      return value;
+    }
+  }
 
   function ensureStore(scriptId) {
     var s = stores[scriptId];
@@ -184,7 +868,11 @@
     /* Wire format: each entry is {key, value}. value === DELETED_SENTINEL
        (compared by reference on this side) marks a delete. We encode
        deletes as {key, deleted: true} for the SW because the wire is
-       JSON and the sentinel can't survive postMessage. */
+       JSON and the sentinel can't survive the wire.
+
+       `value` is already in codec wire form — `storage.set` encoded
+       it — so nothing here has to know about tagged types. The SW
+       and chrome.storage.local both treat it as opaque JSON. */
     var wireWrites = [];
     for (var i = 0; i < batch.length; i++) {
       var w = batch[i];
@@ -194,16 +882,25 @@
         wireWrites.push({ key: w.key, value: w.value });
       }
     }
-    if (!_sendMessage) {
-      /* Defensive — should never happen in USER_SCRIPT world. Surface
-         to console so the user can spot the lost writes. */
-      try { console.info("[SourceMonkey] storage flush dropped: chrome.runtime unavailable", scriptId, reason, wireWrites.length); } catch (_e) {}
-      return;
-    }
     try {
-      var p = _sendMessage({ type: "sm:gm-batch-write", scriptId: scriptId, writes: wireWrites });
-      if (p && typeof p.catch === "function") {
-        p.catch(function (err) {
+      var msg = { type: "sm:gm-batch-write", scriptId: scriptId, writes: wireWrites };
+      if (reason === "pagehide") {
+        /* The document is going away; there is no later task to
+           await a reply in, so skip the request/reply path. */
+        transportSendNow(msg);
+        return;
+      }
+      var p = transportSend(msg);
+      if (p && typeof p.then === "function") {
+        p.then(function (reply) {
+          /* A resolved promise isn't proof the write landed. The SW
+             answers {ok:true}; the MAIN-world bridge answers with a
+             generic fallback when the SW call failed, and the SW
+             answers {ok:false} when the bridge gate refused. Both
+             resolve, so check the payload or lose writes in silence. */
+          if (reply && reply.ok === true) return;
+          try { console.info("[SourceMonkey] storage flush not confirmed", scriptId, reply && reply.error); } catch (_e0) {}
+        }, function (err) {
           try { console.info("[SourceMonkey] storage flush rejected", scriptId, err && err.message); } catch (_e) {}
         });
       }
@@ -221,6 +918,10 @@
     var keys = _ObjectKeys(stores);
     for (var i = 0; i < keys.length; i++) flushStore(keys[i], "pagehide");
   }
+  /* These flushes go over `transportSendNow`, which drops the reply
+     rather than parking a Promise a dying document will never settle.
+     Delivery itself is synchronous in both worlds — see the transport
+     section — so the write leaves before this handler returns. */
   try {
     window.addEventListener("pagehide", flushAll, { capture: true });
     /* visibilitychange → hidden is a softer signal that also tends to
@@ -262,8 +963,9 @@
         delete s.cache[w.key];
         fireListeners(scriptId, w.key, oldValue, undefined, true);
       } else {
-        s.cache[w.key] = w.value;
-        fireListeners(scriptId, w.key, oldValue, w.value, true);
+        var newValue = decodeValue(w.value);
+        s.cache[w.key] = newValue;
+        fireListeners(scriptId, w.key, oldValue, newValue, true);
       }
     }
   }
@@ -294,6 +996,11 @@
      value as the cache already holds doesn't fire listeners: the
      snapshot arrives freshly deserialized, so `===` would report
      every object-valued key as changed on every resync.
+
+     Both sides are passed in WIRE form (what the codec would store),
+     not as live values. That is what makes the comparison exact for
+     the tagged types: two different Maps both serialize to `{}` as
+     raw values, but to distinct envelopes once encoded.
 
      Key-order sensitive, because it compares serializations. A
      value that round-trips through storage keeps its order, so
@@ -343,9 +1050,25 @@
       if (stale(k)) continue;
       var had = _hasOwn.call(s.cache, k);
       var oldValue = had ? s.cache[k] : undefined;
-      if (had && sameStoredValue(oldValue, values[k])) continue;
-      s.cache[k] = values[k];
-      fireListeners(scriptId, k, oldValue, values[k], true);
+      /* `values[k]` is already wire form; encode the cached side to
+         match rather than decoding the snapshot for every key.
+         Encoding can throw — GM_getValue hands back the live cached
+         object, so a script is free to make it circular — and a
+         throw escaping here would abandon every remaining key AND
+         the deleted-key sweep below. An uncomparable cached value
+         counts as changed. */
+      var comparable = false;
+      var encodedOld = null;
+      if (had) {
+        try {
+          encodedOld = encodeValue(oldValue);
+          comparable = true;
+        } catch (_cmpE) {}
+      }
+      if (comparable && sameStoredValue(encodedOld, values[k])) continue;
+      var fresh = decodeValue(values[k]);
+      s.cache[k] = fresh;
+      fireListeners(scriptId, k, oldValue, fresh, true);
     }
     /* Anything the cache still holds that the worker doesn't was
        deleted by another tab in a broadcast we didn't get. */
@@ -361,7 +1084,7 @@
 
   function requestResync(scriptId) {
     var s = stores[scriptId];
-    if (!s || !s.ready || s.resyncInFlight || !_sendMessage) return;
+    if (!s || !s.ready || s.resyncInFlight) return;
     var now = _now();
     /* Stamped on the attempt, not on success: a worker that is
        failing to answer shouldn't get asked once per visibility
@@ -372,19 +1095,12 @@
     /* Captured BEFORE the send — see applyResyncSnapshot. */
     var writeSeqAt = s.writeSeq;
     var done = function () { s.resyncInFlight = false; };
-    try {
-      var p = _sendMessage({ type: "sm:gm-resync", scriptId: scriptId });
-      if (p && typeof p.then === "function") {
-        p.then(function (reply) {
-          done();
-          if (reply && reply.ok && reply.values) applyResyncSnapshot(scriptId, reply.values, writeSeqAt);
-        }, done);
-      } else {
-        done();
-      }
-    } catch (_rE) {
+    /* Over whichever transport this world has — a MAIN-world store
+       resyncs through the bridge like every other SW call. */
+    transportSend({ type: "sm:gm-resync", scriptId: scriptId }).then(function (reply) {
       done();
-    }
+      if (reply && reply.ok && reply.values) applyResyncSnapshot(scriptId, reply.values, writeSeqAt);
+    }, done);
   }
 
   function resyncListeningStores() {
@@ -394,29 +1110,17 @@
     }
   }
 
-  /* Sender filter. A naive listener would happily process a forged
-     `sm:gm-value-update` from another userscript inside the same
-     extension — chrome.runtime.sendMessage from one USER_SCRIPT
-     world fires onMessage in every other context (incl. other tabs).
-     We require:
-       - sender.id === chrome.runtime.id  (our extension only)
-       - sender.tab is undefined          (came from the SW, not a tab)
-     The combination ensures only the SW's broadcast reaches us. */
-  var _extensionId = null;
-  try { _extensionId = chrome.runtime.id; } catch (_idE) {}
-  try {
-    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage && typeof chrome.runtime.onMessage.addListener === "function") {
-      chrome.runtime.onMessage.addListener(function (msg, sender /*, sendResponse */) {
-        if (!sender || sender.id !== _extensionId || sender.tab) return;
-        if (!msg || typeof msg !== "object") return;
-        if (msg.type === "sm:gm-resync-hint") { resyncListeningStores(); return; }
-        if (msg.type !== "sm:gm-value-update") return;
-        if (typeof msg.scriptId !== "string") return;
-        if (!msg.writes || typeof msg.writes.length !== "number") return;
-        applyRemoteUpdate(msg.scriptId, msg.writes);
-      });
-    }
-  } catch (_lE) {}
+  /* The SW's own messages, over whichever transport this world has —
+     `chrome.runtime.onMessage` in USER_SCRIPT, the bridge's re-post in
+     MAIN. `onPush` applies the sender filter for us; see the transport
+     section at the top of this file. */
+  onPush(function (msg) {
+    if (msg.type === "sm:gm-resync-hint") { resyncListeningStores(); return; }
+    if (msg.type !== "sm:gm-value-update") return;
+    if (typeof msg.scriptId !== "string") return;
+    if (!msg.writes || typeof msg.writes.length !== "number") return;
+    applyRemoteUpdate(msg.scriptId, msg.writes);
+  });
 
   var storage = {
     /* Called from the GM prelude spliced into the main-body wrap
@@ -439,7 +1143,12 @@
          keys via inherited properties. */
       var copy = _ObjectCreate(null);
       var keys = _ObjectKeys(values || {});
-      for (var i = 0; i < keys.length; i++) copy[keys[i]] = values[keys[i]];
+      /* The snapshot is in wire form (see the stored-value codec):
+         values that needed tagging arrive as envelopes and are
+         revived here, so the cache always holds what the userscript
+         stored. Rows written before the codec existed are plain and
+         pass through decodeValue unchanged. */
+      for (var i = 0; i < keys.length; i++) copy[keys[i]] = decodeValue(values[keys[i]]);
       s.cache = copy;
       s.ready = true;
     },
@@ -456,10 +1165,23 @@
        value-change listeners synchronously with remote=false. */
     set: function (scriptId, key, value) {
       var s = ensureStore(scriptId);
+      /* Encode BEFORE touching the cache, so a value we can't store
+         (a circular reference) throws at the GM_setValue call site
+         with nothing half-applied, rather than being swallowed by
+         the async flush.
+
+         Note what this does NOT fix: a JSON-clean value encodes to
+         ITSELF, so the pending write still holds the live object and
+         a later mutation of it does reach disk, exactly as before.
+         Only a tagged value (Date, Map, binary, ...) is snapshotted
+         here. Mutating the object you stored was already unsupported
+         — see sameStoredValue — and which of the two behaviours you
+         get now depends on the value's type. */
+      var encoded = encodeValue(value);
       var oldValue = _hasOwn.call(s.cache, key) ? s.cache[key] : undefined;
       s.cache[key] = value;
       s.writeSeqByKey[key] = ++s.writeSeq;
-      s.pending.push({ key: key, value: value });
+      s.pending.push({ key: key, value: encoded });
       scheduleFlush(scriptId);
       fireListeners(scriptId, key, oldValue, value, false);
     },
@@ -498,6 +1220,11 @@
       s.listeners[id] = { key: String(key), callback: callback };
       return id;
     },
+    /* Codec access, for tests and for anything that needs to reason
+       about the stored form of a value without going through a
+       write. Not part of the GM_* API surface. */
+    encodeValue: encodeValue,
+    decodeValue: decodeValue,
     removeValueChangeListener: function (scriptId, listenerId) {
       var s = stores[scriptId];
       if (!s || !s.listeners) return;
@@ -512,6 +1239,14 @@
      same dispensation content scripts get), so a script on a strict-
      CSP page like github.com / google.com can still inject styles
      and elements that the page itself couldn't.
+
+     In MAIN world there is no exemption: the page's CSP applies to
+     what the script inserts, so a strict `style-src` accepts the
+     <style> element and silently ignores its rules. TM and VM have
+     the same limitation in page context. We can't work around it
+     here, but we can say so: a <style> whose `.sheet` is still null
+     after it's in the document was blocked, and that is reported
+     once per script as a warning in its Log (see `reportBlockedStyle`).
 
      Both helpers return the created element so userscripts can hold a
      reference and tweak it later. */
@@ -562,17 +1297,46 @@
     }
   }
 
+  /* Once per script per document: a page with a strict CSP blocks
+     every style the script adds, and one line says it. */
+  var blockedStyleReported = {};
+  function reportBlockedStyle(scriptId, api) {
+    if (blockedStyleReported[scriptId]) return;
+    blockedStyleReported[scriptId] = true;
+    /* Same wording the SW puts in the Log (`cspBlockedStyleMessage` in
+       background.ts); the SW words its own line rather than trusting
+       a page-reachable string. */
+    var text = "The page's Content Security Policy blocked the style " + api +
+      " added, so its rules don't apply. A script running in the page (unsafeWindow," +
+      " @inject-into page, or @grant none) gets no CSP exemption; only an isolated script does.";
+    try { console.info("[SourceMonkey:" + scriptId + "] " + text); } catch (_e) {}
+    transportSend({ type: "sm:gm-dom-blocked", scriptId: scriptId, api: api }).catch(function () {});
+  }
+  /* A <style> that is in the document but has no sheet was refused by
+     CSP: the parser builds the sheet synchronously on insertion, so a
+     null `.sheet` on a connected element is the block itself, not a
+     timing gap (an empty <style> gets an empty sheet, not null). A
+     non-CSS `type` also yields no sheet, with no CSP involved, so that
+     one is left alone. */
+  function styleWasBlocked(el) {
+    try {
+      if (el.type && !/^text\/css$/i.test(el.type)) return false;
+      return el.isConnected === true && el.sheet === null;
+    } catch (_e) { return false; }
+  }
+
   var dom = {
     /* GM_addStyle(css): create <style>, set its textContent, attach
        to (document.head || document.documentElement). Returns the
        style element. */
-    addStyle: function (css) {
+    addStyle: function (scriptId, css) {
       var el = _docCreateElement ? _docCreateElement("style") : document.createElement("style");
       el.textContent = String(css == null ? "" : css);
       var parent = defaultParent();
       if (parent) {
         if (_Node_appendChild) _Node_appendChild.call(parent, el);
         else parent.appendChild(el);
+        if (styleWasBlocked(el)) reportBlockedStyle(scriptId, "GM_addStyle");
       }
       return el;
     },
@@ -594,7 +1358,7 @@
        checking arg1 for a `.nodeType` — DOM nodes have one, strings
        don't. `typeof === "object"` keeps strings (which have `.length`
        and look array-ish to a sloppy check) out of the parent branch. */
-    addElement: function (arg1, arg2, arg3) {
+    addElement: function (scriptId, arg1, arg2, arg3) {
       var parent, tagName, attrs;
       if (arg1 && typeof arg1 === "object" && typeof arg1.nodeType === "number") {
         parent = arg1; tagName = arg2; attrs = arg3;
@@ -620,6 +1384,9 @@
       if (parent) {
         if (_Node_appendChild) _Node_appendChild.call(parent, el);
         else parent.appendChild(el);
+        if (String(tagName).toUpperCase() === "STYLE" && styleWasBlocked(el)) {
+          reportBlockedStyle(scriptId, "GM_addElement");
+        }
       }
       return el;
     },
@@ -736,11 +1503,8 @@
 
      Per-script state: an `activeRequests` map keyed by request id,
      holding the user's onload/onerror/etc. callbacks. The runtime
-     installs a chrome.runtime.onMessage listener that routes
-     `sm:gm-xhr-event` messages back to the originating request.
-
-     Same sender filter as the value-update listener so a sibling
-     userscript can't forge a load event. */
+     registers an `onPush` handler that routes `sm:gm-xhr-event`
+     messages back to the originating request. */
   var activeRequests = _ObjectCreate(null);
   var _xhrNextId = 1;
 
@@ -822,22 +1586,17 @@
      onerror has a shot at handling it. Per-request, refreshed when
      the entry is created. */
   var XHR_PAGE_SIDE_TTL_MS = 5 * 60 * 1000; /* 5 minutes */
-  try {
-    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage && typeof chrome.runtime.onMessage.addListener === "function") {
-      chrome.runtime.onMessage.addListener(function (msg, sender) {
-        if (!sender || sender.id !== _extensionId || sender.tab) return;
-        if (!msg || typeof msg !== "object" || msg.type !== "sm:gm-xhr-event") return;
-        if (typeof msg.id !== "string" || !msg.event) return;
-        dispatchXhrEvent(msg.id, msg.event);
-      });
-    }
-  } catch (_xhrE) {}
+  onPush(function (msg) {
+    if (msg.type !== "sm:gm-xhr-event") return;
+    if (typeof msg.id !== "string" || !msg.event) return;
+    dispatchXhrEvent(msg.id, msg.event);
+  });
 
   var xhr = {
     /* GM_xmlhttpRequest(details) — kicks off the request, returns
        `{abort}` immediately. The user's onload/onerror/ontimeout/
        onabort callbacks come from `details` and are stored locally
-       (callbacks aren't serializable across postMessage). */
+       (callbacks aren't serializable across the bridge). */
     start: function (scriptId, details) {
       if (!details || typeof details !== "object") {
         throw new _Error("[SourceMonkey] GM_xmlhttpRequest: details object required");
@@ -889,7 +1648,15 @@
         id: id,
         scriptId: scriptId,
         request: request,
-      }).catch(function (err) {
+      }).then(function (reply) {
+        /* Anything but an explicit ack is a refusal — the SW's bridge
+           gate replies `{ok:false, error}`, and the bridge's own
+           fallback when the SW is unreachable carries no `ok` at all.
+           Settle now rather than letting the TTL above do it. */
+        if (reply && reply.ok === true) return;
+        var why = (reply && reply.error) || "SourceMonkey did not accept the request";
+        dispatchXhrEvent(id, { kind: "error", message: "[SourceMonkey] GM_xmlhttpRequest: " + why });
+      }, function (err) {
         /* The send itself failed (chrome.runtime not available).
            Synthesize an error event for the caller. */
         dispatchXhrEvent(id, { kind: "error", message: String(err && err.message || err) });
@@ -969,7 +1736,7 @@
         try { _consoleLog.apply(null, arr); } catch (_e) {}
       }
       /* SW fan-out (text-only). __SM_GM__.sendAsync is the
-         chrome.runtime.sendMessage / bridge-postMessage helper the
+         chrome.runtime.sendMessage / bridge-event helper the
          async APIs use; here we fire-and-forget so the script's GM_log
          call stays sync. */
       try {
@@ -1042,11 +1809,14 @@
       }).then(function (reply) {
         if (reply && reply.ok && typeof reply.tabId === "number") {
           entry.tabId = reply.tabId;
-        } else if (reply && reply.error) {
-          /* SW couldn't create the tab — surface the error so a
-             userscript debugging an unexpected fast-close has a
-             signal, then synthesize the close so onclose fires. */
-          try { console.info("[SourceMonkey] GM_openInTab failed:", reply.error); } catch (_e) {}
+        } else {
+          /* SW couldn't create the tab, refused to, or was never
+             reached (the bridge's fallback reply carries no `ok`) —
+             surface the reason so a userscript debugging an
+             unexpected fast-close has a signal, then synthesize the
+             close so onclose fires. */
+          var why = (reply && reply.error) || "SourceMonkey did not accept the request";
+          try { console.info("[SourceMonkey] GM_openInTab failed:", why); } catch (_e) {}
           dispatchTabClose(requestId);
         }
       }, function (err) {
@@ -1353,9 +2123,17 @@
           saveAs: d.saveAs,
           timeout: d.timeout,
           wantsProgress: !!d.onprogress,
-        }).catch(function (err) {
-          /* Couldn't even reach the SW (no chrome.runtime — e.g. a
-             MAIN-world script). TM calls that `not_supported`. */
+        }).then(function (reply) {
+          /* Refused by the SW's bridge gate, or never reached it (the
+             bridge's fallback reply carries no `ok`). Settle now. */
+          if (reply && reply.ok === true) return;
+          dispatchDownloadEvent(requestId, {
+            kind: "error",
+            error: "not_supported",
+            details: { message: (reply && reply.error) || "SourceMonkey did not accept the request" },
+          });
+        }, function (err) {
+          /* Couldn't even reach the SW. TM calls that `not_supported`. */
           dispatchDownloadEvent(requestId, {
             kind: "error",
             error: "not_supported",
@@ -1840,28 +2618,21 @@
   };
 
   /* Wire the SW-originated tab-close, notification-event, menu-fire,
-     download-event, and url-change messages into the same dispatcher we
-     already use for value-update and xhr. Sender filter logic identical
-     to the earlier listeners. */
-  try {
-    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage && typeof chrome.runtime.onMessage.addListener === "function") {
-      chrome.runtime.onMessage.addListener(function (msg, sender) {
-        if (!sender || sender.id !== _extensionId || sender.tab) return;
-        if (!msg || typeof msg !== "object") return;
-        if (msg.type === "sm:gm-tab-closed" && typeof msg.requestId === "string") {
-          dispatchTabClose(msg.requestId);
-        } else if (msg.type === "sm:gm-notification-event" && typeof msg.requestId === "string" && typeof msg.event === "string") {
-          dispatchNotificationEvent(msg.requestId, msg.event);
-        } else if (msg.type === "sm:gm-menu-fire" && typeof msg.scriptId === "string" && typeof msg.commandId === "string") {
-          dispatchMenuFire(msg.scriptId, msg.commandId);
-        } else if (msg.type === "sm:gm-download-event" && typeof msg.requestId === "string" && msg.event) {
-          dispatchDownloadEvent(msg.requestId, msg.event);
-        } else if (msg.type === "sm:url-change" && typeof msg.url === "string") {
-          noteUrlChanged(msg.url);
-        }
-      });
+     download-event, and url-change messages into the same push channel
+     as value-update and xhr. */
+  onPush(function (msg) {
+    if (msg.type === "sm:gm-tab-closed" && typeof msg.requestId === "string") {
+      dispatchTabClose(msg.requestId);
+    } else if (msg.type === "sm:gm-notification-event" && typeof msg.requestId === "string" && typeof msg.event === "string") {
+      dispatchNotificationEvent(msg.requestId, msg.event);
+    } else if (msg.type === "sm:gm-menu-fire" && typeof msg.scriptId === "string" && typeof msg.commandId === "string") {
+      dispatchMenuFire(msg.scriptId, msg.commandId);
+    } else if (msg.type === "sm:gm-download-event" && typeof msg.requestId === "string" && msg.event) {
+      dispatchDownloadEvent(msg.requestId, msg.event);
+    } else if (msg.type === "sm:url-change" && typeof msg.url === "string") {
+      noteUrlChanged(msg.url);
     }
-  } catch (_evE3) {}
+  });
 
   var api = {
     /* Placeholder for sync APIs still not wired. */
@@ -1869,19 +2640,12 @@
       throw new _Error("[SourceMonkey] " + name + " is not implemented yet");
     },
     /* Exposed for compile-in async bindings to route through. Returns
-       a Promise that resolves with the SW's reply (or rejects if
-       messaging is unavailable). */
+       a Promise that resolves with the SW's reply (or rejects if the
+       transport is unavailable). Picks chrome.runtime.sendMessage or
+       the DOM-event bridge depending on the world — see the
+       transport section at the top of this file. */
     sendAsync: function (payload) {
-      if (!_sendMessage) {
-        return _Promise.reject(new _Error("[SourceMonkey] chrome.runtime.sendMessage unavailable"));
-      }
-      try {
-        var p = _sendMessage(payload);
-        if (p && typeof p.then === "function") return p;
-        return _Promise.resolve(p);
-      } catch (e) {
-        return _Promise.reject(e);
-      }
+      return transportSend(payload);
     },
     storage: storage,
     dom: dom,
@@ -1918,10 +2682,15 @@
     },
   };
 
-  /* Object.defineProperty with writable:false + configurable:false so a
-     sibling userscript can't replace the runtime out from under other
-     scripts after init. We accept that the page can't see us (USER_SCRIPT
-     world) so we don't need to hide the global. */
+  /* Object.defineProperty with writable:false + configurable:false so
+     neither a sibling userscript nor (in MAIN world) the page can
+     replace the runtime out from under other scripts after init.
+     We don't try to HIDE the global: in USER_SCRIPT world the page
+     can't see it anyway, and in MAIN world there is nowhere to hide it
+     — separate chrome.userScripts registrations can only hand each
+     other references through a shared global, and any secret baked
+     into MAIN-world source is readable by the page. Bounding what a
+     page can do with it is the SW-side gate's job instead. */
   try {
     Object.defineProperty(window, "__SM_GM__", {
       value: api,

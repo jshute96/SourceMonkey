@@ -1,10 +1,16 @@
 // Drives the Tampermonkey dashboard to keep example userscripts in
 // sync. Shared between the Playwright fixture (manager.ts) and the
-// standalone CLI (scripts/sync-tm-scripts.mjs) so the install/list
+// standalone CLI (scripts/sync-manager-scripts.mjs) so the install/list
 // logic and selectors stay in one place.
 //
+// The Violentmonkey equivalent is violentmonkey-driver.mjs, which
+// exposes the same shape (listInstalled / getInstalledMap /
+// installFromFile) over a completely different mechanism — TM is
+// closed-source so we drive its UI; VM is not, so we can talk to its
+// background directly.
+//
 // TM is not loaded as an unpacked extension under our control — the
-// test browser is opened via scripts/open-test-browser-with-Tampermonkey.sh
+// test browser is opened via `scripts/open-test-browser.sh tampermonkey`
 // and the user installed TM from the Chrome Web Store into the
 // persistent profile (one-time setup). Callers connect to that browser
 // over CDP and pass the resulting BrowserContext to TampermonkeyDriver.
@@ -14,93 +20,23 @@
 // future release — `scripts/inspect-tm-*.mjs` produce the diagnostic
 // dumps needed to pick new selectors.
 
-import fs from 'node:fs';
-import path from 'node:path';
-
-/** Chrome Web Store ID for Tampermonkey Stable. Override with TM_EXTENSION_ID. */
-export const TAMPERMONKEY_STABLE_ID = 'dhdgffkkebhmkfjojejmpbldmpobfkfo';
-
-/** @returns {string} */
-export function getTampermonkeyExtensionId() {
-  return process.env.TM_EXTENSION_ID || TAMPERMONKEY_STABLE_ID;
-}
+import { managerExtensionId } from './managers.mjs';
+import { compareVersions, listUserscripts } from './userscript-files.mjs';
 
 /**
- * @typedef {Object} UserscriptHeader
- * @property {string} name
- * @property {string} version
- * @property {string} filepath  Absolute path to the source file.
+ * Tampermonkey's extension ID in this profile. Defaults to TM Stable's
+ * Chrome Web Store ID; `TM_EXTENSION_ID` overrides it (e.g. TM Beta).
+ * @returns {string}
  */
+export function getTampermonkeyExtensionId() {
+  return managerExtensionId('tampermonkey');
+}
 
 /**
  * @typedef {Object} InstalledScript
  * @property {string} name
  * @property {string} version
  */
-
-/**
- * Read a `*.user.js` and extract its `@name` and `@version`.
- * @param {string} filepath
- * @returns {UserscriptHeader}
- */
-export function parseUserscriptHeader(filepath) {
-  const src = fs.readFileSync(filepath, 'utf8');
-  const block = src.match(/==UserScript==([\s\S]*?)==\/UserScript==/);
-  if (!block) throw new Error(`No UserScript metadata block in ${filepath}`);
-  const name = readTag(block[1], 'name');
-  const version = readTag(block[1], 'version');
-  if (!name) throw new Error(`Missing @name in ${filepath}`);
-  if (!version) throw new Error(`Missing @version in ${filepath}`);
-  return { name, version, filepath };
-}
-
-function readTag(metaBlock, tag) {
-  const re = new RegExp(`^\\s*//\\s*@${tag}\\s+(.+?)\\s*$`, 'm');
-  const m = metaBlock.match(re);
-  return m ? m[1] : null;
-}
-
-/**
- * List every `*.user.js` directly under `dir` (non-recursive). Used by
- * the per-spec install flow where each spec only cares about the
- * userscripts in its own directory.
- * @param {string} dir
- * @returns {UserscriptHeader[]}
- */
-export function listUserscripts(dir) {
-  return fs.readdirSync(dir)
-    .filter((f) => f.endsWith('.user.js'))
-    .map((f) => parseUserscriptHeader(path.join(dir, f)));
-}
-
-/**
- * List every `*.user.js` under `dir` recursively. Used by the
- * standalone sync CLI to walk all of `tests/examples/` in one pass.
- * @param {string} dir
- * @returns {UserscriptHeader[]}
- */
-export function listUserscriptsRecursive(dir) {
-  const out = [];
-  const walk = (d) => {
-    for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
-      const p = path.join(d, entry.name);
-      if (entry.isDirectory()) walk(p);
-      else if (entry.isFile() && entry.name.endsWith('.user.js')) out.push(p);
-    }
-  };
-  walk(dir);
-  return out.map(parseUserscriptHeader);
-}
-
-// `@version` ordering comes from the extension's own comparator so the
-// sync tooling and the shipped update-probe agree on which of two
-// versions is newer. Re-exported because this module is the TM
-// tooling's single import surface — imported first, since a bare
-// `export { x } from …` re-export does NOT bind `x` locally, and
-// `syncTampermonkeyScripts` below calls it.
-import { compareVersions } from '../../dist/version-compare.js';
-
-export { compareVersions };
 
 export class TampermonkeyDriver {
   /**
@@ -147,7 +83,7 @@ export class TampermonkeyDriver {
    * downloads") calls `chrome.permissions.request`, which needs
    * Chrome's own native grant bubble — headless can't show one, so the
    * click lands and nothing happens. That permission is pre-granted in
-   * the profile by `scripts/e2e-tm-preflight.mjs`; don't drop that on
+   * the profile by `scripts/e2e-manager-preflight.mjs`; don't drop that on
    * the assumption this handler covers it.
    *
    * Only `input.button.permission[value="Ok"]` is clicked. The install
@@ -298,6 +234,14 @@ export class TampermonkeyDriver {
   invalidateInstalledCache() {
     this._installedMap = null;
   }
+
+  /**
+   * Release any pages the driver is holding. This driver opens and
+   * closes a page per operation, so there's nothing to do — it exists
+   * so callers can treat both manager drivers alike (the VM one caches
+   * a page and does need closing).
+   */
+  async close() {}
 
   /**
    * Install (or reinstall / update / downgrade) a single userscript by

@@ -9,11 +9,13 @@ by the [script store](storage.md). Companion to
 
 ## What you can point at
 
-- An **http(s) URL ending in `.user.js`** → folded into the matching
-  container collection (`Scripts from web` or `Scripts from GitHub` —
-  see [storage.md](storage.md#container-collections)). The script is
-  added to the container's `scriptIds` list rather than minting its
-  own collection row.
+- An **http(s) URL ending in `.user.js`** → installed into a scripts
+  collection — by default the built-in one for its scheme
+  (`Scripts from web` or `Scripts from GitHub`), or whichever the
+  install page's dropdown picks — see
+  [storage.md](storage.md#container-collections). The script is added
+  to that container's `scriptIds` list rather than minting its own
+  collection row.
 - **Anything whose pathname's basename is `script_manifest.json`** →
   treated as a **manifest** that lists script URLs. The manifest itself
   can live at:
@@ -42,9 +44,10 @@ recognises three shapes:
   whose path ends in `.user.js`, or whose basename is
   `script_manifest.json`.
   - Rewritten to its `raw.githubusercontent.com` counterpart at
-    add-collection time. A `.user.js` URL is folded into the
-    `Scripts from GitHub` container; a `script_manifest.json` URL is
-    stored as a regular HTTP manifest collection.
+    add-collection time. A `.user.js` URL is installed into a scripts
+    collection (`Scripts from GitHub` by default); a
+    `script_manifest.json` URL is stored as a regular HTTP manifest
+    collection.
   - Why: the `github.com/.../blob/...` URL serves an HTML rendering, not
     the raw bytes.
   - The reverse `githubRawToBlobUrl` (in `github-provider.ts`) converts
@@ -68,9 +71,10 @@ recognises three shapes:
 Limits:
 
 - A `.user.js` file deleted from the repo (or absent on the resolved
-  branch) is tagged `missing` and auto-disabled — same handling as a
-  local-directory collection, since the file might come back if the user
-  reverts. Use the per-row trash to clear it for good.
+  branch) drops off the collection on the next refresh — same handling
+  as a local-directory collection. Only a listing that comes back
+  *entirely* empty leaves the rows behind as `missing`; see
+  [storage.md](storage.md#vanished-entries).
 - Unauthenticated GitHub API budget is **60 requests / hour / IP**.
   Each repo-root add costs one call (metadata); each refresh costs one
   Contents-API call per walked directory. Per-script raw fetches don't
@@ -197,15 +201,16 @@ strategy:
   surfaces as `FetchResult.unchanged` and `rebuildCollection` keeps the
   prior content + validators verbatim — no re-parse, no `loadedAt`
   bump. A `200` response replaces both the body and the validators.
-- **file://** entries reached through a manifest are always re-fetched
-  (file:// fetches are cheap; there's no listing-step skip the way
-  local-directory collections have).
-- **Local-directory** collections keep their existing pre-fetch listing
-  skip: if Chrome's `addRow(...)` listing reports the same `size +
-  mtime` as the stored entry, no fetch happens at all.
+- **file://** entries — in a local-directory collection, reached
+  through a manifest, or added on their own into the file container —
+  take the pre-fetch listing skip: if Chrome's `addRow(...)` listing
+  reports the same `size + mtime` as the stored entry, no fetch happens
+  at all. (A manifest or container refresh lists each entry's folder
+  once to get that stat; an entry whose folder won't list just
+  re-fetches.)
 
-When none of the cheap pre-fetch skips fire (manifest entries; HTTP
-servers that don't return validators), `buildScriptFromText` falls
+When none of the cheap pre-fetch skips fire (HTTP servers that don't
+return validators; a local file whose folder wouldn't list), `buildScriptFromText` falls
 back to a content-hash compare against the prior row's `contentHash`
 and preserves `loadedAt` if the bytes are identical. So the
 "unchanged → no flash" outcome is uniform across every collection/scheme
@@ -224,14 +229,15 @@ collection row is tracked in `TODO.md`.
 
 - **Detection**: if a manifest used to list a script and no longer
   does, the script row is **deleted**. The manifest is the user's
-  source of truth — removing an entry is an explicit removal, not a
-  "maybe gone" signal (unlike a local directory, where a file may
-  reappear).
+  source of truth — removing an entry is an explicit removal, and that
+  holds even when the new manifest is empty — the same rule a
+  directory collection follows (see
+  [storage.md](storage.md#vanished-entries)).
 - **Re-adding an entry mints a fresh row.** Identity isn't preserved
   across a delete + re-add — the new row gets a new UUID and starts
-  `enabled: true`. This is an intentional asymmetry with directory
-  collections, where a `missing` file that returns keeps its prior
-  `enabled: false` (the user has to opt back in).
+  `enabled: true`. Same for a directory file that is deleted and
+  restored across two refreshes; only a file still absent from an
+  *empty* scan keeps its row (and its `enabled: false`) across the gap.
 - **Identity is by entry text**: `relativePath` for manifest
   collections is the entry string from the JSON (the `path` value, for
   object entries), so reformatting `foo.user.js` to `./foo.user.js` is
@@ -241,7 +247,10 @@ collection row is tracked in `TODO.md`.
     `{"path": "foo.user.js"}` keeps the same row, and editing the
     other fields on an object entry changes nothing.
 - **Scripts in a container can't vanish**: the URL either fetches or
-  errors; there's no listing for it to disappear from.
+  errors, and the row stays either way — the user added it, so the
+  user removes it. (A `file://` one is still stat'ed from its folder's
+  listing, for the skip and for the `deleted` / `modified` chips, but
+  a listing that lacks it never drops it.)
 
 ## Unreadable manifest
 
@@ -314,18 +323,20 @@ input's pathname suffix, regardless of `http://`, `file://`, or raw
 path form):
 
 - `isSingleFileInput(s)` — pathname ends in `.user.js`. Gates the
-  add-collection dispatch that routes the input into the matching
-  container collection.
+  add-collection dispatch that routes the input into a container
+  collection.
 - `isManifestCollection(s)` — pathname's basename is `script_manifest.json`
   (re-exported as `MANIFEST_FILENAME`). Arbitrary `.json` files are
   rejected.
 - `isGithubDirCollection(s)` — github.com URL pointing at a directory.
-- `isContainerCollection(s)` / `containerKind(s)` / `containerPath(kind)`
-  — recognise / extract / build the synthetic `container:<kind>`
-  identifiers used by the three container collection rows.
-- `containerKindForSingleFileInput(s)` — classify a single-file input
-  into `'file' | 'http' | 'github'` so `addCollection` can pick the right
-  container.
+- `isContainerCollection(s)` — any `container:…` path.
+  `containerKind(s)` / `containerPath(kind)` — extract / build the fixed
+  path of a built-in default (`container:file|http|github`); null for a
+  user-created `container:<uuid>`, which `newContainerPath()` mints.
+  `collectionKind(s)` — `'scripts' | 'directory' | 'manifest'`.
+- `containerKindForSingleFileInput(s)` — classify a script location
+  into `'file' | 'http' | 'github'`: which default container it lands in
+  when none is chosen, and which scheme chip its row wears.
 
 Scheme classifiers (used at the rare call sites that genuinely care):
 

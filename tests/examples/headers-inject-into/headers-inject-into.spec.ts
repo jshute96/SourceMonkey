@@ -30,7 +30,8 @@ test.describe('examples / headers-inject-into', () => {
     //
     // Not asserted under TM, which doesn't implement `@inject-into` at
     // all (that's a Violentmonkey/SourceMonkey header; TM's equivalent
-    // is `@sandbox`). TM therefore ignores `@inject-into content` and
+    // is `@sandbox`). VM does implement it, so it is held to the same
+    // assertions SM is. TM ignores `@inject-into content` and
     // honours this variant's `@grant none`, which by TM's own rules
     // means "run in page context" — so the script legitimately sees
     // the page's globals there. A real manager difference in what the

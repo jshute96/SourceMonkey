@@ -120,19 +120,81 @@
   /* ---------- telemetry transport ---------- */
 
   /* Dual transport: chrome.runtime.sendMessage in USER_SCRIPT world,
-     window.postMessage bridge in MAIN world. The bridge listener
-     lives in wrapper-bridge.js (registered separately). */
+     the DOM-event bridge in MAIN world. The bridge listener lives in
+     wrapper-bridge.js (registered separately).
+
+     "Are we in the isolated world?" is `chrome.runtime.id` being a
+     string. A web page listed in some extension's
+     `externally_connectable` has `chrome.runtime.sendMessage` in MAIN
+     world too (for talking to that extension), and calling it without
+     an extension id throws — so the presence of `sendMessage` alone is
+     the wrong test. Same rule in wrapper-gm-runtime.js. */
+  function hasOwnRuntimeChannel() {
+    try {
+      return typeof chrome !== "undefined" && !!chrome.runtime &&
+        typeof chrome.runtime.id === "string" &&
+        typeof chrome.runtime.sendMessage === "function";
+    } catch (_e) { return false; }
+  }
+  /* MAIN world's leg of the transport: a CustomEvent on `document`
+     carrying {requestId, payload} as JSON in `detail`. All three
+     primitives are captured at init — this file runs at
+     document_start, before any page script — because `send` also
+     carries `sm:error` reports raised arbitrarily late, by which point
+     a page could have replaced any of them and silently swallowed the
+     report. Same reasoning as the GM runtime's transport section. The bridge runs
+     in USER_SCRIPT world on this same document, and event dispatch
+     runs every world's listeners in the dispatching task — so its
+     chrome.runtime.sendMessage happens before this returns, which a
+     postMessage (delivered on a later task) could not promise a
+     document that is tearing down. Replies come back the other way, as
+     a `sourcemonkey-bridge-reply` postMessage keyed on requestId.
+     Returns false if the dispatch could not happen at all; a dropped
+     payload (no bridge listening, unallowlisted type) looks the same
+     as a delivered one from here. */
+  var _CustomEvent = null;
+  var _dispatchEvent = null;
+  var _stringify = null;
+  try { _CustomEvent = CustomEvent; } catch (_ceE) {}
+  try { _stringify = JSON.stringify; } catch (_jsE) {}
+  try {
+    if (document && typeof document.dispatchEvent === "function") {
+      _dispatchEvent = document.dispatchEvent.bind(document);
+    }
+  } catch (_deE) {}
+  function bridgeDispatch(payload, requestId) {
+    try {
+      if (!_CustomEvent || !_dispatchEvent || !_stringify) return false;
+      _dispatchEvent(new _CustomEvent("sourcemonkey-bridge-sync", {
+        detail: _stringify({ requestId: requestId == null ? undefined : requestId, payload: payload }),
+      }));
+      return true;
+    } catch (_e) { return false; }
+  }
   function send(payload) {
     try {
-      if (typeof chrome !== "undefined" && chrome.runtime && typeof chrome.runtime.sendMessage === "function") {
+      if (hasOwnRuntimeChannel()) {
         var p = chrome.runtime.sendMessage(payload);
         if (p && typeof p.catch === "function") p.catch(function () {});
         return;
       }
     } catch (_e) {}
-    try {
-      window.postMessage({ __sm: "sourcemonkey-bridge", payload: payload }, "*");
-    } catch (_e2) {}
+    bridgeDispatch(payload, null);
+  }
+
+  /* Is the shared GM runtime installed in THIS world on THIS document?
+     Decides whether a hot-swap body that needs it (`needsRuntime` on
+     the SW's reply) can run: the runtime is registered only where some
+     active script grants a runtime-backed API, so a refresh that ADDS
+     the first such grant produces a body whose GM_* bindings have no
+     `window.__SM_GM__` to dereference until the next reload
+     re-registers it. Asked at the moment the body is about to run (see
+     runMain), not at wrapper start: the runtime is its own
+     document_start registration and may sit after this wrapper in
+     Chrome's order — an updated registration moves to the end — but by
+     run time every document_start registration has executed. */
+  function hasGmRuntime() {
+    try { return !!window.__SM_GM__; } catch (_e) { return false; }
   }
 
   /* Round-trip sm:check-pending and hand the SW's decision (or a 2s
@@ -153,7 +215,7 @@
       finish(decision);
     };
     try {
-      if (typeof chrome !== "undefined" && chrome.runtime && typeof chrome.runtime.sendMessage === "function") {
+      if (hasOwnRuntimeChannel()) {
         var p = chrome.runtime.sendMessage({
           type: "sm:check-pending",
           id: cfg.id,
@@ -173,7 +235,9 @@
         return;
       }
       /* MAIN world: bridge request/reply protocol with a requestId
-         nonce so concurrent userscripts each get their own reply. */
+         nonce so concurrent userscripts each get their own reply. The
+         listener goes on before the dispatch, because the bridge's
+         sendMessage runs inside it. */
       var requestId = "sm-" + Math.random().toString(36).slice(2) + "-" + Date.now();
       var listener = function (ev) {
         try {
@@ -186,18 +250,17 @@
       };
       window.addEventListener("message", listener, true);
       cleanup = function () { try { window.removeEventListener("message", listener, true); } catch (_e) {} };
-      window.postMessage({
-        __sm: "sourcemonkey-bridge",
-        requestId: requestId,
-        payload: {
-          type: "sm:check-pending",
-          id: cfg.id,
-          name: cfg.name,
-          loadedAt: cfg.loadedAt,
-          url: location.href,
-          needsValues: !!cfg.needsGmValues
-        }
-      }, "*");
+      var dispatched = bridgeDispatch({
+        type: "sm:check-pending",
+        id: cfg.id,
+        name: cfg.name,
+        loadedAt: cfg.loadedAt,
+        url: location.href,
+        needsValues: !!cfg.needsGmValues
+      }, requestId);
+      /* Nothing left the page, so no reply is coming. Seal now rather
+         than costing this script the full 2s safety timeout. */
+      if (!dispatched) seal({ action: "run" });
     } catch (_e3) { seal({ action: "run" }); }
   }
 
@@ -253,6 +316,54 @@
       stack: stack
     });
   }
+  /* ---------- focus signal ----------
+
+     Chrome tells the service worker about tab switches
+     (`tabs.onActivated`) and about focus moving between Chrome
+     windows (`windows.onFocusChanged`), but on some platforms and
+     window managers — Linux/X11 in particular — it says nothing when
+     Chrome regains focus from ANOTHER APPLICATION. That is exactly the
+     case the focus-triggered refresh exists for: edit the script in an
+     editor, alt-tab back to the browser. So the page reports it
+     instead, which works the same everywhere.
+
+     One listener per execution world per document (the prelude IIFE is
+     idempotent), installed only once some script has matched this URL
+     — a page we run nothing on has nothing to re-check.
+
+     See docs/updates.md#focus-triggered-refresh. */
+
+  /* Floor between signals from one document. The SW-side check is
+     rate-limited far harder (10s per script) and is idempotent, so
+     this exists only to keep focus churn — clicking in and out of an
+     embedded editor, say — from waking the worker each time. Set below
+     the SW's interval so it never becomes the binding limit. */
+  var FOCUS_SIGNAL_MIN_MS = 5000;
+  var lastFocusSignalAt = 0;
+  var focusSignalInstalled = false;
+
+  function sendFocusSignal() {
+    var now = Date.now();
+    if (now - lastFocusSignalAt < FOCUS_SIGNAL_MIN_MS) return;
+    lastFocusSignalAt = now;
+    send({ type: "sm:focus", url: location.href });
+  }
+
+  function installFocusSignal() {
+    if (focusSignalInstalled) return;
+    focusSignalInstalled = true;
+    try {
+      /* `focus` is the one that fires when the window comes back from
+         another application. `visibilitychange` covers a tab switch —
+         redundant with `tabs.onActivated` on the SW side, but the two
+         are cheap together and neither alone covers both cases. */
+      window.addEventListener("focus", sendFocusSignal);
+      document.addEventListener("visibilitychange", function () {
+        if (!document.hidden) sendFocusSignal();
+      });
+    } catch (_e) {}
+  }
+
   function installAsyncListeners(entry) {
     if (entry.asyncListenersInstalled) return;
     entry.asyncListenersInstalled = true;
@@ -302,10 +413,12 @@
   /* ---------- matcher (regex-aware URL recheck) ---------- */
 
   /* Mirrors the algorithm in src/url-match.ts. Inlined here so a
-     regex-using script doesn't need a separate matcher entry; the
-     prelude is on every script's js[] and the algorithm is tiny.
-     The matcher block is only consulted when cfg.matching is
-     present — pure @match / glob scripts skip it. */
+     script needing the recheck doesn't need a separate matcher entry;
+     the prelude is on every script's js[] and the algorithm is tiny.
+     The matcher block is only consulted when cfg.matching is present:
+     scripts with a regex @include/@exclude, and scripts with no
+     @match at all (registered <all_urls>). A script whose @match
+     patterns carry the whole registration skips it. */
   function escRx(s) { return s.replace(/[.+?^${}()|[\]\\]/g, "\\$&"); }
   function globRx(g) { return new RegExp("^" + escRx(g).replace(/\*/g, ".*") + "$"); }
   function includeMatch(pat, url) {
@@ -368,9 +481,9 @@
     /* Split off a trailing `:port` so a port-pinned pattern matches the
        way Chrome's matcher (and src/url-match.ts) does — without this
        the whole `host:port` was compared against u.hostname (no port)
-       and a script declaring both a port-pinned @match and a regex
-       @include/@exclude (the only case cfg.matching ships) was wrongly
-       rejected in-page even though Chrome injected it. A pattern host
+       and a script declaring a port-pinned @match alongside anything
+       that makes cfg.matching ship was wrongly rejected in-page even
+       though Chrome injected it. A pattern host
        with no port matches any port. Keep this in lockstep with
        url-match.ts. */
     var colon = host.lastIndexOf(":");
@@ -433,6 +546,9 @@
        entry (which runs BEFORE the main body's deferred callback) is
        still attributed correctly through the window error listener. */
     installAsyncListeners(entry);
+    /* Past the matcher, so only a document we actually run on reports
+       its focus. Not per-script — the flag inside is module-scoped. */
+    installFocusSignal();
     emitStartupLogs(cfg);
     /* The two gates run CONCURRENTLY and the body starts at
        max(decision, run-at) — `flushPending` is the join, and it needs
@@ -527,7 +643,17 @@
       var evalRefused = false;
       var evalErr = null;
       var swapReady = true;
-      if (decision.seedValues) {
+      if (decision.needsRuntime && !hasGmRuntime()) {
+        /* The new body grants a runtime-backed API and this world has
+           no runtime — the refresh added the first such grant on this
+           page, and the next reload registers it. Run the baked-in
+           (previous) body instead. */
+        swapReady = false;
+        try {
+          console.info("[SourceMonkey] " + cfg.name + ": The updated copy needs the GM runtime, which this page does not have yet, so the previous version ran — reload the page to pick it up");
+        } catch (_smNR) {}
+      }
+      if (swapReady && decision.seedValues) {
         swapReady = false;
         var swapSnap = decision.gmValues;
         if (swapSnap && typeof swapSnap === "object") {
@@ -665,9 +791,9 @@
        from its absence — and initScript stores the entry BEFORE
        running the matcher, so on a page the script doesn't match the
        entry exists with runRegistered false and nothing wrong. Without
-       this check a script with a regex @include (registered at
-       <all_urls>, filtered in-page) would log an error and turn the
-       badge red on every page the user visits. */
+       this check a script registered at <all_urls> and filtered
+       in-page would log an error and turn the badge red on every page
+       the user visits. */
     if (!entry.matched) return;
     var msg = "Script source failed to parse (a @require or the script body has a syntax error); nothing was run";
     try { console.info("[SourceMonkey]", entry.cfg.name + ":", msg); } catch (_e) {}

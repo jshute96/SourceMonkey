@@ -37,6 +37,10 @@ export interface GmNotificationShowResult {
 interface NotificationEntry {
   originatorTabId: number;
   requestId: string;
+  // Which userscript called GM_notification. Kept so the SW can stamp
+  // click / close events with that script's execution world — see
+  // `pushWorld` in background.ts.
+  scriptId: string;
   // Auto-close timer set when details.timeout > 0. Cleared on closed
   // event so we don't fire chrome.notifications.clear on an already-
   // gone notification.
@@ -107,6 +111,7 @@ export async function showGmNotification(
     const entry: NotificationEntry = {
       originatorTabId,
       requestId: payload.requestId,
+      scriptId: payload.scriptId,
       timeoutTimer: null,
     };
     if (d.timeout > 0) {
@@ -131,13 +136,20 @@ export async function showGmNotification(
 export function takeForClicked(chromeId: string): {
   originatorTabId: number;
   requestId: string;
+  // See takeRequestForClosedTab in gm-tab.ts — the SW stamps the
+  // event with the owning script's execution world.
+  scriptId: string;
 } | null {
   const entry = byChromeId.get(chromeId);
   if (!entry) return null;
   // Don't delete the entry on click — TM's `onclick` is NOT terminal.
   // The user may click then the notification auto-closes (or stays
   // open until they dismiss); we still want to deliver ondone later.
-  return { originatorTabId: entry.originatorTabId, requestId: entry.requestId };
+  return {
+    originatorTabId: entry.originatorTabId,
+    requestId: entry.requestId,
+    scriptId: entry.scriptId,
+  };
 }
 
 // Called by the SW's chrome.notifications.onClosed listener.
@@ -145,12 +157,17 @@ export function takeForClicked(chromeId: string): {
 export function takeForClosed(chromeId: string): {
   originatorTabId: number;
   requestId: string;
+  scriptId: string;
 } | null {
   const entry = byChromeId.get(chromeId);
   if (!entry) return null;
   if (entry.timeoutTimer != null) clearTimeout(entry.timeoutTimer);
   byChromeId.delete(chromeId);
-  return { originatorTabId: entry.originatorTabId, requestId: entry.requestId };
+  return {
+    originatorTabId: entry.originatorTabId,
+    requestId: entry.requestId,
+    scriptId: entry.scriptId,
+  };
 }
 
 // Drop every entry whose originator tab just closed. Best-effort

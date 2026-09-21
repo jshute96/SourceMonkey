@@ -15,13 +15,19 @@
 // per-row limit; they also let us write a single key delta without
 // rewriting siblings.
 //
-// Type tagging. chrome.storage round-trips objects via JSON which
-// is lossy for `undefined` and special values. We store the raw
-// value untransformed — JSON-serializable objects survive; functions
-// / circular refs would have been rejected by chrome.storage anyway.
-// VM and TM both use a type-tag prefix encoding to round-trip more
-// types (e.g. dates) — we don't, for simplicity. Userscripts that
-// need date round-tripping should JSON.stringify themselves.
+// Type tagging happens PAGE-SIDE, not here. chrome.storage
+// round-trips via JSON, which is lossy for Date / Map / Set / NaN /
+// undefined — but so is `chrome.runtime.sendMessage`, so by the time
+// a value reaches this module the damage would already be done. The
+// codec therefore lives in `wrapper-gm-runtime.js`, which tags a
+// value before it goes on the wire and revives it after the snapshot
+// comes back. This module stores whatever it is handed, opaquely.
+//
+// The tagged form is a plain `{ __smv__: 1, v: … }` object, and only
+// values JSON would have mangled get wrapped at all — so rows this
+// module wrote before the codec existed are byte-identical to what
+// it writes for the same values now. See
+// docs/GM-APIs-storage.md#value-type-fidelity.
 //
 // Reading one script's values. chrome.storage has no prefix query, so
 // the shape is `getKeys()` → filter → `get(thoseKeys)`. That matters

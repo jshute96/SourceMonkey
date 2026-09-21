@@ -11,29 +11,31 @@ import { defineConfig } from '@playwright/test';
 //   - tests/examples/*/*.spec.ts   — per-API spec lives next to its
 //                                    paired example page + userscript.
 //
-// Two projects:
+// Three projects:
 //   - sourcemonkey (default) — runs every spec under both directories.
 //   - tampermonkey           — runs only the examples suite against the
 //                              user's TM-equipped browser opened via
-//                              scripts/open-test-browser-with-Tampermonkey.sh.
-//                              SM-internals specs (e2e/) are skipped here
-//                              because they reach into the SM service
-//                              worker which doesn't exist under TM.
+//                              `scripts/open-test-browser.sh tampermonkey`.
+//   - violentmonkey          — the same, against a VM-equipped profile.
+//
+// SM-internals specs (e2e/) are skipped under the external managers
+// because they reach into the SM service worker, which doesn't exist
+// there.
 //
 // `metadata.manager` is the source of truth for which backend
 // tests/fixtures/manager.ts uses. Pick the project explicitly with
-// `--project=sourcemonkey` or `--project=tampermonkey`; the
-// `test:e2e` script wires the SM project so `pnpm test` doesn't try to
-// reach a TM browser. See docs/cross-manager-testing.md.
+// `--project=<name>`; the `test:e2e` script wires the SM project so
+// `pnpm test` doesn't try to reach a TM or VM browser. See
+// docs/cross-manager-testing.md.
 export default defineConfig({
   testDir: './tests',
   // Half the cores. Each worker runs its own Chromium with the
   // extension loaded, so this trades memory for wall-clock; leaving
   // headroom keeps the box usable while a run is going.
   //
-  // The tampermonkey project must NOT run this way — it drives one real
-  // browser over CDP with no per-test reset — so `pnpm run test:e2e:tm`
-  // passes `--workers=1`.
+  // The external-manager projects must NOT run this way — each drives
+  // one real browser over CDP with no per-test reset — so
+  // `pnpm run test:e2e:tm` / `:vm` pass `--workers=1`.
   fullyParallel: true,
   workers: '50%',
   reporter: 'list',
@@ -53,10 +55,10 @@ export default defineConfig({
       metadata: { manager: 'sourcemonkey' },
       // Scoped to this project on purpose: a retry here starts from a
       // fresh browser (Playwright discards the crashed worker and its
-      // context), which is what makes it safe. The tampermonkey project
-      // drives the developer's own long-lived profile over CDP with no
-      // per-test reset, where re-running a half-finished install is not
-      // the same proposition.
+      // context), which is what makes it safe. The external-manager
+      // projects drive the developer's own long-lived profile over CDP
+      // with no per-test reset, where re-running a half-finished install
+      // is not the same proposition.
       retries: 1,
     },
     {
@@ -67,6 +69,12 @@ export default defineConfig({
       // prevent cross-worker parallelism — `workers` is global — which
       // is why tests/fixtures/manager.ts refuses to run this project
       // with more than one.
+      fullyParallel: false,
+    },
+    {
+      name: 'violentmonkey',
+      testMatch: ['examples/**/*.spec.ts'],
+      metadata: { manager: 'violentmonkey' },
       fullyParallel: false,
     },
   ],

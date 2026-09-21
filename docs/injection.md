@@ -32,13 +32,47 @@ Tampermonkey / Violentmonkey use in MV3. We picked it over
   page and our content-script world (we currently use no content
   scripts).
 
+### How Violentmonkey uses the same API
+
+Worth knowing when comparing behavior, since "both use
+`chrome.userScripts`" hides the interesting part. Verified against
+VM 2.48.0.
+
+- **VM registers its own injector, not your scripts.** One
+  registration for `<all_urls>` carries VM's content bundle; VM keeps
+  its own URL matcher and decides what to run. We hand Chrome one
+  registration per script and let Chrome match.
+- **VM's content-realm userscripts run via
+  `chrome.userScripts.execute`** — a per-navigation call, which is
+  why its MV3 build needs Chrome ≥ 135. Ours are declarative, so no
+  worker wake-up sits on the injection path.
+- **VM's page-realm scripts don't use `world: 'MAIN'`** — they go in
+  through a `<script>` element appended from the content realm, so a
+  page CSP can block them and VM falls back to running them in the
+  content realm. Our MAIN-world registration isn't subject to page
+  CSP, so `@inject-into page` means what it says.
+- **VM registers a second script per URL to carry its data.** The
+  payload for one page is `JSON.stringify`d into a
+  `chrome.userScripts.register` whose `matches` is that exact URL,
+  registered ahead of the injector. We bake each script's data into
+  that script's own registration instead, so nothing is keyed by URL.
+- **VM has an opt-in path that beats the parser.** With "synchronous
+  page mode" on (`xhrInject`, off by default), a DNR rule appends a
+  `Set-Cookie` naming a blob and the content script reads it with a
+  *synchronous* XHR at `document_start` — for scripts that would
+  otherwise run too late. We have no equivalent.
+
 ## One-time user opt-in
 
 Chrome requires an explicit user toggle before the API will execute:
+the **"Allow User Scripts"** switch on the extension's details page
+(`chrome://extensions/?id=<extId>`).
 
-- **Chrome ≥ 138**: "Allow User Scripts" toggle on the extension's
-  details page (`chrome://extensions/?id=<extId>`).
-- **Chrome 120–137**: Developer mode toggle on `chrome://extensions`.
+- Not a SourceMonkey quirk: Violentmonkey's MV3 build prompts for the
+  same toggle, then tells the user to reload the tab.
+- Chrome below 138 used the browser-wide Developer mode toggle instead.
+  That is under the extension's Chrome 152 floor, so only the one case
+  is live.
 
 Until the user flips that, **every** `register()` call throws. The
 badge logic is unaffected (it's local code, not the userScripts API),
@@ -189,26 +223,41 @@ against and a pure diff would strand stale registrations.
 property is only updated for the existing script if it is specified" —
 and testing against real Chrome adds the part the contract doesn't say.
 
-- **An explicit empty array counts as unspecified.** `excludeGlobs: []`
-  leaves the old exclusions in place, exactly as omitting the key does.
-- **`matches: []` is refused outright** — *"must specify at least one
-  match"*. So there is no way at all to clear a pattern field through
-  `update`.
+- **`includeGlobs` / `excludeGlobs` are ignored entirely.** `update`
+  cannot add them, change them, or clear them. The call succeeds and
+  `getScripts` keeps reporting whatever was registered, so nothing
+  surfaces the loss. Only `matches` really updates.
+- **An explicit empty array counts as unspecified.** `matches: []` is
+  refused outright — *"must specify at least one match"* — so `matches`
+  can be changed but never cleared.
 - **An updated registration moves to the END** of Chrome's set, in
   batch order. See [Ordering](#ordering).
+
+Only the glob behaviour has a live probe
+(`tests/e2e/exclude-globs.spec.ts`). The `matches` and ordering
+behaviours were measured against Chrome when they were first relied on,
+and today are only *modelled* by the fake in
+`tests/unit/injector.test.mjs` — a fake encodes the assumption, it does
+not re-establish it. Probes for those two are filed in
+[TODO.md](../TODO.md).
 
 Why this bites: `buildRegistrationSpec` emits `matches` / `includeGlobs`
 / `excludeGlobs` only when non-empty. Under wipe-and-replace every
 placement was a `register` onto an empty set, so an absent key meant
-"unset"; on the update path it means "keep".
+"unset"; on the update path it means "keep" — and for the globs, it
+means "keep" no matter what the key says.
 
-- A user deleting their last `@exclude` would get a registration still
-  carrying it. The script keeps not running on a site its header no
-  longer excludes, our own matcher (badge, tab status) says otherwise,
-  and nothing in the UI explains the difference.
-- So the injector records which pattern fields each registration
-  carries, and a spec that drops one is placed by `replaceRegistration`
-  — `unregister` then `register`.
+- A user **adding** an `@exclude` would get a registration without it.
+  The script keeps running on the site its header now excludes, our own
+  matcher (badge, tab status) says it shouldn't, and the row reads
+  UNEXPECTED with nothing the user can do about it.
+- A user **deleting** their last `@exclude` is the mirror case: a
+  registration still carrying an exclusion the header no longer
+  declares.
+- So the injector records the pattern fields each registration carries —
+  the glob **values**, since those never update, and presence only for
+  `matches` — and any spec `update` would not faithfully apply is placed
+  by `replaceRegistration` — `unregister` then `register`.
 - **That is the one place the closed window reopens**, for one script,
   for the length of one call pair. The trade is narrow and in the right
   direction: a gap costs that script one navigation, and only a script
@@ -217,24 +266,35 @@ placement was a `register` onto an empty set, so an absent key meant
 
 ### Ordering
 
-`orderWithOwnSpecs` emits GM runtime → bridge → user scripts, and
-because `update` moves a registration to the end of the set, *how* the
-calls are grouped decides the result.
+`orderWithOwnSpecs` emits GM runtimes (one per world) → bridge → user
+scripts, and because `update` moves a registration to the end of the
+set, *how* the calls are grouped decides the result.
 
-- **Our own two registrations are placed first and individually.**
+- **Our own registrations are placed first and individually.**
   Grouping the calls by kind (one `update` batch, one `register` batch)
   would put a newly-registered bridge after already-updated user
   scripts.
+- **An incremental sync that moves an own spec's pattern union updates
+  it**, which lands it after the user scripts already registered. Not
+  repaired: nothing rests on the order once a wrapper checks for the
+  runtime lazily (see the reload fast path's `needsRuntime`), and
+  re-placing the world's scripts behind it would cost each an injection
+  gap.
 - **User specs then go out as batches**, since the relative order of two
   user scripts is not something we promise anyway — see
   [`@run-at` gating](#run-at-gating).
 - Cross-registration ordering isn't guaranteed by the API; in practice
-  Chrome runs registrations in order. The bridge doesn't actually rest
-  on it (a MAIN wrapper's postMessage queues to the message task queue,
-  so the listener is installed before delivery), and neither does the GM
-  runtime (its bindings are spliced inside the wrap function the prelude
-  invokes only after its gates resolve). Keeping the order is
-  belt-and-braces — but cheap, so we keep it.
+  Chrome runs registrations in order.
+  - The GM runtime doesn't rest on it: its bindings are spliced inside
+    the wrap function the prelude invokes only after its gates resolve.
+  - The bridge does. A request is a synchronous event dispatch, so a
+    bridge that hasn't installed its listener yet misses it rather than
+    picking it up from a queue.
+  - Bounded: the only request exposed is `sm:check-pending`, and the
+    prelude's 2s safety timer seals it (the script runs, without the
+    reload fast-path swap).
+  - So keeping our specs first is load-bearing for the bridge, not just
+    belt-and-braces.
 
 ### Update, never unregister-then-register
 
@@ -258,14 +318,15 @@ A registration that is *staying* is replaced with
     registration that was working — and filed our own sequencing
     against the script as Chrome's reason.
   - Asking also yields the registration's real *shape*, which is what
-    says whether an `update` would silently keep a pattern field.
+    says whether an `update` would silently keep the pattern fields it
+    already holds.
 - **The reported reason is the real refusal**, never the second call's.
 - **A refused spec for an id Chrome already holds IS unregistered.**
   Otherwise the previous version keeps injecting while the row reads
   REJECTED — and REJECTED says the script will not run.
 - **The remaining `unregister` calls are all for scripts that are
   genuinely going away**: disabled, deleted, newly INVALID, the one case
-  above, or a pattern field being cleared.
+  above, or a pattern field `update` cannot apply.
 - **Removals do not consult our record of the set.** Every affected
   script that no longer wants a registration is dropped, whether or not
   this context believes it has one — the collections page and the viewer
@@ -396,12 +457,10 @@ rules and why it carries no location.
 - **A fix needs no extra user action**, and is logged: the retry that
   succeeds drops the script from the map, so REJECTED clears, and
   `logRecoveries` writes the matching info row.
-  - The row does **not** go back to OK on its own. `loglevel:` is
-    monotonic within a session, so the refusal's error rows keep the
-    status at ERROR until the log is cleared. That is the same residual
-    badge every recovered failure leaves here — see
-    [storage.md](storage.md#displayed-status-ui-level) and the sentinel
-    note in TODO.md — not something specific to REJECTED.
+  - The row goes back to OK on its own: the refusal rows carry
+    `state: 'rejected'` and the recovery `state: 'ok'`, so neither
+    touched the `loglevel:` sentinel — see
+    [script-log.md](script-log.md#entry-shape).
 - **Every refused attempt gets a Log row**, including a re-sync that
   gets the same reason for the same content. The retry is what's being
   reported: a suppressed retry looks exactly like no retry, and a
@@ -442,7 +501,9 @@ collection's `enabled` flag are both true, we build a
   one pattern can expand to more than one), minus any Chrome's grammar
   would still refuse — one of those would take the whole registration
   down.
-- `includeGlobs` — `@include` glob patterns.
+- `includeGlobs` — `@include` glob patterns. Chrome ORs these with
+  `matches` rather than filtering within them (see
+  [How Chrome reads includeGlobs](#how-chrome-reads-includeglobs)).
 - `excludeGlobs` — `@exclude` glob patterns.
 - `js` — the per-script config blob, the inlined prelude, the user
   program (every `@require` concatenated ahead of the script's own
@@ -519,9 +580,13 @@ default:
 
 - `// @inject-into page` → MAIN.
 - `// @inject-into content` → USER_SCRIPT.
-- `// @inject-into auto` / unspecified → MAIN when there are no
-  `@grant` entries or every `@grant` is `none`; USER_SCRIPT
-  otherwise.
+- `// @inject-into auto` / unspecified →
+  - MAIN when there are no `@grant` entries or a `@grant none` line
+    is present,
+  - MAIN when `unsafeWindow` is granted (see below),
+  - MAIN when the body names `unsafeWindow` with no grant for it (see
+    below),
+  - USER_SCRIPT otherwise.
 
 Why a `@grant none` script defaults to MAIN: scripts that opt out of
 `GM_*` (the conventional `@grant none` declaration) almost always
@@ -530,49 +595,353 @@ functions, hook its jQuery. Running them in the isolated world
 silently breaks any such script. Tampermonkey runs `@grant none`
 scripts in page context for the same reason.
 
-#### MAIN-world telemetry — the bridge
+`none` wins over other `@grant` lines here exactly as it does for the
+bindings (`resolveGrants`): a script mixing `none` with `GM_setValue`
+is a plain `@grant none` script — MAIN world, no GM APIs.
 
-`chrome.runtime.sendMessage` is not exposed to MAIN-world scripts, so
-the wrapper's `sm:start` / `sm:error` reports can't reach the SW
-directly from MAIN. To still get them through:
+- Violentmonkey reads it the same way, on both halves: its API wrapper
+  builds nothing (not even `unsafeWindow`) when `grant` contains
+  `none`, and the same test picks its page-context injection path.
+- It also flags the combination at install time — "`@grant none`
+  disables all other `@grant` keys". Our `warning`-level startup log is
+  the equivalent, naming the overridden grants so the author sees why
+  they're missing.
 
-- `send` in `userscript-prelude.js` feature-detects
-  `chrome.runtime.sendMessage`. In USER_SCRIPT world it calls it
-  directly; in MAIN world it falls back to `window.postMessage({ __sm:
-  "sourcemonkey-bridge", payload })`.
-- `src/wrapper-bridge.js` is a tiny USER_SCRIPT-world script registered
-  alongside user scripts. It listens for those postMessages, validates
-  the marker + `event.source === window`, and forwards the payload to
-  the SW via `chrome.runtime.sendMessage`.
+#### `unsafeWindow` forces MAIN world
+
+`unsafeWindow` is defined as **the page's** `window`. Everything else
+follows from that:
+
+- Chrome's isolated worlds each get their own `window` per document.
+  There is no synchronous channel between an isolated world and the
+  page's realm, and `unsafeWindow.foo` is a synchronous property read —
+  so no proxy or bridge can stand in for it.
+- Therefore the only way to honor the grant is to run the script where
+  the page's window already is. `@grant unsafeWindow` resolves to MAIN,
+  and the binding is the same `const unsafeWindow = window;` we always
+  emitted — what changed is which realm that `window` belongs to.
+- TM and VM land in the same place by different routes (TM's
+  `@sandbox JavaScript`, VM's page-context injection); both give a
+  Chrome script `unsafeWindow === window`.
+
+The isolated-world case that remains:
+
+- `@inject-into content` is an explicit request for isolation and wins
+  over the grant. `unsafeWindow` is then that world's own `window`,
+  matching VM's content mode.
+- Because every page global reads as `undefined` there, that
+  combination is **not** left silent: `extractStartupLogs`
+  (`src/script-store.ts`) attaches a `warn` startup log, which surfaces
+  in the page console and the viewer's Log tab on every matching load.
+
+Scale of the change: of the top 2000 GreasyFork scripts, 224 grant
+`unsafeWindow` and 213 of those set no `@inject-into`, so they had no
+way to opt into MAIN world themselves. 158 of the 213 also grant real
+`GM_*` APIs — which is why moving them required bringing the GM
+runtime along, below.
+
+##### An ungranted reference asks for the same thing
+
+Neither TM nor VM keys `unsafeWindow` off a grant line, so a script
+written against either may use the name and never declare it. Honoring
+only the grant left those scripts with a `ReferenceError` on the one
+name that was supposed to reach the page.
+
+That premise is measured, not read off their docs:
+`tests/examples/unsafe-window/ungranted.user.js` uses the name with no
+grant and reports what it got, and both TM 5.5.0 and VM 2.49.0 hand over
+the page's own object — see
+[cross-manager-test-results.md](cross-manager-test-results.md).
+
+- **Same outcome as the grant**: MAIN world, and the same
+  `const unsafeWindow = window;` binding.
+- **Measured** over the GreasyFork top 2000: 313 scripts mention the
+  name, 187 grant it. Of the remaining 126, 112 are real references —
+  75 that resolved to the isolated world (where the name did not exist
+  at all) and 37 already in MAIN but with no binding, so throwing too.
+  Of the rest, 13 mention it only in a comment or a string and one
+  declares the name itself.
+- **`GM_info.script.grant` is unchanged.** A script reading its own
+  metadata sees its own metadata, and the name itself buys nothing at
+  the SW gate — `bridgeMayActAs` checks header-derived subsystems and
+  `unsafeWindow` has none.
+- **The world move costs what any MAIN-world script's does**, and that
+  part is real: the page can see `window.__SM_GM__` (when the script's
+  other grants need it) and can forge bridge requests for the
+  subsystems that script genuinely granted, exactly as it can for a
+  script that declared `@grant unsafeWindow`. See
+  [Trust model](#trust-model).
+  - For a genuine reference that is the cost of the script working at
+    all — the alternative is the `ReferenceError` it has today.
+  - But unlike the grant, this decision is *inferred*, so a false
+    positive de-isolates a script whose author never asked. That is why
+    the scan errs towards leaving a script alone, and why its
+    false-positive cases (a property key, a `#private` member, a
+    declaration the source makes itself) are the ones it works hardest
+    to exclude.
+- **Reported, not silent**: an `info`-level startup log says the script
+  now runs in the page and is no longer isolated from page content.
+  Only when the reference is what moved it — a script already headed
+  for MAIN says nothing.
+- **`@inject-into content` and `@inject-into page` still win.** The
+  pinned-isolated case gets the same `warning` as the granted one; the
+  grant was never what made that combination broken.
+
+###### How the reference is found
+
+`sourceUsesUnsafeWindow` (`src/unsafe-window-use.ts`) scans the body at
+load time; the answer is persisted as `StoredScript.usesUnsafeWindow`
+and read by `resolveScriptWorld`. It is a text scan, not a parse — the
+extension has no JS parser (the install-time check compiles in a
+sandboxed page and returns a verdict, see
+[parse-check.md](parse-check.md)).
+
+- Comments and string literals are stripped first, and `${…}` inside a
+  template is scanned as code.
+- `foo.unsafeWindow` and `unsafeWindows` don't count; `typeof
+  unsafeWindow` does.
+- A source that **declares** the name — `const unsafeWindow =
+  window.wrappedJSObject || window;`, a real cross-browser idiom — is
+  left alone. Our binding is a `const` in the same scope, so adding one
+  beside it would turn a working script into a SyntaxError. The same
+  check runs over `@require` bodies at emission time, where a library
+  declaring the name is what the main body is usually referencing.
+- Two limits, both erring towards today's behavior: regex literals are
+  not recognized (a `/['"]/` opens a string state, and a literal ending
+  in `\/\/` reads as a line comment, either of which can swallow a
+  later reference), and only the script's own body is scanned, not its
+  `@require` bodies — see TODO.md.
+
+Persisted rather than recomputed: `resolveScriptWorld` runs on the
+per-sync spec-build path, and the spec build, the match index and the
+reload-swap world check all have to give the same answer.
+
+- A row stored before the field existed reads as false, and a row is
+  only rebuilt when a fetch actually happens — the cheap-skip paths
+  (unchanged size+mtime, a 304) leave it exactly as it was. So
+  `backfillUsesUnsafeWindow` (`src/script-store.ts`) fills those rows in
+  on `onInstalled` and re-syncs when any changed; without it the feature
+  would never reach an already-installed script that doesn't change.
+
+#### `GM_*` in MAIN world
+
+Moving a script to MAIN can't cost it the rest of its grants, so the
+whole `GM_*` surface works there too.
+
+- `src/wrapper-gm-runtime.js` — the same source — is registered in
+  MAIN as well as USER_SCRIPT (`buildGmRuntimeSpecs`). It detects at
+  init whether `chrome.runtime` is reachable and picks its transport
+  accordingly. One implementation, two transports; no second copy to
+  drift.
+- Page → SW requests go out over `wrapper-bridge.js` as
+  `sourcemonkey-bridge-sync` DOM events with a `requestId`, the same
+  request/reply shape `sm:check-pending` already used.
+- SW → page pushes (XHR events, cross-tab value updates, menu fires)
+  arrive at the bridge on `chrome.runtime.onMessage`, which MAIN world
+  can't listen on; the bridge re-posts them as
+  `sourcemonkey-bridge-push`.
+- Registration is **per world, per need, and per pattern**:
+  - A world only gets the runtime when some active script there grants
+    an API that needs it. `GM_info` (a baked literal) and
+    `unsafeWindow` (a `window` alias) don't, so an ordinary
+    `@grant none` MAIN-world script leaves no `window.__SM_GM__` on the
+    page.
+  - Its `matches` / `includeGlobs` are the union of those scripts' own,
+    not `<all_urls>`. In MAIN world the runtime is a page-visible
+    global — a fingerprint and an attack surface — so installing one
+    such script must not put it on every page the user visits.
+
+##### Trust model
+
+- In MAIN world `window.__SM_GM__` is a global in the page's own realm.
+  The page can call it, and can forge messages in both bridge
+  directions. That is inherent, not a leak we can plug: separate
+  `chrome.userScripts` registrations can only hand each other
+  references through a shared global, and any secret baked into
+  MAIN-world source is readable once the page steals the wrap function
+  (`self.__smRun` is a page-realm global too).
+- What we do bound is the **service worker** side.
+  `bridgeMayActAs` in `src/background.ts` honors a bridge-relayed,
+  script-scoped request only when the named script actually runs in
+  MAIN world on the sending frame's URL **and** granted the API the
+  request exercises (in catalog-subsystem terms: `tab` for
+  `sm:gm-tab-open`, `storage` for a value read or write, …) — i.e.
+  only through GM surface the page could already reach directly. A
+  `@grant none` script matching the page is not a handle for opening
+  tabs or starting downloads. It fails closed on an unknown id, a
+  non-matching URL, a missing sender URL, or an ungranted API.
+- The **return** direction needs the same discipline. A push the bridge
+  re-posts becomes readable by the page, and pushes carry real payloads
+  — a script's stored values on `sm:gm-value-update`, a cross-origin
+  response body on `sm:gm-xhr-event`. So the SW stamps every push with
+  the destination script's world (`pushWorld`, backed by
+  `scriptWorld` in the match index) and the bridge relays only
+  `smWorld === "MAIN"`. Unknown ids stamp as USER_SCRIPT, so it fails
+  closed.
+- Two pushes carry nothing script-scoped and are relayed regardless:
+  `sm:gm-resync-hint` (a bare "ask again" nudge) and `sm:url-change`
+  (the URL of the very document being posted into). Neither hands the
+  page anything it doesn't already have.
+- Consequences: a page still cannot touch a USER_SCRIPT-world script's
+  GM values (the pre-existing read-leak fix still holds — see
+  `tests/e2e/gm-storage-read-leak.spec.ts`), cannot read its broadcasts
+  or XHR responses just by running a MAIN-world script alongside it,
+  and cannot drive a MAIN-world script scoped to some other site.
+- `sm:gm-xhr-abort`, `sm:gm-tab-close` and `sm:gm-download-abort` are
+  deliberately ungated: they name a per-call random request id, not a
+  script, and cancelling a request the page can already observe gains
+  it nothing.
+- Everything script-scoped goes through the gate, including the
+  handlers that used to refuse a bridge-relayed request outright —
+  `sm:gm-window-close` / `sm:gm-window-focus`, `sm:gm-resync`, and
+  `sm:gm-download-start`. Refusing outright was right while no
+  MAIN-world script could need them; now one can, and the gate is a
+  tighter statement of the same rule. `window.close` is the sharpest
+  case: in MAIN the override sits on the page's own `window`, so the
+  page can reach it — bounded to closing its own tab, and noted in
+  [TODO.md](../TODO.md).
+- **Failing closed has a cost.** The gate decides "does this script
+  match this URL?" with our own matcher (`url-match.ts`), while Chrome
+  decided whether to inject with its. Where the two disagree, a
+  legitimate MAIN-world script would be refused. For a storage-granting
+  script that means no snapshot, which the GM prelude treats as fatal —
+  it reports `sm:error` and doesn't run the body. Loud rather than
+  silent, and the same matcher agreement the badge already depends on
+  (see [matching.md](matching.md)), but it is a new way for a
+  divergence to bite.
+
+##### Costs of running in MAIN
+
+- **Page CSP applies to DOM injection.** `GM_addStyle` /
+  `GM_addElement` are CSP-exempt in USER_SCRIPT world but not in MAIN.
+  A page whose `style-src` omits `'unsafe-inline'` will drop an
+  injected `<style>`'s rules on the floor. The runtime detects that
+  (a connected `<style>` with no `.sheet`) and files one warning per
+  script per document in its Log (`source: gm-dom`), so the failure
+  is visible even though it can't be fixed from the page.
+- **The page can interfere.** It shares prototypes and globals with the
+  script. The runtime's shim cache is captured at `document_start`,
+  before any page script, so its own natives are pristine — but user
+  code in MAIN is on its own.
+- **One extra hop per call.** Every `GM_*` SW round-trip pays the
+  bridge relay, like `sm:check-pending` already did from MAIN. The
+  request leg costs no task hop (it is a synchronous event dispatch);
+  the reply comes back as a postMessage.
+
+#### MAIN-world traffic — the bridge
+
+`chrome.runtime` is not exposed to MAIN-world scripts, so neither the
+wrapper's `sm:start` / `sm:error` reports nor the GM runtime's SW calls
+can reach the service worker directly from MAIN. `src/wrapper-bridge.js`
+is the relay.
+
+What crosses it:
+
+- **Fire-and-forget reports** — `sm:start` / `sm:error` / `sm:swapped` /
+  `sm:abandoned` from `send` in `userscript-prelude.js`, and the
+  storage flush at teardown.
+- **Request/reply** — anything sent with a `requestId`:
+  `sm:check-pending` from the prelude, and every SW-backed `GM_*` call
+  from the MAIN copy of `wrapper-gm-runtime.js`. The bridge always
+  replies, even on failure, so the caller's awaiter settles instead of
+  running out its timeout.
+- **SW-originated pushes** — `sm:gm-xhr-event`, `sm:gm-value-update`,
+  `sm:gm-tab-closed`, `sm:gm-notification-event`, `sm:gm-menu-fire`,
+  `sm:gm-download-event` (the bridge's `PUSHED` list is authoritative).
+  Those arrive on `chrome.runtime.onMessage`, which only USER_SCRIPT
+  world can listen on, so the bridge re-posts them into the page as
+  `sourcemonkey-bridge-push`.
+
+Mechanics:
+
+- `send` in `userscript-prelude.js` asks whether `chrome.runtime.id`
+  is a string — true only in a real extension context. In USER_SCRIPT
+  world it then calls `chrome.runtime.sendMessage` directly; in MAIN
+  world it falls back to the bridge event. The GM runtime's
+  `transportSend` makes the same choice. Not keyed on `sendMessage` existing: a web
+  page listed in another extension's `externally_connectable` has a
+  partial `chrome.runtime` (`sendMessage` and `connect`) in MAIN world
+  for talking to that extension, and calling it without an extension
+  id throws.
+- **Page → SW is a DOM event**, not a postMessage: a `CustomEvent`
+  named `sourcemonkey-bridge-sync` dispatched on `document`, carrying
+  `{requestId, payload}` as a JSON string in `detail` (objects don't
+  cross realms).
+  - Event dispatch runs *every* world's listeners in the **dispatching
+    task**, so the bridge's `chrome.runtime.sendMessage` happens before
+    the caller returns. A postMessage is delivered on a later task, and
+    a document in `pagehide` never gets one — `GM_setValue()` before
+    `location.href = …` or a tab close lost the write every time.
+  - It also saves a task hop on `sm:check-pending`, which every
+    MAIN-world script waits on at `document_start`. The hop is small at
+    rest — a `postMessage` to one's own window round-trips in well under
+    a millisecond on an idle page, against roughly a millisecond for the
+    whole SW round-trip — but it is a *queued task*, so it grows with
+    whatever else the page has pending, which at `document_start` is the
+    page's own boot.
+  - JSON costs nothing the wire didn't already: the bridge's
+    `chrome.runtime.sendMessage` JSON-serializes regardless, so a value
+    that survives `JSON.stringify` here is exactly a value the SW could
+    have received.
+  - `requestId` is omitted for fire-and-forget sends, and that absence
+    is what selects the bridge's reply-less path.
+- **SW → page stays postMessage** — replies and pushes both. There is
+  no durability concern (the document just asked), and the bridge
+  originates them in USER_SCRIPT world, where postMessage is the only
+  channel into MAIN.
+- The bridge checks the payload type against an allowlist per
+  direction and forwards. An unallowlisted request gets no reply at
+  all, so the bridge can't be used as an "is this type relayed?"
+  oracle. Cross-frame relay is not a concern on the request side: a DOM
+  event on `document` only reaches listeners in that same document, so
+  a frame can only reach the bridge instance injected into it, already
+  scoped to that frame's URL. The MAIN-world receivers of our replies
+  and pushes still check `event.source === window`.
 - `buildBridgeSpec` (in `src/injector.ts`) emits the bridge
-  registration when at least one active script resolves to MAIN. The
-  bridge matches `<all_urls>` and runs at `document_start` so its
-  listener is installed before any wrapper's queued postMessage event
-  dispatches.
+  registration when at least one active script resolves to MAIN. It
+  runs at `document_start`, ahead of the wrapper specs, because the
+  request path is synchronous now: an event dispatched before the
+  bridge's listener exists is dropped, not queued. Only the
+  `sm:check-pending` handshake is exposed to that race, and the
+  prelude's 2s safety timer covers it (the script runs, just without
+  the reload fast-path swap). The script's own `GM_*` calls aren't: the
+  body doesn't run until the handshake settles, by which point every
+  `document_start` registration has executed.
+- The bridge is scoped like the runtime: its patterns are the union of
+  every MAIN-world script's (granted or not — telemetry and the reload
+  handshake ride it too), fingerprinted so an incremental sync
+  re-offers it when the union moves. It is not `<all_urls>`: on a page
+  with no MAIN-world script it would still cost a whole USER_SCRIPT
+  world for that document, a V8 context per navigation.
+- Our own specs go in before the user scripts (injection order), so
+  they are built from patterns Chrome hasn't ruled on. If Chrome
+  refuses one, it is rebuilt from the placements Chrome accepted —
+  which exclude the refused script, whose row reads REJECTED — and
+  offered again (`retryRefusedOwnSpecs`). Not `<all_urls>`: a bad
+  pattern in one script must not put our code on every page.
 
 Trust model:
 
-- The bridge requires `event.source === window` plus the marker, so
-  cross-origin frames can't reach it.
-- It does **not** stop the host page from forging messages. Once any
-  MAIN-world wrapper runs, the page can observe our postMessage
-  payloads on its own window and learn the stored script `id` and any
-  `sm:error` `message` text, then send fakes with whatever marker /
-  ids it just saw.
+- Cross-origin frames can't reach a bridge instance that isn't theirs:
+  the request is a DOM event, which stays inside its own document.
+- It does **not** stop the host page from forging traffic. Once any
+  MAIN-world wrapper runs, the page can observe our replies and pushes
+  on its own window and learn the stored script `id` and any `sm:error`
+  `message` text, then dispatch fakes with whatever ids it just saw —
+  the request event is as available to the page as a postMessage was.
 - A forged `sm:start` flips a script's badge entry from MISSING to OK
   on that document; a forged `sm:error` writes an attacker-controlled
   string into the SW console and per-tab session record. Neither
   grants script execution or SW privilege.
-- Reading another script's GM values via a forged `sm:check-pending`
-  IS blocked: the bridge stamps `__viaBridge:true` on every message it
-  relays (set last, so the page can't pre-set it false), and the SW
-  refuses to attach a `gmValues` snapshot to any `__viaBridge` request.
-  Legitimate value reads ride a USER_SCRIPT-world script's own direct
-  `chrome.runtime` channel and carry no marker. See
-  `docs/GM-APIs.md` and `tests/e2e/gm-storage-read-leak.spec.ts`.
-
-`GM_*` is not supported anywhere yet (see Limitations); the
-`@grant`-keyed branch just future-proofs the resolver for when it is.
+- Script-scoped requests — a `sm:check-pending` asking for `gmValues`,
+  or any `sm:gm-*` call — are gated. The bridge stamps
+  `__viaBridge:true` on every message it relays (set last, so the page
+  can't pre-set it false), and the SW's `bridgeMayActAs` honors such a
+  request only for a script that runs in MAIN world on the sending
+  page and granted the API being called. Reading a USER_SCRIPT-world script's GM values stays blocked,
+  which is the original read-leak fix. See
+  [`GM_*` in MAIN world](#gm_-in-main-world), `docs/GM-APIs.md`, and
+  `tests/e2e/gm-storage-read-leak.spec.ts`.
 
 ### /regex/ pattern forms
 
@@ -581,9 +950,11 @@ The User Scripts API has no equivalent for `/regex/` `@include` /
 
 - **Registration layer.** Glob `@include` / `@exclude` patterns go to
   `includeGlobs` / `excludeGlobs`. `@match` goes to `matches`. If a
-  script's *only* includes are regexes (no `@match`, no glob
-  `@include`), we register with `matches: ['<all_urls>']` so Chrome
-  hands us every page.
+  script has no `@match` at all — only `@include`, in either form — we
+  register with `matches: ['<all_urls>']` so Chrome hands us every
+  page, and let the wrapper narrow it. Chrome refuses a registration
+  with no `matches` (*"must specify 'matches'"*), so there is nothing
+  else to give it.
 - **Wrapper layer.** When a script has any regex pattern, the wrapper
   embeds the full `{matches, includes, excludes}` object and a small
   self-contained matcher equivalent to `urlMatchesScript()`. Before
@@ -593,6 +964,30 @@ The User Scripts API has no equivalent for `/regex/` `@include` /
 Net effect: badge and injection stay in sync. The wrapper-side
 matcher must agree byte-for-byte with `src/url-match.ts`; a unit test
 eval's the embedded snippet to verify the regex-relevant cases.
+
+### How Chrome reads includeGlobs
+
+Measured against real Chrome, not taken from the docs — the probe lives
+in `tests/e2e/include-only.spec.ts` and re-checks this on whatever
+Chrome the suite runs:
+
+- `chrome.userScripts` **ORs** `includeGlobs` with `matches`: a page
+  matching either one runs the script. That is userscript `@include`
+  semantics, and it differs from the content-script API, whose
+  `include_globs` filters *within* `matches`.
+- So a script declaring both `@match` and `@include` runs on the union,
+  which is what its header says and what the badge predicts. No
+  divergence to fix.
+- `excludeGlobs` subtracts under either reading, so it needs no care.
+
+Consequences for the `<all_urls>` fallback:
+
+- It cannot be narrowed by handing Chrome the globs alongside it —
+  `<all_urls>` OR anything is still every page.
+- So every no-`@match` script carries the wrapper-side matcher, glob
+  includes included.
+- The globs go to Chrome anyway, so the registration stays correct if
+  Chrome ever moves to the documented AND.
 
 ## The activation / error wrapper
 
@@ -612,9 +1007,11 @@ into `dist/`). The pieces:
   `js[]` array — see [injection-modes.md](injection-modes.md).
 - `src/wrapper-bridge.js` → `WRAPPER_BRIDGE` — USER_SCRIPT-world
   relay registered separately when any MAIN-world script is active
-  (see [MAIN-world telemetry — the bridge](#main-world-telemetry--the-bridge)).
+  (see [MAIN-world traffic — the bridge](#main-world-traffic--the-bridge)).
 - `src/wrapper-gm-runtime.js` → `WRAPPER_GM_RUNTIME` — shared
-  USER_SCRIPT-world runtime for `GM_*` APIs. See
+  per-world runtime for `GM_*` APIs, registered in USER_SCRIPT and/or
+  MAIN world as the granting scripts need (see
+  [GM_* in MAIN world](#gm_-in-main-world)). See
   [GM-APIs.md](GM-APIs.md).
 
 Why one line per file: per-script wrap entries (the require and
@@ -668,9 +1065,9 @@ When the body fires (inside the prelude's `runMain`), the prelude:
   USER_SCRIPT world it uses `chrome.runtime.sendMessage` (silencing
   the returned Promise so an unreachable SW doesn't surface as
   `Uncaught (in promise)`). In MAIN world (where `chrome.runtime`
-  is undefined) it falls back to `window.postMessage` with a
-  marker the bridge picks up — see [MAIN-world telemetry — the
-  bridge](#main-world-telemetry--the-bridge).
+  is undefined) it falls back to a `sourcemonkey-bridge-sync` DOM
+  event the bridge picks up — see [MAIN-world traffic — the
+  bridge](#main-world-traffic--the-bridge).
 
 ### Async-error attribution
 
@@ -732,7 +1129,13 @@ listener that handles these wrapper-originated message types:
   this script id.
 - `sm:error` — synchronous or attributed-async throw.
 - `sm:abandoned` — the wrapper exited without running anything
-  (SW replied `skip`). Logged only; no badge change.
+  (SW replied `skip`). Logged only; no badge change. Today `skip` comes
+  from "Reload page with no userscripts" — see
+  [matching.md](matching.md#reload-with-no-userscripts).
+- `sm:focus` — the document came to the front. Not per-script and not
+  a report about one: one listener per world per document, and the SW
+  answers it by checking this tab's local scripts for edits. See
+  [updates.md](updates.md#focus-triggered-refresh).
 
 For the report types (start / swapped / error) the SW:
 
@@ -786,6 +1189,21 @@ Two clicks per edit gets annoying fast. The fast-path collapses it to
 one for the common "edited file is already on disk before reload"
 case.
 
+**For a local script it is now the backstop rather than the first
+line**, because the
+[focus-triggered refresh](updates.md#focus-triggered-refresh) checks
+local scripts when the user switches to the tab:
+
+- That check usually lands first, so by reload time the new body is
+  already registered and there is no race to win.
+- What is left for the fast path is an edit that arrives while the tab
+  is already in front — no switch to trigger on.
+
+**For an http(s) script the fast path is still the only mechanism.**
+The focus check deliberately skips those (a conditional GET to a third
+party on every alt-tab), so a published update is picked up by the
+reload's own refresh, racing the same 500 ms window as before.
+
 ### Setup
 
 `onCommitted` with `transitionType === 'reload'` calls
@@ -806,6 +1224,10 @@ it just gets the default `run` reply — the optimization is best-effort.
 
 When a wrapper sends `sm:check-pending` with its own `id`, `loadedAt`
 (the value baked in at registration), and `url`, the SW:
+
+Before any of this, a tab marked for "Reload page with no userscripts"
+gets `skip`, for every frame — see
+[matching.md](matching.md#reload-with-no-userscripts). Otherwise the SW:
 
 1. Looks up `fastPathByDoc[tabId:docId]`. **No entry → reply `run`.**
    This is the common case for ordinary navigations and costs ~1–5ms
@@ -1171,10 +1593,11 @@ timeout remains the hard ceiling for every `@run-at`.
 
 - **MAIN-world scripts** can't call `chrome.runtime.sendMessage`
   directly, so they round-trip `sm:check-pending` via
-  `wrapper-bridge.js` using a `sourcemonkey-bridge-reply` postMessage
-  keyed on a per-request nonce. The page can observe and forge these
-  postMessages — the threat model is unchanged from the existing
-  bridge (the page already runs arbitrary code in MAIN world). Where
+  `wrapper-bridge.js`: the request as a `sourcemonkey-bridge-sync`
+  event, the answer as a `sourcemonkey-bridge-reply` postMessage keyed
+  on a per-request nonce. The page can observe and forge both — the
+  threat model is unchanged from the existing bridge (the page already
+  runs arbitrary code in MAIN world). Where
   the page's CSP forbids `unsafe-eval`, the swap eval throws; the
   prelude detects the CSP marker in the error message and falls
   through to running the baked-in main body, matching pre-fast-path
@@ -1183,16 +1606,30 @@ timeout remains the hard ceiling for every `@run-at`.
   round-trips `sm:check-pending` regardless of `transitionType` — the
   SW just replies `run` faster when there's no fast-path entry. For
   USER_SCRIPT-world scripts that's ~1–5ms on the document-start
-  critical path; for MAIN-world (which routes through `wrapper-bridge.js`
-  via postMessage) it's roughly 2–3x that.
+  critical path; for MAIN-world (which routes through
+  `wrapper-bridge.js`) it's more, though the request leg itself is a
+  synchronous event dispatch rather than a task hop.
 - **World changes defer the swap.** Adding a script's first real
   `@grant` moves it MAIN → USER_SCRIPT, but the running wrapper is
-  stuck in the world Chrome injected it into, and USER_SCRIPT
-  bindings dereference `window.__SM_GM__`, which MAIN doesn't have.
+  stuck in the world Chrome injected it into — a body that expects
+  page context can't see the page's globals from the isolated world,
+  and one that expects isolation gets a `window` the page can reach.
   A request relayed over `wrapper-bridge.js` is by definition from a
   MAIN wrapper, so that plus a USER_SCRIPT new row means "defer to
-  the next reload". The reverse direction is safe — a MAIN-only
-  build is just the `GM_info` literal.
+  the next reload", and vice versa.
+- **A newly-needed GM runtime defers the swap — decided by the
+  wrapper, at run time.** The shared `__SM_GM__` runtime is registered
+  only in worlds that have a script granting a runtime-backed API (see
+  [`GM_*` in MAIN world](#gm_-in-main-world)), so a page whose scripts
+  grant nothing carries none. A refresh that adds the first such grant
+  would ship a body whose GM_* bindings resolve to nothing. The SW
+  marks such a reply `needsRuntime`; the wrapper checks
+  `window.__SM_GM__` at the moment the body is about to run and falls
+  back to the baked-in body if it's absent. At run time, not at
+  wrapper start: the runtime is its own `document_start` registration
+  and may sit after the wrapper in Chrome's order (an updated
+  registration moves to the end), but by run time every
+  `document_start` registration has executed.
 - **Race vs. setup.** If a wrapper fires before `setupReloadFastPath`
   finishes its `await ensureLoaded()` step, it gets `run` and the
   reload behaves like before. The opportunistic refresh kicked off by

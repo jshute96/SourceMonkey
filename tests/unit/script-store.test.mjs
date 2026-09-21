@@ -6,12 +6,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  IMPLICIT_UNSAFE_WINDOW_INFO,
+  backfillUsesUnsafeWindow,
   distillMatching,
   extractStartupLogs,
   validateHeader,
   buildScriptFromText,
   applyFetchError,
-  applyMissing,
   buildInitialInvalidEntry,
   fetchOrSkipInParallel,
   hashSource,
@@ -228,7 +229,7 @@ test('extractStartupLogs warns once per unusable @match, each on its own line', 
     {
       level: 'warn',
       message: 'Ignoring @match https://bare.example — it has no path; '
-        + 'add a trailing "/*" to match every page on that host',
+        + 'add a trailing "/*" to match all pages on that host',
       location: { file: 'x.user.js', line: 4 },
     },
     {
@@ -333,13 +334,12 @@ test('buildScriptFromText reports a missing required field', async () => {
   assert.deepEqual(entry.matching.matches, ['https://example.com/*']);
 });
 
-// ---------- applyFetchError / applyMissing / buildInitialInvalidEntry ----------
+// ---------- applyFetchError / buildInitialInvalidEntry ----------
 //
 // `applyFetchError` is named for the trigger (a hard fetch failure). A
 // prior `ok` row keeps running (`status: 'ok'` + `refreshError`) so a
 // transient logout / network blip never silently disables a working
-// script; a prior non-ok row flips to `'invalid'`. `applyMissing` is
-// keyed by vanished-listing-entry, not a fetch attempt.
+// script; a prior non-ok row flips to `'invalid'`.
 
 test('applyFetchError keeps a prior-ok row running with refreshError', async () => {
   const ok = await buildScriptFromText({ ...COMMON, text: VALID_SCRIPT });
@@ -363,62 +363,6 @@ test('applyFetchError flips a prior non-ok row to invalid', async () => {
   assert.equal(errored.status, 'invalid');
   assert.equal(errored.errorMessage, 'EACCES');
   assert.equal(errored.refreshError, undefined);
-});
-
-test('applyMissing preserves size + content, clears errorMessage + refreshError', async () => {
-  // The file is gone but we still hold its last-read bytes — keep the
-  // cached size so the Size column reflects the preserved content,
-  // distinct from genuine "unknown size" rows. A confirmed-vanished file
-  // also subsumes any "refresh failed" annotation.
-  const ok = await buildScriptFromText({ ...COMMON, text: VALID_SCRIPT });
-  const errored = applyFetchError(ok, 'read failed'); // ok + refreshError
-  const missing = applyMissing(errored);
-  assert.equal(missing.status, 'missing');
-  assert.equal(missing.size, ok.size);
-  assert.equal(missing.errorMessage, undefined);
-  assert.equal(missing.refreshError, undefined);
-  assert.equal(missing.headerText, ok.headerText);
-  assert.equal(missing.bodyText, ok.bodyText);
-});
-
-test('applyMissing disables the script so a vanished file stops running', async () => {
-  // The directory-level Refresh promotes vanished files to missing;
-  // we want them silently stopped, not still injected from cached
-  // content. The user has to manually re-enable if the file returns.
-  const ok = await buildScriptFromText({ ...COMMON, text: VALID_SCRIPT });
-  assert.equal(ok.enabled, true);
-  assert.equal(applyMissing(ok).enabled, false);
-});
-
-test('applyMissing preserves enabled when the row has already left the ok state', async () => {
-  // Regression guard: rebuildCollection calls applyMissing on every refresh
-  // for files the scan still doesn't see, not just on the first
-  // ok→missing transition. If the user re-enabled a missing row to run
-  // from its cached body, the next refresh must not silently clobber
-  // that choice. The enabled flag only flips on the ok→missing edge.
-  //
-  // Two non-ok prior states need preservation:
-  //   - missing → missing (a plain directory refresh while the file
-  //     is still gone)
-  //   - error → missing (an opportunistic per-script refetch flipped
-  //     the row to error first — applyFetchError preserves enabled —
-  //     and then the directory-level refresh promotes it to missing)
-  const ok = await buildScriptFromText({ ...COMMON, text: VALID_SCRIPT });
-
-  // missing → missing preserves enabled
-  const justMissing = applyMissing(ok);
-  assert.equal(justMissing.enabled, false);
-  const reEnabledMissing = { ...justMissing, enabled: true };
-  const afterRefresh = applyMissing(reEnabledMissing);
-  assert.equal(afterRefresh.status, 'missing');
-  assert.equal(afterRefresh.enabled, true);
-
-  // error → missing preserves enabled
-  const reEnabledErrored = { ...ok, enabled: true, status: /** @type {'invalid'} */ ('invalid'), errorMessage: 'gone' };
-  const fromError = applyMissing(reEnabledErrored);
-  assert.equal(fromError.status, 'missing');
-  assert.equal(fromError.enabled, true);
-  assert.equal(fromError.errorMessage, undefined);
 });
 
 test('buildInitialInvalidEntry leaves content empty', async () => {
@@ -492,7 +436,10 @@ test('rebuildCollection reuses IDs for known relativePaths', async () => {
   assert.equal(result[1].id, 'id-1');
 });
 
-test('rebuildCollection flags vanished scripts as missing and keeps their content', async () => {
+test('rebuildCollection drops a vanished script when the scan still sees others', async () => {
+  // A successful scan that lists something is the directory telling us
+  // what it holds now, so a renamed or deleted file leaves rather than
+  // lingering as a `missing` row the user has to trash by hand.
   const existing = [
     await buildScriptFromText({
       id: 'a-id',
@@ -522,23 +469,51 @@ test('rebuildCollection flags vanished scripts as missing and keeps their conten
     now: 100,
     newId: fakeIdSequence(),
   });
-  assert.equal(result.length, 2);
-  // Scan-order entries come first, then missing entries trailing.
-  assert.equal(result[0].relativePath, 'a.user.js');
+  assert.deepEqual(result.map((s) => s.relativePath), ['a.user.js']);
   assert.equal(result[0].status, 'ok');
-  assert.equal(result[1].relativePath, 'b.user.js');
-  assert.equal(result[1].status, 'missing');
-  // Missing entry keeps the prior body + size so the viewer still
-  // works and the Size column reflects the cached content.
-  assert.equal(result[1].size, existing[1].size);
-  assert.equal(result[1].bodyText, existing[1].bodyText);
+});
+
+test('rebuildCollection drops every script when the scan came back empty', async () => {
+  // A scan that succeeded and found nothing is the directory saying it
+  // holds nothing — the same as an empty manifest. The case this must
+  // not be confused with, a listing that could not be read, never
+  // reaches rebuildCollection: the listing reader refuses a page that
+  // isn't a directory listing, and refreshCollection turns that into a
+  // scanError that leaves every row alone.
+  const existing = [
+    await buildScriptFromText({
+      id: 'a-id',
+      collectionId: 'src-1',
+      relativePath: 'a.user.js',
+      fileUrl: 'file:///dir/a.user.js',
+      text: VALID_SCRIPT,
+      now: 50,
+    }),
+    await buildScriptFromText({
+      id: 'b-id',
+      collectionId: 'src-1',
+      relativePath: 'b.user.js',
+      fileUrl: 'file:///dir/b.user.js',
+      text: VALID_SCRIPT,
+      now: 50,
+    }),
+  ];
+  const result = await rebuildCollection({
+    collectionId: 'src-1',
+    collectionPath: '/dir',
+    existing,
+    scan: [],
+    fetchResults: new Map(),
+    now: 100,
+    newId: fakeIdSequence(),
+  });
+  assert.deepEqual(result, []);
 });
 
 test('rebuildCollection drops vanished entries entirely for a manifest collection', async () => {
   // A manifest is the user's source of truth: if they remove an entry,
-  // they're explicitly removing the script. No reason to keep a
-  // tombstone row around as 'missing' the way we do for a local
-  // directory (where the file might come back).
+  // they're explicitly removing the script — the same rule as a
+  // directory listing, which is the directory's own source of truth.
   const existing = [
     await buildScriptFromText({
       id: 'a-id',
@@ -577,7 +552,8 @@ test('rebuildCollection drops vanished entries entirely for a manifest collectio
 
 test('rebuildCollection drops vanished entries for a local manifest collection too', async () => {
   // Same rule applies to file:// / raw-path manifests — the manifest
-  // kind, not the scheme, decides the vanished-entry policy.
+  // kind, not the scheme, decides the vanished-entry policy. The empty
+  // scan here is the case a directory collection exempts.
   const existing = [
     await buildScriptFromText({
       id: 'b-id',
@@ -841,26 +817,6 @@ test('rebuildCollection: successful fetch stores fsMtime from the scan', async (
   assert.equal(result[0].fsMtime, 4200);
 });
 
-test('rebuildCollection: missing path also disables the entry', async () => {
-  // Mirrors applyMissing's behavior end-to-end via rebuildCollection.
-  const existing = [
-    await buildScriptFromText({
-      id: 'a-id', collectionId: 'src-1', relativePath: 'a.user.js',
-      fileUrl: 'file:///dir/a.user.js', text: VALID_SCRIPT, now: 50,
-    }),
-  ];
-  const result = await rebuildCollection({
-    collectionId: 'src-1', collectionPath: '/dir',
-    existing,
-    scan: [],
-    fetchResults: new Map(),
-    now: 100,
-    newId: fakeIdSequence(),
-  });
-  assert.equal(result[0].status, 'missing');
-  assert.equal(result[0].enabled, false);
-});
-
 test('rebuildCollection builds the right fileUrl for a container file script', async () => {
   // Container scripts store the full URL/path as `relativePath`.
   // scriptFileUrl must coerce raw fs paths into file:// URLs so the
@@ -1037,25 +993,6 @@ test('fetchOrSkipInParallel: mixed-scheme manifest dispatches per resolved entry
   }
 });
 
-test('applyMissing keeps HTTP validators dormant for later recovery', async () => {
-  // Documented behavior: a vanished script row preserves httpEtag /
-  // httpLastModified even though they're unused while status is
-  // 'missing'. If the entry later reappears, buildScriptFromText
-  // overwrites the validators from the fresh response.
-  const prior = {
-    ...await buildScriptFromText({
-      id: 'h-id', collectionId: 'src-1', relativePath: 'a.user.js',
-      fileUrl: 'https://x/a.user.js', text: VALID_SCRIPT, now: 1,
-    }),
-    httpEtag: 'W/"abc"',
-    httpLastModified: 'Wed, 21 Oct 2025 07:28:00 GMT',
-  };
-  const missing = applyMissing(prior);
-  assert.equal(missing.status, 'missing');
-  assert.equal(missing.httpEtag, 'W/"abc"');
-  assert.equal(missing.httpLastModified, 'Wed, 21 Oct 2025 07:28:00 GMT');
-});
-
 // ---------- loadStateLogEntry ----------
 //
 // The one place that decides how a failed load is phrased and at what
@@ -1082,6 +1019,7 @@ test('loadStateLogEntry reports an invalid row as an error carrying errorMessage
   // the text, so the Log tab can render it as a link.
   assert.deepEqual(loadStateLogEntry(bad), {
     level: 'error',
+    state: 'invalid',
     message: NO_NAME,
     location: { file: 'a.user.js', line: 1 },
   });
@@ -1090,25 +1028,14 @@ test('loadStateLogEntry reports an invalid row as an error carrying errorMessage
 test('loadStateLogEntry falls back to a generic message when an invalid row has none', () => {
   assert.deepEqual(
     loadStateLogEntry({ status: 'invalid' }),
-    { level: 'error', message: 'Unknown error' },
-  );
-});
-
-test('loadStateLogEntry reports a missing row as an error', async () => {
-  const ok = await buildScriptFromText({
-    id: 'a', collectionId: 's', relativePath: 'a.user.js',
-    fileUrl: 'file:///a.user.js', text: VALID_SCRIPT, now: 1,
-  });
-  assert.deepEqual(
-    loadStateLogEntry(applyMissing(ok)),
-    { level: 'error', message: 'Script file is missing' },
+    { level: 'error', state: 'invalid', message: 'Unknown error' },
   );
 });
 
 test('loadStateLogEntry reports a refreshError as a warning: the script still runs', async () => {
   // status stays 'ok' — the cached copy is still injected — so this is
-  // a warning, not an error. It also must not poison the monotonic
-  // loglevel sentinel with ERROR for a collection that later comes back.
+  // a warning, not an error. The `state` is what the badge shows, and
+  // is also what keeps the entry off the `loglevel:` sentinel.
   const ok = await buildScriptFromText({
     id: 'a', collectionId: 's', relativePath: 'a.user.js',
     fileUrl: 'file:///a.user.js', text: VALID_SCRIPT, now: 1,
@@ -1117,7 +1044,7 @@ test('loadStateLogEntry reports a refreshError as a warning: the script still ru
   assert.equal(stale.status, 'ok');
   assert.deepEqual(
     loadStateLogEntry(stale),
-    { level: 'warning', message: 'Refresh failed: HTTP 404' },
+    { level: 'warning', state: 'refresh-failed', message: 'Refresh failed: HTTP 404' },
   );
 });
 
@@ -1128,7 +1055,7 @@ test('loadStateLogEntry ranks a broken load above a stale refresh', () => {
     loadStateLogEntry({
       status: 'invalid', errorMessage: 'no metadata block', refreshError: 'HTTP 404',
     }),
-    { level: 'error', message: 'no metadata block' },
+    { level: 'error', state: 'invalid', message: 'no metadata block' },
   );
 });
 
@@ -1216,4 +1143,87 @@ test('sameStoredValue sees a real content change on a full row', async () => {
     ...base, text: VALID_SCRIPT + '\nconsole.log("more");\n', prior: first,
   });
   assert.equal(sameStoredValue(first, edited), false);
+});
+
+// ---------- backfillUsesUnsafeWindow ----------
+//
+// The one storage-touching function tested here, because what it exists
+// for can't be seen from the pure helpers: a row is only rebuilt when a
+// fetch happens, so a script installed before `usesUnsafeWindow` existed
+// would keep failing on the name indefinitely.
+
+const USES_UNSAFE_WINDOW = `// ==UserScript==
+// @name        Implicit
+// @match       https://example.com/*
+// @grant       GM_setValue
+// ==/UserScript==
+unsafeWindow.__PAGE_APP__.go();
+`;
+
+function legacyRow(over = {}) {
+  // A row as it would have been stored before the field existed: no
+  // `usesUnsafeWindow`, whatever `startupLogs` its header alone produced.
+  const text = over.text ?? USES_UNSAFE_WINDOW;
+  const body = text.slice(text.indexOf('==/UserScript==') + '==/UserScript=='.length);
+  const row = {
+    id: over.id ?? 'script-1',
+    collectionId: 'c',
+    relativePath: 'a.user.js',
+    fileUrl: 'file:///a.user.js',
+    status: 'ok',
+    size: text.length,
+    headerText: '',
+    bodyText: body,
+    header: parseHeader(text),
+    matching: { matches: ['https://example.com/*'], excludes: [], includes: [] },
+    loadedAt: 0,
+    enabled: true,
+  };
+  delete over.text;
+  return { ...row, ...over };
+}
+
+function stubStorage(rows) {
+  const store = Object.fromEntries(rows.map((r) => [`script:${r.id}`, r]));
+  globalThis.chrome = {
+    storage: {
+      local: {
+        get: async (key) => (key === null ? { ...store } : {}),
+        set: async (obj) => { Object.assign(store, obj); },
+      },
+    },
+  };
+  return store;
+}
+
+test('backfillUsesUnsafeWindow flips a pre-field row and gives it the startup log', async () => {
+  const store = stubStorage([legacyRow()]);
+  assert.equal(await backfillUsesUnsafeWindow(), 1);
+  const row = store['script:script-1'];
+  assert.equal(row.usesUnsafeWindow, true);
+  // Re-derived, so the row says what the injector will now do with it.
+  assert.deepEqual(row.startupLogs.map((l) => [l.level, l.message]), [
+    ['info', IMPLICIT_UNSAFE_WINDOW_INFO],
+  ]);
+});
+
+test('backfillUsesUnsafeWindow leaves rows it has nothing to add to', async () => {
+  const store = stubStorage([
+    // Already carries the flag.
+    legacyRow({ id: 'has-flag', usesUnsafeWindow: true }),
+    // Never runs, so it never reaches the injector.
+    legacyRow({ id: 'broken', status: 'invalid', errorMessage: 'The file is empty' }),
+    // Doesn't name unsafeWindow at all.
+    legacyRow({ id: 'plain', text: VALID_SCRIPT }),
+  ]);
+  assert.equal(await backfillUsesUnsafeWindow(), 0);
+  assert.equal(store['script:broken'].usesUnsafeWindow, undefined);
+  assert.equal(store['script:plain'].usesUnsafeWindow, undefined);
+});
+
+test('backfillUsesUnsafeWindow is idempotent', async () => {
+  const store = stubStorage([legacyRow()]);
+  assert.equal(await backfillUsesUnsafeWindow(), 1);
+  assert.equal(await backfillUsesUnsafeWindow(), 0);
+  assert.equal(store['script:script-1'].usesUnsafeWindow, true);
 });

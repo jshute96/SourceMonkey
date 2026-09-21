@@ -9,12 +9,12 @@ import { test, expect } from '../../fixtures/manager';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// SourceMonkey supports relative `@resource` refs resolved against
-// the host script's URL; TM/VM only accept absolute URLs. The
-// example userscript uses relative refs (`./*.css`, etc.) so TM
-// can't install it cleanly. Whole suite is SM-only until we ship an
-// absolute-URL variant of this example. See
-// docs/cross-manager-test-results.md.
+// The example userscript uses relative `@resource` refs (`./*.css`).
+// SourceMonkey resolves those against the host script's URL, and VM
+// against the URL the script was installed from — which the harness
+// makes a real fixture-server URL, so VM fetches them for real. TM
+// takes absolute URLs only and can't install the example cleanly, so
+// it stays skipped. See docs/cross-manager-test-results.md.
 test.describe('examples / gm-resource', () => {
   test.beforeEach(({ setup }) => {
     test.skip(setup.manager === 'tampermonkey', 'TM requires absolute @resource URLs; this example uses relative refs');

@@ -26,13 +26,32 @@ userscripts — and don't try to help you *write* the scripts.
 
 ### Violentmonkey
 
-- <https://violentmonkey.github.io/>
-- Open source (MIT). Firefox, Edge (their site notes Violentmonkey
-  is "no longer supported on Chrome" and recommends Brave).
-- Similar feature set to Tampermonkey: full `GM_*` API, value
-  storage, `@require` / `@resource`, editor with linting.
+- <https://violentmonkey.github.io/> ·
+  [GitHub](https://github.com/violentmonkey/violentmonkey)
+- Open source (MIT). Chrome, Edge, Firefox. Actively developed —
+  2.48.0 in August 2026.
+- **Back on Chrome, under MV3.** The MV3 build landed in 2.41.2
+  (July 2026) and is what their release workflow uploads to the
+  Chrome Web Store listing. Their Edge workflow switched to it in
+  August 2026, after the 2.48.0 tag, so it lands there with the next
+  release. Firefox keeps the MV2 build from the same tree — MV3 is a
+  build flag (`MV3=1`), not a fork.
+  - The MV3 build needs Chrome ≥ 135 and the same one-time
+    "Allow user scripts" toggle SourceMonkey needs.
+  - Chrome's MV2 shutdown had left VM's Chrome listing a dead end
+    before that, so older write-ups — earlier revisions of these
+    docs included — describe VM as a Firefox/Edge-only option.
+- Feature set comparable to Tampermonkey: full `GM_*` surface —
+  including `GM_cookie` (2.35.1+) and the bulk `GM_getValues` /
+  `GM_setValues` / `GM_deleteValues` (2.19.1+) — value storage UI,
+  `@require` / `@resource`, editor with linting, and cloud sync
+  (Dropbox, Google Drive, OneDrive, WebDAV, S3).
 - Originated the `@inject-into` header (`page` / `content` / `auto`)
   that Tampermonkey and SourceMonkey both honor.
+- How its MV3 architecture compares to ours — where it uses
+  `chrome.userScripts`, its offscreen document, its
+  `declarativeNetRequest` header surgery — is in
+  [GM-API-strategy.md](GM-API-strategy.md#violentmonkey-mit-oss-copy-able).
 
 ### Greasemonkey
 

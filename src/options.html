@@ -2,20 +2,26 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>SourceMonkey — Options</title>
+    <title>SourceMonkey | Options</title>
     <link rel="stylesheet" href="styles.css" />
     <style>
-      body { font: 14px system-ui, sans-serif; max-width: 720px; margin: 2em auto; padding: 0 1em; color: #222; }
-      h1 { margin-top: 0; }
-      button { font: inherit; padding: 0.3em 0.8em; cursor: pointer; }
-      .top-actions { display: flex; justify-content: flex-start; margin-bottom: 0.5em; }
-      .settings { margin-top: 1em; }
-      .settings-heading { font-size: 1em; margin: 0 0 0.5em; }
-      .settings-row { display: inline-flex; align-items: center; gap: 0.5em; cursor: pointer; }
+      /* Full-bleed body; the header bar and `.page-body` (styles.css)
+         each centre their own contents on the shared `--page-width`
+         column. */
+      body { font: 14px system-ui, sans-serif; margin: 0; color: #222; --page-width: 720px; }
+      /* Whole-px vertical metrics — see docs/architecture.md "Extension-page styling". */
+      /* Horizontal only: height, surface and states are shared across
+         every page (styles.css). */
+      button { font: inherit; padding: 0 11px; cursor: pointer; }
+      .settings { margin-top: 14px; }
+      .settings-heading { font-size: 1em; line-height: 16px; margin: 0 0 7px; }
+      /* Odd line-height: centering the 13px checkbox in an even line box
+         would put it on a half pixel. */
+      .settings-row { display: inline-flex; align-items: center; line-height: 15px; gap: 0.5em; cursor: pointer; }
       /* Space each toggle from the hint text of the one above it. */
-      .settings-hint + .settings-row { margin-top: 0.8em; }
+      .settings-hint + .settings-row { margin-top: 11px; }
       .settings-row input[type="checkbox"] { cursor: pointer; margin: 0; }
-      .settings-hint { margin: 0.3em 0 0; font-size: 0.85em; color: #666; }
+      .settings-hint { margin: 4px 0 0; font-size: 0.85em; line-height: 14px; color: #666; }
       .settings-section { margin-top: 2em; padding-top: 1em; border-top: 1px solid #eee; }
       .token-row { display: flex; gap: 0.5em; align-items: center; margin: 0.5em 0; }
       .token-row input[type="password"],
@@ -39,103 +45,134 @@
     </style>
   </head>
   <body>
-    <h1>SourceMonkey</h1>
-
-    <div class="top-actions">
-      <button id="open-collections" type="button" title="Open the collections page">Collections</button>
-    </div>
-
-    <div id="settings" class="settings">
-      <h2 class="settings-heading">Settings</h2>
-      <label class="settings-row">
-        <input id="capture-userjs" type="checkbox" />
-        <span>Capture <code>.user.js</code> links</span>
-      </label>
-      <p class="settings-hint">
-        Opening a <code>.user.js</code> link — or a <code>.user.js</code>
-        file on this computer — shows SourceMonkey's install prompt
-        instead of leaving it to Chrome, which downloads the file rather
-        than offering to install it. On by default. Turn this off to get
-        Chrome's stock behavior back, including for local files.
-      </p>
-      <label class="settings-row">
-        <input id="debug-logging" type="checkbox" />
-        <span>Enable debug logging</span>
-      </label>
-      <p class="settings-hint">Logs per-navigation match lists and per-script update checks to the service-worker console. Off by default.</p>
-    </div>
-
-    <div id="local-roots" class="settings-section">
-      <h2 class="settings-heading">Search paths for local <code>@require</code> and <code>@resource</code> files (for scripts in local files)</h2>
-      <p class="settings-hint">
-        Scripts loaded from a local file can also load resources from local files, overriding the original URL.<br/>
-        The script's local directory is searched first.<br/>
-        Then these directories are searched, in order, looking for
-        files matching any trailing part of the URL, site name included.<br/>
-        If not found locally, files are loaded from their original URL.
-      </p>
-      <p class="settings-hint">
-        Note: Any files under these directories can be read by local userscripts.
-      </p>
-      <textarea id="local-roots-text" rows="4" spellcheck="false"
-                placeholder="One absolute path per line, e.g. /home/me/dev/userscript-lib"></textarea>
-      <div class="token-row">
-        <button id="local-roots-save" type="button">Save</button>
+    <header class="page-header">
+      <div class="page-header-inner">
+        <a class="page-home page-icon-link" href="collections.html" target="_blank"
+           rel="noopener" tabindex="-1" aria-hidden="true">
+          <img class="page-icon" src="icons/icon-48.png" alt="" />
+        </a>
+        <h1><a class="page-home brand" href="collections.html" target="_blank" rel="noopener"
+             title="Open the collections page">SourceMonkey</a><span class="brand"> |</span> Options</h1>
+        <div class="page-header-actions">
+          <button id="open-collections" type="button" title="Open the collections page">Collections</button>
+        </div>
       </div>
-      <p id="local-roots-status" class="token-status"></p>
-      <ul id="local-roots-problems" class="root-problems"></ul>
-      <div id="local-roots-file-access"></div>
-    </div>
+    </header>
 
-    <div id="github-auth" class="settings-section">
-      <h2 class="settings-heading">GitHub authentication</h2>
-      <p class="settings-hint">
-        Optional personal access token used when fetching from
-        <code>api.github.com</code> and
-        <code>raw.githubusercontent.com</code>. Lets you add private
-        repos and lifts the GitHub API limit from <strong>60</strong>
-        to <strong>5000</strong> requests per hour. Stored in
-        <code>chrome.storage.local</code> on this machine; never sent
-        to any non-GitHub host.
-      </p>
-      <div class="token-row">
-        <input id="github-token" type="password" autocomplete="off" spellcheck="false"
-               placeholder="ghp_… or github_pat_…" />
-        <button id="github-token-reveal" type="button" title="Show / hide the token">Show</button>
-        <button id="github-token-save" type="button">Save</button>
-        <button id="github-token-clear" type="button" title="Remove the saved token">Clear</button>
-      </div>
-      <p id="github-token-status" class="token-status"></p>
-      <details class="token-help">
-        <summary>How to create a token</summary>
-        <ol>
-          <li>
-            Open
-            <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener">
-              github.com/settings/personal-access-tokens
-            </a>
-            and click <strong>Generate new token</strong> (fine-grained recommended).
-          </li>
-          <li>
-            <strong>Repository access</strong>: pick the repos you want
-            SourceMonkey to reach (or <em>All repositories</em> for
-            convenience). For public repos you just want higher rate
-            limits on, the default <em>Public repositories</em> selection
-            is enough.
-          </li>
-          <li>
-            <strong>Permissions → Repository → Contents</strong>: select
-            <code>Read-only</code>. That's the only scope SourceMonkey
-            uses; leave everything else at <em>No access</em>.
-          </li>
-          <li>Set an expiry, generate the token, and paste it above.</li>
-        </ol>
+    <div class="page-body">
+      <div id="settings" class="settings">
+        <h2 class="settings-heading">Settings</h2>
+        <label class="settings-row">
+          <input id="capture-userjs" type="checkbox" />
+          <span>Capture <code>.user.js</code> links</span>
+        </label>
         <p class="settings-hint">
-          Tip: revoke the token from the same settings page if you
-          stop using SourceMonkey. Tokens never expire automatically
-          unless you set an expiry.
+          Opening a <code>.user.js</code> link — or a <code>.user.js</code>
+          file on this computer — shows SourceMonkey's install prompt
+          instead of leaving it to Chrome, which just shows the file's
+          source rather than offering to install it. On by default. Turn
+          this off to get Chrome's stock behavior back, including for
+          local files.
         </p>
-      </details>
+        <label class="settings-row">
+          <input id="debug-logging" type="checkbox" />
+          <span>Enable debug logging</span>
+        </label>
+        <p class="settings-hint">Logs per-navigation match lists and per-script update checks to the service-worker console. Off by default.</p>
+      </div>
+
+      <div id="local-roots" class="settings-section">
+        <h2 class="settings-heading">Search paths for local <code>@require</code> and <code>@resource</code> files (for scripts in local files)</h2>
+        <p class="settings-hint">
+          Scripts loaded from a local file can also load resources from local files, overriding the original URL.<br/>
+          The script's local directory is searched first, then the
+          collection directory it came from.<br/>
+          Then the directories here are searched, in order, looking for
+          files matching any trailing part of the URL, site name included.<br/>
+          If not found locally, files are loaded from their original URL.
+        </p>
+        <p class="settings-hint">
+          Note: Any files under these directories can be read by local userscripts.
+        </p>
+        <textarea id="local-roots-text" rows="4" spellcheck="false"
+                  placeholder="One absolute path per line, e.g. /home/me/dev/userscript-lib"></textarea>
+        <div class="token-row">
+          <button id="local-roots-save" type="button">Save</button>
+        </div>
+        <p id="local-roots-status" class="token-status"></p>
+        <ul id="local-roots-problems" class="root-problems"></ul>
+        <div id="local-roots-file-access"></div>
+      </div>
+
+      <div id="downloads-copies" class="settings-section">
+        <h2 class="settings-heading">Downloads folder (for local copies of scripts)</h2>
+        <p class="settings-hint">
+          <strong>Local copy…</strong> on a script's page writes an editable
+          copy into <code>SourceMonkey/</code> under the browser's Downloads
+          folder, and registers that folder as the
+          <strong>Scripts copied in Downloads</strong> collection.
+          Chrome doesn't tell extensions where Downloads is, so it is
+          learned from the first copy. Correct it here if Chrome's
+          download location has changed since.
+        </p>
+        <div class="token-row">
+          <input id="downloads-dir" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="Learned from the first local copy, e.g. /home/me/Downloads" />
+          <button id="downloads-dir-save" type="button">Save</button>
+        </div>
+        <p id="downloads-dir-status" class="token-status"></p>
+      </div>
+
+      <div id="github-auth" class="settings-section">
+        <h2 class="settings-heading">GitHub authentication</h2>
+        <p class="settings-hint">
+          Optional personal access token used when fetching from
+          <code>api.github.com</code> and
+          <code>raw.githubusercontent.com</code>. Lets you add private
+          repos and lifts the GitHub API limit from <strong>60</strong>
+          to <strong>5000</strong> requests per hour. Stored in
+          <code>chrome.storage.local</code> on this machine; never sent
+          to any non-GitHub host.
+        </p>
+        <div class="token-row">
+          <input id="github-token" type="password" autocomplete="off" spellcheck="false"
+                 placeholder="ghp_… or github_pat_…" />
+          <button id="github-token-reveal" type="button" title="Show / hide the token">Show</button>
+          <button id="github-token-save" type="button">Save</button>
+          <button id="github-token-clear" type="button" title="Remove the saved token">Clear</button>
+        </div>
+        <p id="github-token-status" class="token-status"></p>
+        <details class="token-help">
+          <summary>How to create a token</summary>
+          <ol>
+            <li>
+              Open
+              <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener">
+                github.com/settings/personal-access-tokens
+              </a>
+              and click <strong>Generate new token</strong> (fine-grained recommended).
+            </li>
+            <li>
+              <strong>Repository access</strong>: pick the repos you want
+              SourceMonkey to reach (or <em>All repositories</em> for
+              convenience). For public repos you just want higher rate
+              limits on, the default <em>Public repositories</em> selection
+              is enough.
+            </li>
+            <li>
+              <strong>Permissions → Repository → Contents</strong>: select
+              <code>Read-only</code>. That's the only scope SourceMonkey
+              uses; leave everything else at <em>No access</em>.
+            </li>
+            <li>Set an expiry, generate the token, and paste it above.</li>
+          </ol>
+          <p class="settings-hint">
+            Tip: revoke the token from the same settings page if you
+            stop using SourceMonkey. Tokens never expire automatically
+            unless you set an expiry.
+          </p>
+        </details>
+      </div>
     </div>
 
     <script src="options.js" type="module"></script>

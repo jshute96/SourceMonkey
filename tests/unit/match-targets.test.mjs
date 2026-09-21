@@ -11,6 +11,8 @@ import {
   originFromMatchPattern,
   representativeOrigin,
   representativeMatch,
+  representativeMatches,
+  MAX_SITE_ICONS,
   linkPathFromMatchPath,
   sameDirLinkUrl,
 } from '../../dist/match-targets.js';
@@ -385,4 +387,54 @@ test('sameDirLinkUrl: a filename needing escapes is resolved, not concatenated',
     sameDirLinkUrl('*://*/gm-menu/my page.html', FILE_SCRIPT),
     'file:///home/u/dev/tests/examples/gm-menu/my%20page.html',
   );
+});
+
+// ---------- representativeMatches ----------
+
+test('representativeMatches: one entry per distinct site, header order', () => {
+  assert.deepEqual(
+    representativeMatches({
+      matches: [
+        'https://connect.garmin.com/app/*',
+        'https://www.strava.com/*',
+        'https://connect.garmin.com/other/*',
+      ],
+    }).map((t) => t.origin),
+    ['https://connect.garmin.com', 'https://www.strava.com'],
+  );
+});
+
+test('representativeMatches: www. and scheme do not make a new site', () => {
+  assert.deepEqual(
+    representativeMatches({
+      matches: [
+        'http://www.example.com/*',
+        'https://example.com/*',
+        'https://WWW.example.com/x/*',
+      ],
+    }).map((t) => t.linkUrl),
+    ['http://www.example.com/'],
+  );
+});
+
+test('representativeMatches: ports are distinct sites; cap at MAX_SITE_ICONS', () => {
+  const got = representativeMatches({
+    matches: [
+      'http://localhost:3000/*',
+      'http://localhost:8080/*',
+      '<all_urls>',
+      'https://a.example/*',
+      'https://b.example/*',
+    ],
+  });
+  assert.equal(got.length, MAX_SITE_ICONS);
+  assert.deepEqual(got.map((t) => t.origin), [
+    'http://localhost:3000',
+    'http://localhost:8080',
+    'https://a.example',
+  ]);
+});
+
+test('representativeMatches: empty when nothing names a site', () => {
+  assert.deepEqual(representativeMatches({ matches: ['<all_urls>', 'file:///x/*'] }), []);
 });
