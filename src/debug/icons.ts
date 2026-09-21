@@ -108,9 +108,22 @@ function renderRow(row: CachedIconRow): HTMLTableRowElement {
   if (!row.isFresh) {
     badge.className = 'status-badge status-stale';
     badge.textContent = 'expired';
-  } else if (!row.isUsable) {
+  } else if (row.requiredVersion !== null && row.entry.v !== row.requiredVersion) {
     badge.className = 'status-badge status-stale';
     badge.textContent = 'stale schema';
+    const have = row.entry.v === undefined ? 'none' : `v${row.entry.v}`;
+    badge.title = [
+      `Schema version: ${have}`,
+      `Current version: v${row.requiredVersion}`,
+      'Ignored and refetched on the next render.',
+    ].join('\n');
+  } else if (!row.isUsable) {
+    badge.className = 'status-badge status-stale';
+    badge.textContent = 'unpaintable';
+    badge.title = [
+      'The cached value is not an icon we would paint.',
+      'Ignored and refetched on the next render.',
+    ].join('\n');
   } else if (row.entry.dataUrl === null) {
     badge.className = 'status-badge status-miss';
     badge.textContent = 'miss';

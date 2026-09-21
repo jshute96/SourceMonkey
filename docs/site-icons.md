@@ -19,6 +19,11 @@
   `iconUrl:*`) with icon preview, target site/URL, scope chip,
   MIME/byte-size details, schema version, freshness status, and
   fetched/expiry timestamps.
+- The status badge reads `ok`, `miss` (cached "no icon"), `expired`,
+  `stale schema` (written under an older discovery version — its tooltip
+  names the row's version and the current one), or `unpaintable`
+  (a value `usableCacheHit` would refuse). All but `ok` / `miss` read as
+  misses, so the next render that needs the row refetches it.
 - Supports per-row **Refresh** and **Delete** buttons, plus a **Delete All**
   action in the header bar.
 

@@ -1009,6 +1009,9 @@ export interface CachedIconRow {
   expiresAt: number;
   isFresh: boolean;
   isUsable: boolean;
+  // The schema version a read demands of this row, or null for rows
+  // that aren't versioned (`iconUrl:`). Compare with `entry.v`.
+  requiredVersion: number | null;
   mimeType: string | null;
   byteLength: number | null;
 }
@@ -1078,6 +1081,7 @@ export function parseCachedIconRow(
     expiresAt,
     isFresh,
     isUsable,
+    requiredVersion: requireVersion ?? null,
     mimeType,
     byteLength,
   };

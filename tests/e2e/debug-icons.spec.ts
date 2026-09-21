@@ -30,6 +30,11 @@ test.describe('/debug/icons.html page', () => {
             dataUrl: `data:image/png;base64,${png}`,
             fetchedAt: ts - 30_000,
           },
+          // Written before rows were versioned: fresh, but not usable.
+          'siteIcon:https://delta.example': {
+            dataUrl: `data:image/png;base64,${png}`,
+            fetchedAt: ts - 90_000,
+          },
         }),
       [now, PNG_BASE64] as const,
     );
@@ -40,10 +45,10 @@ test.describe('/debug/icons.html page', () => {
     await expect(page.locator('header.page-header h1')).toContainText('Debug');
     await expect(page.locator('header.page-header h1')).toContainText('Icons');
 
-    // All three rows render in sorted target order.
+    // All rows render in sorted target order.
     const rows = page.locator('#icons-tbody tr');
-    await expect(rows).toHaveCount(3);
-    await expect(page.locator('#icons-summary')).toHaveText('3 cached icons');
+    await expect(rows).toHaveCount(4);
+    await expect(page.locator('#icons-summary')).toHaveText('4 cached icons');
 
     // Row 0: siteIcon:https://alpha.example
     const row0 = rows.nth(0);
@@ -60,6 +65,16 @@ test.describe('/debug/icons.html page', () => {
     await expect(row1.locator('td.col-icon svg.site-icon-globe')).toBeVisible();
     await expect(row1.locator('.kind-chip')).toHaveText('path');
     await expect(row1.locator('.status-badge')).toHaveText('miss');
+
+    // Row 2: siteIcon:https://delta.example — unversioned, so the read
+    // would ignore it; the badge's tooltip says what it has vs needs.
+    const row2 = rows.nth(2);
+    await expect(row2.locator('td.col-target a')).toHaveText('https://delta.example');
+    await expect(row2.locator('.status-badge')).toHaveText('stale schema');
+    await expect(row2.locator('.status-badge')).toHaveAttribute(
+      'title',
+      /^Schema version: none\nCurrent version: v2\n/,
+    );
 
     // Test per-row Refresh on beta.example/app/ after routing a live icon.
     const REFRESHED_ICON = 'data:image/png;base64,REFRESH1';
@@ -79,8 +94,8 @@ test.describe('/debug/icons.html page', () => {
 
     // Test per-row Delete on row 0.
     await row0.locator('button.delete-icon').click();
-    await expect(rows).toHaveCount(2);
-    await expect(page.locator('#icons-summary')).toHaveText('2 cached icons');
+    await expect(rows).toHaveCount(3);
+    await expect(page.locator('#icons-summary')).toHaveText('3 cached icons');
 
     // Test Delete All button at top.
     await page.locator('#delete-all').click();
