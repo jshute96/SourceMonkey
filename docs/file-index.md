@@ -73,7 +73,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/userscript.html` | Userscript viewer markup: header bar, status box (banner + versions panel), controls row, install callout + preview actions, details panel, tab strip, code box, log pane |
 | `src/userscript.ts` | Userscript viewer controller — installed mode (`?script=`), preview mode (`?preview=`), in-page switching between copies, the Collection row's Move button, the controls row's Local copy / delete-copy buttons, live `storage` watchers, log pane |
 | `src/compare.html` | Compare page markup: header bar, the fields table slot, view controls, tab strip, diff box |
-| `src/compare.ts` | Compare page controller — loads two copies (stored, or a preview's download), the fields table with its swap, per-file tabs, unified / side-by-side diff rendering |
+| `src/compare.ts` | Compare page controller — loads two copies (stored, or a preview's download), the fields table with its swap, per-file tabs, unified / side-by-side diff rendering, change-block arrows |
 | `src/select-all.ts` | The Ctrl/Cmd-A that selects a page's content rather than the page, given what each page wants selected |
 | `src/line-diff.ts` | Pure line diff (Myers) plus hunk folding and change counts, behind the compare page |
 | `src/move-dialog.ts` | The move-script dialog opened from the viewer's Collection row: destination dropdown, live refusals, runs the move itself |

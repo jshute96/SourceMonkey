@@ -112,7 +112,7 @@ test.describe('compare page', () => {
     // changed the version and a body line: three out, two in. One hunk
     // — in a file this short the header change and the body change
     // are within context of each other.
-    await expect(page.locator('.diff-summary')).toHaveText('−3 +2 lines');
+    await expect(page.locator('.diff-counts')).toHaveText('−3 +2 lines');
     const unified = page.locator('table.diff.unified');
     await expect(unified.locator('tr.del')).toHaveCount(3);
     await expect(unified.locator('tr.add')).toHaveCount(2);
@@ -158,8 +158,8 @@ test.describe('compare page', () => {
     const leftRows = panes.nth(0).locator('tr');
     const rightRows = panes.nth(1).locator('tr');
     const at = (await leftRows.allTextContents()).findIndex((t) => t.includes('1.1.0'));
-    await expect(leftRows.nth(at)).toHaveClass('del');
-    await expect(rightRows.nth(at)).toHaveClass('add');
+    await expect(leftRows.nth(at)).toHaveClass(/\bdel\b/);
+    await expect(rightRows.nth(at)).toHaveClass(/\badd\b/);
     await expect(rightRows.nth(at)).toContainText('1.0.0');
     // The left side's `setup();` has a filler across from it, as tall
     // as a line, so the panes stay in step past it: the two tables are
@@ -258,18 +258,18 @@ test.describe('compare page', () => {
 
     await tabs.nth(1).click();
     await expect(tabs.nth(1)).toHaveClass(/\bactive\b/);
-    await expect(page.locator('.diff-summary')).toHaveText('−1 +1 lines');
+    await expect(page.locator('.diff-counts')).toHaveText('−1 +1 lines');
     await expect(page.locator('table.diff tr.del')).toContainText('__lib = 2');
 
     // A file only one side has is all removals — or, after a swap,
     // all additions.
     await tabs.nth(2).click();
-    await expect(page.locator('.diff-summary')).toHaveText('−1 line');
+    await expect(page.locator('.diff-counts')).toHaveText('−1 line');
     await expect(page.locator('table.diff tr.del')).toHaveCount(1);
     await page.locator('#swap').click();
     await expect(tabs.nth(2).locator('.chip')).toHaveText('added');
     await expect(tabs.nth(2)).toHaveClass(/\bactive\b/);
-    await expect(page.locator('.diff-summary')).toHaveText('+1 line');
+    await expect(page.locator('.diff-counts')).toHaveText('+1 line');
     await page.close();
   });
 
@@ -297,7 +297,7 @@ test.describe('compare page', () => {
     await expect(tabs.nth(1)).toContainText('lib.js');
     await expect(tabs.nth(1).locator('.chip')).toHaveText('different');
     await tabs.nth(1).click();
-    await expect(page.locator('.diff-summary')).toHaveText('\u22121 +1 lines');
+    await expect(page.locator('.diff-counts')).toHaveText('\u22121 +1 lines');
     await page.close();
   });
 
@@ -347,12 +347,81 @@ test.describe('compare page', () => {
     const tabs = page.locator('#tabs .tab');
     await expect(tabs.nth(1).locator('.chip')).toHaveText('same');
     await tabs.nth(1).click();
-    await expect(page.locator('.diff-summary')).toHaveText('No differences');
+    await expect(page.locator('.diff-counts')).toHaveText('No differences');
     // The whole file, as one copy, whatever the view says.
     await page.locator('.seg button[data-value="split"]').click();
     await expect(page.locator('table.diff.unified tr')).toHaveCount(2);
     await expect(page.locator('.diff-body.split')).toHaveCount(0);
     await expect(page.locator('table.diff tr.del, table.diff tr.add, table.diff tr.hunk')).toHaveCount(0);
+    await page.close();
+  });
+
+  test('the arrows jump between change blocks and stop at the ends', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // Three changes far enough apart that, whole file, each block is
+    // its own screenful: the header's version line, then two body
+    // lines. (The version differs in every test; here it is the first
+    // block.)
+    const lines = Array.from({ length: 300 }, (_, i) => `console.log(${i});`);
+    const edited = [...lines];
+    edited[100] = 'console.log("a");';
+    edited[200] = 'console.log("b");';
+    write(dir, { version: '1.0.0', body: lines.join('\n') + '\n' });
+    write(other, { version: '1.1.0', body: edited.join('\n') + '\n' });
+    await sm.addCollection(dir.path);
+    await sm.addCollection(other.path);
+    await sm.syncNow();
+    const scripts = await allScripts(sm);
+    const base = scripts.find((s) => s.fileUrl.includes(other.path))!;
+    const older = scripts.find((s) => s.fileUrl.includes(dir.path))!;
+
+    const page = await extensionContext.newPage();
+    await page.goto(comparePage(extensionId, base.id, older.id));
+    await page.locator('.seg button[data-value="whole"]').click();
+    await page.locator('.seg button[data-value="unified"]').click();
+    const body = page.locator('.diff-body');
+    const starts = body.locator('tr.block-start');
+    await expect(starts).toHaveCount(3);
+    const prev = page.locator('.diff-summary .block-prev');
+    const next = page.locator('.diff-summary .block-next');
+    // Each click lands the block's first row at the top of the box —
+    // the first block too, a few header lines down from the top.
+    // (Within a pixel: rows are 19.5px tall, so half the offsets are
+    // fractional, and the box lands on a whole pixel.)
+    const rowTop = (i: number) => starts.nth(i).evaluate((tr) => (tr as HTMLElement).offsetTop);
+    const scrollTop = () => body.evaluate((el) => el.scrollTop);
+    await expect(prev).toBeDisabled();
+    await expect(next).toBeEnabled();
+    await next.click();
+    expect(await scrollTop()).toBeCloseTo(await rowTop(0), 0);
+    await expect(prev).toBeDisabled();
+    await next.click();
+    expect(await scrollTop()).toBeCloseTo(await rowTop(1), 0);
+    await expect(prev).toBeEnabled();
+    await next.click();
+    expect(await scrollTop()).toBeCloseTo(await rowTop(2), 0);
+    await expect(next).toBeDisabled();
+    await prev.click();
+    expect(await scrollTop()).toBeCloseTo(await rowTop(1), 0);
+    await prev.click();
+    expect(await scrollTop()).toBeCloseTo(await rowTop(0), 0);
+    await expect(prev).toBeDisabled();
+    // Scrolled by hand past the last block, Down has nowhere to go.
+    await body.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    await expect(next).toBeDisabled();
+    await expect(prev).toBeEnabled();
+
+    // Side by side the left pane is the one the arrows drive, and the
+    // right follows it.
+    await page.locator('.seg button[data-value="split"]').click();
+    const left = page.locator('.diff-body .pane.left');
+    const right = page.locator('.diff-body .pane.right');
+    await expect(left.locator('tr.block-start')).toHaveCount(3);
+    await page.locator('.diff-summary .block-next').click();
+    const leftTop = await left.evaluate((el) => el.scrollTop);
+    expect(leftTop).toBeGreaterThan(0);
+    await expect.poll(() => right.evaluate((el) => el.scrollTop)).toBe(leftTop);
     await page.close();
   });
 
@@ -376,7 +445,7 @@ test.describe('compare page', () => {
     await expect(sides.nth(1)).toContainText(path);
     await expect(row(page, 'Version').locator('td.value.left')).toHaveText('1.0.0');
     await expect(row(page, 'Version').locator('td.value.right')).toHaveText('1.0.1');
-    await expect(page.locator('.diff-summary')).toHaveText('−1 +1 lines');
+    await expect(page.locator('.diff-counts')).toHaveText('−1 +1 lines');
     await page.close();
   });
 

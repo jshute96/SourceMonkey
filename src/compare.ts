@@ -668,18 +668,23 @@ function renderDiff(): void {
     body.tabIndex = 0;
     body.appendChild(unifiedTable(ops, identical));
   }
-  diffEl.replaceChildren(summaryRow(counts), body);
+  diffEl.replaceChildren(summaryRow(counts, body), body);
   diffEl.hidden = false;
 }
 
-function summaryRow(counts: { removed: number; added: number }): HTMLElement {
+// The summary strip: the counts, then the Up/Down arrows that jump
+// between change blocks (the collections page's move arrows, by glyph).
+// `body` is the scroller the arrows drive.
+function summaryRow(counts: { removed: number; added: number }, body: HTMLElement): HTMLElement {
   const row = document.createElement('div');
   row.className = 'diff-summary';
+  const text = document.createElement('span');
+  text.className = 'diff-counts';
+  row.appendChild(text);
   if (counts.removed === 0 && counts.added === 0) {
-    row.textContent = 'No differences';
+    text.textContent = 'No differences';
     return row;
   }
-  const span = document.createElement('span');
   const parts: Node[] = [];
   if (counts.removed > 0) {
     const del = document.createElement('span');
@@ -694,12 +699,76 @@ function summaryRow(counts: { removed: number; added: number }): HTMLElement {
     parts.push(add);
   }
   parts.forEach((part, i) => {
-    if (i > 0) span.appendChild(document.createTextNode(' '));
-    span.appendChild(part);
+    if (i > 0) text.appendChild(document.createTextNode(' '));
+    text.appendChild(part);
   });
-  span.appendChild(document.createTextNode(counts.removed + counts.added === 1 ? ' line' : ' lines'));
-  row.appendChild(span);
+  text.appendChild(document.createTextNode(counts.removed + counts.added === 1 ? ' line' : ' lines'));
+  row.append(...blockNav(body));
   return row;
+}
+
+// ---------- Jumping between change blocks ----------
+
+// A change block is a run of changed rows — removals, additions, and
+// (side by side) the blanks across from them — between two unchanged
+// rows or seams. Its first row wears `.block-start`; the arrows step
+// between those rows in whichever element scrolls: the unified body,
+// or the left pane, whose scroll the right pane follows.
+//
+// "Where we are" is read off the scroll position each click rather
+// than kept as a block index: the user scrolls by hand too, and a
+// counter would send the next click somewhere unrelated to what is on
+// screen. The rows are measured from the scroller's top so that a row
+// counts as "current" only once it has been scrolled to.
+function blockNav(body: HTMLElement): HTMLButtonElement[] {
+  const up = arrowButton('up', 'Previous change');
+  const down = arrowButton('down', 'Next change');
+  const scroller = () => body.querySelector<HTMLElement>('.pane.left') ?? body;
+  // A row's offsetTop is from its table, which sits at the top of the
+  // scroller — so it is the scrollTop that puts the row at the top.
+  const starts = () => [...scroller().querySelectorAll<HTMLElement>('tr.block-start')].map((tr) => tr.offsetTop);
+  const refresh = () => {
+    const el = scroller();
+    const offsets = starts();
+    up.disabled = !offsets.some((o) => o < el.scrollTop - 1);
+    // Rows past the end of the scroll range can never be scrolled to,
+    // so the last few blocks are reached when the scroller is at its
+    // end, not when their row is at the top.
+    const maxTop = el.scrollHeight - el.clientHeight;
+    down.disabled = el.scrollTop >= maxTop - 1 || !offsets.some((o) => o > el.scrollTop + 1);
+  };
+  up.addEventListener('click', () => {
+    const el = scroller();
+    const before = starts().filter((o) => o < el.scrollTop - 1);
+    if (before.length) el.scrollTop = before[before.length - 1];
+  });
+  down.addEventListener('click', () => {
+    const el = scroller();
+    const after = starts().find((o) => o > el.scrollTop + 1);
+    if (after !== undefined) el.scrollTop = after;
+  });
+  for (const el of body.classList.contains('split') ? body.querySelectorAll('.pane') : [body]) {
+    el.addEventListener('scroll', refresh);
+  }
+  // The body is not in the layout yet — it is appended after this
+  // returns — so the first refresh waits for it: the observer reports
+  // once on observe, after layout. A resize also changes where the
+  // scroll range ends, which the Down arrow's state depends on.
+  new ResizeObserver(refresh).observe(body);
+  return [up, down];
+}
+
+// An Up or Down arrow, in the same character and box as the collections
+// page's move arrows — `.icon-btn` so it lines up with every other icon
+// button, sized down by the strip to sit in its line.
+function arrowButton(direction: 'up' | 'down', label: string): HTMLButtonElement {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = `icon-btn block-${direction === 'up' ? 'prev' : 'next'}`;
+  btn.textContent = direction === 'up' ? '↑' : '↓';
+  btn.title = label;
+  btn.setAttribute('aria-label', label);
+  return btn;
 }
 
 // Which ops to draw: every line, or the hunks with `@@` seams between
@@ -727,6 +796,9 @@ function range(start: number, count: number): string {
 function unifiedTable(ops: readonly DiffOp[], whole: boolean): HTMLTableElement {
   const table = document.createElement('table');
   table.className = 'diff unified';
+  // The first changed row after an unchanged row (or a seam, or the
+  // top) starts a block — see blockNav.
+  let inBlock = false;
   for (const op of visibleOps(ops, whole)) {
     const tr = document.createElement('tr');
     if (op.kind === 'hunk') {
@@ -742,6 +814,9 @@ function unifiedTable(ops: readonly DiffOp[], whole: boolean): HTMLTableElement 
       tr.appendChild(td('sign', op.kind === 'del' ? '−' : op.kind === 'add' ? '+' : ' '));
       tr.appendChild(td('code', op.text));
     }
+    const changed = op.kind === 'del' || op.kind === 'add';
+    if (changed && !inBlock) tr.classList.add('block-start');
+    inBlock = changed;
     table.appendChild(tr);
   }
   return table;
@@ -774,14 +849,25 @@ function splitPanes(ops: readonly DiffOp[]): [HTMLElement, HTMLElement] {
       i++;
       continue;
     }
+    // The whole changed run, whatever order the diff emits the two
+    // kinds in, so a block here is the block unified view has.
     const dels: DiffOp[] = [];
     const adds: DiffOp[] = [];
-    for (let next = rows[i]; next && next.kind === 'del'; next = rows[++i]) dels.push(next);
-    for (let next = rows[i]; next && next.kind === 'add'; next = rows[++i]) adds.push(next);
+    for (let next = rows[i]; next && (next.kind === 'del' || next.kind === 'add'); next = rows[++i]) {
+      (next.kind === 'del' ? dels : adds).push(next);
+    }
     const n = Math.max(dels.length, adds.length);
     for (let k = 0; k < n; k++) {
-      leftTable.appendChild(paneRow(dels[k], 'left'));
-      rightTable.appendChild(paneRow(adds[k], 'right'));
+      const left = paneRow(dels[k], 'left');
+      const right = paneRow(adds[k], 'right');
+      // The run is one block (blockNav); its first row starts it, on
+      // both sides so either pane can be measured.
+      if (k === 0) {
+        left.classList.add('block-start');
+        right.classList.add('block-start');
+      }
+      leftTable.appendChild(left);
+      rightTable.appendChild(right);
     }
   }
   const leftPane = pane(leftTable, 'left');

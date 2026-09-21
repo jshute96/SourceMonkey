@@ -189,19 +189,31 @@
          linked scroll would hit the end in one before the other. */
       .diff-body.split .pane { flex: 1 1 50%; min-width: 0; overflow: auto; overflow-x: scroll; }
       .diff-body.split .pane.right { border-left: 1px solid #ccc; }
-      /* The one line of summary: the counts, right-aligned. */
+      /* The one line of summary: the counts, right-aligned, then the
+         Up/Down arrows that jump between change blocks. The arrows are
+         icon buttons shrunk to the strip's line (the two custom
+         properties, styles.css), and the strip is held at their
+         height whether or not it has them (`No differences` has
+         none), so the lines do not shift between tabs. That height
+         is within the 30px the box's floor (`--code-box-min`, above)
+         reserves for the strip. */
       .diff-summary {
+        --icon-btn-size: 20px;
+        --icon-btn-glyph: 14px;
+        min-height: 20px;
         flex: 0 0 auto;
         display: flex;
         justify-content: flex-end;
-        gap: 1.2em;
-        padding: 6px 12px;
+        align-items: center;
+        gap: 0.4em;
+        padding: 4px 12px;
         border-bottom: 1px solid #e3e3e3;
         background: #f3f4f6;
         font-family: system-ui, sans-serif;
         font-size: 12.5px;
         color: #555;
       }
+      .diff-summary .diff-counts { margin-right: 0.6em; }
       .diff-summary .removed { color: var(--diff-del-fg); font-weight: 600; }
       .diff-summary .added { color: var(--diff-add-fg); font-weight: 600; }
       table.diff { border-collapse: collapse; width: 100%; }
