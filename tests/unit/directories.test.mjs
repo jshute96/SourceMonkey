@@ -13,6 +13,7 @@ import {
   canonicalCollectionInput,
   fetchHttpText,
   parseListing,
+  isDirectoryListing,
   parseManifest,
   pathToFileUrl,
   joinPath,
@@ -25,6 +26,8 @@ import {
   isContainerCollection,
   containerKind,
   containerPath,
+  newContainerPath,
+  collectionKind,
   containerKindForSingleFileInput,
   isManifestCollection,
   collectionCanonicalUrl,
@@ -89,6 +92,16 @@ test('parseListing returns [] on unrelated HTML', () => {
   assert.deepEqual(parseListing('<html><body>nothing here</body></html>'), []);
 });
 
+test('isDirectoryListing tells an empty listing from a page that is not one', () => {
+  // The two parse to the same [] and mean opposite things to a refresh:
+  // an empty listing drops every script, a non-listing fails the scan.
+  assert.equal(isDirectoryListing('<script>start("/home/me/empty/");</script>'), true);
+  assert.equal(isDirectoryListing(
+    '<script>start("/x/");</script><script>addRow("a.user.js", "a.user.js", 0);</script>'), true);
+  assert.equal(isDirectoryListing('<html><body>nothing here</body></html>'), false);
+  assert.equal(isDirectoryListing(''), false);
+});
+
 test('pathToFileUrl percent-encodes segments and strips trailing slash', () => {
   assert.equal(pathToFileUrl('/home/me/my scripts/'), 'file:///home/me/my%20scripts');
   assert.equal(pathToFileUrl('/a/b'), 'file:///a/b');
@@ -123,7 +136,7 @@ test('isSingleFileInput matches *.user.js across all schemes', () => {
   assert.equal(isSingleFileInput('file:///home/me/scripts'), false);
 });
 
-test('container helpers classify the three container kinds', () => {
+test('container helpers recognise the built-in defaults by their fixed paths', () => {
   assert.equal(containerPath('file'), 'container:file');
   assert.equal(containerPath('http'), 'container:http');
   assert.equal(containerPath('github'), 'container:github');
@@ -135,6 +148,27 @@ test('container helpers classify the three container kinds', () => {
   assert.equal(containerKind('container:file'), 'file');
   assert.equal(containerKind('container:github'), 'github');
   assert.equal(containerKind('/home/me/scripts'), null);
+});
+
+// A user-created container is a container like any other, but it is
+// nobody's scheme default — `containerKind` is what decides that, and
+// it must not claim a uuid row is one.
+test('a user-created container is a container, but not a scheme default', () => {
+  const path = newContainerPath();
+  assert.match(path, /^container:[0-9a-f-]{36}$/);
+  assert.notEqual(newContainerPath(), path, 'each call mints a fresh path');
+  assert.equal(isContainerCollection(path), true);
+  assert.equal(containerKind(path), null);
+  assert.equal(collectionKind(path), 'scripts');
+});
+
+test('collectionKind: scripts / directory / manifest, by path shape', () => {
+  assert.equal(collectionKind('container:file'), 'scripts');
+  assert.equal(collectionKind('/home/me/scripts'), 'directory');
+  assert.equal(collectionKind('file:///home/me/scripts'), 'directory');
+  assert.equal(collectionKind('https://github.com/o/r/tree/main'), 'directory');
+  assert.equal(collectionKind('/home/me/script_manifest.json'), 'manifest');
+  assert.equal(collectionKind('https://x/dir/script_manifest.json'), 'manifest');
 });
 
 test('containerKindForSingleFileInput routes single-file inputs by host', () => {

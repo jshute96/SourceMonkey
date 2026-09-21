@@ -97,6 +97,30 @@ test.describe('local file overrides', () => {
     expect(data!.scripts[0].requires?.[0]?.source).toBe('window.__SM_LOCAL = "deep";');
   });
 
+  // The layout a repo of userscripts actually uses: scripts nested
+  // under `sites/<host>/`, shared libraries in `lib/` at the top. Only
+  // the COLLECTION root can see that `lib/` — the script's own folder is
+  // a floor, and the search never climbs out of it.
+  test('a nested script finds a library at the collection root', async ({ sm }) => {
+    fs.mkdirSync(path.join(scriptsDir.path, 'lib'));
+    fs.writeFileSync(path.join(scriptsDir.path, 'lib', 'util.js'), 'window.__SM_LOCAL = "repo";');
+    scriptsDir.write({
+      relativePath: 'sites/example.com/main.user.js',
+      meta: {
+        name: 'Nested',
+        match: ['https://example.com/*'],
+        extra: [`// @require     ${server.baseUrl}/lib/util.js`],
+      },
+      body: 'void window.__SM_LOCAL;',
+    });
+    const collection = await sm.addCollection(scriptsDir.path);
+    const data = await sm.getCollectionWithScripts(collection!.id);
+    const req = data!.scripts[0].requires?.[0];
+    expect(data!.scripts[0].status, data!.scripts[0].errorMessage).toBe('ok');
+    expect(req?.source).toBe('window.__SM_LOCAL = "repo";');
+    expect(server.countResponses('/lib/util.js', 200)).toBe(0);
+  });
+
   // The dev loop: edit the library, reload the page, see the change.
   // An opportunistic refresh is what a navigation triggers, and it
   // normally reuses every cached dependency verbatim.
@@ -201,6 +225,56 @@ test.describe('local file overrides', () => {
     }
   });
 
+  // The collection root is a floor too, and it is the OUTERMOST implicit
+  // root — so this is the case the test above no longer covers now that
+  // a nested script has two roots (its own folder, then the
+  // collection's). The planted file is one level above the collection.
+  test('a nested script cannot reach outside the collection root', async ({ sm }) => {
+    const parent = path.dirname(scriptsDir.path);
+    const secret = path.join(parent, 'sm-local-secret.js');
+    fs.writeFileSync(secret, 'window.__SM_LOCAL = "escaped";');
+    try {
+      scriptsDir.write({
+        relativePath: 'sites/example.com/main.user.js',
+        meta: {
+          name: 'Nested Climber',
+          match: ['https://example.com/*'],
+          extra: [`// @require     ${server.baseUrl}/a/../../../sm-local-secret.js`],
+        },
+        body: '',
+      });
+      const collection = await sm.addCollection(scriptsDir.path);
+      const req = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].requires?.[0];
+      expect(req?.source).not.toBe('window.__SM_LOCAL = "escaped";');
+      expect(req?.localUrl).toBeUndefined();
+    } finally {
+      fs.rmSync(secret, { force: true });
+    }
+  });
+
+  // A manifest names a file, so the root its scripts share is the
+  // manifest's own directory — the same `lib/` reach a directory
+  // collection gets, through a different derivation.
+  test('a manifest collection roots its scripts at the manifest directory', async ({ sm }) => {
+    fs.mkdirSync(path.join(scriptsDir.path, 'lib'));
+    fs.writeFileSync(path.join(scriptsDir.path, 'lib', 'util.js'), 'window.__SM_LOCAL = "manifest";');
+    scriptsDir.write({
+      relativePath: 'sites/example.com/main.user.js',
+      meta: {
+        name: 'Manifest Nested',
+        match: ['https://example.com/*'],
+        extra: [`// @require     ${server.baseUrl}/lib/util.js`],
+      },
+      body: '',
+    });
+    const manifest = path.join(scriptsDir.path, 'script_manifest.json');
+    fs.writeFileSync(manifest, JSON.stringify(['sites/example.com/main.user.js']));
+    const collection = await sm.addCollection(manifest);
+    const req = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].requires?.[0];
+    expect(req?.source).toBe('window.__SM_LOCAL = "manifest";');
+    expect(server.countResponses('/lib/util.js', 200)).toBe(0);
+  });
+
   // Substitution must never be silent. One line when it starts, one per
   // edit, one when it stops — and nothing in between, or the many
   // opportunistic refreshes between edits would bury the log.
@@ -210,10 +284,10 @@ test.describe('local file overrides', () => {
     writeScript();
     const collection = await sm.addCollection(scriptsDir.path);
     const scriptId = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].id;
-    const localLines = async () =>
+    const localEntries = async () =>
       (await sm.getScriptLog(scriptId))
-        .filter((e) => /is (loading from file:|no longer loading)/.test(e.message))
-        .map((e) => e.message);
+        .filter((e) => /is (loading from file:|no longer loading)/.test(e.message));
+    const localLines = async () => (await localEntries()).map((e) => e.message);
 
     expect(await localLines()).toEqual([
       expect.stringMatching(/^@require .* is loading from file:\/\/.*\/util\.js$/),
@@ -235,12 +309,14 @@ test.describe('local file overrides', () => {
     await sm.updateCollection(collection!.id, 'manual');
     expect(await localLines()).toHaveLength(2);
 
-    // So is losing it.
+    // So is losing it — at info, like the rest: the script is back on
+    // what its `@require` names, which is not a fault.
     fs.rmSync(libPath);
     await sm.updateCollection(collection!.id, 'manual');
-    const lines = await localLines();
-    expect(lines).toHaveLength(3);
-    expect(lines[2]).toMatch(/is no longer loading from a local file$/);
+    const entries = await localEntries();
+    expect(entries).toHaveLength(3);
+    expect(entries[2].message).toMatch(/is no longer loading from a local file; the remote version is loaded instead$/);
+    expect(entries.map((e) => e.level)).toEqual(['info', 'info', 'info']);
   });
 
   // A `@require` may carry its expected hash in the URL fragment
@@ -390,14 +466,21 @@ test.describe('local file overrides', () => {
       .locator('.site-icon a.site-icon-inner img');
     await expect(img).toHaveAttribute('src', `data:image/png;base64,${localPng.toString('base64')}`);
 
-    await page.locator('.local-files-toggle input').click();
+    // The option lives in the Edit dialog; Save refreshes the collection.
+    await page
+      .locator(`section.collection[data-collection-id="${collection!.id}"] button.edit-collection`)
+      .click();
+    const dialog = page.locator('dialog.collection-dialog');
+    await dialog.locator('#collection-dialog-local-files').uncheck();
+    await dialog.locator('button.primary').click();
+    await expect(dialog).toBeHidden();
     await expect(img).toHaveAttribute('src', `data:image/png;base64,${remotePng.toString('base64')}`);
     await page.close();
   });
 
   // THE security property, end to end. An http-sourced script reaches
-  // the same pipeline with `useLocalFiles` true — the http container
-  // carries no opt-out, so the flag defaults on — and must still get no
+  // the same pipeline with local files enabled — the http container
+  // defaults the option on, like every collection — and must still get no
   // stand-in, because the gate is the host script's own scheme. This is
   // where `@resource file:///home/you/.ssh/id_rsa` + GM_getResourceText
   // would matter, so it is worth an e2e and not just the unit test on

@@ -13,6 +13,14 @@ import { test, expect } from '../../fixtures/manager';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 test.describe('examples / window-onurlchange', () => {
+  // VM has no `window.onurlchange` at all — the grant isn't in its
+  // source, and the example page duly reports the feature as
+  // unavailable. Every assertion here is about events that can only
+  // come from it. See docs/cross-manager-test-results.md.
+  test.beforeEach(({ setup }) => {
+    test.skip(setup.manager === 'violentmonkey', 'VM does not implement window.onurlchange');
+  });
+
   test('pushState, replaceState, hash and back all report a new URL', async ({
     extensionContext, fixtureServer, setup,
   }) => {

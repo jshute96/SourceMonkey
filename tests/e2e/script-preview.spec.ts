@@ -32,23 +32,95 @@ test.describe('script preview', () => {
     const page = await extensionContext.newPage();
     await page.goto(`chrome-extension://${extensionId}/collections.html`);
     await page.locator('#add-path').fill(file);
-    await page.locator('#add-form button[type="submit"]').click();
+    // Nothing is added yet — the field routed the file to the preview,
+    // in a NEW tab, so the collections page the user was adding from is
+    // still there behind it.
+    const [preview] = await Promise.all([
+      extensionContext.waitForEvent('page'),
+      page.locator('#add-form button[type="submit"]').click(),
+    ]);
+    await preview.waitForURL(/userscript\.html\?preview=/);
+    await expect(page).toHaveURL(/collections\.html/);
+    await expect(page.locator('#add-path')).toHaveValue('');
 
-    // Nothing is added yet — the field routed us to the preview.
-    await page.waitForURL(/userscript\.html\?preview=/);
-    await expect(page.locator('#header-summary')).toContainText('Local Script');
-    await expect(page.locator('#content')).toContainText("console.log('local')");
-    await expect(page.locator('#banner-slot')).toContainText('not installed yet');
+    await expect(preview.locator('#header-summary')).toContainText('Local Script');
+    await expect(preview.locator('#content')).toContainText("console.log('local')");
+    // Nothing installed anywhere: the install callout is the page's
+    // question, with the local default pre-selected.
+    await expect(preview.locator('#install-callout')).toBeVisible();
+    await expect(preview.locator('#install-target option:checked')).toHaveText('Scripts from local disk (new)');
     expect(await sm.getCollections()).toHaveLength(0);
 
-    await page.locator('#install-btn').click();
-    await page.waitForURL(/userscript\.html\?script=/);
+    await preview.locator('#install-btn').click();
+    await preview.waitForURL(/userscript\.html\?script=/);
 
     const collections = await sm.getCollections();
     expect(collections).toHaveLength(1);
     const withScripts = await sm.getCollectionWithScripts(collections[0].id);
     expect(withScripts!.scripts).toHaveLength(1);
     expect(withScripts!.scripts[0].status).toBe('ok');
+    await preview.close();
+    await page.close();
+  });
+
+  test('the heading and tab title name the script, and say which page this is', async ({
+    extensionContext, extensionId,
+  }) => {
+    const file = scriptsDir.write({
+      relativePath: 'named.user.js',
+      meta: { name: 'Named Script', match: ['https://example.com/*'] },
+      body: '',
+    });
+
+    const page = await extensionContext.newPage();
+    await page.goto(
+      `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(file)}`,
+    );
+    // Preview mode says it is the install question, in both places.
+    await expect(page.locator('h1#filename'))
+      .toHaveText('SourceMonkey | Install | Named Script');
+    await expect(page).toHaveTitle('Install script: Named Script | SourceMonkey');
+
+    await page.locator('#install-btn').click();
+    await page.waitForURL(/userscript\.html\?script=/);
+
+    // Installed mode carries the same name, with no install wording.
+    await expect(page.locator('h1#filename')).toHaveText('SourceMonkey | Named Script');
+    await expect(page).toHaveTitle('Named Script | SourceMonkey');
+    await page.close();
+  });
+
+  test('a script with no @name is headed by its location alone', async ({
+    extensionContext, extensionId,
+  }) => {
+    const file = scriptsDir.write({
+      relativePath: 'anon.user.js',
+      meta: { name: '', match: ['https://example.com/*'] },
+      body: '',
+    });
+
+    const page = await extensionContext.newPage();
+    await page.goto(
+      `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(file)}`,
+    );
+    // The location stands in for the name it doesn't have.
+    await expect(page.locator('h1#filename')).toHaveText(`SourceMonkey | Install | ${file}`);
+    await expect(page).toHaveTitle(`Install script: ${file} | SourceMonkey`);
+    await page.close();
+  });
+
+  test('with no script to name, both the heading and the tab say so', async ({
+    extensionContext, extensionId,
+  }) => {
+    const page = await extensionContext.newPage();
+    // Neither `?script=` nor `?preview=`: nothing to name, and no mode
+    // to flavor the wording with.
+    await page.goto(`chrome-extension://${extensionId}/userscript.html`);
+    await expect(page.locator('h1#filename')).toHaveText('SourceMonkey | Not available');
+    // The title too — this state is also reached by removing the script
+    // an open viewer is showing, where a stale title would keep
+    // advertising it.
+    await expect(page).toHaveTitle('Not available | SourceMonkey');
     await page.close();
   });
 
@@ -67,11 +139,12 @@ test.describe('script preview', () => {
       `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(file)}`,
     );
     await expect(page.locator('#banner-slot')).toContainText('already installed');
-    await expect(page.locator('#install-btn')).toBeHidden();
-    await expect(page.locator('#update-btn')).toBeVisible();
+    await expect(page.locator('#install-callout')).toBeHidden();
+    const update = page.locator('#other-versions td.col-actions button', { hasText: 'Update' });
+    await expect(update).toBeVisible();
 
-    await page.locator('#update-btn').click();
-    await page.waitForURL(/userscript\.html\?script=/);
+    await update.click();
+    await expect(update).toBeEnabled();
     // Still one script — Update refreshed the existing row rather than
     // adding a second copy.
     const collections = await sm.getCollections();
@@ -99,7 +172,6 @@ test.describe('script preview', () => {
     );
     await expect(page.locator('#banner-slot')).toContainText('No @match or @include in the metadata block');
     await expect(page.locator('#install-btn')).toBeHidden();
-    await expect(page.locator('#update-btn')).toBeHidden();
     // Local `.user.js` navigations are captured too, so this file needs
     // the same way out an http one gets — pointed at the `file://` form,
     // since the bare path the preview was opened with isn't navigable.
@@ -127,9 +199,16 @@ test.describe('script preview', () => {
     );
     const message = page.locator('#message');
     await expect(message).toContainText('This is not a script location');
-    await expect(message).toContainText('http(s):// or file:// URL');
+    await expect(message).toContainText('must be a URL or absolute file path');
     await expect(message).not.toContainText('Could not fetch');
     await expect(page.locator('#install-btn')).toBeHidden();
+    // The heading survives a location we never fetched: no header to
+    // read a name from, so it is the raw input under the install
+    // wording.
+    await expect(page.locator('h1#filename'))
+      .toHaveText('SourceMonkey | Install | ftp://example.com/thing.user.js');
+    await expect(page)
+      .toHaveTitle('Install script: ftp://example.com/thing.user.js | SourceMonkey');
     await page.close();
   });
 

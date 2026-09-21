@@ -1,6 +1,6 @@
 // Resolution + loading of resources referenced from a userscript
 // metadata block — e.g. `@icon` today, `@require` planned. Centralizes
-// the scheme-dispatch + relative-path-against-script-parent rule so
+// the scheme-dispatch + relative-path-against-the-script rule so
 // each consumer doesn't reinvent it.
 //
 // Reference forms accepted by `resolveScriptResource`:
@@ -9,10 +9,14 @@
 //                               author explicitly pointed there)
 //   - `data:` URL             → kind 'data' (caller handles inline;
 //                               not fetched here)
-//   - relative path           → resolved against `scriptFileUrl`'s
-//                               parent directory; the result must
-//                               still live at or under that parent
-//                               (containment check on the resolved URL)
+//   - relative path           → resolved against `scriptFileUrl`.
+//                               Against a *local* (file://) script the
+//                               result must still live at or under the
+//                               script's own directory (containment
+//                               check on the resolved URL). Against an
+//                               http(s) script it may climb — see
+//                               "Containment is about local files"
+//                               below.
 //
 // Notably absent: absolute `file://` URLs. The extension holds
 // `file:///*` host permission so any caller code can read arbitrary
@@ -22,6 +26,19 @@
 // result is only reachable as the *resolution* of a relative path
 // against a file:// script, in which case the containment check
 // confines it to the script's own directory tree.
+//
+// Containment is about local files, so it applies only to a local
+// base. A `../lib/util.js` next to a published script is the ordinary
+// layout of a userscript repo served over HTTP, and Violentmonkey
+// resolves it (`vetUrl` in `src/background/utils/url.js`, applied by
+// `buildPathMap`) with no containment at all. Refusing it bought
+// nothing: an http(s)-loaded script may already name an absolute URL on
+// any origin, so climbing out of its own directory grants it no reach
+// it didn't have. Against a `file://` script the same move would reach
+// out of the script's tree into the rest of the disk, which is exactly
+// what the rule exists to stop — there, the sanctioned way to reach a
+// sibling `lib/` is a search root the user named (see
+// `local-file-overrides.ts`).
 //
 // Containment check vs. textual `..` filter: a textual filter on the
 // raw reference can be bypassed by percent-encoding (`%2e%2e` is
@@ -110,10 +127,11 @@ export function resolveScriptResourceDetailed(
     return { failed: true, reason: 'unsupported-scheme', scheme: parsed.protocol };
   }
 
-  // Relative path. Resolve against the script's parent directory and
-  // then verify the result is still confined to that directory tree.
-  // We compare URL strings rather than path strings so the check
-  // accounts for origin, scheme, host, and port atomically — the
+  // Relative path. Resolve against the script's own URL. Against a
+  // local script the result must still be confined to the script's own
+  // directory tree; against a remote one it need not (see the module
+  // header). We compare URL strings rather than path strings so the
+  // check accounts for origin, scheme, host, and port atomically — the
   // resolved URL must share the same prefix as `<parentBase>/`.
   let resolved: URL;
   let parentBase: URL;
@@ -123,9 +141,12 @@ export function resolveScriptResourceDetailed(
   } catch {
     return { failed: true, reason: 'malformed-url' };
   }
+  // `parentBase` carries the base's scheme, so it answers "is the host
+  // script remote?" without a third parse of the same string.
+  const remoteBase = parentBase.protocol === 'http:' || parentBase.protocol === 'https:';
   const parentStr = parentBase.toString();
   const resolvedStr = resolved.toString();
-  if (!resolvedStr.startsWith(parentStr)) {
+  if (!remoteBase && !resolvedStr.startsWith(parentStr)) {
     return { failed: true, reason: 'outside-script-folder' };
   }
 

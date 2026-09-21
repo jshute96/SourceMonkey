@@ -238,8 +238,8 @@ export interface HeaderRuleSpec {
   rule: chrome.declarativeNetRequest.Rule;
 }
 
-// DNR session-rule ids. Rule 1 belongs to the install capture
-// (`install-capture.ts`), so XHR rules start above it and climb.
+// DNR session-rule ids. XHR rules start well above zero and climb,
+// leaving the low ids free for any other subsystem that wants one.
 //
 // Everything from XHR_RULE_ID_MIN up is this module's band —
 // `clearStaleHeaderRules` deletes any session rule in it at startup, so

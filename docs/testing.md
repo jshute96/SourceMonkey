@@ -42,10 +42,11 @@ or the GreasyFork corpus. See
   `fullyParallel: true`). Each worker launches its own Chromium with its
   own `mkdtemp` profile, and the fixture HTTP server binds to port 0, so
   workers share nothing.
-  - **The `tampermonkey` project must stay serial.** It attaches over
-    CDP to one real browser with no per-test state reset, so the
-    package scripts pass `--workers=1`. Invoking `playwright test
-    --project=tampermonkey` directly skips that — pass it yourself.
+  - **The `tampermonkey` and `violentmonkey` projects must stay
+    serial.** Each attaches over CDP to one real browser with no
+    per-test state reset, so the package scripts pass `--workers=1`.
+    Invoking `playwright test --project=<name>` directly skips that —
+    pass it yourself.
 - Typecheck: `pnpm run typecheck` — `tsconfig.json` builds the extension
   and covers `src/` only, so this runs `tsconfig.tests.json` over the
   tests as well. Playwright transpiles specs without checking types, so
@@ -53,6 +54,11 @@ or the GreasyFork corpus. See
 - SW console forwarding (debugging only): set
   `SM_FORWARD_SW_CONSOLE=1` — every SW `console.log` lands in test
   stderr. Off by default because it's noisy.
+- Wire-header report: `gm-xmlhttp-wire-headers.spec.ts` records the
+  headers a manager puts on a `GM_xmlhttpRequest` as a test attachment
+  (`wire-headers.txt`, in the HTML report), so it doesn't clutter the
+  run. Set
+  `SM_PRINT_WIRE_HEADERS=1` to print it to the console as well.
 
 ### Retries and traces
 
@@ -124,6 +130,16 @@ It runs against real headless Chromium with `chrome.userScripts`,
   - `extensionId` — the deterministic ID of the unpacked extension.
   - `sm` — typed proxy over `self.SourceMonkey`; see *SW test surface*
     below. Wipes storage and unregisters userscripts at test start.
+  - `testWithBrowserDownloads` — the same fixtures, but downloads are
+    left to Chrome's own download manager, landing in the
+    worker-scoped `downloadsDir` (a temp directory). Playwright's
+    default intercepts every download into its artifacts dir under a
+    GUID name — what `page.waitForEvent('download')` needs, but it
+    hides the real path from `chrome.downloads`, which the local-copy
+    feature reads back. The launch helper undoes the interception over
+    CDP (`Browser.setDownloadBehavior: default`) and writes the
+    `download.*` Preferences. The browser is shared across the worker's
+    tests, so a spec cleans its own files in `beforeEach`.
 - `extension-id.ts` — computes Chrome's deterministic
   unpacked-extension ID (SHA-256 of the path, first 16 bytes, mapped
   `0`–`f` → `a`–`p`). Needed because we have to write Preferences for
@@ -148,13 +164,22 @@ It runs against real headless Chromium with `chrome.userScripts`,
 
 ### Chrome flags / Preferences
 
+**The bundled browser must be Chrome 152+:**
+
+- `src/manifest.json` declares `minimum_chrome_version: "152"`.
+- Below that Chrome refuses to load the extension at all, so every e2e
+  test fails at once rather than one feature failing.
+- Playwright ≥ 1.63 ships Chrome for Testing 153.
+- Symptom to recognise: the whole suite goes red right after a
+  dependency change. Check the browser version first.
+
 Two Chrome capabilities the e2e harness needs:
 
 - **`file://` access** — already granted in headless mode for
   unpacked extensions, so no extra setup. Production users still have
   to flip the per-extension toggle.
-- **User scripts** (Chrome ≥138) — `chrome.userScripts` is gated
-  behind a per-extension toggle. The harness pre-writes
+- **User scripts** — `chrome.userScripts` is gated behind a
+  per-extension toggle. The harness pre-writes
   `extensions.settings.<extensionId>.user_scripts_enabled = true`
   into `<userDataDir>/Default/Preferences` before launch so the API
   is callable without UI clicks.
@@ -341,6 +366,50 @@ fetch via the SW). Highlights:
   the SW driver's `chrome.tabs` / `chrome.windows` calls. Also pins the
   known per-document (rather than per-script) grant leak: an ungranted
   sibling script in the same document gets the working override.
+- `tests/e2e/gm-unsafe-window.spec.ts` — `@grant unsafeWindow` reads,
+  calls, and writes real page globals; storage and XHR keep working
+  from MAIN world over the bridge; `@grant none` pages stay free of
+  `__SM_GM__`; `@inject-into content` is isolated and warns; a
+  page-forged bridge GM call for a USER_SCRIPT-world script is
+  refused; and an isolated script's cross-tab value broadcast is not
+  relayed into the page.
+- `tests/e2e/gm-unsafe-window-implicit.spec.ts` — `unsafeWindow` used
+  with no `@grant` line for it: a `GM_*`-granting script reaches page
+  globals and keeps its storage, a grant-free script gets the binding
+  without pulling `__SM_GM__` onto the page, a mention in a comment or
+  a string leaves the script isolated, a script that declares the name
+  itself still installs `ok` (our binding would be a duplicate `const`),
+  and `@inject-into content` still wins and warns.
+- `tests/e2e/gm-main-world-surface.spec.ts` — the rest of the GM_*
+  surface from MAIN world, which every other spec exercises only in
+  USER_SCRIPT world. Two reasons a surface is in here:
+  - **It installs itself on the world's `window`**, which in MAIN is the
+    *page's*: `window.onurlchange` (the `=== null` feature test has to
+    hold, and the page can see the accessor too — pinned deliberately,
+    see TODO.md) and `window.close` / `window.focus` (the override
+    replaces the page's method, and the tab really closes).
+  - **It depends on an unprompted SW push**, which MAIN world can only
+    receive via `wrapper-bridge.js` re-posting it: `sm:url-change`,
+    `sm:gm-value-update` (cross-tab listener), `sm:gm-menu-fire`,
+    `sm:gm-tab-closed`. Gutting the bridge's push lists fails four of
+    the five tests, which is how the coverage was checked.
+  - Not covered because they aren't drivable headlessly:
+    `sm:gm-notification-event` (no way to click a Chrome notification)
+    and `sm:gm-download-event` (needs a real download).
+
+The other direction — page→SW requests, which ride a
+`sourcemonkey-bridge-sync` DOM event — is pinned in two places:
+
+- `tests/unit/injector.test.mjs` drives the bridge source in a fake DOM
+  and covers the reply path (the SW's answer relayed back on the
+  matching `requestId`; a rejected, a throwing and an unallowlisted
+  call), plus that no `message` listener is installed any more.
+- The MAIN-world e2e specs above exercise it end to end. Making the
+  bridge treat every request as fire-and-forget fails three of those
+  unit tests and nine of the e2e ones, which is how that was checked.
+- `tests/e2e/gm-storage-teardown-main.spec.ts` covers the property the
+  event path exists for: a write issued as the document tears down
+  still reaches the SW.
 
 The XHR tests use `UserscriptServer` (see
 `tests/fixtures/userscript-server.ts`) to serve test endpoints

@@ -36,7 +36,7 @@ or UI surface refers to it.
     tells the rows apart is one hover away.
 - Userscript viewer — a `Log ID` row in the details panel, but only
   for a script whose ID carries a `#N`. A unique log ID is just the
-  basename, which the heading and the `Location` row already say.
+  basename, which the `Location` row already says.
   Absent in preview mode, which is showing a script that has never
   run.
 
@@ -157,6 +157,19 @@ console call at all, and each has its own countermeasure:
   open-in-a-tab paths return their promises and report the failure into
   the message bar (plus the file-access banner) instead of dropping
   them.
+- **`chrome.*` calls cut off by service-worker shutdown.**
+  - When Chrome destroys the SW — every reload of the unpacked
+    extension, plus idle termination — each in-flight `chrome.*` call
+    rejects with `Error: No SW`.
+  - SW startup fires many `void someStorageRead()` calls, so a reload
+    mid-startup would list one entry per read. Nothing is broken: the
+    next wake starts over and redoes them.
+  - `src/sw-teardown.ts` installs an `unhandledrejection` handler
+    (first thing in `background.ts`) that marks exactly that rejection
+    handled and notes it at `console.info`. Every other rejection
+    still surfaces.
+  - `Unchecked runtime.lastError: No SW` with no context or stack is
+    Chrome-internal for the same teardown and can't be caught.
 - **A registered userscript entry that doesn't compile.** V8's
   `SyntaxError` is raised before any of our code runs, so nothing can
   catch it. The answer is to never register such an entry — the parse
@@ -196,9 +209,12 @@ still drives the Log-tab mirror.
   entry 0), which the prelude reads back as `cfg.startupLogs`. No
   rederivation at sync time — SW restarts produce the same config-blob
   bytes for the same script version, no log spam.
-- Today's only producer is the unknown-`@grant` check (emits `warn`).
-  Future detectors (partial `@resource` failures, header validation
-  warnings, deprecation notices, etc.) extend `extractStartupLogs`.
+- Producers today: unknown `@grant` names, `@grant none` overriding
+  other grants, a `@match` Chrome's grammar refuses, `unsafeWindow`
+  pinned to the isolated world by `@inject-into content` (all `warn`),
+  and an ungranted `unsafeWindow` reference moving the script into the
+  page (`info`). Future detectors (partial `@resource` failures,
+  deprecation notices, etc.) extend `extractStartupLogs`.
 
 ### Properties
 
@@ -234,13 +250,16 @@ tab even though the state that explains it is still persisted in
 refresh, `replayScriptLogsAtBoot()` (in `src/script-updater.ts`) runs
 once at SW startup and walks every stored script, emitting:
 
-- one `parser` row per `startupLogs` diagnostic, and
-- one `boot` row for a script whose row is *currently* broken
-  (`invalid` / `missing` / carrying a `refreshError`). The refresh
-  paths only log on a state *change*, so without this a script that
-  was already broken before the restart would show a red or amber
-  badge over an empty Log. See
-  [script-log.md](script-log.md#every-surfaced-failure-lands-in-the-log).
+- one `parser` row per `startupLogs` diagnostic,
+- one `extension-startup` row for a script whose row is *currently*
+  broken (`invalid` / `missing` / carrying a `refreshError`), and
+- one `extension-startup` row for a script whose persisted probe still
+  puts an upstream ahead of it (OUTDATED).
+
+The refresh paths and the probe only log on a state *change*, so
+without this a script that was already broken or outdated before the
+restart would show a red or amber badge over an empty Log. See
+[script-log.md](script-log.md#every-surfaced-failure-lands-in-the-log).
 
 - Gated by a sentinel key in `chrome.storage.session`. The sentinel
   is missing on first SW boot of a Chrome session and present on
@@ -269,8 +288,14 @@ once at SW startup and walks every stored script, emitting:
   ordering: whichever path runs second states the fact again. Bounded
   to one duplicate per affected script per Chrome session, and the
   `source` column tells them apart (`extension-startup` vs a
-  `*-refresh`). Only reachable when the content changed on disk between
-  shutdown and the user's first navigation after restart.
+  `*-refresh`).
+  - For the load-state leg, only reachable when the content changed on
+    disk between shutdown and the user's first navigation after
+    restart.
+  - For the OUTDATED leg, the replay reads its snapshot before the
+    refresh lands, so a first-navigation refresh whose new content
+    catches up can be followed by a stale `OUTDATED` restatement. Same
+    bound; the `source` column is again the tell.
 
 See [script-log.md].
 

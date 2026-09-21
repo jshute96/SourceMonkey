@@ -464,6 +464,47 @@ test('framing: new content is announced, then reported', async () => {
   assert.match(log[1], /^Loaded new content/);
 });
 
+test('emitScriptOutcomeLog: a manual no-change check restates parse-time diagnostics', async () => {
+  // A parse-time warning is a property of the installed content, not an
+  // event: it stays true until the content changes. Logging it only on
+  // the refresh that first loaded the content left a misconfigured
+  // script with no Log line at all once that row scrolled away, was
+  // cleared, or the session it was written in ended — while the page
+  // console kept reporting the problem on every run.
+  const warned = {
+    ...OK_ROW,
+    startupLogs: [{ level: 'warn', message: 'unsafeWindow cannot reach the page' }],
+  };
+  const log = await emitAll([[warned, warned]]);
+  assert.deepEqual(log.map((e) => e.message), [
+    'Checked for updates — no change',
+    'unsafeWindow cannot reach the page',
+  ]);
+  assert.equal(log[1].level, 'warning');
+  assert.equal(log[1].source, 'parser');
+});
+
+test('emitScriptOutcomeLog: a background no-change check restates nothing', async () => {
+  // Same rule as the "no change" line it follows: nobody asked.
+  const warned = {
+    ...OK_ROW,
+    startupLogs: [{ level: 'warn', message: 'unsafeWindow cannot reach the page' }],
+  };
+  assert.deepEqual(await emitAll([[warned, warned]], 'auto'), []);
+});
+
+test('emitScriptOutcomeLog: new content states its diagnostics once, not twice', async () => {
+  // The changed-content branch replays them and returns, so the
+  // no-change restate above can't also fire for the same check.
+  const warned = {
+    ...OK_ROW,
+    loadedAt: OK_ROW.loadedAt + 1,
+    startupLogs: [{ level: 'warn', message: 'unsafeWindow cannot reach the page' }],
+  };
+  const log = await emitAll([[OK_ROW, warned]]);
+  assert.equal(log.filter((e) => e.message === 'unsafeWindow cannot reach the page').length, 1);
+});
+
 test('emitScriptOutcomeLog: a still-failing check reports, like a healthy one does', async () => {
   // Both rows are unchanged since the prior check, so both must say so.
   // A broken script going quieter than a healthy one is the failure
@@ -482,16 +523,6 @@ test('emitScriptOutcomeLog: a changed failure reason does append', async () => {
   const badB = { ...OK_ROW, status: 'invalid', errorMessage: 'missing @name' };
   const log = await emitAll([[OK_ROW, badA], [badA, badB]]);
   assert.deepEqual(log.map((e) => e.message), ['no metadata block', 'missing @name']);
-});
-
-test('emitScriptOutcomeLog: a vanished file logs at error level, on every check', async () => {
-  const gone = { ...OK_ROW, status: 'missing', enabled: false };
-  const log = await emitAll([[OK_ROW, gone], [gone, gone]]);
-  assert.equal(log.length, 2, 'the second check re-looked and it is still gone');
-  for (const entry of log) {
-    assert.equal(entry.level, 'error');
-    assert.equal(entry.message, 'Script file is missing');
-  }
 });
 
 test('emitScriptOutcomeLog: a refresh failure is a warning, on every check', async () => {
@@ -538,11 +569,10 @@ test('emitScriptOutcomeLog: a broken row with no prior still logs', async () => 
   assert.equal(log[0].message, 'missing @name');
 });
 
-test('emitScriptOutcomeLog: a row that vanished mid-refresh is reported', async () => {
+test('emitScriptOutcomeLog: a row that vanished mid-refresh writes nothing', async () => {
+  // Its Log went with the row; an entry here would be an orphan.
   const log = await emitAll([[OK_ROW, null]]);
-  assert.equal(log.length, 1);
-  assert.equal(log[0].level, 'warning');
-  assert.equal(log[0].message, 'This script was removed while it was being refreshed');
+  assert.equal(log.length, 0);
 });
 
 test('emitScriptOutcomeLog: a cleared log gets its explanation back on the next check', async () => {
@@ -615,10 +645,11 @@ test('summarizeCollectionOutcome: a scan failure lands in every script log, not 
 });
 
 test('summarizeCollectionOutcome: a scan failure stays at info so it cannot badge every script', async () => {
-  // The `loglevel:` sentinel is monotonic within a session, so a
-  // warning here would leave every script under the collection reading
-  // WARNING for the rest of the session after one transient blip. The
-  // collection row is where a collection-level problem gets its badge.
+  // The `loglevel:` sentinel is for what the script itself did, and
+  // sticks until the log is cleared or new content loads — so a warning
+  // here would leave every script under the collection reading WARNING
+  // after one transient blip. The collection row is where a
+  // collection-level problem gets its badge.
   const script = { ...OK_ROW, id: 'sa-level' };
   const failed = { collection: { ...COLLECTION_OK, scanError: 'ENOENT' }, scripts: [script] };
   const [log] = await summarize(COLLECTION_OK, [script], failed);

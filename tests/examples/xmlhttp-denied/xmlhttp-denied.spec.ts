@@ -18,13 +18,13 @@ test.describe('examples / xmlhttp-denied', () => {
   test('@connect denial covers the no-connect and mismatched-host cases; @connect 127.0.0.1 lets the request through', async ({
     extensionContext, fixtureServer, setup,
   }) => {
-    // Tampermonkey's @connect UX differs from SourceMonkey: TM may
-    // prompt the user interactively before allowing the request, and
-    // its denial message is its own — the "blocked by this script's
-    // @connect rules" substring this test asserts is a SM-only
-    // string. Skip
-    // under TM and treat the TM behaviour as out-of-scope here.
-    test.skip(setup.manager === 'tampermonkey', 'TM uses its own @connect UX (prompts, different message)');
+    // TM's and VM's @connect UX both differ from SourceMonkey's: each
+    // may prompt the user interactively before allowing the request,
+    // and each has its own denial message — the "blocked by this
+    // script's @connect rules" substring this test asserts is a SM-only
+    // string. Skip on both and treat their behaviour as out-of-scope
+    // here.
+    test.skip(setup.manager !== 'sourcemonkey', `${setup.manager} uses its own @connect UX (prompts, different message)`);
 
     await setup.installScriptsFrom(__dirname);
 

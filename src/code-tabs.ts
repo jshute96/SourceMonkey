@@ -148,6 +148,21 @@ export class CodeTabsView {
     this.paint();
   }
 
+  // Forget the current selection so the NEXT `setTabs` seeds from
+  // `location.hash` again, exactly as the first paint does.
+  //
+  // For in-page navigation to another copy of the script (see the
+  // viewer's `navigateToScript`): the tab list about to arrive belongs
+  // to a different file, so preserving "tab 3" — the third `@require`
+  // of the script the user just left — would land them somewhere
+  // arbitrary. The hash is the new page's own instruction (`#Log` from
+  // a Status link, nothing from a Location link).
+  reseedFromHash(): void {
+    this.seeded = false;
+    this.activeIdx = 0;
+    this.resetHighlight();
+  }
+
   // Wipe the view (no script to show).
   clear(): void {
     this.tabList = [];

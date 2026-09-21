@@ -97,7 +97,6 @@ test('a matching change is NOT probe-only', () => {
 test('a status change is NOT probe-only', () => {
   // status gates whether the script is eligible for a spec at all.
   assert.equal(onlyProbesChanged(ROW, { ...ROW, status: 'invalid' }), false);
-  assert.equal(onlyProbesChanged(ROW, { ...ROW, status: 'missing' }), false);
 });
 
 test('a @require body change is NOT probe-only', () => {

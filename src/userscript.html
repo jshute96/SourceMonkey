@@ -2,86 +2,121 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>SourceMonkey — Userscript</title>
+    <title>SourceMonkey | Userscript</title>
     <link rel="stylesheet" href="vendor/prism/prism.css" />
     <link rel="stylesheet" href="vendor/prism/prism-line-numbers.css" />
     <link rel="stylesheet" href="styles.css" />
+    <!-- Ahead of the Prism scripts and userscript.js on purpose: this
+         one paints the header bar's heading, and it has to run before
+         the browser's first paint rather than after the viewer's whole
+         module graph has loaded. Deferred like every module, so the <h1>
+         it writes into is already parsed. See src/page-heading.ts. -->
+    <script src="page-heading.js" type="module"></script>
     <style>
-      html, body { height: 100%; margin: 0; }
+      /* The body is at least the viewport and grows past it only when
+         the code box's minimum height (`--code-box-min`) no longer
+         fits under the details panel — then the page scrolls, padding
+         and all. `height: 100%` instead would fix the body at the
+         viewport and let that overflow spill out of it. */
+      html { height: 100%; margin: 0; }
       body {
+        min-height: 100%;
+        margin: 0;
         font: 14px system-ui, sans-serif;
         color: #222;
         display: flex;
         flex-direction: column;
-        padding: 1em;
         box-sizing: border-box;
       }
+      /* The page under the header bar. The body's flex column moves
+         down one level so the code box can still take the leftover
+         height: `min-height: 0` is what lets this column shrink below
+         its content, which is what makes the box scroll rather than
+         push the page taller. Full-bleed — the viewer has no
+         `--page-width` column, so its padding is the only inset. */
+      .page-main {
+        flex: 1 1 auto;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        /* 16px, matching `.page-header`'s side padding, so the heading
+           starts directly above the page's own first line. `1em` here
+           is 14px and put the two two pixels apart. */
+        padding: 16px;
+        box-sizing: border-box;
+      }
+      /* No focus ring, ever. The `tabindex` in the body exists only so
+         in-page navigation can park focus here for a screen reader to
+         announce the new script from — the heading is not a control and
+         is not tabbable, so a ring around it reads as a text field.
+         `:focus-visible` is not the discriminator it looks like: Chrome
+         counts a programmatic focus as visible when the focus it
+         replaced came from the keyboard, so the ring appeared for some
+         clicks and not others. */
+      h1:focus { outline: none; }
+      /* No hanging indent here, unlike the collections page's name cell:
+         the favicon is no longer the first thing on the line (the
+         "SourceMonkey | " / "SourceMonkey | Install | " prefix is), so
+         there is no single x-position for continuation lines to align
+         to. */
+      /* Size, weight and colour come from `.page-header h1`
+         (styles.css) — every page's heading is the same one. Only the
+         wrap behaviour is the viewer's own, because only here is the
+         heading a filename. */
       h1 {
-        font-size: 1em;
-        font-weight: 600;
-        margin: 0 0 0.4em;
         /* Slash-aware wrap: prefer spaces / slashes (with `<wbr>`
            markers inserted by appendWithSlashBreaks), then anywhere
            inside a word only when nothing else fits. */
         overflow-wrap: anywhere;
         word-break: normal;
-        /* Hanging indent past the favicon slot below, so a wrapped
-           name's continuation lines align with the first line's text
-           instead of tucking under the icon. No `0.6em` term here (an
-           h1 has no cell padding to absorb) — don't copy the collections
-           page's constant. */
-        padding-left: calc(16px + 0.4em);
-        text-indent: calc(-16px - 0.4em);
       }
-      /* Fixed-width slot for the site favicon, immediately before the
-         filename text in the h1. Always present so the text always
-         starts at the same x-position. Holds a clickable <a> when the
-         script's @match yields an origin, or an inert <span>
-         otherwise. Inner content is a globe placeholder until the real
-         favicon loads. */
-      h1 .site-icon {
-        display: inline-block;
-        width: 16px;
-        height: 16px;
-        margin-right: 0.4em;
-        vertical-align: text-bottom;
-        /* text-indent inherits, and this is a block container: reset it
-           so the h1's negative hanging indent can't shift the icon if a
-           future inner is ever inline rather than display:block. */
-        text-indent: 0;
-      }
-      .site-icon-inner {
-        display: block;
-        width: 16px;
-        height: 16px;
-        color: #888;
-      }
-      a.site-icon-inner { text-decoration: none; }
-      a.site-icon-inner:hover { color: #444; }
-      h1 .site-icon img { width: 16px; height: 16px; display: block; }
-      .site-icon-globe { width: 16px; height: 16px; display: block; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-      /* Controls row: per-script enable toggle + Refresh button. The
-         filename, size, and status moved into the details panel below
-         where the dl gives them aligned label/value columns. */
+      /* The heading's favicon slot (`h1 .site-icon`) is shared with the
+         compare page — see styles.css. */
+      /* The icons inside the slot (`.site-icon-inner`, the globe, the
+         <img>) are styled once for every page in styles.css. */
+      /* Controls row: everything that acts on the script itself —
+         the enable toggle, Local copy…, the delete trash can, Refresh.
+         The filename, size, and status moved into the details panel
+         below where the dl gives them aligned label/value columns. */
       .meta-row {
         display: flex;
         align-items: center;
-        gap: 1em;
+        /* One gap for the whole row, matching the one inside
+           `.meta-actions`: the controls are peers, so a wider gap on one
+           side of the trash can than the other reads as a mistake. */
+        gap: 0.5em;
         margin: 0 0 0.5em;
         font-size: 0.95em;
       }
       .meta-row[hidden] { display: none; }
       .meta-status { font-weight: 600; }
       .status-ok { color: #166534; }
-      .status-invalid, .status-rejected, .status-missing, .status-error { color: #b00; }
+      .status-invalid, .status-rejected, .status-error { color: #b00; }
       .status-warning, .status-outdated { color: #b67200; }
       .status-refresh-failed { color: #c2410c; }
       /* Status row is a link to the Log tab — keep it looking like
          status text (not a default blue underline). */
       .meta-status[href] { text-decoration: none; color: inherit; cursor: pointer; }
       .meta-status[href]:hover { text-decoration: underline; }
-      .meta-row button { font: inherit; padding: 0.2em 0.7em; cursor: pointer; }
+      /* Horizontal padding only: an `.icon-btn` brings its own, and
+         this rule outranks it on specificity — without the `:not()`
+         the row's Refresh comes out wider than the trash can beside
+         it. Height, surface and hover are shared (styles.css). */
+      .meta-row button:not(.icon-btn) { padding: 0 0.7em; }
       .meta-row .toggle { display: inline-flex; align-items: center; gap: 0.3em; cursor: pointer; margin-left: auto; }
+      /* The script's own actions, between the Enabled box and Refresh.
+         Nothing here styles the buttons: every button in this row —
+         Local copy…, the trash can, Refresh — takes the one shared
+         surface and height from styles.css. This used to `revert` the
+         trash can's border and background to the browser's own, back
+         when the shared style gave it no chrome at all; once the
+         shared style became the chrome, that revert was what made this
+         one button look unlike everything beside it. */
+      .meta-row .meta-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.5em;
+      }
       .meta-row .toggle input[type="checkbox"] { cursor: pointer; margin: 0; }
       .meta-row .toggle.toggle-disabled { cursor: not-allowed; opacity: 0.5; }
       .meta-row .toggle.toggle-disabled input[type="checkbox"] { cursor: not-allowed; }
@@ -89,34 +124,99 @@
       .message.error { color: #b00; }
       .message.refresh-failed { color: #c2410c; }
       .message:empty { display: none; }
-      /* Preview-mode action row + banner. The banner states what the
-         file is relative to what's installed; the row carries the
-         Install / Update / Cancel decision. */
+      /* Preview-mode install callout, banner, and action row. With
+         nothing installed, the callout IS the page's question — "Install
+         into [collection]" — so it gets the box; when copies exist the
+         banner takes that spot, in one box with the table that carries
+         the choice. The row under either holds Cancel / View raw
+         source. */
+      .install-callout {
+        display: flex;
+        align-items: center;
+        gap: 0.5em;
+        flex-wrap: wrap;
+        /* Same green as the versions panel: both are about
+           where a copy of this script lives. */
+        border: 1px solid #b9d4b1;
+        background: #dbecd6;
+        border-radius: 6px;
+        padding: 10px 14px;
+        margin: 0 0 10px;
+      }
+      .install-callout[hidden] { display: none; }
+      /* Unbolded on purpose, and so with no weight of its own: the
+         label is the connector in "Install into <collection>", not a
+         heading over the row — the button ahead of it is the verb, and
+         a bold word between the two controls breaks the sentence. */
+      .install-callout label[hidden] { display: none; }
+      /* A collection name can be longer than the callout. The row wraps
+         first (`flex-wrap` above) and the dropdown then shrinks rather
+         than running past the edge; Chrome sizes the OPEN list to its
+         widest option, so the full name is still readable there. */
+      .install-callout select { flex: 0 1 auto; min-width: 0; }
+      /* Horizontal only: height and the disabled state are shared
+         (styles.css). */
+      .install-callout button { padding: 0 0.9em; }
+      .install-callout .primary { font-weight: 600; }
       .actions { display: flex; gap: 0.5em; align-items: center; margin: 0 0 0.7em; }
       .actions[hidden] { display: none; }
-      .actions button { font: inherit; padding: 0.35em 0.9em; cursor: pointer; }
+      .actions button { padding: 0 0.9em; }
       .actions button:disabled { cursor: not-allowed; opacity: 0.5; }
       .actions .primary { font-weight: 600; }
       .actions .spacer { margin-left: auto; }
       /* The banner box is in styles.css (shared with the collections page,
          which is also where the file-access banner comes from). Only
-         the viewer's own colour variants live here — the amber default
-         is a warning, and "already installed" / "preview" are not. */
-      /* Matches the "Existing versions" panel below it — this banner is
-         about which of those copies the buttons act on, so the two are
-         one thought and share a ground. */
+         the viewer's own colour variant lives here — the amber default
+         is a warning, and "already installed" is not. */
+      /* Matches the versions panel — this banner is about which of
+         those copies to act on, so the two share a ground before the
+         `merged` rule below makes them literally one box. */
       .banner.installed { border-color: #b9d4b1; background: #dbecd6; }
-      .banner.preview { border-color: #6b7280; background: #f3f4f6; }
-      @keyframes sm-spin { to { transform: rotate(360deg); } }
+      /* One line, not the block-level heading `.banner strong` gives
+         every other banner: this one is a sentence with its follow-up
+         in the same breath, and the table under it is what needs the
+         vertical room. */
+      .banner.installed strong { display: inline; margin-bottom: 0; }
+      /* …and when both are on screen they are literally one box: the
+         wrapper takes the green card and the two children give up
+         their own borders, so "This script is already installed" and
+         the table of copies read as one statement rather than two
+         stacked cards in the same colour. Only the preview's installed
+         case sets `merged` (renderInstalledBanner); a warning banner
+         raised alongside keeps its own amber box inside. */
+      #status-box.merged {
+        border: 1px solid #b9d4b1;
+        background: #dbecd6;
+        border-radius: 6px;
+        padding: 10px 14px;
+        margin: 0 0 10px;
+      }
+      #status-box.merged .banner.installed {
+        border: 0;
+        background: none;
+        padding: 0;
+        margin: 0;
+        border-radius: 0;
+      }
+      /* The blank line between the banner's one line and the first row
+         of the table is this margin — a preview's panel draws no
+         heading of its own, so nothing else separates them. */
+      #status-box.merged #other-versions {
+        border: 0;
+        background: none;
+        padding: 0;
+        margin: 14px 0 0;
+      }
+      /* `@keyframes sm-spin` is in styles.css, shared with the dialog
+         spinner and the glyph buttons' spin state. */
       .busy-spinner { display: inline-block; width: 12px; height: 12px; margin-left: -0.2em; border: 2px solid #ccc; border-top-color: #555; border-radius: 50%; animation: sm-spin 0.7s linear infinite; box-sizing: border-box; }
-      /* @connect row: hostnames and match rules, not prose. */
-      .host-list { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
       /* The "loaded from local disk" chip, worn by a code tab whose
          body came off local disk rather than from the URL its
          declaration names. Loud enough to notice without hovering,
          which is the whole reason that fact isn't left to the
          tooltip. */
       .tab-mark {
+        white-space: nowrap;
         padding: 0 0.4em;
         border-radius: 3px;
         background: #d97706;
@@ -131,8 +231,8 @@
          Location / Size / Status rows. Cleared via :empty when there's
          no script. */
       #header-summary {
-        margin: 0 0 0.8em;
-        padding: 0.6em 0.8em;
+        margin: 0 0 11px;
+        padding: 8px 11px;
         border: 1px solid #ddd;
         border-radius: 4px;
         background: #f5f7fa;
@@ -168,6 +268,41 @@
         margin: 0;
         padding-left: 1.1em;
       }
+      /* The "(N more)" / "(show fewer)" bullet that folds a long list
+         (see `bulletList` in script-details.ts). A button styled as
+         text: muted like the row labels so it reads as an aside, not an
+         item, with an underline on hover to say it's clickable. */
+      .list-fold { list-style: none; }
+      .list-fold-toggle {
+        all: unset;
+        cursor: pointer;
+        color: #555;
+        font: inherit;
+      }
+      .list-fold-toggle:hover { text-decoration: underline; }
+      .list-fold-toggle:focus-visible { outline: 2px solid #4a90e2; outline-offset: 1px; }
+      /* Match row: each pattern is led by its site's favicon (a globe
+         when the pattern names no site), between the bullet and the
+         URL. The slot is a flex item so a wrapping pattern's
+         continuation lines don't tuck under the icon. */
+      .pattern-cell {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 0.4em;
+        max-width: 100%;
+      }
+      /* The text is the flex item that shrinks; without this a long
+         pattern would push the cell wider instead of wrapping. */
+      .pattern-cell > :not(.pattern-icon) { min-width: 0; }
+      .pattern-icon {
+        display: inline-flex;
+        width: 16px;
+        height: 16px;
+        flex: 0 0 auto;
+        /* Centred on the line rather than sat on the baseline, which
+           left the square hanging low beside the pattern text. */
+        align-self: center;
+      }
       /* Location row: path text + a square copy-icon button to its
          right. min-width:0 lets long paths shrink and wrap rather
          than blow out the grid column. */
@@ -196,7 +331,7 @@
          same kind of value (a path plus its copy button). */
       .local-override-cell {
         display: flex;
-        align-items: baseline;
+        align-items: center;
         gap: 0.4em;
         min-width: 0;
       }
@@ -215,9 +350,6 @@
         word-break: normal;
         min-width: 0;
       }
-      /* The copy button sits on the text baseline in a flex row that
-         otherwise aligns on it; nudge it back to optical centre. */
-      .local-override-cell .copy-btn { align-self: center; }
       /* Anchors in the details panel (Match patterns, Location)
          read as plain text by default; underline only on hover so
          the rows stay calm. The bubble is excluded so its `color:#fff`
@@ -236,32 +368,76 @@
          class stays as a hook for finding the cell. Wrapping comes from
          the `dd`'s own slash-aware rule. */
       /* ---- "Other versions" panel (src/related-versions.ts) ----
-         Same card shape as #header-summary, but a green ground rather
-         than the details panel's grey: the two sit directly on top of
-         each other, and the panel is the one that carries live
-         controls, so it has to read as a different kind of thing at a
-         glance. Empty when nothing relates, and hidden by the :empty
-         rule rather than a `hidden` attribute the renderer would have
-         to manage. */
+         Sits at the top of the page, under the title and above the
+         controls row: which copy you are looking at comes before
+         anything that acts on it. Same card shape as #header-summary
+         further down, but a green ground rather than that panel's
+         grey — this is the one that carries live controls, so it has
+         to read as a different kind of thing at a glance. Empty when
+         nothing relates, and hidden by the :empty rule rather than a
+         `hidden` attribute the renderer would have to manage. */
       #other-versions {
-        margin: 0 0 0.8em;
-        padding: 0.6em 0.8em;
+        margin: 0 0 11px;
+        padding: 8px 11px;
         border: 1px solid #b9d4b1;
         border-radius: 4px;
         background: #dbecd6;
       }
       #other-versions:empty { display: none; }
+      /* Heading line: the title, and the fold control pushed to the
+         far corner. The gap below belongs to the line rather than to
+         the <h2>, so a folded panel is exactly one line tall with no
+         trailing space under it. */
+      .versions-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+        margin: 0 0 8px;
+      }
+      .versions-head.collapsed { margin: 0; }
+      /* …except when a failure line follows the folded heading: the two
+         are the whole panel then, and they still need a gap. */
+      .versions-head.collapsed + .versions-message { margin-top: 8px; }
       #other-versions h2 {
         font-size: 1.1em;
         font-weight: 650;
         color: #333;
-        margin: 0 0 0.6em;
+        line-height: 18px;
+        margin: 0;
       }
+      /* A bare triangle, quiet until pointed at: it sits above the
+         panel's own controls and must not compete with them. Padded out
+         to a real target — it is the panel's only fold affordance, and
+         the glyph itself is a few pixels wide. */
+      .versions-collapse {
+        flex: none;
+        /* Its own height: this is a small inline affordance inside the
+           panel heading, not a control in a row of buttons, so the
+           shared button height would make it loom over the heading. */
+        height: 18px;
+        border: 0;
+        border-radius: 3px;
+        background: none;
+        padding: 0 6px;
+        font-size: 12px;
+        line-height: 18px;
+        color: #4a6a44;
+        cursor: pointer;
+      }
+      .versions-collapse:hover { background: #cbe3c5; color: #223; }
+      /* Pressed is a shade past hover, the same direction of travel
+         as every other button in the extension (styles.css). */
+      .versions-collapse:active { background: #b8d6b1; color: #223; }
+      /* A bare glyph has no shape of its own to show focus with — and
+         this is the control the fold hands focus back to. */
+      .versions-collapse:focus-visible { outline: 2px solid #4a90e2; outline-offset: 1px; }
       .versions-section-heading {
         font-size: 1em;
         font-weight: 600;
         color: #444;
-        margin: 0.9em 0 0.3em;
+        line-height: 16px;
+        margin: 13px 0 4px;
       }
       .versions-section-heading:first-of-type { margin-top: 0; }
       /* The parenthesized gloss names which match produced the rows
@@ -273,47 +449,128 @@
         color: #777;
         font-size: 12px;
       }
+      /* A heading row that is there for a screen reader and not for the
+         eye — the install-offer section's, whose labels the section
+         above it has already shown (see `makeTable`). Taken out of
+         flow rather than `display: none`, which drops it from the
+         accessibility tree along with the page. */
+      .versions-table thead.visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
       /* `fixed` + the <colgroup> the renderer emits is what keeps the
          two sections' columns aligned with each other: without it each
          <table> sizes its own columns from its own content and the
          panel reads as two unrelated grids. */
+      /* Whole-px vertical metrics in this panel, and `separate` borders
+         rather than `collapse` (a collapsed border is split half into each
+         adjacent cell, landing rows on half pixels) — see
+         docs/architecture.md, "Extension-page styling". */
       .versions-table {
         width: 100%;
-        border-collapse: collapse;
+        border-collapse: separate;
+        border-spacing: 0;
         table-layout: fixed;
       }
+      /* Status, Version, Content, and the actions column are sized to
+         their own widest content by `fitColumns` (related-versions.ts),
+         which writes the custom properties below onto the panel. The
+         fallbacks are what the first paint uses and what a measurement
+         of a hidden panel falls back to: wide enough for REFRESH
+         FAILED and a date-shaped @version. Everything left over goes to
+         Location, which is the column that can always use it. */
       .versions-table col.col-enabled  { width: 2.2em; }
       .versions-table col.col-collection { width: 26%; }
-      .versions-table col.col-version  { width: 7em; }
-      .versions-table col.col-actions  { width: 6.5em; }
+      .versions-table col.col-status   { width: var(--w-col-status, 8em); }
+      .versions-table col.col-version  { width: var(--w-col-version, 7em); }
+      .versions-table col.col-compare  { width: var(--w-col-compare, 7em); }
+      .versions-table col.col-actions  { width: var(--w-col-actions, 6em); }
       .versions-table col.col-remove   { width: 2.4em; }
+      /* Same #444 as the section heading above the table: the panel's
+         two kinds of heading are both headings, and at 11px uppercase
+         a lighter grey reads as faded rather than as secondary. */
       .versions-table th {
         text-align: left;
         font-size: 11px;
         font-weight: 600;
-        color: #888;
+        color: #444;
         text-transform: uppercase;
         letter-spacing: 0.04em;
-        padding: 0 0.5em 0.2em 0;
+        padding: 0 6px 2px 0;
         border-bottom: 1px solid #b9d4b1;
       }
       .versions-table td {
-        padding: 0.35em 0.5em 0.35em 0;
+        padding: 5px 7px 5px 0;
+        line-height: 16px;
         vertical-align: top;
         border-bottom: 1px solid #c9e0c2;
       }
-      .versions-table tr:last-child td { border-bottom: none; }
+      .versions-table tr:last-child td { border-bottom-color: transparent; }
       .versions-table .col-actions {
         text-align: right;
         padding-right: 0;
         white-space: nowrap;
       }
-      .versions-table th.col-actions button { font-size: 12px; padding: 1px 8px; }
-      .versions-table .col-version {
+      .versions-table th.col-actions button { font-size: 12px; }
+      /* Type styling for the body cells is scoped to `td`, here and in
+         the Location rule below. A column class sits on the `th` too,
+         and `.versions-table .col-x` outranks `.versions-table th`, so
+         an unscoped `color` / `font-size` here leaks into that
+         column's heading — which is how COLLECTION, LOCATION, STATUS
+         and VERSION ended up drawn in three combinations of size and
+         grey. The heading row is one row and reads as one. */
+      .versions-table td.col-version {
         color: #555;
         font-variant-numeric: tabular-nums;
         overflow-wrap: anywhere;
       }
+      /* A wider right gutter than the other columns get: these two are
+         measured to their content, so without it the widest status
+         would sit hard against the version beside it. On the `th` as
+         well, so heading and values share an edge, and inside the
+         measured width, so the gutter survives the fit. */
+      .versions-table .col-status,
+      .versions-table .col-version,
+      .versions-table .col-compare { padding-right: 1.1em; }
+      /* Status reuses the `status-*` colours the controls row and the
+         collections page already use, so one verdict is one colour
+         everywhere, and styles its link as status text — see
+         docs/script-identity.md for why the colour, not the underline,
+         is what has to carry. */
+      .versions-table td.col-status { font-size: 12px; }
+      .versions-table .col-status a {
+        font-weight: 600;
+        text-decoration: none;
+        white-space: nowrap;
+      }
+      .versions-table .col-status a:hover { text-decoration: underline; }
+      /* Compare is a verdict like Status and dressed like one. Green is
+         Status's own OK. DIFFERENT is blue, not the `modified` chip's
+         teal: on this panel's green card teal and green are near twins
+         down a column, and the two words have to be told apart at a
+         glance. BASE (NEW on a preview) marks the row the rest are
+         compared against and carries no colour — it is a label, not a
+         verdict. */
+      .versions-table td.col-compare { font-size: 12px; white-space: nowrap; }
+      /* Flush left, all of it: the heading, the words, and the DIFF
+         button's EDGE — not its label — start on the column's line. */
+      .versions-table td.col-compare span { font-weight: 600; }
+      .versions-table .content-same { color: #166534; }
+      .versions-table .content-different { color: #1d4ed8; }
+      /* DIFF: the verdict as a button, since it opens the compare page.
+         The shared button surface (styles.css), in DIFFERENT's blue and
+         the column's weight, sized like the row's other buttons. */
+      .versions-table button.content-diff {
+        padding: 0 0.6em;
+        font-size: 12px;
+        font-weight: 600;
+        color: #1d4ed8;
+      }
+      .versions-table .content-base { color: #555; }
       /* Slash-aware wrap; see the h1 rule above. `min-width: 0` lets
          a long URL shrink its column rather than widening the table. */
       .versions-table .col-collection,
@@ -322,7 +579,7 @@
         word-break: normal;
         min-width: 0;
       }
-      .versions-table .col-location { font-size: 12px; color: #555; }
+      .versions-table td.col-location { font-size: 12px; color: #555; }
       .versions-collection-name {
         color: inherit;
         text-decoration: none;
@@ -335,10 +592,81 @@
          elsewhere for "current" — on this ground a blue row would read
          as a different kind of highlight rather than as emphasis. */
       .versions-table tr.is-current { background: #c3e0ba; }
+      /* Rows that select their copy when clicked anywhere that isn't a
+         control (installed mode only — see `versionRow`). The hover
+         tint stops short of the current row's, so "the row under the
+         pointer" and "the row you are on" stay distinguishable while
+         the pointer is over one of them. */
+      .versions-table tr.is-navigable { cursor: pointer; }
+      .versions-table tr.is-navigable:hover { background: #d3e8cb; }
+      /* The rows are the tab stops the Location links used to be, so
+         they need a ring of their own — the current row included: it
+         takes focus after a selection and on the Up/Down walk, even
+         though activating it does nothing. Inset, because an outline
+         drawn outside a table row is clipped by the row above it. */
+      .versions-table tr.is-navigable:focus-visible,
+      .versions-table tr.is-current:focus-visible {
+        outline: 2px solid #4a7f3d;
+        outline-offset: -2px;
+      }
       .versions-current-marker { color: #666; }
       .versions-this-page { font-weight: 700; color: #333; }
       .versions-table tr.is-offer .versions-offer-text {
         color: #888;
+        font-style: italic;
+      }
+      /* The install-offer row's controls, in the one cell that spans
+         everything left of Location (see `installRow`). One line —
+         "Install into <collection>" — reading the way the header
+         callout does, with the button next to the dropdown that
+         decides what it will do rather than out at the table's right
+         edge. The disabled-button explanation sits under the line. */
+      .versions-table td.col-install { padding-right: 10px; }
+      /* Button, connector and dropdown on one line. `min-width: 0` on
+         the select is what lets it give way to them instead of
+         overflowing the cell — a flex item's default floor is its
+         content width, and a long collection name is wider than two
+         columns. Chrome sizes the open list to its widest option, so
+         a name truncated here is still readable in the list. */
+      .install-offer-pick {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .install-offer-pick select { flex: 1 1 auto; min-width: 0; }
+
+      /* The recommended action in a preview that already has copies:
+         update one of them rather than install another. Set here
+         because the shared `.primary` bolding is scoped to the callout
+         and the action row. */
+      .versions-table td.col-actions button.primary { font-weight: 600; }
+      /* Not bold, for the same reason the header's Install isn't once
+         copies are listed (`showInstallCallout`): this row offers
+         ANOTHER copy alongside versions the user could update instead,
+         so it is an alternative, not the recommended move. The
+         emphasis is on the rows' Update buttons. */
+      .versions-table td.col-install button {
+        flex: none;
+        font: inherit;
+        padding: 0.35em 0.9em;
+        cursor: pointer;
+      }
+      /* Greyed by explicit colours, not by `opacity` — on this panel's
+         green ground a translucent button takes the green on and stops
+         reading as a disabled control at all. */
+      .versions-table td.col-install button:disabled {
+        cursor: not-allowed;
+        background: #ececec;
+        border-color: #c2c2c2;
+        color: #999;
+      }
+      /* Why Install is off: its own line under the sentence above, not
+         spliced into the middle of it. Empty — and so invisible —
+         otherwise. */
+      .install-offer-note {
+        margin-top: 5px;
+        font-size: 12px;
+        color: #666;
         font-style: italic;
       }
       .versions-table .toggle {
@@ -353,38 +681,22 @@
       .versions-table .toggle.toggle-disabled { cursor: not-allowed; opacity: 0.5; }
       .versions-table .toggle.toggle-disabled input[type="checkbox"] { cursor: not-allowed; }
       /* Trash can, in its own column hard against the table's right
-         edge. Same glyph and red hover as the collections page's
-         `.remove-script`, so the two read as one control in two
-         places; the border and resting colour are the panel's own,
-         since it sits on green rather than white. Disabled (a script
-         inside a collection) keeps the button on screen — the
-         column would otherwise look ragged with no clue why — but
-         drops it to a plain dimmed glyph with no border, so it doesn't
-         invite a click its tooltip has to then refuse. `not-allowed`
-         to match the disabled toggle two rules up. */
+         edge. The button itself is `.icon-btn` in styles.css — the same
+         control as the refetch arrow beside it, which is what the two
+         looked like two different widgets before. Disabled (a script
+         inside a collection) keeps the button on screen, since the
+         column would otherwise look ragged with no clue why. */
       .versions-table .col-remove {
         text-align: right;
         padding-right: 0;
         white-space: nowrap;
       }
-      .versions-remove {
-        padding: 0 0.3em;
-        font: inherit;
-        line-height: 1;
-        border: 1px solid #b9d4b1;
-        border-radius: 3px;
-        background: transparent;
-        cursor: pointer;
-        color: #6a7b66;
-      }
-      .versions-remove:hover:not(:disabled) { background: #f5c2c7; color: #b00; }
-      /* A bare glyph has no shape of its own to show focus with. */
-      .versions-remove:focus-visible { outline: 2px solid #4a90e2; outline-offset: 1px; }
-      .versions-remove:disabled {
-        cursor: not-allowed;
-        border-color: transparent;
-        opacity: 0.35;
-      }
+      /* A disabled row button (a script inside a collection, which the
+         collection's own removal takes) stays a button — dimmed, but
+         still a box with a border. Dropping the border left a bare
+         glyph floating on the panel's green, which read as an icon
+         rather than a control that happens to be unavailable. The
+         dimming is `.icon-btn:disabled` in styles.css. */
       /* The panel reports its own action failures here rather than in
          the page's `#message` bar — see related-versions.ts. */
       .versions-message {
@@ -403,6 +715,10 @@
          `table-layout: fixed` the colgroup, not the cells, is what
          sets column width.
 
+         Status does not shed either: it is the column that says
+         whether a copy is actually working, and its link is the only
+         route to that copy's log from here.
+
          Location does NOT shed, though it used to. Its link is the
          only way to reach another copy's page now that a preview with
          several targets drops its header Open button in favour of this
@@ -413,73 +729,41 @@
         .versions-table .col-version { display: none; }
       }
       /* Collection row layout. Grid layout so a long display name wraps
-         inside the right-hand column instead of dropping back to the
-         row's left edge. The bubble's own styling (color, padding,
-         hover) is in styles.css, the cross-page shared stylesheet. */
+         inside the middle column instead of dropping back to the row's
+         left edge. The bubble's own styling (color, padding, hover) is
+         in styles.css, the cross-page shared stylesheet. */
+      /* `minmax(0, max-content)` on the name, not `1fr`: a name that
+         fits keeps its natural width, so the Move button sits right
+         after it instead of being flung to the margin. A name too long
+         for the row fills the track, wraps inside it, and the button
+         ends up at the right edge — which is where it belongs once
+         there is no "right after the name" to sit at. */
       .collection-cell {
         display: grid;
-        grid-template-columns: max-content 1fr;
+        grid-template-columns: max-content minmax(0, max-content) max-content;
         column-gap: 0.5em;
         align-items: baseline;
         min-width: 0;
       }
-      /* Square icon-only button. Swaps the copy icon for a checkmark
-         while the .copied class is on it (set briefly after a
-         successful clipboard write). */
-      .copy-btn {
-        flex: 0 0 auto;
-        width: 1.6em;
-        height: 1.6em;
-        padding: 0;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        border: 1px solid #bbb;
-        border-radius: 3px;
-        background: #fff;
-        color: #444;
-        cursor: pointer;
-      }
-      .copy-btn:hover { background: #eee; }
-      .copy-btn:focus-visible { outline: 2px solid #4a90e2; outline-offset: 1px; }
-      .copy-btn svg { width: 14px; height: 14px; display: block; }
-      .copy-btn .check-icon { display: none; color: #166534; }
-      .copy-btn.copied .copy-icon { display: none; }
-      .copy-btn.copied .check-icon { display: block; }
+      /* Move control: the Collection row's own button, in a column of
+         its own so a wrapping name never drags it down onto the last
+         wrapped line.
+
+         Its height is no longer its own business: every button takes
+         the shared height (styles.css), which is what keeps it level
+         with the versions table's row buttons now that those hold a
+         glyph. Only the padding is here. */
+      .collection-move { padding: 0 0.7em; }
+      /* `.copy-btn` (the square copy-to-clipboard button) is in
+         styles.css: the delete dialog uses it on every page. */
       /* Tab strip above the code box: one tab per source file (main
          script + each @require). Always rendered. The strip sits
          entirely above the code box (no overlap, no negative margin
          tricks) so the layout is robust against the body's flex
          column constraints. */
-      .tabs {
-        display: flex;
-        flex: 0 0 auto;
-        gap: 3px;
-        margin: 0;
-        padding: 0;
-        overflow-x: auto;
-      }
-      .tab {
-        font: inherit;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        font-size: 12px;
-        line-height: 1.2;
-        padding: 0.45em 0.9em;
-        border: 1px solid #ccc;
-        border-radius: 4px 4px 0 0;
-        background: #e4e4e4;
-        color: #555;
-        cursor: pointer;
-        white-space: nowrap;
-      }
-      .tab:hover { background: #efefef; }
-      .tab.active {
-        background: #fafafa;
-        color: #222;
-        font-weight: 600;
-        border-bottom-color: #fafafa;
-      }
-      .tab:focus-visible { outline: 2px solid #4a90e2; outline-offset: -2px; }
+      /* The tab strip itself (`.tabs`, `.tab`) is shared with the
+         compare page — see styles.css. Only the chip's placement in a
+         tab is this page's own. */
       /* Positioning only — the chip's own look is above. */
       .tab-mark { margin-left: 0.5em; vertical-align: 1px; }
       /* The code box fills the rest of the viewport and scrolls. The
@@ -488,9 +772,24 @@
          top-left rounding is dropped so the active tab meets the box
          cleanly along that edge. margin-top:-1px lets the active tab's
          transparent bottom border merge with the code box's top
-         border so the active tab visually "opens into" the box. */
+         border so the active tab visually "opens into" the box.
+
+         A tall details panel (a script with dozens of @match lines) would
+         otherwise squeeze the box to nothing. `--code-box-min` keeps a
+         useful number of lines visible and lets the PAGE scroll instead
+         — the one case where the viewer accepts a page-level scroll bar.
+         20 lines at Prism's line-height (1.5, set on the <code> by
+         vendor/prism/prism.css, so not ours to pin here) and this box's
+         13px font, plus its padding and border: the box is border-box
+         so the minimum is its outer height, and the Log pane below
+         shares it so switching tabs doesn't reflow. */
+      .page-main { --code-box-min: calc(20 * 1.5 * 13px + 2 * 0.8 * 13px + 2px); }
       pre.code-box {
-        flex: 1 1 auto;
+        /* Basis 0: the box's own content must never size the page —
+           it scrolls inside the box. Its floor is the minimum below. */
+        flex: 1 1 0;
+        min-height: var(--code-box-min);
+        box-sizing: border-box;
         margin: -1px 0 0;
         overflow: auto;
         border: 1px solid #ccc;
@@ -527,7 +826,9 @@
          Same border/margin trick as .code-box so the active Log tab's
          bottom border merges with the pane's top border. */
       .log-pane {
-        flex: 1 1 auto;
+        flex: 1 1 0;
+        min-height: var(--code-box-min);
+        box-sizing: border-box;
         margin: -1px 0 0;
         overflow: auto;
         border: 1px solid #ccc;
@@ -571,6 +872,13 @@
       .log-pane .log-level-info    { background: #e7eef7; color: #345; }
       .log-pane .log-level-warning { background: #fdf1c5; color: #6b4f00; }
       .log-pane .log-level-error   { background: #fbe2e2; color: #8a1d1d; }
+      /* State-carrying entries (see `LogEntry.state`): the same hues the
+         Status badge uses for that state, on a badge background. */
+      .log-pane .log-state-ok             { background: #dcfce7; color: #166534; }
+      .log-pane .log-state-invalid,
+      .log-pane .log-state-rejected       { background: #fbe2e2; color: #8a1d1d; }
+      .log-pane .log-state-outdated       { background: #fdf1c5; color: #6b4f00; }
+      .log-pane .log-state-refresh-failed { background: #ffedd5; color: #c2410c; }
       .log-empty {
         padding: 1em;
         color: #777;
@@ -677,31 +985,81 @@
     </style>
   </head>
   <body>
-    <!-- Shared globe glyph referenced by the icon slot's <use href="#sm-globe">
-         (see collections.html for the rationale). -->
-    <svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="sm-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></symbol></svg>
-    <h1 id="filename"></h1>
+    <!--#include glyph-sprite-->
+    <header class="page-header">
+      <div class="page-header-inner">
+        <a class="page-home page-icon-link" href="collections.html" target="_blank"
+           rel="noopener" tabindex="-1" aria-hidden="true">
+          <img class="page-icon" src="icons/icon-48.png" alt="" />
+        </a>
+        <!-- `tabindex="-1"` so in-page navigation between copies can move
+             focus here: the heading, the details, and the code all change
+             with no document load for a screen reader to announce. Not
+             reachable by Tab, and it draws no focus ring (see the h1 rule
+             in the stylesheet above). -->
+        <!-- The brand run ships in the markup, so the bar reads
+             "SourceMonkey |" from the document's own first paint rather
+             than after any script has run. Exactly what
+             `headingPrefixEl(INSTALLED_HEADING)` builds (src/page-heading.ts),
+             so when the heading is rendered for real this part of it does
+             not move: the installed page repaints the same link and
+             separator, and the install page appends its "Install |"
+             after them.
+             The product name is a link home to the collections page.
+             It carries a real href and `target` so a click before
+             `userscript.js` has run still opens a new tab; once the
+             page's delegated handler is installed (installHomeLinkHandler,
+             src/page-links.ts) the click goes to the NAMED collections
+             tab instead. -->
+        <h1 id="filename" tabindex="-1"><a class="heading-prefix brand page-home" href="collections.html"
+             target="_blank" rel="noopener" title="Open the collections page">SourceMonkey</a><span class="heading-prefix brand"> | </span></h1>
+      </div>
+    </header>
+    <div class="page-main">
+    <!-- Banner + versions panel, directly under the title and ABOVE the
+         controls row: which copies of this script exist is the first
+         thing either mode has to answer, and every control below acts
+         on the one copy this page is showing. In the preview's
+         "already installed" case the two are merged into one box (the
+         `merged` class) — see `renderInstalledBanner`. -->
+    <div id="status-box">
+      <!-- In preview mode (`?preview=<url>`) the banner says what this
+           file is relative to what's installed, and the action row asks
+           the install / update question; the action row stays hidden for
+           an installed script, which uses the controls row below. The
+           banner slot is shared with the file-access banner, which either
+           mode can raise when a local read fails. -->
+      <div id="banner-slot"></div>
+      <div id="other-versions"></div>
+    </div>
     <div id="meta-row" class="meta-row" hidden>
       <label id="enable-label" class="toggle" title="Enable this script">
         <input id="enable-checkbox" type="checkbox" />
         <span>Enabled</span>
       </label>
-      <button id="refresh-btn" type="button">Refresh</button>
+      <!-- Local copy… and the delete trash can, filled per render
+           (`makeScriptActions`). Empty until the first one, and the
+           row it is in stays hidden until then. -->
+      <span id="meta-actions" class="meta-actions"></span>
+      <!-- Icon-only; the glyph is painted by src/userscript.ts
+           (setGlyphButton), which is safe to leave empty here
+           because #meta-row ships `hidden` and is only revealed
+           once the script has loaded. -->
+      <button id="refresh-btn" type="button"></button>
     </div>
-    <!-- In preview mode (`?preview=<url>`) the banner says what this
-         file is relative to what's installed, and the action row asks
-         the install / update question; the action row stays hidden for
-         an installed script, which uses the controls row above. The
-         banner slot is shared with the file-access banner, which either
-         mode can raise when a local read fails. -->
-    <div id="banner-slot"></div>
+    <!-- Install stays hidden until the fetch has landed and we know
+         whether this file is installable and not already installed,
+         so it is never clickable without a handler behind it. The
+         dropdown is filled per preview (see `showInstallCallout`); it
+         is absent for a location with no single-file spelling, where
+         Install adds a whole collection instead. -->
+    <div id="install-callout" class="install-callout" hidden>
+      <button id="install-btn" class="primary" type="button">Install</button>
+      <label id="install-target-label" for="install-target">into</label>
+      <span id="install-target-slot"></span>
+    </div>
     <div id="preview-actions" class="actions" hidden>
-      <!-- Install stays hidden until the fetch has landed and we know
-           whether this file is installable and not already installed,
-           so it is never clickable without a handler behind it. -->
-      <button id="install-btn" class="primary" type="button" hidden>Install</button>
       <button id="open-btn" type="button" hidden>Open installed script</button>
-      <button id="update-btn" type="button" hidden>Update now</button>
       <button id="continue-btn" class="primary" type="button" hidden
               title="Open this location in the browser, without previewing it">Continue to page</button>
       <button id="cancel-btn" type="button">Cancel</button>
@@ -709,12 +1067,26 @@
     </div>
     <p id="message" class="message"></p>
     <div id="header-summary"></div>
-    <div id="other-versions"></div>
     <div id="tabs" class="tabs" role="tablist" hidden></div>
     <pre id="code-pane" class="code-box line-numbers" tabindex="0"><code id="content" class="language-javascript"></code></pre>
     <div id="log-pane" class="log-pane" tabindex="0" role="tabpanel" hidden></div>
-    <script src="vendor/prism/prism.js"></script>
-    <script src="vendor/prism/prism-line-numbers.js"></script>
+    </div>
+    <!-- `defer`, not blocking: a synchronous script here stalls parsing,
+         and everything deferred — page-heading.js included — has to wait
+         for parsing to finish. That put the header bar's name a couple
+         of frames behind the page's first paint. Deferred scripts still
+         run in document order, so Prism is still defined before
+         userscript.js evaluates.
+
+         `data-manual` stands Prism's own automatic highlightAll() pass
+         down. Nothing wanted it — code-tabs.ts highlights the code box
+         itself, once it has code to highlight — and deferring changed
+         WHEN that pass fires (readyState is no longer `loading`, so
+         Prism schedules it on a frame instead of DOMContentLoaded). A
+         pass that rebuilt the block from its textContent would drop the
+         <a> elements code-links.ts puts in. -->
+    <script src="vendor/prism/prism.js" data-manual defer></script>
+    <script src="vendor/prism/prism-line-numbers.js" defer></script>
     <script src="userscript.js" type="module"></script>
   </body>
 </html>

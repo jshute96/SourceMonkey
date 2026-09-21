@@ -1,12 +1,31 @@
 # Site icons
 
 - Each row in the collections page (and the H1 of the script viewer)
-  shows a small favicon next to the script name.
+  shows a small favicon per site the script targets, next to the
+  script name.
 - Collection priority:
   - A script-declared `@icon` (or its TM aliases — see below) wins
-    outright when set.
-  - Otherwise the icon is discovered from the matched site itself.
+    outright when set, and collapses the slot to that one icon.
+  - Otherwise one icon per distinct site is discovered from the
+    matched sites themselves (see [Multiple sites](#multiple-sites)).
 - Implemented in [`src/site-icon.ts`](../src/site-icon.ts).
+
+## Debug page
+
+- `/debug/icons.html` ([`src/debug/icons.html`](../src/debug/icons.html) +
+  [`src/debug/icons.ts`](../src/debug/icons.ts)) inspects and manages cached
+  icons in `chrome.storage.local`.
+- Displays a table of all cached rows (`siteIcon:*`, `pathIcon:*`, and
+  `iconUrl:*`) with icon preview, target site/URL, scope chip,
+  MIME/byte-size details, schema version, freshness status, and
+  fetched/expiry timestamps.
+- The status badge reads `ok`, `miss` (cached "no icon"), `expired`,
+  `stale schema` (written under an older discovery version — its tooltip
+  names the row's version and the current one), or `unpaintable`
+  (a value `usableCacheHit` would refuse). All but `ok` / `miss` read as
+  misses, so the next render that needs the row refetches it.
+- Supports per-row **Refresh** and **Delete** buttons, plus a **Delete All**
+  action in the header bar.
 
 ## Header override (`@icon`)
 
@@ -17,16 +36,18 @@
 - Accepted reference forms (handled by [`src/file-loader.ts`](../src/file-loader.ts)):
   - Absolute `http(s)://` URL.
   - `data:` URL (rendered inline, no fetch).
-  - Relative path — resolved against the script's parent directory.
-    Works for both file:// and HTTP scripts: an HTTP script's
-    `@icon foo.png` reaches `<script-dir>/foo.png` on the same origin.
+  - Relative path — resolved against the script's own URL. Works for
+    both file:// and HTTP scripts: an HTTP script's `@icon foo.png`
+    reaches `<script-dir>/foo.png` on the same origin.
 - Absolute `file://` URLs are *not* accepted — the extension holds
   `file:///*` host permission, so allowing arbitrary file:// refs
   would let a malicious HTTP-sourced script read host files.
-- Path-traversal is rejected: the resolved URL must still live at or
-  under the script's parent dir. Caught textually via a post-resolution
-  prefix check on the URL string, so `..`, `%2e%2e`, `..\`, and
-  host-absolute `/` paths are all rejected uniformly.
+- Path-traversal is rejected **for a local script**: from a `file://`
+  script the resolved URL must still live at or under the script's
+  parent dir. Caught via a post-resolution prefix check on the URL
+  string, so `..`, `%2e%2e`, `..\`, and host-absolute `/` paths are all
+  rejected uniformly. An HTTP script's icon may climb — it could name
+  any absolute URL anyway.
 - An absolute `http(s)` `@icon` can be served from a **local file**
   beside the script — same rule `@require` / `@resource` use, so a
   script keeps its portable URL while an icon on disk stands in during
@@ -59,6 +80,76 @@
   `@icon` is purely a visual override — it doesn't change which site
   the favicon links to.
 
+## Multiple sites
+
+- A script whose `@match` set names several sites gets one icon per
+  site, in header order, up to a cap. Sites past the cap are not shown.
+  - Collections table: `MAX_SITE_ICONS` (`match-targets.ts`). Small —
+    the slot sits in a column beside the name.
+  - Viewer heading: `HEADING_SITE_ICONS` (`userscript.ts`). Higher —
+    the heading has room, and it is the one place the whole target
+    list is worth a glance.
+- "Same site" means the same `host[:port]` after dropping a leading
+  `www.`; the scheme is ignored. `http://www.example.com/*` and
+  `https://example.com/*` are one icon (the first pattern's link).
+  `localhost:3000` and `localhost:8080` are two.
+- `representativeMatches(matching, limit)` returns that list;
+  `representativeMatch` is just its first entry.
+- Each icon is its own link to its site's `linkUrl` and runs its own
+  discovery — so a script's second site shares cache rows with every
+  other script on that site.
+
+### Identical favicons collapse
+
+- Different hosts can serve the same favicon (`maps.google.com` and
+  `www.google.com`). Once every icon in a slot has loaded, icons whose
+  resolved `data:` URL is byte-identical fold into the first one.
+  - The survivor keeps its link; its tooltip lists every site it now
+    stands for, one per line — the first 10, then `(and N more)`
+    (`sitesTooltip`).
+  - An `@icon`-declared icon is the script's, not a site's: its
+    tooltip leads with the script's `@name`, then lists every site the
+    script names, uncapped by the row's icon limit.
+  - Globes collapse too: sites that all came up without an icon fold
+    into one globe, with the same multi-line tooltip.
+  - The globe then moves after the real favicons — unless it is the
+    first site's, which keeps its place as the primary site.
+  - Identity is the resolved bytes. Two hosts serving the same picture
+    in different files (another size, another encoding) do not merge.
+- Only the resolved bytes can tell — the hosts differ — so this
+  happens after the fetches, not at first paint. `renderSiteIconInto`
+  resolves with the final icon count for callers that care.
+
+### Layout
+
+- **Collections table**: icons sit side by side with a 2px gap. The
+  slot is a fixed width per table — wide enough for the widest row in
+  that collection — so all names in one collection start at the same
+  x position. `collections.ts` sets `--icon-cols` on the `<table>`
+  (`fitIconColumns`) and the stylesheet derives the slot width and the
+  name cell's hanging indent from it.
+  - Fitted from the slots on screen: first from the header-derived
+    estimates (every site starts as a globe), then again once the
+    rebuilt slots' favicons have settled and identical ones collapsed
+    — one shift per pass, not one per row.
+  - Every live sync (a refresh that changed `@match`, a script that
+    arrived or left) runs the same fit, so the column narrows as well
+    as widens.
+- **Viewer heading**: same, but the slot grows with the count
+  (nothing to align against).
+
+### Per-pattern icons in the viewer
+
+- The viewer's `Match` / `Include` / `Exclude` rows lead every pattern
+  with one icon (`renderPatternIconInto`): that pattern's site favicon
+  via the same discovery + cache, or the globe when it names no site.
+- No de-dup or collapse here — the row lists patterns, so each gets
+  its own icon even when two share a site.
+- Cost: opening the viewer probes one page per pattern (cache rows
+  under `pathIcon:` / `siteIcon:` as usual), including the sites an
+  `@exclude` names. A deliberate choice — the row is there to show
+  which sites those are.
+
 ## How an origin and link URL are picked
 
 Pure transforms over a `@match` pattern; live in
@@ -66,9 +157,10 @@ Pure transforms over a `@match` pattern; live in
 consumed by the userscript-viewer linkifier for
 `@match`/`@exclude`/`@include` rows — see
 [script-viewer.md](script-viewer.md#link-rendering). The icon module
-picks the first `@match` whose pattern yields a usable origin via
-`representativeMatch`; it then uses the same `linkUrl` for both
-HTML icon discovery and the favicon click-through. The viewer's
+takes the `@match` patterns that yield a usable origin via
+`representativeMatches`, one per distinct site, and uses each site's
+`linkUrl` for both HTML icon discovery and the favicon click-through.
+The viewer's
 [same-directory fallback](script-viewer.md#same-directory-fallback)
 for site-less patterns is not used here — it points at a page beside
 the script, which is not a site to take an icon from.
@@ -100,9 +192,10 @@ A host slot that isn't a host we could navigate to yields no target.
 ## Fetch + cache
 
 - `ensureSiteIcon(origin, pageUrl)` is called from each row's render
-  path. `pageUrl` (e.g. `https://connect.garmin.com/app/home`) comes
-  from `representativeMatch` and points at a page closer to what the
-  script actually targets — many sites only ship the proper
+  path, once per site. `pageUrl` (e.g.
+  `https://connect.garmin.com/app/home`) is that site's
+  `representativeMatches` entry and points at a page closer to what
+  the script actually targets — many sites only ship the proper
   `<link rel="icon">` on authed/deep pages and serve a barebones SSO
   stub at `/`.
 
@@ -113,36 +206,58 @@ section of a big site) each get their own icon instead of all sharing
 the first one discovered for the host.
 
 - **Path-scoped layer** (`pathIcon:<pageUrl>`): when the page URL is
-  deeper than `<origin>/`, try HTML discovery there first. Positive
-  hits are returned immediately; a null result (no usable icon on
-  that page) falls through to the origin layer instead of refetching.
+  deeper than `<origin>/`, try Chrome's `/_favicon/` DB and then HTML
+  discovery there first. Positive hits are returned immediately; a null
+  result (no usable icon on that page) falls through to the origin layer
+  instead of refetching.
 - **Origin fallback** (`siteIcon:<origin>`): shared across every
-  script on the host. Runs origin-root HTML → `/favicon.ico` →
-  Google S2 in order and caches whichever wins.
+  script on the host. Runs Chrome's `/_favicon/` DB → origin-root HTML
+  → `/favicon.ico` → Google S2 in order and caches whichever wins.
 - When the page URL is already the origin root the path layer is
-  skipped — it would just duplicate the origin-root HTML fetch.
+  skipped — it would just duplicate the origin-root lookup.
 
 ### Discovery strategies
 
-- **HTML discovery (page URL or origin root)**: fetch the page,
+- **Chrome `/_favicon/` database (`chrome-extension://<id>/_favicon/`)**:
+  reads directly from Chrome's internal favicon database (populated
+  when the user visits pages in real tabs — after SSO (single sign-on)
+  authentication and after client-side JS updates `<link rel="icon">`).
+  - Because `/_favicon/` returns `200 OK` with Chrome's default globe
+    PNG on cache misses rather than 404ing, `fetchChromeFavicon` probes
+    a known-miss sentinel URL once per context and treats any response
+    matching those bytes as a miss (`null`).
+  - Chrome falls back to the host's icon for an unvisited page URL by
+    default. The path layer asks with `fallbackToHost=0` (`exactPage`)
+    so it only reports page-specific hits; the origin layer keeps the
+    fallback.
+  - Not redirect-proof: Chrome maps an icon onto every URL of the
+    redirect chain that led to it, so a tab that bounced to SSO without
+    signing in leaves the SSO icon on the app URL, and the DB tier
+    returns it. Only the 7-day TTL clears that (see TODO.md).
+- **HTML discovery (page URL or origin root)**: fetch the page and
   scan the `<head>` for `<link rel="icon">` (also `shortcut icon`,
-  `apple-touch-icon`). The fetch follows redirects, so even when the
-  server bounces us to an SSO host we still get that page's icon
-  tag. Relative hrefs resolve against the final post-redirect URL.
-  The best candidate is selected by [pickBestIconCandidate](#scoring-link-rel-icon-candidates).
-  A non-empty `data:` URL declared inline is used verbatim.
-- **`/favicon.ico` fallback**: conventional path. Origin-layer only.
+  `apple-touch-icon`).
+  - **Cross-host redirects are rejected** (`isSameHostRedirect`): if the
+    fetch bounces to a different host — `www.` aside, ports and
+    subdomains included (e.g. an SSO portal like
+    `login.corp.google.com` or `accounts.google.com`, or a marketing
+    portal like `workspace.google.com`), the HTML's `<link rel="icon">`
+    belongs to that other host and is discarded as `null`.
+  - Same-host redirects (including scheme upgrades and `www.` differences)
+    are allowed, and relative hrefs resolve against `finalUrl`.
+  - The best candidate is selected by [pickBestIconCandidate](#scoring-link-rel-icon-candidates).
+    A non-empty `data:` URL declared inline is used verbatim.
+- **`/favicon.ico` fallback**: conventional path (`fetchIconAt` with
+  `rejectCrossHostRedirect: true`). Origin-layer only.
 - **Google S2 fallback**:
   `https://www.google.com/s2/favicons?domain=<host>&sz=64`. The only
   leg that touches a third party — the host name (already public via
   the `@match`) is sent to www.google.com. Reached only when every
-  direct strategy has failed. Google returns a generic globe for
-  hosts it can't resolve; we cache that as "better than nothing."
-  Origin-layer only.
+  local and direct strategy has failed. Origin-layer only.
 
 ### Bounds and freshness
 
-- Every fetch is bounded:
+- Every network fetch is bounded:
   - 5s timeout, follows redirects.
   - Allowed by the extension's `<all_urls>` host permission.
   - HTML body capped at 1MB; icon body at 128KB.
@@ -152,20 +267,23 @@ the first one discovered for the host.
     A site's HTML routinely carries `Link: rel=preload; as=script`
     headers, and a document-initiated fetch acts on them — see
     [logging.md](logging.md#keeping-the-errors-panel-clean).
-- On any failure (network error, non-icon `Content-Type`, oversized
-  body) the layer caches a `null` entry so the same broken page or
-  host doesn't get hammered on every render.
+- On any failure (network error, cross-host redirect, non-icon
+  `Content-Type`, oversized body) the layer caches a `null` entry so
+  the same broken page or host doesn't get hammered on every render.
 - Successful entries are cached for 7 days; `null` entries for 24h.
   After that the next render triggers a refetch — so sites that swap
   their favicon, or hosts that briefly fell back to Google's globe
   placeholder, self-heal without the user clearing storage.
-- A row is only a cache *hit* if it is fresh **and** holds something
-  we would paint (`usableCacheHit`). Anything other than a
-  payload-bearing `data:` URL counts as a miss, so it is hidden
-  immediately and the refetch overwrites it.
+- A row is only a cache *hit* if it is fresh, matches the current
+  discovery schema version (`DISCOVERED_ICON_CACHE_VERSION` for
+  `pathIcon:` / `siteIcon:`), **and** holds something we would paint
+  (`usableCacheHit`). Anything other than a payload-bearing `data:` URL
+  counts as a miss, so it is hidden immediately and the refetch
+  overwrites it.
   - The check exists because rows written before the empty-`data:`
-    rule existed stored example.com's `data:,` as though it were an
-    icon, and only the 7-day TTL would ever have cleared them.
+    rule or before cross-host redirect rejection stored invalid /
+    redirected icons, and only the 7-day TTL would ever have cleared
+    them.
   - It defaults *closed*: the point is distrusting rows written by
     other builds, so an unrecognized shape is refetched rather than
     painted.
@@ -196,16 +314,16 @@ the first one discovered for the host.
 ## Storage shape
 
 Parallel cache rows for the icon-collection paths, sharing the same
-`{ dataUrl, fetchedAt }` shape and TTLs:
+`{ dataUrl, fetchedAt, v? }` shape and TTLs:
 
-- `pathIcon:<pageUrl>` — HTML-discovery result for a specific
-  deep page. Key is the full page URL; lets two scripts on the
-  same host but different sections keep distinct icons. A null entry
+- `pathIcon:<pageUrl>` — discovery result (`/_favicon/` DB + HTML) for
+  a specific deep page. Key is the full page URL; lets two scripts on
+  the same host but different sections keep distinct icons. A null entry
   here means "no icon on this page" — the lookup falls through to
   the origin row.
-- `siteIcon:<origin>` — origin-level fallback favicons (root HTML
-  + `/favicon.ico` + Google S2). Key is the full `scheme://host`
-  string; every script on that host shares the row.
+- `siteIcon:<origin>` — origin-level fallback favicons (`/_favicon/` DB
+  + root HTML + `/favicon.ico` + Google S2). Key is the full
+  `scheme://host` string; every script on that host shares the row.
 - `iconUrl:<url>` — `@icon`-declared icons. Key is the literal header
   URL; scripts pinning the same icon share one fetch.
 - A local stand-in is NOT written here — it's memoized for the life of
@@ -220,21 +338,26 @@ just trigger a fresh fetch if the user re-adds the collection.
 
 ## Display
 
-- A 16×16 `<span class="site-icon">` slot sits before the name
-  link in each row. The viewer page mirrors the same slot inside its
-  `<h1>`.
+- A `<span class="site-icon">` slot of 16×16 icons sits before the
+  name link in each row. The viewer page mirrors the same slot inside
+  its `<h1>`. Widths are in [Layout](#layout) above.
 - `renderSiteIconInto` paints the slot synchronously:
-  - When the script has a representative origin, the slot contains an `<a class="site-icon-inner" target="_blank">` pointing at `linkUrl`.
-  - Otherwise it contains an inert `<span class="site-icon-inner">` — file:// scripts, `<all_urls>`, host-of-`*`, etc.
-- The inner element always starts with a muted globe placeholder so
-  users see *something* immediately and rows missing an origin still
-  show a consistent placeholder.
+  - One `<a class="site-icon-inner" target="_blank">` per distinct
+    site, pointing at that site's `linkUrl`.
+  - A script that declares an `@icon` gets a single `<a>` (first
+    site's link) painted with that icon.
+  - A script with no usable site gets one inert
+    `<span class="site-icon-inner">` — file:// scripts, `<all_urls>`,
+    host-of-`*`, etc.
+- Every inner element starts with a muted globe placeholder so users
+  see *something* immediately and rows missing an origin still show a
+  consistent placeholder.
 - The async swap picks its collection by header priority: if the script
   declares an `@icon`, `ensureIconForUrl` runs; otherwise
-  `ensureSiteIcon` runs the origin-discovery pipeline. The resolved
-  icon is wrapped in an `<img>` that replaces the globe inside
-  the inner element. No `isConnected` guard — orphan paints from
-  re-renders are cheap and unobservable.
+  `ensureSiteIcon` runs the origin-discovery pipeline once per icon.
+  The resolved icon is wrapped in an `<img>` that replaces the globe
+  inside its inner element. No `isConnected` guard — orphan paints
+  from re-renders are cheap and unobservable.
 
 ### Keeping the rendered page small
 
@@ -243,11 +366,12 @@ full copy of each favicon — and the globe SVG — into *every* row,
 pushing the live collections-page DOM past half a megabyte (mostly
 duplicated bytes). Two measures keep it bounded:
 
-- **Shared globe glyph.** The globe is defined once per page as an SVG
-  `<symbol id="sm-globe">` (in `collections.html` / `userscript.html`);
-  each slot renders a tiny `<svg class="site-icon-globe"><use
-  href="#sm-globe">`. Stroke/fill styling lives in CSS on
-  `.site-icon-globe` so it still inherits `currentColor`.
+- **Shared globe glyph.** The globe is one `<symbol id="sm-globe">` in
+  `src/glyph-sprite.svg`, which the build inlines once per page (see
+  *Glyph sprite* in [architecture.md](architecture.md)); each slot
+  renders a tiny `<svg class="site-icon-globe"><use href="#sm-globe">`.
+  Stroke/fill styling lives in CSS on `.site-icon-globe` (styles.css,
+  shared by every page with a slot) so it still inherits `currentColor`.
 - **Deduped blob: URLs for large icons.** `iconImgSrc` converts a
   cached icon `data:` URL above `ICON_INLINE_MAX_LEN` (512 chars) into
   a `blob:` URL once — via `dataUrlToBlob` + `URL.createObjectURL` —

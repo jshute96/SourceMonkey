@@ -323,18 +323,19 @@ async function checkScript(file, offlineRoot, now) {
 // tree that's reconstructible: the tree is `<root>/<host>/<url-path>`
 // with the URL's own percent-encoding preserved.
 //
-// It matters for three things, all of which a `file://` base would get
-// wrong:
+// It matters for several things, all of which a `file://` base would
+// get wrong:
 //
 //   - the directory a relative `@require` / `@resource` resolves
 //     against;
+//   - whether a relative ref may climb out of that directory —
+//     `resolveScriptResource` contains one only when the base is
+//     `file://`, so a mirrored script reconstructed as `https://…`
+//     resolves a climbing ref the way the real one does;
 //   - the canonical URL used as the fetch + dedup key, which is what
 //     `findExisting` looks up in the tree;
 //   - the URL the report prints, which should name the dependency the
 //     way the script's author wrote it.
-//
-// (The containment rule in `resolveScriptResource` is NOT one of them —
-// it applies to every relative ref regardless of scheme.)
 //
 // Not exact in two shapes the downloader produces: `clampSegment`
 // truncates an over-long segment with a hash spliced in, and a path

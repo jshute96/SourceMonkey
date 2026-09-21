@@ -2,11 +2,13 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>SourceMonkey — Collections</title>
+    <title>SourceMonkey | Collections</title>
     <link rel="stylesheet" href="styles.css" />
     <style>
-      body { font: 14px system-ui, sans-serif; max-width: 720px; margin: 2em auto; padding: 0 1em; color: #222; }
-      h1 { margin-top: 0; }
+      /* Full-bleed body; the header bar and `.page-body` (styles.css)
+         each centre their own contents on the shared `--page-width`
+         column. */
+      body { font: 14px system-ui, sans-serif; margin: 0; color: #222; --page-width: 720px; }
       /* Grid layout so a long display name that needs to wrap stays
          inside the right-hand column instead of dropping back to the
          row's left edge. Column 1 sizes to the bubble; column 2 takes
@@ -23,61 +25,63 @@
       /* `.collection-type-bubble` + colored `.bubble-*` variants +
          `.collection-display-name` typography are in styles.css (the
          cross-page shared stylesheet). */
-      button { font: inherit; padding: 0.3em 0.8em; cursor: pointer; }
-      input[type="text"] { font: inherit; padding: 0.3em 0.5em; }
+      /* Height, surface, hover and press are shared across the two
+         pages (styles.css); this is just this page's roomier
+         horizontal padding on text buttons. */
+      button { font: inherit; padding: 0 11px; cursor: pointer; }
+      input[type="text"] { font: inherit; padding: 4px 7px; }
       .placeholder { color: #666; }
       .add-form { display: flex; gap: 0.5em; margin-bottom: 1em; align-items: center; }
       .add-form input[type="text"] { flex: 1 1 auto; }
-      .collection { border: 1px solid #ddd; border-radius: 6px; padding: 0.8em 1em; margin-bottom: 0.8em; }
-      .collection-header { display: flex; justify-content: flex-start; align-items: center; gap: 0.6em; margin-bottom: 0.5em; }
+      .collection { border: 1px solid #ddd; border-radius: 6px; padding: 11px 14px; margin-bottom: 11px; }
+      .collection-header { display: flex; justify-content: flex-start; align-items: center; gap: 0.6em; margin-bottom: 7px; }
       .collection-header h2 { flex: 1 1 auto; min-width: 0; }
       .collection-toggle { flex: 0 0 auto; }
       .collection-buttons { display: flex; gap: 0.4em; flex: 0 0 auto; margin-left: auto; align-items: center; }
-      /* Up/Down arrow buttons that sit left of Refresh. Keep the
-         vertical padding identical to the standard button rule above
-         so heights line up with Refresh/Remove; only the horizontal
-         padding is tightened so the arrow glyph isn't drowned in
-         whitespace. */
-      /* The "Local files" opt-out, sitting among the header's buttons.
-         Labeled (unlike the bare enable switch on the left) because an
-         unlabeled second switch up here would read as a second
-         enable/disable control. */
-      .local-files-toggle {
-        display: flex;
-        align-items: center;
-        gap: 0.3em;
-        font-size: 0.85em;
-        color: #555;
-        cursor: pointer;
-        white-space: nowrap;
-      }
-      .move-collection { padding: 0.3em 0.5em; }
-      .move-collection:disabled { cursor: not-allowed; opacity: 0.35; }
-      .script-table { width: 100%; border-collapse: collapse; }
-      .script-table th, .script-table td { text-align: left; padding: 0.3em 0.6em; border-bottom: 1px solid #eee; vertical-align: top; }
-      .script-table th { font-weight: 600; color: #555; font-size: 0.9em; }
-      .script-table tbody tr:last-child td { border-bottom: none; }
-      .script-table td.size-cell, .script-table td.status-cell, .script-table td.toggle-cell, .script-table td.action-cell { white-space: nowrap; width: 1%; }
+      /* Up/Down arrow buttons. They wear `.icon-btn` like the rest of
+         the header row, so the box and the disabled state come from
+         styles.css; the class is what the reorder code and the tests
+         address them by. */
+      /* Whole-px vertical metrics on this page, and `separate` borders rather
+         than `collapse` (a collapsed border is split half into each adjacent
+         cell, landing rows on half pixels) — see docs/architecture.md,
+         "Extension-page styling". */
+      /* A can inside a script row is a row control, not a control in a
+         button row: at the shared 26px it makes its row 7px taller than
+         the rows around it, and only SOME rows have one (a `missing`
+         row, a local copy), so the table comes out ragged. Shrinking
+         the pair here puts it back inside the row's own line box —
+         this is the escape hatch styles.css describes. */
+      .script-table { --icon-btn-size: 18px; --icon-btn-glyph: 14px; }
+      .script-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+      .script-table th, .script-table td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #eee; vertical-align: top; }
+      .script-table th { font-weight: 600; color: #555; font-size: 0.9em; line-height: 16px; }
+      .script-table tbody tr:last-child td { border-bottom-color: transparent; }
+      .script-table td.size-cell, .script-table td.status-cell, .script-table td.toggle-cell, .script-table td.action-cell, .script-table td.scheme-cell { white-space: nowrap; width: 1%; }
       /* Container-collection action column: the per-row remove button.
          Right-aligned so the trash icon hugs the table edge regardless
          of how narrow / wide the name column wants to be. */
-      .script-table td.action-cell { text-align: right; padding-left: 0.2em; }
+      .script-table td.action-cell { text-align: right; padding-left: 3px; }
       .script-table th:last-child { width: 1%; }
-      .script-table td.toggle-cell { padding-right: 0.2em; }
+      .script-table td.toggle-cell { padding-right: 3px; }
       /* When a collection is off, its whole section dims; when a script is off, just the row dims.
          The toggle itself stays at full opacity so users can flip it back. */
       .collection.disabled .collection-header h2,
       .script-table tr.disabled td:not(.toggle-cell) { opacity: 0.45; }
-      .toggle { display: inline-flex; align-items: center; cursor: pointer; }
+      .toggle { display: inline-flex; align-items: center; cursor: pointer; position: relative; }
       .toggle input[type="checkbox"] { cursor: pointer; margin: 0; }
       .toggle-disabled { cursor: not-allowed; opacity: 0.5; }
       .toggle-disabled input[type="checkbox"] { cursor: not-allowed; }
       /* Bulk-toggle button in the script-table header. Sized like the
          per-row checkbox so the column lines up. */
-      .bulk-toggle { width: 14px; height: 14px; padding: 0; font: inherit; font-weight: 700; line-height: 1; border: 1px solid #888; border-radius: 2px; background: #fff; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+      /* vertical-align keeps the button's place in the header line box
+         independent of its text: baseline-aligned, an empty inline-flex
+         button sits a fraction lower and resizes the header row, which
+         shifts every collection below. */
+      .bulk-toggle { vertical-align: middle; width: 14px; height: 14px; padding: 0; font: inherit; font-weight: 700; line-height: 1; border: 1px solid #888; border-radius: 2px; background: #fff; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
       .bulk-toggle:hover:not(:disabled) { background: #f0f0f0; }
       .bulk-toggle:disabled { cursor: not-allowed; opacity: 0.5; }
-      .script-table th.toggle-cell { white-space: nowrap; width: 1%; padding-right: 0.2em; }
+      .script-table th.toggle-cell { white-space: nowrap; width: 1%; padding-right: 3px; }
       /* Dupe-basename suffix (e.g. " #2") shown after the script's
          name link. Empty for unique basenames so the column stays
          clean. */
@@ -86,15 +90,21 @@
          line, but never splits into `#` + `2`. */
       .log-id-suffix { color: #555; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; white-space: nowrap; }
       .log-id-suffix:not(:empty)::before { content: ' '; }
-      /* Fixed-width slot for the site favicon to the left of the
-         name link. Always present so the name column has a
-         stable left edge. Holds either a clickable <a class="site-icon-inner">
-         (when the script's @match yields a usable origin) or an inert
-         <span class="site-icon-inner">. Inside is a globe placeholder
-         that gets swapped for the real favicon once it loads. */
+      /* Column of site favicons to the left of the name link. One
+         16px icon per distinct site the script targets (see
+         `MAX_SITE_ICONS`), side by side with a 2px gap. Each icon is
+         a clickable <a class="site-icon-inner"> when its @match yields
+         a usable origin; a script with no site holds one inert
+         <span class="site-icon-inner">. Every inner starts as a globe
+         placeholder that is swapped for the real favicon on load.
+         The slot is as wide as this table's widest row needs
+         (`--icon-cols`, set per table by collections.ts), so the
+         names in one collection share a straight left edge. */
+      .script-table { --icon-cols: 1; --icon-gap: 2px; }
       .site-icon {
-        display: inline-block;
-        width: 16px;
+        display: inline-flex;
+        gap: var(--icon-gap);
+        width: calc(var(--icon-cols) * 16px + (var(--icon-cols) - 1) * var(--icon-gap));
         height: 16px;
         margin-right: 0.4em;
         vertical-align: text-bottom;
@@ -105,16 +115,8 @@
            display:block. */
         text-indent: 0;
       }
-      .site-icon-inner {
-        display: block;
-        width: 16px;
-        height: 16px;
-        color: #888;
-      }
-      a.site-icon-inner { text-decoration: none; }
-      a.site-icon-inner:hover { color: #444; }
-      .site-icon img { width: 16px; height: 16px; display: block; }
-      .site-icon-globe { width: 16px; height: 16px; display: block; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+      /* The icons inside the slot (`.site-icon-inner`, the globe, the
+         <img>) are styled once for every page in styles.css. */
       /* Script names come from the file/URL and can be arbitrarily long
          (web-installed scripts often carry a whole marketing title).
          Let them wrap rather than force the table wider than its
@@ -126,32 +128,21 @@
       .script-table td.name-cell {
         overflow-wrap: anywhere;
         word-break: normal;
-        padding-left: calc(0.6em + 16px + 0.4em);
-        text-indent: calc(-16px - 0.4em);
+        /* `--icon-w` is the slot's width incl. its right margin; the
+           hanging indent must track the icon column so wrapped lines
+           still align under the first line's text. */
+        --icon-w: calc(var(--icon-cols) * 16px + (var(--icon-cols) - 1) * var(--icon-gap) + 0.4em);
+        padding-left: calc(8px + var(--icon-w));
+        text-indent: calc(-1 * var(--icon-w));
       }
       .status-ok { color: #166534; }
-      .status-invalid, .status-rejected, .status-missing, .status-error { color: #b00; }
+      .status-invalid, .status-rejected, .status-error { color: #b00; }
       .status-warning, .status-outdated { color: #b67200; }
       .status-refresh-failed { color: #c2410c; }
       /* The Status cell content is a link to that script's Log tab.
          Keep the link looking like status text (not blue underlined). */
       .status-cell a { text-decoration: none; color: inherit; cursor: pointer; }
       .status-cell a:hover { text-decoration: underline; }
-      /* Small trash-can button shown beside the Status label on missing
-         rows, so users can clear out records for files that are gone
-         for good (refresh won't re-add them). */
-      .remove-script {
-        margin-left: 0.4em;
-        padding: 0 0.3em;
-        font: inherit;
-        line-height: 1;
-        border: 1px solid #ddd;
-        background: transparent;
-        cursor: pointer;
-        color: #888;
-      }
-      .remove-script:hover:not(:disabled) { background: #f5c2c7; color: #b00; }
-      .remove-script:disabled { cursor: not-allowed; opacity: 0.5; }
       .empty { color: #666; font-style: italic; }
       .error { color: #b00; }
       /* The banner box itself is in styles.css (shared with the
@@ -160,20 +151,29 @@
          "Allow User Scripts" banner appends. */
       .banner { margin-bottom: 1em; }
       .banner .banner-detail { color: #92400e; font-size: 0.85em; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin-top: 0.5em; }
-      /* Inline busy spinner for individual controls (toggles, add form). */
-      @keyframes sm-spin { to { transform: rotate(360deg); } }
+      /* Inline busy spinner for individual controls (toggles, add form).
+         `@keyframes sm-spin` is in styles.css, shared with the dialog
+         spinner and the glyph buttons' spin state. */
       .busy-spinner { display: inline-block; width: 12px; height: 12px; margin-left: 6px; border: 2px solid #ccc; border-top-color: #555; border-radius: 50%; animation: sm-spin 0.7s linear infinite; vertical-align: middle; box-sizing: border-box; }
       /* Bulk-toggle button shows its spinner in place of the +/- glyph. */
       .bulk-toggle.busy { position: relative; color: transparent; }
       .bulk-toggle.busy::after { content: ''; position: absolute; left: 50%; top: 50%; margin: -5px 0 0 -5px; width: 10px; height: 10px; border: 2px solid #ccc; border-top-color: #555; border-radius: 50%; animation: sm-spin 0.7s linear infinite; box-sizing: border-box; }
+      /* A toggle's spinner is overlaid on its own checkbox rather than
+         appended beside it. The script table's toggle cell sizes to its
+         content, so an in-flow spinner widened that column and shifted
+         every row in the collection a few pixels right (and back) for as
+         long as the write was in flight. */
+      .toggle .busy-spinner { position: absolute; inset: 0; width: auto; height: auto; margin: 0; }
+      .toggle:has(.busy-spinner) input[type="checkbox"] { opacity: 0.3; }
       /* While a collection is being removed, dim the whole section and block further clicks. */
       .collection.removing { opacity: 0.5; pointer-events: none; }
       /* Highlight rows that changed during a refresh. The color
          persists until the next refresh clears it, so the
          user can leave the page and come back without losing the
-         what-changed signal. */
-      .script-table tr.row-updated td { background: #cdebcf; }
-      .script-table tr.row-failed  td { background: #f5c2c7; }
+         what-changed signal.
+
+         Two independent signals: `row-added` / `row-updated` say what
+         happened, `row-failed` says how it came out. `row-failed` is
       /* Import dialog. Sized so the instruction list reads as prose
          rather than a wrapped column, and centered by the native
          <dialog> so it doesn't have to compete with the page's own
@@ -192,61 +192,128 @@
       .import-warnings ul { margin: 0.3em 0 0; padding-left: 1.2em; }
       .import-actions { display: flex; justify-content: flex-end; gap: 0.5em; margin-top: 1.2em; }
 
-      /* Top-of-page action bar — sits above the add form. The Options
-         button anchors the left edge; Refresh All anchors the right. */
-      .top-actions { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5em; }
-      .top-actions .right-actions { display: flex; align-items: center; }
-      .top-actions .busy-spinner { margin-left: 0.5em; }
+         listed after both so it wins the wash — a script that arrived
+         broken is red, and keeps its "New" chip to say it is also new.
+         (`row-removed` sits last and never shares a row with any of
+         them.) */
+      .script-table tr.row-added   td { background: #cdebcf; }
+      .script-table tr.row-updated td { background: #d7e7f7; }
+      .script-table tr.row-failed  td { background: #f5c2c7; }
+      .script-table tr.row-removed td { background: #f0f0ef; }
+      /* The accent bar rides on the row's first cell as an inset
+         shadow, so it costs no column width and can't shift the table. */
+      .script-table tr.row-added   td:first-child { box-shadow: inset 3px 0 0 #166534; }
+      .script-table tr.row-updated td:first-child { box-shadow: inset 3px 0 0 #2b6cb0; }
+      .script-table tr.row-failed  td:first-child { box-shadow: inset 3px 0 0 #b00; }
+      .script-table tr.row-removed td:first-child { box-shadow: inset 3px 0 0 #9ca3af; }
+      /* What a refresh did to the row, said in words as well as colour.
+         New / Updated are pseudo-elements rather than real nodes: their
+         Status cell is rebuilt from stored state on every repaint, which
+         would discard a chip element, while the class lives on the `<tr>`
+         the repaint preserves. A tombstone's `Removed` chip IS a real
+         element (`.change-chip`) — nothing repaints that row, and there
+         the chip is the whole status, so it has to be selectable and
+         readable by a screen reader. One rule for the three, so they
+         can't drift apart. */
+      .script-table tr.row-added   td.status-cell::after,
+      .script-table tr.row-updated td.status-cell::after,
+      .script-table .change-chip {
+        display: inline-block;
+        margin-left: 6px;
+        padding: 0 6px;
+        border-radius: 8px;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        color: #fff;
+        vertical-align: 1px;
+      }
+      .script-table tr.row-added   td.status-cell::after { content: 'New'; background: #166534; }
+      .script-table tr.row-updated td.status-cell::after { content: 'Updated'; background: #2b6cb0; }
+      /* A dropped row has no status of its own, so its chip stands
+         alone in the cell rather than beside a status word. */
+      .script-table .chip-removed { background: #9ca3af; margin-left: 0; }
+      /* Tombstone: the ghost of a script this refresh dropped. Struck
+         through and greyed, with nothing on it to click — the checkbox
+         is disabled and the favicon is de-linked in `renderTombstoneRow`.
+         Lives in the DOM only: the next refresh clears it and a reload
+         never rebuilds it. */
+      .script-table tr.row-removed td { color: #6b7280; }
+      /* The strike is drawn on the name and size themselves, not on the
+         cells: a decoration inherited by a cell is painted straight
+         across the favicon (an atomic inline the line can't skip), and
+         the chip and checkbox have nothing to strike through. */
+      .script-table tr.row-removed .tombstone-name,
+      .script-table tr.row-removed td.size-cell { text-decoration: line-through; }
+      /* The favicon stays — it's what the eye finds the row by — but
+         muted, so a dead row never draws attention ahead of a live one. */
+      .script-table tr.row-removed .site-icon { filter: grayscale(1); opacity: 0.55; }
+      .script-table tr.row-removed td.toggle-cell input { opacity: 0.5; }
+      /* The live rows' toggle box without the `.toggle` class the bulk
+         census counts — see `renderTombstoneRow`. Same box AND the same
+         zeroed checkbox margin: the UA's default margin on an
+         `<input type="checkbox">` is what `.toggle` above cancels, and
+         without cancelling it here too the ghost's box sits a few pixels
+         down and right of every other row's. */
+      .toggle-ghost { display: inline-flex; align-items: center; }
+      .toggle-ghost input[type="checkbox"] { margin: 0; }
+      .script-table tr.row-removed .scheme-chip { opacity: 0.55; }
     </style>
   </head>
   <body>
-    <!-- Shared globe glyph: defined once, referenced by every row's icon
-         slot via <use href="#sm-globe"> so the path data isn't inlined
-         per row. Stroke/fill styling is on `.site-icon-globe` in CSS. -->
-    <svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="sm-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></symbol></svg>
-    <h1>SourceMonkey</h1>
-
-    <div id="banner-slot"></div>
-
-    <div class="top-actions">
-      <button id="open-options" type="button" title="Open the options page">Options</button>
-      <div class="right-actions">
-        <button id="refresh-all" type="button" title="Refresh every collection">Refresh All</button>
+    <!--#include glyph-sprite-->
+    <header class="page-header">
+      <div class="page-header-inner">
+        <img class="page-icon" src="icons/icon-48.png" alt="" />
+        <h1><span class="brand">SourceMonkey |</span> Collections</h1>
+        <div class="page-header-actions">
+          <button id="open-options" type="button" title="Open the options page">Options</button>
+          <!-- The label ships in the markup so the button is never blank:
+               collections.js is a deferred module, and `setGlyphButton`
+               (src/collections.ts) replaces this text with the same word
+               beside a glyph once it runs. -->
+          <button id="refresh-all" type="button">Refresh All</button>
+        </div>
       </div>
+    </header>
+
+    <div class="page-body">
+      <div id="banner-slot"></div>
+
+      <form id="add-form" class="add-form">
+        <input id="add-path" type="text" placeholder="A .user.js file, a directory, a script_manifest.json, or a name for a new collection" autocomplete="off" spellcheck="false" />
+        <button type="submit">Add</button>
+        <button id="open-import" type="button" title="Import scripts from a Tampermonkey backup file">Import</button>
+      </form>
+      <p id="add-error" class="error" hidden></p>
+      <!-- Import warnings live on the PAGE, not in the dialog: they are
+           reported for an import that succeeded, so they have to outlive
+           the dialog closing and sit beside the section that just
+           appeared. -->
+      <div id="import-warnings" class="import-warnings" hidden></div>
+
+      <!-- Import dialog. Instructions first, because the work is in
+           Tampermonkey: nothing on its Utilities page can be driven by a
+           link, so the user has to click Export there and bring the file
+           back. See docs/import-export-tampermonkey.md. -->
+      <dialog id="import-dialog">
+        <h2>Import from Tampermonkey</h2>
+        <ol class="import-steps">
+          <li>Open <a id="import-tm-link" href="#" target="_blank" rel="noopener noreferrer">Tampermonkey's Utilities page</a>.</li>
+          <li>Under <strong>File</strong>, click <strong>Export</strong>. Your browser saves a <code>tampermonkey-backup-….txt</code> file.</li>
+          <li>Choose that file here:</li>
+        </ol>
+        <input id="import-file" type="file" accept=".txt,.json,application/json,text/plain" />
+        <p id="import-error" class="error" hidden></p>
+        <div class="import-actions">
+          <button id="import-cancel" type="button">Cancel</button>
+          <button id="import-run" type="button" disabled>Import</button>
+        </div>
+      </dialog>
+
+      <div id="collections"></div>
     </div>
-
-    <form id="add-form" class="add-form">
-      <input id="add-path" type="text" placeholder="Absolute path or URL, to a .user.js file, a directory, or a script_manifest.json file" required autocomplete="off" spellcheck="false" />
-      <button type="submit">Add</button>
-      <button id="open-import" type="button" title="Import scripts from a Tampermonkey backup file">Import</button>
-    </form>
-    <p id="add-error" class="error" hidden></p>
-    <!-- Import warnings live on the PAGE, not in the dialog: they are
-         reported for an import that succeeded, so they have to outlive
-         the dialog closing and sit beside the section that just
-         appeared. -->
-    <div id="import-warnings" class="import-warnings" hidden></div>
-
-    <!-- Import dialog. Instructions first, because the work is in
-         Tampermonkey: nothing on its Utilities page can be driven by a
-         link, so the user has to click Export there and bring the file
-         back. See docs/import-export-tampermonkey.md. -->
-    <dialog id="import-dialog">
-      <h2>Import from Tampermonkey</h2>
-      <ol class="import-steps">
-        <li>Open <a id="import-tm-link" href="#" target="_blank" rel="noopener noreferrer">Tampermonkey's Utilities page</a>.</li>
-        <li>Under <strong>File</strong>, click <strong>Export</strong>. Your browser saves a <code>tampermonkey-backup-….txt</code> file.</li>
-        <li>Choose that file here:</li>
-      </ol>
-      <input id="import-file" type="file" accept=".txt,.json,application/json,text/plain" />
-      <p id="import-error" class="error" hidden></p>
-      <div class="import-actions">
-        <button id="import-cancel" type="button">Cancel</button>
-        <button id="import-run" type="button" disabled>Import</button>
-      </div>
-    </dialog>
-
-    <div id="collections"></div>
 
     <script src="collections.js" type="module"></script>
   </body>

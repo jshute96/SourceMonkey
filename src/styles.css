@@ -8,25 +8,36 @@
    Currently shared:
    - the collection-type bubble + its display-name sibling (DOM helper in
      src/collection-display.ts, used on the collections page heading and the
-     userscript viewer's Collection row);
+     userscript viewer's Collection row), and the per-row scheme chip a
+     script wears inside a scripts collection;
    - the warning banner box, whose file-access variant (DOM helper in
      src/file-access.ts) renders on both the collections page and the
-     viewer / install preview. */
+     viewer / install preview;
+   - the modal dialog shell, shared by the create / edit collection
+     dialog (src/collection-dialog.ts) and the move-script dialog
+     (src/move-dialog.ts);
+   - the "Install into" dropdown (src/related-versions.ts), in the
+     install page's callout and its versions table;
+   - the removal buttons' glyph sizing and destructive colour
+     (src/delete-icon.ts), on every page that has a remove button;
+   - the icon-button layout and spin state (src/glyph.ts), shared by
+     the Refresh / options buttons on the collections page and the
+     viewer. */
 
 /* Warning banner. Pages keep their own margin and colour variants
-   (`.banner.installed` / `.banner.preview` on the viewer) in their
+   (`.banner.installed` on the viewer) in their
    <style> block; everything below is common to every banner. */
 .banner {
   border: 1px solid #d97706;
   background: #fffbeb;
-  padding: 0.7em 1em;
+  padding: 10px 14px;
   border-radius: 6px;
-  margin-bottom: 0.7em;
+  margin-bottom: 10px;
 }
 
-.banner strong { display: block; margin-bottom: 0.3em; }
+.banner strong { display: block; margin-bottom: 4px; }
 
-.banner p { margin: 0.3em 0; }
+.banner p { margin: 4px 0; line-height: 16px; }
 
 /* The `chrome://extensions/?id=…` link every permission banner ends
    with. Styled as inline code because that's what it is — an address
@@ -64,20 +75,688 @@
   letter-spacing: 0.04em;
   color: #fff;
   text-decoration: none;
-  line-height: 1.5;
-  white-space: nowrap;
-  flex: 0 0 auto;
-}
-.collection-type-bubble:hover { opacity: 0.85; }
-
-.bubble-file            { background: #d97706; }
-.bubble-file-manifest   { background: #92400e; }
-.bubble-http            { background: #2563eb; }
-.bubble-http-manifest   { background: #1e3a8a; }
-.bubble-github          { background: #6f42c1; }
-.bubble-github-manifest { background: #4c2889; }
+  /* Whole px: 1.5 x 11px = 16.5 would make its whole row fractional. */
 /* Imported collections have no location, so this is the one bubble
    that is never a link. Slate keeps it visually apart from the three
    location-backed hues rather than reading as a fourth kind of
    source. */
 .bubble-imported        { background: #475569; }
+  line-height: 16px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.collection-type-bubble:hover { opacity: 0.85; }
+
+/* Kind + scheme: `-dir` in the scheme's base hue, `-manifest` darker,
+   and a neutral grey for a scripts collection, which has no scheme of
+   its own. `http-dir` is unreachable through the add paths (a plain
+   web directory can't be listed) but a legacy or hand-written row
+   still renders, and a bubble with no rule would be white on white. */
+.bubble-file-dir        { background: #d97706; }
+.bubble-http-dir        { background: #2563eb; }
+.bubble-file-manifest   { background: #92400e; }
+.bubble-http-manifest   { background: #1e3a8a; }
+.bubble-github-dir      { background: #6f42c1; }
+.bubble-github-manifest { background: #4c2889; }
+.bubble-scripts         { background: #4b5563; }
+/* Form states, not collection kinds — only the collection dialog's Type
+   row ever wears these: red for a location (or an empty form) that
+   can't become a collection, grey while its verdict is being fetched. */
+.bubble-invalid         { background: #b00; }
+.bubble-checking        { background: #9ca3af; }
+
+/* The per-row scheme chip inside a scripts collection: the same hues
+   as the bubbles, smaller, so a mixed collection still says where each
+   script loads from. */
+.scheme-chip {
+  display: inline-block;
+  min-width: 2.2em;
+  text-align: center;
+  padding: 0 5px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #fff;
+  line-height: 14px;
+  white-space: nowrap;
+}
+.chip-file   { background: #d97706; }
+.chip-http   { background: #2563eb; }
+.chip-github { background: #6f42c1; }
+/* Same slate as `.bubble-imported` below: not a fourth kind of source. */
+.chip-imported { background: #475569; }
+
+/* ---- Modal dialog shell ---- */
+/* `.sm-dialog` is the shell — frame, title bar, body grid, error slot,
+   action row — shared by the create / edit collection dialog
+   (src/collection-dialog.ts) and the move-script dialog
+   (src/move-dialog.ts). Each dialog also carries its own identity
+   class, which is what page code and tests select on. */
+dialog.sm-dialog {
+  border: 1px solid #bbb;
+  border-radius: 8px;
+  padding: 0;
+  width: 520px;
+  max-width: calc(100vw - 2em);
+  color: #222;
+  font: 14px system-ui, sans-serif;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  background: #fff;
+  box-sizing: border-box;
+}
+dialog.sm-dialog::backdrop { background: rgba(20, 24, 32, 0.35); }
+/* Wider than the shared default: every row here can hold a long name
+   or path — the collection name, the file name with its subdirectory,
+   each dependency's path, the description. */
+dialog.sm-dialog.copy-dialog { width: 680px; }
+/* Same reason as the copy dialog: every row holds a path. */
+dialog.sm-dialog.delete-dialog { width: 680px; }
+.sm-dialog .dlg-title {
+  font-size: 1em;
+  font-weight: 600;
+  margin: 0;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e5e7eb;
+}
+.sm-dialog .dlg-body {
+  margin: 0;
+  padding: 14px 16px 4px;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 12px;
+  row-gap: 12px;
+  align-items: start;
+}
+.sm-dialog .dlg-label { padding-top: 5px; color: #444; }
+/* Slot for a control the dialog rebuilds per open. Fills its grid
+   column the way the collection dialog's text inputs do. */
+.sm-dialog .dlg-slot { min-width: 0; }
+.sm-dialog .dlg-slot select { width: 100%; font: inherit; padding: 4px 7px; }
+.sm-dialog .dlg-label[hidden] { display: none; }
+.sm-dialog input[type="text"],
+.sm-dialog textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 4px 7px;
+}
+/* A one-line box that grows to fit its value — `autoGrow` sets the
+   height, these bound it. Whole-px line metrics so N lines is an exact
+   height: 19 + 8 padding + 2 border = 29px for one line, 86px for the
+   four this caps at, after which it scrolls. Not user-resizable: the
+   content already decides the height. */
+.sm-dialog textarea {
+  line-height: 19px;
+  min-height: 29px;
+  max-height: 86px;
+  resize: none;
+  overflow-y: auto;
+}
+.sm-dialog input[type="text"][hidden] { display: none; }
+.sm-dialog input[type="text"]:disabled {
+  background: #f3f4f6;
+  color: #666;
+  border-color: #d1d5db;
+}
+/* `border-style` too: the UA gives text inputs an inset border, and
+   recolouring an inset border shades each side a different tint. */
+.sm-dialog input[type="text"].invalid { border-style: solid; border-color: #b00; outline-color: #b00; }
+/* The Type row: the inferred bubble, plus a hint for the one state
+   that has nothing to report in the error slot yet. */
+.sm-dialog .dlg-type { display: flex; gap: 8px; align-items: baseline; padding-top: 3px; }
+/* The shared bubble dims on hover because everywhere else it is a link.
+   This one is a report, not a target. */
+.sm-dialog .dlg-type .collection-type-bubble:hover { opacity: 1; }
+.sm-dialog .dlg-check {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  cursor: pointer;
+}
+.sm-dialog .dlg-check input { margin: 0; position: relative; top: 1px; flex: 0 0 auto; }
+.sm-dialog .dlg-hint { color: #666; font-size: 0.85em; }
+.sm-dialog .dlg-check.off { opacity: 0.5; cursor: default; }
+.sm-dialog .dlg-error-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 8px 16px 0;
+}
+.sm-dialog .dlg-error {
+  color: #b00;
+  /* Messages that name a file and then say what to do put the two on
+     separate lines. Every other message is one line and unaffected. */
+  white-space: pre-line;
+  margin: 0;
+  min-height: 1.3em;
+  line-height: 1.3;
+}
+.sm-dialog .dlg-error.warn { color: #92400e; }
+/* Offered inside the error line — today only "Install script", under
+   the "this is a single script" verdict. Its own height: this sits
+   INSIDE a line of message text, so the shared button height would
+   grow the error row around it. */
+.sm-dialog .dlg-error-action {
+  height: 18px;
+  font: inherit;
+  padding: 1px 8px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.sm-dialog .dlg-error-action[hidden] { display: none; }
+/* Copy dialog (src/copy-dialog.ts): read-only values in the body
+   grid, the dependency list under its checkbox, and the file-access
+   banner slot above the form. */
+.sm-dialog .dlg-static { padding-top: 5px; min-width: 0; overflow-wrap: anywhere; }
+.sm-dialog .dlg-target-name { font-weight: 600; }
+.sm-dialog .dlg-banner:empty { display: none; }
+.sm-dialog .dlg-banner { padding: 12px 16px 0; }
+.sm-dialog .dlg-banner > * { margin: 0; }
+.sm-dialog .dlg-deps { min-width: 0; padding-top: 3px; }
+.sm-dialog .dlg-deps .dlg-hint { margin-top: 3px; }
+/* The delete dialog's headed lists (src/delete-dialog.ts): one block
+   per reason, stacked, each hidden whole when it holds no files.
+   Scoped to that dialog — the copy dialog builds its checkbox and list
+   inside a `.dlg-deps` of its own, and stacking that one would move a
+   row this feature has no business touching. */
+.delete-dialog .dlg-deps { display: flex; flex-direction: column; gap: 8px; }
+/* Beats the `display: flex` above, which would otherwise leave a script
+   with no dependency files an empty grid row and its row-gap. */
+.delete-dialog .dlg-deps[hidden] { display: none; }
+.delete-dialog .dlg-dep-group[hidden] { display: none; }
+.delete-dialog .dlg-dep-group .dlg-hint { margin-top: 0; }
+/* A path + its copy button on one line: the script file's full path,
+   and each dependency file in the lists below it. */
+.delete-dialog .dlg-path-row { display: flex; align-items: center; gap: 0.4em; }
+.delete-dialog .dlg-path-row > span { overflow-wrap: anywhere; }
+/* `display: flex` on an `li` drops its marker; `list-item` inside the
+   flex row would break the layout, so the bullet comes back as a
+   pseudo-element. */
+.delete-dialog li.dlg-path-row { list-style: none; position: relative; }
+.delete-dialog li.dlg-path-row::before { content: '•'; position: absolute; left: -1em; }
+/* One size everywhere in the dialog: the rows differ in font size, so
+   the button's `em` sizing would otherwise differ with them. */
+.delete-dialog .dlg-path-row .copy-btn { width: 20px; height: 20px; }
+.sm-dialog .dlg-deps-list {
+  margin: 4px 0 0;
+  padding-left: 1.2em;
+  font-size: 0.85em;
+  color: #444;
+  max-height: 6.5em;
+  overflow-y: auto;
+}
+.sm-dialog .dlg-deps-list:empty { display: none; }
+/* A dependency file the copy would overwrite, marked in the list. The
+   warning colour, not the error one: the same fact the line at the
+   bottom of the dialog reports, and Replace is a choice, not a fault. */
+.sm-dialog .dlg-exists { color: #92400e; }
+/* A second line under a field's label, for what it accepts that its
+   name doesn't say. */
+.sm-dialog .dlg-label-note { display: block; font-size: 0.85em; color: #666; }
+/* A heading INSIDE the body grid, spanning both its columns. */
+.sm-dialog .dlg-section { grid-column: 1 / -1; font-weight: 600; }
+/* `<original> -> [new value]` in one field row. */
+.sm-dialog .dlg-arrow { display: flex; gap: 7px; align-items: center; min-width: 0; }
+.sm-dialog .dlg-arrow input[type="text"] { flex: 1 1 auto; min-width: 0; }
+/* The old value is shown in full, never elided. It takes exactly the
+   width its text needs (`flex-shrink: 0`, so the box beside it gives
+   way first rather than the two splitting the squeeze and wrapping it
+   mid-version as `1.0.` / `6`), and stops at half the row — a version
+   longer than that wraps inside its half. */
+.sm-dialog .dlg-was {
+  flex: 0 0 auto;
+  max-width: 50%;
+  overflow-wrap: anywhere;
+}
+.sm-dialog .dlg-arrow-mark { color: #666; flex: 0 0 auto; }
+/* Copy's dependency hint + list while the box is unticked: what would
+   happen, not what will. Same dimming as the unavailable checkbox. */
+.sm-dialog .dimmed { opacity: 0.5; }
+.sm-dialog .dlg-deps-list li { overflow-wrap: anywhere; }
+.sm-dialog .dlg-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px 14px;
+}
+.sm-dialog .dlg-actions button { padding: 0 11px; }
+.sm-dialog .dlg-actions button.primary { font-weight: 600; }
+/* The confirm of a dialog that destroys something (src/delete-dialog.ts).
+   Coloured, not just bold: the button is one click from files leaving
+   the disk with nothing to undo it. */
+.sm-dialog .dlg-actions button.danger { color: #b00; }
+@keyframes sm-spin { to { transform: rotate(360deg); } }
+.sm-dialog .busy-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #ccc;
+  border-top-color: #555;
+  border-radius: 50%;
+  animation: sm-spin 0.7s linear infinite;
+  box-sizing: border-box;
+}
+
+/* ---- "Install into" dropdown (src/related-versions.ts) ---- */
+/* Ellipsised, not clipped: the control gives way to its neighbours
+   where a collection name is longer than the row (see the install
+   callout and the panel's offer row), and Chrome sizes the OPEN list
+   to its widest option, so the full name is still readable there. */
+select.install-target {
+  font: inherit;
+  padding: 3px 6px;
+  max-width: 100%;
+  text-overflow: ellipsis;
+}
+
+/* ---- Icon buttons (src/glyph.ts, src/delete-icon.ts) ---- */
+
+/* Every button whose content is a glyph — the removal cans, the
+   refresh arrow, the options gear — is one control with one look, on
+   every page. `.icon-btn` is put on by the code that paints the glyph,
+   so a button can't get the icon without the box.
+
+   The box is SET, not inferred. Letting each button size itself off
+   its content is what gave five identically-sized icons five different
+   button widths: three padding values, a text arrow measuring
+   differently from an SVG, and `align-self: stretch` on one of them.
+   Here the height and the glyph are both fixed, so every icon button
+   in a row lines up by construction, and the whole-pixel rule for the
+   collections page and the versions panel (docs/architecture.md,
+   "Extension-page styling") falls out for free — no `em` in any
+   vertical metric.
+
+   A dense context can shrink the pair by redefining the two custom
+   properties on an ancestor; nothing else needs to change. */
+:root {
+  --icon-btn-size: 26px;
+  --icon-btn-glyph: 16px;
+  /* One button surface for every page. Chrome's own button paints no
+     hover or press state once an author background is set, and setting
+     one on only SOME buttons (the removal cans' red hover) left a row
+     where half the controls reacted to the pointer and half didn't.
+     So the whole progression is ours, and it only ever gets darker:
+     rest -> hover -> pressed. */
+  --btn-bg: #f6f6f6;
+  --btn-bg-hover: #e7e7e7;
+  --btn-bg-active: #d6d6d6;
+  --btn-border: #bbb;
+  --btn-fg: #222;
+  /* The destructive pair, same direction of travel. */
+  --btn-bg-danger-hover: #f5c2c7;
+  --btn-bg-danger-active: #e9a3ab;
+  --btn-fg-danger: #a3372c;
+}
+
+/* THE button surface, for every button in the extension — both pages,
+   the Options page, and every dialog. Anything that does not opt out
+   rests, hovers and presses the same, and the press is always DARKER
+   than the hover, never lighter.
+
+   `:where()` puts the whole thing at zero specificity, which is what
+   makes it safe to apply this broadly: it is a baseline, not an
+   override. Any class rule beats it, so a control keeps whatever it
+   sets for itself — but only what it actually sets. A rule that
+   declares a background and no height gets its own background and
+   THIS height; the fold triangle and the code tabs each pin a height
+   because of that, not by default.
+
+   Chrome paints no hover or press state on a native button, and the
+   moment any author background is set it stops painting one at all.
+   So this is not decoration: without it, whether a button reacts to
+   being pressed depended on whether some page had happened to style
+   it. */
+:where(button) {
+  /* One height too, not just one surface. A button that isn't in some
+     hand-kept list of selectors still has to line up with the ones
+     beside it — the alternative is finding them one at a time. A
+     control that genuinely needs another size sets its own `height`
+     in a class rule, which (like everything here) outranks this. */
+  box-sizing: border-box;
+  height: var(--icon-btn-size);
+  font: inherit;
+  line-height: 1;
+  border: 1px solid var(--btn-border);
+  border-radius: 3px;
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+  cursor: pointer;
+}
+:where(button:hover:not(:disabled)) { background: var(--btn-bg-hover); }
+:where(button:active:not(:disabled)) { background: var(--btn-bg-active); }
+:where(button:disabled) { cursor: not-allowed; opacity: 0.5; }
+/* The blue ring the rest of the extension already uses (the code tabs,
+   the copy button, the panel's rows). The removal buttons carried their
+   own copy of this before their per-page rules were folded in here; a
+   glyph has no shape of its own to show focus with, so it can't be left
+   to the UA's. */
+:where(button:focus-visible) { outline: 2px solid #4a90e2; outline-offset: 1px; }
+
+/* `font: inherit` above takes the bold from a `<th>`, and the versions
+   table's "Refresh all" sits in a header cell. */
+.versions-table button { font-weight: 400; }
+
+/* What makes it an ICON button, on top of the shared surface above:
+   a square minimum so a lone glyph gets a box rather than a slot, and
+   centring for the glyph (plus a label, where it has one). */
+.icon-btn {
+  min-width: var(--icon-btn-size);
+  padding: 0 6px;
+  /* Snug around a lone glyph; a labelled one takes the roomier padding
+     of the text buttons it sits beside (`.icon-btn` is a class and
+     would otherwise outrank a page's own `button` rule). */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4em;
+  vertical-align: middle;
+}
+.icon-btn:has(.btn-label) { padding: 0 11px; }
+/* An author `display` outranks the UA's `[hidden] { display: none }`,
+   and this codebase does hide buttons with the attribute. */
+.icon-btn[hidden] { display: none; }
+.icon-btn:disabled { cursor: not-allowed; opacity: 0.4; }
+
+/* The glyph fills a fixed square inside that box; it never sizes off
+   the font, so a button in 13px text and one in 14px text still hold
+   the same icon. */
+.icon-btn .btn-glyph,
+.icon-btn .delete-icon {
+  width: var(--icon-btn-glyph);
+  height: var(--icon-btn-glyph);
+  display: block;
+  flex: none;
+}
+
+/* Destructive: the removal cans hover red, and the one that deletes a
+   FILE also rests red. Shape (the disk badge on its glyph) and colour
+   both say it, because colour on its own isn't a cue every user gets. */
+.icon-btn.remove-script:hover:not(:disabled),
+.icon-btn.versions-remove:hover:not(:disabled) {
+  background: var(--btn-bg-danger-hover);
+  color: #b00;
+}
+.icon-btn.remove-script:active:not(:disabled),
+.icon-btn.versions-remove:active:not(:disabled) { background: var(--btn-bg-danger-active); }
+.icon-btn.deletes-file { color: var(--btn-fg-danger); }
+
+/* In-flight. The glyph spins in place instead of the label changing to
+   "Refreshing…" — an icon-only button has no label to change, and a
+   fixed box means nothing moves while it spins. */
+.btn-glyph.spinning {
+  animation: sm-spin 1.1s linear infinite;
+  transform-origin: 50% 50%;
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn-glyph.spinning { animation: none; opacity: 0.55; }
+}
+
+/* ---- Page header bar (every extension page) ---- */
+
+/* One bar across the top of every page: the extension icon, the
+   "SourceMonkey | <page>" heading, and whatever cross-page navigation
+   that page offers, pushed to the right edge.
+
+   Brown rather than the obvious green: the bar sits directly above the
+   viewer's green "Other versions" card and the amber warning banner
+   slot, and a green bar would read as the top of that card. Brown is
+   where the monkey icon's own colours live, and it is desaturated
+   enough not to be mistaken for the amber banner. */
+:root {
+  --brand-fg: #6b4423;
+  --header-bg: #f2e9dc;
+  --header-border: #b59a78;
+  /* The content column every page centres. The bar's contents honour
+     it too, so the heading starts at the same x as the page body
+     underneath rather than at the window edge. Pages that run
+     full-bleed (the viewer) leave it unset. */
+  --page-width: none;
+}
+
+/* Full-bleed background; the inner row is what gets constrained. The
+   16px side padding matches the page body's, so the two content edges
+   line up at every window width. */
+.page-header {
+  background: var(--header-bg);
+  border-bottom: 1px solid var(--header-border);
+  padding: 0 16px;
+}
+
+.page-header-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* Whole pixels, like the rest of the vertical metrics — see
+     docs/architecture.md, "Extension-page styling". */
+  padding: 8px 0;
+  max-width: var(--page-width);
+  margin: 0 auto;
+}
+
+.page-icon {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+}
+
+/* The heading takes the row's slack so the actions sit at the right
+   edge; `min-width: 0` lets a long script name wrap instead of
+   pushing them off. */
+.page-header h1 {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 1.15em;
+  font-weight: 700;
+  color: #222;
+}
+
+/* The product name and the separators after it, in the brand colour —
+   the same split the icon makes visually. The page name between or after
+   them stays in the heading's own colour.
+
+   Two shapes wear it, both rendering the same thing:
+   - Collections and Options spell it in their markup, as one span
+     around `SourceMonkey |`.
+   - The viewer builds it (`headingPrefixEl`, src/page-heading.ts), a
+     span per term, because its heading has a page name in the middle
+     ("SourceMonkey | Install | <script>"). Those spans wear
+     `.heading-prefix` as well. */
+.page-header h1 .brand { color: var(--brand-fg); }
+
+/* The icon and the product name are a link home to the collections
+   page (src/page-links.ts). Styled to look like the bar, not like a
+   link: it is chrome, and underlining it permanently would read as an
+   error. The underline on hover is what says it is clickable.
+
+   Deliberately NO colour here. The product name is `.brand` inside the
+   `<h1>`, so the rule above already paints it, and a `color` on this
+   selector would tie with that one on specificity and win on source
+   order — leaving a near-black "SourceMonkey" beside a brown `|`. */
+.page-header a.page-home { text-decoration: none; }
+.page-header a.page-home:hover { text-decoration: underline; }
+
+/* The icon's wrapper: flex so the anchor is exactly the image's box
+   with no inline-layout gap under it, and `flex: 0 0 auto` because the
+   anchor is now the row's item, not the image. It sits outside the
+   `<h1>`, so nothing else colours it and the link blue has to be
+   turned off here. */
+.page-header .page-icon-link {
+  flex: 0 0 auto;
+  display: flex;
+  color: inherit;
+}
+
+.page-header-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The page's own content column, under the bar. Content-box sizing so
+   `--page-width` means the text column, not the column plus padding —
+   that is what makes it line up with the bar's inner row. */
+.page-body {
+  box-sizing: content-box;
+  max-width: var(--page-width);
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+/* Square icon-only copy-to-clipboard button (src/copy-button.ts), beside
+   a path in the viewer's Location row and the delete dialog's file row.
+   Swaps the copy icon for a checkmark while the .copied class is on it
+   (set briefly after a successful clipboard write). */
+.copy-btn {
+  flex: 0 0 auto;
+  width: 1.6em;
+  height: 1.6em;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #bbb;
+  border-radius: 3px;
+  background: #fff;
+  color: #444;
+  cursor: pointer;
+}
+.copy-btn:hover { background: #eee; }
+.copy-btn:active { background: #ddd; }
+.copy-btn:focus-visible { outline: 2px solid #4a90e2; outline-offset: 1px; }
+.copy-btn svg { width: 14px; height: 14px; display: block; }
+.copy-btn .check-icon { display: none; color: #166534; }
+.copy-btn.copied .copy-icon { display: none; }
+.copy-btn.copied .check-icon { display: block; }
+
+/* "deleted" / "modified" chip after a local file path whose file has
+   gone or changed on disk since it was read (src/file-changes.ts).
+   Sized like `.scheme-chip` above but square-cornered like the
+   viewer's tab marks, so it reads as a remark on the path rather than
+   a collection kind. Red for a file that isn't there; amber for one
+   that is, but differs from what is loaded. */
+.file-change-chip {
+  display: inline-block;
+  margin-left: 0.5em;
+  padding: 0 0.4em;
+  border-radius: 3px;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  vertical-align: 1px;
+  cursor: default;
+  /* `text-indent` inherits into an inline-block and would shove the
+     word out of the chip on the collections page's hanging-indent
+     name cells. */
+  text-indent: 0;
+  /* A chip is one word and never breaks: in a flex row it must not
+     shrink (the path beside it wraps instead), and inherited
+     `overflow-wrap: anywhere` / `word-break` must not split it. */
+  flex: 0 0 auto;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.file-change-chip-missing { background: #b91c1c; }
+/* Teal for "differs from what is loaded": a modified file, and the
+   collection whose refresh would pick such changes up. Chosen to be
+   unlike the amber the FILE-DIR bubble wears, which sits inches away. */
+.file-change-chip-modified,
+.file-change-chip-pending { background: #0f766e; }
+/* Inside a flex row that already spaces its children with `gap` (the
+   viewer's Location and Local overrides rows), the margin would double
+   the gap on the chip's left only. */
+.filename-cell > .file-change-chip,
+.local-override-cell > .file-change-chip { margin-left: 0; }
+
+/* ---- Tab strip over a code box (src/code-tabs.ts, src/compare.ts) ---- */
+
+/* One file per tab: the viewer's main script, `@require`s and Log; the
+   compare page's per-file diffs. The active tab's bottom border takes
+   the box's own colour so it "opens into" the box below, which sits
+   1px up to meet it (each page's own `margin-top: -1px`). */
+.tabs {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+}
+/* An author `display` outranks the UA's `[hidden] { display: none }`. */
+.tabs[hidden] { display: none; }
+.tab {
+  /* Its own height: a tab sizes to its label and the strip's bottom
+     edge, and the shared button height squeezes the label's line box. */
+  height: auto;
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.2;
+  padding: 0.45em 0.9em;
+  border: 1px solid #ccc;
+  border-radius: 4px 4px 0 0;
+  background: #e4e4e4;
+  color: #555;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tab:hover { background: #efefef; }
+/* Hover lightens a tab toward the selected look, so pressing goes the
+   other way to stay a press. */
+.tab:active:not(.active) { background: #d4d4d4; }
+.tab.active {
+  background: #fafafa;
+  color: #222;
+  font-weight: 600;
+  border-bottom-color: #fafafa;
+}
+.tab:focus-visible { outline: 2px solid #4a90e2; outline-offset: -2px; }
+
+/* ---- Site favicons (src/site-icon.ts) ---- */
+
+/* The icons inside a slot: one clickable <a> (or inert <span>) per
+   site, each a globe until the real favicon lands. The slot itself is
+   each page's own — a table's fixed-width column on the collections
+   page, the heading's on the viewer and compare pages (below). */
+.site-icon-inner {
+  display: block;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: #888;
+}
+a.site-icon-inner { text-decoration: none; }
+a.site-icon-inner:hover { color: #444; }
+.site-icon img { width: 16px; height: 16px; display: block; }
+.site-icon-globe { width: 16px; height: 16px; display: block; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Slot for the site favicons, sitting between the heading's
+   product prefix and the script's name. Always present, and at
+   least one icon wide, so the name starts at the same offset past
+   the prefix whether or not a favicon resolves. Holds one
+   clickable <a> per distinct site the script's @match names
+   (side by side, 2px gap), or one inert <span> when it names
+   none.
+   Inner content is a globe placeholder until the real favicon
+   loads. */
+.page-header h1 .site-icon {
+  display: inline-flex;
+  gap: 2px;
+  min-width: 16px;
+  height: 16px;
+  margin-right: 0.4em;
+  /* Centred on the heading's CAP band, not on its baseline or its
+     descender line. `text-bottom` sits the 16px square on the
+     font's descender, which puts its centre ~1.4px below the
+     centre of the letters beside it — visible as a favicon
+     hanging low. The heading is 16.1px with a 12px cap height, so
+     2px of the square below the baseline centres the two. */
+  vertical-align: -2px;
+}

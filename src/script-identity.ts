@@ -43,12 +43,12 @@ import {
   canonicalCollectionInput,
   containerKindForSingleFileInput,
   containerPath,
+  isContainerCollection,
   isSingleFileInput,
-  type ContainerKind,
 } from './directories.js';
 import { isScriptEnabled, isCollectionEnabled, type StoredScript, type StoredCollection } from './script-store.js';
-import { effectiveDisplayName } from './collection-display.js';
-import { getValue, type ParsedHeader } from './userscript-header.js';
+import { CONTAINER_DISPLAY_NAMES, effectiveDisplayName } from './collection-display.js';
+import { getValue, getValues, type ParsedHeader } from './userscript-header.js';
 
 // The ecosystem identity key: `@namespace` and `@name`, trimmed and
 // joined by a separator that can't occur in either.
@@ -114,19 +114,43 @@ export interface RelatedVersions {
   // that matched by location is never repeated here, since the
   // stronger relationship is the one worth showing.
   sameIdentity: RelatedScript[];
-  // Where a "keep your own single-file copy" install would land: the
-  // container collection matching the location's scheme. Present only
-  // when the location is a single-file input (a script inside a
+  // Where a single-file install could land — the entries of the install
+  // page's "Install into" dropdown, in display order. Present only when
+  // the location is a single-file input (a script inside a
   // directory/manifest collection has no single-file spelling to
-  // install) and no `sameLocation` row already sits in that container.
-  //
-  // `collection` is `null` when the container doesn't exist yet — the
-  // first single-file install of that scheme creates it.
-  installTarget?: {
-    kind: ContainerKind;
-    path: string;
-    collection: StoredCollection | null;
-  };
+  // install); `undefined` otherwise.
+  installOptions?: InstallOption[];
+}
+
+// One entry of the "Install into" dropdown.
+export interface InstallOption {
+  // The container a copy would land in. `null` for the built-in default
+  // of this location's scheme when no row exists yet — the install
+  // creates it.
+  collection: StoredCollection | null;
+  // The container's stored path (`container:http`, `container:<uuid>`…).
+  path: string;
+  // What the dropdown shows.
+  label: string;
+  // This container already holds this location: listed, but not
+  // installable a second time.
+  installed: boolean;
+  // The container is switched off, so a script installed into it would
+  // not run. Still a legitimate target — the user may be about to turn
+  // it back on — so it is marked rather than refused.
+  collectionOff: boolean;
+  // The built-in default for the location's scheme. Always listed
+  // first — and pre-selected unless some other entry is `isCurrent`,
+  // so that a second copy anywhere is a deliberate pick rather than
+  // the one-click path.
+  isDefault: boolean;
+  // The collection this script is in right now. Only the move
+  // dropdown sets it: the move list shows the current collection
+  // rather than hiding it, so every script's list reads the same and
+  // the pre-selection is a place the script already is — which makes
+  // moving it anywhere a deliberate pick. Always `false` for an
+  // install, which has no "current".
+  isCurrent: boolean;
 }
 
 export interface RelatedVersionsQuery {
@@ -171,23 +195,66 @@ export function findRelatedVersions(q: RelatedVersionsQuery): RelatedVersions {
   sameLocation.sort(byName);
   sameIdentity.sort(byName);
 
-  return { sameLocation, sameIdentity, installTarget: installTargetFor(loc, sameLocation, q.collections) };
+  return {
+    sameLocation,
+    sameIdentity,
+    installOptions: installOptionsFor(loc, sameLocation, q.collections),
+  };
 }
 
-// The container a single-file install of `loc` would land in — but
-// only when installing there would actually add something. If one of
-// the same-location rows already sits in that container, the user has
-// their own copy and the offer would be a no-op.
-function installTargetFor(
+// The containers a single-file install of `loc` could land in, in the
+// order the dropdown lists them: the built-in default for the
+// location's scheme first (offered as not-yet-existing when it has no
+// row), then every other container in page order. Each is marked
+// `installed` when one of the same-location rows already sits in it.
+// The caller appends its own "New collection…" entry.
+//
+// `current` names the collection the script is in now — the move
+// dropdown's caller. That entry is still listed, marked `isCurrent`
+// so the dropdown can label it *(current)*, disable it and pre-select
+// it. Listing it rather than dropping it keeps one list shape for
+// every script, and makes the opening selection somewhere the script
+// already is, so nothing moves without a deliberate pick.
+export function installOptionsFor(
   loc: string,
   sameLocation: readonly RelatedScript[],
   collections: readonly StoredCollection[],
-): RelatedVersions['installTarget'] {
+  current?: string,
+): InstallOption[] | undefined {
   if (!isSingleFileInput(loc)) return undefined;
   const kind = containerKindForSingleFileInput(loc);
-  const path = containerPath(kind);
-  if (sameLocation.some((r) => r.collection?.path === path)) return undefined;
-  return { kind, path, collection: collections.find((s) => s.path === path) ?? null };
+  const defaultPath = containerPath(kind);
+  const holding = new Set<string>();
+  for (const r of sameLocation) {
+    if (r.collection) holding.add(r.collection.id);
+  }
+  const containers = collections.filter((c) => isContainerCollection(c.path));
+  const def = containers.find((c) => c.path === defaultPath) ?? null;
+  const options: InstallOption[] = [{
+    collection: def,
+    path: defaultPath,
+    label: def ? effectiveDisplayName(def) : CONTAINER_DISPLAY_NAMES[kind],
+    installed: def ? holding.has(def.id) : false,
+    // A default that doesn't exist yet is created enabled.
+    collectionOff: def ? !isCollectionEnabled(def) : false,
+    isDefault: true,
+    // `def?.id === current` alone would be `undefined === undefined`
+    // for an install (no current) whose default has no row yet.
+    isCurrent: current !== undefined && def?.id === current,
+  }];
+  for (const c of containers) {
+    if (c.path === defaultPath) continue;
+    options.push({
+      collection: c,
+      path: c.path,
+      label: effectiveDisplayName(c),
+      installed: holding.has(c.id),
+      collectionOff: !isCollectionEnabled(c),
+      isDefault: false,
+      isCurrent: c.id === current,
+    });
+  }
+  return options;
 }
 
 // One row's share of an enable/disable click. A plain click produces
@@ -219,7 +286,12 @@ export function enableChanges(
 }
 
 // Whether a row is actually running: its own flag AND its collection's.
-function isRunning(rel: RelatedScript): boolean {
+//
+// Exported because the sweep has a second question to ask with it: a
+// copy that is about to be enabled has to be running itself before it
+// is worth switching the others off (see `soloRunningCopy` in
+// userscript.ts).
+export function isRunning(rel: RelatedScript): boolean {
   if (!isScriptEnabled(rel.script)) return false;
   return rel.collection ? isCollectionEnabled(rel.collection) : true;
 }
@@ -259,4 +331,35 @@ export function allRelatedRows(related: RelatedVersions): RelatedScript[] {
 // a string the user never sees, so the table would look unsorted.
 function collectionSortKey(r: RelatedScript): string {
   return r.collection ? effectiveDisplayName(r.collection) : '';
+}
+
+// What the panel's Compare column compares: a copy's own source text
+// plus every `@require` body it loaded, in declaration order. Built
+// from the hashes the store already keeps for each (`contentHash` on
+// the row and on each require entry), so it is string assembly, not
+// hashing — and it is comparable across pages: a preview's download
+// gets the same shape from its text hash and the parse check's
+// requires.
+//
+// Requires are part of it because they are part of what runs: two
+// copies with the same body but a library that moved on behave
+// differently. `@resource` is not: it is data the script reads, not
+// code that runs.
+//
+// `undefined` when there is no content to compare: the row never
+// loaded, or its header declares `@require`s and none is stored — a
+// dependency that would not load leaves the list empty, and a preview
+// has none until its parse check lands. A body-only answer there would
+// call a broken copy DIFFERENT from a healthy twin with the same text,
+// or two broken copies SAME.
+export function contentFingerprint(script: {
+  contentHash?: string;
+  header: ParsedHeader | null;
+  requires?: readonly { contentHash: string }[];
+}): string | undefined {
+  if (!script.contentHash) return undefined;
+  const requires = script.requires ?? [];
+  const declared = script.header ? getValues(script.header, 'require').length > 0 : false;
+  if (declared && requires.length === 0) return undefined;
+  return [script.contentHash, ...requires.map((r) => r.contentHash)].join('\n');
 }

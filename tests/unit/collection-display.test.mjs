@@ -14,6 +14,8 @@ import {
   collectionClickUrl,
   collectionHasManifest,
   isSyntheticCollection,
+  reservedNameOwner,
+  mayUseReservedName,
 } from '../../dist/collection-display.js';
 
 // ---------- inferCollectionType ----------
@@ -56,18 +58,20 @@ test('collectionHasManifest: true only for paths whose basename is script_manife
 
 // ---------- collectionBubbleKey ----------
 
-test('collectionBubbleKey: appends -manifest only for manifest collections', () => {
-  assert.equal(collectionBubbleKey('/scripts/foo.user.js'), 'file');
+test('collectionBubbleKey: kind + scheme, and a bare `scripts` for containers', () => {
+  assert.equal(collectionBubbleKey('/scripts'), 'file-dir');
   assert.equal(collectionBubbleKey('/scripts/script_manifest.json'), 'file-manifest');
-  assert.equal(collectionBubbleKey('https://example.com/foo.user.js'), 'http');
   assert.equal(
     collectionBubbleKey('https://example.com/manifest-dir/script_manifest.json'),
     'http-manifest',
   );
   assert.equal(
     collectionBubbleKey('https://github.com/Mottie/GitHub-userscripts/tree/master'),
-    'github',
+    'github-dir',
   );
+  assert.equal(collectionBubbleKey('container:file'), 'scripts');
+  assert.equal(collectionBubbleKey('container:http'), 'scripts');
+  assert.equal(collectionBubbleKey('container:0d3d6b2e-1111-4222-8333-444455556666'), 'scripts');
   assert.equal(
     collectionBubbleKey('https://raw.githubusercontent.com/o/r/main/script_manifest.json'),
     'github-manifest',
@@ -235,6 +239,29 @@ test('collectionClickUrl: github raw URLs convert to their github.com page URL',
     collectionClickUrl('https://github.com/owner/repo/tree/main'),
     'https://github.com/owner/repo/tree/main',
   );
+});
+
+// ---------- reserved names ----------
+
+// The built-in defaults' names are reserved even before their rows
+// exist, or a user collection could take one and the first install of
+// that scheme would auto-create a second collection reading the same.
+test('reservedNameOwner: the three built-in names, case- and space-insensitively', () => {
+  assert.equal(reservedNameOwner('Scripts from local disk'), 'file');
+  assert.equal(reservedNameOwner('  scripts from web  '), 'http');
+  assert.equal(reservedNameOwner('SCRIPTS FROM GITHUB'), 'github');
+  assert.equal(reservedNameOwner('Work'), null);
+  assert.equal(reservedNameOwner(''), null);
+});
+
+test('mayUseReservedName: only the default that owns the name may carry it', () => {
+  assert.equal(mayUseReservedName('Work', null), true);
+  assert.equal(mayUseReservedName('Scripts from web', null), false);
+  // The row that owns it keeps it — re-saving its own name is fine.
+  assert.equal(mayUseReservedName('Scripts from web', 'container:http'), true);
+  // Another collection may not take it.
+  assert.equal(mayUseReservedName('Scripts from web', 'container:file'), false);
+  assert.equal(mayUseReservedName('Scripts from web', 'container:uuid-1'), false);
 });
 
 // ---------- Import collections ----------

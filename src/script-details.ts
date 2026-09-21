@@ -36,20 +36,22 @@
 
 import { openInNewTabAnchor } from './code-links.js';
 import { makeCopyButton } from './copy-button.js';
+import { standInTag, tagLocalFile, type LocalFileTag } from './file-changes.js';
 import { rowTooltip, type DetailsMode } from './details-tooltips.js';
 import { matchTargetInfo, sameDirLinkUrl } from './match-targets.js';
+import { renderPatternIconInto } from './site-icon.js';
 import type { StoredCollection } from './script-store.js';
 import type { StoredRequire, StoredResource } from './external-files.js';
 import { locationFsPath } from './directories.js';
-import { displayLocation, formatBytes, logIdDupeSuffix, stripSriFragment } from './script-display.js';
+import { appendWithSlashBreaks, displayLocation, formatBytes, logIdDupeSuffix, stripSriFragment } from './script-display.js';
 import { sitePageRow } from './script-sites.js';
 import {
-  appendWithSlashBreaks,
   effectiveDisplayName,
   makeCollectionTypeBubble,
   collectionAnchorId,
   isSyntheticCollection,
 } from './collection-display.js';
+import { wireNamedTabLink } from './page-links.js';
 import { getValue, getValues, type ParsedHeader } from './userscript-header.js';
 import { versionRelation, type VersionRelation } from './version-compare.js';
 import { probeLabel, type VersionProbe } from './version-probe.js';
@@ -70,11 +72,16 @@ export interface LocationRow {
   // Optional trailing control, e.g. the viewer's copy-to-clipboard
   // button. Moved into the cell on every render.
   trailing?: HTMLElement;
+  // For a `file://` location: the file, as `markFileChanges` wants it
+  // tagged, so the caller can run that over the panel after the render
+  // (see file-changes.ts).
+  localFile?: LocalFileTag;
   // Intercepts activation of the location anchor. Both viewer modes
   // use it, because a plain navigation to a `.user.js` URL — http(s)
   // or file:// — is captured straight back into a preview (see
   // install-capture.ts):
-  //   - preview mode routes the click to its raw view;
+  //   - preview mode routes the click through View raw source, which
+  //     stands the capture down first;
   //   - installed mode stands the capture down for that one
   //     navigation, so the row's link opens what it says it opens.
   // Wired for `auxclick` too, or a middle-click would take the plain
@@ -110,6 +117,10 @@ export interface DetailsModel {
   // Installed scripts only.
   logId?: string;
   collection?: StoredCollection | null;
+  // Appended to the right of the Collection row's display name — the
+  // viewer's Move control. A node rather than a flag so the details
+  // renderer stays free of store calls; the caller owns the behavior.
+  collectionTrailing?: Node;
   status?: Node;
   location?: LocationRow;
   size?: string;
@@ -150,7 +161,7 @@ export function renderDetails(container: HTMLElement, model: DetailsModel): void
   // section). Above Location so the "where did this come from" rows are
   // grouped.
   if (model.collection) {
-    appendRow(dl, 'Collection', collectionCell(model.collection));
+    appendRow(dl, 'Collection', collectionCell(model.collection, model.collectionTrailing));
   }
   if (model.location) {
     appendRow(dl, 'Location', locationCell(model.location));
@@ -285,6 +296,9 @@ function probeValueText(probe: VersionProbe, relation: VersionRelation): string 
   if (relation === 'newer' || relation === 'older') {
     return `${probe.version} (${relation === 'newer' ? 'Newer' : 'Older'})`;
   }
+  // Our `@version` is theirs plus a `-local` tail — a copy made for
+  // editing. Neither newer nor older: the release we started from.
+  if (relation === 'edited') return `${probe.version} (Base of this local edit)`;
   // `unknown`: we declare no `@version` and they do. No qualifier — the
   // number is all we can say, and the Version row above reads `<none>`,
   // so the contrast is on screen without us guessing at a direction.
@@ -299,7 +313,7 @@ function probeTitleText(probe: VersionProbe, relation: VersionRelation): string 
   if (!probe.error) return probe.url;
   // The value is showing a version, so the tooltip carries the failure
   // — otherwise the row reads as freshly confirmed when it isn't.
-  if (relation === 'newer' || relation === 'older' || relation === 'unknown') {
+  if (relation !== 'same') {
     return `${probe.url} — last check failed: ${probe.error}`;
   }
   // The value is showing the error, so the tooltip carries the version
@@ -325,11 +339,12 @@ function addSitePage(dl: HTMLDListElement, locationUrl: string, h: ParsedHeader 
   appendRow(dl, row.label, openInNewTabAnchor(row.url, row.url));
 }
 
-// The header's own claim about where the script lives. Read in two
-// places — the Homepage row and the hosting-site row's duplicate check
-// — which have to agree on what counts, or the check silently stops
-// matching when this grows a tag.
-function declaredHomepage(h: ParsedHeader): string | undefined {
+// The header's own claim about where the script lives: the two
+// spellings of the tag, first one wins. Read in three places — the
+// Homepage row here and on the compare page, and the hosting-site
+// row's duplicate check — which have to agree on what counts, or the
+// check silently stops matching when this grows a tag.
+export function declaredHomepage(h: ParsedHeader): string | undefined {
   return getValue(h, 'homepage') ?? getValue(h, 'homepageURL');
 }
 
@@ -338,18 +353,16 @@ function addText(dl: HTMLDListElement, label: string, value: string | undefined)
   appendRow(dl, label, document.createTextNode(value));
 }
 
-// `@connect` row: hosts and the wildcard/`self` forms, so monospace —
-// these are hostnames, not prose, and `*.example.com` vs
-// `*.example.com.evil.net` is a difference the reader has to be able
-// to see. Rendered as plain text, deliberately unlinked: a `@connect`
-// value is a matching rule (`self`, `*`, `*.example.com`), not an
-// address, and linkifying it would invite a click that means nothing.
+// `@connect` row: hosts and the wildcard/`self` forms, in the same
+// face as the Match patterns above it — it was the panel's one
+// monospace row, and its bullets sat a different size from its
+// neighbours'. Rendered as plain text, deliberately unlinked: a
+// `@connect` value is a matching rule (`self`, `*`, `*.example.com`),
+// not an address, and linkifying it would invite a click that means
+// nothing.
 function addConnect(dl: HTMLDListElement, values: string[]): void {
   if (values.length === 0) return;
-  const dd = appendRow(
-    dl, 'Network access', listNode(values, (v) => document.createTextNode(v)),
-  );
-  dd.className = 'host-list';
+  appendRow(dl, 'Network access', listNode(values, (v) => document.createTextNode(v)));
 }
 
 function addLink(dl: HTMLDListElement, label: string, value: string | undefined): void {
@@ -373,14 +386,14 @@ function addLink(dl: HTMLDListElement, label: string, value: string | undefined)
 // tab to fall back on — so for a resource stand-in before install this
 // row is the only surface there is.
 function addLocalFiles(dl: HTMLDListElement, files: DetailsModel['files']): void {
-  const entries: { kind: string; declared: string; localUrl: string }[] = [];
+  const entries: { kind: string; declared: string; file: LoadedFile & { localUrl: string } }[] = [];
   const groups: readonly [string, readonly LoadedFile[] | undefined][] = [
     ['@require', files?.requires],
     ['@resource', files?.resources],
   ];
   for (const [kind, list] of groups) {
     for (const f of list ?? []) {
-      if (f.localUrl) entries.push({ kind, declared: f.url, localUrl: f.localUrl });
+      if (f.localUrl) entries.push({ kind, declared: f.url, file: { ...f, localUrl: f.localUrl } });
     }
   }
   if (entries.length === 0) return;
@@ -404,13 +417,17 @@ function addLocalFiles(dl: HTMLDListElement, files: DetailsModel['files']): void
     // thing. The code tab's tooltip keeps the URL form deliberately —
     // there it sits directly under the declared URL, and the pair reads
     // as "asked for this, got that".
-    const localPath = locationFsPath(e.localUrl);
+    const localPath = locationFsPath(e.file.localUrl);
     const path = document.createElement('span');
     path.className = 'local-override-path';
     appendWithSlashBreaks(path, displayLocation(localPath));
     // Which declaration it stood in for rides along as the tooltip,
     // in the URL display form every other declared ref uses.
     path.title = `Stands in for ${displayLocation(stripSriFragment(e.declared))}`;
+    // A stand-in the user has since deleted or edited gets a chip
+    // saying so — until the next refresh, this row is still claiming
+    // to load the bytes it holds.
+    tagLocalFile(path, standInTag(localPath, e.file));
     span.appendChild(path);
 
     // Copies the same path the row shows — for a local file that IS the
@@ -464,15 +481,23 @@ interface LoadedFile {
   size?: number;
   // Present exactly when this entry was overridden from local disk.
   localUrl?: string;
+  // The stand-in's listing mtime when it was read, for the "modified"
+  // chip (file-changes.ts).
+  fsMtime?: number;
 }
 
 // `@match` / `@include` / `@exclude` row: each pattern that resolves to
 // a usable linkUrl via the same wildcard-trim rule as the site favicon
-// becomes a clickable open-in-new-tab anchor. A pattern naming no site
-// gets a second chance against the script's own directory. Patterns we
-// can't linkify either way (`<all_urls>`, regex literals, a host
-// wildcard with nothing to anchor on) render as plain text so the row
-// still shows every entry.
+// becomes a clickable open-in-new-tab anchor, led by that site's
+// favicon (the globe when the pattern names no site). A pattern naming
+// no site gets a second chance against the script's own directory.
+// Patterns we can't linkify either way (`<all_urls>`, regex literals,
+// a host wildcard with nothing to anchor on) render as plain text so
+// the row still shows every entry.
+//
+// Always a bulleted list, even for one pattern: these rows sit
+// together and an icon-led inline value beside an icon-led list read
+// as two different things.
 function addPatterns(
   dl: HTMLDListElement,
   label: string,
@@ -480,35 +505,81 @@ function addPatterns(
   scriptUrl: string | undefined,
 ): void {
   if (values.length === 0) return;
-  appendRow(dl, label, listNode(values, (p) => patternValueNode(p, scriptUrl)));
+  appendRow(dl, label, bulletList(values, (p) => patternValueNode(p, scriptUrl)));
 }
 
-// One value renders inline; several render as a `<ul>`. Generic in the
-// item type so the rows whose items aren't plain strings (Local
-// overrides) share the same one-vs-many rule rather than
-// reimplementing it.
+// One value renders inline; several render as a `<ul>` (folded when
+// long — see `bulletList`). Generic in the item type so the rows whose
+// items aren't plain strings (Local overrides) share the same
+// one-vs-many rule rather than reimplementing it.
 function listNode<T>(values: readonly T[], make: (v: T) => Node): Node {
   if (values.length === 1) return make(values[0]);
+  return bulletList(values, make);
+}
+
+// How many items a details-panel list shows before folding the rest
+// behind a "(N more)" link. Long enough that ordinary scripts never
+// fold; short enough that a fifty-site `@match` block doesn't push the
+// code box off the screen.
+const LIST_FOLD_AT = 10;
+
+// A `<ul>` of `values`, folded past `LIST_FOLD_AT`: the tail is hidden
+// behind a last bullet reading "(N more)", which swaps the whole list
+// in and turns into "(show fewer)". All items are rendered up front —
+// the fold is display only — so a per-item side effect (a favicon
+// fetch) happens once, whether or not the reader ever expands.
+function bulletList<T>(values: readonly T[], make: (v: T) => Node): HTMLUListElement {
   const ul = document.createElement('ul');
+  const items: HTMLLIElement[] = [];
   for (const v of values) {
     const li = document.createElement('li');
     li.appendChild(make(v));
     ul.appendChild(li);
+    items.push(li);
   }
+  // A "(1 more)" bullet takes the line it would save; show the item.
+  const hidden = items.slice(LIST_FOLD_AT);
+  if (hidden.length < 2) return ul;
+
+  const toggleLi = document.createElement('li');
+  toggleLi.className = 'list-fold';
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'list-fold-toggle';
+  toggleLi.appendChild(toggle);
+  ul.appendChild(toggleLi);
+  const setFolded = (folded: boolean): void => {
+    for (const li of hidden) li.hidden = folded;
+    toggle.textContent = folded ? `(${hidden.length} more)` : '(show fewer)';
+    toggle.setAttribute('aria-expanded', String(!folded));
+  };
+  toggle.addEventListener('click', () => setFolded(!hidden[0].hidden));
+  setFolded(true);
   return ul;
 }
 
 function patternValueNode(pattern: string, scriptUrl: string | undefined): Node {
-  const linkUrl = matchTargetInfo(pattern)?.linkUrl ?? sameDirLinkUrl(pattern, scriptUrl);
+  const target = matchTargetInfo(pattern);
+  const linkUrl = target?.linkUrl ?? sameDirLinkUrl(pattern, scriptUrl);
+  let text: Node;
   if (!linkUrl) {
     // Non-linkable pattern (`<all_urls>`, regex literal, etc.); render
     // as plain text but still allow slash-aware wrapping in case the
     // pattern is long.
     const span = document.createElement('span');
     appendWithSlashBreaks(span, pattern);
-    return span;
+    text = span;
+  } else {
+    text = openInNewTabAnchor(linkUrl, pattern);
   }
-  return openInNewTabAnchor(linkUrl, pattern);
+  // Icon first, then the pattern; both open the same URL.
+  const cell = document.createElement('span');
+  cell.className = 'pattern-cell';
+  const slot = document.createElement('span');
+  slot.className = 'site-icon pattern-icon';
+  renderPatternIconInto(slot, target, linkUrl);
+  cell.append(slot, text);
+  return cell;
 }
 
 function logIdCell(logId: string): Node {
@@ -521,8 +592,9 @@ function logIdCell(logId: string): Node {
 // Collection-row cell: colored type bubble on the left (linking out to
 // the underlying file:// / http(s):// URL), followed by the
 // collection's display name as a back-link to the collections page
-// anchored at this collection's section.
-function collectionCell(collection: StoredCollection): Node {
+// anchored at this collection's section. Also each side's Collection
+// cell on the compare page.
+export function collectionCell(collection: StoredCollection, trailing?: Node): Node {
   const cell = document.createElement('span');
   cell.className = 'collection-cell';
 
@@ -531,15 +603,17 @@ function collectionCell(collection: StoredCollection): Node {
   const nameLink = document.createElement('a');
   nameLink.className = 'collection-display-name';
   appendWithSlashBreaks(nameLink, effectiveDisplayName(collection));
-  // Page-relative (both pages sit at the extension root) so the href
-  // doesn't carry the `chrome-extension://<id>/` prefix.
-  nameLink.href = `collections.html#${collectionAnchorId(collection.id)}`;
+  // The collections page is a named tab: this opens it beside the
+  // viewer rather than replacing it, reusing the one that is already
+  // open and scrolling it to this collection. See src/page-links.ts.
+  wireNamedTabLink(nameLink, 'collections', collectionAnchorId(collection.id));
   // Tooltip surfaces the raw stored path; the anchor itself jumps to
   // the section on the collections page. Container and import
-  // collections have a synthetic path (`container:<kind>` /
-  // `import:<uuid>`) which would leak — skip for those.
+  // collections have a synthetic path (`container:…` / `import:<uuid>`)
+  // which would leak — skip for those.
   if (!isSyntheticCollection(collection.path)) nameLink.title = collection.path;
   cell.appendChild(nameLink);
+  if (trailing) cell.appendChild(trailing);
 
   return cell;
 }
@@ -587,6 +661,7 @@ function locationCell(row: LocationRow): Node {
       });
     }
   }
+  if (row.localFile) tagLocalFile(pathEl, row.localFile);
   cell.appendChild(pathEl);
 
   // The caller's button is a single long-lived element; appendChild

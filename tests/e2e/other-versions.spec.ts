@@ -1,5 +1,5 @@
-// End-to-end coverage of the "Other versions" / "Existing versions"
-// panel (`#other-versions`, src/related-versions.ts) and the lookup
+// End-to-end coverage of the "Other versions" panel (`#other-versions`,
+// src/related-versions.ts) and the lookup
 // behind it (src/script-identity.ts).
 //
 // The unit tests cover the matching rules against fabricated rows;
@@ -13,6 +13,7 @@
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
+import { allScripts, type SmApi } from '../fixtures/sw-api';
 
 const PANEL = '#other-versions';
 const ROWS = `${PANEL} tbody tr`;
@@ -38,22 +39,6 @@ test.describe('other-versions panel', () => {
 
   function viewer(scriptId: string): string {
     return `userscript.html?script=${encodeURIComponent(scriptId)}`;
-  }
-
-  // Every stored script, across every collection. The SW test surface
-  // exposes collections and their scripts, not a flat list.
-  async function allScripts(sm: { getCollections: () => Promise<{ id: string }[]>;
-    getCollectionWithScripts: (id: string) => Promise<{ scripts: unknown[] } | null> }):
-    Promise<{ id: string; relativePath: string; enabled?: boolean }[]> {
-    const collections = await sm.getCollections();
-    const out: { id: string; relativePath: string; enabled?: boolean }[] = [];
-    for (const src of collections) {
-      const withScripts = await sm.getCollectionWithScripts(src.id);
-      for (const script of withScripts?.scripts ?? []) {
-        out.push(script as { id: string; relativePath: string; enabled?: boolean });
-      }
-    }
-    return out;
   }
 
   // The case the whole feature exists for. The directory collection stores
@@ -116,11 +101,13 @@ test.describe('other-versions panel', () => {
     await expect(page.locator(ROWS)).toHaveCount(2);
     await expect(page.locator(PANEL)).toContainText('2.0.0');
 
-    // The other copy links to its own viewer tab.
+    // The other copy's row is what opens it — no link inside the cell,
+    // which would only offer the row's own destination twice. See
+    // versions-navigation.spec.ts for the navigation itself.
     const other = scripts.find((s) => s.relativePath === b)!;
-    await expect(
-      page.locator(`${PANEL} td.col-location a[href*="${other.id}"]`),
-    ).toHaveCount(1);
+    await expect(page.locator(`${ROWS}[data-script-id="${other.id}"]`))
+      .toHaveClass(/is-navigable/);
+    await expect(page.locator(`${PANEL} td.col-location a`)).toHaveCount(0);
 
     await page.close();
   });
@@ -156,6 +143,159 @@ test.describe('other-versions panel', () => {
     await page.goto(`chrome-extension://${extensionId}/${viewer(scripts[0].id)}`);
     await expect(page.locator('#header-summary')).toContainText('Lonely Script');
     await expect(page.locator(PANEL)).toBeHidden();
+    await page.close();
+  });
+
+  // Status is the column that says whether a copy actually works, and
+  // it is the route to that copy's log.
+  test('each row shows its status, linked to that copy\'s log', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const good = write('hello.user.js', 'Shared Script');
+    // Same file installed twice — once through the folder, once on its
+    // own — so both rows describe a script that loaded fine.
+    await sm.addCollection(dir.path);
+    await sm.addCollection(good);
+    await sm.syncNow();
+
+    const scripts = await allScripts(sm);
+    const standalone = scripts.find((s) => s.relativePath === good)!;
+    const inFolder = scripts.find((s) => s.id !== standalone.id)!;
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/${viewer(standalone.id)}`);
+    await expect(page.locator(ROWS)).toHaveCount(2);
+
+    // Status sits between Location and Version; Content follows.
+    const headings = await page.locator(`${PANEL} thead th`).allTextContents();
+    expect(headings.slice(2, 6)).toEqual(['Location', 'Status', 'Version', 'Compare']);
+
+    const cell = page.locator(`${PANEL} tr[data-script-id="${inFolder.id}"] td.col-status a`);
+    await expect(cell).toHaveText('OK');
+    // Links to that copy's OWN log, not to the page we are standing on.
+    await expect(cell).toHaveAttribute(
+      'href', `userscript.html?script=${encodeURIComponent(inFolder.id)}#Log`,
+    );
+    await page.close();
+  });
+
+  // The Status column speaks for every copy, so it has to move when
+  // another copy's log escalates — not only when this one's does.
+  test('another copy\'s status updates without a reload', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const path = write('hello.user.js', 'Shared Script');
+    await sm.addCollection(dir.path);
+    await sm.addCollection(path);
+    await sm.syncNow();
+
+    const scripts = await allScripts(sm);
+    const standalone = scripts.find((s) => s.relativePath === path)!;
+    const inFolder = scripts.find((s) => s.id !== standalone.id)!;
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/${viewer(standalone.id)}`);
+    const cell = page.locator(`${PANEL} tr[data-script-id="${inFolder.id}"] td.col-status a`);
+    await expect(cell).toHaveText('OK');
+
+    // The OTHER copy hits a runtime error while this page sits open.
+    await sm.appendScriptLog(inFolder.id, {
+      level: 'error',
+      source: 'test',
+      message: 'boom',
+    });
+
+    await expect(cell).toHaveText('ERROR');
+    // This page's own row is about a different copy, so it stays put.
+    await expect(
+      page.locator(`${PANEL} tr[data-script-id="${standalone.id}"] td.col-status a`),
+    ).toHaveText('OK');
+    await page.close();
+  });
+
+  // The preview's panel is live too — its own listener branch runs
+  // before the installed-script gate that the rest of the page's
+  // storage handling sits behind.
+  test('a preview\'s panel tracks another copy\'s status', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const path = write('hello.user.js', 'Shared Script');
+    await sm.addCollection(dir.path);
+    await sm.syncNow();
+
+    const inFolder = (await allScripts(sm))[0];
+    const page = await extensionContext.newPage();
+    await page.goto(
+      `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`file://${path}`)}`,
+    );
+    const cell = page.locator(`${PANEL} tr[data-script-id="${inFolder.id}"] td.col-status a`);
+    await expect(cell).toHaveText('OK');
+
+    await sm.appendScriptLog(inFolder.id, {
+      level: 'warning',
+      source: 'test',
+      message: 'careful',
+    });
+    await expect(cell).toHaveText('WARNING');
+    await page.close();
+  });
+
+  // A copy that can't run says so from the panel, without the user
+  // having to open it.
+  test('a broken copy reports its status in the panel', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const ns = 'https://example.com/ns';
+    const good = write('good.user.js', 'Twin Script', { namespace: ns });
+    // Parses, carries the same identity, but declares no @match — so it
+    // fails validation and lands `invalid`.
+    const broken = dir.writeRaw(
+      'broken.user.js',
+      [
+        '// ==UserScript==',
+        '// @name        Twin Script',
+        `// @namespace   ${ns}`,
+        '// ==/UserScript==',
+        '',
+        'console.log("hi");',
+        '',
+      ].join('\n'),
+    );
+    await sm.addCollection(good);
+    await sm.addCollection(broken);
+    await sm.syncNow();
+
+    const scripts = await allScripts(sm);
+    const goodScript = scripts.find((s) => s.relativePath === good)!;
+    const brokenScript = scripts.find((s) => s.relativePath === broken)!;
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/${viewer(goodScript.id)}`);
+    const cell = page.locator(`${PANEL} tr[data-script-id="${brokenScript.id}"] td.col-status a`);
+    await expect(cell).toHaveText('INVALID');
+    // The hover text carries the REASON, not just any string: the
+    // point of the column is that the user knows what to fix before
+    // clicking through.
+    await expect(cell).toHaveAttribute('title', /@match|@include/);
+    await page.close();
+  });
+
+  // The offer row is not a copy: nothing has been loaded, registered,
+  // or logged, so it has no status to report.
+  test('the not-installed-yet offer row shows no status', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const path = write('hello.user.js', 'Shared Script', { version: '1.0.0' });
+    await sm.addCollection(dir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(
+      `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`file://${path}`)}`,
+    );
+    await expect(page.locator(`${PANEL} tr.is-offer`)).toHaveCount(1);
+    await expect(page.locator(`${PANEL} tr.is-offer td.col-status`)).toHaveText('\u2014');
+    await expect(page.locator(`${PANEL} tr.is-offer td.col-status a`)).toHaveCount(0);
     await page.close();
   });
 
@@ -544,28 +684,175 @@ test.describe('other-versions panel', () => {
     await page.close();
   });
 
-  // Removing the row you are standing on is allowed, and the page says
-  // so rather than reporting a store that lost your script.
-  test('removing the script being viewed reports it as removed', async ({
+  // Installing is an enable, so it sweeps too: after Install the copy
+  // just added is the only one running.
+  test('installing from a preview disables the copies already installed', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const ns = 'https://example.com/ns';
+    const a = write('a.user.js', 'Twin Script', { namespace: ns, version: '1.0.0' });
+    const b = write('b.user.js', 'Twin Script', { namespace: ns, version: '2.0.0' });
+    await sm.addCollection(a);
+    await sm.syncNow();
+    // The copy the sweep has to switch off starts ON — without this the
+    // assertion below passes for a copy that was never enabled at all.
+    expect((await allScripts(sm)).find((s) => s.relativePath === a)!.enabled).not.toBe(false);
+
+    const page = await extensionContext.newPage();
+    await page.goto(
+      `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`file://${b}`)}`,
+    );
+    // Two targets (the installed twin and the offer), so the header
+    // Install defers to the table's offer row.
+    await page.locator(`${PANEL} tr.is-offer button`).click();
+    // Install navigates to the new script's own page.
+    await page.waitForURL(/userscript\.html\?script=/);
+
+    await expect.poll(async () => {
+      const scripts = await allScripts(sm);
+      return {
+        old: scripts.find((s) => s.relativePath === a)?.enabled,
+        installed: scripts.find((s) => s.relativePath === b)?.enabled,
+      };
+    }).toEqual({ old: false, installed: true });
+    await page.close();
+  });
+
+  // The install sweep asks the same "is it running" question of the new
+  // copy that it asks of the ones it switches off. A container the user
+  // has turned off means the new copy can't run, so switching the
+  // working one off would leave nothing running.
+  test('installing into a disabled container sweeps nothing', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const ns = 'https://example.com/ns';
+    write('a.user.js', 'Twin Script', { namespace: ns });
+    const b = write('b.user.js', 'Twin Script', { namespace: ns });
+    // A third file, installed on its own purely to create the container
+    // collection so there is something to disable before installing `b`.
+    await sm.addCollection(write('other.user.js', 'Unrelated Script'));
+    await sm.addCollection(dir.path);
+    await sm.syncNow();
+
+    const container = (await sm.getCollections()).find((s) => s.path !== dir.path)!;
+    await sm.setCollectionEnabled(container.id, false);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(
+      `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`file://${b}`)}`,
+    );
+    await page.locator(`${PANEL} tr.is-offer button`).click();
+    await page.waitForURL(/userscript\.html\?script=/);
+
+    // The install itself landed — otherwise there would be no sweep to
+    // skip and the assertions below would prove nothing.
+    const after = await allScripts(sm);
+    expect(after.some((s) => s.relativePath === b)).toBe(true);
+    // Both directory copies keep their stored intent: the same-identity
+    // twin and the directory's own copy of the file just installed.
+    expect(after.find((s) => s.relativePath === 'a.user.js')!.enabled).not.toBe(false);
+    expect(after.find((s) => s.relativePath === 'b.user.js')!.enabled).not.toBe(false);
+    await page.close();
+  });
+
+  // Removing the row you are standing on is allowed, and the page moves
+  // to another copy rather than stranding itself on the not-found line.
+  //
+  // Three containers, named so their display-name sort is A / M / Z:
+  // that fixes the table order, which is the order these two tests are
+  // about. Returns the script id of the copy in each, in that order.
+  async function threeCopies(sm: SmApi, path: string): Promise<[string, string, string]> {
+    const collectionIds: string[] = [];
+    for (const name of ['A first', 'M middle', 'Z last']) {
+      const collection = await sm.createCollection({ kind: 'scripts', name });
+      await sm.installScript(`file://${path}`, { collectionId: collection!.id });
+      collectionIds.push(collection!.id);
+    }
+    await sm.syncNow();
+    const scripts = await allScripts(sm);
+    const [a, m, z] = collectionIds.map((id) => scripts.find((s) => s.collectionId === id)!.id);
+    return [a, m, z];
+  }
+
+  test('removing the script being viewed switches to the next copy', async ({
     extensionContext, extensionId, sm,
   }) => {
     const path = write('hello.user.js', 'Shared Script');
-    await sm.addCollection(dir.path);
-    await sm.addCollection(path);
-    await sm.syncNow();
-
-    const scripts = await allScripts(sm);
-    const standalone = scripts.find((s) => s.relativePath === path)!;
+    const [, middle, last] = await threeCopies(sm, path);
 
     const page = await extensionContext.newPage();
-    await page.goto(`chrome-extension://${extensionId}/${viewer(standalone.id)}`);
+    await page.goto(`chrome-extension://${extensionId}/${viewer(middle)}`);
     await page.locator(`${PANEL} tr.is-current .versions-remove`).click();
 
-    await expect(page.locator('#message')).toContainText('This script has been removed');
-    // The panel goes with the rest of the page — its heading has
-    // nothing left to be "other than".
-    await expect(page.locator(PANEL)).toBeHidden();
-    expect(await allScripts(sm)).toHaveLength(1);
+    // The row below the one that went away — the whole page, not just
+    // the URL: the title is the successor's and the not-found state
+    // never appears.
+    await page.waitForURL(`**/${viewer(last)}`);
+    await expect(page.locator(`${PANEL} tr.is-current`)).toHaveAttribute('data-script-id', last);
+    await expect(page.locator('h1')).not.toHaveText('Not available');
+    await expect(page.locator(ROWS)).toHaveCount(2);
+    expect(await allScripts(sm)).toHaveLength(2);
+    await page.close();
+  });
+
+  // The switch above has to be ONE paint. The removal's own storage
+  // event lands while the page still points at the deleted row, and the
+  // listener's not-found paint would blank the heading, the details and
+  // the panel before the swap builds them back — a flash that reads as a
+  // page load. Only a recording made across the transition can catch it:
+  // by the time the swap has landed the page looks right either way.
+  test('the switch never paints the not-found state on the way', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const path = write('hello.user.js', 'Shared Script');
+    const [, middle, last] = await threeCopies(sm, path);
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/${viewer(middle)}`);
+    await page.locator(`${PANEL} tr.is-current`).waitFor();
+    await page.evaluate(() => {
+      const seen: string[] = [];
+      (window as unknown as { smHeadings: string[] }).smHeadings = seen;
+      const h1 = document.querySelector('h1')!;
+      new MutationObserver(() => seen.push(h1.textContent ?? '')).observe(h1, {
+        childList: true, subtree: true, characterData: true,
+      });
+    });
+
+    await page.locator(`${PANEL} tr.is-current .versions-remove`).click();
+    await page.waitForURL(`**/${viewer(last)}`);
+    await expect(page.locator(`${PANEL} tr.is-current`)).toHaveAttribute('data-script-id', last);
+
+    const headings = await page.evaluate(
+      () => (window as unknown as { smHeadings: string[] }).smHeadings,
+    );
+    expect(headings.join(' | ')).not.toContain('Not available');
+    await page.close();
+  });
+
+  test('removing the last copy in the table wraps to the first', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const path = write('hello.user.js', 'Shared Script');
+    const [first, middle, last] = await threeCopies(sm, path);
+
+    const page = await extensionContext.newPage();
+    // Arrive at the last copy from the middle one, so there is a
+    // history entry to go back to.
+    await page.goto(`chrome-extension://${extensionId}/${viewer(middle)}`);
+    await page.locator(`${PANEL} tr[data-script-id="${last}"]`).click();
+    await page.waitForURL(`**/${viewer(last)}`);
+
+    await page.locator(`${PANEL} tr.is-current .versions-remove`).click();
+    await page.waitForURL(`**/${viewer(first)}`);
+
+    // The entry for the removed copy was replaced, not stacked on top
+    // of: Back goes to where the user came from, not to a not-found
+    // page for a script that no longer exists.
+    await page.goBack();
+    await page.waitForURL(`**/${viewer(middle)}`);
+    await expect(page.locator(`${PANEL} tr.is-current`)).toHaveAttribute('data-script-id', middle);
     await page.close();
   });
 
@@ -583,18 +870,20 @@ test.describe('other-versions panel', () => {
       `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`file://${path}`)}`,
     );
     await expect(page.locator('#preview-actions')).toBeVisible();
-    await expect(page.locator('#install-btn')).toBeHidden();
-    await expect(page.locator('#open-btn')).toBeVisible();
+    // A copy exists, so the table carries every action and the callout
+    // stays down.
+    await expect(page.locator('#install-callout')).toBeHidden();
+    await expect(page.locator('#banner-slot')).toContainText('already installed');
 
     await page.locator(`${PANEL} .versions-remove`).click();
 
-    // Nothing is installed anywhere now: Install comes back, the stale
-    // Open/Update pointing at a dead id go away, and the panel — with
-    // no existing versions left — hides itself.
-    await expect(page.locator('#install-btn')).toBeVisible();
+    // Nothing is installed anywhere now: the install callout comes
+    // back in place of the banner, and the panel — with no existing
+    // versions left — hides itself.
+    await expect(page.locator('#install-callout')).toBeVisible();
+    await expect(page.locator('#install-btn')).toBeEnabled();
     await expect(page.locator('#open-btn')).toBeHidden();
-    await expect(page.locator('#update-btn')).toBeHidden();
-    await expect(page.locator('#banner-slot')).toContainText('This script is not installed yet');
+    await expect(page.locator('#banner-slot')).not.toContainText('already installed');
     await expect(page.locator(PANEL)).toBeHidden();
     await page.close();
   });
@@ -619,10 +908,20 @@ test.describe('other-versions panel', () => {
     await expect(page.locator(ROWS)).toHaveCount(2);
     // The viewer calls this operation Refresh, so the panel does too.
     await expect(page.locator(`${PANEL} th.col-actions button`)).toHaveText('Refresh all');
-    await expect(page.locator(`${PANEL} td.col-actions button`).first()).toHaveText('Refresh');
+    // Icon-only rows: the verb that used to be the label is now the
+    // accessible name, and it is still Refresh rather than Update.
+    await expect(page.locator(`${PANEL} td.col-actions button`).first())
+      .toHaveAttribute('aria-label', /^Refresh /);
     // Every row in this section carries its own button, the current
     // one included.
     await expect(page.locator(`${PANEL} td.col-actions button`)).toHaveCount(2);
+    // It spans the actions and removal columns, so it ends flush with
+    // the removal buttons under it — neither short of them nor hanging
+    // off the table.
+    const headRight = (await page.locator(`${PANEL} th.col-actions button`).boundingBox())!;
+    const canRight = (await page.locator(`${PANEL} td.col-remove button`).first().boundingBox())!;
+    expect(Math.abs((headRight.x + headRight.width) - (canRight.x + canRight.width)))
+      .toBeLessThanOrEqual(1);
     await page.close();
   });
 
@@ -644,30 +943,55 @@ test.describe('other-versions panel', () => {
     await expect(page.locator('#preview-actions')).toBeVisible();
 
     await expect(page.locator('#banner-slot')).toContainText('already installed');
-    // Two targets below — the installed copy and the offer — so
-    // "…below" must not point past a row of buttons doing the same
-    // three things.
+    // The table carries every action, so the banner's one line says so
+    // and the header keeps no button that acts on a copy.
     await expect(page.locator('#banner-slot'))
-      .toContainText('Select which instance to open, update or install below');
-    await expect(page.locator('#install-btn')).toBeHidden();
+      .toContainText('This script is already installed. Select which instance to update or install.');
+    await expect(page.locator('#install-callout')).toBeHidden();
     await expect(page.locator('#open-btn')).toBeHidden();
-    await expect(page.locator('#update-btn')).toBeHidden();
     // Cancel and View raw source are about the preview itself, not
     // about a copy, so they stay.
     await expect(page.locator('#cancel-btn')).toBeVisible();
 
-    // Preview heading, and the offer row for the container that has no
-    // copy yet.
-    await expect(page.locator(PANEL)).toContainText('Existing versions');
-    await expect(page.locator(PANEL)).not.toContainText('Other versions of this script');
+    // No heading of its own — the banner line above the table is the
+    // heading in a preview. Then the install-offer section, with the
+    // local default — which has no row yet — pre-selected and nothing
+    // saying Install is blocked.
+    await expect(page.locator(`${PANEL} h2`)).toHaveCount(0);
+    await expect(page.locator(`${PANEL} .versions-section-heading`).last())
+      .toHaveText('Install another copy of this script');
     await expect(page.locator(`${PANEL} tr.is-offer`)).toHaveCount(1);
-    await expect(page.locator(`${PANEL} tr.is-offer`)).toContainText('Not installed here yet');
+    await expect(page.locator(`${PANEL} .install-offer-note`)).toHaveText('');
+    await expect(page.locator(`${PANEL} tr.is-offer select option:checked`))
+      .toHaveText('Scripts from local disk (new)');
     // The offer row borrows the previewed file's version rather than
     // reading as missing data.
     await expect(page.locator(`${PANEL} tr.is-offer td.col-version`)).toHaveText('1.0.0');
+    // The offer's Location is ABSOLUTE, which is not how the directory
+    // collection's own row spells the same file — that one stores a
+    // path under the collection root. Absolute because it is what
+    // installing from here would store; the column lines the two up
+    // without claiming they read alike.
+    await expect(page.locator(`${PANEL} tr.is-offer td.col-location`)).toHaveText(path);
+    await expect(page.locator(`${PANEL} tbody td.col-location`).first()).toHaveText('hello.user.js');
+    // The offer's table keeps a heading row for a screen reader — the
+    // labelling of the section above does not reach across tables —
+    // and takes it off screen, rather than dropping it.
+    const offerHead = page.locator(`${PANEL} table`).last().locator('thead');
+    await expect(offerHead).toHaveClass(/visually-hidden/);
+    await expect(offerHead.locator('th')).toHaveCount(8);
+    await expect(offerHead).not.toBeInViewport();
+    // The dropdown is labelled, and the callout's own copy of it is not
+    // in the document twice over.
+    await expect(page.locator('label[for="install-target-offer"]')).toHaveText('into');
+    await expect(page.locator('#install-target')).toHaveCount(0);
     // Every action the header gave up is present in the table.
     await expect(page.locator(`${PANEL} tr.is-offer button`)).toHaveText('Install');
+    // A preview's button keeps its word: it is not the refetch the
+    // installed page does, so it does not wear the refresh arrow.
     await expect(page.locator(`${PANEL} td.col-actions button`).first()).toHaveText('Update');
+    // A preview's Location IS a link — its rows are not clickable, so
+    // this is the only way to reach that copy from here.
     await expect(page.locator(`${PANEL} td.col-location a`)).toHaveCount(1);
 
     await page.close();
@@ -720,14 +1044,16 @@ test.describe('other-versions panel', () => {
     await page.close();
   });
 
-  // The deliberate asymmetry: a copy at a different URL is a different
-  // subscription, so refetching it is not "bring this up to date".
-  test('a different-URL copy gets no refresh button', async ({
+  // The refetch is per row — each copy re-reads from its own
+  // collection — so a different-URL copy gets the button too, and
+  // Refresh all covers both sections. (Not in a preview, which offers
+  // Update on same-URL rows only.)
+  test('a different-URL copy gets a refresh button, and Refresh all reaches it', async ({
     extensionContext, extensionId, sm,
   }) => {
     const ns = 'https://example.com/ns';
-    const a = write('a.user.js', 'Twin Script', { namespace: ns });
-    write('b.user.js', 'Twin Script', { namespace: ns });
+    const a = write('a.user.js', 'Twin Script', { namespace: ns, version: '1.0' });
+    write('b.user.js', 'Twin Script', { namespace: ns, version: '1.0' });
     await sm.addCollection(a);
     await sm.addCollection(dir.path);
     await sm.syncNow();
@@ -737,13 +1063,201 @@ test.describe('other-versions panel', () => {
     const page = await extensionContext.newPage();
     await page.goto(`chrome-extension://${extensionId}/${viewer(standalone.id)}`);
 
-    // Rows under "This URL" carry Refresh; the different-URL row does
-    // not. Two tables, so index the second one's body.
+    // Two tables; the different-URL row in the second carries Refresh
+    // like the rows in the first.
     const tables = page.locator(`${PANEL} table`);
     await expect(tables).toHaveCount(2);
     await expect(tables.nth(1).locator('tbody tr')).toHaveCount(1);
-    await expect(tables.nth(1).locator('td.col-actions button')).toHaveCount(0);
-    await expect(tables.nth(0).locator('td.col-actions button').first()).toHaveText('Refresh');
+    await expect(tables.nth(1).locator('td.col-actions button'))
+      .toHaveAttribute('aria-label', 'Refresh this copy from its collection');
+    // Two refreshable rows across the two sections, so Refresh all
+    // appears, scoped to the whole panel.
+    const all = page.locator(`${PANEL} th.col-actions button`);
+    await expect(all).toHaveText('Refresh all');
+    await expect(all).toHaveAttribute('title', 'Refresh all copies of this script');
+
+    // It really does refresh the different-URL row: bump its file and
+    // watch the stored version follow. A longer version, so the file's
+    // size changes — a same-size edit inside the listing's one-second
+    // mtime granularity is one the refresh is allowed to skip.
+    write('b.user.js', 'Twin Script', { namespace: ns, version: '2.0.1' });
+    await all.click();
+    await expect.poll(async () => {
+      const b = (await allScripts(sm)).find((s) => s.relativePath === 'b.user.js');
+      return /@version\s+(\S+)/.exec(b?.headerText ?? '')?.[1];
+    }).toBe('2.0.1');
+    await page.close();
+  });
+
+  // The Compare column says whether each other copy holds the same
+  // loaded code as the copy on screen — body and `@require`s together.
+  test('the Compare column compares each copy against the one on screen', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const ns = 'https://example.com/ns';
+    const a = write('a.user.js', 'Twin Script', { namespace: ns, version: '1.0' });
+    // Same text at a different path: same content, different URL.
+    write('b.user.js', 'Twin Script', { namespace: ns, version: '1.0' });
+    await sm.addCollection(a);
+    await sm.addCollection(dir.path);
+    await sm.syncNow();
+
+    const scripts = await allScripts(sm);
+    const standalone = scripts.find((s) => s.relativePath === a)!;
+    const inFolder = scripts.find((s) => s.relativePath === 'a.user.js')!;
+    const twin = scripts.find((s) => s.relativePath === 'b.user.js')!;
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/${viewer(standalone.id)}`);
+
+    const content = (id: string) => page.locator(`${ROWS}[data-script-id="${id}"] td.col-compare`);
+    // The copy on screen is compared against, not with itself.
+    await expect(content(standalone.id)).toHaveText('BASE');
+    await expect(content(inFolder.id)).toHaveText('SAME');
+    await expect(content(inFolder.id).locator('span')).toHaveClass('content-same');
+    await expect(content(twin.id)).toHaveText('SAME');
+
+    // The twin's file changes; the column follows the STORED copy, so
+    // it says Same until a refresh loads the new text.
+    write('b.user.js', 'Twin Script', { namespace: ns, version: '2.0.1' });
+    await expect(content(twin.id)).toHaveText('SAME');
+    await page.locator(`${PANEL} th.col-actions button`).click();
+    await expect(content(twin.id)).toHaveText('DIFF');
+    // A copy that differs gets a button to the diff: the compare page,
+    // with the copy on screen as the base and this row as the other
+    // side, in a new tab.
+    const diffBtn = content(twin.id).locator('button.content-diff');
+    await expect(diffBtn).toHaveAttribute(
+      'data-href',
+      `compare.html?script=${standalone.id}&other=${twin.id}`,
+    );
+    const [comparePage] = await Promise.all([
+      extensionContext.waitForEvent('page'),
+      diffBtn.click(),
+    ]);
+    await expect(comparePage).toHaveURL(
+      `chrome-extension://${extensionId}/compare.html?script=${standalone.id}&other=${twin.id}`,
+    );
+    await comparePage.close();
+    await expect(content(inFolder.id)).toHaveText('SAME');
+
+    // Switching copies in place moves the comparison with the page.
+    await page.locator(`${ROWS}[data-script-id="${twin.id}"] td.col-version`).click();
+    await expect(page.locator(`${PANEL} tr.is-current`)).toHaveAttribute('data-script-id', twin.id);
+    await expect(content(twin.id)).toHaveText('BASE');
+    await expect(content(standalone.id)).toHaveText('DIFF');
+    await expect(content(inFolder.id)).toHaveText('DIFF');
+    await page.close();
+  });
+
+  test('the Compare column counts a differing @require', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // Two directories, each with an identical script that requires its
+    // own `lib.js` — only the libraries differ.
+    const other = ScriptsDir.create();
+    try {
+      const ns = 'https://example.com/ns';
+      const spec = {
+        relativePath: 'lib.user.js',
+        meta: { name: 'Lib Script', match: ['https://example.com/*'], extra: [
+          `// @namespace   ${ns}`,
+          '// @require     lib.js',
+        ] },
+        body: 'console.log("hi");\n',
+      };
+      dir.writeRaw('lib.js', 'window.__lib = 1;\n');
+      other.writeRaw('lib.js', 'window.__lib = 2;\n');
+      dir.write(spec);
+      other.write(spec);
+      await sm.addCollection(dir.path);
+      await sm.addCollection(other.path);
+      await sm.syncNow();
+
+      const scripts = await allScripts(sm);
+      expect(scripts).toHaveLength(2);
+      const [shown, rest] = scripts;
+      const page = await extensionContext.newPage();
+      await page.goto(`chrome-extension://${extensionId}/${viewer(shown.id)}`);
+      await expect(page.locator(`${ROWS}[data-script-id="${rest.id}"] td.col-compare`))
+        .toHaveText('DIFF');
+
+      // Bring the libraries into line; the refresh picks the change up.
+      other.writeRaw('lib.js', 'window.__lib = 1;\n');
+      await page.locator(`${ROWS}[data-script-id="${rest.id}"] td.col-actions button`).click();
+      await expect(page.locator(`${ROWS}[data-script-id="${rest.id}"] td.col-compare`))
+        .toHaveText('SAME');
+      await page.close();
+    } finally {
+      other.cleanup();
+    }
+  });
+
+  test('a copy whose @require did not load is not compared', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const other = ScriptsDir.create();
+    try {
+      const spec = {
+        relativePath: 'lib.user.js',
+        meta: { name: 'Lib Script', match: ['https://example.com/*'], extra: [
+          '// @namespace   https://example.com/ns',
+          '// @require     lib.js',
+        ] },
+        body: 'console.log("hi");\n',
+      };
+      dir.writeRaw('lib.js', 'window.__lib = 1;\n');
+      dir.write(spec);
+      other.write(spec);  // no lib.js beside it
+      await sm.addCollection(dir.path);
+      await sm.addCollection(other.path);
+      await sm.syncNow();
+
+      const scripts = await allScripts(sm);
+      const healthy = scripts.find((s) => s.status === 'ok')!;
+      const broken = scripts.find((s) => s.status !== 'ok')!;
+      const page = await extensionContext.newPage();
+      await page.goto(`chrome-extension://${extensionId}/${viewer(healthy.id)}`);
+      // Body-only would call it DIFFERENT; with its library missing
+      // there is nothing to compare, so the cell says so.
+      await expect(page.locator(`${ROWS}[data-script-id="${broken.id}"] td.col-compare`))
+        .toHaveText('\u2014');
+      // Standing on the broken copy, no row can be compared either.
+      await page.goto(`chrome-extension://${extensionId}/${viewer(broken.id)}`);
+      await expect(page.locator(`${ROWS}[data-script-id="${healthy.id}"] td.col-compare`))
+        .toHaveText('\u2014');
+      await page.close();
+    } finally {
+      other.cleanup();
+    }
+  });
+
+  test('a preview compares the installed copies against the download', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const path = write('hello.user.js', 'Shared Script', { version: '1.0.0' });
+    await sm.addCollection(dir.path);
+    await sm.syncNow();
+    const [installed] = await allScripts(sm);
+
+    const page = await extensionContext.newPage();
+    const preview = `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`file://${path}`)}`;
+    await page.goto(preview);
+    const content = page.locator(`${ROWS}[data-script-id="${installed.id}"] td.col-compare`);
+    await expect(content).toHaveText('SAME');
+    // The offer row IS the download: what the installed rows are
+    // compared with, and what would replace them.
+    await expect(page.locator(`${PANEL} tr.is-offer td.col-compare`)).toHaveText('NEW');
+
+    // The file moves on; a fresh preview shows the stored copy behind.
+    write('hello.user.js', 'Shared Script', { version: '1.0.1' });
+    await page.goto(preview);
+    await expect(content).toHaveText('DIFF');
+    // The button compares this row against the download, named by the
+    // preview's normalized location.
+    await expect(content.locator('button.content-diff')).toHaveAttribute(
+      'data-href',
+      `compare.html?preview=${encodeURIComponent(path)}&other=${installed.id}`,
+    );
     await page.close();
   });
 
@@ -784,7 +1298,7 @@ test.describe('other-versions panel', () => {
     await page.close();
   });
 
-  test('preview of a file already installed standalone offers no second install', async ({
+  test('preview of a file already installed in the default makes a second copy a deliberate pick', async ({
     extensionContext, extensionId, sm,
   }) => {
     const path = write('hello.user.js', 'Shared Script');
@@ -797,11 +1311,14 @@ test.describe('other-versions panel', () => {
     );
     await expect(page.locator('#preview-actions')).toBeVisible();
     await expect(page.locator('#banner-slot')).toContainText('already installed');
-    // The container already holds this URL, so there is nothing to add.
-    await expect(page.locator('#install-btn')).toBeHidden();
-    // One copy, at this very URL: the buttons above are unambiguous, so
-    // the banner does not send the user to the table to pick.
-    await expect(page.locator('#banner-slot')).not.toContainText('Select which instance');
+    await expect(page.locator('#install-callout')).toBeHidden();
+    // The offer row keeps the default first and selected even though it
+    // already holds this script; Install waits for another pick.
+    const offer = page.locator(`${PANEL} tr.is-offer`);
+    await expect(offer.locator('select option:checked')).toHaveText('Scripts from local disk (already installed)');
+    await expect(offer.locator('select option:checked')).toBeDisabled();
+    await expect(offer.locator('button')).toBeDisabled();
+    await expect(offer).toContainText('Choose another collection');
     await page.close();
   });
 
@@ -817,16 +1334,17 @@ test.describe('other-versions panel', () => {
       `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`file://${path}`)}`,
     );
     await expect(page.locator('#preview-actions')).toBeVisible();
-    await expect(page.locator('#banner-slot')).toContainText('This script is not installed yet');
+    await expect(page.locator('#install-callout')).toBeVisible();
     await expect(page.locator('#install-btn')).toBeVisible();
+    await expect(page.locator('#banner-slot')).not.toContainText('installed');
     await expect(page.locator(PANEL)).toBeHidden();
     expect(await allScripts(sm)).toHaveLength(0);
     await page.close();
   });
 
-  // The banner says WHICH copies exist, because the buttons beside it
-  // only ever act on the one at this URL.
-  test('the preview banner names the multiple-copy case', async ({
+  // The banner says a copy exists and sends the reader to the table,
+  // which is where every copy — and the offer — is.
+  test('the preview banner covers the multiple-copy case', async ({
     extensionContext, extensionId, sm,
   }) => {
     const path = write('hello.user.js', 'Shared Script');
@@ -840,10 +1358,12 @@ test.describe('other-versions panel', () => {
     );
     await expect(page.locator('#preview-actions')).toBeVisible();
     await expect(page.locator('#banner-slot'))
-      .toContainText('This script is already installed multiple times');
+      .toContainText('This script is already installed');
     await expect(page.locator('#banner-slot'))
-      .toContainText('Select which instance to open, update or install below');
-    await expect(page.locator(ROWS)).toHaveCount(2);
+      .toContainText('Select which instance to update or install');
+    // Two copies plus the offer row.
+    await expect(page.locator(ROWS)).toHaveCount(3);
+    await expect(page.locator(`${PANEL} tr.is-offer`)).toHaveCount(1);
     await page.close();
   });
 
@@ -856,7 +1376,7 @@ test.describe('other-versions panel', () => {
   }) => {
     const ns = 'https://example.com/ns';
     // `.js`, not `.user.js`: previewable, but not a single-file input,
-    // so `installTarget` — and with it the offer row — is undefined.
+    // so `installOptions` — and with it the offer row — is undefined.
     const plain = dir.writeRaw(
       'plain.js',
       [
@@ -880,10 +1400,13 @@ test.describe('other-versions panel', () => {
       `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`file://${plain}`)}`,
     );
     await expect(page.locator('#preview-actions')).toBeVisible();
-    // Two same-identity rows below, and no offer row to install from.
+    // Two same-identity rows below, and no offer row to install from —
+    // so the callout stays, without a dropdown.
     await expect(page.locator(`${PANEL} tr.is-offer`)).toHaveCount(0);
     await expect(page.locator(ROWS)).toHaveCount(2);
+    await expect(page.locator('#install-callout')).toBeVisible();
     await expect(page.locator('#install-btn')).toBeVisible();
+    await expect(page.locator('#install-target')).toHaveCount(0);
     await page.close();
   });
 
@@ -904,16 +1427,80 @@ test.describe('other-versions panel', () => {
     );
     await expect(page.locator('#preview-actions')).toBeVisible();
     await expect(page.locator('#banner-slot'))
-      .toContainText('This script is already installed from a different URL');
-    await expect(page.locator('#banner-slot')).toContainText('Select which instance');
-    // Nothing installed at THIS url, so nothing for Open/Update to act
-    // on; Install has two targets counting the twin's row, so it too
-    // defers to the table.
+      .toContainText('This script is already installed');
+    await expect(page.locator('#banner-slot')).toContainText('Select which instance to update or install');
+    // Nothing installed at THIS url, so nothing for Open to act on; the
+    // table carries Install on its offer row.
     await expect(page.locator('#open-btn')).toBeHidden();
-    await expect(page.locator('#update-btn')).toBeHidden();
-    await expect(page.locator('#install-btn')).toBeHidden();
+    await expect(page.locator('#install-callout')).toBeHidden();
     await expect(page.locator(PANEL)).toContainText('Same script from a different URL');
     await expect(page.locator(`${PANEL} tr.is-offer button`)).toHaveText('Install');
+    // Nothing is installed at this URL, so there is no "This URL"
+    // section at all — it lists copies, and there are none. The offer
+    // is a section of its own below it either way.
+    await expect(page.locator(PANEL)).not.toContainText('This URL');
+    await expect(page.locator(`${PANEL} .versions-section-heading`)).toHaveCount(2);
+    await page.close();
+  });
+
+  // The fold. Collapsed, the panel is its heading line and the button —
+  // no rows, no tables. It lasts for the page only: a reload opens the
+  // panel again, and so does a panel that appears after having gone
+  // away, whatever the fold said before.
+  test('the versions panel folds to its heading for the life of the page', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const path = write('hello.user.js', 'Shared Script');
+    await sm.addCollection(dir.path);
+    await sm.addCollection(path);
+    await sm.syncNow();
+
+    const scripts = await allScripts(sm);
+    const standalone = scripts.find((s) => s.relativePath === path)!;
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/${viewer(standalone.id)}`);
+
+    const toggle = page.locator(`${PANEL} .versions-collapse`);
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator(ROWS)).toHaveCount(2);
+
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator(ROWS)).toHaveCount(0);
+    await expect(page.locator(`${PANEL} table`)).toHaveCount(0);
+    // Still headed, and the button keeps focus so a second press undoes
+    // the first.
+    await expect(page.locator(PANEL)).toContainText('Other versions of this script');
+    await expect(toggle).toBeFocused();
+    // One sentence for the pointer and the screen reader both — the
+    // glyph names nothing on its own.
+    await expect(toggle).toHaveAttribute('title', 'Show the other versions');
+    await expect(toggle).toHaveAttribute('aria-label', 'Show the other versions');
+
+    // A repaint nobody asked for — the panel rebuilds on any drawn
+    // copy's stored change — must not cost the button its focus.
+    const other = scripts.find((s) => s.id !== standalone.id)!;
+    await sm.setScriptEnabled(other.id, false);
+    await sm.syncNow();
+    await expect(page.locator(`${PANEL} .versions-collapse`)).toBeFocused();
+
+    // A reload opens the panel again: the fold was this page's alone.
+    await page.reload();
+    await expect(page.locator(`${PANEL} .versions-collapse`))
+      .toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator(ROWS)).toHaveCount(2);
+
+    // Folded, then the panel goes away (the other copy is removed) and
+    // comes back (it is installed again): it comes back open.
+    await page.goto(`chrome-extension://${extensionId}/${viewer(other.id)}`);
+    await page.locator(`${PANEL} .versions-collapse`).click();
+    await expect(page.locator(ROWS)).toHaveCount(0);
+    await sm.removeScript(standalone.id);
+    await expect(page.locator(PANEL)).toBeHidden();
+    await sm.installScript(path, { schemeDefault: true });
+    await expect(page.locator(`${PANEL} .versions-collapse`))
+      .toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator(ROWS)).toHaveCount(2);
     await page.close();
   });
 });
