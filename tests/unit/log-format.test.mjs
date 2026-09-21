@@ -66,7 +66,7 @@ test('formatLogCsv: header row, newest entry first', () => {
     entry({ timestamp: AT, message: 'first' }),
     entry({ timestamp: AT + 1000, message: 'second' }),
   ]).split('\n');
-  assert.equal(rows[0], 'Time,Level,Source,Message');
+  assert.equal(rows[0], 'Time,Status,Source,Message');
   assert.match(rows[1], /,second$/);
   assert.match(rows[2], /,first$/);
   // Trailing newline: the last element is the empty tail of the split.
@@ -74,7 +74,7 @@ test('formatLogCsv: header row, newest entry first', () => {
 });
 
 test('formatLogCsv: an empty log is just the header row', () => {
-  assert.equal(formatLogCsv([]), 'Time,Level,Source,Message\n');
+  assert.equal(formatLogCsv([]), 'Time,Status,Source,Message\n');
 });
 
 test('formatLogCsv: cells match what the pane renders', () => {
@@ -84,6 +84,13 @@ test('formatLogCsv: cells match what the pane renders', () => {
   assert.equal(row, `"${AT_TEXT}",error,"tab 4 · script-wrapper","Boom, it broke"`);
 });
 
+test('formatLogCsv: a state-carrying entry shows the badge word, not the level', () => {
+  const [, row] = formatLogCsv([
+    entry({ level: 'warning', state: 'refresh-failed', message: 'Refresh failed: HTTP 404' }),
+  ]).split('\n');
+  assert.equal(row, `"${AT_TEXT}","REFRESH FAILED",manual-refresh,"Refresh failed: HTTP 404"`);
+});
+
 test('formatLogCsv: a stack trace is one line, so line tools still work', () => {
   const rows = formatLogCsv([
     entry({ level: 'error', message: 'Error: boom\n    at f (main.user.js:3:9)' }),
@@ -91,7 +98,7 @@ test('formatLogCsv: a stack trace is one line, so line tools still work', () => 
   // Header + the one entry + the trailing newline's empty tail: a
   // multi-frame trace must not add lines of its own.
   assert.equal(rows.length, 3);
-  assert.equal(rows[0], 'Time,Level,Source,Message');
+  assert.equal(rows[0], 'Time,Status,Source,Message');
   assert.equal(
     rows[1],
     `"${AT_TEXT}",error,manual-refresh,"Error: boom\\n    at f (main.user.js:3:9)"`,

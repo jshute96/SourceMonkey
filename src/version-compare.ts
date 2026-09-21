@@ -100,11 +100,42 @@ export function compareVersions(a: string, b: string): -1 | 0 | 1 {
   return comparePre(va.pre, vb.pre);
 }
 
+// The prerelease tag a local copy's `@version` carries: `13.2` copied
+// for editing becomes `13.2-local`. Lives here, next to the comparison
+// that has to recognise it — see `versionRelation`.
+export const LOCAL_EDIT_TAG = 'local';
+
+// The `@version` a local copy is given: the original with `-local`
+// appended. Always a plain append — `splitVersion` keys on the FIRST
+// `-`, so `1.0-beta` becomes `1.0-beta-local`, whose single prerelease
+// segment `beta-local` string-compares above `beta` and stays below
+// the `1.0` release. That copy therefore reads as newer than its
+// source, the ordinary "local edit running ahead" case; only a source
+// with no tail needs the `edited` relation below.
+export function localEditVersion(version: string): string {
+  return `${version.trim()}-${LOCAL_EDIT_TAG}`;
+}
+
+// True when `version` is a local edit per `localEditVersion`: any
+// prerelease segment that is, or ends in, `-local`.
+export function isLocalEditVersion(version: string): boolean {
+  const { pre } = splitVersion(version.trim());
+  return pre.some((seg) => seg === LOCAL_EDIT_TAG || seg.endsWith(`-${LOCAL_EDIT_TAG}`));
+}
+
 // What the UI says about a version we found somewhere else, relative to
 // the copy we're running. `unknown` covers "one side didn't declare a
 // `@version`" — with nothing to compare, claiming "same" would be a
 // lie and claiming "newer" would be worse.
-export type VersionRelation = 'same' | 'newer' | 'older' | 'unknown';
+//
+// `edited` is the local-copy case: the other side is the release our
+// `-local` tail was appended to. By the prerelease rule that release
+// sorts ABOVE us, so without this it would read as `newer` — and the
+// copy the user just made for editing would immediately be reported
+// OUTDATED against the very version it was copied from. Deliberately
+// narrow: only a `-local` tail gets it, so a genuine `1.0-beta` whose
+// upstream has since shipped `1.0` still reads as outdated.
+export type VersionRelation = 'same' | 'newer' | 'older' | 'edited' | 'unknown';
 
 export function versionRelation(
   loaded: string | undefined,
@@ -112,7 +143,15 @@ export function versionRelation(
 ): VersionRelation {
   if (!loaded?.trim() || !other?.trim()) return 'unknown';
   const cmp = compareVersions(other, loaded);
-  if (cmp > 0) return 'newer';
+  if (cmp > 0) return isEditOf(loaded, other) ? 'edited' : 'newer';
   if (cmp < 0) return 'older';
   return 'same';
+}
+
+// `loaded` is a local edit of `other`: same main segments, `other` has
+// no prerelease tail, and ours is a `-local` one.
+function isEditOf(loaded: string, other: string): boolean {
+  const vl = splitVersion(loaded.trim());
+  const vo = splitVersion(other.trim());
+  return vo.pre.length === 0 && compareMain(vl.main, vo.main) === 0 && isLocalEditVersion(loaded);
 }

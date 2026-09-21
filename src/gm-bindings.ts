@@ -57,6 +57,26 @@ export interface GmInfoInput {
   excludes: readonly string[];
   grants: readonly string[];
   runAt?: string;
+  // Plain single-value headers TM exposes on `GM_info.script`
+  // (`author`, `homepage`, `icon`, `supportURL`, ...). `null` when the
+  // header is absent, matching TM.
+  passthrough: Record<GmInfoPassthroughTag, string | null>;
+  // `@require` refs in declaration order, under VM's key
+  // `script.require` (TM spells it `requires`; the header tag wins).
+  requires: readonly string[];
+  // `@resource` name → declared ref for `GM_info.script.resources`.
+  // Both TM and VM expose this list with the ref as written (not the
+  // resolved URL), and scripts iterate it to discover what was
+  // declared. (TM adds `content`/`meta`, VM's `url` is a blob.)
+  resourceList: readonly { name: string; url: string }[];
+  // `@connect` hosts.
+  connects: readonly string[];
+  // `@noframes` present. VM exposes it as `script.noframes`.
+  noframes: boolean;
+  // Snapshot of `navigator.userAgentData` (brands / mobile / platform),
+  // which TM and VM both put on GM_info. Read once by the caller in
+  // the SW; `null` where the API is missing (unit tests under Node).
+  userAgentData: UserAgentDataSnapshot | null;
   // Raw `// ==UserScript== ... // ==/UserScript==` block text. Many
   // scripts re-parse this to read metadata our parser doesn't expose,
   // so passing it through verbatim matches TM/VM behavior.
@@ -70,6 +90,20 @@ export interface GmInfoInput {
   // `GM_getResourceURL` resolve synchronously without an SW round-
   // trip. Empty object when the script declares no `@resource`.
   resources: Record<string, { b64: string; ct: string }>;
+}
+
+// Single-value headers exposed verbatim on `GM_info.script`, under
+// the keys TM uses. Shared with the injector so the two sides agree.
+export const GM_INFO_PASSTHROUGH_TAGS = [
+  'author', 'homepage', 'icon', 'icon64', 'supportURL', 'updateURL',
+  'downloadURL', 'copyright', 'license',
+] as const;
+export type GmInfoPassthroughTag = (typeof GM_INFO_PASSTHROUGH_TAGS)[number];
+
+export interface UserAgentDataSnapshot {
+  brands: { brand: string; version: string }[];
+  mobile: boolean;
+  platform: string;
 }
 
 // The compile-in result.
@@ -136,7 +170,12 @@ function emitGmInfo(info: GmInfoInput): string {
   // matches VM's behavior (TM exposes the raw declared form). Worth
   // revisiting if real compat reports show up. `matches` / `includes`
   // / `excludes` pass through verbatim.
+  //
+  // Key names: where TM and VM disagree (`run-at` vs `runAt`,
+  // `connects` vs `connect`) we use whichever matches the header tag.
   const scriptObject = {
+    // Passthrough first so the canonical keys below always win.
+    ...info.passthrough,
     name: info.name,
     version: info.version ?? '',
     namespace: info.namespace ?? '',
@@ -145,7 +184,11 @@ function emitGmInfo(info: GmInfoInput): string {
     includes: info.includes.slice(),
     excludes: info.excludes.slice(),
     grant: info.grants.slice(),
-    runAt: info.runAt ?? '',
+    'run-at': info.runAt ?? '',
+    require: info.requires.slice(),
+    resources: info.resourceList.map((r) => ({ name: r.name, url: r.url })),
+    connect: info.connects.slice(),
+    noframes: info.noframes,
   };
   const gmInfo = {
     script: scriptObject,
@@ -153,6 +196,10 @@ function emitGmInfo(info: GmInfoInput): string {
     version: info.scriptHandlerVersion,
     scriptMetaStr: info.scriptMetaStr,
     uuid: info.scriptId,
+    // Every SourceMonkey script is re-read from its collection source
+    // on refresh, so from the script's point of view it will update.
+    scriptWillUpdate: true,
+    userAgentData: info.userAgentData,
   };
   return `const GM_info = Object.freeze(${jsLit(gmInfo)});`;
 }
@@ -166,11 +213,24 @@ function emitGmInfo(info: GmInfoInput): string {
 // __SM_GM__.sendAsync. The call-site shape is stable across phases —
 // landing a new API only changes the SW-side dispatch.
 function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
-  // unsafeWindow is a passthrough binding, not a function. In
-  // USER_SCRIPT world there's no direct page-window access; expose
-  // `window` for now (Phase X will handle the real cross-world bridge
-  // if it ever lands). This matches "ungated" behavior — calling code
-  // gets a usable object — but it does NOT reach the page's globals.
+  // unsafeWindow is a passthrough binding, not a function — the same
+  // `const unsafeWindow = window;` in both worlds, because what makes
+  // it correct is the WORLD, not the binding.
+  //
+  //   - MAIN world: `window` IS the page's window, so this is the real
+  //     thing. `resolveWorld` sends every script that asks for
+  //     `unsafeWindow` here for exactly that reason — whether it asked
+  //     with a `@grant` line or just by naming it (see
+  //     src/unsafe-window-use.ts).
+  //   - USER_SCRIPT world: reachable only when the script also declared
+  //     `@inject-into content`, i.e. explicitly asked for isolation.
+  //     `window` is then the isolated realm's, NOT the page's — matching
+  //     Violentmonkey's content mode. `extractStartupLogs` emits a
+  //     warning for that combination so it isn't a silent wrong answer.
+  //
+  // No cross-world proxy is possible: property access on unsafeWindow is
+  // synchronous and Chrome exposes no synchronous channel between an
+  // isolated world and the page's realm.
   if (spec.subsystem === 'unsafe-window') {
     return `const unsafeWindow = window;`;
   }
@@ -222,9 +282,9 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   if (spec.subsystem === 'dom') {
     switch (spec.name) {
       case 'GM_addStyle':
-        return `const GM_addStyle = function (css) { return window.__SM_GM__.dom.addStyle(css); };`;
+        return `const GM_addStyle = function (css) { return window.__SM_GM__.dom.addStyle(${jsLit(scriptId)}, css); };`;
       case 'GM_addElement':
-        return `const GM_addElement = function (parentOrTag, tagOrAttrs, attrs) { return window.__SM_GM__.dom.addElement(parentOrTag, tagOrAttrs, attrs); };`;
+        return `const GM_addElement = function (parentOrTag, tagOrAttrs, attrs) { return window.__SM_GM__.dom.addElement(${jsLit(scriptId)}, parentOrTag, tagOrAttrs, attrs); };`;
     }
   }
   // Clipboard subsystem: navigator.clipboard.writeText via the
@@ -523,13 +583,18 @@ export function emitGmBindings(
     // userscript that started with stale data would silently
     // overwrite the user's real values with defaults.
     //
-    // When the snapshot is missing (SW unreachable past the
-    // wrapper's safety timeout, or handleCheckPending errored): log
-    // via console.info (not .error — see userscript-prelude.js;
-    // injected .error/.warn leak into chrome://extensions/?errors),
-    // send sm:error so the failure surfaces on the per-script log +
-    // badge, and `return` from the @run-at callback so the user body
-    // never runs. The user can recover by reloading.
+    // When the snapshot is missing: log via console.info (not .error —
+    // see userscript-prelude.js; injected .error/.warn leak into
+    // chrome://extensions/?errors), send sm:error so the failure
+    // surfaces on the per-script log + badge, and `return` from the
+    // @run-at callback so the user body never runs. The user can
+    // recover by reloading.
+    //
+    // Several ways to get here, which is why the message doesn't assert
+    // one cause: the SW was unreachable past the wrapper's safety
+    // timeout, `handleCheckPending` errored, or — for a MAIN-world
+    // script only — the SW's `bridgeMayActAs` gate refused to hand the
+    // values over the bridge (see docs/injection.md#gm_-in-main-world).
     //
     // One string in both places. As two literals they had already
     // drifted — the Log copy lost the "reload" half, which is the only

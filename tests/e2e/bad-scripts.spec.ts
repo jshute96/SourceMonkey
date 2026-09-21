@@ -50,16 +50,17 @@ const GM_INFO_DIR = path.resolve(__dirname, '..', 'examples', 'gm-info');
 async function openViewer(extensionContext: BrowserContext, extensionId: string, scriptId: string): Promise<Page> {
   const page = await extensionContext.newPage();
   await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${scriptId}`);
-  // render() always sets document.title to `<relativePath> — SourceMonkey`,
+  // render() always sets document.title to `<label> | SourceMonkey`,
   // even for the error cases (empty files, no-header files) where the
   // code box has no syntax tokens to wait on. Using the title as the
   // "viewer has hydrated" signal lets us cover both well-formed and
   // malformed scripts with the same wait.
   //
-  // Match the suffix, not just the dash: the page ships a static
-  // `<title>SourceMonkey — Userscript</title>`, so an `includes('—')`
-  // test is satisfied before any script has run and waits for nothing.
-  await page.waitForFunction(() => document.title.endsWith('— SourceMonkey'));
+  // Match the whole suffix, not just the separator: the page ships a
+  // static `<title>SourceMonkey | Userscript</title>`, so an
+  // `includes('|')` test is satisfied before any script has run and
+  // waits for nothing.
+  await page.waitForFunction(() => document.title.endsWith('| SourceMonkey'));
   return page;
 }
 

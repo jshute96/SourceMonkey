@@ -16,13 +16,14 @@
 // `window` with the page, the library must stay a local of the wrap
 // function and not leak onto the page's global object.
 //
-// Runs under BOTH managers, with a deliberately different expected
+// Runs under every manager, with a deliberately different expected
 // count each:
 //
 //   - `page-world` / `content-world` `@require` lib.js by absolute
 //     raw.githubusercontent.com URL, the only form TM/VM/GM accept.
-//   - `relative-require` uses a relative ref, a SourceMonkey
-//     extension. SM resolves it (3 of 3); TM cannot (2 of 3).
+//   - `relative-require` uses a relative ref. SM resolves it against
+//     the script's own URL and VM against the install URL (3 of 3);
+//     TM cannot (2 of 3).
 //
 // NETWORK DEPENDENCY: because the portable pair name an absolute URL,
 // both managers now fetch lib.js from raw.githubusercontent.com at
@@ -49,12 +50,18 @@ test.describe('examples / require-scope', () => {
   }) => {
     // Blocked on repo visibility, not on anything in this tree: the
     // absolute @require 404s while jshute96/SourceMonkey is private,
-    // which takes the two portable scripts down under BOTH managers.
+    // which takes the two portable scripts down under every manager.
     // Verified by control run — point the requires back at `./lib.js`
     // and every assertion below passes at 3 of 3.
     test.fixme(true, 'Absolute @require 404s until the repo is public — see TODO.md, Cross-manager coverage');
 
-    const isSourceMonkey = setup.manager === 'sourcemonkey';
+    // Relative `@require` refs resolve against the script's own URL
+    // under SM, and against the install URL under VM — the harness
+    // installs into VM from the fixture server, so VM fetches the
+    // library for real. TM takes absolute URLs only, and installs
+    // these examples from a local file, so it has no base URL to
+    // resolve against even in principle.
+    const resolvesRelative = setup.manager !== 'tampermonkey';
 
     await setup.installScriptsFrom(__dirname);
 
@@ -69,7 +76,7 @@ test.describe('examples / require-scope', () => {
     // lib.js, so it doubles as proof the require reached each script —
     // the page's own initial text reads "0 of 3", and only a script
     // that successfully called into the library can change it.
-    const expectedRan = isSourceMonkey ? 3 : 2;
+    const expectedRan = resolvesRelative ? 3 : 2;
     await expect(page.locator('#runStatus'))
       .toHaveText(`${expectedRan} of 3 userscripts ran. See log below.`);
     await expect(page.locator('#runStatus')).toHaveClass(/\bran\b/);
@@ -80,7 +87,7 @@ test.describe('examples / require-scope', () => {
     // pass vacuously at t=0 if it ran before anything had a chance to
     // execute. The status assertion above is what waits.
     await expect(page.locator('#log li[data-script="relative"]'))
-      .toHaveCount(isSourceMonkey ? 1 : 0);
+      .toHaveCount(resolvesRelative ? 1 : 0);
 
     // MAIN world: the require's bindings are all in scope, and the
     // script really is in the page's world.
@@ -107,11 +114,11 @@ test.describe('examples / require-scope', () => {
     // Isolated world — the page's global is not visible from here.
     await expect(contentRow).toContainText('"seesPageGlobal":"(not visible)"');
 
-    // SourceMonkey only: the relative-require script resolved BOTH of
-    // its refs — `./lib.js` (the same library the portable pair reach
-    // by absolute URL) and `./relative-lib.js` (reachable no other
-    // way) — and both landed in one scope with the body.
-    if (isSourceMonkey) {
+    // SM and VM: the relative-require script resolved BOTH of its
+    // refs — `./lib.js` (the same library the portable pair reach by
+    // absolute URL) and `./relative-lib.js` (reachable no other way)
+    // — and both landed in one scope with the body.
+    if (resolvesRelative) {
       const relativeRow = page.locator('#log li[data-script="relative"]');
       await expect(relativeRow).toContainText('"fromSharedConst":"const from lib.js"');
       await expect(relativeRow).toContainText('class RequireScopeGreeter reached the relative-require world');

@@ -15,10 +15,14 @@
 - Hard cap: `LOG_CAP` (currently 500). Oldest entries are dropped on
   overflow.
 - Sibling key `loglevel:<scriptId>` records the **highest level any
-  entry in this log has carried so far** (`'info' | 'warning' |
-  'error'`). Bumped on `appendScriptLog` only when the new entry's
-  level is strictly higher than the stored one; cleared on
-  `clearScriptLog` alongside the entries. Lives next to the log
+  script-originated entry in this log has carried so far** (`'info' |
+  'warning' | 'error'`). Bumped on `appendScriptLog` only when the new
+  entry's level is strictly higher than the stored one **and the entry
+  carries no `state`** (see [Entry shape](#entry-shape)); cleared on
+  `clearScriptLog` alongside the entries, and by an entry with
+  `resetsLogLevel` (see
+  [A new version starts the badge over](#a-new-version-starts-the-badge-over)).
+  Lives next to the log
   (rather than on the `StoredScript` row) so its lifetime exactly
   matches the entries that back it — Chrome shutdown drops both
   together. The collections page reads every script's row in one bulk
@@ -44,8 +48,63 @@ interface LogEntry {
   tabId?: number;          // present when the event originated from injected code
   message: string;         // human-readable; multiline OK
   location?: DiagnosticLocation;  // a place in the script's own files
+  state?: LoadState;       // the Status-badge state this event moved the script into
+  resetsLogLevel?: boolean;  // clears `loglevel:` as it is written — a fresh start
 }
 ```
+
+`state` is set on entries that record a **state transition** rather
+than something the script did. Type `LoadState` (`script-display.ts`):
+`refresh-failed`, `invalid`, `rejected`, `outdated`, and
+`ok` for the matching recovery — `warning` / `error` are excluded
+because they are derived *from* the sentinel. It drives two things:
+
+- The Log tab's Status column shows the badge word (`REFRESH FAILED`,
+  `OK`) instead of the level, so the entry that put a badge there reads
+  like the badge.
+- The entry never bumps `loglevel:`.
+  - The badge for a state comes from the row (`status`,
+    `refreshError`, the rejection map, the probes) and clears when the
+    row recovers.
+  - WARNING / ERROR are left to mean "the script itself did something":
+    a runtime error, a parse-time diagnostic, a refused `GM_download`.
+  - A transient refresh failure therefore leaves no residue once it
+    recovers.
+
+### A new version starts the badge over
+
+`resetsLogLevel` is set on the `Loaded new content` row, and clearing
+`loglevel:` rides on that entry's own queued write:
+
+- The old version's runtime errors are not evidence about the new one,
+  and a developer who just fixed one needs the badge to answer "did
+  that work?", not "did it ever fail?".
+- Earlier entries stay in the Log; only the sentinel resets. The row
+  shows `OK` in the Status column, since that is what the badge reads
+  once it lands.
+- Ordering matters and is guaranteed by the queue: the new version's
+  `parser` diagnostics are appended right after and bump the sentinel
+  afresh, so a fix that introduces a header warning still reads
+  WARNING.
+- Not set on a recovery row (`Refresh succeeded again`, the rejection
+  clearing): the same code is still running there, and its errors still
+  stand.
+- A tab still running the old version keeps reporting for as long as
+  it is open, and a report landing after the reset re-badges the
+  script. Reloading that tab stops the reports but does not reset
+  again (the bytes haven't changed); the badge then stays until the
+  next new version or Clear log. Noted in TODO.md.
+
+Row vs. entry, deliberately separate:
+
+- The row is the durable, persisted truth of what state the script is
+  in.
+- The entry is the session-scoped record of when it got there.
+- Every write that moves the row into a load state (or back) appends
+  the entry with that `state` in the same step.
+- Across a restart, `replayScriptLogsAtBoot` restates whatever is
+  still badged — `invalid` / `refreshError` rows and a
+  persisted OUTDATED probe — so a badge never outlives its line.
 
 The viewer's table renders `tabId · source` together when `tabId` is
 present, and just `source` otherwise.
@@ -71,8 +130,8 @@ Load pipeline (service-worker side, never carries a `tabId`):
 | `manual-refresh` | `emitScriptOutcomeLog` | The user clicked Refresh / Refresh All. |
 | `background-refresh` | same | An opportunistic check, triggered by a page navigation. |
 | `add` | `emitInitialLoadLog` | Failed on its first load, when the script was added. |
-| `extension-startup` | `ensureLoadStateInLogTab` | Restated after a browser restart — see below. |
-| `parser` | `ensureStartupLogsInLogTab` | Parse-time diagnostics from `script.startupLogs`. |
+| `extension-startup` | `ensureLoadStateInLogTab`, `ensureOutdatedInLogTab` | Restated after a browser restart — see below. |
+| `parser` | `ensureStartupLogsInLogTab`, and the refresh paths | Parse-time diagnostics from `script.startupLogs`: when new content lands, restated on a manual no-change refresh, and replayed at boot. |
 | `version-probe` | `probeOneScript` | An `@updateURL` / `@downloadURL` elsewhere declares a newer `@version`. |
 
 Registration:
@@ -87,6 +146,7 @@ Runtime — always carries a `tabId`, so these render as `tab 17 · …`:
 | --- | --- | --- |
 | `script-wrapper` | the `sm:*` handlers in `background.ts` | Start, reload-swap, abandon, and uncaught script errors. |
 | `gm-log` | the `SM_GM_LOG_MSG` handler | A `GM_log()` call from the script itself. |
+| `gm-dom` | the `SM_GM_DOM_BLOCKED_MSG` handler | The page's CSP refused a style `GM_addStyle` / `GM_addElement` added — only possible for a script running in the page (MAIN world). Once per script per document. |
 | `gm-download` | `sendDownloadEvent` in `background.ts` | A `GM_download()` call that was refused, interrupted, or timed out. Successful downloads are not logged — a batch downloader would flood the capped log. |
 | `gm-window` | `handleWindowControl` in `background.ts` | A granted `window.close()` / `window.focus()` the browser refused. A successful close takes the page (and its console) with it, so only failures land here. |
 
@@ -109,7 +169,8 @@ Two naming notes worth keeping:
 
 - `appendScriptLog(scriptId, input)` — async write. Promise resolves
   once the entry is persisted. Also bumps `loglevel:<scriptId>` when
-  the new entry's level exceeds the stored max.
+  the new entry's level exceeds the stored max, or clears it when the
+  entry `resetsLogLevel`.
 - `logScriptEvent(scriptId, input)` — fire-and-forget convenience.
   Swallows errors because the log isn't load-bearing.
 - `getScriptLog(scriptId)` — async read.
@@ -120,6 +181,31 @@ Two naming notes worth keeping:
 - `getAllMaxLogLevels()` — bulk read returning a `Map<scriptId,
   LogLevel>`. Used by the collections page to drive every row's Status
   column in one storage round trip.
+
+### The worker owns the writes
+
+`log:<id>` is read-modify-written and the per-script promise chain that
+serializes those writes is module state — so it only orders the writes
+made in one JS context.
+
+- Both contexts write. The worker logs injection, refresh and probe
+  events; a page logs through the `script-store` code it shares with the
+  worker (an install's first-load line), and the viewer's Clear log
+  button removes the key.
+- Two chains on one key lose entries, and let an append that was already
+  in flight resurrect a log the user just cleared.
+- So a page hands every **mutation** to the worker
+  (`SCRIPT_LOG_WRITE_MESSAGE`, handled in `background.ts`) and the
+  worker's chain is the only one that touches the key. Reads don't hop —
+  they aren't read-modify-write.
+- The page falls back to writing locally unless the worker answers
+  `true`: a visible entry is worth more than the ordering, and a handler
+  that threw resolves the message rather than rejecting it, so the ack
+  has to be read and not just awaited.
+- What the chain guarantees is that the worker's chain orders everything
+  reaching it — not that one page's appends are ordered. Two writes from
+  a page are two messages, and a write that fell back is on a different
+  chain entirely.
 
 ## Status column promotion
 
@@ -142,28 +228,21 @@ reason is worse than no badge.
 `loadStateLogEntry` (`src/script-store.ts`) is the single mapping from
 a row's persisted state to the entry it warrants:
 
-| Row state | Level | Message |
-| --- | --- | --- |
-| `status: 'invalid'` | error | the row's `errorMessage` |
-| `status: 'missing'` | error | `Script file is missing` |
-| `refreshError` (status still `ok`) | warning | `Refresh failed: <reason>` |
-| otherwise | — | nothing to say |
+| Row state | `state` | Level | Message |
+| --- | --- | --- | --- |
+| `status: 'invalid'` | `invalid` | error | the row's `errorMessage` |
+| `refreshError` (status still `ok`) | `refresh-failed` | warning | `Refresh failed: <reason>` |
+| otherwise | — | — | nothing to say |
 
 Why those levels:
 
-- `invalid` / `missing` mean **the script cannot run** — `invalid`
-  rows are never injected and `missing` rows are auto-disabled on the
-  transition. Error matches what the badge already claims.
+- `invalid` means **the script cannot run** — such rows are never
+  injected. Error matches what the badge already claims.
 - `refreshError` means the script **is** running, from its
   last-known-good copy; only the update failed. Warning, not error.
-- The level choice can't double-count against the badge while the
-  failure lasts: `effectiveScriptStatus` returns INVALID / MISSING /
-  REFRESH FAILED before it ever consults the max log level (see
-  [storage.md](storage.md#displayed-status-ui-level)). It only shows
-  through *after* recovery, where the `loglevel:` sentinel's
-  monotonicity leaves a residual badge. Warning is not right there
-  either — the honest answer is OK — but it is the least wrong option
-  available until the sentinel stops being monotonic (see `TODO.md`).
+- The level never reaches the badge: these entries carry a `state`, so
+  they leave the `loglevel:` sentinel alone. The badge is INVALID /
+  REFRESH FAILED straight from the row while the failure lasts, and OK the moment the row recovers.
 
 Every caller shares that mapping, so the same failure reads the same
 way whichever path reported it:
@@ -179,10 +258,15 @@ Beyond the load pipeline:
 - **Rejected registration** (`registerWithFallback` in
   `src/injector.ts`, source `chrome-injector`) — Chrome refused the
   script's spec, so it never runs even though its row loaded fine.
-  Error level. The status cell says REJECTED for as long as the
-  refusal stands; the Log is where the reason gets a timestamp and a
-  permanent home. See
+  Error level, `state: 'rejected'`. The status cell says REJECTED for
+  as long as the refusal stands; the Log is where the reason gets a
+  timestamp and a permanent home. See
   [injection.md](injection.md#rejected-registrations).
+- **Outdated** (`probeOneScript` in `src/script-updater.ts`, source
+  `version-probe`) — an upstream copy moved ahead of ours. Warning
+  level, `state: 'outdated'`; the probe going quiet again logs
+  `Up to date again` with `state: 'ok'`. Restated at boot with source
+  `extension-startup`, since the probe persists while the log doesn't.
 
 ### Collection-level failures
 
@@ -192,9 +276,8 @@ collection. They are always **info**, never warning/error:
 - The badge for a collection-level problem belongs on the collection row,
   which already renders `scanError`. These entries exist so a user
   reading one script's Log can see why it wasn't checked.
-- The `loglevel:` sentinel is monotonic within a session, so anything
-  higher would leave every script under the collection badged WARNING for
-  the rest of the session after one transient listing failure.
+- WARNING / ERROR via the `loglevel:` sentinel are reserved for things
+  the script itself did; a listing failure is not that.
 
 What gets fanned out:
 
@@ -307,7 +390,6 @@ longer true. So the transition back to healthy gets an info entry
 naming what recovered:
 
 - `Loads cleanly again (was invalid)`
-- `Script file is back`
 - `Refresh succeeded again (collection is reachable)`
 - `This collection is readable again`
 - `Chrome accepted this script's registration — it runs again`
@@ -318,10 +400,10 @@ host that starts answering again clears the failure without bumping
 `loadedAt`, so there's no `Loaded new content` row to explain the
 badge going green.
 
-A recovery row does not pull the Status cell back to OK by itself:
-`loglevel:` is monotonic within a session, so the earlier error rows
-hold it at ERROR until "Clear log". That applies to every entry in the
-list above, and is tracked in TODO.md.
+Every recovery row carries `state: 'ok'`, and the failure it answers
+carried its own `state`, so neither touched the `loglevel:` sentinel:
+the Status cell reads OK again as soon as the row does, with nothing to
+clear.
 
 ## Opportunistic vs manual
 
@@ -355,8 +437,6 @@ tracked in `TODO.md`.
     `invalid`, covering metadata-block parse failures, header
     validation, fetch failures with no good copy to fall back on, and
     `@require` / `@resource` resolve or fetch failures.
-  - `Script file is missing` (error) — the file vanished from its
-    collection's listing.
   - `Refresh failed: <reason>` (warning) — a script that's still
     running from its cached copy but whose latest refresh failed
     (`status: ok` + `refreshError`; see
@@ -375,9 +455,11 @@ tracked in `TODO.md`.
   - All of the rows above are outcomes of a real check, so they are
     appended unconditionally — see
     [When the log stays quiet](#when-the-log-stays-quiet).
-  - `This script was removed while it was being refreshed` (warning) —
-    the script row was deleted while its refresh was in flight. Can
-    only happen once per row.
+  - A row that went away during its check (deleted by the user, or
+    dropped by the check itself because the directory no longer lists
+    its file) gets **no entry**: its Log was cleared with the row, and
+    an entry would be an orphan. The service-worker console line is the
+    record.
   - Collection / refresh-all paths route per-script outcomes through the
     same helper so each affected script gets one entry.
 - **Injector** (`registerWithFallback` in `src/injector.ts`, source
@@ -398,14 +480,15 @@ tracked in `TODO.md`.
   - The same load-failure entry, for a script that lands broken on its
     very first load. The add path bypasses the updater, so without
     this a brand-new INVALID row would have an empty Log.
-- **Boot replay** (`replayScriptLogsAtBoot`, source `boot`):
+- **Boot replay** (`replayScriptLogsAtBoot`, source `extension-startup`):
   - The same load-failure entry, restated once per Chrome session for
     any row that is *still* broken. `chrome.storage.session` is wiped
     on shutdown while the row that explains the badge is not, and the
     refresh paths only log on a state change — so without this a
     long-broken script would show a red badge over an empty Log.
-- **Update probes** (`src/script-updater.ts`, source
-  `probe-manual` / `probe-opportunistic`):
+  - The OUTDATED row too, for a row whose persisted probe is still
+    ahead of it — same reasoning, same wording as the probe's own row.
+- **Update probes** (`src/script-updater.ts`, source `version-probe`):
   - `Newer version <v> at <update|download> URL (running <v>) — <url>`
     (warning) — an `@updateURL` / `@downloadURL` declares a version
     ahead of the copy we run. Emitted only when the newer version
@@ -419,10 +502,16 @@ tracked in `TODO.md`.
     once per loaded content version, immediately after the
     `Loaded new content` row. Detection happens at parse time and is
     persisted on `StoredScript.startupLogs`, so SW restarts don't
-    re-fire the row. A refresh that doesn't change the bytes adds
-    nothing. Also mirrored into the page DevTools console via the
-    wrapper's [startup-log channel](logging.md#page-console-startup-logs)
+    re-fire the row. Also mirrored into the page DevTools console via
+    the wrapper's [startup-log channel](logging.md#page-console-startup-logs)
     on every matching page load.
+  - A **manual** refresh that finds no change restates them, after
+    its `Checked for updates — no change` line. They describe the
+    installed content, not an event, so they stay true until it
+    changes; logging them only when content lands left a permanently
+    misconfigured script with no Log line at all once that row
+    scrolled away or `Clear log` wiped it. A background check restates
+    nothing, same as the no-change line itself.
   - On the first SW boot of a fresh Chrome session, a
     [boot-replay pass](logging.md#boot-replay) appends parser rows
     for every persisted script — without this the Log tab would be
@@ -531,15 +620,20 @@ tracked in `TODO.md`.
 ## Export
 
 The Log tab's **Save** and **Copy** buttons hand out the same CSV text,
-built by `formatLogCsv` in `src/log-format.ts`.
+built by `formatLogCsv` in `src/log-format.ts`. (Ctrl-A on the tab
+selects the table itself instead — see
+[script-viewer.md](script-viewer.md#layout).)
 
 Format:
 
-- Header row `Time,Level,Source,Message`, then one row per entry.
+- Header row `Time,Status,Source,Message`, then one row per entry.
 - **Newest first**, matching the table — an export is a copy of what
   the reader is looking at.
 - Columns carry the table's cells:
   - `Time` — local wall clock, `2026-08-05 14:03:22.017`.
+  - `Status` — the badge word for a state-carrying entry
+    (`REFRESH FAILED`, `OK`), else the level (`info` / `warning` /
+    `error`).
   - `Source` — `tab 17 · script-wrapper` when the entry names a tab.
   - `Message` — as rendered, not as stored:
     - a derived `location` is flattened into the text as

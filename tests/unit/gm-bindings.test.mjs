@@ -20,6 +20,12 @@ function makeInfo(over = {}) {
     scriptMetaStr: '// ==UserScript==\n// @name Hello\n// ==/UserScript==',
     scriptHandlerVersion: '0.0.1',
     resources: {},
+    passthrough: {},
+    requires: [],
+    resourceList: [],
+    connects: [],
+    noframes: false,
+    userAgentData: null,
     ...over,
   };
 }
@@ -289,6 +295,37 @@ test('emitGmBindings: granted output names match the input order (filtered to su
     makeInfo({ grants: ['GM_setValue', 'GM_addStyle'] }),
   );
   assert.deepEqual(out.granted, ['GM_setValue', 'GM_addStyle']);
+});
+
+test('emitGmBindings: GM_info.script carries require/resources/passthrough headers', () => {
+  const out = emitGmBindings(['GM_info'], makeInfo({
+    passthrough: { author: 'Ada', homepage: null },
+    requires: ['https://cdn.example/lib.js'],
+    resourceList: [{ name: 'css', url: 'https://cdn.example/a.css' }],
+    connects: ['example.com'],
+    noframes: true,
+  }));
+  assert.match(out.js, /"connect":\["example\.com"\]/);
+  // Header-tag spelling wins where TM and VM disagree.
+  assert.match(out.js, /"run-at":"document_idle"/);
+  assert.match(out.js, /"noframes":true/);
+  assert.match(out.js, /"require":\["https:\/\/cdn\.example\/lib\.js"\]/);
+  assert.match(out.js, /"resources":\[\{"name":"css","url":"https:\/\/cdn\.example\/a\.css"\}\]/);
+  assert.match(out.js, /"author":"Ada"/);
+  // Absent headers are present-but-null, as under TM.
+  assert.match(out.js, /"homepage":null/);
+  assert.match(out.js, /"scriptWillUpdate":true/);
+  assert.match(out.js, /"userAgentData":null/);
+});
+
+test('emitGmBindings: userAgentData snapshot is baked in; passthrough cannot override canonical keys', () => {
+  const out = emitGmBindings(['GM_info'], makeInfo({
+    userAgentData: { brands: [{ brand: 'Chromium', version: '153' }], mobile: false, platform: 'Linux' },
+    passthrough: { name: 'evil' },
+  }));
+  assert.match(out.js, /"userAgentData":\{"brands":\[\{"brand":"Chromium","version":"153"\}\],"mobile":false,"platform":"Linux"\}/);
+  assert.match(out.js, /"name":"Hello"/);
+  assert.doesNotMatch(out.js, /"name":"evil"/);
 });
 
 test('emitGmBindings: escapes </script> in scriptMetaStr to dodge inline-injection breakouts', () => {

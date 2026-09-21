@@ -47,9 +47,17 @@ export interface TabMatchState {
   // implicitly when the document is replaced (new documentId → new
   // state). Optional so older persisted records still parse.
   staleScriptIds?: string[];
+  // True when this document was loaded via the action menu's "Reload
+  // page with no userscripts": the SW answered every wrapper's
+  // check-pending with `skip`, so no `actual` report is coming. The
+  // badge shows the expected scripts as NOT LOADED (grey) instead of
+  // MISSING (orange) — nothing is wrong, the user asked for this.
+  // Dies with the document like everything else on this state.
+  scriptsSkipped?: boolean;
 }
 
-export type RowStatus = 'OK' | 'ERROR' | 'REJECTED' | 'MISSING' | 'UNEXPECTED' | 'RELOAD';
+export type RowStatus =
+  | 'OK' | 'ERROR' | 'REJECTED' | 'MISSING' | 'UNEXPECTED' | 'RELOAD' | 'NOT_LOADED';
 
 export interface BadgeRow {
   id: string;
@@ -77,10 +85,17 @@ export const BADGE_RED = '#d32f2f';
 // purple-A400) so the badge reads as a vivid "something changed"
 // signal, not a muted/inactive color.
 export const BADGE_PURPLE = '#d500f9';
+// Grey = the user reloaded this page with no userscripts, so nothing
+// ran on purpose. Loses to every other color: an UNEXPECTED report on a
+// skipped document is still a disagreement worth orange.
+export const BADGE_GREY = '#757575';
 
 // Tooltip status string for RELOAD rows. Kept verbose because the
 // tooltip is the only place the user is told *what to do*.
 const RELOAD_LABEL = 'Reload to update';
+// Tooltip status string for NOT_LOADED rows — the enum's underscore
+// is not for display.
+const NOT_LOADED_LABEL = 'NOT LOADED';
 
 // Pure: derive the badge view from a tab's combined expected + actual.
 //
@@ -91,6 +106,8 @@ const RELOAD_LABEL = 'Reload to update';
 //       REJECTED   — expected, never started, and Chrome is refusing to
 //                    register it (so it never will) — see
 //                    src/script-rejection.ts
+//       NOT_LOADED — expected, never started, on a document the user
+//                    loaded with "Reload page with no userscripts"
 //       MISSING    — expected but no `actual` entry yet
 //       UNEXPECTED — actual `started` but not in our expected set
 //       RELOAD     — a script that's started here, but its on-disk
@@ -99,6 +116,7 @@ const RELOAD_LABEL = 'Reload to update';
 //       RED    if any script reported ERROR or is REJECTED
 //       PURPLE else, if any RELOAD row
 //       ORANGE else, if any MISSING or UNEXPECTED
+//       GREY   else, if any NOT_LOADED row
 //       GREEN  otherwise
 //   - Badge text is the size of the union of expected ∪ actual IDs.
 //
@@ -130,6 +148,7 @@ export function computeBadge(
   let anyError = false;
   let anyMismatch = false;
   let anyReload = false;
+  let anySkipped = false;
   const rows: BadgeRow[] = [];
   for (const id of allIds) {
     const expected = expectedById.get(id);
@@ -151,6 +170,13 @@ export function computeBadge(
       status = 'ERROR';
       message = actual.message;
       anyError = true;
+    } else if (expected && !actual && state.scriptsSkipped) {
+      // Settled too, but by the user: the SW told every wrapper on this
+      // document to skip, so "never reported" is the intended outcome.
+      // Checked ahead of REJECTED — a refused registration didn't get
+      // to matter on a document where nothing was going to run.
+      status = 'NOT_LOADED';
+      anySkipped = true;
     } else if (expected && !actual && rejected.has(id)) {
       // Settled, not provisional: Chrome refused the registration, so
       // no wrapper is coming. Red, like an error.
@@ -173,6 +199,7 @@ export function computeBadge(
   if (anyError) color = BADGE_RED;
   else if (anyReload) color = BADGE_PURPLE;
   else if (anyMismatch) color = BADGE_ORANGE;
+  else if (anySkipped) color = BADGE_GREY;
 
   const title = ['SourceMonkey', ...rows.map((r) => formatRowLabel(r))].join('\n');
 
@@ -186,7 +213,9 @@ export function formatRowLabel(row: BadgeRow): string {
 }
 
 function formatStatus(s: RowStatus): string {
-  return s === 'RELOAD' ? RELOAD_LABEL : s;
+  if (s === 'RELOAD') return RELOAD_LABEL;
+  if (s === 'NOT_LOADED') return NOT_LOADED_LABEL;
+  return s;
 }
 
 // ---------- Per-tab document history ----------

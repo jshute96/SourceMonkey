@@ -22,10 +22,23 @@ import { test, expect } from '../../fixtures/manager';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Violentmonkey saves a download by clicking an anchor on a
+// `blob:chrome-extension://` URL from its own extension page. In
+// headless Chromium 153 (Playwright's bundled build and the system
+// Chrome alike) the *browser process* segfaults about half the time
+// the moment such a download completes, taking every open page with
+// it. No download-handling setting or flag on our side changes that,
+// and Tampermonkey (which downloads through `chrome.downloads`) is
+// unaffected, so the tests that let a download run to completion sit
+// out under VM. Re-check when the bundled Chromium moves past 153.
+const VM_DOWNLOAD_CRASH =
+  'A completed Violentmonkey download crashes headless Chromium 153';
+
 test.describe('examples / gm-download', () => {
   test('downloading a same-origin file reports a callback', async ({
     extensionContext, fixtureServer, setup,
   }) => {
+    test.skip(setup.manager === 'violentmonkey', VM_DOWNLOAD_CRASH);
     await setup.installScriptsFrom(__dirname);
 
     const page = await extensionContext.newPage();
@@ -43,6 +56,7 @@ test.describe('examples / gm-download', () => {
   test('a data: URL download reports a callback', async ({
     extensionContext, fixtureServer, setup,
   }) => {
+    test.skip(setup.manager === 'violentmonkey', VM_DOWNLOAD_CRASH);
     await setup.installScriptsFrom(__dirname);
 
     const page = await extensionContext.newPage();

@@ -41,13 +41,17 @@ test.describe('userscript viewer link rendering', () => {
     const matchRow = page.locator('#header-summary dt', { hasText: 'Match' }).locator('+ dd');
 
     // First pattern keeps the literal leading path segment.
-    const first = matchRow.locator('li').nth(0).locator('a');
+    const first = matchRow.locator('li').nth(0).locator('a.code-link');
     await expect(first).toHaveText('https://example.com/posts/*/edit');
     await expect(first).toHaveAttribute('href', 'https://example.com/posts/');
     await expect(first).toHaveAttribute('target', '_blank');
+    // Its site icon, before the text, opens the same URL.
+    const firstIcon = matchRow.locator('li').nth(0).locator('.pattern-icon a.site-icon-inner');
+    await expect(firstIcon).toHaveAttribute('href', 'https://example.com/posts/');
+    await expect(firstIcon.locator('svg.site-icon-globe')).toBeVisible();
 
     // Subdomain wildcard is dewildcarded to the apex.
-    const second = matchRow.locator('li').nth(1).locator('a');
+    const second = matchRow.locator('li').nth(1).locator('a.code-link');
     await expect(second).toHaveAttribute('href', 'https://example.org/');
 
     await page.close();
@@ -95,14 +99,18 @@ test.describe('userscript viewer link rendering', () => {
     const script = got!.scripts.find((s) => s.relativePath === 'e.user.js')!;
 
     const page = await openViewer(extensionContext, extensionId, script.id);
-    const excludeAnchor = page
+    const excludeRow = page
       .locator('#header-summary dt', { hasText: 'Exclude' })
-      .locator('+ dd a');
+      .locator('+ dd');
+    // A single pattern is still a bulleted list, with its icon.
+    const excludeAnchor = excludeRow.locator('ul li a.code-link');
     await expect(excludeAnchor).toHaveText('https://www.nytimes.com/athletic/*');
     await expect(excludeAnchor).toHaveAttribute(
       'href',
       'https://www.nytimes.com/athletic/',
     );
+    await expect(excludeRow.locator('li .pattern-icon a.site-icon-inner'))
+      .toHaveAttribute('href', 'https://www.nytimes.com/athletic/');
     await page.close();
   });
 
@@ -134,11 +142,16 @@ test.describe('userscript viewer link rendering', () => {
     const matchRow = page.locator('#header-summary dt', { hasText: 'Match' }).locator('+ dd');
 
     for (const i of [0, 1]) {
-      const anchor = matchRow.locator('li').nth(i).locator('a');
+      const anchor = matchRow.locator('li').nth(i).locator('a.code-link');
       await expect(anchor).toHaveAttribute('href', expectedHref);
+      // Linked, but no site to take a favicon from: a linked globe.
+      const icon = matchRow.locator('li').nth(i).locator('.pattern-icon a.site-icon-inner');
+      await expect(icon).toHaveAttribute('href', expectedHref);
     }
-    await expect(matchRow.locator('li').nth(2).locator('a')).toHaveCount(0);
-    await expect(matchRow.locator('li').nth(2)).toHaveText('*://*/loose.html');
+    const loose = matchRow.locator('li').nth(2);
+    await expect(loose.locator('a')).toHaveCount(0);
+    await expect(loose.locator('.pattern-icon span.site-icon-inner svg.site-icon-globe')).toBeVisible();
+    await expect(loose).toHaveText('*://*/loose.html');
 
     // Same rule in the code box, where the anchor text is the pattern.
     await expect(page.locator('#content .token.comment').first()).toBeVisible();

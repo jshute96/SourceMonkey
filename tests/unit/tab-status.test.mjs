@@ -20,6 +20,7 @@ import {
   setCurrentDoc,
   writeDocState,
   BADGE_GREEN,
+  BADGE_GREY,
   BADGE_ORANGE,
   BADGE_PURPLE,
   BADGE_RED,
@@ -68,6 +69,45 @@ test('computeBadge: expected but no report → MISSING, ORANGE', () => {
   assert.equal(view.color, BADGE_ORANGE);
   const beta = view.rows.find((r) => r.name === 'Beta');
   assert.equal(beta.status, 'MISSING');
+});
+
+test('computeBadge: skipped document → NOT_LOADED, GREY', () => {
+  // "Reload page with no userscripts": nothing reported because nothing
+  // was asked to run. Grey says "on purpose", where MISSING's amber
+  // would say "something's off".
+  const view = computeBadge({
+    documentId: DOC, url: 'https://x',
+    matches: [expected('a', 'Alpha'), expected('b', 'Beta')],
+    actual: {},
+    scriptsSkipped: true,
+  });
+  assert.equal(view.count, 2);
+  assert.equal(view.color, BADGE_GREY);
+  assert.deepEqual(view.rows.map((r) => r.status), ['NOT_LOADED', 'NOT_LOADED']);
+  assert.match(view.title, /Alpha \| NOT LOADED/);
+});
+
+test('computeBadge: NOT_LOADED beats REJECTED, but any real disagreement beats GREY', () => {
+  // A refused registration didn't get to matter on a document where
+  // nothing was going to run; an UNEXPECTED report still did.
+  const skipped = computeBadge({
+    documentId: DOC, url: 'https://x',
+    matches: [expected('a', 'Alpha')],
+    actual: {},
+    scriptsSkipped: true,
+  }, new Set(['a']));
+  assert.equal(skipped.rows[0].status, 'NOT_LOADED');
+  assert.equal(skipped.color, BADGE_GREY);
+
+  const mixed = computeBadge({
+    documentId: DOC, url: 'https://x',
+    matches: [expected('a', 'Alpha')],
+    actual: { z: { state: 'started', name: 'Zeta' } },
+    scriptsSkipped: true,
+  });
+  assert.equal(mixed.color, BADGE_ORANGE);
+  assert.equal(mixed.rows.find((r) => r.name === 'Alpha').status, 'NOT_LOADED');
+  assert.equal(mixed.rows.find((r) => r.name === 'Zeta').status, 'UNEXPECTED');
 });
 
 test('computeBadge: a refused registration → REJECTED, RED', () => {
@@ -505,6 +545,10 @@ test('formatRowLabel: RELOAD is rendered as the verbose "Reload to update" label
   // must come from formatRowLabel itself — otherwise the menu would
   // show "RELOAD" while the tooltip says "Reload to update".
   assert.equal(formatRowLabel({ id: 'e', name: 'Echo', status: 'RELOAD' }), 'Echo | Reload to update');
+});
+
+test('formatRowLabel: NOT_LOADED is rendered with a space', () => {
+  assert.equal(formatRowLabel({ id: 'f', name: 'Fox', status: 'NOT_LOADED' }), 'Fox | NOT LOADED');
 });
 
 test('formatRowLabel: matches the tooltip line format byte-for-byte', () => {

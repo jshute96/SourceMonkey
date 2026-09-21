@@ -22,7 +22,7 @@ extension page named in the `page` query parameter.
 
 | `page=` | Lands on | Useful params |
 |---------|----------|---------------|
-| `collections.html` | Collections page | `refresh`; `add=<url-or-path>` |
+| `collections.html` | Collections page | `refresh`; `refresh_local`; `refresh_file=<path>`; `add=<url-or-path>` |
 | `options.html` | Options page | — |
 | `userscript.html` | Script viewer | `script=<id>`, `preview=<url>` |
 
@@ -35,6 +35,10 @@ user sees this page.
   `…/redirect-page.md?page=collections.html`
 - Open the collections page and trigger a refresh-all:
   `…/redirect-page.md?page=collections.html&refresh`
+- Refresh only what lives on local disk — every local collection, or just
+  the collections and scripts covering one file or directory:
+  `…/redirect-page.md?page=collections.html&refresh_local`
+  `…/redirect-page.md?page=collections.html&refresh_file=/home/me/scripts/a.user.js`
 - Add a userscript or a collection (path or URL) on the collections page; the
   page validates the input, jumps to the new section on success, or
   jumps to the existing section if the collection is already registered:
