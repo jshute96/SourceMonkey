@@ -110,8 +110,9 @@ Other `run` flags:
   page has loaded.
 - `--for N` stops after N seconds, for a bounded check from a script or
   an agent; without it the stream runs until Ctrl-C.
-- `--extension` (planned) uses the real extension in that browser
-  instead of the built-in stand-in (see below).
+- `--extension` uses the real extension in that browser instead of
+  the built-in stand-in (see below); `--solo` silences the other
+  collections for the run.
 
 ### What the output looks like
 
@@ -170,18 +171,26 @@ page can still be refused when it comes from the extension, so send one
 real request per endpoint here before building on it.
 
 - Start the browser with `--load-extension=<SourceMonkey dist>` and
-  turn on "Allow User Scripts" for it once.
+  turn on "Allow User Scripts" for it once. The user's ordinary browser
+  with SourceMonkey installed works too, as long as it has a
+  remote-debugging port.
 - `sm-dev run --extension` pushes the script text into the extension as
   an **ephemeral** script: it lands in a "Pushed scripts" collection,
-  is registered before the command returns, and is replaced in place on
-  the next push. Nothing on disk is scanned.
+  is registered before the page opens, and is replaced in place on the
+  next push of the same file name, keeping its stored values. Nothing
+  on disk is scanned. What it prints are the entries the script adds to
+  its own Log tab, plus the page's console lines.
 - `--solo` disables every other collection for the run and restores
   them after, so the pushed script runs without noise from the rest.
 - `sm-dev clear --extension` drops all pushed scripts and their stored
-  values.
-- The same operations are available to specs through
-  `test.use({ backend: 'extension' })`; the fixture then reads the
-  script's real Log entries into `reports`.
+  values, and turns solo mode off. If a `--solo` run was killed rather
+  than stopped, this is how to get the other collections back; they
+  are restored to how they were.
+- `--values` and `--fire-menu` have no effect here: the extension keeps
+  its own storage, and its menu is the toolbar's.
+- Specs stay on the push backend; for a check that needs the real
+  extension, drive it from a spec with SourceMonkey's own test fixtures
+  or by hand with `sm-dev run --extension`.
 
 ## What is and isn't faithful
 

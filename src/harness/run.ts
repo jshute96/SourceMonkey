@@ -6,12 +6,14 @@
 // `match`) never load Playwright, which is an optional peer dependency.
 
 import { watch } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { Browser, BrowserContext, Page } from '@playwright/test';
 
 import { representativeMatch } from '../match-targets.js';
+import { ExtensionBackend, type LogEntry } from './extension-backend.js';
 import { HarnessHost, type ErrorReport, type SkipReport, type StartReport } from './host.js';
 import { attachPage, type PageAttachment } from './inject.js';
 import { prepareScript, type PreparedScript } from './prepare.js';
@@ -26,6 +28,13 @@ export interface RunOptions extends ConnectOptions {
   values?: Record<string, unknown>;
   /** Fire this registered menu command once the page has loaded. */
   fireMenu?: string;
+  /**
+   * Use the real extension in the browser: the script is pushed into
+   * it as text rather than injected by the harness.
+   */
+  extension?: boolean;
+  /** With `extension`: disable every other collection for the run. */
+  solo?: boolean;
   collectionRoot: string;
   localRoots: string[];
   /** Where the stream goes. */
@@ -84,6 +93,7 @@ export async function connectBrowser(opts: ConnectOptions, out: (line: string) =
 export async function run(opts: RunOptions): Promise<number> {
   const session = await connectBrowser(opts, opts.out);
   if (!session) return 1;
+  if (opts.extension) return runInExtension(opts, session);
   const { browser, page } = session;
   const host = new HarnessHost();
   wireOutput(host, page, opts.out);
@@ -144,6 +154,115 @@ export async function run(opts: RunOptions): Promise<number> {
   return host.reports.errors.length === 0 ? 0 : 1;
 }
 
+// The extension backend: push the files' text into SourceMonkey and
+// read its Log tab, instead of preparing and injecting. `prepareAll`
+// still runs first so a header or syntax problem is reported here with
+// the same wording, before anything reaches the extension.
+async function runInExtension(opts: RunOptions, session: BrowserSession): Promise<number> {
+  const { context, page } = session;
+  let backend: ExtensionBackend;
+  try {
+    backend = await ExtensionBackend.connect(context);
+  } catch (err) {
+    opts.out(`[sm-dev] ${(err as Error).message}`);
+    await session.done();
+    return 1;
+  }
+  const prepared = await prepareAll(opts);
+  if (!prepared) {
+    await session.done();
+    return 1;
+  }
+  const url = opts.url ?? defaultUrl(prepared[0]);
+  if (!url) {
+    opts.out('No --url given and the first script\'s @match names no page to open');
+    await session.done();
+    return 2;
+  }
+  if (opts.values) opts.out('[sm-dev] --values is ignored with --extension; the extension keeps its own storage');
+  if (opts.fireMenu) opts.out('[sm-dev] --fire-menu is ignored with --extension; use the toolbar menu in the browser');
+  if (opts.solo) await backend.solo(true);
+  const pushed = new Map<string, string>();
+  // The extension's per-script log is the report stream here; it is
+  // polled, since nothing pushes it to Node. Only what this run adds is
+  // printed, so each script's last printed entry is remembered rather
+  // than a count: the log rotates at a cap, and a count would go quiet
+  // once it did.
+  const lastPrinted = new Map<string, LogEntry | null>();
+  let errors = 0;
+  const pushAll = async (scripts: PreparedScript[]): Promise<boolean> => {
+    for (const script of scripts) {
+      const text = await readFile(fileURLToPath(script.script.fileUrl), 'utf8');
+      const result = await backend.push(text, path.basename(script.script.relativePath));
+      if (result.status !== 'ok') {
+        opts.out(`INVALID  ${script.script.relativePath}\n    ${result.errorMessage ?? ''}`);
+        return false;
+      }
+      pushed.set(result.scriptId, script.script.relativePath);
+      const entries = await backend.log(result.scriptId).catch(() => [] as LogEntry[]);
+      lastPrinted.set(result.scriptId, entries[entries.length - 1] ?? null);
+      opts.out(`[sm-dev] pushed ${script.script.relativePath}${result.replaced ? ' (replaced)' : ''}`);
+    }
+    return true;
+  };
+  let polling = false;
+  const poll = async (): Promise<void> => {
+    // One poll at a time: an overlapping pair would print the same
+    // entries twice.
+    if (polling) return;
+    polling = true;
+    try {
+      for (const [scriptId, name] of pushed) {
+        const entries = await backend.log(scriptId).catch(() => [] as LogEntry[]);
+        const last = lastPrinted.get(scriptId) ?? null;
+        let at = -1;
+        if (last) {
+          for (let i = entries.length - 1; i >= 0; i--) {
+            if (sameEntry(entries[i], last)) {
+              at = i;
+              break;
+            }
+          }
+        }
+        for (const entry of entries.slice(at + 1)) {
+          if (entry.level === 'error') errors++;
+          opts.out(`[sm-dev] ${name} ${entry.level}: ${entry.message}`);
+        }
+        if (entries.length > 0) lastPrinted.set(scriptId, entries[entries.length - 1]);
+      }
+    } finally {
+      polling = false;
+    }
+  };
+  try {
+    if (!(await pushAll(prepared))) return 1;
+    wirePageOutput(page, opts.out);
+    opts.out(`[sm-dev] opening ${url}`);
+    await page.goto(url).catch((err) => opts.out(`[sm-dev] navigation failed: ${(err as Error).message}`));
+    let watcher: (() => void) | null = null;
+    if (opts.watch) {
+      watcher = watchFiles(opts, prepared, null, page, async (next) => {
+        if (await pushAll(next)) await page.reload().catch(() => undefined);
+      });
+    }
+    const ticker = setInterval(() => { void poll(); }, 500);
+    if (opts.until) await opts.until;
+    else await page.waitForTimeout(1000);
+    clearInterval(ticker);
+    while (polling) await new Promise((r) => setTimeout(r, 50));
+    await poll();
+    watcher?.();
+  } finally {
+    if (opts.solo) await backend.solo(false).catch(() => undefined);
+    await session.done();
+  }
+  return errors === 0 ? 0 : 1;
+}
+
+function sameEntry(a: LogEntry, b: LogEntry): boolean {
+  return a.timestamp === b.timestamp && a.message === b.message && a.source === b.source;
+}
+
 async function prepareAll(opts: RunOptions): Promise<PreparedScript[] | null> {
   const out: PreparedScript[] = [];
   for (const file of opts.files) {
@@ -163,6 +282,11 @@ function defaultUrl(script: PreparedScript): string | null {
 }
 
 function wireOutput(host: HarnessHost, page: Page, out: (line: string) => void): void {
+  wireHostOutput(host, out);
+  wirePageOutput(page, out);
+}
+
+function wireHostOutput(host: HarnessHost, out: (line: string) => void): void {
   host.on('start', (r: StartReport) => out(`[sm-dev] ${r.name} started on ${r.url}`));
   host.on('skip', (r: SkipReport) => out(`[sm-dev] ${r.name} skipped on ${r.url}: ${r.reason}`));
   host.on('script-error', (r: ErrorReport) => {
@@ -182,6 +306,9 @@ function wireOutput(host: HarnessHost, page: Page, out: (line: string) => void):
         : `[sm-dev] GM_setValue ${w.key} = ${JSON.stringify(w.value)}`);
     }
   });
+}
+
+function wirePageOutput(page: Page, out: (line: string) => void): void {
   page.on('console', (msg) => {
     const text = msg.text();
     // The prelude's own lines duplicate the reports printed above.
@@ -205,7 +332,7 @@ function wireOutput(host: HarnessHost, page: Page, out: (line: string) => void):
 function watchFiles(
   opts: RunOptions,
   prepared: PreparedScript[],
-  attachment: PageAttachment,
+  attachment: PageAttachment | null,
   page: Page,
   injectAll: (scripts: PreparedScript[]) => Promise<void>,
 ): () => void {
@@ -230,12 +357,17 @@ function watchFiles(
       timer = null;
       if (stopped) return;
       (async () => {
-        opts.out('[sm-dev] change detected, re-injecting');
+        opts.out(attachment ? '[sm-dev] change detected, re-injecting' : '[sm-dev] change detected, re-pushing');
         const next = await prepareAll(opts);
         if (!next || stopped) return;
-        for (const old of attachment.injectedScripts()) await attachment.remove(old.spec!.id);
-        await injectAll(next);
-        await page.reload();
+        if (attachment) {
+          for (const old of attachment.injectedScripts()) await attachment.remove(old.spec!.id);
+          await injectAll(next);
+          await page.reload();
+        } else {
+          // Extension mode: the callback pushes and reloads itself.
+          await injectAll(next);
+        }
       })().catch((err) => opts.out(`[sm-dev] re-inject failed: ${(err as Error).message}`));
     }, 150);
   };

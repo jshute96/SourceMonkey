@@ -52,6 +52,9 @@ import {
   isHttpUrl,
   isLocalDirectoryCollection,
   isSingleFileInput,
+  PUSHED_CONTAINER_PATH,
+  pushedTextKey,
+  pushedUrl,
   baseName,
   isFileUrl,
   isManifestCollection,
@@ -88,6 +91,7 @@ import {
 } from './external-files.js';
 import { localSearchRoots, localRootsReady, type LocalFileScope } from './local-file-overrides.js';
 import { scanAllStorage } from './storage-scan.js';
+import { wipeScriptValues } from './gm-values.js';
 import { canonicalizeGrant, resolveGrants } from './gm-api-catalog.js';
 import { sourceUsesUnsafeWindow } from './unsafe-window-use.js';
 import {
@@ -2229,7 +2233,7 @@ export async function markFirstRunComplete(): Promise<void> {
 // Where a single script should be installed: a specific container by
 // id, or the built-in default container for the script's own scheme
 // (created if it doesn't exist).
-export type InstallTarget = { collectionId: string } | { schemeDefault: true };
+export type InstallTarget = { collectionId: string } | { schemeDefault: true } | { pushed: true };
 
 // Install one `.user.js` location into a container collection. Returns
 // null if the location is already a script in THAT container — the
@@ -2246,6 +2250,137 @@ export async function installScript(
     throw new Error('Internal error: only a .user.js location can be installed into a collection');
   }
   return await addScriptToContainer(path, target);
+}
+
+// ---------- Pushed scripts ----------
+//
+// Scripts handed over as text by the development harness
+// (docs/harness-design.md, "Extension backend"). They live in one
+// container, `container:pushed`, shown on the collections page like any
+// other; their text is a storage row the fetcher reads back, so every
+// refresh path treats them as ordinary scripts.
+
+export const PUSHED_COLLECTION_NAME = 'Pushed scripts';
+
+export interface PushScriptResult {
+  scriptId: string;
+  collectionId: string;
+  status: ScriptStatus;
+  errorMessage?: string;
+  errorLocation?: DiagnosticLocation;
+  /** True when a script of this name was already pushed and got replaced. */
+  replaced: boolean;
+}
+
+// Install or replace a pushed script. The name (the `@name`, or one the
+// caller gives) is the identity: pushing it again replaces the earlier
+// text in place, keeping the row's id and its GM values, which is what
+// lets a page reload hot-swap the new version.
+export async function pushScript(args: { text: string; name?: string }): Promise<PushScriptResult> {
+  const header = parseHeader(args.text);
+  const name = args.name?.trim() || (header ? getValue(header, 'name')?.trim() : '') || 'script';
+  const url = pushedUrl(name);
+  await writeLocal({ [pushedTextKey(url)]: args.text });
+  const container = (await getCollections()).find((c) => c.path === PUSHED_CONTAINER_PATH);
+  let scriptId: string | undefined;
+  let collectionId: string | undefined;
+  let replaced = false;
+  if (container) {
+    const rows = await getMany(container.scriptIds.map(scriptKey));
+    for (const sid of container.scriptIds) {
+      const row = rows[scriptKey(sid)] as StoredScript | undefined;
+      if (row?.relativePath === url) {
+        scriptId = sid;
+        collectionId = container.id;
+        replaced = true;
+      }
+    }
+  }
+  if (scriptId === undefined) {
+    let result: AddCollectionResult;
+    try {
+      result = await installScript(url, { pushed: true });
+    } catch (err) {
+      // The install took its seed back out; the text row goes with it.
+      await chrome.storage.local.remove(pushedTextKey(url));
+      throw err;
+    }
+    if (!result) throw new Error('Internal error: the pushed script was neither installed nor found');
+    collectionId = result.collection.id;
+    scriptId = result.kind === 'existingContainer'
+      ? result.scriptId
+      : result.collection.scriptIds[result.collection.scriptIds.length - 1];
+  } else {
+    // Re-read the text; the pushed fetcher has no size or mtime to skip
+    // on, so the new content lands and the hash says whether it changed.
+    await refreshScript(scriptId);
+  }
+  const row = await getScript(scriptId);
+  if (!row) throw new Error('Internal error: the pushed script vanished during install');
+  const out: PushScriptResult = { scriptId, collectionId: collectionId!, status: row.status, replaced };
+  if (row.errorMessage) out.errorMessage = row.errorMessage;
+  if (row.errorLocation) out.errorLocation = row.errorLocation;
+  return out;
+}
+
+// Remove the pushed container, its rows, their GM values, and the text
+// rows behind them. Returns what went, for the caller's registration
+// sync. The text keys come from the rows rather than a storage scan: a
+// scan costs every script body, and the only text row a container
+// wouldn't name is one a failed install left, which `pushScript`
+// cleans up itself.
+export async function clearPushedScripts(): Promise<{ scriptIds: string[]; collectionId: string | null }> {
+  const container = (await getCollections()).find((c) => c.path === PUSHED_CONTAINER_PATH);
+  if (!container) return { scriptIds: [], collectionId: null };
+  const rows = await getMany(container.scriptIds.map(scriptKey));
+  const textKeys: string[] = [];
+  for (const sid of container.scriptIds) {
+    const row = rows[scriptKey(sid)] as StoredScript | undefined;
+    if (row) textKeys.push(pushedTextKey(row.relativePath));
+    await wipeScriptValues(sid);
+  }
+  await removeCollection(container.id);
+  if (textKeys.length > 0) await chrome.storage.local.remove(textKeys);
+  return { scriptIds: container.scriptIds, collectionId: container.id };
+}
+
+// Solo mode: every collection but the pushed one disabled, so a pushed
+// script runs alone. Turning it off restores the enabled flags as they
+// were, from the session-storage note taken when it went on, so the
+// user's own collections come back exactly as they were. The note lives
+// as long as the browser: a run killed without turning solo mode off
+// leaves it on, and the next `setSoloMode(false)` (any `sm-dev clear
+// --extension`, or another solo run ending) restores from the note.
+// Returns the ids of the collections it toggled.
+const SOLO_MODE_KEY = 'sm:solo-mode';
+
+export async function setSoloMode(on: boolean): Promise<string[]> {
+  const noted = (await chrome.storage.session.get(SOLO_MODE_KEY))[SOLO_MODE_KEY] as
+    Record<string, boolean> | undefined;
+  const toggled: string[] = [];
+  if (on) {
+    // Already on: the note stands, and a second run must not overwrite
+    // it with "everything was disabled".
+    if (noted) return toggled;
+    const collections = await getCollections();
+    const previous: Record<string, boolean> = {};
+    for (const c of collections) {
+      if (c.path === PUSHED_CONTAINER_PATH) continue;
+      previous[c.id] = isCollectionEnabled(c);
+      if (previous[c.id]) {
+        await setCollectionEnabled(c.id, false);
+        toggled.push(c.id);
+      }
+    }
+    await chrome.storage.session.set({ [SOLO_MODE_KEY]: previous });
+    return toggled;
+  }
+  if (!noted) return toggled;
+  for (const [id, wasEnabled] of Object.entries(noted)) {
+    if (wasEnabled && await setCollectionEnabled(id, true)) toggled.push(id);
+  }
+  await chrome.storage.session.remove(SOLO_MODE_KEY);
+  return toggled;
 }
 
 // Does this container already hold `canonicalPath`?
@@ -2309,6 +2444,9 @@ async function addScriptToContainer(
         throw new Error('Internal error: scripts can only be installed into a scripts collection');
       }
       cPath = existingContainer.path;
+    } else if ('pushed' in target) {
+      cPath = PUSHED_CONTAINER_PATH;
+      existingContainer = collections.find((s) => s.path === cPath);
     } else {
       cPath = containerPath(containerKindForSingleFileInput(path));
       existingContainer = collections.find((s) => s.path === cPath);
@@ -2326,6 +2464,7 @@ async function addScriptToContainer(
     const nextContainer: StoredCollection = existingContainer
       ? { ...existingContainer, scriptIds: [...priorScriptIds, scriptId] }
       : newContainerRow(containerId, cPath, [scriptId]);
+    if (isNew && cPath === PUSHED_CONTAINER_PATH) nextContainer.displayName = PUSHED_COLLECTION_NAME;
     const seedScript = buildInitialInvalidEntry({
       id: scriptId,
       collectionId: containerId,

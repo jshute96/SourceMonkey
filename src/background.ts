@@ -142,11 +142,15 @@ import {
   setCollectionOptions,
   createCollection,
   installScript,
+  pushScript,
+  clearPushedScripts,
+  setSoloMode,
   moveScript,
   removeScript,
   reconcileScriptMembership,
   describeError,
   type AddCollectionResult,
+  type PushScriptResult,
   type CollectionOptions,
   type InstallTarget,
   type NewCollectionSpec,
@@ -263,6 +267,15 @@ interface SourceMonkeyApi {
   addCollection: (path: string) => Promise<AddCollectionResult>;
   createCollection: (spec: NewCollectionSpec) => Promise<AddCollectionResult>;
   installScript: (location: string, target: InstallTarget) => Promise<AddCollectionResult>;
+  // Ephemeral scripts for the development harness (docs/harness-design.md,
+  // "Extension backend"): install text into the Pushed scripts
+  // collection, registered before the promise settles; a re-push of the
+  // same name replaces it in place. `clearPushedScripts` drops them all
+  // with their GM values. `soloMode(true)` disables every other
+  // collection until `soloMode(false)` restores them.
+  pushScript: (args: { text: string; name?: string }) => Promise<PushScriptResult>;
+  clearPushedScripts: () => Promise<number>;
+  soloMode: (on: boolean) => Promise<void>;
   moveScript: (scriptId: string, target: InstallTarget) => Promise<StoredScript | null>;
   // Remove one installed script row (a container copy), as the viewer's
   // trash can does.
@@ -442,6 +455,34 @@ interface SourceMonkeyApi {
   resetCollectionRowReads: () => void;
 }
 
+// The `syncNow` of the test surface, shared by the pushed-script
+// methods so they too settle only once the registration is in place.
+async function syncNowForTests(): Promise<{ registered: { id: string }[]; kind: 'full' | 'incremental' | null }> {
+  // Cancel any pending debounced sync first — otherwise its work
+  // would fire just after we return, and a test that does
+  // addCollection → syncNow → page.goto could see the registration
+  // briefly disappear mid-navigation. Tests rely on syncNow being the
+  // LAST sync until the next mutation.
+  if (syncTimer != null) {
+    clearTimeout(syncTimer);
+    syncTimer = null;
+  }
+  // Mirror scheduleSync's full work — both the chrome.userScripts
+  // re-registration AND the open-tab badge recompute — so callers
+  // don't need to know which side effect they care about. Including
+  // its scope: this flushes the debounced sync rather than replacing
+  // it with a different one, so tests exercise the same incremental
+  // path production takes.
+  await Promise.all([syncRegistrations(takePendingScope()), refreshAllOpenTabs()]);
+  // `kind` says which path that sync took. The two leave the same
+  // registration set behind — which is the point — so a test meaning
+  // to pin the incremental path has no other way to say it took it.
+  const kind = lastSyncKindForTests();
+  if (!isUserScriptsAvailable()) return { registered: [], kind };
+  const list = await chrome.userScripts.getScripts();
+  return { registered: list.map((s) => ({ id: s.id })), kind };
+}
+
 const api: SourceMonkeyApi = {
   version: chrome.runtime.getManifest().version,
   ping: (value = 'pong') => value,
@@ -564,31 +605,29 @@ const api: SourceMonkeyApi = {
   resetDirectoryListingFetches,
   getCollectionRowReads,
   resetCollectionRowReads,
-  syncNow: async () => {
-    // Cancel any pending debounced sync first — otherwise its work
-    // would fire just after we return, and a test that does
-    // addCollection → syncNow → page.goto could see the registration
-    // briefly disappear mid-navigation. Tests rely on syncNow being the
-    // LAST sync until the next mutation.
-    if (syncTimer != null) {
-      clearTimeout(syncTimer);
-      syncTimer = null;
-    }
-    // Mirror scheduleSync's full work — both the chrome.userScripts
-    // re-registration AND the open-tab badge recompute — so callers
-    // don't need to know which side effect they care about. Including
-    // its scope: this flushes the debounced sync rather than replacing
-    // it with a different one, so tests exercise the same incremental
-    // path production takes.
-    await Promise.all([syncRegistrations(takePendingScope()), refreshAllOpenTabs()]);
-    // `kind` says which path that sync took. The two leave the same
-    // registration set behind — which is the point — so a test meaning
-    // to pin the incremental path has no other way to say it took it.
-    const kind = lastSyncKindForTests();
-    if (!isUserScriptsAvailable()) return { registered: [], kind };
-    const list = await chrome.userScripts.getScripts();
-    return { registered: list.map((s) => ({ id: s.id })), kind };
+  // The three pushed-script calls name the rows they changed to the
+  // sync themselves. `storage.onChanged` would add them to the pending
+  // scope too, but that event arrives on its own schedule, and the
+  // promise here must not settle before the registration is in place.
+  pushScript: async (args) => {
+    const result = await pushScript(args);
+    pendingScriptIds.add(result.scriptId);
+    pendingCollectionIds.add(result.collectionId);
+    await syncNowForTests();
+    return result;
   },
+  clearPushedScripts: async () => {
+    const cleared = await clearPushedScripts();
+    for (const id of cleared.scriptIds) pendingScriptIds.add(id);
+    if (cleared.collectionId) pendingCollectionIds.add(cleared.collectionId);
+    await syncNowForTests();
+    return cleared.scriptIds.length;
+  },
+  soloMode: async (on) => {
+    for (const id of await setSoloMode(on)) pendingCollectionIds.add(id);
+    await syncNowForTests();
+  },
+  syncNow: () => syncNowForTests(),
   replayScriptLogsAtBoot,
   clearUpdateRateLimit: () => { _resetUpdaterStateForTests(); },
   resetAllState: async () => {

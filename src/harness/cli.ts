@@ -10,6 +10,7 @@
 //                                    what happens
 //   sm-dev probe <url> --selectors S which selectors resolve on a page
 //   sm-dev snapshot <url> --out F    save a page's DOM for a spec
+//   sm-dev clear --extension         drop every pushed script
 //
 // Exit codes: 0 when every script checked out (or every URL matched,
 // no script threw, every selector was found), 1 when one didn't, 2 for
@@ -30,6 +31,8 @@ Commands:
                               console lines and reports until Ctrl-C
   probe <url>                 Report which --selectors resolve on the page
   snapshot <url>              Save the page's DOM to --out FILE
+  clear --extension           Remove every script pushed into the extension
+                              and turn solo mode off
 
 Options:
   --root DIR      The repo root, searched for local copies of @require
@@ -48,6 +51,11 @@ Options for run:
   --values JSON   Seed GM_* storage, e.g. --values '{"units":"metric"}'
   --fire-menu S   Fire the registered menu command named S after load
   --for SECONDS   Stop after this long instead of waiting for Ctrl-C
+  --extension     Push the script into the SourceMonkey extension in
+                  that browser instead of injecting it; reports come
+                  from the script's Log tab
+  --solo          With --extension: disable every other collection for
+                  the run and restore them after
 
 Options for probe:
   --selectors S   Comma-separated CSS selectors to look for; repeat the
@@ -70,6 +78,8 @@ interface Opts {
   watch: boolean;
   values?: Record<string, unknown>;
   fireMenu?: string;
+  extension: boolean;
+  solo: boolean;
   for?: number;
   selectors: string[];
   selectorFlags: number;
@@ -80,7 +90,8 @@ interface Opts {
 function parseArgs(argv: string[]): Opts {
   const opts: Opts = {
     command: null, args: [], root: process.cwd(), local: [],
-    launch: false, headed: false, watch: false, selectors: [], selectorFlags: 0, html: false,
+    launch: false, headed: false, watch: false, extension: false, solo: false,
+    selectors: [], selectorFlags: 0, html: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -109,6 +120,8 @@ function parseArgs(argv: string[]): Opts {
         break;
       }
       case '--fire-menu': opts.fireMenu = next(); break;
+      case '--extension': opts.extension = true; break;
+      case '--solo': opts.solo = true; break;
       case '--selectors': {
         // One flag with commas is a list; a selector that needs a comma
         // (`:is(a, b)`) goes in its own flag, which is taken whole.
@@ -235,6 +248,8 @@ async function runCommand(opts: Opts): Promise<number> {
       watch: opts.watch,
       values: opts.values,
       fireMenu: opts.fireMenu,
+      extension: opts.extension,
+      solo: opts.solo,
       collectionRoot: opts.root,
       localRoots: opts.local,
       out: (line) => process.stdout.write(line + '\n'),
@@ -273,6 +288,31 @@ async function snapshotCommand(opts: Opts): Promise<number> {
   });
 }
 
+async function clearCommand(opts: Opts): Promise<number> {
+  if (!opts.extension) throw new Error('The clear command needs --extension; the harness itself keeps nothing between runs');
+  const { connectBrowser } = await import('./run.js');
+  const { ExtensionBackend } = await import('./extension-backend.js');
+  const out = (line: string): void => { process.stdout.write(line + '\n'); };
+  const session = await connectBrowser(opts, out);
+  if (!session) return 1;
+  try {
+    const backend = await ExtensionBackend.connect(session.context);
+    const count = await backend.clear();
+    // A run killed before it could turn solo mode off leaves the user's
+    // collections disabled; clearing is the natural place to put them
+    // back.
+    await backend.solo(false);
+    out(`[sm-dev] removed ${count} pushed script(s)`);
+    return 0;
+  } catch (err) {
+    out(`[sm-dev] ${(err as Error).message}`);
+    return 1;
+  } finally {
+    await session.page.close().catch(() => undefined);
+    await session.done();
+  }
+}
+
 async function main(): Promise<void> {
   let opts: Opts;
   try {
@@ -294,6 +334,7 @@ async function main(): Promise<void> {
       case 'run': process.exitCode = await runCommand(opts); break;
       case 'probe': process.exitCode = await probeCommand(opts); break;
       case 'snapshot': process.exitCode = await snapshotCommand(opts); break;
+      case 'clear': process.exitCode = await clearCommand(opts); break;
       default:
         process.stderr.write(`Unknown command: ${opts.command}\n\n${USAGE}`);
         process.exitCode = 2;

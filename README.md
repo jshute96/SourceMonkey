@@ -169,7 +169,10 @@ location can be read before creating anything.
 Single scripts go into **scripts collections** — folders you create
 and name, or the defaults created on demand (`Scripts from local disk`,
 `Scripts from web`, `Scripts from GitHub`). One scripts collection can
-mix local, web, and GitHub scripts.
+mix local, web, and GitHub scripts. A `Pushed scripts` collection
+appears when a development tool pushes a script straight into the
+extension (see [docs/harness-guide.md](docs/harness-guide.md)); it can
+be removed like any other.
 
 Details: [docs/file-access.md](docs/file-access.md),
 [docs/http-collections.md](docs/http-collections.md).

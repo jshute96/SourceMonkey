@@ -449,9 +449,58 @@ export function baseName(absolutePath: string): string {
   return slash < 0 ? trimmed : trimmed.slice(slash + 1);
 }
 
+// ---------- Pushed scripts ----------
+//
+// A script handed to the extension as text, with no file or URL behind
+// it: what the development harness pushes over the test surface
+// (docs/harness-design.md, "Extension backend"). It lives in the
+// `container:pushed` collection and its "location" is a `pushed://`
+// URL that names the storage row holding the text, so the ordinary
+// refresh pipeline reads it back like any other body and a re-push of
+// the same name is picked up as a content change.
+
+export const PUSHED_CONTAINER_PATH = 'container:pushed';
+// Three slashes: with an empty host the name is the URL's path, so the
+// basename every label is cut from is the script's own name rather
+// than the whole URL.
+const PUSHED_SCHEME = 'pushed:///';
+const PUSHED_TEXT_KEY_PREFIX = 'pushed:';
+
+export function isPushedUrl(input: string): boolean {
+  return input.startsWith(PUSHED_SCHEME);
+}
+
+// The location for a pushed script called `name`. Ends in `.user.js`
+// so every "is this a script" check reads it as one, and so its
+// basename labels it in the viewer and the logs.
+export function pushedUrl(name: string): string {
+  const base = name.replace(/\.user\.js$/i, '').replace(/[^A-Za-z0-9._-]+/g, '-') || 'script';
+  return `${PUSHED_SCHEME}${base}.user.js`;
+}
+
+export function pushedTextKey(url: string): string {
+  return PUSHED_TEXT_KEY_PREFIX + url;
+}
+
+export type ScriptSchemeKind = ContainerKind | 'pushed';
+
+// The scheme chip's kind for a container script: where it came from.
+// A pushed script came from a development tool, not a location.
+export function scriptSchemeKind(location: string): ScriptSchemeKind {
+  return isPushedUrl(location) ? 'pushed' : containerKindForSingleFileInput(location);
+}
+
+async function fetchPushedText(url: string): Promise<string> {
+  const got = await chrome.storage.local.get(pushedTextKey(url));
+  const text = got[pushedTextKey(url)];
+  if (typeof text !== 'string') throw new Error(`Could not read ${url}: The pushed script was cleared. Push it again`);
+  return text;
+}
+
 // ---------- File / directory fetch ----------
 
 export function fetchFileUrlText(url: string): Promise<string> {
+  if (isPushedUrl(url)) return fetchPushedText(url);
   if (typeof XMLHttpRequest !== 'undefined') return fetchFileUrlTextXhr(url);
   return fetchFileUrlTextFetch(url);
 }
@@ -1152,7 +1201,7 @@ export function scriptFileUrl(collectionPath: string, relativePath: string): str
     // Container scripts carry the full URL/path the user added in
     // their `relativePath`. Coerce raw fs paths to file:// URLs so the
     // downstream fetcher sees a uniform URL form.
-    if (isHttpUrl(relativePath) || isFileUrl(relativePath)) return relativePath;
+    if (isHttpUrl(relativePath) || isFileUrl(relativePath) || isPushedUrl(relativePath)) return relativePath;
     return pathToFileUrl(relativePath);
   }
   if (isManifestCollection(collectionPath)) {

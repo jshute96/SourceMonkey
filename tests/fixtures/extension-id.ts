@@ -40,10 +40,10 @@ export function extensionIdFromPathOnly(absolutePath: string): string {
 
 // Public-key derivation. Chrome uses the raw bytes of the key, NOT
 // the base64-encoded form.
-export function extensionIdFromKey(base64Key: string): string {
-  const keyBytes = Buffer.from(base64Key, 'base64');
-  return finishId(crypto.createHash('sha256').update(keyBytes).digest('hex'));
-}
+// The key-based derivation is the one that ships, in the harness
+// package, so it is taken from there rather than kept twice.
+import { extensionIdFromKey } from '../../dist/harness/extension-backend.js';
+export { extensionIdFromKey };
 
 // Computes the ID Chrome will actually use for the unpacked extension
 // at `absolutePath`. Reads <absolutePath>/manifest.json and uses the

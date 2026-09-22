@@ -21,8 +21,8 @@
 
 import {
   containerKind,
-  containerKindForSingleFileInput,
   containerPath,
+  scriptSchemeKind,
   githubRawToBlobUrl,
   isContainerCollection,
   isFileUrl,
@@ -157,7 +157,7 @@ export function collectionBubbleKey(path: string): string {
 // from the script's own location (`relativePath` in a container is the
 // full URL/path the user installed).
 export function makeSchemeChip(location: string): HTMLElement {
-  const scheme = containerKindForSingleFileInput(location);
+  const scheme = scriptSchemeKind(location);
   const span = document.createElement('span');
   span.className = `scheme-chip chip-${scheme}`;
   span.textContent = scheme;
@@ -165,6 +165,7 @@ export function makeSchemeChip(location: string): HTMLElement {
     file: 'Loaded from a local file',
     http: 'Loaded from the web',
     github: 'Loaded from GitHub',
+    pushed: 'Pushed in by a development tool',
   }[scheme];
   return span;
 }
