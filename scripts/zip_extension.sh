@@ -7,6 +7,13 @@
 #
 # The versioned name is used by scripts/release-extension.sh so the
 # downloaded release artifact is self-identifying.
+#
+# `dist/` is both the unpacked extension and the `sourcemonkey` npm
+# package, so it holds two things Chrome never loads: the `.d.ts`
+# declarations a TypeScript consumer of the package needs, and
+# `harness/`, the Node-side development harness (docs/harness-design.md).
+# Neither is packed. Nothing the extension loads imports either — the
+# harness imports the extension's modules, not the other way round.
 
 set -euo pipefail
 
@@ -52,7 +59,7 @@ fi
 pnpm run build
 
 rm -f "$TARGET"
-cd dist && zip -r "$TARGET" .
+cd dist && zip -rq "$TARGET" . -x '*.d.ts' 'harness/*'
 
 echo
-echo "Made zip file in $TARGET"
+echo "Made zip file in $TARGET ($(du -h "$TARGET" | cut -f1))"

@@ -436,11 +436,10 @@ takes effect:
   outside a browser, the offline dependency root, and what the report
   groups. Findings over the GreasyFork corpus are in
   [corpus-validation-results.md](corpus-validation-results.md).
-- [harness-design.md](harness-design.md) — proposal for a
-  development and testing harness other repos can install: the push
-  backend that runs the injected code without the extension, and
-  ephemeral pushed scripts in the real one. User-facing side in
-  [harness-guide.md](harness-guide.md).
+- [harness-design.md](harness-design.md) — the development and testing
+  harness other repos install: the push backend that runs the injected
+  code without the extension, and ephemeral pushed scripts in the real
+  one. User-facing side in [harness-guide.md](harness-guide.md).
 - [logging.md](logging.md) — SW console-message catalog, log IDs
   (basename + `#N` dupes), and the debug-logging gate.
 - [names-and-paths.md](names-and-paths.md) — the decode-for-display
@@ -473,10 +472,31 @@ takes effect:
 - Inlines `src/glyph-sprite.svg` into each page as it is copied, at the
   page's `#include glyph-sprite` marker comment (see below).
 - Invokes `tsc` (optionally with `--watch`) to compile
-  `src/*.ts` → `dist/*.js`.
+  `src/**/*.ts` → `dist/**/*.js`, with a `.d.ts` beside each one.
+- Copies `src/generated-wrappers.d.ts` beside the generated
+  `dist/generated-wrappers.js`, since that one is hand-written.
 
 No bundler. Each TypeScript module compiles to its own `dist/*.js`
 and Chrome loads them directly as ES modules.
+
+### `dist/` is two products
+
+One compile, two consumers:
+
+- **The unpacked extension**, which is what Chrome loads and what
+  `scripts/zip_extension.sh` packs.
+- **The `sourcemonkey` package**, whose `exports` point into the same
+  files. It adds `dist/harness/` (Node-only code, see
+  [harness-design.md](harness-design.md)) and the `.d.ts`
+  declarations a TypeScript consumer resolves.
+
+They share one compile on purpose: the harness's whole claim is that it
+runs *the extension's own code*, and a second copy built from the same
+sources would be one more thing to keep honest. Chrome ignores the
+files it has no use for — nothing it loads imports them, and the
+manifest declares no `web_accessible_resources`, so none of them is
+reachable from a page — and the zip leaves them out, which is why it is
+a third of the directory's size.
 
 ### Glyph sprite
 

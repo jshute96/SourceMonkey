@@ -9,8 +9,8 @@
 //   --project=harness        — no manager at all: a plain Chromium, with
 //     the development harness (src/harness/) injecting the scripts and
 //     a Node host standing in for the service worker. Running the
-//     examples this way is what checks the host against the real
-//     worker; see docs/harness-design.md.
+//     examples this way checks that host against the real worker; see
+//     docs/harness-design.md.
 //
 // The two external managers share one code path here; everything that
 // differs between them (profile directory, CDP port, env-var names) is

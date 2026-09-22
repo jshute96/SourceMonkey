@@ -30,7 +30,7 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `scripts/build.mjs` | Clean `dist/`, copy icons + manifest + HTML + vendor (Prism), run `tsc` (optional `--watch`) |
-| `scripts/zip_extension.sh` | Build and zip `dist/` for distribution — `/tmp/SourceMonkey.zip`, or `-vVERSION` with `--release` |
+| `scripts/zip_extension.sh` | Build and zip the extension for distribution, packing the runtime files only (no `.d.ts`, no `harness/`) |
 | `scripts/release-extension.sh` | Cut a `vX.Y.Z` GitHub release: version/branch/tag checks, zip, push tag, `gh release create` (draft by default) |
 | `scripts/serve-examples.mjs` | Local HTTP server for `tests/examples/`, including the `/__slow/?ms=N` delay route the `headers-run-at` demo needs |
 | `scripts/make_manifest.sh` | Scan the current dir for `*.user.js` and emit a SourceMonkey HTTP-manifest JSON array to stdout (redirect to `script_manifest.json`) |

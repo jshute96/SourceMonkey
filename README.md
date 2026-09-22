@@ -22,6 +22,28 @@ SourceMonkey is generally compatible with
 [Tampermonkey](https://www.tampermonkey.net/) and other common
 userscript managers.
 
+### Testing your userscripts
+
+The part of a userscript that is hard to test is the manager: `@match`
+deciding where it runs, `@grant` deciding what exists, `@require`
+loading, the `GM_*` APIs behaving. Test harnesses usually fake those,
+and a fake is the one thing that can't tell you your script works.
+
+SourceMonkey ships its own. A repo of userscripts installs it as a
+package and gets:
+
+- **Playwright tests** where a script runs behind the extension's real
+  injection and `GM_*` runtime, with a stand-in for the service worker,
+  so a test exercises the script as installed rather than a
+  hand-written imitation of one.
+- **`sm-dev`**, a command line for developing against a live page: run
+  a script and watch what it does, re-injecting on save; check which
+  selectors still resolve; save a page for a test to replay; or push
+  the script straight into a running SourceMonkey.
+
+See [docs/harness-guide.md](docs/harness-guide.md) to use it, and
+[docs/harness-design.md](docs/harness-design.md) for how it works.
+
 ### Example userscripts
 
 [`tests/examples`](tests/examples/README.md) includes example scripts
@@ -400,10 +422,12 @@ started](#getting-started).
 
 `pnpm install` runs the same build (the package's `prepare` script), so
 a fresh checkout has a `dist/` as soon as its dependencies are in.
-`dist/` doubles as the `sourcemonkey` npm package: its Node-only
-modules under `dist/harness/` are what another repo of userscripts
-installs to test scripts with SourceMonkey's own code. See
-[docs/harness-guide.md](docs/harness-guide.md).
+
+`dist/` is both the unpacked extension and the `sourcemonkey` package:
+alongside what Chrome loads it holds `dist/harness/` (Node-only) and a
+`.d.ts` per module, for the repos that install it to test their
+userscripts. Chrome ignores those; `scripts/zip_extension.sh` leaves
+them out. See [docs/architecture.md](docs/architecture.md#dist-is-two-products).
 
 ### Test
 

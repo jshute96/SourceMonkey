@@ -38,7 +38,7 @@ browsing session, not the user's configuration.
 | `"loglevel:<scid>"`      | `LogLevel`              | Highest level a script-originated entry in that log has carried; drives WARNING / ERROR in the Status column. |
 | `"tab:<tabId>"`          | `TabRecord`             | Per-tab expected vs actual injection state behind the toolbar badge (see [matching.md](matching.md)). |
 | `"injector-rejections"`  | `Record<string,string>` | `{script id → Chrome's reason for refusing its registration}` — what the UI renders as REJECTED (see [injection.md](injection.md#rejected-registrations)). |
-| `"sm:solo-mode"`         | `Record<string,boolean>` | While solo mode is on: `{collection id → was it enabled}`, what turning it off restores (see [Container collections](#container-collections)). |
+| `"sm:solo-mode"`         | `Record<string,boolean>` | Present only while solo mode is on: each collection's `enabled` as it was before, so turning solo mode off puts them back (see [Container collections](#container-collections)). |
 
 ### Legacy key migration (temporary)
 
