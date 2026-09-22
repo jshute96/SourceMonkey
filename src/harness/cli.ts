@@ -2,14 +2,15 @@
 // `sm-dev`: the command-line side of the development harness.
 //
 // Every command prints plain text meant to be read by a person or an
-// agent iterating on a userscript. The commands that need a browser
-// come later; these two run entirely in Node:
+// agent iterating on a userscript.
 //
-//   sm-dev validate <path>...        the install-time checks
-//   sm-dev match <script> <url>...   would the script run there?
+//   sm-dev validate <path>...        the install-time checks (Node only)
+//   sm-dev match <script> <url>...   would the script run there? (Node only)
+//   sm-dev run <script>... [--url U] inject into a browser and stream
+//                                    what happens
 //
-// Exit codes: 0 when every script checked out (or every URL matched),
-// 1 when one didn't, 2 for a usage error.
+// Exit codes: 0 when every script checked out (or every URL matched, or
+// no script threw), 1 when one didn't, 2 for a usage error.
 
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -22,11 +23,23 @@ Commands:
   validate <path>...          Run the install-time checks over files or
                               directories of *.user.js
   match <script> <url>...     Say whether the script would run on each URL
+  run <script>...             Inject the script(s) into a page and stream
+                              console lines and reports until Ctrl-C
 
 Options:
   --root DIR      The repo root, searched for local copies of @require
                   URLs (default: the current directory)
   --local DIR     Another directory to search; repeatable
+
+Options for run:
+  --url URL       The page to open (default: the first page the script's
+                  @match implies)
+  --cdp URL       Browser to connect to (default: $SM_DEV_CDP or
+                  http://127.0.0.1:9233)
+  --launch        Launch a Chromium instead of connecting; --headed shows it
+  --watch         Re-inject and reload when a script or its files change
+  --values JSON   Seed GM_* storage, e.g. --values '{"units":"metric"}'
+  --for SECONDS   Stop after this long instead of waiting for Ctrl-C
 `;
 
 interface Opts {
@@ -34,10 +47,20 @@ interface Opts {
   args: string[];
   root: string;
   local: string[];
+  url?: string;
+  cdp?: string;
+  launch: boolean;
+  headed: boolean;
+  watch: boolean;
+  values?: Record<string, unknown>;
+  for?: number;
 }
 
 function parseArgs(argv: string[]): Opts {
-  const opts: Opts = { command: null, args: [], root: process.cwd(), local: [] };
+  const opts: Opts = {
+    command: null, args: [], root: process.cwd(), local: [],
+    launch: false, headed: false, watch: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     const next = (): string => {
@@ -48,6 +71,28 @@ function parseArgs(argv: string[]): Opts {
     switch (arg) {
       case '--root': opts.root = path.resolve(next()); break;
       case '--local': opts.local.push(path.resolve(next())); break;
+      case '--url': opts.url = next(); break;
+      case '--cdp': opts.cdp = next(); break;
+      case '--launch': opts.launch = true; break;
+      case '--headed': opts.headed = true; break;
+      case '--watch': opts.watch = true; break;
+      case '--values': {
+        const raw = next();
+        try {
+          const parsed: unknown = JSON.parse(raw);
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
+          opts.values = parsed as Record<string, unknown>;
+        } catch {
+          throw new Error('--values needs a JSON object');
+        }
+        break;
+      }
+      case '--for': {
+        const v = Number(next());
+        if (!Number.isFinite(v) || v < 0) throw new Error('--for needs a number of seconds');
+        opts.for = v;
+        break;
+      }
       case '--help': case '-h': opts.command = 'help'; break;
       default:
         if (arg.startsWith('-')) throw new Error(`Unknown option: ${arg}`);
@@ -134,6 +179,40 @@ async function match(opts: Opts): Promise<number> {
   return misses === 0 ? 0 : 1;
 }
 
+async function runCommand(opts: Opts): Promise<number> {
+  if (opts.args.length === 0) throw new Error('The run command needs at least one script');
+  const { run } = await import('./run.js');
+  // Ends on Ctrl-C, or after --for seconds. Without a bound the loop
+  // keeps streaming, which is the interactive case. The timer is
+  // unreferenced so it can't hold the process open after an early
+  // exit, and the listener comes off once the run has ended.
+  let onSigint: (() => void) | null = null;
+  let timer: NodeJS.Timeout | null = null;
+  const until = new Promise<void>((resolve) => {
+    onSigint = () => resolve();
+    process.once('SIGINT', onSigint);
+    if (opts.for !== undefined) timer = setTimeout(resolve, opts.for * 1000).unref();
+  });
+  try {
+    return await run({
+      files: opts.args.map((a) => path.resolve(a)),
+      url: opts.url,
+      cdp: opts.cdp,
+      launch: opts.launch,
+      headed: opts.headed,
+      watch: opts.watch,
+      values: opts.values,
+      collectionRoot: opts.root,
+      localRoots: opts.local,
+      out: (line) => process.stdout.write(line + '\n'),
+      until,
+    });
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (onSigint) process.off('SIGINT', onSigint);
+  }
+}
+
 async function main(): Promise<void> {
   let opts: Opts;
   try {
@@ -152,6 +231,7 @@ async function main(): Promise<void> {
     switch (opts.command) {
       case 'validate': process.exitCode = await validate(opts); break;
       case 'match': process.exitCode = await match(opts); break;
+      case 'run': process.exitCode = await runCommand(opts); break;
       default:
         process.stderr.write(`Unknown command: ${opts.command}\n\n${USAGE}`);
         process.exitCode = 2;

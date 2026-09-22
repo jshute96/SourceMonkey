@@ -80,7 +80,7 @@ agent.
 
 | Command | What it does |
 | --- | --- |
-| `sm-dev run <script.user.js> [--url U]` | Opens or reuses a tab at `U` (default: the first URL the script's `@match` implies), injects the script as it is on disk, reloads, and streams the script's console lines, page errors, and start / skipped / error reports until interrupted. |
+| `sm-dev run <script.user.js> [--url U]` | Opens a tab at `U` (default: the first URL the script's `@match` implies), injects the script as it is on disk, and streams the script's console lines, page errors, and start / skipped / error reports until Ctrl-C, or for `--for N` seconds. |
 | `sm-dev run ... --watch` | Same, and re-injects plus reloads on every save of the script or a `@require`d file. |
 | `sm-dev run a.user.js b.user.js` | Injects several scripts into the same page, for interaction tests. |
 | `sm-dev probe <url> --selectors 'a, b, c'` | Reports which selectors resolve on the page, so a broken script's assumptions can be checked in one call. `--html` dumps the current DOM of a match. |
@@ -98,6 +98,11 @@ Options for `validate` and `match`:
 Other `run` flags:
 
 - `--values '{"key": 1}'` seeds `GM_*` storage before the script runs.
+- `--for N` stops after N seconds, for a bounded check from a script or
+  an agent; without it the stream runs until Ctrl-C.
+- `--launch` starts a headless Chromium instead of connecting to one;
+  `--headed` shows it. Useful when no browser is running and the page
+  needs no login.
 - `--fire-menu "Label"` invokes a registered menu command.
 - `--extension` uses the real extension in that browser instead of the
   built-in stand-in (see below).

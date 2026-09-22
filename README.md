@@ -405,10 +405,11 @@ installs to test scripts with SourceMonkey's own code. See
 ### Test
 
 ```sh
-pnpm test            # unit + e2e
-pnpm run test:unit   # node --test, fast
-pnpm run test:e2e    # Playwright with the extension loaded
-pnpm run test:headed # e2e with a visible browser
+pnpm test              # unit + e2e + harness
+pnpm run test:unit     # node --test, fast
+pnpm run test:e2e      # Playwright with the extension loaded
+pnpm run test:headed   # e2e with a visible browser
+pnpm run test:harness  # the development harness, on a plain Chromium
 ```
 
 To narrow a run to one file:

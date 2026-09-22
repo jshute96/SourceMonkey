@@ -17,3 +17,14 @@ export type { StoredScript, ScriptMatching, StartupLog } from '../script-store.j
 export type { DiagnosticLocation } from '../diagnostic-location.js';
 export type { ApiSubsystem } from '../gm-api-catalog.js';
 export { checkParseNode } from './parse-check-node.js';
+export {
+  HarnessHost,
+  type PageLink,
+  type HostReports,
+  type HostEventMap,
+  type StartReport,
+  type ErrorReport,
+  type SkipReport,
+  type LogReport,
+} from './host.js';
+export { attachPage, PageAttachment, type InjectOptions } from './inject.js';

@@ -241,7 +241,7 @@ async function prepareScriptNow(opts: PrepareOptions): Promise<PreparedScript> {
   const handlerVersion = opts.handlerVersion ?? await packageVersion();
   const logLabel = opts.logLabel ?? scriptBasename(relativePath);
   const spec = script.status === 'ok'
-    ? asEntries(await buildRegistrationSpec(script, handlerVersion, logLabel))
+    ? asEntries(await buildRegistrationSpec(script, handlerVersion, logLabel, { inPageMatcher: true }))
     : null;
 
   const out: PreparedScript = {

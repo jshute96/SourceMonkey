@@ -930,10 +930,21 @@ export async function buildSwapEvalBody(
 // Async because storage-granting scripts read their persisted values
 // from chrome.storage.local at register time (see
 // buildGmBindingsForScript).
+export interface RegistrationSpecOptions {
+  // Always carry the script's matching rules in the config blob so the
+  // prelude's in-page matcher gates every document. In the extension
+  // Chrome's own `matches` does that and the in-page matcher is only
+  // shipped where Chrome's grammar can't express the rule; the
+  // development harness (src/harness/) injects with CDP init scripts,
+  // which run on every document, so it asks for the matcher every time.
+  inPageMatcher?: boolean;
+}
+
 export async function buildRegistrationSpec(
   script: StoredScript,
   scriptHandlerVersion: string = '0.0.0',
   logLabel: string = scriptBasename(script.relativePath),
+  options: RegistrationSpecOptions = {},
 ): Promise<RegistrationSpec | null> {
   // What Chrome gets is the canonical spelling of each `@match`, not
   // the author's: a scheme-less `*.example.com/*` or a globbed
@@ -1019,7 +1030,8 @@ export async function buildRegistrationSpec(
     script.header ? getValue(script.header, 'run-at') : undefined,
   );
   const name = scriptDisplayName(script);
-  const needsWrapperFilter = hasRegexInclude || hasRegexExclude || usedAllUrlsFallback;
+  const needsWrapperFilter = hasRegexInclude || hasRegexExclude || usedAllUrlsFallback
+    || options.inPageMatcher === true;
   const sourceUrl = buildSourceUrl(logLabel);
 
   const world = resolveScriptWorld(script);

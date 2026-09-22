@@ -171,13 +171,17 @@ command. See `docs/harness-design.md`.
 | `src/harness/index.ts` | Public entry of the harness package: re-exports `prepareScript`, `explainMatch`, and the Node parse checker |
 | `src/harness/prepare.ts` | Runs the real install pipeline over a file or text under Node and returns the registrable entries, world, matching, and diagnostics |
 | `src/harness/parse-check-node.ts` | Node counterpart of the sandboxed parse check: `new Function` verdict plus `vm.Script` location probes |
-| `src/harness/cli.ts` | The `sm-dev` command: `validate` and `match` today, the browser-driving commands later |
+| `src/harness/host.ts` | The stand-in service worker: answers the injected code's bridge messages under Node and records what scripts report |
+| `src/harness/inject.ts` | Attaches prepared scripts to a Playwright page over CDP, in the right world, with the bridge forwarded to the host |
+| `src/harness/run.ts` | `sm-dev run`: connect or launch a browser, inject scripts, stream reports and console lines, re-inject on file changes |
+| `src/harness/cli.ts` | The `sm-dev` command: `validate`, `match`, and `run` |
 
 ## Tests (`tests/`)
 
 | File | Description |
 |------|-------------|
 | `tests/fixtures/extension.ts` | Playwright fixture: launches Chromium with the extension, exposes SW handle, HTTP fixture server, and the `sm` SW-api proxy; `testWithBrowserDownloads` variant leaves downloads to Chrome |
+| `tests/fixtures/harness.ts` | Fixtures for the `harness` project: plain Chromium, fixture server, a host and page attachment per test, `loadScript` |
 | `tests/fixtures/manager.ts` | Manager-agnostic Playwright fixture for the examples suite — picks SM (unpacked build) or TM/VM (persistent CWS profile) per project metadata |
 | `tests/fixtures/managers.mjs` | Per-manager table (profile dir, CDP port, Web Store ID, env vars) shared by the fixture, preflight, and CLIs |
 | `tests/fixtures/userscript-files.mjs` | Finds `*.user.js` files on disk and reads their `@name`/`@version`, shared by both manager drivers and the sync CLI |
@@ -374,6 +378,15 @@ command. See `docs/harness-design.md`.
 | `tests/bad-examples/` | Deliberately broken `*.user.js` files (plus the `@require` libraries some of them need, and the ones that merely warn) for the SM-only spec; outside `tests/examples/` so the TM loader doesn't see them |
 | `tests/e2e/bad-scripts.spec.ts` | SM-only e2e: each bad script gets the expected status, error location, and byte-for-byte viewer render |
 | `tests/e2e/diagnostic-links.spec.ts` | Clicking a diagnostic's location jumps to the file and line, in the installed viewer and the install preview |
+
+### Harness suite (`tests/harness/`)
+
+Runs under the `harness` Playwright project: a plain Chromium with no
+extension, driven by the Node host in `src/harness/`.
+
+| File | Description |
+|------|-------------|
+| `tests/harness/inject.spec.ts` | Injection end to end: start and error reports, URL misses, world choice, storage seeding and writes, cross-page broadcast, remove and re-inject |
 
 ## GreasyFork Corpus Tooling (`tests/greasyfork-examples/`)
 

@@ -161,7 +161,10 @@ they send into pages.
   - `scripts/validate-userscripts.mjs` keeps its own driver (it has an
     offline dependency root the harness doesn't) and shares the Node
     parse checker, which moved to `src/harness/parse-check-node.ts`.
-- **`host.ts`**: the stand-in SW.
+- **`host.ts`**: the stand-in SW. (Built: reports, `check-pending`,
+  storage with broadcast and resync, `GM_log`, CSP-blocked DOM
+  reports. Still to come: XHR, tabs, downloads, notifications, menus,
+  `urlchange`.)
   - Answers every message type the SW handles for injected code:
     `sm:check-pending` (with a values snapshot when the script needs
     one), `sm:start` / `sm:error` / `sm:abandoned` (recorded), batch
@@ -180,31 +183,45 @@ they send into pages.
     opens, menu commands (and a way to fire one), notifications,
     requests, and the start / error reports.
 - **`inject.ts`**: attaches a prepared script to a Playwright `Page`.
+  (Built.)
   - Installs a MAIN-world init script that listens for bridge events
-    and forwards them to Node through `page.exposeBinding`, posting
-    replies and pushes back. DOM events and `postMessage` cross worlds,
-    so one transport serves both.
-  - Adds the entries as init scripts in the script's world. MAIN goes
-    through `page.addInitScript`. USER_SCRIPT goes through a CDP session
-    and `Page.addScriptToEvaluateOnNewDocument` with a `worldName`,
-    which Playwright's own init scripts cannot do. An isolated world has
-    no `chrome.*`, so the runtime there uses the bridge too.
-  - Always attaches the in-page matcher block to the prelude config, so
-    the prelude decides per document exactly as Chrome's registration
-    would. A miss reports `abandoned` instead of silently running, and
-    the tool prints why.
-  - Honors `@noframes` by having the injected config bail in subframes.
+    and forwards them to Node through a CDP `Runtime.addBinding`
+    binding; the reply is posted back into the frame and world the
+    request came from with `Runtime.evaluate`. Pushes from the host
+    (value updates and, later, XHR and tab events) go in through
+    `page.evaluate` in the main frame's MAIN world. DOM events and
+    `postMessage` cross worlds, so one transport serves both. Everything
+    goes through one CDP session rather than Playwright's own init
+    scripts, so registration order (listener first, then the entries)
+    is the execution order.
+  - Adds the entries as init scripts in the script's world with
+    `Page.addScriptToEvaluateOnNewDocument`, naming a `worldName` for
+    USER_SCRIPT, which Playwright's own init scripts cannot do. An
+    isolated world has no `chrome.*`, so the runtime there uses the
+    bridge too. Each entry is wrapped in a top-frame guard, since CDP
+    init scripts run in every frame and `chrome.userScripts`
+    registrations do not.
+  - Always attaches the in-page matcher block to the prelude config
+    (`buildRegistrationSpec`'s `inPageMatcher` option), so the prelude
+    decides per document where Chrome's registration `matches` would
+    have. The prelude's miss is silent, so the host evaluates the same
+    rules on every navigation and records the rule that kept the script
+    off the page.
   - Survives reloads (init scripts persist), which is what makes the
-    interactive loop one keystroke.
+    interactive loop one keystroke. Re-injecting a script removes its
+    old entries first.
 - **`fixture.ts`**: the `@playwright/test` extension consumers import.
   Wraps the three above into `loadUserscript`, `gm`, `reports`, and a
   `serveSnapshot` helper that routes a saved HTML file at its original
   URL so `@match` and relative URLs still hold. HAR replay is left to
   Playwright's own `routeFromHAR`.
-- **`cli.ts`** (`sm-dev`): the interactive tool, built on the same
-  modules and `playwright-core`'s `connectOverCDP`. Commands are listed
-  in the guide. The `--extension` flag switches it to the extension
-  backend.
+- **`cli.ts`** (`sm-dev`) and **`run.ts`**: the interactive tool,
+  built on the same modules and Playwright's `connectOverCDP` (or a
+  launched Chromium with `--launch`). Commands are listed in the guide.
+  `run` is in its own module so the Node-only commands never load
+  Playwright. The `--extension` flag switches it to the extension
+  backend. (Built: `validate`, `match`, `run` with `--watch`,
+  `--values`, `--for`.)
 
 ### Service-worker additions
 
@@ -218,9 +235,10 @@ they send into pages.
 
 ### Compliance check for the host
 
-- Add a `harness` project to `playwright.config.ts` that runs
-  `tests/examples/` through the push backend, beside the `sourcemonkey`,
-  `tampermonkey`, and `violentmonkey` projects. Each example directory
+- A `harness` project in `playwright.config.ts` runs `tests/harness/`
+  (the harness's own specs, on a plain Chromium) beside the
+  `sourcemonkey`, `tampermonkey`, and `violentmonkey` projects. Next, it
+  also runs `tests/examples/` through the push backend. Each example directory
   already exercises one API through the public surface.
 - The stand-in SW is then measured against the real one by the same
   specs, and a divergence fails a test instead of surprising a script

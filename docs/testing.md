@@ -12,6 +12,10 @@ real-browser end-to-end suite for everything that touches the
 - `tests/e2e/*.spec.ts` — Playwright specs. Launch headless Chromium
   with the unpacked extension loaded.
 - `tests/fixtures/` — shared harness code.
+- `tests/harness/*.spec.ts` — the development harness (`src/harness/`,
+  see [harness-design.md](harness-design.md)) on a plain Chromium with
+  no extension, under the `harness` Playwright project
+  (`pnpm run test:harness`). Fixtures in `tests/fixtures/harness.ts`.
 - `tests/greasyfork-examples/` — not a test suite: tooling that builds a
   corpus of the top 2000 real-world GreasyFork scripts and analyses it
   (see its own `README.md`). Playwright's `testMatch` covers only
@@ -33,7 +37,7 @@ or the GreasyFork corpus. See
 
 ## Running
 
-- All tests: `pnpm test`
+- All tests: `pnpm test` (unit, e2e, then the harness suite)
 - Unit only: `pnpm run test:unit`
 - E2E only: `pnpm run test:e2e`
 - One unit file: `node --test tests/unit/<name>.test.mjs`
