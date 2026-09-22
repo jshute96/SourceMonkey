@@ -58,7 +58,7 @@ Nothing here needs writing; it needs packaging.
 | `GM_*` binding emitter | `src/gm-bindings.ts` | Yes |
 | `@require` / `@resource` resolution and fetch | `src/external-files.ts`, `src/file-loader.ts`, `src/local-file-overrides.ts` | Yes, given a `fetch` |
 | Wrapper builder: world choice, `@run-at`, the ordered code entries Chrome registers | pure half of `src/injector.ts` (`buildRegistrationSpec` and friends) | Needs a small `chrome` stub for `getManifest` and storage; unit tests have one |
-| Compile-only parse check | `scripts/parse-check-node.mjs` | Yes |
+| Compile-only parse check | `src/harness/parse-check-node.ts` | Yes |
 | Stored-value codec, `@connect` gating | `src/gm-values.ts`, `src/gm-connect.ts` | `gm-connect` yes; `gm-values` with a storage stub |
 | Injected code as strings | `dist/generated-wrappers.js` | Yes |
 | Whole install pipeline in Node | `scripts/validate-userscripts.mjs` | Yes; swaps `fetch` and the parse checker |
@@ -124,12 +124,14 @@ script **text or a file path**, never a collection.
 
 ### Package plumbing
 
-- `package.json`: remove `private`; add `exports` (`./harness`,
-  `./validate`, `./url-match`, `./userscript-header`, and the other pure
-  modules a consumer might want), `files: ["dist"]`, `bin: { "sm-dev":
-  ... }`, a `prepare` script that runs the build so a git install
-  produces `dist/`, and `@playwright/test` as an optional peer
-  dependency used only by the harness entry.
+- `package.json`: remove `private`; add `exports` (`./harness` for the
+  harness entry, and `./*` mapping to `dist/*.js` so the pure modules
+  such as `url-match` and `userscript-header` are importable too),
+  `files: ["dist"]`, `bin: { "sm-dev": ... }`, a `prepare` script that
+  runs the build so a git install produces `dist/`, and
+  `@playwright/test` as an optional peer dependency used only by the
+  harness entry. `tsconfig.json` emits declarations so a TypeScript
+  consumer gets types.
 - The package name is `sourcemonkey`. Consumers pin a git tag; npm
   publishing can come later without changing the import paths.
 
@@ -146,11 +148,19 @@ they send into pages.
     at a raw GitHub URL reads the local `lib/` copy, exactly as the
     extension would).
   - Emits bindings and calls `buildRegistrationSpec`.
-  - Returns `{ entries, world, matching, runAt, noframes, diagnostics,
-    script }`. An `invalid` script is returned with its diagnostics,
-    not thrown, so a tool can print the same message the viewer shows.
-  - The validate CLI is refactored to call this; it keeps only its arg
-    parsing, walker, and report.
+  - Returns a `PreparedScript`: the stored row, the registration
+    entries, world, `@run-at`, matching rules, startup logs, and the
+    diagnostic when the script is invalid. An `invalid` script is
+    returned with its diagnostics, not thrown, so a tool can print the
+    same message the viewer shows.
+  - The script's id is derived from its source URL, so re-preparing the
+    same file keeps its id (and its GM values in the host) while two
+    files sharing a basename stay distinct.
+  - Calls are serialized: the local-roots setting the override
+    resolver reads is process-wide.
+  - `scripts/validate-userscripts.mjs` keeps its own driver (it has an
+    offline dependency root the harness doesn't) and shares the Node
+    parse checker, which moved to `src/harness/parse-check-node.ts`.
 - **`host.ts`**: the stand-in SW.
   - Answers every message type the SW handles for injected code:
     `sm:check-pending` (with a values snapshot when the script needs
@@ -246,16 +256,28 @@ Details are in the guide; the shape is:
    `--extension` backend.
 5. Update the `userscripts` repo's fixtures, `CLAUDE.md`, and skills.
 
+## Resolved questions
+
+Checked before building, in throwaway scripts:
+
+- **Isolated-world init scripts over CDP work beside Playwright.**
+  `Page.addScriptToEvaluateOnNewDocument` with a `worldName` runs in
+  its own world (separate globals, no `chrome`), fires again on reload,
+  can be evaluated into from a CDP session by its context id, and a DOM
+  event it dispatches is heard by a MAIN-world listener. Playwright's
+  own `addInitScript` keeps working on the same page.
+- **pnpm builds a git dependency's `prepare` script**, but only when
+  the consumer allowlists it under `allowBuilds` in
+  `pnpm-workspace.yaml`. The key is matched against
+  `<name>@git+https://…#<sha>`, so a bare name does not match and the
+  glob `sourcemonkey@git+https*` is the form to document. The build
+  runs in pnpm's clone, with the package's dev dependencies installed
+  there.
+
 ## Open questions
 
 - Whether Playwright exposes the extension's service worker through
   `context.serviceWorkers()` on a `connectOverCDP` connection. If not,
   the extension backend uses raw CDP for the worker in both cases.
-- Whether pnpm runs a git dependency's `prepare` script under the
-  current build-script policy, or whether releases should ship a
-  prebuilt tarball instead.
-- `Page.addScriptToEvaluateOnNewDocument` with `worldName` is marked
-  experimental in CDP. Confirm it coexists with Playwright's own
-  utility world and fires for the reload case.
 - How much of the SW's `urlchange` and `window.close` / `window.focus`
   behavior the host should emulate versus report as unsupported.

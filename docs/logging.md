@@ -130,7 +130,7 @@ The last two fire at most once per JS context, and only on a profile
 written before the August 2026 sources → collections rename — see
 [storage.md](storage.md#legacy-key-migration-temporary).
 
-Per-script `parser`-source rows (e.g. `Ignoring @grant <names> — unsupported APIs`) live in the viewer's Log tab, not the SW console — see "Page-console startup logs" below.
+Per-script `parser`-source rows (e.g. `Ignoring unsupported @grant <names>`) live in the viewer's Log tab, not the SW console — see "Page-console startup logs" below.
 
 **No `console.warn` / `console.error` anywhere in the extension** —
 not the SW, not extension pages, and not injected wrapper / prelude /

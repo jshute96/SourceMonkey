@@ -44,11 +44,15 @@ for the manager's half of the picture.
 pnpm add -D github:jshute96/SourceMonkey#v0.x
 ```
 
-SourceMonkey builds itself on install, so add it to pnpm's build
-allowlist in `package.json`:
+SourceMonkey builds itself on install, and pnpm refuses to run a
+dependency's build unless the project allows it. Add this to
+`pnpm-workspace.yaml` in your repo (create the file if there isn't
+one). The key has to cover the git URL, so it is a glob rather than
+the bare name:
 
-```json
-{ "pnpm": { "onlyBuiltDependencies": ["sourcemonkey"] } }
+```yaml
+allowBuilds:
+  "sourcemonkey@git+https*": true
 ```
 
 While hacking on SourceMonkey itself, point at the checkout instead:
@@ -62,7 +66,10 @@ The package is written as ES modules (ESM: files that use `import` /
 `require()` / `module.exports`). A CommonJS spec can't `require()` it
 reliably, so write specs and fixtures as ESM: name them `.mjs`, or set
 `"type": "module"` in `package.json` so plain `.js` files count.
-Playwright runs either kind.
+Playwright runs either kind. Type declarations ship with the package,
+so a TypeScript spec gets types without extra setup; keep
+`skipLibCheck` on, since some declarations mention Chrome's extension
+types.
 
 ## The interactive loop: `sm-dev`
 
@@ -80,6 +87,13 @@ agent.
 | `sm-dev match <script> <url>...` | Says whether the script would run on each URL, and which rule decided. |
 | `sm-dev validate <path>...` | The install-time checks (header, `@require`, syntax) over files or directories, with the message the extension would show. |
 | `sm-dev snapshot <url> --out file.html` | Saves the live DOM so a spec can run against it without a login. |
+
+Options for `validate` and `match`:
+
+- `--root DIR` names the repo root, searched for local copies of
+  `@require` URLs the way the extension searches a collection's
+  directory. Defaults to the current directory.
+- `--local DIR` adds another directory to that search; repeatable.
 
 Other `run` flags:
 

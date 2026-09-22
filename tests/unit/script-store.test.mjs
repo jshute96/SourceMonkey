@@ -188,7 +188,7 @@ test('extractStartupLogs emits a warn entry naming each unknown @grant in declar
   assert.deepEqual(extractStartupLogs(header, 'x.user.js'), [
     {
       level: 'warn',
-      message: 'Ignoring @grant GM_webRequest, GM_audio — unsupported APIs',
+      message: 'Ignoring unsupported @grant GM_webRequest, GM_audio',
       location: { file: 'x.user.js', line: 5 },
     },
   ]);
@@ -208,7 +208,7 @@ test('extractStartupLogs surfaces unknown names even when @grant none also appea
   assert.deepEqual(extractStartupLogs(header, 'x.user.js'), [
     {
       level: 'warn',
-      message: 'Ignoring @grant GM_typo — unsupported APIs',
+      message: 'Ignoring unsupported @grant GM_typo',
       location: { file: 'x.user.js', line: 5 },
     },
   ]);
@@ -289,7 +289,7 @@ console.log('hi');
   assert.deepEqual(entry.startupLogs, [
     {
       level: 'warn',
-      message: 'Ignoring @grant GM_typoName — unsupported APIs',
+      message: 'Ignoring unsupported @grant GM_typoName',
       location: { file: 'a.user.js', line: 5 },
     },
   ]);

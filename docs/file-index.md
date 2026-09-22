@@ -42,7 +42,6 @@ One-line descriptions of every source file, grouped by directory.
 | `scripts/inspect-tm-dashboard.mjs` | Diagnostic: dumps every visible row on the TM dashboard with cell classes — use when listInstalled selectors stop working |
 | `scripts/inspect-tm-install.mjs` | Diagnostic: drives one TM install and dumps the confirmation-page buttons — use when the Install-button selector stops working |
 | `scripts/validate-userscripts.mjs` | CLI that runs the install-time checks (header, `@require`/`@resource`, parse) over files on disk, with an offline dependency root |
-| `scripts/parse-check-node.mjs` | Node counterpart of the sandboxed parse check: `new Function` verdict plus `vm.Script` location probes |
 
 ## Extension Source (`src/`)
 
@@ -161,6 +160,19 @@ One-line descriptions of every source file, grouped by directory.
 | `src/action-menu.ts` | Action context-menu planner — packs script + command groups and the fixed reload row into Chrome's 6-item cap with a "More" overflow submenu |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons (placeholder) |
 
+### Development harness (`src/harness/`)
+
+Node-side code, compiled with the rest of `src/` into `dist/harness/`
+and published as the `sourcemonkey/harness` entry and the `sm-dev`
+command. See `docs/harness-design.md`.
+
+| File | Description |
+|------|-------------|
+| `src/harness/index.ts` | Public entry of the harness package: re-exports `prepareScript`, `explainMatch`, and the Node parse checker |
+| `src/harness/prepare.ts` | Runs the real install pipeline over a file or text under Node and returns the registrable entries, world, matching, and diagnostics |
+| `src/harness/parse-check-node.ts` | Node counterpart of the sandboxed parse check: `new Function` verdict plus `vm.Script` location probes |
+| `src/harness/cli.ts` | The `sm-dev` command: `validate` and `match` today, the browser-driving commands later |
+
 ## Tests (`tests/`)
 
 | File | Description |
@@ -264,6 +276,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/site-icon.test.mjs` | Unit tests for the icon-specific helpers: `@icon`-header extraction, `<link rel="icon">` parsing + scoring, cache-hit rules, `data:`→Blob decode |
 | `tests/unit/parse-sandbox-host.test.mjs` | Unit tests for `isParseVerdict` — only the three real statuses pass, so an odd reply can't read as `invalid` |
 | `tests/unit/parse-location.test.mjs` | Unit tests for probe selection and line mapping, driven by positions Chromium really reported |
+| `tests/unit/harness-prepare.test.mjs` | `prepareScript` over real tmp files: entries and world, invalid header, syntax error location, local `@require` overrides, `explainMatch` |
 | `tests/unit/parse-check-node.test.mjs` | Unit tests for the Node parse checker: verdict, both probes' positions, and the two probe-selection routes |
 | `tests/unit/validate-userscripts.test.mjs` | Drives the validator CLI as a subprocess over the example suites plus a hand-built offline tree |
 | `tests/unit/diagnostic-location.test.mjs` | Unit tests for the diagnostic label + validator, especially what they do with a partial location |

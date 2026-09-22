@@ -436,7 +436,7 @@ export function extractStartupLogs(
     if (resolved.unknown.length > 0) {
       const log: StartupLog = {
         level: 'warn',
-        message: `Ignoring @grant ${resolved.unknown.join(', ')} — unsupported APIs`,
+        message: `Ignoring unsupported @grant ${resolved.unknown.join(', ')}`,
       };
       // One message can name several bad grants, and they may be spread
       // over several `@grant` lines — so the location is the FIRST one,

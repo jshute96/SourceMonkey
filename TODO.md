@@ -746,6 +746,18 @@ Adding any of these is a catalog entry + a body — nothing structural.
   page. Surface a "this script wants to talk to any host" signal in
   the collections-page row at install / refresh time.
 
+## Development harness
+
+- `sm-dev validate` has no offline mode: a remote `@require` with no
+  local stand-in is fetched from the network. The corpus validator
+  (`scripts/validate-userscripts.mjs --offline-root`) still has its own
+  fetch shim for that; folding it into `prepareScript` as a fetch
+  override would let the two share one driver.
+- User-visible messages in `src/url-match.ts` (`Ignoring @match ... — it
+  has no path`, the unusable-match message) still carry em-dashes, now
+  printed by `sm-dev validate` too. Reword them without the dash; the
+  `Ignoring unsupported @grant` message was done alongside the harness.
+
 ## Test coverage gaps
 
 Negative-path / edge-case tests that would catch real bugs noticed

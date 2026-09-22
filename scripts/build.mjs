@@ -160,6 +160,10 @@ async function generateWrappers() {
     out.push(`export const ${exportName[name]} = ${JSON.stringify(minified)};`);
   }
   await writeFile(resolve(dist, 'generated-wrappers.js'), out.join('\n') + '\n');
+  // The hand-written declarations go beside it: tsc emits `.d.ts` for
+  // every module it compiles, and a consumer of the package resolving
+  // `injector.d.ts` needs this one too.
+  await cp(resolve(src, 'generated-wrappers.d.ts'), resolve(dist, 'generated-wrappers.d.ts'));
 }
 
 function minifyForInjection(source) {

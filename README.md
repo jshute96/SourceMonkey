@@ -395,6 +395,13 @@ The built extension is written to `dist/`. Load it into Chrome via
 directory, then enable the toggles listed under [Getting
 started](#getting-started).
 
+`pnpm install` runs the same build (the package's `prepare` script), so
+a fresh checkout has a `dist/` as soon as its dependencies are in.
+`dist/` doubles as the `sourcemonkey` npm package: its Node-only
+modules under `dist/harness/` are what another repo of userscripts
+installs to test scripts with SourceMonkey's own code. See
+[docs/harness-guide.md](docs/harness-guide.md).
+
 ### Test
 
 ```sh

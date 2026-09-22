@@ -128,7 +128,7 @@ test.describe('bad-examples corpus', () => {
     // does, pointing at the first offending `@grant` line.
     const grants = byFile.get('unknown-grant.user.js');
     expect(grants?.startupLogs, 'unknown-grant should record a startup log').toHaveLength(1);
-    expect(grants!.startupLogs![0].message).toMatch(/Ignoring @grant .* — unsupported APIs/);
+    expect(grants!.startupLogs![0].message).toMatch(/Ignoring unsupported @grant .*/);
     expect(grants!.startupLogs![0].location).toEqual({
       file: 'unknown-grant.user.js',
       line: markedErrorLine('unknown-grant.user.js'),
