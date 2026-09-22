@@ -82,6 +82,11 @@ const attached = new WeakSet<Page>();
 export class PageAttachment implements PageLink {
   private readonly injected = new Map<string, Injected>();
   private readonly runtimeWorlds = new Map<InjectionWorld, string>();
+  // Tabs this page's scripts opened with `GM_openInTab`. The extension
+  // leaves such a tab open when its opener goes; a test must not, or a
+  // run against the developer's own browser leaves one behind every
+  // time. Closed on dispose.
+  private readonly openedTabs = new Set<Page>();
   private closed = false;
   private mainFrameId = '';
   readonly browser: BrowserActions = {
@@ -89,8 +94,12 @@ export class PageAttachment implements PageLink {
     // for it as it would for the extension's tab.
     openTab: async (url: string, active: boolean): Promise<OpenedTab> => {
       const opened = await this.createTab(url, active);
+      this.openedTabs.add(opened);
       const closedCallbacks: (() => void)[] = [];
-      opened.on('close', () => { for (const cb of closedCallbacks) cb(); });
+      opened.on('close', () => {
+        this.openedTabs.delete(opened);
+        for (const cb of closedCallbacks) cb();
+      });
       return {
         close: () => (opened.isClosed() ? Promise.resolve() : opened.close()),
         onClosed: (cb) => {
@@ -314,6 +323,8 @@ export class PageAttachment implements PageLink {
       await this.cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier }).catch(() => undefined);
     }
     this.runtimeWorlds.clear();
+    for (const tab of this.openedTabs) await tab.close().catch(() => undefined);
+    this.openedTabs.clear();
     this.closed = true;
     this.page.off('close', this.onClose);
     this.host.detachPage(this);

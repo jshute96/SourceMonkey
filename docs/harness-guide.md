@@ -1,7 +1,6 @@
 # Testing userscripts with the SourceMonkey harness
 
-> **Status: proposal.** This describes the intended interface. See
-> [harness-design.md](harness-design.md) for what gets built and why.
+See [harness-design.md](harness-design.md) for how it works and why.
 
 For a repo of userscripts that wants to probe sites, run a script under
 development, and write regression tests, using SourceMonkey's own code
@@ -44,22 +43,28 @@ for the manager's half of the picture.
 pnpm add -D github:jshute96/SourceMonkey#v0.x
 ```
 
-SourceMonkey builds itself on install, and pnpm refuses to run a
-dependency's build unless the project allows it. Add this to
-`pnpm-workspace.yaml` in your repo (create the file if there isn't
-one). The key has to cover the git URL, so it is a glob rather than
-the bare name:
+Two things pnpm needs to be told, in your repo:
 
 ```yaml
+# pnpm-workspace.yaml — SourceMonkey builds itself on install, and pnpm
+# runs a dependency's build only for packages the project allows. The
+# key is the dependency spec as the lockfile records it; pnpm prints
+# the one it wants if this is wrong.
 allowBuilds:
-  "sourcemonkey@git+https*": true
+  "sourcemonkey@git+https://github.com/jshute96/SourceMonkey.git#<sha>": true
 ```
-
-While hacking on SourceMonkey itself, point at the checkout instead:
 
 ```json
-{ "devDependencies": { "sourcemonkey": "link:../SourceMonkey2" } }
+{ "dependenciesMeta": { "sourcemonkey": { "injected": true } } }
 ```
+
+The second matters when you install from a checkout on disk
+(`file:../SourceMonkey2`, while working on both). A plain symlink
+would leave the package resolving its own Playwright instead of yours,
+and Playwright refuses to run with two copies loaded. `injected` copies
+it into your project's store instead, where the peer resolves to your
+copy. Re-run `pnpm install` after rebuilding SourceMonkey, since the
+copy is taken at install time.
 
 The package is written as ES modules (ESM: files that use `import` /
 `export`, the standard module system, rather than CommonJS's
@@ -149,7 +154,7 @@ What the fixture provides:
 
 | Name | Purpose |
 | --- | --- |
-| `loadUserscript(path, options?)` | Prepares the file with the real pipeline and attaches it to `page` (before the navigation that should see it). A relative path is taken from the Playwright config's root. Options: `values` to seed storage, `url` to check the match now and throw if it misses, `collectionRoot` and `localRoots` for `@require` lookups (default: the config's root). Throws with the extension's own message if the script is invalid. Call it twice for two scripts on one page. |
+| `loadUserscript(path, options?)` | Prepares the file with the real pipeline and attaches it to `page` (before the navigation that should see it). A relative path is taken from the Playwright config's root. Options: `values` to seed storage, `url` to check the match now and throw if it misses, `copy` to load the same file again as a second installed copy (its own id and storage), `collectionRoot` and `localRoots` for `@require` lookups (default: the config's root). Throws with the extension's own message if the script is invalid. Call it twice for two scripts on one page. |
 | `gm` | `get(key)`, `set(key, value)` (reaches a running script like another tab's write), `list()`, `menuCommands()`, `fireMenu(label)`, `openedTabs()`, `notifications()`, `clickNotification(requestId)`, `closeNotification(requestId)`, `downloads()`, `requests()`, `failHosts(...hosts)` (a synthetic 503 for those hosts, to force a fallback path), `interceptRequests(fn)` (answer any request from the test). Values and commands are per script; when several are loaded, name one by the path it was loaded from, its basename, or its `@name`. |
 | `reports` | `started()`, `skipped()` (with the rule that missed), `errors()` (message and stack). `await reports.waitForStart()` is the usual gate before interacting; when nothing starts it says which script was skipped where, and why. |
 | `serveSnapshot(file, url, { block? })` | Routes a saved HTML file at `url` (matched exactly, query string included), so `@match` and relative URLs behave as on the live site. Other requests fall through to the page's other routes and the network, unless `block` is set. Pair with Playwright's `routeFromHAR` for pages that fetch data. |
@@ -218,7 +223,9 @@ Close, but not the same:
   loaded before that sees `null` there.
 - A tab `GM_openInTab` opens is a real page in the same context, born
   at its URL as Chrome's would be, but no scripts are injected into it;
-  the extension would inject whatever matches the new page.
+  the extension would inject whatever matches the new page. It is
+  closed when the attachment is disposed, where the extension would
+  leave it open, so a test run leaves no tabs behind.
 - `GM_download` fetches the file from Node into a directory of the
   host's choosing and reports the extension's events, numbering a
   taken name as Chrome does; there is no download bar or prompt, and

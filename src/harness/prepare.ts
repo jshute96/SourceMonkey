@@ -105,6 +105,13 @@ export interface PrepareOptions {
    * to the file's basename.
    */
   logLabel?: string;
+  /**
+   * Tells two loads of the same file apart, so both can run on one
+   * page as two installed copies would: each gets its own script id,
+   * its own storage, and its own wrapper. Without it a second load of
+   * a path replaces the first.
+   */
+  copy?: string;
 }
 
 export interface PreparedScript {
@@ -223,7 +230,7 @@ async function prepareScriptNow(opts: PrepareOptions): Promise<PreparedScript> {
     // that script's GM values under one key, and distinct for two
     // scripts sharing a basename, so their prelude entries don't
     // collide when both are injected into one page.
-    id: `harness-${scriptBasename(relativePath)}-${(await sha256Hex(sourceUrl)).slice(0, 12)}`,
+    id: `harness-${scriptBasename(relativePath)}-${(await sha256Hex(sourceUrl + (opts.copy ?? ''))).slice(0, 12)}`,
     collectionId: 'harness',
     relativePath,
     fileUrl: sourceUrl,

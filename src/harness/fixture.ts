@@ -27,6 +27,12 @@ export interface LoadOptions extends Omit<PrepareOptions, 'file' | 'text'> {
   /** Seed the script's `GM_*` storage before it runs. */
   values?: Record<string, unknown>;
   /**
+   * Load the same file a second time as a separate copy: its own
+   * script id and its own storage, as two installed copies would be.
+   * Pass any name you can refer to it by afterwards.
+   */
+  copy?: string;
+  /**
    * Check the page URL against the script's header now and throw if it
    * would not run there, rather than finding out from a silent page.
    */
@@ -144,6 +150,7 @@ export const test = base.extend<HarnessFixtures>({
       const found = loaded.find((p) => scriptMatches(p, script));
       if (!found) throw new Error(`No loaded userscript is named ${script}`);
       return found.spec!.id;
+
     };
     await use({
       get: (key, script) => host.getValue(idOf(script), key),

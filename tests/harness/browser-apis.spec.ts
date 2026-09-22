@@ -232,4 +232,18 @@ test.describe('harness browser APIs', () => {
     await closed;
     expect(host.reports.windowCalls).toEqual([expect.objectContaining({ method: 'close' })]);
   });
+
+  test('a tab the script opened is closed with the attachment', async ({ page, context, fixtureServer, attachment, loadScript }) => {
+    await loadScript({
+      relativePath: 'tab.user.js',
+      meta: { name: 'Tab', match: MATCH, grant: ['GM_openInTab'] },
+      body: `GM_openInTab(location.origin + '/other.html', { active: false });`,
+    });
+    const opened = context.waitForEvent('page');
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    const tab = await opened;
+    expect(tab.isClosed()).toBe(false);
+    await attachment.dispose();
+    await expect.poll(() => tab.isClosed()).toBe(true);
+  });
 });

@@ -1,10 +1,9 @@
 # Userscript development harness: design
 
-> **Status: proposal.** Nothing in this document is built yet. It
-> describes what SourceMonkey would add so that a userscript repo (the
-> author's `userscripts` repo first, a clonable template later) can
-> develop, probe, and test scripts with SourceMonkey's real semantics.
-> The user-facing side is in [harness-guide.md](harness-guide.md).
+The harness lets a userscript repo (the author's `userscripts` repo
+first, a clonable template later) develop, probe, and test scripts with
+SourceMonkey's real semantics. The user-facing side is in
+[harness-guide.md](harness-guide.md).
 
 ## The problem
 
@@ -326,3 +325,5 @@ Checked before building, in throwaway scripts:
 - Whether a tab `GM_openInTab` opens under the push backend should get
   the scripts that match it, as the extension's would. Today it gets
   none; attaching after creation would reach only its next document.
+- Whether the package should be published to npm, which would remove
+  the consumer's `injected` workaround and the build allowlist.

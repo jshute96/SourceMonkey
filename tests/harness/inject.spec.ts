@@ -179,4 +179,31 @@ test.describe('harness injection', () => {
     await secondAttachment.dispose();
     await second.close();
   });
+
+  test('the same file loaded twice runs as two copies with their own storage', async ({ page, fixtureServer, host, attachment, scriptsDir, loadScript }) => {
+    const spec = {
+      relativePath: 'twice.user.js',
+      meta: { name: 'Twice', match: ['*://*/target.html'], grant: ['GM_setValue', 'GM_getValue'] },
+      body: `
+        const seen = GM_getValue('seen', 0) + 1;
+        GM_setValue('seen', seen);
+        const el = document.getElementById('target');
+        el.textContent = (el.dataset.ran ? el.textContent + ',' : '') + 'copy ' + seen;
+        el.dataset.ran = 'yes';
+      `,
+    };
+    const first = await loadScript(spec);
+    const { prepareScript } = await import('../../dist/harness/prepare.js');
+    const second = await prepareScript({
+      file: scriptsDir.write(spec),
+      collectionRoot: scriptsDir.path,
+      copy: 'second',
+    });
+    await attachment.inject(second);
+    expect(second.spec!.id).not.toBe(first.spec!.id);
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    // Both ran, and each counted from its own empty storage.
+    await expect(page.locator('#target')).toHaveText('copy 1,copy 1');
+    expect(host.reports.started).toHaveLength(2);
+  });
 });
