@@ -25,6 +25,7 @@
 import type { CDPSession, Page } from '@playwright/test';
 
 import { WRAPPER_GM_RUNTIME } from '../generated-wrappers.js';
+import { setUserAgentDataSnapshot } from '../injector.js';
 import { GM_RUNTIME_SOURCE_URL } from '../script-source-url.js';
 import type { BrowserActions, HarnessHost, OpenedTab, PageLink } from './host.js';
 import type { InjectionWorld, PreparedScript } from './prepare.js';
@@ -87,17 +88,9 @@ export class PageAttachment implements PageLink {
     // A real page in the same context, so a test can `waitForEvent('page')`
     // for it as it would for the extension's tab.
     openTab: async (url: string, active: boolean): Promise<OpenedTab> => {
-      const opened = await this.page.context().newPage();
+      const opened = await this.createTab(url, active);
       const closedCallbacks: (() => void)[] = [];
       opened.on('close', () => { for (const cb of closedCallbacks) cb(); });
-      // Focus first, then navigate without waiting: `chrome.tabs.create`
-      // answers before the page has loaded, and a slow page must not
-      // hold the script's reply. The order matters: bringing a page to
-      // the front while the other's navigation is in flight left a
-      // later `close()` waiting on that navigation.
-      if (active) await opened.bringToFront().catch(() => undefined);
-      else await this.page.bringToFront().catch(() => undefined);
-      void opened.goto(url).catch(() => undefined);
       return {
         close: () => (opened.isClosed() ? Promise.resolve() : opened.close()),
         onClosed: (cb) => {
@@ -147,6 +140,7 @@ export class PageAttachment implements PageLink {
     this.cdp.on('Page.frameNavigated', (ev) => {
       if (ev.frame.parentId) return;
       this.host.noteNavigation(this, this.injectedScripts());
+      void readUserAgentData(this.page);
     });
     // Those same-document changes are what `window.onurlchange` reports.
     // The worker forwards Chrome's history-update events; this is the
@@ -182,6 +176,45 @@ export class PageAttachment implements PageLink {
     if (this.closed) return [];
     const cookies = await this.page.context().cookies(url);
     return cookies.map((c) => ({ name: c.name, value: c.value }));
+  }
+
+  // A tab created the way `chrome.tabs.create({url})` creates one: the
+  // target is born navigating to `url`, so the page a test receives
+  // from the context's `page` event already has that URL, and
+  // `waitForLoadState` waits for that document rather than resolving at
+  // once on `about:blank`. Playwright's `newPage()` can't do this (it
+  // always starts blank), so the target is created over CDP in this
+  // page's own browser context, which is what keeps it inside the
+  // Playwright context a test is watching.
+  private async createTab(url: string, active: boolean): Promise<Page> {
+    const { targetInfo } = await this.cdp.send('Target.getTargetInfo');
+    const browser = this.page.context().browser();
+    // A persistent context (`launchPersistentContext`) has no Browser
+    // object in Playwright, and so no browser-level session.
+    if (!browser) throw new Error('This browser context does not expose a browser-level CDP session');
+    const browserSession = await browser.newBrowserCDPSession();
+    try {
+      // Matched on URL: the target is born at `url`, so a page opened
+      // by something else at the same moment is told apart unless it
+      // has the same URL, where nothing could tell them apart anyway.
+      const pagePromise = this.page.context().waitForEvent('page', {
+        predicate: (p) => p.url() === url,
+        timeout: 10000,
+      });
+      // Settled either way, so a failed create can't leave a rejection
+      // nobody awaits.
+      pagePromise.catch(() => undefined);
+      await browserSession.send('Target.createTarget', {
+        url,
+        browserContextId: targetInfo.browserContextId,
+        background: !active,
+      });
+      const opened = await pagePromise;
+      if (active) await opened.bringToFront().catch(() => undefined);
+      return opened;
+    } finally {
+      await browserSession.detach().catch(() => undefined);
+    }
   }
 
   // ---------- Bridge ----------
@@ -289,6 +322,38 @@ export class PageAttachment implements PageLink {
   }
 }
 
-export function attachPage(page: Page, host: HarnessHost): Promise<PageAttachment> {
+export async function attachPage(page: Page, host: HarnessHost): Promise<PageAttachment> {
+  await readUserAgentData(page);
   return PageAttachment.create(page, host);
+}
+
+let userAgentDataRead = false;
+
+/**
+ * Read the browser's `navigator.userAgentData` once and hand it to the
+ * injector, so a script prepared after this gets the browser's brands
+ * in `GM_info` as it would from the extension (whose worker is a
+ * secure context). The API exists only on secure origins, `localhost`
+ * and `file:` included, and not on `about:blank`; a page that has none
+ * leaves the value unread, and the next navigation of any attached
+ * page tries again. A script prepared before a page reached such an
+ * origin gets `null`.
+ */
+export async function readUserAgentData(page: Page): Promise<boolean> {
+  if (userAgentDataRead) return true;
+  try {
+    const data = await page.evaluate(() => {
+      const nav = navigator as Navigator & {
+        userAgentData?: { brands: { brand: string; version: string }[]; mobile: boolean; platform: string };
+      };
+      const d = nav.userAgentData;
+      return d ? { brands: d.brands.map((b) => ({ brand: b.brand, version: b.version })), mobile: d.mobile, platform: d.platform } : null;
+    });
+    if (!data) return false;
+    setUserAgentDataSnapshot(data);
+    userAgentDataRead = true;
+    return true;
+  } catch {
+    return false;
+  }
 }

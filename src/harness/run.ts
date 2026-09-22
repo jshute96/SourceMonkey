@@ -40,15 +40,6 @@ export interface RunOptions {
 }
 
 export async function run(opts: RunOptions): Promise<number> {
-  const prepared = await prepareAll(opts);
-  if (!prepared) return 1;
-
-  const url = opts.url ?? defaultUrl(prepared[0]);
-  if (!url) {
-    opts.out('No --url given and the first script\'s @match names no page to open');
-    return 2;
-  }
-
   const { chromium } = await import('@playwright/test');
   let browser: Browser;
   if (opts.launch) {
@@ -67,7 +58,22 @@ export async function run(opts: RunOptions): Promise<number> {
   const page: Page = await context.newPage();
   const host = new HarnessHost();
   wireOutput(host, page, opts.out);
+  // Attached before preparing, so the scripts' GM_info describes this
+  // browser.
   const attachment = await attachPage(page, host);
+  const prepared = await prepareAll(opts);
+  if (!prepared) {
+    await attachment.dispose();
+    await browser.close();
+    return 1;
+  }
+  const url = opts.url ?? defaultUrl(prepared[0]);
+  if (!url) {
+    opts.out('No --url given and the first script\'s @match names no page to open');
+    await attachment.dispose();
+    await browser.close();
+    return 2;
+  }
 
   const injectAll = async (scripts: PreparedScript[]): Promise<void> => {
     for (const script of scripts) {

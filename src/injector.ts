@@ -675,6 +675,15 @@ function firstValue(header: ParsedHeader, tags: readonly string[]): string | nul
 // describes the browser, not the page, so every script gets the same
 // value. `null` where the API is missing (unit tests under Node).
 let uaDataSnapshot: UserAgentDataSnapshot | null | undefined;
+
+// For a caller with no `navigator` of its own but a browser to ask:
+// the development harness (src/harness/) reads the snapshot from a
+// page it controls and sets it here before building specs, so the
+// `GM_info` it bakes describes that browser rather than Node.
+export function setUserAgentDataSnapshot(snapshot: UserAgentDataSnapshot | null): void {
+  uaDataSnapshot = snapshot;
+}
+
 function readUserAgentData(): UserAgentDataSnapshot | null {
   if (uaDataSnapshot !== undefined) return uaDataSnapshot;
   const nav = (globalThis as { navigator?: { userAgentData?: UserAgentDataSnapshot } }).navigator;

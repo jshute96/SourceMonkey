@@ -6,6 +6,11 @@
 //   --project=tampermonkey   — connects to a persistent profile with
 //     Tampermonkey (TM) installed from the Chrome Web Store.
 //   --project=violentmonkey  — the same, for Violentmonkey (VM).
+//   --project=harness        — no manager at all: a plain Chromium, with
+//     the development harness (src/harness/) injecting the scripts and
+//     a Node host standing in for the service worker. Running the
+//     examples this way is what checks the host against the real
+//     worker; see docs/harness-design.md.
 //
 // The two external managers share one code path here; everything that
 // differs between them (profile directory, CDP port, env-var names) is
@@ -23,6 +28,7 @@
 
 import { test as base, chromium, type BrowserContext } from '@playwright/test';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extensionIdFromPath } from './extension-id';
@@ -49,6 +55,10 @@ import {
   managerConfig,
   managerHeaded,
 } from './managers.mjs';
+import { listUserscriptsRecursive } from './userscript-files.mjs';
+import { HarnessHost } from '../../dist/harness/host.js';
+import { attachPage, readUserAgentData } from '../../dist/harness/inject.js';
+import { prepareScript, type PreparedScript } from '../../dist/harness/prepare.js';
 
 /**
  * The managers this fixture can drive. Everything but `sourcemonkey`
@@ -57,11 +67,11 @@ import {
  * that has to learn its name.
  */
 export type ExternalManagerName = 'tampermonkey' | 'violentmonkey';
-export type ManagerName = 'sourcemonkey' | ExternalManagerName;
+export type ManagerName = 'sourcemonkey' | 'harness' | ExternalManagerName;
 
 /** Narrowing helper so the shared external-manager paths type-check. */
 function isExternal(name: ManagerName): name is ExternalManagerName {
-  return name !== 'sourcemonkey';
+  return name !== 'sourcemonkey' && name !== 'harness';
 }
 
 /**
@@ -83,9 +93,9 @@ export function resolveManager(workerInfo: { project: { metadata?: { manager?: u
     );
   }
   const chosen = fromProject || fromEnv || 'sourcemonkey';
-  if (chosen !== 'sourcemonkey' && !EXTERNAL_MANAGERS.includes(chosen)) {
+  if (chosen !== 'sourcemonkey' && chosen !== 'harness' && !EXTERNAL_MANAGERS.includes(chosen)) {
     throw new Error(
-      `Manager must be one of sourcemonkey, ${EXTERNAL_MANAGERS.join(', ')}; `
+      `Manager must be one of sourcemonkey, harness, ${EXTERNAL_MANAGERS.join(', ')}; `
       + `got ${JSON.stringify(chosen)}`,
     );
   }
@@ -189,6 +199,16 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 
   extensionContext: [
     async ({ manager }, use) => {
+      if (manager === 'harness') {
+        // No extension: a plain headless Chromium. The scripts reach
+        // its pages through `setup.installScriptsFrom` below.
+        const browser = await chromium.launch();
+        const ctx = await browser.newContext();
+        await use(ctx);
+        await ctx.close();
+        await browser.close();
+        return;
+      }
       if (manager === 'sourcemonkey') {
         const launched = await launchSourceMonkeyContext({
           extensionPath: EXTENSION_PATH,
@@ -307,6 +327,14 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   ],
 
   setup: async ({ extensionContext, fixtureServer, manager, externalDriver }, use) => {
+    if (manager === 'harness') {
+      // A per-test download directory, so parallel workers writing the
+      // same name can't collide in the shared default.
+      const downloadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sourcemonkey-harness-downloads-'));
+      await use(await harnessSetup(extensionContext, downloadDir, `${fixtureServer.baseUrl}/blank.html`));
+      fs.rmSync(downloadDir, { recursive: true, force: true });
+      return;
+    }
     if (manager === 'sourcemonkey') {
       const getServiceWorker = makeGetServiceWorker(extensionContext);
       const sm = makeSwApi(getServiceWorker);
@@ -359,6 +387,71 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 });
 
 export const expect = test.expect;
+
+interface HarnessState {
+  host: HarnessHost;
+  prepared: PreparedScript[];
+}
+
+// Per context, because the context is worker-scoped and `setup` is
+// per test: `newPage` is patched once and reads the current test's
+// state from here, so the patch never wraps itself.
+const harnessStates = new WeakMap<BrowserContext, HarnessState>();
+
+/**
+ * The harness backend of `setup`. `installScriptsFrom` prepares every
+ * userscript under `dir` (the directory is the collection root, so
+ * relative and local `@require`s resolve as under SourceMonkey), and
+ * from then on every page the spec opens through
+ * `extensionContext.newPage()` gets them injected before the spec can
+ * navigate it. Pages are attached inside `newPage` rather than from the
+ * context's `page` event, which fires asynchronously and would race the
+ * spec's first `goto`.
+ */
+async function harnessSetup(ctx: BrowserContext, downloadDir: string, probeUrl: string): Promise<SetupApi> {
+  let state = harnessStates.get(ctx);
+  if (!state) {
+    state = { host: new HarnessHost(), prepared: [] };
+    harnessStates.set(ctx, state);
+    // Once per browser: the brands `GM_info` reports come from a page
+    // on a secure origin (the fixture server is one), and the scripts
+    // are prepared before any spec opens a page.
+    const probe = await ctx.newPage();
+    await probe.goto(probeUrl);
+    await readUserAgentData(probe);
+    await probe.close();
+    const originalNewPage = ctx.newPage.bind(ctx);
+    ctx.newPage = async () => {
+      const page = await originalNewPage();
+      const current = harnessStates.get(ctx)!;
+      const attachment = await attachPage(page, current.host);
+      for (const script of current.prepared) await attachment.inject(script);
+      return page;
+    };
+  }
+  // A fresh host per test: no values, reports, or scripts carried over,
+  // matching the SM branch's `resetAllState`.
+  state.host = new HarnessHost();
+  state.host.downloadDir = downloadDir;
+  state.prepared = [];
+  const s = state;
+  // A tab `GM_openInTab` opens is created over CDP, born navigating to
+  // its URL, and never passes through `newPage`; it gets no scripts.
+  // The extension would inject whatever matches it. No example asserts
+  // on that, and attaching after the fact would only reach the tab's
+  // next document.
+  return {
+    manager: 'harness',
+    installScriptsFrom: async (dir: string) => {
+      s.prepared = [];
+      for (const { filepath } of listUserscriptsRecursive(dir)) {
+        const p = await prepareScript({ file: filepath, collectionRoot: dir });
+        if (p.status !== 'ok') throw new Error(`Example script is invalid under the harness: ${p.diagnostic}`);
+        s.prepared.push(p);
+      }
+    },
+  };
+}
 
 /**
  * The URL this worker's fixture server serves `filepath` at.

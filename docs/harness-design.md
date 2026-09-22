@@ -245,14 +245,19 @@ they send into pages.
 ### Compliance check for the host
 
 - A `harness` project in `playwright.config.ts` runs `tests/harness/`
-  (the harness's own specs, on a plain Chromium) beside the
-  `sourcemonkey`, `tampermonkey`, and `violentmonkey` projects. Next, it
-  also runs `tests/examples/` through the push backend. Each example directory
+  (the harness's own specs) and `tests/examples/` on a plain Chromium,
+  beside the `sourcemonkey`, `tampermonkey`, and `violentmonkey`
+  projects. The manager fixture's `harness` backend prepares every
+  script under the example directory and injects them into each page
+  the spec opens (`tests/fixtures/manager.ts`). Each example directory
   already exercises one API through the public surface.
 - The stand-in SW is then measured against the real one by the same
   specs, and a divergence fails a test instead of surprising a script
-  author. Cases that only Chrome can satisfy (real downloads,
-  notification clicks) are skipped there as they are under VM.
+  author. One example is skipped there: the wire-header report, which
+  measures a browser's request and says nothing about a request sent
+  from Node. The two examples that check SourceMonkey-specific values
+  (`GM_info` fields, the `@connect` refusal message) run, since the
+  harness produces them with the extension's own code.
 
 ## How the `userscripts` repo consumes it
 

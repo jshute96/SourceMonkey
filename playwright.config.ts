@@ -13,8 +13,9 @@ import { defineConfig } from '@playwright/test';
 //
 // Projects:
 //   - sourcemonkey (default) — runs every spec under both directories.
-//   - harness                — tests/harness/, the development harness
-//                              against a plain Chromium (no extension).
+//   - harness                — tests/harness/ plus the examples suite,
+//                              through the development harness on a
+//                              plain Chromium (no extension).
 //   - tampermonkey           — runs only the examples suite against the
 //                              user's TM-equipped browser opened via
 //                              `scripts/open-test-browser.sh tampermonkey`.
@@ -68,7 +69,7 @@ export default defineConfig({
       // extension, the injected code driven by the Node host
       // (src/harness/). See docs/harness-design.md.
       name: 'harness',
-      testMatch: ['harness/**/*.spec.ts'],
+      testMatch: ['harness/**/*.spec.ts', 'examples/**/*.spec.ts'],
       metadata: { manager: 'harness' },
       retries: 1,
     },

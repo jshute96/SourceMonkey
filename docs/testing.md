@@ -15,7 +15,8 @@ real-browser end-to-end suite for everything that touches the
 - `tests/harness/*.spec.ts` — the development harness (`src/harness/`,
   see [harness-design.md](harness-design.md)) on a plain Chromium with
   no extension, under the `harness` Playwright project
-  (`pnpm run test:harness`). Fixtures in `tests/fixtures/harness.ts`.
+  (`pnpm run test:harness`), which also runs the examples suite through
+  it. Fixtures in `tests/fixtures/harness.ts`.
 - `tests/greasyfork-examples/` — not a test suite: tooling that builds a
   corpus of the top 2000 real-world GreasyFork scripts and analyses it
   (see its own `README.md`). Playwright's `testMatch` covers only

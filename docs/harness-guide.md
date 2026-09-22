@@ -195,6 +195,12 @@ Close, but not the same:
   cross-origin redirect, and a `Set-Cookie` in the response does not
   reach the browser.
 
+- `GM_info.userAgentData` is read from the browser once a page has
+  reached a secure origin (`https:`, `localhost`, `file:`); a script
+  loaded before that sees `null` there.
+- A tab `GM_openInTab` opens is a real page in the same context, born
+  at its URL as Chrome's would be, but no scripts are injected into it;
+  the extension would inject whatever matches the new page.
 - `GM_download` fetches the file from Node into a directory of the
   host's choosing and reports the extension's events, numbering a
   taken name as Chrome does; there is no download bar or prompt, and

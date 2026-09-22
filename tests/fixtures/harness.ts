@@ -21,8 +21,11 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const PAGES_DIR = path.resolve(here, 'pages');
 const EXAMPLES_DIR = path.resolve(here, '..', 'examples');
 
-export interface HarnessFixtures {
+export interface HarnessWorkerFixtures {
   fixtureServer: FixtureServer;
+}
+
+export interface HarnessFixtures {
   scriptsDir: ScriptsDir;
   host: HarnessHost;
   attachment: PageAttachment;
@@ -30,7 +33,7 @@ export interface HarnessFixtures {
   loadScript: (spec: UserscriptSpec, options?: Omit<PrepareOptions, 'file'>) => Promise<PreparedScript>;
 }
 
-export const test = base.extend<HarnessFixtures>({
+export const test = base.extend<HarnessFixtures, HarnessWorkerFixtures>({
   fixtureServer: [async ({}, use) => {
     const server = await createFixtureServer(PAGES_DIR, EXAMPLES_DIR);
     await use(server);

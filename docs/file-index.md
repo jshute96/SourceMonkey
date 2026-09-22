@@ -182,7 +182,7 @@ command. See `docs/harness-design.md`.
 |------|-------------|
 | `tests/fixtures/extension.ts` | Playwright fixture: launches Chromium with the extension, exposes SW handle, HTTP fixture server, and the `sm` SW-api proxy; `testWithBrowserDownloads` variant leaves downloads to Chrome |
 | `tests/fixtures/harness.ts` | Fixtures for the `harness` project: plain Chromium, fixture server, a host and page attachment per test, `loadScript` |
-| `tests/fixtures/manager.ts` | Manager-agnostic Playwright fixture for the examples suite — picks SM (unpacked build) or TM/VM (persistent CWS profile) per project metadata |
+| `tests/fixtures/manager.ts` | Manager-agnostic Playwright fixture for the examples suite — picks SM (unpacked build), TM/VM (persistent CWS profile), or the harness per project metadata |
 | `tests/fixtures/managers.mjs` | Per-manager table (profile dir, CDP port, Web Store ID, env vars) shared by the fixture, preflight, and CLIs |
 | `tests/fixtures/userscript-files.mjs` | Finds `*.user.js` files on disk and reads their `@name`/`@version`, shared by both manager drivers and the sync CLI |
 | `tests/fixtures/sourcemonkey-launch.ts` | Shared Chromium-launch / SW-handle / HTTP-fixture-server helpers used by both `extension.ts` and `manager.ts`; optional Chrome-managed downloads dir |
