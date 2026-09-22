@@ -203,11 +203,14 @@ export class PageAttachment implements PageLink {
     if (!browser) throw new Error('This browser context does not expose a browser-level CDP session');
     const browserSession = await browser.newBrowserCDPSession();
     try {
-      // Matched on URL: the target is born at `url`, so a page opened
-      // by something else at the same moment is told apart unless it
-      // has the same URL, where nothing could tell them apart anyway.
+      // Matched by identity, not by URL: a page that fails to load
+      // reports an error URL rather than the one asked for, and that
+      // page would then never be recognized as this tab, left open and
+      // untracked. The pages present before the create are the ones
+      // this is not.
+      const before = new Set(this.page.context().pages());
       const pagePromise = this.page.context().waitForEvent('page', {
-        predicate: (p) => p.url() === url,
+        predicate: (p) => !before.has(p),
         timeout: 10000,
       });
       // Settled either way, so a failed create can't leave a rejection

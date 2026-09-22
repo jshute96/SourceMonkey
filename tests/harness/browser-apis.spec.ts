@@ -233,11 +233,14 @@ test.describe('harness browser APIs', () => {
     expect(host.reports.windowCalls).toEqual([expect.objectContaining({ method: 'close' })]);
   });
 
-  test('a tab the script opened is closed with the attachment', async ({ page, context, fixtureServer, attachment, loadScript }) => {
+  test('a tab the script opened is closed with the attachment, even one that would not load', async ({ page, context, fixtureServer, attachment, loadScript }) => {
     await loadScript({
       relativePath: 'tab.user.js',
       meta: { name: 'Tab', match: MATCH, grant: ['GM_openInTab'] },
-      body: `GM_openInTab(location.origin + '/other.html', { active: false });`,
+      // A URL Chrome refuses (port 1 is blocked), so the opened page
+      // reports an error URL rather than this one: the tab still has to
+      // be recognized, recorded and closed.
+      body: `GM_openInTab('http://127.0.0.1:1/blocked', { active: false });`,
     });
     const opened = context.waitForEvent('page');
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
