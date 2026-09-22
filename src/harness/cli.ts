@@ -8,9 +8,12 @@
 //   sm-dev match <script> <url>...   would the script run there? (Node only)
 //   sm-dev run <script>... [--url U] inject into a browser and stream
 //                                    what happens
+//   sm-dev probe <url> --selectors S which selectors resolve on a page
+//   sm-dev snapshot <url> --out F    save a page's DOM for a spec
 //
-// Exit codes: 0 when every script checked out (or every URL matched, or
-// no script threw), 1 when one didn't, 2 for a usage error.
+// Exit codes: 0 when every script checked out (or every URL matched,
+// no script threw, every selector was found), 1 when one didn't, 2 for
+// a usage error.
 
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -25,22 +28,34 @@ Commands:
   match <script> <url>...     Say whether the script would run on each URL
   run <script>...             Inject the script(s) into a page and stream
                               console lines and reports until Ctrl-C
+  probe <url>                 Report which --selectors resolve on the page
+  snapshot <url>              Save the page's DOM to --out FILE
 
 Options:
   --root DIR      The repo root, searched for local copies of @require
                   URLs (default: the current directory)
   --local DIR     Another directory to search; repeatable
 
-Options for run:
-  --url URL       The page to open (default: the first page the script's
-                  @match implies)
+Options for the browser commands (run, probe, snapshot):
   --cdp URL       Browser to connect to (default: $SM_DEV_CDP or
                   http://127.0.0.1:9233)
   --launch        Launch a Chromium instead of connecting; --headed shows it
+
+Options for run:
+  --url URL       The page to open (default: the first page the script's
+                  @match implies)
   --watch         Re-inject and reload when a script or its files change
   --values JSON   Seed GM_* storage, e.g. --values '{"units":"metric"}'
   --fire-menu S   Fire the registered menu command named S after load
   --for SECONDS   Stop after this long instead of waiting for Ctrl-C
+
+Options for probe:
+  --selectors S   Comma-separated CSS selectors to look for; repeat the
+                  flag for a selector that itself contains a comma
+  --html          Also print the first match's HTML
+
+Options for snapshot:
+  --out FILE      Where to write the HTML
 `;
 
 interface Opts {
@@ -56,12 +71,16 @@ interface Opts {
   values?: Record<string, unknown>;
   fireMenu?: string;
   for?: number;
+  selectors: string[];
+  selectorFlags: number;
+  html: boolean;
+  outFile?: string;
 }
 
 function parseArgs(argv: string[]): Opts {
   const opts: Opts = {
     command: null, args: [], root: process.cwd(), local: [],
-    launch: false, headed: false, watch: false,
+    launch: false, headed: false, watch: false, selectors: [], selectorFlags: 0, html: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -90,6 +109,16 @@ function parseArgs(argv: string[]): Opts {
         break;
       }
       case '--fire-menu': opts.fireMenu = next(); break;
+      case '--selectors': {
+        // One flag with commas is a list; a selector that needs a comma
+        // (`:is(a, b)`) goes in its own flag, which is taken whole.
+        const raw = next();
+        opts.selectorFlags++;
+        opts.selectors.push(raw.trim());
+        break;
+      }
+      case '--html': opts.html = true; break;
+      case '--out': opts.outFile = path.resolve(next()); break;
       case '--for': {
         const v = Number(next());
         if (!Number.isFinite(v) || v < 0) throw new Error('--for needs a number of seconds');
@@ -217,6 +246,33 @@ async function runCommand(opts: Opts): Promise<number> {
   }
 }
 
+async function probeCommand(opts: Opts): Promise<number> {
+  const [url] = opts.args;
+  if (!url) throw new Error('The probe command needs a URL');
+  if (opts.selectors.length === 0) throw new Error('The probe command needs --selectors');
+  const selectors = opts.selectorFlags === 1
+    ? opts.selectors[0].split(',').map((x) => x.trim()).filter(Boolean)
+    : opts.selectors;
+  const { probe } = await import('./browser-commands.js');
+  return probe({
+    url, selectors, html: opts.html,
+    cdp: opts.cdp, launch: opts.launch, headed: opts.headed,
+    out: (line) => process.stdout.write(line + '\n'),
+  });
+}
+
+async function snapshotCommand(opts: Opts): Promise<number> {
+  const [url] = opts.args;
+  if (!url) throw new Error('The snapshot command needs a URL');
+  if (!opts.outFile) throw new Error('The snapshot command needs --out');
+  const { snapshot } = await import('./browser-commands.js');
+  return snapshot({
+    url, outFile: opts.outFile,
+    cdp: opts.cdp, launch: opts.launch, headed: opts.headed,
+    out: (line) => process.stdout.write(line + '\n'),
+  });
+}
+
 async function main(): Promise<void> {
   let opts: Opts;
   try {
@@ -236,6 +292,8 @@ async function main(): Promise<void> {
       case 'validate': process.exitCode = await validate(opts); break;
       case 'match': process.exitCode = await match(opts); break;
       case 'run': process.exitCode = await runCommand(opts); break;
+      case 'probe': process.exitCode = await probeCommand(opts); break;
+      case 'snapshot': process.exitCode = await snapshotCommand(opts); break;
       default:
         process.stderr.write(`Unknown command: ${opts.command}\n\n${USAGE}`);
         process.exitCode = 2;

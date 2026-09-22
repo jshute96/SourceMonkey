@@ -83,10 +83,10 @@ agent.
 | `sm-dev run <script.user.js> [--url U]` | Opens a tab at `U` (default: the first URL the script's `@match` implies), injects the script as it is on disk, and streams the script's console lines, page errors, and start / skipped / error reports until Ctrl-C, or for `--for N` seconds. |
 | `sm-dev run ... --watch` | Same, and re-injects plus reloads on every save of the script or a `@require`d file. |
 | `sm-dev run a.user.js b.user.js` | Injects several scripts into the same page, for interaction tests. |
-| `sm-dev probe <url> --selectors 'a, b, c'` | Reports which selectors resolve on the page, so a broken script's assumptions can be checked in one call. `--html` dumps the current DOM of a match. |
+| `sm-dev probe <url> --selectors 'a, b, c'` | Reports which selectors resolve on the page, so a broken script's assumptions can be checked in one call. `--html` prints the first match's HTML. Exits 1 when any is missing. |
 | `sm-dev match <script> <url>...` | Says whether the script would run on each URL, and which rule decided. |
 | `sm-dev validate <path>...` | The install-time checks (header, `@require`, syntax) over files or directories, with the message the extension would show. |
-| `sm-dev snapshot <url> --out file.html` | Saves the live DOM so a spec can run against it without a login. |
+| `sm-dev snapshot <url> --out file.html` | Saves the live DOM so a spec can run against it without a login. The site's own scripts are disabled in the file, so what a spec gets is the captured page, not a page that logs itself out again. |
 
 Options for `validate` and `match`:
 
@@ -95,32 +95,38 @@ Options for `validate` and `match`:
   directory. Defaults to the current directory.
 - `--local DIR` adds another directory to that search; repeatable.
 
-Other `run` flags:
+Options for the browser commands (`run`, `probe`, `snapshot`):
 
-- `--values '{"key": 1}'` seeds `GM_*` storage before the script runs.
-- `--for N` stops after N seconds, for a bounded check from a script or
-  an agent; without it the stream runs until Ctrl-C.
+- `--cdp URL` names the browser to connect to. Defaults to the
+  `SM_DEV_CDP` environment variable, then `http://127.0.0.1:9233`.
 - `--launch` starts a headless Chromium instead of connecting to one;
   `--headed` shows it. Useful when no browser is running and the page
   needs no login.
-- `--fire-menu "Label"` invokes a registered menu command.
-- `--extension` uses the real extension in that browser instead of the
-  built-in stand-in (see below).
+
+Other `run` flags:
+
+- `--values '{"key": 1}'` seeds `GM_*` storage before the script runs.
+- `--fire-menu "Label"` invokes a registered menu command once the
+  page has loaded.
+- `--for N` stops after N seconds, for a bounded check from a script or
+  an agent; without it the stream runs until Ctrl-C.
+- `--extension` (planned) uses the real extension in that browser
+  instead of the built-in stand-in (see below).
 
 ### What the output looks like
 
 ```
-[sm-dev] prepared sites/example.com/add-button.user.js: ok, world USER_SCRIPT, run-at document-idle
-[sm-dev] https://example.com/items/42: match on @match https://example.com/items/*
-[sm-dev] start
-[add-button] init
-[add-button] toolbar found, button inserted
+[sm-dev] injected sites/example.com/add-button.user.js: world USER_SCRIPT, run-at document-idle
+[sm-dev] opening https://example.com/items/42
+[sm-dev] Add button started on https://example.com/items/42
+[page log] [add-button] toolbar found, button inserted
 [sm-dev] GM_setValue lastItem = "42"
 ```
 
-A URL miss prints the pattern that failed and stops, instead of running
-the script anyway. A header problem prints the same wording the
-extension's viewer would.
+A page the header does not cover prints the rule that kept the script
+off it (`skipped on <url>: No @match or @include covers this URL`) and
+nothing runs. A header problem prints the same wording the extension's
+viewer would, and nothing is injected.
 
 ## Writing specs: the Playwright fixture
 
@@ -142,14 +148,17 @@ What the fixture provides:
 
 | Name | Purpose |
 | --- | --- |
-| `loadUserscript(path, options?)` | Prepares the file with the real pipeline and attaches it to `page` (before the navigation that should see it). Options: `values` to seed storage, `world` to override the computed world, `url` to check the match early. Throws with the extension's own message if the script is invalid. Call it twice for two scripts on one page. |
-| `gm` | `get(key)`, `set(key, value)`, `list()`, `menuCommands()`, `fireMenu(label)`, `openedTabs()`, `notifications()`, `clickNotification(requestId)`, `closeNotification(requestId)`, `downloads()`, `requests()`. Values are per script; pass the script's name when more than one is loaded. |
-| `reports` | `started()`, `skipped()` (with the rule that missed), `errors()` (message, file, line). `await reports.waitForStart()` is the usual gate before interacting. |
-| `serveSnapshot(file, url)` | Routes a saved HTML file at `url`, so `@match` and relative URLs behave as on the live site. Pair with Playwright's `routeFromHAR` for pages that fetch data. |
+| `loadUserscript(path, options?)` | Prepares the file with the real pipeline and attaches it to `page` (before the navigation that should see it). A relative path is taken from the Playwright config's root. Options: `values` to seed storage, `url` to check the match now and throw if it misses, `collectionRoot` and `localRoots` for `@require` lookups (default: the config's root). Throws with the extension's own message if the script is invalid. Call it twice for two scripts on one page. |
+| `gm` | `get(key)`, `set(key, value)` (reaches a running script like another tab's write), `list()`, `menuCommands()`, `fireMenu(label)`, `openedTabs()`, `notifications()`, `clickNotification(requestId)`, `closeNotification(requestId)`, `downloads()`, `requests()`. Values and commands are per script; when several are loaded, name one by the path it was loaded from, its basename, or its `@name`. |
+| `reports` | `started()`, `skipped()` (with the rule that missed), `errors()` (message and stack). `await reports.waitForStart()` is the usual gate before interacting; when nothing starts it says which script was skipped where, and why. |
+| `serveSnapshot(file, url, { block? })` | Routes a saved HTML file at `url` (matched exactly, query string included), so `@match` and relative URLs behave as on the live site. Other requests fall through to the page's other routes and the network, unless `block` is set. Pair with Playwright's `routeFromHAR` for pages that fetch data. |
+| `host`, `attachment` | The underlying objects, for anything the two above don't cover. |
 
 The fixture leaves `browser` and `context` to you. A repo that attaches
 to a manually launched browser keeps that logic in its own fixture file
-and re-exports the harness `test` extended with it.
+and re-exports the harness `test` extended with it. `sourcemonkey/harness`
+loads Playwright when imported; a Node-only tool that wants just
+`prepareScript` can import `sourcemonkey/harness/prepare` instead.
 
 ## The extension backend
 

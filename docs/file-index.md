@@ -173,8 +173,10 @@ command. See `docs/harness-design.md`.
 | `src/harness/parse-check-node.ts` | Node counterpart of the sandboxed parse check: `new Function` verdict plus `vm.Script` location probes |
 | `src/harness/host.ts` | The stand-in service worker: answers every bridge message the injected code sends, under Node, and records what scripts do |
 | `src/harness/inject.ts` | Attaches prepared scripts to a Playwright page over CDP, in the right world, with the bridge forwarded to the host |
-| `src/harness/run.ts` | `sm-dev run`: connect or launch a browser, inject scripts, stream reports and console lines, re-inject on file changes |
-| `src/harness/cli.ts` | The `sm-dev` command: `validate`, `match`, and `run` |
+| `src/harness/fixture.ts` | The Playwright fixture a consumer repo imports: `loadUserscript`, `gm`, `reports`, `serveSnapshot` over a host and attachment per test |
+| `src/harness/browser-commands.ts` | `sm-dev probe` (which selectors resolve on a page) and `sm-dev snapshot` (save a page's DOM for a spec) |
+| `src/harness/run.ts` | `sm-dev run`: connect or launch a browser (shared `connectBrowser`), inject scripts, stream reports and console lines, re-inject on file changes |
+| `src/harness/cli.ts` | The `sm-dev` command: `validate`, `match`, `run`, `probe`, `snapshot` |
 
 ## Tests (`tests/`)
 
@@ -389,6 +391,7 @@ extension, driven by the Node host in `src/harness/`.
 | `tests/harness/inject.spec.ts` | Injection end to end: start and error reports, URL misses, world choice, storage seeding and writes, cross-page broadcast, remove and re-inject |
 | `tests/harness/xhr.spec.ts` | `GM_xmlhttpRequest` through the host: load and 404, JSON, `@connect` refusals and redirects, cookies, timeout, abort |
 | `tests/harness/browser-apis.spec.ts` | Tabs (including close before open), menu commands across reloads, notifications with timeout, downloads and numbered names, `window.onurlchange`, `window.close` |
+| `tests/harness/fixture.spec.ts` | The consumer fixture from `dist/`: a script against a served snapshot, `gm` and `reports`, the up-front URL check, the explained miss |
 
 ## GreasyFork Corpus Tooling (`tests/greasyfork-examples/`)
 

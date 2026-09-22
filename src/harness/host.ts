@@ -227,6 +227,9 @@ const NEEDS_BROWSER: Record<string, string> = {
   'sm:gm-window-focus': 'window.focus',
 };
 
+/** The skip reason when no header rule names a URL at all. */
+export const NO_RULE_COVERS_URL = 'No @match or @include covers this URL';
+
 export class HarnessHost extends EventEmitter<HostEventMap> {
   private readonly scripts = new Map<string, PreparedScript>();
   // Which attached pages hold each script. A script stays known to the
@@ -338,6 +341,23 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
     for (const [k, v] of Object.entries(values)) store.set(k, encodeValue(v));
   }
 
+  /**
+   * Write values as another tab of the script would: stored, and
+   * pushed to every attached page so a running script's `GM_getValue`
+   * sees them and its value-change listeners fire with `remote` set.
+   */
+  async setValues(scriptId: string, values: Record<string, unknown>): Promise<void> {
+    const { encodeValue } = loadCodec();
+    const writes: WireWrite[] = Object.entries(values).map(([key, v]) =>
+      v === undefined ? { key, deleted: true } : { key, value: encodeValue(v) });
+    const store = this.storeFor(scriptId);
+    for (const w of writes) {
+      if (w.deleted) store.delete(w.key);
+      else store.set(w.key, w.value);
+    }
+    await this.push({ type: 'sm:gm-value-update', smWorld: this.worldOf(scriptId), scriptId, writes });
+  }
+
   /** Every value a script has stored, decoded. */
   getValues(scriptId: string): Record<string, unknown> {
     const { decodeValue } = loadCodec();
@@ -389,7 +409,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
         name: scriptName(script),
         url,
         at: Date.now(),
-        reason: verdict.rule ?? 'No @match or @include covers this URL',
+        reason: verdict.rule ?? NO_RULE_COVERS_URL,
       };
       this.reports.skipped.push(report);
       this.emit('skip', report);

@@ -34,4 +34,5 @@ export {
   type BrowserActions,
   type OpenedTab,
 } from './host.js';
-export { attachPage, PageAttachment, type InjectOptions } from './inject.js';
+export { attachPage, PageAttachment, readUserAgentData, type InjectOptions } from './inject.js';
+export { test, expect, type GmApi, type ReportsApi, type LoadOptions, type HarnessFixtures } from './fixture.js';

@@ -223,14 +223,18 @@ they send into pages.
   Wraps the three above into `loadUserscript`, `gm`, `reports`, and a
   `serveSnapshot` helper that routes a saved HTML file at its original
   URL so `@match` and relative URLs still hold. HAR replay is left to
-  Playwright's own `routeFromHAR`.
+  Playwright's own `routeFromHAR`. (Built; `tests/harness/fixture.spec.ts`
+  drives it from `dist/` the way a consumer would.)
+- **`browser-commands.ts`**: `sm-dev probe` and `sm-dev snapshot`, on
+  the same browser connection as `run`. (Built.)
 - **`cli.ts`** (`sm-dev`) and **`run.ts`**: the interactive tool,
   built on the same modules and Playwright's `connectOverCDP` (or a
   launched Chromium with `--launch`). Commands are listed in the guide.
   `run` is in its own module so the Node-only commands never load
   Playwright. The `--extension` flag switches it to the extension
   backend. (Built: `validate`, `match`, `run` with `--watch`,
-  `--values`, `--for`.)
+  `--values`, `--fire-menu`, `--for`; `probe`; `snapshot`. Still to
+  come: `--extension`.)
 
 ### Service-worker additions
 

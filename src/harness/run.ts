@@ -16,15 +16,10 @@ import { HarnessHost, type ErrorReport, type SkipReport, type StartReport } from
 import { attachPage, type PageAttachment } from './inject.js';
 import { prepareScript, type PreparedScript } from './prepare.js';
 
-export interface RunOptions {
+export interface RunOptions extends ConnectOptions {
   files: string[];
   /** The page to open. Defaults to the first URL the first script's `@match` implies. */
   url?: string;
-  /** CDP endpoint to connect to, e.g. `http://127.0.0.1:9233`. */
-  cdp?: string;
-  /** Launch a Chromium instead of connecting. */
-  launch?: boolean;
-  headed?: boolean;
   /** Re-inject and reload whenever a script or one of its files changes. */
   watch?: boolean;
   /** Seed `GM_*` storage for every script before it runs. */
@@ -39,7 +34,27 @@ export interface RunOptions {
   until?: Promise<void>;
 }
 
-export async function run(opts: RunOptions): Promise<number> {
+// How the browser commands reach a browser: connect to one over CDP
+// (the default, for the developer's own logged-in browser) or launch
+// a fresh Chromium.
+export interface ConnectOptions {
+  cdp?: string;
+  launch?: boolean;
+  headed?: boolean;
+}
+
+export interface BrowserSession {
+  browser: Browser;
+  context: BrowserContext;
+  page: Page;
+  /**
+   * End the session: a launched browser is closed; a connected one is
+   * only disconnected, and its tabs, this page included, stay open.
+   */
+  done(): Promise<void>;
+}
+
+export async function connectBrowser(opts: ConnectOptions, out: (line: string) => void): Promise<BrowserSession | null> {
   const { chromium } = await import('@playwright/test');
   let browser: Browser;
   if (opts.launch) {
@@ -49,13 +64,27 @@ export async function run(opts: RunOptions): Promise<number> {
     try {
       browser = await chromium.connectOverCDP(endpoint);
     } catch (err) {
-      opts.out(`Could not connect to a browser at ${endpoint}: ${(err as Error).message}`);
-      opts.out('Start one with a remote-debugging port, pass --cdp, or use --launch');
-      return 1;
+      out(`Could not connect to a browser at ${endpoint}: ${(err as Error).message}`);
+      out('Start one with a remote-debugging port, pass --cdp, or use --launch');
+      return null;
     }
   }
-  const context: BrowserContext = browser.contexts()[0] ?? await browser.newContext();
-  const page: Page = await context.newPage();
+  const context = browser.contexts()[0] ?? await browser.newContext();
+  const page = await context.newPage();
+  return {
+    browser,
+    context,
+    page,
+    // On a connected browser `close()` only drops the connection; the
+    // browser and its tabs stay as they are.
+    done: () => browser.close(),
+  };
+}
+
+export async function run(opts: RunOptions): Promise<number> {
+  const session = await connectBrowser(opts, opts.out);
+  if (!session) return 1;
+  const { browser, page } = session;
   const host = new HarnessHost();
   wireOutput(host, page, opts.out);
   // Attached before preparing, so the scripts' GM_info describes this
@@ -111,9 +140,7 @@ export async function run(opts: RunOptions): Promise<number> {
   }
   watcher?.();
   await attachment.dispose();
-  // On a connected browser this only drops the connection; the browser
-  // and the tab stay as they are.
-  await browser.close();
+  await session.done();
   return host.reports.errors.length === 0 ? 0 : 1;
 }
 
