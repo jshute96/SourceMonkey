@@ -18,7 +18,7 @@ import path from 'node:path';
 
 import {
   HarnessHost, NO_RULE_COVERS_URL,
-  type HostReports, type SkipReport, type ErrorReport, type StartReport,
+  type HostReports, type SkipReport, type ErrorReport, type StartReport, type RequestInterceptor,
 } from './host.js';
 import { attachPage, type PageAttachment } from './inject.js';
 import { prepareScript, explainMatch, type PreparedScript, type PrepareOptions } from './prepare.js';
@@ -56,6 +56,15 @@ export interface GmApi {
   closeNotification(requestId: string): Promise<boolean>;
   downloads(): HostReports['downloads'];
   requests(): HostReports['requests'];
+  /**
+   * Answer `GM_xmlhttpRequest`s from the test instead of the network:
+   * return an event (`{ kind: 'error', message }` or
+   * `{ kind: 'load', response }`) to use it, null to let the request
+   * go. `failHosts(...)` is the common case, a synthetic 503 for those
+   * hosts.
+   */
+  interceptRequests(fn: RequestInterceptor | null): void;
+  failHosts(...hosts: string[]): void;
 }
 
 export interface ReportsApi {
@@ -151,6 +160,22 @@ export const test = base.extend<HarnessFixtures>({
       closeNotification: (requestId) => host.closeNotification(requestId),
       downloads: () => host.reports.downloads,
       requests: () => host.reports.requests,
+      interceptRequests: (fn) => { host.interceptRequests = fn; },
+      failHosts: (...hosts) => {
+        const set = new Set(hosts);
+        host.interceptRequests = (request) => {
+          let hostname = '';
+          try { hostname = new URL(request.url).hostname; } catch { return null; }
+          if (!set.has(hostname)) return null;
+          return {
+            kind: 'load',
+            response: {
+              status: 503, statusText: 'Service Unavailable', responseURL: request.url,
+              responseText: '', response: '', responseHeaders: '', finalUrl: request.url,
+            },
+          };
+        };
+      },
     });
   },
 

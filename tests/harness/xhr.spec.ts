@@ -157,4 +157,18 @@ test.describe('harness GM_xmlhttpRequest', () => {
       bouncer.close();
     }
   });
+
+  test('a test can answer a request itself', async ({ page, fixtureServer, host, loadScript }) => {
+    await loadScript(requester(['127.0.0.1']));
+    host.interceptRequests = (request) => request.url.endsWith('/canned')
+      ? { kind: 'error', message: 'canned failure' }
+      : null;
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect.poll(() => host.reports.started.length).toBe(1);
+    await send(page, { url: `${fixtureServer.baseUrl}/canned` });
+    await expect(page.locator('#target')).toHaveText('error canned failure');
+    await send(page, { url: `${fixtureServer.baseUrl}/other.html` });
+    await expect(page.locator('#target')).toHaveText(/^load 200/);
+    expect(host.reports.requests.map((r) => r.outcome)).toEqual(['error', 'load']);
+  });
 });

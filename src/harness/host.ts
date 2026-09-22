@@ -230,8 +230,23 @@ const NEEDS_BROWSER: Record<string, string> = {
 /** The skip reason when no header rule names a URL at all. */
 export const NO_RULE_COVERS_URL = 'No @match or @include covers this URL';
 
+// What a test can put in front of `GM_xmlhttpRequest`: an event to
+// answer with instead of sending the request, or null to send it.
+export type RequestInterceptor = (
+  request: GmXhrRequestPayload,
+  scriptId: string,
+) => GmXhrEvent | null | Promise<GmXhrEvent | null>;
+
 export class HarnessHost extends EventEmitter<HostEventMap> {
   private readonly scripts = new Map<string, PreparedScript>();
+  /**
+   * Answers a `GM_xmlhttpRequest` from the test instead of the network
+   * when it returns an event: a synthetic failure to force a script down
+   * its fallback path, a canned body to keep a spec off a live service.
+   * The `@connect` check still runs first, as it would for the real
+   * request.
+   */
+  interceptRequests: RequestInterceptor | null = null;
   // Which attached pages hold each script. A script stays known to the
   // host while any page still has it injected, so removing it from one
   // page can't break another page's storage calls.
@@ -666,6 +681,13 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
         message: initial.denied ? connectBlockedMessage(initial.reason) : gmXhrError(initial.reason),
       });
       return;
+    }
+    if (this.interceptRequests) {
+      const canned = await this.interceptRequests(request, script.spec!.id);
+      if (canned) {
+        await emit(canned);
+        return;
+      }
     }
     const outgoing: GmXhrRequestPayload = { ...request };
     const scriptSetsCookie = Object.keys(request.headers ?? {}).some((h) => h.toLowerCase() === 'cookie');
