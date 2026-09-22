@@ -909,9 +909,15 @@ materialising silently.
   once set, neither the SW open nor the page seed fires again —
   including after the user deletes the seeded collections.
 - **Reset behavior.** The test-surface `resetAllState()` sets
-  `"firstRunComplete"` after clearing storage, and the e2e launch
-  fixture pre-sets it at startup, so the network seed never runs during
-  tests.
+  `"firstRunComplete"` after clearing storage, so the network seed never
+  runs during tests.
+  - The e2e launch fixture also sets the flag in a throwaway browser
+    before the real one starts (`tests/fixtures/sourcemonkey-launch.ts`).
+    Setting it after launch would race `onInstalled`, and a lost race
+    leaves a stray collections tab open for the rest of the worker's
+    life: the first-run page scrubs `?first_run` from its URL, so what
+    remains looks like an ordinary collections tab to the named-tab
+    tests.
 
 ## Updater
 

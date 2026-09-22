@@ -48,18 +48,9 @@ export async function launchSourceMonkeyContext(opts: {
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sourcemonkey-test-'));
   writeExtensionPreferences(userDataDir, opts.extensionId, opts.downloads);
 
-  const ctx = await chromium.launchPersistentContext(userDataDir, {
-    // Extensions require Chrome's new headless mode (--headless=new,
-    // available since Chrome 112). We set headless: false so Playwright
-    // doesn't inject its own --headless flag, then pass --headless=new
-    // ourselves. This avoids a visible window that steals focus.
-    headless: false,
-    args: [
-      '--headless=new',
-      `--disable-extensions-except=${opts.extensionPath}`,
-      `--load-extension=${opts.extensionPath}`,
-    ],
-  });
+  await primeFirstRunFlag(userDataDir, opts.extensionPath);
+
+  const ctx = await launchChromium(userDataDir, opts.extensionPath);
 
   if (opts.downloads) {
     // Playwright has already told Chromium to intercept downloads
@@ -84,29 +75,61 @@ export async function launchSourceMonkeyContext(opts: {
     ctx.on('serviceworker', wireUp);
   }
 
-  // Suppress first-run default-collection seeding in tests. The SW opens a
-  // `collections.html?first_run` tab on install and that page seeds the
-  // defaults over the network (GitHub) — flaky and slow in a test run.
-  // Pre-setting the flag makes the SW skip the open and any seeding page
-  // skip the network add. (Key mirrors FIRST_RUN_DONE_KEY in
-  // script-store.ts.) Best-effort: this can lose the race against the
-  // SW's onInstalled('install') if that fires before the evaluate lands,
-  // but seeding is also gated on the `?first_run` param (only that tab
-  // carries it) and `resetAllState` re-marks the flag beforeEach, so a
-  // stray seed can't pollute a test's own page state.
-  try {
-    const sw = await makeGetServiceWorker(ctx)();
-    await sw.evaluate(() => chrome.storage.local.set({ firstRunComplete: true }));
-  } catch {
-    /* SW not reachable yet; the sm fixture's resetAllState also sets it */
-  }
-
   return {
     ctx,
     cleanup: () => {
       try { fs.rmSync(userDataDir, { recursive: true, force: true }); } catch {}
     },
   };
+}
+
+function launchChromium(userDataDir: string, extensionPath: string): Promise<BrowserContext> {
+  return chromium.launchPersistentContext(userDataDir, {
+    // Extensions require Chrome's new headless mode (--headless=new,
+    // available since Chrome 112). We set headless: false so Playwright
+    // doesn't inject its own --headless flag, then pass --headless=new
+    // ourselves. This avoids a visible window that steals focus.
+    headless: false,
+    args: [
+      '--headless=new',
+      `--disable-extensions-except=${extensionPath}`,
+      `--load-extension=${extensionPath}`,
+    ],
+  });
+}
+
+/**
+ * Write `firstRunComplete` into the profile in a throwaway browser, so
+ * the real context launches against a profile where first run is
+ * already done.
+ *
+ * Why a whole extra launch: on a fresh profile the SW receives
+ * `onInstalled('install')` and opens `collections.html?first_run=1`.
+ * That happens while Chrome is still starting, before any test code can
+ * reach the SW, so setting the flag after launch is a race — and one
+ * that is lost regularly when several workers start their browsers at
+ * once. Losing it is not harmless: the first-run page scrubs
+ * `?first_run` out of its own URL, so what is left is an ordinary
+ * `collections.html` tab that lives for the whole worker's lifetime.
+ * Every later test that counts collections tabs, or expects a link to
+ * open one, then sees the stray tab instead
+ * (`tests/e2e/page-links.spec.ts`).
+ *
+ * The flag is persistent `chrome.storage.local`, so it survives into
+ * the relaunch, where the SW's first-run check returns early and no tab
+ * is opened. That also keeps the default collections from being seeded
+ * over the network (GitHub), which is slow and flaky in a test run.
+ * Key mirrors FIRST_RUN_DONE_KEY in script-store.ts.
+ */
+async function primeFirstRunFlag(userDataDir: string, extensionPath: string): Promise<void> {
+  const ctx = await launchChromium(userDataDir, extensionPath);
+  try {
+    const sw = await makeGetServiceWorker(ctx)();
+    await sw.evaluate(() => chrome.storage.local.set({ firstRunComplete: true }));
+  } finally {
+    // A clean close is what flushes the storage write to disk.
+    await ctx.close();
+  }
 }
 
 /**
