@@ -770,12 +770,6 @@ See [docs/harness-design.md](docs/harness-design.md).
   one way worth closing: a `file://` read in Node returns no
   `Content-Type`, matching Chrome, but an http(s) one goes out without
   the extension's identity. Nothing depends on it today.
-- `tests/e2e/page-links.spec.ts` fails most of its tests when that file
-  is run on its own with the default worker count, on main as well as
-  here: four Chromiums with the extension, each opening extra tabs, and
-  `waitForEvent('page')` times out with "context or browser has been
-  closed". `--workers=1` passes, and so does the full suite (the files
-  interleave). Worth finding before it costs someone an afternoon.
 - Publishing: the package is installed from a checkout or a git tag.
   Once it is on npm, the guide's install step and the consumer's
   `dependenciesMeta.injected` workaround both get simpler.
