@@ -436,6 +436,11 @@ takes effect:
   outside a browser, the offline dependency root, and what the report
   groups. Findings over the GreasyFork corpus are in
   [corpus-validation-results.md](corpus-validation-results.md).
+- [harness-design.md](harness-design.md) — proposal for a
+  development and testing harness other repos can install: the push
+  backend that runs the injected code without the extension, and
+  ephemeral pushed scripts in the real one. User-facing side in
+  [harness-guide.md](harness-guide.md).
 - [logging.md](logging.md) — SW console-message catalog, log IDs
   (basename + `#N` dupes), and the debug-logging gate.
 - [names-and-paths.md](names-and-paths.md) — the decode-for-display
