@@ -748,6 +748,8 @@ Adding any of these is a catalog entry + a body — nothing structural.
 
 ## Development harness
 
+See [docs/harness-design.md](docs/harness-design.md).
+
 - `sm-dev validate` has no offline mode: a remote `@require` with no
   local stand-in is fetched from the network. The corpus validator
   (`scripts/validate-userscripts.mjs --offline-root`) still has its own
@@ -757,6 +759,20 @@ Adding any of these is a catalog entry + a body — nothing structural.
   has no path`, the unusable-match message) still carry em-dashes, now
   printed by `sm-dev validate` too. Reword them without the dash; the
   `Ignoring unsupported @grant` message was done alongside the harness.
+- A tab `GM_openInTab` opens under the push backend gets no scripts;
+  the extension would inject whatever matches it. Attaching after the
+  tab exists would only reach its next document, so this needs the
+  attachment to be created with the tab.
+- `GM_download` under the push backend has no `onprogress`, and
+  `GM_notification` shows nothing. Both are recorded and reported;
+  a script that needs the real thing wants `--extension`.
+- The harness's own `@require` fetches and the extension's differ in
+  one way worth closing: a `file://` read in Node returns no
+  `Content-Type`, matching Chrome, but an http(s) one goes out without
+  the extension's identity. Nothing depends on it today.
+- Publishing: the package is installed from a checkout or a git tag.
+  Once it is on npm, the guide's install step and the consumer's
+  `dependenciesMeta.injected` workaround both get simpler.
 
 ## Test coverage gaps
 
