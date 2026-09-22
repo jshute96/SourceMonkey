@@ -139,6 +139,15 @@ export class PageAttachment implements PageLink {
     );
   }
 
+  // The browser context's cookies for the request's URL, so a
+  // credentialed GM_xmlhttpRequest carries the session the user has in
+  // this browser, as the extension's does.
+  async cookiesFor(url: string): Promise<{ name: string; value: string }[]> {
+    if (this.closed) return [];
+    const cookies = await this.page.context().cookies(url);
+    return cookies.map((c) => ({ name: c.name, value: c.value }));
+  }
+
   // ---------- Bridge ----------
 
   private async onBridgeEvent(detail: string, contextId: number): Promise<void> {

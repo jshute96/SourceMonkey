@@ -163,8 +163,8 @@ they send into pages.
     parse checker, which moved to `src/harness/parse-check-node.ts`.
 - **`host.ts`**: the stand-in SW. (Built: reports, `check-pending`,
   storage with broadcast and resync, `GM_log`, CSP-blocked DOM
-  reports. Still to come: XHR, tabs, downloads, notifications, menus,
-  `urlchange`.)
+  reports, `GM_xmlhttpRequest`. Still to come: tabs, downloads,
+  notifications, menus, `urlchange`.)
   - Answers every message type the SW handles for injected code:
     `sm:check-pending` (with a values snapshot when the script needs
     one), `sm:start` / `sm:error` / `sm:abandoned` (recorded), batch
@@ -176,9 +176,13 @@ they send into pages.
     closed, menu fired, `urlchange` from Playwright's same-document
     navigation events.
   - Uses the real pieces where they exist: the value codec, the
-    `@connect` gate. `GM_xmlhttpRequest` runs through Playwright's
-    request API, which has no CORS limit; this is closer to the
-    extension than page `fetch` but not the extension's cookie jar.
+    `@connect` gate, and `runXhr` itself, the extension's request
+    driver, run on Node's `fetch`. The browser context's cookies for
+    the target are copied onto the request unless it is `anonymous`,
+    and forbidden headers pass straight through (`runXhr`'s
+    `forbiddenHeaders: 'passthrough'`) where the extension would use a
+    declarativeNetRequest rule. No CORS limit, but not the extension's
+    request identity either.
   - Exposes state to tests: seed and read values, the recorded tab
     opens, menu commands (and a way to fire one), notifications,
     requests, and the start / error reports.

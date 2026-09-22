@@ -22,6 +22,14 @@
 import { EventEmitter } from 'node:events';
 
 import { WRAPPER_GM_RUNTIME } from '../generated-wrappers.js';
+import {
+  connectBlockedMessage,
+  extractSelfHosts,
+  gmXhrError,
+  isUrlConnectAllowed,
+  parseConnectRules,
+} from '../gm-connect.js';
+import { abortXhr, runXhr, type GmXhrEvent, type GmXhrRequestPayload } from '../gm-xhr.js';
 import type { PreparedScript } from './prepare.js';
 import { explainMatch } from './prepare.js';
 
@@ -32,6 +40,26 @@ export interface PageLink {
   push(message: object): Promise<void>;
   /** The page's current top-level URL. */
   url(): string;
+  /**
+   * The browser's cookies for a URL, for a credentialed
+   * `GM_xmlhttpRequest`. Optional: without it requests go out with no
+   * cookies at all.
+   */
+  cookiesFor?(url: string): Promise<{ name: string; value: string }[]>;
+}
+
+export interface XhrRecord {
+  scriptId: string;
+  id: string;
+  url: string;
+  method: string;
+  at: number;
+  /** How it ended, once it has. */
+  outcome?: 'load' | 'error' | 'timeout' | 'abort';
+  /** The HTTP status, on `load`. */
+  status?: number;
+  /** The message the script's `onerror` got, on `error`. */
+  error?: string;
 }
 
 export interface ScriptReport {
@@ -64,6 +92,8 @@ export interface HostReports {
   logs: LogReport[];
   /** `GM_addStyle` / `GM_addElement` refused by the page's CSP. */
   domBlocked: { scriptId: string; api: string; at: number }[];
+  /** Every `GM_xmlhttpRequest`, with its outcome once settled. */
+  requests: XhrRecord[];
 }
 
 interface WireWrite {
@@ -80,6 +110,8 @@ export interface HostEventMap {
   skip: [SkipReport];
   log: [LogReport];
   'value-write': [{ scriptId: string; writes: WireWrite[] }];
+  /** A `GM_xmlhttpRequest` settled; the record carries its outcome. */
+  request: [XhrRecord];
   unhandled: [{ type: string; payload: Record<string, unknown> }];
 }
 
@@ -102,8 +134,6 @@ function loadCodec(): NonNullable<typeof codec> {
 // script that sent it, so the error it sees names the API rather than
 // an internal message name.
 const UNSUPPORTED_API: Record<string, string> = {
-  'sm:gm-xhr-start': 'GM_xmlhttpRequest',
-  'sm:gm-xhr-abort': 'GM_xmlhttpRequest',
   'sm:gm-tab-open': 'GM_openInTab',
   'sm:gm-tab-close': 'GM_openInTab',
   'sm:gm-download-start': 'GM_download',
@@ -125,7 +155,9 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
   // extension would have put in chrome.storage.local).
   private readonly values = new Map<string, Map<string, unknown>>();
   private readonly pages = new Set<PageLink>();
-  readonly reports: HostReports = { started: [], errors: [], skipped: [], logs: [], domBlocked: [] };
+  readonly reports: HostReports = {
+    started: [], errors: [], skipped: [], logs: [], domBlocked: [], requests: [],
+  };
 
   /** Register a prepared script as injected into `owner`. */
   addScript(prepared: PreparedScript, owner: PageLink): void {
@@ -293,6 +325,11 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
         if (!this.scripts.has(scriptId)) return { ok: false };
         return { ok: true, values: this.snapshot(scriptId) };
       }
+      case 'sm:gm-xhr-start':
+        return this.xhrStart(payload, from);
+      case 'sm:gm-xhr-abort':
+        abortXhr(str(payload.id));
+        return { ok: true };
       default: {
         this.emit('unhandled', { type, payload });
         const api = UNSUPPORTED_API[type];
@@ -333,6 +370,88 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
     // the writes to its own cache.
     await this.push({ type: 'sm:gm-value-update', smWorld: this.worldOf(scriptId), scriptId, writes }, from);
     return { ok: true };
+  }
+
+  // ---------- GM_xmlhttpRequest ----------
+
+  // The extension's own `runXhr` drives the request, so timeouts,
+  // aborts, binary response types and the post-redirect `@connect`
+  // re-check behave as they do there. Two things differ, both because
+  // the fetch is Node's rather than the extension's:
+  //   - the browser's cookies for the target are copied onto a `Cookie`
+  //     header (when the page can supply them and the request isn't
+  //     `anonymous`), where Chrome would attach the extension's jar;
+  //   - forbidden headers pass straight through instead of riding a
+  //     declarativeNetRequest rule.
+  //   - a script's own `Cookie` header wins over the jar, as the rule
+  //     does in the extension: the override is the script's request,
+  //     and sending the user's session instead would be the opposite.
+  // Neither makes this the extension's request as a server sees it;
+  // see docs/harness-guide.md, "What is and isn't faithful".
+  private xhrStart(payload: Record<string, unknown>, from: PageLink): { ok: boolean; error?: string } {
+    const scriptId = str(payload.scriptId);
+    const id = str(payload.id);
+    const request = payload.request as GmXhrRequestPayload | undefined;
+    const script = this.scripts.get(scriptId);
+    if (!script) return { ok: false, error: 'This script is not attached to the harness' };
+    if (!id || !request || typeof request.url !== 'string') {
+      return { ok: false, error: 'GM_xmlhttpRequest was called without a URL' };
+    }
+    const record: XhrRecord = {
+      scriptId, id, url: request.url, method: (request.method ?? 'GET').toUpperCase(), at: Date.now(),
+    };
+    this.reports.requests.push(record);
+    const emit = async (event: GmXhrEvent): Promise<void> => {
+      record.outcome = event.kind;
+      if (event.kind === 'load') record.status = event.response.status;
+      if (event.kind === 'error') record.error = event.message;
+      this.emit('request', record);
+      await from.push({ type: 'sm:gm-xhr-event', smWorld: script.world, id, event }).catch(() => undefined);
+    };
+    // Acknowledged first, as the worker does, then the outcome arrives
+    // as a push: even a synchronous `@connect` refusal waits for the
+    // reply to go out.
+    setImmediate(() => {
+      this.runRequest(script, id, request, from, emit).catch((err) => {
+        void emit({ kind: 'error', message: gmXhrError(`internal error: ${(err as Error).message}`) });
+      });
+    });
+    return { ok: true };
+  }
+
+  private async runRequest(
+    script: PreparedScript,
+    id: string,
+    request: GmXhrRequestPayload,
+    from: PageLink,
+    emit: (event: GmXhrEvent) => Promise<void>,
+  ): Promise<void> {
+    // A script with a registration (`spec`) always has a header:
+    // `buildScriptFromText` stores a headerless file as invalid.
+    const header = script.script.header!;
+    const rules = parseConnectRules(header);
+    const selfHosts = extractSelfHosts(header);
+    const check = (url: string) => isUrlConnectAllowed(url, rules, selfHosts);
+    const initial = check(request.url);
+    if (!initial.allowed) {
+      await emit({
+        kind: 'error',
+        message: initial.denied ? connectBlockedMessage(initial.reason) : gmXhrError(initial.reason),
+      });
+      return;
+    }
+    const outgoing: GmXhrRequestPayload = { ...request };
+    const scriptSetsCookie = Object.keys(request.headers ?? {}).some((h) => h.toLowerCase() === 'cookie');
+    if (!request.anonymous && !scriptSetsCookie && from.cookiesFor) {
+      const jar = await from.cookiesFor(request.url).catch(() => []);
+      if (jar.length > 0) {
+        outgoing.headers = { ...(request.headers ?? {}), cookie: jar.map((c) => `${c.name}=${c.value}`).join('; ') };
+      }
+    }
+    const event = await runXhr(id, outgoing, (finalUrl) => check(finalUrl).allowed, null, {
+      forbiddenHeaders: 'passthrough',
+    });
+    await emit(event);
   }
 
   // ---------- Pushes to pages ----------

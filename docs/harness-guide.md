@@ -185,9 +185,19 @@ Faithful under the push backend:
 - `@connect` gating of `GM_xmlhttpRequest`.
 - Error attribution to file and line.
 
+Close, but not the same:
+
+- `GM_xmlhttpRequest` goes out from Node with the browser's cookies for
+  the target copied onto it (unless the request is `anonymous` or sets
+  its own `Cookie` header), and with any header the script asked for.
+  A server sees a request from Node, not from the extension: no
+  `Sec-Fetch-Site: none`, cookies are not re-attached after a
+  cross-origin redirect, and a `Set-Cookie` in the response does not
+  reach the browser.
+
 Not faithful, use the extension backend:
 
-- The request identity of `GM_xmlhttpRequest` (cookies, headers).
+- The request identity of `GM_xmlhttpRequest` as a site's edge sees it.
 - Real downloads and notification clicks.
 - Chrome refusing a registration, and page CSP effects on
   `GM_addStyle` in the page world.
