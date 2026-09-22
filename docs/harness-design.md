@@ -161,10 +161,8 @@ they send into pages.
   - `scripts/validate-userscripts.mjs` keeps its own driver (it has an
     offline dependency root the harness doesn't) and shares the Node
     parse checker, which moved to `src/harness/parse-check-node.ts`.
-- **`host.ts`**: the stand-in SW. (Built: reports, `check-pending`,
-  storage with broadcast and resync, `GM_log`, CSP-blocked DOM
-  reports, `GM_xmlhttpRequest`. Still to come: tabs, downloads,
-  notifications, menus, `urlchange`.)
+- **`host.ts`**: the stand-in SW. (Built: every message the injected
+  code sends today.)
   - Answers every message type the SW handles for injected code:
     `sm:check-pending` (with a values snapshot when the script needs
     one), `sm:start` / `sm:error` / `sm:abandoned` (recorded), batch
@@ -173,8 +171,14 @@ they send into pages.
     focus.
   - Pushes back what the SW pushes: value updates to every attached
     page (cross-tab broadcast within the context), XHR events, tab
-    closed, menu fired, `urlchange` from Playwright's same-document
-    navigation events.
+    closed, menu fired, notification events, download events, and
+    `urlchange` from CDP's `Page.navigatedWithinDocument`.
+  - `GM_openInTab` opens a real page in the same browser context (so a
+    test can wait for it), `window.close` and `window.focus` act on the
+    page, and `GM_download` fetches the bytes from Node into a
+    directory the host names, reporting the extension's event shapes.
+    `GM_notification` records the call and resolves with an id; a test
+    delivers the click or close.
   - Uses the real pieces where they exist: the value codec, the
     `@connect` gate, and `runXhr` itself, the extension's request
     driver, run on Node's `fetch`. The browser context's cookies for
@@ -184,15 +188,16 @@ they send into pages.
     declarativeNetRequest rule. No CORS limit, but not the extension's
     request identity either.
   - Exposes state to tests: seed and read values, the recorded tab
-    opens, menu commands (and a way to fire one), notifications,
-    requests, and the start / error reports.
+    opens, menu commands (and `fireMenuCommand`), notifications (and
+    `clickNotification` / `closeNotification`), downloads, requests,
+    window calls, and the start / error / skipped reports.
 - **`inject.ts`**: attaches a prepared script to a Playwright `Page`.
   (Built.)
   - Installs a MAIN-world init script that listens for bridge events
     and forwards them to Node through a CDP `Runtime.addBinding`
     binding; the reply is posted back into the frame and world the
     request came from with `Runtime.evaluate`. Pushes from the host
-    (value updates and, later, XHR and tab events) go in through
+    (value updates, XHR and tab events, and the rest) go in through
     `page.evaluate` in the main frame's MAIN world. DOM events and
     `postMessage` cross worlds, so one transport serves both. Everything
     goes through one CDP session rather than Playwright's own init

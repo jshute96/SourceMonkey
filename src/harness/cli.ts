@@ -39,6 +39,7 @@ Options for run:
   --launch        Launch a Chromium instead of connecting; --headed shows it
   --watch         Re-inject and reload when a script or its files change
   --values JSON   Seed GM_* storage, e.g. --values '{"units":"metric"}'
+  --fire-menu S   Fire the registered menu command named S after load
   --for SECONDS   Stop after this long instead of waiting for Ctrl-C
 `;
 
@@ -53,6 +54,7 @@ interface Opts {
   headed: boolean;
   watch: boolean;
   values?: Record<string, unknown>;
+  fireMenu?: string;
   for?: number;
 }
 
@@ -87,6 +89,7 @@ function parseArgs(argv: string[]): Opts {
         }
         break;
       }
+      case '--fire-menu': opts.fireMenu = next(); break;
       case '--for': {
         const v = Number(next());
         if (!Number.isFinite(v) || v < 0) throw new Error('--for needs a number of seconds');
@@ -202,6 +205,7 @@ async function runCommand(opts: Opts): Promise<number> {
       headed: opts.headed,
       watch: opts.watch,
       values: opts.values,
+      fireMenu: opts.fireMenu,
       collectionRoot: opts.root,
       localRoots: opts.local,
       out: (line) => process.stdout.write(line + '\n'),

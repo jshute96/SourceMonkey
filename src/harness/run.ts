@@ -29,6 +29,8 @@ export interface RunOptions {
   watch?: boolean;
   /** Seed `GM_*` storage for every script before it runs. */
   values?: Record<string, unknown>;
+  /** Fire this registered menu command once the page has loaded. */
+  fireMenu?: string;
   collectionRoot: string;
   localRoots: string[];
   /** Where the stream goes. */
@@ -79,6 +81,18 @@ export async function run(opts: RunOptions): Promise<number> {
   await injectAll(prepared);
   opts.out(`[sm-dev] opening ${url}`);
   await page.goto(url).catch((err) => opts.out(`[sm-dev] navigation failed: ${(err as Error).message}`));
+  if (opts.fireMenu) {
+    // Registered from the script's body, so it exists once the script
+    // has started; a short grace period covers a late registration.
+    const name = opts.fireMenu;
+    const deadline = Date.now() + 5000;
+    let fired = false;
+    while (!fired && Date.now() < deadline) {
+      fired = await host.fireMenuCommand(name);
+      if (!fired) await page.waitForTimeout(100);
+    }
+    opts.out(fired ? `[sm-dev] fired menu command "${name}"` : `[sm-dev] no menu command named "${name}" was registered`);
+  }
 
   let watcher: (() => void) | null = null;
   if (opts.watch) watcher = watchFiles(opts, prepared, attachment, page, injectAll);
@@ -123,6 +137,11 @@ function wireOutput(host: HarnessHost, page: Page, out: (line: string) => void):
     if (r.stack) for (const line of r.stack.split('\n').slice(1, 4)) out(`    ${line.trim()}`);
   });
   host.on('log', (r) => out(`[sm-dev] ${r.name} GM_log: ${r.message}`));
+  host.on('request', (r) => out(`[sm-dev] GM_xmlhttpRequest ${r.method} ${r.url}: ${r.outcome}${r.status ? ' ' + r.status : ''}${r.error ? ' ' + r.error : ''}`));
+  host.on('tab', (r) => out(`[sm-dev] GM_openInTab ${r.url}`));
+  host.on('menu-command', (r) => out(`[sm-dev] GM_registerMenuCommand "${r.name}"`));
+  host.on('notification', (r) => out(`[sm-dev] GM_notification "${r.title || r.text}"`));
+  host.on('download', (r) => out(`[sm-dev] GM_download ${r.url}: ${r.outcome}${r.filename ? ' -> ' + r.filename : ''}${r.error ? ' ' + r.error : ''}`));
   host.on('value-write', ({ writes }) => {
     for (const w of writes) {
       out(w.deleted

@@ -26,5 +26,12 @@ export {
   type ErrorReport,
   type SkipReport,
   type LogReport,
+  type XhrRecord,
+  type TabRecord,
+  type MenuCommandRecord,
+  type NotificationRecord,
+  type DownloadRecord,
+  type BrowserActions,
+  type OpenedTab,
 } from './host.js';
 export { attachPage, PageAttachment, type InjectOptions } from './inject.js';

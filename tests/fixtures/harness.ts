@@ -43,8 +43,12 @@ export const test = base.extend<HarnessFixtures>({
     dir.cleanup();
   },
 
-  host: async ({}, use) => {
-    await use(new HarnessHost());
+  host: async ({ scriptsDir }, use) => {
+    const host = new HarnessHost();
+    // Per test, so parallel workers downloading the same name can't
+    // collide in the shared default directory.
+    host.downloadDir = path.join(scriptsDir.path, 'downloads');
+    await use(host);
   },
 
   attachment: async ({ page, host }, use) => {

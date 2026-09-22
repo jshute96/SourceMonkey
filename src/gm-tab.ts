@@ -62,8 +62,15 @@ export interface GmTabOpenResult {
 // other extensions' pages). TM/VM's GM_openInTab is web-oriented;
 // restricting to http/https matches the realistic use and closes the
 // scheme-smuggling hole.
-function isAllowedTabUrl(url: string): boolean {
+export function isAllowedTabUrl(url: string): boolean {
   return hasAllowedScheme(url, WEB_SCHEMES);
+}
+
+// The refusal a script sees for a URL `isAllowedTabUrl` rejects. Shared
+// with the development harness (src/harness/host.ts), which applies
+// the same gate.
+export function tabUrlRefusedMessage(url: string): string {
+  return `GM_openInTab: refusing non-http(s) URL ${url}`;
 }
 
 // Open a new tab on behalf of a script. Returns the assigned chrome
@@ -74,7 +81,7 @@ export async function openGmTab(
   originatorTabId: number,
 ): Promise<GmTabOpenResult> {
   if (!isAllowedTabUrl(payload.url)) {
-    return { ok: false, error: `GM_openInTab: refusing non-http(s) URL ${payload.url}` };
+    return { ok: false, error: tabUrlRefusedMessage(payload.url) };
   }
   // Stash the entry first so a close event arriving between
   // chrome.tabs.create resolving and the page receiving the reply

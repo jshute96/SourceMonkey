@@ -26,7 +26,7 @@ import type { CDPSession, Page } from '@playwright/test';
 
 import { WRAPPER_GM_RUNTIME } from '../generated-wrappers.js';
 import { GM_RUNTIME_SOURCE_URL } from '../script-source-url.js';
-import type { HarnessHost, PageLink } from './host.js';
+import type { BrowserActions, HarnessHost, OpenedTab, PageLink } from './host.js';
 import type { InjectionWorld, PreparedScript } from './prepare.js';
 
 // The named isolated world. Any name works; it only has to be the same
@@ -82,6 +82,33 @@ export class PageAttachment implements PageLink {
   private readonly injected = new Map<string, Injected>();
   private readonly runtimeWorlds = new Map<InjectionWorld, string>();
   private closed = false;
+  private mainFrameId = '';
+  readonly browser: BrowserActions = {
+    // A real page in the same context, so a test can `waitForEvent('page')`
+    // for it as it would for the extension's tab.
+    openTab: async (url: string, active: boolean): Promise<OpenedTab> => {
+      const opened = await this.page.context().newPage();
+      const closedCallbacks: (() => void)[] = [];
+      opened.on('close', () => { for (const cb of closedCallbacks) cb(); });
+      // Focus first, then navigate without waiting: `chrome.tabs.create`
+      // answers before the page has loaded, and a slow page must not
+      // hold the script's reply. The order matters: bringing a page to
+      // the front while the other's navigation is in flight left a
+      // later `close()` waiting on that navigation.
+      if (active) await opened.bringToFront().catch(() => undefined);
+      else await this.page.bringToFront().catch(() => undefined);
+      void opened.goto(url).catch(() => undefined);
+      return {
+        close: () => (opened.isClosed() ? Promise.resolve() : opened.close()),
+        onClosed: (cb) => {
+          if (opened.isClosed()) cb();
+          else closedCallbacks.push(cb);
+        },
+      };
+    },
+    closeSelf: () => this.page.close(),
+    focusSelf: () => this.page.bringToFront(),
+  };
   private readonly onClose = (): void => {
     this.closed = true;
     this.host.detachPage(this);
@@ -121,6 +148,15 @@ export class PageAttachment implements PageLink {
       if (ev.frame.parentId) return;
       this.host.noteNavigation(this, this.injectedScripts());
     });
+    // Those same-document changes are what `window.onurlchange` reports.
+    // The worker forwards Chrome's history-update events; this is the
+    // same signal from CDP, for the main frame.
+    this.cdp.on('Page.navigatedWithinDocument', (ev) => {
+      if (ev.frameId !== this.mainFrameId) return;
+      void this.push({ type: 'sm:url-change', url: ev.url }).catch(() => undefined);
+    });
+    const { frameTree } = await this.cdp.send('Page.getFrameTree');
+    this.mainFrameId = frameTree.frame.id;
     this.page.on('close', this.onClose);
     this.host.attachPage(this);
   }

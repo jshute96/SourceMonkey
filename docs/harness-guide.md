@@ -143,7 +143,7 @@ What the fixture provides:
 | Name | Purpose |
 | --- | --- |
 | `loadUserscript(path, options?)` | Prepares the file with the real pipeline and attaches it to `page` (before the navigation that should see it). Options: `values` to seed storage, `world` to override the computed world, `url` to check the match early. Throws with the extension's own message if the script is invalid. Call it twice for two scripts on one page. |
-| `gm` | `get(key)`, `set(key, value)`, `list()`, `menuCommands()`, `fireMenu(label)`, `openedTabs()`, `notifications()`, `requests()`. Values are per script; pass the script's name when more than one is loaded. |
+| `gm` | `get(key)`, `set(key, value)`, `list()`, `menuCommands()`, `fireMenu(label)`, `openedTabs()`, `notifications()`, `clickNotification(requestId)`, `closeNotification(requestId)`, `downloads()`, `requests()`. Values are per script; pass the script's name when more than one is loaded. |
 | `reports` | `started()`, `skipped()` (with the rule that missed), `errors()` (message, file, line). `await reports.waitForStart()` is the usual gate before interacting. |
 | `serveSnapshot(file, url)` | Routes a saved HTML file at `url`, so `@match` and relative URLs behave as on the live site. Pair with Playwright's `routeFromHAR` for pages that fetch data. |
 
@@ -195,10 +195,16 @@ Close, but not the same:
   cross-origin redirect, and a `Set-Cookie` in the response does not
   reach the browser.
 
+- `GM_download` fetches the file from Node into a directory of the
+  host's choosing and reports the extension's events, numbering a
+  taken name as Chrome does; there is no download bar or prompt, and
+  no `onprogress`. `GM_notification` shows nothing; a `timeout` still
+  fires `ondone`, and a test delivers the click.
+
 Not faithful, use the extension backend:
 
 - The request identity of `GM_xmlhttpRequest` as a site's edge sees it.
-- Real downloads and notification clicks.
+- Chrome's own download manager and notification UI.
 - Chrome refusing a registration, and page CSP effects on
   `GM_addStyle` in the page world.
 - Anything about the extension's UI: badge, collections page, Log tab.
