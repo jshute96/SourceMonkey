@@ -22,6 +22,9 @@
 *.pem
 dist/
 
+# the npm package's build output (see docs/architecture.md)
+lib/
+
 # playwright
 /test-results/
 /playwright-report/

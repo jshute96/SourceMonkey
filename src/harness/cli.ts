@@ -1,16 +1,19 @@
 #!/usr/bin/env node
-// `sm-dev`: the command-line side of the development harness.
+// `sm-dev`: argument parsing and dispatch for the development
+// harness's command line. What each command does is in the usage text
+// below, which is the one description of them; this file is the
+// plumbing around it.
 //
-// Every command prints plain text meant to be read by a person or an
-// agent iterating on a userscript.
+// Where the work lives:
+//   - Node-only commands (`validate`, `match`) call prepare.ts here.
+//   - Commands that need a browser hand off to run.ts (`run`, and the
+//     connection every browser command shares) or
+//     browser-commands.ts (`probe`, `snapshot`).
+//   - `--extension` and `clear` go through extension-backend.ts, which
+//     drives a real SourceMonkey rather than the harness.
 //
-//   sm-dev validate <path>...        the install-time checks (Node only)
-//   sm-dev match <script> <url>...   would the script run there? (Node only)
-//   sm-dev run <script>... [--url U] inject into a browser and stream
-//                                    what happens
-//   sm-dev probe <url> --selectors S which selectors resolve on a page
-//   sm-dev snapshot <url> --out F    save a page's DOM for a spec
-//   sm-dev clear --extension         drop every pushed script
+// The loaded modules differ on purpose: `validate` and `match` never
+// import Playwright, so they run in a repo that has not installed it.
 //
 // Exit codes: 0 when every script checked out (or every URL matched,
 // no script threw, every selector was found), 1 when one didn't, 2 for
@@ -21,41 +24,60 @@ import path from 'node:path';
 
 import { explainMatch, prepareScript } from './prepare.js';
 
-const USAGE = `Usage: sm-dev <command> [options]
+const USAGE = `sm-dev — develop and test userscripts against a real browser,
+with SourceMonkey's own injection and GM_* APIs behind them.
+
+Usage: sm-dev <command> [options]
 
 Commands:
-  validate <path>...          Run the install-time checks over files or
-                              directories of *.user.js
-  match <script> <url>...     Say whether the script would run on each URL
   run <script>...             Inject the script(s) into a page and stream
-                              console lines and reports until Ctrl-C
-  probe <url>                 Report which --selectors resolve on the page
-  snapshot <url>              Save the page's DOM to --out FILE
-  clear --extension           Remove every script pushed into the extension
-                              and turn solo mode off
+                              what they do, until Ctrl-C. Type commands
+                              while it runs: see "Interactive commands"
+  validate <path>...          Run the install-time checks (header,
+                              @require, syntax) over files or directories
+  match <script> <url>...     Say whether the script would run on each
+                              URL, and which header rule decided
+  probe <url>                 Say which --selectors resolve on the page
+  snapshot <url>              Save the page's DOM to --out FILE, for a
+                              test to serve back without a login
+  clear --extension           Remove every script pushed into the
+                              extension and turn solo mode off
 
-Options:
+Options for every command:
   --root DIR      The repo root, searched for local copies of @require
                   URLs (default: the current directory)
   --local DIR     Another directory to search; repeatable
 
-Options for the browser commands (run, probe, snapshot):
+Options for the browser commands (run, probe, snapshot, clear):
   --cdp URL       Browser to connect to (default: $SM_DEV_CDP or
                   http://127.0.0.1:9233)
-  --launch        Launch a Chromium instead of connecting; --headed shows it
+  --launch        Launch a Chromium instead of connecting to one
+  --headed        With --launch: show the browser
 
 Options for run:
   --url URL       The page to open (default: the first page the script's
                   @match implies)
   --watch         Re-inject and reload when a script or its files change
-  --values JSON   Seed GM_* storage, e.g. --values '{"units":"metric"}'
-  --fire-menu S   Fire the registered menu command named S after load
-  --for SECONDS   Stop after this long instead of waiting for Ctrl-C
+  --values JSON   Seed GM_* storage before the script runs, e.g.
+                  --values '{"units":"metric"}'
+  --fire-menu S   Fire the registered menu command named S once the page
+                  has loaded, as if picked from the toolbar menu
+  --seconds N     Stop after N seconds instead of waiting for Ctrl-C
   --extension     Push the script into the SourceMonkey extension in
-                  that browser instead of injecting it; reports come
-                  from the script's Log tab
+                  that browser instead of injecting it; what it prints
+                  is then the script's own Log tab
   --solo          With --extension: disable every other collection for
                   the run and restore them after
+
+Interactive commands (type these while \`run\` is streaming):
+  menu [label]    Fire a registered menu command; with no label, list them
+  values          Print everything the script has stored
+  get <key>       Print one stored value
+  set <key> <json>  Store a value, as another tab's write would
+  reload          Reload the page
+  open <url>      Navigate to another page
+  help            List these
+  quit            Stop the run
 
 Options for probe:
   --selectors S   Comma-separated CSS selectors to look for; repeat the
@@ -80,7 +102,7 @@ interface Opts {
   fireMenu?: string;
   extension: boolean;
   solo: boolean;
-  for?: number;
+  seconds?: number;
   selectors: string[];
   selectorFlags: number;
   html: boolean;
@@ -132,10 +154,10 @@ function parseArgs(argv: string[]): Opts {
       }
       case '--html': opts.html = true; break;
       case '--out': opts.outFile = path.resolve(next()); break;
-      case '--for': {
+      case '--seconds': {
         const v = Number(next());
-        if (!Number.isFinite(v) || v < 0) throw new Error('--for needs a number of seconds');
-        opts.for = v;
+        if (!Number.isFinite(v) || v < 0) throw new Error('--seconds needs a number');
+        opts.seconds = v;
         break;
       }
       case '--help': case '-h': opts.command = 'help'; break;
@@ -233,10 +255,12 @@ async function runCommand(opts: Opts): Promise<number> {
   // exit, and the listener comes off once the run has ended.
   let onSigint: (() => void) | null = null;
   let timer: NodeJS.Timeout | null = null;
+  let stop: () => void = () => undefined;
   const until = new Promise<void>((resolve) => {
+    stop = resolve;
     onSigint = () => resolve();
     process.once('SIGINT', onSigint);
-    if (opts.for !== undefined) timer = setTimeout(resolve, opts.for * 1000).unref();
+    if (opts.seconds !== undefined) timer = setTimeout(resolve, opts.seconds * 1000).unref();
   });
   try {
     return await run({
@@ -254,6 +278,7 @@ async function runCommand(opts: Opts): Promise<number> {
       localRoots: opts.local,
       out: (line) => process.stdout.write(line + '\n'),
       until,
+      onStop: () => stop(),
     });
   } finally {
     if (timer) clearTimeout(timer);

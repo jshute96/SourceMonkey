@@ -132,21 +132,21 @@ script **text or a file path**, never a collection.
 ### Package plumbing
 
 - `package.json`: remove `private`; add `exports` (`./harness` for the
-  harness entry, and `./*` mapping to `dist/*.js` so the pure modules
+  harness entry, and `./*` mapping to `lib/*.js` so the pure modules
   such as `url-match` and `userscript-header` are importable too),
-  `files: ["dist"]`, `bin: { "sm-dev": ... }`, a `prepare` script that
-  runs the build so a git install produces `dist/`, and
-  `@playwright/test` as an optional peer dependency used only by the
-  harness entry. `tsconfig.json` emits declarations so a TypeScript
-  consumer gets types.
+  `files: ["lib"]`, `bin: { "sm-dev": ... }`, a `prepare` script that
+  runs the build so a git install produces it, and `@playwright/test`
+  as an optional peer dependency used only by the harness entry.
+  The package is built by `tsconfig.lib.json` into `lib/`, with
+  declarations; `dist/` stays the extension alone. See
+  [architecture.md](architecture.md#two-outputs-dist-and-lib).
 - The package name is `sourcemonkey`. Consumers pin a git tag; npm
   publishing can come later without changing the import paths.
 
 ### `src/harness/`
 
-Compiled to `dist/harness/` by the existing `tsc` run (`src/**/*.ts` is
-already the include). Four modules, all Node-side except for the strings
-they send into pages.
+Compiled to `lib/harness/`. Node-side except for the strings they send
+into pages.
 
 - **`prepare.ts`**: file or text in, an injectable script out.
   - Runs the real install pipeline: `buildScriptFromText`, then
@@ -275,7 +275,8 @@ Details are in the guide; the shape is:
 
 - `pnpm add -D github:jshute96/SourceMonkey#<tag>`, with `sourcemonkey`
   allowlisted under `pnpm.onlyBuiltDependencies` so the `prepare` build
-  runs. `link:../SourceMonkey2` while developing both.
+  runs. `file:../SourceMonkey` (with `dependenciesMeta.injected`)
+  while developing both; see the guide.
 - Its `test/fixtures.js` keeps the CDP connection logic (a repo policy,
   not a harness concern) and re-exports `test` / `expect` from
   `sourcemonkey/harness` instead of stripping headers itself. The

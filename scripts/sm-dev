@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+#
+# `sm-dev` in this checkout. The same tool a repo of userscripts gets on
+# its PATH when it installs the `sourcemonkey` package: the package's
+# `bin` entry points at lib/harness/cli.js, which pnpm links into that
+# repo's node_modules/.bin. Here there is no such link, so this is it.
+#
+#   scripts/sm-dev run tests/examples/gm-storage/gm-storage.user.js
+#   scripts/sm-dev --help
+#
+# Builds first when lib/ is missing, so a fresh checkout works.
+
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
+if [[ ! -f "$root/lib/harness/cli.js" ]]; then
+  echo "Building the harness first..." >&2
+  (cd "$root" && pnpm run build >/dev/null)
+fi
+exec node "$root/lib/harness/cli.js" "$@"

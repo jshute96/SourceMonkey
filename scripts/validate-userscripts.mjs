@@ -68,7 +68,7 @@ import {
   UNTERMINATED_METADATA_BLOCK,
 } from '../dist/userscript-header.js';
 import { unusableMatchGroupKey } from '../dist/url-match.js';
-import { checkParseNode } from '../dist/harness/parse-check-node.js';
+import { checkParseNode } from '../lib/harness/parse-check-node.js';
 // The offline tree's layout (percent-encoded segments, truncated long
 // names, `<path>/index` for a path that is also a directory prefix) is
 // defined by the corpus downloader, so the lookup comes from there

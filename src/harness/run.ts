@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import type { Browser, BrowserContext, Page } from '@playwright/test';
 
 import { representativeMatch } from '../match-targets.js';
+import { readConsoleCommands } from './console-commands.js';
 import { ExtensionBackend, type LogEntry } from './extension-backend.js';
 import { HarnessHost, type ErrorReport, type SkipReport, type StartReport } from './host.js';
 import { attachPage, type PageAttachment } from './inject.js';
@@ -41,6 +42,8 @@ export interface RunOptions extends ConnectOptions {
   out: (line: string) => void;
   /** Resolves when the run should end (Ctrl-C). Omit to return after the first load. */
   until?: Promise<void>;
+  /** Called when a typed `quit` asks for the run to end. */
+  onStop?: () => void;
 }
 
 // How the browser commands reach a browser: connect to one over CDP
@@ -142,12 +145,30 @@ export async function run(opts: RunOptions): Promise<number> {
   let watcher: (() => void) | null = null;
   if (opts.watch) watcher = watchFiles(opts, prepared, attachment, page, injectAll);
 
+  let stopCommands: (() => void) | null = null;
   if (opts.until) {
+    // Typed commands drive the script while it runs: fire a menu
+    // command again, read what it stored, write a value back. Only
+    // worth arming for a run that is waiting on something.
+    //
+    // Armed once the script has started (or shortly after, if it never
+    // does): a command read before then would run against a page whose
+    // script has not registered anything yet, which is what a piped
+    // sequence of commands would otherwise hit.
+    await waitForFirstStart(host, page);
+    stopCommands = readConsoleCommands({
+      host,
+      page,
+      scriptIds: prepared.map((p) => p.spec!.id),
+      out: opts.out,
+      stop: () => opts.onStop?.(),
+    });
     await opts.until;
   } else {
     // One load's worth of output, then leave the page as it is.
     await page.waitForTimeout(500);
   }
+  stopCommands?.();
   watcher?.();
   await attachment.dispose();
   await session.done();
@@ -257,6 +278,23 @@ async function runInExtension(opts: RunOptions, session: BrowserSession): Promis
     await session.done();
   }
   return errors === 0 ? 0 : 1;
+}
+
+// Resolve when some script has reported that it started, or after a
+// grace period when none does (a URL its header does not cover, a
+// script that threw before reporting).
+async function waitForFirstStart(host: HarnessHost, page: Page, timeoutMs = 5000): Promise<void> {
+  if (host.reports.started.length > 0) return;
+  await new Promise<void>((resolve) => {
+    const done = (): void => {
+      clearTimeout(timer);
+      host.off('start', done);
+      resolve();
+    };
+    const timer = setTimeout(done, timeoutMs);
+    host.on('start', done);
+  });
+  void page;
 }
 
 function sameEntry(a: LogEntry, b: LogEntry): boolean {

@@ -5,7 +5,6 @@
     "moduleResolution": "bundler",
     "rootDir": "src",
     "outDir": "dist",
-    "declaration": true,
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
@@ -15,5 +14,9 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": ["chrome", "node"]
   },
-  "include": ["src/**/*.ts"]
+  // The extension only. `src/harness/**` is Node-side code Chrome never
+  // loads; it is compiled into `lib/` by tsconfig.lib.json, along with
+  // the extension modules it imports. See docs/architecture.md.
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/harness/**"]
 }

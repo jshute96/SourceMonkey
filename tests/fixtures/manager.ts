@@ -56,9 +56,9 @@ import {
   managerHeaded,
 } from './managers.mjs';
 import { listUserscriptsRecursive } from './userscript-files.mjs';
-import { HarnessHost } from '../../dist/harness/host.js';
-import { attachPage, readUserAgentData } from '../../dist/harness/inject.js';
-import { prepareScript, type PreparedScript } from '../../dist/harness/prepare.js';
+import { HarnessHost } from '../../lib/harness/host.js';
+import { attachPage, readUserAgentData } from '../../lib/harness/inject.js';
+import { prepareScript, type PreparedScript } from '../../lib/harness/prepare.js';
 
 /**
  * The managers this fixture can drive. Everything but `sourcemonkey`

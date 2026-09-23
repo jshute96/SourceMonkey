@@ -11,9 +11,9 @@ import { test as base } from '@playwright/test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { HarnessHost } from '../../dist/harness/host.js';
-import { attachPage, type PageAttachment } from '../../dist/harness/inject.js';
-import { prepareScript, type PrepareOptions, type PreparedScript } from '../../dist/harness/prepare.js';
+import { HarnessHost } from '../../lib/harness/host.js';
+import { attachPage, type PageAttachment } from '../../lib/harness/inject.js';
+import { prepareScript, type PrepareOptions, type PreparedScript } from '../../lib/harness/prepare.js';
 import { createFixtureServer, type FixtureServer } from './sourcemonkey-launch.js';
 import { ScriptsDir, type UserscriptSpec } from './scripts-dir.js';
 

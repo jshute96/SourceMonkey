@@ -15,6 +15,7 @@
 import { test as base } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { savePageSnapshot } from './capture-page.js';
 
 import {
   HarnessHost, NO_RULE_COVERS_URL,
@@ -100,6 +101,13 @@ export interface HarnessFixtures {
    * unless `block` is set, which aborts them.
    */
   serveSnapshot: (file: string, url: string, options?: { block?: boolean }) => Promise<void>;
+  /**
+   * Write the page's current DOM to `file`, for `serveSnapshot` to
+   * replay later. The same file `sm-dev snapshot` writes: run a spec
+   * once against the live site to record it, then serve it and the
+   * spec needs no login.
+   */
+  saveSnapshot: (file: string) => Promise<void>;
 }
 
 export const test = base.extend<HarnessFixtures>({
@@ -216,6 +224,10 @@ export const test = base.extend<HarnessFixtures>({
         host.on('start', onStart);
       }),
     });
+  },
+
+  saveSnapshot: async ({ page }, use) => {
+    await use(async (file) => { await savePageSnapshot(page, file); });
   },
 
   serveSnapshot: async ({ page }, use) => {

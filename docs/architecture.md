@@ -479,24 +479,29 @@ takes effect:
 No bundler. Each TypeScript module compiles to its own `dist/*.js`
 and Chrome loads them directly as ES modules.
 
-### `dist/` is two products
+### Two outputs: `dist/` and `lib/`
 
-One compile, two consumers:
+One set of sources, compiled twice:
 
-- **The unpacked extension**, which is what Chrome loads and what
-  `scripts/zip_extension.sh` packs.
-- **The `sourcemonkey` package**, whose `exports` point into the same
-  files. It adds `dist/harness/` (Node-only code, see
-  [harness-design.md](harness-design.md)) and the `.d.ts`
-  declarations a TypeScript consumer resolves.
+- **`dist/`** is the unpacked extension and nothing else. Chrome loads
+  it, `scripts/zip_extension.sh` packs all of it, and
+  `tsconfig.json` builds it with `src/harness/**` excluded.
+- **`lib/`** is the `sourcemonkey` package (`package.json`'s `files`
+  and `exports` point there). `tsconfig.lib.json` compiles every
+  module, the development harness included, and emits a `.d.ts` beside
+  each one for a TypeScript consumer.
 
-They share one compile on purpose: the harness's whole claim is that it
-runs *the extension's own code*, and a second copy built from the same
-sources would be one more thing to keep honest. Chrome ignores the
-files it has no use for — nothing it loads imports them, and the
-manifest declares no `web_accessible_resources`, so none of them is
-reachable from a page — and the zip leaves them out, which is why it is
-a third of the directory's size.
+Why two builds of the same modules rather than one directory serving
+both: the harness is not a separate program, it is a library built on
+49 of the extension's own modules, so the two sets of files are not
+separable. Where they land is. Keeping `dist/` to exactly what Chrome
+loads means the unpacked directory, the zip, and the extension are the
+same thing, and the package can carry what it needs without that
+showing up in the browser.
+
+The cost is one extra `tsc` pass on a full build, about six seconds.
+`pnpm run watch` skips it: a developer watching `dist/` is iterating on
+the extension, and `pnpm run build` is what produces the package.
 
 ### Glyph sprite
 

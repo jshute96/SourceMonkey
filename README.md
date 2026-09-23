@@ -24,22 +24,25 @@ userscript managers.
 
 ### Testing your userscripts
 
-The part of a userscript that is hard to test is the manager: `@match`
-deciding where it runs, `@grant` deciding what exists, `@require`
-loading, the `GM_*` APIs behaving. Test harnesses usually fake those,
-and a fake is the one thing that can't tell you your script works.
+Userscripts are hard to test. The hard part is not the script, it is
+the manager around it: `@match` deciding where the script runs,
+`@grant` deciding what exists, `@require` loading, the `GM_*` APIs
+doing what they do. A test harness normally fakes all of that, and a
+fake is the one thing that cannot tell you your script works.
 
-SourceMonkey ships its own. A repo of userscripts installs it as a
-package and gets:
+SourceMonkey ships a harness that uses its own code instead. A repo of
+userscripts installs SourceMonkey as a package and gets two things:
 
-- **Playwright tests** where a script runs behind the extension's real
-  injection and `GM_*` runtime, with a stand-in for the service worker,
-  so a test exercises the script as installed rather than a
-  hand-written imitation of one.
-- **`sm-dev`**, a command line for developing against a live page: run
-  a script and watch what it does, re-injecting on save; check which
-  selectors still resolve; save a page for a test to replay; or push
-  the script straight into a running SourceMonkey.
+- **A Playwright fixture.** A script under test is prepared by the
+  extension's own install pipeline and injected behind its real
+  prelude and `GM_*` runtime, with a stand-in for the service worker.
+  A test drives what the script did through the manager: read what it
+  stored, fire a menu command, answer a network request.
+- **`sm-dev`, a command-line tool.** Run a script against a live page
+  and watch what it does, re-injecting as you save. Check which
+  selectors still resolve after a site changes. Save a page so a test
+  can replay it without logging in. Push a script straight into a
+  running SourceMonkey.
 
 See [docs/harness-guide.md](docs/harness-guide.md) to use it, and
 [docs/harness-design.md](docs/harness-design.md) for how it works.
@@ -423,11 +426,20 @@ started](#getting-started).
 `pnpm install` runs the same build (the package's `prepare` script), so
 a fresh checkout has a `dist/` as soon as its dependencies are in.
 
-`dist/` is both the unpacked extension and the `sourcemonkey` package:
-alongside what Chrome loads it holds `dist/harness/` (Node-only) and a
-`.d.ts` per module, for the repos that install it to test their
-userscripts. Chrome ignores those; `scripts/zip_extension.sh` leaves
-them out. See [docs/architecture.md](docs/architecture.md#dist-is-two-products).
+The build writes two directories. `dist/` is the unpacked extension,
+and nothing else: it is what you load in Chrome and what
+`scripts/zip_extension.sh` packs. `lib/` is the `sourcemonkey`
+package, which adds the development harness and the type declarations
+a consumer needs. See
+[docs/architecture.md](docs/architecture.md#two-outputs-dist-and-lib).
+
+`scripts/sm-dev` runs the harness's command line from this checkout
+(a repo that installs the package gets `sm-dev` on its path instead):
+
+```sh
+scripts/sm-dev --help
+scripts/sm-dev validate tests/examples
+```
 
 ### Test
 

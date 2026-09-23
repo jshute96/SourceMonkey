@@ -13,6 +13,7 @@ One-line descriptions of every source file, grouped by directory.
 | `package.json` | Node project manifest, scripts, devDependencies |
 | `pnpm-lock.yaml` | pnpm dependency lockfile |
 | `tsconfig.json` | TypeScript compiler config for the extension build |
+| `tsconfig.lib.json` | The `sourcemonkey` package build: every module plus the harness, with declarations, into `lib/` |
 | `tsconfig.tests.json` | Typecheck-only config extending the build one to cover `tests/` (`pnpm run typecheck`) |
 | `playwright.config.ts` | Playwright test runner config (e2e suite) |
 | `.gitignore` | Git ignore rules |
@@ -30,6 +31,7 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `scripts/build.mjs` | Clean `dist/`, copy icons + manifest + HTML + vendor (Prism), run `tsc` (optional `--watch`) |
+| `scripts/sm-dev` | Runs the harness's command line from this checkout, building `lib/` first when it is missing |
 | `scripts/zip_extension.sh` | Build and zip the extension for distribution, packing the runtime files only (no `.d.ts`, no `harness/`) |
 | `scripts/release-extension.sh` | Cut a `vX.Y.Z` GitHub release: version/branch/tag checks, zip, push tag, `gh release create` (draft by default) |
 | `scripts/serve-examples.mjs` | Local HTTP server for `tests/examples/`, including the `/__slow/?ms=N` delay route the `headers-run-at` demo needs |
@@ -162,8 +164,8 @@ One-line descriptions of every source file, grouped by directory.
 
 ### Development harness (`src/harness/`)
 
-Node-side code, compiled with the rest of `src/` into `dist/harness/`
-and published as the `sourcemonkey/harness` entry and the `sm-dev`
+Node-side code Chrome never loads. Compiled into `lib/harness/`, and
+published as the `sourcemonkey/harness` entry and the `sm-dev`
 command. See `docs/harness-design.md`.
 
 | File | Description |
@@ -174,6 +176,8 @@ command. See `docs/harness-design.md`.
 | `src/harness/host.ts` | The stand-in service worker: answers every bridge message the injected code sends, under Node, and records what scripts do |
 | `src/harness/inject.ts` | Attaches prepared scripts to a Playwright page over CDP, in the right world, with the bridge forwarded to the host |
 | `src/harness/fixture.ts` | The Playwright fixture a consumer repo imports: `loadUserscript`, `gm`, `reports`, `serveSnapshot` over a host and attachment per test |
+| `src/harness/capture-page.ts` | A page's DOM as a standalone file, scripts disabled and a `<base>` added; shared by `sm-dev snapshot` and the fixture's `saveSnapshot` |
+| `src/harness/console-commands.ts` | The commands typed while `sm-dev run` streams: fire a menu command, read and write stored values, reload, navigate |
 | `src/harness/browser-commands.ts` | `sm-dev probe` (which selectors resolve on a page) and `sm-dev snapshot` (save a page's DOM for a spec) |
 | `src/harness/run.ts` | `sm-dev run`: connect or launch a browser (shared `connectBrowser`), inject scripts, stream reports and console lines, re-inject on file changes |
 | `src/harness/extension-backend.ts` | `sm-dev --extension`: finds SourceMonkey's worker in the browser and drives `pushScript`, `clearPushedScripts`, `soloMode`, the script log |
@@ -456,5 +460,5 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 | `docs/file-changes.md` | Files changed behind SourceMonkey's back: the drop-on-refresh rule per collection kind, the paint-time chips, the collection's "refresh pending" chip |
 | `docs/local-delete.md` | Deleting a local copy: what can be deleted and why, the dialog, dependency files, order and failure |
 | `docs/local-copy.md` | Local copies of a script: the Downloads collection, why `chrome.downloads`, the dialog, header rewriting, dependency layout, what's next |
-| `docs/harness-design.md` | Proposal: packaging SourceMonkey's pipeline and injected code as a harness for other repos, the push and extension backends, `sm-dev` |
-| `docs/harness-guide.md` | Proposal, user-facing: what a userscript repo installs, the `sm-dev` commands, the Playwright fixture API, what is and isn't faithful |
+| `docs/harness-design.md` | The harness other repos install: the push backend that runs the injected code without the extension, the extension backend, `sm-dev` |
+| `docs/harness-guide.md` | User-facing: what a userscript repo installs, the `sm-dev` commands, the Playwright fixture API, what is and isn't faithful |

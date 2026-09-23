@@ -13,7 +13,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { checkParseNode } from '../../dist/harness/parse-check-node.js';
+import { checkParseNode } from '../../lib/harness/parse-check-node.js';
 import { selectParseLocation } from '../../dist/parse-location.js';
 
 test('valid source compiles as a function body', () => {

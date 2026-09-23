@@ -2,9 +2,9 @@
 // need no userscript at all. Both connect the way `run` does (see
 // run.ts) and print plain text.
 
-import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { savePageSnapshot } from './capture-page.js';
 import { connectBrowser, type ConnectOptions } from './run.js';
 
 export interface ProbeOptions extends ConnectOptions {
@@ -70,12 +70,8 @@ export interface SnapshotOptions extends ConnectOptions {
 }
 
 // The live DOM as HTML, for a spec to serve back at the original URL
-// (`serveSnapshot` in the fixture) so it needs no login. A `<base>`
-// keeps relative URLs pointing at the site. The site's own scripts are
-// disabled: served again they would re-fetch, redirect to a login, or
-// rebuild the DOM the snapshot was taken to preserve. What a clone
-// can't carry (typed form values, canvas pixels, shadow roots) is not
-// in the file either.
+// (`serveSnapshot` in the fixture) so it needs no login. What the file
+// holds, and what it cannot, is described on `capturePage`.
 export async function snapshot(opts: SnapshotOptions): Promise<number> {
   const session = await connectBrowser(opts, opts.out);
   if (!session) return 1;
@@ -88,25 +84,9 @@ export async function snapshot(opts: SnapshotOptions): Promise<number> {
       return 1;
     }
     await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => undefined);
-    const html = await page.evaluate((base) => {
-      const doc = document.documentElement.cloneNode(true) as HTMLElement;
-      const head = doc.querySelector('head');
-      if (head && !head.querySelector('base')) {
-        const el = document.createElement('base');
-        el.href = base;
-        head.prepend(el);
-      }
-      // `type="text/plain"` keeps the element and its text for a reader
-      // while the browser skips it.
-      for (const script of doc.querySelectorAll('script')) script.setAttribute('type', 'text/plain');
-      const doctype = document.doctype;
-      const dt = doctype
-        ? `<!DOCTYPE ${doctype.name}${doctype.publicId ? ` PUBLIC "${doctype.publicId}"` : ''}${doctype.systemId ? ` "${doctype.systemId}"` : ''}>`
-        : '';
-      return (dt ? dt + '\n' : '') + doc.outerHTML;
-    }, page.url());
+    let html: string;
     try {
-      await writeFile(opts.outFile, html);
+      html = await savePageSnapshot(page, opts.outFile);
     } catch (err) {
       opts.out(`[sm-dev] could not write ${opts.outFile}: ${(err as Error).message}`);
       return 1;

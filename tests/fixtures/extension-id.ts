@@ -42,7 +42,7 @@ export function extensionIdFromPathOnly(absolutePath: string): string {
 // the base64-encoded form.
 // The key-based derivation is the one that ships, in the harness
 // package, so it is taken from there rather than kept twice.
-import { extensionIdFromKey } from '../../dist/harness/extension-backend.js';
+import { extensionIdFromKey } from '../../lib/harness/extension-backend.js';
 export { extensionIdFromKey };
 
 // Computes the ID Chrome will actually use for the unpacked extension

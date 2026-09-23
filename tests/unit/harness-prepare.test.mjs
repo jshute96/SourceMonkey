@@ -1,4 +1,4 @@
-// Unit tests for src/harness/prepare.ts (compiled to dist/harness/prepare.js):
+// Unit tests for src/harness/prepare.ts (compiled to lib/harness/prepare.js):
 // the harness's front door, which runs the real install pipeline under
 // Node over files on disk.
 //
@@ -13,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { explainMatch, prepareScript } from '../../dist/harness/prepare.js';
+import { explainMatch, prepareScript } from '../../lib/harness/prepare.js';
 import { NO_NAME } from '../../dist/script-store.js';
 
 const HEADER = `// ==UserScript==

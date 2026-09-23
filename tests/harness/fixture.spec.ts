@@ -6,7 +6,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { test as harnessTest, expect } from '../../dist/harness/index.js';
+import { test as harnessTest, expect } from '../../lib/harness/index.js';
 
 // A repo-like directory with one script, as a consumer would have.
 const test = harnessTest.extend<{ repo: string }>({
@@ -81,5 +81,20 @@ test.describe('consumer fixture', () => {
     await loadUserscript(path.join(repo, 'greet.user.js'), { collectionRoot: repo });
     await page.goto('https://example.test/other');
     await expect(reports.waitForStart(undefined, 500)).rejects.toThrow(/Skipped: Greeter on https:\/\/example\.test\/other: No @match/);
+  });
+
+  test('saveSnapshot records a page serveSnapshot can replay', async ({ page, repo, loadUserscript, serveSnapshot, saveSnapshot }) => {
+    await serveSnapshot(path.join(repo, 'snapshot.html'), 'https://example.test/items/7', { block: true });
+    await page.goto('https://example.test/items/7');
+    await page.evaluate(() => { document.getElementById('target')!.textContent = 'as it stood'; });
+    const recorded = path.join(repo, 'recorded.html');
+    await saveSnapshot(recorded);
+
+    // Replaying it gives the page back as it was, with the script
+    // running against it.
+    await serveSnapshot(recorded, 'https://example.test/items/8');
+    await loadUserscript(path.join(repo, 'greet.user.js'), { collectionRoot: repo });
+    await page.goto('https://example.test/items/8');
+    await expect(page.locator('#target')).toHaveText('hello from Greeter');
   });
 });

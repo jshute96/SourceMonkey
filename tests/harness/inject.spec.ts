@@ -3,7 +3,7 @@
 // with the harness host answering the bridge.
 
 import { test, expect } from '../fixtures/harness.js';
-import { attachPage } from '../../dist/harness/inject.js';
+import { attachPage } from '../../lib/harness/inject.js';
 
 test.describe('harness injection', () => {
   test('a script runs on a matching page and reports its start', async ({ page, fixtureServer, host, loadScript }) => {
@@ -193,7 +193,7 @@ test.describe('harness injection', () => {
       `,
     };
     const first = await loadScript(spec);
-    const { prepareScript } = await import('../../dist/harness/prepare.js');
+    const { prepareScript } = await import('../../lib/harness/prepare.js');
     const second = await prepareScript({
       file: scriptsDir.write(spec),
       collectionRoot: scriptsDir.path,
