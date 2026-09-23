@@ -52,10 +52,10 @@ import {
   isHttpUrl,
   isLocalDirectoryCollection,
   isSingleFileInput,
-  PUSHED_CONTAINER_PATH,
-  isPushedUrl,
-  pushedTextKey,
-  pushedUrl,
+  SCRATCH_CONTAINER_PATH,
+  isScratchUrl,
+  scratchTextKey,
+  scratchUrl,
   baseName,
   isFileUrl,
   isManifestCollection,
@@ -2234,7 +2234,7 @@ export async function markFirstRunComplete(): Promise<void> {
 // Where a single script should be installed: a specific container by
 // id, or the built-in default container for the script's own scheme
 // (created if it doesn't exist).
-export type InstallTarget = { collectionId: string } | { schemeDefault: true } | { pushed: true };
+export type InstallTarget = { collectionId: string } | { schemeDefault: true } | { scratch: true };
 
 // Install one `.user.js` location into a container collection. Returns
 // null if the location is already a script in THAT container — the
@@ -2253,36 +2253,37 @@ export async function installScript(
   return await addScriptToContainer(path, target);
 }
 
-// ---------- Pushed scripts ----------
+// ---------- Scratch scripts ----------
 //
-// Scripts handed over as text by the development harness
+// Scripts whose only copy is their text in storage (see directories.ts).
+// For now only the development harness writes them
 // (docs/harness-design.md, "Extension backend"). They live in one
-// container, `container:pushed`, shown on the collections page like any
+// container, `container:scratch`, shown on the collections page like any
 // other; their text is a storage row the fetcher reads back, so every
 // refresh path treats them as ordinary scripts.
 
-export const PUSHED_COLLECTION_NAME = 'Pushed scripts';
+export const SCRATCH_COLLECTION_NAME = 'Scratch';
 
-export interface PushScriptResult {
+export interface WriteScratchScriptResult {
   scriptId: string;
   collectionId: string;
   status: ScriptStatus;
   errorMessage?: string;
   errorLocation?: DiagnosticLocation;
-  /** True when a script of this name was already pushed and got replaced. */
+  /** True when a scratch script of this name already existed and got replaced. */
   replaced: boolean;
 }
 
-// Install or replace a pushed script. The name (the `@name`, or one the
-// caller gives) is the identity: pushing it again replaces the earlier
+// Install or replace a scratch script. The name (the `@name`, or one the
+// caller gives) is the identity: writing it again replaces the earlier
 // text in place, keeping the row's id and its GM values, which is what
 // lets a page reload hot-swap the new version.
-export async function pushScript(args: { text: string; name?: string }): Promise<PushScriptResult> {
+export async function writeScratchScript(args: { text: string; name?: string }): Promise<WriteScratchScriptResult> {
   const header = parseHeader(args.text);
   const name = args.name?.trim() || (header ? getValue(header, 'name')?.trim() : '') || 'script';
-  const url = pushedUrl(name);
-  await writeLocal({ [pushedTextKey(url)]: args.text });
-  const container = (await getCollections()).find((c) => c.path === PUSHED_CONTAINER_PATH);
+  const url = scratchUrl(name);
+  await writeLocal({ [scratchTextKey(url)]: args.text });
+  const container = (await getCollections()).find((c) => c.path === SCRATCH_CONTAINER_PATH);
   let scriptId: string | undefined;
   let collectionId: string | undefined;
   let replaced = false;
@@ -2300,43 +2301,43 @@ export async function pushScript(args: { text: string; name?: string }): Promise
   if (scriptId === undefined) {
     let result: AddCollectionResult;
     try {
-      result = await installScript(url, { pushed: true });
+      result = await installScript(url, { scratch: true });
     } catch (err) {
       // The install took its seed back out; the text row goes with it.
-      await chrome.storage.local.remove(pushedTextKey(url));
+      await chrome.storage.local.remove(scratchTextKey(url));
       throw err;
     }
-    if (!result) throw new Error('Internal error: the pushed script was neither installed nor found');
+    if (!result) throw new Error('Internal error: the scratch script was neither installed nor found');
     collectionId = result.collection.id;
     scriptId = result.kind === 'existingContainer'
       ? result.scriptId
       : result.collection.scriptIds[result.collection.scriptIds.length - 1];
   } else {
-    // Re-read the text; the pushed fetcher has no size or mtime to skip
+    // Re-read the text; the scratch fetcher has no size or mtime to skip
     // on, so the new content lands and the hash says whether it changed.
     await refreshScript(scriptId);
   }
   const row = await getScript(scriptId);
-  if (!row) throw new Error('Internal error: the pushed script vanished during install');
-  const out: PushScriptResult = { scriptId, collectionId: collectionId!, status: row.status, replaced };
+  if (!row) throw new Error('Internal error: the scratch script vanished during install');
+  const out: WriteScratchScriptResult = { scriptId, collectionId: collectionId!, status: row.status, replaced };
   if (row.errorMessage) out.errorMessage = row.errorMessage;
   if (row.errorLocation) out.errorLocation = row.errorLocation;
   return out;
 }
 
-// Remove the pushed container, its rows, their GM values, and the text
+// Remove the Scratch container, its rows, their GM values, and the text
 // rows behind them. Returns what went, for the caller's registration
 // sync. `removeCollection` deletes the text rows, keeping any that a
 // copy moved into another collection still reads.
-export async function clearPushedScripts(): Promise<{ scriptIds: string[]; collectionId: string | null }> {
-  const container = (await getCollections()).find((c) => c.path === PUSHED_CONTAINER_PATH);
+export async function clearScratchScripts(): Promise<{ scriptIds: string[]; collectionId: string | null }> {
+  const container = (await getCollections()).find((c) => c.path === SCRATCH_CONTAINER_PATH);
   if (!container) return { scriptIds: [], collectionId: null };
   for (const sid of container.scriptIds) await wipeScriptValues(sid);
   await removeCollection(container.id);
   return { scriptIds: container.scriptIds, collectionId: container.id };
 }
 
-// Solo mode: every collection but the pushed one disabled, so a pushed
+// Solo mode: every collection but Scratch disabled, so a scratch
 // script runs alone. Turning it off restores the enabled flags as they
 // were, from the note taken when it went on, so the user's own
 // collections come back exactly as they were. The note is in local
@@ -2358,7 +2359,7 @@ export async function setSoloMode(on: boolean): Promise<string[]> {
     const collections = await getCollections();
     const previous: Record<string, boolean> = {};
     for (const c of collections) {
-      if (c.path !== PUSHED_CONTAINER_PATH) previous[c.id] = isCollectionEnabled(c);
+      if (c.path !== SCRATCH_CONTAINER_PATH) previous[c.id] = isCollectionEnabled(c);
     }
     // Noted before anything is disabled, so a worker killed partway
     // through still leaves the note that restores what it did.
@@ -2439,8 +2440,8 @@ async function addScriptToContainer(
         throw new Error('Internal error: scripts can only be installed into a scripts collection');
       }
       cPath = existingContainer.path;
-    } else if ('pushed' in target) {
-      cPath = PUSHED_CONTAINER_PATH;
+    } else if ('scratch' in target) {
+      cPath = SCRATCH_CONTAINER_PATH;
       existingContainer = collections.find((s) => s.path === cPath);
     } else {
       cPath = containerPath(containerKindForSingleFileInput(path));
@@ -2459,7 +2460,7 @@ async function addScriptToContainer(
     const nextContainer: StoredCollection = existingContainer
       ? { ...existingContainer, scriptIds: [...priorScriptIds, scriptId] }
       : newContainerRow(containerId, cPath, [scriptId]);
-    if (isNew && cPath === PUSHED_CONTAINER_PATH) nextContainer.displayName = PUSHED_COLLECTION_NAME;
+    if (isNew && cPath === SCRATCH_CONTAINER_PATH) nextContainer.displayName = SCRATCH_COLLECTION_NAME;
     const seedScript = buildInitialInvalidEntry({
       id: scriptId,
       collectionId: containerId,
@@ -2765,7 +2766,7 @@ export async function removeCollection(id: string): Promise<void> {
     const removeKeys = [
       collectionKey(id),
       ...scriptIds.map(scriptKey),
-      ...await unreferencedPushedTextKeys(removed),
+      ...await unreferencedScratchTextKeys(removed),
     ];
     await writeLocal({ [COLLECTIONS_INDEX_KEY]: next });
     await chrome.storage.local.remove(removeKeys);
@@ -2797,7 +2798,7 @@ export async function removeScript(id: string): Promise<void> {
       }
     }
     if (Object.keys(toSet).length > 0) await writeLocal(toSet);
-    await chrome.storage.local.remove([scriptKey(id), ...await unreferencedPushedTextKeys([script])]);
+    await chrome.storage.local.remove([scriptKey(id), ...await unreferencedScratchTextKeys([script])]);
   });
   // After the write, not inside it: the local write is the one that has
   // to be atomic, and a failure here must not undo a removal that
@@ -2806,15 +2807,15 @@ export async function removeScript(id: string): Promise<void> {
   await forgetScriptLogs([id]);
 }
 
-// The text rows of the pushed scripts among `removed` that no other
-// script row still reads. A pushed script moved into another collection
-// keeps reading the text row it was pushed with, so a URL some remaining
-// row names keeps its text. Reads nothing more when no pushed script is
-// among those removed, and otherwise only the container collections'
-// rows: a pushed script can only be moved into another container. Call
+// The text rows of the scratch scripts among `removed` that no other
+// script row still reads. A scratch script moved into another collection
+// keeps reading its text row, so a URL some remaining row names keeps
+// its text. Reads nothing more when no scratch script is among those
+// removed, and otherwise only the container collections' rows: a
+// scratch script can only be moved into another container. Call
 // inside `mutate`, before the rows are deleted.
-async function unreferencedPushedTextKeys(removed: readonly StoredScript[]): Promise<string[]> {
-  const urls = new Set(removed.map((r) => r.relativePath).filter(isPushedUrl));
+async function unreferencedScratchTextKeys(removed: readonly StoredScript[]): Promise<string[]> {
+  const urls = new Set(removed.map((r) => r.relativePath).filter(isScratchUrl));
   if (urls.size === 0) return [];
   const removedIds = new Set(removed.map((r) => r.id));
   const collectionRows = await getMany((await readCollectionIndex()).map(collectionKey));
@@ -2828,7 +2829,7 @@ async function unreferencedPushedTextKeys(removed: readonly StoredScript[]): Pro
   for (const value of Object.values(rows)) {
     urls.delete((value as StoredScript).relativePath);
   }
-  return [...urls].map(pushedTextKey);
+  return [...urls].map(scratchTextKey);
 }
 
 // ---------- Membership reconciliation ----------

@@ -41,7 +41,7 @@ userscripts installs SourceMonkey as a package and gets two things:
   and watch what it does, re-injecting as you save. Check which
   selectors still resolve after a site changes. Save a page so a test
   can replay it without logging in. Push a script straight into a
-  running SourceMonkey.
+  running SourceMonkey's Scratch collection.
 
 See [docs/harness-guide.md](docs/harness-guide.md) to use it, and
 [docs/harness-design.md](docs/harness-design.md) for how it works.
@@ -193,10 +193,12 @@ location can be read before creating anything.
 Single scripts go into **scripts collections** — folders you create
 and name, or the defaults created on demand (`Scripts from local disk`,
 `Scripts from web`, `Scripts from GitHub`). One scripts collection can
-mix local, web, and GitHub scripts. A `Pushed scripts` collection
-appears when a development tool pushes a script straight into the
-extension (see [docs/harness-guide.md](docs/harness-guide.md)); it can
-be removed like any other.
+mix local, web, and GitHub scripts. A `Scratch` collection holds
+scripts whose only copy is in SourceMonkey itself, with no file or URL
+behind them. For now it appears when a development tool pushes a
+script straight into the extension (see
+[docs/harness-guide.md](docs/harness-guide.md)); it can be removed like
+any other.
 
 Details: [docs/file-access.md](docs/file-access.md),
 [docs/http-collections.md](docs/http-collections.md).

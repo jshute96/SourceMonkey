@@ -438,7 +438,7 @@ takes effect:
   [corpus-validation-results.md](corpus-validation-results.md).
 - [harness-design.md](harness-design.md) — the development and testing
   harness other repos install: the push backend that runs the injected
-  code without the extension, and ephemeral pushed scripts in the real
+  code without the extension, and scratch scripts pushed into the real
   one. User-facing side in [harness-guide.md](harness-guide.md).
 - [logging.md](logging.md) — SW console-message catalog, log IDs
   (basename + `#N` dupes), and the debug-logging gate.

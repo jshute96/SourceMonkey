@@ -94,21 +94,22 @@ script **text or a file path**, never a collection.
 - The browser runs the real extension. The harness talks to the SW test
   surface, over Playwright when it launched the browser, over CDP when
   it attached to one.
-- Test-surface calls make scripts **ephemeral** (see
+- Test-surface calls write **scratch scripts**, whose only copy is
+  their text in storage (see
   [storage.md](storage.md#container-collections) for the rows):
-  - `pushScript({ text, name? })` installs the text into a built-in
-    **Pushed scripts** collection and returns the row's id, status, and
+  - `writeScratchScript({ text, name? })` installs the text into a
+    built-in **Scratch** collection and returns the row's id, status, and
     diagnostics, after registration has completed (the wrapper names
     the changed rows to the sync itself rather than waiting for the
     storage event to). The name (one the caller gives, else the
     `@name`; `sm-dev` passes the file's basename) is the identity:
-    re-pushing it replaces the text in place, keeping the row's id and
+    rewriting it replaces the text in place, keeping the row's id and
     GM values, so the next reload runs the new version. Names that
     differ only in punctuation collapse into one identity.
-  - `clearPushedScripts()` drops that collection's rows and their
+  - `clearScratchScripts()` drops that collection's rows and their
     `GM_*` values.
   - `soloMode(on)` disables every other collection while on and
-    restores the previous enabled set when off, so a pushed script runs
+    restores the previous enabled set when off, so a scratch script runs
     alone without touching the user's real collections. For a
     throwaway profile, `resetAllState()` wipes everything instead.
 - `sm-dev run --extension` reaches the worker through Playwright, which
@@ -119,7 +120,7 @@ script **text or a file path**, never a collection.
   collections page. Reports are the script's own Log tab entries,
   polled, and only those added after the push are printed. `--solo`
   turns solo mode on for the run and off after; `sm-dev clear
-  --extension` drops the pushed scripts.
+  --extension` drops the scratch scripts.
 - Use this backend for what only Chrome can answer: CSP, real world
   registration, Chrome's own match gating, cross-tab broadcast, and the
   real identity of a `GM_xmlhttpRequest` (extension cookies, no
@@ -253,8 +254,8 @@ into pages.
 
 ### Service-worker additions
 
-- `pushScript`, `clearPushedScripts`, `soloMode` on the test surface,
-  as above. The Pushed scripts collection is a normal `scripts`
+- `writeScratchScript`, `clearScratchScripts`, `soloMode` on the test
+  surface, as above. The Scratch collection is a normal `scripts`
   collection at a fixed path, so the collections page and viewer show
   it like any other and the Log tab works unchanged.
 - No new message transport into the extension: Playwright's worker

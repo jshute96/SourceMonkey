@@ -193,9 +193,9 @@ export function describeResolveFailure(failure: ResolveFailure): string {
       // rather than stating a rule that isn't universal.
       return 'That path points outside the script\'s own folder; ' +
         'a relative path in a local script has to stay inside it';
-    case 'relative-in-pushed':
-      // A pushed script arrives as text, without the files beside it.
-      return 'A pushed script cannot use a relative path, since only its own text was pushed. ' +
+    case 'relative-in-scratch':
+      // A scratch script is text alone, without the files beside it.
+      return 'A scratch script cannot use a relative path, since only its own text is stored. ' +
         'Use an http(s) URL, or run it without --extension.';
   }
 }

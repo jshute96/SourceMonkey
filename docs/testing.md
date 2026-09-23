@@ -238,9 +238,9 @@ tests:
   sharing has no other observable signature. Both are per-JS-context and
   count *all* such reads in the worker, so reset around the window under
   test.
-- Pushed scripts: `pushScript({ text, name? })` installs text into the
-  Pushed scripts collection and syncs before it resolves (a re-push of
-  the same name replaces in place); `clearPushedScripts()` drops them
+- Scratch scripts: `writeScratchScript({ text, name? })` installs text
+  into the Scratch collection and syncs before it resolves (a rewrite
+  of the same name replaces in place); `clearScratchScripts()` drops them
   all; `soloMode(on)` disables every other collection until turned
   off. The development harness's extension backend drives these; see
   [harness-design.md](harness-design.md).

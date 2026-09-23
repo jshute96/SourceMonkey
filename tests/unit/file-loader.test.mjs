@@ -267,10 +267,10 @@ test('resolveScriptResourceDetailed: an escaping relative path and a bad scheme 
   assert.equal(scheme.scheme, 'ftp:');
 });
 
-test('resolveScriptResourceDetailed: a pushed script has no folder for a relative path', () => {
-  const pushed = 'pushed:///foo.user.js';
-  assert.deepEqual(resolveScriptResourceDetailed('lib/x.js', pushed), { failed: true, reason: 'relative-in-pushed' });
-  assert.deepEqual(resolveScriptResourceDetailed('https://example.com/x.js', pushed), { kind: 'http', url: 'https://example.com/x.js' });
+test('resolveScriptResourceDetailed: a scratch script has no folder for a relative path', () => {
+  const scratch = 'scratch:///foo.user.js';
+  assert.deepEqual(resolveScriptResourceDetailed('lib/x.js', scratch), { failed: true, reason: 'relative-in-scratch' });
+  assert.deepEqual(resolveScriptResourceDetailed('https://example.com/x.js', scratch), { kind: 'http', url: 'https://example.com/x.js' });
 });
 
 test('resolveScriptResourceDetailed: a remote script may climb out of its own directory', () => {

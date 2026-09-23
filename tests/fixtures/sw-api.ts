@@ -27,9 +27,9 @@ export interface SmApi {
     location: string,
     target: { collectionId: string } | { schemeDefault: true },
   ): Promise<{ id: string; path: string } | null>;
-  // Ephemeral scripts for the development harness: text in, registered
+  // Scratch scripts for the development harness: text in, registered
   // before the promise settles. See docs/harness-design.md.
-  pushScript(args: { text: string; name?: string }): Promise<{
+  writeScratchScript(args: { text: string; name?: string }): Promise<{
     scriptId: string;
     collectionId: string;
     status: 'ok' | 'invalid';
@@ -37,7 +37,7 @@ export interface SmApi {
     errorLocation?: { file: string; line?: number; column?: number };
     replaced: boolean;
   }>;
-  clearPushedScripts(): Promise<number>;
+  clearScratchScripts(): Promise<number>;
   soloMode(on: boolean): Promise<void>;
   // Move an installed script from one scripts collection to another.
   // Resolves to the moved row, or null when the destination already

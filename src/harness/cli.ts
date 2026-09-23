@@ -46,8 +46,8 @@ Commands:
   probe <url>                 Say which --selectors resolve on the page
   snapshot <url>              Save the page's DOM to --out FILE, for a
                               test to serve back without a login
-  clear --extension           Remove every script pushed into the
-                              extension and turn solo mode off
+  clear --extension           Remove every script in the extension's
+                              Scratch collection and turn solo mode off
 
 Options for every command:
   --root DIR      The repo root, searched for local copies of @require
@@ -337,9 +337,9 @@ async function clearCommand(opts: Opts): Promise<number> {
     const count = await backend.clear();
     // A run killed before it could turn solo mode off leaves the user's
     // collections disabled. Put them back here, since clearing the
-    // pushed scripts is the other half of the same cleanup.
+    // scratch scripts is the other half of the same cleanup.
     await backend.solo(false);
-    out(`[sm-dev] Removed ${count} pushed script(s)`);
+    out(`[sm-dev] Removed ${count} scratch script(s)`);
     return 0;
   } catch (err) {
     out(`[sm-dev] ${(err as Error).message}`);

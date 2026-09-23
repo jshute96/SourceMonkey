@@ -142,15 +142,15 @@ import {
   setCollectionOptions,
   createCollection,
   installScript,
-  pushScript,
-  clearPushedScripts,
+  writeScratchScript,
+  clearScratchScripts,
   setSoloMode,
   moveScript,
   removeScript,
   reconcileScriptMembership,
   describeError,
   type AddCollectionResult,
-  type PushScriptResult,
+  type WriteScratchScriptResult,
   type CollectionOptions,
   type InstallTarget,
   type NewCollectionSpec,
@@ -267,14 +267,14 @@ interface SourceMonkeyApi {
   addCollection: (path: string) => Promise<AddCollectionResult>;
   createCollection: (spec: NewCollectionSpec) => Promise<AddCollectionResult>;
   installScript: (location: string, target: InstallTarget) => Promise<AddCollectionResult>;
-  // Ephemeral scripts for the development harness (docs/harness-design.md,
-  // "Extension backend"): install text into the Pushed scripts
-  // collection, registered before the promise settles; a re-push of the
-  // same name replaces it in place. `clearPushedScripts` drops them all
+  // Scratch scripts for the development harness (docs/harness-design.md,
+  // "Extension backend"): install text into the Scratch collection,
+  // registered before the promise settles; a rewrite of the same name
+  // replaces it in place. `clearScratchScripts` drops them all
   // with their GM values. `soloMode(true)` disables every other
   // collection until `soloMode(false)` restores them.
-  pushScript: (args: { text: string; name?: string }) => Promise<PushScriptResult>;
-  clearPushedScripts: () => Promise<number>;
+  writeScratchScript: (args: { text: string; name?: string }) => Promise<WriteScratchScriptResult>;
+  clearScratchScripts: () => Promise<number>;
   soloMode: (on: boolean) => Promise<void>;
   moveScript: (scriptId: string, target: InstallTarget) => Promise<StoredScript | null>;
   // Remove one installed script row (a container copy), as the viewer's
@@ -455,7 +455,7 @@ interface SourceMonkeyApi {
   resetCollectionRowReads: () => void;
 }
 
-// The `syncNow` of the test surface, shared by the pushed-script
+// The `syncNow` of the test surface, shared by the scratch-script
 // methods so they too settle only once the registration is in place.
 async function syncNowForTests(): Promise<{ registered: { id: string }[]; kind: 'full' | 'incremental' | null }> {
   // Cancel any pending debounced sync first — otherwise its work
@@ -605,19 +605,19 @@ const api: SourceMonkeyApi = {
   resetDirectoryListingFetches,
   getCollectionRowReads,
   resetCollectionRowReads,
-  // The three pushed-script calls name the rows they changed to the
+  // The three scratch-script calls name the rows they changed to the
   // sync themselves. `storage.onChanged` would add them to the pending
   // scope too, but that event arrives on its own schedule, and the
   // promise here must not settle before the registration is in place.
-  pushScript: async (args) => {
-    const result = await pushScript(args);
+  writeScratchScript: async (args) => {
+    const result = await writeScratchScript(args);
     pendingScriptIds.add(result.scriptId);
     pendingCollectionIds.add(result.collectionId);
     await syncNowForTests();
     return result;
   },
-  clearPushedScripts: async () => {
-    const cleared = await clearPushedScripts();
+  clearScratchScripts: async () => {
+    const cleared = await clearScratchScripts();
     for (const id of cleared.scriptIds) pendingScriptIds.add(id);
     if (cleared.collectionId) pendingCollectionIds.add(cleared.collectionId);
     await syncNowForTests();

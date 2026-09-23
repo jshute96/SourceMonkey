@@ -26,7 +26,7 @@ Key spaces in `chrome.storage.local`:
 | `"iconUrl:<url>"`      | `SiteIconEntry`     | Cached `@icon`-declared icon, keyed by header URL (see [site-icons.md](site-icons.md)). |
 | `"firstRunComplete"`   | `boolean`           | Set once the SW has seeded the default collections; gates first-run seeding (see [First-run seeding](#first-run-seeding)). |
 | `"smLocalFileRoots"`   | `string[]`          | Canonical `file://` directory URLs searched for local stand-ins, in order (see [local-file-overrides.md](local-file-overrides.md)). |
-| `"pushed:<url>"`       | `string`            | The text of a pushed script, keyed by its `pushed:///…` location (see [Container collections](#container-collections)). |
+| `"scratch:<url>"`      | `string`            | The text of a scratch script, keyed by its `scratch:///…` location (see [Container collections](#container-collections)). |
 | `"sm:solo-mode"`       | `Record<string,boolean>` | Present only while solo mode is on: each collection's `enabled` as it was before, so turning solo mode off puts them back, even after a restart (see [Container collections](#container-collections)). |
 
 Key spaces in `chrome.storage.session` — everything here is dropped on
@@ -379,21 +379,22 @@ individually installed scripts. Two kinds of row, told apart by path:
   by name, so a rename doesn't stop it being the default.
 - **User-created** — `container:<uuid>`, made by the collection dialog
   with a name of the user's choosing.
-- **Pushed scripts** — `container:pushed`, created by the first
-  `pushScript` on the test surface (the development harness's
+- **Scratch** — `container:scratch`, holding scripts whose only copy
+  is their text in storage. For now it is created by the first
+  `writeScratchScript` on the test surface (the development harness's
   extension backend, [harness-design.md](harness-design.md)).
-  - Each row's location is a `pushed:///<name>.user.js` URL naming the
-    storage row (`pushed:<url>`) that holds the text. The file fetcher
+  - Each row's location is a `scratch:///<name>.user.js` URL naming the
+    storage row (`scratch:<url>`) that holds the text. The file fetcher
     reads that row back, so every refresh path treats them as ordinary
     scripts.
-  - A push of the same name replaces the text and re-reads the row in
+  - A write of the same name replaces the text and re-reads the row in
     place.
-  - `clearPushedScripts` removes the container, its rows, their GM
+  - `clearScratchScripts` removes the container, its rows, their GM
     values and the text rows.
-  - Removing a pushed script, the container, or a clear keeps a text
+  - Removing a scratch script, the container, or a clear keeps a text
     row while another script row still reads it: a row moved out of
     the container keeps reading its text row, until it is removed too.
-  - The scheme chip reads `pushed`, and the viewer's Location row is
+  - The scheme chip reads `scratch`, and the viewer's Location row is
     plain text, since there is nothing to open.
 
 Properties:
@@ -1034,8 +1035,8 @@ collection**:
     old visible "Refreshing…", and the reason Refresh All keeps words.
 - Table with columns **(bulk toggle) | Name | Size | Status** — plus,
   in a scripts collection, a small scheme chip (`file` / `http` /
-  `github`) after the name, since one such collection can mix all
-  three, and a trailing per-row remove button.
+  `github` / `scratch`) after the name, since one such collection can
+  mix them, and a trailing per-row remove button.
   - Header's first cell is a small `+` / `−` bulk-toggle button:
     flips every script under this collection on (when not all are on) or
     off (when all are on). Greyed when the collection itself is off.

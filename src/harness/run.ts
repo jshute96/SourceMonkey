@@ -31,7 +31,7 @@ export interface RunOptions extends ConnectOptions {
   fireMenu?: string;
   /**
    * Use the real extension in the browser: the script is pushed into
-   * it as text rather than injected by the harness.
+   * its Scratch collection as text rather than injected by the harness.
    */
   extension?: boolean;
   /** With `extension`: disable every other collection for the run. */
@@ -230,7 +230,7 @@ async function runInExtension(opts: RunOptions, session: BrowserSession): Promis
       pushed.set(result.scriptId, script.script.relativePath);
       const entries = await backend.log(result.scriptId).catch(() => [] as LogEntry[]);
       lastPrinted.set(result.scriptId, entries[entries.length - 1] ?? null);
-      opts.out(`[sm-dev] Pushed ${script.script.relativePath}${result.replaced ? ' (replaced)' : ''}`);
+      opts.out(`[sm-dev] Pushed to Scratch: ${script.script.relativePath}${result.replaced ? ' (replaced)' : ''}`);
     }
     return true;
   };

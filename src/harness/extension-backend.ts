@@ -3,9 +3,9 @@
 // injected by the harness.
 //
 // The service worker's test surface (`self.SourceMonkey` in
-// src/background.ts) does the work: `pushScript` installs the text into
-// the Pushed scripts collection and registers it before it answers, a
-// re-push replaces it in place, `soloMode` silences the user's other
+// src/background.ts) does the work: `writeScratchScript` installs the
+// text into the Scratch collection and registers it before it answers,
+// a rewrite replaces it in place, `soloMode` silences the user's other
 // collections for the run, and `run` prints the per-script log as the
 // script's reports. Playwright exposes the worker on a
 // CDP-connected browser as well as a launched one, so the same
@@ -92,15 +92,15 @@ export class ExtensionBackend {
 
   push(text: string, name?: string): Promise<PushResult> {
     return this.worker.evaluate(
-      ([t, n]) => (self as unknown as { SourceMonkey: { pushScript(a: { text: string; name?: string }): Promise<PushResult> } })
-        .SourceMonkey.pushScript({ text: t, name: n }),
+      ([t, n]) => (self as unknown as { SourceMonkey: { writeScratchScript(a: { text: string; name?: string }): Promise<PushResult> } })
+        .SourceMonkey.writeScratchScript({ text: t, name: n }),
       [text, name] as const,
     );
   }
 
   clear(): Promise<number> {
     return this.worker.evaluate(() =>
-      (self as unknown as { SourceMonkey: { clearPushedScripts(): Promise<number> } }).SourceMonkey.clearPushedScripts());
+      (self as unknown as { SourceMonkey: { clearScratchScripts(): Promise<number> } }).SourceMonkey.clearScratchScripts());
   }
 
   solo(on: boolean): Promise<void> {

@@ -254,14 +254,14 @@ For what only Chrome can answer:
   with SourceMonkey installed works too, as long as it has a
   remote-debugging port.
 - `sm-dev run --extension` pushes the script text into the extension as
-  an **ephemeral** script: it lands in a "Pushed scripts" collection,
-  is registered before the page opens, and is replaced in place on the
-  next push of the same file name, keeping its stored values. Nothing
+  a **scratch script**, stored only in the extension: it lands in the
+  "Scratch" collection, is registered before the page opens, and is
+  replaced in place on the next push of the same file name, keeping its stored values. Nothing
   on disk is scanned. What it prints are the entries the script adds to
   its own Log tab, plus the page's console lines.
 - `--solo` disables every other collection for the run and restores
-  them after, so the pushed script runs without noise from the rest.
-- `sm-dev clear --extension` drops all pushed scripts and their stored
+  them after, so the scratch script runs without noise from the rest.
+- `sm-dev clear --extension` drops all scratch scripts and their stored
   values, and turns solo mode off. If a `--solo` run was killed rather
   than stopped, this is how to get the other collections back; they
   are restored to how they were.

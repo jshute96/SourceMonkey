@@ -69,7 +69,7 @@ export interface LocationRow {
   // tagged, so the caller can run that over the panel after the render
   // (see file-changes.ts).
   localFile?: LocalFileTag;
-  // A location nothing can open: a pushed script's, which names a
+  // A location nothing can open: a scratch script's, which names a
   // storage row rather than a place. Rendered as text, no anchor.
   unopenable?: boolean;
   // Intercepts activation of the location anchor. Both viewer modes
