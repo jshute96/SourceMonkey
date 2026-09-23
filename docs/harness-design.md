@@ -251,6 +251,16 @@ into pages.
   `run` is in its own module so the Node-only commands never load
   Playwright. The `--extension` flag switches it to the extension
   backend.
+  - Tab reuse (`openRunTab`): the tabs runs opened are recorded in a
+    temp file with the owning pid, so a later run can take over a
+    finished run's selected tab. A tab carries no mark a page couldn't
+    fake, hence the file.
+- **`console-commands.ts`**: the commands typed while `run` streams,
+  and the terminal prompt output is drawn around.
+  - `DialogTracker` listens for page dialogs, because Playwright
+    dismisses any dialog nobody listens for, which answers a script's
+    `prompt()` with Cancel. Dialogs stay open for the person or a typed
+    `accept` / `dismiss`.
 
 ### Service-worker additions
 

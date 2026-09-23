@@ -177,9 +177,9 @@ command. See `docs/harness-design.md`.
 | `src/harness/inject.ts` | Attaches prepared scripts to a Playwright page over CDP, in the right world, with a message channel per world to the host |
 | `src/harness/fixture.ts` | The Playwright fixture a consumer repo imports: `loadUserscript`, `gm`, `reports`, `serveSnapshot` over a host and attachment per test |
 | `src/harness/capture-page.ts` | A page's DOM as a standalone file, scripts disabled and a `<base>` added; shared by `sm-dev snapshot` and the fixture's `saveSnapshot` |
-| `src/harness/console-commands.ts` | The commands typed while `sm-dev run` streams, and the terminal prompt output is drawn around |
+| `src/harness/console-commands.ts` | The commands typed while `sm-dev run` streams, the page-dialog tracker, and the terminal prompt |
 | `src/harness/browser-commands.ts` | `sm-dev probe` (which selectors resolve on a page) and `sm-dev snapshot` (save a page's DOM for a spec) |
-| `src/harness/run.ts` | `sm-dev run`: open a browser, inject or push the scripts, and stream what they report |
+| `src/harness/run.ts` | `sm-dev run`: open a browser (reusing a finished run's tab), inject or push the scripts, and stream |
 | `src/harness/extension-backend.ts` | `sm-dev --extension`: finds SourceMonkey's worker in the browser and drives `writeScratchScript`, `clearScratchScripts`, `soloMode`, the script log |
 | `src/harness/cli.ts` | The `sm-dev` command: `validate`, `match`, `run`, `probe`, `snapshot`, `clear` |
 
@@ -398,7 +398,7 @@ extension, driven by the Node host in `src/harness/`.
 | `tests/harness/xhr.spec.ts` | `GM_xmlhttpRequest` through the host: load and 404, JSON, `@connect` refusals and redirects, cookies, timeout, abort |
 | `tests/harness/browser-apis.spec.ts` | The harness's tabs, menu commands, notifications, downloads and window APIs |
 | `tests/harness/bridge-trust.spec.ts` | What the page can reach: forged requests refused, isolated traffic kept out of the page, subframes ignored |
-| `tests/harness/console-commands.spec.ts` | The commands typed into `sm-dev run`: `use` picking which script `values`, `get` and `set` act on |
+| `tests/harness/console-commands.spec.ts` | The commands typed into `sm-dev run`: picking a script with `use`, per-script `values`, numbered `menu` |
 | `tests/harness/fixture.spec.ts` | The consumer fixture from `lib/`: a script against a served snapshot, `gm` and `reports`, the up-front URL check, the explained miss |
 
 ## GreasyFork Corpus Tooling (`tests/greasyfork-examples/`)

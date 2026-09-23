@@ -100,13 +100,16 @@ person or an agent.
 | `sm-dev run ... --watch` | Same, and re-injects plus reloads on every save of the script or a `@require`d file. |
 | `sm-dev run a.user.js b.user.js` | Injects several scripts into the same page, for interaction tests. |
 | `sm-dev probe <url> --selectors 'a, b, c'` | Reports which selectors resolve on the page, so a broken script's assumptions can be checked in one call. `--html` prints the first match's HTML. Exits 1 when any is missing. |
-| `sm-dev match <script> <url>...` | Says whether the script would run on each URL, and which rule decided. |
+| `sm-dev match <script> [url]...` | Says whether the script would run on each URL, and which rule decided. Also checks `--url`, so a `run` command line works with `match` in its place. |
 | `sm-dev validate <path>...` | The install-time checks (header, `@require`, syntax) over files or directories, with the message the extension would show. |
 | `sm-dev snapshot <url> --out file.html` | Saves the live DOM so a spec can run against it without a login. The site's own scripts are disabled in the file, so a spec sees the captured page rather than a page that logs itself out again. In your own browser, turn off any installed copy of the script first, or the snapshot holds its changes and a spec applies them twice. |
 
 Every command exits 0 on success, 1 when a check fails (a script is
 invalid, a URL doesn't match, a selector is missing) or the command
 fails, and 2 when it was typed wrong.
+
+A URL typed without a scheme (`example.com/x`) gets `http://`, and a
+path (`/tmp/x.html`, `./x.html`) becomes a `file://` URL.
 
 Options for every command:
 
@@ -135,6 +138,33 @@ Other `run` flags:
   the built-in stand-in (see below); `--solo` silences the other
   collections for the run.
 
+### Which tab `run` uses
+
+In a connected browser, `run` opens a new tab, unless the tab showing
+in its window is one an earlier `run` opened and that run has ended.
+Then it takes that tab over. So re-running with the old tab still
+selected reuses it rather than piling up tabs.
+
+- The tabs `run` opened are recorded in `sm-dev-run-tabs.json` in the
+  system temp directory, with the process that owns each.
+- Each run only touches the entries for its own browser, so parallel
+  sessions on other ports keep theirs.
+- A tab whose run is still going is never taken.
+- With several windows open, each window's showing tab counts, and the
+  first free one found is taken.
+
+### Page dialogs
+
+A script's `alert`, `confirm` or `prompt` is left open and reported in
+the stream, rather than being answered automatically:
+
+- In a browser on screen, answer it there.
+- Or type `accept` (a prompt's text after it) or `dismiss`.
+- In a headless run with no typed commands, nothing could answer it,
+  so it is dismissed and reported.
+- While one is open, the page's JavaScript is stopped, so `menu`,
+  `set`, `reload` and `open` refuse until it is answered.
+
 ### Driving the script while it runs
 
 A script's interesting moments are not all at startup: a menu command
@@ -144,15 +174,22 @@ commands from its own input while it streams.
 
 | Typed command | What it does |
 | --- | --- |
-| `menu` | Lists the menu commands the script registered |
-| `menu <label>` | Fires one, as picking it from the toolbar would. Waits a moment for a script that is still loading |
-| `values` | Prints everything the script has stored |
+| `use` | Lists the loaded scripts, numbered |
+| `use <script>` | Picks the script `get` and `set` act on (the first, until changed) |
+| `status` | Prints the page's URL, any open dialog, and each script's state: started or skipped, and counts of its menu commands, stored values and errors (those that are not zero) |
+| `menu` | Lists the registered menu commands, numbered, under the script that registered each |
+| `menu <n or label>` | Fires one, as picking it from the toolbar would. Piped in while none is registered yet, it waits a moment for a script that is still loading |
+| `values [script]` | Prints what every script has stored, or just one script |
 | `get <key>` | Prints one stored value |
 | `set <key> <json>` | Stores a value, as another tab's write would: a running script sees it and its change listeners fire |
-| `use [script]` | With several scripts loaded, picks the one `values`, `get` and `set` act on, by path, file name or `@name` (the first, until changed). Alone, lists them |
-| `reload` | Reloads the page |
-| `open <url>` | Navigates to another page |
+| `reload`, `open <url>` | Reloads the page, or navigates to another |
+| `focus` | Brings the tab to the front, un-minimizing its window |
+| `accept [text]`, `dismiss` | Answers an open dialog (see [Page dialogs](#page-dialogs)) |
 | `help`, `quit` | The list, and stop |
+
+A `<script>` is its number in the `use` list, its path, file name or
+`@name`, or a piece of its name or path that no other loaded script
+shares.
 
 When both input and output are a terminal, commands are typed at a
 `> ` prompt:

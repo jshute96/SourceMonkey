@@ -323,6 +323,20 @@ export function explainMatch(matching: ScriptMatching, url: string): MatchExplan
   return explainUrlMatch(url, matching);
 }
 
+/**
+ * A typed URL with `http://` added when it has no scheme, so
+ * `example.com/x` works. A path (`/tmp/x.html`, `./x.html`) becomes a
+ * `file://` URL instead. `host:port` would otherwise read as a scheme,
+ * so only a scheme followed by `//`, or one of the kinds that never
+ * have it, counts.
+ */
+export function withDefaultScheme(url: string): string {
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) return url;
+  if (/^(about|blob|data|file|javascript|mailto|view-source):/i.test(url)) return url;
+  if (/^\.{0,2}\//.test(url)) return pathToFileURL(path.resolve(url)).toString();
+  return `http://${url}`;
+}
+
 /** The script's `@name`, else the path it was loaded from. */
 export function preparedScriptName(script: PreparedScript): string {
   const tags = script.script.header?.tags ?? [];

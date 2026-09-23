@@ -23,7 +23,7 @@ import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import { CONSOLE_HELP, writeOutputLine } from './console-commands.js';
-import { NO_RULE_COVERS_URL, explainMatch, prepareScript } from './prepare.js';
+import { NO_RULE_COVERS_URL, explainMatch, prepareScript, withDefaultScheme } from './prepare.js';
 
 // A mistake in how the command was typed, as opposed to a failure while
 // carrying it out: the one kind that exits 2.
@@ -36,16 +36,16 @@ Usage: sm-dev <command> [options]
 
 Commands:
   run <script>...             Inject the script(s) into a page and stream
-                              their console lines, reports and GM_* calls
-                              until Ctrl-C. Type commands while it runs:
-                              see "Interactive commands"
+                              their console lines, reports and GM_* calls.
+                              Type commands while it runs: see
+                              "Interactive commands"
   validate <path>...          Run the install-time checks (header,
                               @require, syntax) over files or directories
-  match <script> <url>...     Say whether the script would run on each
-                              URL, and which header rule decided
+  match <script> [url]...     Say whether the script would run on each
+                              URL (and --url's), and which header rule
+                              decided
   probe <url>                 Say which --selectors resolve on the page
-  snapshot <url>              Save the page's DOM to --out FILE, for a
-                              test to serve back without a login
+  snapshot <url>              Save the page's HTML DOM to --out FILE
   clear --extension           Remove every script in the extension's
                               Scratch collection and turn solo mode off
 
@@ -60,9 +60,12 @@ Options for the browser commands (run, probe, snapshot, clear):
   --launch        Launch a Chromium instead of connecting to one
   --headed        With --launch: show the browser
 
+A URL with no scheme gets http://, and a path becomes a file:// URL.
+
 Options for run:
   --url URL       The page to open (default: the first page the script's
-                  @match implies)
+                  @match implies). Also checked by match, so one command
+                  line serves both
   --watch         Re-inject and reload when a script or its files change
   --values JSON   Seed GM_* storage before the script runs, e.g.
                   --values '{"units":"metric"}'
@@ -124,7 +127,7 @@ function parseArgs(argv: string[]): Opts {
     switch (arg) {
       case '--root': opts.root = path.resolve(next()); break;
       case '--local': opts.local.push(path.resolve(next())); break;
-      case '--url': opts.url = next(); break;
+      case '--url': opts.url = withDefaultScheme(next()); break;
       case '--cdp': opts.cdp = next(); break;
       case '--launch': opts.launch = true; break;
       case '--headed': opts.headed = true; break;
@@ -233,8 +236,9 @@ async function validate(opts: Opts): Promise<number> {
 }
 
 async function match(opts: Opts): Promise<number> {
-  const [script, ...urls] = opts.args;
-  if (!script || urls.length === 0) throw new UsageError('The match command needs a script and at least one URL');
+  const [script, ...typed] = opts.args;
+  const urls = [...typed.map(withDefaultScheme), ...(opts.url ? [opts.url] : [])];
+  if (!script || urls.length === 0) throw new UsageError('The match command needs a script and at least one URL, or --url');
   const prepared = await prepareScript({
     file: await scriptFile(script),
     collectionRoot: opts.root,
@@ -307,7 +311,7 @@ async function runCommand(opts: Opts): Promise<number> {
 }
 
 async function probeCommand(opts: Opts): Promise<number> {
-  const [url] = opts.args;
+  const url = opts.args[0] && withDefaultScheme(opts.args[0]);
   if (!url) throw new UsageError('The probe command needs a URL');
   if (opts.selectors.length === 0) throw new UsageError('The probe command needs --selectors');
   const selectors = opts.selectorFlags === 1
@@ -322,7 +326,7 @@ async function probeCommand(opts: Opts): Promise<number> {
 }
 
 async function snapshotCommand(opts: Opts): Promise<number> {
-  const [url] = opts.args;
+  const url = opts.args[0] && withDefaultScheme(opts.args[0]);
   if (!url) throw new UsageError('The snapshot command needs a URL');
   if (!opts.outFile) throw new UsageError('The snapshot command needs --out');
   const { snapshot } = await import('./browser-commands.js');

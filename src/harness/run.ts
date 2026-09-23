@@ -6,14 +6,15 @@
 // `match`) never load Playwright, which is an optional peer dependency.
 
 import { watch } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readFile, rename, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { Browser, BrowserContext, Page } from '@playwright/test';
 
 import { representativeMatch } from '../match-targets.js';
-import { readConsoleCommands } from './console-commands.js';
+import { DialogTracker, readConsoleCommands } from './console-commands.js';
 import { ExtensionBackend, type LogEntry } from './extension-backend.js';
 import { HarnessHost, type ErrorReport, type SkipReport, type StartReport } from './host.js';
 import { attachPage, type PageAttachment } from './inject.js';
@@ -66,13 +67,23 @@ export interface BrowserSession {
   done(): Promise<void>;
 }
 
-export async function connectBrowser(opts: ConnectOptions, out: (line: string) => void): Promise<BrowserSession | null> {
+/**
+ * `reuseTab`: in a connected browser, take over the selected tab when
+ * it is one an earlier, finished `run` opened, rather than opening
+ * another. See `openRunTab`.
+ */
+export async function connectBrowser(
+  opts: ConnectOptions,
+  out: (line: string) => void,
+  { reuseTab = false } = {},
+): Promise<BrowserSession | null> {
   const { chromium } = await import('@playwright/test');
   let browser: Browser;
+  let endpoint: string | null = null;
   if (opts.launch) {
     browser = await chromium.launch({ headless: !opts.headed });
   } else {
-    const endpoint = opts.cdp ?? process.env.SM_DEV_CDP ?? 'http://127.0.0.1:9233';
+    endpoint = opts.cdp ?? process.env.SM_DEV_CDP ?? 'http://127.0.0.1:9233';
     try {
       browser = await chromium.connectOverCDP(endpoint);
     } catch (err) {
@@ -82,7 +93,9 @@ export async function connectBrowser(opts: ConnectOptions, out: (line: string) =
     }
   }
   const context = browser.contexts()[0] ?? await browser.newContext();
-  const page = await context.newPage();
+  const page = reuseTab && endpoint !== null
+    ? await openRunTab(browser, context, endpoint, out).catch(() => context.newPage())
+    : await context.newPage();
   return {
     browser,
     context,
@@ -93,10 +106,123 @@ export async function connectBrowser(opts: ConnectOptions, out: (line: string) =
   };
 }
 
+// ---------- Reusing a run's tab ----------
+
+// The tabs `run` has opened, across runs, so a later one can recognize
+// them: a tab carries no mark of its own that a page couldn't also set.
+// Keyed by endpoint and the tab's CDP target id, with the pid of the
+// run that owns it, since a tab whose run is still going is not free.
+const RUN_TABS_FILE = path.join(os.tmpdir(), 'sm-dev-run-tabs.json');
+
+interface RunTab {
+  endpoint: string;
+  /** CDP's id for the tab, not the `chrome.tabs` id an extension sees. */
+  tabTargetId: string;
+  pid: number;
+}
+
+/**
+ * The tab for a new run: the selected tab, when an earlier run opened
+ * it and has since ended, so re-running from a terminal doesn't pile up
+ * tabs; otherwise a new one. "Selected" is the tab showing in its
+ * window: the terminal has the focus, so no tab would count as
+ * focused. Records the tab for the next run either way.
+ */
+async function openRunTab(
+  browser: Browser,
+  context: BrowserContext,
+  endpoint: string,
+  out: (line: string) => void,
+): Promise<Page> {
+  const records = await readRunTabs();
+  const cdp = await browser.newBrowserCDPSession();
+  const { targetInfos } = await cdp.send('Target.getTargets');
+  await cdp.detach();
+  const live = new Set(targetInfos.filter((t) => t.type === 'page').map((t) => t.targetId));
+  const free = new Set(records
+    .filter((r) => r.endpoint === endpoint && live.has(r.tabTargetId) && !processAlive(r.pid))
+    .map((r) => r.tabTargetId));
+  let page: Page | null = null;
+  // Only when one could be free, since reading a page's target id
+  // means a protocol session per tab.
+  if (free.size > 0) {
+    for (const candidate of context.pages()) {
+      const id = await targetIdOf(candidate).catch(() => null);
+      if (id && free.has(id) && await isSelected(candidate)) {
+        page = candidate;
+        break;
+      }
+    }
+  }
+  if (page) out('[sm-dev] Reusing the selected tab, which an earlier run opened');
+  page ??= await context.newPage();
+  const id = await targetIdOf(page);
+  // Re-read just before writing, so a parallel run's entry written
+  // meanwhile survives. Two runs on one browser starting at the same
+  // moment could still both take the same free tab; that is left as
+  // too rare to lock against.
+  const latest = await readRunTabs();
+  // Drops this browser's closed tabs. Another browser's entries are
+  // left as they are: a parallel session may be using that browser, and
+  // its tabs can't be checked from here.
+  const kept = latest.filter((r) => r.endpoint !== endpoint || (live.has(r.tabTargetId) && r.tabTargetId !== id));
+  kept.push({ endpoint, tabTargetId: id, pid: process.pid });
+  await writeRunTabs(kept).catch(() => undefined);
+  return page;
+}
+
+// Written whole and renamed into place, so a run reading it meanwhile
+// never sees half a file, which it would take for an empty one and
+// then write back over everyone's entries.
+async function writeRunTabs(tabs: RunTab[]): Promise<void> {
+  // One tab per line, for someone reading the file.
+  const text = `[\n${tabs.map((r) => `  ${JSON.stringify(r)}`).join(',\n')}\n]\n`;
+  const temp = `${RUN_TABS_FILE}.${process.pid}`;
+  await writeFile(temp, text);
+  await rename(temp, RUN_TABS_FILE);
+}
+
+async function readRunTabs(): Promise<RunTab[]> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(RUN_TABS_FILE, 'utf8'));
+    return Array.isArray(parsed) ? parsed as RunTab[] : [];
+  } catch {
+    return [];
+  }
+}
+
+async function targetIdOf(page: Page): Promise<string> {
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    return (await cdp.send('Target.getTargetInfo')).targetInfo.targetId;
+  } finally {
+    await cdp.detach().catch(() => undefined);
+  }
+}
+
+// Every window's showing tab counts, so with several windows open the
+// first free one found wins. A page blocked on a dialog never answers,
+// hence the time limit.
+async function isSelected(page: Page): Promise<boolean> {
+  const visible = page.evaluate(() => document.visibilityState === 'visible').catch(() => false);
+  const timeout = new Promise<boolean>((r) => setTimeout(() => r(false), 1000).unref());
+  return Promise.race([visible, timeout]);
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM: it exists, under another user.
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
 const NO_URL = 'No --url given, and the first script\'s @match names no page to open';
 
 export async function run(opts: RunOptions): Promise<number> {
-  const session = await connectBrowser(opts, opts.out);
+  const session = await connectBrowser(opts, opts.out, { reuseTab: true });
   if (!session) return 1;
   const held: { attachment?: PageAttachment } = {};
   try {
@@ -117,6 +243,12 @@ async function runInHarness(
   const { page } = session;
   const host = new HarnessHost();
   wireOutput(host, page, opts.out);
+  const dialogs = await DialogTracker.attach(page, opts.out, {
+    visible: browserVisible(opts),
+    // Commands are only read once the page has loaded, but a prompt
+    // opened before then can still wait for a typed accept.
+    commandsComing: opts.until !== undefined && process.stdin.readable,
+  });
   // Attached before preparing, so the scripts' GM_info describes this
   // browser.
   const attachment = await attachPage(page, host);
@@ -148,7 +280,11 @@ async function runInHarness(
     const deadline = Date.now() + 5000;
     let fired = false;
     while (!fired && Date.now() < deadline) {
-      fired = await host.fireMenuCommand(name);
+      // Only once it is registered, so an unrelated dialog opening
+      // meanwhile can't pass for this command's.
+      const registered = host.reports.menuCommands.some((m) => m.name === name || m.commandId === name);
+      // Done once a dialog it opens is up: the page waits on that.
+      fired = registered && await dialogs.untilDialog(host.fireMenuCommand(name));
       if (!fired) await page.waitForTimeout(100);
     }
     opts.out(fired ? `[sm-dev] Fired menu command "${name}"` : `[sm-dev] No menu command named "${name}" was registered`);
@@ -172,6 +308,7 @@ async function runInHarness(
         host,
         page,
         scripts: prepared,
+        dialogs,
         out: opts.out,
         stop: () => opts.onStop?.(),
       });
@@ -269,6 +406,7 @@ async function runInExtension(opts: RunOptions, session: BrowserSession): Promis
     if (opts.solo) await backend.solo(true);
     if (!(await pushAll(prepared))) return 1;
     wirePageOutput(page, opts.out);
+    await DialogTracker.attach(page, opts.out, { visible: browserVisible(opts) });
     opts.out(`[sm-dev] Opening ${url}`);
     await page.goto(url).catch((err) => opts.out(`[sm-dev] Navigation failed: ${(err as Error).message}`));
     let watcher: (() => void) | null = null;
@@ -307,6 +445,11 @@ async function waitForFirstStart(host: HarnessHost, timeoutMs = 5000): Promise<v
     const timer = setTimeout(done, timeoutMs);
     host.on('start', done);
   });
+}
+
+// Whether a person can see the browser, and so answer its dialogs.
+function browserVisible(opts: ConnectOptions): boolean {
+  return !opts.launch || opts.headed === true;
 }
 
 function sameEntry(a: LogEntry, b: LogEntry): boolean {

@@ -13,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { explainMatch, prepareScript } from '../../lib/harness/prepare.js';
+import { explainMatch, prepareScript, withDefaultScheme } from '../../lib/harness/prepare.js';
 import { NO_NAME } from '../../dist/script-store.js';
 
 const HEADER = `// ==UserScript==
@@ -187,4 +187,15 @@ test('explainMatch: names the rule that decided', () => {
     { matches: true, rule: '@include /^https:\\/\\/other\\.test\\//' });
   assert.deepEqual(explainMatch(matching, 'https://example.com/'),
     { matches: false, rule: null });
+});
+
+test('withDefaultScheme adds http:// only where a URL has no scheme', () => {
+  assert.equal(withDefaultScheme('example.com/x'), 'http://example.com/x');
+  assert.equal(withDefaultScheme('localhost:8080/x'), 'http://localhost:8080/x');
+  assert.equal(withDefaultScheme('https://example.com/'), 'https://example.com/');
+  assert.equal(withDefaultScheme('about:blank'), 'about:blank');
+  assert.equal(withDefaultScheme('file:/tmp/x.html'), 'file:/tmp/x.html');
+  // A path is a local file, not a host.
+  assert.equal(withDefaultScheme('/tmp/x.html'), 'file:///tmp/x.html');
+  assert.equal(withDefaultScheme('./x.html'), pathToFileURL(path.resolve('x.html')).toString());
 });
