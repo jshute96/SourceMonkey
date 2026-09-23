@@ -5,6 +5,7 @@
 
 import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures/harness.js';
+import { attachPage } from '../../lib/harness/inject.js';
 import { prepareScript } from '../../lib/harness/prepare.js';
 import { BRIDGE_DENIED } from '../../lib/gm-api-catalog.js';
 
@@ -122,6 +123,38 @@ test.describe('harness bridge channels', () => {
     await expect.poll(() => host.reports.started.length).toBe(1);
     await host.setValues(prepared.spec!.id, { k: 'pushed' });
     await expect(page.locator('#target')).toHaveText('heard pushed remote=true');
+  });
+
+  test('a page-world script\'s value writes reach only the pages running it', async ({ page, context, fixtureServer, host, loadScript }) => {
+    const prepared = await loadScript({
+      relativePath: 'main.user.js',
+      meta: { name: 'Main', match: ['*://*/target.html'], grant: ['unsafeWindow', 'GM_setValue', 'GM_getValue'] },
+      body: `window.addEventListener('message', (ev) => { if (ev.data === 'write-now') GM_setValue('secret', 's3cret'); });`,
+    });
+    // Attached to the same host without the script, and with the script
+    // but on a page it doesn't match. Neither runs it, so neither's page
+    // code may hear its values.
+    const bystander = await context.newPage();
+    const bystanderAttachment = await attachPage(bystander, host);
+    const offMatch = await context.newPage();
+    const offMatchAttachment = await attachPage(offMatch, host);
+    await offMatchAttachment.inject(prepared);
+    for (const p of [bystander, offMatch]) await recordPushes(p);
+    await bystander.goto(`${fixtureServer.baseUrl}/target.html`);
+    await offMatch.goto(`${fixtureServer.baseUrl}/other.html`);
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect.poll(() => host.reports.started.length).toBe(1);
+
+    await page.evaluate(() => window.postMessage('write-now', '*'));
+    await expect.poll(() => host.getValue(prepared.spec!.id, 'secret')).toBe('s3cret');
+    await host.setValues(prepared.spec!.id, { other: 1 });
+    for (const p of [bystander, offMatch]) {
+      expect(await p.evaluate(() => (window as unknown as { __heard: unknown[] }).__heard)).toEqual([]);
+    }
+    await bystanderAttachment.dispose();
+    await offMatchAttachment.dispose();
+    await bystander.close();
+    await offMatch.close();
   });
 
   test('a page that replaces the binding cannot swallow a script\'s reports', async ({ page, fixtureServer, host, loadScript }) => {

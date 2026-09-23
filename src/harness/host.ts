@@ -44,7 +44,7 @@ import path from 'node:path';
 import { BRIDGE_DENIED, STORAGE_SUBSYSTEMS, type ApiSubsystem } from '../gm-api-catalog.js';
 import type { BridgeOrigin } from './inject.js';
 import type { PreparedScript } from './prepare.js';
-import { explainMatch, preparedScriptName } from './prepare.js';
+import { NO_RULE_COVERS_URL, explainMatch, preparedScriptName } from './prepare.js';
 
 // One attached page, as the host sees it. `inject.ts` implements it
 // over a Playwright page; nothing here depends on Playwright.
@@ -242,9 +242,6 @@ const NEEDS_BROWSER: Record<string, string> = {
   'sm:gm-window-focus': 'window.focus',
 };
 
-/** The skip reason when no header rule names a URL at all. */
-export const NO_RULE_COVERS_URL = 'No @match or @include covers this URL';
-
 // What a test can put in front of `GM_xmlhttpRequest`: an event to
 // answer with instead of sending the request, or null to send it.
 export type RequestInterceptor = (
@@ -389,7 +386,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
       if (w.deleted) store.delete(w.key);
       else store.set(w.key, w.value);
     }
-    await this.push({ type: 'sm:gm-value-update', smWorld: this.worldOf(scriptId), scriptId, writes });
+    await this.pushToRunners(scriptId, { type: 'sm:gm-value-update', smWorld: this.worldOf(scriptId), scriptId, writes });
   }
 
   /** Every value a script has stored, decoded. */
@@ -446,7 +443,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
         reason: verdict.rule ?? NO_RULE_COVERS_URL,
       };
       this.reports.skipped.push(report);
-      this.emit('skip', report);
+      this.notify('skip', report);
     }
   }
 
@@ -471,7 +468,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
       case 'sm:start': {
         const report = this.baseReport(payload);
         this.reports.started.push(report);
-        this.emit('start', report);
+        this.notify('start', report);
         return undefined;
       }
       case 'sm:error': {
@@ -481,13 +478,13 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
           stack: str(payload.stack),
         };
         this.reports.errors.push(report);
-        this.emit('script-error', report);
+        this.notify('script-error', report);
         return undefined;
       }
       case 'sm:abandoned': {
         const report: SkipReport = { ...this.baseReport(payload), reason: str(payload.reason) || 'skip' };
         this.reports.skipped.push(report);
-        this.emit('skip', report);
+        this.notify('skip', report);
         return undefined;
       }
       case 'sm:swapped':
@@ -502,7 +499,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
           message: str(payload.message),
         };
         this.reports.logs.push(report);
-        this.emit('log', report);
+        this.notify('log', report);
         return { ok: true };
       }
       case 'sm:gm-dom-blocked':
@@ -545,7 +542,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
           this.reports.menuCommands.push(record);
         }
         this.menuOwners.set(record, from);
-        this.emit('menu-command', record);
+        this.notify('menu-command', record);
         return { ok: true };
       }
       case 'sm:gm-menu-unregister': {
@@ -577,7 +574,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
           ? setTimeout(() => { void this.closeNotification(requestId); }, timeout)
           : null;
         this.notifications.set(requestId, { record, from, timer });
-        this.emit('notification', record);
+        this.notify('notification', record);
         return { ok: true, notificationId: `harness-notification-${this.nextNotificationId++}` };
       }
       case 'sm:gm-download-start':
@@ -602,7 +599,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
         return { ok: true };
       }
       default: {
-        this.emit('unhandled', { type, payload });
+        this.notify('unhandled', { type, payload });
         // Every message the injected code sends today has a handler.
         // `sm:gm-call` is the generic envelope for a future API that
         // doesn't, and carries the API's name, so the script's error
@@ -655,11 +652,11 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
       if (w.deleted) store.delete(w.key);
       else store.set(w.key, w.value);
     }
-    this.emit('value-write', { scriptId, writes });
-    // Broadcast to every other attached page, as the worker does to
-    // every other tab running the script. The writer already applied
-    // the writes to its own cache.
-    await this.push({ type: 'sm:gm-value-update', smWorld: this.worldOf(scriptId), scriptId, writes }, from);
+    this.notify('value-write', { scriptId, writes });
+    // Broadcast to every other page running the script, as the worker
+    // does to its other tabs. The writer already applied the writes to
+    // its own cache.
+    await this.pushToRunners(scriptId, { type: 'sm:gm-value-update', smWorld: this.worldOf(scriptId), scriptId, writes }, from);
     return { ok: true };
   }
 
@@ -697,7 +694,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
       record.outcome = event.kind;
       if (event.kind === 'load') record.status = event.response.status;
       if (event.kind === 'error') record.error = event.message;
-      this.emit('request', record);
+      this.notify('request', record);
       await from.push({ type: 'sm:gm-xhr-event', smWorld: script.world, id, event }).catch(() => undefined);
     };
     // Acknowledged first, as the worker does, then the outcome arrives
@@ -799,7 +796,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
     tab.onClosed(closed);
     // A close asked for while the page was still being created.
     if (entry.closeRequested) await tab.close().catch(() => undefined);
-    this.emit('tab', record);
+    this.notify('tab', record);
     return { ok: true, tabId: this.nextTabId++ };
   }
 
@@ -835,11 +832,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
       record.outcome = event.kind;
       if (event.kind === 'load') record.filename = event.filename;
       if (event.kind === 'error') record.error = event.details.message ?? event.error;
-      try {
-        this.emit('download', record);
-      } catch {
-        // A listener's failure is its own; the script still gets its event.
-      }
+      this.notify('download', record);
       await from.push({ type: 'sm:gm-download-event', smWorld: script.world, requestId, event }).catch(() => undefined);
     };
     // Acknowledged first, then the outcome as a push, even for a refusal:
@@ -962,11 +955,19 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
 
   // ---------- Pushes to pages ----------
 
-  /** Send a service-worker push to every attached page but `except`. */
-  async push(message: object, except?: PageLink): Promise<void> {
+  /**
+   * Send a service-worker push to every page but `except` that runs the
+   * script: attached, holding it, and on a URL it matches. The worker
+   * sends only to tabs that ran the script too, and here it matters
+   * more: a MAIN-world push is posted into the page's own window, where
+   * any other page's code could read it.
+   */
+  private async pushToRunners(scriptId: string, message: object, except?: PageLink): Promise<void> {
+    const script = this.scripts.get(scriptId);
     const sends: Promise<void>[] = [];
-    for (const page of this.pages) {
-      if (page === except) continue;
+    for (const page of this.owners.get(scriptId) ?? []) {
+      if (page === except || !this.pages.has(page)) continue;
+      if (!script || !explainMatch(script.matching, page.url()).matches) continue;
       // A page that is navigating or closed can't take a message; that
       // is the "receiving end does not exist" the worker also ignores.
       sends.push(page.push(message).catch(() => undefined));
@@ -989,6 +990,17 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
   private nameOf(scriptId: string): string {
     const script = this.scripts.get(scriptId);
     return script ? preparedScriptName(script) : scriptId;
+  }
+
+  // Every event goes out through here. A test's listener that throws
+  // is the test's own failure: it must not cost the script its reply or
+  // event, or leave a request hanging.
+  private notify<K extends keyof HostEventMap>(event: K, ...args: HostEventMap[K]): void {
+    try {
+      (this.emit as (e: K, ...a: HostEventMap[K]) => boolean)(event, ...args);
+    } catch {
+      // Dropped on purpose; see above.
+    }
   }
 
   private worldOf(scriptId: string): 'MAIN' | 'USER_SCRIPT' {

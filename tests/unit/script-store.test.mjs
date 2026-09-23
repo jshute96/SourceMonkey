@@ -228,13 +228,13 @@ test('extractStartupLogs warns once per unusable @match, each on its own line', 
   assert.deepEqual(extractStartupLogs(header, 'x.user.js'), [
     {
       level: 'warn',
-      message: 'Ignoring @match https://bare.example — it has no path; '
+      message: 'Ignoring @match https://bare.example, which has no path; '
         + 'add a trailing "/*" to match all pages on that host',
       location: { file: 'x.user.js', line: 4 },
     },
     {
       level: 'warn',
-      message: 'Ignoring @match httpx://other.example/* — it names the unsupported '
+      message: 'Ignoring @match httpx://other.example/*, which names the unsupported '
         + 'scheme "httpx"; use one of *, http, https, file, ftp ("*" covers http and https)',
       location: { file: 'x.user.js', line: 5 },
     },

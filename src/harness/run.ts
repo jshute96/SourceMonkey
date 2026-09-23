@@ -93,13 +93,14 @@ export async function connectBrowser(opts: ConnectOptions, out: (line: string) =
   };
 }
 
+const NO_URL = 'No --url given, and the first script\'s @match names no page to open';
+
 export async function run(opts: RunOptions): Promise<number> {
   const session = await connectBrowser(opts, opts.out);
   if (!session) return 1;
-  if (opts.extension) return runInExtension(opts, session);
   const held: { attachment?: PageAttachment } = {};
   try {
-    return await runInHarness(opts, session, held);
+    return opts.extension ? await runInExtension(opts, session) : await runInHarness(opts, session, held);
   } finally {
     // Also on a throw partway through, so a failed run leaves no
     // attachment behind in a browser the developer keeps using.
@@ -124,7 +125,7 @@ async function runInHarness(
   if (!prepared) return 1;
   const url = opts.url ?? defaultUrl(prepared[0]);
   if (!url) {
-    opts.out('No --url given and the first script\'s @match names no page to open');
+    opts.out(NO_URL);
     return 2;
   }
 
@@ -199,23 +200,17 @@ async function runInExtension(opts: RunOptions, session: BrowserSession): Promis
     backend = await ExtensionBackend.connect(context);
   } catch (err) {
     opts.out(`[sm-dev] ${(err as Error).message}`);
-    await session.done();
     return 1;
   }
   const prepared = await prepareAll(opts);
-  if (!prepared) {
-    await session.done();
-    return 1;
-  }
+  if (!prepared) return 1;
   const url = opts.url ?? defaultUrl(prepared[0]);
   if (!url) {
-    opts.out('No --url given and the first script\'s @match names no page to open');
-    await session.done();
+    opts.out(NO_URL);
     return 2;
   }
   if (opts.values) opts.out('[sm-dev] The --values flag is ignored with --extension, since the extension keeps its own storage');
   if (opts.fireMenu) opts.out('[sm-dev] The --fire-menu flag is ignored with --extension. Use the toolbar menu in the browser.');
-  if (opts.solo) await backend.solo(true);
   const pushed = new Map<string, string>();
   // The extension's per-script log is the report stream here; it is
   // polled, since nothing pushes it to Node. Only what this run adds is
@@ -269,6 +264,9 @@ async function runInExtension(opts: RunOptions, session: BrowserSession): Promis
     }
   };
   try {
+    // Inside the try, so a solo switch that fails partway is still
+    // switched back.
+    if (opts.solo) await backend.solo(true);
     if (!(await pushAll(prepared))) return 1;
     wirePageOutput(page, opts.out);
     opts.out(`[sm-dev] Opening ${url}`);
@@ -291,7 +289,6 @@ async function runInExtension(opts: RunOptions, session: BrowserSession): Promis
     await poll();
   } finally {
     if (opts.solo) await backend.solo(false).catch(() => undefined);
-    await session.done();
   }
   return errors === 0 ? 0 : 1;
 }

@@ -179,7 +179,7 @@ command. See `docs/harness-design.md`.
 | `src/harness/capture-page.ts` | A page's DOM as a standalone file, scripts disabled and a `<base>` added; shared by `sm-dev snapshot` and the fixture's `saveSnapshot` |
 | `src/harness/console-commands.ts` | The commands typed while `sm-dev run` streams: fire a menu command, pick a script, read and write its values, reload |
 | `src/harness/browser-commands.ts` | `sm-dev probe` (which selectors resolve on a page) and `sm-dev snapshot` (save a page's DOM for a spec) |
-| `src/harness/run.ts` | `sm-dev run`: connect or launch a browser (shared `connectBrowser`), inject scripts, stream reports and console lines, re-inject on file changes |
+| `src/harness/run.ts` | `sm-dev run`: open a browser, inject or push the scripts, and stream what they report |
 | `src/harness/extension-backend.ts` | `sm-dev --extension`: finds SourceMonkey's worker in the browser and drives `pushScript`, `clearPushedScripts`, `soloMode`, the script log |
 | `src/harness/cli.ts` | The `sm-dev` command: `validate`, `match`, `run`, `probe`, `snapshot`, `clear` |
 
@@ -287,7 +287,7 @@ command. See `docs/harness-design.md`.
 | `tests/unit/site-icon.test.mjs` | Unit tests for the icon-specific helpers: `@icon`-header extraction, `<link rel="icon">` parsing + scoring, cache-hit rules, `data:`→Blob decode |
 | `tests/unit/parse-sandbox-host.test.mjs` | Unit tests for `isParseVerdict` — only the three real statuses pass, so an odd reply can't read as `invalid` |
 | `tests/unit/parse-location.test.mjs` | Unit tests for probe selection and line mapping, driven by positions Chromium really reported |
-| `tests/unit/harness-prepare.test.mjs` | `prepareScript` over real tmp files: entries and world, invalid header, syntax error location, local `@require` overrides, `explainMatch` |
+| `tests/unit/harness-prepare.test.mjs` | Unit tests for `prepareScript` and `explainMatch` over real files on disk |
 | `tests/unit/parse-check-node.test.mjs` | Unit tests for the Node parse checker: verdict, both probes' positions, and the two probe-selection routes |
 | `tests/unit/validate-userscripts.test.mjs` | Drives the validator CLI as a subprocess over the example suites plus a hand-built offline tree |
 | `tests/unit/diagnostic-location.test.mjs` | Unit tests for the diagnostic label + validator, especially what they do with a partial location |
@@ -299,7 +299,7 @@ command. See `docs/harness-design.md`.
 | `tests/e2e/parse-check.spec.ts` | The parse-check mechanism: compiles without executing, judges as a function body, catches join-only conflicts |
 | `tests/e2e/parse-check-install.spec.ts` | Install/refresh-time parse failures surface as `invalid`, healthy scripts stay `ok`, and an unverified row is caught before it registers |
 | `tests/e2e/parse-check-pages.spec.ts` | The parse check holds on page-driven paths: the install preview's warning, Install, Refresh, Refresh All |
-| `tests/e2e/pushed-scripts.spec.ts` | Pushed scripts on the test surface: runs on the next navigation, re-push replaces in place keeping values, invalid text, clear, removal from the UI, solo mode, the harness's `ExtensionBackend` |
+| `tests/e2e/pushed-scripts.spec.ts` | Pushed scripts in the extension: push, re-push, clear, removal, solo mode, `ExtensionBackend` |
 | `tests/e2e/preload-hints.spec.ts` | A fetched response's `Link: rel=preload` header reaches no extension page — both page-side readers hop to the service worker |
 | `tests/e2e/local-file-overrides.spec.ts` | End-to-end local stand-ins across `@require` / `@resource` / `@icon`: suffix matching, live re-read, fallback, opt-out, traversal, configured roots |
 | `tests/e2e/options-local-roots.spec.ts` | Options-page local-file-override roots box: hydration, saving, format complaints, missing-directory warnings |
@@ -396,7 +396,7 @@ extension, driven by the Node host in `src/harness/`.
 |------|-------------|
 | `tests/harness/inject.spec.ts` | Injection end to end: start and error reports, URL misses, world choice, storage seeding and writes, cross-page broadcast, remove and re-inject |
 | `tests/harness/xhr.spec.ts` | `GM_xmlhttpRequest` through the host: load and 404, JSON, `@connect` refusals and redirects, cookies, timeout, abort |
-| `tests/harness/browser-apis.spec.ts` | Tabs (including close before open), menu commands across reloads, notifications with timeout, downloads and numbered names, `window.onurlchange`, `window.close` |
+| `tests/harness/browser-apis.spec.ts` | The harness's tabs, menu commands, notifications, downloads and window APIs |
 | `tests/harness/bridge-trust.spec.ts` | What the page can reach: forged requests refused, isolated traffic kept out of the page, subframes ignored |
 | `tests/harness/console-commands.spec.ts` | The commands typed into `sm-dev run`: `use` picking which script `values`, `get` and `set` act on |
 | `tests/harness/fixture.spec.ts` | The consumer fixture from `lib/`: a script against a served snapshot, `gm` and `reports`, the up-front URL check, the explained miss |

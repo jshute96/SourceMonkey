@@ -755,10 +755,6 @@ See [docs/harness-design.md](docs/harness-design.md).
   (`scripts/validate-userscripts.mjs --offline-root`) still has its own
   fetch shim for that; folding it into `prepareScript` as a fetch
   override would let the two share one driver.
-- User-visible messages in `src/url-match.ts` (`Ignoring @match ... — it
-  has no path`, the unusable-match message) still carry em-dashes, now
-  printed by `sm-dev validate` too. Reword them without the dash; the
-  `Ignoring unsupported @grant` message was done alongside the harness.
 - A tab `GM_openInTab` opens under the push backend gets no scripts;
   the extension would inject whatever matches it. Attaching after the
   tab exists would only reach its next document, so this needs the
@@ -782,6 +778,38 @@ See [docs/harness-design.md](docs/harness-design.md).
   and the remove, in another context, sees no reader in between. The
   install then fails with "The pushed script was cleared". Narrow, and
   only with the harness pushing while someone edits the page.
+- `PUSHED_ANY_WORLD` in `src/harness/inject.ts` repeats the list of
+  world-free pushes in `wrapper-bridge.js`, which is plain injected JS
+  and can't import it. A pushed type added to one and not the other
+  reaches the wrong world under the harness. Generate one from the
+  other at build time, or check them against each other in a unit test.
+- Pushed scripts carry only their own text, so under `sm-dev run
+  --extension` a relative `@require` is refused (with a message saying
+  so) and a local copy of a remote `@require` is not used. Pushing the
+  resolved `@require` bodies along with the text would close both.
+- Detaching a page from the harness host (the page closed, or its
+  attachment disposed) drops its menus, notifications and tab tracking
+  but not its in-flight `GM_download`s or `GM_xmlhttpRequest`s. They
+  run to completion or time out with nobody listening; a download can
+  still land in a test's output directory after teardown.
+- A page the harness attached to that closes (a granted `window.close`,
+  or the user closing it) leaves the tabs its scripts opened until the
+  attachment is disposed, and `sm-dev run` keeps running with nothing
+  to stream until Ctrl-C.
+- Two `loadUserscript` / `inject` calls at once on one attachment can
+  both add the GM runtime to a world (harmless: it installs once) and
+  lose track of one of them. Serialize `inject` if it ever matters.
+- Two `pushScript`s of the same new name at once (two `sm-dev run
+  --extension` on one file) both miss the lookup, and the second fails
+  with an `Internal error`. Look the row up inside the install's lock.
+- The collections page's default move target for a pushed script is
+  "Scripts from local disk", since `pushed:///` reads as a file path
+  there. A pushed script moved there is no longer removed by `sm-dev
+  clear`. Offer no default for pushed rows.
+- Move the author's `userscripts` repo onto the harness: its
+  `test/fixtures.js` re-exports the harness fixture instead of
+  stripping headers, `gm-stubs.js` goes, its specs become ESM, and its
+  `CLAUDE.md` and skills point at `sm-dev run` and the fixture.
 - Publishing: the package is installed from a checkout or a git tag.
   `package.json` keeps `"private": true` until then; drop it to
   publish.

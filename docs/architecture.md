@@ -494,12 +494,15 @@ One set of sources, compiled twice:
   each one for a TypeScript consumer.
 
 Why two builds of the same modules rather than one directory serving
-both: the harness is not a separate program, it is a library built on
-dozens of the extension's own modules, so the two sets of files are not
-separable. Where they land is. Keeping `dist/` to exactly what Chrome
-loads means the unpacked directory, the zip, and the extension are the
-same thing, and the package can carry what it needs without that
-showing up in the browser.
+both:
+
+- The harness is a library built on dozens of the extension's own
+  modules, so the two sets of files are not separable. Where they land
+  is.
+- Keeping `dist/` to exactly what Chrome loads means the unpacked
+  directory, the zip, and the extension are the same thing.
+- The package can carry what it needs without that showing up in the
+  browser.
 
 The cost is one extra `tsc` pass on a full build, a few seconds.
 `pnpm run watch` skips it: a developer watching `dist/` is iterating on

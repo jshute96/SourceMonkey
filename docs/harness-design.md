@@ -1,8 +1,7 @@
 # Userscript development harness: design
 
-The harness lets a userscript repo (the author's `userscripts` repo
-first, a clonable template later) develop, probe, and test scripts with
-SourceMonkey's real semantics. The user-facing side is in
+The harness lets a userscript repo develop, probe, and test scripts
+with SourceMonkey's real semantics. The user-facing side is in
 [harness-guide.md](harness-guide.md).
 
 ## The problem
@@ -11,16 +10,16 @@ SourceMonkey's real semantics. The user-facing side is in
   probes a site, injects the script as it exists so far, watches what
   happens over Playwright or the Chrome DevTools Protocol (CDP), edits,
   and tries again. Fast iteration matters more than a green suite.
-- Today's harness in the `userscripts` repo strips the metadata block
-  and runs the raw body in the page's own world. Nothing a manager does
-  exists there: no `GM_*`, no `@match`, no `@run-at`, no isolation.
-  A hand-written stub file fakes a few `GM_*` calls.
+- A typical homemade harness strips the metadata block and runs the
+  raw body in the page's own world. Nothing a manager does exists
+  there: no `GM_*`, no `@match`, no `@run-at`, no isolation. A
+  hand-written stub file fakes a few `GM_*` calls.
 - Running the real extension is faithful but needs coordination: a
   collection registered in a profile, a refresh when headers change,
   other scripts in the same profile adding noise.
-- SourceMonkey already contains nearly everything needed to inject a
-  script with real manager semantics **without** the extension. This
-  design packages that, and adds a way to push scripts into the real
+- SourceMonkey contains nearly everything needed to inject a script
+  with real manager semantics **without** the extension. The harness
+  packages that, and adds a way to push scripts into the real
   extension without persistent state for the cases that need Chrome
   itself.
 
@@ -30,9 +29,9 @@ Terms used below, for readers who don't work in this repo.
 
 | Term | Meaning |
 | --- | --- |
-| `src/` | TypeScript source of the extension, plus three plain-JS files that are injected into web pages (`userscript-prelude.js`, `wrapper-gm-runtime.js`, `wrapper-bridge.js`). |
-| `dist/` | The build output. It **is** the unpacked extension: `manifest.json`, the HTML pages, icons, the Prism highlighter, and one compiled ES module per `src/*.ts` file. There is no bundler, so any module that doesn't touch `chrome.*` is importable from Node as-is. Unit tests and the validate CLI already do this. |
-| `dist/generated-wrappers.js` | The three injected JS files, minified to one line each and exported as string constants (`WRAPPER_PRELUDE`, `WRAPPER_GM_RUNTIME`, `WRAPPER_BRIDGE`). |
+| `src/` | TypeScript source of the extension, plus the plain-JS files injected into web pages (`userscript-prelude.js`, `wrapper-gm-runtime.js`, `wrapper-bridge.js`). |
+| `dist/` | The build output. It **is** the unpacked extension: `manifest.json`, the HTML pages, icons, the Prism highlighter, and one compiled ES module per extension `src/*.ts` file. There is no bundler, so any module that doesn't touch `chrome.*` is importable from Node as-is. Unit tests and the validate CLI import it the same way. The harness itself builds into `lib/` instead. |
+| `dist/generated-wrappers.js` | The injected JS files, minified to one line each and exported as string constants (`WRAPPER_PRELUDE`, `WRAPPER_GM_RUNTIME`, `WRAPPER_BRIDGE`). |
 | `scripts/` | Node scripts run by hand or by package scripts: the build, the validate CLI, the examples server, the cross-manager sync tool. |
 | `tests/fixtures/` | Playwright fixtures for this repo's own e2e suite: launching Chromium with the extension, the typed service-worker API, the example-page server. |
 | `tests/examples/` | One directory per `GM_*` API or header feature, each with a page, a userscript, and a spec. Doubles as a compliance suite that also runs under Tampermonkey and Violentmonkey. |
@@ -42,11 +41,12 @@ Terms used below, for readers who don't work in this repo.
 | Prelude | The per-script harness code injected ahead of the script: waits for the SW's go-ahead, enforces `@run-at`, runs the in-page URL matcher when needed, and attributes errors to the script. |
 | GM runtime | `window.__SM_GM__`, one per document per world. The page-side half of every `GM_*` API. Per-script `const GM_x = ...` bindings delegate to it. |
 | Bridge | When the runtime has no `chrome.runtime` (MAIN world), it talks through DOM events (`sourcemonkey-bridge-sync` out, `window.postMessage` replies back). In the extension a USER_SCRIPT-world relay forwards those to the SW. |
-| CDP | Chrome DevTools Protocol. Playwright is built on it; it can also be driven directly over a WebSocket, which the `userscripts` repo already does when Playwright misbehaves. |
+| CDP | Chrome DevTools Protocol. Playwright is built on it; it can also be driven directly over a WebSocket. |
 
-## What already exists
+## Extension code the harness reuses
 
-Nothing here needs writing; it needs packaging.
+The harness writes little of its own semantics. It runs these pieces of
+the extension under Node or in the page:
 
 | Piece | Where | Chrome-free? |
 | --- | --- | --- |
@@ -56,24 +56,21 @@ Nothing here needs writing; it needs packaging.
 | `@grant` catalog and resolution | `src/gm-api-catalog.ts` | Yes |
 | `GM_*` binding emitter | `src/gm-bindings.ts` | Yes |
 | `@require` / `@resource` resolution and fetch | `src/external-files.ts`, `src/file-loader.ts`, `src/local-file-overrides.ts` | Yes, given a `fetch` |
-| Wrapper builder: world choice, `@run-at`, the ordered code entries Chrome registers | pure half of `src/injector.ts` (`buildRegistrationSpec` and friends) | Needs a small `chrome` stub for `getManifest` and storage; unit tests have one |
+| Wrapper builder: world choice, `@run-at`, the ordered code entries Chrome registers | pure half of `src/injector.ts` (`buildRegistrationSpec` and friends) | Yes, as the harness calls it (`src/harness/prepare.ts`) |
 | Compile-only parse check | `src/harness/parse-check-node.ts` | Yes |
 | Stored-value codec, `@connect` gating | `src/gm-values.ts`, `src/gm-connect.ts` | `gm-connect` yes; `gm-values` with a storage stub |
 | Injected code as strings | `dist/generated-wrappers.js` | Yes |
-| Whole install pipeline in Node | `scripts/validate-userscripts.mjs` | Yes; swaps `fetch` and the parse checker |
-| Launch Chromium with the extension, Preferences seeding, typed SW API | `tests/fixtures/sourcemonkey-launch.ts`, `sw-api.ts`, `extension-id.ts` | n/a (Playwright) |
 | Compliance pages and specs | `tests/examples/` | n/a |
 
 Two facts make the no-extension path cheap:
 
 - **The GM runtime picks its transport at init.** With a
   `chrome.runtime.id` it uses `chrome.runtime`; without one it uses the
-  bridge. A test host that answers both, with a stand-in
-  `chrome.runtime` in the isolated world, replaces the SW; nothing on
-  the page side changes. Unit tests already instantiate the runtime
-  under Node.
+  bridge. The harness host answers both, with a stand-in
+  `chrome.runtime` in the isolated world, in place of the SW; nothing
+  on the page side changes.
 - **`buildRegistrationSpec` returns the exact entries Chrome would
-  register.** Feeding those into init scripts runs the prelude, the
+  register.** Injecting those as init scripts runs the prelude, the
   bindings, the `@require` bodies, and the script unchanged.
 
 ## Two backends
@@ -86,8 +83,8 @@ script **text or a file path**, never a collection.
 - The test process builds the entries in Node, injects them into a page
   as init scripts, and hosts a stand-in SW that answers the bridge.
 - Works in any Chromium Playwright can reach, including the manually
-  launched, CDP-attached browser the `userscripts` repo insists on
-  (Playwright must not launch it, or Google refuses sign-in).
+  launched, CDP-attached browser a repo needs for sites with a login
+  (a browser Playwright launched is refused Google sign-in).
 - Deterministic: the caller knows exactly what was injected and when.
   No storage, no debounce, no other scripts.
 - This is the default for interactive work and for specs.
@@ -97,7 +94,7 @@ script **text or a file path**, never a collection.
 - The browser runs the real extension. The harness talks to the SW test
   surface, over Playwright when it launched the browser, over CDP when
   it attached to one.
-- Test-surface calls make scripts **ephemeral** (built; see
+- Test-surface calls make scripts **ephemeral** (see
   [storage.md](storage.md#container-collections) for the rows):
   - `pushScript({ text, name? })` installs the text into a built-in
     **Pushed scripts** collection and returns the row's id, status, and
@@ -112,12 +109,11 @@ script **text or a file path**, never a collection.
     `GM_*` values.
   - `soloMode(on)` disables every other collection while on and
     restores the previous enabled set when off, so a pushed script runs
-    alone without touching the user's real collections. `resetAllState()`
-    already exists for a throwaway profile, where wiping everything is
-    fine.
+    alone without touching the user's real collections. For a
+    throwaway profile, `resetAllState()` wipes everything instead.
 - `sm-dev run --extension` reaches the worker through Playwright, which
   lists an extension's service worker on a CDP-connected browser as
-  well as a launched one (checked; this was an open question). The
+  well as a launched one. The
   worker's URL is known up front, since the manifest's fixed `key`
   fixes the extension id; an idle worker is woken by opening the
   collections page. Reports are the script's own Log tab entries,
@@ -129,23 +125,26 @@ script **text or a file path**, never a collection.
   real identity of a `GM_xmlhttpRequest` (extension cookies, no
   `Origin`, `Sec-Fetch-Site: none`).
 
-## Components to build
+## Components
 
 ### Package plumbing
 
-- `package.json`: keep `private` (it only blocks `npm publish`, and a
-  git install works without publishing; drop it when publishing is
-  wanted); add `exports` (`./harness` for the harness entry, and `./*`
-  mapping to `lib/*.js` so the pure modules such as `url-match` and
-  `userscript-header` are importable too),
-  `files: ["lib"]`, `bin: { "sm-dev": ... }`, a `prepare` script that
-  runs the build so a git install produces it, and `@playwright/test`
-  as an optional peer dependency used only by the harness entry.
-  The package is built by `tsconfig.lib.json` into `lib/`, with
-  declarations; `dist/` stays the extension alone. See
+- The package is `sourcemonkey`, built by `tsconfig.lib.json` into
+  `lib/` with declarations; `dist/` stays the extension alone. See
   [architecture.md](architecture.md#two-outputs-dist-and-lib).
-- The package name is `sourcemonkey`. Consumers pin a git tag; npm
-  publishing can come later without changing the import paths.
+- `package.json` carries:
+  - `exports`: `./harness` for the harness entry, and `./*` mapping to
+    `lib/*.js` so pure modules such as `url-match` and
+    `userscript-header` are importable too.
+  - `files: ["lib"]` and `bin: { "sm-dev": ... }`.
+  - A `prepare` script that runs the build, so a git install produces
+    `lib/`.
+  - `@playwright/test` as an optional peer dependency, used only by the
+    harness entry.
+  - `private: true`. It only blocks `npm publish`; a git install works
+    without publishing.
+- Consumers pin a git tag. Publishing to npm later would not change the
+  import paths.
 
 ### `src/harness/`
 
@@ -169,19 +168,18 @@ into pages.
     files sharing a basename stay distinct.
   - Calls are serialized: the local-roots setting the override
     resolver reads is process-wide.
-  - `scripts/validate-userscripts.mjs` keeps its own driver (it has an
+  - `scripts/validate-userscripts.mjs` has its own driver (it has an
     offline dependency root the harness doesn't) and shares the Node
-    parse checker, which moved to `src/harness/parse-check-node.ts`.
-- **`host.ts`**: the stand-in SW. (Built: every message the injected
-  code sends today.)
+    parse checker in `src/harness/parse-check-node.ts`.
+- **`host.ts`**: the stand-in SW.
   - Answers every message type the SW handles for injected code:
     `sm:check-pending` (with a values snapshot when the script needs
     one), `sm:start` / `sm:error` / `sm:abandoned` (recorded), batch
     writes and resync for storage, XHR start and abort, tab open and
     close, downloads, notifications, menu register and unregister, log,
     focus.
-  - Pushes back what the SW pushes: value updates to every attached
-    page (cross-tab broadcast within the context), XHR events, tab
+  - Pushes back what the SW pushes: value updates to the other pages
+    running the script (attached, holding it, URL matching), XHR events, tab
     closed, menu fired, notification events, download events, and
     `urlchange` from CDP's `Page.navigatedWithinDocument`.
   - `GM_openInTab` opens a real page in the same browser context (so a
@@ -203,7 +201,6 @@ into pages.
     `clickNotification` / `closeNotification`), downloads, requests,
     window calls, and the start / error / skipped reports.
 - **`inject.ts`**: attaches a prepared script to a Playwright `Page`.
-  (Built.)
   - Gives each world its own channel, so the page sees only what it
     would in the extension:
     - **Isolated world**: an init script installs a stand-in
@@ -243,18 +240,16 @@ into pages.
   Wraps the three above into `loadUserscript`, `gm`, `reports`, and a
   `serveSnapshot` helper that routes a saved HTML file at its original
   URL so `@match` and relative URLs still hold. HAR replay is left to
-  Playwright's own `routeFromHAR`. (Built; `tests/harness/fixture.spec.ts`
-  drives it from `lib/` the way a consumer would.)
+  Playwright's own `routeFromHAR`. `tests/harness/fixture.spec.ts`
+  drives it from `lib/` the way a consumer would.
 - **`browser-commands.ts`**: `sm-dev probe` and `sm-dev snapshot`, on
-  the same browser connection as `run`. (Built.)
+  the same browser connection as `run`.
 - **`cli.ts`** (`sm-dev`) and **`run.ts`**: the interactive tool,
   built on the same modules and Playwright's `connectOverCDP` (or a
   launched Chromium with `--launch`). Commands are listed in the guide.
   `run` is in its own module so the Node-only commands never load
   Playwright. The `--extension` flag switches it to the extension
-  backend. (Built: `validate`, `match`, `run` with `--watch`,
-  `--values`, `--fire-menu`, `--for`, `--extension`, `--solo`;
-  `probe`; `snapshot`; `clear`.)
+  backend.
 
 ### Service-worker additions
 
@@ -273,8 +268,8 @@ into pages.
   projects. The manager fixture's `harness` backend prepares every
   script under the example directory and injects them into each page
   the spec opens (`tests/fixtures/manager.ts`). Each example directory
-  already exercises one API through the public surface.
-- The stand-in SW is then measured against the real one by the same
+  exercises one API through the public surface.
+- The stand-in SW is measured against the real one by the same
   specs, and a divergence fails a test instead of surprising a script
   author. One example is skipped there: the wire-header report, which
   measures a browser's request and says nothing about a request sent
@@ -282,39 +277,27 @@ into pages.
   (`GM_info` fields, the `@connect` refusal message) run, since the
   harness produces them with the extension's own code.
 
-## How the `userscripts` repo consumes it
+## How a userscript repo uses it
 
 Details are in the guide; the shape is:
 
-- `pnpm add -D github:jshute96/SourceMonkey#<tag>`, with `sourcemonkey`
-  allowlisted under `pnpm.onlyBuiltDependencies` so the `prepare` build
-  runs. `file:../SourceMonkey` (with `dependenciesMeta.injected`)
-  while developing both; see the guide.
-- Its `test/fixtures.js` keeps the CDP connection logic (a repo policy,
-  not a harness concern) and re-exports `test` / `expect` from
-  `sourcemonkey/harness` instead of stripping headers itself. The
-  `gm-stubs.js` file goes away.
-- SourceMonkey is written as ES modules (ESM, `import` / `export`)
-  while that repo's specs are CommonJS (`require()`), so its specs move
-  to `.mjs` or the repo sets `"type": "module"`.
-- Its `CLAUDE.md` and skills change to: run `sm-dev run` while
-  iterating; write a spec on the harness fixture once the human
-  confirms the script; use `--extension` for the request-identity and
-  Chrome-only checks. No template repo for now.
+- It installs `github:jshute96/SourceMonkey#<tag>` as a dev dependency,
+  with `sourcemonkey` allowlisted under `allowBuilds` in
+  `pnpm-workspace.yaml` so the `prepare` build runs. While developing
+  both, it uses `file:../SourceMonkey` with
+  `dependenciesMeta.injected`.
+- Its own fixture file keeps any browser-connection logic (a repo
+  policy, not a harness concern) and re-exports `test` / `expect` from
+  `sourcemonkey/harness`.
+- Its specs are ES modules (`.mjs`, or `"type": "module"`), since
+  SourceMonkey is written as ESM.
+- Its agent instructions: run `sm-dev run` while iterating, write a
+  spec on the harness fixture once the script is confirmed, and use
+  `--extension` for the request-identity and Chrome-only checks.
 
-## Sequencing
+## Platform behavior the design relies on
 
-1. Package plumbing and `prepare.ts`, extracted from the validate CLI.
-2. `host.ts` and `inject.ts`, proven by the `harness` project over
-   `tests/examples/`.
-3. `sm-dev` and `fixture.ts`, thin once the library works.
-4. `pushScript` / `clearPushedScripts` / `soloMode` and the
-   `--extension` backend.
-5. Update the `userscripts` repo's fixtures, `CLAUDE.md`, and skills.
-
-## Resolved questions
-
-Checked before building, in throwaway scripts:
+Each was checked in a throwaway script before the harness was built:
 
 - **Isolated-world init scripts over CDP work beside Playwright.**
   `Page.addScriptToEvaluateOnNewDocument` with a `worldName` runs in
@@ -325,11 +308,10 @@ Checked before building, in throwaway scripts:
 - **pnpm builds a git dependency's `prepare` script**, but only when
   the consumer allowlists it under `allowBuilds` in
   `pnpm-workspace.yaml`. The key is matched against
-  `<name>@git+https://…#<sha>`, so a bare name does not match and the
-  glob `sourcemonkey@git+https*` is the form to document. The build
+  `<name>@git+https://…#<sha>`, so a bare name does not match; the
+  full key does, and so does the glob `sourcemonkey@git+https*`. The build
   runs in pnpm's clone, with the package's dev dependencies installed
   there.
-
 - **Playwright lists an extension's service worker on a
   `connectOverCDP` connection** (`context.serviceWorkers()`), so the
   extension backend uses `worker.evaluate` in both cases.

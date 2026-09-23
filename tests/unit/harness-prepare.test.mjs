@@ -39,7 +39,7 @@ async function repo() {
   };
 }
 
-test('prepareScript: a valid script yields the four entries and its world', async () => {
+test('prepareScript: a valid script yields its registration entries and its world', async () => {
   const r = await repo();
   try {
     const file = await r.write('sites/example.com/a.user.js', HEADER + 'console.log("hi");\n');

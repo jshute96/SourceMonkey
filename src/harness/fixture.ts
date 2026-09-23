@@ -18,12 +18,13 @@ import path from 'node:path';
 import { savePageSnapshot } from './capture-page.js';
 
 import {
-  HarnessHost, NO_RULE_COVERS_URL,
+  HarnessHost,
   type HostReports, type SkipReport, type ErrorReport, type StartReport, type RequestInterceptor,
 } from './host.js';
 import { attachPage, type PageAttachment } from './inject.js';
 import {
   prepareScript,
+  NO_RULE_COVERS_URL,
   explainMatch,
   preparedScriptMatches,
   type PreparedScript,

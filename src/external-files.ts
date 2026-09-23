@@ -184,15 +184,19 @@ export function describeResolveFailure(failure: ResolveFailure): string {
       // local script (see file-loader.ts's module header). The scheme
       // is parenthesized rather than leading, so the sentence can open
       // with a capital of ours instead of a verbatim value.
-      return `That URL scheme (${failure.scheme}) is not supported — ` +
+      return `That URL scheme (${failure.scheme}) is not supported; ` +
         'use an http(s) URL, or a relative path resolved against the script\'s own location';
     case 'outside-script-folder':
       // Only reachable for a script loaded from `file://`: a relative
       // ref in a script served over http(s) may climb, the way it does
       // in Violentmonkey. So the message names the case it applies to
       // rather than stating a rule that isn't universal.
-      return 'That path points outside the script\'s own folder — ' +
+      return 'That path points outside the script\'s own folder; ' +
         'a relative path in a local script has to stay inside it';
+    case 'relative-in-pushed':
+      // A pushed script arrives as text, without the files beside it.
+      return 'A pushed script cannot use a relative path, since only its own text was pushed. ' +
+        'Use an http(s) URL, or run it without --extension.';
   }
 }
 

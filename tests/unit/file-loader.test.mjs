@@ -267,6 +267,12 @@ test('resolveScriptResourceDetailed: an escaping relative path and a bad scheme 
   assert.equal(scheme.scheme, 'ftp:');
 });
 
+test('resolveScriptResourceDetailed: a pushed script has no folder for a relative path', () => {
+  const pushed = 'pushed:///foo.user.js';
+  assert.deepEqual(resolveScriptResourceDetailed('lib/x.js', pushed), { failed: true, reason: 'relative-in-pushed' });
+  assert.deepEqual(resolveScriptResourceDetailed('https://example.com/x.js', pushed), { kind: 'http', url: 'https://example.com/x.js' });
+});
+
 test('resolveScriptResourceDetailed: a remote script may climb out of its own directory', () => {
   // Containment exists to keep a local script inside its own tree. A
   // script served over http(s) can already name any absolute URL, so

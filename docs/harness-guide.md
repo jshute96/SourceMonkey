@@ -69,23 +69,25 @@ The second matters when you install from a checkout on disk
 - Re-run `pnpm install` after rebuilding SourceMonkey, since the copy
   is taken at install time.
 
-The package is written as ES modules (ESM: files that use `import` /
-`export`, the standard module system, rather than CommonJS's
-`require()` / `module.exports`). A CommonJS spec can't `require()` it
-reliably, so write specs and fixtures as ESM: name them `.mjs`, or set
-`"type": "module"` in `package.json` so plain `.js` files count.
-Playwright runs either kind. Type declarations ship with the package,
-so a TypeScript spec gets types without extra setup; keep
-`skipLibCheck` on, since some declarations mention Chrome's extension
-types.
+Writing specs against it:
+
+- The package is written as ES modules (ESM: files that use `import` /
+  `export`, rather than CommonJS's `require()` / `module.exports`).
+- A CommonJS spec can't `require()` it reliably, so write specs and
+  fixtures as ESM: name them `.mjs`, or set `"type": "module"` in
+  `package.json` so plain `.js` files count. Playwright runs either.
+- Type declarations ship with the package, so a TypeScript spec gets
+  types without extra setup. Keep `skipLibCheck` on, since some
+  declarations mention Chrome's extension types.
 
 ## The interactive loop: `sm-dev`
 
-`sm-dev` is the harness's command-line tool. Installing the package
-puts it on your project's path (it is the package's `bin`, so pnpm
-links it into `node_modules/.bin`), which means `pnpm sm-dev …` in a
-project that depends on SourceMonkey, or `pnpm exec sm-dev …`. In a
-SourceMonkey checkout it is `scripts/sm-dev`.
+`sm-dev` is the harness's command-line tool.
+
+- Installing the package puts it on your project's path: it is the
+  package's `bin`, so pnpm links it into `node_modules/.bin`. Run it as
+  `pnpm sm-dev …` or `pnpm exec sm-dev …`.
+- In a SourceMonkey checkout it is `scripts/sm-dev`.
 
 It connects to a running browser over CDP (`--cdp
 http://127.0.0.1:9233`, or the `SM_DEV_CDP` environment variable) and
@@ -100,16 +102,20 @@ person or an agent.
 | `sm-dev probe <url> --selectors 'a, b, c'` | Reports which selectors resolve on the page, so a broken script's assumptions can be checked in one call. `--html` prints the first match's HTML. Exits 1 when any is missing. |
 | `sm-dev match <script> <url>...` | Says whether the script would run on each URL, and which rule decided. |
 | `sm-dev validate <path>...` | The install-time checks (header, `@require`, syntax) over files or directories, with the message the extension would show. |
-| `sm-dev snapshot <url> --out file.html` | Saves the live DOM so a spec can run against it without a login. The site's own scripts are disabled in the file, so a spec sees the captured page rather than a page that logs itself out again. |
+| `sm-dev snapshot <url> --out file.html` | Saves the live DOM so a spec can run against it without a login. The site's own scripts are disabled in the file, so a spec sees the captured page rather than a page that logs itself out again. In your own browser, turn off any installed copy of the script first, or the snapshot holds its changes and a spec applies them twice. |
 
-Options for `validate` and `match`:
+Every command exits 0 on success, 1 when a check fails (a script is
+invalid, a URL doesn't match, a selector is missing) or the command
+fails, and 2 when it was typed wrong.
+
+Options for every command:
 
 - `--root DIR` names the repo root, searched for local copies of
   `@require` URLs the way the extension searches a collection's
   directory. Defaults to the current directory.
 - `--local DIR` adds another directory to that search; repeatable.
 
-Options for the browser commands (`run`, `probe`, `snapshot`):
+Options for the browser commands (`run`, `probe`, `snapshot`, `clear`):
 
 - `--cdp URL` names the browser to connect to. Defaults to the
   `SM_DEV_CDP` environment variable, then `http://127.0.0.1:9233`.
@@ -225,20 +231,23 @@ convenience: a spec uses locators. Answering a network request
 (`gm.interceptRequests`, `gm.failHosts`) is a spec's, since it needs a
 function.
 
-The fixture leaves `browser` and `context` to you. A repo that attaches
-to a manually launched browser keeps that logic in its own fixture file
-and re-exports the harness `test` extended with it. `sourcemonkey/harness`
-loads Playwright when imported; a Node-only tool that wants just
-`prepareScript` can import `sourcemonkey/harness/prepare` instead.
+- The fixture leaves `browser` and `context` to you. A repo that
+  attaches to a manually launched browser keeps that logic in its own
+  fixture file and re-exports the harness `test` extended with it.
+- `sourcemonkey/harness` loads Playwright when imported. A Node-only
+  tool that wants just `prepareScript` can import
+  `sourcemonkey/harness/prepare` instead.
 
 ## The extension backend
 
-For what only Chrome can answer: content security policy, Chrome's own
-match gating, cross-tab broadcast between real tabs, and the real
-identity of a `GM_xmlhttpRequest` (the extension's cookies, no
-`Origin` header, `Sec-Fetch-Site: none`). A request that works from a
-page can still be refused when it comes from the extension, so send one
-real request per endpoint here before building on it.
+For what only Chrome can answer:
+
+- Content security policy, Chrome's own match gating, and cross-tab
+  broadcast between real tabs.
+- The real identity of a `GM_xmlhttpRequest`: the extension's cookies,
+  no `Origin` header, `Sec-Fetch-Site: none`. A request that works from
+  a page can still be refused when it comes from the extension, so send
+  one real request per endpoint here before building on it.
 
 - Start the browser with `--load-extension=<SourceMonkey dist>` and
   turn on "Allow User Scripts" for it once. The user's ordinary browser
@@ -258,6 +267,9 @@ real request per endpoint here before building on it.
   are restored to how they were.
 - `--values` and `--fire-menu` have no effect here: the extension keeps
   its own storage, and its menu is the toolbar's.
+- Only the script's own text is pushed, not the files beside it. A
+  relative `@require` is refused, and a local copy of a remote
+  `@require` is not used: the extension fetches the URL.
 - Specs stay on the push backend; for a check that needs the real
   extension, drive it from a spec with SourceMonkey's own test fixtures
   or by hand with `sm-dev run --extension`.
@@ -269,7 +281,7 @@ Faithful under the push backend:
 - Header validation, URL matching, `@run-at`, `@noframes`, `@require`
   scope and local overrides, `@grant` gating, world choice.
 - `GM_*` storage semantics, including the write batching and
-  broadcast to other pages in the same context.
+  broadcast to other pages running the script.
 - `@connect` gating of `GM_xmlhttpRequest`.
 - Which of a script's messages the web page can see or fake.
 - Error attribution to file and line.
@@ -291,7 +303,9 @@ Close, but not the same:
   at its URL as Chrome's would be, but no scripts are injected into it;
   the extension would inject whatever matches the new page. It is
   closed when the attachment is disposed, where the extension would
-  leave it open, so a test run leaves no tabs behind.
+  leave it open, so a test run leaves no tabs behind. It needs a
+  context that belongs to a browser, so it fails under Playwright's
+  `launchPersistentContext`.
 - `GM_download` fetches the file from Node into a directory of the
   host's choosing (the fixture uses the test's output directory) and
   reports the extension's events, numbering a taken name as Chrome
@@ -309,7 +323,8 @@ Not faithful, use the extension backend:
 
 ## Troubleshooting
 
-- **"skipped: no @match covers <url>"**: the script would not run
+- **"skipped on <url>: No @match or @include covers this URL"**, or
+  another rule named there: the script would not run
   there in the extension either. Broaden the pattern or change the
   URL; see `sm-dev match`.
 - **`GM_getValue is not defined`**: the script uses an API it did not

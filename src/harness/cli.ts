@@ -16,13 +16,18 @@
 // installed it.
 //
 // Exit codes: 0 when every script checked out (or every URL matched,
-// no script threw, every selector was found), 1 when one didn't, 2 for
-// a usage error.
+// no script threw, every selector was found), 1 when one didn't or the
+// command failed, 2 for a usage error (a `UsageError`).
 
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
-import { explainMatch, prepareScript } from './prepare.js';
+import { CONSOLE_HELP } from './console-commands.js';
+import { NO_RULE_COVERS_URL, explainMatch, prepareScript } from './prepare.js';
+
+// A mistake in how the command was typed, as opposed to a failure while
+// carrying it out: the one kind that exits 2.
+class UsageError extends Error {}
 
 const USAGE = `sm-dev: develop and test userscripts against a real browser,
 with SourceMonkey's own injection and GM_* APIs behind them.
@@ -71,15 +76,7 @@ Options for run:
                   the run and restore them after
 
 Interactive commands (type these while \`run\` is streaming):
-  menu [label]    Fire a registered menu command; with no label, list them
-  values          Print everything the script has stored
-  get <key>       Print one stored value
-  set <key> <json>  Store a value, as another tab's write would
-  use [script]    Pick the script values/get/set act on; with none, list them
-  reload          Reload the page
-  open <url>      Navigate to another page
-  help            List these
-  quit            Stop the run
+${CONSOLE_HELP.map((line) => `  ${line}`).join('\n')}
 
 Options for probe:
   --selectors S   Comma-separated CSS selectors to look for; repeat the
@@ -121,7 +118,7 @@ function parseArgs(argv: string[]): Opts {
     const arg = argv[i];
     const next = (): string => {
       const v = argv[++i];
-      if (v === undefined) throw new Error(`The ${arg} flag needs a value`);
+      if (v === undefined) throw new UsageError(`The ${arg} flag needs a value`);
       return v;
     };
     switch (arg) {
@@ -136,10 +133,10 @@ function parseArgs(argv: string[]): Opts {
         const raw = next();
         try {
           const parsed: unknown = JSON.parse(raw);
-          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new TypeError('not an object');
           opts.values = parsed as Record<string, unknown>;
         } catch {
-          throw new Error('The --values flag needs a JSON object');
+          throw new UsageError('The --values flag needs a JSON object');
         }
         break;
       }
@@ -158,13 +155,13 @@ function parseArgs(argv: string[]): Opts {
       case '--out': opts.outFile = path.resolve(next()); break;
       case '--seconds': {
         const v = Number(next());
-        if (!Number.isFinite(v) || v < 0) throw new Error('The --seconds flag needs a number');
+        if (!Number.isFinite(v) || v < 0) throw new UsageError('The --seconds flag needs a number');
         opts.seconds = v;
         break;
       }
       case '--help': case '-h': opts.command = 'help'; break;
       default:
-        if (arg.startsWith('-')) throw new Error(`Unknown option: ${arg}`);
+        if (arg.startsWith('-')) throw new UsageError(`Unknown option: ${arg}`);
         if (opts.command === null) opts.command = arg;
         else opts.args.push(arg);
     }
@@ -176,13 +173,25 @@ async function collectScripts(inputs: string[]): Promise<string[]> {
   const found: string[] = [];
   for (const input of inputs) {
     const full = path.resolve(input);
-    const info = await stat(full).catch(() => {
-      throw new Error(`No such file or directory: ${input}`);
-    });
+    const info = await statInput(input);
     if (info.isDirectory()) await walk(full, found);
     else found.push(full);
   }
   return found;
+}
+
+// The script a command was pointed at, checked up front so a typo is
+// reported as one rather than as the file system's `ENOENT` text.
+async function scriptFile(input: string): Promise<string> {
+  const info = await statInput(input);
+  if (info.isDirectory()) throw new UsageError(`${input} is a directory. Name a .user.js file.`);
+  return path.resolve(input);
+}
+
+function statInput(input: string): ReturnType<typeof stat> {
+  return stat(path.resolve(input)).catch(() => {
+    throw new UsageError(`No such file or directory: ${input}`);
+  });
 }
 
 async function walk(dir: string, out: string[]): Promise<void> {
@@ -201,9 +210,9 @@ function rel(file: string): string {
 }
 
 async function validate(opts: Opts): Promise<number> {
-  if (opts.args.length === 0) throw new Error('The validate command needs at least one path');
+  if (opts.args.length === 0) throw new UsageError('The validate command needs at least one path');
   const files = await collectScripts(opts.args);
-  if (files.length === 0) throw new Error('No *.user.js files found');
+  if (files.length === 0) throw new UsageError('No *.user.js files found');
   let failed = 0;
   for (const file of files) {
     const prepared = await prepareScript({
@@ -225,9 +234,9 @@ async function validate(opts: Opts): Promise<number> {
 
 async function match(opts: Opts): Promise<number> {
   const [script, ...urls] = opts.args;
-  if (!script || urls.length === 0) throw new Error('The match command needs a script and at least one URL');
+  if (!script || urls.length === 0) throw new UsageError('The match command needs a script and at least one URL');
   const prepared = await prepareScript({
-    file: path.resolve(script),
+    file: await scriptFile(script),
     collectionRoot: opts.root,
     localRoots: opts.local,
   });
@@ -242,14 +251,15 @@ async function match(opts: Opts): Promise<number> {
       process.stdout.write(`match    ${url}\n    ${verdict.rule}\n`);
     } else {
       misses++;
-      process.stdout.write(`no match ${url}\n    ${verdict.rule ?? 'No @match or @include covers it'}\n`);
+      process.stdout.write(`no match ${url}\n    ${verdict.rule ?? NO_RULE_COVERS_URL}\n`);
     }
   }
   return misses === 0 ? 0 : 1;
 }
 
 async function runCommand(opts: Opts): Promise<number> {
-  if (opts.args.length === 0) throw new Error('The run command needs at least one script');
+  if (opts.args.length === 0) throw new UsageError('The run command needs at least one script');
+  const files = await Promise.all(opts.args.map(scriptFile));
   const { run } = await import('./run.js');
   // Ends on Ctrl-C, or after --seconds. With neither, the run streams
   // until interrupted, which suits a person watching it. The timer is
@@ -266,7 +276,7 @@ async function runCommand(opts: Opts): Promise<number> {
   });
   try {
     return await run({
-      files: opts.args.map((a) => path.resolve(a)),
+      files,
       url: opts.url,
       cdp: opts.cdp,
       launch: opts.launch,
@@ -290,8 +300,8 @@ async function runCommand(opts: Opts): Promise<number> {
 
 async function probeCommand(opts: Opts): Promise<number> {
   const [url] = opts.args;
-  if (!url) throw new Error('The probe command needs a URL');
-  if (opts.selectors.length === 0) throw new Error('The probe command needs --selectors');
+  if (!url) throw new UsageError('The probe command needs a URL');
+  if (opts.selectors.length === 0) throw new UsageError('The probe command needs --selectors');
   const selectors = opts.selectorFlags === 1
     ? opts.selectors[0].split(',').map((x) => x.trim()).filter(Boolean)
     : opts.selectors;
@@ -305,8 +315,8 @@ async function probeCommand(opts: Opts): Promise<number> {
 
 async function snapshotCommand(opts: Opts): Promise<number> {
   const [url] = opts.args;
-  if (!url) throw new Error('The snapshot command needs a URL');
-  if (!opts.outFile) throw new Error('The snapshot command needs --out');
+  if (!url) throw new UsageError('The snapshot command needs a URL');
+  if (!opts.outFile) throw new UsageError('The snapshot command needs --out');
   const { snapshot } = await import('./browser-commands.js');
   return snapshot({
     url, outFile: opts.outFile,
@@ -316,7 +326,7 @@ async function snapshotCommand(opts: Opts): Promise<number> {
 }
 
 async function clearCommand(opts: Opts): Promise<number> {
-  if (!opts.extension) throw new Error('The clear command needs --extension; the harness itself keeps nothing between runs');
+  if (!opts.extension) throw new UsageError('The clear command needs --extension; the harness itself keeps nothing between runs');
   const { connectBrowser } = await import('./run.js');
   const { ExtensionBackend } = await import('./extension-backend.js');
   const out = (line: string): void => { process.stdout.write(line + '\n'); };
@@ -368,7 +378,7 @@ async function main(): Promise<void> {
     }
   } catch (err) {
     process.stderr.write(`${(err as Error).message}\n`);
-    process.exitCode = 2;
+    process.exitCode = err instanceof UsageError ? 2 : 1;
   }
 }
 

@@ -2358,14 +2358,16 @@ export async function setSoloMode(on: boolean): Promise<string[]> {
     const collections = await getCollections();
     const previous: Record<string, boolean> = {};
     for (const c of collections) {
-      if (c.path === PUSHED_CONTAINER_PATH) continue;
-      previous[c.id] = isCollectionEnabled(c);
-      if (previous[c.id]) {
-        await setCollectionEnabled(c.id, false);
-        toggled.push(c.id);
-      }
+      if (c.path !== PUSHED_CONTAINER_PATH) previous[c.id] = isCollectionEnabled(c);
     }
+    // Noted before anything is disabled, so a worker killed partway
+    // through still leaves the note that restores what it did.
     await chrome.storage.local.set({ [SOLO_MODE_KEY]: previous });
+    for (const [id, wasEnabled] of Object.entries(previous)) {
+      if (!wasEnabled) continue;
+      await setCollectionEnabled(id, false);
+      toggled.push(id);
+    }
     return toggled;
   }
   if (!noted) return toggled;

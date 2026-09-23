@@ -140,7 +140,7 @@ test.describe('bad-examples corpus', () => {
     const badMatch = byFile.get('invalid-match.user.js');
     expect(badMatch?.startupLogs, 'invalid-match should record a startup log').toHaveLength(1);
     expect(badMatch!.startupLogs![0].message)
-      .toMatch(/Ignoring @match https:\/\/example\.org — it has no path/);
+      .toMatch(/Ignoring @match https:\/\/example\.org, which has no path/);
     expect(badMatch!.startupLogs![0].location).toEqual({
       file: 'invalid-match.user.js',
       line: markedErrorLine('invalid-match.user.js'),

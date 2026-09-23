@@ -4,7 +4,7 @@
 // does the same job with the Chrome DevTools Protocol (CDP), on a page
 // Playwright already controls:
 //
-//   - Each registration entry (`prepare.ts` returns the same four the
+//   - Each registration entry (`prepare.ts` returns the same ones the
 //     extension registers) becomes a `Page.addScriptToEvaluateOnNewDocument`
 //     call, in the script's world. MAIN is the page's own world; the
 //     isolated world is named, which Playwright's `addInitScript`
@@ -372,7 +372,9 @@ export class PageAttachment implements PageLink {
     const browser = this.page.context().browser();
     // A persistent context (`launchPersistentContext`) has no Browser
     // object in Playwright, and so no browser-level session.
-    if (!browser) throw new Error('This browser context does not expose a browser-level CDP session');
+    if (!browser) {
+      throw new Error('A persistent context (launchPersistentContext) cannot open tabs here. Use a context from browser.newContext().');
+    }
     const browserSession = await browser.newBrowserCDPSession();
     try {
       // Heard from before the create, so a tab closed at once is still

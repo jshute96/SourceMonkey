@@ -33,16 +33,19 @@ export interface ConsoleContext {
   stop: () => void;
 }
 
-const HELP = [
-  'menu [label]      fire a registered menu command; with no label, list them',
-  'values            print everything the script has stored',
-  'get <key>         print one stored value',
-  'set <key> <json>  store a value, as another tab\'s write would',
-  'use [script]      pick the script values/get/set act on (path, file name or @name); with none, list them',
-  'reload            reload the page',
-  'open <url>        navigate to another page',
-  'help              this list',
-  'quit              stop the run',
+// Also the "Interactive commands" part of `sm-dev --help`, so the two
+// lists can't drift apart.
+export const CONSOLE_HELP = [
+  'menu [label]      Fire a registered menu command; with no label, list them',
+  'values            Print everything the script has stored',
+  'get <key>         Print one stored value',
+  'set <key> <json>  Store a value, as another tab\'s write would',
+  'use [script]      Pick the script values/get/set act on (path, file name',
+  '                  or @name); with none, list them',
+  'reload            Reload the page',
+  'open <url>        Navigate to another page',
+  'help              List these',
+  'quit              Stop the run',
 ];
 
 /**
@@ -63,7 +66,7 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
   switch (command) {
     case 'help':
     case '?':
-      for (const l of HELP) ctx.out(`  ${l}`);
+      for (const l of CONSOLE_HELP) ctx.out(`  ${l}`);
       return;
     case 'quit':
     case 'exit':

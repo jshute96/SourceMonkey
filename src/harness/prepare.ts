@@ -51,7 +51,7 @@ import { attachParseLocation } from '../parse-location.js';
 import { describeDiagnostic, type DiagnosticLocation } from '../diagnostic-location.js';
 import { setConfiguredLocalRoots } from '../local-file-overrides.js';
 import { getValue, hasTag } from '../userscript-header.js';
-import { includePattern, matchPattern } from '../url-match.js';
+import { explainUrlMatch, type UrlMatchExplanation } from '../url-match.js';
 import { scriptBasename } from '../script-display.js';
 import { sha256Hex } from '../bytes.js';
 import type { ApiSubsystem } from '../gm-api-catalog.js';
@@ -308,26 +308,19 @@ function dirUrl(dir: string): string {
 
 // ---------- Matching ----------
 
-export interface MatchExplanation {
-  matches: boolean;
-  /** Which header line decided, e.g. `@exclude *://example.com/admin*`. */
-  rule: string | null;
-}
+export type MatchExplanation = UrlMatchExplanation;
 
-// `urlMatchesScript` says yes or no; a developer wants to know which
-// rule answered. Same order as the evaluator: an exclude wins over
-// everything, then the first `@match`, then the first `@include`.
+/** The reason to give when no header rule names a URL at all. */
+export const NO_RULE_COVERS_URL = 'No @match or @include covers this URL';
+
+/**
+ * Whether the script runs on `url`, and which header rule decided: an
+ * exclude wins over everything, then the first `@match`, then the
+ * first `@include`. The extension's own matcher, so the answer is the
+ * one the extension would give.
+ */
 export function explainMatch(matching: ScriptMatching, url: string): MatchExplanation {
-  for (const ex of matching.excludes) {
-    if (includePattern(ex, url)) return { matches: false, rule: `@exclude ${ex}` };
-  }
-  for (const m of matching.matches) {
-    if (matchPattern(m, url)) return { matches: true, rule: `@match ${m}` };
-  }
-  for (const inc of matching.includes) {
-    if (includePattern(inc, url)) return { matches: true, rule: `@include ${inc}` };
-  }
-  return { matches: false, rule: null };
+  return explainUrlMatch(url, matching);
 }
 
 /** The script's `@name`, else the path it was loaded from. */

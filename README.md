@@ -25,10 +25,9 @@ userscript managers.
 ### Testing your userscripts
 
 Userscripts are hard to test. The hard part is not the script, it is
-the manager around it: `@match` deciding where the script runs,
-`@grant` deciding what exists, `@require` loading, the `GM_*` APIs
-doing what they do. A test harness normally fakes all of that, and a
-fake is the one thing that cannot tell you your script works.
+the manager around it: `@match`, `@grant`, `@require` loading, and the
+`GM_*` APIs. A test harness normally fakes all of that, and a fake is
+the one thing that cannot tell you your script works.
 
 SourceMonkey ships a harness that uses its own code instead. A repo of
 userscripts installs SourceMonkey as a package and gets two things:
