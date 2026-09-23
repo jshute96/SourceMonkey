@@ -707,7 +707,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
     this.startingXhrs.set(id, starting);
     setImmediate(() => {
       this.runRequest(script, id, request, from, emit, starting).catch((err) => {
-        void emit({ kind: 'error', message: gmXhrError(`internal error: ${(err as Error).message}`) });
+        void emit({ kind: 'error', message: gmXhrError(`Internal error: ${(err as Error).message}`) });
       }).finally(() => {
         this.startingXhrs.delete(id);
       });

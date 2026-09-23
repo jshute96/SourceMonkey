@@ -72,7 +72,7 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
     case 'menu': {
       const commands = ctx.host.reports.menuCommands;
       if (!argument) {
-        if (commands.length === 0) ctx.out('[sm-dev] no menu commands are registered');
+        if (commands.length === 0) ctx.out('[sm-dev] No menu commands are registered');
         for (const c of commands) ctx.out(`  ${c.name}`);
         return;
       }
@@ -81,8 +81,8 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
       // early should still land.
       const fired = await waitForMenuCommand(ctx, argument);
       ctx.out(fired
-        ? `[sm-dev] fired "${argument}"`
-        : `[sm-dev] no menu command named "${argument}" is registered`);
+        ? `[sm-dev] Fired "${argument}"`
+        : `[sm-dev] No menu command named "${argument}" is registered`);
       return;
     }
     case 'use': {
@@ -96,32 +96,32 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
       }
       const found = ctx.scripts.find((script) => preparedScriptMatches(script, argument));
       if (!found) {
-        ctx.out(`[sm-dev] no loaded script is named ${argument}; type use to list them`);
+        ctx.out(`[sm-dev] No loaded script is named ${argument}. Type use to list them.`);
         return;
       }
       ctx.current = found;
-      ctx.out(`[sm-dev] using ${preparedScriptName(found)}`);
+      ctx.out(`[sm-dev] Using ${preparedScriptName(found)}`);
       return;
     }
     case 'values': {
       if (!scriptId) {
-        ctx.out('[sm-dev] no script is loaded');
+        ctx.out('[sm-dev] No script is loaded');
         return;
       }
       await settleWrites();
       const values = ctx.host.getValues(scriptId);
       const keys = Object.keys(values);
-      if (keys.length === 0) ctx.out(`[sm-dev] the script${whose} has stored nothing`);
+      if (keys.length === 0) ctx.out(`[sm-dev] The script${whose} has stored nothing`);
       for (const key of keys) ctx.out(`  ${key} = ${JSON.stringify(values[key])}`);
       return;
     }
     case 'get': {
       if (!scriptId) {
-        ctx.out('[sm-dev] no script is loaded');
+        ctx.out('[sm-dev] No script is loaded');
         return;
       }
       if (!argument) {
-        ctx.out('[sm-dev] get needs a key');
+        ctx.out('[sm-dev] The get command needs a key');
         return;
       }
       await settleWrites();
@@ -130,42 +130,42 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
     }
     case 'set': {
       if (!scriptId) {
-        ctx.out('[sm-dev] no script is loaded');
+        ctx.out('[sm-dev] No script is loaded');
         return;
       }
       const key = rest[0];
       const raw = argument.slice(key?.length ?? 0).trim();
       if (!key || !raw) {
-        ctx.out('[sm-dev] set needs a key and a JSON value, e.g. set units "metric"');
+        ctx.out('[sm-dev] The set command needs a key and a JSON value, e.g. set units "metric"');
         return;
       }
       let value: unknown;
       try {
         value = JSON.parse(raw);
       } catch {
-        ctx.out(`[sm-dev] ${raw} is not JSON; a string needs quotes`);
+        ctx.out(`[sm-dev] ${raw} is not JSON. A string needs quotes.`);
         return;
       }
       // Through the host, so a running script sees it on its next read
       // and its value-change listeners fire, as another tab's write
       // would.
       await ctx.host.setValues(scriptId, { [key]: value });
-      ctx.out(`[sm-dev] set ${key}${whose}`);
+      ctx.out(`[sm-dev] Set ${key}${whose}`);
       return;
     }
     case 'reload':
-      await ctx.page.reload().catch((err) => ctx.out(`[sm-dev] reload failed: ${(err as Error).message}`));
+      await ctx.page.reload().catch((err) => ctx.out(`[sm-dev] Reload failed: ${(err as Error).message}`));
       return;
     case 'open': {
       if (!argument) {
-        ctx.out('[sm-dev] open needs a URL');
+        ctx.out('[sm-dev] The open command needs a URL');
         return;
       }
-      await ctx.page.goto(argument).catch((err) => ctx.out(`[sm-dev] navigation failed: ${(err as Error).message}`));
+      await ctx.page.goto(argument).catch((err) => ctx.out(`[sm-dev] Navigation failed: ${(err as Error).message}`));
       return;
     }
     default:
-      ctx.out(`[sm-dev] ${command} is not a command; type help`);
+      ctx.out(`[sm-dev] ${command} is not a command. Type help to list them.`);
   }
 }
 

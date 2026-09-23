@@ -162,8 +162,8 @@ printf 'menu Bump\nvalues\nquit\n' | sm-dev run sites/x/y.user.js --seconds 30
 ### What the output looks like
 
 ```
-[sm-dev] injected sites/example.com/add-button.user.js: world USER_SCRIPT, run-at document-idle
-[sm-dev] opening https://example.com/items/42
+[sm-dev] Injected sites/example.com/add-button.user.js in world USER_SCRIPT, run-at document-idle
+[sm-dev] Opening https://example.com/items/42
 [sm-dev] Add button started on https://example.com/items/42
 [page log] [add-button] toolbar found, button inserted
 [sm-dev] GM_setValue lastItem = "42"

@@ -121,7 +121,7 @@ function parseArgs(argv: string[]): Opts {
     const arg = argv[i];
     const next = (): string => {
       const v = argv[++i];
-      if (v === undefined) throw new Error(`${arg} needs a value`);
+      if (v === undefined) throw new Error(`The ${arg} flag needs a value`);
       return v;
     };
     switch (arg) {
@@ -139,7 +139,7 @@ function parseArgs(argv: string[]): Opts {
           if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
           opts.values = parsed as Record<string, unknown>;
         } catch {
-          throw new Error('--values needs a JSON object');
+          throw new Error('The --values flag needs a JSON object');
         }
         break;
       }
@@ -158,7 +158,7 @@ function parseArgs(argv: string[]): Opts {
       case '--out': opts.outFile = path.resolve(next()); break;
       case '--seconds': {
         const v = Number(next());
-        if (!Number.isFinite(v) || v < 0) throw new Error('--seconds needs a number');
+        if (!Number.isFinite(v) || v < 0) throw new Error('The --seconds flag needs a number');
         opts.seconds = v;
         break;
       }
@@ -329,7 +329,7 @@ async function clearCommand(opts: Opts): Promise<number> {
     // collections disabled. Put them back here, since clearing the
     // pushed scripts is the other half of the same cleanup.
     await backend.solo(false);
-    out(`[sm-dev] removed ${count} pushed script(s)`);
+    out(`[sm-dev] Removed ${count} pushed script(s)`);
     return 0;
   } catch (err) {
     out(`[sm-dev] ${(err as Error).message}`);

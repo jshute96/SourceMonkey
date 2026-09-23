@@ -26,11 +26,11 @@ test.describe('sm-dev typed commands', () => {
 
     expect(await run('get who')).toEqual(['  who = "one"']);
     expect(await run('use')).toEqual(['* First  first.user.js', '  Second  second.user.js']);
-    expect(await run('use second.user.js')).toEqual(['[sm-dev] using Second']);
+    expect(await run('use second.user.js')).toEqual(['[sm-dev] Using Second']);
     expect(await run('get who')).toEqual(['  who = "two"']);
-    expect(await run('set who "changed"')).toEqual(['[sm-dev] set who (Second)']);
+    expect(await run('set who "changed"')).toEqual(['[sm-dev] Set who (Second)']);
     expect(host.getValue(second.spec!.id, 'who')).toBe('changed');
     expect(host.getValue(first.spec!.id, 'who')).toBe('one');
-    expect(await run('use Nobody')).toEqual(['[sm-dev] no loaded script is named Nobody; type use to list them']);
+    expect(await run('use Nobody')).toEqual(['[sm-dev] No loaded script is named Nobody. Type use to list them.']);
   });
 });

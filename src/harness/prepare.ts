@@ -211,7 +211,7 @@ export function prepareScript(opts: PrepareOptions): Promise<PreparedScript> {
 async function prepareScriptNow(opts: PrepareOptions): Promise<PreparedScript> {
   installNodeSeams();
   if (!opts.file && opts.text === undefined) {
-    throw new Error('prepareScript needs a file or text');
+    throw new Error('Pass prepareScript a file or text');
   }
   const text = opts.text ?? await readFile(opts.file as string, 'utf8');
   const sourceUrl = opts.sourceUrl

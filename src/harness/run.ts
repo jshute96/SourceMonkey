@@ -131,15 +131,15 @@ async function runInHarness(
   const injectAll = async (scripts: PreparedScript[]): Promise<void> => {
     for (const script of scripts) {
       await attachment.inject(script);
-      opts.out(`[sm-dev] injected ${script.script.relativePath}: world ${script.world}, run-at ${script.runAt}`);
+      opts.out(`[sm-dev] Injected ${script.script.relativePath} in world ${script.world}, run-at ${script.runAt}`);
     }
   };
   // Seeded once. A watch re-inject keeps the store, so values the
   // script wrote since the last save survive the save.
   if (opts.values) for (const script of prepared) host.seedValues(script.spec!.id, opts.values);
   await injectAll(prepared);
-  opts.out(`[sm-dev] opening ${url}`);
-  await page.goto(url).catch((err) => opts.out(`[sm-dev] navigation failed: ${(err as Error).message}`));
+  opts.out(`[sm-dev] Opening ${url}`);
+  await page.goto(url).catch((err) => opts.out(`[sm-dev] Navigation failed: ${(err as Error).message}`));
   if (opts.fireMenu) {
     // Registered from the script's body, so it exists once the script
     // has started; a short grace period covers a late registration.
@@ -150,7 +150,7 @@ async function runInHarness(
       fired = await host.fireMenuCommand(name);
       if (!fired) await page.waitForTimeout(100);
     }
-    opts.out(fired ? `[sm-dev] fired menu command "${name}"` : `[sm-dev] no menu command named "${name}" was registered`);
+    opts.out(fired ? `[sm-dev] Fired menu command "${name}"` : `[sm-dev] No menu command named "${name}" was registered`);
   }
 
   let watcher: (() => void) | null = null;
@@ -213,8 +213,8 @@ async function runInExtension(opts: RunOptions, session: BrowserSession): Promis
     await session.done();
     return 2;
   }
-  if (opts.values) opts.out('[sm-dev] --values is ignored with --extension; the extension keeps its own storage');
-  if (opts.fireMenu) opts.out('[sm-dev] --fire-menu is ignored with --extension; use the toolbar menu in the browser');
+  if (opts.values) opts.out('[sm-dev] The --values flag is ignored with --extension, since the extension keeps its own storage');
+  if (opts.fireMenu) opts.out('[sm-dev] The --fire-menu flag is ignored with --extension. Use the toolbar menu in the browser.');
   if (opts.solo) await backend.solo(true);
   const pushed = new Map<string, string>();
   // The extension's per-script log is the report stream here; it is
@@ -235,7 +235,7 @@ async function runInExtension(opts: RunOptions, session: BrowserSession): Promis
       pushed.set(result.scriptId, script.script.relativePath);
       const entries = await backend.log(result.scriptId).catch(() => [] as LogEntry[]);
       lastPrinted.set(result.scriptId, entries[entries.length - 1] ?? null);
-      opts.out(`[sm-dev] pushed ${script.script.relativePath}${result.replaced ? ' (replaced)' : ''}`);
+      opts.out(`[sm-dev] Pushed ${script.script.relativePath}${result.replaced ? ' (replaced)' : ''}`);
     }
     return true;
   };
@@ -271,8 +271,8 @@ async function runInExtension(opts: RunOptions, session: BrowserSession): Promis
   try {
     if (!(await pushAll(prepared))) return 1;
     wirePageOutput(page, opts.out);
-    opts.out(`[sm-dev] opening ${url}`);
-    await page.goto(url).catch((err) => opts.out(`[sm-dev] navigation failed: ${(err as Error).message}`));
+    opts.out(`[sm-dev] Opening ${url}`);
+    await page.goto(url).catch((err) => opts.out(`[sm-dev] Navigation failed: ${(err as Error).message}`));
     let watcher: (() => void) | null = null;
     if (opts.watch) {
       watcher = watchFiles(opts, prepared, null, page, async (next) => {
@@ -410,7 +410,7 @@ function watchFiles(
       timer = null;
       if (stopped) return;
       (async () => {
-        opts.out(attachment ? '[sm-dev] change detected, re-injecting' : '[sm-dev] change detected, re-pushing');
+        opts.out(attachment ? '[sm-dev] Change detected, re-injecting' : '[sm-dev] Change detected, re-pushing');
         const next = await prepareAll(opts);
         if (!next || stopped) return;
         if (attachment) {
@@ -421,13 +421,13 @@ function watchFiles(
           // Extension mode: the callback pushes and reloads itself.
           await injectAll(next);
         }
-      })().catch((err) => opts.out(`[sm-dev] re-inject failed: ${(err as Error).message}`));
+      })().catch((err) => opts.out(`[sm-dev] Re-inject failed: ${(err as Error).message}`));
     }, 150);
   };
   const watchers = [...dirs].map(([dir, names]) => watch(dir, (_event, name) => {
     if (typeof name === 'string' && names.has(name)) trigger();
   }));
-  opts.out(`[sm-dev] watching ${files.size} file(s); Ctrl-C to stop`);
+  opts.out(`[sm-dev] Watching ${files.size} file(s). Press Ctrl-C to stop.`);
   return () => {
     stopped = true;
     if (timer) clearTimeout(timer);

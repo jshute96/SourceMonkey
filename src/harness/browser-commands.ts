@@ -26,7 +26,7 @@ export async function probe(opts: ProbeOptions): Promise<number> {
     try {
       await page.goto(opts.url);
     } catch (err) {
-      opts.out(`[sm-dev] navigation failed: ${(err as Error).message}`);
+      opts.out(`[sm-dev] Navigation failed: ${(err as Error).message}`);
       return 1;
     }
     // Give a client-rendered page a moment; the developer can re-run
@@ -80,7 +80,7 @@ export async function snapshot(opts: SnapshotOptions): Promise<number> {
     try {
       await page.goto(opts.url);
     } catch (err) {
-      opts.out(`[sm-dev] navigation failed: ${(err as Error).message}`);
+      opts.out(`[sm-dev] Navigation failed: ${(err as Error).message}`);
       return 1;
     }
     await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => undefined);
@@ -88,12 +88,12 @@ export async function snapshot(opts: SnapshotOptions): Promise<number> {
     try {
       html = await savePageSnapshot(page, opts.outFile);
     } catch (err) {
-      opts.out(`[sm-dev] could not write ${opts.outFile}: ${(err as Error).message}`);
+      opts.out(`[sm-dev] Could not write ${opts.outFile}: ${(err as Error).message}`);
       return 1;
     }
     const rel = path.relative(process.cwd(), opts.outFile);
     const shown = rel && !rel.startsWith('..') ? rel : opts.outFile;
-    opts.out(`[sm-dev] wrote ${shown} (${html.length} chars) from ${page.url()}`);
+    opts.out(`[sm-dev] Wrote ${shown} (${html.length} chars) from ${page.url()}`);
     return 0;
   } finally {
     await page.close().catch(() => undefined);
