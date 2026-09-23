@@ -7,12 +7,13 @@
 // the same messages under Node, so the same injected code runs in a
 // page with no extension present.
 //
-// The transport is the one the injected code already has for the case
-// where `chrome.runtime` is missing: a `sourcemonkey-bridge-sync` DOM
-// event out, `window.postMessage` replies and pushes back (see
-// src/wrapper-bridge.js for the protocol). `inject.ts` forwards the
-// events here and posts the replies; this module only knows message
-// payloads and the pages they came from.
+// The transport is `inject.ts`'s: isolated-world code reaches the host
+// through a channel the page can't touch, MAIN-world code through the
+// DOM bridge the page shares (see src/wrapper-bridge.js for that
+// protocol). This module only knows message payloads, the pages they
+// came from, and which of the two channels carried them. A request
+// over the DOM bridge may be the page's forgery, so it is checked
+// first (`pageMayActAs`).
 //
 // What it keeps: every attached script, its stored values, and a record
 // of everything the scripts reported (start, error, skipped) or asked
@@ -40,6 +41,8 @@ import { isAllowedTabUrl, tabUrlRefusedMessage } from '../gm-tab.js';
 import { access, mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { BRIDGE_DENIED, STORAGE_SUBSYSTEMS, type ApiSubsystem } from '../gm-api-catalog.js';
+import type { BridgeOrigin } from './inject.js';
 import type { PreparedScript } from './prepare.js';
 import { explainMatch } from './prepare.js';
 
@@ -209,6 +212,26 @@ function loadCodec(): NonNullable<typeof codec> {
   codec = (window.__SM_GM__ as { storage: NonNullable<typeof codec> }).storage;
   return codec;
 }
+
+// What a DOM-bridge request exercises, for `pageMayActAs`: the same
+// subsystems the worker's handlers pass to `bridgeMayActAs`. A type
+// not listed is ungated, as in the worker: reports that only land in
+// the host's records, and aborts and closes that name a random
+// per-call id rather than a script.
+const PAGE_GATED: Record<string, readonly ApiSubsystem[]> = {
+  'sm:gm-batch-write': STORAGE_SUBSYSTEMS,
+  'sm:gm-resync': STORAGE_SUBSYSTEMS,
+  'sm:gm-xhr-start': ['xhr'],
+  'sm:gm-tab-open': ['tab'],
+  'sm:gm-notification-show': ['notification'],
+  'sm:gm-download-start': ['download'],
+  'sm:gm-menu-register': ['menu'],
+  'sm:gm-menu-unregister': ['menu'],
+  'sm:gm-dom-blocked': ['dom'],
+  'sm:gm-log': ['log'],
+  'sm:gm-window-close': ['window-control'],
+  'sm:gm-window-focus': ['window-control'],
+};
 
 // What a message type that the host doesn't answer yet means to the
 // script that sent it, so the error it sees names the API rather than
@@ -439,11 +462,16 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
    * an unknown or malformed message gets `{ ok: false }` so the caller's
    * promise settles, the way the extension's bridge always replies.
    */
-  async handle(payload: Record<string, unknown>, from: PageLink): Promise<unknown> {
+  async handle(payload: Record<string, unknown>, from: PageLink, origin: BridgeOrigin): Promise<unknown> {
     const type = typeof payload.type === 'string' ? payload.type : '';
+    const gate = PAGE_GATED[type];
+    if (gate && origin === 'page' && !this.pageMayActAs(str(payload.scriptId), from, gate)) {
+      return { ok: false, error: BRIDGE_DENIED };
+    }
     switch (type) {
       case 'sm:check-pending':
-        return this.checkPending(payload);
+        return this.checkPending(payload, payload.needsValues === true
+          && (origin === 'isolated' || this.pageMayActAs(str(payload.id), from, STORAGE_SUBSYSTEMS)));
       case 'sm:start': {
         const report = this.baseReport(payload);
         this.reports.started.push(report);
@@ -585,13 +613,29 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
     }
   }
 
-  private checkPending(payload: Record<string, unknown>): unknown {
+  // The worker's `bridgeMayActAs`, for a request that came over the
+  // DOM bridge: honored only for a MAIN-world script attached to this
+  // page, matching its URL, that granted an API the request exercises.
+  // Those are the scripts whose `GM_*` surface the page could drive
+  // anyway, since it shares their realm. Everything else fails closed.
+  private pageMayActAs(scriptId: string, from: PageLink, subsystems: readonly ApiSubsystem[]): boolean {
+    const script = this.scripts.get(scriptId);
+    if (!script || script.world !== 'MAIN') return false;
+    // Stricter than the worker, on purpose: a script detached from this
+    // page is refused even while the copy already running here lasts
+    // until the next navigation.
+    if (!this.owners.get(scriptId)?.has(from)) return false;
+    if (!explainMatch(script.matching, from.url()).matches) return false;
+    return subsystems.some((s) => script.grantedSubsystems.has(s));
+  }
+
+  private checkPending(payload: Record<string, unknown>, valuesAllowed: boolean): unknown {
     const id = str(payload.id);
     // The extension replies `run-new` with a fresher body when the
     // file changed since registration; the harness re-injects instead,
     // so the answer is always to run the body that was injected.
     const reply: { action: 'run'; gmValues?: Record<string, unknown> } = { action: 'run' };
-    if (payload.needsValues === true && this.scripts.has(id)) reply.gmValues = this.snapshot(id);
+    if (payload.needsValues === true && valuesAllowed && this.scripts.has(id)) reply.gmValues = this.snapshot(id);
     return reply;
   }
 

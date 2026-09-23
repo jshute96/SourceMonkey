@@ -13,11 +13,16 @@
 //   - The shared `GM_*` runtime goes in ahead of the first script that
 //     needs it in each world, once per page, as `buildGmRuntimeSpecs`
 //     registers it once per world.
-//   - The injected code finds no `chrome.runtime` and talks over the DOM
-//     bridge (a `sourcemonkey-bridge-sync` event out, `postMessage`
-//     back). A listener registered before any script forwards each
-//     event to Node through a CDP binding, and the reply is posted back
-//     into the frame the request came from. See host.ts for the messages.
+//   - Isolated-world code gets a stand-in `chrome.runtime` whose
+//     `sendMessage` calls a CDP binding exposed only in that world, so
+//     it takes the same path as in the extension and the page can
+//     neither read nor forge its traffic. Replies and pushes come back
+//     by evaluating into that world.
+//   - MAIN-world code has no `chrome.runtime` there either, and talks
+//     over the DOM bridge (a `sourcemonkey-bridge-sync` event out,
+//     `postMessage` back). The page can see and forge that traffic, as
+//     it can in the extension, so the host checks each such request the
+//     way the worker's `bridgeMayActAs` does. See host.ts.
 //
 // Init scripts persist across reloads, so a script attached once keeps
 // running on every navigation until it is detached. That turns "edit,
@@ -36,6 +41,10 @@ import type { InjectionWorld, PreparedScript } from './prepare.js';
 // `chrome.userScripts` world does.
 const ISOLATED_WORLD = 'sourcemonkey';
 const BINDING = '__smHarnessBridge';
+const RUNTIME_BINDING = '__smHarnessRuntime';
+// The id the stand-in `chrome.runtime` reports. The injected code only
+// needs a string: it compares a push's `sender.id` against it.
+const RUNTIME_ID = 'sourcemonkey-harness';
 
 const BRIDGE_SYNC = 'sourcemonkey-bridge-sync';
 const BRIDGE_REPLY = 'sourcemonkey-bridge-reply';
@@ -44,18 +53,102 @@ const BRIDGE_PUSH = 'sourcemonkey-bridge-push';
 // MAIN-world listener that hands every bridge event to Node. The
 // binding call is synchronous from the page's side, so a report sent
 // as the document tears down still leaves the page, the property the
-// extension's bridge is built around. Installed first, in MAIN, so it
-// hears the isolated world's events too (DOM events cross worlds).
+// extension's bridge is built around. Top frame only, as the scripts
+// are.
 const BRIDGE_LISTENER = `(function(){
+  if (self !== top) return;
   if (window.__smHarnessListening) return;
   window.__smHarnessListening = true;
+  // Captured now, before any page script, so a page that replaces the
+  // global later can't swallow the scripts' reports and calls.
+  var call = window[${JSON.stringify(BINDING)}];
+  if (typeof call !== 'function') return;
   document.addEventListener(${JSON.stringify(BRIDGE_SYNC)}, function (ev) {
     try {
       if (!ev || typeof ev.detail !== 'string') return;
-      window[${JSON.stringify(BINDING)}](ev.detail);
+      call(ev.detail);
     } catch (e) {}
   }, true);
 })();`;
+
+// The isolated world's `chrome.runtime`: the two members the injected
+// code uses (plus `id`, which it checks to pick this path over the DOM
+// bridge). `sendMessage` resolves with the host's reply, which comes
+// back through `__smHarnessReply`; pushes arrive through
+// `__smHarnessPush` with the sender shape the runtime's filter wants.
+// The binding call is synchronous, like `chrome.runtime.sendMessage`,
+// so a write sent during teardown still leaves. A reply that never
+// comes rejects after the MAIN bridge's own timeout, as the real
+// `sendMessage` rejects when nobody answers: the GM runtime has no
+// timer of its own on this path.
+const ISOLATED_RUNTIME = `(function(){
+  if (self !== top) return;
+  var call = globalThis[${JSON.stringify(RUNTIME_BINDING)}];
+  if (typeof call !== 'function') return;
+  var id = ${JSON.stringify(RUNTIME_ID)};
+  var stringify = JSON.stringify;
+  var pending = Object.create(null);
+  var listeners = [];
+  var seq = 1;
+  var TIMEOUT_MS = 30000;
+  globalThis.__smHarnessReply = function (requestId, reply) {
+    var entry = pending[requestId];
+    if (!entry) return;
+    delete pending[requestId];
+    clearTimeout(entry.timer);
+    entry.resolve(reply);
+  };
+  globalThis.__smHarnessPush = function (msg) {
+    for (var i = 0; i < listeners.length; i++) {
+      try { listeners[i](msg, { id: id }, function () {}); } catch (e) {}
+    }
+  };
+  var runtime = {
+    id: id,
+    sendMessage: function (payload) {
+      return new Promise(function (resolve, reject) {
+        var requestId = 'r' + (seq++);
+        var detail = stringify({ requestId: requestId, payload: payload });
+        // Registered before the call, so the entry exists whenever the
+        // reply lands.
+        pending[requestId] = {
+          resolve: resolve,
+          timer: setTimeout(function () {
+            delete pending[requestId];
+            reject(new Error('[SourceMonkey] The harness did not answer within ' + TIMEOUT_MS / 1000 + ' seconds'));
+          }, TIMEOUT_MS)
+        };
+        try {
+          call(detail);
+        } catch (e) {
+          clearTimeout(pending[requestId].timer);
+          delete pending[requestId];
+          throw e;
+        }
+      });
+    },
+    onMessage: {
+      addListener: function (fn) { if (typeof fn === 'function') listeners.push(fn); }
+    }
+  };
+  var c = globalThis.chrome;
+  if (!c || typeof c !== 'object') { c = {}; globalThis.chrome = c; }
+  Object.defineProperty(c, 'runtime', { value: runtime, configurable: true, writable: true });
+})();`;
+
+// Pushes that carry nothing script-scoped, so they go to MAIN world
+// whatever script they concern. Same list as wrapper-bridge.js.
+const PUSHED_ANY_WORLD = new Set(['sm:gm-resync-hint', 'sm:url-change']);
+
+// Where a bridge message came from: the isolated world's own channel,
+// or the DOM bridge the page shares.
+export type BridgeOrigin = 'isolated' | 'page';
+
+interface ContextInfo {
+  frameId: string;
+  name: string;
+  isDefault: boolean;
+}
 
 export interface InjectOptions {
   /**
@@ -90,6 +183,9 @@ export class PageAttachment implements PageLink {
   private readonly openedTabs = new Set<Page>();
   private closed = false;
   private mainFrameId = '';
+  // Execution contexts by id, so a binding call can be traced to its
+  // frame and world, and a push can find the isolated world.
+  private readonly contexts = new Map<number, ContextInfo>();
   readonly browser: BrowserActions = {
     // A real page in the same context, so a test can `waitForEvent('page')`
     // for it as it would for the extension's tab.
@@ -133,16 +229,30 @@ export class PageAttachment implements PageLink {
   }
 
   private async install(): Promise<void> {
+    // Before `Runtime.enable`, which reports the contexts that already exist.
+    this.cdp.on('Runtime.executionContextCreated', ({ context }) => {
+      const aux = (context.auxData ?? {}) as { frameId?: string; isDefault?: boolean };
+      this.contexts.set(context.id, { frameId: aux.frameId ?? '', name: context.name, isDefault: aux.isDefault === true });
+    });
+    this.cdp.on('Runtime.executionContextDestroyed', (ev) => { this.contexts.delete(ev.executionContextId); });
+    this.cdp.on('Runtime.executionContextsCleared', () => { this.contexts.clear(); });
     await this.cdp.send('Page.enable');
     await this.cdp.send('Runtime.enable');
     this.cdp.on('Runtime.bindingCalled', (ev) => {
-      if (ev.name !== BINDING) return;
-      void this.onBridgeEvent(ev.payload, ev.executionContextId);
+      const origin = ev.name === RUNTIME_BINDING ? 'isolated' : ev.name === BINDING ? 'page' : null;
+      if (origin) void this.onBridgeEvent(ev.payload, ev.executionContextId, origin);
     });
     await this.cdp.send('Runtime.addBinding', { name: BINDING });
+    // Only in the isolated world, so the page can't call it.
+    await this.cdp.send('Runtime.addBinding', { name: RUNTIME_BINDING, executionContextName: ISOLATED_WORLD });
     await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', {
       source: BRIDGE_LISTENER,
       runImmediately: true,
+    });
+    await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', {
+      source: ISOLATED_RUNTIME,
+      runImmediately: true,
+      worldName: ISOLATED_WORLD,
     });
     // New documents only. Playwright's `framenavigated` also fires for
     // `pushState` and hash changes, where the injected scripts are still
@@ -171,12 +281,42 @@ export class PageAttachment implements PageLink {
     return this.page.url();
   }
 
+  // The isolated world always hears a push, as the extension's
+  // `chrome.runtime.onMessage` does. MAIN world, which the page can
+  // read, hears only pushes addressed to a MAIN-world script or
+  // carrying nothing script-scoped: the rule wrapper-bridge.js applies
+  // with `smWorld`, so an isolated script's values and responses stay
+  // out of the page.
   async push(message: object): Promise<void> {
     if (this.closed) return;
-    await this.page.evaluate(
-      ([marker, payload]) => { window.postMessage({ __sm: marker, payload }, '*'); },
-      [BRIDGE_PUSH, message] as const,
-    );
+    const { type, smWorld } = message as { type?: unknown; smWorld?: unknown };
+    const isolated = this.contextFor(ISOLATED_WORLD);
+    const sends: Promise<unknown>[] = [];
+    if (isolated !== null) {
+      sends.push(this.cdp.send('Runtime.evaluate', {
+        expression: `globalThis.__smHarnessPush && globalThis.__smHarnessPush(${JSON.stringify(message)})`,
+        contextId: isolated,
+      }));
+    }
+    if (smWorld === 'MAIN' || PUSHED_ANY_WORLD.has(String(type))) {
+      sends.push(this.page.evaluate(
+        ([marker, payload]) => { window.postMessage({ __sm: marker, payload }, '*'); },
+        [BRIDGE_PUSH, message] as const,
+      ));
+    }
+    await Promise.all(sends);
+  }
+
+  // The top frame's context for a world: '' is the page's own (MAIN).
+  // The newest match, should a stale one linger beside it (Map order is
+  // creation order).
+  private contextFor(world: string): number | null {
+    let found: number | null = null;
+    for (const [id, info] of this.contexts) {
+      if (info.frameId !== this.mainFrameId) continue;
+      if (world === '' ? info.isDefault : info.name === world) found = id;
+    }
+    return found;
   }
 
   // The browser context's cookies for the request's URL, so a
@@ -232,7 +372,13 @@ export class PageAttachment implements PageLink {
 
   // ---------- Bridge ----------
 
-  private async onBridgeEvent(detail: string, contextId: number): Promise<void> {
+  private async onBridgeEvent(detail: string, contextId: number, origin: BridgeOrigin): Promise<void> {
+    // Top frame only, and each binding from its own world. The page
+    // binding is visible in every world and frame; a call from anywhere
+    // else is not one of ours.
+    const context = this.contexts.get(contextId);
+    if (!context || context.frameId !== this.mainFrameId) return;
+    if (origin === 'isolated' ? context.name !== ISOLATED_WORLD : !context.isDefault) return;
     let envelope: { requestId?: unknown; payload?: unknown };
     try {
       envelope = JSON.parse(detail);
@@ -246,20 +392,22 @@ export class PageAttachment implements PageLink {
     // bridge always replies, and `{action: 'run'}` is its fallback too.
     let reply: unknown;
     try {
-      reply = await this.host.handle(payload as Record<string, unknown>, this);
+      reply = await this.host.handle(payload as Record<string, unknown>, this, origin);
     } catch {
       reply = undefined;
     }
     if (typeof envelope.requestId !== 'string') return;
-    // Posted into the frame and world the request came from. The
-    // prelude's fallback for a missing reply is to run anyway after
-    // two seconds, so a lost reply costs time, not correctness.
-    const message = { __sm: BRIDGE_REPLY, requestId: envelope.requestId, reply: reply ?? { action: 'run' } };
+    // Delivered into the context the request came from: a call into
+    // the isolated runtime, or a postMessage the MAIN-world code is
+    // listening for. The prelude's fallback for a missing reply is to
+    // run anyway after two seconds, so a lost reply costs time, not
+    // correctness.
+    const answer = reply ?? { action: 'run' };
+    const expression = origin === 'isolated'
+      ? `globalThis.__smHarnessReply(${JSON.stringify(envelope.requestId)}, ${JSON.stringify(answer)})`
+      : `window.postMessage(${JSON.stringify({ __sm: BRIDGE_REPLY, requestId: envelope.requestId, reply: answer })}, '*')`;
     try {
-      await this.cdp.send('Runtime.evaluate', {
-        expression: `window.postMessage(${JSON.stringify(message)}, '*')`,
-        contextId,
-      });
+      await this.cdp.send('Runtime.evaluate', { expression, contextId });
     } catch {
       // The document went away before the answer did.
     }

@@ -66,10 +66,12 @@ Nothing here needs writing; it needs packaging.
 
 Two facts make the no-extension path cheap:
 
-- **The GM runtime picks its transport at init.** With no
-  `chrome.runtime.id` it uses the bridge. A test host that answers
-  bridge events is a complete stand-in for the SW; nothing on the page
-  side changes. Unit tests already instantiate the runtime under Node.
+- **The GM runtime picks its transport at init.** With a
+  `chrome.runtime.id` it uses `chrome.runtime`; without one it uses the
+  bridge. A test host that answers both, with a stand-in
+  `chrome.runtime` in the isolated world, replaces the SW; nothing on
+  the page side changes. Unit tests already instantiate the runtime
+  under Node.
 - **`buildRegistrationSpec` returns the exact entries Chrome would
   register.** Feeding those into init scripts runs the prelude, the
   bindings, the `@require` bodies, and the script unchanged.
@@ -200,23 +202,32 @@ into pages.
     window calls, and the start / error / skipped reports.
 - **`inject.ts`**: attaches a prepared script to a Playwright `Page`.
   (Built.)
-  - Installs a MAIN-world init script that listens for bridge events
-    and forwards them to Node through a CDP `Runtime.addBinding`
-    binding; the reply is posted back into the frame and world the
-    request came from with `Runtime.evaluate`. Pushes from the host
-    (value updates, XHR and tab events, and the rest) go in through
-    `page.evaluate` in the main frame's MAIN world. DOM events and
-    `postMessage` cross worlds, so one transport serves both. Everything
-    goes through one CDP session rather than Playwright's own init
-    scripts, so registration order (listener first, then the entries)
-    is the execution order.
+  - Gives each world its own channel, so the page sees only what it
+    would in the extension:
+    - **Isolated world**: an init script installs a stand-in
+      `chrome.runtime` (`id`, `sendMessage`, `onMessage`). It calls a
+      CDP binding (`Runtime.addBinding`) exposed only in that world,
+      and replies and pushes come back by `Runtime.evaluate` into it.
+      The page can neither read nor forge this traffic. A request
+      nobody answers rejects after 30 seconds, as the MAIN bridge's do.
+    - **MAIN world**: a top-frame init script forwards bridge events to
+      its own binding, captured before page scripts run so the page
+      can't swap it out; replies and pushes are posted with
+      `postMessage`, as the extension's relay does.
+  - Treats MAIN-world traffic as possibly forged, as the worker does:
+    - `host.ts`'s `pageMayActAs` honors a bridge request only for a
+      MAIN-world script on this page, matching its URL, that granted
+      an API the request uses (the worker's `bridgeMayActAs`).
+    - Pushes reach MAIN world only when addressed to a MAIN-world
+      script (`smWorld`) or carrying nothing script-scoped.
+  - Uses one CDP session rather than Playwright's own init scripts, so
+    registration order (channels first, then the entries) is the
+    execution order.
   - Adds the entries as init scripts in the script's world with
     `Page.addScriptToEvaluateOnNewDocument`, naming a `worldName` for
-    USER_SCRIPT, which Playwright's own init scripts cannot do. An
-    isolated world has no `chrome.*`, so the runtime there uses the
-    bridge too. Each entry is wrapped in a top-frame guard, since CDP
-    init scripts run in every frame and `chrome.userScripts`
-    registrations do not.
+    USER_SCRIPT, which Playwright's own init scripts cannot do. Each
+    entry is wrapped in a top-frame guard, since CDP init scripts run
+    in every frame and `chrome.userScripts` registrations do not.
   - Always attaches the in-page matcher block to the prelude config
     (`buildRegistrationSpec`'s `inPageMatcher` option), so the prelude
     decides per document where Chrome's registration `matches` would
@@ -231,7 +242,7 @@ into pages.
   `serveSnapshot` helper that routes a saved HTML file at its original
   URL so `@match` and relative URLs still hold. HAR replay is left to
   Playwright's own `routeFromHAR`. (Built; `tests/harness/fixture.spec.ts`
-  drives it from `dist/` the way a consumer would.)
+  drives it from `lib/` the way a consumer would.)
 - **`browser-commands.ts`**: `sm-dev probe` and `sm-dev snapshot`, on
   the same browser connection as `run`. (Built.)
 - **`cli.ts`** (`sm-dev`) and **`run.ts`**: the interactive tool,

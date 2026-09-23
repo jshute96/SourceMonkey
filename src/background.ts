@@ -29,7 +29,7 @@ import {
   scriptWorld,
   type MatchedScript,
 } from './match-index.js';
-import type { ApiSubsystem } from './gm-api-catalog.js';
+import { BRIDGE_DENIED, STORAGE_SUBSYSTEMS, type ApiSubsystem } from './gm-api-catalog.js';
 import {
   dlog,
   installDebugLoggingListener,
@@ -2717,7 +2717,7 @@ async function handleWindowControl(
   // own `window` — so the page could make this call through the script
   // regardless. See `bridgeMayActAs` and wrapper-bridge.js.
   if (viaBridge(msg) && !(await bridgeMayActAs(scriptId, sender, ['window-control']))) {
-    return { ok: false, error: NO_ORIGINATOR_TAB };
+    return { ok: false, error: BRIDGE_DENIED };
   }
   const tabId = sender.tab?.id;
   if (tabId == null) {
@@ -3187,7 +3187,7 @@ async function broadcastValueUpdate(
 async function handleGmResync(
   payload: { scriptId?: unknown; __viaBridge?: unknown },
   sender: chrome.runtime.MessageSender,
-): Promise<{ ok: boolean; values?: Record<string, unknown> }> {
+): Promise<{ ok: boolean; values?: Record<string, unknown>; error?: string }> {
   // A bridge-relayed request hands back a whole value map, and a
   // MAIN-world page can forge the scriptId on anything it gets the
   // bridge to forward — so it goes through the same gate every other
@@ -3196,7 +3196,7 @@ async function handleGmResync(
   // reachable from that page's own realm anyway. See wrapper-bridge.js.
   const scriptId = payload.scriptId;
   if (typeof scriptId !== 'string' || !scriptId) return { ok: false };
-  if (viaBridge(payload) && !(await bridgeMayActAs(scriptId, sender, STORAGE_SUBSYSTEMS))) return { ok: false };
+  if (viaBridge(payload) && !(await bridgeMayActAs(scriptId, sender, STORAGE_SUBSYSTEMS))) return { ok: false, error: BRIDGE_DENIED };
   const tabId = sender.tab?.id;
   if (tabId != null) registerOpener(scriptId, tabId);
   const values = await loadSnapshotForCheckPending(scriptId);
@@ -3298,13 +3298,6 @@ async function bridgeMayActAs(
   if (!findMatchesForUrl(url).some((m) => m.id === scriptId && m.world === 'MAIN')) return false;
   return scriptGrantsSubsystem(scriptId, subsystems);
 }
-
-// What a request that reads or writes a script's stored values has to
-// have granted: any storage API, or a value-change listener (its
-// snapshot seeds the listener's remote-change detection).
-const STORAGE_SUBSYSTEMS: readonly ApiSubsystem[] = ['storage', 'storage-listener'];
-
-const BRIDGE_DENIED = 'This page is not allowed to act for that userscript';
 
 // The Log line for a style the page's CSP refused. The runtime prints
 // the same wording to the page console (`reportBlockedStyle`).

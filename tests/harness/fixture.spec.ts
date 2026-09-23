@@ -1,5 +1,5 @@
 // The fixture a consumer repo imports from `sourcemonkey/harness`,
-// driven here from `dist/` the way that repo would: `loadUserscript`,
+// driven here from `lib/` the way that repo would: `loadUserscript`,
 // `gm`, `reports`, and `serveSnapshot`.
 
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';

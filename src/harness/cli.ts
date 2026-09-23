@@ -24,7 +24,7 @@ import path from 'node:path';
 
 import { explainMatch, prepareScript } from './prepare.js';
 
-const USAGE = `sm-dev — develop and test userscripts against a real browser,
+const USAGE = `sm-dev: develop and test userscripts against a real browser,
 with SourceMonkey's own injection and GM_* APIs behind them.
 
 Usage: sm-dev <command> [options]

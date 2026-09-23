@@ -3,7 +3,7 @@
   // development harness, plus the `.d.ts` a TypeScript consumer needs.
   //
   // A second output rather than a second source tree, because the
-  // harness is built ON the extension's modules — 49 of them — so the
+  // harness is built ON the extension's modules, so the
   // two are not separable sets of files. What IS separable is where
   // each lands: `dist/` is the unpacked extension and nothing else
   // (tsconfig.json), `lib/` is what npm ships. Both come from the same

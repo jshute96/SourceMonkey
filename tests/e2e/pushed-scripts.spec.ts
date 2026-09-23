@@ -4,6 +4,7 @@
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir, renderUserscript } from '../fixtures/scripts-dir';
+import { ExtensionBackend } from '../../lib/harness/extension-backend.js';
 
 function script(body: string, name = 'Pushed one'): string {
   return renderUserscript({
@@ -59,6 +60,19 @@ test.describe('pushed scripts', () => {
     expect(await sm.getGmValues(pushed.scriptId)).toEqual({});
     await page.reload();
     await expect(page.locator('#target')).toHaveText('original content');
+    await page.close();
+  });
+
+  // The path `sm-dev run --extension` takes: find the worker from the
+  // package's own copy of the manifest, push, and clear.
+  test('the harness\'s ExtensionBackend finds the extension and pushes through it', async ({ extensionContext, fixtureServer }) => {
+    const backend = await ExtensionBackend.connect(extensionContext);
+    const result = await backend.push(script(`document.getElementById('target').textContent = 'via backend';`));
+    expect(result.status).toBe('ok');
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('#target')).toHaveText('via backend');
+    expect(await backend.clear()).toBe(1);
     await page.close();
   });
 

@@ -6,6 +6,7 @@
 //      16/48/128 sizes referenced by manifest.json).
 //   3. Copies src/manifest.json -> dist/manifest.json verbatim. Chrome loads
 //      the unpacked extension from dist/, so the manifest must live there.
+//      lib/ gets a copy for the harness, which reads the extension key.
 //   4. Copies src/**/*.html -> dist/**/*.html (extension pages such as
 //      collections.html and debug/icons.html), inlining the shared glyph
 //      sprite where a page writes `<!--#include glyph-sprite-->`.
@@ -63,8 +64,11 @@ await cp(
 );
 
 // 3. Copy the manifest into dist/ so Chrome can find it when loading
-//    unpacked from dist/.
+//    unpacked from dist/. The package gets a copy too: the harness
+//    derives the extension id from its `key` (extension-backend.ts).
 await cp(resolve(src, 'manifest.json'), resolve(dist, 'manifest.json'));
+await mkdir(lib, { recursive: true });
+await cp(resolve(src, 'manifest.json'), resolve(lib, 'manifest.json'));
 
 // 4. Copy every HTML / CSS asset under src/, keeping its subdirectory
 //    (collections.html, debug/icons.html, plus any shared *.css the pages

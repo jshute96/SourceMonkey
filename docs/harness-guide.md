@@ -267,6 +267,7 @@ Faithful under the push backend:
 - `GM_*` storage semantics, including the write batching and
   broadcast to other pages in the same context.
 - `@connect` gating of `GM_xmlhttpRequest`.
+- Which of a script's messages the web page can see or fake.
 - Error attribution to file and line.
 
 Close, but not the same:
