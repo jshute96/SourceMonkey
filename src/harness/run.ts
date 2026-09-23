@@ -153,8 +153,8 @@ export async function run(opts: RunOptions): Promise<number> {
     //
     // Armed once the script has started (or shortly after, if it never
     // does): a command read before then would run against a page whose
-    // script has not registered anything yet, which is what a piped
-    // sequence of commands would otherwise hit.
+    // script has not registered anything yet. A piped sequence of
+    // commands would otherwise hit exactly that.
     await waitForFirstStart(host, page);
     stopCommands = readConsoleCommands({
       host,

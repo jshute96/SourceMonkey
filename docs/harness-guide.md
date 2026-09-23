@@ -97,7 +97,7 @@ person or an agent.
 | `sm-dev probe <url> --selectors 'a, b, c'` | Reports which selectors resolve on the page, so a broken script's assumptions can be checked in one call. `--html` prints the first match's HTML. Exits 1 when any is missing. |
 | `sm-dev match <script> <url>...` | Says whether the script would run on each URL, and which rule decided. |
 | `sm-dev validate <path>...` | The install-time checks (header, `@require`, syntax) over files or directories, with the message the extension would show. |
-| `sm-dev snapshot <url> --out file.html` | Saves the live DOM so a spec can run against it without a login. The site's own scripts are disabled in the file, so what a spec gets is the captured page, not a page that logs itself out again. |
+| `sm-dev snapshot <url> --out file.html` | Saves the live DOM so a spec can run against it without a login. The site's own scripts are disabled in the file, so a spec sees the captured page rather than a page that logs itself out again. |
 
 Options for `validate` and `match`:
 

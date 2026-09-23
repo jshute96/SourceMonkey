@@ -1,14 +1,15 @@
 // Attaching prepared scripts to a Playwright page without the extension.
 //
-// What the extension does with `chrome.userScripts`, this does with the
-// Chrome DevTools Protocol (CDP) on a page Playwright already controls:
+// The extension registers its scripts with `chrome.userScripts`. This
+// does the same job with the Chrome DevTools Protocol (CDP), on a page
+// Playwright already controls:
 //
 //   - Each registration entry (`prepare.ts` returns the same four the
 //     extension registers) becomes a `Page.addScriptToEvaluateOnNewDocument`
 //     call, in the script's world. MAIN is the page's own world; the
-//     isolated world is named, which Playwright's `addInitScript` cannot
-//     do and which is what makes `@grant` scripts run sandboxed here as
-//     they do in Chrome.
+//     isolated world is named, which Playwright's `addInitScript`
+//     cannot do. Naming it sandboxes `@grant` scripts here as Chrome
+//     sandboxes them.
 //   - The shared `GM_*` runtime goes in ahead of the first script that
 //     needs it in each world, once per page, as `buildGmRuntimeSpecs`
 //     registers it once per world.
@@ -19,8 +20,8 @@
 //     into the frame the request came from. See host.ts for the messages.
 //
 // Init scripts persist across reloads, so a script attached once keeps
-// running on every navigation of the page until it is detached, which
-// is what makes "edit, reload, look" a one-step loop.
+// running on every navigation until it is detached. That turns "edit,
+// reload, look" into a one-step loop.
 
 import type { CDPSession, Page } from '@playwright/test';
 
@@ -193,8 +194,8 @@ export class PageAttachment implements PageLink {
   // `waitForLoadState` waits for that document rather than resolving at
   // once on `about:blank`. Playwright's `newPage()` can't do this (it
   // always starts blank), so the target is created over CDP in this
-  // page's own browser context, which is what keeps it inside the
-  // Playwright context a test is watching.
+  // page's own browser context, so it lands inside the Playwright
+  // context a test is watching.
   private async createTab(url: string, active: boolean): Promise<Page> {
     const { targetInfo } = await this.cdp.send('Target.getTargetInfo');
     const browser = this.page.context().browser();

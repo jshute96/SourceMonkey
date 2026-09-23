@@ -6,8 +6,8 @@
 // src/background.ts) does the work: `pushScript` installs the text into
 // the Pushed scripts collection and registers it before it answers, a
 // re-push replaces it in place, `soloMode` silences the user's other
-// collections for the run, and the per-script log is what `run` prints
-// as the script's reports. Playwright exposes the worker on a
+// collections for the run, and `run` prints the per-script log as the
+// script's reports. Playwright exposes the worker on a
 // CDP-connected browser as well as a launched one, so the same
 // `worker.evaluate` reaches it either way.
 

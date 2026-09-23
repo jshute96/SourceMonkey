@@ -1,19 +1,19 @@
 #!/usr/bin/env node
 // `sm-dev`: argument parsing and dispatch for the development
-// harness's command line. What each command does is in the usage text
-// below, which is the one description of them; this file is the
-// plumbing around it.
+// harness's command line. The usage text below describes each command,
+// and describes it once; this file is the plumbing around it.
 //
-// Where the work lives:
-//   - Node-only commands (`validate`, `match`) call prepare.ts here.
-//   - Commands that need a browser hand off to run.ts (`run`, and the
-//     connection every browser command shares) or
-//     browser-commands.ts (`probe`, `snapshot`).
+// Each command's work lives elsewhere:
+//   - `validate` and `match` call prepare.ts, here in this file.
+//   - `run` hands off to run.ts, which also opens the browser every
+//     browser command uses.
+//   - `probe` and `snapshot` hand off to browser-commands.ts.
 //   - `--extension` and `clear` go through extension-backend.ts, which
 //     drives a real SourceMonkey rather than the harness.
 //
-// The loaded modules differ on purpose: `validate` and `match` never
-// import Playwright, so they run in a repo that has not installed it.
+// Each command loads only the modules it needs. `validate` and `match`
+// never import Playwright, so they run in a repo that has not
+// installed it.
 //
 // Exit codes: 0 when every script checked out (or every URL matched,
 // no script threw, every selector was found), 1 when one didn't, 2 for
@@ -31,8 +31,9 @@ Usage: sm-dev <command> [options]
 
 Commands:
   run <script>...             Inject the script(s) into a page and stream
-                              what they do, until Ctrl-C. Type commands
-                              while it runs: see "Interactive commands"
+                              their console lines, reports and GM_* calls
+                              until Ctrl-C. Type commands while it runs:
+                              see "Interactive commands"
   validate <path>...          Run the install-time checks (header,
                               @require, syntax) over files or directories
   match <script> <url>...     Say whether the script would run on each
@@ -64,8 +65,8 @@ Options for run:
                   has loaded, as if picked from the toolbar menu
   --seconds N     Stop after N seconds instead of waiting for Ctrl-C
   --extension     Push the script into the SourceMonkey extension in
-                  that browser instead of injecting it; what it prints
-                  is then the script's own Log tab
+                  that browser instead of injecting it; reports then
+                  come from the script's own Log tab
   --solo          With --extension: disable every other collection for
                   the run and restore them after
 
@@ -145,8 +146,8 @@ function parseArgs(argv: string[]): Opts {
       case '--extension': opts.extension = true; break;
       case '--solo': opts.solo = true; break;
       case '--selectors': {
-        // One flag with commas is a list; a selector that needs a comma
-        // (`:is(a, b)`) goes in its own flag, which is taken whole.
+        // One flag with commas holds a list. A selector containing a
+        // comma (`:is(a, b)`) goes in its own flag, taken whole.
         const raw = next();
         opts.selectorFlags++;
         opts.selectors.push(raw.trim());
@@ -249,8 +250,8 @@ async function match(opts: Opts): Promise<number> {
 async function runCommand(opts: Opts): Promise<number> {
   if (opts.args.length === 0) throw new Error('The run command needs at least one script');
   const { run } = await import('./run.js');
-  // Ends on Ctrl-C, or after --for seconds. Without a bound the loop
-  // keeps streaming, which is the interactive case. The timer is
+  // Ends on Ctrl-C, or after --seconds. With neither, the run streams
+  // until interrupted, which suits a person watching it. The timer is
   // unreferenced so it can't hold the process open after an early
   // exit, and the listener comes off once the run has ended.
   let onSigint: (() => void) | null = null;
@@ -324,8 +325,8 @@ async function clearCommand(opts: Opts): Promise<number> {
     const backend = await ExtensionBackend.connect(session.context);
     const count = await backend.clear();
     // A run killed before it could turn solo mode off leaves the user's
-    // collections disabled; clearing is the natural place to put them
-    // back.
+    // collections disabled. Put them back here, since clearing the
+    // pushed scripts is the other half of the same cleanup.
     await backend.solo(false);
     out(`[sm-dev] removed ${count} pushed script(s)`);
     return 0;

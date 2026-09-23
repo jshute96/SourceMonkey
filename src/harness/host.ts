@@ -61,9 +61,9 @@ export interface PageLink {
   browser?: BrowserActions;
 }
 
-// What the host needs from the browser for the tab-level APIs. The
-// page opened for `GM_openInTab` is a real page in the same context,
-// so a test can wait for it the way it would for the extension's tab.
+// The browser actions the host needs for the tab-level APIs. The page
+// opened for `GM_openInTab` is a real page in the same context, so a
+// test can wait for it the way it would for the extension's tab.
 export interface BrowserActions {
   openTab(url: string, active: boolean): Promise<OpenedTab>;
   closeSelf(): Promise<void>;
@@ -935,8 +935,8 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
   }
 }
 
-// Chrome's interrupt reason for an HTTP failure, which is what a
-// script branching on `details.current` was written against.
+// Chrome's interrupt reason for an HTTP failure. A script branching on
+// `details.current` was written against these names.
 function interruptReasonFor(status: number): string {
   if (status === 403) return 'SERVER_FORBIDDEN';
   if (status === 404) return 'SERVER_BAD_CONTENT';

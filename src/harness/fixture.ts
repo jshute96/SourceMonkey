@@ -42,7 +42,8 @@ export interface LoadOptions extends Omit<PrepareOptions, 'file' | 'text'> {
 
 // `script` selects one loaded script when several are: by the path
 // given to `loadUserscript`, its basename, or the script's `@name`.
-// Any of the three, because each is what a different spec has to hand.
+// All three work, because different specs have different ones to
+// hand.
 export interface GmApi {
   /** A stored value, decoded. */
   get(key: string, script?: string): unknown;
@@ -244,9 +245,9 @@ export const test = base.extend<HarnessFixtures>({
           return;
         }
         // `fallback`, not `continue`: Playwright runs route handlers
-        // newest first and only `fallback` hands a request to the next
-        // one, so this is what lets a second snapshot, or a HAR, sit
-        // beside this route.
+        // newest first, and only `fallback` hands a request to the next
+        // one. That lets a second snapshot, or a HAR, sit beside this
+        // route.
         await route.fallback();
       });
     });

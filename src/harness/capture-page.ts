@@ -1,8 +1,8 @@
 // Capturing a page's DOM as a file a test can serve back.
 //
 // Shared by `sm-dev snapshot` (browser-commands.ts) and the fixture's
-// `saveSnapshot`, so what a developer records by hand and what a test
-// records are the same file.
+// `saveSnapshot`, so a developer recording a page by hand and a test
+// recording one produce the same file.
 
 import { writeFile } from 'node:fs/promises';
 

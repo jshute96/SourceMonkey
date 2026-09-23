@@ -70,8 +70,8 @@ export interface SnapshotOptions extends ConnectOptions {
 }
 
 // The live DOM as HTML, for a spec to serve back at the original URL
-// (`serveSnapshot` in the fixture) so it needs no login. What the file
-// holds, and what it cannot, is described on `capturePage`.
+// (`serveSnapshot` in the fixture) so it needs no login. `capturePage`
+// describes what the file holds and what it cannot.
 export async function snapshot(opts: SnapshotOptions): Promise<number> {
   const session = await connectBrowser(opts, opts.out);
   if (!session) return 1;

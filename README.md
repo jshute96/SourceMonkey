@@ -427,8 +427,8 @@ started](#getting-started).
 a fresh checkout has a `dist/` as soon as its dependencies are in.
 
 The build writes two directories. `dist/` is the unpacked extension,
-and nothing else: it is what you load in Chrome and what
-`scripts/zip_extension.sh` packs. `lib/` is the `sourcemonkey`
+and nothing else: you load it in Chrome, and
+`scripts/zip_extension.sh` packs it. `lib/` is the `sourcemonkey`
 package, which adds the development harness and the type declarations
 a consumer needs. See
 [docs/architecture.md](docs/architecture.md#two-outputs-dist-and-lib).

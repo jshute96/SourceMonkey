@@ -223,8 +223,8 @@ into pages.
     have. The prelude's miss is silent, so the host evaluates the same
     rules on every navigation and records the rule that kept the script
     off the page.
-  - Survives reloads (init scripts persist), which is what makes the
-    interactive loop one keystroke. Re-injecting a script removes its
+  - Survives reloads (init scripts persist), so the interactive loop
+    costs one keystroke. Re-injecting a script removes its
     old entries first.
 - **`fixture.ts`**: the `@playwright/test` extension consumers import.
   Wraps the three above into `loadUserscript`, `gm`, `reports`, and a
