@@ -44,7 +44,7 @@ import path from 'node:path';
 import { BRIDGE_DENIED, STORAGE_SUBSYSTEMS, type ApiSubsystem } from '../gm-api-catalog.js';
 import type { BridgeOrigin } from './inject.js';
 import type { PreparedScript } from './prepare.js';
-import { explainMatch } from './prepare.js';
+import { explainMatch, preparedScriptName } from './prepare.js';
 
 // One attached page, as the host sees it. `inject.ts` implements it
 // over a Playwright page; nothing here depends on Playwright.
@@ -233,14 +233,6 @@ const PAGE_GATED: Record<string, readonly ApiSubsystem[]> = {
   'sm:gm-window-focus': ['window-control'],
 };
 
-// What a message type that the host doesn't answer yet means to the
-// script that sent it, so the error it sees names the API rather than
-// an internal message name.
-// Every message the injected code sends today has a handler; this
-// names the API for a future one that doesn't yet, so the script's
-// error reads as an API name rather than a message type. `sm:gm-call`
-// is the generic envelope, which carries the API's name itself.
-const UNSUPPORTED_API: Record<string, string> = {};
 
 // Which API a page-level action belongs to, for the refusal when the
 // attached page can't perform browser actions.
@@ -300,6 +292,10 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
   // Paths handed out to downloads still being written, so two
   // concurrent downloads with one name don't both pick it.
   private readonly claimedPaths = new Set<string>();
+  // Requests acknowledged but not yet handed to `runXhr`, which is what
+  // `abortXhr` can reach. An abort in that gap is noted here instead of
+  // being lost, and the request ends as aborted when it gets there.
+  private readonly startingXhrs = new Map<string, { aborted: boolean }>();
   private nextTabId = 1;
   private nextDownloadId = 1;
   private nextNotificationId = 1;
@@ -444,7 +440,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
       if (verdict.matches) continue;
       const report: SkipReport = {
         scriptId: id,
-        name: scriptName(script),
+        name: preparedScriptName(script),
         url,
         at: Date.now(),
         reason: verdict.rule ?? NO_RULE_COVERS_URL,
@@ -521,9 +517,14 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
       }
       case 'sm:gm-xhr-start':
         return this.xhrStart(payload, from);
-      case 'sm:gm-xhr-abort':
-        abortXhr(str(payload.id));
+      case 'sm:gm-xhr-abort': {
+        const id = str(payload.id);
+        if (!abortXhr(id)) {
+          const starting = this.startingXhrs.get(id);
+          if (starting) starting.aborted = true;
+        }
         return { ok: true };
+      }
       case 'sm:gm-tab-open':
         return this.tabOpen(payload, from);
       case 'sm:gm-tab-close':
@@ -602,7 +603,11 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
       }
       default: {
         this.emit('unhandled', { type, payload });
-        const api = UNSUPPORTED_API[type] ?? (type === 'sm:gm-call' ? str(payload.api) : '');
+        // Every message the injected code sends today has a handler.
+        // `sm:gm-call` is the generic envelope for a future API that
+        // doesn't, and carries the API's name, so the script's error
+        // can name it.
+        const api = type === 'sm:gm-call' ? str(payload.api) : '';
         return {
           ok: false,
           error: api
@@ -662,17 +667,18 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
 
   // The extension's own `runXhr` drives the request, so timeouts,
   // aborts, binary response types and the post-redirect `@connect`
-  // re-check behave as they do there. Two things differ, both because
+  // re-check behave as they do there. Where it differs, it is because
   // the fetch is Node's rather than the extension's:
   //   - the browser's cookies for the target are copied onto a `Cookie`
   //     header (when the page can supply them and the request isn't
-  //     `anonymous`), where Chrome would attach the extension's jar;
+  //     `anonymous`), where Chrome would attach the extension's jar. A
+  //     script's own `Cookie` header still wins over the jar, as the
+  //     rule does in the extension: the override is the script's
+  //     request, and sending the user's session instead would be the
+  //     opposite;
   //   - forbidden headers pass straight through instead of riding a
   //     declarativeNetRequest rule.
-  //   - a script's own `Cookie` header wins over the jar, as the rule
-  //     does in the extension: the override is the script's request,
-  //     and sending the user's session instead would be the opposite.
-  // Neither makes this the extension's request as a server sees it;
+  // None of this makes it the extension's request as a server sees it;
   // see docs/harness-guide.md, "What is and isn't faithful".
   private xhrStart(payload: Record<string, unknown>, from: PageLink): { ok: boolean; error?: string } {
     const scriptId = str(payload.scriptId);
@@ -697,9 +703,13 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
     // Acknowledged first, as the worker does, then the outcome arrives
     // as a push: even a synchronous `@connect` refusal waits for the
     // reply to go out.
+    const starting = { aborted: false };
+    this.startingXhrs.set(id, starting);
     setImmediate(() => {
-      this.runRequest(script, id, request, from, emit).catch((err) => {
+      this.runRequest(script, id, request, from, emit, starting).catch((err) => {
         void emit({ kind: 'error', message: gmXhrError(`internal error: ${(err as Error).message}`) });
+      }).finally(() => {
+        this.startingXhrs.delete(id);
       });
     });
     return { ok: true };
@@ -711,6 +721,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
     request: GmXhrRequestPayload,
     from: PageLink,
     emit: (event: GmXhrEvent) => Promise<void>,
+    starting: { aborted: boolean },
   ): Promise<void> {
     // A script with a registration (`spec`) always has a header:
     // `buildScriptFromText` stores a headerless file as invalid.
@@ -729,7 +740,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
     if (this.interceptRequests) {
       const canned = await this.interceptRequests(request, script.spec!.id);
       if (canned) {
-        await emit(canned);
+        await emit(starting.aborted ? { kind: 'abort' } : canned);
         return;
       }
     }
@@ -741,6 +752,13 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
         outgoing.headers = { ...(request.headers ?? {}), cookie: jar.map((c) => `${c.name}=${c.value}`).join('; ') };
       }
     }
+    if (starting.aborted) {
+      await emit({ kind: 'abort' });
+      return;
+    }
+    // Registered with `runXhr` from here on, so a later abort reaches it
+    // directly.
+    this.startingXhrs.delete(id);
     const event = await runXhr(id, outgoing, (finalUrl) => check(finalUrl).allowed, null, {
       forbiddenHeaders: 'passthrough',
     });
@@ -882,8 +900,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
       // a name when none is given. A name already taken gets a ` (N)`
       // suffix, as the worker's `conflictAction: 'uniquify'` does.
       const basename = nameCheck.filename || path.basename(new URL(url).pathname) || 'download';
-      const filename = await uniquePath(path.join(this.downloadDir, basename), this.claimedPaths);
-      this.claimedPaths.add(filename);
+      const filename = await claimUniquePath(path.join(this.downloadDir, basename), this.claimedPaths);
       try {
         await mkdir(path.dirname(filename), { recursive: true });
         await writeFile(filename, bytes);
@@ -971,7 +988,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
 
   private nameOf(scriptId: string): string {
     const script = this.scripts.get(scriptId);
-    return script ? scriptName(script) : scriptId;
+    return script ? preparedScriptName(script) : scriptId;
   }
 
   private worldOf(scriptId: string): 'MAIN' | 'USER_SCRIPT' {
@@ -989,24 +1006,22 @@ function interruptReasonFor(status: number): string {
 }
 
 // `file.ext`, else `file (1).ext`, `file (2).ext`, as Chrome's
-// uniquify does.
-async function uniquePath(wanted: string, claimed: ReadonlySet<string>): Promise<string> {
-  const exists = (p: string): Promise<boolean> =>
-    claimed.has(p) ? Promise.resolve(true) : access(p).then(() => true, () => false);
-  if (!(await exists(wanted))) return wanted;
+// uniquify does. Each candidate is added to `claimed` before the disk
+// check awaits, so a concurrent download of the same name moves on to
+// the next one instead of picking this one too. The caller releases
+// the returned path once the file is written.
+async function claimUniquePath(wanted: string, claimed: Set<string>): Promise<string> {
   const dir = path.dirname(wanted);
   const ext = path.extname(wanted);
   const stem = path.basename(wanted, ext);
-  for (let n = 1; ; n++) {
-    const candidate = path.join(dir, `${stem} (${n})${ext}`);
-    if (!(await exists(candidate))) return candidate;
+  for (let n = 0; ; n++) {
+    const candidate = n === 0 ? wanted : path.join(dir, `${stem} (${n})${ext}`);
+    if (claimed.has(candidate)) continue;
+    claimed.add(candidate);
+    const onDisk = await access(candidate).then(() => true, () => false);
+    if (!onDisk) return candidate;
+    claimed.delete(candidate);
   }
-}
-
-function scriptName(script: PreparedScript): string {
-  const tags = script.script.header?.tags ?? [];
-  const name = tags.find((t) => t.tag === 'name' && !t.locale)?.value;
-  return name || script.script.relativePath;
 }
 
 function str(v: unknown): string {

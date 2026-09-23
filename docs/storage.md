@@ -27,6 +27,7 @@ Key spaces in `chrome.storage.local`:
 | `"firstRunComplete"`   | `boolean`           | Set once the SW has seeded the default collections; gates first-run seeding (see [First-run seeding](#first-run-seeding)). |
 | `"smLocalFileRoots"`   | `string[]`          | Canonical `file://` directory URLs searched for local stand-ins, in order (see [local-file-overrides.md](local-file-overrides.md)). |
 | `"pushed:<url>"`       | `string`            | The text of a pushed script, keyed by its `pushed:///…` location (see [Container collections](#container-collections)). |
+| `"sm:solo-mode"`       | `Record<string,boolean>` | Present only while solo mode is on: each collection's `enabled` as it was before, so turning solo mode off puts them back, even after a restart (see [Container collections](#container-collections)). |
 
 Key spaces in `chrome.storage.session` — everything here is dropped on
 browser shutdown, which is the point: each row describes the *current*
@@ -38,7 +39,6 @@ browsing session, not the user's configuration.
 | `"loglevel:<scid>"`      | `LogLevel`              | Highest level a script-originated entry in that log has carried; drives WARNING / ERROR in the Status column. |
 | `"tab:<tabId>"`          | `TabRecord`             | Per-tab expected vs actual injection state behind the toolbar badge (see [matching.md](matching.md)). |
 | `"injector-rejections"`  | `Record<string,string>` | `{script id → Chrome's reason for refusing its registration}` — what the UI renders as REJECTED (see [injection.md](injection.md#rejected-registrations)). |
-| `"sm:solo-mode"`         | `Record<string,boolean>` | Present only while solo mode is on: each collection's `enabled` as it was before, so turning solo mode off puts them back (see [Container collections](#container-collections)). |
 
 ### Legacy key migration (temporary)
 
@@ -381,17 +381,20 @@ individually installed scripts. Two kinds of row, told apart by path:
   with a name of the user's choosing.
 - **Pushed scripts** — `container:pushed`, created by the first
   `pushScript` on the test surface (the development harness's
-  extension backend, [harness-design.md](harness-design.md)). Its
-  scripts arrived as text: each row's location is a `pushed:///<name>.user.js`
-  URL naming the storage row (`pushed:<url>`) that holds the text, and
-  the file fetcher reads that row back, so every refresh path treats
-  them as ordinary scripts. A push of the same name replaces the text
-  and re-reads the row in place. `clearPushedScripts` removes the
-  container, its rows, their GM values and the text rows. The scheme
-  chip reads `pushed`, and the viewer's Location row is plain text,
-  since there is nothing to open. A row moved out of the container
-  keeps reading its text row, which the next clear deletes; pushed
-  scripts are meant to stay where they were pushed.
+  extension backend, [harness-design.md](harness-design.md)).
+  - Each row's location is a `pushed:///<name>.user.js` URL naming the
+    storage row (`pushed:<url>`) that holds the text. The file fetcher
+    reads that row back, so every refresh path treats them as ordinary
+    scripts.
+  - A push of the same name replaces the text and re-reads the row in
+    place.
+  - `clearPushedScripts` removes the container, its rows, their GM
+    values and the text rows.
+  - Removing a pushed script, the container, or a clear keeps a text
+    row while another script row still reads it: a row moved out of
+    the container keeps reading its text row, until it is removed too.
+  - The scheme chip reads `pushed`, and the viewer's Location row is
+    plain text, since there is nothing to open.
 
 Properties:
 

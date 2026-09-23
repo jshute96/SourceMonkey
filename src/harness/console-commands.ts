@@ -11,15 +11,23 @@
 // sit in one place, and so a non-interactive run (a pipe, an agent
 // reading the stream) can skip the whole thing.
 
+import readline from 'node:readline';
+
 import type { Page } from '@playwright/test';
 
 import type { HarnessHost } from './host.js';
+import { preparedScriptMatches, preparedScriptName, type PreparedScript } from './prepare.js';
 
 export interface ConsoleContext {
   host: HarnessHost;
   page: Page;
-  /** The script ids this run injected, in load order. */
-  scriptIds: string[];
+  /** The scripts this run injected, in load order. */
+  scripts: PreparedScript[];
+  /**
+   * The script `values`, `get` and `set` act on. Starts as the first;
+   * `use` changes it.
+   */
+  current?: PreparedScript;
   out: (line: string) => void;
   /** Ends the run, as Ctrl-C does. */
   stop: () => void;
@@ -30,6 +38,7 @@ const HELP = [
   'values            print everything the script has stored',
   'get <key>         print one stored value',
   'set <key> <json>  store a value, as another tab\'s write would',
+  'use [script]      pick the script values/get/set act on (path, file name or @name); with none, list them',
   'reload            reload the page',
   'open <url>        navigate to another page',
   'help              this list',
@@ -46,7 +55,10 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
   if (!trimmed) return;
   const [command, ...rest] = trimmed.split(/\s+/);
   const argument = trimmed.slice(command.length).trim();
-  const scriptId = ctx.scriptIds[0];
+  const current = ctx.current ?? ctx.scripts[0];
+  const scriptId = current?.spec?.id;
+  // Named in the output only when there is a choice to be clear about.
+  const whose = ctx.scripts.length > 1 && current ? ` (${preparedScriptName(current)})` : '';
 
   switch (command) {
     case 'help':
@@ -73,6 +85,24 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
         : `[sm-dev] no menu command named "${argument}" is registered`);
       return;
     }
+    case 'use': {
+      if (!argument) {
+        for (const script of ctx.scripts) {
+          const name = preparedScriptName(script);
+          const where = name === script.script.relativePath ? '' : `  ${script.script.relativePath}`;
+          ctx.out(`${script === current ? '* ' : '  '}${name}${where}`);
+        }
+        return;
+      }
+      const found = ctx.scripts.find((script) => preparedScriptMatches(script, argument));
+      if (!found) {
+        ctx.out(`[sm-dev] no loaded script is named ${argument}; type use to list them`);
+        return;
+      }
+      ctx.current = found;
+      ctx.out(`[sm-dev] using ${preparedScriptName(found)}`);
+      return;
+    }
     case 'values': {
       if (!scriptId) {
         ctx.out('[sm-dev] no script is loaded');
@@ -81,11 +111,15 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
       await settleWrites();
       const values = ctx.host.getValues(scriptId);
       const keys = Object.keys(values);
-      if (keys.length === 0) ctx.out('[sm-dev] the script has stored nothing');
+      if (keys.length === 0) ctx.out(`[sm-dev] the script${whose} has stored nothing`);
       for (const key of keys) ctx.out(`  ${key} = ${JSON.stringify(values[key])}`);
       return;
     }
     case 'get': {
+      if (!scriptId) {
+        ctx.out('[sm-dev] no script is loaded');
+        return;
+      }
       if (!argument) {
         ctx.out('[sm-dev] get needs a key');
         return;
@@ -95,6 +129,10 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
       return;
     }
     case 'set': {
+      if (!scriptId) {
+        ctx.out('[sm-dev] no script is loaded');
+        return;
+      }
       const key = rest[0];
       const raw = argument.slice(key?.length ?? 0).trim();
       if (!key || !raw) {
@@ -112,7 +150,7 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
       // and its value-change listeners fire, as another tab's write
       // would.
       await ctx.host.setValues(scriptId, { [key]: value });
-      ctx.out(`[sm-dev] set ${key}`);
+      ctx.out(`[sm-dev] set ${key}${whose}`);
       return;
     }
     case 'reload':
@@ -154,25 +192,22 @@ async function waitForMenuCommand(ctx: ConsoleContext, label: string): Promise<b
 }
 
 /**
- * Read commands from stdin for as long as the run lasts. Does nothing
- * when stdin is not a terminal and carries no data, so a run started by
- * a script or a test is unaffected.
+ * Read commands from stdin, one per line, for as long as the run lasts.
+ * Whole lines only, so a piped command split across two reads still
+ * runs as one. Does nothing when stdin is already closed.
  */
 export function readConsoleCommands(ctx: ConsoleContext): () => void {
   if (!process.stdin.readable) return () => undefined;
   let queue: Promise<void> = Promise.resolve();
-  const onData = (chunk: Buffer): void => {
-    for (const line of chunk.toString('utf8').split('\n')) {
-      // Serialized: two lines typed quickly must not interleave.
-      queue = queue.then(() => runConsoleCommand(line, ctx)).catch((err) => {
-        ctx.out(`[sm-dev] ${(err as Error).message}`);
-      });
-    }
-  };
-  process.stdin.on('data', onData);
-  process.stdin.resume();
+  const lines = readline.createInterface({ input: process.stdin, terminal: false });
+  lines.on('line', (line) => {
+    // Serialized: two lines typed quickly must not interleave.
+    queue = queue.then(() => runConsoleCommand(line, ctx)).catch((err) => {
+      ctx.out(`[sm-dev] ${(err as Error).message}`);
+    });
+  });
   return () => {
-    process.stdin.off('data', onData);
+    lines.close();
     process.stdin.pause();
   };
 }

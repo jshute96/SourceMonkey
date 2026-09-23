@@ -770,7 +770,21 @@ See [docs/harness-design.md](docs/harness-design.md).
   one way worth closing: a `file://` read in Node returns no
   `Content-Type`, matching Chrome, but an http(s) one goes out without
   the extension's identity. Nothing depends on it today.
+- Pushed scripts are keyed by a sanitized name, so different names can
+  share one `pushed:///` URL and replace each other: `Foo Bar`,
+  `Foo/Bar` and `Foo-Bar` all become `Foo-Bar.user.js`, and `sm-dev
+  run --extension` pushes `a/x.user.js` and `b/x.user.js` both as
+  `x.user.js`. At least report the replacement when the header
+  `@name` differs.
+- Removing a pushed script from the collections page while
+  `pushScript` re-pushes one of the same name can delete the fresh text:
+  the push writes the text row before installing the row that reads it,
+  and the remove, in another context, sees no reader in between. The
+  install then fails with "The pushed script was cleared". Narrow, and
+  only with the harness pushing while someone edits the page.
 - Publishing: the package is installed from a checkout or a git tag.
+  `package.json` keeps `"private": true` until then; drop it to
+  publish.
   Once it is on npm, the guide's install step and the consumer's
   `dependenciesMeta.injected` workaround both get simpler.
 

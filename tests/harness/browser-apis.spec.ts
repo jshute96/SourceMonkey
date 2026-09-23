@@ -35,6 +35,31 @@ test.describe('harness browser APIs', () => {
     expect(host.reports.tabs[0].closed).toBe(true);
   });
 
+  test('two tabs opened at once are each tracked as their own', async ({ page, context, fixtureServer, host, loadScript }) => {
+    await loadScript({
+      relativePath: 'tabs.user.js',
+      meta: { name: 'Tabs', match: MATCH, grant: ['GM_openInTab'] },
+      body: `
+        window.addEventListener('message', (ev) => {
+          if (ev.data !== 'open') return;
+          for (const which of ['a', 'b']) {
+            const t = GM_openInTab(location.origin + '/other.html?' + which, { active: false });
+            t.onclose = () => { document.getElementById('target').dataset[which] = 'closed'; };
+          }
+        });
+      `,
+    });
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect.poll(() => host.reports.started.length).toBe(1);
+    await page.evaluate(() => window.postMessage('open', '*'));
+    await expect.poll(() => host.reports.tabs.length).toBe(2);
+    await expect.poll(() => context.pages().filter((p) => p.url().includes('/other.html?')).length).toBe(2);
+    const b = context.pages().find((p) => p.url().endsWith('/other.html?b'))!;
+    await b.close();
+    await expect(page.locator('#target')).toHaveAttribute('data-b', 'closed');
+    await expect(page.locator('#target')).not.toHaveAttribute('data-a', 'closed');
+  });
+
   test('menu commands are recorded and a test can fire one', async ({ page, fixtureServer, host, loadScript }) => {
     await loadScript({
       relativePath: 'menu.user.js',

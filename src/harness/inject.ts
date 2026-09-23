@@ -181,6 +181,10 @@ export class PageAttachment implements PageLink {
   // run against the developer's own browser leaves one behind every
   // time. Closed on dispose.
   private readonly openedTabs = new Set<Page>();
+  // `GM_openInTab` calls still finding their page, so dispose can wait
+  // for them rather than miss a tab that appears as it runs.
+  private readonly creatingTabs = new Set<Promise<Page | null>>();
+  private disposing = false;
   private closed = false;
   private mainFrameId = '';
   // Execution contexts by id, so a binding call can be traced to its
@@ -190,7 +194,24 @@ export class PageAttachment implements PageLink {
     // A real page in the same context, so a test can `waitForEvent('page')`
     // for it as it would for the extension's tab.
     openTab: async (url: string, active: boolean): Promise<OpenedTab> => {
-      const opened = await this.createTab(url, active);
+      if (this.disposing) throw new Error('The page is being detached from the harness');
+      const creating = this.createTab(url, active);
+      this.creatingTabs.add(creating);
+      let opened: Page | null;
+      try {
+        opened = await creating;
+      } finally {
+        this.creatingTabs.delete(creating);
+      }
+      const alreadyClosed: OpenedTab = { close: () => Promise.resolve(), onClosed: (cb) => cb() };
+      // Closed before it could be told apart from other pages: it
+      // opened, and it has already closed.
+      if (!opened) return alreadyClosed;
+      // Finished opening after dispose began, which closes every tab.
+      if (this.disposing) {
+        await opened.close().catch(() => undefined);
+        return alreadyClosed;
+      }
       this.openedTabs.add(opened);
       const closedCallbacks: (() => void)[] = [];
       opened.on('close', () => {
@@ -221,11 +242,21 @@ export class PageAttachment implements PageLink {
 
   static async create(page: Page, host: HarnessHost): Promise<PageAttachment> {
     if (attached.has(page)) throw new Error('This page already has a harness attachment');
+    // Claimed before the first await, so two concurrent attaches can't
+    // both pass the check; released if setup fails, so the page can be
+    // attached again.
     attached.add(page);
-    const cdp = await page.context().newCDPSession(page);
-    const attachment = new PageAttachment(page, host, cdp);
-    await attachment.install();
-    return attachment;
+    let cdp: CDPSession | null = null;
+    try {
+      cdp = await page.context().newCDPSession(page);
+      const attachment = new PageAttachment(page, host, cdp);
+      await attachment.install();
+      return attachment;
+    } catch (err) {
+      attached.delete(page);
+      await cdp?.detach().catch(() => undefined);
+      throw err;
+    }
   }
 
   private async install(): Promise<void> {
@@ -336,7 +367,7 @@ export class PageAttachment implements PageLink {
   // always starts blank), so the target is created over CDP in this
   // page's own browser context, so it lands inside the Playwright
   // context a test is watching.
-  private async createTab(url: string, active: boolean): Promise<Page> {
+  private async createTab(url: string, active: boolean): Promise<Page | null> {
     const { targetInfo } = await this.cdp.send('Target.getTargetInfo');
     const browser = this.page.context().browser();
     // A persistent context (`launchPersistentContext`) has no Browser
@@ -344,30 +375,57 @@ export class PageAttachment implements PageLink {
     if (!browser) throw new Error('This browser context does not expose a browser-level CDP session');
     const browserSession = await browser.newBrowserCDPSession();
     try {
-      // Matched by identity, not by URL: a page that fails to load
-      // reports an error URL rather than the one asked for, and that
-      // page would then never be recognized as this tab, left open and
-      // untracked. The pages present before the create are the ones
-      // this is not.
+      // Heard from before the create, so a tab closed at once is still
+      // seen going.
+      const destroyed = new Set<string>();
+      browserSession.on('Target.targetDestroyed', (ev) => { destroyed.add(ev.targetId); });
+      await browserSession.send('Target.setDiscoverTargets', { discover: true });
+      // Pages open before the create can't be the new one, so they are
+      // never attached to just to ask their id: under `sm-dev run` they
+      // are the developer's own tabs.
       const before = new Set(this.page.context().pages());
-      const pagePromise = this.page.context().waitForEvent('page', {
-        predicate: (p) => !before.has(p),
-        timeout: 10000,
-      });
-      // Settled either way, so a failed create can't leave a rejection
-      // nobody awaits.
-      pagePromise.catch(() => undefined);
-      await browserSession.send('Target.createTarget', {
+      const { targetId } = await browserSession.send('Target.createTarget', {
         url,
         browserContextId: targetInfo.browserContextId,
         background: !active,
       });
-      const opened = await pagePromise;
-      if (active) await opened.bringToFront().catch(() => undefined);
+      let opened: Page | null;
+      try {
+        opened = await this.pageForTarget(targetId, before, () => destroyed.has(targetId));
+      } catch (err) {
+        // Never found, so nothing else would close it.
+        await browserSession.send('Target.closeTarget', { targetId }).catch(() => undefined);
+        throw err;
+      }
+      if (opened && active) await opened.bringToFront().catch(() => undefined);
       return opened;
     } finally {
       await browserSession.detach().catch(() => undefined);
     }
+  }
+
+  // The Playwright page for a CDP target, or null once the target is
+  // gone before its page was found. Matched by target id, not by URL or
+  // by "the next new page": a page that fails to load reports an error
+  // URL, and two tabs opened at once would otherwise each take
+  // whichever appeared first, leaving the other open and untracked.
+  private async pageForTarget(targetId: string, before: ReadonlySet<Page>, gone: () => boolean): Promise<Page | null> {
+    const ctx = this.page.context();
+    // Pages known not to be it. One whose id couldn't be read yet (still
+    // initializing) is asked again on the next pass.
+    const ruledOut = new Set<Page>(before);
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline) {
+      for (const p of ctx.pages()) {
+        if (ruledOut.has(p)) continue;
+        const id = await targetIdOf(p);
+        if (id === targetId) return p;
+        if (id !== null || p.isClosed()) ruledOut.add(p);
+      }
+      if (gone()) return null;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    throw new Error('The tab GM_openInTab opened did not appear within 10 seconds');
   }
 
   // ---------- Bridge ----------
@@ -470,11 +528,18 @@ export class PageAttachment implements PageLink {
 
   /** Detach everything and drop the CDP session. */
   async dispose(): Promise<void> {
+    this.disposing = true;
     for (const id of [...this.injected.keys()]) await this.remove(id);
     for (const identifier of this.runtimeWorlds.values()) {
       await this.cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier }).catch(() => undefined);
     }
     this.runtimeWorlds.clear();
+    // Each one closes its own page on seeing `disposing`; closed here
+    // too, in case dispose gets there first.
+    for (const pending of [...this.creatingTabs]) {
+      const tab = await pending.catch(() => null);
+      await tab?.close().catch(() => undefined);
+    }
     for (const tab of this.openedTabs) await tab.close().catch(() => undefined);
     this.openedTabs.clear();
     this.closed = true;
@@ -482,6 +547,27 @@ export class PageAttachment implements PageLink {
     this.host.detachPage(this);
     attached.delete(this.page);
     await this.cdp.detach().catch(() => undefined);
+  }
+}
+
+// A page's CDP target id, remembered: a page keeps its id for life.
+const targetIds = new WeakMap<Page, string>();
+
+async function targetIdOf(page: Page): Promise<string | null> {
+  const known = targetIds.get(page);
+  if (known) return known;
+  try {
+    const session = await page.context().newCDPSession(page);
+    try {
+      const { targetInfo } = await session.send('Target.getTargetInfo');
+      targetIds.set(page, targetInfo.targetId);
+      return targetInfo.targetId;
+    } finally {
+      await session.detach().catch(() => undefined);
+    }
+  } catch {
+    // Closed while being asked.
+    return null;
   }
 }
 

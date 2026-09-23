@@ -493,7 +493,7 @@ export function scriptSchemeKind(location: string): ScriptSchemeKind {
 async function fetchPushedText(url: string): Promise<string> {
   const got = await chrome.storage.local.get(pushedTextKey(url));
   const text = got[pushedTextKey(url)];
-  if (typeof text !== 'string') throw new Error(`Could not read ${url}: The pushed script was cleared. Push it again`);
+  if (typeof text !== 'string') throw new Error(`Could not read ${url}: The pushed script was cleared. Push it again.`);
   return text;
 }
 

@@ -133,9 +133,11 @@ script **text or a file path**, never a collection.
 
 ### Package plumbing
 
-- `package.json`: remove `private`; add `exports` (`./harness` for the
-  harness entry, and `./*` mapping to `lib/*.js` so the pure modules
-  such as `url-match` and `userscript-header` are importable too),
+- `package.json`: keep `private` (it only blocks `npm publish`, and a
+  git install works without publishing; drop it when publishing is
+  wanted); add `exports` (`./harness` for the harness entry, and `./*`
+  mapping to `lib/*.js` so the pure modules such as `url-match` and
+  `userscript-header` are importable too),
   `files: ["lib"]`, `bin: { "sm-dev": ... }`, a `prepare` script that
   runs the build so a git install produces it, and `@playwright/test`
   as an optional peer dependency used only by the harness entry.

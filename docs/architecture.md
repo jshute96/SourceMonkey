@@ -466,7 +466,7 @@ takes effect:
 
 `scripts/build.mjs` is dependency-free:
 
-- Wipes `dist/` and `lib/`.
+- Wipes `dist/` and `lib/` (only `dist/` under `--watch`, so `lib/` stays usable).
 - Copies `src/icons/`, `src/manifest.json`, every top-level
   `src/*.html`, and `node_modules/prismjs/*` into `dist/`, and the
   manifest into `lib/` too (the harness reads the extension key from it).

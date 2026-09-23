@@ -53,6 +53,7 @@ import {
   isLocalDirectoryCollection,
   isSingleFileInput,
   PUSHED_CONTAINER_PATH,
+  isPushedUrl,
   pushedTextKey,
   pushedUrl,
   baseName,
@@ -2325,37 +2326,29 @@ export async function pushScript(args: { text: string; name?: string }): Promise
 
 // Remove the pushed container, its rows, their GM values, and the text
 // rows behind them. Returns what went, for the caller's registration
-// sync. The text keys come from the rows rather than a storage scan: a
-// scan costs every script body, and the only text row a container
-// wouldn't name is one a failed install left, which `pushScript`
-// cleans up itself.
+// sync. `removeCollection` deletes the text rows, keeping any that a
+// copy moved into another collection still reads.
 export async function clearPushedScripts(): Promise<{ scriptIds: string[]; collectionId: string | null }> {
   const container = (await getCollections()).find((c) => c.path === PUSHED_CONTAINER_PATH);
   if (!container) return { scriptIds: [], collectionId: null };
-  const rows = await getMany(container.scriptIds.map(scriptKey));
-  const textKeys: string[] = [];
-  for (const sid of container.scriptIds) {
-    const row = rows[scriptKey(sid)] as StoredScript | undefined;
-    if (row) textKeys.push(pushedTextKey(row.relativePath));
-    await wipeScriptValues(sid);
-  }
+  for (const sid of container.scriptIds) await wipeScriptValues(sid);
   await removeCollection(container.id);
-  if (textKeys.length > 0) await chrome.storage.local.remove(textKeys);
   return { scriptIds: container.scriptIds, collectionId: container.id };
 }
 
 // Solo mode: every collection but the pushed one disabled, so a pushed
 // script runs alone. Turning it off restores the enabled flags as they
-// were, from the session-storage note taken when it went on, so the
-// user's own collections come back exactly as they were. The note lives
-// as long as the browser: a run killed without turning solo mode off
-// leaves it on, and the next `setSoloMode(false)` (any `sm-dev clear
+// were, from the note taken when it went on, so the user's own
+// collections come back exactly as they were. The note is in local
+// storage, beside the flags it restores: a run killed without turning
+// solo mode off leaves it on, even across a browser or extension
+// restart, and the next `setSoloMode(false)` (any `sm-dev clear
 // --extension`, or another solo run ending) restores from the note.
 // Returns the ids of the collections it toggled.
 const SOLO_MODE_KEY = 'sm:solo-mode';
 
 export async function setSoloMode(on: boolean): Promise<string[]> {
-  const noted = (await chrome.storage.session.get(SOLO_MODE_KEY))[SOLO_MODE_KEY] as
+  const noted = (await chrome.storage.local.get(SOLO_MODE_KEY))[SOLO_MODE_KEY] as
     Record<string, boolean> | undefined;
   const toggled: string[] = [];
   if (on) {
@@ -2372,14 +2365,14 @@ export async function setSoloMode(on: boolean): Promise<string[]> {
         toggled.push(c.id);
       }
     }
-    await chrome.storage.session.set({ [SOLO_MODE_KEY]: previous });
+    await chrome.storage.local.set({ [SOLO_MODE_KEY]: previous });
     return toggled;
   }
   if (!noted) return toggled;
   for (const [id, wasEnabled] of Object.entries(noted)) {
     if (wasEnabled && await setCollectionEnabled(id, true)) toggled.push(id);
   }
-  await chrome.storage.session.remove(SOLO_MODE_KEY);
+  await chrome.storage.local.remove(SOLO_MODE_KEY);
   return toggled;
 }
 
@@ -2763,7 +2756,15 @@ export async function removeCollection(id: string): Promise<void> {
     const collection = await getRaw<StoredCollection>(collectionKey(id));
     const ids = await readCollectionIndex();
     const next = ids.filter((sid) => sid !== id);
-    const removeKeys = [collectionKey(id), ...(collection?.scriptIds ?? []).map(scriptKey)];
+    const scriptIds = collection?.scriptIds ?? [];
+    const rows = await getMany(scriptIds.map(scriptKey));
+    const removed = scriptIds.map((sid) => rows[scriptKey(sid)] as StoredScript | undefined)
+      .filter((r): r is StoredScript => r !== undefined);
+    const removeKeys = [
+      collectionKey(id),
+      ...scriptIds.map(scriptKey),
+      ...await unreferencedPushedTextKeys(removed),
+    ];
     await writeLocal({ [COLLECTIONS_INDEX_KEY]: next });
     await chrome.storage.local.remove(removeKeys);
     return next;
@@ -2794,13 +2795,38 @@ export async function removeScript(id: string): Promise<void> {
       }
     }
     if (Object.keys(toSet).length > 0) await writeLocal(toSet);
-    await chrome.storage.local.remove(scriptKey(id));
+    await chrome.storage.local.remove([scriptKey(id), ...await unreferencedPushedTextKeys([script])]);
   });
   // After the write, not inside it: the local write is the one that has
   // to be atomic, and a failure here must not undo a removal that
   // succeeded. The refresh path drops rows the same way and clears their
   // logs the same way.
   await forgetScriptLogs([id]);
+}
+
+// The text rows of the pushed scripts among `removed` that no other
+// script row still reads. A pushed script moved into another collection
+// keeps reading the text row it was pushed with, so a URL some remaining
+// row names keeps its text. Reads nothing more when no pushed script is
+// among those removed, and otherwise only the container collections'
+// rows: a pushed script can only be moved into another container. Call
+// inside `mutate`, before the rows are deleted.
+async function unreferencedPushedTextKeys(removed: readonly StoredScript[]): Promise<string[]> {
+  const urls = new Set(removed.map((r) => r.relativePath).filter(isPushedUrl));
+  if (urls.size === 0) return [];
+  const removedIds = new Set(removed.map((r) => r.id));
+  const collectionRows = await getMany((await readCollectionIndex()).map(collectionKey));
+  const others: string[] = [];
+  for (const value of Object.values(collectionRows)) {
+    const c = value as StoredCollection | undefined;
+    if (!c || !isContainerCollection(c.path)) continue;
+    for (const sid of c.scriptIds) if (!removedIds.has(sid)) others.push(sid);
+  }
+  const rows = await getMany(others.map(scriptKey));
+  for (const value of Object.values(rows)) {
+    urls.delete((value as StoredScript).relativePath);
+  }
+  return [...urls].map(pushedTextKey);
 }
 
 // ---------- Membership reconciliation ----------

@@ -329,3 +329,21 @@ export function explainMatch(matching: ScriptMatching, url: string): MatchExplan
   }
   return { matches: false, rule: null };
 }
+
+/** The script's `@name`, else the path it was loaded from. */
+export function preparedScriptName(script: PreparedScript): string {
+  const tags = script.script.header?.tags ?? [];
+  const name = tags.find((t) => t.tag === 'name' && !t.locale)?.value;
+  return name || script.script.relativePath;
+}
+
+/**
+ * Whether `name` picks out this script: the path it was loaded from,
+ * its basename, or its `@name`. How a test or a typed command names
+ * one script among several.
+ */
+export function preparedScriptMatches(script: PreparedScript, name: string): boolean {
+  return script.script.relativePath === name
+    || path.basename(script.script.relativePath) === name
+    || script.script.header?.tags.some((t) => t.tag === 'name' && !t.locale && t.value === name) === true;
+}

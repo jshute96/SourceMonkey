@@ -63,17 +63,52 @@ test.describe('pushed scripts', () => {
     await page.close();
   });
 
+  test('removing a pushed script or its collection from the UI drops its text, unless a moved copy still reads it', async ({ sm, getServiceWorker }) => {
+    const sw = await getServiceWorker();
+    const pushedKeys = async () => Object.keys(await sw.evaluate(() => chrome.storage.local.get(null)))
+      .filter((k) => k.startsWith('pushed:')).sort();
+
+    const one = await sm.pushScript({ text: script('', 'One') });
+    await sm.pushScript({ text: script('', 'Two') });
+    expect(await pushedKeys()).toEqual(['pushed:pushed:///One.user.js', 'pushed:pushed:///Two.user.js']);
+    await sm.removeScript(one.scriptId);
+    expect(await pushedKeys()).toEqual(['pushed:pushed:///Two.user.js']);
+
+    // A copy moved into another collection keeps its text alive, and
+    // removing that copy last takes the text with it.
+    const mine = await sm.createCollection({ kind: 'scripts', name: 'Mine' });
+    const three = await sm.pushScript({ text: script('', 'Three') });
+    const moved = await sm.moveScript(three.scriptId, { collectionId: mine!.id });
+    expect(moved).not.toBeNull();
+    // Two goes with the collection; Three is still read from Mine.
+    await sm.removeCollection(three.collectionId);
+    expect(await pushedKeys()).toEqual(['pushed:pushed:///Three.user.js']);
+    await sm.removeScript(moved!.id);
+    expect(await pushedKeys()).toEqual([]);
+
+    // A clear keeps the text a moved copy reads, even with a same-named
+    // push still in the container.
+    const four = await sm.pushScript({ text: script('', 'Four') });
+    await sm.moveScript(four.scriptId, { collectionId: mine!.id });
+    await sm.pushScript({ text: script('', 'Four') });
+    await sm.clearPushedScripts();
+    expect(await pushedKeys()).toEqual(['pushed:pushed:///Four.user.js']);
+  });
+
   // The path `sm-dev run --extension` takes: find the worker from the
   // package's own copy of the manifest, push, and clear.
   test('the harness\'s ExtensionBackend finds the extension and pushes through it', async ({ extensionContext, fixtureServer }) => {
     const backend = await ExtensionBackend.connect(extensionContext);
-    const result = await backend.push(script(`document.getElementById('target').textContent = 'via backend';`));
-    expect(result.status).toBe('ok');
     const page = await extensionContext.newPage();
-    await page.goto(`${fixtureServer.baseUrl}/target.html`);
-    await expect(page.locator('#target')).toHaveText('via backend');
-    expect(await backend.clear()).toBe(1);
-    await page.close();
+    try {
+      const result = await backend.push(script(`document.getElementById('target').textContent = 'via backend';`));
+      expect(result.status).toBe('ok');
+      await page.goto(`${fixtureServer.baseUrl}/target.html`);
+      await expect(page.locator('#target')).toHaveText('via backend');
+      expect(await backend.clear()).toBe(1);
+    } finally {
+      await page.close();
+    }
   });
 
   test('solo mode disables the other collections and restores them', async ({ extensionContext, fixtureServer, sm }) => {

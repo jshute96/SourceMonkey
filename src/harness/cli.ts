@@ -75,6 +75,7 @@ Interactive commands (type these while \`run\` is streaming):
   values          Print everything the script has stored
   get <key>       Print one stored value
   set <key> <json>  Store a value, as another tab's write would
+  use [script]    Pick the script values/get/set act on; with none, list them
   reload          Reload the page
   open <url>      Navigate to another page
   help            List these

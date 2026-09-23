@@ -97,23 +97,34 @@ export async function run(opts: RunOptions): Promise<number> {
   const session = await connectBrowser(opts, opts.out);
   if (!session) return 1;
   if (opts.extension) return runInExtension(opts, session);
-  const { browser, page } = session;
+  const held: { attachment?: PageAttachment } = {};
+  try {
+    return await runInHarness(opts, session, held);
+  } finally {
+    // Also on a throw partway through, so a failed run leaves no
+    // attachment behind in a browser the developer keeps using.
+    await held.attachment?.dispose().catch(() => undefined);
+    await session.done().catch(() => undefined);
+  }
+}
+
+async function runInHarness(
+  opts: RunOptions,
+  session: BrowserSession,
+  held: { attachment?: PageAttachment },
+): Promise<number> {
+  const { page } = session;
   const host = new HarnessHost();
   wireOutput(host, page, opts.out);
   // Attached before preparing, so the scripts' GM_info describes this
   // browser.
   const attachment = await attachPage(page, host);
+  held.attachment = attachment;
   const prepared = await prepareAll(opts);
-  if (!prepared) {
-    await attachment.dispose();
-    await browser.close();
-    return 1;
-  }
+  if (!prepared) return 1;
   const url = opts.url ?? defaultUrl(prepared[0]);
   if (!url) {
     opts.out('No --url given and the first script\'s @match names no page to open');
-    await attachment.dispose();
-    await browser.close();
     return 2;
   }
 
@@ -143,35 +154,37 @@ export async function run(opts: RunOptions): Promise<number> {
   }
 
   let watcher: (() => void) | null = null;
-  if (opts.watch) watcher = watchFiles(opts, prepared, attachment, page, injectAll);
-
   let stopCommands: (() => void) | null = null;
-  if (opts.until) {
-    // Typed commands drive the script while it runs: fire a menu
-    // command again, read what it stored, write a value back. Only
-    // worth arming for a run that is waiting on something.
-    //
-    // Armed once the script has started (or shortly after, if it never
-    // does): a command read before then would run against a page whose
-    // script has not registered anything yet. A piped sequence of
-    // commands would otherwise hit exactly that.
-    await waitForFirstStart(host, page);
-    stopCommands = readConsoleCommands({
-      host,
-      page,
-      scriptIds: prepared.map((p) => p.spec!.id),
-      out: opts.out,
-      stop: () => opts.onStop?.(),
-    });
-    await opts.until;
-  } else {
-    // One load's worth of output, then leave the page as it is.
-    await page.waitForTimeout(500);
+  try {
+    if (opts.watch) watcher = watchFiles(opts, prepared, attachment, page, injectAll);
+    if (opts.until) {
+      // Typed commands drive the script while it runs: fire a menu
+      // command again, read what it stored, write a value back. Only
+      // worth arming for a run that is waiting on something.
+      //
+      // Armed once the script has started (or shortly after, if it
+      // never does): a command read before then would run against a
+      // page whose script has not registered anything yet. A piped
+      // sequence of commands would otherwise hit exactly that.
+      await waitForFirstStart(host);
+      stopCommands = readConsoleCommands({
+        host,
+        page,
+        scripts: prepared,
+        out: opts.out,
+        stop: () => opts.onStop?.(),
+      });
+      await opts.until;
+    } else {
+      // One load's worth of output, then leave the page as it is.
+      await page.waitForTimeout(500);
+    }
+  } finally {
+    // Also on a throw, or stdin and the file watcher would keep the
+    // process alive.
+    stopCommands?.();
+    watcher?.();
   }
-  stopCommands?.();
-  watcher?.();
-  await attachment.dispose();
-  await session.done();
   return host.reports.errors.length === 0 ? 0 : 1;
 }
 
@@ -267,12 +280,15 @@ async function runInExtension(opts: RunOptions, session: BrowserSession): Promis
       });
     }
     const ticker = setInterval(() => { void poll(); }, 500);
-    if (opts.until) await opts.until;
-    else await page.waitForTimeout(1000);
-    clearInterval(ticker);
+    try {
+      if (opts.until) await opts.until;
+      else await page.waitForTimeout(1000);
+    } finally {
+      clearInterval(ticker);
+      watcher?.();
+    }
     while (polling) await new Promise((r) => setTimeout(r, 50));
     await poll();
-    watcher?.();
   } finally {
     if (opts.solo) await backend.solo(false).catch(() => undefined);
     await session.done();
@@ -283,7 +299,7 @@ async function runInExtension(opts: RunOptions, session: BrowserSession): Promis
 // Resolve when some script has reported that it started, or after a
 // grace period when none does (a URL its header does not cover, a
 // script that threw before reporting).
-async function waitForFirstStart(host: HarnessHost, page: Page, timeoutMs = 5000): Promise<void> {
+async function waitForFirstStart(host: HarnessHost, timeoutMs = 5000): Promise<void> {
   if (host.reports.started.length > 0) return;
   await new Promise<void>((resolve) => {
     const done = (): void => {
@@ -294,7 +310,6 @@ async function waitForFirstStart(host: HarnessHost, page: Page, timeoutMs = 5000
     const timer = setTimeout(done, timeoutMs);
     host.on('start', done);
   });
-  void page;
 }
 
 function sameEntry(a: LogEntry, b: LogEntry): boolean {

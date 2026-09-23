@@ -158,6 +158,28 @@ test.describe('harness GM_xmlhttpRequest', () => {
     }
   });
 
+  test('an abort sent before the request starts still ends it as aborted', async ({ page, fixtureServer, host, loadScript }) => {
+    await loadScript({
+      ...requester(['127.0.0.1']),
+      body: `
+        window.addEventListener('message', (ev) => {
+          if (!ev.data || ev.data.kind !== 'send') return;
+          GM_xmlhttpRequest({ ...ev.data.details }).abort();
+        });
+      `,
+    });
+    // Slow to answer, so the abort lands while the request is still
+    // on its way to the fetch.
+    host.interceptRequests = async () => {
+      await new Promise((r) => setTimeout(r, 300));
+      return { kind: 'error', message: 'should not be delivered' };
+    };
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect.poll(() => host.reports.started.length).toBe(1);
+    await send(page, { url: `${fixtureServer.baseUrl}/other.html` });
+    await expect.poll(() => host.reports.requests[0]?.outcome).toBe('abort');
+  });
+
   test('a test can answer a request itself', async ({ page, fixtureServer, host, loadScript }) => {
     await loadScript(requester(['127.0.0.1']));
     host.interceptRequests = (request) => request.url.endsWith('/canned')

@@ -22,7 +22,13 @@ import {
   type HostReports, type SkipReport, type ErrorReport, type StartReport, type RequestInterceptor,
 } from './host.js';
 import { attachPage, type PageAttachment } from './inject.js';
-import { prepareScript, explainMatch, type PreparedScript, type PrepareOptions } from './prepare.js';
+import {
+  prepareScript,
+  explainMatch,
+  preparedScriptMatches,
+  type PreparedScript,
+  type PrepareOptions,
+} from './prepare.js';
 
 export interface LoadOptions extends Omit<PrepareOptions, 'file' | 'text'> {
   /** Seed the script's `GM_*` storage before it runs. */
@@ -114,8 +120,12 @@ export interface HarnessFixtures {
 export const test = base.extend<HarnessFixtures>({
   // No teardown: the host holds no browser resources of its own, and
   // the attachment's dispose drops what it registered with the host.
-  host: async ({}, use) => {
-    await use(new HarnessHost());
+  host: async ({}, use, testInfo) => {
+    const host = new HarnessHost();
+    // In the test's own output directory, so parallel tests can't
+    // collide on a name and a run leaves nothing in the system temp dir.
+    host.downloadDir = testInfo.outputPath('downloads');
+    await use(host);
   },
 
   attachment: async ({ page, host }, use) => {
@@ -156,10 +166,9 @@ export const test = base.extend<HarnessFixtures>({
         if (loaded.length > 1) throw new Error('Several userscripts are loaded; name one');
         return loaded[0].spec!.id;
       }
-      const found = loaded.find((p) => scriptMatches(p, script));
+      const found = loaded.find((p) => preparedScriptMatches(p, script));
       if (!found) throw new Error(`No loaded userscript is named ${script}`);
       return found.spec!.id;
-
     };
     await use({
       get: (key, script) => host.getValue(idOf(script), key),
@@ -204,7 +213,7 @@ export const test = base.extend<HarnessFixtures>({
         // The same selection `gm` uses, via the loaded script's id.
         const wanted = script === undefined
           ? undefined
-          : attachment.injectedScripts().find((p) => scriptMatches(p, script))?.spec!.id ?? script;
+          : attachment.injectedScripts().find((p) => preparedScriptMatches(p, script))?.spec!.id ?? script;
         const matches = (r: StartReport): boolean => wanted === undefined || r.scriptId === wanted;
         const already = host.reports.started.find(matches);
         if (already) {
@@ -214,7 +223,9 @@ export const test = base.extend<HarnessFixtures>({
         const timer = setTimeout(() => {
           host.off('start', onStart);
           const skipped = host.reports.skipped.map((s) => `${s.name} on ${s.url}: ${s.reason}`).join('; ');
-          reject(new Error(`No userscript started within ${timeoutMs} ms${skipped ? `. Skipped: ${skipped}` : ''}`));
+          reject(new Error(skipped
+            ? `No userscript started within ${timeoutMs} ms. Skipped: ${skipped.replace(/\.$/, '')}.`
+            : `No userscript started within ${timeoutMs} ms`));
         }, timeoutMs);
         const onStart = (r: StartReport): void => {
           if (!matches(r)) return;
@@ -253,14 +264,6 @@ export const test = base.extend<HarnessFixtures>({
     });
   },
 });
-
-// A loaded script by the path it was loaded from, its basename, or its
-// `@name`.
-function scriptMatches(p: PreparedScript, script: string): boolean {
-  return p.script.relativePath === script
-    || path.basename(p.script.relativePath) === script
-    || p.script.header?.tags.some((t) => t.tag === 'name' && !t.locale && t.value === script) === true;
-}
 
 // The browser reports `https://example.test` as `https://example.test/`
 // and never reports a fragment, so both sides are normalized the same

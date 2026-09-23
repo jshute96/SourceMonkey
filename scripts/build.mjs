@@ -35,9 +35,11 @@ const dist = resolve(root, 'dist');
 const lib = resolve(root, 'lib');
 const watch = process.argv.includes('--watch');
 
-// 1. Clean both outputs.
+// 1. Clean the outputs. Watch mode rebuilds only dist/, so it leaves
+//    lib/ standing: the harness tests and the validate script import
+//    from it.
 await rm(dist, { recursive: true, force: true });
-await rm(lib, { recursive: true, force: true });
+if (!watch) await rm(lib, { recursive: true, force: true });
 await mkdir(dist, { recursive: true });
 
 // 2. Copy icons.

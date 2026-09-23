@@ -59,12 +59,15 @@ allowBuilds:
 ```
 
 The second matters when you install from a checkout on disk
-(`file:../SourceMonkey`, while working on both). A plain symlink
-would leave the package resolving its own Playwright instead of yours,
-and Playwright refuses to run with two copies loaded. `injected` copies
-it into your project's store instead, where the peer resolves to your
-copy. Re-run `pnpm install` after rebuilding SourceMonkey, since the
-copy is taken at install time.
+(`file:../SourceMonkey`, while working on both):
+
+- A plain symlink would leave the package resolving its own Playwright
+  instead of yours, and Playwright refuses to run with two copies
+  loaded.
+- `injected` copies it into your project's store instead, where the
+  peer resolves to your copy.
+- Re-run `pnpm install` after rebuilding SourceMonkey, since the copy
+  is taken at install time.
 
 The package is written as ES modules (ESM: files that use `import` /
 `export`, the standard module system, rather than CommonJS's
@@ -140,6 +143,7 @@ commands from its own input while it streams.
 | `values` | Prints everything the script has stored |
 | `get <key>` | Prints one stored value |
 | `set <key> <json>` | Stores a value, as another tab's write would: a running script sees it and its change listeners fire |
+| `use [script]` | With several scripts loaded, picks the one `values`, `get` and `set` act on, by path, file name or `@name` (the first, until changed). Alone, lists them |
 | `reload` | Reloads the page |
 | `open <url>` | Navigates to another page |
 | `help`, `quit` | The list, and stop |
@@ -289,10 +293,11 @@ Close, but not the same:
   closed when the attachment is disposed, where the extension would
   leave it open, so a test run leaves no tabs behind.
 - `GM_download` fetches the file from Node into a directory of the
-  host's choosing and reports the extension's events, numbering a
-  taken name as Chrome does; there is no download bar or prompt, and
-  no `onprogress`. `GM_notification` shows nothing; a `timeout` still
-  fires `ondone`, and a test delivers the click.
+  host's choosing (the fixture uses the test's output directory) and
+  reports the extension's events, numbering a taken name as Chrome
+  does. There is no download bar or prompt, and no `onprogress`.
+- `GM_notification` shows nothing; a `timeout` still fires `ondone`,
+  and a test delivers the click.
 
 Not faithful, use the extension backend:
 

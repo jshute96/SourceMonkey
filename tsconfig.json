@@ -12,7 +12,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": ["chrome", "node"]
+    "types": ["chrome"]
   },
   // The extension only. `src/harness/**` is Node-side code Chrome never
   // loads; it is compiled into `lib/` by tsconfig.lib.json, along with
