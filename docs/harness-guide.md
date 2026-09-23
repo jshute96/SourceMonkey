@@ -154,6 +154,16 @@ commands from its own input while it streams.
 | `open <url>` | Navigates to another page |
 | `help`, `quit` | The list, and stop |
 
+When both input and output are a terminal, commands are typed at a
+`> ` prompt:
+
+- Line editing and history work as in most shells (arrows, Ctrl-A / Ctrl-E,
+  Ctrl-U), and Tab completes a command name.
+- Output streamed while you type is printed above the prompt, which is
+  then redrawn with what you had typed so far.
+- Ctrl-C clears a half-typed line. On an empty line, Ctrl-C or Ctrl-D
+  stops the run.
+
 A read waits out the page's write batching first, so `menu Bump`
 followed by `values` prints what the command just stored rather than
 what was there before it.

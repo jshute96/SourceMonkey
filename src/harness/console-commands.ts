@@ -194,22 +194,112 @@ async function waitForMenuCommand(ctx: ConsoleContext, label: string): Promise<b
   }
 }
 
+const COMMAND_NAMES = CONSOLE_HELP
+  .map((line) => line.split(/\s+/)[0])
+  .filter(Boolean);
+
+function completeCommand(line: string): [string[], string] {
+  if (/\s/.test(line.trimStart())) return [[], line];
+  const word = line.trimStart();
+  return [COMMAND_NAMES.filter((name) => name.startsWith(word)), word];
+}
+
+// The prompt readline is drawing while a person types at a terminal,
+// or null when there is none (a pipe, or before commands are armed).
+let activePrompt: readline.Interface | null = null;
+
+/**
+ * Print one line of run output. With a prompt showing, the prompt and
+ * whatever is half-typed are erased, the line printed above them, and
+ * both redrawn with the cursor where it was, so streaming output never
+ * lands in the middle of a command being edited.
+ */
+export function writeOutputLine(line: string): void {
+  const rl = activePrompt;
+  if (!rl) {
+    process.stdout.write(line + '\n');
+    return;
+  }
+  // A long typed line can wrap onto several rows; erase from its top.
+  const { rows } = rl.getCursorPos();
+  readline.moveCursor(process.stdout, 0, -rows);
+  readline.cursorTo(process.stdout, 0);
+  readline.clearScreenDown(process.stdout);
+  // readline's redraw starts by moving up as many rows as it last
+  // recorded the cursor being below the prompt's top, so pad the output
+  // by that much. Its record, not `rows`: it goes stale when pasted
+  // text wraps without a redraw. `prevRows` is internal, hence
+  // the fallback.
+  const recorded = (rl as unknown as { prevRows?: number }).prevRows ?? rows;
+  process.stdout.write(line + '\n' + '\n'.repeat(recorded));
+  rl.prompt(true);
+}
+
 /**
  * Read commands from stdin, one per line, for as long as the run lasts.
  * Whole lines only, so a piped command split across two reads still
  * runs as one. Does nothing when stdin is already closed.
+ *
+ * At a terminal, shows a `> ` prompt with line editing and history
+ * (readline's own keys: arrows, Ctrl-A/E, Ctrl-U and so on) and Tab
+ * completion of command names. Ctrl-C clears the typed line, and on an
+ * empty one it or Ctrl-D stops the run. Piped input gets neither: EOF on a pipe
+ * only means no more commands, and the run goes on.
  */
 export function readConsoleCommands(ctx: ConsoleContext): () => void {
   if (!process.stdin.readable) return () => undefined;
+  // A dumb terminal can't move the cursor, so writeOutputLine couldn't
+  // redraw around a prompt there.
+  const terminal = Boolean(process.stdin.isTTY && process.stdout.isTTY) && process.env.TERM !== 'dumb';
   let queue: Promise<void> = Promise.resolve();
-  const lines = readline.createInterface({ input: process.stdin, terminal: false });
+  const lines = terminal
+    ? readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: true,
+      prompt: '> ',
+      // Tab completes a command name.
+      completer: completeCommand,
+    })
+    : readline.createInterface({ input: process.stdin, terminal: false });
   lines.on('line', (line) => {
     // Serialized: two lines typed quickly must not interleave.
     queue = queue.then(() => runConsoleCommand(line, ctx)).catch((err) => {
       ctx.out(`[sm-dev] ${(err as Error).message}`);
     });
+    if (terminal) lines.prompt();
   });
+  // Erases the prompt and stops drawing output around it. Before the
+  // interface closes, or after readline closes it itself on Ctrl-D, so
+  // later output neither redraws a dead prompt nor resumes stdin.
+  const dropPrompt = (): void => {
+    if (activePrompt !== lines) return;
+    activePrompt = null;
+    readline.moveCursor(process.stdout, 0, -lines.getCursorPos().rows);
+    readline.cursorTo(process.stdout, 0);
+    readline.clearScreenDown(process.stdout);
+  };
+  if (terminal) {
+    // readline puts the terminal in raw mode, so Ctrl-C arrives here
+    // rather than as the process's SIGINT. As in a shell, it first
+    // clears a half-typed line, and only stops the run on an empty one.
+    lines.on('SIGINT', () => {
+      if (!lines.line) {
+        ctx.stop();
+        return;
+      }
+      lines.write(null, { ctrl: true, name: 'e' });
+      lines.write(null, { ctrl: true, name: 'u' });
+    });
+    lines.on('close', () => {
+      dropPrompt();
+      ctx.stop();
+    });
+    activePrompt = lines;
+    lines.prompt();
+  }
   return () => {
+    dropPrompt();
     lines.close();
     process.stdin.pause();
   };

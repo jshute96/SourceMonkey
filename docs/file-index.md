@@ -177,7 +177,7 @@ command. See `docs/harness-design.md`.
 | `src/harness/inject.ts` | Attaches prepared scripts to a Playwright page over CDP, in the right world, with a message channel per world to the host |
 | `src/harness/fixture.ts` | The Playwright fixture a consumer repo imports: `loadUserscript`, `gm`, `reports`, `serveSnapshot` over a host and attachment per test |
 | `src/harness/capture-page.ts` | A page's DOM as a standalone file, scripts disabled and a `<base>` added; shared by `sm-dev snapshot` and the fixture's `saveSnapshot` |
-| `src/harness/console-commands.ts` | The commands typed while `sm-dev run` streams: fire a menu command, pick a script, read and write its values, reload |
+| `src/harness/console-commands.ts` | The commands typed while `sm-dev run` streams, and the terminal prompt output is drawn around |
 | `src/harness/browser-commands.ts` | `sm-dev probe` (which selectors resolve on a page) and `sm-dev snapshot` (save a page's DOM for a spec) |
 | `src/harness/run.ts` | `sm-dev run`: open a browser, inject or push the scripts, and stream what they report |
 | `src/harness/extension-backend.ts` | `sm-dev --extension`: finds SourceMonkey's worker in the browser and drives `writeScratchScript`, `clearScratchScripts`, `soloMode`, the script log |

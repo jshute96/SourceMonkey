@@ -22,7 +22,7 @@
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
-import { CONSOLE_HELP } from './console-commands.js';
+import { CONSOLE_HELP, writeOutputLine } from './console-commands.js';
 import { NO_RULE_COVERS_URL, explainMatch, prepareScript } from './prepare.js';
 
 // A mistake in how the command was typed, as opposed to a failure while
@@ -269,7 +269,14 @@ async function runCommand(opts: Opts): Promise<number> {
   let timer: NodeJS.Timeout | null = null;
   let stop: () => void = () => undefined;
   const until = new Promise<void>((resolve) => {
-    stop = resolve;
+    // Also drops the Ctrl-C handler, so while a stopped run tears down,
+    // a Ctrl-C kills it rather than landing here again. That matters
+    // when a typed-command prompt did the stopping: its Ctrl-C (or
+    // quit) never reached this handler.
+    stop = () => {
+      if (onSigint) process.off('SIGINT', onSigint);
+      resolve();
+    };
     onSigint = () => resolve();
     process.once('SIGINT', onSigint);
     if (opts.seconds !== undefined) timer = setTimeout(resolve, opts.seconds * 1000).unref();
@@ -288,7 +295,8 @@ async function runCommand(opts: Opts): Promise<number> {
       solo: opts.solo,
       collectionRoot: opts.root,
       localRoots: opts.local,
-      out: (line) => process.stdout.write(line + '\n'),
+      // Drawn around the typed-command prompt, when one is showing.
+      out: writeOutputLine,
       until,
       onStop: () => stop(),
     });
