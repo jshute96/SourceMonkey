@@ -85,7 +85,13 @@ export async function connectBrowser(
   } else {
     endpoint = opts.cdp ?? process.env.SM_DEV_CDP ?? 'http://127.0.0.1:9233';
     try {
-      browser = await chromium.connectOverCDP(endpoint);
+      // `noDefaults` keeps Playwright's test-friendly overrides off the
+      // developer's own profile: downloads rerouted to a temp folder
+      // that is deleted on disconnect, every tab reporting focus, and
+      // a forced light color scheme. The script should see the browser
+      // as its user would. A Playwright older than the option ignores
+      // it and keeps the overrides.
+      browser = await chromium.connectOverCDP(endpoint, { noDefaults: true });
     } catch (err) {
       out(`Could not connect to a browser at ${endpoint}: ${(err as Error).message}`);
       out('Start one with a remote-debugging port, pass --cdp, or use --launch');

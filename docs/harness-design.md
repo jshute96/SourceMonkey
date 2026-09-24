@@ -251,6 +251,11 @@ into pages.
   `run` is in its own module so the Node-only commands never load
   Playwright. The `--extension` flag switches it to the extension
   backend.
+  - A connected browser is attached with `noDefaults`, which keeps
+    Playwright's test overrides off the developer's own profile:
+    - downloads rerouted to a temp folder that is deleted on disconnect;
+    - every tab reporting focus;
+    - a forced light color scheme.
   - Tab reuse (`openRunTab`): the tabs runs opened are recorded in a
     temp file with the owning pid, so a later run can take over a
     finished run's selected tab. A tab carries no mark a page couldn't
