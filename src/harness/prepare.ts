@@ -53,6 +53,7 @@ import { setConfiguredLocalRoots } from '../local-file-overrides.js';
 import { getValue, hasTag } from '../userscript-header.js';
 import { explainUrlMatch, type UrlMatchExplanation } from '../url-match.js';
 import { scriptBasename } from '../script-display.js';
+import { representativeMatch } from '../match-targets.js';
 import { sha256Hex } from '../bytes.js';
 import type { ApiSubsystem } from '../gm-api-catalog.js';
 import { checkParseNode } from './parse-check-node.js';
@@ -321,6 +322,18 @@ export const NO_RULE_COVERS_URL = 'No @match or @include covers this URL';
  */
 export function explainMatch(matching: ScriptMatching, url: string): MatchExplanation {
   return explainUrlMatch(url, matching);
+}
+
+/** Why a script has no default page, as `--all` and `open all` report it. */
+export const NO_DEFAULT_PAGE = 'Its @match names no page to open';
+
+/**
+ * The page a script is opened on when no URL is given: the first one
+ * its `@match` implies. Null when none names a page, as with a
+ * match-everything pattern.
+ */
+export function defaultPageUrl(script: PreparedScript): string | null {
+  return representativeMatch(script.matching)?.linkUrl ?? null;
 }
 
 /**

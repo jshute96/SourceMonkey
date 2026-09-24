@@ -186,6 +186,12 @@ export class PageAttachment implements PageLink {
   private readonly creatingTabs = new Set<Promise<Page | null>>();
   private disposing = false;
   private closed = false;
+  /**
+   * Called with each tab this page's scripts open with `GM_openInTab`,
+   * so a caller can inject into it too. Such a tab has no opener, so
+   * Playwright's `popup` event never names it.
+   */
+  onOpenedTab: ((tab: Page) => void) | null = null;
   private mainFrameId = '';
   // Execution contexts by id, so a binding call can be traced to its
   // frame and world, and a push can find the isolated world.
@@ -213,6 +219,7 @@ export class PageAttachment implements PageLink {
         return alreadyClosed;
       }
       this.openedTabs.add(opened);
+      this.onOpenedTab?.(opened);
       const closedCallbacks: (() => void)[] = [];
       opened.on('close', () => {
         this.openedTabs.delete(opened);
@@ -304,6 +311,9 @@ export class PageAttachment implements PageLink {
     this.mainFrameId = frameTree.frame.id;
     this.page.on('close', this.onClose);
     this.host.attachPage(this);
+    // Closed during the awaits above, before the listener was on: the
+    // event has come and gone.
+    if (this.page.isClosed()) this.onClose();
   }
 
   // ---------- PageLink ----------

@@ -267,6 +267,9 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
   // extension would have put in chrome.storage.local).
   private readonly values = new Map<string, Map<string, unknown>>();
   private readonly pages = new Set<PageLink>();
+  // Which page each report came from, for telling tabs apart. Kept off
+  // the records themselves, so they stay plain data a test can compare.
+  private readonly recordPages = new WeakMap<object, PageLink>();
   readonly reports: HostReports = {
     started: [], errors: [], skipped: [], logs: [], domBlocked: [], requests: [],
     tabs: [], menuCommands: [], notifications: [], downloads: [], windowCalls: [],
@@ -325,6 +328,11 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
 
   hasScript(scriptId: string): boolean {
     return this.scripts.has(scriptId);
+  }
+
+  /** The page a record in `reports` came from, if it is still known. */
+  pageOf(record: object): PageLink | undefined {
+    return this.recordPages.get(record);
   }
 
   scriptIds(): string[] {
@@ -442,6 +450,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
         at: Date.now(),
         reason: verdict.rule ?? NO_RULE_COVERS_URL,
       };
+      this.recordPages.set(report, page);
       this.reports.skipped.push(report);
       this.notify('skip', report);
     }
@@ -466,14 +475,14 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
         return this.checkPending(payload, payload.needsValues === true
           && (origin === 'isolated' || this.pageMayActAs(str(payload.id), from, STORAGE_SUBSYSTEMS)));
       case 'sm:start': {
-        const report = this.baseReport(payload);
+        const report = this.baseReport(payload, from);
         this.reports.started.push(report);
         this.notify('start', report);
         return undefined;
       }
       case 'sm:error': {
         const report: ErrorReport = {
-          ...this.baseReport(payload),
+          ...this.baseReport(payload, from),
           message: str(payload.message),
           stack: str(payload.stack),
         };
@@ -482,7 +491,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
         return undefined;
       }
       case 'sm:abandoned': {
-        const report: SkipReport = { ...this.baseReport(payload), reason: str(payload.reason) || 'skip' };
+        const report: SkipReport = { ...this.baseReport(payload, from), reason: str(payload.reason) || 'skip' };
         this.reports.skipped.push(report);
         this.notify('skip', report);
         return undefined;
@@ -498,6 +507,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
           at: Date.now(),
           message: str(payload.message),
         };
+        this.recordPages.set(report, from);
         this.reports.logs.push(report);
         this.notify('log', report);
         return { ok: true };
@@ -542,6 +552,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
           this.reports.menuCommands.push(record);
         }
         this.menuOwners.set(record, from);
+        this.recordPages.set(record, from);
         this.notify('menu-command', record);
         return { ok: true };
       }
@@ -567,6 +578,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
           scriptId, requestId, text: str(details.text), title: str(details.title), at: Date.now(),
         };
         this.reports.notifications.push(record);
+        this.recordPages.set(record, from);
         // A `timeout` closes the notification and fires `ondone`, as
         // Chrome's auto-close does in the extension.
         const timeout = typeof details.timeout === 'number' && details.timeout > 0 ? details.timeout : 0;
@@ -652,7 +664,9 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
       if (w.deleted) store.delete(w.key);
       else store.set(w.key, w.value);
     }
-    this.notify('value-write', { scriptId, writes });
+    const write = { scriptId, writes };
+    this.recordPages.set(write, from);
+    this.notify('value-write', write);
     // Broadcast to every other page running the script, as the worker
     // does to its other tabs. The writer already applied the writes to
     // its own cache.
@@ -690,6 +704,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
       scriptId, id, url: request.url, method: (request.method ?? 'GET').toUpperCase(), at: Date.now(),
     };
     this.reports.requests.push(record);
+    this.recordPages.set(record, from);
     const emit = async (event: GmXhrEvent): Promise<void> => {
       record.outcome = event.kind;
       if (event.kind === 'load') record.status = event.response.status;
@@ -776,6 +791,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
     if (!isAllowedTabUrl(url)) return { ok: false, error: tabUrlRefusedMessage(url) };
     const record: TabRecord = { scriptId, requestId, url, active: payload.active === true, at: Date.now(), closed: false };
     this.reports.tabs.push(record);
+    this.recordPages.set(record, from);
     const entry = { tab: null as OpenedTab | null, record, from, closeRequested: false };
     this.openTabs.set(requestId, entry);
     const closed = (): void => {
@@ -827,6 +843,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
     if (!script || !requestId) return { ok: false, error: 'This script is not attached to the harness' };
     const record: DownloadRecord = { scriptId, requestId, url, name, at: Date.now() };
     this.reports.downloads.push(record);
+    this.recordPages.set(record, from);
     const emit = async (event: GmDownloadEvent): Promise<void> => {
       if (event.kind === 'progress') return;
       record.outcome = event.kind;
@@ -921,8 +938,17 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
   async fireMenuCommand(nameOrId: string, scriptId?: string): Promise<boolean> {
     const entry = [...this.reports.menuCommands].reverse().find((m) =>
       (scriptId === undefined || m.scriptId === scriptId) && (m.name === nameOrId || m.commandId === nameOrId));
-    const owner = entry && this.menuOwners.get(entry);
-    if (!entry || !owner) return false;
+    return entry ? this.fireMenuEntry(entry) : false;
+  }
+
+  /**
+   * Fire one entry of `reports.menuCommands` in the page that
+   * registered it. By the entry, since two tabs can register the same
+   * id. False once that page has moved on.
+   */
+  async fireMenuEntry(entry: MenuCommandRecord): Promise<boolean> {
+    const owner = this.menuOwners.get(entry);
+    if (!owner) return false;
     await owner.push({
       type: 'sm:gm-menu-fire', smWorld: this.worldOf(entry.scriptId), scriptId: entry.scriptId, commandId: entry.commandId,
     }).catch(() => undefined);
@@ -977,14 +1003,16 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
 
   // ---------- Helpers ----------
 
-  private baseReport(payload: Record<string, unknown>): ScriptReport {
+  private baseReport(payload: Record<string, unknown>, from: PageLink): ScriptReport {
     const scriptId = str(payload.id);
-    return {
+    const report = {
       scriptId,
       name: str(payload.name) || this.nameOf(scriptId),
       url: str(payload.url),
       at: Date.now(),
     };
+    this.recordPages.set(report, from);
+    return report;
   }
 
   private nameOf(scriptId: string): string {

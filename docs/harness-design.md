@@ -183,6 +183,9 @@ into pages.
     running the script (attached, holding it, URL matching), XHR events, tab
     closed, menu fired, notification events, download events, and
     `urlchange` from CDP's `Page.navigatedWithinDocument`.
+  - `pageOf(record)` says which attached page sent a report. It is kept
+    in a `WeakMap` rather than on the record, so records stay plain
+    data a test can compare.
   - `GM_openInTab` opens a real page in the same browser context (so a
     test can wait for it), `window.close` and `window.focus` act on the
     page, and `GM_download` fetches the bytes from Node into a
@@ -260,8 +263,44 @@ into pages.
     temp file with the owning pid, so a later run can take over a
     finished run's selected tab. A tab carries no mark a page couldn't
     fake, hence the file.
+  - Opened tabs (`FollowedTabs`): a tab the run's tab opens (link,
+    `window.open`, `GM_openInTab`), and any tab those open, gets its
+    own attachment on the same host with every loaded script.
+    - Found by Playwright's `popup` event, plus a hook on the
+      attachment for `GM_openInTab`, whose tab has no opener.
+    - Tabs the person opens have no opener, so they are left alone.
+    - Playwright reports a tab only once its document has committed,
+      so the scripts also run in that document (`runImmediately`). An
+      earlier run-at than idle may run late there, and the run says so.
+    - Link and `window.open` tabs stay open when the run ends, as
+      under the extension. `GM_openInTab` ones still close with the
+      opener's attachment.
+    - It also holds T1, the run's own tab, and hands the commands the
+      list of open tabs.
+    - `newTab` opens a tab for `tabs new` and `--all`, attached before
+      its first page loads. It takes the tab's number before awaiting
+      anything, so tabs opened together are numbered in call order.
+    - Host output from a followed tab gets its `[T<n>]` prefix through
+      `host.pageOf`, and a map of numbers that outlives the tab, so a
+      late report (a request finishing) still names it.
+    - The close listener goes on before any await, so a tab that closes
+      during setup is dropped, not listed forever.
 - **`console-commands.ts`**: the commands typed while `run` streams,
   and the terminal prompt output is drawn around.
+  - Each kind of thing has its own style of name: scripts `1`, tabs
+    `T1`, menu commands `M1`, with `T2.` in front to name one on
+    another tab. A bare number only ever means a script; one typed
+    where a tab or menu command belongs gets a "Did you mean T2?" hint.
+  - A `T<n>.` split only happens before a number or `M<n>` (or, for
+    `menu`, a label), so a file name like `t1.user.js` stays a script.
+  - Per-tab state (started or skipped, menu commands, errors) is the
+    host's reports filtered by `pageOf`. A script counts as running on
+    a tab when its last report there is a start rather than a skip.
+  - Menu commands fire by record (`fireMenuEntry`), not by id, since
+    two tabs can register the same custom id.
+  - A script's default page (`defaultPageUrl` in `prepare.ts`) is
+    the one `run` opens without `--url`; `open`, `tabs new` and
+    `--all` use the same one.
   - `DialogTracker` listens for page dialogs, because Playwright
     dismisses any dialog nobody listens for, which answers a script's
     `prompt()` with Cancel. Dialogs stay open for the person or a typed
@@ -331,11 +370,21 @@ Each was checked in a throwaway script before the harness was built:
 - **Playwright lists an extension's service worker on a
   `connectOverCDP` connection** (`context.serviceWorkers()`), so the
   extension backend uses `worker.evaluate` in both cases.
+- **A new tab can't be held before it loads from Playwright.** Found
+  while adding opened-tab injection:
+  - Playwright's `popup` event fires after the tab's document commits,
+    so init scripts added then first reach its next document.
+  - Holding the tab (`Target.setAutoAttach` with
+    `waitForDebuggerOnStart`) needs a browser-level session in flat
+    mode, whose child sessions Playwright's `CDPSession` can't address.
+  - A page-level auto-attach doesn't cover popups.
 
 ## Open questions
 
-- Whether a tab `GM_openInTab` opens under the push backend should get
-  the scripts that match it, as the extension's would. Today it gets
-  none; attaching after creation would reach only its next document.
+- Whether opened tabs should get exact `document-start` timing, via
+  a raw CDP connection of our own that holds each new tab until the
+  scripts are in.
+- Whether the Playwright fixture should follow opened tabs too, as an
+  opt-in.
 - Whether the package should be published to npm, which would remove
   the consumer's `injected` workaround and the build allowlist.

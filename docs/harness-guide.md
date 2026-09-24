@@ -128,6 +128,13 @@ Options for the browser commands (`run`, `probe`, `snapshot`, `clear`):
 
 Other `run` flags:
 
+- `--all`, with several scripts, opens each one's default page, one
+  tab per distinct page, instead of only the first script's. The
+  extra tabs are T2, T3 (see [Several tabs](#several-tabs)), and stay
+  open when the run ends. Scripts it opened no tab for are listed at
+  the end, with the reason. Works with `--extension` too, where only
+  page output carries the tab's name (the extension's Log entries
+  don't say which tab). It can't be combined with `--url`.
 - `--values '{"key": 1}'` seeds `GM_*` storage before the script runs.
 - `--fire-menu "Label"` invokes a registered menu command once the
   page has loaded. For anything beyond one invocation, use the typed
@@ -155,6 +162,28 @@ selected reuses it rather than piling up tabs.
 - With several windows open, each window's showing tab counts, and the
   first free one found is taken.
 
+### Tabs the page opens
+
+A tab the run's tab opens gets the loaded scripts too, as it would
+under the extension, where each one's `@match` decides:
+- Covered: links and `window.open` calls, `GM_openInTab`, and tabs
+  those tabs open in turn.
+- Tabs you open yourself are left alone, unless you open them from a
+  controlled tab's link (Ctrl-click, middle-click), which gives them
+  that tab as their opener.
+- Tabs are named `T1` (the run's own), `T2` and so on. A followed
+  tab's lines, its page output and the harness's reports alike, are
+  prefixed with its name, as in `[T2]`.
+- The typed commands can list these tabs and act on any of them (see
+  [Several tabs](#several-tabs)).
+- When the run ends, link and `window.open` tabs stay open.
+  `GM_openInTab` ones close, as they do in tests, so runs don't pile
+  up tabs.
+- The harness only sees such a tab once its page has started loading,
+  so a `document-start` script can run late there. The run prints a
+  note when that may have happened; `document-idle` scripts, the
+  default, run on time.
+
 ### Page dialogs
 
 A script's `alert`, `confirm` or `prompt` is left open and reported in
@@ -178,20 +207,67 @@ commands from its own input while it streams.
 | --- | --- |
 | `use` | Lists the loaded scripts, numbered |
 | `use <script>` | Picks the script `get` and `set` act on (the first, until changed) |
-| `status` | Prints the page's URL, any open dialog, and each script's state: started or skipped, and counts of its menu commands, stored values and errors (those that are not zero) |
-| `menu` | Lists the registered menu commands, numbered, under the script that registered each |
-| `menu <n or label>` | Fires one, as picking it from the toolbar would. Piped in while none is registered yet, it waits a moment for a script that is still loading |
+| `status [what]` | Prints the page's URL, any open dialog, and each script's state: started or skipped, and counts of its menu commands, stored values and errors (those that are not zero). Also takes a script, a tab (`T2`, `T2.3`) or `all` |
+| `menu` | Lists the registered menu commands, numbered `M1`, `M2`, under the script that registered each |
+| `menu <M-number or label>` | Fires one, as picking it from the toolbar would. Piped in while none is registered yet, it waits a moment for a script that is still loading |
 | `values [script]` | Prints what every script has stored, or just one script |
 | `get <key>` | Prints one stored value |
 | `set <key> <json>` | Stores a value, as another tab's write would: a running script sees it and its change listeners fire |
-| `reload`, `open <url>` | Reloads the page, or navigates to another |
-| `focus` | Brings the tab to the front, un-minimizing its window |
+| `tabs [tab]` | Lists the controlled tabs, or picks the one the page commands act on (see [Several tabs](#several-tabs)) |
+| `tabs new [page]` | Opens a new tab with the scripts, picks it and brings it to the front. `tabs new all` opens one per script's default page |
+| `reload [tab]` | Reloads the page |
+| `open [page]` | Navigates to a URL, or to a script's default page: the `use` script's when bare, or one by number (`open 2`, or `open T2.3` in T2). `open all` is `tabs new all` |
+| `focus [tab]` | Brings the tab to the front, un-minimizing its window |
 | `accept [text]`, `dismiss` | Answers an open dialog (see [Page dialogs](#page-dialogs)) |
 | `help`, `quit` | The list, and stop |
 
 A `<script>` is its number in the `use` list, its path, file name or
 `@name`, or a piece of its name or path that no other loaded script
 shares.
+
+A `[page]` is a URL, or a script's number for its default page: the
+first page its `@match` names. Only a number counts as a script there,
+so a URL is never mistaken for one.
+
+#### Several tabs
+
+Once the page opens tabs of its own (see
+[Tabs the page opens](#tabs-the-page-opens)), each kind of thing has its
+own style of name, so they can't be mixed up:
+- Scripts are `1`, `2`, as `use` lists them.
+- Tabs are `T1`, `T2`, as `tabs` lists them.
+- Menu commands are `M1`, `M2`, as `menu` lists them for one tab.
+- A `T<n>.` prefix names one on another tab: `T2.3` is script 3 there,
+  `T2.M1` that tab's first menu command.
+- Tabs and menu commands always take their letter: `2` alone means
+  script 2, and typed where a tab or menu command belongs, it gets a
+  hint (`Did you mean T2?`).
+
+How the commands treat tabs:
+- `tabs T2` picks the tab that `status`, `menu`, `reload`, `open`,
+  `focus`, `accept` and `dismiss` act on. It starts as T1. If the
+  picked tab closes, the first one still open takes over.
+- Any tab can be closed, T1 included, and the run notes it. With none
+  left, `tabs` says `No active tabs`, and `tabs new` opens another.
+- `tabs new [page]` opens a tab of your own with the scripts, picks it
+  and brings it to the front. Unlike one you open in the browser, it
+  is controlled from the start. It stays open when the run ends.
+- `tabs new all` (or `open all`) opens one tab per script's default
+  page, as `--all` does at startup, and leaves the picked tab as it
+  was. Scripts it opened no tab for are listed at the end.
+- `tabs` lists each tab's URL, which tab opened it, any open dialog,
+  and the scripts running there, with `*` on the picked tab and, under it,
+  on the `use` script.
+- `status` covers the picked tab. A script also running on other tabs
+  gets an `Also active on N other tabs` line, and the tab list follows
+  at the bottom.
+- `status all`, `menu all` and `values all` show every tab in turn,
+  each under a `Tab T<n>: <url>` heading.
+- `menu T2` lists T2's commands, and `menu T2.M1` fires one there
+  without switching tabs.
+- `values T2` shows the scripts running on T2. Stored values belong to
+  the script, so every tab sees the same ones.
+- `use T2.3` picks script 3 and tab T2 together.
 
 When both input and output are a terminal, commands are typed at a
 `> ` prompt:
@@ -364,12 +440,13 @@ Close, but not the same:
   reached a secure origin (`https:`, `localhost`, `file:`); a script
   loaded before that sees `null` there.
 - A tab `GM_openInTab` opens is a real page in the same context, born
-  at its URL as Chrome's would be, but no scripts are injected into it;
-  the extension would inject whatever matches the new page. It is
-  closed when the attachment is disposed, where the extension would
-  leave it open, so a test run leaves no tabs behind. It needs a
-  context that belongs to a browser, so it fails under Playwright's
-  `launchPersistentContext`.
+  at its URL as Chrome's would be. In the fixture no scripts are
+  injected into it; the extension would inject whatever matches the
+  new page (`sm-dev run` does, see
+  [Tabs the page opens](#tabs-the-page-opens)). It is closed when the
+  attachment is disposed, where the extension would leave it open, so
+  a test run leaves no tabs behind. It needs a context that belongs to
+  a browser, so it fails under Playwright's `launchPersistentContext`.
 - `GM_download` fetches the file from Node into a directory of the
   host's choosing (the fixture uses the test's output directory) and
   reports the extension's events, numbering a taken name as Chrome

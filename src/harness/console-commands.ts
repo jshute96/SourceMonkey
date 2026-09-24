@@ -15,12 +15,36 @@ import readline from 'node:readline';
 
 import type { Dialog, Page } from '@playwright/test';
 
-import type { HarnessHost, MenuCommandRecord } from './host.js';
-import { preparedScriptMatches, preparedScriptName, withDefaultScheme, type PreparedScript } from './prepare.js';
+import type { HarnessHost, MenuCommandRecord, PageLink } from './host.js';
+import { defaultPageUrl, NO_DEFAULT_PAGE, preparedScriptMatches, preparedScriptName, withDefaultScheme, type PreparedScript } from './prepare.js';
+
+/**
+ * A tab the run controls: its own, or one a controlled tab opened.
+ * Named `T<n>` in every list and command.
+ */
+export interface ControlledTab {
+  /** T1 is the run's own tab; the tabs it opens count up from 2. */
+  n: number;
+  page: Page;
+  /** The page as the host knows it, to tell this tab's reports apart. */
+  link: PageLink;
+  /** The page's JavaScript dialogs, for `accept` and `dismiss`. */
+  dialogs?: DialogTracker;
+  /** The number of the tab that opened this one. */
+  openedBy?: number;
+}
 
 export interface ConsoleContext {
   host: HarnessHost;
-  page: Page;
+  /** The controlled tabs still open, T1 first. */
+  tabs: () => ControlledTab[];
+  /** The tab the page commands act on. Starts as T1; `tabs` changes it. */
+  tab?: ControlledTab;
+  /**
+   * Open a new controlled tab, at `url` or blank, for `tabs new`.
+   * Absent where the caller can't open one.
+   */
+  newTab?: (url?: string) => Promise<ControlledTab>;
   /** The scripts this run injected, in load order. */
   scripts: PreparedScript[];
   /**
@@ -33,35 +57,34 @@ export interface ConsoleContext {
    * what is registered, so `menu` never waits for a late one.
    */
   interactive?: boolean;
-  /** The page's JavaScript dialogs, for `accept` and `dismiss`. */
-  dialogs?: DialogTracker;
   out: (line: string) => void;
   /** Ends the run, as Ctrl-C does. */
   stop: () => void;
 }
 
-// Grouped as `help` prints them. Also the "Interactive commands" part
-// of `sm-dev --help`, so the two lists can't drift apart.
+// Grouped as `help` prints them.
 const COMMAND_GROUPS: { title: string; lines: string[] }[] = [
   {
     title: 'Scripts',
     lines: [
       'use [script]      List the loaded scripts; with one, pick the script',
-      '                  get and set act on',
-      'status            Show the page\'s URL and status for each script',
+      '                  get and set act on (T2.3 picks tab T2 too)',
+      'status [what]     Show the tab\'s URL and each script\'s status there;',
+      '                  or one script (3, T2.3), a tab (T2), or all tabs',
     ],
   },
   {
     title: 'Menu commands',
     lines: [
-      'menu [n|label]    List the registered menu commands; with a number',
-      '                  from that list or a label, fire one',
+      'menu [what]       List the tab\'s menu commands, a tab\'s (T2), or all',
+      '                  tabs\'; with a number (M2, T2.M2) or a label, fire one',
     ],
   },
   {
     title: 'Stored values',
     lines: [
-      'values [script]   Print what every script has stored, or one script',
+      'values [what]     Print what every script has stored, or one script\'s,',
+      '                  or the scripts running on a tab (T2), or on all tabs',
       'get <key>         Print one stored value',
       'set <key> <json>  Store a value, as another tab\'s write would',
     ],
@@ -69,9 +92,15 @@ const COMMAND_GROUPS: { title: string; lines: string[] }[] = [
   {
     title: 'The page',
     lines: [
-      'reload            Reload the page',
-      'open <url>        Navigate to another page',
-      'focus             Bring the tab to the front',
+      'tabs [T<n>]       List the tabs the run controls; with one, pick the',
+      '                  tab the commands for the page act on',
+      'tabs new [page]   Open a new tab with the scripts, pick it and focus',
+      '                  it; with all, one tab for each script\'s page',
+      'reload [T<n>]     Reload the page',
+      'open [page]       Navigate to a URL, or to a script\'s default page',
+      '                  (the use script\'s, or one by number: 2, T2.3);',
+      '                  open all is tabs new all',
+      'focus [T<n>]      Bring the tab to the front',
       'accept [text]     Answer an open dialog with OK (a prompt with text)',
       'dismiss           Answer an open dialog with Cancel',
     ],
@@ -85,10 +114,17 @@ const COMMAND_GROUPS: { title: string; lines: string[] }[] = [
   },
 ];
 
+const NO_TABS = '[sm-dev] No tabs are active. Type tabs new to open one.';
+
+// The commands that act on the current tab, which there may not be.
+const NEEDS_A_TAB = new Set(['menu', 'status', 'open', 'reload', 'focus', 'accept', 'dismiss']);
+
 export const CONSOLE_HELP = [
   ...COMMAND_GROUPS.flatMap((group) => [`${group.title}:`, ...group.lines.map((line) => `  ${line}`)]),
   'A script is named by its number in the use list, or by part of its',
-  'name or path.',
+  'name or path. Tabs are named T1, T2 and so on, and menu commands M1,',
+  'M2, as their lists show them. A T<n>. prefix (T2.3, T2.M1) names one',
+  'on that tab rather than the current one.',
 ];
 
 /**
@@ -113,13 +149,26 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
     ctx.out(`[sm-dev] The ${name} command takes no arguments`);
     return false;
   };
+  const picked = currentTab(ctx);
+  // Every controlled tab can be closed, T1 included. `open all` opens
+  // tabs, so it needs none.
+  if (!picked && NEEDS_A_TAB.has(command) && !(command === 'open' && argument === 'all')) {
+    ctx.out(NO_TABS);
+    return;
+  }
+  // Only undefined for the commands that don't act on it.
+  const tab = picked as ControlledTab;
   // An open dialog blocks the page's JavaScript, so a command that
   // reaches into the page would wait on it, and hold up the accept or
-  // dismiss typed after it.
-  const blockedByDialog = (): boolean => {
-    const dialog = ctx.dialogs?.current;
-    if (!dialog) return false;
-    ctx.out(`[sm-dev] The page is waiting on ${dialogKind(dialog)} dialog. Type accept or dismiss first.`);
+  // dismiss typed after it. `set` reaches every tab, so any tab's
+  // dialog blocks it.
+  const blockedByDialog = (tabs: ControlledTab[] = [tab]): boolean => {
+    const waiting = tabs.find((t) => t.dialogs?.current);
+    if (!waiting) return false;
+    const kind = dialogKind(waiting.dialogs!.current!);
+    ctx.out(waiting === tab
+      ? `[sm-dev] The page is waiting on ${kind} dialog. Type accept or dismiss first.`
+      : `[sm-dev] ${tabName(waiting)} is waiting on ${kind} dialog. Type tabs ${tabName(waiting)}, then accept or dismiss.`);
     return true;
   };
 
@@ -135,22 +184,45 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
       ctx.stop();
       return;
     case 'menu': {
-      if (!argument) {
-        const groups = menuGroups(ctx);
-        if (groups.length === 0) {
-          ctx.out('[sm-dev] No menu commands are registered');
-          return;
-        }
+      if (argument === 'all') {
         ctx.out('Menu commands:');
-        let n = 0;
-        for (const group of groups) {
-          ctx.out(group.label);
-          for (const c of group.commands) ctx.out(`    ${++n}: ${c.name}`);
-        }
+        printPerTab(ctx, tab, (t) => menuLines(ctx, t), 'None registered');
         return;
       }
-      if (blockedByDialog()) return;
-      await fireMenu(ctx, argument);
+      const ref = tabRef(ctx, argument, tab, true);
+      if (!ref) return;
+      if (!ref.rest) {
+        const lines = menuLines(ctx, ref.tab);
+        if (lines.length === 0) {
+          ctx.out(noMenusMessage(ctx, ref.tab));
+          return;
+        }
+        ctx.out(`Menu commands${onTab(ctx, ref.tab)}:`);
+        for (const l of lines) ctx.out(l);
+        return;
+      }
+      if (blockedByDialog([ref.tab])) return;
+      await fireMenu(ctx, ref.tab, ref.rest);
+      return;
+    }
+    case 'tabs':
+    case 'tab': {
+      if (!argument) {
+        printTabs(ctx);
+        return;
+      }
+      if (rest[0] === 'new') {
+        await openNewTab(ctx, rest);
+        return;
+      }
+      if (rest.length > 1) {
+        ctx.out('[sm-dev] The tabs command takes one tab, e.g. tabs T2');
+        return;
+      }
+      const picked = pickTab(ctx, argument);
+      if (!picked) return;
+      ctx.tab = picked;
+      ctx.out(`[sm-dev] The page commands now act on ${tabName(picked)} (${picked.page.url()})`);
       return;
     }
     case 'use': {
@@ -159,33 +231,69 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
         for (const script of ctx.scripts) ctx.out(scriptRow(ctx, script));
         return;
       }
-      const found = pickScript(ctx, argument);
+      const ref = tabRef(ctx, argument, tab);
+      if (!ref) return;
+      if (!ref.rest) {
+        ctx.out('[sm-dev] The use command needs a script, e.g. use 2 or use T2.2');
+        return;
+      }
+      const found = pickScript(ctx, ref.rest);
       if (!found) return;
       ctx.current = found;
-      ctx.out(`[sm-dev] Using ${scriptLabel(found)} for get and set`);
+      if (!ref.named) {
+        ctx.out(`[sm-dev] Using ${scriptLabel(found)} for get and set`);
+        return;
+      }
+      ctx.tab = ref.tab;
+      ctx.out(`[sm-dev] Using ${scriptLabel(found)} for get and set, and ${tabName(ref.tab)} for the page commands`);
       return;
     }
-    case 'status':
-      if (!takesNothing()) return;
-      printStatus(ctx);
+    case 'status': {
+      if (argument === 'all') {
+        printPerTab(ctx, tab, (t) => statusLines(ctx, t, ctx.scripts, false));
+        return;
+      }
+      const ref = tabRef(ctx, argument, tab);
+      if (!ref) return;
+      const script = ref.rest ? pickScript(ctx, ref.rest) : undefined;
+      if (script === null) return;
+      const several = ctx.tabs().length > 1;
+      ctx.out(`Page${several ? ` (${tabName(ref.tab)})` : ''}: ${ref.tab.page.url()}`);
+      for (const l of statusLines(ctx, ref.tab, script ? [script] : ctx.scripts, true)) ctx.out(l);
+      // The other tabs too, unless one script was asked about.
+      if (several && !script) printTabs(ctx);
       return;
+    }
     case 'values': {
-      const scripts = argument ? [pickScript(ctx, argument)] : ctx.scripts;
-      if (scripts[0] === null) return;
-      if (scripts.length === 0) {
+      if (ctx.scripts.length === 0) {
         ctx.out('[sm-dev] No script is loaded');
         return;
       }
+      if (argument === 'all') {
+        await settleWrites();
+        // The values are each script's, the same on every tab; per
+        // tab, this shows which scripts are running there to use them.
+        ctx.out('Stored values:');
+        printPerTab(ctx, tab, (t) => valueLines(ctx, runningOn(ctx, t)), 'No script is running here');
+        return;
+      }
+      const ref = tabRef(ctx, argument, tab);
+      if (!ref) return;
+      let scripts = ctx.scripts;
+      if (ref.rest) {
+        const found = pickScript(ctx, ref.rest);
+        if (!found) return;
+        scripts = [found];
+      } else if (ref.named) {
+        scripts = runningOn(ctx, ref.tab);
+        if (scripts.length === 0) {
+          ctx.out(`[sm-dev] No script is running on ${tabName(ref.tab)}`);
+          return;
+        }
+      }
       await settleWrites();
       ctx.out('Stored values:');
-      for (const script of scripts as PreparedScript[]) {
-        ctx.out(scriptRow(ctx, script));
-        const id = script.spec?.id;
-        const values = id ? ctx.host.getValues(id) : {};
-        const keys = Object.keys(values);
-        if (keys.length === 0) ctx.out('    Nothing stored');
-        for (const key of keys) ctx.out(`    ${key} = ${JSON.stringify(values[key])}`);
-      }
+      for (const l of valueLines(ctx, scripts)) ctx.out(l);
       return;
     }
     case 'get': {
@@ -219,7 +327,7 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
         ctx.out(`[sm-dev] ${raw} is not JSON. A string needs quotes.`);
         return;
       }
-      if (blockedByDialog()) return;
+      if (blockedByDialog(ctx.tabs())) return;
       // Through the host, so a running script sees it on its next read
       // and its value-change listeners fire, as another tab's write
       // would.
@@ -227,41 +335,58 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
       ctx.out(`[sm-dev] Set ${key}${whose}`);
       return;
     }
-    case 'reload':
-      if (!takesNothing() || blockedByDialog()) return;
-      await ctx.page.reload().catch((err) => ctx.out(`[sm-dev] Reload failed: ${(err as Error).message}`));
+    case 'reload': {
+      const target = argument ? pickTab(ctx, argument) : tab;
+      if (!target || blockedByDialog([target])) return;
+      await target.page.reload().catch((err) => ctx.out(`[sm-dev] Reload failed: ${(err as Error).message}`));
       return;
+    }
     case 'open': {
-      if (!argument) {
-        ctx.out('[sm-dev] The open command needs a URL');
+      if (argument === 'all') {
+        await openNewTab(ctx, ['new', 'all']);
         return;
       }
       if (rest.length > 1) {
-        ctx.out('[sm-dev] The open command takes one URL');
+        ctx.out('[sm-dev] The open command takes one URL or script');
         return;
       }
-      if (blockedByDialog()) return;
-      await ctx.page.goto(withDefaultScheme(argument))
+      // `T2`: the use script's page, in T2; `T2.3`: script 3's. Only
+      // those shapes, so a host like `t2.example.com` stays a URL.
+      const target = TAB_REF.test(argument) ? tabRef(ctx, argument, tab) : { tab, rest: argument };
+      if (!target) return;
+      const url = target.rest ? pageFor(ctx, target.rest) : current ? scriptPage(ctx, current) : null;
+      if (!url) {
+        if (!current) ctx.out('[sm-dev] The open command needs a URL, since no script is loaded');
+        return;
+      }
+      if (blockedByDialog([target.tab])) return;
+      await target.tab.page.goto(url)
         .catch((err) => ctx.out(`[sm-dev] Navigation failed: ${(err as Error).message}`));
       return;
     }
-    case 'focus':
-      if (!takesNothing()) return;
-      await focusTab(ctx.page)
-        .then(() => ctx.out('[sm-dev] Brought the tab to the front'))
-        .catch((err) => ctx.out(`[sm-dev] Could not bring the tab to the front: ${(err as Error).message}`));
+    case 'focus': {
+      const target = argument ? pickTab(ctx, argument) : tab;
+      if (!target) return;
+      const which = ctx.tabs().length > 1 ? tabName(target) : 'the tab';
+      await focusTab(target.page)
+        .then(() => ctx.out(`[sm-dev] Brought ${which} to the front`))
+        .catch((err) => ctx.out(`[sm-dev] Could not bring ${which} to the front: ${(err as Error).message}`));
       return;
+    }
     case 'accept':
     case 'dismiss': {
       if (command === 'dismiss' && !takesNothing()) return;
-      const dialog = ctx.dialogs?.take();
+      const dialog = tab.dialogs?.take();
       if (!dialog) {
-        ctx.out('[sm-dev] No dialog is open');
+        const elsewhere = ctx.tabs().find((t) => t.dialogs?.current);
+        ctx.out(elsewhere
+          ? `[sm-dev] No dialog is open on ${tabName(tab)}. ${tabName(elsewhere)} has one; type tabs ${tabName(elsewhere)} first.`
+          : '[sm-dev] No dialog is open');
         return;
       }
       if (argument && dialog.type() !== 'prompt') {
         ctx.out(`[sm-dev] Only a prompt dialog takes text. This one is ${dialogKind(dialog)}.`);
-        ctx.dialogs!.putBack(dialog);
+        tab.dialogs!.putBack(dialog);
         return;
       }
       // A bare accept keeps the prompt's own default, as pressing OK
@@ -323,17 +448,253 @@ function pickScript(ctx: ConsoleContext, arg: string): PreparedScript | null {
   return null;
 }
 
-// The registered menu commands under the script that registered each,
-// in load order. The numbers `menu` prints count through this, so
-// firing by number reads the same order.
-function menuGroups(ctx: ConsoleContext): { label: string; commands: MenuCommandRecord[] }[] {
-  const all = ctx.host.reports.menuCommands;
+// ---------- Tabs ----------
+
+function tabName(tab: ControlledTab): string {
+  return `T${tab.n}`;
+}
+
+// The tab the page commands act on. One that has closed gives way to
+// T1, said once so a command doesn't land somewhere unexpected.
+function currentTab(ctx: ConsoleContext): ControlledTab | undefined {
+  const open = ctx.tabs();
+  if (ctx.tab && !open.includes(ctx.tab)) {
+    // With none left, the command's own reply says so.
+    if (open[0]) ctx.out(`[sm-dev] ${tabName(ctx.tab)} has closed, so the page commands now act on ${tabName(open[0])}`);
+    ctx.tab = undefined;
+  }
+  // Remembered, so the tab closing later is noted as above.
+  ctx.tab ??= open[0];
+  return ctx.tab;
+}
+
+// ` on T2` in a heading, only when there is more than one tab to
+// tell apart.
+function onTab(ctx: ConsoleContext, tab: ControlledTab): string {
+  return ctx.tabs().length > 1 ? ` on ${tabName(tab)}` : '';
+}
+
+function fromTab<T extends object>(ctx: ConsoleContext, tab: ControlledTab, records: T[]): T[] {
+  return records.filter((r) => ctx.host.pageOf(r) === tab.link);
+}
+
+// Whether a script is running on a tab's current document: its last
+// word there is a start rather than a skip.
+function activeOn(ctx: ConsoleContext, tab: ControlledTab, scriptId: string | undefined): boolean {
+  const { started, skipped } = lastStartAndSkip(ctx, tab, scriptId);
+  return started !== undefined && (!skipped || started.at >= skipped.at);
+}
+
+function lastStartAndSkip(ctx: ConsoleContext, tab: ControlledTab, scriptId: string | undefined) {
+  const { reports } = ctx.host;
+  return {
+    started: fromTab(ctx, tab, reports.started).filter((r) => r.scriptId === scriptId).at(-1),
+    skipped: fromTab(ctx, tab, reports.skipped).filter((r) => r.scriptId === scriptId).at(-1),
+  };
+}
+
+// `tabs`, and the end of `status` when there are several: each tab
+// with `*` on the current one, what opened it, an open dialog, and
+// which scripts run there.
+function printTabs(ctx: ConsoleContext): void {
+  const current = currentTab(ctx);
+  ctx.out('Tabs:');
+  if (ctx.tabs().length === 0) ctx.out('  No active tabs');
+  for (const tab of ctx.tabs()) {
+    const opener = tab.openedBy ? ` (opened by T${tab.openedBy})` : '';
+    ctx.out(`${tab === current ? '* ' : '  '}${tabName(tab)}: ${tab.page.url()}${opener}`);
+    const dialog = tab.dialogs?.current;
+    if (dialog) ctx.out(`    Waiting on ${dialogKind(dialog)} dialog: ${JSON.stringify(dialog.message())}`);
+    const running = runningOn(ctx, tab);
+    // By @name alone, the file being in `use`. The use script is one
+    // for the whole run, so its `*` goes only under the current tab.
+    const selected = tab === current ? ctx.current ?? ctx.scripts[0] : undefined;
+    for (const script of running) {
+      ctx.out(`   ${script === selected ? '* ' : '  '}${ctx.scripts.indexOf(script) + 1}: ${preparedScriptName(script)}`);
+    }
+  }
+}
+
+// `tabs new [page]`: a tab of the run's own, controlled from the start,
+// which becomes the current one and comes to the front. `tabs new all`
+// opens one per script's page instead, and leaves the current tab be.
+async function openNewTab(ctx: ConsoleContext, rest: string[]): Promise<void> {
+  if (!ctx.newTab) {
+    ctx.out('[sm-dev] This run cannot open tabs');
+    return;
+  }
+  if (rest.length > 2) {
+    ctx.out('[sm-dev] The tabs new command takes one URL or script');
+    return;
+  }
+  const open = async (url?: string): Promise<ControlledTab | null> => {
+    try {
+      return await ctx.newTab!(url);
+    } catch (err) {
+      ctx.out(`[sm-dev] The new tab could not be opened: ${(err as Error).message}`);
+      return null;
+    }
+  };
+  if (rest[1] === 'all') {
+    // One tab per distinct page; the scripts with none, or whose tab
+    // failed, are listed at the end, after the tabs' own output.
+    const pages = new Map<string, PreparedScript[]>();
+    const skipped: string[] = [];
+    if (ctx.scripts.length === 0) {
+      ctx.out('[sm-dev] No script is loaded');
+      return;
+    }
+    ctx.scripts.forEach((script, i) => {
+      const url = defaultPageUrl(script);
+      if (!url) skipped[i] = skippedScriptLine(i + 1, script, NO_DEFAULT_PAGE);
+      else pages.set(url, [...(pages.get(url) ?? []), script]);
+    });
+    if (pages.size === 0) {
+      ctx.out('[sm-dev] No tab was opened, since no script\'s @match names a page to open');
+      return;
+    }
+    // All loading at once; tabs are numbered in call order.
+    await Promise.all([...pages].map(async ([url, scripts]) => {
+      try {
+        await ctx.newTab!(url);
+      } catch (err) {
+        for (const script of scripts) {
+          const i = ctx.scripts.indexOf(script);
+          skipped[i] = skippedScriptLine(i + 1, script, `The tab could not be opened: ${(err as Error).message}`);
+        }
+      }
+    }));
+    for (const line of skipped) if (line) ctx.out(line);
+    return;
+  }
+  if (rest[1] && TAB_REF.test(rest[1])) {
+    ctx.out(`[sm-dev] The tabs new command opens a tab of its own, so it takes a URL or a script number, not ${rest[1]}`);
+    return;
+  }
+  let url: string | undefined;
+  if (rest[1]) {
+    const page = pageFor(ctx, rest[1]);
+    if (!page) return;
+    url = page;
+  }
+  const tab = await open(url);
+  if (!tab) return;
+  ctx.tab = tab;
+  await focusTab(tab.page).catch(() => undefined);
+  ctx.out(`[sm-dev] The page commands now act on ${tabName(tab)} (${tab.page.url()})`);
+}
+
+// What `open` and `tabs new` take: a script by its number, meaning its
+// default page, or else a URL. A bare number can't be a URL, so the
+// two never overlap.
+function pageFor(ctx: ConsoleContext, arg: string): string | null {
+  if (!/^\d+$/.test(arg)) return withDefaultScheme(arg);
+  const script = pickScript(ctx, arg);
+  return script ? scriptPage(ctx, script) : null;
+}
+
+function scriptPage(ctx: ConsoleContext, script: PreparedScript): string | null {
+  const url = defaultPageUrl(script);
+  if (!url) ctx.out(`[sm-dev] ${scriptLabel(script)}: ${NO_DEFAULT_PAGE}. Give a URL instead.`);
+  return url;
+}
+
+/** A script `--all` or `tabs new all` opened no tab for, and why. */
+export function skippedScriptLine(n: number, script: PreparedScript, reason: string): string {
+  return `[sm-dev] Skipped script ${n}, ${scriptLabel(script)}: ${reason}`;
+}
+
+// A tab reference `open` and `tabs new` recognize: `T2` or `T2.3`.
+const TAB_REF = /^[Tt]\d+(\.\d+)?$/;
+
+/**
+ * Splits a `T<n>.` prefix off a typed argument: `T2.3` is script 3 on
+ * T2, `T1.M2` menu command M2 on T1, and `T2` alone the tab itself.
+ * Without one, the current tab and the whole argument. Only a number
+ * or `M<n>` after the dot, or for `menu` (`labels`) any label, so a
+ * file name like `t1.user.js` stays a script. Null, reported, when the
+ * named tab isn't open.
+ */
+function tabRef(
+  ctx: ConsoleContext,
+  arg: string,
+  current: ControlledTab,
+  labels = false,
+): { tab: ControlledTab; rest: string; named: boolean } | null {
+  const m = (labels ? /^[Tt](\d+)(?:\.(.+))?$/ : /^[Tt](\d+)(?:\.(\d+|[Mm]\d+))?$/).exec(arg);
+  if (!m) return { tab: current, rest: arg, named: false };
+  const tab = pickTab(ctx, `T${m[1]}`);
+  return tab ? { tab, rest: (m[2] ?? '').trim(), named: true } : null;
+}
+
+// The `all` form of a command: each tab under a `Tab T<n>:` heading,
+// `*` on the current one, with `body`'s lines for it indented below.
+function printPerTab(
+  ctx: ConsoleContext,
+  current: ControlledTab | undefined,
+  body: (tab: ControlledTab) => string[],
+  empty?: string,
+): void {
+  for (const tab of ctx.tabs()) {
+    ctx.out(`${tab === current ? '* ' : '  '}Tab ${tabName(tab)}: ${tab.page.url()}`);
+    const lines = body(tab);
+    if (lines.length === 0 && empty) ctx.out(`    ${empty}`);
+    for (const l of lines) ctx.out(`  ${l}`);
+  }
+}
+
+function runningOn(ctx: ConsoleContext, tab: ControlledTab): PreparedScript[] {
+  return ctx.scripts.filter((script) => activeOn(ctx, tab, script.spec?.id));
+}
+
+/** The tab a typed argument names: `T2`. */
+function pickTab(ctx: ConsoleContext, arg: string): ControlledTab | null {
+  const m = /^[Tt](\d+)$/.exec(arg);
+  if (!m) {
+    // A bare number is the likely slip, and has an obvious fix.
+    ctx.out(/^\d+$/.test(arg)
+      ? `[sm-dev] Tabs are named T1, T2 and so on. Did you mean T${arg}?`
+      : `[sm-dev] ${arg} is not a tab. Tabs are named T1, T2 and so on; type tabs to list them.`);
+    return null;
+  }
+  const tab = ctx.tabs().find((t) => t.n === Number(m[1]));
+  if (!tab) ctx.out(`[sm-dev] There is no open tab T${m[1]}. Type tabs to list them.`);
+  return tab ?? null;
+}
+
+// ---------- Menu commands ----------
+
+// A tab's registered menu commands under the script that registered
+// each, in load order. The M numbers `menu` prints count through this,
+// so firing by number reads the same order.
+function menuGroups(ctx: ConsoleContext, tab: ControlledTab): { label: string; commands: MenuCommandRecord[] }[] {
+  const all = fromTab(ctx, tab, ctx.host.reports.menuCommands);
   return ctx.scripts
     .map((script) => ({
       label: scriptRow(ctx, script),
       commands: all.filter((c) => c.scriptId === script.spec?.id),
     }))
     .filter((group) => group.commands.length > 0);
+}
+
+// A tab's menu commands as `menu` lists them, numbered M1, M2 under
+// each script; empty when it has none.
+function menuLines(ctx: ConsoleContext, tab: ControlledTab): string[] {
+  const lines: string[] = [];
+  let n = 0;
+  for (const group of menuGroups(ctx, tab)) {
+    lines.push(group.label);
+    for (const c of group.commands) lines.push(`    M${++n}: ${c.name}`);
+  }
+  return lines;
+}
+
+function noMenusMessage(ctx: ConsoleContext, tab: ControlledTab): string {
+  if (ctx.tabs().length === 1) return '[sm-dev] No menu commands are registered';
+  const others = ctx.tabs().filter((t) => t !== tab && menuGroups(ctx, t).length > 0);
+  return others.length === 0
+    ? '[sm-dev] No menu commands are registered on any tab'
+    : `[sm-dev] No menu commands are registered on ${tabName(tab)}. ${others.map(tabName).join(', ')} ${others.length === 1 ? 'has' : 'have'} some; type menu ${tabName(others[0])} to list them.`;
 }
 
 // A script registers its commands as it starts, and commands are only
@@ -343,63 +704,95 @@ function menuGroups(ctx: ConsoleContext): { label: string; commands: MenuCommand
 // once, as is any miss typed at a terminal.
 const MENU_WAIT_MS = 5000;
 
-async function fireMenu(ctx: ConsoleContext, argument: string): Promise<void> {
-  const all = (): MenuCommandRecord[] => menuGroups(ctx).flatMap((group) => group.commands);
+async function fireMenu(ctx: ConsoleContext, tab: ControlledTab, argument: string): Promise<void> {
+  const all = (): MenuCommandRecord[] => menuGroups(ctx, tab).flatMap((group) => group.commands);
+  const numbered = /^[Mm](\d+)$/.exec(argument);
   const deadline = Date.now() + MENU_WAIT_MS;
   for (;;) {
     const commands = all();
     // A label wins over a number, for a command whose label is one.
     const byName = [...commands].reverse().find((c) => c.name === argument);
-    const byNumber = /^\d+$/.test(argument) ? commands[Number(argument) - 1] : undefined;
+    const byNumber = numbered ? commands[Number(numbered[1]) - 1] : undefined;
     const entry = byName ?? byNumber;
     if (entry) {
       // Listed but not fired: the page that registered it is going
       // away, as in the middle of a navigation.
-      ctx.out(await fire(ctx, entry)
+      ctx.out(await fire(tab, ctx.host.fireMenuEntry(entry))
         ? `[sm-dev] Fired "${entry.name}"`
         : `[sm-dev] The menu command "${entry.name}" could not be fired, since the page that registered it has gone away`);
       return;
     }
-    if (ctx.interactive || commands.length > 0 || Date.now() >= deadline) break;
+    // Registered on another tab is an answer too, not worth waiting past.
+    if (ctx.interactive || commands.length > 0 || Date.now() >= deadline || elsewhereFor(ctx, tab, argument)) break;
     await new Promise((r) => setTimeout(r, 100));
   }
-  if (all().length === 0) ctx.out('[sm-dev] No menu commands are registered');
-  else if (/^\d+$/.test(argument)) ctx.out(`[sm-dev] There is no menu command ${argument}. Type menu to list them.`);
-  else ctx.out(`[sm-dev] No menu command named "${argument}" is registered. Type menu to list them.`);
+  const elsewhere = numbered ? undefined : elsewhereFor(ctx, tab, argument);
+  if (/^\d+$/.test(argument) && !elsewhere) ctx.out(`[sm-dev] Menu commands are named M1, M2 and so on. Did you mean M${argument}?`);
+  else if (elsewhere) ctx.out(`[sm-dev] "${argument}" is registered on ${tabName(elsewhere)}, not ${tabName(tab)}. Type menu ${tabName(elsewhere)}.${argument} to fire it there.`);
+  else if (all().length === 0) ctx.out(noMenusMessage(ctx, tab));
+  else if (numbered) ctx.out(`[sm-dev] There is no menu command M${numbered[1]}${onTab(ctx, tab)}. Type menu to list them.`);
+  else ctx.out(`[sm-dev] No menu command named "${argument}" is registered${onTab(ctx, tab)}. Type menu to list them.`);
+}
+
+// Another tab with a menu command of that label.
+function elsewhereFor(ctx: ConsoleContext, tab: ControlledTab, label: string): ControlledTab | undefined {
+  return ctx.tabs().find((t) => t !== tab && fromTab(ctx, t, ctx.host.reports.menuCommands).some((c) => c.name === label));
 }
 
 // Counts as done once a dialog the command opens is up, so `accept`
 // can be typed.
-function fire(ctx: ConsoleContext, entry: MenuCommandRecord): Promise<boolean> {
-  const fired = ctx.host.fireMenuCommand(entry.commandId, entry.scriptId);
-  return ctx.dialogs ? ctx.dialogs.untilDialog(fired) : fired;
+function fire(tab: ControlledTab, fired: Promise<boolean>): Promise<boolean> {
+  return tab.dialogs ? tab.dialogs.untilDialog(fired) : fired;
 }
 
-function printStatus(ctx: ConsoleContext): void {
+// ---------- status and values ----------
+
+// Each script's state on a tab: an open dialog there, then per script
+// its last start or skip, its counts, and its last error. `others`
+// adds a line for a script also running on other tabs, which the `all`
+// form shows anyway.
+function statusLines(ctx: ConsoleContext, tab: ControlledTab, scripts: PreparedScript[], others: boolean): string[] {
   const { reports } = ctx.host;
-  ctx.out(`Page: ${ctx.page.url()}`);
-  const dialog = ctx.dialogs?.current;
-  if (dialog) ctx.out(`Waiting on ${dialogKind(dialog)} dialog: ${JSON.stringify(dialog.message())}`);
-  ctx.out('Scripts:');
-  ctx.scripts.forEach((script) => {
+  const lines: string[] = [];
+  const dialog = tab.dialogs?.current;
+  if (dialog) lines.push(`Waiting on ${dialogKind(dialog)} dialog: ${JSON.stringify(dialog.message())}`);
+  lines.push('Scripts:');
+  for (const script of scripts) {
     const id = script.spec?.id;
-    ctx.out(scriptRow(ctx, script));
+    lines.push(scriptRow(ctx, script));
     // The newer of its last start and last skip says where it stands.
-    const started = reports.started.filter((r) => r.scriptId === id).at(-1);
-    const skipped = reports.skipped.filter((r) => r.scriptId === id).at(-1);
-    if (skipped && (!started || skipped.at > started.at)) ctx.out(`    Skipped on ${skipped.url}: ${skipped.reason}`);
-    else if (started) ctx.out(`    Started on ${started.url}`);
-    else ctx.out('    Not started');
-    const errors = reports.errors.filter((r) => r.scriptId === id);
-    const menus = reports.menuCommands.filter((r) => r.scriptId === id).length;
+    const { started, skipped } = lastStartAndSkip(ctx, tab, id);
+    if (skipped && (!started || skipped.at > started.at)) lines.push(`    Skipped on ${skipped.url}: ${skipped.reason}`);
+    else if (started) lines.push(`    Started on ${started.url}`);
+    else lines.push('    Not started');
+    const errors = fromTab(ctx, tab, reports.errors).filter((r) => r.scriptId === id);
+    const menus = fromTab(ctx, tab, reports.menuCommands).filter((r) => r.scriptId === id).length;
+    // Stored values are the script's, shared by every tab.
     const values = id ? Object.keys(ctx.host.getValues(id)).length : 0;
     // Only the counts that aren't zero, and no line when none is.
     const counts = [count(menus, 'menu command'), count(values, 'stored value'), count(errors.length, 'error')]
       .filter((c) => !c.startsWith('0 '));
-    if (counts.length > 0) ctx.out(`    ${counts.join(', ')}`);
+    if (counts.length > 0) lines.push(`    ${counts.join(', ')}`);
     const last = errors.at(-1);
-    if (last) ctx.out(`    Last error: ${last.message}`);
-  });
+    if (last) lines.push(`    Last error: ${last.message}`);
+    if (!others) continue;
+    const elsewhere = ctx.tabs().filter((t) => t !== tab && activeOn(ctx, t, id)).length;
+    if (elsewhere > 0) lines.push(`    Also active on ${elsewhere} other tab${elsewhere === 1 ? '' : 's'}`);
+  }
+  return lines;
+}
+
+function valueLines(ctx: ConsoleContext, scripts: PreparedScript[]): string[] {
+  const lines: string[] = [];
+  for (const script of scripts) {
+    lines.push(scriptRow(ctx, script));
+    const id = script.spec?.id;
+    const values = id ? ctx.host.getValues(id) : {};
+    const keys = Object.keys(values);
+    if (keys.length === 0) lines.push('    Nothing stored');
+    for (const key of keys) lines.push(`    ${key} = ${JSON.stringify(values[key])}`);
+  }
+  return lines;
 }
 
 function count(n: number, noun: string): string {
@@ -557,10 +950,11 @@ function settleWrites(): Promise<void> {
   return new Promise((r) => setTimeout(r, WRITE_FLUSH_MS));
 }
 
-const COMMAND_NAMES = COMMAND_GROUPS
+// A command with several help lines (`tabs`, `tabs new`) is listed once.
+const COMMAND_NAMES = [...new Set(COMMAND_GROUPS
   .flatMap((group) => group.lines)
   .map((line) => line.split(/\s+/)[0])
-  .filter(Boolean);
+  .filter(Boolean))];
 
 function completeCommand(line: string): [string[], string] {
   if (/\s/.test(line.trimStart())) return [[], line];
@@ -612,7 +1006,7 @@ export function writeOutputLine(line: string): void {
  */
 export function readConsoleCommands(ctx: ConsoleContext): () => void {
   if (!process.stdin.readable) return () => undefined;
-  if (ctx.dialogs) ctx.dialogs.commandsListening = true;
+  for (const tab of ctx.tabs()) if (tab.dialogs) tab.dialogs.commandsListening = true;
   // Otherwise nothing says the run is listening at all.
   ctx.out('[sm-dev] Ready for commands. Type help to list them.');
   // A dumb terminal can't move the cursor, so writeOutputLine couldn't
@@ -667,7 +1061,7 @@ export function readConsoleCommands(ctx: ConsoleContext): () => void {
     lines.prompt();
   }
   return () => {
-    if (ctx.dialogs) ctx.dialogs.commandsListening = false;
+    for (const tab of ctx.tabs()) if (tab.dialogs) tab.dialogs.commandsListening = false;
     dropPrompt();
     lines.close();
     process.stdin.pause();
