@@ -276,7 +276,8 @@ into pages.
       under the extension. `GM_openInTab` ones still close with the
       opener's attachment.
     - It also holds T1, the run's own tab, and hands the commands the
-      list of open tabs.
+      list of open tabs. With `--notab` there is none at first, and
+      the first tab `newTab` opens becomes T1.
     - `newTab` opens a tab for `tabs new` and `--all`, attached before
       its first page loads. It takes the tab's number before awaiting
       anything, so tabs opened together are numbered in call order.

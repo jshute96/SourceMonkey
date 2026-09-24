@@ -89,8 +89,8 @@ Writing specs against it:
   `pnpm sm-dev …` or `pnpm exec sm-dev …`.
 - In a SourceMonkey checkout it is `scripts/sm-dev`.
 
-It connects to a running browser over CDP (`--cdp
-http://127.0.0.1:9233`, or the `SM_DEV_CDP` environment variable) and
+It connects to a running browser over CDP (`--cdp 9233`, a port on
+this machine, or the `SM_DEV_CDP` environment variable) and
 drives it. Everything it prints is plain text meant to be read by a
 person or an agent.
 
@@ -120,8 +120,11 @@ Options for every command:
 
 Options for the browser commands (`run`, `probe`, `snapshot`, `clear`):
 
-- `--cdp URL` names the browser to connect to. Defaults to the
-  `SM_DEV_CDP` environment variable, then `http://127.0.0.1:9233`.
+- `--cdp URL or port` names the browser to connect to: a URL, a
+  `host:port` (`http://` is added), or just a port on this machine
+  (`9222` or `:9222`). An IPv6 host needs brackets (`[::1]:9222`).
+  Defaults to the `SM_DEV_CDP` environment variable, which takes the
+  same forms, then port 9233.
 - `--launch` starts a Chromium instead of connecting to one, and
   `--headed` shows it. Useful when no browser is running and the page
   needs no login.
@@ -135,6 +138,16 @@ Other `run` flags:
   the end, with the reason. Works with `--extension` too, where only
   page output carries the tab's name (the extension's Log entries
   don't say which tab). It can't be combined with `--url`.
+- `--noscript` starts with no scripts at all, on a blank page or
+  `--url`, as a browser to drive with the typed commands. The flags
+  that act on scripts (`--all`, `--fire-menu`, `--values`, `--watch`)
+  and `--extension` can't be combined with it.
+- `--notab` opens no tab at startup. `tabs new` opens one later, and
+  the first it opens is T1. That tab isn't one a later run takes over
+  (see [Which tab `run` uses](#which-tab-run-uses)). With
+  `--extension`, the scripts just run in whatever pages you browse to,
+  and after a `--watch` save you reload them yourself. It can't be
+  combined with `--url`, `--all` or `--fire-menu`.
 - `--values '{"key": 1}'` seeds `GM_*` storage before the script runs.
 - `--fire-menu "Label"` invokes a registered menu command once the
   page has loaded. For anything beyond one invocation, use the typed
@@ -205,8 +218,8 @@ commands from its own input while it streams.
 
 | Typed command | What it does |
 | --- | --- |
-| `use` | Lists the loaded scripts, numbered |
-| `use <script>` | Picks the script `get` and `set` act on (the first, until changed) |
+| `scripts` | Lists the loaded scripts, numbered (`script` works too) |
+| `scripts <script>` | Picks the script `get` and `set` act on (the first, until changed) |
 | `status [what]` | Prints the page's URL, any open dialog, and each script's state: started or skipped, and counts of its menu commands, stored values and errors (those that are not zero). Also takes a script, a tab (`T2`, `T2.3`) or `all` |
 | `menu` | Lists the registered menu commands, numbered `M1`, `M2`, under the script that registered each |
 | `menu <M-number or label>` | Fires one, as picking it from the toolbar would. Piped in while none is registered yet, it waits a moment for a script that is still loading |
@@ -216,12 +229,12 @@ commands from its own input while it streams.
 | `tabs [tab]` | Lists the controlled tabs, or picks the one the page commands act on (see [Several tabs](#several-tabs)) |
 | `tabs new [page]` | Opens a new tab with the scripts, picks it and brings it to the front. `tabs new all` opens one per script's default page |
 | `reload [tab]` | Reloads the page |
-| `open [page]` | Navigates to a URL, or to a script's default page: the `use` script's when bare, or one by number (`open 2`, or `open T2.3` in T2). `open all` is `tabs new all` |
+| `open [page]` | Navigates to a URL, or to a script's default page: the selected script's when bare, or one by number (`open 2`, or `open T2.3` in T2). `open all` is `tabs new all` |
 | `focus [tab]` | Brings the tab to the front, un-minimizing its window |
 | `accept [text]`, `dismiss` | Answers an open dialog (see [Page dialogs](#page-dialogs)) |
 | `help`, `quit` | The list, and stop |
 
-A `<script>` is its number in the `use` list, its path, file name or
+A `<script>` is its number in the `scripts` list, its path, file name or
 `@name`, or a piece of its name or path that no other loaded script
 shares.
 
@@ -234,7 +247,7 @@ so a URL is never mistaken for one.
 Once the page opens tabs of its own (see
 [Tabs the page opens](#tabs-the-page-opens)), each kind of thing has its
 own style of name, so they can't be mixed up:
-- Scripts are `1`, `2`, as `use` lists them.
+- Scripts are `1`, `2`, as `scripts` lists them.
 - Tabs are `T1`, `T2`, as `tabs` lists them.
 - Menu commands are `M1`, `M2`, as `menu` lists them for one tab.
 - A `T<n>.` prefix names one on another tab: `T2.3` is script 3 there,
@@ -248,7 +261,8 @@ How the commands treat tabs:
   `focus`, `accept` and `dismiss` act on. It starts as T1. If the
   picked tab closes, the first one still open takes over.
 - Any tab can be closed, T1 included, and the run notes it. With none
-  left, `tabs` says `No active tabs`, and `tabs new` opens another.
+  left, `tabs` says `No active tabs`, `status` still lists the scripts
+  with their stored values and errors, and `tabs new` opens another.
 - `tabs new [page]` opens a tab of your own with the scripts, picks it
   and brings it to the front. Unlike one you open in the browser, it
   is controlled from the start. It stays open when the run ends.
@@ -257,7 +271,7 @@ How the commands treat tabs:
   was. Scripts it opened no tab for are listed at the end.
 - `tabs` lists each tab's URL, which tab opened it, any open dialog,
   and the scripts running there, with `*` on the picked tab and, under it,
-  on the `use` script.
+  on the selected script.
 - `status` covers the picked tab. A script also running on other tabs
   gets an `Also active on N other tabs` line, and the tab list follows
   at the bottom.
@@ -267,7 +281,7 @@ How the commands treat tabs:
   without switching tabs.
 - `values T2` shows the scripts running on T2. Stored values belong to
   the script, so every tab sees the same ones.
-- `use T2.3` picks script 3 and tab T2 together.
+- `scripts T2.3` picks script 3 and tab T2 together.
 
 When both input and output are a terminal, commands are typed at a
 `> ` prompt:

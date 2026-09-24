@@ -48,7 +48,7 @@ export interface ConsoleContext {
   /** The scripts this run injected, in load order. */
   scripts: PreparedScript[];
   /**
-   * The script `get` and `set` act on. Starts as the first; `use`
+   * The script `get` and `set` act on. Starts as the first; `scripts`
    * changes it.
    */
   current?: PreparedScript;
@@ -67,7 +67,7 @@ const COMMAND_GROUPS: { title: string; lines: string[] }[] = [
   {
     title: 'Scripts',
     lines: [
-      'use [script]      List the loaded scripts; with one, pick the script',
+      'scripts [script]  List the loaded scripts; with one, pick the script',
       '                  get and set act on (T2.3 picks tab T2 too)',
       'status [what]     Show the tab\'s URL and each script\'s status there;',
       '                  or one script (3, T2.3), a tab (T2), or all tabs',
@@ -98,7 +98,7 @@ const COMMAND_GROUPS: { title: string; lines: string[] }[] = [
       '                  it; with all, one tab for each script\'s page',
       'reload [T<n>]     Reload the page',
       'open [page]       Navigate to a URL, or to a script\'s default page',
-      '                  (the use script\'s, or one by number: 2, T2.3);',
+      '                  (the selected script\'s, or one by number: 2, T2.3);',
       '                  open all is tabs new all',
       'focus [T<n>]      Bring the tab to the front',
       'accept [text]     Answer an open dialog with OK (a prompt with text)',
@@ -114,14 +114,20 @@ const COMMAND_GROUPS: { title: string; lines: string[] }[] = [
   },
 ];
 
-const NO_TABS = '[sm-dev] No tabs are active. Type tabs new to open one.';
+// One wording for having none, whether as a reply or in a list.
+const NO_SCRIPTS = 'No scripts are loaded';
+
+/** Where the page commands have no tab to act on; also `run --notab`'s start. */
+export const NO_TABS = '[sm-dev] No tabs are active. Type tabs new to open one.';
 
 // The commands that act on the current tab, which there may not be.
-const NEEDS_A_TAB = new Set(['menu', 'status', 'open', 'reload', 'focus', 'accept', 'dismiss']);
+const NEEDS_A_TAB = new Set(['menu', 'open', 'reload', 'focus', 'accept', 'dismiss']);
 
-export const CONSOLE_HELP = [
-  ...COMMAND_GROUPS.flatMap((group) => [`${group.title}:`, ...group.lines.map((line) => `  ${line}`)]),
-  'A script is named by its number in the use list, or by part of its',
+// A blank line between the groups, and before the note on names.
+const CONSOLE_HELP = [
+  ...COMMAND_GROUPS.flatMap((group, i) => [...(i > 0 ? [''] : []), `${group.title}:`, ...group.lines.map((line) => `  ${line}`)]),
+  '',
+  'A script is named by its number in the scripts list, or by part of its',
   'name or path. Tabs are named T1, T2 and so on, and menu commands M1,',
   'M2, as their lists show them. A T<n>. prefix (T2.3, T2.M1) names one',
   'on that tab rather than the current one.',
@@ -176,7 +182,7 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
     case 'help':
     case '?':
       if (!takesNothing()) return;
-      for (const l of CONSOLE_HELP) ctx.out(`  ${l}`);
+      for (const l of CONSOLE_HELP) ctx.out(l ? `  ${l}` : '');
       return;
     case 'quit':
     case 'exit':
@@ -225,16 +231,18 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
       ctx.out(`[sm-dev] The page commands now act on ${tabName(picked)} (${picked.page.url()})`);
       return;
     }
-    case 'use': {
+    case 'scripts':
+    case 'script': {
       if (!argument) {
         ctx.out('Loaded scripts:');
+        if (ctx.scripts.length === 0) ctx.out(`  ${NO_SCRIPTS}`);
         for (const script of ctx.scripts) ctx.out(scriptRow(ctx, script));
         return;
       }
       const ref = tabRef(ctx, argument, tab);
       if (!ref) return;
       if (!ref.rest) {
-        ctx.out('[sm-dev] The use command needs a script, e.g. use 2 or use T2.2');
+        ctx.out('[sm-dev] The scripts command needs a script after the tab, e.g. scripts T2.2');
         return;
       }
       const found = pickScript(ctx, ref.rest);
@@ -249,6 +257,14 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
       return;
     }
     case 'status': {
+      // With no tab, still the scripts and what they have stored.
+      if (!tab && (!argument || argument === 'all' || !TAB_REF.test(argument))) {
+        const script = argument && argument !== 'all' ? pickScript(ctx, argument) : undefined;
+        if (script === null) return;
+        ctx.out(NO_TABS);
+        for (const l of statusLines(ctx, undefined, script ? [script] : ctx.scripts, false)) ctx.out(l);
+        return;
+      }
       if (argument === 'all') {
         printPerTab(ctx, tab, (t) => statusLines(ctx, t, ctx.scripts, false));
         return;
@@ -266,7 +282,7 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
     }
     case 'values': {
       if (ctx.scripts.length === 0) {
-        ctx.out('[sm-dev] No script is loaded');
+        ctx.out(`[sm-dev] ${NO_SCRIPTS}`);
         return;
       }
       if (argument === 'all') {
@@ -298,7 +314,7 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
     }
     case 'get': {
       if (!scriptId) {
-        ctx.out('[sm-dev] No script is loaded');
+        ctx.out(`[sm-dev] ${NO_SCRIPTS}`);
         return;
       }
       if (!argument) {
@@ -311,7 +327,7 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
     }
     case 'set': {
       if (!scriptId) {
-        ctx.out('[sm-dev] No script is loaded');
+        ctx.out(`[sm-dev] ${NO_SCRIPTS}`);
         return;
       }
       const key = rest[0];
@@ -350,7 +366,7 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
         ctx.out('[sm-dev] The open command takes one URL or script');
         return;
       }
-      // `T2`: the use script's page, in T2; `T2.3`: script 3's. Only
+      // `T2`: the selected script's page, in T2; `T2.3`: script 3's. Only
       // those shapes, so a host like `t2.example.com` stays a URL.
       const target = TAB_REF.test(argument) ? tabRef(ctx, argument, tab) : { tab, rest: argument };
       if (!target) return;
@@ -413,7 +429,7 @@ function scriptLabel(script: PreparedScript): string {
   return name === file ? name : `${name} (${file})`;
 }
 
-// One script's row in any list of them: its number in the `use` list,
+// One script's row in any list of them: its number in the `scripts` list,
 // with `*` on the one `get` and `set` act on.
 function scriptRow(ctx: ConsoleContext, script: PreparedScript): string {
   const current = ctx.current ?? ctx.scripts[0];
@@ -421,7 +437,7 @@ function scriptRow(ctx: ConsoleContext, script: PreparedScript): string {
 }
 
 /**
- * The script a typed argument names: its number in the `use` list, an
+ * The script a typed argument names: its number in the `scripts` list, an
  * exact path, file name or `@name`, or else a piece of its name or path
  * that no other loaded script shares. Reports why and returns null when
  * there is no single answer.
@@ -429,7 +445,7 @@ function scriptRow(ctx: ConsoleContext, script: PreparedScript): string {
 function pickScript(ctx: ConsoleContext, arg: string): PreparedScript | null {
   if (/^\d+$/.test(arg)) {
     const script = ctx.scripts[Number(arg) - 1];
-    if (!script) ctx.out(`[sm-dev] There is no script ${arg}. Type use to list them.`);
+    if (!script) ctx.out(`[sm-dev] There is no script ${arg}. Type scripts to list them.`);
     return script ?? null;
   }
   const exact = ctx.scripts.filter((script) => preparedScriptMatches(script, arg));
@@ -440,7 +456,7 @@ function pickScript(ctx: ConsoleContext, arg: string): PreparedScript | null {
     || script.script.relativePath.toLowerCase().includes(needle));
   if (hits.length === 1) return hits[0];
   if (hits.length === 0) {
-    ctx.out(`[sm-dev] No loaded script matches ${arg}. Type use to list them.`);
+    ctx.out(`[sm-dev] No loaded script matches ${arg}. Type scripts to list them.`);
   } else {
     const numbers = hits.map((script) => ctx.scripts.indexOf(script) + 1).join(', ');
     ctx.out(`[sm-dev] Several loaded scripts match ${arg} (${numbers}). Name one by its number.`);
@@ -506,7 +522,7 @@ function printTabs(ctx: ConsoleContext): void {
     const dialog = tab.dialogs?.current;
     if (dialog) ctx.out(`    Waiting on ${dialogKind(dialog)} dialog: ${JSON.stringify(dialog.message())}`);
     const running = runningOn(ctx, tab);
-    // By @name alone, the file being in `use`. The use script is one
+    // By @name alone, the file being in `scripts`. The selected script is one
     // for the whole run, so its `*` goes only under the current tab.
     const selected = tab === current ? ctx.current ?? ctx.scripts[0] : undefined;
     for (const script of running) {
@@ -541,7 +557,7 @@ async function openNewTab(ctx: ConsoleContext, rest: string[]): Promise<void> {
     const pages = new Map<string, PreparedScript[]>();
     const skipped: string[] = [];
     if (ctx.scripts.length === 0) {
-      ctx.out('[sm-dev] No script is loaded');
+      ctx.out(`[sm-dev] ${NO_SCRIPTS}`);
       return;
     }
     ctx.scripts.forEach((script, i) => {
@@ -751,15 +767,29 @@ function fire(tab: ControlledTab, fired: Promise<boolean>): Promise<boolean> {
 // its last start or skip, its counts, and its last error. `others`
 // adds a line for a script also running on other tabs, which the `all`
 // form shows anyway.
-function statusLines(ctx: ConsoleContext, tab: ControlledTab, scripts: PreparedScript[], others: boolean): string[] {
+// With no `tab`, only what doesn't depend on one: stored values and
+// errors.
+function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined, scripts: PreparedScript[], others: boolean): string[] {
   const { reports } = ctx.host;
   const lines: string[] = [];
-  const dialog = tab.dialogs?.current;
+  const dialog = tab?.dialogs?.current;
   if (dialog) lines.push(`Waiting on ${dialogKind(dialog)} dialog: ${JSON.stringify(dialog.message())}`);
   lines.push('Scripts:');
+  if (scripts.length === 0) lines.push(`  ${NO_SCRIPTS}`);
   for (const script of scripts) {
     const id = script.spec?.id;
     lines.push(scriptRow(ctx, script));
+    if (!tab) {
+      // Errors are the script's, from tabs since closed, so still told.
+      const values = id ? Object.keys(ctx.host.getValues(id)).length : 0;
+      const errors = reports.errors.filter((r) => r.scriptId === id);
+      lines.push('    Not running, since no tabs are active');
+      const counts = [count(values, 'stored value'), count(errors.length, 'error')].filter((c) => !c.startsWith('0 '));
+      if (counts.length > 0) lines.push(`    ${counts.join(', ')}`);
+      const last = errors.at(-1);
+      if (last) lines.push(`    Last error: ${last.message}`);
+      continue;
+    }
     // The newer of its last start and last skip says where it stands.
     const { started, skipped } = lastStartAndSkip(ctx, tab, id);
     if (skipped && (!started || skipped.at > started.at)) lines.push(`    Skipped on ${skipped.url}: ${skipped.reason}`);

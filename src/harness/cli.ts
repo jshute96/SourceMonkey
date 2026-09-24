@@ -37,6 +37,7 @@ Usage: sm-dev <command> [options]
 Commands:
   run <script>...             Inject the script(s) into a page and stream
                               their console lines, reports and GM_* calls
+                              (no scripts with --noscript)
   validate <path>...          Run the install-time checks (header,
                               @require, syntax) over files or directories
   match <script> [url]...     Say whether the script would run on each
@@ -53,8 +54,8 @@ Options for every command:
   --local DIR     Another directory to search; repeatable
 
 Options for the browser commands (run, probe, snapshot, clear):
-  --cdp URL       Browser to connect to (default: $SM_DEV_CDP or
-                  http://127.0.0.1:9233)
+  --cdp URL|PORT  Browser to connect to: a URL, host:port, or just a
+                  port on this machine (default: $SM_DEV_CDP or 9233)
   --launch        Launch a Chromium instead of connecting to one
   --headed        With --launch: show the browser
 
@@ -66,6 +67,10 @@ Options for run:
                   line serves both
   --all           Open each script's default page, one tab per page,
                   instead of only the first script's
+  --noscript      Start with no scripts, as a browser to drive with the
+                  typed commands (a blank page unless --url names one)
+  --notab         Open no tab at startup; type tabs new to open one.
+                  With --extension, the pages you browse to run them
   --watch         Re-inject and reload when a script or its files change
   --values JSON   Seed GM_* storage before the script runs, e.g.
                   --values '{"units":"metric"}'
@@ -88,7 +93,7 @@ Options for snapshot:
   --out FILE      Where to write the HTML
 
 While run streams, it also acts as an interactive shell, with commands to
-control the scripts. Type help at the prompt so see interactive commands.
+control the scripts. Type help at the prompt to see interactive commands.
 `;
 
 interface Opts {
@@ -98,6 +103,8 @@ interface Opts {
   local: string[];
   url?: string;
   all: boolean;
+  noScript: boolean;
+  noTab: boolean;
   cdp?: string;
   launch: boolean;
   headed: boolean;
@@ -117,7 +124,7 @@ interface Opts {
 function parseArgs(argv: string[]): Opts {
   const opts: Opts = {
     command: null, args: [], root: process.cwd(), local: [],
-    all: false, launch: false, headed: false, watch: false, extension: false, solo: false, pageErrors: false,
+    all: false, noScript: false, noTab: false, launch: false, headed: false, watch: false, extension: false, solo: false, pageErrors: false,
     selectors: [], selectorFlags: 0, html: false,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -132,6 +139,8 @@ function parseArgs(argv: string[]): Opts {
       case '--local': opts.local.push(path.resolve(next())); break;
       case '--url': opts.url = withDefaultScheme(next()); break;
       case '--all': opts.all = true; break;
+      case '--noscript': opts.noScript = true; break;
+      case '--notab': opts.noTab = true; break;
       case '--cdp': opts.cdp = next(); break;
       case '--launch': opts.launch = true; break;
       case '--headed': opts.headed = true; break;
@@ -267,8 +276,22 @@ async function match(opts: Opts): Promise<number> {
 }
 
 async function runCommand(opts: Opts): Promise<number> {
-  if (opts.args.length === 0) throw new UsageError('The run command needs at least one script');
+  if (opts.noScript && opts.args.length > 0) throw new UsageError('The --noscript flag runs no scripts, so the run command takes none with it');
+  if (!opts.noScript && opts.args.length === 0) throw new UsageError('The run command needs at least one script, or --noscript');
   if (opts.all && opts.url) throw new UsageError('The --all and --url flags can\'t be used together');
+  // Flags that would silently do nothing, or wait out --fire-menu's
+  // grace period for a command nothing can register.
+  const clash = (flag: string, others: [boolean, string][]): void => {
+    const used = others.filter(([on]) => on).map(([, name]) => name);
+    if (used.length > 0) throw new UsageError(`The ${flag} flag can't be used with ${used.join(' or ')}`);
+  };
+  if (opts.noTab) clash('--notab', [[opts.all, '--all'], [Boolean(opts.url), '--url'], [Boolean(opts.fireMenu), '--fire-menu']]);
+  if (opts.noScript) {
+    clash('--noscript', [
+      [opts.all, '--all'], [Boolean(opts.fireMenu), '--fire-menu'], [Boolean(opts.values), '--values'],
+      [opts.watch, '--watch'], [opts.extension, '--extension'], [opts.solo, '--solo'],
+    ]);
+  }
   const files = await Promise.all(opts.args.map(scriptFile));
   const { run } = await import('./run.js');
   // Ends on Ctrl-C, or after --seconds. With neither, the run streams
@@ -296,6 +319,7 @@ async function runCommand(opts: Opts): Promise<number> {
       files,
       url: opts.url,
       all: opts.all,
+      noTab: opts.noTab,
       cdp: opts.cdp,
       launch: opts.launch,
       headed: opts.headed,

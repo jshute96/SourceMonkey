@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 import type { Browser, BrowserContext, Page } from '@playwright/test';
 
-import { DialogTracker, readConsoleCommands, skippedScriptLine, type ConsoleContext, type ControlledTab } from './console-commands.js';
+import { DialogTracker, NO_TABS, readConsoleCommands, skippedScriptLine, type ConsoleContext, type ControlledTab } from './console-commands.js';
 import { ExtensionBackend, type LogEntry } from './extension-backend.js';
 import { HarnessHost, type ErrorReport, type SkipReport, type StartReport } from './host.js';
 import { attachPage, type PageAttachment } from './inject.js';
@@ -29,6 +29,12 @@ export interface RunOptions extends ConnectOptions {
    * than one page for the first script.
    */
   all?: boolean;
+  /**
+   * Open no tab at startup. The typed `tabs new` opens one later, and
+   * with `--extension` the scripts run in whatever tabs the person
+   * browses to.
+   */
+  noTab?: boolean;
   /** Re-inject and reload whenever a script or one of its files changes. */
   watch?: boolean;
   /** Seed `GM_*` storage for every script before it runs. */
@@ -63,6 +69,27 @@ export interface ConnectOptions {
   headed?: boolean;
 }
 
+/**
+ * A `--cdp` value as a URL Playwright can connect to: a port alone
+ * (`9222`, `:9222`) means this machine, and a host with no scheme gets
+ * `http://`. Also the key runs record their tabs under, so the port
+ * and no-scheme spellings match the URL they stand for; `localhost`
+ * and `127.0.0.1` still differ. An IPv6 host needs brackets
+ * (`[::1]:9222`), as in a URL.
+ */
+export function cdpEndpoint(value: string): string {
+  const v = value.trim().replace(/\/+$/, '');
+  const port = /^:?(\d+)$/.exec(v);
+  if (port) return `http://127.0.0.1:${port[1]}`;
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(v) ? v : `http://${v}`;
+}
+
+// `--cdp`, else $SM_DEV_CDP, else port 9233. Empty counts as unset, so
+// an exported-but-blank variable doesn't become `http://`.
+function cdpSetting(opts: ConnectOptions): string {
+  return cdpEndpoint(opts.cdp?.trim() || process.env.SM_DEV_CDP?.trim() || '9233');
+}
+
 export interface BrowserSession {
   browser: Browser;
   context: BrowserContext;
@@ -84,13 +111,28 @@ export async function connectBrowser(
   out: (line: string) => void,
   { reuseTab = false } = {},
 ): Promise<BrowserSession | null> {
+  return openBrowser(opts, out, { reuseTab, openTab: true });
+}
+
+// `connectBrowser`, and for `run --notab`, the same with no tab.
+async function openBrowser(
+  opts: ConnectOptions, out: (line: string) => void, o: { reuseTab: boolean; openTab: true },
+): Promise<BrowserSession | null>;
+async function openBrowser(
+  opts: ConnectOptions, out: (line: string) => void, o: { reuseTab: boolean; openTab: boolean },
+): Promise<RunSession | null>;
+async function openBrowser(
+  opts: ConnectOptions,
+  out: (line: string) => void,
+  { reuseTab, openTab }: { reuseTab: boolean; openTab: boolean },
+): Promise<RunSession | null> {
   const { chromium } = await import('@playwright/test');
   let browser: Browser;
   let endpoint: string | null = null;
   if (opts.launch) {
     browser = await chromium.launch({ headless: !opts.headed });
   } else {
-    endpoint = opts.cdp ?? process.env.SM_DEV_CDP ?? 'http://127.0.0.1:9233';
+    endpoint = cdpSetting(opts);
     try {
       // `noDefaults` keeps Playwright's test-friendly overrides off the
       // developer's own profile: downloads rerouted to a temp folder
@@ -106,9 +148,10 @@ export async function connectBrowser(
     }
   }
   const context = browser.contexts()[0] ?? await browser.newContext();
-  const page = reuseTab && endpoint !== null
-    ? await openRunTab(browser, context, endpoint, out).catch(() => context.newPage())
-    : await context.newPage();
+  const page = !openTab ? null
+    : reuseTab && endpoint !== null
+      ? await openRunTab(browser, context, endpoint, out).catch(() => context.newPage())
+      : await context.newPage();
   return {
     browser,
     context,
@@ -118,6 +161,9 @@ export async function connectBrowser(
     done: () => browser.close(),
   };
 }
+
+/** A `run` session, whose `--notab` form has no tab. */
+type RunSession = Omit<BrowserSession, 'page'> & { page: Page | null };
 
 // ---------- Reusing a run's tab ----------
 
@@ -245,6 +291,9 @@ interface StartPages {
 }
 
 function startPages(opts: RunOptions, prepared: PreparedScript[]): StartPages | null {
+  if (opts.noTab) return { urls: [], skipped: [] };
+  // `--noscript`: a blank page, unless --url names one.
+  if (prepared.length === 0) return { urls: [opts.url ?? 'about:blank'], skipped: [] };
   if (!opts.all) {
     const url = opts.url ?? defaultPageUrl(prepared[0]);
     if (!url) opts.out(NO_URL);
@@ -276,7 +325,7 @@ function printSkipped(opts: RunOptions, start: StartPages): void {
 }
 
 export async function run(opts: RunOptions): Promise<number> {
-  const session = await connectBrowser(opts, opts.out, { reuseTab: true });
+  const session = await openBrowser(opts, opts.out, { reuseTab: true, openTab: !opts.noTab });
   if (!session) return 1;
   const held: Held = {};
   try {
@@ -292,7 +341,7 @@ export async function run(opts: RunOptions): Promise<number> {
 
 async function runInHarness(
   opts: RunOptions,
-  session: BrowserSession,
+  session: RunSession,
   held: Held,
 ): Promise<number> {
   const { page } = session;
@@ -300,16 +349,21 @@ async function runInHarness(
   // Commands are only read once the page has loaded, but a prompt
   // opened before then can still wait for a typed accept.
   const commandsComing = opts.until !== undefined && process.stdin.readable;
-  const tabs = new FollowedTabs(host, opts, commandsComing);
+  const tabs = new FollowedTabs(host, opts, session.context, commandsComing);
   held.tabs = tabs;
   wireHostOutput(host, opts.out, (record) => tabs.prefixOf(record));
-  wirePageOutput(page, opts, true);
-  const dialogs = await DialogTracker.attach(page, opts.out, { visible: browserVisible(opts), commandsComing });
-  // Attached before preparing, so the scripts' GM_info describes this
-  // browser.
-  const attachment = await attachPage(page, host);
-  held.attachment = attachment;
-  tabs.start(page, attachment, dialogs);
+  // T1, unless `--notab`; then the first tab `tabs new` opens is T1.
+  let first: { page: Page; attachment: PageAttachment } | null = null;
+  if (page) {
+    wirePageOutput(page, opts, true);
+    const dialogs = await DialogTracker.attach(page, opts.out, { visible: browserVisible(opts), commandsComing });
+    // Attached before preparing, so the scripts' GM_info describes this
+    // browser. With no tab, a script's GM_info.userAgentData stays null.
+    const attachment = await attachPage(page, host);
+    held.attachment = attachment;
+    tabs.start(page, attachment, dialogs);
+    first = { page, attachment };
+  }
   const prepared = await prepareAll(opts);
   if (!prepared) return 1;
   const start = startPages(opts, prepared);
@@ -319,11 +373,11 @@ async function runInHarness(
   const injectAll = async (scripts: PreparedScript[]): Promise<void> => {
     for (const script of scripts) {
       // T1 may have been closed; the other tabs still get them.
-      if (!page.isClosed()) await attachment.inject(script);
+      if (first && !first.page.isClosed()) await first.attachment.inject(script);
       opts.out(`[sm-dev] Injected ${script.script.relativePath} in world ${script.world}, run-at ${script.runAt}`);
     }
     await tabs.replaceScripts(scripts);
-    // The typed commands' list too, keeping the `use` script by its place.
+    // The typed commands' list too, keeping the selected script by its place.
     if (commands) {
       const i = commands.current ? commands.scripts.indexOf(commands.current) : -1;
       commands.scripts = scripts;
@@ -335,15 +389,19 @@ async function runInHarness(
   // script wrote since the last save survive the save.
   if (opts.values) for (const script of prepared) host.seedValues(script.spec!.id, opts.values);
   await injectAll(prepared);
-  opts.out(`[sm-dev] Opening ${urls[0]}`);
-  // With --all, the other scripts' pages too, each in a tab of its own,
-  // all loading at once. `newTab` numbers them in call order.
-  await Promise.all([
-    page.goto(urls[0]).catch((err) => opts.out(`[sm-dev] Navigation failed: ${(err as Error).message}`)),
-    ...urls.slice(1).map((url) => tabs.newTab(url)
-      .catch((err) => skipScriptsOf(start, prepared, url, `The tab could not be opened: ${(err as Error).message}`))),
-  ]);
-  printSkipped(opts, start);
+  if (page && urls.length > 0) {
+    opts.out(`[sm-dev] Opening ${urls[0]}`);
+    // With --all, the other scripts' pages too, each in a tab of its
+    // own, all loading at once. `newTab` numbers them in call order.
+    await Promise.all([
+      page.goto(urls[0]).catch((err) => opts.out(`[sm-dev] Navigation failed: ${(err as Error).message}`)),
+      ...urls.slice(1).map((url) => tabs.newTab(url)
+        .catch((err) => skipScriptsOf(start, prepared, url, `The tab could not be opened: ${(err as Error).message}`))),
+    ]);
+    printSkipped(opts, start);
+  } else if (!page) {
+    opts.out(NO_TABS);
+  }
   if (opts.fireMenu) {
     // Registered from the script's body, so it exists once the script
     // has started; a short grace period covers a late registration.
@@ -360,8 +418,9 @@ async function runInHarness(
       firedOn = entry && tabs.list().find((t) => t.link === host.pageOf(entry));
       // Done once a dialog it opens is up, on the tab it ran in: that
       // page waits on it.
+      const tracker = firedOn?.dialogs;
       fired = entry !== undefined && firedOn !== undefined
-        && await (firedOn.dialogs ?? dialogs).untilDialog(host.fireMenuEntry(entry));
+        && await (tracker ? tracker.untilDialog(host.fireMenuEntry(entry)) : host.fireMenuEntry(entry));
       if (!fired) await sleep(100);
     }
     const where = firedOn && firedOn.n > 1 ? ` on T${firedOn.n}` : '';
@@ -371,7 +430,15 @@ async function runInHarness(
   let watcher: (() => void) | null = null;
   let stopCommands: (() => void) | null = null;
   try {
-    if (opts.watch) watcher = watchFiles(opts, prepared, attachment, page, injectAll);
+    if (opts.watch) {
+      watcher = watchFiles(opts, prepared, 're-injecting', async (next) => {
+        // T1 may have been closed, with other tabs still open.
+        const t1 = first && !first.page.isClosed() ? first : null;
+        if (t1) for (const old of t1.attachment.injectedScripts()) await t1.attachment.remove(old.spec!.id);
+        await injectAll(next);
+        if (t1) await t1.page.reload();
+      });
+    }
     if (opts.until) {
       // Typed commands drive the script while it runs: fire a menu
       // command again, read what it stored, write a value back. Only
@@ -381,7 +448,8 @@ async function runInHarness(
       // never does): a command read before then would run against a
       // page whose script has not registered anything yet. A piped
       // sequence of commands would otherwise hit exactly that.
-      await waitForFirstStart(host);
+      // Nothing will start with no scripts, or no tab to run in.
+      if (prepared.length > 0 && page) await waitForFirstStart(host);
       commands = {
         host,
         tabs: () => tabs.list(),
@@ -425,8 +493,8 @@ interface Held {
 // before it loads, which needs the browser's flat protocol sessions
 // that Playwright doesn't expose.
 class FollowedTabs {
-  // T1, the run's own tab; set by `start`.
-  private first!: ControlledTab;
+  // T1, the run's own tab; set by `start`, unless the run opened none.
+  private first: ControlledTab | null = null;
   // The scripts every tab gets: the latest `--watch` set.
   private scripts: PreparedScript[] = [];
   // The rest, while they are open.
@@ -436,12 +504,14 @@ class FollowedTabs {
   private readonly numbers = new WeakMap<object, number>();
   // Tabs still being set up, so dispose can wait for them.
   private readonly adopting = new Set<Promise<unknown>>();
-  private nextNumber = 2;
+  // Without a T1 of the run's own (`--notab`), the first tab opened is T1.
+  private nextNumber = 1;
   private disposed = false;
 
   constructor(
     private readonly host: HarnessHost,
     private readonly opts: RunOptions,
+    private readonly context: BrowserContext,
     // Whether typed commands will be read, so a new tab's dialog waits
     // for a typed answer rather than being dismissed.
     private readonly commandsComing: boolean,
@@ -450,6 +520,7 @@ class FollowedTabs {
   /** Register the run's own tab as T1, and follow the tabs it opens. */
   start(page: Page, attachment: PageAttachment, dialogs: DialogTracker): void {
     this.first = { n: 1, page, link: attachment, dialogs };
+    this.nextNumber = 2;
     this.numbers.set(attachment, 1);
     this.follow(attachment, 1);
     page.on('close', () => {
@@ -460,7 +531,7 @@ class FollowedTabs {
   /** The controlled tabs still open, by number. */
   list(): ControlledTab[] {
     // Sorted: tabs opened together finish setting up in any order.
-    const all = [this.first, ...[...this.tabs.values()].map((t) => t.tab)];
+    const all = [...(this.first ? [this.first] : []), ...[...this.tabs.values()].map((t) => t.tab)];
     return all.filter((t) => !t.page.isClosed()).sort((a, b) => a.n - b.n);
   }
 
@@ -528,7 +599,7 @@ class FollowedTabs {
     if (this.disposed) throw new Error('The run is ending');
     const n = this.nextNumber++;
     const setUp = (async () => {
-      const page = await this.first.page.context().newPage();
+      const page = await this.context.newPage();
       try {
         await this.setUp(page, n);
       } catch (err) {
@@ -556,7 +627,9 @@ class FollowedTabs {
 
   // `opener` is the tab that opened this one; none for `tabs new`.
   private async setUp(page: Page, n: number, opener?: number): Promise<void> {
-    const out = (line: string): void => this.opts.out(`[T${n}] ${line}`);
+    // T1 goes unprefixed, as the run's own does, when `--notab` makes
+    // the first tab opened T1.
+    const out = n === 1 ? this.opts.out : (line: string): void => this.opts.out(`[T${n}] ${line}`);
     // First, so a tab that closes during the awaits below is still
     // noticed.
     let announced = false;
@@ -622,7 +695,7 @@ function ranLate(script: PreparedScript, readyState: string | null): boolean {
 // read its Log tab, instead of preparing and injecting. `prepareAll`
 // still runs first so a header or syntax problem is reported here with
 // the same wording, before anything reaches the extension.
-async function runInExtension(opts: RunOptions, session: BrowserSession): Promise<number> {
+async function runInExtension(opts: RunOptions, session: RunSession): Promise<number> {
   const { context, page } = session;
   let backend: ExtensionBackend;
   try {
@@ -704,7 +777,7 @@ async function runInExtension(opts: RunOptions, session: BrowserSession): Promis
       const n = i + 1;
       let tabPage: Page;
       try {
-        tabPage = i === 0 ? page : await context.newPage();
+        tabPage = i === 0 && page ? page : await context.newPage();
       } catch (err) {
         skipScriptsOf(start, prepared, url, `The tab could not be opened: ${(err as Error).message}`);
         return;
@@ -717,12 +790,15 @@ async function runInExtension(opts: RunOptions, session: BrowserSession): Promis
       opts.out(i === 0 ? `[sm-dev] Opening ${url}` : `[sm-dev] Opening ${url} in T${n}`);
       await tabPage.goto(url).catch((err) => opts.out(`[sm-dev] Navigation failed: ${(err as Error).message}`));
     }));
+    if (!page) opts.out('[sm-dev] No tab was opened. The scripts run in the pages you browse to.');
     printSkipped(opts, start);
     let watcher: (() => void) | null = null;
     if (opts.watch) {
-      watcher = watchFiles(opts, prepared, null, page, async (next) => {
+      watcher = watchFiles(opts, prepared, 're-pushing', async (next) => {
         if (!(await pushAll(next))) return;
         for (const p of pages) await p.reload().catch(() => undefined);
+        // With --notab the pages are the person's own, so theirs to reload.
+        if (pages.length === 0) opts.out('[sm-dev] Reload your tabs to run the new version');
       });
     }
     const ticker = setInterval(() => { void poll(); }, 500);
@@ -827,12 +903,12 @@ function wirePageOutput(page: Page, opts: Pick<RunOptions, 'out' | 'pageErrors'>
 // than the files, because an editor that saves by writing a temp file
 // and renaming it over the original leaves a per-file watch on the old
 // inode, silent from the first save on.
+// `apply` puts the re-prepared scripts in place and reloads.
 function watchFiles(
   opts: RunOptions,
   prepared: PreparedScript[],
-  attachment: PageAttachment | null,
-  page: Page,
-  injectAll: (scripts: PreparedScript[]) => Promise<void>,
+  doing: 're-injecting' | 're-pushing',
+  apply: (scripts: PreparedScript[]) => Promise<void>,
 ): () => void {
   const files = new Set<string>();
   for (const p of prepared) {
@@ -855,19 +931,10 @@ function watchFiles(
       timer = null;
       if (stopped) return;
       (async () => {
-        opts.out(attachment ? '[sm-dev] Change detected, re-injecting' : '[sm-dev] Change detected, re-pushing');
+        opts.out(`[sm-dev] Change detected, ${doing}`);
         const next = await prepareAll(opts);
         if (!next || stopped) return;
-        if (attachment) {
-          // T1 may have been closed, with other tabs still open.
-          const open = !page.isClosed();
-          if (open) for (const old of attachment.injectedScripts()) await attachment.remove(old.spec!.id);
-          await injectAll(next);
-          if (open) await page.reload();
-        } else {
-          // Extension mode: the callback pushes and reloads itself.
-          await injectAll(next);
-        }
+        await apply(next);
       })().catch((err) => opts.out(`[sm-dev] Re-inject failed: ${(err as Error).message}`));
     }, 150);
   };

@@ -146,3 +146,81 @@ test('a document-start script in a followed tab gets a may-have-run-late note', 
   }, [note]);
   expect(lines).toContain(`[sm-dev] ${note}`);
 });
+
+test('--notab opens no tab, and no scripts open a blank page or --url', async ({ fixtureServer, scriptsDir }) => {
+  const file = scriptsDir.write({
+    relativePath: 'quiet.user.js',
+    meta: { name: 'Quiet', match: ['*://*/target.html'] },
+    body: `console.log('[quiet] ran');`,
+  });
+  const noTab: string[] = [];
+  const code = await run({
+    files: [file], noTab: true, launch: true, collectionRoot: scriptsDir.path, localRoots: [], out: (l) => noTab.push(l),
+  });
+  expect(code).toBe(0);
+  expect(noTab.some((l) => l.startsWith('[sm-dev] Opening'))).toBe(false);
+
+  const target = `${fixtureServer.baseUrl}/target.html`;
+  const { code: noScriptCode, lines } = await runUntil({ files: [], url: target, collectionRoot: scriptsDir.path }, [
+    `[sm-dev] Opening ${target}`,
+  ]);
+  expect(noScriptCode).toBe(0);
+  expect(lines).toContain(`[sm-dev] Opening ${target}`);
+});
+
+// Drive the real CLI through its input, as a person or an agent would:
+// each command is sent once the line before it in `steps` has printed.
+async function driveCli(args: string[], steps: [waitFor: string, send: string][]): Promise<string[]> {
+  const { spawn } = await import('node:child_process');
+  const cli = new URL('../../lib/harness/cli.js', import.meta.url).pathname;
+  const child = spawn(process.execPath, [cli, 'run', ...args, '--launch', '--seconds', '20'], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const lines: string[] = [];
+  let pending = [...steps];
+  let buffer = '';
+  const onData = (chunk: Buffer): void => {
+    buffer += chunk.toString();
+    const parts = buffer.split('\n');
+    buffer = parts.pop() ?? '';
+    for (const line of parts) {
+      lines.push(line);
+      while (pending[0] && lines.some((l) => l.includes(pending[0][0]))) {
+        child.stdin.write(`${pending[0][1]}\n`);
+        pending = pending.slice(1);
+      }
+    }
+  };
+  child.stdout.on('data', onData);
+  child.stderr.on('data', onData);
+  await new Promise((resolve) => child.on('exit', resolve));
+  return lines;
+}
+
+test('--notab: the first tab opened is T1, unprefixed like a normal run\'s', async ({ fixtureServer, scriptsDir }) => {
+  const file = scriptsDir.write({
+    relativePath: 'hello.user.js',
+    meta: { name: 'Hello', match: ['*://*/target.html'] },
+    body: `console.log('[hello] on ' + location.pathname);`,
+  });
+  const target = `${fixtureServer.baseUrl}/target.html`;
+  const lines = await driveCli([file, '--notab'], [
+    ['Ready for commands', 'status'],
+    ['Not running, since no tabs are active', `tabs new ${target}`],
+    ['[page log] [hello] on /target.html', 'quit'],
+  ]);
+  expect(lines).toContain('[sm-dev] No tabs are active. Type tabs new to open one.');
+  expect(lines).toContain('[sm-dev] Tab T1 opened');
+  // Both the page's lines and the harness's own, without a [T1] prefix.
+  expect(lines).toContain('[page log] [hello] on /target.html');
+  expect(lines).toContain(`[sm-dev] Hello started on ${target}`);
+  expect(lines.some((l) => l.startsWith('[T1]'))).toBe(false);
+});
+
+test('--noscript: a blank page, and the lists say there are no scripts', async () => {
+  const lines = await driveCli(['--noscript'], [
+    ['Ready for commands', 'status'],
+    ['No scripts are loaded', 'quit'],
+  ]);
+  expect(lines).toContain('[sm-dev] Opening about:blank');
+  expect(lines).toContain('Page: about:blank');
+  expect(lines).toContain('  No scripts are loaded');
+});

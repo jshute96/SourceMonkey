@@ -800,8 +800,14 @@ See [docs/harness-design.md](docs/harness-design.md).
   still land in a test's output directory after teardown.
 - A page the harness attached to that closes (a granted `window.close`,
   or the user closing it) leaves the tabs its scripts opened until the
-  attachment is disposed, and `sm-dev run` keeps running with nothing
-  to stream until Ctrl-C.
+  attachment is disposed.
+- `sm-dev run` gives scripts `GM_info.userAgentData` of `null`: scripts
+  are prepared once at startup, while the run's tab is still on
+  `about:blank` (or, with `--notab`, before any tab exists), and the
+  browser only exposes `navigator.userAgentData` on secure origins. A
+  reused tab already on a secure page is the exception. Reading it
+  from a secure context the run doesn't show (or re-preparing once a
+  tab reaches one) would close it.
 - Two `loadUserscript` / `inject` calls at once on one attachment can
   both add the GM runtime to a world (harmless: it installs once) and
   lose track of one of them. Serialize `inject` if it ever matters.
