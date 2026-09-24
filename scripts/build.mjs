@@ -6,11 +6,16 @@
 //      16/48/128 sizes referenced by manifest.json).
 //   3. Copies src/manifest.json -> dist/manifest.json verbatim. Chrome loads
 //      the unpacked extension from dist/, so the manifest must live there.
+//      lib/ gets a copy for the harness, which reads the extension key.
 //   4. Copies src/**/*.html -> dist/**/*.html (extension pages such as
 //      collections.html and debug/icons.html), inlining the shared glyph
 //      sprite where a page writes `<!--#include glyph-sprite-->`.
-//   5. Runs the TypeScript compiler (tsc) to compile src/*.ts -> dist/*.js.
-//      With --watch, tsc keeps running and rebuilds on change.
+//   5. Runs the TypeScript compiler (tsc) twice: src/*.ts -> dist/*.js
+//      for the extension, and src/**/*.ts -> lib/**/*.js (with .d.ts)
+//      for the `sourcemonkey` package, whose development harness is
+//      Node-only code Chrome never loads. See docs/architecture.md.
+//      With --watch, only the extension build runs, and tsc keeps
+//      running and rebuilds on change.
 //
 // Run with `pnpm run build`. Pass --watch to keep tsc running.
 //
@@ -27,10 +32,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
 const src = resolve(root, 'src');
 const dist = resolve(root, 'dist');
+const lib = resolve(root, 'lib');
 const watch = process.argv.includes('--watch');
 
-// 1. Clean dist/.
+// 1. Clean the outputs. Watch mode rebuilds only dist/, so it leaves
+//    lib/ standing: the harness tests and the validate script import
+//    from it.
 await rm(dist, { recursive: true, force: true });
+if (!watch) await rm(lib, { recursive: true, force: true });
 await mkdir(dist, { recursive: true });
 
 // 2. Copy icons.
@@ -57,8 +66,11 @@ await cp(
 );
 
 // 3. Copy the manifest into dist/ so Chrome can find it when loading
-//    unpacked from dist/.
+//    unpacked from dist/. The package gets a copy too: the harness
+//    derives the extension id from its `key` (extension-backend.ts).
 await cp(resolve(src, 'manifest.json'), resolve(dist, 'manifest.json'));
+await mkdir(lib, { recursive: true });
+await cp(resolve(src, 'manifest.json'), resolve(lib, 'manifest.json'));
 
 // 4. Copy every HTML / CSS asset under src/, keeping its subdirectory
 //    (collections.html, debug/icons.html, plus any shared *.css the pages
@@ -159,7 +171,16 @@ async function generateWrappers() {
     const minified = minifyForInjection(text);
     out.push(`export const ${exportName[name]} = ${JSON.stringify(minified)};`);
   }
-  await writeFile(resolve(dist, 'generated-wrappers.js'), out.join('\n') + '\n');
+  const text = out.join('\n') + '\n';
+  await writeFile(resolve(dist, 'generated-wrappers.js'), text);
+  // The package gets the same module, plus the hand-written
+  // declarations beside it: tsc emits a `.d.ts` for every module it
+  // compiles, and a consumer resolving `injector.d.ts` needs this one
+  // too. Written here rather than copied from dist so the two outputs
+  // never depend on each other's timing.
+  await mkdir(lib, { recursive: true });
+  await writeFile(resolve(lib, 'generated-wrappers.js'), text);
+  await cp(resolve(src, 'generated-wrappers.d.ts'), resolve(lib, 'generated-wrappers.d.ts'));
 }
 
 function minifyForInjection(source) {
@@ -180,6 +201,8 @@ function minifyForInjection(source) {
 //    failure surfaces as a non-zero exit instead of being silently
 //    swallowed. Non-watch mode just runs once and propagates the exit code.
 if (watch) {
+  // The extension only: that is what a developer watching `dist/` is
+  // iterating on, and the package build is a full `pnpm run build`.
   const child = spawn('pnpm', ['exec', 'tsc', '--watch'], { stdio: 'inherit', cwd: root });
   const code = await new Promise((res, rej) => {
     child.on('exit', (c) => res(c ?? 0));
@@ -187,6 +210,8 @@ if (watch) {
   });
   process.exit(code);
 } else {
-  const r = spawnSync('pnpm', ['exec', 'tsc'], { stdio: 'inherit', cwd: root });
-  if (r.status !== 0) process.exit(r.status ?? 1);
+  for (const args of [['exec', 'tsc'], ['exec', 'tsc', '-p', 'tsconfig.lib.json']]) {
+    const r = spawnSync('pnpm', args, { stdio: 'inherit', cwd: root });
+    if (r.status !== 0) process.exit(r.status ?? 1);
+  }
 }

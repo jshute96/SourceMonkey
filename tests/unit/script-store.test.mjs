@@ -188,7 +188,7 @@ test('extractStartupLogs emits a warn entry naming each unknown @grant in declar
   assert.deepEqual(extractStartupLogs(header, 'x.user.js'), [
     {
       level: 'warn',
-      message: 'Ignoring @grant GM_webRequest, GM_audio — unsupported APIs',
+      message: 'Ignoring unsupported @grant GM_webRequest, GM_audio',
       location: { file: 'x.user.js', line: 5 },
     },
   ]);
@@ -208,7 +208,7 @@ test('extractStartupLogs surfaces unknown names even when @grant none also appea
   assert.deepEqual(extractStartupLogs(header, 'x.user.js'), [
     {
       level: 'warn',
-      message: 'Ignoring @grant GM_typo — unsupported APIs',
+      message: 'Ignoring unsupported @grant GM_typo',
       location: { file: 'x.user.js', line: 5 },
     },
   ]);
@@ -228,13 +228,13 @@ test('extractStartupLogs warns once per unusable @match, each on its own line', 
   assert.deepEqual(extractStartupLogs(header, 'x.user.js'), [
     {
       level: 'warn',
-      message: 'Ignoring @match https://bare.example — it has no path; '
+      message: 'Ignoring @match https://bare.example, which has no path; '
         + 'add a trailing "/*" to match all pages on that host',
       location: { file: 'x.user.js', line: 4 },
     },
     {
       level: 'warn',
-      message: 'Ignoring @match httpx://other.example/* — it names the unsupported '
+      message: 'Ignoring @match httpx://other.example/*, which names the unsupported '
         + 'scheme "httpx"; use one of *, http, https, file, ftp ("*" covers http and https)',
       location: { file: 'x.user.js', line: 5 },
     },
@@ -289,7 +289,7 @@ console.log('hi');
   assert.deepEqual(entry.startupLogs, [
     {
       level: 'warn',
-      message: 'Ignoring @grant GM_typoName — unsupported APIs',
+      message: 'Ignoring unsupported @grant GM_typoName',
       location: { file: 'a.user.js', line: 5 },
     },
   ]);

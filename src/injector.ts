@@ -675,6 +675,15 @@ function firstValue(header: ParsedHeader, tags: readonly string[]): string | nul
 // describes the browser, not the page, so every script gets the same
 // value. `null` where the API is missing (unit tests under Node).
 let uaDataSnapshot: UserAgentDataSnapshot | null | undefined;
+
+// For a caller with no `navigator` of its own but a browser to ask:
+// the development harness (src/harness/) reads the snapshot from a
+// page it controls and sets it here before building specs, so the
+// `GM_info` it bakes describes that browser rather than Node.
+export function setUserAgentDataSnapshot(snapshot: UserAgentDataSnapshot | null): void {
+  uaDataSnapshot = snapshot;
+}
+
 function readUserAgentData(): UserAgentDataSnapshot | null {
   if (uaDataSnapshot !== undefined) return uaDataSnapshot;
   const nav = (globalThis as { navigator?: { userAgentData?: UserAgentDataSnapshot } }).navigator;
@@ -930,10 +939,21 @@ export async function buildSwapEvalBody(
 // Async because storage-granting scripts read their persisted values
 // from chrome.storage.local at register time (see
 // buildGmBindingsForScript).
+export interface RegistrationSpecOptions {
+  // Always carry the script's matching rules in the config blob so the
+  // prelude's in-page matcher gates every document. In the extension
+  // Chrome's own `matches` does that and the in-page matcher is only
+  // shipped where Chrome's grammar can't express the rule; the
+  // development harness (src/harness/) injects with CDP init scripts,
+  // which run on every document, so it asks for the matcher every time.
+  inPageMatcher?: boolean;
+}
+
 export async function buildRegistrationSpec(
   script: StoredScript,
   scriptHandlerVersion: string = '0.0.0',
   logLabel: string = scriptBasename(script.relativePath),
+  options: RegistrationSpecOptions = {},
 ): Promise<RegistrationSpec | null> {
   // What Chrome gets is the canonical spelling of each `@match`, not
   // the author's: a scheme-less `*.example.com/*` or a globbed
@@ -1019,7 +1039,8 @@ export async function buildRegistrationSpec(
     script.header ? getValue(script.header, 'run-at') : undefined,
   );
   const name = scriptDisplayName(script);
-  const needsWrapperFilter = hasRegexInclude || hasRegexExclude || usedAllUrlsFallback;
+  const needsWrapperFilter = hasRegexInclude || hasRegexExclude || usedAllUrlsFallback
+    || options.inPageMatcher === true;
   const sourceUrl = buildSourceUrl(logLabel);
 
   const world = resolveScriptWorld(script);

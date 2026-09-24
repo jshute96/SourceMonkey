@@ -24,7 +24,8 @@ test.describe('examples / xmlhttp-denied', () => {
     // script's @connect rules" substring this test asserts is a SM-only
     // string. Skip on both and treat their behaviour as out-of-scope
     // here.
-    test.skip(setup.manager !== 'sourcemonkey', `${setup.manager} uses its own @connect UX (prompts, different message)`);
+    // The harness applies SourceMonkey's own @connect rules and messages.
+    test.skip(setup.manager !== 'sourcemonkey' && setup.manager !== 'harness', `${setup.manager} uses its own @connect UX (prompts, different message)`);
 
     await setup.installScriptsFrom(__dirname);
 

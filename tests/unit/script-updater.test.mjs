@@ -219,7 +219,7 @@ async function seedSingleScriptThenReplay(scriptId = 'sc-1') {
   sessionStore.clear();
   seedScript({
     scriptId,
-    startupLogs: [{ level: 'warn', message: 'Ignoring @grant GM_audio — unsupported APIs' }],
+    startupLogs: [{ level: 'warn', message: 'Ignoring unsupported @grant GM_audio' }],
   });
   await replayScriptLogsAtBoot();
   await _flushScriptLogQueueForTests(scriptId);
@@ -266,13 +266,13 @@ test('replayScriptLogsAtBoot: replays diagnostics even if a refresh got there fi
   sessionStore.clear();
   seedScript({
     scriptId: 'sc-race',
-    startupLogs: [{ level: 'warn', message: 'Ignoring @grant GM_audio — unsupported APIs' }],
+    startupLogs: [{ level: 'warn', message: 'Ignoring unsupported @grant GM_audio' }],
   });
   // Pre-seed the log with what a refresh path would have written.
   await (await import('../../dist/script-log.js')).appendScriptLog('sc-race', {
     level: 'warning',
     source: 'parser',
-    message: 'Ignoring @grant GM_audio — unsupported APIs',
+    message: 'Ignoring unsupported @grant GM_audio',
   });
   await replayScriptLogsAtBoot();
   await _flushScriptLogQueueForTests('sc-race');

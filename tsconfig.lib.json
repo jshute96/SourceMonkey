@@ -1,0 +1,24 @@
+{
+  // The `sourcemonkey` package: every module, plus the Node-only
+  // development harness, plus the `.d.ts` a TypeScript consumer needs.
+  //
+  // A second output rather than a second source tree, because the
+  // harness is built ON the extension's modules, so the two are not
+  // separable sets of files. What IS separable is where each lands:
+  // `dist/` is the unpacked extension and nothing else (tsconfig.json),
+  // `lib/` is what the package ships. Both come from the same sources
+  // with the same settings, so the harness runs the extension's own
+  // code.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "lib",
+    "declaration": true,
+    // The harness runs under Node. The extension build leaves Node's
+    // types out, so extension code can't use `Buffer` or `process`.
+    "types": ["chrome", "node"]
+  },
+  // `exclude` is inherited, and the extension config uses it to keep
+  // the harness out of `dist/`; clear it so the package gets it.
+  "exclude": [],
+  "include": ["src/**/*.ts"]
+}

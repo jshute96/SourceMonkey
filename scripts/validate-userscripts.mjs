@@ -15,7 +15,7 @@
 // pieces necessarily differ, and both are documented where they live:
 //
 //   - the compile happens in Node's V8 rather than Chrome's sandboxed
-//     page (`scripts/parse-check-node.mjs`);
+//     page (`src/harness/parse-check-node.ts`);
 //   - `--offline-root` swaps the global `fetch` for one that serves
 //     `@require` / `@resource` URLs out of a downloaded tree.
 //
@@ -68,7 +68,7 @@ import {
   UNTERMINATED_METADATA_BLOCK,
 } from '../dist/userscript-header.js';
 import { unusableMatchGroupKey } from '../dist/url-match.js';
-import { checkParseNode } from './parse-check-node.mjs';
+import { checkParseNode } from '../lib/harness/parse-check-node.js';
 // The offline tree's layout (percent-encoded segments, truncated long
 // names, `<path>/index` for a path that is also a directory prefix) is
 // defined by the corpus downloader, so the lookup comes from there

@@ -22,6 +22,30 @@ SourceMonkey is generally compatible with
 [Tampermonkey](https://www.tampermonkey.net/) and other common
 userscript managers.
 
+### Testing your userscripts
+
+Userscripts are hard to test. The hard part is not the script, it is
+the manager around it: `@match`, `@grant`, `@require` loading, and the
+`GM_*` APIs. A test harness normally fakes all of that, and a fake is
+the one thing that cannot tell you your script works.
+
+SourceMonkey ships a harness that uses its own code instead. A repo of
+userscripts installs SourceMonkey as a package and gets two things:
+
+- **A Playwright fixture.** A script under test is prepared by the
+  extension's own install pipeline and injected behind its real
+  prelude and `GM_*` runtime, with a stand-in for the service worker.
+  A test drives what the script did through the manager: read what it
+  stored, fire a menu command, answer a network request.
+- **`sm-dev`, a command-line tool.** Run a script against a live page
+  and watch what it does, re-injecting as you save. Check which
+  selectors still resolve after a site changes. Save a page so a test
+  can replay it without logging in. Push a script straight into a
+  running SourceMonkey's Scratch collection.
+
+See [docs/harness-guide.md](docs/harness-guide.md) to use it, and
+[docs/harness-design.md](docs/harness-design.md) for how it works.
+
 ### Example userscripts
 
 [`tests/examples`](tests/examples/README.md) includes example scripts
@@ -169,7 +193,12 @@ location can be read before creating anything.
 Single scripts go into **scripts collections** — folders you create
 and name, or the defaults created on demand (`Scripts from local disk`,
 `Scripts from web`, `Scripts from GitHub`). One scripts collection can
-mix local, web, and GitHub scripts.
+mix local, web, and GitHub scripts. A `Scratch` collection holds
+scripts whose only copy is in SourceMonkey itself, with no file or URL
+behind them. For now it appears when a development tool pushes a
+script straight into the extension (see
+[docs/harness-guide.md](docs/harness-guide.md)); it can be removed like
+any other.
 
 Details: [docs/file-access.md](docs/file-access.md),
 [docs/http-collections.md](docs/http-collections.md).
@@ -395,13 +424,32 @@ The built extension is written to `dist/`. Load it into Chrome via
 directory, then enable the toggles listed under [Getting
 started](#getting-started).
 
+`pnpm install` runs the same build (the package's `prepare` script), so
+a fresh checkout has a `dist/` as soon as its dependencies are in.
+
+The build writes two directories. `dist/` is the unpacked extension,
+and nothing else: you load it in Chrome, and
+`scripts/zip_extension.sh` packs it. `lib/` is the `sourcemonkey`
+package, which adds the development harness and the type declarations
+a consumer needs. See
+[docs/architecture.md](docs/architecture.md#two-outputs-dist-and-lib).
+
+`scripts/sm-dev` runs the harness's command line from this checkout
+(a repo that installs the package gets `sm-dev` on its path instead):
+
+```sh
+scripts/sm-dev --help
+scripts/sm-dev validate tests/examples
+```
+
 ### Test
 
 ```sh
-pnpm test            # unit + e2e
-pnpm run test:unit   # node --test, fast
-pnpm run test:e2e    # Playwright with the extension loaded
-pnpm run test:headed # e2e with a visible browser
+pnpm test              # unit + e2e + harness
+pnpm run test:unit     # node --test, fast
+pnpm run test:e2e      # Playwright with the extension loaded
+pnpm run test:headed   # e2e with a visible browser
+pnpm run test:harness  # the development harness, on a plain Chromium
 ```
 
 To narrow a run to one file:

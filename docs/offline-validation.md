@@ -55,7 +55,7 @@ Only two pieces can't be shared, and both are contained:
 
 | Piece | In the extension | Here |
 |-------|------------------|------|
-| The compile | `new Function` in a sandboxed extension page, located by appending a `<script>` and reading the window `error` event | `new Function` under Node, located by `new vm.Script` and the position V8 renders at the top of `err.stack` (`scripts/parse-check-node.mjs`) |
+| The compile | `new Function` in a sandboxed extension page, located by appending a `<script>` and reading the window `error` event | `new Function` under Node, located by `new vm.Script` and the position V8 renders at the top of `err.stack` (`src/harness/parse-check-node.ts`) |
 | The fetch | `fetch()` / XHR against the network | the global `fetch` is replaced; see below |
 
 Everything downstream of the compile — probe selection, the range

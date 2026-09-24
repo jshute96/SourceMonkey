@@ -12,6 +12,11 @@ real-browser end-to-end suite for everything that touches the
 - `tests/e2e/*.spec.ts` — Playwright specs. Launch headless Chromium
   with the unpacked extension loaded.
 - `tests/fixtures/` — shared harness code.
+- `tests/harness/*.spec.ts` — the development harness (`src/harness/`,
+  see [harness-design.md](harness-design.md)) on a plain Chromium with
+  no extension, under the `harness` Playwright project
+  (`pnpm run test:harness`), which also runs the examples suite through
+  it. Fixtures in `tests/fixtures/harness.ts`.
 - `tests/greasyfork-examples/` — not a test suite: tooling that builds a
   corpus of the top 2000 real-world GreasyFork scripts and analyses it
   (see its own `README.md`). Playwright's `testMatch` covers only
@@ -33,7 +38,7 @@ or the GreasyFork corpus. See
 
 ## Running
 
-- All tests: `pnpm test`
+- All tests: `pnpm test` (unit, e2e, then the harness suite)
 - Unit only: `pnpm run test:unit`
 - E2E only: `pnpm run test:e2e`
 - One unit file: `node --test tests/unit/<name>.test.mjs`
@@ -233,6 +238,12 @@ tests:
   sharing has no other observable signature. Both are per-JS-context and
   count *all* such reads in the worker, so reset around the window under
   test.
+- Scratch scripts: `writeScratchScript({ text, name? })` installs text
+  into the Scratch collection and syncs before it resolves (a rewrite
+  of the same name replaces in place); `clearScratchScripts()` drops them
+  all; `soloMode(on)` disables every other collection until turned
+  off. The development harness's extension backend drives these; see
+  [harness-design.md](harness-design.md).
 - GM values: `getGmValues(id)` returns every **persisted** value for a
   script, deliberately excluding the SW's in-flight overlay.
   `GM_setValue` batches its write 150ms after the last one, so a test

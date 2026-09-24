@@ -13,6 +13,7 @@ One-line descriptions of every source file, grouped by directory.
 | `package.json` | Node project manifest, scripts, devDependencies |
 | `pnpm-lock.yaml` | pnpm dependency lockfile |
 | `tsconfig.json` | TypeScript compiler config for the extension build |
+| `tsconfig.lib.json` | The `sourcemonkey` package build: every module plus the harness, with declarations, into `lib/` |
 | `tsconfig.tests.json` | Typecheck-only config extending the build one to cover `tests/` (`pnpm run typecheck`) |
 | `playwright.config.ts` | Playwright test runner config (e2e suite) |
 | `.gitignore` | Git ignore rules |
@@ -29,8 +30,9 @@ One-line descriptions of every source file, grouped by directory.
 
 | File | Description |
 |------|-------------|
-| `scripts/build.mjs` | Clean `dist/`, copy icons + manifest + HTML + vendor (Prism), run `tsc` (optional `--watch`) |
-| `scripts/zip_extension.sh` | Build and zip `dist/` for distribution — `/tmp/SourceMonkey.zip`, or `-vVERSION` with `--release` |
+| `scripts/build.mjs` | Build the extension into `dist/` (assets + `tsc`) and the package into `lib/` (optional `--watch`) |
+| `scripts/sm-dev` | Runs the harness's command line from this checkout, building `lib/` first when it is missing |
+| `scripts/zip_extension.sh` | Build and zip the extension for distribution, packing all of `dist/` |
 | `scripts/release-extension.sh` | Cut a `vX.Y.Z` GitHub release: version/branch/tag checks, zip, push tag, `gh release create` (draft by default) |
 | `scripts/serve-examples.mjs` | Local HTTP server for `tests/examples/`, including the `/__slow/?ms=N` delay route the `headers-run-at` demo needs |
 | `scripts/make_manifest.sh` | Scan the current dir for `*.user.js` and emit a SourceMonkey HTTP-manifest JSON array to stdout (redirect to `script_manifest.json`) |
@@ -42,7 +44,6 @@ One-line descriptions of every source file, grouped by directory.
 | `scripts/inspect-tm-dashboard.mjs` | Diagnostic: dumps every visible row on the TM dashboard with cell classes — use when listInstalled selectors stop working |
 | `scripts/inspect-tm-install.mjs` | Diagnostic: drives one TM install and dumps the confirmation-page buttons — use when the Install-button selector stops working |
 | `scripts/validate-userscripts.mjs` | CLI that runs the install-time checks (header, `@require`/`@resource`, parse) over files on disk, with an offline dependency root |
-| `scripts/parse-check-node.mjs` | Node counterpart of the sandboxed parse check: `new Function` verdict plus `vm.Script` location probes |
 
 ## Extension Source (`src/`)
 
@@ -161,12 +162,34 @@ One-line descriptions of every source file, grouped by directory.
 | `src/action-menu.ts` | Action context-menu planner — packs script + command groups and the fixed reload row into Chrome's 6-item cap with a "More" overflow submenu |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons (placeholder) |
 
+### Development harness (`src/harness/`)
+
+Node-side code Chrome never loads. Compiled into `lib/harness/`, and
+published as the `sourcemonkey/harness` entry and the `sm-dev`
+command. See `docs/harness-design.md`.
+
+| File | Description |
+|------|-------------|
+| `src/harness/index.ts` | Public entry of the harness package: re-exports the install pipeline, host, injector, and Playwright fixture |
+| `src/harness/prepare.ts` | Runs the real install pipeline over a file or text under Node and returns the registrable entries, world, matching, and diagnostics |
+| `src/harness/parse-check-node.ts` | Node counterpart of the sandboxed parse check: `new Function` verdict plus `vm.Script` location probes |
+| `src/harness/host.ts` | The stand-in service worker: answers every bridge message the injected code sends, under Node, and records what scripts do |
+| `src/harness/inject.ts` | Attaches prepared scripts to a Playwright page over CDP, in the right world, with a message channel per world to the host |
+| `src/harness/fixture.ts` | The Playwright fixture a consumer repo imports: `loadUserscript`, `gm`, `reports`, `serveSnapshot` over a host and attachment per test |
+| `src/harness/capture-page.ts` | A page's DOM as a standalone file, scripts disabled and a `<base>` added; shared by `sm-dev snapshot` and the fixture's `saveSnapshot` |
+| `src/harness/console-commands.ts` | The commands typed while `sm-dev run` streams, the page-dialog tracker, and the terminal prompt |
+| `src/harness/browser-commands.ts` | `sm-dev probe` (which selectors resolve on a page) and `sm-dev snapshot` (save a page's DOM for a spec) |
+| `src/harness/run.ts` | `sm-dev run`: open a browser (reusing a finished run's tab), inject or push the scripts, and stream |
+| `src/harness/extension-backend.ts` | `sm-dev --extension`: finds SourceMonkey's worker in the browser and drives `writeScratchScript`, `clearScratchScripts`, `soloMode`, the script log |
+| `src/harness/cli.ts` | The `sm-dev` command: `validate`, `match`, `run`, `probe`, `snapshot`, `clear` |
+
 ## Tests (`tests/`)
 
 | File | Description |
 |------|-------------|
 | `tests/fixtures/extension.ts` | Playwright fixture: launches Chromium with the extension, exposes SW handle, HTTP fixture server, and the `sm` SW-api proxy; `testWithBrowserDownloads` variant leaves downloads to Chrome |
-| `tests/fixtures/manager.ts` | Manager-agnostic Playwright fixture for the examples suite — picks SM (unpacked build) or TM/VM (persistent CWS profile) per project metadata |
+| `tests/fixtures/harness.ts` | Fixtures for the `harness` project: plain Chromium, fixture server, a host and page attachment per test, `loadScript` |
+| `tests/fixtures/manager.ts` | Manager-agnostic Playwright fixture for the examples suite — picks SM (unpacked build), TM/VM (persistent CWS profile), or the harness per project metadata |
 | `tests/fixtures/managers.mjs` | Per-manager table (profile dir, CDP port, Web Store ID, env vars) shared by the fixture, preflight, and CLIs |
 | `tests/fixtures/userscript-files.mjs` | Finds `*.user.js` files on disk and reads their `@name`/`@version`, shared by both manager drivers and the sync CLI |
 | `tests/fixtures/sourcemonkey-launch.ts` | Shared Chromium-launch / SW-handle / HTTP-fixture-server helpers used by both `extension.ts` and `manager.ts`; optional Chrome-managed downloads dir |
@@ -264,6 +287,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/site-icon.test.mjs` | Unit tests for the icon-specific helpers: `@icon`-header extraction, `<link rel="icon">` parsing + scoring, cache-hit rules, `data:`→Blob decode |
 | `tests/unit/parse-sandbox-host.test.mjs` | Unit tests for `isParseVerdict` — only the three real statuses pass, so an odd reply can't read as `invalid` |
 | `tests/unit/parse-location.test.mjs` | Unit tests for probe selection and line mapping, driven by positions Chromium really reported |
+| `tests/unit/harness-prepare.test.mjs` | Unit tests for `prepareScript` and `explainMatch` over real files on disk |
 | `tests/unit/parse-check-node.test.mjs` | Unit tests for the Node parse checker: verdict, both probes' positions, and the two probe-selection routes |
 | `tests/unit/validate-userscripts.test.mjs` | Drives the validator CLI as a subprocess over the example suites plus a hand-built offline tree |
 | `tests/unit/diagnostic-location.test.mjs` | Unit tests for the diagnostic label + validator, especially what they do with a partial location |
@@ -275,6 +299,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/parse-check.spec.ts` | The parse-check mechanism: compiles without executing, judges as a function body, catches join-only conflicts |
 | `tests/e2e/parse-check-install.spec.ts` | Install/refresh-time parse failures surface as `invalid`, healthy scripts stay `ok`, and an unverified row is caught before it registers |
 | `tests/e2e/parse-check-pages.spec.ts` | The parse check holds on page-driven paths: the install preview's warning, Install, Refresh, Refresh All |
+| `tests/e2e/scratch-scripts.spec.ts` | Scratch scripts in the extension: write, rewrite, clear, removal, solo mode, `ExtensionBackend` |
 | `tests/e2e/preload-hints.spec.ts` | A fetched response's `Link: rel=preload` header reaches no extension page — both page-side readers hop to the service worker |
 | `tests/e2e/local-file-overrides.spec.ts` | End-to-end local stand-ins across `@require` / `@resource` / `@icon`: suffix matching, live re-read, fallback, opt-out, traversal, configured roots |
 | `tests/e2e/options-local-roots.spec.ts` | Options-page local-file-override roots box: hydration, saving, format complaints, missing-directory warnings |
@@ -362,6 +387,20 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/bad-scripts.spec.ts` | SM-only e2e: each bad script gets the expected status, error location, and byte-for-byte viewer render |
 | `tests/e2e/diagnostic-links.spec.ts` | Clicking a diagnostic's location jumps to the file and line, in the installed viewer and the install preview |
 
+### Harness suite (`tests/harness/`)
+
+Runs under the `harness` Playwright project: a plain Chromium with no
+extension, driven by the Node host in `src/harness/`.
+
+| File | Description |
+|------|-------------|
+| `tests/harness/inject.spec.ts` | Injection end to end: start and error reports, URL misses, world choice, storage seeding and writes, cross-page broadcast, remove and re-inject |
+| `tests/harness/xhr.spec.ts` | `GM_xmlhttpRequest` through the host: load and 404, JSON, `@connect` refusals and redirects, cookies, timeout, abort |
+| `tests/harness/browser-apis.spec.ts` | The harness's tabs, menu commands, notifications, downloads and window APIs |
+| `tests/harness/bridge-trust.spec.ts` | What the page can reach: forged requests refused, isolated traffic kept out of the page, subframes ignored |
+| `tests/harness/console-commands.spec.ts` | The commands typed into `sm-dev run`: picking a script with `use`, per-script `values`, numbered `menu` |
+| `tests/harness/fixture.spec.ts` | The consumer fixture from `lib/`: a script against a served snapshot, `gm` and `reports`, the up-front URL check, the explained miss |
+
 ## GreasyFork Corpus Tooling (`tests/greasyfork-examples/`)
 
 Standalone tooling, not a test suite — see `docs/testing.md`.
@@ -423,3 +462,5 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 | `docs/file-changes.md` | Files changed behind SourceMonkey's back: the drop-on-refresh rule per collection kind, the paint-time chips, the collection's "refresh pending" chip |
 | `docs/local-delete.md` | Deleting a local copy: what can be deleted and why, the dialog, dependency files, order and failure |
 | `docs/local-copy.md` | Local copies of a script: the Downloads collection, why `chrome.downloads`, the dialog, header rewriting, dependency layout, what's next |
+| `docs/harness-design.md` | The harness other repos install: the push backend that runs the injected code without the extension, the extension backend, `sm-dev` |
+| `docs/harness-guide.md` | User-facing: what a userscript repo installs, the `sm-dev` commands, the Playwright fixture API, what is and isn't faithful |

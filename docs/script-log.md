@@ -498,7 +498,7 @@ tracked in `TODO.md`.
     [updates.md](updates.md).
 - **Parser** (`extractStartupLogs` in `src/script-store.ts`, replayed
   by `emitScriptOutcomeLog` in `src/script-updater.ts`):
-  - `Ignoring @grant <names> — unsupported APIs` (warning) — emitted
+  - `Ignoring unsupported @grant <names>` (warning) — emitted
     once per loaded content version, immediately after the
     `Loaded new content` row. Detection happens at parse time and is
     persisted on `StoredScript.startupLogs`, so SW restarts don't

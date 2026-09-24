@@ -746,6 +746,82 @@ Adding any of these is a catalog entry + a body — nothing structural.
   page. Surface a "this script wants to talk to any host" signal in
   the collections-page row at install / refresh time.
 
+## Development harness
+
+See [docs/harness-design.md](docs/harness-design.md).
+
+- `sm-dev validate` has no offline mode: a remote `@require` with no
+  local stand-in is fetched from the network. The corpus validator
+  (`scripts/validate-userscripts.mjs --offline-root`) still has its own
+  fetch shim for that; folding it into `prepareScript` as a fetch
+  override would let the two share one driver.
+- A tab `GM_openInTab` opens under the push backend gets no scripts;
+  the extension would inject whatever matches it. Attaching after the
+  tab exists would only reach its next document, so this needs the
+  attachment to be created with the tab.
+- `GM_download` under the push backend has no `onprogress`, and
+  `GM_notification` shows nothing. Both are recorded and reported;
+  a script that needs the real thing wants `--extension`.
+- The harness's own `@require` fetches and the extension's differ in
+  one way worth closing: a `file://` read in Node returns no
+  `Content-Type`, matching Chrome, but an http(s) one goes out without
+  the extension's identity. Nothing depends on it today.
+- Scratch scripts are keyed by a sanitized name, so different names can
+  share one `scratch:///` URL and replace each other: `Foo Bar`,
+  `Foo/Bar` and `Foo-Bar` all become `Foo-Bar.user.js`, and `sm-dev
+  run --extension` pushes `a/x.user.js` and `b/x.user.js` both as
+  `x.user.js`. At least report the replacement when the header
+  `@name` differs.
+- Removing a scratch script from the collections page while
+  `writeScratchScript` rewrites one of the same name can delete the
+  fresh text: the write stores the text row before installing the row
+  that reads it, and the remove, in another context, sees no reader in
+  between. The install then fails with "The scratch script's text was
+  cleared". Narrow, and only with the harness pushing while someone
+  edits the page.
+- `PUSHED_ANY_WORLD` in `src/harness/inject.ts` repeats the list of
+  world-free pushes in `wrapper-bridge.js`, which is plain injected JS
+  and can't import it. A pushed type added to one and not the other
+  reaches the wrong world under the harness. Generate one from the
+  other at build time, or check them against each other in a unit test.
+- Two scratch-script errors name the harness as the fix: "Push it
+  again" when the text row is gone (`directories.ts`), and "run it
+  without --extension" for a relative path (`external-files.ts`). Word
+  them for the writer once anything but the harness writes scratch
+  scripts.
+- Scratch scripts carry only their own text, so under `sm-dev run
+  --extension` a relative `@require` is refused (with a message saying
+  so) and a local copy of a remote `@require` is not used. Pushing the
+  resolved `@require` bodies along with the text would close both.
+- Detaching a page from the harness host (the page closed, or its
+  attachment disposed) drops its menus, notifications and tab tracking
+  but not its in-flight `GM_download`s or `GM_xmlhttpRequest`s. They
+  run to completion or time out with nobody listening; a download can
+  still land in a test's output directory after teardown.
+- A page the harness attached to that closes (a granted `window.close`,
+  or the user closing it) leaves the tabs its scripts opened until the
+  attachment is disposed, and `sm-dev run` keeps running with nothing
+  to stream until Ctrl-C.
+- Two `loadUserscript` / `inject` calls at once on one attachment can
+  both add the GM runtime to a world (harmless: it installs once) and
+  lose track of one of them. Serialize `inject` if it ever matters.
+- Two `writeScratchScript`s of the same new name at once (two `sm-dev run
+  --extension` on one file) both miss the lookup, and the second fails
+  with an `Internal error`. Look the row up inside the install's lock.
+- The collections page's default move target for a scratch script is
+  "Scripts from local disk", since `scratch:///` reads as a file path
+  there. A scratch script moved there is no longer removed by `sm-dev
+  clear`. Offer no default for scratch rows.
+- Move the author's `userscripts` repo onto the harness: its
+  `test/fixtures.js` re-exports the harness fixture instead of
+  stripping headers, `gm-stubs.js` goes, its specs become ESM, and its
+  `CLAUDE.md` and skills point at `sm-dev run` and the fixture.
+- Publishing: the package is installed from a checkout or a git tag.
+  `package.json` keeps `"private": true` until then; drop it to
+  publish.
+  Once it is on npm, the guide's install step and the consumer's
+  `dependenciesMeta.injected` workaround both get simpler.
+
 ## Test coverage gaps
 
 Negative-path / edge-case tests that would catch real bugs noticed

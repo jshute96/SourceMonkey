@@ -75,7 +75,8 @@ export type ResolveFailReason =
   | 'empty'
   | 'malformed-url'
   | 'unsupported-scheme'
-  | 'outside-script-folder';
+  | 'outside-script-folder'
+  | 'relative-in-scratch';
 
 // A discriminated union for the same reason `FetchFailure` is one: the
 // scheme is always known where it belongs, so making it optional would
@@ -156,6 +157,9 @@ export function resolveScriptResourceDetailed(
   if (resolved.protocol === 'file:') {
     return { kind: 'file', url: resolvedStr };
   }
+  // A scratch script (`scratch:///name.user.js`, see directories.ts) is
+  // stored as text alone, so it has no folder a relative path could name.
+  if (resolved.protocol === 'scratch:') return { failed: true, reason: 'relative-in-scratch' };
   // A relative ref that lands on some other scheme — only reachable
   // when the script's own URL has one, which the collection pipeline
   // doesn't produce today.

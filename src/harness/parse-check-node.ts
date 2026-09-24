@@ -1,5 +1,8 @@
 // Node counterpart of `src/parse-sandbox.ts` — the compile-only parse
-// check, run under Node's V8 instead of Chrome's.
+// check, run under Node's V8 instead of Chrome's. Used by the offline
+// validator (`scripts/validate-userscripts.mjs`) and the development
+// harness (`prepare.ts`), both of which run the install pipeline
+// outside a browser.
 //
 // The extension can only do this inside a sandboxed extension page,
 // because MV3's CSP forbids `eval` everywhere else and the location
@@ -13,8 +16,8 @@
 //     same thing appending a `<script>` element does in the sandbox.
 //
 // Everything downstream (`selectParseLocation`, `attachParseLocation`)
-// is the extension's own code, imported from `dist/`, so the probe
-// selection rule is shared rather than reimplemented.
+// is the extension's own code, so the probe selection rule is shared
+// rather than reimplemented.
 //
 // Caveat worth remembering when reading results: Node's V8 is not
 // Chrome's V8. Both accept the same language, but a very new syntax
@@ -22,6 +25,7 @@
 // between the two versions. `node --version` pins which one answered.
 
 import vm from 'node:vm';
+import type { ParseProbeResult, ParseProbes, ParseVerdict } from '../parse-check-protocol.js';
 
 // Mirrors `parse-sandbox.ts` exactly, because the probe text is what
 // the reported positions are relative to: change the framing and the
@@ -45,11 +49,8 @@ const WRAPPER_TAIL = '\n}';
 const PROBE_FILENAME = 'sm-parse-probe.js';
 const PROBE_HEAD_PREFIX = `${PROBE_FILENAME}:`;
 
-/**
- * The verdict, with probes attached when it's a syntax error. Same
- * shape as `ParseVerdict` in `src/parse-check-protocol.ts`.
- */
-export function checkParseNode(source) {
+/** The verdict, with probes attached when it's a syntax error. */
+export function checkParseNode(source: string): ParseVerdict {
   try {
     // eslint-disable-next-line no-new-func
     new Function(source);
@@ -64,7 +65,7 @@ export function checkParseNode(source) {
   }
 }
 
-function locate(source) {
+function locate(source: string): ParseProbes | undefined {
   try {
     return {
       wrapped: runProbe(`${WRAPPER_HEAD}${source}${WRAPPER_TAIL}${PROBE_SENTINEL}`, 1),
@@ -79,7 +80,7 @@ function locate(source) {
 // Compile `text` as a classic script and report where it failed.
 // `lineOffset` is how many lines of our own framing precede the source,
 // so the caller gets source coordinates back.
-function runProbe(text, lineOffset) {
+function runProbe(text: string, lineOffset: number): ParseProbeResult | undefined {
   try {
     new vm.Script(text, { filename: PROBE_FILENAME });
   } catch (err) {
@@ -122,7 +123,7 @@ function runProbe(text, lineOffset) {
 // lines, so probe choice and the verdict are unaffected.
 const COLUMN_UNKNOWN = 1;
 
-function positionFromStack(err) {
+function positionFromStack(err: Error): { line: number; column: number } | null {
   const lines = String(err.stack ?? '').split('\n');
   const head = lines[0] ?? '';
   if (!head.startsWith(PROBE_HEAD_PREFIX)) return null;

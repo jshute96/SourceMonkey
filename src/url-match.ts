@@ -350,7 +350,7 @@ function canonicalPatternProblem(pattern: string): MatchPatternProblem | null {
 // scanning the Log for.
 export function ignoredMatchMessage(problem: MatchPatternProblem): string {
   const fix = problem.fix ? `; ${problem.fix}` : '';
-  return `Ignoring @match ${problem.pattern} — it ${problem.what}${fix}`;
+  return `Ignoring @match ${problem.pattern}, which ${problem.what}${fix}`;
 }
 
 // The pieces `unusableMatchMessage` is built from, kept separate so the
@@ -373,7 +373,7 @@ const NEVER_RUNS = ', so this script would never run on any page';
 // `@require` failures do: the tag names what the reader has to go and
 // fix, and a `@match` isn't a word we get to recase.
 export function unusableMatchMessage(problem: MatchPatternProblem): string {
-  const fix = problem.fix ? ` — ${problem.fix}` : '';
+  const fix = problem.fix ? `; ${problem.fix}` : '';
   return `${MATCH_TAG}${problem.pattern} ${problem.what}${NEVER_RUNS}${fix}`;
 }
 
@@ -417,14 +417,27 @@ export function includePattern(pattern: string, url: string): boolean {
 // A script with zero match/include patterns never matches anything,
 // which is intentional — validateHeader already flags those as errors.
 export function urlMatchesScript(url: string, matching: UrlMatching): boolean {
+  return explainUrlMatch(url, matching).matches;
+}
+
+export interface UrlMatchExplanation {
+  matches: boolean;
+  /** Which header line decided, e.g. `@exclude *://example.com/admin*`. */
+  rule: string | null;
+}
+
+// The same test, also naming the rule that answered, for a developer
+// asking why a script did or didn't run. One implementation for both,
+// so the answer given and the decision made can't drift apart.
+export function explainUrlMatch(url: string, matching: UrlMatching): UrlMatchExplanation {
   for (const ex of matching.excludes) {
-    if (includePattern(ex, url)) return false;
+    if (includePattern(ex, url)) return { matches: false, rule: `@exclude ${ex}` };
   }
   for (const m of matching.matches) {
-    if (matchPattern(m, url)) return true;
+    if (matchPattern(m, url)) return { matches: true, rule: `@match ${m}` };
   }
   for (const inc of matching.includes) {
-    if (includePattern(inc, url)) return true;
+    if (includePattern(inc, url)) return { matches: true, rule: `@include ${inc}` };
   }
-  return false;
+  return { matches: false, rule: null };
 }

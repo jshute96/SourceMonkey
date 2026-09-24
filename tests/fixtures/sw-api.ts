@@ -27,6 +27,18 @@ export interface SmApi {
     location: string,
     target: { collectionId: string } | { schemeDefault: true },
   ): Promise<{ id: string; path: string } | null>;
+  // Scratch scripts for the development harness: text in, registered
+  // before the promise settles. See docs/harness-design.md.
+  writeScratchScript(args: { text: string; name?: string }): Promise<{
+    scriptId: string;
+    collectionId: string;
+    status: 'ok' | 'invalid';
+    errorMessage?: string;
+    errorLocation?: { file: string; line?: number; column?: number };
+    replaced: boolean;
+  }>;
+  clearScratchScripts(): Promise<number>;
+  soloMode(on: boolean): Promise<void>;
   // Move an installed script from one scripts collection to another.
   // Resolves to the moved row, or null when the destination already
   // has it. Not unwrapped — it returns a script row, not a collection.
@@ -46,7 +58,7 @@ export interface SmApi {
   removeCollection(id: string): Promise<void>;
   getCollections(): Promise<{
     id: string; path: string; enabled: boolean; scriptIds: string[];
-    manifestSize?: number; manifestMtime?: number;
+    displayName?: string; manifestSize?: number; manifestMtime?: number;
   }[]>;
   getCollectionWithScripts(id: string): Promise<{
     collection: { id: string; path: string; enabled: boolean; scriptIds: string[]; scanError?: string };

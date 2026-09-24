@@ -69,6 +69,9 @@ export interface LocationRow {
   // tagged, so the caller can run that over the panel after the render
   // (see file-changes.ts).
   localFile?: LocalFileTag;
+  // A location nothing can open: a scratch script's, which names a
+  // storage row rather than a place. Rendered as text, no anchor.
+  unopenable?: boolean;
   // Intercepts activation of the location anchor. Both viewer modes
   // use it, because a plain navigation to a `.user.js` URL — http(s)
   // or file:// — is captured straight back into a preview (see
@@ -609,6 +612,15 @@ export function collectionCell(collection: StoredCollection, trailing?: Node): N
 function locationCell(row: LocationRow): Node {
   const cell = document.createElement('span');
   cell.className = 'filename-cell';
+  if (row.unopenable) {
+    const textEl = document.createElement('span');
+    textEl.className = 'filename-text';
+    textEl.title = row.text;
+    appendWithSlashBreaks(textEl, row.text);
+    cell.appendChild(textEl);
+    if (row.trailing) cell.appendChild(row.trailing);
+    return cell;
+  }
 
   // Wrap the path in an anchor so it doubles as an open-in-new-tab
   // link. http(s) URLs navigate normally; file:// links are accepted

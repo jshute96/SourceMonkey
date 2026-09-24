@@ -140,6 +140,12 @@ export function isAllowedDownloadUrl(url: string): boolean {
   return hasAllowedScheme(url, WEB_SCHEMES);
 }
 
+// The `details.message` a script sees for a URL `isAllowedDownloadUrl`
+// rejects. Shared with the development harness (src/harness/host.ts).
+export function downloadUrlRefusedMessage(url: string): string {
+  return `refusing to download non-http(s) URL: ${url}`;
+}
+
 // Validate the caller's `name` and turn it into the `filename` we pass
 // to `chrome.downloads.download`.
 //
@@ -222,7 +228,7 @@ export async function startGmDownload(
     return {
       ok: false,
       error: 'not_permitted',
-      details: { message: `refusing to download non-http(s) URL: ${payload.url}` },
+      details: { message: downloadUrlRefusedMessage(payload.url) },
     };
   }
   const nameCheck = validateDownloadName(payload.name);

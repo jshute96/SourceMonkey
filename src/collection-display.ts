@@ -21,8 +21,8 @@
 
 import {
   containerKind,
-  containerKindForSingleFileInput,
   containerPath,
+  scriptSchemeKind,
   githubRawToBlobUrl,
   isContainerCollection,
   isFileUrl,
@@ -152,12 +152,12 @@ export function collectionBubbleKey(path: string): string {
 }
 
 // The small per-row scheme chip a script wears inside a `scripts`
-// collection — `file` / `http` / `github` — since the collection's own
+// collection — `file` / `http` / `github` / `scratch` — since the collection's own
 // bubble can't say where each of its scripts loads from. Classified
 // from the script's own location (`relativePath` in a container is the
 // full URL/path the user installed).
 export function makeSchemeChip(location: string): HTMLElement {
-  const scheme = containerKindForSingleFileInput(location);
+  const scheme = scriptSchemeKind(location);
   const span = document.createElement('span');
   span.className = `scheme-chip chip-${scheme}`;
   span.textContent = scheme;
@@ -165,6 +165,7 @@ export function makeSchemeChip(location: string): HTMLElement {
     file: 'Loaded from a local file',
     http: 'Loaded from the web',
     github: 'Loaded from GitHub',
+    scratch: 'Stored only in SourceMonkey',
   }[scheme];
   return span;
 }

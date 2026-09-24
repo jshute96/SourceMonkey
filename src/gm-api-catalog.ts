@@ -47,6 +47,16 @@ export type ApiSubsystem =
   | 'url-change'
   | 'window-control';
 
+// What a request that reads or writes a script's stored values has to
+// have granted: any storage API, or a value-change listener (its
+// snapshot seeds the listener's remote-change detection). Used by the
+// bridge gate in background.ts and its harness twin in host.ts.
+export const STORAGE_SUBSYSTEMS: readonly ApiSubsystem[] = ['storage', 'storage-listener'];
+
+// The refusal a bridge-relayed request gets when the page may not act
+// for the script it names. Shared by the same two gates.
+export const BRIDGE_DENIED = 'This page is not allowed to act for that userscript';
+
 // Extra header tags an API depends on, beyond the bare `@grant` line.
 // The catalog declares these so the wrapper / SW can validate them once
 // at sync time (`requires: ['connect']` → `@connect` URL gating for

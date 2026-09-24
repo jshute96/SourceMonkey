@@ -224,11 +224,24 @@ function serializeHeaders(headers: Headers): string {
 // against the script's `@connect` policy after redirects. A response
 // that landed on a disallowed host (via a redirect the initial check
 // couldn't see) is dropped with an error event rather than returned.
+//
+// `forbiddenHeaders` says what to do with request headers the browser's
+// `fetch` refuses to send (`Origin`, `Cookie`, `Sec-Fetch-*`): `rule`,
+// the default, rewrites them with a short-lived declarativeNetRequest
+// rule around the request (docs/xhr-header-surgery.md); `passthrough`
+// hands them to `fetch` as they are, for the development harness
+// (src/harness/) where the fetch is Node's, which has no such rules and
+// accepts those headers directly.
+export interface RunXhrOptions {
+  forbiddenHeaders?: 'rule' | 'passthrough';
+}
+
 export async function runXhr(
   id: string,
   request: GmXhrRequestPayload,
   isFinalUrlAllowed?: (url: string) => boolean,
   tabId: number | null = null,
+  options: RunXhrOptions = {},
 ): Promise<GmXhrEvent> {
   const controller = new AbortController();
   activeXhrs.set(id, { controller, tabId });
@@ -277,7 +290,10 @@ export async function runXhr(
   // Headers `fetch` would drop travel as a DNR rule instead; the rest
   // ride along on the request. `installedRuleId` is held so the rule
   // comes off however the request ends.
-  const { passthrough, surgical } = splitHeaders(request.headers);
+  const useRules = options.forbiddenHeaders !== 'passthrough';
+  const { passthrough, surgical } = useRules
+    ? splitHeaders(request.headers)
+    : { passthrough: { ...(request.headers ?? {}) }, surgical: {} };
   let installedRuleId: number | null = null;
   try {
     const method = (request.method ?? 'GET').toUpperCase();
@@ -286,7 +302,7 @@ export async function runXhr(
     // Where there is a rule, `spec.target` is the URL to fetch — the
     // same tagged string the rule matches on, which is what makes the
     // rule apply to this request and no other.
-    const spec = buildHeaderRule(request.url, surgical, method);
+    const spec = useRules ? buildHeaderRule(request.url, surgical, method) : null;
     startHeaderStall();
     if (spec) {
       installedRuleId = await installHeaderRule(spec);

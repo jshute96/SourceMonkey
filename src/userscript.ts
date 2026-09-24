@@ -144,6 +144,7 @@ import {
   isContainerCollection,
   isSingleFileLocation,
   isFileUrl,
+  isScratchUrl,
   isHttpUrl,
   LOCATION_SHAPES,
   normalizeCollectionInput,
@@ -848,6 +849,7 @@ function render(script: StoredScript): void {
       ? {
           text: displayLocation(currentFilenamePath),
           href: locationHref,
+          unopenable: isScratchUrl(script.fileUrl),
           trailing: filenameCopyBtn,
           localFile: collectionPath ? scriptFileTag(script, collectionPath) ?? undefined : undefined,
           // This href is a `.user.js` URL for nearly every installed

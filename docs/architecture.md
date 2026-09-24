@@ -436,6 +436,10 @@ takes effect:
   outside a browser, the offline dependency root, and what the report
   groups. Findings over the GreasyFork corpus are in
   [corpus-validation-results.md](corpus-validation-results.md).
+- [harness-design.md](harness-design.md) — the development and testing
+  harness other repos install: the push backend that runs the injected
+  code without the extension, and scratch scripts pushed into the real
+  one. User-facing side in [harness-guide.md](harness-guide.md).
 - [logging.md](logging.md) — SW console-message catalog, log IDs
   (basename + `#N` dupes), and the debug-logging gate.
 - [names-and-paths.md](names-and-paths.md) — the decode-for-display
@@ -462,16 +466,47 @@ takes effect:
 
 `scripts/build.mjs` is dependency-free:
 
-- Wipes `dist/`.
+- Wipes `dist/` and `lib/` (only `dist/` under `--watch`, so `lib/` stays usable).
 - Copies `src/icons/`, `src/manifest.json`, every top-level
-  `src/*.html`, and `node_modules/prismjs/*` into `dist/`.
+  `src/*.html`, and `node_modules/prismjs/*` into `dist/`, and the
+  manifest into `lib/` too (the harness reads the extension key from it).
 - Inlines `src/glyph-sprite.svg` into each page as it is copied, at the
   page's `#include glyph-sprite` marker comment (see below).
 - Invokes `tsc` (optionally with `--watch`) to compile
-  `src/*.ts` → `dist/*.js`.
+  `src/**/*.ts` → `dist/**/*.js`.
+- Unless watching, runs a second `tsc` pass for `lib/` (below), and
+  copies `src/generated-wrappers.d.ts` into `lib/`, since that one is
+  hand-written.
 
 No bundler. Each TypeScript module compiles to its own `dist/*.js`
 and Chrome loads them directly as ES modules.
+
+### Two outputs: `dist/` and `lib/`
+
+One set of sources, compiled twice:
+
+- **`dist/`** is the unpacked extension and nothing else. Chrome loads
+  it, `scripts/zip_extension.sh` packs all of it, and
+  `tsconfig.json` builds it with `src/harness/**` excluded.
+- **`lib/`** is the `sourcemonkey` package (`package.json`'s `files`
+  and `exports` point there). `tsconfig.lib.json` compiles every
+  module, the development harness included, and emits a `.d.ts` beside
+  each one for a TypeScript consumer.
+
+Why two builds of the same modules rather than one directory serving
+both:
+
+- The harness is a library built on dozens of the extension's own
+  modules, so the two sets of files are not separable. Where they land
+  is.
+- Keeping `dist/` to exactly what Chrome loads means the unpacked
+  directory, the zip, and the extension are the same thing.
+- The package can carry what it needs without that showing up in the
+  browser.
+
+The cost is one extra `tsc` pass on a full build, a few seconds.
+`pnpm run watch` skips it: a developer watching `dist/` is iterating on
+the extension, and `pnpm run build` is what produces the package.
 
 ### Glyph sprite
 

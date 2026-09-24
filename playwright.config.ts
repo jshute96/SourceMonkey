@@ -11,8 +11,11 @@ import { defineConfig } from '@playwright/test';
 //   - tests/examples/*/*.spec.ts   — per-API spec lives next to its
 //                                    paired example page + userscript.
 //
-// Three projects:
+// Projects:
 //   - sourcemonkey (default) — runs every spec under both directories.
+//   - harness                — tests/harness/ plus the examples suite,
+//                              through the development harness on a
+//                              plain Chromium (no extension).
 //   - tampermonkey           — runs only the examples suite against the
 //                              user's TM-equipped browser opened via
 //                              `scripts/open-test-browser.sh tampermonkey`.
@@ -59,6 +62,15 @@ export default defineConfig({
       // projects drive the developer's own long-lived profile over CDP
       // with no per-test reset, where re-running a half-finished install
       // is not the same proposition.
+      retries: 1,
+    },
+    {
+      // The development harness's own suite: plain Chromium with no
+      // extension, the injected code driven by the Node host
+      // (src/harness/). See docs/harness-design.md.
+      name: 'harness',
+      testMatch: ['harness/**/*.spec.ts', 'examples/**/*.spec.ts'],
+      metadata: { manager: 'harness' },
       retries: 1,
     },
     {

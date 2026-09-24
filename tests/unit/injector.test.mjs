@@ -186,11 +186,11 @@ test('buildConfigBlob: a startup log\'s location never reaches the page', () => 
     matching: null,
     startupLogs: [{
       level: 'warn',
-      message: 'Ignoring @grant GM_nope — unsupported APIs',
+      message: 'Ignoring unsupported @grant GM_nope',
       location: { file: '/home/someone/private/x.user.js', line: 4 },
     }],
   });
-  assert.match(blob, /"message":"Ignoring @grant GM_nope — unsupported APIs"/);
+  assert.match(blob, /"message":"Ignoring unsupported @grant GM_nope"/);
   assert.doesNotMatch(blob, /"location"/);
   assert.doesNotMatch(blob, /home\/someone/);
 });
@@ -1265,13 +1265,13 @@ test('buildRegistrationSpec: MAIN-world script gets GM_info only (no other bindi
 test('buildRegistrationSpec: passes script.startupLogs through to the config blob', async () => {
   const script = makeScript({
     id: 'forwarded',
-    startupLogs: [{ level: 'warn', message: 'Ignoring @grant GM_audio — unsupported APIs' }],
+    startupLogs: [{ level: 'warn', message: 'Ignoring unsupported @grant GM_audio' }],
   });
   const spec = await buildRegistrationSpec(script);
   const cfg = spec.js[0];
   assert.ok('code' in cfg);
   assert.match(cfg.code, /"startupLogs":\[/);
-  assert.match(cfg.code, /Ignoring @grant GM_audio — unsupported APIs/);
+  assert.match(cfg.code, /Ignoring unsupported @grant GM_audio/);
 });
 
 // ---------- resolveWorld ----------

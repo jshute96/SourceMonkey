@@ -117,9 +117,10 @@
   line-height: 14px;
   white-space: nowrap;
 }
-.chip-file   { background: #d97706; }
-.chip-http   { background: #2563eb; }
-.chip-github { background: #6f42c1; }
+.chip-file    { background: #d97706; }
+.chip-http    { background: #2563eb; }
+.chip-github  { background: #6f42c1; }
+.chip-scratch { background: #0f766e; }
 
 /* ---- Modal dialog shell ---- */
 /* `.sm-dialog` is the shell — frame, title bar, body grid, error slot,

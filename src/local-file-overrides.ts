@@ -260,14 +260,23 @@ export function readRootsSetting(raw: unknown): string[] {
   return raw.filter((r): r is string => typeof r === 'string');
 }
 
-// Test hook. Production callers write the storage key and let the
-// listener above pick it up.
-export function _setLocalRootsForTests(roots: readonly string[]): void {
+// Set the configured roots directly, bypassing storage. Production
+// callers write the storage key and let the listener above pick it up;
+// this is for the two contexts with no `chrome.storage` at all — unit
+// tests, and the development harness (`src/harness/`), which runs the
+// same resolve pipeline under Node with roots the caller names.
+export function setConfiguredLocalRoots(roots: readonly string[]): void {
   configuredRoots = roots.slice();
   loadGeneration++;
   // Also satisfy `localRootsReady`, or the first resolve after this
-  // would read storage and overwrite what the test just set.
+  // would read storage and overwrite what was just set.
   loadOnce = Promise.resolve();
+}
+
+// Test hook, kept under its old name for the tests and the SW test
+// surface that call it.
+export function _setLocalRootsForTests(roots: readonly string[]): void {
+  setConfiguredLocalRoots(roots);
 }
 
 // What a script's collection says about local stand-ins: whether they
