@@ -541,10 +541,16 @@ export class PageAttachment implements PageLink {
   /** Detach everything and drop the CDP session. */
   async dispose(): Promise<void> {
     this.disposing = true;
-    for (const id of [...this.injected.keys()]) await this.remove(id);
-    for (const identifier of this.runtimeWorlds.values()) {
-      await this.cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier }).catch(() => undefined);
-    }
+    const unregister = (async () => {
+      for (const id of [...this.injected.keys()]) await this.remove(id);
+      for (const identifier of this.runtimeWorlds.values()) {
+        await this.cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier }).catch(() => undefined);
+      }
+    })();
+    // A page stopped on a dialog answers nothing until it is closed, so
+    // this is not waited on for long. Detaching the session below drops
+    // what it registered either way.
+    await briefly(unregister);
     this.runtimeWorlds.clear();
     // Each one closes its own page on seeing `disposing`; closed here
     // too, in case dispose gets there first.
@@ -558,8 +564,14 @@ export class PageAttachment implements PageLink {
     this.page.off('close', this.onClose);
     this.host.detachPage(this);
     attached.delete(this.page);
-    await this.cdp.detach().catch(() => undefined);
+    // Also held up by a dialog; the session goes with the page anyway.
+    await briefly(this.cdp.detach().catch(() => undefined));
   }
+}
+
+// `work`, or a second, whichever is sooner.
+function briefly(work: Promise<unknown>): Promise<unknown> {
+  return Promise.race([work, new Promise((r) => setTimeout(r, 1000).unref())]);
 }
 
 // A page's CDP target id, remembered: a page keeps its id for life.

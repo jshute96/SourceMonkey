@@ -45,6 +45,10 @@ export interface ConsoleContext {
    * Absent where the caller can't open one.
    */
   newTab?: (url?: string) => Promise<ControlledTab>;
+  /** Load another script from disk, for `load`. */
+  loadScript?: (file: string) => Promise<void>;
+  /** Re-read scripts from disk (all, when none are named), for `update`. */
+  updateScripts?: (scripts?: PreparedScript[]) => Promise<void>;
   /** The scripts this run injected, in load order. */
   scripts: PreparedScript[];
   /**
@@ -71,6 +75,9 @@ const COMMAND_GROUPS: { title: string; lines: string[] }[] = [
       '                  get and set act on (T2.3 picks tab T2 too)',
       'status [what]     Show the tab\'s URL and each script\'s status there;',
       '                  or one script (3, T2.3), a tab (T2), or all tabs',
+      'load <file>       Load another script from disk',
+      'update [script]   Re-read one script from disk, or all (as --watch',
+      '                  does on a save), and reload the tabs it affects',
     ],
   },
   {
@@ -96,7 +103,7 @@ const COMMAND_GROUPS: { title: string; lines: string[] }[] = [
       '                  tab the commands for the page act on',
       'tabs new [page]   Open a new tab with the scripts, pick it and focus',
       '                  it; with all, one tab for each script\'s page',
-      'reload [T<n>]     Reload the page',
+      'reload [T<n>|all] Reload the page, another tab\'s, or every tab',
       'open [page]       Navigate to a URL, or to a script\'s default page',
       '                  (the selected script\'s, or one by number: 2, T2.3);',
       '                  open all is tabs new all',
@@ -352,9 +359,46 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
       return;
     }
     case 'reload': {
+      if (argument === 'all') {
+        // All at once, so one slow page holds up no other.
+        await Promise.all(reloadable(ctx.tabs(), ctx.out).map((t) => reloadTab(t, ctx.out)));
+        return;
+      }
       const target = argument ? pickTab(ctx, argument) : tab;
       if (!target || blockedByDialog([target])) return;
-      await target.page.reload().catch((err) => ctx.out(`[sm-dev] Reload failed: ${(err as Error).message}`));
+      await reloadTab(target, ctx.out);
+      return;
+    }
+    case 'load': {
+      if (!argument) {
+        ctx.out('[sm-dev] The load command needs a script file');
+        return;
+      }
+      if (!ctx.loadScript) {
+        ctx.out('[sm-dev] This run cannot load scripts');
+        return;
+      }
+      // Its injection reaches every tab, so any tab's dialog blocks it.
+      if (blockedByDialog(ctx.tabs())) return;
+      await ctx.loadScript(argument);
+      return;
+    }
+    case 'update': {
+      if (!ctx.updateScripts) {
+        ctx.out('[sm-dev] This run cannot update scripts');
+        return;
+      }
+      if (ctx.scripts.length === 0) {
+        ctx.out(`[sm-dev] ${NO_SCRIPTS}`);
+        return;
+      }
+      if (blockedByDialog(ctx.tabs())) return;
+      if (!argument || argument === 'all') {
+        await ctx.updateScripts();
+        return;
+      }
+      const script = pickScript(ctx, argument);
+      if (script) await ctx.updateScripts([script]);
       return;
     }
     case 'open': {
@@ -494,19 +538,31 @@ function fromTab<T extends object>(ctx: ConsoleContext, tab: ControlledTab, reco
   return records.filter((r) => ctx.host.pageOf(r) === tab.link);
 }
 
-// Whether a script is running on a tab's current document: its last
-// word there is a start rather than a skip.
+// Whether a script is running on a tab's current document.
 function activeOn(ctx: ConsoleContext, tab: ControlledTab, scriptId: string | undefined): boolean {
-  const { started, skipped } = lastStartAndSkip(ctx, tab, scriptId);
-  return started !== undefined && (!skipped || started.at >= skipped.at);
+  return scriptId !== undefined && ctx.host.isRunning(tab.link, scriptId);
 }
 
 function lastStartAndSkip(ctx: ConsoleContext, tab: ControlledTab, scriptId: string | undefined) {
-  const { reports } = ctx.host;
-  return {
-    started: fromTab(ctx, tab, reports.started).filter((r) => r.scriptId === scriptId).at(-1),
-    skipped: fromTab(ctx, tab, reports.skipped).filter((r) => r.scriptId === scriptId).at(-1),
-  };
+  return scriptId === undefined ? {} : ctx.host.lastStartAndSkip(tab.link, scriptId);
+}
+
+/**
+ * The tabs of `tabs` that can be reloaded now. One waiting on a dialog
+ * would hang its reload, so it is left for the person, and named.
+ */
+export function reloadable(tabs: ControlledTab[], out: (line: string) => void): ControlledTab[] {
+  const waiting = tabs.filter((t) => t.dialogs?.current);
+  for (const t of waiting) out(`[sm-dev] ${tabName(t)} is waiting on a dialog, so it was not reloaded`);
+  return tabs.filter((t) => !waiting.includes(t));
+}
+
+/** Reload one tab, saying so if it fails. */
+export function reloadTab(tab: ControlledTab, out: (line: string) => void): Promise<void> {
+  return tab.page.reload().then(
+    () => undefined,
+    (err: Error) => out(`[sm-dev] ${tabName(tab)} could not be reloaded: ${err.message}`),
+  );
 }
 
 // `tabs`, and the end of `status` when there are several: each tab

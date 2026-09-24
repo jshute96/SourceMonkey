@@ -324,6 +324,16 @@ export function explainMatch(matching: ScriptMatching, url: string): MatchExplan
   return explainUrlMatch(url, matching);
 }
 
+/** A script path that names nothing, for `run` and the typed `load`. */
+export function noSuchFileMessage(input: string): string {
+  return `No such file or directory: ${input}`;
+}
+
+/** A script path that names a directory, for `run` and the typed `load`. */
+export function isDirectoryMessage(input: string): string {
+  return `${input} is a directory. Name a .user.js file.`;
+}
+
 /** Why a script has no default page, as `--all` and `open all` report it. */
 export const NO_DEFAULT_PAGE = 'Its @match names no page to open';
 

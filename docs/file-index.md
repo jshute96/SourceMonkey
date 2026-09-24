@@ -403,7 +403,7 @@ extension, driven by the Node host in `src/harness/`.
 | `tests/harness/browser-apis.spec.ts` | The harness's tabs, menu commands, notifications, downloads and window APIs |
 | `tests/harness/bridge-trust.spec.ts` | What the page can reach: forged requests refused, isolated traffic kept out of the page, subframes ignored |
 | `tests/harness/console-commands.spec.ts` | The commands typed into `sm-dev run`: `scripts`, `values`, `menu` by M number, dialogs, and several tabs |
-| `tests/harness/run-tabs.spec.ts` | `sm-dev run` injecting into the tabs its tab opens, by `window.open` and `GM_openInTab` |
+| `tests/harness/run-tabs.spec.ts` | `sm-dev run` end to end: followed tabs, `--all`, `--notab`, `load` / `update` / `--watch` reloads |
 | `tests/harness/fixture.spec.ts` | The consumer fixture from `lib/`: a script against a served snapshot, `gm` and `reports`, the up-front URL check, the explained miss |
 
 ## GreasyFork Corpus Tooling (`tests/greasyfork-examples/`)

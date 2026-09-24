@@ -5,20 +5,22 @@
 // Kept apart from cli.ts so the Node-only commands (`validate`,
 // `match`) never load Playwright, which is an optional peer dependency.
 
-import { watch } from 'node:fs';
-import { readFile, rename, writeFile } from 'node:fs/promises';
+import { watch, type FSWatcher } from 'node:fs';
+import { readFile, rename, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { Browser, BrowserContext, Page } from '@playwright/test';
 
-import { DialogTracker, NO_TABS, readConsoleCommands, skippedScriptLine, type ConsoleContext, type ControlledTab } from './console-commands.js';
+import { DialogTracker, NO_TABS, readConsoleCommands, reloadTab, reloadable, skippedScriptLine, type ConsoleContext, type ControlledTab } from './console-commands.js';
 import { ExtensionBackend, type LogEntry } from './extension-backend.js';
 import { HarnessHost, type ErrorReport, type SkipReport, type StartReport } from './host.js';
 import { attachPage, type PageAttachment } from './inject.js';
 import { showConsoleLine, showPageError } from './page-output.js';
-import { defaultPageUrl, explainMatch, NO_DEFAULT_PAGE, prepareScript, type PreparedScript } from './prepare.js';
+import {
+  defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, prepareScript, type PreparedScript,
+} from './prepare.js';
 
 export interface RunOptions extends ConnectOptions {
   files: string[];
@@ -160,6 +162,12 @@ async function openBrowser(
     // browser and its tabs stay as they are.
     done: () => browser.close(),
   };
+}
+
+/** A script `apply` puts in place: `old` is absent for a `load`. */
+interface ScriptChange {
+  old?: PreparedScript;
+  next: PreparedScript;
 }
 
 /** A `run` session, whose `--notab` form has no tab. */
@@ -353,16 +361,15 @@ async function runInHarness(
   held.tabs = tabs;
   wireHostOutput(host, opts.out, (record) => tabs.prefixOf(record));
   // T1, unless `--notab`; then the first tab `tabs new` opens is T1.
-  let first: { page: Page; attachment: PageAttachment } | null = null;
   if (page) {
     wirePageOutput(page, opts, true);
     const dialogs = await DialogTracker.attach(page, opts.out, { visible: browserVisible(opts), commandsComing });
-    // Attached before preparing, so the scripts' GM_info describes this
-    // browser. With no tab, a script's GM_info.userAgentData stays null.
+    // Attached before preparing, so a reused tab already on a secure
+    // page gives the scripts' GM_info the browser's userAgentData.
+    // Otherwise it stays null (see TODO.md).
     const attachment = await attachPage(page, host);
     held.attachment = attachment;
     tabs.start(page, attachment, dialogs);
-    first = { page, attachment };
   }
   const prepared = await prepareAll(opts);
   if (!prepared) return 1;
@@ -370,25 +377,104 @@ async function runInHarness(
   if (!start) return 2;
   const { urls } = start;
 
-  const injectAll = async (scripts: PreparedScript[]): Promise<void> => {
-    for (const script of scripts) {
-      // T1 may have been closed; the other tabs still get them.
-      if (first && !first.page.isClosed()) await first.attachment.inject(script);
-      opts.out(`[sm-dev] Injected ${script.script.relativePath} in world ${script.world}, run-at ${script.runAt}`);
-    }
-    await tabs.replaceScripts(scripts);
+  // The loaded scripts, and the files they came from, in step: `load`
+  // adds to both, `update` and `--watch` replace scripts in place.
+  let scripts = prepared;
+  const files = [...opts.files];
+  // When each script's files were last modified, as it was read.
+  const stamps = new Map<PreparedScript, string>();
+  for (const script of prepared) stamps.set(script, await filesStamp(script));
+  let commands: ConsoleContext | null = null;
+  let watcher: FileWatcher | null = null;
+  // Set once the run is ending, so work still queued changes nothing.
+  let stopping = false;
+  // `load`, `update` and `--watch` saves, one at a time: each reads the
+  // script list, awaits, and then replaces it, so two at once would
+  // lose one's change.
+  let queue: Promise<unknown> = Promise.resolve();
+  const serial = (work: () => Promise<void>): Promise<void> => {
+    const done = queue.then(work);
+    queue = done.catch(() => undefined);
+    return done;
+  };
+  const injected = (script: PreparedScript): void =>
+    opts.out(`[sm-dev] Injected ${script.script.relativePath} in world ${script.world}, run-at ${script.runAt}`);
+  // Put `next` in place everywhere, and reload the tabs `changed` affects.
+  const apply = async (next: PreparedScript[], changed: ScriptChange[], none: string): Promise<void> => {
+    for (const c of changed) injected(c.next);
+    scripts = next;
     // The typed commands' list too, keeping the selected script by its place.
     if (commands) {
       const i = commands.current ? commands.scripts.indexOf(commands.current) : -1;
-      commands.scripts = scripts;
-      commands.current = scripts[i];
+      commands.scripts = next;
+      commands.current = next[i];
     }
+    // Before the reloads, so a save made while they run is seen; a
+    // watcher that fails to start costs the tabs nothing.
+    try {
+      watcher?.watch(next);
+    } catch (err) {
+      opts.out(`[sm-dev] The files could not be watched: ${(err as Error).message}`);
+    }
+    await tabs.apply(next, changed, none);
   };
-  let commands: ConsoleContext | null = null;
-  // Seeded once. A watch re-inject keeps the store, so values the
-  // script wrote since the last save survive the save.
+  // `update`, and a `--watch` save: re-read the scripts at `which`
+  // (every one, when not given) whose files have been modified since
+  // they were read; a touch counts. One that no longer prepares leaves
+  // every one as it was.
+  const update = (which?: number[]): Promise<void> => serial(async () => {
+    const indices = which ?? scripts.map((_, i) => i);
+    const next = [...scripts];
+    const changed: ScriptChange[] = [];
+    for (const i of indices) {
+      const old = scripts[i];
+      const stamp = await filesStamp(old);
+      if (stamp === stamps.get(old)) continue;
+      const fresh = await prepareAll(opts, [files[i]]);
+      if (!fresh || stopping) return;
+      stamps.set(fresh[0], stamp);
+      next[i] = fresh[0];
+      changed.push({ old, next: fresh[0] });
+    }
+    if (changed.length === 0) {
+      opts.out(indices.length === 1
+        ? `[sm-dev] Script ${indices[0] + 1} hasn't changed on disk, so nothing was reloaded`
+        : '[sm-dev] No script has changed on disk, so nothing was reloaded');
+      return;
+    }
+    await apply(next, changed, 'No open tab runs or matches the updated scripts, so none was reloaded');
+  });
+  const load = (input: string): Promise<void> => serial(async () => {
+    const file = path.resolve(input);
+    const info = await stat(file).catch(() => null);
+    if (!info) {
+      opts.out(`[sm-dev] ${noSuchFileMessage(input)}`);
+      return;
+    }
+    if (info.isDirectory()) {
+      opts.out(`[sm-dev] ${isDirectoryMessage(input)}`);
+      return;
+    }
+    const already = files.indexOf(file);
+    if (already >= 0) {
+      opts.out(`[sm-dev] ${input} is already loaded, as script ${already + 1}. Type update ${already + 1} to re-read it.`);
+      return;
+    }
+    const fresh = await prepareAll(opts, [file]);
+    if (!fresh || stopping) return;
+    const script = fresh[0];
+    const n = scripts.length + 1;
+    files.push(file);
+    stamps.set(script, await filesStamp(script));
+    if (opts.values) host.seedValues(script.spec!.id, opts.values);
+    opts.out(`[sm-dev] Loaded ${input} as script ${n}`);
+    await apply([...scripts, script], [{ next: script }], `No open tab matches it, so none was reloaded. Type open ${n} to open its page.`);
+  });
+  // Seeded once. An update keeps the store, so values the script wrote
+  // since survive it.
   if (opts.values) for (const script of prepared) host.seedValues(script.spec!.id, opts.values);
-  await injectAll(prepared);
+  for (const script of prepared) injected(script);
+  await tabs.setScripts(prepared);
   if (page && urls.length > 0) {
     opts.out(`[sm-dev] Opening ${urls[0]}`);
     // With --all, the other scripts' pages too, each in a tab of its
@@ -427,16 +513,12 @@ async function runInHarness(
     opts.out(fired ? `[sm-dev] Fired menu command "${name}"${where}` : `[sm-dev] No menu command named "${name}" was registered`);
   }
 
-  let watcher: (() => void) | null = null;
   let stopCommands: (() => void) | null = null;
   try {
     if (opts.watch) {
-      watcher = watchFiles(opts, prepared, 're-injecting', async (next) => {
-        // T1 may have been closed, with other tabs still open.
-        const t1 = first && !first.page.isClosed() ? first : null;
-        if (t1) for (const old of t1.attachment.injectedScripts()) await t1.attachment.remove(old.spec!.id);
-        await injectAll(next);
-        if (t1) await t1.page.reload();
+      watcher = watchFiles(opts, prepared, async () => {
+        opts.out('[sm-dev] Change detected, re-injecting');
+        await update();
       });
     }
     if (opts.until) {
@@ -450,17 +532,21 @@ async function runInHarness(
       // sequence of commands would otherwise hit exactly that.
       // Nothing will start with no scripts, or no tab to run in.
       if (prepared.length > 0 && page) await waitForFirstStart(host);
-      commands = {
+      const ctx: ConsoleContext = {
         host,
         tabs: () => tabs.list(),
         // T1 to start with, or whichever is open if T1 has closed.
         tab: tabs.list()[0],
         newTab: (url) => tabs.newTab(url),
-        scripts: prepared,
+        loadScript: load,
+        // By place, so an update queued behind another still finds them.
+        updateScripts: (which) => update(which?.map((s) => scripts.indexOf(s)).filter((i) => i >= 0)),
+        scripts,
         out: opts.out,
         stop: () => opts.onStop?.(),
       };
-      stopCommands = readConsoleCommands(commands);
+      commands = ctx;
+      stopCommands = readConsoleCommands(ctx);
       await opts.until;
     } else {
       // One load's worth of output, then leave the page as it is. Not
@@ -469,9 +555,12 @@ async function runInHarness(
     }
   } finally {
     // Also on a throw, or stdin and the file watcher would keep the
-    // process alive.
+    // process alive. Queued work still running finishes first, and
+    // changes nothing once it sees `stopping`.
+    stopping = true;
     stopCommands?.();
-    watcher?.();
+    watcher?.stop();
+    await queue;
   }
   return host.reports.errors.length === 0 ? 0 : 1;
 }
@@ -495,10 +584,12 @@ interface Held {
 class FollowedTabs {
   // T1, the run's own tab; set by `start`, unless the run opened none.
   private first: ControlledTab | null = null;
-  // The scripts every tab gets: the latest `--watch` set.
+  private firstAttachment: PageAttachment | null = null;
+  // The scripts every tab gets: the latest after `load`, `update` and
+  // `--watch` saves.
   private scripts: PreparedScript[] = [];
   // The rest, while they are open.
-  private readonly tabs = new Map<Page, { tab: ControlledTab; attachment: PageAttachment }>();
+  private readonly tabs = new Map<Page, { tab: ControlledTab; attachment: PageAttachment; ready: boolean }>();
   // Every tab's number by its attachment, kept after it closes, so a
   // report that arrives late (a request finishing) still says whose.
   private readonly numbers = new WeakMap<object, number>();
@@ -520,6 +611,7 @@ class FollowedTabs {
   /** Register the run's own tab as T1, and follow the tabs it opens. */
   start(page: Page, attachment: PageAttachment, dialogs: DialogTracker): void {
     this.first = { n: 1, page, link: attachment, dialogs };
+    this.firstAttachment = attachment;
     this.nextNumber = 2;
     this.numbers.set(attachment, 1);
     this.follow(attachment, 1);
@@ -545,21 +637,57 @@ class FollowedTabs {
     return n && n > 1 ? `[T${n}] ` : '';
   }
 
-  /**
-   * After a `--watch` re-prepare: swap in the new scripts and reload,
-   * every tab at once, so one waiting on a dialog holds up no other.
-   */
-  async replaceScripts(scripts: PreparedScript[]): Promise<void> {
+  /** The scripts to start with, before T1 has loaded anything. */
+  async setScripts(scripts: PreparedScript[]): Promise<void> {
     this.scripts = scripts;
-    await Promise.all([...this.tabs.values()].map(async ({ tab, attachment }) => {
+    for (const { attachment } of this.open()) await this.swapScripts(attachment, scripts);
+  }
+
+  /**
+   * Put `next` in place in every open tab, for `update`, `load` and a
+   * `--watch` save, and reload the tabs `changed` affects: those where
+   * a changed script is running, or where its rules now match. All at
+   * once, so one slow page holds up no other. `none` is what to say
+   * when no tab is affected.
+   */
+  async apply(next: PreparedScript[], changed: ScriptChange[], none: string): Promise<void> {
+    this.scripts = next;
+    const open = this.open();
+    const affected = open.filter(({ tab }) => changed.some((c) =>
+      (c.old?.spec && this.host.isRunning(tab.link, c.old.spec.id))
+      || explainMatch(c.next.matching, tab.page.url()).matches));
+    if (affected.length === 0) this.opts.out(`[sm-dev] ${none}`);
+    const reload = reloadable(affected.map(({ tab }) => tab), this.opts.out);
+    // Only a `--watch` save gets here with a dialog open; the typed
+    // commands refuse. The page takes no new scripts until it is
+    // answered, so neither does this.
+    for (const { tab } of open) {
+      if (tab.dialogs?.current) this.opts.out(`[sm-dev] T${tab.n} gets the new scripts once its dialog is answered`);
+    }
+    if (reload.length > 0) this.opts.out(`[sm-dev] Reloading ${reload.map((t) => `T${t.n}`).join(', ')}`);
+    // Scripts before the first changed one stay as they are, so a tab
+    // that isn't reloaded keeps them attached throughout; from there on
+    // they are re-added, keeping the load order they run in.
+    const from = Math.min(...changed.map((c) => next.indexOf(c.next)));
+    await Promise.all(open.map(async ({ tab, attachment }) => {
       try {
-        await this.swapScripts(attachment, scripts);
-        await attachment.page.reload();
+        await this.swapScripts(attachment, next, from);
       } catch (err) {
         // A tab closing meanwhile needs no word; its close says it.
-        if (!tab.page.isClosed()) this.opts.out(`[sm-dev] T${tab.n} could not be re-injected: ${(err as Error).message}`);
+        if (!tab.page.isClosed()) this.opts.out(`[sm-dev] T${tab.n} could not be updated: ${(err as Error).message}`);
+        return;
       }
+      if (reload.includes(tab)) await reloadTab(tab, this.opts.out);
     }));
+  }
+
+  // The open tabs with their attachments, T1 included.
+  private open(): { tab: ControlledTab; attachment: PageAttachment }[] {
+    const first = this.first && this.firstAttachment ? [{ tab: this.first, attachment: this.firstAttachment }] : [];
+    // A tab still being set up is left out: its setup catches up on
+    // what it missed, and two swaps at once could add a script twice.
+    const ready = [...this.tabs.values()].filter((t) => t.ready);
+    return [...first, ...ready].filter(({ tab }) => !tab.page.isClosed());
   }
 
   async dispose(): Promise<void> {
@@ -648,13 +776,15 @@ class FollowedTabs {
       await attachment.dispose().catch(() => undefined);
       return;
     }
-    this.tabs.set(page, { tab: { n, page, link: attachment, dialogs, openedBy: opener }, attachment });
+    const entry = { tab: { n, page, link: attachment, dialogs, openedBy: opener }, attachment, ready: false };
+    this.tabs.set(page, entry);
     const url = page.url();
     const loaded = url !== '' && url !== 'about:blank';
     announced = true;
     this.opts.out(`[sm-dev] Tab T${n} opened${loaded ? ` at ${url}` : ''}${opener ? `, from T${opener}` : ''}`);
     const readyState = await page.evaluate(() => document.readyState).catch(() => null);
-    const { scripts } = this;
+    const initial = this.scripts;
+    let scripts = initial;
     // A document that committed before the attachment reports no
     // navigation, so a miss on it is noted here. Before injecting, as
     // it also clears the document's menu commands, which the scripts
@@ -662,13 +792,16 @@ class FollowedTabs {
     if (loaded) this.host.noteNavigation(attachment, scripts);
     for (const script of scripts) await attachment.inject(script, { immediately: true });
     this.follow(attachment, n);
-    // A `--watch` save while this tab was being set up passed it by,
-    // since it wasn't listed yet. Brought up to date here.
-    if (this.scripts !== scripts) {
-      await this.swapScripts(attachment, this.scripts);
+    // A `load`, `update` or `--watch` save while this tab was being set
+    // up passed it by. Brought up to date here, before it is ready for
+    // the next one.
+    while (this.scripts !== scripts) {
+      scripts = this.scripts;
+      await this.swapScripts(attachment, scripts);
       await page.reload().catch(() => undefined);
-      return;
     }
+    entry.ready = true;
+    if (scripts !== initial) return;
     if (!loaded) return;
     for (const script of scripts) {
       if (!explainMatch(script.matching, url).matches || !ranLate(script, readyState)) continue;
@@ -676,9 +809,13 @@ class FollowedTabs {
     }
   }
 
-  private async swapScripts(attachment: PageAttachment, scripts: PreparedScript[]): Promise<void> {
-    for (const old of attachment.injectedScripts()) await attachment.remove(old.spec!.id);
-    for (const script of scripts) await attachment.inject(script);
+  // `scripts` in place of what `attachment` has, from index `from` on.
+  private async swapScripts(attachment: PageAttachment, scripts: PreparedScript[], from = 0): Promise<void> {
+    const keep = new Set(scripts.slice(0, from).map((s) => s.spec!.id));
+    for (const old of attachment.injectedScripts()) {
+      if (!keep.has(old.spec!.id)) await attachment.remove(old.spec!.id);
+    }
+    for (const script of scripts.slice(from)) await attachment.inject(script);
   }
 }
 
@@ -792,11 +929,14 @@ async function runInExtension(opts: RunOptions, session: RunSession): Promise<nu
     }));
     if (!page) opts.out('[sm-dev] No tab was opened. The scripts run in the pages you browse to.');
     printSkipped(opts, start);
-    let watcher: (() => void) | null = null;
+    let watcher: FileWatcher | null = null;
     if (opts.watch) {
-      watcher = watchFiles(opts, prepared, 're-pushing', async (next) => {
-        if (!(await pushAll(next))) return;
-        for (const p of pages) await p.reload().catch(() => undefined);
+      watcher = watchFiles(opts, prepared, async () => {
+        opts.out('[sm-dev] Change detected, re-pushing');
+        const next = await prepareAll(opts);
+        if (!next || !(await pushAll(next))) return;
+        // All at once, so one slow page holds up no other.
+        await Promise.all(pages.map((p) => p.reload().catch(() => undefined)));
         // With --notab the pages are the person's own, so theirs to reload.
         if (pages.length === 0) opts.out('[sm-dev] Reload your tabs to run the new version');
       });
@@ -807,7 +947,7 @@ async function runInExtension(opts: RunOptions, session: RunSession): Promise<nu
       else await sleep(1000);
     } finally {
       clearInterval(ticker);
-      watcher?.();
+      watcher?.stop();
     }
     while (polling) await new Promise((r) => setTimeout(r, 50));
     await poll();
@@ -846,9 +986,18 @@ function sameEntry(a: LogEntry, b: LogEntry): boolean {
   return a.timestamp === b.timestamp && a.message === b.message && a.source === b.source;
 }
 
-async function prepareAll(opts: RunOptions): Promise<PreparedScript[] | null> {
+// When a script's files (its own and local @requires) were last
+// modified, as one comparable string; a missing file counts too.
+async function filesStamp(script: PreparedScript): Promise<string> {
+  const paths = [script.script.fileUrl, ...script.requires.map((r) => r.localUrl ?? '')]
+    .filter((u) => u.startsWith('file:')).map((u) => fileURLToPath(u));
+  const times = await Promise.all(paths.map((p) => stat(p).then((st) => st.mtimeMs, () => -1)));
+  return paths.map((p, i) => `${p}:${times[i]}`).join('|');
+}
+
+async function prepareAll(opts: RunOptions, files = opts.files): Promise<PreparedScript[] | null> {
   const out: PreparedScript[] = [];
-  for (const file of opts.files) {
+  for (const file of files) {
     const p = await prepareScript({ file, collectionRoot: opts.collectionRoot, localRoots: opts.localRoots });
     if (p.status !== 'ok') {
       opts.out(`INVALID  ${path.relative(process.cwd(), file)}\n    ${p.diagnostic}`);
@@ -903,48 +1052,65 @@ function wirePageOutput(page: Page, opts: Pick<RunOptions, 'out' | 'pageErrors'>
 // than the files, because an editor that saves by writing a temp file
 // and renaming it over the original leaves a per-file watch on the old
 // inode, silent from the first save on.
-// `apply` puts the re-prepared scripts in place and reloads.
+//
+// `onChange` does the re-preparing. `watch` starts over on a new set
+// of scripts, after `load` adds one or a save changes its @requires.
+interface FileWatcher {
+  /** Returns how many files are watched now. */
+  watch(scripts: PreparedScript[]): number;
+  stop(): void;
+}
+
 function watchFiles(
   opts: RunOptions,
   prepared: PreparedScript[],
-  doing: 're-injecting' | 're-pushing',
-  apply: (scripts: PreparedScript[]) => Promise<void>,
-): () => void {
-  const files = new Set<string>();
-  for (const p of prepared) {
-    if (p.script.fileUrl.startsWith('file:')) files.add(fileURLToPath(p.script.fileUrl));
-    for (const r of p.requires) {
-      if (r.localUrl?.startsWith('file:')) files.add(fileURLToPath(r.localUrl));
-    }
-  }
-  const dirs = new Map<string, Set<string>>();
-  for (const file of files) {
-    const dir = path.dirname(file);
-    if (!dirs.has(dir)) dirs.set(dir, new Set());
-    dirs.get(dir)!.add(path.basename(file));
-  }
+  onChange: () => Promise<void>,
+): FileWatcher {
   let timer: NodeJS.Timeout | null = null;
   let stopped = false;
+  let watchers: FSWatcher[] = [];
+  // One change at a time: a save landing while the last is still being
+  // applied waits for it.
+  let running: Promise<void> = Promise.resolve();
   const trigger = (): void => {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = null;
       if (stopped) return;
-      (async () => {
-        opts.out(`[sm-dev] Change detected, ${doing}`);
-        const next = await prepareAll(opts);
-        if (!next || stopped) return;
-        await apply(next);
-      })().catch((err) => opts.out(`[sm-dev] Re-inject failed: ${(err as Error).message}`));
+      running = running.then(onChange).catch((err) => opts.out(`[sm-dev] Re-inject failed: ${(err as Error).message}`));
     }, 150);
   };
-  const watchers = [...dirs].map(([dir, names]) => watch(dir, (_event, name) => {
-    if (typeof name === 'string' && names.has(name)) trigger();
-  }));
-  opts.out(`[sm-dev] Watching ${files.size} file(s). Press Ctrl-C to stop.`);
-  return () => {
-    stopped = true;
-    if (timer) clearTimeout(timer);
-    for (const w of watchers) w.close();
+  const watcher: FileWatcher = {
+    watch(scripts) {
+      // Not again once stopped, or its handles would keep the process
+      // alive.
+      if (stopped) return 0;
+      for (const w of watchers) w.close();
+      const files = new Set<string>();
+      for (const p of scripts) {
+        if (p.script.fileUrl.startsWith('file:')) files.add(fileURLToPath(p.script.fileUrl));
+        for (const r of p.requires) {
+          if (r.localUrl?.startsWith('file:')) files.add(fileURLToPath(r.localUrl));
+        }
+      }
+      const dirs = new Map<string, Set<string>>();
+      for (const file of files) {
+        const dir = path.dirname(file);
+        if (!dirs.has(dir)) dirs.set(dir, new Set());
+        dirs.get(dir)!.add(path.basename(file));
+      }
+      watchers = [...dirs].map(([dir, names]) => watch(dir, (_event, name) => {
+        if (typeof name === 'string' && names.has(name)) trigger();
+      }));
+      return files.size;
+    },
+    stop() {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+      for (const w of watchers) w.close();
+    },
   };
+  const count = watcher.watch(prepared);
+  opts.out(`[sm-dev] Watching ${count} file(s). Press Ctrl-C to stop.`);
+  return watcher;
 }

@@ -198,6 +198,12 @@ test.describe('sm-dev typed commands', () => {
       expect(await run('focus T2')).toEqual(['[sm-dev] Brought T2 to the front']);
       await run('reload T2');
       await expect.poll(() => fromT2Menus()).toBe(1);
+      // Every tab, at once.
+      const reloaded = Promise.all([page.waitForEvent('load'), page2.waitForEvent('load')]);
+      await run('reload all');
+      await reloaded;
+      expect(await run('update')).toEqual(['[sm-dev] This run cannot update scripts']);
+      expect(await run('load x.user.js')).toEqual(['[sm-dev] This run cannot load scripts']);
 
       expect(await run('values all')).toEqual([
         'Stored values:',

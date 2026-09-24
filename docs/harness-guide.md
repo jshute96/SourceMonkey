@@ -97,7 +97,7 @@ person or an agent.
 | Command | What it does |
 | --- | --- |
 | `sm-dev run <script.user.js> [--url U]` | Opens a tab at `U` (default: the first URL the script's `@match` implies), injects the script as it is on disk, and streams the script's console lines, errors, and start / skipped / error reports until Ctrl-C, or for `--seconds N`. |
-| `sm-dev run ... --watch` | Same, and re-injects plus reloads on every save of the script or a `@require`d file. |
+| `sm-dev run ... --watch` | Same, and on every save of the script or a `@require`d file, re-injects it and reloads the tabs it runs in or now matches, all at once. The typed `update` does the same on demand. |
 | `sm-dev run a.user.js b.user.js` | Injects several scripts into the same page, for interaction tests. |
 | `sm-dev probe <url> --selectors 'a, b, c'` | Reports which selectors resolve on the page, so a broken script's assumptions can be checked in one call. `--html` prints the first match's HTML. Exits 1 when any is missing. |
 | `sm-dev match <script> [url]...` | Says whether the script would run on each URL, and which rule decided. Also checks `--url`, so a `run` command line works with `match` in its place. |
@@ -207,7 +207,9 @@ the stream, rather than being answered automatically:
 - In a headless run with no typed commands, nothing could answer it,
   so it is dismissed and reported.
 - While one is open, the page's JavaScript is stopped, so `menu`,
-  `set`, `reload` and `open` refuse until it is answered.
+  `set`, `reload` and `open` refuse until it is answered, as do `load`
+  and `update` for a dialog in any tab. `reload all` skips that tab and
+  says so.
 
 ### Driving the script while it runs
 
@@ -220,6 +222,8 @@ commands from its own input while it streams.
 | --- | --- |
 | `scripts` | Lists the loaded scripts, numbered (`script` works too) |
 | `scripts <script>` | Picks the script `get` and `set` act on (the first, until changed) |
+| `load <file>` | Loads another script from disk, and reloads the tabs it matches |
+| `update [script]` | Re-reads one script from disk, or all (with no argument, or `all`), as `--watch` does on a save. Only a script whose file or local `@require`s were modified since it was read counts, so touching a file forces it. Reloads, all at once, the tabs where an updated script runs or where its rules now match. Stored values are kept |
 | `status [what]` | Prints the page's URL, any open dialog, and each script's state: started or skipped, and counts of its menu commands, stored values and errors (those that are not zero). Also takes a script, a tab (`T2`, `T2.3`) or `all` |
 | `menu` | Lists the registered menu commands, numbered `M1`, `M2`, under the script that registered each |
 | `menu <M-number or label>` | Fires one, as picking it from the toolbar would. Piped in while none is registered yet, it waits a moment for a script that is still loading |
@@ -228,7 +232,7 @@ commands from its own input while it streams.
 | `set <key> <json>` | Stores a value, as another tab's write would: a running script sees it and its change listeners fire |
 | `tabs [tab]` | Lists the controlled tabs, or picks the one the page commands act on (see [Several tabs](#several-tabs)) |
 | `tabs new [page]` | Opens a new tab with the scripts, picks it and brings it to the front. `tabs new all` opens one per script's default page |
-| `reload [tab]` | Reloads the page |
+| `reload [tab]` | Reloads the page, or another tab's. `reload all` reloads every tab at once |
 | `open [page]` | Navigates to a URL, or to a script's default page: the selected script's when bare, or one by number (`open 2`, or `open T2.3` in T2). `open all` is `tabs new all` |
 | `focus [tab]` | Brings the tab to the front, un-minimizing its window |
 | `accept [text]`, `dismiss` | Answers an open dialog (see [Page dialogs](#page-dialogs)) |

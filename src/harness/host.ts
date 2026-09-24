@@ -330,6 +330,22 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
     return this.scripts.has(scriptId);
   }
 
+  /**
+   * Whether a script is running in a page's current document: its last
+   * word from that page is a start rather than a skip.
+   */
+  isRunning(page: PageLink, scriptId: string): boolean {
+    const { started, skipped } = this.lastStartAndSkip(page, scriptId);
+    return started !== undefined && (!skipped || started.at >= skipped.at);
+  }
+
+  /** A script's latest start and latest skip from one page. */
+  lastStartAndSkip(page: PageLink, scriptId: string): { started?: StartReport; skipped?: SkipReport } {
+    const mine = <T extends ScriptReport>(records: T[]): T | undefined =>
+      records.filter((r) => r.scriptId === scriptId && this.recordPages.get(r) === page).at(-1);
+    return { started: mine(this.reports.started), skipped: mine(this.reports.skipped) };
+  }
+
   /** The page a record in `reports` came from, if it is still known. */
   pageOf(record: object): PageLink | undefined {
     return this.recordPages.get(record);

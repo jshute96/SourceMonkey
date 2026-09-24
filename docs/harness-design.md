@@ -286,6 +286,28 @@ into pages.
       late report (a request finishing) still names it.
     - The close listener goes on before any await, so a tab that closes
       during setup is dropped, not listed forever.
+  - Changing scripts (`load`, `update`, a `--watch` save) all go
+    through `FollowedTabs.apply`:
+    - Every open tab gets the new set, in load order, so run order
+      stays the same.
+    - Only the tabs a changed script affects are reloaded: it was
+      running there (`host.isRunning`), or its new rules match the
+      tab's URL. They reload together; one waiting on a dialog is
+      skipped and named, since its reload would hang.
+    - Scripts before the first changed one stay attached, so a tab
+      that isn't reloaded never loses them; the rest are re-added.
+    - The file watcher restarts on the new set, so a loaded script,
+      or a new local `@require`, is watched too.
+  - `load`, `update` and `--watch` saves run one at a time through one
+    queue in `runInHarness`, since each reads the script list, awaits,
+    and replaces it. A tab still being set up is left out of `apply`
+    until its setup has caught up with the latest set.
+  - `update` skips a script whose files' modification times haven't
+    changed since it was read, so a touch still forces one.
+- A page stopped on a dialog answers no CDP call until it is answered.
+  So `load` / `update` refuse while one is open, and
+  `PageAttachment.dispose` gives up on the page after a second; detaching
+  the session drops what it registered anyway.
 - **`console-commands.ts`**: the commands typed while `run` streams,
   and the terminal prompt output is drawn around.
   - Each kind of thing has its own style of name: scripts `1`, tabs

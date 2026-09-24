@@ -3,6 +3,8 @@
 // lines carry the tab's name. Also `--all`'s tab per script, tabs
 // closing (T1 included), and `--fire-menu` reaching another tab.
 
+import { utimesSync } from 'node:fs';
+
 import { test, expect } from '../fixtures/harness.js';
 import { run, type RunOptions } from '../../lib/harness/run.js';
 
@@ -169,13 +171,18 @@ test('--notab opens no tab, and no scripts open a blank page or --url', async ({
 });
 
 // Drive the real CLI through its input, as a person or an agent would:
-// each command is sent once the line before it in `steps` has printed.
-async function driveCli(args: string[], steps: [waitFor: string, send: string][]): Promise<string[]> {
+// each command is sent once a line containing its `waitFor` prints
+// after the command before it. A `send` function runs first (to edit a
+// file, say) and returns the line to type.
+type Step = [waitFor: string, send: string | (() => string)];
+
+async function driveCli(args: string[], steps: Step[]): Promise<string[]> {
   const { spawn } = await import('node:child_process');
   const cli = new URL('../../lib/harness/cli.js', import.meta.url).pathname;
-  const child = spawn(process.execPath, [cli, 'run', ...args, '--launch', '--seconds', '20'], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [cli, 'run', ...args, '--launch', '--seconds', '25'], { stdio: ['pipe', 'pipe', 'pipe'] });
   const lines: string[] = [];
   let pending = [...steps];
+  let since = 0;
   let buffer = '';
   const onData = (chunk: Buffer): void => {
     buffer += chunk.toString();
@@ -183,8 +190,10 @@ async function driveCli(args: string[], steps: [waitFor: string, send: string][]
     buffer = parts.pop() ?? '';
     for (const line of parts) {
       lines.push(line);
-      while (pending[0] && lines.some((l) => l.includes(pending[0][0]))) {
-        child.stdin.write(`${pending[0][1]}\n`);
+      while (pending[0] && lines.slice(since).some((l) => l.includes(pending[0][0]))) {
+        const send = pending[0][1];
+        since = lines.length;
+        child.stdin.write(`${typeof send === 'string' ? send : send()}\n`);
         pending = pending.slice(1);
       }
     }
@@ -193,6 +202,12 @@ async function driveCli(args: string[], steps: [waitFor: string, send: string][]
   child.stderr.on('data', onData);
   await new Promise((resolve) => child.on('exit', resolve));
   return lines;
+}
+
+// A newer modification time, as a save would give it.
+function touch(file: string): void {
+  const later = new Date(Date.now() + 2000);
+  utimesSync(file, later, later);
 }
 
 test('--notab: the first tab opened is T1, unprefixed like a normal run\'s', async ({ fixtureServer, scriptsDir }) => {
@@ -223,4 +238,127 @@ test('--noscript: a blank page, and the lists say there are no scripts', async (
   expect(lines).toContain('[sm-dev] Opening about:blank');
   expect(lines).toContain('Page: about:blank');
   expect(lines).toContain('  No scripts are loaded');
+});
+
+test('load, update and reload all reload just the tabs they affect', async ({ fixtureServer, scriptsDir }) => {
+  const base = fixtureServer.baseUrl;
+  const write = (name: string, page: string, body = `console.log('[${name}] on ' + location.pathname);`) => scriptsDir.write({
+    relativePath: `${name.toLowerCase()}.user.js`,
+    meta: { name, match: [`*://*/${page}`] },
+    body,
+  });
+  const a = write('A', 'target.html');
+  const b = write('B', 'other.html');
+  const lines = await driveCli([a, '--url', `${base}/target.html`], [
+    ['Ready for commands', `tabs new ${base}/other.html`],
+    ['The page commands now act on T2', `load ${b}`],
+    // B matches only T2's page.
+    ['[T2] [page log] [B] on /other.html', 'scripts 2'],
+    ['Using B', 'set k 1'],
+    ['Set k', 'update 1'],
+    // Untouched, so nothing to do; touched, only A's tab reloads.
+    ["hasn't changed on disk", () => { touch(a); return 'update all'; }],
+    ['[page log] [A] on /target.html', 'scripts'],
+    ['Loaded scripts:', 'get k'],
+    ['k = 1', `load ${b}`],
+    ['is already loaded', `load ${scriptsDir.path}`],
+    ['is a directory', 'load nothing.user.js'],
+    ['No such file or directory', () => { write('B', 'other.html', 'syntax error here('); return 'update 2'; }],
+    ['INVALID', 'reload all'],
+    ['[page log] [A] on /target.html', 'quit'],
+  ]);
+  expect(lines).toContain(`[sm-dev] Loaded ${b} as script 2`);
+  expect(lines).toContain('[sm-dev] Reloading T2');
+  expect(lines).toContain("[sm-dev] Script 1 hasn't changed on disk, so nothing was reloaded");
+  // `update all` after touching A: only its tab, and the selection and
+  // stored value are kept.
+  expect(lines).toContain('[sm-dev] Reloading T1');
+  expect(lines).not.toContain('[sm-dev] Reloading T1, T2');
+  expect(lines).toContain('* 2: B (b.user.js)');
+  expect(lines).toContain('  k = 1');
+  expect(lines).toContain(`[sm-dev] ${b} is already loaded, as script 2. Type update 2 to re-read it.`);
+  expect(lines).toContain(`[sm-dev] ${scriptsDir.path} is a directory. Name a .user.js file.`);
+  expect(lines).toContain('[sm-dev] No such file or directory: nothing.user.js');
+  // The failed update changed nothing, so reloaded nothing.
+  const invalid = lines.findIndex((l) => l.startsWith('INVALID'));
+  expect(lines.slice(invalid).filter((l) => l.startsWith('[sm-dev] Reloading'))).toEqual([]);
+  // `reload all` reloaded both tabs.
+  expect(lines.slice(invalid).filter((l) => l.endsWith('[page log] [A] on /target.html'))).toHaveLength(1);
+  expect(lines.slice(invalid).filter((l) => l.endsWith('[T2] [page log] [B] on /other.html'))).toHaveLength(1);
+});
+
+test('a tab waiting on a dialog is left out of reload all, and blocks update', async ({ fixtureServer, scriptsDir }) => {
+  const base = fixtureServer.baseUrl;
+  const a = scriptsDir.write({ relativePath: 'a.user.js', meta: { name: 'A', match: ['*://*/target.html'] }, body: '' });
+  const b = scriptsDir.write({
+    relativePath: 'b.user.js', meta: { name: 'B', match: ['*://*/other.html'] }, body: `setTimeout(() => alert('Hi'), 100);`,
+  });
+  const lines = await driveCli([a, b, '--url', `${base}/target.html`], [
+    ['Ready for commands', `tabs new ${base}/other.html`],
+    ['opened an alert dialog', 'reload all'],
+    // T1 still reloads; then update, which would reach T2, refuses.
+    ['[sm-dev] A started on', () => { touch(b); return 'update 2'; }],
+    ['is waiting on an alert dialog', 'quit'],
+  ]);
+  expect(lines).toContain('[sm-dev] T2 is waiting on a dialog, so it was not reloaded');
+  // T2 is the current tab, having just been opened.
+  expect(lines).toContain('[sm-dev] The page is waiting on an alert dialog. Type accept or dismiss first.');
+  expect(lines.filter((l) => l.startsWith('[sm-dev] Reloading'))).toEqual([]);
+});
+
+test('--watch follows a loaded script, and a save reloads only its tabs', async ({ fixtureServer, scriptsDir }) => {
+  const base = fixtureServer.baseUrl;
+  const write = (name: string, page: string, word: string) => scriptsDir.write({
+    relativePath: `${name.toLowerCase()}.user.js`,
+    meta: { name, match: [`*://*/${page}`] },
+    body: `console.log('[${name}] ${word}');`,
+  });
+  const a = write('A', 'target.html', 'one');
+  const b = write('B', 'other.html', 'one');
+  const lines = await driveCli([a, '--url', `${base}/target.html`, '--watch'], [
+    ['Ready for commands', `tabs new ${base}/other.html`],
+    ['The page commands now act on T2', `load ${b}`],
+    ['[T2] [page log] [B] one', () => { write('B', 'other.html', 'two'); return ''; }],
+    ['[T2] [page log] [B] two', 'quit'],
+  ]);
+  const saved = lines.indexOf('[sm-dev] Change detected, re-injecting');
+  expect(saved).toBeGreaterThan(-1);
+  expect(lines.slice(saved)).toContain('[sm-dev] Reloading T2');
+  expect(lines.slice(saved).some((l) => l.includes('Reloading T1'))).toBe(false);
+});
+
+test('with no tab, load says nothing was reloaded', async ({ scriptsDir }) => {
+  const a = scriptsDir.write({ relativePath: 'a.user.js', meta: { name: 'A', match: ['*://*/target.html'] }, body: '' });
+  const b = scriptsDir.write({ relativePath: 'b.user.js', meta: { name: 'B', match: ['*://example.com/*'] }, body: '' });
+  const lines = await driveCli([a, '--notab'], [
+    ['Ready for commands', `load ${b}`],
+    ['none was reloaded', 'quit'],
+  ]);
+  expect(lines).toContain('[sm-dev] No open tab matches it, so none was reloaded. Type open 2 to open its page.');
+});
+
+test('--watch re-injects on a save and reloads the tab it runs in', async ({ fixtureServer, scriptsDir }) => {
+  const spec = (word: string) => ({
+    relativePath: 'saved.user.js',
+    meta: { name: 'Saved', match: ['*://*/target.html'] },
+    body: `console.log('[saved] ${word}');`,
+  });
+  const file = scriptsDir.write(spec('before'));
+  const lines: string[] = [];
+  let stop!: () => void;
+  const until = new Promise<void>((resolve) => { stop = resolve; });
+  const done = run({
+    files: [file], url: `${fixtureServer.baseUrl}/target.html`, watch: true, launch: true,
+    collectionRoot: scriptsDir.path, localRoots: [], until,
+    out: (line) => {
+      lines.push(line);
+      if (line === '[page log] [saved] before') scriptsDir.write(spec('after'));
+      if (line === '[page log] [saved] after') stop();
+    },
+  });
+  const timer = setTimeout(stop, 10000);
+  await done.finally(() => clearTimeout(timer));
+  expect(lines).toContain('[sm-dev] Change detected, re-injecting');
+  expect(lines).toContain('[sm-dev] Reloading T1');
+  expect(lines).toContain('[page log] [saved] after');
 });

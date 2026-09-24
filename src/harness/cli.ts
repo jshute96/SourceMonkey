@@ -23,7 +23,7 @@ import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import { writeOutputLine } from './console-commands.js';
-import { NO_RULE_COVERS_URL, explainMatch, prepareScript, withDefaultScheme } from './prepare.js';
+import { NO_RULE_COVERS_URL, explainMatch, isDirectoryMessage, noSuchFileMessage, prepareScript, withDefaultScheme } from './prepare.js';
 
 // A mistake in how the command was typed, as opposed to a failure while
 // carrying it out: the one kind that exits 2.
@@ -201,13 +201,13 @@ async function collectScripts(inputs: string[]): Promise<string[]> {
 // reported as one rather than as the file system's `ENOENT` text.
 async function scriptFile(input: string): Promise<string> {
   const info = await statInput(input);
-  if (info.isDirectory()) throw new UsageError(`${input} is a directory. Name a .user.js file.`);
+  if (info.isDirectory()) throw new UsageError(isDirectoryMessage(input));
   return path.resolve(input);
 }
 
 function statInput(input: string): ReturnType<typeof stat> {
   return stat(path.resolve(input)).catch(() => {
-    throw new UsageError(`No such file or directory: ${input}`);
+    throw new UsageError(noSuchFileMessage(input));
   });
 }
 
