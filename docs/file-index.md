@@ -171,6 +171,7 @@ command. See `docs/harness-design.md`.
 | File | Description |
 |------|-------------|
 | `src/harness/index.ts` | Public entry of the harness package: re-exports the install pipeline, host, injector, and Playwright fixture |
+| `src/harness/page-output.ts` | Which page console lines and uncaught errors `sm-dev run` streams: the scripts', not the site's |
 | `src/harness/prepare.ts` | Runs the real install pipeline over a file or text under Node and returns the registrable entries, world, matching, and diagnostics |
 | `src/harness/parse-check-node.ts` | Node counterpart of the sandboxed parse check: `new Function` verdict plus `vm.Script` location probes |
 | `src/harness/host.ts` | The stand-in service worker: answers every bridge message the injected code sends, under Node, and records what scripts do |
@@ -287,6 +288,7 @@ command. See `docs/harness-design.md`.
 | `tests/unit/site-icon.test.mjs` | Unit tests for the icon-specific helpers: `@icon`-header extraction, `<link rel="icon">` parsing + scoring, cache-hit rules, `data:`→Blob decode |
 | `tests/unit/parse-sandbox-host.test.mjs` | Unit tests for `isParseVerdict` — only the three real statuses pass, so an odd reply can't read as `invalid` |
 | `tests/unit/parse-location.test.mjs` | Unit tests for probe selection and line mapping, driven by positions Chromium really reported |
+| `tests/unit/harness-page-output.test.mjs` | Unit tests for which page console lines and errors `sm-dev run` shows |
 | `tests/unit/harness-prepare.test.mjs` | Unit tests for `prepareScript` and `explainMatch` over real files on disk |
 | `tests/unit/parse-check-node.test.mjs` | Unit tests for the Node parse checker: verdict, both probes' positions, and the two probe-selection routes |
 | `tests/unit/validate-userscripts.test.mjs` | Drives the validator CLI as a subprocess over the example suites plus a hand-built offline tree |

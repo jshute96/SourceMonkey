@@ -72,6 +72,7 @@ Options for run:
   --fire-menu S   Fire the registered menu command named S once the page
                   has loaded, as if picked from the toolbar menu
   --seconds N     Stop after N seconds instead of waiting for Ctrl-C
+  --page-errors   Also show the page's own errors, not just the script's
   --extension     Push the script into the SourceMonkey extension in
                   that browser instead of injecting it; reports then
                   come from the script's own Log tab
@@ -104,6 +105,7 @@ interface Opts {
   fireMenu?: string;
   extension: boolean;
   solo: boolean;
+  pageErrors: boolean;
   seconds?: number;
   selectors: string[];
   selectorFlags: number;
@@ -114,7 +116,7 @@ interface Opts {
 function parseArgs(argv: string[]): Opts {
   const opts: Opts = {
     command: null, args: [], root: process.cwd(), local: [],
-    launch: false, headed: false, watch: false, extension: false, solo: false,
+    launch: false, headed: false, watch: false, extension: false, solo: false, pageErrors: false,
     selectors: [], selectorFlags: 0, html: false,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -146,6 +148,7 @@ function parseArgs(argv: string[]): Opts {
       case '--fire-menu': opts.fireMenu = next(); break;
       case '--extension': opts.extension = true; break;
       case '--solo': opts.solo = true; break;
+      case '--page-errors': opts.pageErrors = true; break;
       case '--selectors': {
         // One flag with commas holds a list. A selector containing a
         // comma (`:is(a, b)`) goes in its own flag, taken whole.
@@ -297,6 +300,7 @@ async function runCommand(opts: Opts): Promise<number> {
       fireMenu: opts.fireMenu,
       extension: opts.extension,
       solo: opts.solo,
+      pageErrors: opts.pageErrors,
       collectionRoot: opts.root,
       localRoots: opts.local,
       // Drawn around the typed-command prompt, when one is showing.

@@ -18,6 +18,7 @@ import { DialogTracker, readConsoleCommands } from './console-commands.js';
 import { ExtensionBackend, type LogEntry } from './extension-backend.js';
 import { HarnessHost, type ErrorReport, type SkipReport, type StartReport } from './host.js';
 import { attachPage, type PageAttachment } from './inject.js';
+import { showConsoleLine, showPageError } from './page-output.js';
 import { prepareScript, type PreparedScript } from './prepare.js';
 
 export interface RunOptions extends ConnectOptions {
@@ -37,6 +38,8 @@ export interface RunOptions extends ConnectOptions {
   extension?: boolean;
   /** With `extension`: disable every other collection for the run. */
   solo?: boolean;
+  /** Also stream the page's own errors, not just ones from the scripts. */
+  pageErrors?: boolean;
   collectionRoot: string;
   localRoots: string[];
   /** Where the stream goes. */
@@ -248,7 +251,7 @@ async function runInHarness(
 ): Promise<number> {
   const { page } = session;
   const host = new HarnessHost();
-  wireOutput(host, page, opts.out);
+  wireOutput(host, page, opts);
   const dialogs = await DialogTracker.attach(page, opts.out, {
     visible: browserVisible(opts),
     // Commands are only read once the page has loaded, but a prompt
@@ -411,7 +414,7 @@ async function runInExtension(opts: RunOptions, session: BrowserSession): Promis
     // switched back.
     if (opts.solo) await backend.solo(true);
     if (!(await pushAll(prepared))) return 1;
-    wirePageOutput(page, opts.out);
+    wirePageOutput(page, opts, false);
     await DialogTracker.attach(page, opts.out, { visible: browserVisible(opts) });
     opts.out(`[sm-dev] Opening ${url}`);
     await page.goto(url).catch((err) => opts.out(`[sm-dev] Navigation failed: ${(err as Error).message}`));
@@ -480,9 +483,9 @@ function defaultUrl(script: PreparedScript): string | null {
   return representativeMatch(script.matching)?.linkUrl ?? null;
 }
 
-function wireOutput(host: HarnessHost, page: Page, out: (line: string) => void): void {
-  wireHostOutput(host, out);
-  wirePageOutput(page, out);
+function wireOutput(host: HarnessHost, page: Page, opts: RunOptions): void {
+  wireHostOutput(host, opts.out);
+  wirePageOutput(page, opts, true);
 }
 
 function wireHostOutput(host: HarnessHost, out: (line: string) => void): void {
@@ -507,19 +510,17 @@ function wireHostOutput(host: HarnessHost, out: (line: string) => void): void {
   });
 }
 
-function wirePageOutput(page: Page, out: (line: string) => void): void {
+// `hostReports`: the harness host already prints a script's own throws,
+// so the page's copy of those is skipped. See page-output.ts.
+function wirePageOutput(page: Page, opts: Pick<RunOptions, 'out' | 'pageErrors'>, hostReports: boolean): void {
+  const pageErrors = opts.pageErrors ?? false;
   page.on('console', (msg) => {
-    const text = msg.text();
-    // The prelude's own lines duplicate the reports printed above.
-    if (text.startsWith('[SourceMonkey]')) return;
-    // A userscript's console output comes from a `sourcemonkey://`
-    // source (the entries' sourceURL), which is how it is told from the
-    // page's own chatter. `[name]`-prefixed lines and errors pass too,
-    // for a script that logs through a page-world helper.
-    const fromScript = msg.location().url.startsWith('sourcemonkey://');
-    if (fromScript || /^\[[^\]]+\]/.test(text) || msg.type() === 'error') out(`[page ${msg.type()}] ${text}`);
+    const line = { type: msg.type(), text: msg.text(), url: msg.location().url, argCount: msg.args().length };
+    if (showConsoleLine(line, pageErrors)) opts.out(`[page ${line.type}] ${line.text}`);
   });
-  page.on('pageerror', (err) => out(`[page error] ${err.message}`));
+  page.on('pageerror', (err) => {
+    if (showPageError(err.stack ?? err.message, { pageErrors, hostReports })) opts.out(`[page error] ${err.message}`);
+  });
 }
 
 // Re-prepare and re-inject on any change to a script or a file it

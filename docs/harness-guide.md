@@ -96,7 +96,7 @@ person or an agent.
 
 | Command | What it does |
 | --- | --- |
-| `sm-dev run <script.user.js> [--url U]` | Opens a tab at `U` (default: the first URL the script's `@match` implies), injects the script as it is on disk, and streams the script's console lines, page errors, and start / skipped / error reports until Ctrl-C, or for `--seconds N`. |
+| `sm-dev run <script.user.js> [--url U]` | Opens a tab at `U` (default: the first URL the script's `@match` implies), injects the script as it is on disk, and streams the script's console lines, errors, and start / skipped / error reports until Ctrl-C, or for `--seconds N`. |
 | `sm-dev run ... --watch` | Same, and re-injects plus reloads on every save of the script or a `@require`d file. |
 | `sm-dev run a.user.js b.user.js` | Injects several scripts into the same page, for interaction tests. |
 | `sm-dev probe <url> --selectors 'a, b, c'` | Reports which selectors resolve on the page, so a broken script's assumptions can be checked in one call. `--html` prints the first match's HTML. Exits 1 when any is missing. |
@@ -132,6 +132,8 @@ Other `run` flags:
 - `--fire-menu "Label"` invokes a registered menu command once the
   page has loaded. For anything beyond one invocation, use the typed
   commands below.
+- `--page-errors` also shows the page's own errors (see
+  [What the output looks like](#what-the-output-looks-like)).
 - `--seconds N` stops after N seconds, for a bounded check from a
   script or an agent; without it the stream runs until Ctrl-C.
 - `--extension` uses the real extension in that browser instead of
@@ -226,6 +228,21 @@ A page the header does not cover prints the rule that kept the script
 off it (`skipped on <url>: No @match or @include covers this URL`) and
 nothing runs. A header problem prints the same wording the extension's
 viewer would, and nothing is injected.
+
+The page's own errors are left out, since a busy site logs enough of
+them (blocked trackers, failed ad requests) to bury the script's lines:
+- Shown: console lines from the script, `[name]`-prefixed console
+  lines, and errors whose stack runs through the script.
+- A thrown value that isn't an `Error` has no stack, so it is always
+  shown.
+- A script's own throw prints once, as `<name> threw:` (with
+  `--extension`, also as the Log tab's entry).
+- `--page-errors` shows the rest too. Reach for it when the script may
+  be breaking the page, or when it runs code outside its own file:
+  - a `<script>` element it adds to the page;
+  - code it `eval`s, whose console lines lose the script's location;
+  - a throw deep inside page code (a framework's event dispatch) that
+    the script's frame has scrolled off the stack.
 
 ## Writing specs: the Playwright fixture
 
