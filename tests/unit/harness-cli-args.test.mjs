@@ -66,3 +66,11 @@ test('--devtools refuses the runs it can\'t serve', () => {
   assert.deepEqual(run(SCRIPT, '--devtools', '--launch'), { code: 2, out: 'The --devtools flag can\'t be used with --launch' });
   assert.deepEqual(run(SCRIPT, '--devtools', '--extension'), { code: 2, out: 'The --devtools flag can\'t be used with --extension' });
 });
+
+test('--help lists the commands a run takes too', () => {
+  const r = spawnSync(process.execPath, [CLI, '--help'], { encoding: 'utf8' });
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /^Commands in interactive shell and send:$/m);
+  assert.match(r.stdout, /^ {4}click <selector> /m);
+  assert.match(r.stdout, /^ {4}menu \[what\] /m);
+});

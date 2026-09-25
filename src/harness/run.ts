@@ -21,6 +21,7 @@ import { DevToolsLink } from './devtools.js';
 import { ExtensionBackend, type LogEntry } from './extension-backend.js';
 import { HarnessHost, type ErrorReport, type SkipReport, type StartReport } from './host.js';
 import { attachPage, targetIdOf, type PageAttachment } from './inject.js';
+import { recordLog } from './page-commands.js';
 import { showConsoleLine, showPageError } from './page-output.js';
 import {
   defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, prepareScript, type PreparedScript,
@@ -458,7 +459,7 @@ class Remote {
     await this.control?.close();
   }
 
-  private readonly handle: SentLineHandler = async (line, reply) => {
+  private readonly handle: SentLineHandler = async (line, reply, sent) => {
     // Not copied to other senders: it is no part of their commands.
     this.print(`[sm-dev] Sent by sm-dev send: ${line}`);
     // Answered straight away, even before the run is ready, and the
@@ -477,7 +478,7 @@ class Remote {
       reply('[sm-dev] The run is ending, so the command was not run');
       return 'done';
     }
-    await this.runner(line, { start: () => this.listeners.add(reply) });
+    await this.runner(line, { start: () => this.listeners.add(reply), cwd: sent?.cwd, words: sent?.words });
     // What a command sets off often prints just after it returns: the
     // script's start line after a reload, its console lines after a
     // menu command. So the sender hears a little longer, which can
@@ -705,7 +706,7 @@ async function runInHarness(
         tabs: () => tabs.list(),
         // T1 to start with, or whichever is open if T1 has closed.
         tab: tabs.list()[0],
-        newTab: (url) => tabs.newTab(url),
+        newTab: (url, options) => tabs.newTab(url, options),
         loadScript: load,
         // By place, so an update queued behind another still finds them.
         updateScripts: (which) => update(which?.map((s) => scripts.indexOf(s)).filter((i) => i >= 0)),
@@ -869,7 +870,8 @@ class FollowedTabs {
     const first = this.first && this.firstAttachment ? [{ tab: this.first, attachment: this.firstAttachment }] : [];
     // A tab still being set up is left out: its setup catches up on
     // what it missed, and two swaps at once could add a script twice.
-    const ready = [...this.tabs.values()].filter((t) => t.ready);
+    // A tab without scripts is no part of changing them.
+    const ready = [...this.tabs.values()].filter((t) => t.ready && !t.tab.noScript);
     return [...first, ...ready].filter(({ tab }) => !tab.page.isClosed());
   }
 
@@ -893,9 +895,14 @@ class FollowedTabs {
   private adopt(page: Page, opener: number): void {
     if (this.disposed || this.tabs.has(page)) return;
     const n = this.nextNumber++;
-    this.track(this.setUp(page, n, opener).catch((err) => {
+    // A tab without scripts opens more of its kind.
+    const noScript = this.list().find((t) => t.n === opener)?.noScript === true;
+    this.track(this.setUp(page, n, opener, true, noScript).catch((err) => {
       // Closed while being set up is the usual cause, and says nothing.
-      if (!page.isClosed()) this.opts.out(`[sm-dev] The scripts could not be injected into T${n}: ${(err as Error).message}`);
+      if (page.isClosed()) return;
+      this.opts.out(noScript
+        ? `[sm-dev] T${n} could not be set up: ${(err as Error).message}`
+        : `[sm-dev] The scripts could not be injected into T${n}: ${(err as Error).message}`);
     }));
   }
 
@@ -904,10 +911,11 @@ class FollowedTabs {
    * its first page loads with the scripts as the extension would run
    * them. Numbered before anything is awaited, so tabs opened together
    * are numbered in call order. Stays open when the run ends, like the
-   * tabs the page opens.
+   * tabs the page opens. `noScript`: one the scripts stay out of, for
+   * `tabs new --noscript`.
    */
-  async newTab(url?: string): Promise<ControlledTab> {
-    const tab = await this.createTab();
+  async newTab(url?: string, { noScript = false } = {}): Promise<ControlledTab> {
+    const tab = await this.createTab(noScript);
     this.announce(tab, url);
     if (url) await this.navigate(tab, url);
     return tab;
@@ -917,13 +925,13 @@ class FollowedTabs {
    * `newTab` without the announcing and loading, for `--all` to set
    * its tabs up together and then say so in order.
    */
-  async createTab(): Promise<ControlledTab> {
+  async createTab(noScript = false): Promise<ControlledTab> {
     if (this.disposed) throw new Error('The run is ending');
     const n = this.nextNumber++;
     const setUp = (async () => {
       const page = await this.context.newPage();
       try {
-        await this.setUp(page, n, undefined, false);
+        await this.setUp(page, n, undefined, false, noScript);
       } catch (err) {
         // Nothing controls it, so it would only be in the way.
         await page.close().catch(() => undefined);
@@ -956,8 +964,9 @@ class FollowedTabs {
 
   // `opener` is the tab that opened this one; none for `tabs new`.
   // `announce`: say it opened; the run's own tabs are announced by
-  // their caller instead, with where they are going.
-  private async setUp(page: Page, n: number, opener?: number, announce = true): Promise<void> {
+  // their caller instead, with where they are going. `noScript`: no
+  // scripts are injected, and none are later.
+  private async setUp(page: Page, n: number, opener?: number, announce = true, noScript = false): Promise<void> {
     // T1 goes unprefixed, as the run's own does, when `--notab` makes
     // the first tab opened T1.
     const out = n === 1 ? this.opts.out : (line: string): void => this.opts.out(`[T${n}] ${line}`);
@@ -977,7 +986,8 @@ class FollowedTabs {
     });
     const attachment = await attachPage(page, this.host);
     this.numbers.set(attachment, n);
-    await attachment.showBadge();
+    // Its count would be of scripts that are kept out on purpose.
+    if (!noScript) await attachment.showBadge();
     // Read before the check below, so a tab closing meanwhile is caught
     // by it rather than listed after its close has passed.
     const targetId = await targetIdOf(page);
@@ -985,13 +995,18 @@ class FollowedTabs {
       await attachment.dispose().catch(() => undefined);
       return;
     }
-    const entry = { tab: { n, page, link: attachment, dialogs, openedBy: opener, targetId }, attachment, ready: false };
+    const entry = { tab: { n, page, link: attachment, dialogs, openedBy: opener, targetId, noScript }, attachment, ready: false };
     this.tabs.set(page, entry);
     this.onTabsChanged();
     const url = page.url();
     const loaded = url !== '' && url !== 'about:blank';
     announced = true;
-    if (announce) this.opts.out(`[sm-dev] Tab T${n} opened${loaded ? ` at ${url}` : ''}${opener ? `, from T${opener}` : ''}${targetIdSuffix(targetId)}`);
+    if (announce) this.opts.out(`[sm-dev] Tab T${n} opened${loaded ? ` at ${url}` : ''}${noScript ? ' (no scripts)' : ''}${opener ? `, from T${opener}` : ''}${targetIdSuffix(targetId)}`);
+    if (noScript) {
+      this.follow(attachment, n);
+      entry.ready = true;
+      return;
+    }
     const readyState = await page.evaluate(() => document.readyState).catch(() => null);
     const initial = this.scripts;
     let scripts = initial;
@@ -1262,9 +1277,16 @@ function wirePageOutput(page: Page, opts: Pick<RunOptions, 'out' | 'pageErrors'>
   const pageErrors = opts.pageErrors ?? false;
   page.on('console', (msg) => {
     const line = { type: msg.type(), text: msg.text(), url: msg.location().url, argCount: msg.args().length };
+    // Every line, for `logs`; the stream shows the script's.
+    recordLog(page, `[${line.type}] ${line.text}`);
     if (showConsoleLine(line, pageErrors)) opts.out(`[page ${line.type}] ${line.text}`);
   });
+  // Which page load each line came from.
+  page.on('framenavigated', (frame) => {
+    if (frame === page.mainFrame()) recordLog(page, `--- ${frame.url()}`);
+  });
   page.on('pageerror', (err) => {
+    recordLog(page, `[error] ${err.message}`);
     if (showPageError(err.stack ?? err.message, { pageErrors, hostReports })) opts.out(`[page error] ${err.message}`);
   });
 }

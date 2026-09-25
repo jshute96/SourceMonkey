@@ -176,17 +176,17 @@ command. See `docs/harness-design.md`.
 | `src/harness/parse-check-node.ts` | Node counterpart of the sandboxed parse check: `new Function` verdict plus `vm.Script` location probes |
 | `src/harness/host.ts` | The stand-in service worker: answers every bridge message the injected code sends, under Node, and records what scripts do |
 | `src/harness/inject.ts` | Attaches prepared scripts to a Playwright page over CDP, in the right world, with a message channel per world to the host |
-| `src/harness/fixture.ts` | The Playwright fixture a consumer repo imports: `loadUserscript`, `gm`, `reports`, `serveSnapshot` over a host and attachment per test |
-| `src/harness/capture-page.ts` | A page's DOM as a standalone file, scripts disabled and a `<base>` added; shared by `sm-dev snapshot` and the fixture's `saveSnapshot` |
+| `src/harness/fixture.ts` | The Playwright fixture a consumer repo imports: `loadUserscript`, `gm`, `reports`, `serveHtml` over a host and attachment per test |
+| `src/harness/save-html.ts` | A page's DOM as a standalone file, scripts disabled and a `<base>` added; for `savehtml` and the fixture's `saveHtml` |
 | `src/harness/console-commands.ts` | The commands typed while `sm-dev run` streams, across its tabs, the page-dialog tracker, and the prompt |
-| `src/harness/browser-commands.ts` | `sm-dev probe` (which selectors resolve on a page) and `sm-dev snapshot` (save a page's DOM for a spec) |
+| `src/harness/page-commands.ts` | The run commands that drive and read a tab's page, from `click` and `eval` to `snapshot` and `logs` |
 | `src/harness/tab-badge.ts` | The count badge `sm-dev run` draws over controlled tabs' favicons, greyed once the run is gone |
 | `src/harness/run.ts` | `sm-dev run`: open a browser (reusing a finished run's tab), inject or push the scripts, follow tabs it opens, and stream |
 | `src/harness/extension-backend.ts` | `sm-dev --extension`: finds SourceMonkey's worker in the browser and drives `writeScratchScript`, `clearScratchScripts`, `soloMode`, the script log |
 | `src/harness/cdp-proxy.ts` | A CDP endpoint that shows a client only the run's tabs, for the `--devtools` server to connect to |
 | `src/harness/devtools.ts` | `sm-dev run --devtools`: a Chrome DevTools server per run, and each tab's DevTools page id |
 | `src/harness/runs.ts` | The runs active on this machine: record files and control sockets behind `sm-dev list`, `send`, `stop` |
-| `src/harness/cli.ts` | The `sm-dev` command: `validate`, `match`, `run`, `probe`, `snapshot`, `clear`, `list`, `send`, `stop` |
+| `src/harness/cli.ts` | The `sm-dev` command: `run`, `validate`, `match`, `clear`, `list`, `send`, `stop` |
 
 ## Tests (`tests/`)
 
@@ -297,6 +297,7 @@ command. See `docs/harness-design.md`.
 | `tests/unit/harness-cdp-endpoint.test.mjs` | Unit tests for `cdpEndpoint`: the forms `sm-dev --cdp` accepts |
 | `tests/unit/harness-cli-args.test.mjs` | Unit tests for `sm-dev`'s argument checks: `run` flag combinations, and `send` / `stop` / `list` misuse |
 | `tests/unit/harness-devtools.test.mjs` | Unit tests for `run --devtools`: when it is on, and the message when `chrome-devtools` is missing |
+| `tests/unit/harness-page-commands.test.mjs` | Unit tests for how the page commands split a typed line into words |
 | `tests/unit/harness-runs.test.mjs` | Unit tests for the run registry: a sent line's round trip, stale records, `stop`'s SIGTERM fallback |
 | `tests/unit/harness-page-output.test.mjs` | Unit tests for which page console lines and errors `sm-dev run` shows |
 | `tests/unit/harness-prepare.test.mjs` | Unit tests for `prepareScript` and `explainMatch` over real files on disk |
@@ -413,9 +414,10 @@ extension, driven by the Node host in `src/harness/`.
 | `tests/harness/console-commands.spec.ts` | The commands typed into `sm-dev run`: `scripts`, `values`, `menu` by M number, dialogs, and several tabs |
 | `tests/harness/run-tabs.spec.ts` | `sm-dev run` end to end: followed tabs, `--all`, `--notab`, `load` / `update` / `--watch` reloads |
 | `tests/harness/cdp-proxy.spec.ts` | The `--devtools` CDP proxy with a plain CDP client: only allowed tabs, in the initial attach, late claims, own sessions |
+| `tests/harness/page-commands.spec.ts` | The run commands that drive and read a page, in both worlds, with dialogs, quoting, and files |
 | `tests/harness/run-remote.spec.ts` | `sm-dev run` as a background process: `list`, `send`, `stop`, and `--devtools` page ids reached with `chrome-devtools` |
 | `tests/harness/tab-badge.spec.ts` | The favicon badge: count and colors, the site's icon under it, grey when released or unpinged, a tab taken over |
-| `tests/harness/fixture.spec.ts` | The consumer fixture from `lib/`: a script against a served snapshot, `gm` and `reports`, the up-front URL check, the explained miss |
+| `tests/harness/fixture.spec.ts` | The consumer fixture from `lib/`: a script against a served page, `gm` and `reports`, the up-front URL check, the explained miss |
 
 ## GreasyFork Corpus Tooling (`tests/greasyfork-examples/`)
 

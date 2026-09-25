@@ -11,11 +11,14 @@
 // sit in one place, and so a non-interactive run (a pipe, an agent
 // reading the stream) can skip the whole thing.
 
+import path from 'node:path';
 import readline from 'node:readline';
 
 import type { Dialog, Page } from '@playwright/test';
 
-import type { HarnessHost, MenuCommandRecord, PageLink } from './host.js';
+import type { HarnessHost, MenuCommandRecord } from './host.js';
+import type { PageAttachment } from './inject.js';
+import { PAGE_COMMAND_GROUPS, PAGE_COMMANDS, runPageCommand, splitWords, VALUE_FLAGS } from './page-commands.js';
 import { defaultPageUrl, NO_DEFAULT_PAGE, preparedScriptMatches, preparedScriptName, withDefaultScheme, type PreparedScript } from './prepare.js';
 
 /**
@@ -27,7 +30,9 @@ export interface ControlledTab {
   n: number;
   page: Page;
   /** The page as the host knows it, to tell this tab's reports apart. */
-  link: PageLink;
+  link: PageAttachment;
+  /** Opened with `tabs new --noscript`, or by such a tab: no scripts run in it. */
+  noScript?: boolean;
   /** The page's JavaScript dialogs, for `accept` and `dismiss`. */
   dialogs?: DialogTracker;
   /** The number of the tab that opened this one. */
@@ -65,7 +70,7 @@ export interface ConsoleContext {
    * Open a new controlled tab, at `url` or blank, for `tabs new`.
    * Absent where the caller can't open one.
    */
-  newTab?: (url?: string) => Promise<ControlledTab>;
+  newTab?: (url?: string, options?: { noScript?: boolean }) => Promise<ControlledTab>;
   /** Load another script from disk, for `load`. */
   loadScript?: (file: string) => Promise<void>;
   /** Re-read scripts from disk (all, when none are named), for `update`. */
@@ -127,7 +132,8 @@ const COMMAND_GROUPS: { title: string; lines: string[] }[] = [
       'tabs [tab]        List the tabs the run controls; with one, pick the',
       '                  tab the commands for the page act on',
       'tabs new [page]   Open a new tab with the scripts, pick it and focus',
-      '                  it; with all, one tab for each script\'s page',
+      '                  it; with all, one tab for each script\'s page;',
+      '                  tabs new --noscript [url] opens one without them',
       'reload [T<n>|all] Reload the page, another tab\'s, or every tab',
       'open [page]       Navigate to a URL, or to a script\'s default page',
       '                  (the selected script\'s, or one by number: 2, T2.3);',
@@ -137,6 +143,7 @@ const COMMAND_GROUPS: { title: string; lines: string[] }[] = [
       'dismiss           Answer an open dialog with Cancel',
     ],
   },
+  ...PAGE_COMMAND_GROUPS,
   {
     title: 'The run',
     lines: [
@@ -153,7 +160,7 @@ const NO_SCRIPTS = 'No scripts are loaded';
 export const NO_TABS = '[sm-dev] No tabs are active. Type tabs new to open one.';
 
 // The commands that act on the current tab, which there may not be.
-const NEEDS_A_TAB = new Set(['menu', 'open', 'reload', 'focus', 'accept', 'dismiss']);
+const NEEDS_A_TAB = new Set(['menu', 'open', 'reload', 'focus', 'accept', 'dismiss', ...PAGE_COMMANDS]);
 
 // How a command's argument names each kind of thing. Kept out of
 // COMMAND_GROUPS, whose first words are the command names Tab
@@ -174,7 +181,8 @@ const ID_LINES = [
 ];
 
 // A blank line between the groups.
-const CONSOLE_HELP = [
+/** The commands' help, as `help` prints it, for `sm-dev --help` too. */
+export const CONSOLE_HELP = [
   ...COMMAND_GROUPS.flatMap((group, i) => [...(i > 0 ? [''] : []), `${group.title}:`, ...group.lines.map((line) => `  ${line}`)]),
   '',
   'IDs to select objects:',
@@ -184,9 +192,14 @@ const CONSOLE_HELP = [
 /**
  * Run one typed line. Returns once its effect has been applied, so an
  * agent driving this over a pipe can send the next line knowing the
- * previous one is done.
+ * previous one is done. For a line `sm-dev send` delivered: `cwd` is
+ * where the files it names are, and `words` are the sender's own words
+ * (the line is them joined by spaces), which page commands take as
+ * they are rather than splitting the line.
  */
-export async function runConsoleCommand(line: string, ctx: ConsoleContext): Promise<void> {
+export async function runConsoleCommand(
+  line: string, ctx: ConsoleContext, { cwd = process.cwd(), words }: { cwd?: string; words?: string[] } = {},
+): Promise<void> {
   const trimmed = line.trim();
   if (!trimmed) return;
   const [command, ...rest] = trimmed.split(/\s+/);
@@ -427,7 +440,8 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
       }
       // Its injection reaches every tab, so any tab's dialog blocks it.
       if (blockedByDialog(ctx.tabs())) return;
-      await ctx.loadScript(argument);
+      // A relative path sent from another directory is the sender's.
+      await ctx.loadScript(cwd !== process.cwd() && !path.isAbsolute(argument) ? path.resolve(cwd, argument) : argument);
       return;
     }
     case 'update': {
@@ -507,8 +521,44 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
       );
       return;
     }
-    default:
-      ctx.out(`[sm-dev] ${command} is not a command. Type help to list them.`);
+    default: {
+      if (!PAGE_COMMANDS.has(command)) {
+        ctx.out(`[sm-dev] ${command} is not a command. Type help to list them.`);
+        return;
+      }
+      // The sender's own words, when they start with the command; a
+      // whole command sent as one quoted word is split like a typed one.
+      const typed = words?.[0] !== command;
+      const list = typed ? splitWords(argument) : words!.slice(1).map((text) => ({ text, start: -1, end: -1 }));
+      // A tab first (T2, targetId=..., pageId=...), or the current one.
+      // Among any flags that lead (and a flag's value), so `eval --script
+      // T2 ...` and `snapshot --out f T2` name one.
+      let at = 0;
+      while (at < list.length && list[at].text.startsWith('--')) at += VALUE_FLAGS.has(list[at].text) ? 2 : 1;
+      let target = tab;
+      let raw = argument;
+      if (at < list.length && TAB_ARG.test(list[at].text)) {
+        // The ids as `tabs` shows them, `[targetId=... pageId=4]`, are
+        // two words.
+        const pair = /^\[targetId=[^\]]+$/i.test(list[at].text) && /^pageId=\d+\]$/i.test(list[at + 1]?.text ?? '');
+        const taken = pair ? 2 : 1;
+        const picked = pickTab(ctx, list.slice(at, at + taken).map((w) => w.text).join(' '));
+        if (!picked) return;
+        target = picked;
+        if (typed) raw = argument.slice(0, list[at].start) + argument.slice(list[at + taken - 1].end);
+        list.splice(at, taken);
+      }
+      // `logs` only reads what was recorded; the rest reach into a page
+      // a dialog has stopped.
+      if (command !== 'logs' && blockedByDialog([target])) return;
+      const input = {
+        words: list.map((w) => w.text),
+        raw: typed ? raw : list.map((w) => w.text).join(' '),
+        typed,
+        scriptsRunning: runningOn(ctx, target).length > 0,
+      };
+      await runPageCommand(command, input, target, ctx.out, cwd);
+    }
   }
 }
 
@@ -621,7 +671,8 @@ function printTabs(ctx: ConsoleContext): void {
   if (ctx.tabs().length === 0) ctx.out('  No active tabs');
   for (const tab of ctx.tabs()) {
     const opener = tab.openedBy ? ` (opened by T${tab.openedBy})` : '';
-    ctx.out(`${tab === current ? '* ' : '  '}${tabName(tab)}: ${tab.page.url()}${opener}${tabIdsSuffix(tab)}`);
+    const none = tab.noScript ? ' (no scripts)' : '';
+    ctx.out(`${tab === current ? '* ' : '  '}${tabName(tab)}: ${tab.page.url()}${none}${opener}${tabIdsSuffix(tab)}`);
     const dialog = tab.dialogs?.current;
     if (dialog) ctx.out(`    Waiting on ${dialogKind(dialog)} dialog: ${JSON.stringify(dialog.message())}`);
     const running = runningOn(ctx, tab);
@@ -637,7 +688,10 @@ function printTabs(ctx: ConsoleContext): void {
 // `tabs new [page]`: a tab of the run's own, controlled from the start,
 // which becomes the current one and comes to the front. `tabs new all`
 // opens one per script's page instead, and leaves the current tab be.
-async function openNewTab(ctx: ConsoleContext, rest: string[]): Promise<void> {
+async function openNewTab(ctx: ConsoleContext, words: string[]): Promise<void> {
+  // `--noscript` anywhere after `new`: a tab the scripts stay out of.
+  const noScript = words.includes('--noscript');
+  const rest = words.filter((w) => w !== '--noscript');
   if (!ctx.newTab) {
     ctx.out('[sm-dev] This run cannot open tabs');
     return;
@@ -648,12 +702,16 @@ async function openNewTab(ctx: ConsoleContext, rest: string[]): Promise<void> {
   }
   const open = async (url?: string): Promise<ControlledTab | null> => {
     try {
-      return await ctx.newTab!(url);
+      return await ctx.newTab!(url, { noScript });
     } catch (err) {
       ctx.out(`[sm-dev] The new tab could not be opened: ${(err as Error).message}`);
       return null;
     }
   };
+  if (rest[1] === 'all' && noScript) {
+    ctx.out('[sm-dev] The tabs new all command opens each script\'s page, so it takes no --noscript');
+    return;
+  }
   if (rest[1] === 'all') {
     // One tab per distinct page; the scripts with none, or whose tab
     // failed, are listed at the end, after the tabs' own output.
@@ -691,6 +749,11 @@ async function openNewTab(ctx: ConsoleContext, rest: string[]): Promise<void> {
     return;
   }
   let url: string | undefined;
+  // Without scripts, a script's number names no page worth opening.
+  if (rest[1] && noScript && /^\d+$/.test(rest[1])) {
+    ctx.out('[sm-dev] A tab without scripts opens a URL, not a script\'s page');
+    return;
+  }
   if (rest[1]) {
     const page = pageFor(ctx, rest[1]);
     if (!page) return;
@@ -725,6 +788,11 @@ export function skippedScriptLine(n: number, script: PreparedScript, reason: str
 
 // A tab reference `open` and `tabs new` recognize: `T2` or `T2.3`.
 const TAB_REF = /^[Tt]\d+(\.\d+)?$/;
+
+// A tab named before a page command's own words: `T2`, or an id as the
+// output shows one. A bare hex prefix isn't taken, since it could be a
+// selector.
+const TAB_ARG = /^(\[?(targetId|pageId)=\S+|[Tt]\d+)$/i;
 
 /**
  * Splits a `T<n>.` prefix off a typed argument: `T2.3` is script 3 on
@@ -1165,7 +1233,9 @@ export function writeOutputLine(line: string): void {
  * `hooks` bracket the line's own turn, not its wait for one, so output
  * captured between them is that command's.
  */
-export type CommandRunner = (line: string, hooks?: { start?: () => void; end?: () => void }) => Promise<void>;
+export type CommandRunner = (
+  line: string, hooks?: { start?: () => void; end?: () => void; cwd?: string; words?: string[] },
+) => Promise<void>;
 
 export function commandRunner(ctx: ConsoleContext): CommandRunner {
   let queue: Promise<void> = Promise.resolve();
@@ -1173,7 +1243,7 @@ export function commandRunner(ctx: ConsoleContext): CommandRunner {
     const done = queue.then(async () => {
       hooks?.start?.();
       try {
-        await runConsoleCommand(line, ctx);
+        await runConsoleCommand(line, ctx, { cwd: hooks?.cwd, words: hooks?.words });
       } catch (err) {
         ctx.out(`[sm-dev] ${(err as Error).message}`);
       } finally {

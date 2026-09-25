@@ -3,7 +3,8 @@
 // lines carry the tab's name. Also `--all`'s tab per script, tabs
 // closing (T1 included), and `--fire-menu` reaching another tab.
 
-import { utimesSync } from 'node:fs';
+import { existsSync, utimesSync } from 'node:fs';
+import path from 'node:path';
 
 import { test, expect } from '../fixtures/harness.js';
 import { run, type RunOptions } from '../../lib/harness/run.js';
@@ -290,6 +291,40 @@ test('load, update and reload all reload just the tabs they affect', async ({ fi
   // `reload all` reloaded both tabs.
   expect(lines.slice(invalid).filter((l) => l.endsWith('[page log] [A] on /target.html'))).toHaveLength(1);
   expect(lines.slice(invalid).filter((l) => l.endsWith('[T2] [page log] [B] on /other.html'))).toHaveLength(1);
+});
+
+test('a tab without scripts gets none, nor do its tabs, and load and savehtml leave it be', async ({ fixtureServer, scriptsDir }) => {
+  const base = fixtureServer.baseUrl;
+  const write = (name: string) => scriptsDir.write({
+    relativePath: `${name.toLowerCase()}.user.js`,
+    meta: { name, match: ['*://*/target.html', '*://*/other.html'] },
+    body: `console.log('[${name}] on ' + location.pathname);`,
+  });
+  const a = write('A');
+  const b = write('B');
+  const saved = path.join(scriptsDir.path, 'plain.html');
+  const lines = await driveCli([a, '--url', `${base}/target.html`], [
+    ['Ready for commands', `tabs new --noscript ${base}/target.html`],
+    ['The page commands now act on T2', 'eval T2 window.open("other.html"), "opened"'],
+    // Its popup is a tab without scripts too.
+    ['Tab T3 opened', `load ${b}`],
+    // Only T1 runs scripts, so only it reloads.
+    ['[page log] [B] on /target.html', `savehtml T2 ${saved}`],
+    ['Wrote', 'eval T2 !!document.querySelector("link[data-sm-badge]")'],
+    ['false', 'eval T1 !!document.querySelector("link[data-sm-badge]")'],
+    ['true', 'quit'],
+  ]);
+  expect(lines.some((l) => /^\[sm-dev\] Tab T3 opened at .*other\.html \(no scripts\), from T2 /.test(l))).toBe(true);
+  expect(lines).toContain('[sm-dev] Reloading T1');
+  expect(lines.some((l) => /Reloading .*T[23]/.test(l))).toBe(false);
+  // Nothing ran in T2 or T3, and savehtml there has no scripts' changes
+  // to warn of.
+  expect(lines.filter((l) => /^\[T[23]\] .*\[(A|B)\] on/.test(l))).toEqual([]);
+  expect(lines.some((l) => l.includes('It has the scripts\' changes'))).toBe(false);
+  expect(existsSync(saved)).toBe(true);
+  // No badge in T2; T1 has one.
+  const badges = lines.slice(lines.findIndex((l) => l.includes('Wrote')));
+  expect(badges.filter((l) => l === 'false' || l === 'true')).toEqual(['false', 'true']);
 });
 
 test('a tab waiting on a dialog is left out of reload all, and blocks update', async ({ fixtureServer, scriptsDir }) => {

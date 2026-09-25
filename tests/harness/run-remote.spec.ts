@@ -13,7 +13,7 @@
 // which is named by the run's id.
 
 import { execFile, spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -43,6 +43,8 @@ interface Setup {
    * and `stop` would see its pid as alive.
    */
   cli: (...args: string[]) => Promise<string[]>;
+  /** `cli`, run from `cwd`. */
+  cliIn: (cwd: string, ...args: string[]) => Promise<string[]>;
   /** Runs a `chrome-devtools` command in the run's session, for its output. */
   devtools: (...args: string[]) => Promise<string>;
   /** `sm-dev run` in the background, its stdin closed, as an agent starts it. */
@@ -73,6 +75,11 @@ async function setUp(): Promise<Setup> {
   };
   mkdirSync(env.XDG_RUNTIME_DIR, { mode: 0o700 });
   const runs: ChildProcess[] = [];
+  const cliIn = (cwd: string, ...args: string[]): Promise<string[]> => new Promise((resolve) => {
+    execFile(process.execPath, [CLI, ...args], { env, cwd, timeout: 30_000 }, (_err, stdout, stderr) => {
+      resolve((stdout + stderr).split('\n').filter(Boolean));
+    });
+  });
   const devtools = (...args: string[]): Promise<string> => new Promise((resolve) => {
     execFile('chrome-devtools', ['--sessionId=D1', ...args], { env, timeout: 30_000 }, (_err, stdout) => resolve(stdout));
   });
@@ -80,11 +87,8 @@ async function setUp(): Promise<Setup> {
     env,
     port,
     devtools,
-    cli: (...args) => new Promise((resolve) => {
-      execFile(process.execPath, [CLI, ...args], { env, timeout: 30_000 }, (_err, stdout, stderr) => {
-        resolve((stdout + stderr).split('\n').filter(Boolean));
-      });
-    }),
+    cli: (...args) => cliIn(process.cwd(), ...args),
+    cliIn,
     startRun: (args) => {
       const proc = spawn(process.execPath, [CLI, 'run', '--cdp', String(port), ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
       runs.push(proc);
@@ -170,6 +174,30 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
     expect((await setup.cli('send', 'menu', 'Say hi')).sort()).toEqual(['[page log] [remote] hi', '[sm-dev] Fired "Say hi"']);
     // The run's own stream says what it was sent.
     await run.waitFor(/^\[sm-dev\] Sent by sm-dev send: menu Say hi$/);
+    // Everything the page logged so far, not only the lines streamed,
+    // after the page load it came from.
+    const logs = await setup.cli('send', 'logs');
+    expect(logs).toContain('[log] [remote] hi');
+    expect(logs.indexOf(`--- ${fixtureServer.baseUrl}/target.html`)).toBeLessThan(logs.indexOf('[log] [remote] hi'));
+    expect(logs.indexOf(`--- ${fixtureServer.baseUrl}/target.html`)).toBeGreaterThanOrEqual(0);
+
+    // Files a sent command names are the sender's, from its directory.
+    const elsewhere = scriptsDir.path;
+    expect((await setup.cliIn(elsewhere, 'send', 'savehtml', 'sent.html'))[0]).toMatch(/^\[sm-dev\] Wrote sent\.html /);
+    expect(existsSync(path.join(elsewhere, 'sent.html'))).toBe(true);
+    scriptsDir.write({ relativePath: 'more.user.js', meta: { name: 'More', match: ['*://*/nowhere.html'] }, body: '' });
+    expect(await setup.cliIn(elsewhere, 'send', 'load', 'more.user.js')).toContain(`[sm-dev] Loaded ${path.join(elsewhere, 'more.user.js')} as script 2`);
+
+    // A tab of the same page without the script, beside the scripted
+    // one: no script started there, so it registered no menu command.
+    const url = `${fixtureServer.baseUrl}/target.html`;
+    await setup.cli('send', 'tabs', 'new', '--noscript', url);
+    expect((await setup.cli('send', 'tabs')).some((l) => l.startsWith(`* T2: ${url} (no scripts)`))).toBe(true);
+    expect(await setup.cli('send', 'menu', 'T2')).toEqual(['[sm-dev] No menu commands are registered on T2. T1 has some; type menu T1 to list them.']);
+    // An expression with spaces and quotes arrives as the shell gave it,
+    // and so does a whole command sent as one word.
+    expect(await setup.cli('send', 'eval', 'T2', 'document.title + " " + location.pathname')).toEqual(['"target /target.html"']);
+    expect(await setup.cli('send', 'eval T1 document.title')).toEqual(['"target"']);
 
     expect(await setup.cli('stop', 'D1')).toEqual([
       '[sm-dev] Stopping run D1',

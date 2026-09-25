@@ -41,6 +41,30 @@ import { BADGE_BINDING, TabBadge, type BadgeDocument, type BadgeOptions } from '
 // for every entry so they share one global object, the way one
 // `chrome.userScripts` world does.
 const ISOLATED_WORLD = 'sourcemonkey';
+
+// Results JSON can't show, printed as the console describes them.
+const DESCRIBED = new Set(['node', 'error', 'map', 'set', 'weakmap', 'weakset', 'nodelist', 'htmlcollection', 'regexp', 'date', 'proxy', 'promise', 'generator', 'iterator']);
+
+/** What an expression `evaluate` ran threw, as opposed to evaluate failing. */
+export class ScriptThrew extends Error {}
+
+// What an expression threw: an Error's description, else the value
+// thrown (`throw 'boom'`).
+function threw(details: { text: string; exception?: unknown }): ScriptThrew {
+  const exception = details.exception as RemoteObject | undefined;
+  const thrown = exception?.description ?? (exception && 'value' in exception ? JSON.stringify(exception.value) : details.text);
+  return new ScriptThrew(thrown.split('\n')[0]);
+}
+
+// The parts of CDP's `Runtime.RemoteObject` that `evaluate` reads.
+interface RemoteObject {
+  type: string;
+  subtype?: string;
+  value?: unknown;
+  unserializableValue?: string;
+  objectId?: string;
+  description?: string;
+}
 const BINDING = '__smHarnessBridge';
 const RUNTIME_BINDING = '__smHarnessRuntime';
 // The id the stand-in `chrome.runtime` reports. The injected code only
@@ -420,6 +444,64 @@ export class PageAttachment implements PageLink {
       if (world === '' ? info.isDefault : info.name === world) found = id;
     }
     return found;
+  }
+
+  /**
+   * Evaluates `expression` in the main frame, in the page's own world or
+   * the scripts' (the isolated world every script without `@grant none`
+   * shares), for `eval`. Resolves to the result as a line to print;
+   * rejects with a `ScriptThrew` for what the expression threw, or an
+   * error of the evaluation's own (the page gone, say).
+   */
+  async evaluate(expression: string, world: 'page' | 'scripts'): Promise<string> {
+    const contextId = this.contextFor(world === 'page' ? '' : ISOLATED_WORLD);
+    if (contextId === null) throw new Error(world === 'page' ? 'The page has no document to evaluate in' : 'The scripts\' world isn\'t set up in this document');
+    const { result, exceptionDetails } = await this.cdp.send('Runtime.evaluate', {
+      expression, contextId, awaitPromise: true, replMode: true, userGesture: true,
+    });
+    if (exceptionDetails) throw threw(exceptionDetails);
+    // A promise, as `eval fetch(url).then(...)` gives: what it settles
+    // to, where the console would show the promise itself.
+    if (result.subtype === 'promise' && result.objectId) {
+      const settled = await this.cdp.send('Runtime.awaitPromise', { promiseObjectId: result.objectId });
+      if (settled.exceptionDetails) throw threw(settled.exceptionDetails);
+      return this.describe(settled.result);
+    }
+    return this.describe(result);
+  }
+
+  // A result as `eval` prints it: JSON where it has one, else what
+  // DevTools' console would show (an element, a Map, a function).
+  private async describe(result: RemoteObject): Promise<string> {
+    if (result.type === 'undefined') return 'undefined';
+    if (!result.objectId) return result.unserializableValue ?? JSON.stringify(result.value);
+    try {
+      if (result.type !== 'object' || (result.subtype && DESCRIBED.has(result.subtype))) return result.description ?? result.type;
+      // Elements inside it as the console names them, not `{}`.
+      const { result: json } = await this.cdp.send('Runtime.callFunctionOn', {
+        objectId: result.objectId,
+        functionDeclaration: `function () {
+          return JSON.stringify(this, (key, value) => {
+            if (value instanceof Element) {
+              const classes = typeof value.className === 'string' && value.className.trim() ? '.' + value.className.trim().split(/\\s+/).join('.') : '';
+              return value.localName + (value.id ? '#' + value.id : '') + classes;
+            }
+            if (value instanceof Node) return value.nodeName;
+            if (value instanceof Map) return Object.fromEntries(value);
+            if (value instanceof Set) return [...value];
+            return value;
+          }, 2);
+        }`,
+        returnByValue: true,
+      });
+      const text = typeof json.value === 'string' ? json.value : result.description ?? result.type;
+      return text.length > 20_000 ? `${text.slice(0, 20_000)}…` : text;
+    } catch {
+      // Circular, or a getter that throws: what the console would show.
+      return result.description ?? result.type;
+    } finally {
+      await this.cdp.send('Runtime.releaseObject', { objectId: result.objectId }).catch(() => undefined);
+    }
   }
 
   // The browser context's cookies for the request's URL, so a

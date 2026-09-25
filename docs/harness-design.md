@@ -277,12 +277,38 @@ into pages.
     doesn't fail a tab.
 - **`fixture.ts`**: the `@playwright/test` extension consumers import.
   Wraps the three above into `loadUserscript`, `gm`, `reports`, and a
-  `serveSnapshot` helper that routes a saved HTML file at its original
+  `serveHtml` helper that routes a saved HTML file at its original
   URL so `@match` and relative URLs still hold. HAR replay is left to
   Playwright's own `routeFromHAR`. `tests/harness/fixture.spec.ts`
   drives it from `lib/` the way a consumer would.
-- **`browser-commands.ts`**: `sm-dev probe` and `sm-dev snapshot`, on
-  the same browser connection as `run`.
+- **`page-commands.ts`**: the run commands that drive and read a tab's
+  page (`click`, `type`, `key`, `eval`, `snapshot`, `screenshot`,
+  `savehtml`, `probe`, `logs`), on the run's own Playwright connection.
+  - Real input comes from Playwright's locators and keyboard; the
+    accessibility tree from `ariaSnapshot`.
+  - Actions then wait for the page to settle: a navigation they
+    started to reach its DOM, then a MutationObserver in the page quiet
+    for 100ms, within 3 seconds.
+  - `eval` goes through the tab's own CDP session
+    (`PageAttachment.evaluate`), in the page's default context or the
+    isolated world the harness keeps for scripts. Results print as
+    JSON, or as the DevTools console describes an element or function.
+  - Typed lines are split into words as a shell would; `sm-dev send`
+    passes the sender's own words and directory instead, so its quoting
+    and relative paths hold.
+  - Every console line and page error is kept per page (the newest
+    thousand) for `logs`, beside the filtered stream.
+- **`save-html.ts`**: a page's DOM as a standalone file, for the
+  `savehtml` command and the fixture's `saveHtml`.
+  - A command that opens a dialog would wait on it for good (the page
+    is stopped), and hold up the `accept` queued behind it. So each
+    action races the tab's dialog tracker (`untilDialog`, as `menu`
+    does), and returns once a dialog is up. The settle wait's limit is
+    kept in Node too, since a stopped page's own timer never fires.
+  - Tabs without scripts (`tabs new --noscript`) are attached and
+    followed like any, but get no injection, no badge, and no part in
+    `load` / `update`; tabs they open inherit that. The harness's
+    bridge is still attached to them, so a page could tell.
 - **`cli.ts`** (`sm-dev`) and **`run.ts`**: the interactive tool,
   built on the same modules and Playwright's `connectOverCDP` (or a
   launched Chromium with `--launch`). Commands are listed in the guide.

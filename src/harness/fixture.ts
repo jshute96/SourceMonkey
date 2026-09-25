@@ -5,7 +5,7 @@
 // It extends `@playwright/test` with a host and a page attachment per
 // test, `loadUserscript` to inject a script from disk, `gm` to seed
 // and read what the script did, `reports` for what the script itself
-// reported, and `serveSnapshot` to run against a saved page. The
+// reported, and `serveHtml` to run against a saved page. The
 // browser and context are left to Playwright's own fixtures, so a
 // repo that attaches to a manually launched browser overrides those
 // as it always has and re-exports this `test` extended with them.
@@ -15,7 +15,7 @@
 import { test as base } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { savePageSnapshot } from './capture-page.js';
+import { savePageHtml } from './save-html.js';
 
 import {
   HarnessHost,
@@ -108,14 +108,14 @@ export interface HarnessFixtures {
    * fall through to the page's other routes and then the network,
    * unless `block` is set, which aborts them.
    */
-  serveSnapshot: (file: string, url: string, options?: { block?: boolean }) => Promise<void>;
+  serveHtml: (file: string, url: string, options?: { block?: boolean }) => Promise<void>;
   /**
-   * Write the page's current DOM to `file`, for `serveSnapshot` to
-   * replay later. The same file `sm-dev snapshot` writes: run a spec
+   * Write the page's current DOM to `file`, for `serveHtml` to
+   * replay later. The same file the `savehtml` run command writes: run a spec
    * once against the live site to record it, then serve it and the
    * spec needs no login.
    */
-  saveSnapshot: (file: string) => Promise<void>;
+  saveHtml: (file: string) => Promise<void>;
 }
 
 export const test = base.extend<HarnessFixtures>({
@@ -239,11 +239,11 @@ export const test = base.extend<HarnessFixtures>({
     });
   },
 
-  saveSnapshot: async ({ page }, use) => {
-    await use(async (file) => { await savePageSnapshot(page, file); });
+  saveHtml: async ({ page }, use) => {
+    await use(async (file) => { await savePageHtml(page, file); });
   },
 
-  serveSnapshot: async ({ page }, use) => {
+  serveHtml: async ({ page }, use) => {
     await use(async (file, url, options = {}) => {
       const html = await readFile(file, 'utf8');
       const wanted = comparableUrl(url);

@@ -127,7 +127,9 @@ export async function checkRunsDir(): Promise<string | null> {
  * connection open, and `reply` receiving, until the run closes it, as
  * `quit` does so the sender sees the run end.
  */
-export type SentLineHandler = (line: string, reply: (line: string) => void) => Promise<'done' | 'hold'>;
+export type SentLineHandler = (
+  line: string, reply: (line: string) => void, sent?: { cwd?: string; words?: string[] },
+) => Promise<'done' | 'hold'>;
 
 // How long a sender gets to take the last of the output once the run
 // ends its connection, before the run drops it and exits anyway.
@@ -215,7 +217,25 @@ export class RunControl {
       const reply = (line: string): void => {
         if (!socket.destroyed) socket.write(line + '\n');
       };
-      handle(buffered.slice(0, end).replace(/\r$/, ''), reply).then(
+      // `{"line": ..., "cwd": ..., "words": [...]}` from `sendLine`: the
+      // sender's directory, for the files the command names, and its own
+      // words. A plain line is taken as it is.
+      const text = buffered.slice(0, end).replace(/\r$/, '');
+      let line = text;
+      let sent: { cwd?: string; words?: string[] } | undefined;
+      try {
+        const message = JSON.parse(text) as { line?: unknown; cwd?: unknown; words?: unknown };
+        if (typeof message.line === 'string') {
+          line = message.line;
+          sent = {
+            cwd: typeof message.cwd === 'string' ? message.cwd : undefined,
+            words: Array.isArray(message.words) && message.words.every((w) => typeof w === 'string') ? message.words as string[] : undefined,
+          };
+        }
+      } catch {
+        // A plain line.
+      }
+      handle(line, reply, sent).then(
         (outcome) => { if (outcome === 'done') socket.end(); },
         (err: Error) => {
           reply(`[sm-dev] ${err.message}`);
@@ -362,7 +382,7 @@ export class RunGoneError extends Error {}
  * it arrives. Resolves once the run closes the connection. `signal`
  * drops the connection, for a sender done waiting.
  */
-export function sendLine(id: string, line: string, out: (line: string) => void, signal?: AbortSignal): Promise<void> {
+export function sendLine(id: string, line: string, out: (line: string) => void, signal?: AbortSignal, words?: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
     const socket = net.connect(socketPath(id));
     signal?.addEventListener('abort', () => {
@@ -374,7 +394,9 @@ export function sendLine(id: string, line: string, out: (line: string) => void, 
     socket.setEncoding('utf8');
     socket.on('connect', () => {
       connected = true;
-      socket.write(line.replace(/[\r\n]+/g, ' ') + '\n');
+      // With this shell's directory, for the files it names, and the
+      // words as the shell gave them.
+      socket.write(JSON.stringify({ line: line.replace(/[\r\n]+/g, ' '), cwd: process.cwd(), words }) + '\n');
     });
     socket.on('data', (chunk: string) => {
       buffered += chunk;

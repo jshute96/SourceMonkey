@@ -8,6 +8,8 @@
 // extension here would defeat them.
 
 import { test as base } from '@playwright/test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -23,6 +25,11 @@ const EXAMPLES_DIR = path.resolve(here, '..', 'examples');
 
 export interface HarnessWorkerFixtures {
   fixtureServer: FixtureServer;
+  /**
+   * A runs directory of the worker's own, so the runs these tests start
+   * in-process never register beside the developer's real ones.
+   */
+  runsDir: string;
 }
 
 export interface HarnessFixtures {
@@ -34,6 +41,13 @@ export interface HarnessFixtures {
 }
 
 export const test = base.extend<HarnessFixtures, HarnessWorkerFixtures>({
+  runsDir: [async ({}, use) => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'sm-dev-runs-test-'));
+    process.env.SM_DEV_RUNS_DIR = dir;
+    await use(dir);
+    rmSync(dir, { recursive: true, force: true });
+  }, { scope: 'worker', auto: true }],
+
   fixtureServer: [async ({}, use) => {
     const server = await createFixtureServer(PAGES_DIR, EXAMPLES_DIR);
     await use(server);

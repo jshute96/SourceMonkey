@@ -100,17 +100,15 @@ person or an agent.
 | `sm-dev run <script.user.js> [--url U]` | Opens a tab at `U` (default: the first URL the script's `@match` implies), injects the script as it is on disk, and streams the script's console lines, errors, and start / skipped / error reports until Ctrl-C, `quit` or `sm-dev stop`, or for `--seconds N`. |
 | `sm-dev run ... --watch` | Same, and on every save of the script or a `@require`d file, re-injects it and reloads the tabs it runs in or now matches, all at once. The typed `update` does the same on demand. |
 | `sm-dev run a.user.js b.user.js` | Injects several scripts into the same page, for interaction tests. |
-| `sm-dev probe <url> --selectors 'a, b, c'` | Reports which selectors resolve on the page, so a broken script's assumptions can be checked in one call. `--html` prints the first match's HTML. Exits 1 when any is missing. |
 | `sm-dev match <script> [url]...` | Says whether the script would run on each URL, and which rule decided. Also checks `--url`, so a `run` command line works with `match` in its place. |
 | `sm-dev validate <path>...` | The install-time checks (header, `@require`, syntax) over files or directories, with the message the extension would show. |
 | `sm-dev list` | Lists the runs active on this machine in a table: id (`D1`), pid, uptime, browser, how many tabs, and the scripts' files (the first few, and a count of the rest). |
 | `sm-dev send [run] <command>` | Runs a typed command in a run from another shell, and prints its output (see [Runs in the background](#runs-in-the-background)). |
 | `sm-dev stop [run]...`, `--all` | Ends a run as `quit` would. |
-| `sm-dev snapshot <url> --out file.html` | Saves the live DOM so a spec can run against it without a login. The site's own scripts are disabled in the file, so a spec sees the captured page rather than a page that logs itself out again. In your own browser, turn off any installed copy of the script first, or the snapshot holds its changes and a spec applies them twice. |
 
 Every command exits 0 on success, 1 when a check fails (a script is
-invalid, a URL doesn't match, a selector is missing) or the command
-fails, and 2 when it was typed wrong.
+invalid, a URL doesn't match) or the command fails, and 2 when it was
+typed wrong.
 
 A URL typed without a scheme (`example.com/x`) gets `http://`, and a
 path (`/tmp/x.html`, `./x.html`) becomes a `file://` URL.
@@ -122,7 +120,7 @@ Options for every command:
   directory. Defaults to the current directory.
 - `--local DIR` adds another directory to that search; repeatable.
 
-Options for the browser commands (`run`, `probe`, `snapshot`, `clear`):
+Options for the browser commands (`run`, `clear`):
 
 - `--cdp URL or port` names the browser to connect to: a URL, a
   `host:port` (`http://` is added), or just a port on this machine
@@ -165,8 +163,8 @@ Other `run` flags:
 - `--extension` uses the real extension in that browser instead of
   the built-in stand-in (see below); `--solo` silences the other
   collections for the run.
-- `--devtools` starts a Chrome DevTools server for the run, to drive
-  its tabs with clicks, keys and snapshots (see
+- `--devtools` starts a Chrome DevTools server for the run, for
+  DevTools' own tools on its tabs (see
   [DevTools alongside a run](#devtools-alongside-a-run)).
   `SM_DEV_DEVTOOLS=1` makes it the default, and `--nodevtools` turns it
   off again.
@@ -263,7 +261,7 @@ commands from its own input while it streams.
 | `get <key>` | Prints one stored value |
 | `set <key> <json>` | Stores a value, as another tab's write would: a running script sees it and its change listeners fire |
 | `tabs [tab]` | Lists the controlled tabs, or picks the one the page commands act on (see [Several tabs](#several-tabs)) |
-| `tabs new [page]` | Opens a new tab with the scripts, picks it and brings it to the front. `tabs new all` opens one per script's default page |
+| `tabs new [page]` | Opens a new tab with the scripts, picks it and brings it to the front. `tabs new all` opens one per script's default page. `tabs new --noscript [url]` opens one the scripts stay out of (see [Driving and reading the page](#driving-and-reading-the-page)) |
 | `reload [tab]` | Reloads the page, or another tab's. `reload all` reloads every tab at once |
 | `open [page]` | Navigates to a URL, or to a script's default page: the selected script's when bare, or one by number (`open 2`, or `open T2.3` in T2). `open all` is `tabs new all` |
 | `focus [tab]` | Brings the tab to the front, un-minimizing its window |
@@ -273,6 +271,47 @@ commands from its own input while it streams.
 A `<script>` is its number in the `scripts` list, its path, file name or
 `@name`, or a piece of its name or path that no other loaded script
 shares.
+
+#### Driving and reading the page
+
+These act on a tab's page, as a person would, and read it back. Each
+takes a tab first (`T2`, `targetId=…`, `pageId=…`), or acts on the
+current one.
+
+| Typed command | What it does |
+| --- | --- |
+| `click <selector>`, `hover <selector>` | A real mouse click or hover, scrolled into view. With several matches, the first |
+| `type <selector> <text>` | Types into an element, key by key |
+| `key <keys>...` | Presses keys: `key j`, `key Shift+ArrowRight`, `key Escape` |
+| `eval <js>` | Evaluates in the page and prints the result: JSON, or an element's or function's description |
+| `eval --script <js>` | The same in the scripts' world, where a script without `@grant none` keeps its globals |
+| `snapshot [selector] [--out file]` | The page (or an element) as its accessibility tree, one line per element. `--out` writes it to a file |
+| `screenshot [selector] [--full] <file>` | A PNG of what's showing, of the whole page (`--full`), or of one element |
+| `savehtml <file>` | The page's HTML, for a spec to replay with `serveHtml` |
+| `probe <selector>... [--html]` | Which selectors match, and how many; `--html` prints each first match |
+| `logs` | Every console line and error the page has had, not only the ones the stream shows |
+
+- `click`, `hover`, `type` and `key` wait for the page to settle (its
+  DOM quiet for a moment) before returning, so the next command sees
+  what they did.
+- One that opens a dialog returns once the dialog is up, and says so;
+  answer it with `accept` or `dismiss`.
+- Quote a selector or text with spaces: `click '.athing .title a'`,
+  `type input 'hello world'`. Through `sm-dev send`, quote `#` too,
+  since the shell reads it as a comment: `sm-dev send click '#submit'`.
+- `eval` takes the rest of the line as JavaScript, quotes and all. A
+  promise prints what it settles to.
+- Through `sm-dev send`, files are named from the sender's directory.
+- `eval --script` reaches what scripts put on `window`, not their local
+  variables. A `@grant none` script runs in the page's world, so plain
+  `eval` reaches it.
+- A saved page has the scripts' changes in it, and a spec replaying it
+  would apply them twice. For one to replay, open the page with `tabs
+  new --noscript <url>` and save that.
+
+`tabs new --noscript <url>` is also a way to compare: the same page
+with and without the scripts, side by side, each driven by the same
+commands. Tabs it opens have no scripts either.
 
 A `[page]` is a URL, or a script's number for its default page: the
 first page its `@match` names. Only a number counts as a script there,
@@ -394,9 +433,12 @@ but nothing from them streams anywhere, and their badge turns grey.
 
 ### DevTools alongside a run
 
-The `chrome-devtools` command (`npm i -g chrome-devtools-mcp`) drives
-pages: clicks, key presses, typing, text snapshots, screenshots. `run
---devtools` points it at the run's own tabs:
+The run's own commands (see
+[Driving and reading the page](#driving-and-reading-the-page)) cover
+most of what a script needs. For the rest of DevTools (network
+requests, performance traces, Lighthouse), the `chrome-devtools`
+command (`npm i -g chrome-devtools-mcp`) can reach the run's own tabs
+with `run --devtools`:
 
 ```sh
 sm-dev run sites/x/y.user.js --devtools &
@@ -490,8 +532,8 @@ What the fixture provides:
 | `loadUserscript(path, options?)` | Prepares the file with the real pipeline and attaches it to `page` (before the navigation that should see it). A relative path is taken from the Playwright config's root. Options: `values` to seed storage, `url` to check the match now and throw if it misses, `copy` to load the same file again as a second installed copy (its own id and storage), `collectionRoot` and `localRoots` for `@require` lookups (default: the config's root). Throws with the extension's own message if the script is invalid. Call it twice for two scripts on one page. |
 | `gm` | `get(key)`, `set(key, value)` (reaches a running script like another tab's write), `list()`, `menuCommands()`, `fireMenu(label)`, `openedTabs()`, `notifications()`, `clickNotification(requestId)`, `closeNotification(requestId)`, `downloads()`, `requests()`, `failHosts(...hosts)` (a synthetic 503 for those hosts, to force a fallback path), `interceptRequests(fn)` (answer any request from the test). Values and commands are per script; when several are loaded, name one by the path it was loaded from, its basename, or its `@name`. |
 | `reports` | `started()`, `skipped()` (with the rule that missed), `errors()` (message and stack). `await reports.waitForStart()` is the usual gate before interacting; when nothing starts it says which script was skipped where, and why. |
-| `serveSnapshot(file, url, { block? })` | Routes a saved HTML file at `url` (matched exactly, query string included), so `@match` and relative URLs behave as on the live site. Other requests fall through to the page's other routes and the network, unless `block` is set. Pair with Playwright's `routeFromHAR` for pages that fetch data. |
-| `saveSnapshot(file)` | Writes the page's current DOM to `file`, for `serveSnapshot` to replay later. The same file `sm-dev snapshot` writes. |
+| `serveHtml(file, url, { block? })` | Routes a saved HTML file at `url` (matched exactly, query string included), so `@match` and relative URLs behave as on the live site. Other requests fall through to the page's other routes and the network, unless `block` is set. Pair with Playwright's `routeFromHAR` for pages that fetch data. |
+| `saveHtml(file)` | Writes the page's current DOM to `file`, for `serveHtml` to replay later. The same file the `savehtml` run command writes. |
 | `host`, `attachment` | The underlying objects, for anything the two above don't cover. |
 
 ### The same actions from either side
@@ -506,17 +548,20 @@ What `sm-dev` does by hand, a spec does through the fixture:
 | `values`, `get <key>` | `gm.list()`, `gm.get(key)` |
 | `set <key> <json>` | `gm.set(key, value)` |
 | `reload`, `open <url>` | `page.reload()`, `page.goto(url)` |
-| `snapshot <url> --out f` | `saveSnapshot(file)` |
-| (a saved snapshot) | `serveSnapshot(file, url)` |
+| `savehtml <file>` | `saveHtml(file)` |
+| (a saved page) | `serveHtml(file, url)` |
+| `click`, `type`, `key`, `eval`, `screenshot` | Playwright's own `page` and locator methods |
+| `probe <selector>` | `page.locator(selector).count()` |
+| `snapshot` | `locator.ariaSnapshot()` |
+| `logs` | `page.on('console', …)` |
 | `match <script> <url>` | `loadUserscript(path, { url })`, which throws on a miss |
 | `validate <path>` | `loadUserscript(path)`, which throws with the same message |
 | the streamed reports | `reports.started()`, `skipped()`, `errors()` |
 | the streamed `GM_*` lines | `gm.requests()`, `gm.openedTabs()`, `gm.downloads()`, `gm.notifications()` |
 
-Two things exist only on one side. `probe` is a command-line
-convenience: a spec uses locators. Answering a network request
-(`gm.interceptRequests`, `gm.failHosts`) is a spec's, since it needs a
-function.
+A spec can also answer the script's network requests itself
+(`gm.interceptRequests`, `gm.failHosts`). `sm-dev` has no command for
+that, since the answer is a function.
 
 - The fixture leaves `browser` and `context` to you. A repo that
   attaches to a manually launched browser keeps that logic in its own

@@ -1,6 +1,6 @@
 // The fixture a consumer repo imports from `sourcemonkey/harness`,
 // driven here from `lib/` the way that repo would: `loadUserscript`,
-// `gm`, `reports`, and `serveSnapshot`.
+// `gm`, `reports`, and `serveHtml`.
 
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -34,8 +34,8 @@ GM_registerMenuCommand('Shout', () => {
 });
 
 test.describe('consumer fixture', () => {
-  test('loads a script against a served snapshot and exposes gm and reports', async ({ page, repo, loadUserscript, gm, reports, serveSnapshot }) => {
-    await serveSnapshot(path.join(repo, 'snapshot.html'), 'https://example.test/items/42', { block: true });
+  test('loads a script against a served page and exposes gm and reports', async ({ page, repo, loadUserscript, gm, reports, serveHtml }) => {
+    await serveHtml(path.join(repo, 'snapshot.html'), 'https://example.test/items/42', { block: true });
     await loadUserscript(path.join(repo, 'greet.user.js'), {
       collectionRoot: repo,
       values: { greeting: 'hi' },
@@ -57,10 +57,10 @@ test.describe('consumer fixture', () => {
     await expect.poll(() => gm.get('greeting')).toBe('yo');
   });
 
-  test('a second snapshot route sits beside the first', async ({ page, repo, serveSnapshot }) => {
+  test('a second served page sits beside the first', async ({ page, repo, serveHtml }) => {
     await writeFile(path.join(repo, 'two.html'), '<!DOCTYPE html><html><body><main id="target">second</main></body></html>');
-    await serveSnapshot(path.join(repo, 'snapshot.html'), 'https://example.test/one', { block: true });
-    await serveSnapshot(path.join(repo, 'two.html'), 'https://example.test/two');
+    await serveHtml(path.join(repo, 'snapshot.html'), 'https://example.test/one', { block: true });
+    await serveHtml(path.join(repo, 'two.html'), 'https://example.test/two');
     await page.goto('https://example.test/one');
     await expect(page.locator('#target')).toHaveText('snapshot content');
     await page.goto('https://example.test/two');
@@ -76,23 +76,23 @@ test.describe('consumer fixture', () => {
     })).rejects.toThrow(/would not run on https:\/\/example\.test\/other: No @match or @include covers this URL/);
   });
 
-  test('waitForStart explains a miss instead of timing out silently', async ({ page, repo, loadUserscript, reports, serveSnapshot }) => {
-    await serveSnapshot(path.join(repo, 'snapshot.html'), 'https://example.test/other', { block: true });
+  test('waitForStart explains a miss instead of timing out silently', async ({ page, repo, loadUserscript, reports, serveHtml }) => {
+    await serveHtml(path.join(repo, 'snapshot.html'), 'https://example.test/other', { block: true });
     await loadUserscript(path.join(repo, 'greet.user.js'), { collectionRoot: repo });
     await page.goto('https://example.test/other');
     await expect(reports.waitForStart(undefined, 500)).rejects.toThrow(/Skipped: Greeter on https:\/\/example\.test\/other: No @match/);
   });
 
-  test('saveSnapshot records a page serveSnapshot can replay', async ({ page, repo, loadUserscript, serveSnapshot, saveSnapshot }) => {
-    await serveSnapshot(path.join(repo, 'snapshot.html'), 'https://example.test/items/7', { block: true });
+  test('saveHtml records a page serveHtml can replay', async ({ page, repo, loadUserscript, serveHtml, saveHtml }) => {
+    await serveHtml(path.join(repo, 'snapshot.html'), 'https://example.test/items/7', { block: true });
     await page.goto('https://example.test/items/7');
     await page.evaluate(() => { document.getElementById('target')!.textContent = 'as it stood'; });
     const recorded = path.join(repo, 'recorded.html');
-    await saveSnapshot(recorded);
+    await saveHtml(recorded);
 
     // Replaying it gives the page back as it was, with the script
     // running against it.
-    await serveSnapshot(recorded, 'https://example.test/items/8');
+    await serveHtml(recorded, 'https://example.test/items/8');
     await loadUserscript(path.join(repo, 'greet.user.js'), { collectionRoot: repo });
     await page.goto('https://example.test/items/8');
     await expect(page.locator('#target')).toHaveText('hello from Greeter');

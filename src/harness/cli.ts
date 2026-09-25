@@ -7,7 +7,6 @@
 //   - `validate` and `match` call prepare.ts, here in this file.
 //   - `run` hands off to run.ts, which also opens the browser every
 //     browser command uses.
-//   - `probe` and `snapshot` hand off to browser-commands.ts.
 //   - `list`, `send` and `stop` reach running runs through runs.ts.
 //   - `--extension` and `clear` go through extension-backend.ts, which
 //     drives a real SourceMonkey rather than the harness.
@@ -23,7 +22,7 @@
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
-import { writeOutputLine } from './console-commands.js';
+import { CONSOLE_HELP, writeOutputLine } from './console-commands.js';
 import { devtoolsWanted } from './devtools.js';
 import { NO_RULE_COVERS_URL, explainMatch, isDirectoryMessage, noSuchFileMessage, prepareScript, withDefaultScheme } from './prepare.js';
 
@@ -45,8 +44,6 @@ Commands:
   match <script> [url]...     Say whether the script would run on each
                               URL (and --url's), and which header rule
                               decided
-  probe <url>                 Say which --selectors resolve on the page
-  snapshot <url>              Save the page's HTML DOM to --out FILE
   clear --extension           Remove every script in the extension's
                               Scratch collection and turn solo mode off
   list                        List sm-dev runs active on this machine
@@ -59,7 +56,7 @@ Options for every command:
                   URLs (default: the current directory)
   --local DIR     Another directory to search; repeatable
 
-Options for the browser commands (run, probe, snapshot, clear):
+Options for the browser commands (run, clear):
   --cdp URL|PORT  Browser to connect to: a URL, host:port, or just a
                   port on this machine (default: $SM_DEV_CDP or 9233)
   --launch        Launch a Chromium instead of connecting to one
@@ -95,18 +92,18 @@ Options for run:
                   command. Default: on when $SM_DEV_DEVTOOLS is 1
   --nodevtools    Don't, even when $SM_DEV_DEVTOOLS is 1
 
-Options for probe:
-  --selectors S   Comma-separated CSS selectors to look for; repeat the
-                  flag for a selector that itself contains a comma
-  --html          Also print the first match's HTML
-
-Options for snapshot:
-  --out FILE      Where to write the HTML
-
-While run streams, it also acts as an interactive shell, with commands to
-control the scripts. Type help at the prompt to see interactive commands.
-Each run prints its id, for sm-dev send and sm-dev stop to reach it by.
+While run streams, it also acts as an interactive shell, with the commands
+below. Each run prints its id, for sm-dev send and sm-dev stop to reach it by.
 `;
+
+// The whole of `--help`: the commands above, then the ones a run takes,
+// as its own `help` lists them.
+function usage(): string {
+  return `${USAGE}
+Commands in interactive shell and send:
+${CONSOLE_HELP.map((line) => (line ? `  ${line}` : '')).join('\n')}
+`;
+}
 
 interface Opts {
   command: string | null;
@@ -129,17 +126,12 @@ interface Opts {
   /** `--devtools` / `--nodevtools`; unset leaves it to `SM_DEV_DEVTOOLS`. */
   devtools?: boolean;
   seconds?: number;
-  selectors: string[];
-  selectorFlags: number;
-  html: boolean;
-  outFile?: string;
 }
 
 function parseArgs(argv: string[]): Opts {
   const opts: Opts = {
     command: null, args: [], root: process.cwd(), local: [],
     all: false, noScript: false, noTab: false, launch: false, headed: false, watch: false, extension: false, solo: false, pageErrors: false,
-    selectors: [], selectorFlags: 0, html: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -176,16 +168,6 @@ function parseArgs(argv: string[]): Opts {
       case '--page-errors': opts.pageErrors = true; break;
       case '--devtools': opts.devtools = true; break;
       case '--nodevtools': opts.devtools = false; break;
-      case '--selectors': {
-        // One flag with commas holds a list. A selector containing a
-        // comma (`:is(a, b)`) goes in its own flag, taken whole.
-        const raw = next();
-        opts.selectorFlags++;
-        opts.selectors.push(raw.trim());
-        break;
-      }
-      case '--html': opts.html = true; break;
-      case '--out': opts.outFile = path.resolve(next()); break;
       case '--seconds': {
         const v = Number(next());
         if (!Number.isFinite(v) || v < 0) throw new UsageError('The --seconds flag needs a number');
@@ -375,33 +357,6 @@ async function runCommand(opts: Opts): Promise<number> {
   }
 }
 
-async function probeCommand(opts: Opts): Promise<number> {
-  const url = opts.args[0] && withDefaultScheme(opts.args[0]);
-  if (!url) throw new UsageError('The probe command needs a URL');
-  if (opts.selectors.length === 0) throw new UsageError('The probe command needs --selectors');
-  const selectors = opts.selectorFlags === 1
-    ? opts.selectors[0].split(',').map((x) => x.trim()).filter(Boolean)
-    : opts.selectors;
-  const { probe } = await import('./browser-commands.js');
-  return probe({
-    url, selectors, html: opts.html,
-    cdp: opts.cdp, launch: opts.launch, headed: opts.headed,
-    out: (line) => process.stdout.write(line + '\n'),
-  });
-}
-
-async function snapshotCommand(opts: Opts): Promise<number> {
-  const url = opts.args[0] && withDefaultScheme(opts.args[0]);
-  if (!url) throw new UsageError('The snapshot command needs a URL');
-  if (!opts.outFile) throw new UsageError('The snapshot command needs --out');
-  const { snapshot } = await import('./browser-commands.js');
-  return snapshot({
-    url, outFile: opts.outFile,
-    cdp: opts.cdp, launch: opts.launch, headed: opts.headed,
-    out: (line) => process.stdout.write(line + '\n'),
-  });
-}
-
 async function clearCommand(opts: Opts): Promise<number> {
   if (!opts.extension) throw new UsageError('The clear command needs --extension; the harness itself keeps nothing between runs');
   const { connectBrowser } = await import('./run.js');
@@ -478,7 +433,9 @@ async function sendCommand(args: string[]): Promise<number> {
   const words = named ? args.slice(1) : args;
   if (words.length === 0) throw new UsageError('The send command needs a command to send, e.g. sm-dev send status');
   const target = named ? namedRun(runs, args[0], runIdOf) : onlyRun(runs, 'sm-dev send <run> <command>');
-  await sendLine(target.id, words.join(' '), print);
+  // The words go as the shell gave them, so a selector or text with
+  // spaces reaches a page command as one word.
+  await sendLine(target.id, words.join(' '), print, undefined, words);
   return 0;
 }
 
@@ -516,7 +473,7 @@ async function main(): Promise<void> {
   });
   const argv = process.argv.slice(2);
   if (argv[0] === 'send' && (argv[1] === '--help' || argv[1] === '-h')) {
-    process.stdout.write(USAGE);
+    process.stdout.write(usage());
     return;
   }
   if (argv[0] === 'send') {
@@ -537,7 +494,7 @@ async function main(): Promise<void> {
     return;
   }
   if (opts.command === null || opts.command === 'help') {
-    process.stdout.write(USAGE);
+    process.stdout.write(usage());
     process.exitCode = opts.command === 'help' ? 0 : 2;
     return;
   }
@@ -546,8 +503,6 @@ async function main(): Promise<void> {
       case 'validate': process.exitCode = await validate(opts); break;
       case 'match': process.exitCode = await match(opts); break;
       case 'run': process.exitCode = await runCommand(opts); break;
-      case 'probe': process.exitCode = await probeCommand(opts); break;
-      case 'snapshot': process.exitCode = await snapshotCommand(opts); break;
       case 'clear': process.exitCode = await clearCommand(opts); break;
       case 'list': process.exitCode = await listCommand(opts); break;
       case 'stop': process.exitCode = await stopCommand(opts); break;
