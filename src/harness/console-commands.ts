@@ -11,6 +11,7 @@
 // sit in one place, and so a non-interactive run (a pipe, an agent
 // reading the stream) can skip the whole thing.
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import path from 'node:path';
 import readline from 'node:readline';
 
@@ -200,6 +201,35 @@ export const CONSOLE_HELP = [
 
 // The names a command also answers to, when run and in `help`.
 const ALIASES: Record<string, string> = { script: 'scripts', tab: 'tabs', exit: 'quit', '?': 'help', keys: 'key' };
+
+// Commands that only look: what they print answers whoever asked, and
+// is no part of the run's story.
+const INSPECTING = new Set(['help', 'status', 'values', 'get', 'snapshot', 'screenshot', 'savehtml', 'probe', 'logs']);
+
+/**
+ * Whether a command line only inspects, so its output, sent by `sm-dev
+ * send`, goes back to the sender alone rather than into the run's
+ * stream too. `tabs`, `scripts` and `menu` inspect when they list, and
+ * change things when they pick or fire.
+ */
+export function onlyInspects(line: string): boolean {
+  const [typed = '', ...rest] = line.trim().split(/\s+/);
+  const command = ALIASES[typed] ?? typed;
+  if (INSPECTING.has(command)) return true;
+  if (command === 'tabs' || command === 'scripts') return rest.length === 0;
+  if (command === 'menu') return rest.length === 0 || (rest.length === 1 && (rest[0] === 'all' || /^[Tt]\d+$/.test(rest[0])));
+  return false;
+}
+
+/**
+ * Where a running command's output goes instead of the run's stream,
+ * while it runs: an inspecting command sent by `sm-dev send` answers
+ * the sender alone. Output the page or the scripts produce meanwhile
+ * isn't the command's, and still goes to the stream. `live` goes false
+ * when the command ends, so anything it started that prints later goes
+ * to the stream rather than a closed connection.
+ */
+export const commandOutput = new AsyncLocalStorage<{ line: (line: string) => void; live: boolean }>();
 
 /**
  * The entries for `name` in a help list: a line starting with it, and
@@ -486,13 +516,13 @@ export async function runConsoleCommand(
         // All at once, so one slow page holds up no other.
         const all = reloadable(ctx.tabs(), ctx.out);
         for (const t of all) if (!await switchScripts(ctx, t, mode)) return;
-        await Promise.all(all.map((t) => reloadTab(t, ctx.out)));
+        await Promise.all(all.map((t) => reloadTab(t, ctx.host, ctx.out)));
         return;
       }
       const target = words[0] ? pickTab(ctx, words[0]) : tab;
       if (!target || blockedByDialog([target])) return;
       if (!await switchScripts(ctx, target, mode)) return;
-      await reloadTab(target, ctx.out);
+      await reloadTab(target, ctx.host, ctx.out);
       return;
     }
     case 'load': {
@@ -556,8 +586,7 @@ export async function runConsoleCommand(
       }
       if (blockedByDialog([target.tab])) return;
       if (!await switchScripts(ctx, target.tab, mode)) return;
-      await target.tab.page.goto(url)
-        .catch((err) => ctx.out(`[sm-dev] Navigation failed: ${(err as Error).message}`));
+      await gotoInTab(target.tab, ctx.host, url, ctx.out);
       return;
     }
     case 'focus': {
@@ -779,11 +808,74 @@ export function reloadable(tabs: ControlledTab[], out: (line: string) => void): 
 }
 
 /** Reload one tab, saying so if it fails. */
-export function reloadTab(tab: ControlledTab, out: (line: string) => void): Promise<void> {
-  return tab.page.reload().then(
-    () => undefined,
-    (err: Error) => out(`[sm-dev] ${tabName(tab)} could not be reloaded: ${err.message}`),
-  );
+export function reloadTab(tab: ControlledTab, host: HarnessHost, out: (line: string) => void): Promise<void> {
+  return loadInTab(tab, host, () => tab.page.reload(), `[sm-dev] ${tabName(tab)} could not be reloaded`, out);
+}
+
+/** Navigate one tab to `url`, saying so if it fails. */
+export function gotoInTab(tab: ControlledTab, host: HarnessHost, url: string, out: (line: string) => void): Promise<void> {
+  return loadInTab(tab, host, () => tab.page.goto(url), '[sm-dev] Navigation failed', out);
+}
+
+// A backstop for a script that never reports, not a guess at when the
+// output is done: every injected script reports once per document.
+// Counted from the load's end, so a slow page isn't blamed on them.
+const SCRIPTS_REPORT_MAX_MS = 10_000;
+
+/**
+ * Load a page in `tab`, done once each script injected there has
+ * started, been skipped or thrown in the new document, and what their
+ * bodies printed has arrived. So a command that loads a page ends with
+ * its scripts' output rather than before it. Also done when a dialog
+ * opens, since the page waits on it, or the tab closes. `failed` is
+ * what to say, before the error, if the load fails.
+ */
+async function loadInTab(
+  tab: ControlledTab, host: HarnessHost, load: () => Promise<unknown>, failed: string, out: (line: string) => void,
+): Promise<void> {
+  const scripts = tab.link.injectedScripts().filter((s) => s.spec);
+  const ids = scripts.map((s) => s.spec!.id);
+  const before = tab.link.documentStart();
+  let since = before;
+  // Ends the wait on the scripts however it ends, so it stops checking.
+  const stopped = new AbortController();
+  let timer: NodeJS.Timeout | undefined;
+  let onClose!: () => void;
+  const outcome = new Promise<boolean>((resolve) => {
+    onClose = () => resolve(true);
+    tab.page.once('close', onClose);
+    load().then(
+      async () => {
+        await tab.link.caughtUp();
+        since = tab.link.documentStart();
+        // Only the hash changed: no new document, so nothing starts again.
+        if (since === before || ids.length === 0) {
+          resolve(true);
+          return;
+        }
+        timer = setTimeout(() => resolve(false), SCRIPTS_REPORT_MAX_MS);
+        // Reports from the new document only, not late ones from the old.
+        await host.untilReported(tab.link, ids, since, stopped.signal);
+        // A script's start report comes before its body runs.
+        await tab.link.drain();
+        resolve(true);
+      },
+      (err: Error) => {
+        out(`${failed}: ${err.message}`);
+        resolve(true);
+      },
+    );
+  });
+  try {
+    if (await (tab.dialogs ? tab.dialogs.untilDialog(outcome) : outcome)) return;
+    const waiting = host.unreported(tab.link, ids, since);
+    const names = scripts.filter((s) => waiting.includes(s.spec!.id)).map(preparedScriptName);
+    if (names.length > 0) out(`[sm-dev] ${names.join(', ')} had not started on ${tabName(tab)} after ${SCRIPTS_REPORT_MAX_MS / 1000} seconds`);
+  } finally {
+    stopped.abort();
+    clearTimeout(timer);
+    tab.page.off('close', onClose);
+  }
 }
 
 // `tabs`, and the end of `status` when there are several: each tab
@@ -1055,9 +1147,14 @@ async function fireMenu(ctx: ConsoleContext, tab: ControlledTab, argument: strin
     if (entry) {
       // Listed but not fired: the page that registered it is going
       // away, as in the middle of a navigation.
-      ctx.out(await fire(tab, ctx.host.fireMenuEntry(entry))
-        ? `[sm-dev] Fired "${entry.name}"`
-        : `[sm-dev] The menu command "${entry.name}" could not be fired, since the page that registered it has gone away`);
+      if (!await fire(tab, ctx.host.fireMenuEntry(entry))) {
+        ctx.out(`[sm-dev] The menu command "${entry.name}" could not be fired, since the page that registered it has gone away`);
+        return;
+      }
+      ctx.out(`[sm-dev] Fired "${entry.name}"`);
+      // A MAIN-world handler runs in a later task than the push, so the
+      // command ends once the page has run it, with what it printed.
+      if (!tab.dialogs?.current) await fire(tab, tab.link.drain().then(() => true));
       return;
     }
     // Registered on another tab is an answer too, not worth waiting past.
@@ -1356,19 +1453,29 @@ export function writeOutputLine(line: string): void {
  * captured between them is that command's.
  */
 export type CommandRunner = (
-  line: string, hooks?: { start?: () => void; end?: () => void; cwd?: string; words?: string[] },
+  line: string,
+  hooks?: { start?: () => void; end?: () => void; cwd?: string; words?: string[]; answer?: (line: string) => void },
 ) => Promise<void>;
 
+// `answer`: where the command's own output goes instead of `ctx.out`
+// (see commandOutput).
 export function commandRunner(ctx: ConsoleContext): CommandRunner {
   let queue: Promise<void> = Promise.resolve();
   return (line, hooks) => {
-    const done = queue.then(async () => {
-      hooks?.start?.();
+    const run = async (): Promise<void> => {
       try {
         await runConsoleCommand(line, ctx, { cwd: hooks?.cwd, words: hooks?.words });
       } catch (err) {
         ctx.out(`[sm-dev] ${(err as Error).message}`);
+      }
+    };
+    const done = queue.then(async () => {
+      hooks?.start?.();
+      const answer = hooks?.answer && { line: hooks.answer, live: true };
+      try {
+        await (answer ? commandOutput.run(answer, run) : run());
       } finally {
+        if (answer) answer.live = false;
         hooks?.end?.();
       }
     });
@@ -1425,14 +1532,29 @@ export function readConsoleCommands(ctx: ConsoleContext, runLine: CommandRunner 
       completer: (line: string) => (blocks.open ? [[], line] : completeCommand(line)),
     })
     : readline.createInterface({ input: process.stdin, terminal: false });
+  // Typed commands not yet done. The `> ` prompt waits for them, as a
+  // shell's does, so a command's output lands before the next prompt
+  // rather than under it. Typing ahead still works, on a bare line.
+  let running = 0;
+  // Set by a Ctrl-C while a command runs, so a second one stops the run.
+  let stopArmed = false;
+  const promptText = (): string => (blocks.open ? BLOCK_PROMPT : running > 0 ? '' : PROMPT);
+  const showPrompt = (preserveCursor: boolean): void => {
+    lines.setPrompt(promptText());
+    lines.prompt(preserveCursor);
+  };
   lines.on('line', (line) => {
     const got = blocks.push(line);
     if (got && 'error' in got) say(got.error);
-    else if (got) void runLine(got.command.text);
-    if (terminal) {
-      lines.setPrompt(blocks.open ? BLOCK_PROMPT : PROMPT);
-      lines.prompt();
+    else if (got) {
+      running++;
+      void runLine(got.command.text).finally(() => {
+        running--;
+        if (running === 0) stopArmed = false;
+        if (terminal && running === 0 && activePrompt === lines) showPrompt(true);
+      });
     }
+    if (terminal) showPrompt(false);
   });
   // Erases the prompt and stops drawing output around it. Before the
   // interface closes, or after readline closes it itself on Ctrl-D, so
@@ -1452,8 +1574,15 @@ export function readConsoleCommands(ctx: ConsoleContext, runLine: CommandRunner 
       if (!lines.line && blocks.open) {
         blocks.drop();
         // Before the output, which redraws the prompt.
-        lines.setPrompt(PROMPT);
+        lines.setPrompt(promptText());
         ctx.out('[sm-dev] Dropped the eval block');
+        return;
+      }
+      // With no prompt showing, Ctrl-C looks like it would cancel the
+      // command. It can't, so the first one only says so.
+      if (!lines.line && running > 0 && !stopArmed) {
+        stopArmed = true;
+        ctx.out('[sm-dev] A command is still running, and cannot be cancelled. Press Ctrl-C again to stop the run.');
         return;
       }
       if (!lines.line) {

@@ -156,8 +156,10 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
   try {
     const file = scriptsDir.write({
       relativePath: 'remote.user.js',
-      meta: { name: 'Remote', match: ['*://*/target.html'], grant: ['GM_registerMenuCommand'] },
-      body: `GM_registerMenuCommand('Say hi', () => console.log('[remote] hi'));`,
+      // In the page's world, where a menu handler runs a task after the
+      // push that fires it.
+      meta: { name: 'Remote', match: ['*://*/target.html'], grant: ['GM_registerMenuCommand'], injectInto: 'page' },
+      body: `console.log('[remote] body ran');\nGM_registerMenuCommand('Say hi', () => console.log('[remote] hi'));`,
     });
     const run = setup.startRun([file, '--url', `${fixtureServer.baseUrl}/target.html`, '--root', scriptsDir.path]);
     await run.waitFor(/^\[sm-dev\] Started as run D1: /);
@@ -174,6 +176,23 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
     expect((await setup.cli('send', 'menu', 'Say hi')).sort()).toEqual(['[page log] [remote] hi', '[sm-dev] Fired "Say hi"']);
     // The run's own stream says what it was sent.
     await run.waitFor(/^\[sm-dev\] Sent by sm-dev send: menu Say hi$/);
+    // A command that only inspects answered the sender alone.
+    expect(run.lines.some((l) => /^Run: D1 |^\[sm-dev\] Sent by sm-dev send: status$/.test(l))).toBe(false);
+    // A reload is done once the script has started again and its body
+    // has run, so both come back without waiting on anything more.
+    const reloaded = await setup.cli('send', 'reload');
+    expect(reloaded).toContain(`[sm-dev] Remote started on ${fixtureServer.baseUrl}/target.html`);
+    expect(reloaded).toContain('[page log] [remote] body ran');
+    await run.waitFor(/^\[sm-dev\] Sent by sm-dev send: reload$/);
+    // A load reloads the tab, and the new script's top-level throw comes
+    // back with it.
+    const thrower = scriptsDir.write({ relativePath: 'thrower.user.js', meta: { name: 'Thrower', match: ['*://*/target.html'] }, body: `throw new Error('boom');` });
+    expect(await setup.cli('send', 'load', thrower)).toContain('[sm-dev] Thrower threw: boom');
+
+    // A hash change loads no new document, so nothing waits on scripts.
+    const started = Date.now();
+    expect(await setup.cli('send', 'open', `${fixtureServer.baseUrl}/target.html#part`)).toEqual([]);
+    expect(Date.now() - started).toBeLessThan(5000);
     // Everything the page logged so far, not only the lines streamed,
     // after the page load it came from.
     const logs = await setup.cli('send', 'logs');
@@ -186,7 +205,7 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
     expect((await setup.cliIn(elsewhere, 'send', 'savehtml', 'sent.html'))[0]).toMatch(/^\[sm-dev\] Wrote sent\.html /);
     expect(existsSync(path.join(elsewhere, 'sent.html'))).toBe(true);
     scriptsDir.write({ relativePath: 'more.user.js', meta: { name: 'More', match: ['*://*/nowhere.html'] }, body: '' });
-    expect(await setup.cliIn(elsewhere, 'send', 'load', 'more.user.js')).toContain(`[sm-dev] Loaded ${path.join(elsewhere, 'more.user.js')} as script 2`);
+    expect(await setup.cliIn(elsewhere, 'send', 'load', 'more.user.js')).toContain(`[sm-dev] Loaded ${path.join(elsewhere, 'more.user.js')} as script 3`);
 
     // A tab of the same page without the script, beside the scripted
     // one: no script started there, so it registered no menu command.
@@ -203,7 +222,8 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
       '[sm-dev] Stopping run D1',
       '[sm-dev] Run D1 ended. Pages still have previously loaded scripts.',
     ]);
-    expect(await exited(run.proc)).toBe(0);
+    // Not 0: Thrower threw.
+    expect(await exited(run.proc)).toBe(1);
     expect(await setup.cli('list')).toEqual(['No sm-dev runs are active']);
   } finally {
     await setup.cleanup();

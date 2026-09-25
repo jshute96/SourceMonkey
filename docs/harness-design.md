@@ -451,10 +451,31 @@ into pages.
     back, and the run ends the connection.
   - In `run.ts`, `Remote` feeds sent lines through the same
     `commandRunner` queue as typed ones, so they never interleave.
-    - Output is copied to the sender from its command's turn until half
-      a second after it, since a reload's start line lands just after
-      the reload returns. That half second can take in the start of the
-      next sender's command.
+    - The reply ends when the command does, with no wait after it.
+      Commands wait out what they set off that has a known end instead.
+    - Every page load a command or `--watch` save makes (`loadInTab`)
+      waits for each script in the tab to report starting, being
+      skipped or throwing in the new document
+      (`HarnessHost.untilReported`), or for a dialog.
+      - Only reports stamped at or after the new document's start
+        count, so late ones from the old document don't end it.
+      - A hash-only change loads no document, and waits for nothing.
+      - A 10-second backstop, counted from the load, covers a script
+        that never reports. It is not how the end is found.
+    - `drain` (in `inject.ts`) then makes a round trip through each CDP
+      session, after a `setTimeout(0)` in the page.
+      - Needed because a script reports its start before its body runs,
+        and a MAIN-world menu handler runs a task after its push.
+      - Console lines come on Playwright's session and reports on the
+        harness's, so each gets its own round trip.
+      - Used after page loads, `menu` fires and `eval`.
+    - Inspecting commands (`onlyInspects`: `status`, `values`,
+      `snapshot`, `logs`, `tabs` / `menu` listings and so on) answer
+      the sender alone. Their lines go through the `commandOutput`
+      async-local store, so the run's stream never shows them.
+    - Commands that change things are echoed in the run's stream and
+      print there. Their sender also gets what the page and scripts
+      print during the command's turn.
     - `quit` is held open until the run has ended, so `stop` prints its
       end line and knows it's done.
     - Lines arriving before the page has loaded wait for it.

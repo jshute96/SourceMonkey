@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import type { Browser, BrowserContext, Page } from '@playwright/test';
 
 import {
-  commandRunner, DialogTracker, NO_TABS, readConsoleCommands, reloadTab, reloadable, setCommandsListening, skippedScriptLine, targetIdSuffix,
+  commandOutput, commandRunner, DialogTracker, gotoInTab, NO_TABS, onlyInspects, readConsoleCommands, reloadTab, reloadable, setCommandsListening, skippedScriptLine, targetIdSuffix,
   type CommandRunner, type ConsoleContext, type ControlledTab,
 } from './console-commands.js';
 import { DevToolsLink } from './devtools.js';
@@ -384,12 +384,15 @@ function displayPath(file: string): string {
   return path.relative(process.cwd(), file) || file;
 }
 
-const SENT_OUTPUT_GRACE_MS = 500;
-
 /**
  * A run's side of `sm-dev send` and `sm-dev stop`: runs each sent line
- * as a typed command, and copies the output while it runs back to the
- * sender. Lines arriving before the run is ready for commands wait.
+ * as a typed command, and answers the sender with the output while it
+ * runs. Done when the command is: each command waits out what it sets
+ * off that has an end, such as the scripts starting after a reload.
+ * A command that only inspects answers the sender alone; one that
+ * changes things also shows in the run's stream, with what the page and
+ * scripts print meanwhile. Lines arriving before the run is ready for
+ * commands wait.
  */
 class Remote {
   private control: RunControl | null = null;
@@ -404,8 +407,16 @@ class Remote {
     private readonly onStop?: () => void,
   ) {}
 
-  /** Prints a line, and copies it to the senders listening now. */
+  /**
+   * Prints a line, and copies it to the senders listening now. An
+   * inspecting sent command's own lines go to its sender alone.
+   */
   readonly out = (line: string): void => {
+    const answer = commandOutput.getStore();
+    if (answer?.live) {
+      answer.line(line);
+      return;
+    }
     this.print(line);
     for (const listener of this.listeners) listener(line);
   };
@@ -460,11 +471,14 @@ class Remote {
   }
 
   private readonly handle: SentLineHandler = async (line, reply, sent) => {
+    const inspects = onlyInspects(line);
     // Not copied to other senders: it is no part of their commands.
     // An eval block's code lines as the prompt shows them.
-    const [first, ...more] = line.split('\n');
-    this.print(`[sm-dev] Sent by sm-dev send: ${first}`);
-    for (const l of more) this.print(`... ${l}`);
+    if (!inspects) {
+      const [first, ...more] = line.split('\n');
+      this.print(`[sm-dev] Sent by sm-dev send: ${first}`);
+      for (const l of more) this.print(`... ${l}`);
+    }
     // Answered straight away, even before the run is ready, and the
     // sender kept listening until the run has ended, so it sees that.
     if (/^\s*(quit|exit)\s*$/.test(line)) {
@@ -481,13 +495,9 @@ class Remote {
       reply('[sm-dev] The run is ending, so the command was not run');
       return 'done';
     }
-    await this.runner(line, { start: () => this.listeners.add(reply), cwd: sent?.cwd, words: sent?.words });
-    // What a command sets off often prints just after it returns: the
-    // script's start line after a reload, its console lines after a
-    // menu command. So the sender hears a little longer, which can
-    // take in the start of a command sent after it.
-    await sleep(SENT_OUTPUT_GRACE_MS);
-    this.listeners.delete(reply);
+    await this.runner(line, inspects
+      ? { answer: reply, cwd: sent?.cwd, words: sent?.words }
+      : { start: () => this.listeners.add(reply), end: () => this.listeners.delete(reply), cwd: sent?.cwd, words: sent?.words });
     return 'done';
   };
 }
@@ -867,7 +877,7 @@ class FollowedTabs {
         if (!tab.page.isClosed()) this.opts.out(`[sm-dev] T${tab.n} could not be updated: ${(err as Error).message}`);
         return;
       }
-      if (reload.includes(tab)) await reloadTab(tab, this.opts.out);
+      if (reload.includes(tab)) await reloadTab(tab, this.host, this.opts.out);
     }));
   }
 
@@ -960,7 +970,7 @@ class FollowedTabs {
   }
 
   async navigate(tab: ControlledTab, url: string): Promise<void> {
-    await tab.page.goto(url).catch((err) => this.opts.out(`[sm-dev] Navigation failed: ${(err as Error).message}`));
+    await gotoInTab(tab, this.host, url, this.opts.out);
   }
 
   private track(work: Promise<unknown>): void {

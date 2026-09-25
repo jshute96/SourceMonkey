@@ -241,6 +241,8 @@ export async function runPageCommand(
           else say(`Internal error: ${(err as Error).message}`);
           return;
         }
+        // Its console lines come through another session than its result.
+        await done(tab.link.drain());
         out(result);
         return;
       }

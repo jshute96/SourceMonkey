@@ -270,6 +270,10 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
   // Which page each report came from, for telling tabs apart. Kept off
   // the records themselves, so they stay plain data a test can compare.
   private readonly recordPages = new WeakMap<object, PageLink>();
+  // `untilReported`'s waits, checked on each start, skip and error.
+  // Not emitter listeners: `reload all` over many tabs would pass
+  // Node's listener limit, which prints a warning.
+  private readonly reportWaiters = new Set<() => void>();
   readonly reports: HostReports = {
     started: [], errors: [], skipped: [], logs: [], domBlocked: [], requests: [],
     tabs: [], menuCommands: [], notifications: [], downloads: [], windowCalls: [],
@@ -337,6 +341,41 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
   isRunning(page: PageLink, scriptId: string): boolean {
     const { started, skipped } = this.lastStartAndSkip(page, scriptId);
     return started !== undefined && (!skipped || started.at >= skipped.at);
+  }
+
+  /**
+   * Of `scriptIds`, the ones with no word from `page` since `since`:
+   * not yet started, skipped or thrown there.
+   */
+  unreported(page: PageLink, scriptIds: readonly string[], since: number): string[] {
+    const reported = (id: string): boolean => [this.reports.started, this.reports.skipped, this.reports.errors]
+      .some((records) => records.some((r) => r.scriptId === id && r.at >= since && this.recordPages.get(r) === page));
+    return scriptIds.filter((id) => !reported(id));
+  }
+
+  /**
+   * Resolves once each of `scriptIds` has had its word from `page`
+   * since `since` (see `unreported`). Every script injected into a new
+   * document gives one, so this is when a load's scripts are done
+   * starting. Never rejects. Stops waiting, unresolved, on `signal`,
+   * for a page that goes away first.
+   */
+  untilReported(page: PageLink, scriptIds: readonly string[], since: number, signal?: AbortSignal): Promise<void> {
+    if (this.unreported(page, scriptIds, since).length === 0) return Promise.resolve();
+    return new Promise((resolve) => {
+      if (signal?.aborted) return;
+      const stop = (): void => {
+        this.reportWaiters.delete(check);
+        signal?.removeEventListener('abort', stop);
+      };
+      const check = (): void => {
+        if (this.unreported(page, scriptIds, since).length > 0) return;
+        stop();
+        resolve();
+      };
+      this.reportWaiters.add(check);
+      signal?.addEventListener('abort', stop);
+    });
   }
 
   /** A script's latest start and latest skip from one page. */
@@ -1046,6 +1085,9 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
       (this.emit as (e: K, ...a: HostEventMap[K]) => boolean)(event, ...args);
     } catch {
       // Dropped on purpose; see above.
+    }
+    if (event === 'start' || event === 'skip' || event === 'script-error') {
+      for (const check of [...this.reportWaiters]) check();
     }
   }
 

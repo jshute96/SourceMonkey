@@ -414,6 +414,8 @@ When both input and output are a terminal, commands are typed at a
 - Ctrl-C clears a half-typed line. On an empty line, Ctrl-C or Ctrl-D
   stops the run, except that Ctrl-C inside an `eval` block drops the
   block.
+- A running command can't be cancelled. Ctrl-C while one runs says so,
+  and a second Ctrl-C stops the run.
 
 `eval` can take several lines of JavaScript as a block:
 
@@ -466,8 +468,19 @@ D1   81234  2m      127.0.0.1:9233  2     a.user.js, b.user.js, c.user.js, (2 mo
 
 - Runs are named `D1`, `D2`, like tabs (`T1`) and menu commands (`M1`).
   A number is reused once its run has ended.
-- `send` runs any typed command and prints its output, including what
-  the command set off right after it (a reload's start line).
+- `send` runs any typed command and prints its output. It returns as
+  soon as the command is done:
+  - A command that loads a page (`reload`, `open`, `newtab`, `load`)
+    is done once the tab's scripts have started and their top-level
+    code has run, so that output is in the reply.
+  - `menu` and `eval` include what the handler or expression printed
+    while it ran.
+- Output a script prints later, from a timer or event, only goes to
+  the run's stream. `sm-dev send logs` shows its console lines.
+- A command that only inspects (`status`, `values`, `snapshot`,
+  `logs`, and so on) answers the sender alone. Ones that change
+  something (`reload`, `click`, `menu Bump`) also show in the run's
+  stream.
 - `send` and `stop` need the id only when several runs are active.
 - `send` exits 0 whenever the run answered; read its output for the
   result.

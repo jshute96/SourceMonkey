@@ -404,6 +404,39 @@ export class PageAttachment implements PageLink {
     if (identifier) await this.cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier }).catch(() => undefined);
   }
 
+  /**
+   * When the main frame entered its current document, by the host's
+   * clock, as reports are stamped. Changes only when a new document
+   * loads, not on a same-document (hash or `pushState`) navigation.
+   */
+  documentStart(): number {
+    return this.currentDocument.spans[this.currentDocument.spans.length - 1][0];
+  }
+
+  /**
+   * Resolves once the page has run the tasks it already had queued, and
+   * the console lines they printed have arrived. A round trip through
+   * Playwright's own session, as those lines are, so none comes after
+   * it. Then one through the harness's session, so the scripts'
+   * reports (a throw, a `GM_log`) sent meanwhile have arrived too. For a
+   * command to end after what it set off in the page, such as a menu
+   * handler, or a script body, which runs after its start report.
+   */
+  async drain(): Promise<void> {
+    await this.page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0))).catch(() => undefined);
+    await this.caughtUp();
+  }
+
+  /**
+   * Resolves once the events the harness's session had already been
+   * sent have arrived: a navigation's new document, a script's report.
+   * Playwright's own session can run ahead of it.
+   */
+  async caughtUp(): Promise<void> {
+    if (this.closed) return;
+    await this.cdp.send('Runtime.evaluate', { expression: '0' }).catch(() => undefined);
+  }
+
   // The main frame moved to the document `loaderId` names.
   private enterDocument(loaderId: string, url: string): void {
     const now = Date.now();
