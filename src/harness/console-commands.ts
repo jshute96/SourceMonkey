@@ -37,11 +37,22 @@ export interface ControlledTab {
    * name the same tab. Unset if it closed before it could be read.
    */
   targetId?: string | null;
+  /** Its page id in the run's DevTools server (`--devtools`), once found. */
+  pageId?: number;
 }
 
 /** ` [targetId=...]`, the tab's CDP id, for the end of a line. */
 export function targetIdSuffix(targetId: string | null | undefined): string {
   return targetId ? ` [targetId=${targetId}]` : '';
+}
+
+// ` [targetId=... pageId=4]`: both ids, where `tabs` lists the tab.
+function tabIdsSuffix(tab: ControlledTab): string {
+  const ids = [
+    ...(tab.targetId ? [`targetId=${tab.targetId}`] : []),
+    ...(tab.pageId !== undefined ? [`pageId=${tab.pageId}`] : []),
+  ];
+  return ids.length > 0 ? ` [${ids.join(' ')}]` : '';
 }
 
 export interface ConsoleContext {
@@ -76,6 +87,8 @@ export interface ConsoleContext {
   stop: () => void;
   /** The id `sm-dev send` and `stop` know the run by, for `status`. */
   runId?: string;
+  /** How to reach the run's DevTools server, for `status`. */
+  devtools?: () => string | null;
 }
 
 // Grouped as `help` prints them.
@@ -153,6 +166,7 @@ const ID_LINES = [
   'Tabs:',
   '  - T2: its number in the tabs list',
   '  - Its CDP targetId (first 6 or more characters), optionally with targetId=',
+  '  - Its DevTools page id, as pageId=4 (with --devtools)',
   'Menu commands:',
   '  - M2: its number in the tab\'s menu list',
   '  - T2.M2: menu item M2 on tab T2',
@@ -255,7 +269,8 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
         await openNewTab(ctx, rest);
         return;
       }
-      if (rest.length > 1) {
+      // The bracketed ids, as `tabs` shows them, are two words.
+      if (rest.length > 1 && !/^\[targetId=\S+\s+pageId=\d+\]$/i.test(argument)) {
         ctx.out('[sm-dev] The tabs command takes one tab, e.g. tabs T2');
         return;
       }
@@ -291,7 +306,11 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
       return;
     }
     case 'status': {
-      if (ctx.runId && (!argument || argument === 'all')) ctx.out(`Run: ${ctx.runId} (pid ${process.pid})`);
+      if (!argument || argument === 'all') {
+        if (ctx.runId) ctx.out(`Run: ${ctx.runId} (pid ${process.pid})`);
+        const devtools = ctx.devtools?.();
+        if (devtools) ctx.out(`DevTools: ${devtools}`);
+      }
       // With no tab, still the scripts and what they have stored.
       if (!tab && (!argument || argument === 'all' || !TAB_REF.test(argument))) {
         const script = argument && argument !== 'all' ? pickScript(ctx, argument) : undefined;
@@ -602,7 +621,7 @@ function printTabs(ctx: ConsoleContext): void {
   if (ctx.tabs().length === 0) ctx.out('  No active tabs');
   for (const tab of ctx.tabs()) {
     const opener = tab.openedBy ? ` (opened by T${tab.openedBy})` : '';
-    ctx.out(`${tab === current ? '* ' : '  '}${tabName(tab)}: ${tab.page.url()}${opener}${targetIdSuffix(tab.targetId)}`);
+    ctx.out(`${tab === current ? '* ' : '  '}${tabName(tab)}: ${tab.page.url()}${opener}${tabIdsSuffix(tab)}`);
     const dialog = tab.dialogs?.current;
     if (dialog) ctx.out(`    Waiting on ${dialogKind(dialog)} dialog: ${JSON.stringify(dialog.message())}`);
     const running = runningOn(ctx, tab);
@@ -753,9 +772,19 @@ const MIN_TARGET_ID_PREFIX = 6;
 /**
  * The tab a typed argument names: `T2`, or its CDP target id (or the
  * start of one, if only one open tab's id starts that way), bare or as
- * the output shows it (`[targetId=...]`).
+ * the output shows it (`[targetId=...]`), or its DevTools page id as
+ * `pageId=4`.
  */
-function pickTab(ctx: ConsoleContext, typed: string): ControlledTab | null {
+function pickTab(ctx: ConsoleContext, input: string): ControlledTab | null {
+  // Both ids as `tabs` shows them, `[targetId=... pageId=4]`: the target
+  // id names the tab.
+  const typed = input.replace(/^\[(targetId=[0-9a-f]+)\s+pageId=\d+\]$/i, '$1');
+  const page = /^\[?pageId=(\d+)\]?$/i.exec(typed);
+  if (page) {
+    const tab = ctx.tabs().find((t) => t.pageId === Number(page[1]));
+    if (!tab) ctx.out(`[sm-dev] No open tab is DevTools page ${page[1]}. Type tabs to list them.`);
+    return tab ?? null;
+  }
   // As copied from the output: `targetId=ABC...`, brackets and all.
   const arg = typed.replace(/^\[?targetId=([0-9a-f]+)\]?$/i, '$1');
   if (arg.length >= MIN_TARGET_ID_PREFIX && /^[0-9a-f]+$/i.test(arg)) {

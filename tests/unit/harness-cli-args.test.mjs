@@ -61,3 +61,8 @@ test('send and stop refuse what they can\'t act on', () => {
   });
   assert.deepEqual(cli('list', 'x'), { code: 2, out: 'The list command takes no arguments' });
 });
+
+test('--devtools refuses the runs it can\'t serve', () => {
+  assert.deepEqual(run(SCRIPT, '--devtools', '--launch'), { code: 2, out: 'The --devtools flag can\'t be used with --launch' });
+  assert.deepEqual(run(SCRIPT, '--devtools', '--extension'), { code: 2, out: 'The --devtools flag can\'t be used with --extension' });
+});

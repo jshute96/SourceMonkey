@@ -165,6 +165,11 @@ Other `run` flags:
 - `--extension` uses the real extension in that browser instead of
   the built-in stand-in (see below); `--solo` silences the other
   collections for the run.
+- `--devtools` starts a Chrome DevTools server for the run, to drive
+  its tabs with clicks, keys and snapshots (see
+  [DevTools alongside a run](#devtools-alongside-a-run)).
+  `SM_DEV_DEVTOOLS=1` makes it the default, and `--nodevtools` turns it
+  off again.
 
 ### Which tab `run` uses
 
@@ -296,6 +301,9 @@ alongside the run to name the same tab:
 - A command that takes a tab alone (`tabs`, `reload`, `focus`) also
   takes the id: whole, its first 6 or more characters, or pasted as
   shown, `targetId=` and all.
+- With `--devtools`, `tabs` also shows each tab's DevTools page id,
+  as `[targetId=… pageId=4]`. Those commands take either id, pasted
+  on its own.
 
 How the commands treat tabs:
 - `tabs T2` picks the tab that `status`, `menu`, `reload`, `open`,
@@ -364,43 +372,69 @@ Run  PID    Uptime  Browser         Tabs  Scripts
 D1   81234  2m      127.0.0.1:9233  2     a.user.js, b.user.js, c.user.js, (2 more)
 ```
 
-- Each run waiting for commands prints its id once it has connected
-  to the browser. Runs are named `D1`, `D2`, like tabs (`T1`) and menu
-  commands (`M1`): the lowest number free when the run starts. A
-  number is reused once its run has ended.
-- `send` runs any typed command, one line, and prints its output.
-  Output from just after it counts too (half a second), so a
-  `reload` prints the script's start line. The run's own stream shows
-  the command as `Sent by sm-dev send: …`.
+- Runs are named `D1`, `D2`, like tabs (`T1`) and menu commands (`M1`).
+  A number is reused once its run has ended.
+- `send` runs any typed command and prints its output, including what
+  the command set off right after it (a reload's start line).
 - `send` and `stop` need the id only when several runs are active.
-- `send` exits 0 whenever the run answered, whatever the command
-  printed. Read its output for the result.
-- `send accept` and `send dismiss` answer a dialog, so dialogs wait
-  for one in a headless browser too.
-- `stop` ends a run as `quit` does, printing its last lines.
-  - A run that doesn't answer within 15 seconds is sent `SIGTERM`,
-    which ends it cleanly, as Ctrl-C does (so does a plain `kill`).
-  - One that answers but hasn't finished ending a minute later is
-    stuck, and `SIGTERM` kills it outright.
-  - On Windows, `SIGTERM` always kills outright.
-- `list` drops runs that have ended: their process has gone, or
-  nothing listens on their socket. `stop` never signals those, since
-  their pid may belong to another process by now.
-- The records and sockets are in `sm-dev-runs-<uid>` in the system
-  temp directory, private to you, beside the tab records. A directory
-  there that another user owns, or can write in, is refused.
-- Piping a run's output into something that stops reading early
-  (`| head`) ends the run, cleanly.
-- `status` starts with the run's id and pid.
+- `send` exits 0 whenever the run answered; read its output for the
+  result.
+- `send accept` and `send dismiss` answer a page dialog, so a dialog
+  waits for an answer even in a headless browser.
+- `stop` ends a run as `quit` does. One that doesn't respond is
+  killed.
+- Prefer `stop` to `--seconds` for a background run, so the run can't
+  expire while you're still testing.
+- Piping a run's output into something that stops reading (`| head`)
+  ends the run.
 
-Every run's last line says it has ended, so a page tested after it is
-never mistaken for one the run still controls:
-- Pages loaded from then on don't get the scripts.
-- Pages already open keep them, and whatever they were doing, until
-  reloaded. Nothing from them streams anywhere, and their badge turns
-  grey.
-- With `--extension`, the scripts stay in the Scratch collection, and
-  the line says so.
+Every run's last line says it has ended. From then on, pages loaded
+don't get the scripts; pages already open keep them until reloaded,
+but nothing from them streams anywhere, and their badge turns grey.
+
+### DevTools alongside a run
+
+The `chrome-devtools` command (`npm i -g chrome-devtools-mcp`) drives
+pages: clicks, key presses, typing, text snapshots, screenshots. `run
+--devtools` points it at the run's own tabs:
+
+```sh
+sm-dev run sites/x/y.user.js --devtools &
+# [sm-dev] DevTools: chrome-devtools --sessionId=D1 <tool> <pageId> ...
+# [sm-dev] T1 is DevTools page 3
+chrome-devtools --sessionId=D1 take_snapshot 3
+chrome-devtools --sessionId=D1 click 3 1_2     # an element id from the snapshot
+chrome-devtools --sessionId=D1 press_key 3 "Shift+ArrowRight"
+chrome-devtools --sessionId=D1 evaluate_script "() => document.title" --pageId 3
+```
+
+- Each tab's page id is printed as it's found, and shown by `tabs`.
+  `status` shows the command to use.
+- Most page tools take the page id first; `evaluate_script` takes it
+  as `--pageId`.
+- The page ids only work with the run's `--sessionId`. DevTools MCP
+  tools in an agent use a server of their own, with other numbers.
+- The run starts its DevTools server, and stops it when it ends. If a
+  run is killed, `chrome-devtools --sessionId=D1 stop` stops the one
+  it left behind.
+- Without the `chrome-devtools` command, the run says so and carries
+  on without it.
+- A tab whose page id isn't found after several tries is named; reload
+  it to try again.
+- Not with `--launch` or `--extension`, and not on Windows yet.
+
+Things to know:
+- DevTools attaches to every tab in the browser, and one tab that
+  doesn't answer it holds up every DevTools call. The run says so when
+  that happens.
+- DevTools makes every tab in the browser report that it has focus,
+  which can hide a script's focus bugs. That's why `--devtools` is off
+  by default; `SM_DEV_DEVTOOLS=1` turns it on for every run.
+- `evaluate_script` answers a dialog that opens while it runs with OK.
+  Pass `--dialogAction dismiss`, or answer through the run (`sm-dev
+  send D1 accept`) when a dialog matters.
+- To find a tab, the run briefly sets a hidden property on the page's
+  `window`, under `Symbol.for('sm-dev')`.
 
 ### What the output looks like
 

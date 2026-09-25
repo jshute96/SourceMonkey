@@ -183,6 +183,7 @@ command. See `docs/harness-design.md`.
 | `src/harness/tab-badge.ts` | The count badge `sm-dev run` draws over controlled tabs' favicons, greyed once the run is gone |
 | `src/harness/run.ts` | `sm-dev run`: open a browser (reusing a finished run's tab), inject or push the scripts, follow tabs it opens, and stream |
 | `src/harness/extension-backend.ts` | `sm-dev --extension`: finds SourceMonkey's worker in the browser and drives `writeScratchScript`, `clearScratchScripts`, `soloMode`, the script log |
+| `src/harness/devtools.ts` | `sm-dev run --devtools`: a Chrome DevTools server per run, and each tab's DevTools page id |
 | `src/harness/runs.ts` | The runs active on this machine: record files and control sockets behind `sm-dev list`, `send`, `stop` |
 | `src/harness/cli.ts` | The `sm-dev` command: `validate`, `match`, `run`, `probe`, `snapshot`, `clear`, `list`, `send`, `stop` |
 
@@ -293,6 +294,7 @@ command. See `docs/harness-design.md`.
 | `tests/unit/parse-location.test.mjs` | Unit tests for probe selection and line mapping, driven by positions Chromium really reported |
 | `tests/unit/harness-cdp-endpoint.test.mjs` | Unit tests for `cdpEndpoint`: the forms `sm-dev --cdp` accepts |
 | `tests/unit/harness-cli-args.test.mjs` | Unit tests for `sm-dev`'s argument checks: `run` flag combinations, and `send` / `stop` / `list` misuse |
+| `tests/unit/harness-devtools.test.mjs` | Unit tests for `run --devtools`: when it is on, and the message when `chrome-devtools` is missing |
 | `tests/unit/harness-runs.test.mjs` | Unit tests for the run registry: a sent line's round trip, stale records, `stop`'s SIGTERM fallback |
 | `tests/unit/harness-page-output.test.mjs` | Unit tests for which page console lines and errors `sm-dev run` shows |
 | `tests/unit/harness-prepare.test.mjs` | Unit tests for `prepareScript` and `explainMatch` over real files on disk |
@@ -408,6 +410,7 @@ extension, driven by the Node host in `src/harness/`.
 | `tests/harness/bridge-trust.spec.ts` | What the page can reach: forged requests refused, isolated traffic kept out of the page, subframes ignored |
 | `tests/harness/console-commands.spec.ts` | The commands typed into `sm-dev run`: `scripts`, `values`, `menu` by M number, dialogs, and several tabs |
 | `tests/harness/run-tabs.spec.ts` | `sm-dev run` end to end: followed tabs, `--all`, `--notab`, `load` / `update` / `--watch` reloads |
+| `tests/harness/run-remote.spec.ts` | `sm-dev run` as a background process: `list`, `send`, `stop`, and `--devtools` page ids reached with `chrome-devtools` |
 | `tests/harness/tab-badge.spec.ts` | The favicon badge: count and colors, the site's icon under it, grey when released or unpinged, a tab taken over |
 | `tests/harness/fixture.spec.ts` | The consumer fixture from `lib/`: a script against a served snapshot, `gm` and `reports`, the up-front URL check, the explained miss |
 

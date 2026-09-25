@@ -383,9 +383,52 @@ into pages.
     - Once the run starts tearing down, sent lines are refused.
   - A closed stdout (`EPIPE`) ends a run through the same stop as
     Ctrl-C; other commands just exit.
-  - `stop` falls back to `SIGTERM`, which `run` handles like Ctrl-C.
+  - `stop` falls back to `SIGTERM`, which `run` handles like Ctrl-C
+    (on Windows it kills outright, with no cleanup).
     Either signal drops both handlers, as `quit` does, so a second one
     during teardown kills the run.
+- **`devtools.ts`**: `run --devtools`, a Chrome DevTools background
+  server per run, and each tab's page id in it.
+  - Started with the `chrome-devtools` command, under the run's id as
+    its session, so an agent's own calls reach the same server.
+  - Then called over the server's socket directly: a JSON request and
+    reply, each ended by a NUL, as the command itself does. A command
+    per call would cost a Node startup each time. The protocol is the
+    package's own (followed as of 1.10), not a documented one.
+    - Calling over the socket also never starts a new server, where the
+      command would start one with its own Chrome if the run's had
+      died.
+  - Each call gets 5 seconds, the first 15: it is when the server
+    connects to the browser, attaching to every tab. DevTools runs one
+    call at a time, so one tab that doesn't answer it holds up
+    everything; the run says so once, naming both causes, since a slow
+    connect looks the same.
+  - On the way out it is stopped before the tabs are let go, so a
+    lookup in flight has its calls cut off and can still delete its
+    markers. The server is then killed (`SIGTERM`), not asked to stop,
+    which would mean waiting behind a stuck call. It cleans up its own
+    socket and pid file on `SIGTERM`.
+    - The pid is the one the server reports over its socket (`status`),
+      not its pid file's: a server that died uncleanly leaves a file
+      whose pid may be another process's by now.
+  - Not on Windows: the server's files and signals are only followed
+    as they are on Linux and macOS.
+  - DevTools gives no id sm-dev can match to its tabs: its page ids are
+    a counter in the server, in the order it first sees pages, and its
+    `list_pages` has only id, URL and title. So each unmapped tab gets
+    a marker in its page's main world (the only world `evaluate_script`
+    reads), the pages with a matching URL are read for it, and the
+    markers are deleted.
+  - The marker is `<run>:<random token>:<tab number>`, so a leftover
+    from another run or pass never matches.
+  - Mapping runs a moment after tabs open (batched), and again every
+    two seconds while tabs are left unmapped (loading, on a dialog, a
+    stuck call), a few times per tab. A tab out of tries is named; its
+    next page load gives it its tries again.
+  - Started with Google's usage statistics, CrUX lookups (Chrome's
+    field-performance API) and update checks turned off.
+  - Off by default: DevTools emulates focus for every page it sees, in
+    the whole browser, and `evaluate_script` answers dialogs.
 - A page stopped on a dialog answers no CDP call until it is answered.
   So `load` / `update` refuse while one is open, and
   `PageAttachment.dispose` gives up on the page after a second; detaching

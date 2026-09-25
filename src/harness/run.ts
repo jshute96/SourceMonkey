@@ -5,6 +5,7 @@
 // Kept apart from cli.ts so the Node-only commands (`validate`,
 // `match`) never load Playwright, which is an optional peer dependency.
 
+import { randomBytes } from 'node:crypto';
 import { watch, type FSWatcher } from 'node:fs';
 import { readFile, rename, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -16,6 +17,7 @@ import {
   commandRunner, DialogTracker, NO_TABS, readConsoleCommands, reloadTab, reloadable, setCommandsListening, skippedScriptLine, targetIdSuffix,
   type CommandRunner, type ConsoleContext, type ControlledTab,
 } from './console-commands.js';
+import { DevToolsLink } from './devtools.js';
 import { ExtensionBackend, type LogEntry } from './extension-backend.js';
 import { HarnessHost, type ErrorReport, type SkipReport, type StartReport } from './host.js';
 import { attachPage, targetIdOf, type PageAttachment } from './inject.js';
@@ -55,6 +57,12 @@ export interface RunOptions extends ConnectOptions {
   solo?: boolean;
   /** Also stream the page's own errors, not just ones from the scripts. */
   pageErrors?: boolean;
+  /**
+   * Start a DevTools background server for the run, and find each tab's
+   * page id in it. Needs a browser connected over CDP, and the harness
+   * backend.
+   */
+  devtools?: boolean;
   collectionRoot: string;
   localRoots: string[];
   /** Where the stream goes. */
@@ -351,6 +359,9 @@ export async function run(opts: RunOptions): Promise<number> {
     ending = true;
     // No sent command runs against tabs being let go.
     remote.disarm();
+    // While the tabs are still attached, so a DevTools lookup in flight
+    // can delete its markers from them.
+    await held.devtools?.stop();
     // Also on a throw partway through, so a failed run leaves no
     // attachment behind in a browser the developer keeps using.
     await held.tabs?.dispose().catch(() => undefined);
@@ -488,8 +499,19 @@ async function runInHarness(
   // Commands are only read once the page has loaded, but a prompt
   // opened before then can still wait for a typed or sent accept.
   const commandsComing = opts.until !== undefined && (process.stdin.readable || remote.reachable);
-  const tabs = new FollowedTabs(host, opts, session.context, commandsComing, () => remote.setTabs(tabs.list().length));
+  let devtools: DevToolsLink | null = null;
+  const tabs = new FollowedTabs(host, opts, session.context, commandsComing, () => {
+    remote.setTabs(tabs.list().length);
+    devtools?.schedule();
+  });
   held.tabs = tabs;
+  // Named by the run's id, which `list` and `status` show. A run other
+  // shells can't reach has none, so a random one stands in (hex, as
+  // DevTools requires; `D1` happens to be hex too).
+  if (opts.devtools && opts.until) {
+    devtools = new DevToolsLink(remote.id ?? randomBytes(3).toString('hex'), cdpSetting(opts), () => tabs.list(), opts.out);
+    held.devtools = devtools;
+  }
   wireHostOutput(host, opts.out, (record) => tabs.prefixOf(record));
   // T1, unless `--notab`; then the first tab `tabs new` opens is T1.
   if (page) {
@@ -691,6 +713,7 @@ async function runInHarness(
         out: opts.out,
         stop: () => opts.onStop?.(),
         runId: remote.id,
+        devtools: () => (devtools?.isUp ? devtools.usage : null),
       };
       commands = ctx;
       const runner = commandRunner(ctx);
@@ -720,6 +743,7 @@ async function runInHarness(
 interface Held {
   attachment?: PageAttachment;
   tabs?: FollowedTabs;
+  devtools?: DevToolsLink;
   /** Set once any script was injected or pushed, for the run's last line. */
   injected?: boolean;
 }

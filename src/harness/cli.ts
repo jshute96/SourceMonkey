@@ -24,6 +24,7 @@ import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import { writeOutputLine } from './console-commands.js';
+import { devtoolsWanted } from './devtools.js';
 import { NO_RULE_COVERS_URL, explainMatch, isDirectoryMessage, noSuchFileMessage, prepareScript, withDefaultScheme } from './prepare.js';
 
 // A mistake in how the command was typed, as opposed to a failure while
@@ -89,6 +90,10 @@ Options for run:
                   come from the script's own Log tab
   --solo          With --extension: disable every other collection for
                   the run and restore them after
+  --devtools      Also start a Chrome DevTools server for the run, and
+                  print each tab's page id in it, for the chrome-devtools
+                  command. Default: on when $SM_DEV_DEVTOOLS is 1
+  --nodevtools    Don't, even when $SM_DEV_DEVTOOLS is 1
 
 Options for probe:
   --selectors S   Comma-separated CSS selectors to look for; repeat the
@@ -121,6 +126,8 @@ interface Opts {
   extension: boolean;
   solo: boolean;
   pageErrors: boolean;
+  /** `--devtools` / `--nodevtools`; unset leaves it to `SM_DEV_DEVTOOLS`. */
+  devtools?: boolean;
   seconds?: number;
   selectors: string[];
   selectorFlags: number;
@@ -167,6 +174,8 @@ function parseArgs(argv: string[]): Opts {
       case '--extension': opts.extension = true; break;
       case '--solo': opts.solo = true; break;
       case '--page-errors': opts.pageErrors = true; break;
+      case '--devtools': opts.devtools = true; break;
+      case '--nodevtools': opts.devtools = false; break;
       case '--selectors': {
         // One flag with commas holds a list. A selector containing a
         // comma (`:is(a, b)`) goes in its own flag, taken whole.
@@ -299,6 +308,10 @@ async function runCommand(opts: Opts): Promise<number> {
       [opts.watch, '--watch'], [opts.extension, '--extension'], [opts.solo, '--solo'],
     ]);
   }
+  // Asked for by name, it must be able to run; on by default from the
+  // environment, it just sits out the runs it can't serve.
+  if (opts.devtools === true) clash('--devtools', [[opts.launch, '--launch'], [opts.extension, '--extension']]);
+  const devtools = devtoolsWanted(opts.devtools) && !opts.launch && !opts.extension;
   const files = await Promise.all(opts.args.map(scriptFile));
   const { run } = await import('./run.js');
   // Ends on Ctrl-C, or after --seconds. With neither, the run streams
@@ -345,6 +358,7 @@ async function runCommand(opts: Opts): Promise<number> {
       extension: opts.extension,
       solo: opts.solo,
       pageErrors: opts.pageErrors,
+      devtools,
       collectionRoot: opts.root,
       localRoots: opts.local,
       // Drawn around the typed-command prompt, when one is showing.
