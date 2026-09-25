@@ -29,7 +29,8 @@ export const PAGE_COMMAND_GROUPS: { title: string; lines: string[] }[] = [
       '                  Type text into an element',
       'key <keys>...     Press keys: key j, key Shift+ArrowRight, key Escape',
       'eval <js>         Evaluate in the page and print the result;',
-      '                  eval --script evaluates in the scripts\' world',
+      '                  eval --script evaluates in the scripts\' world;',
+      '                  eval {{ starts multi-line block',
     ],
   },
   {

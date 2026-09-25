@@ -378,9 +378,10 @@ export async function liveRuns(): Promise<RunRecord[]> {
 export class RunGoneError extends Error {}
 
 /**
- * Sends one line to a run, passing each line of its output to `out` as
- * it arrives. Resolves once the run closes the connection. `signal`
- * drops the connection, for a sender done waiting.
+ * Sends one command to a run (one line, or an eval block's several),
+ * passing each line of its output to `out` as it arrives. Resolves
+ * once the run closes the connection. `signal` drops the connection,
+ * for a sender done waiting.
  */
 export function sendLine(id: string, line: string, out: (line: string) => void, signal?: AbortSignal, words?: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -396,7 +397,7 @@ export function sendLine(id: string, line: string, out: (line: string) => void, 
       connected = true;
       // With this shell's directory, for the files it names, and the
       // words as the shell gave them.
-      socket.write(JSON.stringify({ line: line.replace(/[\r\n]+/g, ' '), cwd: process.cwd(), words }) + '\n');
+      socket.write(JSON.stringify({ line, cwd: process.cwd(), words }) + '\n');
     });
     socket.on('data', (chunk: string) => {
       buffered += chunk;

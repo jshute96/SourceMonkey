@@ -16,6 +16,7 @@ import readline from 'node:readline';
 
 import type { Dialog, Page } from '@playwright/test';
 
+import { CommandAssembler, unclosedBlockMessage } from './command-lines.js';
 import type { HarnessHost, MenuCommandRecord } from './host.js';
 import type { PageAttachment } from './inject.js';
 import { PAGE_COMMAND_GROUPS, PAGE_COMMANDS, runPageCommand, splitWords, VALUE_FLAGS } from './page-commands.js';
@@ -533,11 +534,15 @@ export async function runConsoleCommand(
       // A tab first (T2, targetId=..., pageId=...), or the current one.
       // Among any flags that lead (and a flag's value), so `eval --script
       // T2 ...` and `snapshot --out f T2` name one.
+      // Only on the command's own line: an eval block's code is not
+      // looked through for them.
+      const headEnd = typed ? argument.indexOf('\n') : -1;
+      const inHead = (i: number): boolean => i < list.length && (headEnd < 0 || list[i].start < headEnd);
       let at = 0;
-      while (at < list.length && list[at].text.startsWith('--')) at += VALUE_FLAGS.has(list[at].text) ? 2 : 1;
+      while (inHead(at) && list[at].text.startsWith('--')) at += VALUE_FLAGS.has(list[at].text) ? 2 : 1;
       let target = tab;
       let raw = argument;
-      if (at < list.length && TAB_ARG.test(list[at].text)) {
+      if (inHead(at) && TAB_ARG.test(list[at].text)) {
         // The ids as `tabs` shows them, `[targetId=... pageId=4]`, are
         // two words.
         const pair = /^\[targetId=[^\]]+$/i.test(list[at].text) && /^pageId=\d+\]$/i.test(list[at + 1]?.text ?? '');
@@ -1200,6 +1205,10 @@ function completeCommand(line: string): [string[], string] {
 // or null when there is none (a pipe, or before commands are armed).
 let activePrompt: readline.Interface | null = null;
 
+const PROMPT = '> ';
+// While an eval block is open.
+const BLOCK_PROMPT = '... ';
+
 /**
  * Print one line of run output. With a prompt showing, the prompt and
  * whatever is half-typed are erased, the line printed above them, and
@@ -1266,12 +1275,14 @@ export function setCommandsListening(tabs: ControlledTab[], listening: boolean):
 /**
  * Read commands from stdin, one per line, for as long as the run lasts.
  * Whole lines only, so a piped command split across two reads still
- * runs as one. Does nothing when stdin is already closed.
+ * runs as one. An `eval {{` block spans lines up to its `}}` (see
+ * command-lines.ts). Does nothing when stdin is already closed.
  *
  * At a terminal, shows a `> ` prompt with line editing and history
  * (readline's own keys: arrows, Ctrl-A/E, Ctrl-U and so on) and Tab
- * completion of command names. Ctrl-C clears the typed line, and on an
- * empty one it or Ctrl-D stops the run. Piped input gets neither: EOF
+ * completion of command names, and `... ` inside a block. Ctrl-C clears
+ * the typed line; on an empty one it drops an open block, and otherwise
+ * it or Ctrl-D stops the run. Piped input gets neither: EOF
  * on a pipe only means no more commands, and the run goes on.
  */
 export function readConsoleCommands(ctx: ConsoleContext, runLine: CommandRunner = commandRunner(ctx)): () => void {
@@ -1282,19 +1293,33 @@ export function readConsoleCommands(ctx: ConsoleContext, runLine: CommandRunner 
   // redraw around a prompt there.
   const terminal = Boolean(process.stdin.isTTY && process.stdout.isTTY) && process.env.TERM !== 'dumb';
   ctx.interactive = terminal;
+  const blocks = new CommandAssembler();
+  // Set once the run closes the input itself, rather than it ending.
+  let closing = false;
+  // A message in the commands' turn, after the ones before it. The
+  // empty line runs nothing.
+  const say = (message: string): void => {
+    void runLine('', { start: () => ctx.out(`[sm-dev] ${message}`) });
+  };
   const lines = terminal
     ? readline.createInterface({
       input: process.stdin,
       output: process.stdout,
       terminal: true,
-      prompt: '> ',
-      // Tab completes a command name.
-      completer: completeCommand,
+      prompt: PROMPT,
+      // Tab completes a command name, except inside an eval block,
+      // where the line is JavaScript.
+      completer: (line: string) => (blocks.open ? [[], line] : completeCommand(line)),
     })
     : readline.createInterface({ input: process.stdin, terminal: false });
   lines.on('line', (line) => {
-    void runLine(line);
-    if (terminal) lines.prompt();
+    const got = blocks.push(line);
+    if (got && 'error' in got) say(got.error);
+    else if (got) void runLine(got.command.text);
+    if (terminal) {
+      lines.setPrompt(blocks.open ? BLOCK_PROMPT : PROMPT);
+      lines.prompt();
+    }
   });
   // Erases the prompt and stops drawing output around it. Before the
   // interface closes, or after readline closes it itself on Ctrl-D, so
@@ -1311,6 +1336,13 @@ export function readConsoleCommands(ctx: ConsoleContext, runLine: CommandRunner 
     // rather than as the process's SIGINT. As in a shell, it first
     // clears a half-typed line, and only stops the run on an empty one.
     lines.on('SIGINT', () => {
+      if (!lines.line && blocks.open) {
+        blocks.drop();
+        // Before the output, which redraws the prompt.
+        lines.setPrompt(PROMPT);
+        ctx.out('[sm-dev] Dropped the eval block');
+        return;
+      }
       if (!lines.line) {
         ctx.stop();
         return;
@@ -1324,8 +1356,17 @@ export function readConsoleCommands(ctx: ConsoleContext, runLine: CommandRunner 
     });
     activePrompt = lines;
     lines.prompt();
+  } else {
+    // Piped input that ends inside a block: said, rather than run
+    // half-written. Not when the run itself closes the input.
+    lines.on('close', () => {
+      if (closing) return;
+      const unclosed = blocks.drop();
+      if (unclosed !== null) say(`${unclosedBlockMessage(unclosed)}, so it was not run`);
+    });
   }
   return () => {
+    closing = true;
     dropPrompt();
     lines.close();
     process.stdin.pause();

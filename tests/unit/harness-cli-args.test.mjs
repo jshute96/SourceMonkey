@@ -51,7 +51,13 @@ function cli(...args) {
 }
 
 test('send and stop refuse what they can\'t act on', () => {
-  assert.deepEqual(cli('send'), { code: 2, out: 'The send command needs a command to send, e.g. sm-dev send status' });
+  // A list of only comments sends nothing.
+  assert.deepEqual(cli('send', '# a comment\n\n'), { code: 2, out: 'The send command needs a command to send, or piped stdin, e.g. sm-dev send status' });
+  assert.deepEqual(cli('send', 'tabs {{\n}}'), {
+    code: 2, out: 'Line 1: Only the eval command takes a {{ block, so its lines up to }} are skipped. None of the commands were run.',
+  });
+  // Piped stdin, read once a run is found to send it to.
+  assert.deepEqual(cli('send'), { code: 1, out: 'No sm-dev runs are active' });
   assert.deepEqual(cli('send', 'D9', 'status'), { code: 1, out: 'There is no run D9. Type sm-dev list to see the runs.' });
   assert.deepEqual(cli('send', '9', 'status'), { code: 2, out: 'Runs are named D1, D2 and so on. Did you mean D9?' });
   assert.deepEqual(cli('send', 'status'), { code: 1, out: 'No sm-dev runs are active' });

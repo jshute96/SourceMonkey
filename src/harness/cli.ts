@@ -22,6 +22,7 @@
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
+import { CommandAssembler, echoCommand, parseCommandList, unclosedBlockMessage } from './command-lines.js';
 import { CONSOLE_HELP, writeOutputLine } from './console-commands.js';
 import { devtoolsWanted } from './devtools.js';
 import { NO_RULE_COVERS_URL, explainMatch, isDirectoryMessage, noSuchFileMessage, prepareScript, withDefaultScheme } from './prepare.js';
@@ -47,8 +48,10 @@ Commands:
   clear --extension           Remove every script in the extension's
                               Scratch collection and turn solo mode off
   list                        List sm-dev runs active on this machine
-  send [run] <command>        Run a command in another sm-dev run
-                              Run IDs are D1, D2
+  send [run] [command|-]      Run a command in another sm-dev run
+                              Run IDs are D1, D2. The command can be
+                              multi-line, one command per line.
+                              Omit it or use - to read from stdin.
   stop [run]... | --all       End one or more runs, or all
 
 Options for every command:
@@ -431,12 +434,86 @@ async function sendCommand(args: string[]): Promise<number> {
   // either.
   const named = args[0] !== undefined && (runIdOf(args[0]) !== null || /^\d+$/.test(args[0]));
   const words = named ? args.slice(1) : args;
-  if (words.length === 0) throw new UsageError('The send command needs a command to send, e.g. sm-dev send status');
-  const target = named ? namedRun(runs, args[0], runIdOf) : onlyRun(runs, 'sm-dev send <run> <command>');
+  // `-`: each command sent as its line is read, a terminal included.
+  if (words.length === 1 && words[0] === '-') {
+    const target = named ? namedRun(runs, args[0], runIdOf) : onlyRun(runs, 'sm-dev send <run> -');
+    return sendAsRead(target.id, sendLine);
+  }
+  // A list of commands: one argument of several lines, or piped stdin,
+  // checked in full before any is sent. Stdin with no arguments only
+  // when it isn't a terminal, which would sit waiting for a command
+  // someone forgot to type. Several arguments are one command, so
+  // eval's JavaScript can be one multi-line argument.
+  const fromStdin = words.length === 0 && !process.stdin.isTTY;
+  if (words.length === 0 && !fromStdin) throw new UsageError(NOTHING_TO_SEND);
+  const pickTarget = () => (named ? namedRun(runs, args[0], runIdOf) : onlyRun(runs, 'sm-dev send <run> <command>'));
+  // Before reading stdin, so a wrong run is said at once, not once the
+  // input ends.
+  const early = fromStdin ? pickTarget() : null;
+  const listed = fromStdin ? await readStdin() : words.length === 1 && words[0].includes('\n') ? words[0] : null;
+  const list = listed === null ? null : parseCommandList(listed);
+  if (list && 'error' in list) throw new UsageError(list.error);
+  if (list?.commands.length === 0) throw new UsageError(NOTHING_TO_SEND);
+  const target = early ?? pickTarget();
+  if (list) {
+    // In order, each done before the next is sent, and each one's
+    // output headed by the command as it was written.
+    for (const command of list.commands) {
+      for (const line of echoCommand(command)) print(line);
+      await sendLine(target.id, command.text, print);
+    }
+    return 0;
+  }
   // The words go as the shell gave them, so a selector or text with
   // spaces reaches a page command as one word.
   await sendLine(target.id, words.join(' '), print, undefined, words);
   return 0;
+}
+
+/**
+ * `send -`: stdin's commands sent one at a time as each is read, so at
+ * a terminal each runs on Enter, as at the run's own prompt. A mistake
+ * (a `{{` after another command) is said and the rest go on, since the
+ * commands before it have run already. 1 when there was one.
+ */
+async function sendAsRead(
+  id: string,
+  sendLine: (id: string, line: string, out: (line: string) => void) => Promise<void>,
+): Promise<number> {
+  const { createInterface } = await import('node:readline');
+  const blocks = new CommandAssembler();
+  // Typed commands are on screen already; piped ones get a heading.
+  const echo = !process.stdin.isTTY;
+  let failed = false;
+  for await (const line of createInterface({ input: process.stdin, terminal: false })) {
+    const got = blocks.push(line);
+    if (!got) continue;
+    if ('error' in got) {
+      failed = true;
+      print(got.error);
+      continue;
+    }
+    if (echo) for (const l of echoCommand(got.command)) print(l);
+    await sendLine(id, got.command.text, print);
+  }
+  const unclosed = blocks.drop();
+  if (unclosed !== null) {
+    print(`${unclosedBlockMessage(unclosed)}, so it was not run`);
+    failed = true;
+  }
+  return failed ? 1 : 0;
+}
+
+const NOTHING_TO_SEND = 'The send command needs a command to send, or piped stdin, e.g. sm-dev send status';
+
+function readStdin(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let text = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (chunk: string) => { text += chunk; });
+    process.stdin.on('end', () => resolve(text));
+    process.stdin.on('error', reject);
+  });
 }
 
 async function stopCommand(opts: Opts): Promise<number> {

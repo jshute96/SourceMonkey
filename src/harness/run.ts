@@ -461,7 +461,10 @@ class Remote {
 
   private readonly handle: SentLineHandler = async (line, reply, sent) => {
     // Not copied to other senders: it is no part of their commands.
-    this.print(`[sm-dev] Sent by sm-dev send: ${line}`);
+    // An eval block's code lines as the prompt shows them.
+    const [first, ...more] = line.split('\n');
+    this.print(`[sm-dev] Sent by sm-dev send: ${first}`);
+    for (const l of more) this.print(`... ${l}`);
     // Answered straight away, even before the run is ready, and the
     // sender kept listening until the run has ended, so it sees that.
     if (/^\s*(quit|exit)\s*$/.test(line)) {

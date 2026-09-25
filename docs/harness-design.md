@@ -519,6 +519,21 @@ into pages.
     dismisses any dialog nobody listens for, which answers a script's
     `prompt()` with Cancel. Dialogs stay open for the person or a typed
     `accept` / `dismiss`.
+- **`command-lines.ts`**: turns input lines into commands, for the
+  prompt, piped input, and a list sent in one go (`parseCommandList`).
+  - `eval ... {{` opens a multi-line block and a line of just `}}`
+    closes it. Not `{` / `}`: a line of just `}` ends any JavaScript
+    function.
+  - The block reaches `eval` as its first line, a newline, then the
+    code with its line breaks kept, so `//` comments still work.
+  - Outside a block, blank lines and `#` comments are skipped.
+  - A list is checked in full before any of it runs, so a `{{` after
+    another command, or a block never closed, runs none of it.
+  - `sm-dev send` sends a list's commands one connection at a time, in
+    order. `send -` feeds stdin through a `CommandAssembler` instead,
+    sending each command as it completes rather than checking the list
+    first. A block's newlines survive the trip, since the message is
+    JSON.
 
 ### Service-worker additions
 

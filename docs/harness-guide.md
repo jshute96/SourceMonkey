@@ -299,8 +299,9 @@ current one.
 - Quote a selector or text with spaces: `click '.athing .title a'`,
   `type input 'hello world'`. Through `sm-dev send`, quote `#` too,
   since the shell reads it as a comment: `sm-dev send click '#submit'`.
-- `eval` takes the rest of the line as JavaScript, quotes and all. A
-  promise prints what it settles to.
+- `eval` takes the rest of the line as JavaScript, quotes and all, or
+  several lines as a block (see below). A promise prints what it
+  settles to.
 - Through `sm-dev send`, files are named from the sender's directory.
 - `eval --script` reaches what scripts put on `window`, not their local
   variables. A `@grant none` script runs in the page's world, so plain
@@ -379,7 +380,23 @@ When both input and output are a terminal, commands are typed at a
 - Output streamed while you type is printed above the prompt, which is
   then redrawn with what you had typed so far.
 - Ctrl-C clears a half-typed line. On an empty line, Ctrl-C or Ctrl-D
-  stops the run.
+  stops the run, except that Ctrl-C inside an `eval` block drops the
+  block.
+
+`eval` can take several lines of JavaScript as a block:
+
+```
+> eval T2 --script {{
+... const rows = [...document.querySelectorAll('.athing')];
+... rows.map((r) => r.id)
+... }}
+```
+
+- `{{` at the end of the line opens the block, and a line of just `}}`
+  closes it. A lone `}` is JavaScript, so it doesn't end the block.
+- A tab and flags go before the `{{`.
+- Only `eval` takes a block; `{{` after another command is refused.
+- The prompt shows `... ` while a block is open.
 
 A read waits out the page's write batching first, so `menu Bump`
 followed by `values` prints what the command just stored rather than
@@ -390,6 +407,10 @@ Piping works as well as typing, for a fixed sequence:
 ```sh
 printf 'menu Bump\nvalues\nquit\n' | sm-dev run sites/x/y.user.js --seconds 30
 ```
+
+Piped input takes `eval` blocks too. Blank lines are skipped, and a
+line starting with `#` is a comment. Input that ends inside a block
+reports it rather than running half of it.
 
 ### Runs in the background
 
@@ -418,6 +439,8 @@ D1   81234  2m      127.0.0.1:9233  2     a.user.js, b.user.js, c.user.js, (2 mo
 - `send` and `stop` need the id only when several runs are active.
 - `send` exits 0 whenever the run answered; read its output for the
   result.
+- `send` runs several commands when its one argument has several
+  lines, or reads them from stdin when it has none or `-` (see below).
 - `send accept` and `send dismiss` answer a page dialog, so a dialog
   waits for an answer even in a headless browser.
 - `stop` ends a run as `quit` does. One that doesn't respond is
@@ -426,6 +449,27 @@ D1   81234  2m      127.0.0.1:9233  2     a.user.js, b.user.js, c.user.js, (2 mo
   expire while you're still testing.
 - Piping a run's output into something that stops reading (`| head`)
   ends the run.
+
+Several commands in one `send`:
+
+```sh
+sm-dev send $'tabs T2\nmenu Bump\nvalues'
+sm-dev send D1 < steps.txt
+sm-dev send -        # each runs on Enter; Ctrl-D ends
+```
+
+- Each line is one command, split as the prompt splits a typed line.
+- They run in order, each finishing before the next starts, and each
+  one's output is headed by the command (`> menu Bump`).
+- Blank lines are skipped, `#` starts a comment, and `eval {{ ... }}`
+  blocks work as at the prompt.
+- A list with a mistake in it (a `{{` after another command, a block
+  never closed) is refused whole; none of it runs.
+- `send -` instead sends each command as its line is read, from a
+  terminal or a pipe: a command runs on Enter, and a block on its
+  `}}`. A mistake is reported and the rest go on.
+- With several arguments, `send` is still one command, so eval's
+  JavaScript can be one multi-line argument.
 
 Every run's last line says it has ended. From then on, pages loaded
 don't get the scripts; pages already open keep them until reloaded,
