@@ -151,7 +151,7 @@ Other `run` flags:
   `--url`, as a browser to drive with the typed commands. The flags
   that act on scripts (`--all`, `--fire-menu`, `--values`, `--watch`)
   and `--extension` can't be combined with it.
-- `--notab` opens no tab at startup. `tabs new` opens one later, and
+- `--notab` opens no tab at startup. `newtab` opens one later, and
   the first it opens is T1. That tab isn't one a later run takes over
   (see [Which tab `run` uses](#which-tab-run-uses)). With
   `--extension`, the scripts just run in whatever pages you browse to,
@@ -268,9 +268,9 @@ commands from its own input while it streams.
 | `get <key>` | Prints one stored value |
 | `set <key> <json>` | Stores a value, as another tab's write would: a running script sees it and its change listeners fire |
 | `tabs [tab]` | Lists the controlled tabs, or picks the one the page commands act on (see [Several tabs](#several-tabs)) |
-| `tabs new [page]` | Opens a new tab with the scripts, picks it and brings it to the front. `tabs new all` opens one per script's default page. `tabs new --noscript [page]` opens one the scripts stay out of (see [Driving and reading the page](#driving-and-reading-the-page)) |
+| `newtab [page]` | Opens a new tab with the scripts, picks it and brings it to the front. `newtab all` opens one per script's default page. `newtab --noscript [page]` opens one the scripts stay out of (see [Driving and reading the page](#driving-and-reading-the-page)) |
 | `reload [tab]` | Reloads the page, or another tab's. `reload all` reloads every tab at once. `--noscript` / `--script` switch the tabs' scripts off or back on first |
-| `open [page]` | Navigates to a URL, or to a script's default page: the selected script's when bare, or one by number (`open 2`, or `open T2.3` in T2). `open all` is `tabs new all`. `--noscript` / `--script` switch the tab's scripts off or back on (see [Driving and reading the page](#driving-and-reading-the-page)) |
+| `open [page]` | Navigates to a URL, or to a script's default page: the selected script's when bare, or one by number (`open 2`, or `open T2.3` in T2). `open all` is `newtab all`. `--noscript` / `--script` switch the tab's scripts off or back on (see [Driving and reading the page](#driving-and-reading-the-page)) |
 | `focus [tab]` | Brings the tab to the front, un-minimizing its window |
 | `accept [text]`, `dismiss` | Answers an open dialog (see [Page dialogs](#page-dialogs)) |
 | `help [command]`, `quit` | The list, or one command's entry (`help status`); and stop |
@@ -318,8 +318,8 @@ current one.
   variables. A `@grant none` script runs in the page's world, so plain
   `eval` reaches it.
 - A saved page has the scripts' changes in it, and a spec replaying it
-  would apply them twice. For one to replay, open the page with `tabs
-  new --noscript <url>` and save that.
+  would apply them twice. For one to replay, open the page with
+  `newtab --noscript <url>` and save that.
 
 #### Tabs without scripts
 
@@ -330,7 +330,7 @@ compare unmodified pages, or save one for a spec (`savehtml`).
   `update` skip it.
 
 To enter (or leave) no-scripts state, use `--noscript` (or `--script`)
-on `tabs new`, `open`, or `reload`.
+on `newtab`, `open`, or `reload`.
 
 #### Several tabs
 
@@ -365,11 +365,11 @@ How the commands treat tabs:
   picked tab closes, the first one still open takes over.
 - Any tab can be closed, T1 included, and the run notes it. With none
   left, `tabs` says `No active tabs`, `status` still lists the scripts
-  with their stored values and errors, and `tabs new` opens another.
-- `tabs new [page]` opens a tab of your own with the scripts, picks it
+  with their stored values and errors, and `newtab` opens another.
+- `newtab [page]` opens a tab of your own with the scripts, picks it
   and brings it to the front. Unlike one you open in the browser, it
   is controlled from the start. It stays open when the run ends.
-- `tabs new all` (or `open all`) opens one tab per script's default
+- `newtab all` (or `open all`) opens one tab per script's default
   page, as `--all` does at startup, and leaves the picked tab as it
   was. Scripts it opened no tab for are listed at the end.
 - `tabs` lists each tab's URL, which tab opened it, any open dialog,

@@ -32,7 +32,7 @@ export interface ControlledTab {
   page: Page;
   /** The page as the host knows it, to tell this tab's reports apart. */
   link: PageAttachment;
-  /** Opened with `tabs new --noscript`, or by such a tab: no scripts run in it. */
+  /** Opened with `newtab --noscript`, or by such a tab: no scripts run in it. */
   noScript?: boolean;
   /** The page's JavaScript dialogs, for `accept` and `dismiss`. */
   dialogs?: DialogTracker;
@@ -68,7 +68,7 @@ export interface ConsoleContext {
   /** The tab the page commands act on. Starts as T1; `tabs` changes it. */
   tab?: ControlledTab;
   /**
-   * Open a new controlled tab, at `url` or blank, for `tabs new`.
+   * Open a new controlled tab, at `url` or blank, for `newtab`.
    * Absent where the caller can't open one.
    */
   newTab?: (url?: string, options?: { noScript?: boolean }) => Promise<ControlledTab>;
@@ -134,14 +134,14 @@ const COMMAND_GROUPS: { title: string; lines: string[] }[] = [
     lines: [
       'tabs [tab]        List the tabs the run controls; with one, pick the',
       '                  tab the commands for the page act on',
-      'tabs new [page]   Open a new tab with the scripts, pick it and focus',
+      'newtab [page]     Open a new tab with the scripts, pick it and focus',
       '                  it; with all, one tab for each script\'s page;',
-      '                  tabs new --noscript [page] opens one without them',
+      '                  newtab --noscript [page] opens one without them',
       'reload [T<n>|all] Reload the page, another tab\'s, or every tab;',
       '                  --noscript and --script switch them as open does',
       'open [page]       Navigate to a URL, or to a script\'s default page',
       '                  (the selected script\'s, or one by number: 2, T2.3);',
-      '                  open all is tabs new all. --noscript switches the',
+      '                  open all is newtab all. --noscript switches the',
       '                  tab to run no scripts, and --script to run them',
       '                  again, for every later load',
       'focus [T<n>]      Bring the tab to the front',
@@ -163,7 +163,7 @@ const COMMAND_GROUPS: { title: string; lines: string[] }[] = [
 const NO_SCRIPTS = 'No scripts are loaded';
 
 /** Where the page commands have no tab to act on; also `run --notab`'s start. */
-export const NO_TABS = '[sm-dev] No tabs are active. Type tabs new to open one.';
+export const NO_TABS = '[sm-dev] No tabs are active. Type newtab to open one.';
 
 // The commands that act on the current tab, which there may not be.
 const NEEDS_A_TAB = new Set(['menu', 'open', 'reload', 'focus', 'accept', 'dismiss', ...PAGE_COMMANDS]);
@@ -201,7 +201,7 @@ const ALIASES: Record<string, string> = { script: 'scripts', tab: 'tabs', exit: 
 /**
  * The entries for `name` in a help list: a line starting with it, and
  * the indented lines that carry on its description. Empty when none
- * does. `tabs` has two entries (`tabs`, `tabs new`), and gets both.
+ * does. A command with several entries gets them all.
  */
 export function helpEntries(lines: string[], name: string): string[] {
   const found: string[] = [];
@@ -325,14 +325,18 @@ export async function runConsoleCommand(
       await fireMenu(ctx, ref.tab, ref.rest);
       return;
     }
+    case 'newtab':
+      await openNewTab(ctx, rest);
+      return;
     case 'tabs':
     case 'tab': {
       if (!argument) {
         printTabs(ctx);
         return;
       }
+      // `tabs new` was newtab's old name.
       if (rest[0] === 'new') {
-        await openNewTab(ctx, rest);
+        ctx.out('[sm-dev] The tabs command picks a tab. To open one, type newtab.');
         return;
       }
       // The bracketed ids, as `tabs` shows them, are two words.
@@ -531,7 +535,7 @@ export async function runConsoleCommand(
       if (mode === null) return;
       const page = rest.filter((w) => !w.startsWith('--'));
       if (page[0] === 'all' && page.length === 1) {
-        await openNewTab(ctx, ['new', 'all', ...(mode ? ['--noscript'] : [])]);
+        await openNewTab(ctx, ['all', ...(mode ? ['--noscript'] : [])]);
         return;
       }
       if (page.length > 1) {
@@ -806,13 +810,13 @@ function printTabs(ctx: ConsoleContext): void {
   }
 }
 
-// `tabs new [page]`: a tab of the run's own, controlled from the start,
-// which becomes the current one and comes to the front. `tabs new all`
+// `newtab [page]`: a tab of the run's own, controlled from the start,
+// which becomes the current one and comes to the front. `newtab all`
 // opens one per script's page instead, and leaves the current tab be.
 async function openNewTab(ctx: ConsoleContext, words: string[]): Promise<void> {
-  // `--noscript` anywhere after `new`: a tab the scripts stay out of.
+  // `--noscript` anywhere: a tab the scripts stay out of.
   // `--script` is what a new tab gets anyway.
-  const mode = scriptsFlag(ctx, 'tabs new', words);
+  const mode = scriptsFlag(ctx, 'newtab', words);
   if (mode === null) return;
   const noScript = mode === true;
   const rest = words.filter((w) => !w.startsWith('--'));
@@ -820,8 +824,8 @@ async function openNewTab(ctx: ConsoleContext, words: string[]): Promise<void> {
     ctx.out('[sm-dev] This run cannot open tabs');
     return;
   }
-  if (rest.length > 2) {
-    ctx.out('[sm-dev] The tabs new command takes one URL or script');
+  if (rest.length > 1) {
+    ctx.out('[sm-dev] The newtab command takes one URL or script');
     return;
   }
   const open = async (url?: string): Promise<ControlledTab | null> => {
@@ -832,7 +836,7 @@ async function openNewTab(ctx: ConsoleContext, words: string[]): Promise<void> {
       return null;
     }
   };
-  if (rest[1] === 'all') {
+  if (rest[0] === 'all') {
     // One tab per distinct page; the scripts with none, or whose tab
     // failed, are listed at the end, after the tabs' own output.
     const pages = new Map<string, PreparedScript[]>();
@@ -864,13 +868,13 @@ async function openNewTab(ctx: ConsoleContext, words: string[]): Promise<void> {
     for (const line of skipped) if (line) ctx.out(line);
     return;
   }
-  if (rest[1] && TAB_REF.test(rest[1])) {
-    ctx.out(`[sm-dev] The tabs new command opens a tab of its own, so it takes a URL or a script number, not ${rest[1]}`);
+  if (rest[0] && TAB_REF.test(rest[0])) {
+    ctx.out(`[sm-dev] The newtab command opens a tab of its own, so it takes a URL or a script number, not ${rest[0]}`);
     return;
   }
   let url: string | undefined;
-  if (rest[1]) {
-    const page = pageFor(ctx, rest[1]);
+  if (rest[0]) {
+    const page = pageFor(ctx, rest[0]);
     if (!page) return;
     url = page;
   }
@@ -881,7 +885,7 @@ async function openNewTab(ctx: ConsoleContext, words: string[]): Promise<void> {
   ctx.out(`[sm-dev] The page commands now act on ${tabName(tab)} (${tab.page.url()})`);
 }
 
-// What `open` and `tabs new` take: a script by its number, meaning its
+// What `open` and `newtab` take: a script by its number, meaning its
 // default page, or else a URL. A bare number can't be a URL, so the
 // two never overlap.
 function pageFor(ctx: ConsoleContext, arg: string): string | null {
@@ -896,12 +900,12 @@ function scriptPage(ctx: ConsoleContext, script: PreparedScript): string | null 
   return url;
 }
 
-/** A script `--all` or `tabs new all` opened no tab for, and why. */
+/** A script `--all` or `newtab all` opened no tab for, and why. */
 export function skippedScriptLine(n: number, script: PreparedScript, reason: string): string {
   return `[sm-dev] Skipped script ${n}, ${scriptLabel(script)}: ${reason}`;
 }
 
-// A tab reference `open` and `tabs new` recognize: `T2` or `T2.3`.
+// A tab reference `open` and `newtab` recognize: `T2` or `T2.3`.
 const TAB_REF = /^[Tt]\d+(\.\d+)?$/;
 
 // A tab named before a page command's own words: `T2`, or an id as the
@@ -1299,7 +1303,7 @@ function settleWrites(): Promise<void> {
   return new Promise((r) => setTimeout(r, WRITE_FLUSH_MS));
 }
 
-// A command with several help lines (`tabs`, `tabs new`) is listed once.
+// A command with several entries in the help is listed once.
 const COMMAND_NAMES = [...new Set(COMMAND_GROUPS
   .flatMap((group) => group.lines)
   .map((line) => line.split(/\s+/)[0])

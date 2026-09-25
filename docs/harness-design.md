@@ -335,7 +335,7 @@ into pages.
     - It also holds T1, the run's own tab, and hands the commands the
       list of open tabs. With `--notab` there is none at first, and
       the first tab `newTab` opens becomes T1.
-    - `newTab` opens a tab for `tabs new` and `--all`, attached before
+    - `newTab` opens a tab for `newtab` and `--all`, attached before
       its first page loads. It takes the tab's number before awaiting
       anything, so tabs opened together are numbered in call order.
     - Host output from a followed tab gets its `[T<n>]` prefix through
@@ -361,7 +361,7 @@ into pages.
     until its setup has caught up with the latest set.
   - `update` skips a script whose files' modification times haven't
     changed since it was read, so a touch still forces one.
-  - Tabs without scripts (`tabs new --noscript`) are attached and
+  - Tabs without scripts (`newtab --noscript`) are attached and
     followed like any, but get no injection, no badge, and no part in
     `load` / `update`; tabs they open inherit that. The harness's
     bridge is still attached to them, so a page could tell.
@@ -525,7 +525,7 @@ into pages.
   - Menu commands fire by record (`fireMenuEntry`), not by id, since
     two tabs can register the same custom id.
   - A script's default page (`defaultPageUrl` in `prepare.ts`) is
-    the one `run` opens without `--url`; `open`, `tabs new` and
+    the one `run` opens without `--url`; `open`, `newtab` and
     `--all` use the same one.
   - `DialogTracker` listens for page dialogs, because Playwright
     dismisses any dialog nobody listens for, which answers a script's

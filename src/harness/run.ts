@@ -38,7 +38,7 @@ export interface RunOptions extends ConnectOptions {
    */
   all?: boolean;
   /**
-   * Open no tab at startup. The typed `tabs new` opens one later, and
+   * Open no tab at startup. The typed `newtab` opens one later, and
    * with `--extension` the scripts run in whatever tabs the person
    * browses to.
    */
@@ -517,7 +517,7 @@ async function runInHarness(
     held.devtools = devtools;
   }
   wireHostOutput(host, opts.out, (record) => tabs.prefixOf(record));
-  // T1, unless `--notab`; then the first tab `tabs new` opens is T1.
+  // T1, unless `--notab`; then the first tab `newtab` opens is T1.
   if (page) {
     wirePageOutput(page, opts, true);
     const dialogs = await DialogTracker.attach(page, opts.out, { visible: browserVisible(opts), commandsComing });
@@ -913,12 +913,12 @@ class FollowedTabs {
   }
 
   /**
-   * A new tab for `tabs new` and `--all`: controlled from the start, so
+   * A new tab for `newtab` and `--all`: controlled from the start, so
    * its first page loads with the scripts as the extension would run
    * them. Numbered before anything is awaited, so tabs opened together
    * are numbered in call order. Stays open when the run ends, like the
    * tabs the page opens. `noScript`: one the scripts stay out of, for
-   * `tabs new --noscript`.
+   * `newtab --noscript`.
    */
   async newTab(url?: string, { noScript = false } = {}): Promise<ControlledTab> {
     const tab = await this.createTab(noScript);
@@ -968,7 +968,7 @@ class FollowedTabs {
     this.adopting.add(settled);
   }
 
-  // `opener` is the tab that opened this one; none for `tabs new`.
+  // `opener` is the tab that opened this one; none for `newtab`.
   // `announce`: say it opened; the run's own tabs are announced by
   // their caller instead, with where they are going. `noScript`: no
   // scripts are injected, and none are later.

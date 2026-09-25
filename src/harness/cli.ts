@@ -95,7 +95,7 @@ const OPTION_GROUPS: { title: string; commands: string[]; lines: string[]; only?
       '                instead of only the first script\'s',
       '--noscript      Start with no scripts, as a browser to drive with the',
       '                typed commands (a blank page unless --url names one)',
-      '--notab         Open no tab at startup; type tabs new to open one.',
+      '--notab         Open no tab at startup; type newtab to open one.',
       '                With --extension, the pages you browse to run them',
       '--watch         Re-inject and reload when a script or its files change',
       '--values JSON   Seed GM_* storage before the script runs, e.g.',

@@ -191,7 +191,7 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
     // A tab of the same page without the script, beside the scripted
     // one: no script started there, so it registered no menu command.
     const url = `${fixtureServer.baseUrl}/target.html`;
-    await setup.cli('send', 'tabs', 'new', '--noscript', url);
+    await setup.cli('send', 'newtab', '--noscript', url);
     expect((await setup.cli('send', 'tabs')).some((l) => l.startsWith(`* T2: ${url} (no scripts)`))).toBe(true);
     expect(await setup.cli('send', 'menu', 'T2')).toEqual(['[sm-dev] No menu commands are registered on T2. T1 has some; type menu T1 to list them.']);
     // An expression with spaces and quotes arrives as the shell gave it,
@@ -230,7 +230,7 @@ test('--devtools reports each tab\'s page id, which chrome-devtools reaches', as
 
     // A second tab on the same URL: the one case only the marker can
     // tell apart.
-    await setup.cli('send', 'D1', 'tabs', 'new', url);
+    await setup.cli('send', 'D1', 'newtab', url);
     const second = (await run.waitFor(/^\[sm-dev\] T2 is DevTools page \d+$/)).match(/(\d+)$/)![1];
     expect(second).not.toBe(first);
 

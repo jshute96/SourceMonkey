@@ -223,10 +223,10 @@ test('--notab: the first tab opened is T1, unprefixed like a normal run\'s', asy
   const target = `${fixtureServer.baseUrl}/target.html`;
   const lines = await driveCli([file, '--notab'], [
     ['Ready for commands', 'status'],
-    ['Not running, since no tabs are active', `tabs new ${target}`],
+    ['Not running, since no tabs are active', `newtab ${target}`],
     ['[page log] [hello] on /target.html', 'quit'],
   ]);
-  expect(lines).toContain('[sm-dev] No tabs are active. Type tabs new to open one.');
+  expect(lines).toContain('[sm-dev] No tabs are active. Type newtab to open one.');
   expect(lines.some((l) => l.startsWith(`[sm-dev] Opening ${target} in T1 [targetId=`))).toBe(true);
   // Both the page's lines and the harness's own, without a [T1] prefix.
   expect(lines).toContain('[page log] [hello] on /target.html');
@@ -256,7 +256,7 @@ test('load, update and reload all reload just the tabs they affect', async ({ fi
   const a = write('A', 'target.html');
   const b = write('B', 'other.html');
   const lines = await driveCli([a, '--url', `${base}/target.html`], [
-    ['Ready for commands', `tabs new ${base}/other.html`],
+    ['Ready for commands', `newtab ${base}/other.html`],
     ['The page commands now act on T2', `load ${b}`],
     // B matches only T2's page.
     ['[T2] [page log] [B] on /other.html', 'scripts 2'],
@@ -304,7 +304,7 @@ test('a tab without scripts gets none, nor do its tabs, and load and savehtml le
   const b = write('B');
   const saved = path.join(scriptsDir.path, 'plain.html');
   const lines = await driveCli([a, '--url', `${base}/target.html`], [
-    ['Ready for commands', `tabs new --noscript ${base}/target.html`],
+    ['Ready for commands', `newtab --noscript ${base}/target.html`],
     ['The page commands now act on T2', 'eval T2 window.open("other.html"), "opened"'],
     // Its popup is a tab without scripts too.
     ['Tab T3 opened', `load ${b}`],
@@ -351,14 +351,14 @@ test('open --noscript switches a tab to no scripts for good, and --script back',
     ['runs the scripts again', 'eval new Promise((r) => setTimeout(r, 1500)).then(() => "waited")'],
     ['"waited"', badge],
     ['true', 'open all --noscript'],
-    ['Opening', 'tabs new --noscript 1'],
+    ['Opening', 'newtab --noscript 1'],
     ['The page commands now act on T3', 'tabs'],
     // reload switches too: every tab back to scripts, then T1 off.
     ['Tabs:', 'reload all --script'],
     ['[T3] [page log] [A] on /target.html', 'reload T1 --noscript'],
-    // tabs new takes --script too: a new tab's usual mode, said out.
-    ['T1 runs no scripts from now on', `tabs new --script ${base}/target.html`],
-    ['[T4] [page log] [A] on /target.html', 'tabs new --script --noscript'],
+    // newtab takes --script too: a new tab's usual mode, said out.
+    ['T1 runs no scripts from now on', `newtab --script ${base}/target.html`],
+    ['[T4] [page log] [A] on /target.html', 'newtab --script --noscript'],
     ['not both', 'quit'],
   ]);
   const at = (text: string) => lines.findIndex((l) => l.includes(text));
@@ -376,7 +376,7 @@ test('open --noscript switches a tab to no scripts for good, and --script back',
   expect(lines.filter((l) => l === 'false' || l === 'true')).toEqual(['false', 'true']);
   // open all --noscript: the script's page, in a tab without scripts.
   expect(lines.some((l) => /^ {2}T2: .*target\.html \(no scripts\)/.test(l))).toBe(true);
-  // tabs new --noscript with a script's number: its page, without it.
+  // newtab --noscript with a script's number: its page, without it.
   expect(lines.some((l) => /^\* T3: .*target\.html \(no scripts\)/.test(l))).toBe(true);
   // reload all --script: T2 and T3 switched back, and the script ran
   // in both.
@@ -385,7 +385,7 @@ test('open --noscript switches a tab to no scripts for good, and --script back',
   expect(lines.slice(back)).toContain('[sm-dev] T3 runs the scripts again');
   expect(lines.slice(back)).toContain('[T2] [page log] [A] on /target.html');
   expect(lines).toContain('[T4] [page log] [A] on /target.html');
-  expect(lines).toContain('[sm-dev] The tabs new command takes --noscript or --script, not both');
+  expect(lines).toContain('[sm-dev] The newtab command takes --noscript or --script, not both');
 });
 
 test('open and reload switch the tab they name, or the current one, and say when nothing changes', async ({ fixtureServer, scriptsDir }) => {
@@ -400,7 +400,7 @@ test('open and reload switch the tab they name, or the current one, and say when
     ['[page log] [A] on /target.html', `open --noscript ${base}/other.html`],
     ['T1 runs no scripts from now on', 'eval location.pathname'],
     ['"/other.html"', 'open --noscript'],
-    ['T1 already runs no scripts', `tabs new ${base}/target.html`],
+    ['T1 already runs no scripts', `newtab ${base}/target.html`],
     // A tab named, no page: its own page, back with the scripts.
     ['[T2] [page log] [A] on /target.html', 'open T1 --script'],
     ['T1 runs the scripts again', 'eval T1 location.pathname'],
@@ -408,12 +408,12 @@ test('open and reload switch the tab they name, or the current one, and say when
     ['"/other.html"', 'reload --noscript'],
     ['T2 runs no scripts from now on', 'open --bogus'],
     ['has no --bogus flag', 'reload --bogus'],
-    ['has no --bogus flag', 'tabs new --bogus'],
+    ['has no --bogus flag', 'newtab --bogus'],
     ['has no --bogus flag', 'quit'],
   ]);
   expect(lines).toContain('[sm-dev] The open command has no --bogus flag');
   expect(lines).toContain('[sm-dev] The reload command has no --bogus flag');
-  expect(lines).toContain('[sm-dev] The tabs new command has no --bogus flag');
+  expect(lines).toContain('[sm-dev] The newtab command has no --bogus flag');
   // T1 stayed on its page when switched back.
   expect(lines.filter((l) => l === '"/other.html"')).toHaveLength(2);
 });
@@ -440,7 +440,7 @@ test('a tab waiting on a dialog is left out of reload all, and blocks update', a
     relativePath: 'b.user.js', meta: { name: 'B', match: ['*://*/other.html'] }, body: `setTimeout(() => alert('Hi'), 100);`,
   });
   const lines = await driveCli([a, b, '--url', `${base}/target.html`], [
-    ['Ready for commands', `tabs new ${base}/other.html`],
+    ['Ready for commands', `newtab ${base}/other.html`],
     ['opened an alert dialog', 'reload all'],
     // T1 still reloads; then update, which would reach T2, refuses.
     ['[sm-dev] A started on', () => { touch(b); return 'update 2'; }],
@@ -462,7 +462,7 @@ test('--watch follows a loaded script, and a save reloads only its tabs', async 
   const a = write('A', 'target.html', 'one');
   const b = write('B', 'other.html', 'one');
   const lines = await driveCli([a, '--url', `${base}/target.html`, '--watch'], [
-    ['Ready for commands', `tabs new ${base}/other.html`],
+    ['Ready for commands', `newtab ${base}/other.html`],
     ['The page commands now act on T2', `load ${b}`],
     ['[T2] [page log] [B] one', () => { write('B', 'other.html', 'two'); return ''; }],
     ['[T2] [page log] [B] two', 'quit'],

@@ -30,7 +30,7 @@ export const PAGE_COMMAND_GROUPS: { title: string; lines: string[] }[] = [
       'key <keys>...     Press keys: key j, key Shift+ArrowRight, key Escape',
       'eval <js>         Evaluate in the page and print the result;',
       '                  eval --script evaluates in the scripts\' world;',
-      '                  eval {{ starts multi-line block',
+      '                  eval {{ starts multi-line block, ended by }}',
     ],
   },
   {
@@ -338,7 +338,7 @@ export async function runPageCommand(
         let html = '';
         await write(words[0], async () => { html = await savePageHtml(page, file(words[0])); });
         say(`Wrote ${shown(words[0])} (${html.length} chars) from ${page.url()}`);
-        if (input.scriptsRunning) say('It has the scripts\' changes in it. For a spec to replay, save it from a tab without scripts (tabs new --noscript).');
+        if (input.scriptsRunning) say('It has the scripts\' changes in it. For a spec to replay, save it from a tab without scripts (newtab --noscript).');
         return;
       }
       case 'probe': {
