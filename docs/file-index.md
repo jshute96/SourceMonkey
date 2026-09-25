@@ -181,6 +181,7 @@ command. See `docs/harness-design.md`.
 | `src/harness/command-lines.ts` | Input lines into `sm-dev run` commands: multi-line `eval {{ ... }}` blocks, comments, sent lists |
 | `src/harness/console-commands.ts` | The commands typed while `sm-dev run` streams, across its tabs, the page-dialog tracker, and the prompt |
 | `src/harness/page-commands.ts` | The run commands that drive and read a tab's page, from `click` and `eval` to `snapshot` and `logs` |
+| `src/harness/snapshot.ts` | `snapshot`'s element refs, its on-screen filter, and its suggested CSS selectors |
 | `src/harness/tab-badge.ts` | The count badge `sm-dev run` draws over controlled tabs' favicons, greyed once the run is gone |
 | `src/harness/run.ts` | `sm-dev run`: open a browser (reusing a finished run's tab), inject or push the scripts, follow tabs it opens, and stream |
 | `src/harness/extension-backend.ts` | `sm-dev --extension`: finds SourceMonkey's worker in the browser and drives `writeScratchScript`, `clearScratchScripts`, `soloMode`, the script log |
@@ -299,6 +300,7 @@ command. See `docs/harness-design.md`.
 | `tests/unit/harness-cli-args.test.mjs` | Unit tests for `sm-dev`'s argument checks: `run` flag combinations, and `send` / `stop` / `list` misuse |
 | `tests/unit/harness-devtools.test.mjs` | Unit tests for `run --devtools`: when it is on, and the message when `chrome-devtools` is missing |
 | `tests/unit/harness-page-commands.test.mjs` | Unit tests for how the page commands split a typed line into words, and name keys for `key` |
+| `tests/unit/harness-snapshot.test.mjs` | Unit tests for `snapshot`: which words are refs, and which lines `--visible` keeps |
 | `tests/unit/harness-runs.test.mjs` | Unit tests for the run registry: a sent line's round trip, stale records, `stop`'s SIGTERM fallback |
 | `tests/unit/harness-command-lines.test.mjs` | Unit tests for `eval {{ ... }}` blocks, comments, and lists of commands |
 | `tests/unit/harness-page-output.test.mjs` | Unit tests for which page console lines and errors `sm-dev run` shows |

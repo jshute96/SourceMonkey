@@ -82,9 +82,9 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('eval document.querySelector("input").value')).toEqual(['"hello wor"']);
 
   const tree = await run('snapshot');
-  expect(tree).toContain('- button "Added 1"');
+  expect(tree.some((l) => /^  - button "Added 1" \[ref=e\d+\]$/.test(l))).toBe(true);
   expect(tree.some((l) => l.includes('textbox "Note"'))).toBe(true);
-  expect(await run('snapshot button')).toEqual(['- button "Added 1"']);
+  expect(await run('snapshot button')).toEqual([expect.stringMatching(/^- button "Added 1" \[ref=e\d+\]$/)]);
 
   // Files are named from the directory given, as `sm-dev send` gives
   // the sender's.
@@ -144,4 +144,93 @@ test('a tab closing mid-expression is said as such', async ({ page, fixtureServe
   await page.close();
   await pending;
   expect(lines).toEqual(['[sm-dev] The tab closed before the expression finished']);
+});
+
+test('snapshot refs name elements for the other commands, and it can show only the screen or add selectors', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {
+  const script = await loadScript({ relativePath: 'idle.user.js', meta: { name: 'Idle', match: ['*://*/target.html'] }, body: '' });
+  await page.setViewportSize({ width: 800, height: 600 });
+  await page.goto(`${fixtureServer.baseUrl}/target.html`);
+  await page.evaluate(() => {
+    document.body.insertAdjacentHTML('beforeend', `
+      <nav><button data-testid="save">Save</button><input aria-label="Note"></nav>
+      <div style="height: 3000px"></div>
+      <button class="far">Far away</button>`);
+    document.querySelector('[data-testid=save]')!.addEventListener('click', (e) => { (e.target as HTMLElement).dataset.clicked = 'yes'; });
+  });
+  const lines: string[] = [];
+  const tabs = [{ n: 1, page, link: attachment }];
+  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(l), stop: () => undefined };
+  const run = async (line: string, cwd?: string) => {
+    lines.length = 0;
+    await runConsoleCommand(line, ctx, { cwd });
+    return [...lines];
+  };
+  const refIn = (tree: string[], text: string): string => /\[ref=(\w+)\]/.exec(tree.find((l) => l.includes(text))!)![1];
+
+  expect(await run('click e1')).toEqual(['[sm-dev] This tab has no snapshot yet. Take one with snapshot.']);
+  const tree = await run('snapshot');
+  const save = refIn(tree, 'button "Save"');
+  const note = refIn(tree, 'textbox "Note"');
+  const far = refIn(tree, 'button "Far away"');
+
+  // A snapshot of part of the page leaves the rest's refs working.
+  expect(await run('snapshot nav')).toHaveLength(3);
+  expect(await run(`click ${save}`)).toEqual([`[sm-dev] Clicked ${save} (button "Save")`]);
+  expect(await page.locator('[data-testid=save]').getAttribute('data-clicked')).toBe('yes');
+  expect(await run(`type [ref=${note}] hello`)).toEqual([`[sm-dev] Typed into [ref=${note}] (textbox "Note")`]);
+  await expect(page.locator('input[aria-label=Note]')).toHaveValue('hello');
+  expect(await run(`hover ref=${far}`)).toEqual([`[sm-dev] Hovered over ref=${far} (button "Far away")`]);
+  expect(await run(`probe ${save} e9999`)).toEqual([`found    ${save}  (1)`, 'missing  e9999']);
+  expect(await run(`snapshot ${save}`)).toEqual([`- button "Save" [ref=${save}]`]);
+  expect(await run(`screenshot ${save} save.png`, scriptsDir.path)).toEqual([expect.stringMatching(/^\[sm-dev\] Wrote save\.png \(e\d+ \(button "Save"\)\) from http/)]);
+  expect(await run('click e9999')).toEqual(['[sm-dev] No element has the ref e9999. Take a new snapshot for the page\'s refs.']);
+
+  // Only what's on screen: the far button is below it, until scrolled to.
+  await page.evaluate(() => window.scrollTo(0, 0));
+  const visible = await run('snapshot --visible');
+  expect(visible.some((l) => l.includes('button "Save"'))).toBe(true);
+  expect(visible.some((l) => l.includes('Far away'))).toBe(false);
+  expect(visible.join('\n')).not.toContain('[box=');
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  const scrolled = await run('snapshot --visible');
+  expect(scrolled.some((l) => l.includes('Far away'))).toBe(true);
+  expect(scrolled.some((l) => l.includes('button "Save"'))).toBe(false);
+
+  const css = await run('snapshot --css');
+  expect(css.find((l) => l.includes('button "Save"'))).toContain(`[ref=${save}] [css=button[data-testid="save"]]`);
+  expect(css.find((l) => l.includes('Far away'))).toContain('[css=button.far]');
+  expect(css.find((l) => l.includes('textbox "Note"'))).toContain('[css=input]');
+
+  // Refs reach into a frame and a shadow root, where selectors are
+  // suggested for neither; and look-alike buttons get told apart.
+  await page.evaluate(() => {
+    document.body.insertAdjacentHTML('afterbegin', '<button>Twin</button><button>Twin</button><div id="host"></div><iframe srcdoc="<button onclick=&quot;this.textContent=\'Hit\'&quot;>In frame</button>"></iframe>');
+    document.getElementById('host')!.attachShadow({ mode: 'open' }).innerHTML = '<button>Shadowed</button>';
+  });
+  await expect(page.frameLocator('iframe').locator('button')).toHaveText('In frame');
+  const more = await run('snapshot --css');
+  const twins = more.filter((l) => l.includes('button "Twin"'));
+  const [first, second] = twins.map((l) => /\[css=(.*)\]$/.exec(l)![1]);
+  expect(first).not.toBe(second);
+  for (const [i, css] of [first, second].entries()) {
+    expect(await page.locator(css).count()).toBe(1);
+    expect(await page.locator(css).evaluate((el, n) => el === document.querySelectorAll('body > button')[n], i)).toBe(true);
+  }
+  expect(more.find((l) => l.includes('Shadowed'))).not.toContain('[css=');
+  const framed = more.find((l) => l.includes('button "In frame"'))!;
+  expect(framed).not.toContain('[css=');
+  const inFrame = /\[ref=(f\d+e\d+)\]/.exec(framed)![1];
+  expect(await run(`click ${inFrame}`)).toEqual([`[sm-dev] Clicked ${inFrame} (button "In frame")`]);
+  await expect(page.frameLocator('iframe').locator('button')).toHaveText('Hit');
+  expect(await run(`click ${refIn(more, 'Shadowed')}`)).toEqual([`[sm-dev] Clicked ${refIn(more, 'Shadowed')} (button "Shadowed")`]);
+
+  // A load takes the snapshot's refs with the old document; a route
+  // change within the page doesn't.
+  await page.evaluate(() => history.pushState({}, '', '#elsewhere'));
+  expect(await run(`probe ${save}`)).toEqual([`found    ${save}  (1)`]);
+  await page.reload();
+  expect(await run(`click ${save}`)).toEqual(['[sm-dev] The page reloaded since the last snapshot. Take a new snapshot.']);
+
+  // help tells how to name an element, and isn't a command itself.
+  expect((await run('help')).join('\n')).toContain('e4: its ref in the latest snapshot');
 });

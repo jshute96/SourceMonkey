@@ -303,6 +303,46 @@ into pages.
     action races the tab's dialog tracker (`untilDialog`, as `menu`
     does), and returns once a dialog is up. The settle wait's limit is
     kept in Node too, since a stopped page's own timer never fires.
+- **`snapshot.ts`**: what `snapshot` adds to Playwright's tree.
+  - Refs: the tree is taken in Playwright's `ai` mode, where Playwright
+    gives each element a ref, `(f<n>)?e<n>`.
+    - `e<n>` counts elements within a document. An element keeps its
+      ref in later snapshots unless its role or name changes.
+    - `f<n>` is the number of the document's frame on the run's
+      connection; frame 0 goes without. Each new document takes the
+      next number: a reload, a navigation, each iframe, and other tabs
+      too, so the numbers only go up, with gaps.
+    - A page restored from the browser's back/forward cache brings its
+      old document back, and with it the old number.
+    - The numbers start again with each `sm-dev run`.
+  - A ref is looked up through the iframes the latest snapshot showed
+    it in, each step `:root >> aria-ref=…`, never by its prefix.
+    - Playwright finds a ref's frame by that number, and a page restored
+      by Back keeps refs numbered for a frame Playwright has since
+      renumbered ("Invalid frame in aria-ref selector").
+  - Each ref's line gives the label commands say back for it
+    (`link "past"`), noted with the frames it's in.
+  - Each page's latest snapshot is noted with its document's
+    `performance.timeOrigin`, new with each load. A ref used after a
+    load says so, not that no element has it, since Playwright's own
+    record of the snapshot went with the old document.
+  - `[cursor=pointer]` (the mouse shows a hand) is dropped from links
+    and buttons, which always have it.
+  - Playwright resolves refs against the latest snapshot only. So a
+    snapshot of part of the page is followed by a quiet one of the
+    whole, which keeps the rest's refs working (an element keeps its
+    ref across snapshots).
+  - `--visible` takes the tree with boxes and keeps lines whose box
+    meets the viewport, plus their parents. A frame's boxes are offset
+    by the frame's, and clipped to it.
+  - The quiet snapshot doubles the cost of `snapshot <selector>` on a
+    large page. It's skipped for `body`, and a failure only costs refs.
+  - `--css` works out a selector in the page for each ref, one
+    Playwright call each (about 2ms), so large trees are slow.
+    - Uniqueness is counted across open shadow roots too, as
+      Playwright's CSS engine matches there.
+    - Elements in frames or shadow roots get none, since the commands'
+      selectors can't reach into either.
 - **`save-html.ts`**: a page's DOM as a standalone file, for the
   `savehtml` command and the fixture's `saveHtml`.
 - **`cli.ts`** (`sm-dev`) and **`run.ts`**: the interactive tool,

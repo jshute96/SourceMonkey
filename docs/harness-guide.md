@@ -296,7 +296,7 @@ current one.
 | `key <keys>...` | Presses keys in order: `key j Shift+ArrowRight Escape` (`keys` works too). Takes the standard key names, case-insensitive (`home`, `ctrl+end`), and common short ones (`ctrl`, `cmd`, `esc`, `pgdn`, `del`) |
 | `eval <js>` | Evaluates in the page and prints the result: JSON, or an element's or function's description |
 | `eval --script <js>` | The same in the scripts' world, where a script without `@grant none` keeps its globals |
-| `snapshot [selector] [--out file]` | The page (or an element) as its accessibility tree, one line per element. `--out` writes it to a file |
+| `snapshot [selector] [--visible] [--css] [--out file]` | The page (or an element) as its accessibility tree, one line per element, each with a ref. `--visible`: only what's on screen. `--css`: a CSS selector for each element. `--out` writes it to a file |
 | `screenshot [selector] [--full] <file>` | A PNG of what's showing, of the whole page (`--full`), or of one element |
 | `savehtml <file>` | The page's HTML, for a spec to replay with `serveHtml` |
 | `probe <selector>... [--html]` | Which selectors match, and how many; `--html` prints each first match |
@@ -307,6 +307,24 @@ current one.
   what they did.
 - One that opens a dialog returns once the dialog is up, and says so;
   answer it with `accept` or `dismiss`.
+- Anywhere a command takes a selector, it also takes a ref from the
+  latest `snapshot`: `click e4` (or `ref=e4`, `[ref=e4]`). Playwright
+  makes the refs; `f2e4` is one it numbered for a frame.
+  - `[cursor=pointer]` marks an element the mouse shows a hand over:
+    one that looks clickable though it isn't a link or button.
+  - A command says what a ref named, from its snapshot line:
+    `Clicked e5 (link "past")`.
+  - A ref names the same element in later snapshots, until its role or
+    name changes (a button relabeled after a click gets a new one).
+  - Only refs in the latest snapshot work, so take a new one after the
+    page changes. A reload or navigation drops them all; a route change
+    within the page (a single-page app's) doesn't.
+- `--css` suggests a short selector that finds just that element,
+  passing over ids and classes that look generated (`css-1x2y3z`).
+  - Elements in a frame or a shadow root get none; use their ref.
+  - On a large page it takes a while; add `--visible` or a selector.
+- `--visible` goes by the viewport: content scrolled out of sight
+  inside a scrolling box on screen still counts.
 - Quote a selector or text with spaces: `click '.athing .title a'`,
   `type input 'hello world'`. Through `sm-dev send`, quote `#` too,
   since the shell reads it as a comment: `sm-dev send click '#submit'`.
@@ -610,7 +628,7 @@ What `sm-dev` does by hand, a spec does through the fixture:
 | (a saved page) | `serveHtml(file, url)` |
 | `click`, `type`, `key`, `eval`, `screenshot` | Playwright's own `page` and locator methods |
 | `probe <selector>` | `page.locator(selector).count()` |
-| `snapshot` | `locator.ariaSnapshot()` |
+| `snapshot` | `locator.ariaSnapshot({ mode: 'ai' })` |
 | `logs` | `page.on('console', …)` |
 | `match <script> <url>` | `loadUserscript(path, { url })`, which throws on a miss |
 | `validate <path>` | `loadUserscript(path)`, which throws with the same message |

@@ -17,6 +17,7 @@ import type { Page } from '@playwright/test';
 import type { ControlledTab } from './console-commands.js';
 import { ScriptThrew } from './inject.js';
 import { savePageHtml } from './save-html.js';
+import { documentOf, framesAround, locate, named, noteRefs, onScreen, refOf, refProblem, tidy, withCss } from './snapshot.js';
 
 /** The commands this module runs, as `help` groups them. */
 export const PAGE_COMMAND_GROUPS: { title: string; lines: string[] }[] = [
@@ -38,8 +39,10 @@ export const PAGE_COMMAND_GROUPS: { title: string; lines: string[] }[] = [
   {
     title: 'Looking at the page (a tab first too)',
     lines: [
-      'snapshot [selector] [--out file]',
-      '                  The page (or an element) as its accessibility tree',
+      'snapshot [selector] [--visible] [--css] [--out file]',
+      '                  The page (or an element) as its accessibility tree,',
+      '                  with a ref for each element; --visible: only what',
+      '                  is on screen; --css: a CSS selector for each',
       'screenshot [selector] [--full] <file>',
       '                  Save a PNG of the page, the whole page, or an element',
       'savehtml <file>   Save the page\'s HTML, for a spec to replay',
@@ -250,9 +253,9 @@ export async function runPageCommand(
         }
         const count = await matches(page, selector, say);
         if (count === null) return;
-        const target = page.locator(selector).first();
+        const target = locate(page, selector).first();
         const action = command === 'click' ? target.click({ timeout: ACTION_TIMEOUT_MS }) : target.hover({ timeout: ACTION_TIMEOUT_MS });
-        await act(action, `${command === 'click' ? 'Clicked' : 'Hovered over'} ${selector}${count > 1 ? ` (the first of ${count} matches)` : ''}`);
+        await act(action, `${command === 'click' ? 'Clicked' : 'Hovered over'} ${named(page, selector)}${count > 1 ? ` (the first of ${count} matches)` : ''}`);
         return;
       }
       case 'type': {
@@ -264,8 +267,8 @@ export async function runPageCommand(
         const [selector, ...text] = words;
         const count = await matches(page, selector, say);
         if (count === null) return;
-        const typing = page.locator(selector).first().pressSequentially(text.join(' '), { timeout: ACTION_TIMEOUT_MS });
-        await act(typing, `Typed into ${selector}${count > 1 ? ` (the first of ${count} matches)` : ''}`);
+        const typing = locate(page, selector).first().pressSequentially(text.join(' '), { timeout: ACTION_TIMEOUT_MS });
+        await act(typing, `Typed into ${named(page, selector)}${count > 1 ? ` (the first of ${count} matches)` : ''}`);
         return;
       }
       case 'key': {
@@ -287,7 +290,7 @@ export async function runPageCommand(
         return;
       }
       case 'snapshot': {
-        const parsed = takeFlags(command, input.words, { '--out': 'value' });
+        const parsed = takeFlags(command, input.words, { '--out': 'value', '--visible': 'bool', '--css': 'bool' });
         if (typeof parsed === 'string') {
           say(parsed);
           return;
@@ -298,7 +301,31 @@ export async function runPageCommand(
         }
         const selector = parsed.rest[0] ?? 'body';
         if (await matches(page, selector, say) === null) return;
-        const tree = await page.locator(selector).first().ariaSnapshot({ timeout: ACTION_TIMEOUT_MS });
+        const visible = parsed.flags['--visible'] === true;
+        let tree = '';
+        const taking = (async () => {
+          const doc = await documentOf(page);
+          tree = await locate(page, selector).first().ariaSnapshot({ mode: 'ai', boxes: visible, timeout: ACTION_TIMEOUT_MS });
+          noteRefs(page, tree, doc, framesAround(page, selector));
+          if (visible) {
+            const [width, height] = await page.evaluate(() => [window.innerWidth, window.innerHeight]);
+            tree = onScreen(tree, width, height);
+          }
+          // Refs resolve against the latest snapshot only, so one of part
+          // of the page is followed by one of the whole, quietly, to keep
+          // the rest's refs working. An element keeps its ref across
+          // snapshots. Failing, it costs only those refs.
+          if (selector !== 'body') {
+            const whole = await page.locator('body').ariaSnapshot({ mode: 'ai', timeout: ACTION_TIMEOUT_MS }).catch(() => null);
+            if (whole !== null) noteRefs(page, whole, doc);
+          }
+          if (parsed.flags['--css']) tree = await withCss(page, tree, say, () => !!tab.dialogs?.current);
+          tree = tidy(tree);
+        })();
+        if (!await done(taking)) {
+          say('The page opened a dialog during the snapshot, which is waiting for an answer.');
+          return;
+        }
         const outFile = parsed.flags['--out'];
         if (typeof outFile === 'string') {
           await write(outFile, () => writeFile(file(outFile), tree + '\n'));
@@ -330,11 +357,11 @@ export async function runPageCommand(
             return;
           }
           if (await matches(page, selector, say) === null) return;
-          await write(image, () => page.locator(selector).first().screenshot({ path: file(image), timeout: ACTION_TIMEOUT_MS }));
+          await write(image, () => locate(page, selector).first().screenshot({ path: file(image), timeout: ACTION_TIMEOUT_MS }));
         } else {
           await write(image, () => page.screenshot({ path: file(image), fullPage: parsed.flags['--full'] === true }));
         }
-        say(`Wrote ${shown(image)}${selector ? ` (${selector})` : ''} from ${page.url()}`);
+        say(`Wrote ${shown(image)}${selector ? ` (${named(page, selector)})` : ''} from ${page.url()}`);
         return;
       }
       case 'savehtml': {
@@ -360,13 +387,13 @@ export async function runPageCommand(
           return;
         }
         for (const selector of parsed.rest) {
-          const count = await countOf(page, selector);
+          const count = await refProblem(page, selector) ?? await countOf(page, selector);
           if (typeof count === 'string') out(`invalid  ${selector}  (${count})`);
           else if (count === 0) out(`missing  ${selector}`);
           else {
             out(`found    ${selector}  (${count})`);
             if (parsed.flags['--html']) {
-              const html = await page.locator(selector).first().evaluate((el) => el.outerHTML).catch(() => '');
+              const html = await locate(page, selector).first().evaluate((el) => el.outerHTML).catch(() => '');
               out(`    ${html.length > 500 ? html.slice(0, 500) + '…' : html}`);
             }
           }
@@ -469,7 +496,7 @@ function plain(err: Error): string {
 // How many elements a selector matches, or why it can't be counted.
 async function countOf(page: Page, selector: string): Promise<number | string> {
   try {
-    return await page.locator(selector).count();
+    return await locate(page, selector).count();
   } catch (err) {
     if (page.isClosed()) return 'The tab closed';
     const message = (err as Error).message;
@@ -481,9 +508,14 @@ async function countOf(page: Page, selector: string): Promise<number | string> {
 // How many elements a selector matches, or null (said why) when none
 // does or it can't be counted.
 async function matches(page: Page, selector: string, say: (line: string) => void): Promise<number | null> {
+  const problem = await refProblem(page, selector);
+  if (problem) {
+    say(problem);
+    return null;
+  }
   const count = await countOf(page, selector);
   if (typeof count === 'string') say(`The selector ${selector} can't be used: ${count}`);
-  else if (count === 0) say(`No element matches ${selector}`);
+  else if (count === 0) say(refOf(selector) ? `No element has the ref ${refOf(selector)}. Take a new snapshot for the page's refs.` : `No element matches ${selector}`);
   return typeof count === 'number' && count > 0 ? count : null;
 }
 
