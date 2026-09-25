@@ -197,6 +197,26 @@ under the extension, where each one's `@match` decides:
   note when that may have happened; `document-idle` scripts, the
   default, run on time.
 
+### Marked tabs
+
+Each tab the run controls gets a badge over its icon in the tab
+strip, in the colors the extension's toolbar badge uses:
+- The number is how many scripts are in play on the page: the ones
+  whose `@match` covers it, plus any that ran there anyway. `0` means
+  the tab is controlled, but no script applies.
+- Green: all is well. Red: a script reported an error. Orange: a
+  script that should run hasn't started yet, or one ran that
+  shouldn't have.
+- Grey: the run has ended, or was killed, so nothing streams from
+  this tab anymore. Reload it to get the site's own icon back.
+  - After a kill it takes a few seconds, or up to a minute in a tab
+    that isn't showing, since Chrome slows timers there.
+- Only without `--extension`: there, the extension's toolbar badge
+  covers the tabs.
+- To have only the badge as the tab's icon, the site's own icon links
+  get their `rel` renamed (see
+  [What is and isn't faithful](#what-is-and-isnt-faithful)).
+
 ### Page dialogs
 
 A script's `alert`, `confirm` or `prompt` is left open and reported in
@@ -481,6 +501,10 @@ Close, but not the same:
   does. There is no download bar or prompt, and no `onprogress`.
 - `GM_notification` shows nothing; a `timeout` still fires `ondone`,
   and a test delivers the click.
+- Under `sm-dev run`, the page's favicon links are not as the site
+  left them: its icon links have `rel="sm-set-aside-icon"`, and the
+  badge's own `rel="icon"` link is added. A script that reads or
+  changes the favicon sees that. The fixture leaves them alone.
 
 Not faithful, use the extension backend:
 

@@ -35,6 +35,7 @@ import { setUserAgentDataSnapshot } from '../injector.js';
 import { GM_RUNTIME_SOURCE_URL } from '../script-source-url.js';
 import type { BrowserActions, HarnessHost, OpenedTab, PageLink } from './host.js';
 import type { InjectionWorld, PreparedScript } from './prepare.js';
+import { BADGE_BINDING, TabBadge, type BadgeDocument, type BadgeOptions } from './tab-badge.js';
 
 // The named isolated world. Any name works; it only has to be the same
 // for every entry so they share one global object, the way one
@@ -193,6 +194,13 @@ export class PageAttachment implements PageLink {
    */
   onOpenedTab: ((tab: Page) => void) | null = null;
   private mainFrameId = '';
+  // The main frame's recent documents by loader id, for the badge: one
+  // restored from the back/forward cache is the same document again,
+  // with the reports it sent before.
+  private readonly documents = new Map<string, BadgeDocument>();
+  private currentDocument: BadgeDocument = { url: '', spans: [[0, Infinity]] };
+  private badge: TabBadge | null = null;
+  private badgeCall: ((payload: string) => void) | null = null;
   // Execution contexts by id, so a binding call can be traced to its
   // frame and world, and a push can find the isolated world.
   private readonly contexts = new Map<number, ContextInfo>();
@@ -277,12 +285,18 @@ export class PageAttachment implements PageLink {
     await this.cdp.send('Page.enable');
     await this.cdp.send('Runtime.enable');
     this.cdp.on('Runtime.bindingCalled', (ev) => {
+      if (ev.name === BADGE_BINDING) {
+        const context = this.contexts.get(ev.executionContextId);
+        if (context?.frameId === this.mainFrameId && context.name === ISOLATED_WORLD) this.badgeCall?.(ev.payload);
+        return;
+      }
       const origin = ev.name === RUNTIME_BINDING ? 'isolated' : ev.name === BINDING ? 'page' : null;
       if (origin) void this.onBridgeEvent(ev.payload, ev.executionContextId, origin);
     });
     await this.cdp.send('Runtime.addBinding', { name: BINDING });
     // Only in the isolated world, so the page can't call it.
     await this.cdp.send('Runtime.addBinding', { name: RUNTIME_BINDING, executionContextName: ISOLATED_WORLD });
+    await this.cdp.send('Runtime.addBinding', { name: BADGE_BINDING, executionContextName: ISOLATED_WORLD });
     await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', {
       source: BRIDGE_LISTENER,
       runImmediately: true,
@@ -297,6 +311,7 @@ export class PageAttachment implements PageLink {
     // running from the earlier document and a "skipped" would be false.
     this.cdp.on('Page.frameNavigated', (ev) => {
       if (ev.frame.parentId) return;
+      this.enterDocument(ev.frame.loaderId, ev.frame.url);
       this.host.noteNavigation(this, this.injectedScripts());
       void readUserAgentData(this.page);
     });
@@ -309,11 +324,58 @@ export class PageAttachment implements PageLink {
     });
     const { frameTree } = await this.cdp.send('Page.getFrameTree');
     this.mainFrameId = frameTree.frame.id;
+    this.currentDocument.url = frameTree.frame.url;
+    this.documents.set(frameTree.frame.loaderId, this.currentDocument);
     this.page.on('close', this.onClose);
     this.host.attachPage(this);
     // Closed during the awaits above, before the listener was on: the
     // event has come and gone.
     if (this.page.isClosed()) this.onClose();
+  }
+
+  /**
+   * Badge the tab's icon with its script count and status, as the
+   * extension's toolbar badge does, until the attachment is disposed.
+   * See tab-badge.ts.
+   */
+  async showBadge(options?: BadgeOptions): Promise<void> {
+    if (this.badge || this.disposing) return;
+    const badge = new TabBadge({
+      page: this.page,
+      link: this,
+      host: this.host,
+      scripts: () => this.injectedScripts(),
+      currentDocument: () => this.currentDocument,
+      addScript: async (source) => {
+        await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', { source, runImmediately: true, worldName: ISOLATED_WORLD });
+      },
+      evaluate: async (expression) => {
+        const contextId = this.contextFor(ISOLATED_WORLD);
+        if (contextId !== null && !this.closed) await this.cdp.send('Runtime.evaluate', { expression, contextId });
+      },
+      onCall: (handler) => { this.badgeCall = handler; },
+    }, options);
+    this.badge = badge;
+    // Best effort: a tab is no less controlled for lacking its badge.
+    await badge.start().catch(() => badge.stop());
+  }
+
+  // The main frame moved to the document `loaderId` names.
+  private enterDocument(loaderId: string, url: string): void {
+    const now = Date.now();
+    this.currentDocument.spans[this.currentDocument.spans.length - 1][1] = now;
+    let doc = this.documents.get(loaderId);
+    if (!doc) {
+      doc = { url, spans: [] };
+      this.documents.set(loaderId, doc);
+      // Only the last few: the back/forward cache holds no more.
+      for (const key of this.documents.keys()) {
+        if (this.documents.size <= 10) break;
+        this.documents.delete(key);
+      }
+    }
+    doc.spans.push([now, Infinity]);
+    this.currentDocument = doc;
   }
 
   // ---------- PageLink ----------
@@ -541,6 +603,8 @@ export class PageAttachment implements PageLink {
   /** Detach everything and drop the CDP session. */
   async dispose(): Promise<void> {
     this.disposing = true;
+    // Grey now, while the session can still say so.
+    if (this.badge) await briefly(this.badge.stop());
     const unregister = (async () => {
       for (const id of [...this.injected.keys()]) await this.remove(id);
       for (const identifier of this.runtimeWorlds.values()) {

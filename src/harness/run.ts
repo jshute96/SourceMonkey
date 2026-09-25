@@ -361,6 +361,7 @@ async function runInHarness(
     // Otherwise it stays null (see TODO.md).
     const attachment = await attachPage(page, host);
     held.attachment = attachment;
+    await attachment.showBadge();
     await tabs.start(page, attachment, dialogs);
   }
   const prepared = await prepareAll(opts);
@@ -795,6 +796,7 @@ class FollowedTabs {
     });
     const attachment = await attachPage(page, this.host);
     this.numbers.set(attachment, n);
+    await attachment.showBadge();
     // Read before the check below, so a tab closing meanwhile is caught
     // by it rather than listed after its close has passed.
     const targetId = await targetIdOf(page);

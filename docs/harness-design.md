@@ -240,6 +240,41 @@ into pages.
   - Survives reloads (init scripts persist), so the interactive loop
     costs one keystroke. Re-injecting a script removes its
     old entries first.
+- **`tab-badge.ts`**: the badge `sm-dev run` draws over each
+  controlled tab's favicon. Harness mode only; under `--extension` the
+  toolbar badge does this job.
+  - Count and color follow the extension's toolbar badge
+    (`computeBadge`): the scripts matching the document's URL, plus any
+    that started or failed there. Red for an error, orange while
+    expected and started disagree, else green. No purple: the run
+    reloads the tabs a change affects.
+  - Reports count for the document they arrived during. The attachment
+    keeps recent documents by loader id, with the times each was
+    showing, so one restored from the back/forward cache keeps its own.
+  - Drawn in the isolated world, top frame only, on a canvas over the
+    site's icon.
+    - The site's icon links get their `rel` renamed, since Chrome
+      doesn't reliably pick the last of several icon links.
+    - A site changing its icon later is followed, including code that
+      finds the badge's link as "the" icon and sets its `href`.
+    - Only `<head>` is watched, and only icon links are looked at.
+  - Same-origin icons load in the page. A cross-origin one would taint
+    the canvas, so the page asks the run through a binding; the run
+    fetches it with the browser context's cookies and hands back a
+    `data:` URL. Images only, so the binding can't be used to read
+    pages past `@connect`. A small cache keeps successes only.
+  - The run pings every 2 seconds, through one pair of host listeners
+    for all tabs. On dispose it greys the badge at once.
+  - After 6 seconds without a ping (a killed run), the page greys it
+    itself. A hidden tab's timers are slowed, so there it can take up
+    to a minute. A late timer in a showing tab (a dialog, a restore)
+    restarts the wait instead of flashing grey.
+  - A tab taken over from an earlier run shares that run's isolated
+    world, so the old badge code carries on with the new pings. An
+    owner mark on the root element keeps a second copy from drawing.
+  - Opt-in (`PageAttachment.showBadge`), and best effort, so specs
+    using the fixture see the site's own icon, and a failed badge
+    doesn't fail a tab.
 - **`fixture.ts`**: the `@playwright/test` extension consumers import.
   Wraps the three above into `loadUserscript`, `gm`, `reports`, and a
   `serveSnapshot` helper that routes a saved HTML file at its original

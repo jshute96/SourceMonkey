@@ -45,7 +45,7 @@ test.describe('harness injection', () => {
     await expect(page.locator('#target')).toHaveText('other page');
   });
 
-  test('a sync throw and a later async throw are both attributed', async ({ page, fixtureServer, host, loadScript }) => {
+  test('a sync throw and a later async throw are both attributed', async ({ page, fixtureServer, host, attachment, loadScript }) => {
     await loadScript({
       relativePath: 'thrower.user.js',
       meta: { name: 'Thrower', match: ['*://*/target.html'], grant: ['none'] },
@@ -54,6 +54,11 @@ test.describe('harness injection', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect.poll(() => host.reports.errors.map((e) => e.message).sort()).toEqual(['at once', 'later']);
     expect(host.reports.errors[0].name).toBe('Thrower');
+    // Each says which page it came from, for telling tabs apart.
+    expect(host.reports.errors.every((e) => host.pageOf(e) === attachment)).toBe(true);
+    // Skips the page decides on too.
+    await host.handle({ type: 'sm:abandoned', id: 'x', reason: 'test' }, attachment, 'isolated');
+    expect(host.pageOf(host.reports.skipped.at(-1)!)).toBe(attachment);
   });
 
   test('@grant puts the script in an isolated world; @grant none in the page world', async ({ page, fixtureServer, loadScript }) => {

@@ -497,17 +497,16 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
         return undefined;
       }
       case 'sm:error': {
-        const report: ErrorReport = {
-          ...this.baseReport(payload, from),
+        const report: ErrorReport = this.baseReport(payload, from, {
           message: str(payload.message),
           stack: str(payload.stack),
-        };
+        });
         this.reports.errors.push(report);
         this.notify('script-error', report);
         return undefined;
       }
       case 'sm:abandoned': {
-        const report: SkipReport = { ...this.baseReport(payload, from), reason: str(payload.reason) || 'skip' };
+        const report: SkipReport = this.baseReport(payload, from, { reason: str(payload.reason) || 'skip' });
         this.reports.skipped.push(report);
         this.notify('skip', report);
         return undefined;
@@ -1019,14 +1018,17 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
 
   // ---------- Helpers ----------
 
-  private baseReport(payload: Record<string, unknown>, from: PageLink): ScriptReport {
+  // `extra` goes in here rather than being spread over the result
+  // afterwards, since a copy would lose the page it came from.
+  private baseReport<T extends object = object>(payload: Record<string, unknown>, from: PageLink, extra?: T): ScriptReport & T {
     const scriptId = str(payload.id);
     const report = {
       scriptId,
       name: str(payload.name) || this.nameOf(scriptId),
       url: str(payload.url),
       at: Date.now(),
-    };
+      ...extra,
+    } as ScriptReport & T;
     this.recordPages.set(report, from);
     return report;
   }
