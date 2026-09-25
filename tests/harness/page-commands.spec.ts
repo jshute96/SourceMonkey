@@ -75,7 +75,10 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
 
   expect(await run('type \'input[aria-label=Note]\' \'hello world\'')).toEqual(['[sm-dev] Typed into input[aria-label=Note]']);
   expect(await run('key Backspace Backspace')).toEqual(['[sm-dev] Pressed Backspace, Backspace']);
-  expect(await run('key Nope')).toEqual(['[sm-dev] The key command failed: Nope is not a key name. Keys are named as in Enter, ArrowLeft, Shift+Tab, or a single character.']);
+  expect(await run('key Nope')).toEqual(['[sm-dev] The key command failed: Nope is not a key name. Keys are named as in Enter, ArrowLeft, Shift+Tab (case-insensitive), or a single character.']);
+  expect(await run('key Shift+')).toEqual(['[sm-dev] Shift+ has a + with no key on one side. Join keys with +, as in Shift+Tab.']);
+  // Through the keys alias, case-insensitive.
+  expect(await run('keys end shift+home')).toEqual(['[sm-dev] Pressed End, Shift+Home']);
   expect(await run('eval document.querySelector("input").value')).toEqual(['"hello wor"']);
 
   const tree = await run('snapshot');

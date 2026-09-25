@@ -195,8 +195,8 @@ export const CONSOLE_HELP = [
   ...ID_LINES.map((line) => `  ${line}`),
 ];
 
-// The names a command also answers to, as `help` looks them up.
-const ALIASES: Record<string, string> = { script: 'scripts', tab: 'tabs', exit: 'quit', '?': 'help' };
+// The names a command also answers to, when run and in `help`.
+const ALIASES: Record<string, string> = { script: 'scripts', tab: 'tabs', exit: 'quit', '?': 'help', keys: 'key' };
 
 /**
  * The entries for `name` in a help list: a line starting with it, and
@@ -249,8 +249,9 @@ export async function runConsoleCommand(
 ): Promise<void> {
   const trimmed = line.trim();
   if (!trimmed) return;
-  const [command, ...rest] = trimmed.split(/\s+/);
-  const argument = trimmed.slice(command.length).trim();
+  const [typedCommand, ...rest] = trimmed.split(/\s+/);
+  const argument = trimmed.slice(typedCommand.length).trim();
+  const command = ALIASES[typedCommand] ?? typedCommand;
   const current = ctx.current ?? ctx.scripts[0];
   const scriptId = current?.spec?.id;
   // Named in the output only when there is a choice to be clear about.
@@ -259,8 +260,7 @@ export async function runConsoleCommand(
   // silently dropped.
   const takesNothing = (): boolean => {
     if (!argument) return true;
-    const name = command === '?' ? 'help' : command === 'exit' ? 'quit' : command;
-    ctx.out(`[sm-dev] The ${name} command takes no arguments`);
+    ctx.out(`[sm-dev] The ${command} command takes no arguments`);
     return false;
   };
   const picked = currentTab(ctx);
@@ -289,7 +289,6 @@ export async function runConsoleCommand(
 
   switch (command) {
     case 'help':
-    case '?':
       if (!argument) {
         for (const l of CONSOLE_HELP) ctx.out(l ? `  ${l}` : '');
         return;
@@ -299,7 +298,6 @@ export async function runConsoleCommand(
       for (const l of lines) ctx.out(l ? `  ${l}` : '');
       return;
     case 'quit':
-    case 'exit':
       if (!takesNothing()) return;
       ctx.stop();
       return;
@@ -328,8 +326,7 @@ export async function runConsoleCommand(
     case 'newtab':
       await openNewTab(ctx, rest);
       return;
-    case 'tabs':
-    case 'tab': {
+    case 'tabs': {
       if (!argument) {
         printTabs(ctx);
         return;
@@ -350,8 +347,7 @@ export async function runConsoleCommand(
       ctx.out(`[sm-dev] The page commands now act on ${tabName(picked)} (${picked.page.url()})`);
       return;
     }
-    case 'scripts':
-    case 'script': {
+    case 'scripts': {
       if (!argument) {
         ctx.out('Loaded scripts:');
         if (ctx.scripts.length === 0) ctx.out(`  ${NO_SCRIPTS}`);
@@ -604,7 +600,7 @@ export async function runConsoleCommand(
       }
       // The sender's own words, when they start with the command; a
       // whole command sent as one quoted word is split like a typed one.
-      const typed = words?.[0] !== command;
+      const typed = words?.[0] !== typedCommand;
       const list = typed ? splitWords(argument) : words!.slice(1).map((text) => ({ text, start: -1, end: -1 }));
       // A tab first (T2, targetId=..., pageId=...), or the current one.
       // Among any flags that lead (and a flag's value), so `eval --script

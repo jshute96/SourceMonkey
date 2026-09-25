@@ -293,7 +293,7 @@ current one.
 | --- | --- |
 | `click <selector>`, `hover <selector>` | A real mouse click or hover, scrolled into view. With several matches, the first |
 | `type <selector> <text>` | Types into an element, key by key |
-| `key <keys>...` | Presses keys: `key j`, `key Shift+ArrowRight`, `key Escape` |
+| `key <keys>...` | Presses keys in order: `key j Shift+ArrowRight Escape` (`keys` works too). Takes the standard key names, case-insensitive (`home`, `ctrl+end`), and common short ones (`ctrl`, `cmd`, `esc`, `pgdn`, `del`) |
 | `eval <js>` | Evaluates in the page and prints the result: JSON, or an element's or function's description |
 | `eval --script <js>` | The same in the scripts' world, where a script without `@grant none` keeps its globals |
 | `snapshot [selector] [--out file]` | The page (or an element) as its accessibility tree, one line per element. `--out` writes it to a file |

@@ -27,7 +27,9 @@ export const PAGE_COMMAND_GROUPS: { title: string; lines: string[] }[] = [
       'hover <selector>  Move the mouse over an element',
       'type <selector> <text>',
       '                  Type text into an element',
-      'key <keys>...     Press keys: key j, key Shift+ArrowRight, key Escape',
+      'key <keys>...     Press keys in order: key j Shift+ArrowRight Escape',
+      '                  (standard key names, case-insensitive, plus modifiers',
+      '                  ctrl/shift/alt/meta/cmd, short names like esc, etc)',
       'eval <js>         Evaluate in the page and print the result;',
       '                  eval --script evaluates in the scripts\' world;',
       '                  eval {{ starts multi-line block, ended by }}',
@@ -272,10 +274,16 @@ export async function runPageCommand(
           say('The key command needs a key, e.g. key j or key Shift+ArrowRight');
           return;
         }
+        const unjoined = keys.find((k) => keyParts(k).includes(''));
+        if (unjoined) {
+          say(`${unjoined} has a + with no key on one side. Join keys with +, as in Shift+Tab.`);
+          return;
+        }
+        const named = keys.map(keyName);
         const pressing = (async () => {
-          for (const key of keys) await page.keyboard.press(key);
+          for (const key of named) await page.keyboard.press(key);
         })();
-        await act(pressing, `Pressed ${keys.join(', ')}`);
+        await act(pressing, `Pressed ${named.join(', ')}`);
         return;
       }
       case 'snapshot': {
@@ -394,13 +402,65 @@ async function write(name: string, work: () => Promise<unknown>): Promise<void> 
   }
 }
 
+// The key names Playwright's `keyboard.press` takes, matched without
+// regard to case: its US layout's `code` names (KeyA, Digit1, Home),
+// which mostly match the standard `key` names, and the modifiers. It
+// mirrors playwright-core's USKeyboardLayout, so a Playwright upgrade
+// may add names.
+const KEY_NAMES = [
+  'Shift', 'Control', 'Alt', 'Meta', 'ControlOrMeta', 'AltGraph',
+  'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight', 'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight',
+  'Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'Insert', 'Space',
+  'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown',
+  'CapsLock', 'NumLock', 'ScrollLock', 'PrintScreen', 'Pause', 'ContextMenu',
+  'AudioVolumeUp', 'AudioVolumeDown', 'AudioVolumeMute', 'MediaPlayPause', 'MediaTrackNext', 'MediaTrackPrevious',
+  ...Array.from({ length: 12 }, (_, i) => `F${i + 1}`),
+  ...Array.from({ length: 26 }, (_, i) => `Key${String.fromCharCode(65 + i)}`),
+  ...Array.from({ length: 10 }, (_, i) => `Digit${i}`),
+  ...Array.from({ length: 10 }, (_, i) => `Numpad${i}`),
+  'NumpadAdd', 'NumpadSubtract', 'NumpadMultiply', 'NumpadDivide', 'NumpadDecimal', 'NumpadEnter',
+  'Backquote', 'Minus', 'Equal', 'BracketLeft', 'BracketRight', 'Backslash', 'Semicolon', 'Quote',
+  'Comma', 'Period', 'Slash',
+];
+
+// Other names people reach for, lowercase. None may be a name above
+// too (`minus` would shadow the Minus key, which Shift makes `_`).
+const KEY_ALIASES: Record<string, string> = {
+  ctrl: 'Control', ctl: 'Control', cmd: 'Meta', command: 'Meta', super: 'Meta', win: 'Meta', windows: 'Meta',
+  opt: 'Alt', option: 'Alt', mod: 'ControlOrMeta', cmdorctrl: 'ControlOrMeta', ctrlorcmd: 'ControlOrMeta',
+  esc: 'Escape', return: 'Enter', del: 'Delete', ins: 'Insert', bksp: 'Backspace', bs: 'Backspace',
+  spacebar: 'Space', up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight',
+  pgup: 'PageUp', pgdn: 'PageDown', pgdown: 'PageDown', menu: 'ContextMenu', apps: 'ContextMenu',
+  prtsc: 'PrintScreen', prtscn: 'PrintScreen', break: 'Pause', caps: 'CapsLock', plus: '+',
+};
+
+const KEYS_BY_LOWER = new Map([
+  ...KEY_NAMES.map((name) => [name.toLowerCase(), name] as const),
+  ...Object.entries(KEY_ALIASES),
+]);
+
+/**
+ * A typed key, or combination (`ctrl+home`), as Playwright names it.
+ * A single character stays as typed, since its case is the key (`A` is
+ * Shift+a). A name it doesn't know is passed on, for Playwright's error.
+ */
+export function keyName(typed: string): string {
+  return keyParts(typed).map((part) => (part.length <= 1 ? part : KEYS_BY_LOWER.get(part.toLowerCase()) ?? part)).join('+');
+}
+
+// `+` joins the parts, and is a key itself last (`Control++`). An
+// empty part is a `+` with no key on one side (`Shift+`).
+function keyParts(typed: string): string[] {
+  return typed === '+' ? ['+'] : typed.endsWith('++') ? [...typed.slice(0, -2).split('+'), '+'] : typed.split('+');
+}
+
 // Playwright's message as a person should see it: its first line,
 // without the method it came from (`locator.click: `), capitalized, and
 // with plain words for the common cases.
 function plain(err: Error): string {
   const first = err.message.split('\n')[0].replace(/^(\w+(\.\w+)+: )+/, '').replace(/\.$/, '');
   const key = /Unknown key: "(.+)"/.exec(first);
-  if (key) return `${key[1]} is not a key name. Keys are named as in Enter, ArrowLeft, Shift+Tab, or a single character.`;
+  if (key) return `${key[1]} is not a key name. Keys are named as in Enter, ArrowLeft, Shift+Tab (case-insensitive), or a single character.`;
   const timeout = /Timeout (\d+)ms exceeded/.exec(first);
   if (timeout) return `The element wasn't ready (visible, stable, and not covered) within ${Number(timeout[1]) / 1000} seconds`;
   return first.charAt(0).toUpperCase() + first.slice(1);

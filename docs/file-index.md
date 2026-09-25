@@ -298,7 +298,7 @@ command. See `docs/harness-design.md`.
 | `tests/unit/harness-cdp-endpoint.test.mjs` | Unit tests for `cdpEndpoint`: the forms `sm-dev --cdp` accepts |
 | `tests/unit/harness-cli-args.test.mjs` | Unit tests for `sm-dev`'s argument checks: `run` flag combinations, and `send` / `stop` / `list` misuse |
 | `tests/unit/harness-devtools.test.mjs` | Unit tests for `run --devtools`: when it is on, and the message when `chrome-devtools` is missing |
-| `tests/unit/harness-page-commands.test.mjs` | Unit tests for how the page commands split a typed line into words |
+| `tests/unit/harness-page-commands.test.mjs` | Unit tests for how the page commands split a typed line into words, and name keys for `key` |
 | `tests/unit/harness-runs.test.mjs` | Unit tests for the run registry: a sent line's round trip, stale records, `stop`'s SIGTERM fallback |
 | `tests/unit/harness-command-lines.test.mjs` | Unit tests for `eval {{ ... }}` blocks, comments, and lists of commands |
 | `tests/unit/harness-page-output.test.mjs` | Unit tests for which page console lines and errors `sm-dev run` shows |
