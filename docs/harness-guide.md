@@ -95,6 +95,13 @@ this machine, or the `SM_DEV_CDP` environment variable) and
 drives it. Everything it prints is plain text meant to be read by a
 person or an agent.
 
+Help:
+- `sm-dev --help` lists everything: the commands, their flags, and the
+  commands a run takes.
+- `sm-dev help run` (or `sm-dev run --help`) shows one command and
+  only the flags it takes.
+- It covers a run's typed commands too: `sm-dev help status tabs`.
+
 | Command | What it does |
 | --- | --- |
 | `sm-dev run <script.user.js> [--url U]` | Opens a tab at `U` (default: the first URL the script's `@match` implies), injects the script as it is on disk, and streams the script's console lines, errors, and start / skipped / error reports until Ctrl-C, `quit` or `sm-dev stop`, or for `--seconds N`. |
@@ -266,7 +273,7 @@ commands from its own input while it streams.
 | `open [page]` | Navigates to a URL, or to a script's default page: the selected script's when bare, or one by number (`open 2`, or `open T2.3` in T2). `open all` is `tabs new all`. `--noscript` / `--script` switch the tab's scripts off or back on (see [Driving and reading the page](#driving-and-reading-the-page)) |
 | `focus [tab]` | Brings the tab to the front, un-minimizing its window |
 | `accept [text]`, `dismiss` | Answers an open dialog (see [Page dialogs](#page-dialogs)) |
-| `help`, `quit` | The list, and stop |
+| `help [command]`, `quit` | The list, or one command's entry (`help status`); and stop |
 
 A `<script>` is its number in the `scripts` list, its path, file name or
 `@name`, or a piece of its name or path that no other loaded script

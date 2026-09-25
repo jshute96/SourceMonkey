@@ -80,3 +80,40 @@ test('--help lists the commands a run takes too', () => {
   assert.match(r.stdout, /^ {4}click <selector> /m);
   assert.match(r.stdout, /^ {4}menu \[what\] /m);
 });
+
+function help(...args) {
+  const r = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8' });
+  return { code: r.status, out: r.stdout + r.stderr };
+}
+
+test('help for one command shows its entry and only its flags', () => {
+  const match = help('help', 'match');
+  assert.equal(match.code, 0);
+  assert.match(match.out, /^Usage: sm-dev match <script> \[url\]\.\.\. \[options\]$/m);
+  assert.match(match.out, /^ {2}--url URL /m);
+  assert.match(match.out, /^ {2}--root DIR /m);
+  assert.doesNotMatch(match.out, /--cdp|--watch|^ {2}run /m);
+  // --help before or after the command asks the same.
+  assert.equal(help('match', '--help').out, match.out);
+  assert.equal(help('--help', 'match').out, match.out);
+  // Even with a flag it would refuse.
+  assert.equal(help('run', '--bogus', '--help').code, 0);
+});
+
+test('help covers a run\'s typed commands, and refuses unknown names', () => {
+  const typed = help('help', 'status', 'scripts', 'get');
+  assert.equal(typed.code, 0);
+  assert.match(typed.out, /^Commands typed in sm-dev run, or sent with sm-dev send:$/m);
+  // Two from one group share its heading.
+  assert.equal(typed.out.match(/^ {2}Scripts:$/gm).length, 1);
+  assert.match(typed.out, /^ {4}status \[what\] /m);
+  assert.match(typed.out, /^ {4}get <key> /m);
+  assert.doesNotMatch(typed.out, /menu \[what\]/);
+  assert.deepEqual(help('help', 'nope'), { code: 2, out: 'nope is not a command. Type sm-dev --help to list them.\n' });
+  // help is both, and shows both.
+  const both = help('help', 'help').out;
+  assert.match(both, /^Usage: sm-dev help \[command\]\.\.\.$/m);
+  assert.match(both, /^ {4}help \[command\] {4}List these/m);
+  // send's own --help, not one meant for the command sent.
+  assert.match(help('send', '--help').out, /^Usage: sm-dev send /m);
+});

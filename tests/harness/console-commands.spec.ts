@@ -52,6 +52,15 @@ test.describe('sm-dev typed commands', () => {
     expect(help).toContain('');
     expect(help).not.toContain('  ');
     expect(help[help.indexOf('') + 1]).toBe('  Menu commands:');
+    expect(await run('help status get')).toEqual([
+      '  Scripts:',
+      '    status [what]     Show the tab\'s URL and each script\'s status there;',
+      '                      or one script (3, T2.3), a tab (T2), or all tabs',
+      '',
+      '  Stored values:',
+      '    get <key>         Print one stored value',
+    ]);
+    expect(await run('help nope')).toEqual(['[sm-dev] nope is not a command. Type help to list them.']);
     expect(await run('status now')).toEqual(['[sm-dev] No loaded script matches now. Type scripts to list them.']);
     expect(await run('reload now')).toEqual(['[sm-dev] now is not a tab. Tabs are named T1, T2 and so on; type tabs to list them.']);
   });

@@ -23,7 +23,7 @@ import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import { CommandAssembler, echoCommand, parseCommandList, unclosedBlockMessage } from './command-lines.js';
-import { CONSOLE_HELP, writeOutputLine } from './console-commands.js';
+import { CONSOLE_HELP, consoleCommandsHelp, helpEntries, writeOutputLine } from './console-commands.js';
 import { devtoolsWanted } from './devtools.js';
 import { NO_RULE_COVERS_URL, explainMatch, isDirectoryMessage, noSuchFileMessage, prepareScript, withDefaultScheme } from './prepare.js';
 
@@ -31,72 +31,120 @@ import { NO_RULE_COVERS_URL, explainMatch, isDirectoryMessage, noSuchFileMessage
 // carrying it out: the one kind that exits 2.
 class UsageError extends Error {}
 
-const USAGE = `sm-dev: develop and test userscripts against a real browser,
+const INTRO = `sm-dev: develop and test userscripts against a real browser,
 with SourceMonkey's own injection and GM_* APIs behind them.
 
-Usage: sm-dev <command> [options]
+Usage: sm-dev <command> [options]`;
+
+// Each command's entry, as the full help lists them and `help <command>`
+// picks them out: a line starting with the name, and indented lines
+// carrying on its description.
+const COMMAND_LINES = [
+  'run <script>...             Inject the script(s) into a page and stream',
+  '                            their console lines, reports and GM_* calls',
+  '                            (no scripts with --noscript)',
+  'validate <path>...          Run the install-time checks (header,',
+  '                            @require, syntax) over files or directories',
+  'match <script> [url]...     Say whether the script would run on each',
+  '                            URL (and --url\'s), and which header rule',
+  '                            decided',
+  'clear --extension           Remove every script in the extension\'s',
+  '                            Scratch collection and turn solo mode off',
+  'list                        List sm-dev runs active on this machine',
+  'send [run] [command|-]      Run a command in another sm-dev run',
+  '                            Run IDs are D1, D2. The command can be',
+  '                            multi-line, one command per line.',
+  '                            Omit it or use - to read from stdin.',
+  'stop [run]... | --all       End one or more runs, or all',
+  'help [command]...           List these, or one command\'s help and',
+  '                            options (a run\'s typed commands too)',
+];
+
+// The flags, grouped as the full help shows them. `commands` are the
+// ones a group's flags apply to, for `help <command>`; `only` narrows
+// or widens that for one flag.
+const OPTION_GROUPS: { title: string; commands: string[]; lines: string[]; only?: Record<string, string[]> }[] = [
+  {
+    title: 'Options for the commands that read scripts (run, validate, match)',
+    commands: ['run', 'validate', 'match'],
+    lines: [
+      '--root DIR      The repo root, searched for local copies of @require',
+      '                URLs (default: the current directory)',
+      '--local DIR     Another directory to search; repeatable',
+    ],
+  },
+  {
+    title: 'Options for the browser commands (run, clear)',
+    commands: ['run', 'clear'],
+    lines: [
+      '--cdp URL|PORT  Browser to connect to: a URL, host:port, or just a',
+      '                port on this machine (default: $SM_DEV_CDP or 9233)',
+      '--launch        Launch a Chromium instead of connecting to one',
+      '--headed        With --launch: show the browser',
+    ],
+  },
+  {
+    title: 'Options for run',
+    commands: ['run'],
+    only: { '--url': ['run', 'match'] },
+    lines: [
+      '--url URL       The page to open (default: the first page the script\'s',
+      '                @match implies). Also checked by match, so one command',
+      '                line serves both',
+      '--all           Open each script\'s default page, one tab per page,',
+      '                instead of only the first script\'s',
+      '--noscript      Start with no scripts, as a browser to drive with the',
+      '                typed commands (a blank page unless --url names one)',
+      '--notab         Open no tab at startup; type tabs new to open one.',
+      '                With --extension, the pages you browse to run them',
+      '--watch         Re-inject and reload when a script or its files change',
+      '--values JSON   Seed GM_* storage before the script runs, e.g.',
+      '                --values \'{"units":"metric"}\'',
+      '--fire-menu S   Fire the registered menu command named S once the page',
+      '                has loaded, as if picked from the toolbar menu',
+      '--seconds N     Stop after N seconds instead of waiting for Ctrl-C,',
+      '                quit or sm-dev stop',
+      '--page-errors   Also show the page\'s own errors, not just the script\'s',
+      '--extension     Push the script into the SourceMonkey extension in',
+      '                that browser instead of injecting it; reports then',
+      '                come from the script\'s own Log tab',
+      '--solo          With --extension: disable every other collection for',
+      '                the run and restore them after',
+      '--devtools      Also start a Chrome DevTools server for the run, and',
+      '                print each tab\'s page id in it, for the chrome-devtools',
+      '                command. Default: on when $SM_DEV_DEVTOOLS is 1',
+      '--nodevtools    Don\'t, even when $SM_DEV_DEVTOOLS is 1',
+    ],
+  },
+];
+
+// Notes after the options, and the commands each concerns.
+const URL_NOTE = { commands: ['run', 'match'], text: 'A URL with no scheme gets http://, and a path becomes a file:// URL.' };
+const SHELL_NOTE = {
+  commands: ['run'],
+  text: `While run streams, it also acts as an interactive shell, with the commands
+below. Each run prints its id, for sm-dev send and sm-dev stop to reach it by.`,
+};
+
+const indent = (lines: string[]): string => lines.map((line) => (line ? `  ${line}` : '')).join('\n');
+
+// The command lines and options alone: what a usage error prints.
+const USAGE = `${INTRO}
 
 Commands:
-  run <script>...             Inject the script(s) into a page and stream
-                              their console lines, reports and GM_* calls
-                              (no scripts with --noscript)
-  validate <path>...          Run the install-time checks (header,
-                              @require, syntax) over files or directories
-  match <script> [url]...     Say whether the script would run on each
-                              URL (and --url's), and which header rule
-                              decided
-  clear --extension           Remove every script in the extension's
-                              Scratch collection and turn solo mode off
-  list                        List sm-dev runs active on this machine
-  send [run] [command|-]      Run a command in another sm-dev run
-                              Run IDs are D1, D2. The command can be
-                              multi-line, one command per line.
-                              Omit it or use - to read from stdin.
-  stop [run]... | --all       End one or more runs, or all
+${indent(COMMAND_LINES)}
 
-Options for every command:
-  --root DIR      The repo root, searched for local copies of @require
-                  URLs (default: the current directory)
-  --local DIR     Another directory to search; repeatable
+${OPTION_GROUPS[0].title}:
+${indent(OPTION_GROUPS[0].lines)}
 
-Options for the browser commands (run, clear):
-  --cdp URL|PORT  Browser to connect to: a URL, host:port, or just a
-                  port on this machine (default: $SM_DEV_CDP or 9233)
-  --launch        Launch a Chromium instead of connecting to one
-  --headed        With --launch: show the browser
+${OPTION_GROUPS[1].title}:
+${indent(OPTION_GROUPS[1].lines)}
 
-A URL with no scheme gets http://, and a path becomes a file:// URL.
+${URL_NOTE.text}
 
-Options for run:
-  --url URL       The page to open (default: the first page the script's
-                  @match implies). Also checked by match, so one command
-                  line serves both
-  --all           Open each script's default page, one tab per page,
-                  instead of only the first script's
-  --noscript      Start with no scripts, as a browser to drive with the
-                  typed commands (a blank page unless --url names one)
-  --notab         Open no tab at startup; type tabs new to open one.
-                  With --extension, the pages you browse to run them
-  --watch         Re-inject and reload when a script or its files change
-  --values JSON   Seed GM_* storage before the script runs, e.g.
-                  --values '{"units":"metric"}'
-  --fire-menu S   Fire the registered menu command named S once the page
-                  has loaded, as if picked from the toolbar menu
-  --seconds N     Stop after N seconds instead of waiting for Ctrl-C,
-                  quit or sm-dev stop
-  --page-errors   Also show the page's own errors, not just the script's
-  --extension     Push the script into the SourceMonkey extension in
-                  that browser instead of injecting it; reports then
-                  come from the script's own Log tab
-  --solo          With --extension: disable every other collection for
-                  the run and restore them after
-  --devtools      Also start a Chrome DevTools server for the run, and
-                  print each tab's page id in it, for the chrome-devtools
-                  command. Default: on when $SM_DEV_DEVTOOLS is 1
-  --nodevtools    Don't, even when $SM_DEV_DEVTOOLS is 1
+${OPTION_GROUPS.slice(2).map((group) => `${group.title}:\n${indent(group.lines)}`).join('\n\n')}
 
-While run streams, it also acts as an interactive shell, with the commands
-below. Each run prints its id, for sm-dev send and sm-dev stop to reach it by.
+${SHELL_NOTE.text}
 `;
 
 // The whole of `--help`: the commands above, then the ones a run takes,
@@ -104,8 +152,65 @@ below. Each run prints its id, for sm-dev send and sm-dev stop to reach it by.
 function usage(): string {
   return `${USAGE}
 Commands in interactive shell and send:
-${CONSOLE_HELP.map((line) => (line ? `  ${line}` : '')).join('\n')}
+${indent(CONSOLE_HELP)}
 `;
+}
+
+const CLI_COMMANDS = new Set(COMMAND_LINES.filter((line) => !/^\s/.test(line)).map((line) => line.split(' ')[0]));
+
+/**
+ * `sm-dev help <command>...`: each command's entry, then the flags and
+ * notes that concern it. A run's typed commands (`status`) get their
+ * entry from its `help`. Throws for a name that is neither.
+ */
+function commandHelp(names: string[]): string {
+  const isTyped = (name: string): boolean => consoleCommandsHelp([name]).unknown.length === 0;
+  const unknown = names.filter((name) => !CLI_COMMANDS.has(name) && !isTyped(name));
+  if (unknown.length > 0) throw new UsageError(`${unknown.join(', ')} ${unknown.length === 1 ? 'is' : 'are'} not ${unknown.length === 1 ? 'a command' : 'commands'}. Type sm-dev --help to list them.`);
+  const blocks: string[] = [];
+  // The typed commands in a row, together under one heading.
+  let typed: string[] = [];
+  const flushTyped = (): void => {
+    if (typed.length === 0) return;
+    blocks.push(['Commands typed in sm-dev run, or sent with sm-dev send:', '', indent(consoleCommandsHelp(typed).lines)].join('\n'));
+    typed = [];
+  };
+  for (const name of names) {
+    if (CLI_COMMANDS.has(name)) {
+      flushTyped();
+      blocks.push(cliCommandHelp(name));
+    }
+    // A name that is both (help) gets both.
+    if (isTyped(name)) typed.push(name);
+  }
+  flushTyped();
+  return blocks.join('\n\n') + '\n';
+}
+
+// One sm-dev command's usage line, entry, the flags it takes, and notes.
+function cliCommandHelp(name: string): string {
+  const entry = helpEntries(COMMAND_LINES, name);
+  // A flag's lines are an entry too, named by the flag.
+  const options = OPTION_GROUPS.flatMap((group) => group.lines
+    .filter((line) => !/^\s/.test(line))
+    .map((line) => line.split(/\s+/)[0])
+    .filter((flag) => (group.only?.[flag] ?? group.commands).includes(name))
+    .flatMap((flag) => helpEntries(group.lines, flag)));
+  const lines = [
+    `Usage: sm-dev ${entry[0].split(/\s{2,}/)[0]}${options.length ? ' [options]' : ''}`,
+    '',
+    indent(entry),
+  ];
+  if (options.length) lines.push('', 'Options:', indent(options));
+  if (URL_NOTE.commands.includes(name)) lines.push('', URL_NOTE.text);
+  if (name === 'run') {
+    lines.push('', 'While run streams, it also acts as an interactive shell. Each run prints its id,', 'for sm-dev send and sm-dev stop to reach it by.');
+  }
+  // The commands a run takes, typed or sent, have help of their own.
+  if (name === 'run' || name === 'send') {
+    lines.push('', 'Type sm-dev help <command> for a run\'s commands (sm-dev help status), or', 'help at its prompt.');
+  }
+  return lines.join('\n');
 }
 
 interface Opts {
@@ -177,7 +282,6 @@ function parseArgs(argv: string[]): Opts {
         opts.seconds = v;
         break;
       }
-      case '--help': case '-h': opts.command = 'help'; break;
       default:
         if (arg.startsWith('-')) throw new UsageError(`Unknown option: ${arg}`);
         if (opts.command === null) opts.command = arg;
@@ -539,6 +643,26 @@ async function stopCommand(opts: Opts): Promise<number> {
   return stopped.every(Boolean) ? 0 : 1;
 }
 
+const HELP_FLAGS = new Set(['--help', '-h']);
+
+/**
+ * What a help request asks about, or null when it isn't one; empty for
+ * the whole help. Looked for before the flags are parsed, so a mistake
+ * elsewhere on the line doesn't stand in the way:
+ *   - `help status tabs`: each named command.
+ *   - `status --help`, `--help status`: the one command. Only the
+ *     first word, since a command's own words (a script path) follow.
+ *   - `send --help`, but not the flag further on, where it may be part
+ *     of the command sent.
+ */
+function helpTopics(argv: string[]): string[] | null {
+  if (argv[0] === 'help') return argv.slice(1).filter((a) => !HELP_FLAGS.has(a));
+  const asked = argv[0] === 'send' ? HELP_FLAGS.has(argv[1]) : argv.some((a) => HELP_FLAGS.has(a));
+  if (!asked) return null;
+  const first = argv.find((a) => !a.startsWith('-'));
+  return first ? [first] : [];
+}
+
 async function main(): Promise<void> {
   // Output piped into something that stops reading early (`| head`)
   // ends the command quietly, as other command-line tools do, rather
@@ -549,8 +673,14 @@ async function main(): Promise<void> {
     onOutputClosed();
   });
   const argv = process.argv.slice(2);
-  if (argv[0] === 'send' && (argv[1] === '--help' || argv[1] === '-h')) {
-    process.stdout.write(usage());
+  const topics = helpTopics(argv);
+  if (topics) {
+    try {
+      process.stdout.write(topics.length === 0 ? usage() : commandHelp(topics));
+    } catch (err) {
+      process.stderr.write(`${(err as Error).message}\n`);
+      process.exitCode = 2;
+    }
     return;
   }
   if (argv[0] === 'send') {
@@ -570,9 +700,9 @@ async function main(): Promise<void> {
     process.exitCode = 2;
     return;
   }
-  if (opts.command === null || opts.command === 'help') {
+  if (opts.command === null) {
     process.stdout.write(usage());
-    process.exitCode = opts.command === 'help' ? 0 : 2;
+    process.exitCode = 2;
     return;
   }
   try {

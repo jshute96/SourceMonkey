@@ -153,7 +153,7 @@ const COMMAND_GROUPS: { title: string; lines: string[] }[] = [
   {
     title: 'The run',
     lines: [
-      'help              List these',
+      'help [command]    List these, or one command\'s help',
       'quit              Stop the run',
     ],
   },
@@ -194,6 +194,47 @@ export const CONSOLE_HELP = [
   'IDs to select objects:',
   ...ID_LINES.map((line) => `  ${line}`),
 ];
+
+// The names a command also answers to, as `help` looks them up.
+const ALIASES: Record<string, string> = { script: 'scripts', tab: 'tabs', exit: 'quit', '?': 'help' };
+
+/**
+ * The entries for `name` in a help list: a line starting with it, and
+ * the indented lines that carry on its description. Empty when none
+ * does. `tabs` has two entries (`tabs`, `tabs new`), and gets both.
+ */
+export function helpEntries(lines: string[], name: string): string[] {
+  const found: string[] = [];
+  let taking = false;
+  for (const line of lines) {
+    if (!/^\s/.test(line)) taking = line.split(/\s+/)[0] === name;
+    if (taking) found.push(line);
+  }
+  return found;
+}
+
+/**
+ * Typed commands' help, for `help <command>...` and `sm-dev help`: each
+ * one's entries under its group's heading, commands in a row from one
+ * group sharing it. `unknown` are the names no command has.
+ */
+export function consoleCommandsHelp(names: string[]): { lines: string[]; unknown: string[] } {
+  const lines: string[] = [];
+  const unknown: string[] = [];
+  let lastGroup: string | null = null;
+  for (const typed of names) {
+    const name = ALIASES[typed] ?? typed;
+    const group = COMMAND_GROUPS.find((g) => helpEntries(g.lines, name).length > 0);
+    if (!group) {
+      unknown.push(typed);
+      continue;
+    }
+    if (group.title !== lastGroup) lines.push(...(lastGroup ? [''] : []), `${group.title}:`);
+    lastGroup = group.title;
+    lines.push(...helpEntries(group.lines, name).map((line) => `  ${line}`));
+  }
+  return { lines, unknown };
+}
 
 /**
  * Run one typed line. Returns once its effect has been applied, so an
@@ -249,8 +290,13 @@ export async function runConsoleCommand(
   switch (command) {
     case 'help':
     case '?':
-      if (!takesNothing()) return;
-      for (const l of CONSOLE_HELP) ctx.out(l ? `  ${l}` : '');
+      if (!argument) {
+        for (const l of CONSOLE_HELP) ctx.out(l ? `  ${l}` : '');
+        return;
+      }
+      const { lines, unknown } = consoleCommandsHelp(rest);
+      for (const name of unknown) ctx.out(`[sm-dev] ${name} is not a command. Type help to list them.`);
+      for (const l of lines) ctx.out(l ? `  ${l}` : '');
       return;
     case 'quit':
     case 'exit':
