@@ -31,7 +31,7 @@ One-line descriptions of every source file, grouped by directory.
 | File | Description |
 |------|-------------|
 | `scripts/build.mjs` | Build the extension into `dist/` (assets + `tsc`) and the package into `lib/` (optional `--watch`) |
-| `scripts/sm-dev` | Runs the harness's command line from this checkout, building `lib/` first when it is missing |
+| `scripts/sm-dev` | Runs the harness's command line from this checkout, from the built `lib/` (it never builds) |
 | `scripts/zip_extension.sh` | Build and zip the extension for distribution, packing all of `dist/` |
 | `scripts/release-extension.sh` | Cut a `vX.Y.Z` GitHub release: version/branch/tag checks, zip, push tag, `gh release create` (draft by default) |
 | `scripts/serve-examples.mjs` | Local HTTP server for `tests/examples/`, including the `/__slow/?ms=N` delay route the `headers-run-at` demo needs |
@@ -183,7 +183,8 @@ command. See `docs/harness-design.md`.
 | `src/harness/tab-badge.ts` | The count badge `sm-dev run` draws over controlled tabs' favicons, greyed once the run is gone |
 | `src/harness/run.ts` | `sm-dev run`: open a browser (reusing a finished run's tab), inject or push the scripts, follow tabs it opens, and stream |
 | `src/harness/extension-backend.ts` | `sm-dev --extension`: finds SourceMonkey's worker in the browser and drives `writeScratchScript`, `clearScratchScripts`, `soloMode`, the script log |
-| `src/harness/cli.ts` | The `sm-dev` command: `validate`, `match`, `run`, `probe`, `snapshot`, `clear` |
+| `src/harness/runs.ts` | The runs active on this machine: record files and control sockets behind `sm-dev list`, `send`, `stop` |
+| `src/harness/cli.ts` | The `sm-dev` command: `validate`, `match`, `run`, `probe`, `snapshot`, `clear`, `list`, `send`, `stop` |
 
 ## Tests (`tests/`)
 
@@ -291,7 +292,8 @@ command. See `docs/harness-design.md`.
 | `tests/unit/parse-sandbox-host.test.mjs` | Unit tests for `isParseVerdict` — only the three real statuses pass, so an odd reply can't read as `invalid` |
 | `tests/unit/parse-location.test.mjs` | Unit tests for probe selection and line mapping, driven by positions Chromium really reported |
 | `tests/unit/harness-cdp-endpoint.test.mjs` | Unit tests for `cdpEndpoint`: the forms `sm-dev --cdp` accepts |
-| `tests/unit/harness-cli-args.test.mjs` | Unit tests for `sm-dev run`'s flag checks: the combinations it refuses |
+| `tests/unit/harness-cli-args.test.mjs` | Unit tests for `sm-dev`'s argument checks: `run` flag combinations, and `send` / `stop` / `list` misuse |
+| `tests/unit/harness-runs.test.mjs` | Unit tests for the run registry: a sent line's round trip, stale records, `stop`'s SIGTERM fallback |
 | `tests/unit/harness-page-output.test.mjs` | Unit tests for which page console lines and errors `sm-dev run` shows |
 | `tests/unit/harness-prepare.test.mjs` | Unit tests for `prepareScript` and `explainMatch` over real files on disk |
 | `tests/unit/parse-check-node.test.mjs` | Unit tests for the Node parse checker: verdict, both probes' positions, and the two probe-selection routes |

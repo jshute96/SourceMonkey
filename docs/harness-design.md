@@ -295,9 +295,9 @@ into pages.
     - every tab reporting focus;
     - a forced light color scheme.
   - Tab reuse (`openRunTab`): the tabs runs opened are recorded in a
-    temp file with the owning pid, so a later run can take over a
-    finished run's selected tab. A tab carries no mark a page couldn't
-    fake, hence the file.
+    file in the runs directory (see `runs.ts` below) with the owning
+    pid, so a later run can take over a finished run's selected tab. A
+    tab carries no mark a page couldn't fake, hence the file.
   - Opened tabs (`FollowedTabs`): a tab the run's tab opens (link,
     `window.open`, `GM_openInTab`), and any tab those open, gets its
     own attachment on the same host with every loaded script.
@@ -339,6 +339,53 @@ into pages.
     until its setup has caught up with the latest set.
   - `update` skips a script whose files' modification times haven't
     changed since it was read, so a touch still forces one.
+- **`runs.ts`**: the runs active on this machine, for `sm-dev list`,
+  `send` and `stop`. Node-only, so those commands never load
+  Playwright.
+  - A run's id is the lowest free `D<n>`. It takes one by listening on
+    its socket, which only one process can. The record is written
+    after, so `list` never shows a run it can't reach yet.
+    - A socket file nothing listens on (a killed run's) is cleared and
+      listened on under a `D<n>.clearing` lock directory, held until
+      the listen. Otherwise a second run could delete the first's
+      freshly bound socket.
+    - A lock already held means trying the next number, so one left by
+      a killed run costs a number, never a hang.
+  - A run waiting for commands writes a record file (id, pid, start
+    time, browser, scripts) and listens on a Unix socket (a named pipe
+    on Windows), both in a per-user temp directory.
+  - A record is deleted when listed if its pid is gone, or its socket
+    refuses connections (the pid may have been reused). The run deletes
+    its own on the way out.
+    - The delete re-checks first, since a new run may have taken the
+      id: the record only if it names the same pid, the socket only if
+      nothing listens on it.
+  - The directory is created `0700`. Before anything in it is trusted
+    (records, sockets, tab records), it is refused if another user owns
+    it or can write in it, since `stop` signals the pids its records
+    name. `SM_DEV_RUNS_DIR` moves it, for tests.
+  - `stop` expects the run's `Stopping run D1` line first. With it, it
+    waits a minute for the teardown before `SIGTERM`; without it (no
+    answer in 15 seconds, or a close without it), it signals at once.
+    Its connection is dropped either way, so `stop` itself never
+    hangs.
+  - One line per connection: the command goes in, its output comes
+    back, and the run ends the connection.
+  - In `run.ts`, `Remote` feeds sent lines through the same
+    `commandRunner` queue as typed ones, so they never interleave.
+    - Output is copied to the sender from its command's turn until half
+      a second after it, since a reload's start line lands just after
+      the reload returns. That half second can take in the start of the
+      next sender's command.
+    - `quit` is held open until the run has ended, so `stop` prints its
+      end line and knows it's done.
+    - Lines arriving before the page has loaded wait for it.
+    - Once the run starts tearing down, sent lines are refused.
+  - A closed stdout (`EPIPE`) ends a run through the same stop as
+    Ctrl-C; other commands just exit.
+  - `stop` falls back to `SIGTERM`, which `run` handles like Ctrl-C.
+    Either signal drops both handlers, as `quit` does, so a second one
+    during teardown kills the run.
 - A page stopped on a dialog answers no CDP call until it is answered.
   So `load` / `update` refuse while one is open, and
   `PageAttachment.dispose` gives up on the page after a second; detaching

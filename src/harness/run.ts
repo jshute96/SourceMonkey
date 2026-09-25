@@ -7,13 +7,15 @@
 
 import { watch, type FSWatcher } from 'node:fs';
 import { readFile, rename, stat, writeFile } from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { Browser, BrowserContext, Page } from '@playwright/test';
 
-import { DialogTracker, NO_TABS, readConsoleCommands, reloadTab, reloadable, skippedScriptLine, targetIdSuffix, type ConsoleContext, type ControlledTab } from './console-commands.js';
+import {
+  commandRunner, DialogTracker, NO_TABS, readConsoleCommands, reloadTab, reloadable, setCommandsListening, skippedScriptLine, targetIdSuffix,
+  type CommandRunner, type ConsoleContext, type ControlledTab,
+} from './console-commands.js';
 import { ExtensionBackend, type LogEntry } from './extension-backend.js';
 import { HarnessHost, type ErrorReport, type SkipReport, type StartReport } from './host.js';
 import { attachPage, targetIdOf, type PageAttachment } from './inject.js';
@@ -21,6 +23,7 @@ import { showConsoleLine, showPageError } from './page-output.js';
 import {
   defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, prepareScript, type PreparedScript,
 } from './prepare.js';
+import { checkRunsDir, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentLineHandler } from './runs.js';
 
 export interface RunOptions extends ConnectOptions {
   files: string[];
@@ -179,8 +182,7 @@ type RunSession = Omit<BrowserSession, 'page'> & { page: Page | null };
 // them: a tab carries no mark of its own that a page couldn't also set.
 // Keyed by endpoint and the tab's CDP target id, with the pid of the
 // run that owns it, since a tab whose run is still going is not free.
-const RUN_TABS_FILE = path.join(os.tmpdir(), 'sm-dev-run-tabs.json');
-
+// Kept in `runTabsPath()`, beside the runs' records, private to the user.
 interface RunTab {
   endpoint: string;
   /** CDP's id for the tab, not the `chrome.tabs` id an extension sees. */
@@ -245,14 +247,18 @@ async function openRunTab(
 async function writeRunTabs(tabs: RunTab[]): Promise<void> {
   // One tab per line, for someone reading the file.
   const text = `[\n${tabs.map((r) => `  ${JSON.stringify(r)}`).join(',\n')}\n]\n`;
-  const temp = `${RUN_TABS_FILE}.${process.pid}`;
+  const file = runTabsPath();
+  await ownRunsDir();
+  const temp = `${file}.${process.pid}`;
   await writeFile(temp, text);
-  await rename(temp, RUN_TABS_FILE);
+  await rename(temp, file);
 }
 
 async function readRunTabs(): Promise<RunTab[]> {
   try {
-    const parsed: unknown = JSON.parse(await readFile(RUN_TABS_FILE, 'utf8'));
+    // Not trusted from a directory another user could write in.
+    if (!await checkRunsDir()) return [];
+    const parsed: unknown = JSON.parse(await readFile(runTabsPath(), 'utf8'));
     return Array.isArray(parsed) ? parsed as RunTab[] : [];
   } catch {
     return [];
@@ -266,16 +272,6 @@ async function isSelected(page: Page): Promise<boolean> {
   const visible = page.evaluate(() => document.visibilityState === 'visible').catch(() => false);
   const timeout = new Promise<boolean>((r) => setTimeout(() => r(false), 1000).unref());
   return Promise.race([visible, timeout]);
-}
-
-function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    // EPERM: it exists, under another user.
-    return (err as NodeJS.ErrnoException).code === 'EPERM';
-  }
 }
 
 const NO_URL = 'No --url given, and the first script\'s @match names no page to open';
@@ -325,31 +321,174 @@ function printSkipped(opts: RunOptions, start: StartPages): void {
 }
 
 export async function run(opts: RunOptions): Promise<number> {
+  const remote = new Remote(opts.out, opts.onStop);
+  // Every line also goes to whoever sent the command running now.
+  opts = { ...opts, out: remote.out };
   const session = await openBrowser(opts, opts.out, { reuseTab: true, openTab: !opts.noTab });
   if (!session) return 1;
+  // Only a run that waits for commands can be sent any.
+  if (opts.until) {
+    await remote.open({
+      pid: process.pid,
+      started: Date.now(),
+      browser: opts.launch ? 'launched' : cdpSetting(opts),
+      scripts: opts.files.map(displayPath),
+    });
+  }
+  // The browser closing (or its connection dropping) ends the run: it
+  // has nothing left to stream from. Without this the run would wait
+  // on with nothing keeping Node alive, and quit without its last line.
+  let ending = false;
+  session.browser.on('disconnected', () => {
+    if (ending) return;
+    opts.out('[sm-dev] The browser closed, or its connection dropped');
+    opts.onStop?.();
+  });
   const held: Held = {};
   try {
-    return opts.extension ? await runInExtension(opts, session) : await runInHarness(opts, session, held);
+    return opts.extension ? await runInExtension(opts, session, remote, held) : await runInHarness(opts, session, held, remote);
   } finally {
+    ending = true;
+    // No sent command runs against tabs being let go.
+    remote.disarm();
     // Also on a throw partway through, so a failed run leaves no
     // attachment behind in a browser the developer keeps using.
     await held.tabs?.dispose().catch(() => undefined);
     await held.attachment?.dispose().catch(() => undefined);
     await session.done().catch(() => undefined);
+    // On every way out, so a page tested after this is never taken
+    // for one the run still controls. Its registrations are gone, but
+    // script code already running in an open page runs on.
+    const run = remote.id ? `Run ${remote.id}` : 'The run';
+    opts.out(!held.injected ? `[sm-dev] ${run} ended`
+      : opts.extension ? `[sm-dev] ${run} ended. The scripts stay in the extension's Scratch collection; sm-dev clear --extension removes them.`
+        : `[sm-dev] ${run} ended. Pages still have previously loaded scripts.`);
+    await remote.close();
   }
+}
+
+// A script's path as the run shows it.
+function displayPath(file: string): string {
+  return path.relative(process.cwd(), file) || file;
+}
+
+const SENT_OUTPUT_GRACE_MS = 500;
+
+/**
+ * A run's side of `sm-dev send` and `sm-dev stop`: runs each sent line
+ * as a typed command, and copies the output while it runs back to the
+ * sender. Lines arriving before the run is ready for commands wait.
+ */
+class Remote {
+  private control: RunControl | null = null;
+  private runner: CommandRunner | null = null;
+  private ending = false;
+  private ready!: () => void;
+  private readonly armed = new Promise<void>((resolve) => { this.ready = resolve; });
+  private readonly listeners = new Set<(line: string) => void>();
+
+  constructor(
+    private readonly print: (line: string) => void,
+    private readonly onStop?: () => void,
+  ) {}
+
+  /** Prints a line, and copies it to the senders listening now. */
+  readonly out = (line: string): void => {
+    this.print(line);
+    for (const listener of this.listeners) listener(line);
+  };
+
+  /** The run's id, once other shells can reach it. */
+  get id(): string | undefined {
+    return this.control?.id;
+  }
+
+  /** Whether sent commands can arrive, for dialogs to wait on one. */
+  get reachable(): boolean {
+    return this.control !== null;
+  }
+
+  async open(record: Omit<RunRecord, 'id'>): Promise<void> {
+    try {
+      this.control = await RunControl.open(record, this.handle);
+      const { id } = this.control;
+      this.out(`[sm-dev] Started as run ${id}: Other shells reach it with sm-dev send ${id} <command> and sm-dev stop ${id}`);
+    } catch (err) {
+      this.out(`[sm-dev] Other shells can't reach this run: ${(err as Error).message}`);
+    }
+  }
+
+  /** Ready for sent commands, run through `runner`. */
+  arm(runner: CommandRunner): void {
+    this.runner = runner;
+    this.ready();
+  }
+
+  /**
+   * From now on, sent lines are refused, and ones still waiting for the
+   * run to be ready are let go: it is ending.
+   */
+  disarm(): void {
+    this.ending = true;
+    this.ready();
+  }
+
+  /** Records the loaded scripts, after `load` adds one. */
+  setScripts(files: string[]): void {
+    void this.control?.update({ scripts: files.map(displayPath) });
+  }
+
+  /** Records how many tabs the run controls, as they open and close. */
+  setTabs(tabs: number): void {
+    void this.control?.update({ tabs });
+  }
+
+  async close(): Promise<void> {
+    await this.control?.close();
+  }
+
+  private readonly handle: SentLineHandler = async (line, reply) => {
+    // Not copied to other senders: it is no part of their commands.
+    this.print(`[sm-dev] Sent by sm-dev send: ${line}`);
+    // Answered straight away, even before the run is ready, and the
+    // sender kept listening until the run has ended, so it sees that.
+    if (/^\s*(quit|exit)\s*$/.test(line)) {
+      // First, so `sm-dev stop` knows it was heard, and waits for the
+      // teardown rather than taking the wait for no answer.
+      reply(`[sm-dev] Stopping run ${this.id}`);
+      this.listeners.add(reply);
+      this.onStop?.();
+      return 'hold';
+    }
+    if (!this.runner && !this.ending) reply('[sm-dev] The run is still starting. The command runs once it is ready.');
+    await this.armed;
+    if (this.ending || !this.runner) {
+      reply('[sm-dev] The run is ending, so the command was not run');
+      return 'done';
+    }
+    await this.runner(line, { start: () => this.listeners.add(reply) });
+    // What a command sets off often prints just after it returns: the
+    // script's start line after a reload, its console lines after a
+    // menu command. So the sender hears a little longer, which can
+    // take in the start of a command sent after it.
+    await sleep(SENT_OUTPUT_GRACE_MS);
+    this.listeners.delete(reply);
+    return 'done';
+  };
 }
 
 async function runInHarness(
   opts: RunOptions,
   session: RunSession,
   held: Held,
+  remote: Remote,
 ): Promise<number> {
   const { page } = session;
   const host = new HarnessHost();
   // Commands are only read once the page has loaded, but a prompt
-  // opened before then can still wait for a typed accept.
-  const commandsComing = opts.until !== undefined && process.stdin.readable;
-  const tabs = new FollowedTabs(host, opts, session.context, commandsComing);
+  // opened before then can still wait for a typed or sent accept.
+  const commandsComing = opts.until !== undefined && (process.stdin.readable || remote.reachable);
+  const tabs = new FollowedTabs(host, opts, session.context, commandsComing, () => remote.setTabs(tabs.list().length));
   held.tabs = tabs;
   wireHostOutput(host, opts.out, (record) => tabs.prefixOf(record));
   // T1, unless `--notab`; then the first tab `tabs new` opens is T1.
@@ -396,6 +535,7 @@ async function runInHarness(
   const apply = async (next: PreparedScript[], changed: ScriptChange[], none: string): Promise<void> => {
     for (const c of changed) injected(c.next);
     scripts = next;
+    if (next.length > 0) held.injected = true;
     // The typed commands' list too, keeping the selected script by its place.
     if (commands) {
       const i = commands.current ? commands.scripts.indexOf(commands.current) : -1;
@@ -458,6 +598,7 @@ async function runInHarness(
     const script = fresh[0];
     const n = scripts.length + 1;
     files.push(file);
+    remote.setScripts(files);
     stamps.set(script, await filesStamp(script));
     if (opts.values) host.seedValues(script.spec!.id, opts.values);
     opts.out(`[sm-dev] Loaded ${input} as script ${n}`);
@@ -468,6 +609,7 @@ async function runInHarness(
   if (opts.values) for (const script of prepared) host.seedValues(script.spec!.id, opts.values);
   for (const script of prepared) injected(script);
   await tabs.setScripts(prepared);
+  if (prepared.length > 0) held.injected = true;
   if (page) {
     const t1 = tabs.list()[0];
     // With --all, the other scripts' pages each get a tab of their own.
@@ -548,9 +690,13 @@ async function runInHarness(
         scripts,
         out: opts.out,
         stop: () => opts.onStop?.(),
+        runId: remote.id,
       };
       commands = ctx;
-      stopCommands = readConsoleCommands(ctx);
+      const runner = commandRunner(ctx);
+      if (commandsComing) setCommandsListening(ctx.tabs(), true);
+      remote.arm(runner);
+      stopCommands = readConsoleCommands(ctx, runner);
       await opts.until;
     } else {
       // One load's worth of output, then leave the page as it is. Not
@@ -562,7 +708,9 @@ async function runInHarness(
     // process alive. Queued work still running finishes first, and
     // changes nothing once it sees `stopping`.
     stopping = true;
+    remote.disarm();
     stopCommands?.();
+    setCommandsListening(tabs.list(), false);
     watcher?.stop();
     await queue;
   }
@@ -572,6 +720,8 @@ async function runInHarness(
 interface Held {
   attachment?: PageAttachment;
   tabs?: FollowedTabs;
+  /** Set once any script was injected or pushed, for the run's last line. */
+  injected?: boolean;
 }
 
 // Tabs the run's tab opens, by a link, `window.open` or `GM_openInTab`,
@@ -610,6 +760,8 @@ class FollowedTabs {
     // Whether typed commands will be read, so a new tab's dialog waits
     // for a typed answer rather than being dismissed.
     private readonly commandsComing: boolean,
+    // Called as tabs join the list or close.
+    private readonly onTabsChanged: () => void = () => undefined,
   ) {}
 
   /** Register the run's own tab as T1, and follow the tabs it opens. */
@@ -620,8 +772,11 @@ class FollowedTabs {
     this.numbers.set(attachment, 1);
     this.follow(attachment, 1);
     page.on('close', () => {
-      if (!this.disposed) this.opts.out('[sm-dev] Tab T1 closed');
+      if (this.disposed) return;
+      this.opts.out('[sm-dev] Tab T1 closed');
+      this.onTabsChanged();
     });
+    this.onTabsChanged();
   }
 
   /** The controlled tabs still open, by number. */
@@ -787,7 +942,9 @@ class FollowedTabs {
     let announced = false;
     page.on('close', () => {
       this.tabs.delete(page);
-      if (announced && !this.disposed) this.opts.out(`[sm-dev] Tab T${n} closed`);
+      if (!announced || this.disposed) return;
+      this.opts.out(`[sm-dev] Tab T${n} closed`);
+      this.onTabsChanged();
     });
     wirePageOutput(page, { ...this.opts, out }, true);
     const dialogs = await DialogTracker.attach(page, out, {
@@ -806,6 +963,7 @@ class FollowedTabs {
     }
     const entry = { tab: { n, page, link: attachment, dialogs, openedBy: opener, targetId }, attachment, ready: false };
     this.tabs.set(page, entry);
+    this.onTabsChanged();
     const url = page.url();
     const loaded = url !== '' && url !== 'about:blank';
     announced = true;
@@ -860,8 +1018,14 @@ function ranLate(script: PreparedScript, readyState: string | null): boolean {
 // read its Log tab, instead of preparing and injecting. `prepareAll`
 // still runs first so a header or syntax problem is reported here with
 // the same wording, before anything reaches the extension.
-async function runInExtension(opts: RunOptions, session: RunSession): Promise<number> {
+async function runInExtension(opts: RunOptions, session: RunSession, remote: Remote, held: Held): Promise<number> {
   const { context, page } = session;
+  // Nothing to run a command against: the extension runs the scripts.
+  remote.arm(async (_line, hooks) => {
+    hooks?.start?.();
+    opts.out('[sm-dev] A run with --extension takes no commands besides quit');
+    hooks?.end?.();
+  });
   let backend: ExtensionBackend;
   try {
     backend = await ExtensionBackend.connect(context);
@@ -893,6 +1057,7 @@ async function runInExtension(opts: RunOptions, session: RunSession): Promise<nu
         return false;
       }
       pushed.set(result.scriptId, script.script.relativePath);
+      held.injected = true;
       const entries = await backend.log(result.scriptId).catch(() => [] as LogEntry[]);
       lastPrinted.set(result.scriptId, entries[entries.length - 1] ?? null);
       opts.out(`[sm-dev] Pushed to Scratch: ${script.script.relativePath}${result.replaced ? ' (replaced)' : ''}`);

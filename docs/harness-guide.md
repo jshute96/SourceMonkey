@@ -87,7 +87,8 @@ Writing specs against it:
 - Installing the package puts it on your project's path: it is the
   package's `bin`, so pnpm links it into `node_modules/.bin`. Run it as
   `pnpm sm-dev …` or `pnpm exec sm-dev …`.
-- In a SourceMonkey checkout it is `scripts/sm-dev`.
+- In a SourceMonkey checkout it is `scripts/sm-dev`. It runs what
+  `lib/` has and never builds it; `pnpm run build` does.
 
 It connects to a running browser over CDP (`--cdp 9233`, a port on
 this machine, or the `SM_DEV_CDP` environment variable) and
@@ -96,12 +97,15 @@ person or an agent.
 
 | Command | What it does |
 | --- | --- |
-| `sm-dev run <script.user.js> [--url U]` | Opens a tab at `U` (default: the first URL the script's `@match` implies), injects the script as it is on disk, and streams the script's console lines, errors, and start / skipped / error reports until Ctrl-C, or for `--seconds N`. |
+| `sm-dev run <script.user.js> [--url U]` | Opens a tab at `U` (default: the first URL the script's `@match` implies), injects the script as it is on disk, and streams the script's console lines, errors, and start / skipped / error reports until Ctrl-C, `quit` or `sm-dev stop`, or for `--seconds N`. |
 | `sm-dev run ... --watch` | Same, and on every save of the script or a `@require`d file, re-injects it and reloads the tabs it runs in or now matches, all at once. The typed `update` does the same on demand. |
 | `sm-dev run a.user.js b.user.js` | Injects several scripts into the same page, for interaction tests. |
 | `sm-dev probe <url> --selectors 'a, b, c'` | Reports which selectors resolve on the page, so a broken script's assumptions can be checked in one call. `--html` prints the first match's HTML. Exits 1 when any is missing. |
 | `sm-dev match <script> [url]...` | Says whether the script would run on each URL, and which rule decided. Also checks `--url`, so a `run` command line works with `match` in its place. |
 | `sm-dev validate <path>...` | The install-time checks (header, `@require`, syntax) over files or directories, with the message the extension would show. |
+| `sm-dev list` | Lists the runs active on this machine in a table: id (`D1`), pid, uptime, browser, how many tabs, and the scripts' files (the first few, and a count of the rest). |
+| `sm-dev send [run] <command>` | Runs a typed command in a run from another shell, and prints its output (see [Runs in the background](#runs-in-the-background)). |
+| `sm-dev stop [run]...`, `--all` | Ends a run as `quit` would. |
 | `sm-dev snapshot <url> --out file.html` | Saves the live DOM so a spec can run against it without a login. The site's own scripts are disabled in the file, so a spec sees the captured page rather than a page that logs itself out again. In your own browser, turn off any installed copy of the script first, or the snapshot holds its changes and a spec applies them twice. |
 
 Every command exits 0 on success, 1 when a check fails (a script is
@@ -154,8 +158,10 @@ Other `run` flags:
   commands below.
 - `--page-errors` also shows the page's own errors (see
   [What the output looks like](#what-the-output-looks-like)).
-- `--seconds N` stops after N seconds, for a bounded check from a
-  script or an agent; without it the stream runs until Ctrl-C.
+- `--seconds N` stops after N seconds, for a one-off bounded check;
+  without it the stream runs until Ctrl-C, `quit` or `sm-dev stop`.
+  For a longer session, leave it off and end the run with `sm-dev
+  stop`, so it can't expire mid-test.
 - `--extension` uses the real extension in that browser instead of
   the built-in stand-in (see below); `--solo` silences the other
   collections for the run.
@@ -167,8 +173,9 @@ in its window is one an earlier `run` opened and that run has ended.
 Then it takes that tab over. So re-running with the old tab still
 selected reuses it rather than piling up tabs.
 
-- The tabs `run` opened are recorded in `sm-dev-run-tabs.json` in the
-  system temp directory, with the process that owns each.
+- The tabs `run` opened are recorded in `run-tabs.json` in
+  `sm-dev-runs-<uid>` in the system temp directory, with the process
+  that owns each.
 - Each run only touches the entries for its own browser, so parallel
   sessions on other ports keep theirs.
 - A tab whose run is still going is never taken.
@@ -331,12 +338,69 @@ A read waits out the page's write batching first, so `menu Bump`
 followed by `values` prints what the command just stored rather than
 what was there before it.
 
-Piping works as well as typing, which is how an agent drives a
-sequence:
+Piping works as well as typing, for a fixed sequence:
 
 ```sh
 printf 'menu Bump\nvalues\nquit\n' | sm-dev run sites/x/y.user.js --seconds 30
 ```
+
+### Runs in the background
+
+A run started in the background (by an agent, or with `&`) has no
+terminal to type into. Other shells reach it by its id instead:
+
+```sh
+sm-dev run sites/x/y.user.js --watch &   # prints: Started as run D1: ...
+sm-dev list
+sm-dev send menu Bump                     # the command's output
+sm-dev send D1 values
+sm-dev stop                               # or stop D1, or stop --all
+```
+
+`list` prints a table:
+
+```
+Run  PID    Uptime  Browser         Tabs  Scripts
+D1   81234  2m      127.0.0.1:9233  2     a.user.js, b.user.js, c.user.js, (2 more)
+```
+
+- Each run waiting for commands prints its id once it has connected
+  to the browser. Runs are named `D1`, `D2`, like tabs (`T1`) and menu
+  commands (`M1`): the lowest number free when the run starts. A
+  number is reused once its run has ended.
+- `send` runs any typed command, one line, and prints its output.
+  Output from just after it counts too (half a second), so a
+  `reload` prints the script's start line. The run's own stream shows
+  the command as `Sent by sm-dev send: …`.
+- `send` and `stop` need the id only when several runs are active.
+- `send` exits 0 whenever the run answered, whatever the command
+  printed. Read its output for the result.
+- `send accept` and `send dismiss` answer a dialog, so dialogs wait
+  for one in a headless browser too.
+- `stop` ends a run as `quit` does, printing its last lines.
+  - A run that doesn't answer within 15 seconds is sent `SIGTERM`,
+    which ends it cleanly, as Ctrl-C does (so does a plain `kill`).
+  - One that answers but hasn't finished ending a minute later is
+    stuck, and `SIGTERM` kills it outright.
+  - On Windows, `SIGTERM` always kills outright.
+- `list` drops runs that have ended: their process has gone, or
+  nothing listens on their socket. `stop` never signals those, since
+  their pid may belong to another process by now.
+- The records and sockets are in `sm-dev-runs-<uid>` in the system
+  temp directory, private to you, beside the tab records. A directory
+  there that another user owns, or can write in, is refused.
+- Piping a run's output into something that stops reading early
+  (`| head`) ends the run, cleanly.
+- `status` starts with the run's id and pid.
+
+Every run's last line says it has ended, so a page tested after it is
+never mistaken for one the run still controls:
+- Pages loaded from then on don't get the scripts.
+- Pages already open keep them, and whatever they were doing, until
+  reloaded. Nothing from them streams anywhere, and their badge turns
+  grey.
+- With `--extension`, the scripts stay in the Scratch collection, and
+  the line says so.
 
 ### What the output looks like
 

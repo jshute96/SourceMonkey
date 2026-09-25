@@ -8,14 +8,14 @@
 #   scripts/sm-dev run tests/examples/gm-storage/gm-storage.user.js
 #   scripts/sm-dev --help
 #
-# Builds first when lib/ is missing, so a fresh checkout works.
+# Runs what lib/ has, and never builds it: a build deletes lib/ before
+# recompiling it, so one started from here would fight any build
+# running in another shell. Build with `pnpm run build`.
 
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 if [[ ! -f "$root/lib/harness/cli.js" ]]; then
-  echo "Building the harness first..." >&2
-  # To stderr rather than dropped: tsc prints its errors on stdout, and
-  # this command's own stdout is the tool's output.
-  (cd "$root" && pnpm run build >&2)
+  echo "sm-dev isn't built: The file lib/harness/cli.js is missing. Run pnpm run build." >&2
+  exit 1
 fi
 exec node "$root/lib/harness/cli.js" "$@"

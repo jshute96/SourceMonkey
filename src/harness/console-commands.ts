@@ -74,6 +74,8 @@ export interface ConsoleContext {
   out: (line: string) => void;
   /** Ends the run, as Ctrl-C does. */
   stop: () => void;
+  /** The id `sm-dev send` and `stop` know the run by, for `status`. */
+  runId?: string;
 }
 
 // Grouped as `help` prints them.
@@ -289,6 +291,7 @@ export async function runConsoleCommand(line: string, ctx: ConsoleContext): Prom
       return;
     }
     case 'status': {
+      if (ctx.runId && (!argument || argument === 'all')) ctx.out(`Run: ${ctx.runId} (pid ${process.pid})`);
       // With no tab, still the scripts and what they have stored.
       if (!tab && (!argument || argument === 'all' || !TAB_REF.test(argument))) {
         const script = argument && argument !== 'all' ? pickScript(ctx, argument) : undefined;
@@ -1128,6 +1131,40 @@ export function writeOutputLine(line: string): void {
 }
 
 /**
+ * Runs command lines one at a time, from whichever source: typed ones
+ * and ones `sm-dev send` delivers take turns, so two never interleave.
+ * `hooks` bracket the line's own turn, not its wait for one, so output
+ * captured between them is that command's.
+ */
+export type CommandRunner = (line: string, hooks?: { start?: () => void; end?: () => void }) => Promise<void>;
+
+export function commandRunner(ctx: ConsoleContext): CommandRunner {
+  let queue: Promise<void> = Promise.resolve();
+  return (line, hooks) => {
+    const done = queue.then(async () => {
+      hooks?.start?.();
+      try {
+        await runConsoleCommand(line, ctx);
+      } catch (err) {
+        ctx.out(`[sm-dev] ${(err as Error).message}`);
+      } finally {
+        hooks?.end?.();
+      }
+    });
+    queue = done;
+    return done;
+  };
+}
+
+/**
+ * Whether dialogs wait for a typed (or sent) `accept`, rather than
+ * being dismissed in a headless run. On while commands are read.
+ */
+export function setCommandsListening(tabs: ControlledTab[], listening: boolean): void {
+  for (const tab of tabs) if (tab.dialogs) tab.dialogs.commandsListening = listening;
+}
+
+/**
  * Read commands from stdin, one per line, for as long as the run lasts.
  * Whole lines only, so a piped command split across two reads still
  * runs as one. Does nothing when stdin is already closed.
@@ -1138,16 +1175,14 @@ export function writeOutputLine(line: string): void {
  * empty one it or Ctrl-D stops the run. Piped input gets neither: EOF
  * on a pipe only means no more commands, and the run goes on.
  */
-export function readConsoleCommands(ctx: ConsoleContext): () => void {
+export function readConsoleCommands(ctx: ConsoleContext, runLine: CommandRunner = commandRunner(ctx)): () => void {
   if (!process.stdin.readable) return () => undefined;
-  for (const tab of ctx.tabs()) if (tab.dialogs) tab.dialogs.commandsListening = true;
   // Otherwise nothing says the run is listening at all.
   ctx.out('[sm-dev] Ready for commands. Type help to list them.');
   // A dumb terminal can't move the cursor, so writeOutputLine couldn't
   // redraw around a prompt there.
   const terminal = Boolean(process.stdin.isTTY && process.stdout.isTTY) && process.env.TERM !== 'dumb';
   ctx.interactive = terminal;
-  let queue: Promise<void> = Promise.resolve();
   const lines = terminal
     ? readline.createInterface({
       input: process.stdin,
@@ -1159,10 +1194,7 @@ export function readConsoleCommands(ctx: ConsoleContext): () => void {
     })
     : readline.createInterface({ input: process.stdin, terminal: false });
   lines.on('line', (line) => {
-    // Serialized: two lines typed quickly must not interleave.
-    queue = queue.then(() => runConsoleCommand(line, ctx)).catch((err) => {
-      ctx.out(`[sm-dev] ${(err as Error).message}`);
-    });
+    void runLine(line);
     if (terminal) lines.prompt();
   });
   // Erases the prompt and stops drawing output around it. Before the
@@ -1195,7 +1227,6 @@ export function readConsoleCommands(ctx: ConsoleContext): () => void {
     lines.prompt();
   }
   return () => {
-    for (const tab of ctx.tabs()) if (tab.dialogs) tab.dialogs.commandsListening = false;
     dropPrompt();
     lines.close();
     process.stdin.pause();

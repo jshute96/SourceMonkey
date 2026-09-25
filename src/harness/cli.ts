@@ -8,6 +8,7 @@
 //   - `run` hands off to run.ts, which also opens the browser every
 //     browser command uses.
 //   - `probe` and `snapshot` hand off to browser-commands.ts.
+//   - `list`, `send` and `stop` reach running runs through runs.ts.
 //   - `--extension` and `clear` go through extension-backend.ts, which
 //     drives a real SourceMonkey rather than the harness.
 //
@@ -47,6 +48,10 @@ Commands:
   snapshot <url>              Save the page's HTML DOM to --out FILE
   clear --extension           Remove every script in the extension's
                               Scratch collection and turn solo mode off
+  list                        List sm-dev runs active on this machine
+  send [run] <command>        Run a command in another sm-dev run
+                              Run IDs are D1, D2
+  stop [run]... | --all       End one or more runs, or all
 
 Options for every command:
   --root DIR      The repo root, searched for local copies of @require
@@ -76,7 +81,8 @@ Options for run:
                   --values '{"units":"metric"}'
   --fire-menu S   Fire the registered menu command named S once the page
                   has loaded, as if picked from the toolbar menu
-  --seconds N     Stop after N seconds instead of waiting for Ctrl-C
+  --seconds N     Stop after N seconds instead of waiting for Ctrl-C,
+                  quit or sm-dev stop
   --page-errors   Also show the page's own errors, not just the script's
   --extension     Push the script into the SourceMonkey extension in
                   that browser instead of injecting it; reports then
@@ -94,6 +100,7 @@ Options for snapshot:
 
 While run streams, it also acts as an interactive shell, with commands to
 control the scripts. Type help at the prompt to see interactive commands.
+Each run prints its id, for sm-dev send and sm-dev stop to reach it by.
 `;
 
 interface Opts {
@@ -302,16 +309,25 @@ async function runCommand(opts: Opts): Promise<number> {
   let timer: NodeJS.Timeout | null = null;
   let stop: () => void = () => undefined;
   const until = new Promise<void>((resolve) => {
-    // Also drops the Ctrl-C handler, so while a stopped run tears down,
-    // a Ctrl-C kills it rather than landing here again. That matters
+    // Also drops the signal handlers, so while a stopped run tears
+    // down, a Ctrl-C kills it rather than landing here again. That matters
     // when a typed-command prompt did the stopping: its Ctrl-C (or
     // quit) never reached this handler.
     stop = () => {
-      if (onSigint) process.off('SIGINT', onSigint);
+      if (onSigint) {
+        process.off('SIGINT', onSigint);
+        process.off('SIGTERM', onSigint);
+      }
       resolve();
     };
-    onSigint = () => resolve();
+    // SIGTERM too, so a plain kill (or sm-dev stop, for a run it
+    // can't reach) still ends the run cleanly. Either one drops both
+    // handlers, as `quit` does, so a second signal while the run tears
+    // down kills it outright.
+    onSigint = () => stop();
+    onOutputClosed = stop;
     process.once('SIGINT', onSigint);
+    process.once('SIGTERM', onSigint);
     if (opts.seconds !== undefined) timer = setTimeout(resolve, opts.seconds * 1000).unref();
   });
   try {
@@ -338,7 +354,10 @@ async function runCommand(opts: Opts): Promise<number> {
     });
   } finally {
     if (timer) clearTimeout(timer);
-    if (onSigint) process.off('SIGINT', onSigint);
+    if (onSigint) {
+      process.off('SIGINT', onSigint);
+      process.off('SIGTERM', onSigint);
+    }
   }
 }
 
@@ -394,10 +413,110 @@ async function clearCommand(opts: Opts): Promise<number> {
   }
 }
 
+const NO_RUNS = 'No sm-dev runs are active';
+
+// What a closed stdout does: ends the command. A run swaps in its own
+// stop, so it still tears down (and says so to any `sm-dev stop`).
+let onOutputClosed = (): void => process.exit(process.exitCode ?? 0);
+
+function print(line: string): void {
+  process.stdout.write(line + '\n');
+}
+
+async function listCommand(opts: Opts): Promise<number> {
+  if (opts.args.length > 0) throw new UsageError('The list command takes no arguments');
+  const { liveRuns, runTable } = await import('./runs.js');
+  const runs = await liveRuns();
+  if (runs.length === 0) print(NO_RUNS);
+  else for (const line of runTable(runs)) print(line);
+  return 0;
+}
+
+// A run named by its id (`D2`), which must be going. A bare number is
+// the likely slip, as with tabs, and gets a hint.
+function namedRun<T extends { id: string }>(runs: T[], typed: string, runIdOf: (typed: string) => string | null): T {
+  const id = runIdOf(typed);
+  if (!id) {
+    throw new UsageError(/^\d+$/.test(typed)
+      ? `Runs are named D1, D2 and so on. Did you mean D${typed}?`
+      : `There is no run named ${typed}. Runs are named D1, D2 and so on; type sm-dev list to see them.`);
+  }
+  const found = runs.find((r) => r.id === id);
+  if (!found) throw new Error(`There is no run ${id}. Type sm-dev list to see the runs.`);
+  return found;
+}
+
+// The run a command meant when it named none: the only one going.
+function onlyRun<T extends { id: string }>(runs: T[], usage: string): T {
+  if (runs.length === 0) throw new Error(NO_RUNS);
+  if (runs.length > 1) throw new UsageError(`Several runs are active (${runs.map((r) => r.id).join(', ')}). Name one: ${usage}`);
+  return runs[0];
+}
+
+// Takes its arguments as typed, not through parseArgs: the command
+// sent may have words of its own that look like flags (`set n -1`).
+async function sendCommand(args: string[]): Promise<number> {
+  const { liveRuns, runIdOf, sendLine } = await import('./runs.js');
+  const runs = await liveRuns();
+  // A run id (`D2`) or a bare number first names the run: no command is
+  // either.
+  const named = args[0] !== undefined && (runIdOf(args[0]) !== null || /^\d+$/.test(args[0]));
+  const words = named ? args.slice(1) : args;
+  if (words.length === 0) throw new UsageError('The send command needs a command to send, e.g. sm-dev send status');
+  const target = named ? namedRun(runs, args[0], runIdOf) : onlyRun(runs, 'sm-dev send <run> <command>');
+  await sendLine(target.id, words.join(' '), print);
+  return 0;
+}
+
+async function stopCommand(opts: Opts): Promise<number> {
+  const { liveRuns, runIdOf, stopRun } = await import('./runs.js');
+  const runs = await liveRuns();
+  let targets;
+  if (opts.all) {
+    if (opts.args.length > 0) throw new UsageError('The --all flag stops every run, so the stop command takes no run ids with it');
+    if (runs.length === 0) {
+      print(NO_RUNS);
+      return 0;
+    }
+    targets = runs;
+  } else {
+    targets = opts.args.length === 0
+      ? [onlyRun(runs, 'sm-dev stop <run>, or sm-dev stop --all')]
+      : [...new Set(opts.args.map((typed) => namedRun(runs, typed, runIdOf)))];
+  }
+  // Together, each run's lines tagged with its id when there are
+  // several.
+  const several = targets.length > 1;
+  const stopped = await Promise.all(targets.map((r) => stopRun(r, several ? (line) => print(`[${r.id}] ${line}`) : print)));
+  return stopped.every(Boolean) ? 0 : 1;
+}
+
 async function main(): Promise<void> {
+  // Output piped into something that stops reading early (`| head`)
+  // ends the command quietly, as other command-line tools do, rather
+  // than with a stack trace.
+  process.stdout.on('error', (err: NodeJS.ErrnoException) => {
+    // Writes after the first failure fail as a destroyed stream.
+    if (err.code !== 'EPIPE' && err.code !== 'ERR_STREAM_DESTROYED') throw err;
+    onOutputClosed();
+  });
+  const argv = process.argv.slice(2);
+  if (argv[0] === 'send' && (argv[1] === '--help' || argv[1] === '-h')) {
+    process.stdout.write(USAGE);
+    return;
+  }
+  if (argv[0] === 'send') {
+    try {
+      process.exitCode = await sendCommand(argv.slice(1));
+    } catch (err) {
+      process.stderr.write(`${(err as Error).message}\n`);
+      process.exitCode = err instanceof UsageError ? 2 : 1;
+    }
+    return;
+  }
   let opts: Opts;
   try {
-    opts = parseArgs(process.argv.slice(2));
+    opts = parseArgs(argv);
   } catch (err) {
     process.stderr.write(`${(err as Error).message}\n\n${USAGE}`);
     process.exitCode = 2;
@@ -416,6 +535,8 @@ async function main(): Promise<void> {
       case 'probe': process.exitCode = await probeCommand(opts); break;
       case 'snapshot': process.exitCode = await snapshotCommand(opts); break;
       case 'clear': process.exitCode = await clearCommand(opts); break;
+      case 'list': process.exitCode = await listCommand(opts); break;
+      case 'stop': process.exitCode = await stopCommand(opts); break;
       default:
         process.stderr.write(`Unknown command: ${opts.command}\n\n${USAGE}`);
         process.exitCode = 2;

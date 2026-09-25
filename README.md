@@ -442,6 +442,9 @@ scripts/sm-dev --help
 scripts/sm-dev validate tests/examples
 ```
 
+It runs what `lib/` has and never builds it, so run `pnpm run build`
+first, and again after changing the harness.
+
 ### Test
 
 ```sh
