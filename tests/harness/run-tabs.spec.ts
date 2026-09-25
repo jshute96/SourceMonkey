@@ -8,7 +8,7 @@ import { utimesSync } from 'node:fs';
 import { test, expect } from '../fixtures/harness.js';
 import { run, type RunOptions } from '../../lib/harness/run.js';
 
-// Run until every `wanted` line has appeared (by suffix), or 10s.
+// Run until every `wanted` text has appeared in a line, or 10s.
 async function runUntil(
   opts: Omit<RunOptions, 'out' | 'until' | 'launch' | 'localRoots'>,
   wanted: string[],
@@ -22,7 +22,7 @@ async function runUntil(
     localRoots: [],
     out: (line) => {
       lines.push(line);
-      if (wanted.every((w) => lines.some((l) => l.endsWith(w)))) stop();
+      if (wanted.every((w) => lines.some((l) => l.includes(w)))) stop();
     },
     until,
   });
@@ -74,7 +74,7 @@ test('scripts run in the tabs the run tab opens', async ({ fixtureServer, script
   const tabLine = (w: string) => lines.find((l) => /^\[T\d+\] \[page log\] \[opener\] /.test(l) && l.endsWith(w));
   expect(tabLine(wanted[0])).toBeDefined();
   expect(tabLine(wanted[1])).toBeDefined();
-  expect(lines.filter((l) => /^\[sm-dev\] Tab T\d+ opened at .*, from T1$/.test(l))).toHaveLength(2);
+  expect(lines.filter((l) => /^\[sm-dev\] Tab T\d+ opened at .*, from T1 \[targetId=[0-9A-F]{32}\]$/.test(l))).toHaveLength(2);
   // The host's own lines say which tab too.
   expect(lines.some((l) => /^\[T\d+\] \[sm-dev\] Opener started on .*other\.html\?via=gm$/.test(l))).toBe(true);
 });
@@ -107,12 +107,15 @@ test('--all opens a tab per script page, numbered in order, and lists the skippe
     '[page log] [A] on /target.html', '[T2] [page log] [B] on /other.html', '[T2] [page log] [D] on /other.html',
     'Skipped script 3, C (c.user.js): Its @match names no page to open',
   ]);
-  expect(lines).toContain(`[sm-dev] Opening ${base}/target.html`);
-  // B and D share one page, so one tab.
-  expect(lines).toContain(`[sm-dev] Opening ${base}/other.html in T2`);
-  expect(lines.filter((l) => /Tab T\d+ opened/.test(l))).toEqual(['[sm-dev] Tab T2 opened']);
+  // Each with the id a CDP session alongside can name the tab by.
+  expect(lines.some((l) => new RegExp(`^\\[sm-dev\\] Opening ${base}/target\\.html in T1 \\[targetId=[0-9A-F]{32}\\]$`).test(l))).toBe(true);
+  // B and D share one page, so one tab, announced once, after T1.
+  const opening = lines.filter((l) => l.startsWith('[sm-dev] Opening'));
+  expect(opening).toHaveLength(2);
+  expect(opening[1]).toMatch(new RegExp(`^\\[sm-dev\\] Opening ${base}/other\\.html in T2 \\[targetId=[0-9A-F]{32}\\]$`));
+  expect(lines.filter((l) => /Tab T\d+ opened/.test(l))).toEqual([]);
   const skipped = lines.indexOf('[sm-dev] Skipped script 3, C (c.user.js): Its @match names no page to open');
-  expect(skipped).toBeGreaterThan(lines.indexOf(`[sm-dev] Opening ${base}/other.html in T2`));
+  expect(skipped).toBeGreaterThan(lines.indexOf(opening[1]));
 });
 
 test('closing a followed tab and T1 is noticed, and the run carries on', async ({ fixtureServer, scriptsDir }) => {
@@ -164,10 +167,10 @@ test('--notab opens no tab, and no scripts open a blank page or --url', async ({
 
   const target = `${fixtureServer.baseUrl}/target.html`;
   const { code: noScriptCode, lines } = await runUntil({ files: [], url: target, collectionRoot: scriptsDir.path }, [
-    `[sm-dev] Opening ${target}`,
+    `[sm-dev] Opening ${target} in T1`,
   ]);
   expect(noScriptCode).toBe(0);
-  expect(lines).toContain(`[sm-dev] Opening ${target}`);
+  expect(lines.some((l) => l.startsWith(`[sm-dev] Opening ${target} in T1 [targetId=`))).toBe(true);
 });
 
 // Drive the real CLI through its input, as a person or an agent would:
@@ -223,7 +226,7 @@ test('--notab: the first tab opened is T1, unprefixed like a normal run\'s', asy
     ['[page log] [hello] on /target.html', 'quit'],
   ]);
   expect(lines).toContain('[sm-dev] No tabs are active. Type tabs new to open one.');
-  expect(lines).toContain('[sm-dev] Tab T1 opened');
+  expect(lines.some((l) => l.startsWith(`[sm-dev] Opening ${target} in T1 [targetId=`))).toBe(true);
   // Both the page's lines and the harness's own, without a [T1] prefix.
   expect(lines).toContain('[page log] [hello] on /target.html');
   expect(lines).toContain(`[sm-dev] Hello started on ${target}`);
@@ -235,7 +238,9 @@ test('--noscript: a blank page, and the lists say there are no scripts', async (
     ['Ready for commands', 'status'],
     ['No scripts are loaded', 'quit'],
   ]);
-  expect(lines).toContain('[sm-dev] Opening about:blank');
+  // The tab as it opened, blank: nothing to open.
+  expect(lines.some((l) => l.startsWith('[sm-dev] Tab T1 opened [targetId='))).toBe(true);
+  expect(lines.some((l) => l.startsWith('[sm-dev] Opening'))).toBe(false);
   expect(lines).toContain('Page: about:blank');
   expect(lines).toContain('  No scripts are loaded');
 });
@@ -352,7 +357,8 @@ test('--watch re-injects on a save and reloads the tab it runs in', async ({ fix
     collectionRoot: scriptsDir.path, localRoots: [], until,
     out: (line) => {
       lines.push(line);
-      if (line === '[page log] [saved] before') scriptsDir.write(spec('after'));
+      // Once the watcher is up; the page can log before it is.
+      if (line.startsWith('[sm-dev] Watching')) scriptsDir.write(spec('after'));
       if (line === '[page log] [saved] after') stop();
     },
   });

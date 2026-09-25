@@ -260,6 +260,16 @@ own style of name, so they can't be mixed up:
   script 2, and typed where a tab or menu command belongs, it gets a
   hint (`Did you mean T2?`).
 
+Each tab's CDP target id is shown with it, for a debugging session
+alongside the run to name the same tab:
+- As `[targetId=61023580282B1D684FAF4072C201AB51]`, at the end of the
+  line the run prints when it opens or finds the tab, and in `tabs`.
+- It's the `targetId` CDP's `Target.*` calls take, and in a browser
+  you connected to, the `id` in its `/json/list`.
+- A command that takes a tab alone (`tabs`, `reload`, `focus`) also
+  takes the id: whole, its first 6 or more characters, or pasted as
+  shown, `targetId=` and all.
+
 How the commands treat tabs:
 - `tabs T2` picks the tab that `status`, `menu`, `reload`, `open`,
   `focus`, `accept` and `dismiss` act on. It starts as T1. If the
@@ -312,7 +322,7 @@ printf 'menu Bump\nvalues\nquit\n' | sm-dev run sites/x/y.user.js --seconds 30
 
 ```
 [sm-dev] Injected sites/example.com/add-button.user.js in world USER_SCRIPT, run-at document-idle
-[sm-dev] Opening https://example.com/items/42
+[sm-dev] Opening https://example.com/items/42 in T1 [targetId=61023580282B1D684FAF4072C201AB51]
 [sm-dev] Add button started on https://example.com/items/42
 [page log] [add-button] toolbar found, button inserted
 [sm-dev] GM_setValue lastItem = "42"

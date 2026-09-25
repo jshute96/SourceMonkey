@@ -13,10 +13,10 @@ import { fileURLToPath } from 'node:url';
 
 import type { Browser, BrowserContext, Page } from '@playwright/test';
 
-import { DialogTracker, NO_TABS, readConsoleCommands, reloadTab, reloadable, skippedScriptLine, type ConsoleContext, type ControlledTab } from './console-commands.js';
+import { DialogTracker, NO_TABS, readConsoleCommands, reloadTab, reloadable, skippedScriptLine, targetIdSuffix, type ConsoleContext, type ControlledTab } from './console-commands.js';
 import { ExtensionBackend, type LogEntry } from './extension-backend.js';
 import { HarnessHost, type ErrorReport, type SkipReport, type StartReport } from './host.js';
-import { attachPage, type PageAttachment } from './inject.js';
+import { attachPage, targetIdOf, type PageAttachment } from './inject.js';
 import { showConsoleLine, showPageError } from './page-output.js';
 import {
   defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, prepareScript, type PreparedScript,
@@ -214,7 +214,7 @@ async function openRunTab(
   // means a protocol session per tab.
   if (free.size > 0) {
     for (const candidate of context.pages()) {
-      const id = await targetIdOf(candidate).catch(() => null);
+      const id = await targetIdOf(candidate);
       if (id && free.has(id) && await isSelected(candidate)) {
         page = candidate;
         break;
@@ -224,6 +224,7 @@ async function openRunTab(
   if (page) out('[sm-dev] Reusing the selected tab, which an earlier run opened');
   page ??= await context.newPage();
   const id = await targetIdOf(page);
+  if (!id) return page;
   // Re-read just before writing, so a parallel run's entry written
   // meanwhile survives. Two runs on one browser starting at the same
   // moment could still both take the same free tab; that is left as
@@ -255,15 +256,6 @@ async function readRunTabs(): Promise<RunTab[]> {
     return Array.isArray(parsed) ? parsed as RunTab[] : [];
   } catch {
     return [];
-  }
-}
-
-async function targetIdOf(page: Page): Promise<string> {
-  const cdp = await page.context().newCDPSession(page);
-  try {
-    return (await cdp.send('Target.getTargetInfo')).targetInfo.targetId;
-  } finally {
-    await cdp.detach().catch(() => undefined);
   }
 }
 
@@ -300,8 +292,8 @@ interface StartPages {
 
 function startPages(opts: RunOptions, prepared: PreparedScript[]): StartPages | null {
   if (opts.noTab) return { urls: [], skipped: [] };
-  // `--noscript`: a blank page, unless --url names one.
-  if (prepared.length === 0) return { urls: [opts.url ?? 'about:blank'], skipped: [] };
+  // `--noscript`: the tab as it opened, blank, unless --url names one.
+  if (prepared.length === 0) return { urls: opts.url ? [opts.url] : [], skipped: [] };
   if (!opts.all) {
     const url = opts.url ?? defaultPageUrl(prepared[0]);
     if (!url) opts.out(NO_URL);
@@ -369,7 +361,7 @@ async function runInHarness(
     // Otherwise it stays null (see TODO.md).
     const attachment = await attachPage(page, host);
     held.attachment = attachment;
-    tabs.start(page, attachment, dialogs);
+    await tabs.start(page, attachment, dialogs);
   }
   const prepared = await prepareAll(opts);
   if (!prepared) return 1;
@@ -475,17 +467,28 @@ async function runInHarness(
   if (opts.values) for (const script of prepared) host.seedValues(script.spec!.id, opts.values);
   for (const script of prepared) injected(script);
   await tabs.setScripts(prepared);
-  if (page && urls.length > 0) {
-    opts.out(`[sm-dev] Opening ${urls[0]}`);
-    // With --all, the other scripts' pages too, each in a tab of its
-    // own, all loading at once. `newTab` numbers them in call order.
+  if (page) {
+    const t1 = tabs.list()[0];
+    // With --all, the other scripts' pages each get a tab of their own.
+    // All are set up first (numbered in call order), then announced in
+    // order, then loaded at once.
+    const more = await Promise.all(urls.slice(1).map((url) => tabs.createTab().then(
+      (tab) => ({ tab, url }),
+      (err) => {
+        skipScriptsOf(start, prepared, url, `The tab could not be opened: ${(err as Error).message}`);
+        return null;
+      },
+    )));
+    const opened = more.filter((m): m is { tab: ControlledTab; url: string } => m !== null);
+    // T1 is gone only if a page closed it on its own already.
+    if (t1) tabs.announce(t1, urls[0]);
+    for (const { tab, url } of opened) tabs.announce(tab, url);
     await Promise.all([
-      page.goto(urls[0]).catch((err) => opts.out(`[sm-dev] Navigation failed: ${(err as Error).message}`)),
-      ...urls.slice(1).map((url) => tabs.newTab(url)
-        .catch((err) => skipScriptsOf(start, prepared, url, `The tab could not be opened: ${(err as Error).message}`))),
+      ...(t1 && urls[0] ? [tabs.navigate(t1, urls[0])] : []),
+      ...opened.map(({ tab, url }) => tabs.navigate(tab, url)),
     ]);
     printSkipped(opts, start);
-  } else if (!page) {
+  } else {
     opts.out(NO_TABS);
   }
   if (opts.fireMenu) {
@@ -609,8 +612,8 @@ class FollowedTabs {
   ) {}
 
   /** Register the run's own tab as T1, and follow the tabs it opens. */
-  start(page: Page, attachment: PageAttachment, dialogs: DialogTracker): void {
-    this.first = { n: 1, page, link: attachment, dialogs };
+  async start(page: Page, attachment: PageAttachment, dialogs: DialogTracker): Promise<void> {
+    this.first = { n: 1, page, link: attachment, dialogs, targetId: await targetIdOf(page) };
     this.firstAttachment = attachment;
     this.nextNumber = 2;
     this.numbers.set(attachment, 1);
@@ -724,12 +727,23 @@ class FollowedTabs {
    * tabs the page opens.
    */
   async newTab(url?: string): Promise<ControlledTab> {
+    const tab = await this.createTab();
+    this.announce(tab, url);
+    if (url) await this.navigate(tab, url);
+    return tab;
+  }
+
+  /**
+   * `newTab` without the announcing and loading, for `--all` to set
+   * its tabs up together and then say so in order.
+   */
+  async createTab(): Promise<ControlledTab> {
     if (this.disposed) throw new Error('The run is ending');
     const n = this.nextNumber++;
     const setUp = (async () => {
       const page = await this.context.newPage();
       try {
-        await this.setUp(page, n);
+        await this.setUp(page, n, undefined, false);
       } catch (err) {
         // Nothing controls it, so it would only be in the way.
         await page.close().catch(() => undefined);
@@ -741,11 +755,18 @@ class FollowedTabs {
     const page = await setUp;
     const entry = this.tabs.get(page);
     if (!entry) throw new Error(`T${n} closed before it could be set up`);
-    if (url) {
-      this.opts.out(`[sm-dev] Opening ${url} in T${n}`);
-      await page.goto(url).catch((err) => this.opts.out(`[sm-dev] Navigation failed: ${(err as Error).message}`));
-    }
     return entry.tab;
+  }
+
+  /** The line a tab the run opens gets: where it's going, and its id. */
+  announce(tab: ControlledTab, url?: string): void {
+    this.opts.out(url
+      ? `[sm-dev] Opening ${url} in T${tab.n}${targetIdSuffix(tab.targetId)}`
+      : `[sm-dev] Tab T${tab.n} opened${targetIdSuffix(tab.targetId)}`);
+  }
+
+  async navigate(tab: ControlledTab, url: string): Promise<void> {
+    await tab.page.goto(url).catch((err) => this.opts.out(`[sm-dev] Navigation failed: ${(err as Error).message}`));
   }
 
   private track(work: Promise<unknown>): void {
@@ -754,7 +775,9 @@ class FollowedTabs {
   }
 
   // `opener` is the tab that opened this one; none for `tabs new`.
-  private async setUp(page: Page, n: number, opener?: number): Promise<void> {
+  // `announce`: say it opened; the run's own tabs are announced by
+  // their caller instead, with where they are going.
+  private async setUp(page: Page, n: number, opener?: number, announce = true): Promise<void> {
     // T1 goes unprefixed, as the run's own does, when `--notab` makes
     // the first tab opened T1.
     const out = n === 1 ? this.opts.out : (line: string): void => this.opts.out(`[T${n}] ${line}`);
@@ -772,16 +795,19 @@ class FollowedTabs {
     });
     const attachment = await attachPage(page, this.host);
     this.numbers.set(attachment, n);
+    // Read before the check below, so a tab closing meanwhile is caught
+    // by it rather than listed after its close has passed.
+    const targetId = await targetIdOf(page);
     if (page.isClosed()) {
       await attachment.dispose().catch(() => undefined);
       return;
     }
-    const entry = { tab: { n, page, link: attachment, dialogs, openedBy: opener }, attachment, ready: false };
+    const entry = { tab: { n, page, link: attachment, dialogs, openedBy: opener, targetId }, attachment, ready: false };
     this.tabs.set(page, entry);
     const url = page.url();
     const loaded = url !== '' && url !== 'about:blank';
     announced = true;
-    this.opts.out(`[sm-dev] Tab T${n} opened${loaded ? ` at ${url}` : ''}${opener ? `, from T${opener}` : ''}`);
+    if (announce) this.opts.out(`[sm-dev] Tab T${n} opened${loaded ? ` at ${url}` : ''}${opener ? `, from T${opener}` : ''}${targetIdSuffix(targetId)}`);
     const readyState = await page.evaluate(() => document.readyState).catch(() => null);
     const initial = this.scripts;
     let scripts = initial;
@@ -909,24 +935,30 @@ async function runInExtension(opts: RunOptions, session: RunSession): Promise<nu
     // all loading at once. The extension injects into each itself, so
     // these are only watched for page output, dialogs and closing. Its
     // Log entries, polled below, carry no tab.
-    const pages: Page[] = [];
-    await Promise.all(urls.map(async (url, i) => {
+    // Set up together, announced in order, then loaded at once.
+    const opened = await Promise.all(urls.map(async (url, i) => {
       const n = i + 1;
       let tabPage: Page;
       try {
         tabPage = i === 0 && page ? page : await context.newPage();
       } catch (err) {
         skipScriptsOf(start, prepared, url, `The tab could not be opened: ${(err as Error).message}`);
-        return;
+        return null;
       }
       const out = i === 0 ? opts.out : (line: string): void => opts.out(`[T${n}] ${line}`);
-      pages.push(tabPage);
       tabPage.on('close', () => opts.out(`[sm-dev] Tab T${n} closed`));
       wirePageOutput(tabPage, { ...opts, out }, false);
       await DialogTracker.attach(tabPage, out, { visible: browserVisible(opts) });
-      opts.out(i === 0 ? `[sm-dev] Opening ${url}` : `[sm-dev] Opening ${url} in T${n}`);
-      await tabPage.goto(url).catch((err) => opts.out(`[sm-dev] Navigation failed: ${(err as Error).message}`));
+      return { n, url, page: tabPage, targetId: await targetIdOf(tabPage) };
     }));
+    const pages: Page[] = [];
+    for (const o of opened) {
+      if (!o) continue;
+      pages.push(o.page);
+      opts.out(`[sm-dev] Opening ${o.url} in T${o.n}${targetIdSuffix(o.targetId)}`);
+    }
+    await Promise.all(opened.map((o) => o && o.page.goto(o.url)
+      .catch((err) => opts.out(`[sm-dev] Navigation failed: ${(err as Error).message}`))));
     if (!page) opts.out('[sm-dev] No tab was opened. The scripts run in the pages you browse to.');
     printSkipped(opts, start);
     let watcher: FileWatcher | null = null;

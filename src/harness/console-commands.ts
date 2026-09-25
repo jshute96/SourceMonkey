@@ -32,6 +32,16 @@ export interface ControlledTab {
   dialogs?: DialogTracker;
   /** The number of the tab that opened this one. */
   openedBy?: number;
+  /**
+   * Its CDP target id, for a debugging session alongside the run to
+   * name the same tab. Unset if it closed before it could be read.
+   */
+  targetId?: string | null;
+}
+
+/** ` [targetId=...]`, the tab's CDP id, for the end of a line. */
+export function targetIdSuffix(targetId: string | null | undefined): string {
+  return targetId ? ` [targetId=${targetId}]` : '';
 }
 
 export interface ConsoleContext {
@@ -99,7 +109,7 @@ const COMMAND_GROUPS: { title: string; lines: string[] }[] = [
   {
     title: 'The page',
     lines: [
-      'tabs [T<n>]       List the tabs the run controls; with one, pick the',
+      'tabs [tab]        List the tabs the run controls; with one, pick the',
       '                  tab the commands for the page act on',
       'tabs new [page]   Open a new tab with the scripts, pick it and focus',
       '                  it; with all, one tab for each script\'s page',
@@ -130,14 +140,29 @@ export const NO_TABS = '[sm-dev] No tabs are active. Type tabs new to open one.'
 // The commands that act on the current tab, which there may not be.
 const NEEDS_A_TAB = new Set(['menu', 'open', 'reload', 'focus', 'accept', 'dismiss']);
 
-// A blank line between the groups, and before the note on names.
+// How a command's argument names each kind of thing. Kept out of
+// COMMAND_GROUPS, whose first words are the command names Tab
+// completes.
+const ID_LINES = [
+  'Scripts:',
+  '  - 2: its number in the scripts list',
+  '  - T2.3: script 3, on tab T2',
+  '  - Its name, file name or path, or a unique substring',
+  'Tabs:',
+  '  - T2: its number in the tabs list',
+  '  - Its CDP targetId (first 6 or more characters), optionally with targetId=',
+  'Menu commands:',
+  '  - M2: its number in the tab\'s menu list',
+  '  - T2.M2: menu item M2 on tab T2',
+  '  - Its label',
+];
+
+// A blank line between the groups.
 const CONSOLE_HELP = [
   ...COMMAND_GROUPS.flatMap((group, i) => [...(i > 0 ? [''] : []), `${group.title}:`, ...group.lines.map((line) => `  ${line}`)]),
   '',
-  'A script is named by its number in the scripts list, or by part of its',
-  'name or path. Tabs are named T1, T2 and so on, and menu commands M1,',
-  'M2, as their lists show them. A T<n>. prefix (T2.3, T2.M1) names one',
-  'on that tab rather than the current one.',
+  'IDs to select objects:',
+  ...ID_LINES.map((line) => `  ${line}`),
 ];
 
 /**
@@ -574,7 +599,7 @@ function printTabs(ctx: ConsoleContext): void {
   if (ctx.tabs().length === 0) ctx.out('  No active tabs');
   for (const tab of ctx.tabs()) {
     const opener = tab.openedBy ? ` (opened by T${tab.openedBy})` : '';
-    ctx.out(`${tab === current ? '* ' : '  '}${tabName(tab)}: ${tab.page.url()}${opener}`);
+    ctx.out(`${tab === current ? '* ' : '  '}${tabName(tab)}: ${tab.page.url()}${opener}${targetIdSuffix(tab.targetId)}`);
     const dialog = tab.dialogs?.current;
     if (dialog) ctx.out(`    Waiting on ${dialogKind(dialog)} dialog: ${JSON.stringify(dialog.message())}`);
     const running = runningOn(ctx, tab);
@@ -719,8 +744,31 @@ function runningOn(ctx: ConsoleContext, tab: ControlledTab): PreparedScript[] {
   return ctx.scripts.filter((script) => activeOn(ctx, tab, script.spec?.id));
 }
 
-/** The tab a typed argument names: `T2`. */
-function pickTab(ctx: ConsoleContext, arg: string): ControlledTab | null {
+// Enough of a target id to be taken for one rather than a slip.
+const MIN_TARGET_ID_PREFIX = 6;
+
+/**
+ * The tab a typed argument names: `T2`, or its CDP target id (or the
+ * start of one, if only one open tab's id starts that way), bare or as
+ * the output shows it (`[targetId=...]`).
+ */
+function pickTab(ctx: ConsoleContext, typed: string): ControlledTab | null {
+  // As copied from the output: `targetId=ABC...`, brackets and all.
+  const arg = typed.replace(/^\[?targetId=([0-9a-f]+)\]?$/i, '$1');
+  if (arg.length >= MIN_TARGET_ID_PREFIX && /^[0-9a-f]+$/i.test(arg)) {
+    const upper = arg.toUpperCase();
+    const hits = ctx.tabs().filter((t) => t.targetId?.toUpperCase().startsWith(upper));
+    if (hits.length === 1) return hits[0];
+    if (hits.length > 1) {
+      ctx.out(`[sm-dev] Several tabs' target ids start with ${arg} (${hits.map(tabName).join(', ')}). Type more of it.`);
+      return null;
+    }
+    // Only a number could still be a tab slip (`2` for `T2`).
+    if (!/^\d+$/.test(arg)) {
+      ctx.out(`[sm-dev] No open tab's target id starts with ${arg}. Type tabs to list them.`);
+      return null;
+    }
+  }
   const m = /^[Tt](\d+)$/.exec(arg);
   if (!m) {
     // A bare number is the likely slip, and has an obvious fix.

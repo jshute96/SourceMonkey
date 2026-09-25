@@ -146,7 +146,10 @@ test.describe('sm-dev typed commands', () => {
       await expect.poll(() => host.reports.menuCommands.length).toBe(2);
 
       const lines: string[] = [];
-      const tabs = [{ n: 1, page, link: attachment }, { n: 2, page: page2, link: attachment2, openedBy: 1 }];
+      const tabs = [
+        { n: 1, page, link: attachment, targetId: 'AB12CD34EF56AB12CD34EF56AB12CD34' },
+        { n: 2, page: page2, link: attachment2, openedBy: 1, targetId: 'AB12CD99EF56AB12CD34EF56AB12CD34' },
+      ];
       const opened: (string | undefined)[] = [];
       const ctx: ConsoleContext = {
         host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(l), stop: () => undefined,
@@ -165,11 +168,30 @@ test.describe('sm-dev typed commands', () => {
       // The reload re-registers T2's command for its new document.
       const fromT2Menus = () => host.reports.menuCommands.filter((m) => host.pageOf(m) === attachment2).length;
 
-      expect(await run('tabs')).toEqual(['Tabs:', `* T1: ${target}`, '   * 1: Menus', `  T2: ${other} (opened by T1)`, '     1: Menus']);
+      expect(await run('tabs')).toEqual([
+        'Tabs:', `* T1: ${target} [targetId=AB12CD34EF56AB12CD34EF56AB12CD34]`, '   * 1: Menus',
+        `  T2: ${other} (opened by T1) [targetId=AB12CD99EF56AB12CD34EF56AB12CD34]`, '     1: Menus',
+      ]);
+      // A tab by its CDP target id, whole or by a start only it has.
+      expect(await run('focus ab12cd99')).toEqual(['[sm-dev] Brought T2 to the front']);
+      expect(await run('focus AB12CD34EF56AB12CD34EF56AB12CD34')).toEqual(['[sm-dev] Brought T1 to the front']);
+      // Or pasted from the output as it is.
+      expect(await run('focus targetId=AB12CD99EF56AB12CD34EF56AB12CD34')).toEqual(['[sm-dev] Brought T2 to the front']);
+      expect(await run('tabs [targetId=AB12CD34EF56AB12CD34EF56AB12CD34]')).toEqual([
+        `[sm-dev] The page commands now act on T1 (${target})`,
+      ]);
+      expect(await run('focus AB12CD')).toEqual([
+        '[sm-dev] Several tabs\' target ids start with AB12CD (T1, T2). Type more of it.',
+      ]);
+      expect(await run('reload ABCDEF')).toEqual(['[sm-dev] No open tab\'s target id starts with ABCDEF. Type tabs to list them.']);
+      // Too short to be taken for an id, and a long number is still a slip.
+      expect(await run('focus AB12C')).toEqual(['[sm-dev] AB12C is not a tab. Tabs are named T1, T2 and so on; type tabs to list them.']);
+      expect(await run('focus 123456')).toEqual(['[sm-dev] Tabs are named T1, T2 and so on. Did you mean T123456?']);
       expect(await run('status')).toEqual([
         `Page (T1): ${target}`, 'Scripts:', row, `    Started on ${target}`, '    1 menu command',
         '    Also active on 1 other tab',
-        'Tabs:', `* T1: ${target}`, '   * 1: Menus', `  T2: ${other} (opened by T1)`, '     1: Menus',
+        'Tabs:', `* T1: ${target} [targetId=AB12CD34EF56AB12CD34EF56AB12CD34]`, '   * 1: Menus',
+        `  T2: ${other} (opened by T1) [targetId=AB12CD99EF56AB12CD34EF56AB12CD34]`, '     1: Menus',
       ]);
       expect(await run('status T2.1')).toEqual([
         `Page (T2): ${other}`, 'Scripts:', row, `    Started on ${other}`, '    1 menu command', '    Also active on 1 other tab',

@@ -577,7 +577,12 @@ function briefly(work: Promise<unknown>): Promise<unknown> {
 // A page's CDP target id, remembered: a page keeps its id for life.
 const targetIds = new WeakMap<Page, string>();
 
-async function targetIdOf(page: Page): Promise<string | null> {
+/**
+ * The page's CDP target id (the `id` in `/json/list`, and what CDP's
+ * `Target.*` calls take), or null when it can't be read, as once the
+ * page has closed.
+ */
+export async function targetIdOf(page: Page): Promise<string | null> {
   const known = targetIds.get(page);
   if (known) return known;
   try {
