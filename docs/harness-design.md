@@ -298,17 +298,13 @@ into pages.
     and relative paths hold.
   - Every console line and page error is kept per page (the newest
     thousand) for `logs`, beside the filtered stream.
-- **`save-html.ts`**: a page's DOM as a standalone file, for the
-  `savehtml` command and the fixture's `saveHtml`.
   - A command that opens a dialog would wait on it for good (the page
     is stopped), and hold up the `accept` queued behind it. So each
     action races the tab's dialog tracker (`untilDialog`, as `menu`
     does), and returns once a dialog is up. The settle wait's limit is
     kept in Node too, since a stopped page's own timer never fires.
-  - Tabs without scripts (`tabs new --noscript`) are attached and
-    followed like any, but get no injection, no badge, and no part in
-    `load` / `update`; tabs they open inherit that. The harness's
-    bridge is still attached to them, so a page could tell.
+- **`save-html.ts`**: a page's DOM as a standalone file, for the
+  `savehtml` command and the fixture's `saveHtml`.
 - **`cli.ts`** (`sm-dev`) and **`run.ts`**: the interactive tool,
   built on the same modules and Playwright's `connectOverCDP` (or a
   launched Chromium with `--launch`). Commands are listed in the guide.
@@ -365,6 +361,22 @@ into pages.
     until its setup has caught up with the latest set.
   - `update` skips a script whose files' modification times haven't
     changed since it was read, so a touch still forces one.
+  - Tabs without scripts (`tabs new --noscript`) are attached and
+    followed like any, but get no injection, no badge, and no part in
+    `load` / `update`; tabs they open inherit that. The harness's
+    bridge is still attached to them, so a page could tell.
+  - `open` / `reload` `--noscript` / `--script` switch a tab's mode for
+    good (`FollowedTabs.setNoScript`):
+    - Its scripts come off or go back on (the current set), and so
+      does its badge, whose page script is unregistered too
+      (`hideBadge`).
+    - In turn with `load` / `update` / `--watch` saves (the `serial`
+      queue), since they change what a tab has too. Refused while the
+      tab is still being set up.
+    - The page showing keeps its scripts until the load that follows;
+      if that load fails, they run on there.
+    - A tab switched off counts as running no script, whatever the
+      host last heard from it.
 - **`runs.ts`**: the runs active on this machine, for `sm-dev list`,
   `send` and `stop`. Node-only, so those commands never load
   Playwright.

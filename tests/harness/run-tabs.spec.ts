@@ -327,6 +327,112 @@ test('a tab without scripts gets none, nor do its tabs, and load and savehtml le
   expect(badges.filter((l) => l === 'false' || l === 'true')).toEqual(['false', 'true']);
 });
 
+test('open --noscript switches a tab to no scripts for good, and --script back', async ({ fixtureServer, scriptsDir }) => {
+  const base = fixtureServer.baseUrl;
+  const a = scriptsDir.write({
+    relativePath: 'a.user.js',
+    // A page of its own, for open all to open.
+    meta: { name: 'A', match: [`${base}/target.html`] },
+    body: `console.log('[A] on ' + location.pathname);`,
+  });
+  const badge = 'eval T1 !!document.querySelector("link[data-sm-badge]")';
+  const lines = await driveCli([a, '--url', `${base}/target.html`], [
+    ['[page log] [A] on /target.html', 'open --noscript'],
+    ['runs no scripts from now on', 'tabs'],
+    // The script stays out: a reload loads without it. (Through eval,
+    // for a line to wait on: a reload with no scripts prints nothing.)
+    ['(no scripts)', 'eval location.reload(), "reloading"'],
+    // Once it's reloaded: an eval in the old page or the new one says
+    // something either way.
+    ['"reloading"', 'eval new Promise((r) => setTimeout(r, 1000)).then(() => document.readyState)'],
+    ['', () => { touch(a); return 'update'; }],
+    ['none was reloaded', badge],
+    ['false', 'open --script'],
+    ['runs the scripts again', 'eval new Promise((r) => setTimeout(r, 1500)).then(() => "waited")'],
+    ['"waited"', badge],
+    ['true', 'open all --noscript'],
+    ['Opening', 'tabs new --noscript 1'],
+    ['The page commands now act on T3', 'tabs'],
+    // reload switches too: every tab back to scripts, then T1 off.
+    ['Tabs:', 'reload all --script'],
+    ['[T3] [page log] [A] on /target.html', 'reload T1 --noscript'],
+    // tabs new takes --script too: a new tab's usual mode, said out.
+    ['T1 runs no scripts from now on', `tabs new --script ${base}/target.html`],
+    ['[T4] [page log] [A] on /target.html', 'tabs new --script --noscript'],
+    ['not both', 'quit'],
+  ]);
+  const at = (text: string) => lines.findIndex((l) => l.includes(text));
+  // Between switching off and back on, the script didn't run.
+  const off = at('runs no scripts from now on');
+  const on = at('runs the scripts again');
+  expect(lines.slice(off, on).filter((l) => l.includes('[A] on'))).toEqual([]);
+  expect(lines.slice(on).filter((l) => l === '[page log] [A] on /target.html').length).toBeGreaterThan(0);
+  const row = lines.findIndex((l) => /^\* T1: .*target\.html \(no scripts\)/.test(l));
+  expect(row).toBeGreaterThan(0);
+  // And lists no script as running there.
+  expect(lines[row + 1]).not.toMatch(/^ +\*? *1: A/);
+  // update left the switched tab alone.
+  expect(lines).toContain('[sm-dev] No open tab runs or matches the updated scripts, so none was reloaded');
+  expect(lines.filter((l) => l === 'false' || l === 'true')).toEqual(['false', 'true']);
+  // open all --noscript: the script's page, in a tab without scripts.
+  expect(lines.some((l) => /^ {2}T2: .*target\.html \(no scripts\)/.test(l))).toBe(true);
+  // tabs new --noscript with a script's number: its page, without it.
+  expect(lines.some((l) => /^\* T3: .*target\.html \(no scripts\)/.test(l))).toBe(true);
+  // reload all --script: T2 and T3 switched back, and the script ran
+  // in both.
+  const back = at('reload') >= 0 ? lines.findIndex((l) => l === '[sm-dev] T2 runs the scripts again') : -1;
+  expect(back).toBeGreaterThan(0);
+  expect(lines.slice(back)).toContain('[sm-dev] T3 runs the scripts again');
+  expect(lines.slice(back)).toContain('[T2] [page log] [A] on /target.html');
+  expect(lines).toContain('[T4] [page log] [A] on /target.html');
+  expect(lines).toContain('[sm-dev] The tabs new command takes --noscript or --script, not both');
+});
+
+test('open and reload switch the tab they name, or the current one, and say when nothing changes', async ({ fixtureServer, scriptsDir }) => {
+  const base = fixtureServer.baseUrl;
+  const a = scriptsDir.write({
+    relativePath: 'a.user.js',
+    meta: { name: 'A', match: [`${base}/target.html`] },
+    body: `console.log('[A] on ' + location.pathname);`,
+  });
+  const lines = await driveCli([a, '--url', `${base}/target.html`], [
+    // Switched, and somewhere else.
+    ['[page log] [A] on /target.html', `open --noscript ${base}/other.html`],
+    ['T1 runs no scripts from now on', 'eval location.pathname'],
+    ['"/other.html"', 'open --noscript'],
+    ['T1 already runs no scripts', `tabs new ${base}/target.html`],
+    // A tab named, no page: its own page, back with the scripts.
+    ['[T2] [page log] [A] on /target.html', 'open T1 --script'],
+    ['T1 runs the scripts again', 'eval T1 location.pathname'],
+    // reload with no tab named: the current one, T2.
+    ['"/other.html"', 'reload --noscript'],
+    ['T2 runs no scripts from now on', 'open --bogus'],
+    ['has no --bogus flag', 'reload --bogus'],
+    ['has no --bogus flag', 'tabs new --bogus'],
+    ['has no --bogus flag', 'quit'],
+  ]);
+  expect(lines).toContain('[sm-dev] The open command has no --bogus flag');
+  expect(lines).toContain('[sm-dev] The reload command has no --bogus flag');
+  expect(lines).toContain('[sm-dev] The tabs new command has no --bogus flag');
+  // T1 stayed on its page when switched back.
+  expect(lines.filter((l) => l === '"/other.html"')).toHaveLength(2);
+});
+
+test('open all --noscript opens its tabs with none open', async ({ fixtureServer, scriptsDir }) => {
+  const a = scriptsDir.write({
+    relativePath: 'a.user.js',
+    meta: { name: 'A', match: [`${fixtureServer.baseUrl}/target.html`] },
+    body: `console.log('[A] on ' + location.pathname);`,
+  });
+  const lines = await driveCli([a, '--notab'], [
+    ['No tabs are active', 'open all --noscript'],
+    ['Opening', 'tabs'],
+    ['Tabs:', 'quit'],
+  ]);
+  expect(lines.some((l) => /^[* ] T1: .*target\.html \(no scripts\)/.test(l))).toBe(true);
+  expect(lines.some((l) => l.includes('[A] on'))).toBe(false);
+});
+
 test('a tab waiting on a dialog is left out of reload all, and blocks update', async ({ fixtureServer, scriptsDir }) => {
   const base = fixtureServer.baseUrl;
   const a = scriptsDir.write({ relativePath: 'a.user.js', meta: { name: 'A', match: ['*://*/target.html'] }, body: '' });

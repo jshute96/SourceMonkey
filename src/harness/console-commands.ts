@@ -72,6 +72,8 @@ export interface ConsoleContext {
    * Absent where the caller can't open one.
    */
   newTab?: (url?: string, options?: { noScript?: boolean }) => Promise<ControlledTab>;
+  /** Switch a tab to running no scripts, or back, for `open --noscript` / `--script`. */
+  setTabScripts?: (tab: ControlledTab, noScript: boolean) => Promise<void>;
   /** Load another script from disk, for `load`. */
   loadScript?: (file: string) => Promise<void>;
   /** Re-read scripts from disk (all, when none are named), for `update`. */
@@ -134,11 +136,14 @@ const COMMAND_GROUPS: { title: string; lines: string[] }[] = [
       '                  tab the commands for the page act on',
       'tabs new [page]   Open a new tab with the scripts, pick it and focus',
       '                  it; with all, one tab for each script\'s page;',
-      '                  tabs new --noscript [url] opens one without them',
-      'reload [T<n>|all] Reload the page, another tab\'s, or every tab',
+      '                  tabs new --noscript [page] opens one without them',
+      'reload [T<n>|all] Reload the page, another tab\'s, or every tab;',
+      '                  --noscript and --script switch them as open does',
       'open [page]       Navigate to a URL, or to a script\'s default page',
       '                  (the selected script\'s, or one by number: 2, T2.3);',
-      '                  open all is tabs new all',
+      '                  open all is tabs new all. --noscript switches the',
+      '                  tab to run no scripts, and --script to run them',
+      '                  again, for every later load',
       'focus [T<n>]      Bring the tab to the front',
       'accept [text]     Answer an open dialog with OK (a prompt with text)',
       'dismiss           Answer an open dialog with Cancel',
@@ -220,7 +225,8 @@ export async function runConsoleCommand(
   const picked = currentTab(ctx);
   // Every controlled tab can be closed, T1 included. `open all` opens
   // tabs, so it needs none.
-  if (!picked && NEEDS_A_TAB.has(command) && !(command === 'open' && argument === 'all')) {
+  const opensAll = command === 'open' && rest.filter((w) => !w.startsWith('--')).join(' ') === 'all';
+  if (!picked && NEEDS_A_TAB.has(command) && !opensAll) {
     ctx.out(NO_TABS);
     return;
   }
@@ -420,13 +426,23 @@ export async function runConsoleCommand(
       return;
     }
     case 'reload': {
-      if (argument === 'all') {
-        // All at once, so one slow page holds up no other.
-        await Promise.all(reloadable(ctx.tabs(), ctx.out).map((t) => reloadTab(t, ctx.out)));
+      const mode = scriptsFlag(ctx, 'reload', rest);
+      if (mode === null) return;
+      const words = rest.filter((w) => !w.startsWith('--'));
+      if (words.length > 1) {
+        ctx.out('[sm-dev] The reload command takes one tab, or all');
         return;
       }
-      const target = argument ? pickTab(ctx, argument) : tab;
+      if (words[0] === 'all') {
+        // All at once, so one slow page holds up no other.
+        const all = reloadable(ctx.tabs(), ctx.out);
+        for (const t of all) if (!await switchScripts(ctx, t, mode)) return;
+        await Promise.all(all.map((t) => reloadTab(t, ctx.out)));
+        return;
+      }
+      const target = words[0] ? pickTab(ctx, words[0]) : tab;
       if (!target || blockedByDialog([target])) return;
+      if (!await switchScripts(ctx, target, mode)) return;
       await reloadTab(target, ctx.out);
       return;
     }
@@ -464,24 +480,33 @@ export async function runConsoleCommand(
       return;
     }
     case 'open': {
-      if (argument === 'all') {
-        await openNewTab(ctx, ['new', 'all']);
+      // `--noscript` / `--script` switch the tab's mode, which lasts.
+      const mode = scriptsFlag(ctx, 'open', rest);
+      if (mode === null) return;
+      const page = rest.filter((w) => !w.startsWith('--'));
+      if (page[0] === 'all' && page.length === 1) {
+        await openNewTab(ctx, ['new', 'all', ...(mode ? ['--noscript'] : [])]);
         return;
       }
-      if (rest.length > 1) {
+      if (page.length > 1) {
         ctx.out('[sm-dev] The open command takes one URL or script');
         return;
       }
+      const where = page[0] ?? '';
       // `T2`: the selected script's page, in T2; `T2.3`: script 3's. Only
       // those shapes, so a host like `t2.example.com` stays a URL.
-      const target = TAB_REF.test(argument) ? tabRef(ctx, argument, tab) : { tab, rest: argument };
+      const target = TAB_REF.test(where) ? tabRef(ctx, where, tab) : { tab, rest: where };
       if (!target) return;
-      const url = target.rest ? pageFor(ctx, target.rest) : current ? scriptPage(ctx, current) : null;
+      // With the mode switched and no page named, the page it's on.
+      const url = target.rest ? pageFor(ctx, target.rest)
+        : mode !== undefined ? target.tab.page.url()
+          : current ? scriptPage(ctx, current) : null;
       if (!url) {
         if (!current) ctx.out('[sm-dev] The open command needs a URL, since no script is loaded');
         return;
       }
       if (blockedByDialog([target.tab])) return;
+      if (!await switchScripts(ctx, target.tab, mode)) return;
       await target.tab.page.goto(url)
         .catch((err) => ctx.out(`[sm-dev] Navigation failed: ${(err as Error).message}`));
       return;
@@ -612,6 +637,48 @@ function pickScript(ctx: ConsoleContext, arg: string): PreparedScript | null {
 
 // ---------- Tabs ----------
 
+// `--noscript` / `--script` among a command's words: true for no
+// scripts, false for scripts, undefined for neither, and null (said
+// why) for another flag, or both.
+function scriptsFlag(ctx: ConsoleContext, command: string, words: string[]): boolean | undefined | null {
+  const flags = words.filter((w) => w.startsWith('--'));
+  const unknown = flags.find((f) => f !== '--noscript' && f !== '--script');
+  if (unknown) {
+    ctx.out(`[sm-dev] The ${command} command has no ${unknown} flag`);
+    return null;
+  }
+  if (flags.includes('--noscript') && flags.includes('--script')) {
+    ctx.out(`[sm-dev] The ${command} command takes --noscript or --script, not both`);
+    return null;
+  }
+  return flags.includes('--noscript') ? true : flags.includes('--script') ? false : undefined;
+}
+
+// Switches a tab to run no scripts (`noScript` true) or the scripts
+// again, when that's a change, and says so. The next load in it goes
+// the new way, and every one after. False (said why) if it can't.
+async function switchScripts(ctx: ConsoleContext, tab: ControlledTab, noScript: boolean | undefined): Promise<boolean> {
+  if (noScript === undefined) return true;
+  if ((tab.noScript === true) === noScript) {
+    ctx.out(`[sm-dev] ${tabName(tab)} already runs ${noScript ? 'no scripts' : 'the scripts'}`);
+    return true;
+  }
+  if (!ctx.setTabScripts) {
+    ctx.out('[sm-dev] This run cannot switch a tab\'s scripts');
+    return false;
+  }
+  try {
+    await ctx.setTabScripts(tab, noScript);
+  } catch (err) {
+    ctx.out(`[sm-dev] ${tabName(tab)} could not be switched to run ${noScript ? 'no scripts' : 'the scripts'}: ${(err as Error).message}`);
+    return false;
+  }
+  ctx.out(noScript
+    ? `[sm-dev] ${tabName(tab)} runs no scripts from now on (--script switches back)`
+    : `[sm-dev] ${tabName(tab)} runs the scripts again`);
+  return true;
+}
+
 function tabName(tab: ControlledTab): string {
   return `T${tab.n}`;
 }
@@ -642,6 +709,9 @@ function fromTab<T extends object>(ctx: ConsoleContext, tab: ControlledTab, reco
 
 // Whether a script is running on a tab's current document.
 function activeOn(ctx: ConsoleContext, tab: ControlledTab, scriptId: string | undefined): boolean {
+  // Switched to run no scripts: the host's last word from it can still
+  // be a start from before, since a load with none says nothing.
+  if (tab.noScript) return false;
   return scriptId !== undefined && ctx.host.isRunning(tab.link, scriptId);
 }
 
@@ -695,8 +765,11 @@ function printTabs(ctx: ConsoleContext): void {
 // opens one per script's page instead, and leaves the current tab be.
 async function openNewTab(ctx: ConsoleContext, words: string[]): Promise<void> {
   // `--noscript` anywhere after `new`: a tab the scripts stay out of.
-  const noScript = words.includes('--noscript');
-  const rest = words.filter((w) => w !== '--noscript');
+  // `--script` is what a new tab gets anyway.
+  const mode = scriptsFlag(ctx, 'tabs new', words);
+  if (mode === null) return;
+  const noScript = mode === true;
+  const rest = words.filter((w) => !w.startsWith('--'));
   if (!ctx.newTab) {
     ctx.out('[sm-dev] This run cannot open tabs');
     return;
@@ -713,10 +786,6 @@ async function openNewTab(ctx: ConsoleContext, words: string[]): Promise<void> {
       return null;
     }
   };
-  if (rest[1] === 'all' && noScript) {
-    ctx.out('[sm-dev] The tabs new all command opens each script\'s page, so it takes no --noscript');
-    return;
-  }
   if (rest[1] === 'all') {
     // One tab per distinct page; the scripts with none, or whose tab
     // failed, are listed at the end, after the tabs' own output.
@@ -738,7 +807,7 @@ async function openNewTab(ctx: ConsoleContext, words: string[]): Promise<void> {
     // All loading at once; tabs are numbered in call order.
     await Promise.all([...pages].map(async ([url, scripts]) => {
       try {
-        await ctx.newTab!(url);
+        await ctx.newTab!(url, { noScript });
       } catch (err) {
         for (const script of scripts) {
           const i = ctx.scripts.indexOf(script);
@@ -754,11 +823,6 @@ async function openNewTab(ctx: ConsoleContext, words: string[]): Promise<void> {
     return;
   }
   let url: string | undefined;
-  // Without scripts, a script's number names no page worth opening.
-  if (rest[1] && noScript && /^\d+$/.test(rest[1])) {
-    ctx.out('[sm-dev] A tab without scripts opens a URL, not a script\'s page');
-    return;
-  }
   if (rest[1]) {
     const page = pageFor(ctx, rest[1]);
     if (!page) return;

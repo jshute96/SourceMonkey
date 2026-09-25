@@ -261,9 +261,9 @@ commands from its own input while it streams.
 | `get <key>` | Prints one stored value |
 | `set <key> <json>` | Stores a value, as another tab's write would: a running script sees it and its change listeners fire |
 | `tabs [tab]` | Lists the controlled tabs, or picks the one the page commands act on (see [Several tabs](#several-tabs)) |
-| `tabs new [page]` | Opens a new tab with the scripts, picks it and brings it to the front. `tabs new all` opens one per script's default page. `tabs new --noscript [url]` opens one the scripts stay out of (see [Driving and reading the page](#driving-and-reading-the-page)) |
-| `reload [tab]` | Reloads the page, or another tab's. `reload all` reloads every tab at once |
-| `open [page]` | Navigates to a URL, or to a script's default page: the selected script's when bare, or one by number (`open 2`, or `open T2.3` in T2). `open all` is `tabs new all` |
+| `tabs new [page]` | Opens a new tab with the scripts, picks it and brings it to the front. `tabs new all` opens one per script's default page. `tabs new --noscript [page]` opens one the scripts stay out of (see [Driving and reading the page](#driving-and-reading-the-page)) |
+| `reload [tab]` | Reloads the page, or another tab's. `reload all` reloads every tab at once. `--noscript` / `--script` switch the tabs' scripts off or back on first |
+| `open [page]` | Navigates to a URL, or to a script's default page: the selected script's when bare, or one by number (`open 2`, or `open T2.3` in T2). `open all` is `tabs new all`. `--noscript` / `--script` switch the tab's scripts off or back on (see [Driving and reading the page](#driving-and-reading-the-page)) |
 | `focus [tab]` | Brings the tab to the front, un-minimizing its window |
 | `accept [text]`, `dismiss` | Answers an open dialog (see [Page dialogs](#page-dialogs)) |
 | `help`, `quit` | The list, and stop |
@@ -271,6 +271,10 @@ commands from its own input while it streams.
 A `<script>` is its number in the `scripts` list, its path, file name or
 `@name`, or a piece of its name or path that no other loaded script
 shares.
+
+A `[page]` is a URL, or a script's number for its default page: the
+first page its `@match` names. Only a number counts as a script there,
+so a URL is never mistaken for one.
 
 #### Driving and reading the page
 
@@ -310,13 +314,16 @@ current one.
   would apply them twice. For one to replay, open the page with `tabs
   new --noscript <url>` and save that.
 
-`tabs new --noscript <url>` is also a way to compare: the same page
-with and without the scripts, side by side, each driven by the same
-commands. Tabs it opens have no scripts either.
+#### Tabs without scripts
 
-A `[page]` is a URL, or a script's number for its default page: the
-first page its `@match` names. Only a number counts as a script there,
-so a URL is never mistaken for one.
+Tabs can be opened in a sticky no-scripts state, so you can view and
+compare unmodified pages, or save one for a spec (`savehtml`).
+- Every page the tab loads, and every tab it opens, gets no scripts.
+- `tabs` marks it `(no scripts)`. It has no badge, and `load` and
+  `update` skip it.
+
+To enter (or leave) no-scripts state, use `--noscript` (or `--script`)
+on `tabs new`, `open`, or `reload`.
 
 #### Several tabs
 

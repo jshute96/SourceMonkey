@@ -710,6 +710,9 @@ async function runInHarness(
         // T1 to start with, or whichever is open if T1 has closed.
         tab: tabs.list()[0],
         newTab: (url, options) => tabs.newTab(url, options),
+        // In turn with load, update and --watch saves, which also
+        // change what a tab has.
+        setTabScripts: (tab, noScript) => serial(() => tabs.setNoScript(tab, noScript)),
         loadScript: load,
         // By place, so an update queued behind another still finds them.
         updateScripts: (which) => update(which?.map((s) => scripts.indexOf(s)).filter((i) => i >= 0)),
@@ -870,7 +873,7 @@ class FollowedTabs {
 
   // The open tabs with their attachments, T1 included.
   private open(): { tab: ControlledTab; attachment: PageAttachment }[] {
-    const first = this.first && this.firstAttachment ? [{ tab: this.first, attachment: this.firstAttachment }] : [];
+    const first = this.first && this.firstAttachment && !this.first.noScript ? [{ tab: this.first, attachment: this.firstAttachment }] : [];
     // A tab still being set up is left out: its setup catches up on
     // what it missed, and two swaps at once could add a script twice.
     // A tab without scripts is no part of changing them.
@@ -1035,6 +1038,31 @@ class FollowedTabs {
       if (!explainMatch(script.matching, url).matches || !ranLate(script, readyState)) continue;
       this.opts.out(`[sm-dev] Tab T${n} had already started loading, so ${script.script.relativePath} (run-at ${script.runAt}) may have run later there than it would in the extension`);
     }
+  }
+
+  /**
+   * Switches a tab to running no scripts, or back to running them, for
+   * `open --noscript` / `--script`. It lasts: every page the tab loads
+   * from then on goes the new way, until switched again. Its scripts
+   * and badge come off or go back on here; the page it's showing keeps
+   * what it has until the next load.
+   */
+  async setNoScript(tab: ControlledTab, noScript: boolean): Promise<void> {
+    if ((tab.noScript === true) === noScript) return;
+    // Its setup would put back what this takes off.
+    if (tab !== this.first && [...this.tabs.values()].some((t) => t.tab === tab && !t.ready)) {
+      throw new Error('It\'s still being set up. Try again in a moment.');
+    }
+    if (noScript) {
+      await this.swapScripts(tab.link, []);
+      await tab.link.hideBadge();
+    } else {
+      await this.swapScripts(tab.link, this.scripts);
+      await tab.link.showBadge();
+    }
+    // Once done, so a failed switch leaves the tab as it was for `load`
+    // and `update`.
+    tab.noScript = noScript;
   }
 
   // `scripts` in place of what `attachment` has, from index `from` on.

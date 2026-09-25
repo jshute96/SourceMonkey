@@ -224,6 +224,9 @@ export class PageAttachment implements PageLink {
   private readonly documents = new Map<string, BadgeDocument>();
   private currentDocument: BadgeDocument = { url: '', spans: [[0, Infinity]] };
   private badge: TabBadge | null = null;
+  // The badge's page script, registered for new documents, so hiding
+  // the badge can take it off them too.
+  private badgeScript: string | null = null;
   private badgeCall: ((payload: string) => void) | null = null;
   // Execution contexts by id, so a binding call can be traced to its
   // frame and world, and a push can find the isolated world.
@@ -371,7 +374,8 @@ export class PageAttachment implements PageLink {
       scripts: () => this.injectedScripts(),
       currentDocument: () => this.currentDocument,
       addScript: async (source) => {
-        await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', { source, runImmediately: true, worldName: ISOLATED_WORLD });
+        const { identifier } = await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', { source, runImmediately: true, worldName: ISOLATED_WORLD });
+        this.badgeScript = identifier;
       },
       evaluate: async (expression) => {
         const contextId = this.contextFor(ISOLATED_WORLD);
@@ -382,6 +386,22 @@ export class PageAttachment implements PageLink {
     this.badge = badge;
     // Best effort: a tab is no less controlled for lacking its badge.
     await badge.start().catch(() => badge.stop());
+  }
+
+  /**
+   * Takes the badge off, for a tab switched to run no scripts: no more
+   * updates, and none on the documents it loads from now on. The one
+   * showing greys until the next load, which is where the switch takes
+   * effect.
+   */
+  async hideBadge(): Promise<void> {
+    const badge = this.badge;
+    if (!badge) return;
+    this.badge = null;
+    await badge.stop();
+    const identifier = this.badgeScript;
+    this.badgeScript = null;
+    if (identifier) await this.cdp.send('Page.removeScriptToEvaluateOnNewDocument', { identifier }).catch(() => undefined);
   }
 
   // The main frame moved to the document `loaderId` names.
