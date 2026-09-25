@@ -424,12 +424,13 @@ chrome-devtools --sessionId=D1 evaluate_script "() => document.title" --pageId 3
 - Not with `--launch` or `--extension`, and not on Windows yet.
 
 Things to know:
-- DevTools attaches to every tab in the browser, and one tab that
-  doesn't answer it holds up every DevTools call. The run says so when
-  that happens.
-- DevTools makes every tab in the browser report that it has focus,
-  which can hide a script's focus bugs. That's why `--devtools` is off
-  by default; `SM_DEV_DEVTOOLS=1` turns it on for every run.
+- DevTools only sees the run's tabs; your other tabs are hidden from it.
+- DevTools makes the run's tabs report that they have focus, even when
+  they don't, which can hide a script's focus bugs. That's why
+  `--devtools` is off by default; `SM_DEV_DEVTOOLS=1` turns it on for
+  every run.
+- If one of the run's tabs stops answering DevTools, every DevTools
+  call waits on it. The run says so when that happens.
 - `evaluate_script` answers a dialog that opens while it runs with OK.
   Pass `--dialogAction dismiss`, or answer through the run (`sm-dev
   send D1 accept`) when a dialog matters.

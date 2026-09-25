@@ -387,8 +387,48 @@ into pages.
     (on Windows it kills outright, with no cleanup).
     Either signal drops both handlers, as `quit` does, so a second one
     during teardown kills the run.
+- **`cdp-proxy.ts`**: a CDP endpoint that shows a client only the run's
+  tabs, for the `--devtools` server to connect to.
+  - Why: DevTools' Puppeteer attaches to every tab in the browser, and
+    its connection isn't ready until each has reported the page inside
+    it. One of the person's tabs that never answers (seen with frozen
+    background tabs, and tabs on a dialog) stalls every DevTools call.
+  - Each client gets its own connection to the browser. Traffic passes
+    through, except events about other tabs, which are dropped, and
+    `Target.getTargets`, which is filtered. Tabs the browser attaches
+    to that connection anyway are let run (if paused) and detached.
+  - A tab is shown when the page inside it is one the run allowed.
+    Chrome lists a tab and its page under unrelated ids, and doesn't
+    keep a tab's own URL up to date as its page navigates, so the page
+    is found on a side connection: attach to the tab, let it report its
+    page, detach (3 seconds).
+    - Tabs are asked when a page is allowed whose tab isn't known yet,
+      a few at a time, each once. A tab that doesn't answer (a frozen
+      one) is asked again only while an allowed page's tab is unknown.
+    - Asking is done by the proxy alone; the client never sees those
+      tabs.
+  - Knowing the run's tabs before the client connects keeps them in
+    the client's initial attach, which Puppeteer waits for, rather than
+    arriving after it.
+  - A tab not allowed yet is held for 30 seconds, not dropped, since
+    the run only claims a tab its page opened once it's loading. One
+    claimed after it was let go is attached again. Tabs the client
+    opens itself (`new_page`) are allowed at once.
+  - A held tab runs meanwhile: a person's new tab can't sit paused
+    waiting for a claim. So a tab claimed later loses its
+    pause-on-start, and the client may miss the start of its first
+    load.
+  - Attaches the client asks for itself (Puppeteer's extra session per
+    page) pass through, with their sessions.
+  - Workers, service workers (extensions' included) and the browser
+    target are hidden too; the client still reaches a page's own frames
+    and workers through the page's session.
+  - The client side is a small WebSocket server of its own (handshake
+    and text frames), since the harness has no WebSocket library; the
+    browser side uses Node's WebSocket client.
 - **`devtools.ts`**: `run --devtools`, a Chrome DevTools background
   server per run, and each tab's page id in it.
+  - The server connects through `cdp-proxy.ts`, not to the browser.
   - Started with the `chrome-devtools` command, under the run's id as
     its session, so an agent's own calls reach the same server.
   - Then called over the server's socket directly: a JSON request and
@@ -399,10 +439,10 @@ into pages.
       command would start one with its own Chrome if the run's had
       died.
   - Each call gets 5 seconds, the first 15: it is when the server
-    connects to the browser, attaching to every tab. DevTools runs one
-    call at a time, so one tab that doesn't answer it holds up
-    everything; the run says so once, naming both causes, since a slow
-    connect looks the same.
+    connects to the browser. DevTools runs one call at a time, so one
+    of the run's tabs not answering it holds up everything; the run
+    says so once, naming both causes, since a slow connect looks the
+    same.
   - On the way out it is stopped before the tabs are let go, so a
     lookup in flight has its calls cut off and can still delete its
     markers. The server is then killed (`SIGTERM`), not asked to stop,
@@ -427,8 +467,8 @@ into pages.
     next page load gives it its tries again.
   - Started with Google's usage statistics, CrUX lookups (Chrome's
     field-performance API) and update checks turned off.
-  - Off by default: DevTools emulates focus for every page it sees, in
-    the whole browser, and `evaluate_script` answers dialogs.
+  - Off by default: DevTools emulates focus in the pages it sees (the
+    run's), and `evaluate_script` answers dialogs.
 - A page stopped on a dialog answers no CDP call until it is answered.
   So `load` / `update` refuse while one is open, and
   `PageAttachment.dispose` gives up on the page after a second; detaching

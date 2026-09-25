@@ -13,14 +13,11 @@
 // which is named by the run's id.
 
 import { execFile, spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import net from 'node:net';
-import os from 'node:os';
+import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { chromium } from '@playwright/test';
-
+import { launchDebugBrowser, openTab } from '../fixtures/debug-browser.js';
 import { test, expect } from '../fixtures/harness.js';
 
 const CLI = fileURLToPath(new URL('../../lib/harness/cli.js', import.meta.url));
@@ -53,15 +50,6 @@ interface Setup {
   cleanup: () => Promise<void>;
 }
 
-async function freePort(): Promise<number> {
-  return new Promise((resolve) => {
-    const server = net.createServer().listen(0, () => {
-      const { port } = server.address() as net.AddressInfo;
-      server.close(() => resolve(port));
-    });
-  });
-}
-
 function exited(proc: ChildProcess): Promise<number | null> {
   return proc.exitCode !== null || proc.signalCode !== null
     ? Promise.resolve(proc.exitCode)
@@ -75,20 +63,8 @@ function within<T>(work: Promise<T>, ms: number): Promise<T | undefined> {
 // A headless Chromium with a debugging port, and directories of the
 // test's own for runs and DevTools servers.
 async function setUp(): Promise<Setup> {
-  const dir = mkdtempSync(path.join(os.tmpdir(), 'sm-dev-remote-'));
-  const port = await freePort();
-  // In a process group of its own, so its helper processes can be
-  // stopped with it.
-  const browser = spawn(chromium.executablePath(), [
-    '--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${path.join(dir, 'profile')}`,
-    '--no-first-run', '--no-default-browser-check', 'about:blank',
-  ], { stdio: 'ignore', detached: true });
-  let up = false;
-  for (let i = 0; i < 100 && !up; i++) {
-    up = await fetch(`http://127.0.0.1:${port}/json/version`).then(() => true, () => false);
-    if (!up) await new Promise((r) => setTimeout(r, 100));
-  }
-  if (!up) throw new Error(`The test browser's debugging port ${port} didn't answer within 10 seconds`);
+  const browser = await launchDebugBrowser();
+  const { port, dir } = browser;
   const env = {
     ...process.env,
     ...DEVTOOLS_ENV,
@@ -141,31 +117,33 @@ async function setUp(): Promise<Setup> {
       return { proc, lines, waitFor };
     },
     // Runs first, so each stops its DevTools server while its files are
-    // still there; then any server a failed test left; then the browser
-    // and every helper process it started; then the directories.
+    // still there; then any server a failed test left; then the browser,
+    // which removes the directories.
     cleanup: async () => {
       for (const proc of runs) {
         if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGTERM');
         await within(exited(proc), 10_000);
       }
       if (devtoolsInstalled) await devtools('stop');
-      const gone = new Promise((r) => browser.once('exit', r));
-      try {
-        process.kill(-browser.pid!, 'SIGKILL');
-      } catch {
-        // Gone already.
-      }
-      await within(gone, 5000);
-      for (let i = 0; i < 20 && existsSync(dir); i++) {
-        try {
-          rmSync(dir, { recursive: true, force: true });
-        } catch {
-          await new Promise((r) => setTimeout(r, 250));
-        }
-      }
-      if (existsSync(dir)) throw new Error(`The test's directory ${dir} could not be removed`);
+      await browser.close();
     },
   };
+}
+
+// Opens a tab the run doesn't control, straight through the browser's
+// endpoint, and leaves it showing an alert.
+async function openForeignDialogTab(port: number, url: string): Promise<void> {
+  const id = await openTab(port, url);
+  await new Promise<void>((resolve, reject) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/devtools/page/${id}`);
+    ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: 'setTimeout(() => alert("hold"), 100)' } }));
+    ws.onmessage = () => {
+      ws.close();
+      resolve();
+    };
+    ws.onerror = () => reject(new Error('Could not reach the new tab'));
+  });
+  await new Promise((r) => setTimeout(r, 300));
 }
 
 test('a background run is listed, takes sent commands, and stops', async ({ fixtureServer, scriptsDir }) => {
@@ -238,6 +216,14 @@ test('--devtools reports each tab\'s page id, which chrome-devtools reaches', as
     expect(await setup.cli('send', 'D1', 'tabs', `pageId=${first}`)).toEqual([`[sm-dev] The page commands now act on T1 (${url})`]);
     expect(await setup.cli('send', 'D1', 'tabs', `pageId=${second}`)).toEqual([`[sm-dev] The page commands now act on T2 (${url})`]);
     expect(await setup.cli('send', 'D1', 'tabs', ids)).toEqual([`[sm-dev] The page commands now act on T1 (${url})`]);
+    // A tab that isn't the run's, stopped on a dialog: DevTools sees
+    // only the run's tabs, so it neither lists this one nor waits on it.
+    await openForeignDialogTab(setup.port, `${fixtureServer.baseUrl}/other.html`);
+    const started = Date.now();
+    const pages = await setup.devtools('list_pages', '--output-format=json');
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect((JSON.parse(pages) as { pages: { id: number }[] }).pages.map((p) => String(p.id)).sort()).toEqual([first, second].sort());
+
     // The marker the lookup used is gone again.
     expect(await setup.devtools('evaluate_script', '() => Symbol.for("sm-dev") in window', '--pageId', first)).toContain('false');
 

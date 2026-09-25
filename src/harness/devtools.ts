@@ -8,6 +8,10 @@
 // server, under the run's id as its session, and finds each tab there
 // by a marker it puts on the page for a moment (see `map`).
 //
+// The server connects to the browser through a proxy that shows it
+// only the run's tabs (cdp-proxy.ts): DevTools otherwise attaches to
+// every tab in the browser, and one that doesn't answer stalls it.
+//
 // `chrome-devtools start` launches the server. After that the run talks
 // to it over its socket, as the command itself does: a command process
 // per call would cost a Node startup each time. That socket protocol is
@@ -19,9 +23,12 @@
 
 import { execFile, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { constants } from 'node:fs';
+import { access } from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
 
+import { CdpProxy } from './cdp-proxy.js';
 import type { ControlledTab } from './console-commands.js';
 
 const CLI = 'chrome-devtools';
@@ -29,11 +36,10 @@ const CLI = 'chrome-devtools';
 // `start` only launches the server; it connects to the browser on the
 // first call.
 const START_TIMEOUT_MS = 15_000;
-// The first call connects to the browser, attaching to every tab in
-// it, which takes a while in a browser with many.
+// The first call connects to the browser, attaching to the run's tabs.
 const FIRST_CALL_TIMEOUT_MS = 15_000;
-// A later call that takes longer is most likely stuck behind a tab in
-// the browser that doesn't answer DevTools, which blocks every call.
+// A later call that takes longer is most likely stuck behind one of the
+// run's tabs not answering DevTools, which blocks every call.
 const CALL_TIMEOUT_MS = 5000;
 // Setting or deleting a tab's marker. Only a tab that just opened a
 // dialog takes long, and it isn't waited for.
@@ -47,6 +53,21 @@ const RETRIES = 5;
 // The marker's key on `window`. A symbol, so no enumeration of the
 // page's own properties finds it.
 const MARKER = 'sm-dev';
+
+const NOT_INSTALLED = `The ${CLI} command wasn't found. Install it with npm i -g chrome-devtools-mcp.`;
+
+// Whether an executable of that name is in a PATH directory.
+async function onPath(name: string): Promise<boolean> {
+  for (const dir of (process.env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
+    try {
+      await access(path.join(dir, name), constants.X_OK);
+      return true;
+    } catch {
+      // Not in this one.
+    }
+  }
+  return false;
+}
 
 /** Whether a run should start one: `--devtools`, `--nodevtools`, else `SM_DEV_DEVTOOLS`. */
 export function devtoolsWanted(flag: boolean | undefined): boolean {
@@ -69,11 +90,6 @@ interface ToolResult {
 
 class CallTimeout extends Error {}
 
-/** The command-line form of a `--cdp` endpoint: a `ws://` one takes its own flag. */
-function endpointArgs(browserUrl: string): string[] {
-  return /^wss?:\/\//i.test(browserUrl) ? ['--wsEndpoint', browserUrl] : ['--browserUrl', browserUrl];
-}
-
 export class DevToolsLink {
   /** Resolves true once the server is up, false if it never will be. */
   readonly ready: Promise<boolean>;
@@ -87,6 +103,9 @@ export class DevToolsLink {
   // Calls in flight, so stopping can cut them off.
   private readonly sockets = new Set<net.Socket>();
   private starting: ChildProcess | null = null;
+  // What the server connects to instead of the browser: it shows only
+  // the run's tabs.
+  private proxy: CdpProxy | null = null;
   private mapping: Promise<void> = Promise.resolve();
   private timer: NodeJS.Timeout | null = null;
   private stopped = false;
@@ -109,6 +128,7 @@ export class DevToolsLink {
   ) {
     this.socket = socketPath(session);
     this.ready = this.start(browserUrl).then(() => {
+      this.allowTabs();
       if (this.stopped) return false;
       this.up = true;
       this.out(`[sm-dev] DevTools: ${this.usage}`);
@@ -132,7 +152,9 @@ export class DevToolsLink {
 
   /** Maps the tabs without a page id yet, shortly: tabs opening together are done in one pass. */
   schedule(delay = 300): void {
-    if (this.stopped || this.timer) return;
+    if (this.stopped) return;
+    this.allowTabs();
+    if (this.timer) return;
     this.timer = setTimeout(() => {
       this.timer = null;
       this.mapping = this.mapping.then(() => this.map()).catch(() => undefined);
@@ -158,14 +180,33 @@ export class DevToolsLink {
     if (this.starting) await Promise.race([this.ready, sleep(3000)]);
     this.starting?.kill();
     await this.killServer();
+    await this.proxy?.close();
   }
 
-  private start(browserUrl: string): Promise<void> {
+  // The run's tabs, for the proxy to show: each as it's found.
+  private allowTabs(): void {
+    for (const tab of this.tabs()) if (tab.targetId) this.proxy?.allow(tab.targetId);
+  }
+
+  private async start(browserUrl: string): Promise<void> {
     // The server's files and signals are only followed as they are on
     // Linux and macOS.
-    if (process.platform === 'win32') return Promise.reject(new Error('The --devtools flag isn\'t supported on Windows yet'));
+    if (process.platform === 'win32') throw new Error('The --devtools flag isn\'t supported on Windows yet');
+    // First, since it's the one a person can fix.
+    if (!await onPath(CLI)) throw new Error(NOT_INSTALLED);
+    try {
+      this.proxy = await CdpProxy.start(browserUrl);
+    } catch (err) {
+      throw new Error(`DevTools couldn't connect to the browser: ${(err as Error).message}`);
+    }
+    // Stopped meanwhile, before there was a proxy for `stop` to close.
+    if (this.stopped) {
+      await this.proxy.close();
+      return;
+    }
+    this.allowTabs();
     return new Promise((resolve, reject) => {
-      const args = [`--sessionId=${this.session}`, 'start', ...endpointArgs(browserUrl), '--usageStatistics=false', '--performanceCrux=false'];
+      const args = [`--sessionId=${this.session}`, 'start', '--browserUrl', this.proxy!.url, '--usageStatistics=false', '--performanceCrux=false'];
       this.starting = execFile(CLI, args, {
         timeout: START_TIMEOUT_MS,
         env: { ...process.env, CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS: '1', CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS: '1' },
@@ -176,7 +217,7 @@ export class DevToolsLink {
           return;
         }
         if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-          reject(new Error(`The ${CLI} command wasn't found. Install it with npm i -g chrome-devtools-mcp.`));
+          reject(new Error(NOT_INSTALLED));
         } else if (err.killed) {
           reject(new Error(`The DevTools server didn't start within ${START_TIMEOUT_MS / 1000} seconds`));
         } else {
@@ -287,7 +328,7 @@ export class DevToolsLink {
     if (this.stopped || this.saidStuck) return;
     this.saidStuck = true;
     this.out(err instanceof CallTimeout
-      ? `[sm-dev] DevTools didn't answer in time, so some tabs have no page id yet. It may still be connecting to a browser with many tabs, or a tab may not be answering it, which holds up every DevTools call.`
+      ? `[sm-dev] DevTools didn't answer in time, so some tabs have no page id yet. It may still be connecting, or one of the run's tabs may not be answering it, which holds up every DevTools call.`
       : `[sm-dev] DevTools page ids could not be looked up: ${err.message}`);
   }
 
