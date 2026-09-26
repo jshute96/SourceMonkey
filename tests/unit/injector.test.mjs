@@ -1436,6 +1436,25 @@ test('prelude matcher: agrees with url-match.ts on the lenient shapes', async ()
   }
 });
 
+test('prelude matcher: @match ignores the #hash, @include and @exclude see it, as urlMatchesScript does', async () => {
+  // The bug this pins: Chrome injected a script with an exact @match on
+  // a URL with a hash, and the regex @include (which ships the matcher
+  // in-page) made the recheck here reject it.
+  const match = await loadPreludeMatcher();
+  const url = 'https://example.com/foo#part';
+  const cases = [
+    [{ matches: ['https://example.com/foo'], excludes: [], includes: ['/nomatch/'] }, true],
+    [{ matches: ['https://example.com/foo#part'], excludes: [], includes: [] }, false],
+    [{ matches: [], excludes: [], includes: ['*#part'] }, true],
+    [{ matches: [], excludes: [], includes: ['https://example.com/foo'] }, false],
+    [{ matches: ['https://example.com/*'], excludes: ['*#part'], includes: [] }, false],
+  ];
+  for (const [m, expected] of cases) {
+    assert.equal(match(url, m), expected, JSON.stringify(m));
+    assert.equal(urlMatchesScript(url, m), expected, JSON.stringify(m));
+  }
+});
+
 test('prelude matcher: <all_urls> matches http/https/file/ftp only', async () => {
   const match = await loadPreludeMatcher();
   const m = { matches: ['<all_urls>'], excludes: [], includes: [] };

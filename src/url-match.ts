@@ -190,9 +190,11 @@ function matchCanonical(pattern: string, url: string): boolean {
   // because parsed.port is ''. That mirrors Chrome's literal compare.)
   if (patternPort !== '' && parsed.port !== patternPort) return false;
 
-  // Path glob runs against pathname + query + fragment so authors can
-  // target ?id=... etc.
-  const tail = parsed.pathname + parsed.search + parsed.hash;
+  // Path glob runs against pathname + query, so authors can target
+  // ?id=... etc. Not the fragment: Chrome's matcher ignores it, so a
+  // `#` in the pattern matches nothing and a URL's `#hash` never stops
+  // a match.
+  const tail = parsed.pathname + parsed.search;
   try {
     return globToRegExp(path).test(tail);
   } catch {
@@ -338,6 +340,16 @@ function canonicalPatternProblem(pattern: string): MatchPatternProblem | null {
       pattern,
       what: 'uses "*" inside its host',
       fix: '"*" has to be the whole host or its first label, as in *.example.com',
+    };
+  }
+  // Chrome takes this one, but matches it against URLs without their
+  // fragment, so it can never match. Violentmonkey does match it, so a
+  // script written there would otherwise just never run here.
+  if (rest.slice(slash).includes('#')) {
+    return {
+      pattern,
+      what: 'includes a "#", but @match ignores the URL\'s #hash',
+      fix: 'use @include to match on the hash',
     };
   }
 

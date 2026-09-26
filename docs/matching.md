@@ -25,7 +25,12 @@ Three pattern flavours, all implemented in `src/url-match.ts`:
   accepts them, and we follow that so the badge stays in step with
   what Chrome actually injects. Port-less patterns match any port.
 - **path**: glob with `*`. `*` matches any chars including `/`. The
-  glob runs against `pathname + search + hash` so `?id=*` works.
+  glob runs against `pathname + search`, so `?id=*` works.
+  - Not the `#hash`, as in Chrome's matcher: a URL's fragment never
+    stops a match, and a `@match` naming a `#hash` matches no URL (see
+    [Patterns Chrome refuses](#patterns-chrome-refuses)).
+  - `@include` / `@exclude` do see the hash (below). Tampermonkey
+    ignores it there too; see `tests/examples/headers-match-hash/`.
 
 Host comparison is case-insensitive.
 
@@ -121,7 +126,7 @@ It judges the **canonical** form, so the lenient shapes above are
 accepted, and a problem the rewrite doesn't cure is reported against
 the pattern the author actually wrote.
 
-What it flags, all cases Chrome names in its own refusal:
+What it flags that Chrome names in its own refusal:
 
 - no path (`https://example.com`) — the common one, and the one other
   managers accept;
@@ -132,6 +137,13 @@ What it flags, all cases Chrome names in its own refusal:
   — a regex in an `@match`, which the scheme-less reading would
   otherwise turn into a pattern with a host of `https?:\`);
 - `*` anywhere in the host but as the whole host or its first label.
+
+One more that Chrome accepts, but which can never match:
+
+- a `#` in the path (`https://app.example/#/settings*`). Chrome
+  matches without the URL's `#hash`. Violentmonkey does match it, so
+  a script written there would otherwise never run, with no word why.
+  The warning points to `@include`.
 
 What happens to one:
 
@@ -172,9 +184,9 @@ with their own engines rather than Chrome's.
 
 ### `@include` — free-form glob
 
-A `*`-glob anchored to the whole URL string. `*` matches any run of
-characters. If the pattern is wrapped in `/.../` it is treated as a
-JavaScript regex instead.
+A `*`-glob anchored to the whole URL string, `#hash` included, as
+Chrome's `include_globs` are. `*` matches any run of characters. If the
+pattern is wrapped in `/.../` it is treated as a JavaScript regex instead.
 
 ### `@exclude` — same syntax as `@include`
 

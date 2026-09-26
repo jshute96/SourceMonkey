@@ -50,7 +50,14 @@ test('matchPattern: host wildcard `*` matches any host', () => {
   assert.equal(matchPattern('https://*/*', 'https://anything.else/path'), true);
 });
 
-test('matchPattern: path glob can target query and fragment', () => {
+test('matchPattern: the URL fragment is ignored, as Chrome ignores it', () => {
+  assert.equal(matchPattern('https://example.com/foo', 'https://example.com/foo#part'), true);
+  assert.equal(matchPattern('https://example.com/foo?q=1', 'https://example.com/foo?q=1#part'), true);
+  // A `#` in the pattern names a fragment the URL is never matched on.
+  assert.equal(matchPattern('https://example.com/foo#part', 'https://example.com/foo#part'), false);
+});
+
+test('matchPattern: path glob can target the query', () => {
   assert.equal(matchPattern('https://example.com/path*', 'https://example.com/path/here?q=1'), true);
   assert.equal(matchPattern('https://example.com/*?id=*', 'https://example.com/x?id=42'), true);
   assert.equal(matchPattern('https://example.com/foo', 'https://example.com/foo'), true);
@@ -391,6 +398,9 @@ test('matchPatternProblem: everything it flags is unmatchable anyway', () => {
     'https://*.example.*/*',
     'https://:8080/*',
     'https?:\\/\\/weibo.com/p/*',
+    // A hash, which @match never sees, even the URL's own.
+    'https://a.b.example.com/x#y',
+    'https://example.com/#/settings*',
   ];
   const urls = [
     'https://example.com/',
@@ -423,6 +433,14 @@ test('matchPatternProblem: the two messages carry the pattern and the fix', () =
   assert.match(ignored, /^Ignoring @match /);
   assert.match(unusable, /^@match /);
   assert.match(unusable, /never run on any page/);
+});
+
+test('matchPatternProblem: a "#" in the path is flagged, with @include as the fix', () => {
+  const problem = matchPatternProblem('https://example.com/page#part');
+  assert.equal(ignoredMatchMessage(problem),
+    'Ignoring @match https://example.com/page#part, which includes a "#", but @match ignores the URL\'s #hash; use @include to match on the hash');
+  // Only in the path; a query that merely looks like one is fine.
+  assert.equal(matchPatternProblem('https://example.com/page?x=1*'), null);
 });
 
 test('unusableMatchGroupKey: elides the pattern, and declines anything else', () => {

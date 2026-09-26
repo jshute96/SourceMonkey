@@ -69,8 +69,12 @@ test('every script in tests/examples validates clean', async () => {
   // The suite is the reference for well-formed scripts, so anything
   // other than a clean sweep is either a broken example or a validator
   // that has started rejecting valid input.
+  // Except one that is flagged on purpose: it shows that an @match
+  // naming a #hash never runs here, while Violentmonkey runs it.
   const bad = records.filter((r) => r.category !== 'ok');
-  assert.deepEqual(bad.map((r) => `${r.name}: ${r.detail ?? r.message}`), []);
+  assert.deepEqual(bad.map((r) => `${r.name}: ${r.detail ?? r.message}`), [
+    'tests/examples/headers-match-hash/match-hash.user.js: @match … includes a "#", but @match ignores the URL\'s #hash, so this script would never run on any page; use @include to match on the hash',
+  ]);
   // Guard against the walker silently matching nothing — an empty run
   // reports zero failures too.
   assert.ok(records.length >= 20, `expected the examples suite, got ${records.length} scripts`);
@@ -78,7 +82,8 @@ test('every script in tests/examples validates clean', async () => {
   // separately from the JSON — a reporter that lost its counts (or its
   // output) would otherwise pass every assertion above.
   assert.match(stdout, new RegExp(`Scripts checked: ${records.length}\\b`));
-  assert.match(stdout, /ok:\s+\d+ \(100\.0%\)/);
+  assert.match(stdout, new RegExp(`ok:\\s+${records.length - bad.length} \\(`));
+  assert.match(stdout, new RegExp(`invalid:\\s+${bad.length} \\(`));
 });
 
 test('tests/bad-examples produces the same verdicts the browser records', async () => {

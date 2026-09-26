@@ -500,7 +500,8 @@
       if (u.hostname !== "") return false;
     } else if (u.hostname.toLowerCase() !== patternHost.toLowerCase()) return false;
     if (patternPort !== "" && u.port !== patternPort) return false;
-    var tail = u.pathname + u.search + u.hash;
+    /* Not the fragment, as in Chrome's matcher and url-match.ts. */
+    var tail = u.pathname + u.search;
     try { return globRx(path).test(tail); } catch (_e) { return false; }
   }
   function matchScript(url, m) {

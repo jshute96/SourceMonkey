@@ -59,6 +59,7 @@ import { listUserscriptsRecursive } from './userscript-files.mjs';
 import { HarnessHost } from '../../lib/harness/host.js';
 import { attachPage, readUserAgentData } from '../../lib/harness/inject.js';
 import { prepareScript, type PreparedScript } from '../../lib/harness/prepare.js';
+import { unusableMatchGroupKey } from '../../lib/url-match.js';
 
 /**
  * The managers this fixture can drive. Everything but `sourcemonkey`
@@ -446,6 +447,10 @@ async function harnessSetup(ctx: BrowserContext, downloadDir: string, probeUrl: 
       s.prepared = [];
       for (const { filepath } of listUserscriptsRecursive(dir)) {
         const p = await prepareScript({ file: filepath, collectionRoot: dir });
+        // One whose every @match can never match is stored and never
+        // runs under SourceMonkey too, so an example may show one
+        // (headers-match-hash). Anything else invalid is a broken example.
+        if (p.status !== 'ok' && p.errorMessage && unusableMatchGroupKey(p.errorMessage) !== null) continue;
         if (p.status !== 'ok') throw new Error(`Example script is invalid under the harness: ${p.diagnostic}`);
         s.prepared.push(p);
       }
