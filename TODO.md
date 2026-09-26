@@ -827,6 +827,18 @@ See [docs/harness-design.md](docs/harness-design.md).
   publish.
   Once it is on npm, the guide's install step and the consumer's
   `dependenciesMeta.injected` workaround both get simpler.
+- Nothing tests the interactive `> ` prompt, which only turns on when
+  stdin and stdout are terminals. A test would run `sm-dev start` in a
+  pseudo-terminal (pty: Python's `pty` module, or the native `node-pty`
+  package) and cover:
+  - Ctrl-C clearing a typed line, stopping the run on an empty one, and
+    dropping an open `eval` block.
+  - A second Ctrl-C while a command runs stopping the run.
+  - Streamed output landing above the prompt, with the typed text redrawn.
+  - Ctrl-Z then `fg` leaving the prompt still reading keys (readline
+    pauses its input on resume). Under a pty with no job control the
+    stop signal is dropped, but sending SIGCONT still runs readline's
+    resume path.
 
 ## Test coverage gaps
 

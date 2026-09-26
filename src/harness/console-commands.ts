@@ -1659,6 +1659,10 @@ export function readConsoleCommands(ctx: ConsoleContext, runLine: CommandRunner 
       lines.write(null, { ctrl: true, name: 'e' });
       lines.write(null, { ctrl: true, name: 'u' });
     });
+    // readline handles Ctrl-Z itself. On `fg` it pauses its input and
+    // emits this event, but never resumes the input. Without this the
+    // prompt stays frozen until some output line happens to redraw it.
+    lines.on('SIGCONT', () => lines.resume());
     lines.on('close', () => {
       dropPrompt();
       ctx.stop();

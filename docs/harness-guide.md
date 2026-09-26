@@ -453,6 +453,9 @@ When both input and output are a terminal, commands are typed at a
   block.
 - A running command can't be cancelled. Ctrl-C while one runs says so,
   and a second Ctrl-C stops the run.
+- Ctrl-Z suspends sm-dev and `fg` resumes it, as in a shell. The browser
+  keeps running meanwhile, but script calls that sm-dev answers, such as
+  `GM_xmlhttpRequest`, wait until it is resumed.
 
 `eval` can take several lines of JavaScript as a block:
 
