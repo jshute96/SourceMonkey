@@ -69,7 +69,7 @@ test('wait and the actions settle the page, and say what kept it busy', async ({
   const runner = commandRunner(ctx);
   const run = async (line: string): Promise<{ lines: string[]; ok: boolean }> => {
     lines.length = 0;
-    const ok = await runner(line);
+    const ok = await runner(line) === 0;
     return { lines: [...lines], ok };
   };
   const result = 'eval !!document.querySelector(".result")';
@@ -110,7 +110,7 @@ test('wait and the actions settle the page, and say what kept it busy', async ({
   for (const words of [['wait', 'log', '[slow]', 'saved', '--timeout-seconds', '1'], ['wait', 'log', '/slow] saved/']]) {
     await run(print);
     lines.length = 0;
-    expect(await runner(words.join(' '), { words })).toBe(true);
+    expect(await runner(words.join(' '), { words })).toBe(0);
     expect(lines).toEqual(found);
   }
   expect((await run('wait log /never  printed/i --timeout-seconds 0.2')).lines)

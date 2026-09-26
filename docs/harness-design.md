@@ -315,9 +315,8 @@ into pages.
       arrive through events outside it.
   - A command fails in a way that stops a line when an explicit `wait`
     gave up (`runConsoleCommand` returns false) or it printed an
-    `ERROR:` line (a typing mistake). The run then ends its reply with a
-    marker line (`COMMAND_FAILED` in `runs.ts`) that `sendLine` turns
-    into a failure, not output.
+    `ERROR:` line (a typing mistake). See the exit codes under
+    `command-lines.ts`, below.
   - A tab whose load already gave up (`stalled`, set by `loadInTab`)
     isn't waited on again after it.
 - **`tab-refs.ts`**: naming and picking a run's tabs (`T2`, target and
@@ -743,6 +742,18 @@ into pages.
   - A list sent from another shell goes one connection per command,
     in order. A block's newlines survive the trip, since the message
     is JSON.
+  - A command that fails ends its reply with a marker line
+    (`COMMAND_FAILED` in `runs.ts`) carrying its exit code. It starts
+    with a NUL, which no output line starts with. `sendLine` takes it
+    off and returns the code.
+  - The codes: what the command returns (a number, or false for 1);
+    else 2 when it printed an `ERROR:` line; a throw is 2 for a typing
+    mistake and 1 otherwise. A run that is ending answers 1.
+  - A `match` or `validate` miss (1) is an answer, so it doesn't stop a
+    line of several; any other failure does.
+  - `match` and `validate` share checks.ts between the command line and
+    a run, so both print the same lines. In a run they read its loaded
+    scripts and tabs (console-commands.ts).
   - Commands from stdin (`--stdin`, or piped with no command) go
     through a `CommandAssembler` as lines arrive:
     - What arrives without a pause (a file, or a pipe's lines within

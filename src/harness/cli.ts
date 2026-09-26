@@ -20,7 +20,7 @@
 // no script threw, every selector was found), 1 when one didn't or the
 // command failed, 2 for a usage error (a `UsageError`).
 
-import { readdir, stat } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
@@ -32,13 +32,12 @@ import {
 import { devtoolsWanted } from './devtools.js';
 // Node built-ins only, so as cheap to load as the rest here.
 import { runIdOf, type RunRecord } from './runs.js';
-import { NO_RULE_COVERS_URL, explainMatch, isDirectoryMessage, noSuchFileMessage, prepareScript, withDefaultScheme, type PreparedScript } from './prepare.js';
-import { isMarkupContentType, looksLikeMarkup, markupResponseMessage } from '../markup-response.js';
-import { unusableMatchGroupKey } from '../url-match.js';
+import { withDefaultScheme } from './prepare.js';
+import {
+  REMOTE_SCRIPT, SCRIPT_ARG, UsageError, matchLines, prepareSource, scriptFile, scriptSources, validateLines, validateSources, validateSummary,
+  type ScriptRoots,
+} from './checks.js';
 
-// A mistake in how the command was typed, as opposed to a failure while
-// carrying it out: the one kind that exits 2.
-class UsageError extends Error {}
 
 const INTRO = `sm-dev: develop and test userscripts against a real browser,
 with SourceMonkey's script injection and GM_* APIs behind them.
@@ -55,10 +54,13 @@ const COMMAND_LINES = [
   '                            implies)',
   'validate <path>...          Check script validity (header, @require,',
   '                            syntax) over files, directories or script',
-  '                            URLs',
+  '                            URLs. In a run, also its loaded scripts',
+  '                            (validate alone: the selected one)',
   'match <script>... <url>...  Say whether each script would run on each',
   '                            URL, and which header rules matched or',
-  '                            excluded it',
+  '                            excluded it. In a run, also its scripts and',
+  '                            tabs (match alone: the selected script on',
+  '                            the current tab)',
   'clear --extension           Remove every script in the extension\'s',
   '                            Scratch collection and turn solo mode off',
   'list                        List sm-dev runs active on this machine',
@@ -77,11 +79,12 @@ const COMMAND_LINES = [
 // or widens that for one flag.
 const OPTION_GROUPS: { title: string; commands: string[]; lines: string[]; only?: Record<string, string[]> }[] = [
   {
-    title: 'Options for the commands that read scripts (start, validate, match)',
+    title: 'Options for the whole line (used by start, validate, match)',
     commands: ['start', 'validate', 'match'],
     lines: [
       '--root DIR      The repo root, searched for local copies of @require',
-      '                URLs (default: the current directory)',
+      '                URLs (default: the current directory). A run keeps',
+      '                the ones it started with',
       '--local DIR     Another directory to search; repeatable',
     ],
   },
@@ -298,8 +301,6 @@ function cliCommandHelp(name: string): string {
 interface Opts {
   command: string | null;
   args: string[];
-  root: string;
-  local: string[];
   all: boolean;
   noScript: boolean;
   noTab: boolean;
@@ -328,7 +329,7 @@ const MAX_TIMER_SECONDS = Math.floor((2 ** 31 - 1) / 1000);
 
 function parseArgs(argv: string[]): Opts {
   const opts: Opts = {
-    command: null, args: [], root: process.cwd(), local: [],
+    command: null, args: [],
     all: false, noScript: false, noTab: false, launch: false, headed: false, watch: false, extension: false, solo: false, pageErrors: false, detach: false, newRun: false, noWait: false,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -339,8 +340,9 @@ function parseArgs(argv: string[]): Opts {
       return v;
     };
     switch (arg) {
-      case '--root': opts.root = path.resolve(next()); break;
-      case '--local': opts.local.push(path.resolve(next())); break;
+      case '--root':
+      case '--local':
+        throw new UsageError(`The ${arg} flag applies to the whole line, so it goes on the sm-dev command line`);
       case '--all': opts.all = true; break;
       case '--noscript': opts.noScript = true; break;
       case '--notab': opts.noTab = true; break;
@@ -390,78 +392,22 @@ function parseArgs(argv: string[]): Opts {
   return opts;
 }
 
-async function collectScripts(inputs: string[]): Promise<string[]> {
-  const found: string[] = [];
-  for (const input of inputs) {
-    const full = path.resolve(input);
-    const info = await statInput(input);
-    if (info.isDirectory()) await walk(full, found);
-    else found.push(full);
-  }
-  return found;
-}
-
-// The script a command was pointed at, checked up front so a typo is
-// reported as one rather than as the file system's `ENOENT` text.
-async function scriptFile(input: string): Promise<string> {
-  const info = await statInput(input);
-  if (info.isDirectory()) throw new UsageError(isDirectoryMessage(input));
-  return path.resolve(input);
-}
-
-function statInput(input: string): ReturnType<typeof stat> {
-  return stat(path.resolve(input)).catch(() => {
-    throw new UsageError(noSuchFileMessage(input));
-  });
-}
-
-async function walk(dir: string, out: string[]): Promise<void> {
-  const entries = await readdir(dir, { withFileTypes: true });
-  entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  for (const entry of entries) {
-    if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) await walk(full, out);
-    else if (entry.name.endsWith('.user.js')) out.push(full);
-  }
-}
-
-function rel(file: string): string {
-  return path.relative(process.cwd(), file) || file;
-}
-
 function checkValidate(opts: Opts): void {
-  if (opts.args.length === 0) throw new UsageError('The validate command needs at least one path');
+  if (opts.args.length === 0) throw new UsageError(VALIDATE_NEEDS);
 }
 
 async function validate(opts: Opts): Promise<number> {
   checkValidate(opts);
-  // In the order given. A web address is fetched; a path may be a
-  // directory to search.
-  const sources: ScriptSource[] = [];
-  for (const arg of opts.args) {
-    if (REMOTE_SCRIPT.test(arg)) sources.push(...await scriptSources([arg]));
-    else for (const file of await collectScripts([arg])) sources.push({ label: rel(file), file });
-  }
-  // What it found, not how it was typed.
-  if (sources.length === 0) throw new Error('No *.user.js files found');
+  const sources = await validateSources(opts.args);
   let failed = 0;
   for (const source of sources) {
-    const prepared = await prepareSource(source, opts);
-    if (prepared.status === 'ok') {
-      const notes = prepared.startupLogs.map((l) => `\n    ${l.level}: ${l.message}`).join('');
-      process.stdout.write(`ok       ${source.label}${notes}\n`);
-    } else {
-      failed++;
-      process.stdout.write(`INVALID  ${source.label}\n    ${prepared.diagnostic}\n`);
-    }
+    const { lines, ok } = validateLines(source.label, await prepareSource(source, lineRoots));
+    if (!ok) failed++;
+    for (const line of lines) print(line);
   }
-  process.stdout.write(`\n${sources.length - failed} ok, ${failed} invalid\n`);
+  print(`\n${validateSummary(sources.length - failed, failed)}`);
   return failed === 0 ? 0 : 1;
 }
-
-// A `start` or `match` argument that names a script rather than a page.
-const SCRIPT_ARG = /\.user\.js$/i;
 
 // `start` and `match` arguments: scripts, and the URLs the rest are.
 function scriptsAndUrls(args: string[]): { scripts: string[]; urls: string[] } {
@@ -472,73 +418,12 @@ function scriptsAndUrls(args: string[]): { scripts: string[]; urls: string[] } {
   };
 }
 
-// A script named by a web address rather than a path: `validate` and
-// `match` fetch it.
-const REMOTE_SCRIPT = /^https?:\/\//i;
-
-// A script to check: read from disk, or already fetched from `url`.
-// `label` is how the output names it.
-type ScriptSource = { label: string; file: string } | { label: string; url: string; text: string };
-
-// Local ones checked, remote ones fetched, all up front, so a mistyped
-// name or a dead link is reported before any output.
-async function scriptSources(inputs: string[]): Promise<ScriptSource[]> {
-  return Promise.all(inputs.map(async (input): Promise<ScriptSource> => {
-    if (!REMOTE_SCRIPT.test(input)) {
-      const file = await scriptFile(input);
-      return { label: rel(file), file };
-    }
-    // Its final URL, past any redirect, for relative @requires to resolve against.
-    const { url, text } = await fetchScript(input);
-    return { label: input, url, text };
-  }));
-}
-
-// Long enough for a slow server, short enough that a stuck one doesn't
-// hold the command for minutes.
-const FETCH_TIMEOUT_MS = 30_000;
-
-async function fetchScript(url: string): Promise<{ url: string; text: string }> {
-  let response: Response;
-  try {
-    response = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-  } catch (err) {
-    const error = err as Error & { cause?: { code?: string; message?: string } };
-    const why = error.name === 'TimeoutError' ? `The server didn't answer within ${FETCH_TIMEOUT_MS / 1000} seconds`
-      : error.cause?.code === 'ENOTFOUND' ? 'No such host'
-        : error.cause?.code === 'ECONNREFUSED' ? 'The server refused the connection'
-          // Node's own message is only "fetch failed"; the cause says why.
-          : capitalize(error.cause?.message ?? error.message);
-    throw new Error(`Could not fetch ${url}: ${why}`);
-  }
-  if (!response.ok) throw new Error(`Could not fetch ${url}: The server answered ${response.status} ${response.statusText}`.trimEnd());
-  const text = await response.text();
-  // A login page or a forge's page about the file, not the file.
-  const contentType = response.headers.get('content-type') ?? '';
-  if (isMarkupContentType(contentType) || looksLikeMarkup(text)) {
-    throw new Error(`Could not fetch ${url}: ${markupResponseMessage(isMarkupContentType(contentType) ? { contentType } : {})}`);
-  }
-  return { url: response.url || url, text };
-}
-
-function capitalize(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
-function prepareSource(source: ScriptSource, opts: Opts): Promise<PreparedScript> {
-  const shared = { collectionRoot: opts.root, localRoots: opts.local };
-  return 'file' in source
-    ? prepareScript({ file: source.file, ...shared })
-    // Relative @requires resolve against the script's own URL.
-    : prepareScript({ text: source.text, sourceUrl: source.url, ...shared });
-}
-
 // Every script against every URL, in the order given. Arguments can
 // come in any order: a `.user.js` one is a script, the rest are URLs.
 function checkMatch(opts: Opts): void {
   const { scripts, urls } = scriptsAndUrls(opts.args);
   if (scripts.length === 0 || urls.length === 0) {
-    throw new UsageError('The match command needs a script (a .user.js file) and at least one URL');
+    throw new UsageError(MATCH_NEEDS);
   }
 }
 
@@ -546,36 +431,15 @@ async function match(opts: Opts): Promise<number> {
   checkMatch(opts);
   const { scripts, urls } = scriptsAndUrls(opts.args);
   const sources = await scriptSources(scripts);
-  let failures = 0;
+  let misses = 0;
   for (const [i, source] of sources.entries()) {
     // Headed only when there are several, so one script reads as before.
-    if (sources.length > 1) process.stdout.write(`${i > 0 ? '\n' : ''}${source.label}\n`);
-    const prepared = await prepareSource(source, opts);
-    // A script whose @match rules can never match is stored invalid,
-    // but the answer per URL is still exact: no match. Anything else
-    // invalid never runs at all; `validate` says why.
-    const unmatchable = prepared.errorMessage !== undefined && unusableMatchGroupKey(prepared.errorMessage) !== null;
-    if (prepared.status !== 'ok' && !unmatchable) {
-      failures++;
-      // Under a heading, the heading has already named it.
-      process.stdout.write(sources.length > 1 ? 'INVALID script\n' : `INVALID  ${source.label}\n`);
-      continue;
-    }
-    for (const url of urls) {
-      const verdict = explainMatch(prepared.matching, url);
-      if (!verdict.matches) failures++;
-      // Every rule that covers the URL, not only the deciding one, so a
-      // miss shows what an @exclude overrode.
-      const lines = [
-        ...verdict.excludedBy.map((rule) => `Excluded by: ${rule}`),
-        // Padded so its rules line up with the excludes'.
-        ...verdict.matchedBy.map((rule) => `Matched by:  ${rule}`),
-      ];
-      if (lines.length === 0) lines.push(NO_RULE_COVERS_URL);
-      process.stdout.write(`${verdict.matches ? 'match   ' : 'no match'} ${url}\n${lines.map((l) => `    ${l}\n`).join('')}`);
-    }
+    if (sources.length > 1) print(`${i > 0 ? '\n' : ''}${source.label}`);
+    const report = matchLines(await prepareSource(source, lineRoots), urls.map((url) => ({ url })), sources.length > 1 ? undefined : source.label);
+    misses += report.misses;
+    for (const line of report.lines) print(line);
   }
-  return failures === 0 ? 0 : 1;
+  return misses === 0 ? 0 : 1;
 }
 
 /**
@@ -604,6 +468,7 @@ async function startCommand(opts: Opts, words: string[], seq: Sequence, more: bo
   const started = await detachRun(words.filter((w) => w !== '--detach'), seq.run);
   if (!started.id) return started.code;
   seq.run = started.id;
+  seq.own = true;
   if (opts.detach) {
     const idle = opts.idleSeconds ?? DEFAULT_IDLE_SECONDS;
     print(`[sm-dev] Run ${started.id} now running detached, with ${idle > 0 ? `idle timeout ${duration(idle)}` : 'no idle timeout'}`);
@@ -644,7 +509,7 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
     if (opts.newRun) throw new UsageError('The --new flag only applies with --detach');
   }
   const devtools = devtoolsWanted(opts.devtools) && !opts.launch && !opts.extension;
-  const files = await Promise.all(scripts.map(scriptFile));
+  const files = await Promise.all(scripts.map((s) => scriptFile(s)));
   return { urls, files, devtools };
 }
 
@@ -728,8 +593,8 @@ async function runHere(opts: Opts, files: string[], urls: string[], devtools: bo
       solo: opts.solo,
       pageErrors: opts.pageErrors,
       devtools,
-      collectionRoot: opts.root,
-      localRoots: opts.local,
+      collectionRoot: lineRoots.collectionRoot,
+      localRoots: lineRoots.localRoots,
       // Drawn around the typed-command prompt, when one is showing.
       out,
       logCommand: log ? (text, echoed) => {
@@ -802,7 +667,7 @@ async function detachRun(words: string[], runId: string | undefined): Promise<{ 
   const { open } = await import('node:fs/promises');
   const { file: log, handle: writing } = await createRunLog();
   const reading = await open(log, 'r');
-  const child = spawn(process.execPath, [...process.execArgv, fileURLToPath(import.meta.url), ...words, ...(runId ? ['--run', runId] : [])], {
+  const child = spawn(process.execPath, [...process.execArgv, fileURLToPath(import.meta.url), ...words, ...rootWords(), ...(runId ? ['--run', runId] : [])], {
     // Its own process group, so a Ctrl-C or closed terminal here
     // doesn't reach it once it is detached. No console window of its
     // own on Windows.
@@ -927,6 +792,8 @@ async function listCommand(opts: Opts): Promise<number> {
  */
 interface Sequence {
   run?: string;
+  /** Whether a `start` of this line began the run, which takes its `--root` and `--local`. */
+  own?: boolean;
   /**
    * A run `start` began, without `--detach`, for the commands after it
    * on the line: stopped once they are done.
@@ -975,26 +842,58 @@ function isTypedCommand(name: string): boolean {
 // Takes its arguments as typed, not through parseArgs: the command
 // sent may have words of its own that look like flags (`set n -1`).
 async function sendCommand(words: string[], wanted: string | undefined): Promise<number> {
-  const { sendLine } = await import('./runs.js');
+  const { liveRuns, sendLine } = await import('./runs.js');
   await checkSend(words);
+  // With no run to take a script or page from, what the command line
+  // form needs instead.
+  const needs = RUN_OR_FILES[words[0]];
+  if (needs && wanted === undefined && (await liveRuns()).length === 0) throw new UsageError(needs);
   const target = await targetRun(wanted);
   const list = sentList(words);
   if (list) {
     // In order, each done before the next is sent, and each one's
     // output headed by the command as it was written. Stops at one that
-    // failed (a `wait` that timed out), as a line of several does.
+    // failed (a `wait` that timed out), as a line of several does. The
+    // exit code is the last one's.
+    let code = 0;
     for (const [i, command] of list.commands.entries()) {
       for (const line of echoCommand(command)) print(line);
-      if (!await sendLine(target.id, command.text, print)) {
+      code = await sendLine(target.id, command.text, print);
+      if (stopsLine(code, commandWords(command.text))) {
         if (i < list.commands.length - 1) process.stderr.write(`${LINE_STOPPED}\n`);
-        return 1;
+        return code;
       }
     }
-    return 0;
+    return code;
   }
   // The words go as the shell gave them, so a selector or text with
   // spaces reaches a page command as one word.
-  return await sendLine(target.id, words.join(' '), print, undefined, words) ? 0 : 1;
+  return sendLine(target.id, words.join(' '), print, undefined, words);
+}
+
+const MATCH_NEEDS = 'The match command needs a script (a .user.js file) and at least one URL, or a run to take them from';
+const VALIDATE_NEEDS = 'The validate command needs at least one path, or a run to take the script from';
+const RUN_OR_FILES: Record<string, string> = { match: MATCH_NEEDS, validate: VALIDATE_NEEDS };
+
+// The words `match` and `validate` take in a run only: a loaded
+// script, a tab, or all of them.
+const SESSION_REF: Record<string, RegExp> = {
+  match: /^(all|all-scripts|all-tabs|\d+|[Tt]\d+(\.\d+)?)$/i,
+  validate: /^(all|\d+|[Tt]\d+\.\d+)$/i,
+};
+
+/**
+ * Whether a `match` or `validate` needs a run: it names a loaded script
+ * or tab, or leaves out what the command line form has to be given.
+ * Otherwise it runs here, run or no run. A word that is also a file or
+ * directory here (`all`, `2024`) is taken for it.
+ */
+function needsRun(words: string[]): boolean {
+  const [name, ...args] = words;
+  if (args.some((a) => SESSION_REF[name].test(a) && !existsSync(a))) return true;
+  if (name === 'validate') return args.length === 0;
+  const { scripts, urls } = scriptsAndUrls(args);
+  return scripts.length === 0 || urls.length === 0;
 }
 
 /**
@@ -1043,8 +942,10 @@ const PIPED_BATCH_GAP_MS = 50;
 
 /**
  * `--stdin`, or no command and piped input: commands read from stdin,
- * one per line, sent to the run. Returns the exit code, or null when
- * stdin had no commands.
+ * one per line. A run's go to the run; sm-dev's own (`list`, `match`
+ * on files) run here, `start` only as the first command of all.
+ * Returns the last command's exit code (1 after a mistake), or null
+ * when stdin had no commands.
  *
  * - A file, or what a pipe delivers at once (a heredoc, `printf`), is
  *   checked in full before any is sent, so a typo on its fifth line
@@ -1053,13 +954,10 @@ const PIPED_BATCH_GAP_MS = 50;
  *   read, as at the run's own prompt. A mistake then is said, and the
  *   rest go on, since the commands before it have run already.
  */
-async function stdinCommands(wanted: string | undefined): Promise<number | null> {
+async function stdinCommands(seq: Sequence, first: boolean, started: () => void): Promise<number | null> {
   const { sendLine } = await import('./runs.js');
   const { createInterface } = await import('node:readline');
   const { fstatSync } = await import('node:fs');
-  // Looked up once there is a command for it, so input with none says
-  // that, rather than that no run is active.
-  let target: RunRecord | undefined;
   const terminal = Boolean(process.stdin.isTTY);
   // A file ends; only a pipe needs the pause to tell a batch.
   const file = !terminal && fstatSync(0).isFile();
@@ -1088,16 +986,57 @@ async function stdinCommands(wanted: string | undefined): Promise<number | null>
     return queue.shift() ?? null;
   };
   const blocks = new CommandAssembler();
-  // Typed commands are on screen already; piped ones get a heading.
-  // Piped ones stop at one that fails, as a list does; typed, the
-  // person decides. False when it failed.
-  const send = async (command: AssembledCommand): Promise<boolean> => {
-    target ??= await targetRun(wanted);
-    if (!terminal) for (const l of echoCommand(command)) print(l);
-    return sendLine(target.id, command.text, print);
-  };
   let sent = 0;
   let failed = false;
+  let code = 0;
+  // Typed commands are on screen already; piped ones get a heading.
+  // The run is looked up for each, since a start among them changes it,
+  // and only once there is a command, so input with none says that.
+  // Set by a command that stopped the rest: a start that failed, or
+  // any that failed, piped in.
+  let halted = false;
+  // Commands of the batch still to send after this one.
+  let pending = 0;
+  const send = async (command: AssembledCommand): Promise<void> => {
+    if (halted) return;
+    const words = commandWords(command.text);
+    const target = runsHere(words) ? null : await targetRun(seq.run);
+    if (!terminal) for (const l of echoCommand(command)) print(l);
+    code = target ? await sendLine(target.id, command.text, print) : await runOne(words, seq, true);
+    sent++;
+    // Piped ones stop at one that fails, as a list does; typed, the
+    // person decides. A start that failed stops the rest either way,
+    // since they were meant for its run.
+    const isStart = commandName(words) === 'start';
+    if (stopsLine(code, words) && (!terminal || isStart)) {
+      halted = true;
+      if (!ended || queue.length > 0 || pending > 0) process.stderr.write(`${LINE_STOPPED}\n`);
+      return;
+    }
+    // So a Ctrl-C stops the run it began, as on the command line.
+    if (isStart && code === 0) started();
+  };
+  // What is wrong with a command, before any runs; null when nothing.
+  // `start` comes first or not at all, as on the command line.
+  // A start read first begins the run the rest go to, with the line's roots.
+  let startFirst = false;
+  // Commands read so far, mistaken ones too: only the first can start.
+  let seen = 0;
+  const mistakeIn = async (command: AssembledCommand): Promise<string | null> => {
+    const index = seen++;
+    const words = commandWords(command.text);
+    if (!runsHere(words)) return rootsGiven && !seq.own && !startFirst ? ROOTS_ARE_THE_RUNS : commandMistake(words);
+    if (commandName(words) === 'start') {
+      if (!(first && index === 0)) return START_FIRST;
+      startFirst = true;
+    }
+    try {
+      await checkCommand(words);
+      return null;
+    } catch (err) {
+      return (err as Error).message;
+    }
+  };
   // Lines read, for naming the one a block mistake is on.
   let n = 0;
   try {
@@ -1110,7 +1049,7 @@ async function stdinCommands(wanted: string | undefined): Promise<number | null>
         const got = blocks.push(line);
         if (got && 'error' in got) mistakes.push(`ERROR: Line ${n}: ${got.error}`);
         else if (got) {
-          const mistake = commandMistake(commandWords(got.command.text));
+          const mistake = await mistakeIn(got.command);
           if (mistake) mistakes.push(...echoCommand(got.command), `ERROR: ${mistake}`);
           else batch.push(got.command);
         }
@@ -1126,30 +1065,30 @@ async function stdinCommands(wanted: string | undefined): Promise<number | null>
         return 2;
       }
       for (const [i, command] of batch.entries()) {
-        sent++;
-        if (await send(command)) continue;
-        if (i < batch.length - 1 || !ended || queue.length > 0) process.stderr.write(`${LINE_STOPPED}\n`);
-        return 1;
+        pending = batch.length - i - 1;
+        await send(command);
+        if (halted) break;
       }
+      pending = 0;
     }
-    for (let line = await next(); line !== null; line = await next()) {
+    for (let line = await next(); line !== null && !halted; line = await next()) {
       if (typeof line !== 'string') continue;
       n++;
       const got = blocks.push(line);
       if (!got) continue;
-      const mistake = 'error' in got ? `Line ${n}: ${got.error}` : commandMistake(commandWords(got.command.text));
+      const mistake = 'error' in got ? `Line ${n}: ${got.error}` : await mistakeIn(got.command);
       if (mistake) {
         failed = true;
         if (!terminal && !('error' in got)) for (const l of echoCommand(got.command)) process.stderr.write(`${l}\n`);
         process.stderr.write(`ERROR: ${mistake}\n`);
-      } else if (!('error' in got)) {
-        sent++;
-        if (!await send(got.command)) failed = true;
+        // Piped in, a mistake stops the rest, as a failed command does.
+        if (!terminal) {
+          process.stderr.write(`${LINE_STOPPED}\n`);
+          return 1;
+        }
+        continue;
       }
-      if (failed && !terminal) {
-        process.stderr.write(`${LINE_STOPPED}\n`);
-        return 1;
-      }
+      if (!('error' in got)) await send(got.command);
     }
     const unclosed = blocks.drop();
     if (unclosed !== null) {
@@ -1161,8 +1100,19 @@ async function stdinCommands(wanted: string | undefined): Promise<number | null>
     process.stdin.pause();
   }
   if (sent === 0 && !failed) return null;
-  return failed ? 1 : 0;
+  return failed || halted ? Math.max(code, 1) : code;
 }
+
+// sm-dev's own commands, which run in this process rather than going
+// to a run, when read from stdin.
+function runsHere(words: string[]): boolean {
+  const name = commandName(words);
+  if (name === 'match' || name === 'validate') return !needsRun(takeRunFlag(words).words);
+  return name !== undefined && HERE.has(name);
+}
+
+// Ones that need no run, so a run's own copy isn't wanted.
+const HERE = new Set(['start', 'list', 'stop', 'clear', 'help']);
 
 async function checkStop(opts: Opts, run: string | undefined): Promise<void> {
   if (opts.all && run !== undefined) throw new UsageError('The --all flag stops every run, so the stop command can\'t be used with --run');
@@ -1249,11 +1199,47 @@ const LINE_STOPPED = 'That command failed, so the commands after it were not run
 
 const STDIN_FLAG = '--stdin';
 
+const ROOTS_ARE_THE_RUNS = 'The --root and --local flags are set when a run starts, and a command sent to a run uses the run\'s own';
+
+// `--root` and `--local`, for every command of the line: where the
+// scripts it reads find local copies of their @requires. A run started
+// on the line keeps them; commands sent to another run use its own.
+let lineRoots: ScriptRoots = { collectionRoot: process.cwd(), localRoots: [] };
+// Whether the line gave either, so one sent to a run can be refused.
+let rootsGiven = false;
+
+// Takes `--root DIR` and `--local DIR` out of the line's words.
+function takeRootFlags(argv: string[]): string[] {
+  const rest: string[] = [];
+  let collectionRoot = process.cwd();
+  const localRoots: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const word = argv[i];
+    if (word !== '--root' && word !== '--local') {
+      rest.push(word);
+      continue;
+    }
+    const value = argv[++i];
+    if (value === undefined || value === SEPARATOR) throw new UsageError(`The ${word} flag needs a value`);
+    if (word === '--root') collectionRoot = path.resolve(value);
+    else localRoots.push(path.resolve(value));
+    rootsGiven = true;
+  }
+  lineRoots = { collectionRoot, localRoots };
+  return rest;
+}
+
+// The line's roots as flags again, for a run started in the background.
+function rootWords(): string[] {
+  if (!rootsGiven) return [];
+  return ['--root', lineRoots.collectionRoot, ...lineRoots.localRoots.flatMap((dir) => ['--local', dir])];
+}
+
 // The commands from stdin, after the line's. With none on the line
 // either, says so rather than exiting without a word.
-async function runStdin(wanted: string | undefined, only: boolean): Promise<number> {
+async function runStdin(seq: Sequence, only: boolean, started: () => void): Promise<number> {
   try {
-    const code = await stdinCommands(wanted);
+    const code = await stdinCommands(seq, only, started);
     if (code !== null) return code;
     if (!only) return 0;
     throw new UsageError(NO_COMMANDS);
@@ -1301,6 +1287,18 @@ function isStart(words: string[]): boolean {
 
 const STOP_THEN_STDIN = 'The --stdin flag sends commands to the line\'s run, so it can\'t be used with stop';
 
+// Whether a command's exit code stops the commands after it: any
+// failure but a miss from match or validate, which is an answer.
+function stopsLine(code: number, words: string[]): boolean {
+  return code !== 0 && !(code === 1 && isVerdict(words));
+}
+
+// The commands whose exit code answers a question.
+function isVerdict(words: string[]): boolean {
+  const name = commandName(words);
+  return name === 'match' || name === 'validate';
+}
+
 function isStop(words: string[]): boolean {
   return commandName(words) === 'stop';
 }
@@ -1331,6 +1329,7 @@ function parseCommand(words: string[]): ParsedCommand {
   // A run's command may come as one argument: `'eval T1 x'`. One of
   // several lines is a list of them, and never sm-dev's own.
   if (words.length === 1 && words[0].includes('\n')) return { kind: 'send', words };
+  if ((words[0] === 'match' || words[0] === 'validate') && needsRun(words)) return { kind: 'send', words };
   const head = words.length === 1 ? words[0].trim().split(/\s+/)[0] : words[0];
   if (!CLI_COMMANDS.has(words[0]) && isTypedCommand(head)) return { kind: 'send', words };
   const opts = parseArgs(words);
@@ -1392,7 +1391,10 @@ async function runOne(words: string[], seq: Sequence, more: boolean): Promise<nu
       process.stdout.write(parsed.topics.length === 0 ? usage() : commandHelp(parsed.topics));
       return 0;
     }
-    if (parsed.kind === 'send') return await sendCommand(parsed.words, seq.run);
+    if (parsed.kind === 'send') {
+      if (rootsGiven && !seq.own) throw new UsageError(ROOTS_ARE_THE_RUNS);
+      return await sendCommand(parsed.words, seq.run);
+    }
     const { opts } = parsed;
     switch (opts.command) {
       case 'validate': return await validate(opts);
@@ -1416,7 +1418,13 @@ async function main(): Promise<void> {
     if (err.code !== 'EPIPE' && err.code !== 'ERR_STREAM_DESTROYED') throw err;
     onOutputClosed();
   });
-  const argv = process.argv.slice(2);
+  let argv: string[];
+  try {
+    argv = takeRootFlags(process.argv.slice(2));
+  } catch (err) {
+    process.exitCode = printMistake(err);
+    return;
+  }
   let commands = splitCommands(argv.filter((w) => w !== STDIN_FLAG));
   // A line of only `--run D1` names the run for stdin's commands.
   let lineRun: string | undefined;
@@ -1502,21 +1510,25 @@ async function main(): Promise<void> {
     }
   };
   let code = 0;
+  let stopped = false;
   try {
     // In order, stopping at the first that fails, as a shell's && would.
     for (const [i, words] of commands.entries()) {
       if (commands.length > 1) print(`> ${words.map(shellWord).join(' ')}`);
       code = await runOne(words, seq, stdin || i < commands.length - 1);
-      if (code !== 0) {
+      // A miss from match or validate is an answer, not a failure: the
+      // line goes on, and it only sets the exit code if it is last.
+      if (stopsLine(code, words)) {
         if (i < commands.length - 1 || stdin) process.stderr.write(`${LINE_STOPPED}\n`);
+        stopped = true;
         break;
       }
       listen(seq.started !== undefined);
     }
-    if (code === 0 && stdin) code = await runStdin(seq.run, commands.length === 0);
+    if (stdin && !stopped) code = await runStdin(seq, commands.length === 0, () => listen(seq.started !== undefined));
   } finally {
-    const stopped = await stopStarted(seq);
-    if (code === 0) code = stopped;
+    const ended = await stopStarted(seq);
+    if (code === 0) code = ended;
     listen(false);
   }
   process.exitCode = code;

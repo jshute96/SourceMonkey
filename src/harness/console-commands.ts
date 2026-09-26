@@ -14,6 +14,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import path from 'node:path';
 import readline from 'node:readline';
+import { fileURLToPath } from 'node:url';
 
 import type { Dialog, Page } from '@playwright/test';
 
@@ -24,6 +25,10 @@ import { ACTIONS, PAGE_COMMAND_GROUPS, PAGE_COMMANDS, runPageCommand, splitWords
 import { defaultPageUrl, NO_DEFAULT_PAGE, preparedScriptMatches, preparedScriptName, withDefaultScheme, type PreparedScript } from './prepare.js';
 import { currentTab, dialogKind, dialogWaitingMessage, NO_TABS, pickTab, TAB_ARG, tabName } from './tab-refs.js';
 import { formIndex, settleTabs, waitFor } from './wait.js';
+import {
+  SCRIPT_ARG, UsageError, matchLines, prepareSource, rel, scriptSources, validateLines, validateSources, validateSummary,
+  type ScriptRoots, type ScriptSource,
+} from './checks.js';
 
 /**
  * A tab the run controls: its own, or one a controlled tab opened.
@@ -119,6 +124,10 @@ export interface ConsoleContext {
    * Unset before the first.
    */
   previousStart?: number;
+  /** Where `validate` and `match` find local copies of `@require`s: the run's own. */
+  roots?: ScriptRoots;
+  /** `clear --extension` in this run's browser; the scratch scripts removed. */
+  clearExtension?: () => Promise<number>;
 }
 
 /** The lines a run has printed, numbered, and a way to hear new ones. */
@@ -201,9 +210,27 @@ const COMMAND_GROUPS: { title: string; lines: string[] }[] = [
   },
   ...PAGE_COMMAND_GROUPS,
   {
+    title: 'Checking scripts',
+    lines: [
+      'match [what]...   Say whether scripts run on pages, and which header',
+      '                  rules decided it: the selected script on the tab,',
+      '                  unless others are named. what: a script (3, T2.3, a',
+      '                  .user.js file), a tab (T2), a URL, all-scripts,',
+      '                  all-tabs, or all (every script on every tab)',
+      'validate [what]   Re-read a script from disk and check it, without',
+      '                  loading it: the selected one, one by number, all',
+      '                  loaded scripts, or files and directories',
+    ],
+  },
+  {
     title: 'The run',
     lines: [
       'help [command]    List these, or one command\'s help',
+      'list              List the sm-dev runs active on this machine',
+      'stop [--all]      Stop the run (as quit does), or every run;',
+      '                  --run ID stops another',
+      'clear --extension Remove every script in the extension\'s Scratch',
+      '                  collection, and turn solo mode off',
       'quit              Stop the run',
     ],
   },
@@ -269,6 +296,8 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   screenshot: ['--full'],
   probe: ['--html', '--css'],
   wait: ['--timeout-seconds'],
+  stop: ['--all', '--run'],
+  clear: ['--extension'],
 };
 
 // Commands whose last argument is free text, which may start with --
@@ -323,7 +352,7 @@ export function commandFlagMistake(words: string[]): string | null {
     if (!word.startsWith('--')) continue;
     if (!known.includes(word)) return `The ${command} command has no ${word} flag`;
     // A flag's value, which may look like anything.
-    if (VALUE_FLAGS.has(word)) i++;
+    if (VALUE_FLAGS.has(word) || word === '--run') i++;
   }
   return null;
 }
@@ -341,7 +370,7 @@ export function commandWords(line: string): string[] {
 
 // Commands that only look: what they print answers whoever asked, and
 // is no part of the run's story.
-const INSPECTING = new Set(['help', 'status', 'values', 'get', 'snapshot', 'screenshot', 'savehtml', 'probe', 'logs']);
+const INSPECTING = new Set(['help', 'status', 'values', 'get', 'snapshot', 'screenshot', 'savehtml', 'probe', 'logs', 'match', 'validate', 'list']);
 
 /**
  * Whether a command line only inspects, so its output, sent from
@@ -428,7 +457,7 @@ export function consoleCommandsHelp(names: string[]): { lines: string[]; unknown
  */
 export async function runConsoleCommand(
   line: string, ctx: ConsoleContext, { cwd = process.cwd(), words }: { cwd?: string; words?: string[] } = {},
-): Promise<boolean | void> {
+): Promise<number | boolean | void> {
   const trimmed = line.trim();
   if (!trimmed) return;
   const [typedCommand, ...rest] = trimmed.split(/\s+/);
@@ -473,7 +502,40 @@ export async function runConsoleCommand(
     return true;
   };
 
+  // The command's own words after its name, as the sender gave them.
+  const args = (words?.[0] === typedCommand ? words : commandWords(trimmed)).slice(1);
+
   switch (command) {
+    case 'match':
+      return matchCommand(ctx, args, cwd);
+    case 'validate':
+      return validateCommand(ctx, args, cwd);
+    case 'list': {
+      if (!takesNothing()) return 2;
+      const { liveRuns, runTable } = await import('./runs.js');
+      const runs = await liveRuns();
+      if (runs.length === 0) ctx.out('No sm-dev runs are active');
+      for (const l of runTable(runs)) ctx.out(l);
+      return;
+    }
+    case 'stop':
+      return stopCommand(ctx, args);
+    case 'clear': {
+      if (args.join(' ') !== '--extension') {
+        ctx.out(`${MISTAKE_PREFIX}The clear command needs --extension, since it clears the extension's Scratch collection`);
+        return 2;
+      }
+      if (!ctx.clearExtension) {
+        ctx.out('[sm-dev] This run cannot reach the extension. Stop the run first, then type sm-dev clear --extension.');
+        return 1;
+      }
+      const count = await ctx.clearExtension();
+      ctx.out(`[sm-dev] Removed ${count} scratch script(s)`);
+      return;
+    }
+    case 'start':
+      ctx.out(`${MISTAKE_PREFIX}This is ${ctx.runId ? `run ${ctx.runId}` : 'a run'} already. Type load to add a script, or newtab to open a page.`);
+      return 2;
     case 'help':
       if (!argument) {
         for (const l of CONSOLE_HELP) ctx.out(l ? `  ${l}` : '');
@@ -888,6 +950,192 @@ function pickScript(ctx: ConsoleContext, arg: string): PreparedScript | null {
     ctx.out(`[sm-dev] Several loaded scripts match ${arg} (${numbers}). Name one by its number.`);
   }
   return null;
+}
+
+// ---------- Checking scripts ----------
+
+// Where the loaded scripts' local @require copies are, for re-reading
+// one: the run's roots, or the sender's directory.
+function rootsOf(ctx: ConsoleContext, cwd: string): ScriptRoots {
+  return ctx.roots ?? { collectionRoot: cwd, localRoots: [] };
+}
+
+// A loaded script's number and label, as the scripts list shows it.
+function numbered(ctx: ConsoleContext, script: PreparedScript): string {
+  return `${ctx.scripts.indexOf(script) + 1}: ${scriptLabel(script)}`;
+}
+
+/**
+ * `match` in a run: the selected script on the current tab, unless the
+ * words name others. Scripts: a number, `T2.3`, a loaded script's
+ * name or file name, a `.user.js` file (or its URL), `all-scripts`.
+ * Pages: a tab, `T2.3`'s tab, a URL, `all-tabs`. `all` is both. 1 when
+ * any page isn't matched.
+ */
+async function matchCommand(ctx: ConsoleContext, words: string[], cwd: string): Promise<number> {
+  const loaded: PreparedScript[] = [];
+  const files: string[] = [];
+  const pages: { url: string; name?: string }[] = [];
+  let allScripts = false;
+  let allTabs = false;
+  const tabPage = (tab: ControlledTab): { url: string; name: string } => ({ url: tab.page.url(), name: tabName(tab) });
+  for (const word of words) {
+    const lower = word.toLowerCase();
+    if (lower === 'all' || lower === 'all-scripts') allScripts = true;
+    if (lower === 'all' || lower === 'all-tabs') allTabs = true;
+    if (lower === 'all' || lower === 'all-scripts' || lower === 'all-tabs') continue;
+    const ref = /^[Tt](\d+)(?:\.(\d+))?$/.exec(word);
+    if (ref) {
+      const tab = pickTab(ctx, `T${ref[1]}`);
+      if (!tab) return 2;
+      pages.push(tabPage(tab));
+      if (ref[2] !== undefined) {
+        const script = pickScript(ctx, ref[2]);
+        if (!script) return 2;
+        loaded.push(script);
+      }
+    } else if (/^\d+$/.test(word)) {
+      const script = pickScript(ctx, word);
+      if (!script) return 2;
+      loaded.push(script);
+    } else if (ctx.scripts.some((script) => preparedScriptMatches(script, word))) {
+      // A loaded script by its exact name or path, before a file or URL.
+      loaded.push(...ctx.scripts.filter((script) => preparedScriptMatches(script, word)));
+    } else if (SCRIPT_ARG.test(word)) {
+      files.push(word);
+    } else {
+      pages.push({ url: withDefaultScheme(word, cwd) });
+    }
+  }
+  if (allScripts) loaded.splice(0, loaded.length, ...ctx.scripts);
+  const current = ctx.current ?? ctx.scripts[0];
+  if (loaded.length === 0 && files.length === 0) {
+    if (!current) {
+      ctx.out(`[sm-dev] ${NO_SCRIPTS}. Name a .user.js file to match.`);
+      return 1;
+    }
+    loaded.push(current);
+  }
+  // Every tab, then any URLs named.
+  if (allTabs) pages.splice(0, pages.length, ...ctx.tabs().map(tabPage), ...pages.filter((p) => p.name === undefined));
+  if (pages.length === 0) {
+    const tab = currentTab(ctx);
+    if (!tab) {
+      ctx.out(NO_TABS);
+      return 1;
+    }
+    // Named only when there is another tab it could have been.
+    pages.push(ctx.tabs().length > 1 ? tabPage(tab) : { url: tab.page.url() });
+  }
+  // Each once, as on the command line.
+  const unique = pages.filter((p, i) => pages.findIndex((q) => q.url === p.url && q.name === p.name) === i);
+  pages.splice(0, pages.length, ...unique);
+  const scripts: { label: string; prepared: PreparedScript }[] = [...new Set(loaded)].map((script) => ({ label: numbered(ctx, script), prepared: script }));
+  for (const source of await scriptSources(files, cwd)) scripts.push({ label: source.label, prepared: await prepareSource(source, rootsOf(ctx, cwd)) });
+  let misses = 0;
+  for (const [i, { label, prepared }] of scripts.entries()) {
+    // Headed only when there are several, as on the command line.
+    if (scripts.length > 1) {
+      if (i > 0) ctx.out('');
+      ctx.out(label);
+    }
+    const report = matchLines(prepared, pages, scripts.length > 1 ? undefined : label);
+    misses += report.misses;
+    for (const line of report.lines) ctx.out(line);
+  }
+  return misses === 0 ? 0 : 1;
+}
+
+/**
+ * `validate` in a run: the selected script re-read from disk, unless
+ * the words name others: a number, `T2.3`, `all` (every loaded
+ * script), or files and directories. 1 when any is invalid.
+ */
+async function validateCommand(ctx: ConsoleContext, words: string[], cwd: string): Promise<number> {
+  const loaded: PreparedScript[] = [];
+  const sources: ScriptSource[] = [];
+  const paths: string[] = [];
+  for (const word of words) {
+    if (word.toLowerCase() === 'all') {
+      loaded.push(...ctx.scripts);
+      continue;
+    }
+    const ref = /^(?:[Tt](\d+)\.)?(\d+)$/.exec(word);
+    if (!ref) {
+      paths.push(word);
+      continue;
+    }
+    if (ref[1] !== undefined && !pickTab(ctx, `T${ref[1]}`)) return 2;
+    const script = pickScript(ctx, ref[2]);
+    if (!script) return 2;
+    loaded.push(script);
+  }
+  if (paths.length > 0) sources.push(...await validateSources(paths, cwd));
+  if (words.length === 0) {
+    const current = ctx.current ?? ctx.scripts[0];
+    if (!current) {
+      ctx.out(`[sm-dev] ${NO_SCRIPTS}. Name a file or directory to validate.`);
+      return 1;
+    }
+    loaded.push(current);
+  }
+  const reread: ScriptSource[] = [];
+  for (const script of new Set(loaded)) {
+    const url = script.script.fileUrl;
+    if (!url.startsWith('file:')) {
+      ctx.out(`[sm-dev] Script ${numbered(ctx, script)} has no file to re-read`);
+      return 1;
+    }
+    const file = fileURLToPath(url);
+    reread.push({ label: rel(file, cwd), file });
+  }
+  // The loaded scripts first, in their order, then the paths.
+  sources.unshift(...reread);
+  let invalid = 0;
+  for (const source of sources) {
+    const { lines, ok } = validateLines(source.label, await prepareSource(source, rootsOf(ctx, cwd)));
+    if (!ok) invalid++;
+    for (const line of lines) ctx.out(line);
+  }
+  ctx.out('');
+  ctx.out(validateSummary(sources.length - invalid, invalid));
+  return invalid === 0 ? 0 : 1;
+}
+
+/**
+ * `stop` in a run: this run, as `quit` does; with `--all`, every run,
+ * this one last; with `--run ID`, that run.
+ */
+async function stopCommand(ctx: ConsoleContext, words: string[]): Promise<number> {
+  const all = words.includes('--all');
+  const at = words.indexOf('--run');
+  const named = at >= 0 ? words[at + 1] : undefined;
+  if (at >= 0 && named === undefined) {
+    ctx.out(`${MISTAKE_PREFIX}The --run flag needs a run ID, e.g. --run D2`);
+    return 2;
+  }
+  const extra = words.filter((w, i) => w !== '--all' && i !== at && i !== at + 1);
+  if (extra.length > 0 || (all && named !== undefined)) {
+    ctx.out(`${MISTAKE_PREFIX}The stop command takes --all or --run ID, not both, and nothing else`);
+    return 2;
+  }
+  const { liveRuns, runIdOf, stopRun } = await import('./runs.js');
+  const id = named === undefined ? undefined : runIdOf(named);
+  if (named !== undefined && !id) {
+    ctx.out(`${MISTAKE_PREFIX}The run ID ${named} is not valid. Run IDs are D and then letters, digits, _ or -.`);
+    return 2;
+  }
+  if (id !== undefined && id !== ctx.runId) {
+    const record = (await liveRuns()).find((r) => r.id === id);
+    if (!record) {
+      ctx.out(`[sm-dev] There is no run ${id}. Type list to see the runs.`);
+      return 1;
+    }
+    return await stopRun(record, ctx.out) ? 0 : 1;
+  }
+  if (all) for (const record of (await liveRuns()).filter((r) => r.id !== ctx.runId)) await stopRun(record, ctx.out);
+  ctx.stop();
+  return 0;
 }
 
 // ---------- Tabs ----------
@@ -1582,28 +1830,33 @@ export function writeOutputLine(line: string): void {
 export type CommandRunner = (
   line: string,
   hooks?: { start?: () => void; end?: () => void; cwd?: string; words?: string[]; answer?: (line: string) => void },
-) => Promise<boolean>;
+) => Promise<number>;
 
 // `answer`: where the command's own output goes instead of `ctx.out`
-// (see commandOutput).
+// (see commandOutput). Resolves to the command's exit code.
 export function commandRunner(ctx: ConsoleContext): CommandRunner {
-  let queue: Promise<void> = Promise.resolve();
+  let queue: Promise<unknown> = Promise.resolve();
   return (line, hooks) => {
-    let ok = true;
+    // The exit code: what the command returned (a number, or false for
+    // 1); else 2 when it said it was typed wrong, wherever in it that
+    // was said; else 0. A throw is 2 for a typing mistake (a file that
+    // isn't there), 1 otherwise. Commands run one at a time, so the
+    // mistake watch holds only for this one.
+    let code = 0;
     const run = async (): Promise<void> => {
-      // A command that said it was typed wrong failed, wherever in it
-      // that was said. Commands run one at a time, so this holds only
-      // for this one.
+      let mistaken = false;
       const out = ctx.out;
       ctx.out = (l) => {
-        if (l.startsWith(MISTAKE_PREFIX)) ok = false;
+        if (l.startsWith(MISTAKE_PREFIX)) mistaken = true;
         out(l);
       };
       try {
-        if (await runConsoleCommand(line, ctx, { cwd: hooks?.cwd, words: hooks?.words }) === false) ok = false;
+        const result = await runConsoleCommand(line, ctx, { cwd: hooks?.cwd, words: hooks?.words });
+        code = result === false ? 1 : typeof result === 'number' ? result : 0;
+        if (code === 0 && mistaken) code = 2;
       } catch (err) {
-        ctx.out(`[sm-dev] ${(err as Error).message}`);
-        ok = false;
+        ctx.out(`${err instanceof UsageError ? MISTAKE_PREFIX : '[sm-dev] '}${(err as Error).message}`);
+        code = err instanceof UsageError ? 2 : 1;
       } finally {
         ctx.out = out;
       }
@@ -1625,7 +1878,7 @@ export function commandRunner(ctx: ConsoleContext): CommandRunner {
       }
     });
     queue = done;
-    return done.then(() => ok);
+    return done.then(() => code);
   };
 }
 

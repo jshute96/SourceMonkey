@@ -49,6 +49,8 @@ interface Setup {
   cliIn: (cwd: string, ...args: string[]) => Promise<string[]>;
   /** `cli`, with `input` piped to its stdin. */
   piped: (input: string, ...args: string[]) => Promise<string[]>;
+  /** `cli`, with its exit code. */
+  cliExit: (...args: string[]) => Promise<{ code: number | null; lines: string[] }>;
   /** Runs a `chrome-devtools` command in the run's session, for its output. */
   devtools: (...args: string[]) => Promise<string>;
   /**
@@ -88,6 +90,11 @@ async function setUp(): Promise<Setup> {
       resolve((stdout + stderr).split('\n').filter(Boolean));
     });
   });
+  const cliExit = (...args: string[]): Promise<{ code: number | null; lines: string[] }> => new Promise((resolve) => {
+    const child = execFile(process.execPath, [CLI, ...args], { env, timeout: 30_000 }, (_err, stdout, stderr) => {
+      resolve({ code: child.exitCode, lines: (stdout + stderr).split('\n').filter(Boolean) });
+    });
+  });
   const piped = (input: string, ...args: string[]): Promise<string[]> => new Promise((resolve) => {
     const child = execFile(process.execPath, [CLI, ...args], { env, timeout: 30_000 }, (_err, stdout, stderr) => {
       resolve((stdout + stderr).split('\n').filter(Boolean));
@@ -104,6 +111,7 @@ async function setUp(): Promise<Setup> {
     cli: (...args) => cliIn(process.cwd(), ...args),
     cliIn,
     piped,
+    cliExit,
     startRun: (args, cdp = String(port)) => {
       const proc = spawn(process.execPath, [CLI, 'start', '--cdp', cdp, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
       runs.push(proc);
@@ -253,6 +261,26 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
     // own, each headed by the command.
     expect(await setup.piped('eval 1+1\neval {{\n2+2\n}}\n')).toEqual(['> eval 1+1', '2', '> eval {{', '... 2+2', '... }}', '4']);
     expect(await setup.piped('eval 3\n', 'eval', 'T1', '0', '--stdin')).toEqual(['0', '> eval 3', '3']);
+
+    // match and validate take the run's scripts and tabs, and a miss
+    // is the exit code only when it comes last.
+    // T2, the tab newtab picked, which runs no scripts but matches.
+    expect(await setup.cliExit('match')).toEqual({ code: 0, lines: [`match    ${url} (T2)`, '    Matched by:  @match *://*/target.html'] });
+    expect(await setup.cliExit('match', '3', 'T2')).toEqual({ code: 1, lines: [`no match ${url} (T2)`, '    No @match or @include covers this URL'] });
+    const goesOn = await setup.cliExit('match', '3', '--', 'eval', '1+1');
+    expect(goesOn.code).toBe(0);
+    expect(goesOn.lines.slice(-2)).toEqual(['> eval 1+1', '2']);
+    const all = await setup.cliExit('validate', 'all');
+    expect(all.code).toBe(0);
+    expect(all.lines.at(-1)).toBe('3 ok, 0 invalid');
+    // The run's roots are its own.
+    expect((await setup.cliExit('match', '--root', scriptsDir.path)).code).toBe(2);
+    // A file that isn't there is a typing mistake, which stops the line.
+    const typo = await setup.cliExit('match', 'nosuch.user.js', '--', 'eval', '1+1');
+    expect(typo.code).toBe(2);
+    expect(typo.lines).not.toContain('> eval 1+1');
+    // A loaded script by its name.
+    expect((await setup.cliExit('match', 'More', 'T1')).lines[0]).toMatch(/^no match \S+ \(T1\)$/);
 
     expect(await setup.cli('stop', '--run', 'D1')).toEqual([
       '[sm-dev] Stopping run D1',

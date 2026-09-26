@@ -60,10 +60,10 @@ test('match takes several scripts and URLs in any order, a heading per script', 
   // A script or URL given twice is checked once.
   const twice = spawnSync(process.execPath, [CLI, 'match', path.join(dir, 'match-exact.user.js'), page, path.join(dir, 'match-exact.user.js'), page], { encoding: 'utf8' });
   assert.equal(twice.stdout, `match    ${page}\n    Matched by:  @match *://*/headers-match-hash/headers-match-hash.html\n`);
-  // With no .user.js argument there is no script to check.
-  const none = spawnSync(process.execPath, [CLI, 'match', page], { encoding: 'utf8' });
+  // With no .user.js argument, and no run to take the script from.
+  const none = spawnSync(process.execPath, [CLI, 'match', page], { encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
   assert.equal(none.status, 2);
-  assert.match(none.stderr, /The match command needs a script \(a \.user\.js file\) and at least one URL$/m);
+  assert.match(none.stderr, /^ERROR: The match command needs a script \(a \.user\.js file\) and at least one URL, or a run to take them from$/m);
 });
 
 test('match gives a script that can never match its per-URL answer, and a broken one only its status', () => {
@@ -256,7 +256,8 @@ test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
   assert.deepEqual(cli('status', '--run='), { code: 2, out: 'ERROR: The --run flag needs a run ID, e.g. --run D2' });
   assert.deepEqual(cli('D1', 'status'), { code: 2, out: 'ERROR: Name the run with --run: sm-dev status --run D1' });
   assert.deepEqual(cli('stop', '--all', '--run', 'D1'), { code: 2, out: 'ERROR: The --all flag stops every run, so the stop command can\'t be used with --run' });
-  assert.deepEqual(cli('--root', '.'), { code: 2, out: 'ERROR: A command is needed. Type sm-dev --help to list the commands.' });
+  // Only line-wide flags: stdin is read for commands, and has none.
+  assert.deepEqual(cli('--root', '.'), { code: 2, out: `ERROR: ${NO_COMMANDS}` });
   // A run's command with a flag it doesn't take, refused before any run is looked for.
   assert.deepEqual(cli('status', '--bad'), { code: 2, out: 'ERROR: The status command has no --bad flag' });
   assert.deepEqual(cli('snapshot --out f --bad'), { code: 2, out: 'ERROR: The snapshot command has no --bad flag' });

@@ -178,6 +178,7 @@ command. See `docs/harness-design.md`.
 | `src/harness/inject.ts` | Attaches prepared scripts to a Playwright page over CDP, in the right world, with a message channel per world to the host |
 | `src/harness/fixture.ts` | The Playwright fixture a consumer repo imports: `loadUserscript`, `gm`, `reports`, `serveHtml` over a host and attachment per test |
 | `src/harness/save-html.ts` | A page's DOM as a standalone file, scripts disabled and a `<base>` added; for `savehtml` and the fixture's `saveHtml` |
+| `src/harness/checks.ts` | `match` and `validate`'s shared half: finding the scripts named, and the lines each prints |
 | `src/harness/command-lines.ts` | Input lines into `sm-dev start` commands: multi-line `eval {{ ... }}` blocks, comments, sent lists |
 | `src/harness/console-commands.ts` | The commands typed while `sm-dev start` streams, across its tabs, the page-dialog tracker, and the prompt |
 | `src/harness/page-commands.ts` | The run commands that drive and read a tab's page, from `click` and `eval` to `snapshot` and `logs` |
@@ -192,7 +193,7 @@ command. See `docs/harness-design.md`.
 | `src/harness/tab-refs.ts` | Naming and picking a run's tabs (`T2`, target or page ids), the current tab, the dialog message |
 | `src/harness/wait.ts` | The `wait` command, and when a tab has settled (loaded, scripts started, no requests or DOM changes) |
 | `src/harness/runs.ts` | The runs active on this machine: record files and control sockets behind `sm-dev list`, `stop`, and commands sent to a run |
-| `src/harness/cli.ts` | The `sm-dev` command: `start` (and `--detach`), `validate`, `match`, `clear`, `list`, `stop`, a run's commands, `--` lines |
+| `src/harness/cli.ts` | The `sm-dev` command: `start` (and `--detach`), `validate`, `match`, `clear`, `list`, `stop`, a run's commands, `--` lines, `--stdin` |
 
 ## Tests (`tests/`)
 

@@ -112,8 +112,8 @@ Help:
 | `sm-dev start ... --watch` | Same, and on every save of the script or a `@require`d file, re-injects it and reloads the tabs it runs in or now matches, all at once. The typed `update` does the same on demand. |
 | `sm-dev start a.user.js b.user.js` | Injects several scripts into the same page, for interaction tests. |
 | `sm-dev start ... --detach` | Returns once the pages have settled (see [Waiting](#waiting)), and leaves the run going in the background (see [Detached runs](#detached-runs)). |
-| `sm-dev match <script>... <url>...` | Says whether each script would run on each URL, with all rules that matched it (`Matched by:`) or excluded it (`Excluded by:`). A `start` command line works with `match` in its place. |
-| `sm-dev validate <path>...` | Checks script validity (header, `@require`, syntax) over files, directories or script URLs, with the message the extension would show. |
+| `sm-dev match <script>... <url>...` | Says whether each script would run on each URL, with all rules that matched it (`Matched by:`) or excluded it (`Excluded by:`). A `start` command line works with `match` in its place. In a run it also takes the run's scripts and tabs (see [Checking scripts in a run](#checking-scripts-in-a-run)). |
+| `sm-dev validate <path>...` | Checks script validity (header, `@require`, syntax) over files, directories or script URLs, with the message the extension would show. In a run it also takes the run's scripts. |
 | `sm-dev list` | Lists the runs active on this machine in a table: id (`D1`), pid, uptime, browser, how many tabs, and the scripts' files (the first few, and a count of the rest). |
 | `sm-dev <command>` | Runs any command a run takes (`sm-dev eval document.title`) in the run from another shell, and prints its output (see [Runs in the background](#runs-in-the-background)). |
 | `sm-dev < steps.txt`, `... --stdin` | Reads commands from stdin, one per line, and sends them to the run (see [Commands from stdin](#commands-from-stdin)). |
@@ -131,14 +131,17 @@ Help:
 
 Every command exits 0 on success, 1 when a check fails (a script is
 invalid, a URL doesn't match) or the command fails, and 2 when it was
-typed wrong.
+typed wrong. `match` and `validate` exit the same way when sent to a
+run; other commands sent to a run exit 0 for now, even when they fail.
 
-Options for every command:
+Options for the whole line, which can go anywhere on it:
 
 - `--root DIR` names the repo root, searched for local copies of
   `@require` URLs the way the extension searches a collection's
   directory. Defaults to the current directory.
 - `--local DIR` adds another directory to that search; repeatable.
+- A run keeps the ones it started with. A line that sends a command to
+  a run it didn't start refuses them.
 
 Options for the commands that act on a run (its commands, `stop`,
 `start`):
@@ -302,6 +305,8 @@ commands from its own input while it streams.
 | `open [page]` | Navigates to a URL, or to a script's default page: the selected script's when bare, or one by number (`open 2`, or `open T2.3` in T2). `open all` is `newtab all`. `--noscript` / `--script` switch the tab's scripts off or back on (see [Driving and reading the page](#driving-and-reading-the-page)) |
 | `focus [tab]` | Brings the tab to the front, un-minimizing its window |
 | `accept [text]`, `dismiss` | Answers an open dialog (see [Page dialogs](#page-dialogs)) |
+| `match [what]...`, `validate [what]...` | Check the run's scripts against its tabs, or re-read and check them (see [Checking scripts in a run](#checking-scripts-in-a-run)) |
+| `list`, `stop [--all]`, `clear --extension` | As `sm-dev list`, `stop` and `clear` do. `stop` ends this run, `stop --all` every run, and `stop --run D2` another. `clear` acts on the run's own browser, so it needs SourceMonkey installed there |
 | `help [command]`, `quit` | The list, or one command's entry (`help status`); and stop |
 
 A `<script>` is its number in the `scripts` list, its path, file name or
@@ -311,6 +316,39 @@ shares.
 A `[page]` is a URL, or a script's number for its default page: the
 first page its `@match` names. Only a number counts as a script there,
 so a URL is never mistaken for one.
+
+`start` itself isn't taken in a run, which is one already: `load` adds
+a script, and `newtab` opens a page.
+
+#### Checking scripts in a run
+
+`match` and `validate` act on the run's scripts and tabs when not given
+files, typed at its prompt or from another shell:
+
+| Command | What it checks |
+| --- | --- |
+| `match` | The selected script on the current tab |
+| `match 3`, `match T2.3`, `match <name>` | Script 3 on the current tab, or on T2; or a loaded script by its exact name or path |
+| `match T2`, `match <url>...` | The selected script on T2, or on those URLs |
+| `match <file.user.js>... [url]...` | Those files, on the URLs or the current tab |
+| `match all-scripts [tab or url]` | Every loaded script on the current tab, or the one named |
+| `match all-tabs [script] [url]...` | The selected script, or the one named, on every tab, and on any URLs named |
+| `match all` | Every loaded script on every tab |
+| `validate` | The selected script, re-read from disk without loading it |
+| `validate 3`, `validate all` | Script 3, or every loaded script |
+| `validate <path>...` | Files and directories, as `sm-dev validate` does |
+
+- The output is the command line's: a heading per script when there are
+  several, and each page with the rules that matched or excluded it.
+  A tab's page is named by the tab when there are several.
+- `match` answers what the run has loaded, so an edit on disk counts
+  once `update` has re-read it. `validate` reads the file as it is now.
+- `sm-dev match` and `sm-dev validate` given files and URLs run in the
+  shell, run or no run. Otherwise they go to the run, and with none
+  active they say what the command line form needs.
+- A word that is also a file or directory in the shell's directory
+  (`all`, `2024`) is taken for the path, not the run's scripts.
+- `--root` and `--local` are the run's own.
 
 #### Driving and reading the page
 
@@ -673,7 +711,9 @@ sm-dev start sites/x/y.user.js -- menu Bump -- values
 ```
 
 - Each one's output is headed by the command (`> menu Bump`).
-- They stop at the first that fails, as a shell's `&&` would.
+- They stop at the first that fails, as a shell's `&&` would. A
+  `match` or `validate` that finds a miss doesn't stop them, and sets
+  the exit code only when it comes last.
 - `start` can only come first, so the line holds at most one run of
   its own, and `start` never picks up a `--run` meant for another
   command.
@@ -717,6 +757,12 @@ sm-dev --stdin       # at a terminal: each runs on Enter; Ctrl-D ends
 - This differs from piping into `sm-dev start` without `--stdin`: that
   run reads stdin at its own prompt, doesn't head the output with the
   command, and keeps running once the input ends.
+- sm-dev's own commands (`list`, `stop`, `clear`, `help`, and `match`
+  or `validate` given files) run in the shell rather than going to a
+  run.
+- `start` works only as the first command, with none on the line: it
+  starts the run the rest go to. If it fails, the rest aren't run.
+- The exit code is the last command's, or 1 after a mistake.
 - One argument of several lines is a list the same way, checked in
   full: `sm-dev $'tabs T2\nmenu Bump'` (bash's `$'...'` quoting turns
   `\n` into a newline). Several arguments are one command, so

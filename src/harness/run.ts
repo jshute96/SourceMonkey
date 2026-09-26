@@ -27,7 +27,7 @@ import { showConsoleLine, showPageError } from './page-output.js';
 import {
   defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, prepareScript, type PreparedScript,
 } from './prepare.js';
-import { checkRunsDir, COMMAND_FAILED, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentLineHandler } from './runs.js';
+import { checkRunsDir, failedLine, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentLineHandler } from './runs.js';
 import { waitForStuckTabs } from './stuck-tabs.js';
 import { NO_TABS } from './tab-refs.js';
 import { settleTabs } from './wait.js';
@@ -609,12 +609,13 @@ class Remote {
     await this.armed;
     if (this.ending || !this.runner) {
       reply('[sm-dev] The run is ending, so the command was not run');
+      reply(failedLine(1));
       return 'done';
     }
-    const ok = await this.runner(line, inspects
+    const code = await this.runner(line, inspects
       ? { answer: reply, cwd: sent?.cwd, words: sent?.words }
       : { start: () => this.listeners.add(reply), end: () => this.listeners.delete(reply), cwd: sent?.cwd, words: sent?.words });
-    if (!ok) reply(COMMAND_FAILED);
+    if (code !== 0) reply(failedLine(code));
     return 'done';
   };
 }
@@ -832,6 +833,14 @@ async function runInHarness(
         devtools: () => (devtools?.isUp ? devtools.usage : null),
         output: remote.output,
         logCommand: opts.logCommand,
+        roots: { collectionRoot: opts.collectionRoot, localRoots: opts.localRoots },
+        clearExtension: async () => {
+          const backend = await ExtensionBackend.connect(session.context);
+          const count = await backend.clear();
+          // Solo mode off too, as sm-dev clear does.
+          await backend.solo(false);
+          return count;
+        },
       };
       commands = ctx;
       const runner = commandRunner(ctx);
@@ -1207,7 +1216,7 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
     hooks?.start?.();
     opts.out('[sm-dev] A run with --extension takes no commands besides quit');
     hooks?.end?.();
-    return false;
+    return 1;
   });
   let backend: ExtensionBackend;
   try {

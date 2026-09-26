@@ -412,10 +412,15 @@ export async function liveRuns(): Promise<RunRecord[]> {
 }
 
 /**
- * The line a run sends last when a command failed (see CommandRunner),
- * for `sendLine` to report rather than print. Not text a command prints.
+ * The start of the line a run sends last when a command failed (see
+ * CommandRunner), with the exit code after it, for `sendLine` to report
+ * rather than print. Not text a command prints.
  */
 export const COMMAND_FAILED = '\u0000sm-dev:command-failed';
+
+export function failedLine(code: number): string {
+  return `${COMMAND_FAILED} ${code}`;
+}
 
 /** `sendLine`'s failure when the run has ended. */
 export class RunGoneError extends Error {}
@@ -423,10 +428,10 @@ export class RunGoneError extends Error {}
 /**
  * Sends one command to a run (one line, or an eval block's several),
  * passing each line of its output to `out` as it arrives. Resolves
- * once the run closes the connection, to whether the command worked.
+ * once the run closes the connection, to the command's exit code.
  * `signal` drops the connection, for a sender done waiting.
  */
-export function sendLine(id: string, line: string, out: (line: string) => void, signal?: AbortSignal, words?: string[]): Promise<boolean> {
+export function sendLine(id: string, line: string, out: (line: string) => void, signal?: AbortSignal, words?: string[]): Promise<number> {
   return new Promise((resolve, reject) => {
     const socket = net.connect(socketPath(id));
     signal?.addEventListener('abort', () => {
@@ -434,10 +439,10 @@ export function sendLine(id: string, line: string, out: (line: string) => void, 
       reject(new Error(`Stopped waiting on run ${id}`));
     }, { once: true });
     let connected = false;
-    let failed = false;
     let buffered = '';
+    let code = 0;
     const take = (l: string): void => {
-      if (l === COMMAND_FAILED) failed = true;
+      if (l.startsWith(COMMAND_FAILED)) code = Number(l.slice(COMMAND_FAILED.length).trim()) || 1;
       else out(l);
     };
     socket.setEncoding('utf8');
@@ -455,7 +460,7 @@ export function sendLine(id: string, line: string, out: (line: string) => void, 
     });
     socket.on('end', () => {
       if (buffered) take(buffered);
-      resolve(!failed);
+      resolve(code);
     });
     socket.on('error', (err) => {
       if (connected) reject(new Error(`The connection to run ${id} was lost`));
