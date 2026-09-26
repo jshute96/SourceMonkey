@@ -1,6 +1,6 @@
 // `sm-dev start` as a background process, driven from other commands
 // the way an agent drives it: `list` finds it, its commands given to
-// sm-dev directly (or through `send`) run in it, `stop` ends it. Also
+// sm-dev directly (or piped to its stdin) run in it, `stop` ends it. Also
 // `start --detach`, and a line of several commands. And with
 // `--devtools`, its tabs' DevTools page ids, which the
 // `chrome-devtools` command then reaches.
@@ -47,6 +47,8 @@ interface Setup {
   cli: (...args: string[]) => Promise<string[]>;
   /** `cli`, run from `cwd`. */
   cliIn: (cwd: string, ...args: string[]) => Promise<string[]>;
+  /** `cli`, with `input` piped to its stdin. */
+  piped: (input: string, ...args: string[]) => Promise<string[]>;
   /** Runs a `chrome-devtools` command in the run's session, for its output. */
   devtools: (...args: string[]) => Promise<string>;
   /**
@@ -86,6 +88,12 @@ async function setUp(): Promise<Setup> {
       resolve((stdout + stderr).split('\n').filter(Boolean));
     });
   });
+  const piped = (input: string, ...args: string[]): Promise<string[]> => new Promise((resolve) => {
+    const child = execFile(process.execPath, [CLI, ...args], { env, timeout: 30_000 }, (_err, stdout, stderr) => {
+      resolve((stdout + stderr).split('\n').filter(Boolean));
+    });
+    child.stdin?.end(input);
+  });
   const devtools = (...args: string[]): Promise<string> => new Promise((resolve) => {
     execFile('chrome-devtools', ['--sessionId=D1', ...args], { env, timeout: 30_000 }, (_err, stdout) => resolve(stdout));
   });
@@ -95,6 +103,7 @@ async function setUp(): Promise<Setup> {
     devtools,
     cli: (...args) => cliIn(process.cwd(), ...args),
     cliIn,
+    piped,
     startRun: (args, cdp = String(port)) => {
       const proc = spawn(process.execPath, [CLI, 'start', '--cdp', cdp, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
       runs.push(proc);
@@ -196,7 +205,7 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
     // The only run, so it needs no id. The command's own output, and
     // what it set off in the page, come back; the page's line can
     // arrive first.
-    expect((await setup.cli('send', 'menu', 'Say hi')).sort()).toEqual(['[page log] [remote] hi', '[sm-dev] Fired "Say hi"']);
+    expect((await setup.cli('menu', 'Say hi')).sort()).toEqual(['[page log] [remote] hi', '[sm-dev] Fired "Say hi"']);
     // The run's own stream says what it was sent.
     await run.waitFor(/^\[sm-dev\] Sent from another shell: menu 'Say hi'$/);
     // A command that only inspects answered the sender alone.
@@ -225,7 +234,7 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
 
     // Files a sent command names are the sender's, from its directory.
     const elsewhere = scriptsDir.path;
-    expect((await setup.cliIn(elsewhere, 'send', 'savehtml', 'sent.html'))[0]).toMatch(/^\[sm-dev\] Wrote sent\.html /);
+    expect((await setup.cliIn(elsewhere, 'savehtml', 'sent.html'))[0]).toMatch(/^\[sm-dev\] Wrote sent\.html /);
     expect(existsSync(path.join(elsewhere, 'sent.html'))).toBe(true);
     scriptsDir.write({ relativePath: 'more.user.js', meta: { name: 'More', match: ['*://*/nowhere.html'] }, body: '' });
     expect(await setup.cliIn(elsewhere, 'load', 'more.user.js')).toContain(`[sm-dev] Loaded ${path.join(elsewhere, 'more.user.js')} as script 3`);
@@ -239,7 +248,11 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
     // An expression with spaces and quotes arrives as the shell gave it,
     // and so does a whole command sent as one word.
     expect(await setup.cli('eval', 'T2', 'document.title + " " + location.pathname')).toEqual(['"target /target.html"']);
-    expect(await setup.cli('send', 'eval T1 document.title')).toEqual(['"target"']);
+    expect(await setup.cli('eval T1 document.title')).toEqual(['"target"']);
+    // Commands piped in, with none on the line or after the line's
+    // own, each headed by the command.
+    expect(await setup.piped('eval 1+1\neval {{\n2+2\n}}\n')).toEqual(['> eval 1+1', '2', '> eval {{', '... 2+2', '... }}', '4']);
+    expect(await setup.piped('eval 3\n', 'eval', 'T1', '0', '--stdin')).toEqual(['0', '> eval 3', '3']);
 
     expect(await setup.cli('stop', '--run', 'D1')).toEqual([
       '[sm-dev] Stopping run D1',
@@ -330,6 +343,11 @@ test('one line starts a run, sends it commands, and stops it unless detached', a
     expect(out.slice(-3, -1)).toEqual(['[sm-dev] Stopping run D1', '[sm-dev] Run D1 ended. Pages still have previously loaded scripts.']);
     expect(out.at(-1)).toMatch(/^\[sm-dev\] Output log: /);
     expect(await setup.cli('list')).toEqual(['No sm-dev runs are active']);
+    // The same with the commands from stdin.
+    const piped = await setup.piped('eval document.title\n', ...start, '--stdin');
+    expect(piped[piped.indexOf('> eval document.title') + 1]).toBe('"target"');
+    expect(piped.slice(-3, -1)).toEqual(['[sm-dev] Stopping run D1', '[sm-dev] Run D1 ended. Pages still have previously loaded scripts.']);
+    expect(await setup.cli('list')).toEqual(['No sm-dev runs are active']);
 
     // A wait that gives up stops the line, and the run is still stopped.
     const stopped = await setup.cli(...start, '--', 'wait', 'selector-gone', 'body', '--timeout-seconds', '0.3', '--', 'eval', '"not run"');
@@ -342,12 +360,14 @@ test('one line starts a run, sends it commands, and stops it unless detached', a
     // with that ID takes it over.
     const kept = await setup.cli(...start, '--detach', '--run', 'Dmain', '--', 'eval', 'location.pathname');
     expect(kept.at(-1)).toBe('"/target.html"');
+    // Named by a line of only --run, stdin's commands reach it.
+    expect(await setup.piped('eval 1+1\n', '--run', 'Dmain')).toEqual(['> eval 1+1', '2']);
     expect((await setup.cli('list'))[1]).toMatch(/^Dmain\s/);
     const again = await setup.cli(...start, '--detach', '--run', 'Dmain');
     expect(again.slice(0, 2)).toEqual(['[sm-dev] Stopping run Dmain', '[sm-dev] Run Dmain ended. Pages still have previously loaded scripts.']);
     expect(again.at(-2)).toMatch(/^\[sm-dev\] Run Dmain now running detached/);
     // The old way of naming a run is pointed at the new one.
-    expect(await setup.cli('send', 'Dmain', 'status')).toEqual(['ERROR: Name the run with --run: sm-dev send status --run Dmain']);
+    expect(await setup.cli('Dmain', 'status')).toEqual(['ERROR: Name the run with --run: sm-dev status --run Dmain']);
   } finally {
     await setup.cli('stop', '--all');
     await setup.cleanup();

@@ -344,8 +344,8 @@ export function commandWords(line: string): string[] {
 const INSPECTING = new Set(['help', 'status', 'values', 'get', 'snapshot', 'screenshot', 'savehtml', 'probe', 'logs']);
 
 /**
- * Whether a command line only inspects, so its output, sent by `sm-dev
- * send`, goes back to the sender alone rather than into the run's
+ * Whether a command line only inspects, so its output, sent from
+ * another shell, goes back to the sender alone rather than into the run's
  * stream too. `tabs`, `scripts` and `menu` inspect when they list, and
  * change things when they pick or fire.
  */
@@ -360,7 +360,7 @@ export function onlyInspects(line: string): boolean {
 
 /**
  * Where a running command's output goes instead of the run's stream,
- * while it runs: an inspecting command sent by `sm-dev send` answers
+ * while it runs: an inspecting command sent from another shell answers
  * the sender alone. Output the page or the scripts produce meanwhile
  * isn't the command's, and still goes to the stream. `live` goes false
  * when the command ends, so anything it started that prints later goes
@@ -421,7 +421,7 @@ export function consoleCommandsHelp(names: string[]): { lines: string[]; unknown
 /**
  * Run one typed line. Returns once its effect has been applied, so an
  * agent driving this over a pipe can send the next line knowing the
- * previous one is done. For a line `sm-dev send` delivered: `cwd` is
+ * previous one is done. For a line sent from another shell: `cwd` is
  * where the files it names are, and `words` are the sender's own words
  * (the line is them joined by spaces), which page commands take as
  * they are rather than splitting the line.
@@ -1571,7 +1571,7 @@ export function writeOutputLine(line: string): void {
 
 /**
  * Runs command lines one at a time, from whichever source: typed ones
- * and ones `sm-dev send` delivers take turns, so two never interleave.
+ * and ones sent from other shells take turns, so two never interleave.
  * `hooks` bracket the line's own turn, not its wait for one, so output
  * captured between them is that command's.
  */

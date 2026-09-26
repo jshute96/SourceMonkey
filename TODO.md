@@ -823,6 +823,10 @@ See [docs/harness-design.md](docs/harness-design.md).
   publish.
   Once it is on npm, the guide's install step and the consumer's
   `dependenciesMeta.injected` workaround both get simpler.
+- A command sent to a run from another shell (or from stdin) exits 0
+  even when it fails in the run: `sendLine` carries only the output
+  back. Send the command's outcome too, so scripted lines can stop on
+  a failure.
 - Nothing tests the interactive `> ` prompt, which only turns on when
   stdin and stdout are terminals. A test would run `sm-dev start` in a
   pseudo-terminal (pty: Python's `pty` module, or the native `node-pty`

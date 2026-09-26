@@ -191,7 +191,7 @@ command. See `docs/harness-design.md`.
 | `src/harness/run-log.ts` | A run's log file: timestamped names in `/tmp/sm-dev-logs-<user>`, stamped lines, per-run links |
 | `src/harness/tab-refs.ts` | Naming and picking a run's tabs (`T2`, target or page ids), the current tab, the dialog message |
 | `src/harness/wait.ts` | The `wait` command, and when a tab has settled (loaded, scripts started, no requests or DOM changes) |
-| `src/harness/runs.ts` | The runs active on this machine: record files and control sockets behind `sm-dev list`, `send`, `stop` |
+| `src/harness/runs.ts` | The runs active on this machine: record files and control sockets behind `sm-dev list`, `stop`, and commands sent to a run |
 | `src/harness/cli.ts` | The `sm-dev` command: `start` (and `--detach`), `validate`, `match`, `clear`, `list`, `stop`, a run's commands, `--` lines |
 
 ## Tests (`tests/`)

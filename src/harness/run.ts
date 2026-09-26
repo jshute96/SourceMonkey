@@ -452,7 +452,7 @@ function displayPath(file: string): string {
 const HISTORY_LINES = 5000;
 
 /**
- * A run's side of `sm-dev send` and `sm-dev stop`: runs each sent line
+ * A run's side of `sm-dev <command>` and `sm-dev stop`: runs each sent line
  * as a typed command, and answers the sender with the output while it
  * runs. Done when the command is: each command waits out what it sets
  * off that has an end, such as the scripts starting after a reload.

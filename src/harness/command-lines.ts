@@ -107,7 +107,7 @@ export class CommandAssembler {
   }
 }
 
-const NONE_RUN = 'None of the commands were run.';
+export const NONE_RUN = 'None of the commands were run.';
 
 /**
  * A whole list of commands, as sent in one go or read from a file.

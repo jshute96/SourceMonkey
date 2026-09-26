@@ -116,7 +116,7 @@ Help:
 | `sm-dev validate <path>...` | Checks script validity (header, `@require`, syntax) over files, directories or script URLs, with the message the extension would show. |
 | `sm-dev list` | Lists the runs active on this machine in a table: id (`D1`), pid, uptime, browser, how many tabs, and the scripts' files (the first few, and a count of the rest). |
 | `sm-dev <command>` | Runs any command a run takes (`sm-dev eval document.title`) in the run from another shell, and prints its output (see [Runs in the background](#runs-in-the-background)). |
-| `sm-dev send <command>` | The same, and also takes several commands, one per line, or reads them from stdin. |
+| `sm-dev < steps.txt`, `... --stdin` | Reads commands from stdin, one per line, and sends them to the run (see [Commands from stdin](#commands-from-stdin)). |
 | `sm-dev stop`, `--all` | Ends the run as `quit` would, or all runs. |
 
 - For `start` and `match`, arguments ending in `.user.js` are scripts,
@@ -140,8 +140,8 @@ Options for every command:
   directory. Defaults to the current directory.
 - `--local DIR` adds another directory to that search; repeatable.
 
-Options for the commands that act on a run (its commands, `send`,
-`stop`, `start`):
+Options for the commands that act on a run (its commands, `stop`,
+`start`):
 
 - `--run ID` names the run. It's needed only when several are active;
   otherwise the command says so, and lists them.
@@ -546,7 +546,7 @@ Giving up:
   `T1 did not settle within 5s: 2 requests pending (/api/poll,
   /ads.js); the DOM is still changing (div#ticker)`.
 - An explicit `wait` that gives up fails, so a line of several commands
-  (or a `send` list, or commands piped to `send -`) stops there, and
+  (or a list in one argument, or commands piped in) stops there, and
   says the rest weren't run. Input piped into `start` itself goes on. A
   command's own wait that gives up only says so, since the command
   itself worked.
@@ -683,29 +683,44 @@ sm-dev start sites/x/y.user.js -- menu Bump -- values
   is stopped once they are done, and the line ends with its log
   file's name.
 
-#### Several commands in one `send`
+#### Commands from stdin
 
-`send` takes a list of commands as one argument, a line each, or from
-stdin:
+With no command on the line, commands piped in are read from stdin.
+`--stdin` anywhere on a line reads them too, after the line's own:
 
 ```sh
-sm-dev send $'tabs T2\nmenu Bump\nvalues'
-sm-dev send --run D1 < steps.txt
-sm-dev send -        # each runs on Enter; Ctrl-D ends
+sm-dev --run D1 < steps.txt
+printf 'tabs T2\nmenu Bump\nvalues\n' | sm-dev
+sm-dev start sites/x/y.user.js --detach --stdin < steps.txt
+sm-dev --stdin       # at a terminal: each runs on Enter; Ctrl-D ends
 ```
 
 - Each line is one command, split as the prompt splits a typed line.
-- They run in order, each finishing before the next starts, and each
-  one's output is headed by the command (`> menu Bump`).
+- They run in order, each finishing before the next starts. Piped
+  ones' output is headed by the command (`> menu Bump`).
 - Blank lines are skipped, `#` starts a comment, and `eval {{ ... }}`
   blocks work as at the prompt.
-- A list with a mistake in it (a `{{` after another command, a block
-  never closed) is refused whole; none of it runs.
-- `send -` instead sends each command as its line is read, from a
-  terminal or a pipe: a command runs on Enter, and a block on its
-  `}}`. A mistake is reported and the rest go on.
-- With several arguments, `send` is still one command, so eval's
-  JavaScript can be one multi-line argument.
+- A file, or what a pipe delivers at once, is checked in full first.
+  A mistake anywhere in it (an unknown command, a `{{` after another
+  command, a block never closed) runs none of it.
+- Lines that come later, from a terminal or a slow writer, run as
+  each is read, and a block on its `}}`.
+- Piped in, a mistake or a command that fails (a `wait` that gives up)
+  stops the rest, as on a line of several. At a terminal it's reported,
+  and you decide.
+- With no command on the line or in stdin, sm-dev says so, and exits 2.
+- Without `--stdin`, a line with commands never reads stdin, so a
+  caller's open pipe doesn't hold it up. A bare `sm-dev` given a pipe
+  nothing writes to waits on it.
+- Like `--run` and `--help`, `--stdin` is taken from anywhere on the
+  line, even from among an `eval`'s words.
+- This differs from piping into `sm-dev start` without `--stdin`: that
+  run reads stdin at its own prompt, doesn't head the output with the
+  command, and keeps running once the input ends.
+- One argument of several lines is a list the same way, checked in
+  full: `sm-dev $'tabs T2\nmenu Bump'` (bash's `$'...'` quoting turns
+  `\n` into a newline). Several arguments are one command, so
+  eval's JavaScript can be one multi-line argument.
 
 ### DevTools alongside a run
 

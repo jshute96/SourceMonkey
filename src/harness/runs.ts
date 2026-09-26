@@ -1,6 +1,6 @@
 // The runs `sm-dev start` began on this machine, and how another shell
 // reaches one: `sm-dev list`, `sm-dev stop`, and the commands sent to
-// a run (`sm-dev status`, or `sm-dev send`).
+// a run (`sm-dev status`, or piped to `sm-dev`'s stdin).
 //
 // Each run that waits for commands writes a record file and listens on
 // a socket of its own, both named by its id (`D1`). A run in the
@@ -8,7 +8,8 @@
 // same way as one in the foreground: a line sent over the socket runs
 // as a typed command, and its output comes back.
 //
-// Node-only: no Playwright, so `list`, `send` and `stop` run anywhere.
+// Node-only: no Playwright, so `list`, `stop` and the commands sent to
+// a run work anywhere.
 
 import { randomBytes } from 'node:crypto';
 import { lstat, mkdir, readdir, readFile, rename, rm, rmdir, writeFile } from 'node:fs/promises';

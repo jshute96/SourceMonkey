@@ -1,13 +1,13 @@
 // Unit tests for the argument checks in `sm-dev` (src/harness/cli.ts,
 // compiled to lib/harness/cli.js): `start` flag combinations that would
-// do nothing or stall, and `send`, `stop` and `list` arguments they
+// do nothing or stall, and commands sent to a run, `stop` and `list` arguments they
 // can't act on, are refused up front, before any browser or run is
 // reached. Also `match`, which needs no browser at all.
 
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { closeSync, mkdtempSync, openSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -166,16 +166,83 @@ function cli(...args) {
   return { code: r.status, out: (r.stdout + r.stderr).trim().split('\n')[0] };
 }
 
-test('send and stop refuse what they can\'t act on', () => {
+// The CLI with `input` piped to its stdin, and all it printed.
+function piped(input, ...args) {
+  const r = spawnSync(process.execPath, [CLI, ...args], { input, encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
+  return { code: r.status, stdout: r.stdout, stderr: r.stderr };
+}
+
+const NO_COMMANDS = 'No commands given on either command line or stdin';
+
+test('piped stdin is commands with none on the line, or with --stdin, checked in full before any is sent', () => {
+  // Nothing to run says so, rather than exiting without a word.
+  assert.deepEqual(piped(''), { code: 2, stdout: '', stderr: `ERROR: ${NO_COMMANDS}\n` });
+  assert.deepEqual(piped('# a comment\n\n', '--stdin'), { code: 2, stdout: '', stderr: `ERROR: ${NO_COMMANDS}\n` });
+  // Commands on the line too: stdin having none is fine.
+  assert.deepEqual(piped('', 'list', '--stdin'), { code: 0, stdout: 'No sm-dev runs are active\n', stderr: '' });
+  // Every mistake said, and none run, so no run is looked for.
+  assert.deepEqual(piped('status\nevel 1\ntabs {{\n}}\neval {{\n1\n'), {
+    code: 2,
+    stdout: '',
+    stderr: [
+      '> evel 1',
+      'ERROR: evel is not a command a run takes. Type sm-dev help to list them.',
+      'ERROR: Line 3: Only the eval command takes a {{ block, so its lines up to }} are skipped',
+      'ERROR: The eval block on line 5 has no }} line to end it',
+      'None of the commands were run.',
+      '',
+    ].join('\n'),
+  });
+  // Checked, then sent: here to no run.
+  assert.deepEqual(piped('status\n', '--stdin'), { code: 1, stdout: '', stderr: 'No sm-dev runs are active. Start one with sm-dev start.\n' });
+  // Not read without --stdin once the line has a command.
+  assert.deepEqual(piped('evel\n', 'list'), { code: 0, stdout: 'No sm-dev runs are active\n', stderr: '' });
+  // A line of only --run names the run stdin's commands go to.
+  const noD9 = { code: 1, stdout: '', stderr: 'There is no run D9. Type sm-dev list to see the runs.\n' };
+  assert.deepEqual(piped('status\n', '--run', 'D9'), noD9);
+  assert.deepEqual(piped('status\n', '--run=D9', '--stdin'), noD9);
+  assert.deepEqual(piped('status\n', '--run', '9'), { code: 2, stdout: '', stderr: 'ERROR: Runs are named D1, D2 and so on. Did you mean --run D9?\n' });
+  // Nothing to send to once stop is done.
+  assert.deepEqual(piped('status\n', 'stop', '--stdin'), {
+    code: 2, stdout: '', stderr: 'ERROR: The --stdin flag sends commands to the line\'s run, so it can\'t be used with stop\n',
+  });
+});
+
+test('stdin from a file is checked in full; lines a pipe sends later run as read, up to a mistake', async () => {
+  // A file: every mistake in it said, none run.
+  const file = path.join(RUNS_DIR, 'steps.txt');
+  writeFileSync(file, 'status\nevel 1\n');
+  const fd = openSync(file, 'r');
+  const r = spawnSync(process.execPath, [CLI], { stdio: [fd, 'pipe', 'pipe'], encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
+  closeSync(fd);
+  assert.equal(r.status, 2);
+  assert.equal(r.stderr, '> evel 1\nERROR: evel is not a command a run takes. Type sm-dev help to list them.\nNone of the commands were run.\n');
+  // A pipe: a comment first, then after a pause a mistake, said as it
+  // comes, which stops the rest, as a failed command does.
+  const child = spawn(process.execPath, [CLI], { env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
+  let stderr = '';
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  child.stdin.write('# first\n');
+  await new Promise((r) => setTimeout(r, 300));
+  child.stdin.write('evel 1\ntabs {{\n}}\n');
+  child.stdin.end();
+  const code = await new Promise((r) => child.on('exit', r));
+  assert.equal(code, 1);
+  assert.equal(stderr, [
+    '> evel 1',
+    'ERROR: evel is not a command a run takes. Type sm-dev help to list them.',
+    'That command failed, so the commands after it were not run',
+    '',
+  ].join('\n'));
+});
+
+test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
   // A list of only comments sends nothing.
-  assert.deepEqual(cli('send', '# a comment\n\n'), { code: 2, out: 'ERROR: The send command needs a command to send, or piped stdin, e.g. sm-dev send status' });
-  assert.deepEqual(cli('send', 'tabs {{\n}}'), {
+  assert.deepEqual(cli('# a comment\n\n'), { code: 2, out: `ERROR: ${NO_COMMANDS}` });
+  assert.deepEqual(cli('tabs {{\n}}'), {
     code: 2, out: 'ERROR: Line 1: Only the eval command takes a {{ block, so its lines up to }} are skipped. None of the commands were run.',
   });
-  // Piped stdin, read once a run is found to send it to.
   const none = { code: 1, out: 'No sm-dev runs are active. Start one with sm-dev start.' };
-  assert.deepEqual(cli('send'), none);
-  assert.deepEqual(cli('send', 'status'), none);
   assert.deepEqual(cli('status'), none);
   assert.deepEqual(cli('status', '--run', 'D9'), { code: 1, out: 'There is no run D9. Type sm-dev list to see the runs.' });
   assert.deepEqual(cli('--run=d9', 'status'), { code: 1, out: 'There is no run D9. Type sm-dev list to see the runs.' });
@@ -183,7 +250,6 @@ test('send and stop refuse what they can\'t act on', () => {
   assert.deepEqual(cli('status', '--run', 'x'), { code: 2, out: 'ERROR: The run ID x is not valid. Run IDs are D and then letters, digits, _ or -.' });
   assert.deepEqual(cli('status', '--run'), { code: 2, out: 'ERROR: The --run flag needs a run ID, e.g. --run D2' });
   // The run named the old way.
-  assert.deepEqual(cli('send', 'D9', 'status'), { code: 2, out: 'ERROR: Name the run with --run: sm-dev send status --run D9' });
   assert.deepEqual(cli('stop', 'D9'), { code: 2, out: 'ERROR: Name the run with --run: sm-dev stop --run D9' });
   assert.deepEqual(cli('stop', 'x'), { code: 2, out: 'ERROR: The stop command takes no arguments. Name the run with --run, or use --all.' });
   assert.deepEqual(cli('list', 'x'), { code: 2, out: 'ERROR: The list command takes no arguments' });
@@ -193,7 +259,7 @@ test('send and stop refuse what they can\'t act on', () => {
   assert.deepEqual(cli('--root', '.'), { code: 2, out: 'ERROR: A command is needed. Type sm-dev --help to list the commands.' });
   // A run's command with a flag it doesn't take, refused before any run is looked for.
   assert.deepEqual(cli('status', '--bad'), { code: 2, out: 'ERROR: The status command has no --bad flag' });
-  assert.deepEqual(cli('send', 'snapshot --out f --bad'), { code: 2, out: 'ERROR: The snapshot command has no --bad flag' });
+  assert.deepEqual(cli('snapshot --out f --bad'), { code: 2, out: 'ERROR: The snapshot command has no --bad flag' });
   // In free text, -- is content: eval's JavaScript here.
   assert.deepEqual(cli('eval', 'T2', '--x'), { code: 2, out: 'ERROR: The eval command has no --x flag' });
   assert.deepEqual(cli('eval', 'x', '--y'), { code: 1, out: 'No sm-dev runs are active. Start one with sm-dev start.' });
@@ -204,13 +270,13 @@ test('send and stop refuse what they can\'t act on', () => {
 test('several commands on a line are checked before any runs, then run in order, stopping at the first that fails', () => {
   const line = (...args) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
   // Nothing runs when any is wrong, and each wrong one is named.
-  const bad = line('list', '--', 'evel', '1', '--', 'send', 'status\nbogus', '--', 'status', '--run', 'x');
+  const bad = line('list', '--', 'evel', '1', '--', 'status\nbogus', '--', 'status', '--run', 'x');
   assert.equal(bad.status, 2);
   assert.equal(bad.stdout, '');
   assert.equal(bad.stderr, [
     '> evel 1',
     'ERROR: Unknown command: evel. Type sm-dev --help to list the commands.',
-    '> send \'status',
+    '> \'status',
     'bogus\'',
     'ERROR: bogus is not a command a run takes. Type sm-dev help to list them.',
     '> status --run x',
@@ -305,6 +371,4 @@ test('help covers a run\'s typed commands, and refuses unknown names', () => {
   const both = help('help', 'help').out;
   assert.match(both, /^Usage: sm-dev help \[command\]\.\.\.$/m);
   assert.match(both, /^ {4}help \[command\] {4}List these/m);
-  // send's own --help, not one meant for the command sent.
-  assert.match(help('send', '--help').out, /^Usage: sm-dev send /m);
 });

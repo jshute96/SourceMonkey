@@ -417,7 +417,7 @@ into pages.
     it replace that run), and a line never has a run it will stop at
     the end alongside an interactive one.
   - A name that isn't an `sm-dev` command but is a typed one goes to
-    the run, as `send` would send it.
+    the run. So does one argument of several lines, as a list.
   - A connected browser is attached with `noDefaults`, which keeps
     Playwright's test overrides off the developer's own profile:
     - downloads rerouted to a temp folder that is deleted on disconnect;
@@ -740,11 +740,17 @@ into pages.
   - Outside a block, blank lines and `#` comments are skipped.
   - A list is checked in full before any of it runs, so a `{{` after
     another command, or a block never closed, runs none of it.
-  - `sm-dev send` sends a list's commands one connection at a time, in
-    order. `send -` feeds stdin through a `CommandAssembler` instead,
-    sending each command as it completes rather than checking the list
-    first. A block's newlines survive the trip, since the message is
-    JSON.
+  - A list sent from another shell goes one connection per command,
+    in order. A block's newlines survive the trip, since the message
+    is JSON.
+  - Commands from stdin (`--stdin`, or piped with no command) go
+    through a `CommandAssembler` as lines arrive:
+    - What arrives without a pause (a file, or a pipe's lines within
+      50ms of each other) is checked in full first, as a list is.
+    - Later lines, from a terminal or a slow writer, are sent as each
+      command completes. A mistake then is said, and the rest go on.
+    - readline holds back a last line with no newline until the input
+      ends, so a half-written line is never taken early.
 
 ### Service-worker additions
 

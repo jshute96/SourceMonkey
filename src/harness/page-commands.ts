@@ -189,7 +189,7 @@ export const VALUE_FLAGS = new Set(['--out', '--timeout-seconds']);
 /**
  * A page command's arguments, after the tab if one was named: its
  * words, and the rest of the line as typed. Typed, the words come from
- * splitting the line (so quotes group words); sent by `sm-dev send`,
+ * splitting the line (so quotes group words); sent from another shell,
  * they are the sender's own, and the line is them joined by spaces.
  * `scriptsRunning`: whether any script runs in the tab's page now.
  */

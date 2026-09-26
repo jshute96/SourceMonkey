@@ -1,5 +1,5 @@
-// Unit tests for the run registry behind `sm-dev list`, `send` and
-// `stop` (src/harness/runs.ts, compiled to lib/harness/runs.js): a
+// Unit tests for the run registry behind `sm-dev list`, `stop` and
+// the commands sent to a run (src/harness/runs.ts, compiled to lib/harness/runs.js): a
 // run's record and socket, a line's round trip, and stale records.
 
 import { after, test } from 'node:test';

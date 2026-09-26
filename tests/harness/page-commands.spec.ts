@@ -86,7 +86,7 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(tree.some((l) => l.includes('textbox "Note"'))).toBe(true);
   expect(await run('snapshot button')).toEqual([expect.stringMatching(/^- button "Added 1" \[ref=e\d+\]$/)]);
 
-  // Files are named from the directory given, as `sm-dev send` gives
+  // Files are named from the directory given, as `sm-dev <command>` gives
   // the sender's.
   const dir = scriptsDir.path;
   expect(await run('snapshot --out tree.txt T1', dir)).toEqual([expect.stringMatching(/^\[sm-dev\] Wrote tree\.txt \(\d+ lines\) from http/)]);
