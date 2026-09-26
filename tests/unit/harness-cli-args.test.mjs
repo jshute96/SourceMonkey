@@ -144,8 +144,8 @@ test('--noscript refuses scripts, and a run needs one without it', () => {
 
 test('--noscript refuses the flags that act on scripts', () => {
   assert.deepEqual(run('--noscript', '--watch'), { code: 2, out: 'The --noscript flag can\'t be used with --watch' });
-  assert.deepEqual(run('--noscript', '--all', '--fire-menu', 'X'), {
-    code: 2, out: 'The --noscript flag can\'t be used with --all or --fire-menu',
+  assert.deepEqual(run('--noscript', '--all', '--values', '{}'), {
+    code: 2, out: 'The --noscript flag can\'t be used with --all or --values',
   });
   assert.deepEqual(run('--noscript', '--extension'), { code: 2, out: 'The --noscript flag can\'t be used with --extension' });
 });
@@ -153,7 +153,7 @@ test('--noscript refuses the flags that act on scripts', () => {
 test('--notab refuses the flags that need a tab', () => {
   assert.deepEqual(run(SCRIPT, 'x.com', '--all'), { code: 2, out: 'The --all flag opens each script\'s own page, so it can\'t be used with a URL' });
   assert.deepEqual(run(SCRIPT, '--notab', 'x.com'), { code: 2, out: 'The --notab flag can\'t be used with a URL' });
-  assert.deepEqual(run(SCRIPT, '--notab', '--fire-menu', 'X'), { code: 2, out: 'The --notab flag can\'t be used with --fire-menu' });
+  assert.deepEqual(run(SCRIPT, '--notab', '--all'), { code: 2, out: 'The --notab flag can\'t be used with --all' });
 });
 
 // An empty runs directory of its own, so runs active on this machine

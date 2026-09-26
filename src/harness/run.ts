@@ -51,8 +51,6 @@ export interface RunOptions extends ConnectOptions {
   watch?: boolean;
   /** Seed `GM_*` storage for every script before it runs. */
   values?: Record<string, unknown>;
-  /** Fire this registered menu command once the page has loaded. */
-  fireMenu?: string;
   /**
    * Use the real extension in the browser: the script is pushed into
    * its Scratch collection as text rather than injected by the harness.
@@ -743,30 +741,6 @@ async function runInHarness(
   } else {
     opts.out(NO_TABS);
   }
-  if (opts.fireMenu) {
-    // Registered from the script's body, so it exists once the script
-    // has started; a short grace period covers a late registration.
-    const name = opts.fireMenu;
-    const deadline = Date.now() + 5000;
-    let fired = false;
-    let firedOn: ControlledTab | undefined;
-    while (!fired && Date.now() < deadline) {
-      // Only once it is registered, so an unrelated dialog opening
-      // meanwhile can't pass for this command's. The newest on any
-      // tab, as the extension's toolbar would have it on the tab it
-      // is showing.
-      const entry = [...host.reports.menuCommands].reverse().find((m) => m.name === name || m.commandId === name);
-      firedOn = entry && tabs.list().find((t) => t.link === host.pageOf(entry));
-      // Done once a dialog it opens is up, on the tab it ran in: that
-      // page waits on it.
-      const tracker = firedOn?.dialogs;
-      fired = entry !== undefined && firedOn !== undefined
-        && await (tracker ? tracker.untilDialog(host.fireMenuEntry(entry)) : host.fireMenuEntry(entry));
-      if (!fired) await sleep(100);
-    }
-    const where = firedOn && firedOn.n > 1 ? ` on T${firedOn.n}` : '';
-    opts.out(fired ? `[sm-dev] Fired menu command "${name}"${where}` : `[sm-dev] No menu command named "${name}" was registered`);
-  }
 
   let stopCommands: (() => void) | null = null;
   try {
@@ -1193,7 +1167,6 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
   if (!start) return 2;
   const { urls } = start;
   if (opts.values) opts.out('[sm-dev] The --values flag is ignored with --extension, since the extension keeps its own storage');
-  if (opts.fireMenu) opts.out('[sm-dev] The --fire-menu flag is ignored with --extension. Use the toolbar menu in the browser.');
   const pushed = new Map<string, string>();
   // The extension's per-script log is the report stream here; it is
   // polled, since nothing pushes it to Node. Only what this run adds is

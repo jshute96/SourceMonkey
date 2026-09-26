@@ -170,18 +170,15 @@ Other `start` flags:
   don't say which tab). It can't be combined with a URL.
 - `--noscript` starts with no scripts at all, on a blank page or the
   URLs given, as a browser to drive with the typed commands. The flags
-  that act on scripts (`--all`, `--fire-menu`, `--values`, `--watch`)
+  that act on scripts (`--all`, `--values`, `--watch`)
   and `--extension` can't be combined with it.
 - `--notab` opens no tab at startup. `newtab` opens one later, and
   the first it opens is T1. That tab isn't one a later run takes over
   (see [Which tab `start` uses](#which-tab-start-uses)). With
   `--extension`, the scripts just run in whatever pages you browse to,
   and after a `--watch` save you reload them yourself. It can't be
-  combined with a URL, `--all` or `--fire-menu`.
+  combined with a URL or `--all`.
 - `--values '{"key": 1}'` seeds `GM_*` storage before the script runs.
-- `--fire-menu "Label"` invokes a registered menu command once the
-  page has loaded. For anything beyond one invocation, use the typed
-  commands below.
 - `--page-errors` also shows the page's own errors (see
   [What the output looks like](#what-the-output-looks-like)).
 - `--seconds N` stops after N seconds, for a one-off bounded check;
@@ -784,8 +781,7 @@ For what only Chrome can answer:
   values, and turns solo mode off. If a `--solo` run was killed rather
   than stopped, this is how to get the other collections back; they
   are restored to how they were.
-- `--values` and `--fire-menu` have no effect here: the extension keeps
-  its own storage, and its menu is the toolbar's.
+- `--values` has no effect here: the extension keeps its own storage.
 - Only the script's own text is pushed, not the files beside it. A
   relative `@require` is refused, and a local copy of a remote
   `@require` is not used: the extension fetches the URL.

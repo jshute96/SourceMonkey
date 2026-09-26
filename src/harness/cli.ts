@@ -115,8 +115,6 @@ const OPTION_GROUPS: { title: string; commands: string[]; lines: string[]; only?
       '--watch         Re-inject and reload when a script or its files change',
       '--values JSON   Seed GM_* storage before the script runs, e.g.',
       '                --values \'{"units":"metric"}\'',
-      '--fire-menu S   Fire the registered menu command named S once the page',
-      '                has loaded, as if picked from the toolbar menu',
       '--seconds N     Stop after N seconds instead of waiting for Ctrl-C,',
       '                quit or sm-dev stop',
       '--detach        Return once the pages have loaded and the scripts',
@@ -300,7 +298,6 @@ interface Opts {
   headed: boolean;
   watch: boolean;
   values?: Record<string, unknown>;
-  fireMenu?: string;
   extension: boolean;
   solo: boolean;
   pageErrors: boolean;
@@ -350,7 +347,6 @@ function parseArgs(argv: string[]): Opts {
         }
         break;
       }
-      case '--fire-menu': opts.fireMenu = next(); break;
       case '--extension': opts.extension = true; break;
       case '--solo': opts.solo = true; break;
       case '--page-errors': opts.pageErrors = true; break;
@@ -614,16 +610,15 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
   if (opts.all && urls.length > 0) throw new UsageError('The --all flag opens each script\'s own page, so it can\'t be used with a URL');
   const remote = scripts.find((s) => REMOTE_SCRIPT.test(s));
   if (remote) throw new UsageError(`The start command loads scripts from files, and ${remote} is a URL. Save it to a file first.`);
-  // Flags that would silently do nothing, or wait out --fire-menu's
-  // grace period for a command nothing can register.
+  // Flags that contradict another, or would silently do nothing with it.
   const clash = (flag: string, others: [boolean, string][]): void => {
     const used = others.filter(([on]) => on).map(([, name]) => name);
     if (used.length > 0) throw new UsageError(`The ${flag} flag can't be used with ${used.join(' or ')}`);
   };
-  if (opts.noTab) clash('--notab', [[opts.all, '--all'], [urls.length > 0, 'a URL'], [Boolean(opts.fireMenu), '--fire-menu']]);
+  if (opts.noTab) clash('--notab', [[opts.all, '--all'], [urls.length > 0, 'a URL']]);
   if (opts.noScript) {
     clash('--noscript', [
-      [opts.all, '--all'], [Boolean(opts.fireMenu), '--fire-menu'], [Boolean(opts.values), '--values'],
+      [opts.all, '--all'], [Boolean(opts.values), '--values'],
       [opts.watch, '--watch'], [opts.extension, '--extension'], [opts.solo, '--solo'],
     ]);
   }
@@ -700,7 +695,6 @@ async function runHere(opts: Opts, files: string[], urls: string[], devtools: bo
       headed: opts.headed,
       watch: opts.watch,
       values: opts.values,
-      fireMenu: opts.fireMenu,
       extension: opts.extension,
       solo: opts.solo,
       pageErrors: opts.pageErrors,

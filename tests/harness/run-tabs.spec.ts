@@ -1,7 +1,7 @@
 // `sm-dev start` follows the tabs its tab opens: a `window.open` popup
 // and a `GM_openInTab` tab both get the loaded scripts, and their
 // lines carry the tab's name. Also `--all`'s tab per script, tabs
-// closing (T1 included), and `--fire-menu` reaching another tab.
+// closing (T1 included), and `menu` firing a command on another tab.
 
 import { existsSync, utimesSync } from 'node:fs';
 import path from 'node:path';
@@ -78,22 +78,6 @@ test('scripts run in the tabs the run tab opens', async ({ fixtureServer, script
   expect(lines.filter((l) => /^\[sm-dev\] Tab T\d+ opened at .*, from T1 \[targetId=[0-9A-F]{32}\]$/.test(l))).toHaveLength(2);
   // The host's own lines say which tab too.
   expect(lines.some((l) => /^\[T\d+\] \[sm-dev\] Opener started on .*other\.html\?via=gm$/.test(l))).toBe(true);
-});
-
-test('a followed tab keeps its menu commands, and --fire-menu reaches them there', async ({ fixtureServer, scriptsDir }) => {
-  const file = scriptsDir.write({
-    relativePath: 'menu.user.js',
-    meta: { name: 'Menu', match: ['*://*/target.html', '*://*/other.html'], grant: ['GM_registerMenuCommand'] },
-    body: `
-      if (location.pathname.endsWith('target.html')) window.open('other.html');
-      else GM_registerMenuCommand('Only here', () => console.log('[menu] fired on ' + location.pathname));
-    `,
-  });
-  const { lines } = await runUntil({
-    files: [file], urls: [`${fixtureServer.baseUrl}/target.html`], collectionRoot: scriptsDir.path, fireMenu: 'Only here',
-  }, ['[T2] [page log] [menu] fired on /other.html']);
-  expect(lines).toContain('[sm-dev] Fired menu command "Only here" on T2');
-  expect(lines).toContain('[T2] [page log] [menu] fired on /other.html');
 });
 
 test('--all opens a tab per script page, numbered in order, and lists the skipped ones last', async ({ fixtureServer, scriptsDir }) => {
@@ -257,6 +241,23 @@ test('--notab: the first tab opened is T1, unprefixed like a normal run\'s', asy
   expect(lines).toContain('[page log] [hello] on /target.html');
   expect(lines).toContain(`[sm-dev] Hello started on ${target}`);
   expect(lines.some((l) => l.startsWith('[T1]'))).toBe(false);
+});
+
+test('a followed tab keeps its menu commands, and menu fires them there', async ({ fixtureServer, scriptsDir }) => {
+  const file = scriptsDir.write({
+    relativePath: 'menu.user.js',
+    meta: { name: 'Menu', match: ['*://*/target.html', '*://*/other.html'], grant: ['GM_registerMenuCommand'] },
+    body: `
+      if (location.pathname.endsWith('target.html')) window.open('other.html');
+      else GM_registerMenuCommand('Only here', () => console.log('[menu] fired on ' + location.pathname));
+    `,
+  });
+  const lines = await driveCli([file, `${fixtureServer.baseUrl}/target.html`], [
+    ['[T2] [sm-dev] Menu started on', 'menu T2.Only here'],
+    ['[T2] [page log] [menu] fired on /other.html', 'quit'],
+  ]);
+  expect(lines).toContain('[sm-dev] Fired "Only here"');
+  expect(lines).toContain('[T2] [page log] [menu] fired on /other.html');
 });
 
 test('--noscript: a blank page, and the lists say there are no scripts', async () => {
