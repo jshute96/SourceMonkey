@@ -348,7 +348,7 @@ function canonicalPatternProblem(pattern: string): MatchPatternProblem | null {
   if (rest.slice(slash).includes('#')) {
     return {
       pattern,
-      what: 'includes a "#", but @match ignores the URL\'s #hash',
+      what: 'names a #hash that @match can\'t see',
       fix: 'use @include to match on the hash',
     };
   }
@@ -428,28 +428,35 @@ export function includePattern(pattern: string, url: string): boolean {
 //   - at least one @match or @include pattern matches.
 // A script with zero match/include patterns never matches anything,
 // which is intentional — validateHeader already flags those as errors.
+//
+// Stops at the first rule that settles it: this runs for every script
+// on every URL the badge checks. `explainUrlMatch` is the same rule,
+// listing every hit instead; `tests/unit/url-match.test.mjs` pins the
+// two together.
 export function urlMatchesScript(url: string, matching: UrlMatching): boolean {
-  return explainUrlMatch(url, matching).matches;
+  if (matching.excludes.some((ex) => includePattern(ex, url))) return false;
+  return matching.matches.some((m) => matchPattern(m, url)) || matching.includes.some((inc) => includePattern(inc, url));
 }
 
 export interface UrlMatchExplanation {
   matches: boolean;
   /** Which header line decided, e.g. `@exclude *://example.com/admin*`. */
   rule: string | null;
+  /** Every `@match` / `@include` line that covers the URL, excluded or not. */
+  matchedBy: string[];
+  /** Every `@exclude` line that covers it. Any one keeps the script off. */
+  excludedBy: string[];
 }
 
-// The same test, also naming the rule that answered, for a developer
-// asking why a script did or didn't run. One implementation for both,
-// so the answer given and the decision made can't drift apart.
+// The same test, also naming the rules that answered, for a developer
+// asking why a script did or didn't run. Slower than `urlMatchesScript`,
+// since it tries every rule to list them all.
 export function explainUrlMatch(url: string, matching: UrlMatching): UrlMatchExplanation {
-  for (const ex of matching.excludes) {
-    if (includePattern(ex, url)) return { matches: false, rule: `@exclude ${ex}` };
-  }
-  for (const m of matching.matches) {
-    if (matchPattern(m, url)) return { matches: true, rule: `@match ${m}` };
-  }
-  for (const inc of matching.includes) {
-    if (includePattern(inc, url)) return { matches: true, rule: `@include ${inc}` };
-  }
-  return { matches: false, rule: null };
+  const excludedBy = matching.excludes.filter((ex) => includePattern(ex, url)).map((ex) => `@exclude ${ex}`);
+  const matchedBy = [
+    ...matching.matches.filter((m) => matchPattern(m, url)).map((m) => `@match ${m}`),
+    ...matching.includes.filter((inc) => includePattern(inc, url)).map((inc) => `@include ${inc}`),
+  ];
+  const matches = excludedBy.length === 0 && matchedBy.length > 0;
+  return { matches, rule: excludedBy[0] ?? matchedBy[0] ?? null, matchedBy, excludedBy };
 }

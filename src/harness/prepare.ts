@@ -26,6 +26,7 @@
 // implement for `file://` URLs, and the parse checker, which the
 // extension installs from a sandboxed page.
 
+import { statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -317,8 +318,9 @@ export const NO_RULE_COVERS_URL = 'No @match or @include covers this URL';
 /**
  * Whether the script runs on `url`, and which header rule decided: an
  * exclude wins over everything, then the first `@match`, then the
- * first `@include`. The extension's own matcher, so the answer is the
- * one the extension would give.
+ * first `@include`. Also every rule that matched or excluded it
+ * (`matchedBy`, `excludedBy`). The extension's own matcher, so the
+ * answer is the one the extension would give.
  */
 export function explainMatch(matching: ScriptMatching, url: string): MatchExplanation {
   return explainUrlMatch(url, matching);
@@ -348,16 +350,32 @@ export function defaultPageUrl(script: PreparedScript): string | null {
 
 /**
  * A typed URL with `http://` added when it has no scheme, so
- * `example.com/x` works. A path (`/tmp/x.html`, `./x.html`) becomes a
- * `file://` URL instead. `host:port` would otherwise read as a scheme,
- * so only a scheme followed by `//`, or one of the kinds that never
- * have it, counts.
+ * `example.com/x` works. A path becomes a `file://` URL instead: one
+ * starting `/`, `./` or `../`, one naming a file that exists in `cwd`,
+ * or one starting with a directory there (`pages/x.html`). `host:port`
+ * would otherwise read as a scheme, so only a scheme followed by `//`,
+ * or one of the kinds that never have it, counts.
  */
-export function withDefaultScheme(url: string): string {
+export function withDefaultScheme(url: string, cwd = process.cwd()): string {
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) return url;
   if (/^(about|blob|data|file|javascript|mailto|view-source):/i.test(url)) return url;
-  if (/^\.{0,2}\//.test(url)) return pathToFileURL(path.resolve(url)).toString();
+  if (/^\.{0,2}\//.test(url) || isLocalPath(url, cwd)) return pathToFileURL(path.resolve(cwd, url)).toString();
   return `http://${url}`;
+}
+
+// A scheme-less word that is a file in `cwd`, or starts with a
+// directory there. Not a first part with a dot, which reads as a host
+// even when a repo has a folder by that name (`example.com/`).
+function isLocalPath(input: string, cwd: string): boolean {
+  const is = (p: string, kind: 'isFile' | 'isDirectory'): boolean => {
+    try {
+      return statSync(path.resolve(cwd, p))[kind]();
+    } catch {
+      return false;
+    }
+  };
+  const first = input.split('/')[0];
+  return is(input, 'isFile') || (first !== '' && !first.includes('.') && is(first, 'isDirectory'));
 }
 
 /** The script's `@name`, else the path it was loaded from. */

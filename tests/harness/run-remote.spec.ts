@@ -164,7 +164,7 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
       meta: { name: 'Remote', match: ['*://*/target.html'], grant: ['GM_registerMenuCommand'], injectInto: 'page' },
       body: `console.log('[remote] body ran');\nGM_registerMenuCommand('Say hi', () => console.log('[remote] hi'));`,
     });
-    const run = setup.startRun([file, '--url', `${fixtureServer.baseUrl}/target.html`, '--root', scriptsDir.path]);
+    const run = setup.startRun([file, `${fixtureServer.baseUrl}/target.html`, '--root', scriptsDir.path]);
     await run.waitFor(/^\[sm-dev\] Started as run D1: /);
     await run.waitFor(/^\[sm-dev\] Remote started on /);
 
@@ -244,7 +244,7 @@ test('--devtools reports each tab\'s page id, which chrome-devtools reaches', as
       body: `console.log('[devtools] on ' + document.title);`,
     });
     const url = `${fixtureServer.baseUrl}/target.html`;
-    const run = setup.startRun([file, '--url', url, '--root', scriptsDir.path, '--devtools']);
+    const run = setup.startRun([file, url, '--root', scriptsDir.path, '--devtools']);
     await run.waitFor(/^\[sm-dev\] DevTools: chrome-devtools --sessionId=D1 /);
     const first = (await run.waitFor(/^\[sm-dev\] T1 is DevTools page \d+$/)).match(/(\d+)$/)![1];
     // The run's own server, not one a tool call would start on its own
@@ -294,7 +294,7 @@ test('a tab stopped on a dialog is named, and waited for, before the run connect
     const file = scriptsDir.write({ relativePath: 'wait.user.js', meta: { name: 'Wait', match: ['*://*/target.html'] }, body: '' });
     const stuckUrl = `${fixtureServer.baseUrl}/other.html`;
     await openForeignDialogTab(setup.port, stuckUrl);
-    const args = [file, '--url', `${fixtureServer.baseUrl}/target.html`, '--root', scriptsDir.path];
+    const args = [file, `${fixtureServer.baseUrl}/target.html`, '--root', scriptsDir.path];
 
     // Ctrl-C (or a kill) while it waits ends it at once: there's
     // nothing to clean up yet.
@@ -352,7 +352,7 @@ test('several stuck tabs, a dialog and a busy page, are all named, over a ws:// 
 
     // The browser's own connection, as `--cdp` also takes it.
     const { webSocketDebuggerUrl } = await (await fetch(`http://127.0.0.1:${setup.port}/json/version`)).json() as { webSocketDebuggerUrl: string };
-    const run = setup.startRun([file, '--url', `${fixtureServer.baseUrl}/target.html`, '--root', scriptsDir.path], webSocketDebuggerUrl);
+    const run = setup.startRun([file, `${fixtureServer.baseUrl}/target.html`, '--root', scriptsDir.path], webSocketDebuggerUrl);
     await run.waitFor(/^Some tabs are not responding, so sm-dev can't connect to the browser over CDP:$/);
     await run.waitFor(/^They may have a dialog open, or a busy page\. Answer the dialogs or close the tabs to continue \(Ctrl-C to abort\)\.$/);
     const named = run.lines.filter((l) => l.startsWith('  '));

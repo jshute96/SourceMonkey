@@ -173,20 +173,42 @@ test('prepareScript: text without a file works, with a placeholder location', as
   assert.equal(p.noframes, false);
 });
 
-test('explainMatch: names the rule that decided', () => {
+test('explainMatch: names the rule that decided, and every rule that covers the URL', () => {
   const matching = {
-    matches: ['https://example.com/items/*'],
-    excludes: ['https://example.com/items/private*'],
+    matches: ['https://example.com/items/*', 'https://example.com/*'],
+    excludes: ['https://example.com/items/private*', '*/private/*'],
     includes: ['/^https:\\/\\/other\\.test\\//'],
   };
-  assert.deepEqual(explainMatch(matching, 'https://example.com/items/42'),
-    { matches: true, rule: '@match https://example.com/items/*' });
-  assert.deepEqual(explainMatch(matching, 'https://example.com/items/private/1'),
-    { matches: false, rule: '@exclude https://example.com/items/private*' });
-  assert.deepEqual(explainMatch(matching, 'https://other.test/x'),
-    { matches: true, rule: '@include /^https:\\/\\/other\\.test\\//' });
-  assert.deepEqual(explainMatch(matching, 'https://example.com/'),
-    { matches: false, rule: null });
+  assert.deepEqual(explainMatch(matching, 'https://example.com/items/42'), {
+    matches: true,
+    rule: '@match https://example.com/items/*',
+    matchedBy: ['@match https://example.com/items/*', '@match https://example.com/*'],
+    excludedBy: [],
+  });
+  // Excluded, but still naming the rules the excludes overrode.
+  assert.deepEqual(explainMatch(matching, 'https://example.com/items/private/1'), {
+    matches: false,
+    rule: '@exclude https://example.com/items/private*',
+    matchedBy: ['@match https://example.com/items/*', '@match https://example.com/*'],
+    excludedBy: ['@exclude https://example.com/items/private*', '@exclude */private/*'],
+  });
+  assert.deepEqual(explainMatch(matching, 'https://other.test/x'), {
+    matches: true,
+    rule: '@include /^https:\\/\\/other\\.test\\//',
+    matchedBy: ['@include /^https:\\/\\/other\\.test\\//'],
+    excludedBy: [],
+  });
+  assert.deepEqual(explainMatch(matching, 'https://elsewhere.test/'),
+    { matches: false, rule: null, matchedBy: [], excludedBy: [] });
+});
+
+test('withDefaultScheme reads an existing file, or a path under an existing directory, as a file', () => {
+  // Run from the repo root, where these exist and `docs.example` doesn't.
+  const here = (p) => pathToFileURL(path.resolve(p)).toString();
+  assert.equal(withDefaultScheme('README.md'), here('README.md'));
+  assert.equal(withDefaultScheme('tests/examples/index.html'), here('tests/examples/index.html'));
+  assert.equal(withDefaultScheme('tests/no-such-page.html'), here('tests/no-such-page.html'));
+  assert.equal(withDefaultScheme('docs.example/x'), 'http://docs.example/x');
 });
 
 test('withDefaultScheme adds http:// only where a URL has no scheme', () => {

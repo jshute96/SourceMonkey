@@ -2,12 +2,12 @@
 // compiled to lib/harness/cli.js): `run` flag combinations that would
 // do nothing or stall, and `send`, `stop` and `list` arguments they
 // can't act on, are refused up front, before any browser or run is
-// reached.
+// reached. Also `match`, which needs no browser at all.
 
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,11 +20,126 @@ function run(...args) {
   return { code: r.status, out: (r.stdout + r.stderr).trim().split('\n')[0] };
 }
 
+test('match lists every rule that excluded or matched each URL', () => {
+  const script = fileURLToPath(new URL('../examples/headers-match-hash/exclude-hash.user.js', import.meta.url));
+  const page = 'http://127.0.0.1/headers-match-hash/headers-match-hash.html';
+  const r = spawnSync(process.execPath, [CLI, 'match', script, page, `${page}#part`, 'http://127.0.0.1/other.html'], { encoding: 'utf8' });
+  assert.equal(r.status, 1);
+  assert.equal(r.stdout, [
+    `match    ${page}`,
+    '    Matched by:  @match *://*/headers-match-hash/headers-match-hash.html',
+    `no match ${page}#part`,
+    '    Excluded by: @exclude *#part',
+    '    Matched by:  @match *://*/headers-match-hash/headers-match-hash.html',
+    'no match http://127.0.0.1/other.html',
+    '    No @match or @include covers this URL',
+    '',
+  ].join('\n'));
+});
+
+test('match takes several scripts and URLs in any order, a heading per script', () => {
+  const dir = fileURLToPath(new URL('../examples/headers-match-hash/', import.meta.url));
+  const page = 'http://127.0.0.1/headers-match-hash/headers-match-hash.html';
+  const rel = (name) => path.relative(process.cwd(), path.join(dir, name));
+  const r = spawnSync(process.execPath, [CLI, 'match', `${page}#part`, path.join(dir, 'match-exact.user.js'), path.join(dir, 'include-hash.user.js'), page], { encoding: 'utf8' });
+  assert.equal(r.status, 1);
+  assert.equal(r.stdout, [
+    rel('match-exact.user.js'),
+    `match    ${page}#part`,
+    '    Matched by:  @match *://*/headers-match-hash/headers-match-hash.html',
+    `match    ${page}`,
+    '    Matched by:  @match *://*/headers-match-hash/headers-match-hash.html',
+    '',
+    rel('include-hash.user.js'),
+    `match    ${page}#part`,
+    '    Matched by:  @include *://*/headers-match-hash/headers-match-hash.html#part',
+    `no match ${page}`,
+    '    No @match or @include covers this URL',
+    '',
+  ].join('\n'));
+  // A script or URL given twice is checked once.
+  const twice = spawnSync(process.execPath, [CLI, 'match', path.join(dir, 'match-exact.user.js'), page, path.join(dir, 'match-exact.user.js'), page], { encoding: 'utf8' });
+  assert.equal(twice.stdout, `match    ${page}\n    Matched by:  @match *://*/headers-match-hash/headers-match-hash.html\n`);
+  // With no .user.js argument there is no script to check.
+  const none = spawnSync(process.execPath, [CLI, 'match', page], { encoding: 'utf8' });
+  assert.equal(none.status, 2);
+  assert.match(none.stderr, /The match command needs a script \(a \.user\.js file\) and at least one URL$/m);
+});
+
+test('match gives a script that can never match its per-URL answer, and a broken one only its status', () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'sm-match-'));
+  try {
+    const broken = path.join(dir, 'broken.user.js');
+    writeFileSync(broken, '// ==UserScript==\n// @name B\n// @match https://x/*\n// ==/UserScript==\nfunction (\n');
+    const hash = fileURLToPath(new URL('../examples/headers-match-hash/match-hash.user.js', import.meta.url));
+    const page = 'http://127.0.0.1/headers-match-hash/headers-match-hash.html#part';
+    const r = spawnSync(process.execPath, [CLI, 'match', hash, broken, page], { encoding: 'utf8' });
+    assert.equal(r.status, 1);
+    assert.equal(r.stdout, [
+      path.relative(process.cwd(), hash),
+      `no match ${page}`,
+      '    No @match or @include covers this URL',
+      '',
+      path.relative(process.cwd(), broken),
+      'INVALID script',
+      '',
+    ].join('\n'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('validate and match fetch a script given as a URL, and run refuses one', async () => {
+  // Async, not spawnSync: the server answers from this same process.
+  const { createServer } = await import('node:http');
+  const { readFileSync } = await import('node:fs');
+  const { execFile } = await import('node:child_process');
+  const script = fileURLToPath(new URL('../examples/headers-match-hash/match-exact.user.js', import.meta.url));
+  const withRequire = '// ==UserScript==\n// @name R\n// @match https://x.test/*\n// @require lib.js\n// ==/UserScript==\nhelper();\n';
+  const server = createServer((req, res) => {
+    if (req.url === '/match-exact.user.js') res.end(readFileSync(script));
+    // A redirect, as Greasy Fork's and GitHub's links do: the @require
+    // is relative to where it lands.
+    else if (req.url === '/redirect.user.js') { res.writeHead(302, { location: '/real/r.user.js' }); res.end(); }
+    else if (req.url === '/real/r.user.js') res.end(withRequire);
+    else if (req.url === '/real/lib.js') res.end('function helper() {}\n');
+    // A page about the file, not the file.
+    else if (req.url === '/page.user.js') { res.setHeader('content-type', 'text/html'); res.end('<html>Sign in</html>'); }
+    else { res.statusCode = 404; res.end(); }
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const cli = (...args) => new Promise((resolve) => {
+    execFile(process.execPath, [CLI, ...args], (err, stdout, stderr) => resolve({ code: err ? err.code : 0, stdout, stderr }));
+  });
+  try {
+    const url = `${base}/match-exact.user.js`;
+    const validated = await cli('validate', url);
+    assert.equal(validated.code, 0);
+    assert.equal(validated.stdout, `ok       ${url}\n\n1 ok, 0 invalid\n`);
+    const page = 'http://x.test/headers-match-hash/headers-match-hash.html';
+    assert.equal((await cli('match', url, page)).stdout,
+      `match    ${page}\n    Matched by:  @match *://*/headers-match-hash/headers-match-hash.html\n`);
+    const missing = await cli('validate', `${base}/nope.user.js`);
+    assert.equal(missing.code, 1);
+    assert.equal(missing.stderr, `Could not fetch ${base}/nope.user.js: The server answered 404 Not Found\n`);
+    assert.equal((await cli('validate', `${base}/redirect.user.js`)).stdout, `ok       ${base}/redirect.user.js\n\n1 ok, 0 invalid\n`);
+    const html = await cli('validate', `${base}/page.user.js`);
+    assert.equal(html.code, 1);
+    assert.match(html.stderr, /^Could not fetch \S+: The server returned an HTML page, not JavaScript \(Content-Type "text\/html"\); the link may be dead or behind a login\n$/);
+    const run = await cli('run', url);
+    assert.equal(run.code, 2);
+    assert.equal(run.stderr.split('\n')[0], `The run command loads scripts from files, and ${url} is a URL. Save it to a file first.`);
+  } finally {
+    server.close();
+  }
+});
+
 test('--noscript refuses scripts, and a run needs one without it', () => {
   assert.deepEqual(run('--noscript', SCRIPT), {
     code: 2, out: 'The --noscript flag runs no scripts, so the run command takes none with it',
   });
-  assert.deepEqual(run(), { code: 2, out: 'The run command needs at least one script, or --noscript' });
+  assert.deepEqual(run(), { code: 2, out: 'The run command needs at least one script (a .user.js file), or --noscript' });
 });
 
 test('--noscript refuses the flags that act on scripts', () => {
@@ -36,7 +151,8 @@ test('--noscript refuses the flags that act on scripts', () => {
 });
 
 test('--notab refuses the flags that need a tab', () => {
-  assert.deepEqual(run(SCRIPT, '--notab', '--url', 'x.com'), { code: 2, out: 'The --notab flag can\'t be used with --url' });
+  assert.deepEqual(run(SCRIPT, 'x.com', '--all'), { code: 2, out: 'The --all flag opens each script\'s own page, so it can\'t be used with a URL' });
+  assert.deepEqual(run(SCRIPT, '--notab', 'x.com'), { code: 2, out: 'The --notab flag can\'t be used with a URL' });
   assert.deepEqual(run(SCRIPT, '--notab', '--fire-menu', 'X'), { code: 2, out: 'The --notab flag can\'t be used with --fire-menu' });
 });
 
@@ -89,8 +205,9 @@ function help(...args) {
 test('help for one command shows its entry and only its flags', () => {
   const match = help('help', 'match');
   assert.equal(match.code, 0);
-  assert.match(match.out, /^Usage: sm-dev match <script> \[url\]\.\.\. \[options\]$/m);
-  assert.match(match.out, /^ {2}--url URL /m);
+  assert.match(match.out, /^Usage: sm-dev match <script>\.\.\. <url>\.\.\. \[options\]$/m);
+  assert.match(match.out, /^Arguments:\n {2}<script>\.\.\. +The userscripts to check/m);
+  assert.match(match.out, /^Scripts, URLs and options can come in any order\./m);
   assert.match(match.out, /^ {2}--root DIR /m);
   assert.doesNotMatch(match.out, /--cdp|--watch|^ {2}run /m);
   // --help before or after the command asks the same.

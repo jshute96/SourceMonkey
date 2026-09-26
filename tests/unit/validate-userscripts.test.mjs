@@ -73,7 +73,7 @@ test('every script in tests/examples validates clean', async () => {
   // naming a #hash never runs here, while Violentmonkey runs it.
   const bad = records.filter((r) => r.category !== 'ok');
   assert.deepEqual(bad.map((r) => `${r.name}: ${r.detail ?? r.message}`), [
-    'tests/examples/headers-match-hash/match-hash.user.js: @match … includes a "#", but @match ignores the URL\'s #hash, so this script would never run on any page; use @include to match on the hash',
+    'tests/examples/headers-match-hash/match-hash.user.js: @match … names a #hash that @match can\'t see, so this script would never run on any page; use @include to match on the hash',
   ]);
   // Guard against the walker silently matching nothing — an empty run
   // reports zero failures too.

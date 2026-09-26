@@ -31,8 +31,11 @@ import { waitForStuckTabs } from './stuck-tabs.js';
 
 export interface RunOptions extends ConnectOptions {
   files: string[];
-  /** The page to open. Defaults to the first URL the first script's `@match` implies. */
-  url?: string;
+  /**
+   * The pages to open, one tab each. Defaults to the first URL the first
+   * script's `@match` implies.
+   */
+  urls?: string[];
   /**
    * Open each script's default page, one tab per distinct page, rather
    * than one page for the first script.
@@ -314,24 +317,28 @@ async function isSelected(page: Page): Promise<boolean> {
   return Promise.race([visible, timeout]);
 }
 
-const NO_URL = 'No --url given, and the first script\'s @match names no page to open';
-const NO_URL_ALL = 'None of the scripts\' @match names a page to open. Use --url instead of --all.';
+const NO_URL = 'No URL was given, and the first script\'s @match names no page to open. Give a URL.';
+const NO_URL_ALL = 'None of the scripts\' @match names a page to open. Give a URL instead of --all.';
 
-// The pages a run opens: `--url`, or the first script's default page,
+// The pages a run opens: the URLs given, or the first script's default page,
 // or with `--all` each script's, once per distinct page. Null, with
 // the reason printed, when there is none.
 interface StartPages {
   urls: string[];
+  /** Whether the URLs were given, rather than the scripts' own pages. */
+  given?: boolean;
   /** Scripts `--all` found no page for, printed once the rest are open. */
   skipped: { n: number; script: PreparedScript; reason: string }[];
 }
 
 function startPages(opts: RunOptions, prepared: PreparedScript[]): StartPages | null {
   if (opts.noTab) return { urls: [], skipped: [] };
-  // `--noscript`: the tab as it opened, blank, unless --url names one.
-  if (prepared.length === 0) return { urls: opts.url ? [opts.url] : [], skipped: [] };
+  const given = [...new Set(opts.urls ?? [])];
+  // `--noscript`: the tab as it opened, blank, unless URLs are given.
+  if (prepared.length === 0) return { urls: given, given: true, skipped: [] };
   if (!opts.all) {
-    const url = opts.url ?? defaultPageUrl(prepared[0]);
+    if (given.length > 0) return { urls: given, given: true, skipped: [] };
+    const url = defaultPageUrl(prepared[0]);
     if (!url) opts.out(NO_URL);
     return url ? { urls: [url], skipped: [] } : null;
   }
@@ -349,8 +356,14 @@ function startPages(opts: RunOptions, prepared: PreparedScript[]): StartPages | 
   return { urls: [...urls], skipped };
 }
 
-// Also for a page whose tab failed to open: every script it was for.
-function skipScriptsOf(start: StartPages, prepared: PreparedScript[], url: string, reason: string): void {
+// A page whose tab failed to open. A URL that was given is named; a
+// script's own page (`--all`) is reported as every script it was for.
+function tabFailed(opts: RunOptions, start: StartPages, prepared: PreparedScript[], url: string, err: Error): void {
+  if (start.given) {
+    opts.out(`[sm-dev] The tab for ${url} could not be opened: ${err.message}`);
+    return;
+  }
+  const reason = `The tab could not be opened: ${err.message}`;
   prepared.forEach((script, i) => {
     if (defaultPageUrl(script) === url) start.skipped.push({ n: i + 1, script, reason });
   });
@@ -680,13 +693,14 @@ async function runInHarness(
   if (prepared.length > 0) held.injected = true;
   if (page) {
     const t1 = tabs.list()[0];
-    // With --all, the other scripts' pages each get a tab of their own.
+    // The other URLs given, or with --all the other scripts' pages, each
+    // get a tab of their own.
     // All are set up first (numbered in call order), then announced in
     // order, then loaded at once.
     const more = await Promise.all(urls.slice(1).map((url) => tabs.createTab().then(
       (tab) => ({ tab, url }),
       (err) => {
-        skipScriptsOf(start, prepared, url, `The tab could not be opened: ${(err as Error).message}`);
+        tabFailed(opts, start, prepared, url, err as Error);
         return null;
       },
     )));
@@ -1221,7 +1235,7 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
       try {
         tabPage = i === 0 && page ? page : await context.newPage();
       } catch (err) {
-        skipScriptsOf(start, prepared, url, `The tab could not be opened: ${(err as Error).message}`);
+        tabFailed(opts, start, prepared, url, err as Error);
         return null;
       }
       const out = i === 0 ? opts.out : (line: string): void => opts.out(`[T${n}] ${line}`);

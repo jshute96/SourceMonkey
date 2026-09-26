@@ -25,14 +25,16 @@ import path from 'node:path';
 import { CommandAssembler, echoCommand, parseCommandList, unclosedBlockMessage } from './command-lines.js';
 import { CONSOLE_HELP, consoleCommandsHelp, helpEntries, writeOutputLine } from './console-commands.js';
 import { devtoolsWanted } from './devtools.js';
-import { NO_RULE_COVERS_URL, explainMatch, isDirectoryMessage, noSuchFileMessage, prepareScript, withDefaultScheme } from './prepare.js';
+import { NO_RULE_COVERS_URL, explainMatch, isDirectoryMessage, noSuchFileMessage, prepareScript, withDefaultScheme, type PreparedScript } from './prepare.js';
+import { isMarkupContentType, looksLikeMarkup, markupResponseMessage } from '../markup-response.js';
+import { unusableMatchGroupKey } from '../url-match.js';
 
 // A mistake in how the command was typed, as opposed to a failure while
 // carrying it out: the one kind that exits 2.
 class UsageError extends Error {}
 
 const INTRO = `sm-dev: develop and test userscripts against a real browser,
-with SourceMonkey's own injection and GM_* APIs behind them.
+with SourceMonkey's script injection and GM_* APIs behind them.
 
 Usage: sm-dev <command> [options]`;
 
@@ -40,14 +42,16 @@ Usage: sm-dev <command> [options]`;
 // picks them out: a line starting with the name, and indented lines
 // carrying on its description.
 const COMMAND_LINES = [
-  'run <script>...             Inject the script(s) into a page and stream',
-  '                            their console lines, reports and GM_* calls',
-  '                            (no scripts with --noscript)',
-  'validate <path>...          Run the install-time checks (header,',
-  '                            @require, syntax) over files or directories',
-  'match <script> [url]...     Say whether the script would run on each',
-  '                            URL (and --url\'s), and which header rule',
-  '                            decided',
+  'run <script>... [url]...    Inject the scripts into each URL, one tab',
+  '                            each, and stream what they do (default URL:',
+  '                            the first page the first script\'s @match',
+  '                            implies)',
+  'validate <path>...          Check script validity (header, @require,',
+  '                            syntax) over files, directories or script',
+  '                            URLs',
+  'match <script>... <url>...  Say whether each script would run on each',
+  '                            URL, and which header rules matched or',
+  '                            excluded it',
   'clear --extension           Remove every script in the extension\'s',
   '                            Scratch collection and turn solo mode off',
   'list                        List sm-dev runs active on this machine',
@@ -86,15 +90,11 @@ const OPTION_GROUPS: { title: string; commands: string[]; lines: string[]; only?
   {
     title: 'Options for run',
     commands: ['run'],
-    only: { '--url': ['run', 'match'] },
     lines: [
-      '--url URL       The page to open (default: the first page the script\'s',
-      '                @match implies). Also checked by match, so one command',
-      '                line serves both',
       '--all           Open each script\'s default page, one tab per page,',
       '                instead of only the first script\'s',
       '--noscript      Start with no scripts, as a browser to drive with the',
-      '                typed commands (a blank page unless --url names one)',
+      '                typed commands (a blank page unless a URL is given)',
       '--notab         Open no tab at startup; type newtab to open one.',
       '                With --extension, the pages you browse to run them',
       '--watch         Re-inject and reload when a script or its files change',
@@ -118,8 +118,45 @@ const OPTION_GROUPS: { title: string; commands: string[]; lines: string[]; only?
   },
 ];
 
+// What `sm-dev help <command>` shows in place of the one-line entry,
+// for the commands that need more: what the command does, then its
+// arguments. The options follow.
+const COMMAND_DETAILS: Record<string, { about: string[]; args: string[] }> = {
+  run: {
+    about: [
+      'Starts a run that lasts as long as this command. It keeps a connection to',
+      'the browser, injects the scripts into each page it opens, and streams their',
+      'console lines, reports and GM_* calls back here.',
+      '',
+      'It is also an interactive shell: type commands at its prompt to act on the',
+      'pages and scripts. Each run prints its id, for sm-dev send and sm-dev stop',
+      'to reach it from another shell.',
+    ],
+    args: [
+      '<script>...     The userscripts to inject: the arguments ending in .user.js.',
+      '                None with --noscript',
+      '[url]...        The pages to open, one tab each: the other arguments.',
+      '                Default URL: the first page the first script\'s @match',
+      '                implies',
+    ],
+  },
+  match: {
+    about: [
+      'Says whether each script would run on each URL, listing all header rules',
+      'that matched it (Matched by:) or excluded it (Excluded by:).',
+    ],
+    args: [
+      '<script>...     The userscripts to check: the arguments ending in .user.js.',
+      '                A script\'s http(s) URL is fetched',
+      '<url>...        The URLs to check them against: the other arguments',
+    ],
+  },
+};
+
+const ARGS_NOTE = `Scripts, URLs and options can come in any order. A URL with no scheme gets
+http://, and a path becomes a file:// URL.`;
+
 // Notes after the options, and the commands each concerns.
-const URL_NOTE = { commands: ['run', 'match'], text: 'A URL with no scheme gets http://, and a path becomes a file:// URL.' };
 const SHELL_NOTE = {
   commands: ['run'],
   text: `While run streams, it also acts as an interactive shell, with the commands
@@ -140,7 +177,8 @@ ${indent(OPTION_GROUPS[0].lines)}
 ${OPTION_GROUPS[1].title}:
 ${indent(OPTION_GROUPS[1].lines)}
 
-${URL_NOTE.text}
+For run and match, a .user.js argument is a script, and the rest are URLs.
+${ARGS_NOTE}
 
 ${OPTION_GROUPS.slice(2).map((group) => `${group.title}:\n${indent(group.lines)}`).join('\n\n')}
 
@@ -196,16 +234,14 @@ function cliCommandHelp(name: string): string {
     .map((line) => line.split(/\s+/)[0])
     .filter((flag) => (group.only?.[flag] ?? group.commands).includes(name))
     .flatMap((flag) => helpEntries(group.lines, flag)));
-  const lines = [
-    `Usage: sm-dev ${entry[0].split(/\s{2,}/)[0]}${options.length ? ' [options]' : ''}`,
-    '',
-    indent(entry),
-  ];
-  if (options.length) lines.push('', 'Options:', indent(options));
-  if (URL_NOTE.commands.includes(name)) lines.push('', URL_NOTE.text);
-  if (name === 'run') {
-    lines.push('', 'While run streams, it also acts as an interactive shell. Each run prints its id,', 'for sm-dev send and sm-dev stop to reach it by.');
+  const details = COMMAND_DETAILS[name];
+  const lines = [`Usage: sm-dev ${entry[0].split(/\s{2,}/)[0]}${options.length ? ' [options]' : ''}`, ''];
+  if (details) {
+    lines.push(...details.about, '', 'Arguments:', indent(details.args), '', ARGS_NOTE);
+  } else {
+    lines.push(indent(entry));
   }
+  if (options.length) lines.push('', 'Options:', indent(options));
   // The commands a run takes, typed or sent, have help of their own.
   if (name === 'run' || name === 'send') {
     lines.push('', 'Type sm-dev help <command> for a run\'s commands (sm-dev help status), or', 'help at its prompt.');
@@ -218,7 +254,6 @@ interface Opts {
   args: string[];
   root: string;
   local: string[];
-  url?: string;
   all: boolean;
   noScript: boolean;
   noTab: boolean;
@@ -251,7 +286,6 @@ function parseArgs(argv: string[]): Opts {
     switch (arg) {
       case '--root': opts.root = path.resolve(next()); break;
       case '--local': opts.local.push(path.resolve(next())); break;
-      case '--url': opts.url = withDefaultScheme(next()); break;
       case '--all': opts.all = true; break;
       case '--noscript': opts.noScript = true; break;
       case '--notab': opts.noTab = true; break;
@@ -333,64 +367,156 @@ function rel(file: string): string {
 
 async function validate(opts: Opts): Promise<number> {
   if (opts.args.length === 0) throw new UsageError('The validate command needs at least one path');
-  const files = await collectScripts(opts.args);
-  if (files.length === 0) throw new UsageError('No *.user.js files found');
+  // In the order given. A web address is fetched; a path may be a
+  // directory to search.
+  const sources: ScriptSource[] = [];
+  for (const arg of opts.args) {
+    if (REMOTE_SCRIPT.test(arg)) sources.push(...await scriptSources([arg]));
+    else for (const file of await collectScripts([arg])) sources.push({ label: rel(file), file });
+  }
+  if (sources.length === 0) throw new UsageError('No *.user.js files found');
   let failed = 0;
-  for (const file of files) {
-    const prepared = await prepareScript({
-      file,
-      collectionRoot: opts.root,
-      localRoots: opts.local,
-    });
+  for (const source of sources) {
+    const prepared = await prepareSource(source, opts);
     if (prepared.status === 'ok') {
       const notes = prepared.startupLogs.map((l) => `\n    ${l.level}: ${l.message}`).join('');
-      process.stdout.write(`ok       ${rel(file)}${notes}\n`);
+      process.stdout.write(`ok       ${source.label}${notes}\n`);
     } else {
       failed++;
-      process.stdout.write(`INVALID  ${rel(file)}\n    ${prepared.diagnostic}\n`);
+      process.stdout.write(`INVALID  ${source.label}\n    ${prepared.diagnostic}\n`);
     }
   }
-  process.stdout.write(`\n${files.length - failed} ok, ${failed} invalid\n`);
+  process.stdout.write(`\n${sources.length - failed} ok, ${failed} invalid\n`);
   return failed === 0 ? 0 : 1;
 }
 
-async function match(opts: Opts): Promise<number> {
-  const [script, ...typed] = opts.args;
-  const urls = [...typed.map(withDefaultScheme), ...(opts.url ? [opts.url] : [])];
-  if (!script || urls.length === 0) throw new UsageError('The match command needs a script and at least one URL, or --url');
-  const prepared = await prepareScript({
-    file: await scriptFile(script),
-    collectionRoot: opts.root,
-    localRoots: opts.local,
-  });
-  if (prepared.status !== 'ok') {
-    process.stdout.write(`INVALID  ${rel(script)}\n    ${prepared.diagnostic}\n`);
-    return 1;
+// A `run` or `match` argument that names a script rather than a page.
+const SCRIPT_ARG = /\.user\.js$/i;
+
+// `run` and `match` arguments: scripts, and the URLs the rest are.
+function scriptsAndUrls(args: string[]): { scripts: string[]; urls: string[] } {
+  return {
+    // Each once, so a repeat is neither checked nor opened twice.
+    scripts: [...new Set(args.filter((a) => SCRIPT_ARG.test(a)))],
+    urls: [...new Set(args.filter((a) => !SCRIPT_ARG.test(a)).map((a) => withDefaultScheme(a)))],
+  };
+}
+
+// A script named by a web address rather than a path: `validate` and
+// `match` fetch it.
+const REMOTE_SCRIPT = /^https?:\/\//i;
+
+// A script to check: read from disk, or already fetched from `url`.
+// `label` is how the output names it.
+type ScriptSource = { label: string; file: string } | { label: string; url: string; text: string };
+
+// Local ones checked, remote ones fetched, all up front, so a mistyped
+// name or a dead link is reported before any output.
+async function scriptSources(inputs: string[]): Promise<ScriptSource[]> {
+  return Promise.all(inputs.map(async (input): Promise<ScriptSource> => {
+    if (!REMOTE_SCRIPT.test(input)) {
+      const file = await scriptFile(input);
+      return { label: rel(file), file };
+    }
+    // Its final URL, past any redirect, for relative @requires to resolve against.
+    const { url, text } = await fetchScript(input);
+    return { label: input, url, text };
+  }));
+}
+
+// Long enough for a slow server, short enough that a stuck one doesn't
+// hold the command for minutes.
+const FETCH_TIMEOUT_MS = 30_000;
+
+async function fetchScript(url: string): Promise<{ url: string; text: string }> {
+  let response: Response;
+  try {
+    response = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  } catch (err) {
+    const error = err as Error & { cause?: { code?: string; message?: string } };
+    const why = error.name === 'TimeoutError' ? `The server didn't answer within ${FETCH_TIMEOUT_MS / 1000} seconds`
+      : error.cause?.code === 'ENOTFOUND' ? 'No such host'
+        : error.cause?.code === 'ECONNREFUSED' ? 'The server refused the connection'
+          // Node's own message is only "fetch failed"; the cause says why.
+          : capitalize(error.cause?.message ?? error.message);
+    throw new Error(`Could not fetch ${url}: ${why}`);
   }
-  let misses = 0;
-  for (const url of urls) {
-    const verdict = explainMatch(prepared.matching, url);
-    if (verdict.matches) {
-      process.stdout.write(`match    ${url}\n    ${verdict.rule}\n`);
-    } else {
-      misses++;
-      process.stdout.write(`no match ${url}\n    ${verdict.rule ?? NO_RULE_COVERS_URL}\n`);
+  if (!response.ok) throw new Error(`Could not fetch ${url}: The server answered ${response.status} ${response.statusText}`.trimEnd());
+  const text = await response.text();
+  // A login page or a forge's page about the file, not the file.
+  const contentType = response.headers.get('content-type') ?? '';
+  if (isMarkupContentType(contentType) || looksLikeMarkup(text)) {
+    throw new Error(`Could not fetch ${url}: ${markupResponseMessage(isMarkupContentType(contentType) ? { contentType } : {})}`);
+  }
+  return { url: response.url || url, text };
+}
+
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function prepareSource(source: ScriptSource, opts: Opts): Promise<PreparedScript> {
+  const shared = { collectionRoot: opts.root, localRoots: opts.local };
+  return 'file' in source
+    ? prepareScript({ file: source.file, ...shared })
+    // Relative @requires resolve against the script's own URL.
+    : prepareScript({ text: source.text, sourceUrl: source.url, ...shared });
+}
+
+// Every script against every URL, in the order given. Arguments can
+// come in any order: a `.user.js` one is a script, the rest are URLs.
+async function match(opts: Opts): Promise<number> {
+  const { scripts, urls } = scriptsAndUrls(opts.args);
+  if (scripts.length === 0 || urls.length === 0) {
+    throw new UsageError('The match command needs a script (a .user.js file) and at least one URL');
+  }
+  const sources = await scriptSources(scripts);
+  let failures = 0;
+  for (const [i, source] of sources.entries()) {
+    // Headed only when there are several, so one script reads as before.
+    if (sources.length > 1) process.stdout.write(`${i > 0 ? '\n' : ''}${source.label}\n`);
+    const prepared = await prepareSource(source, opts);
+    // A script whose @match rules can never match is stored invalid,
+    // but the answer per URL is still exact: no match. Anything else
+    // invalid never runs at all; `validate` says why.
+    const unmatchable = prepared.errorMessage !== undefined && unusableMatchGroupKey(prepared.errorMessage) !== null;
+    if (prepared.status !== 'ok' && !unmatchable) {
+      failures++;
+      // Under a heading, the heading has already named it.
+      process.stdout.write(sources.length > 1 ? 'INVALID script\n' : `INVALID  ${source.label}\n`);
+      continue;
+    }
+    for (const url of urls) {
+      const verdict = explainMatch(prepared.matching, url);
+      if (!verdict.matches) failures++;
+      // Every rule that covers the URL, not only the deciding one, so a
+      // miss shows what an @exclude overrode.
+      const lines = [
+        ...verdict.excludedBy.map((rule) => `Excluded by: ${rule}`),
+        // Padded so its rules line up with the excludes'.
+        ...verdict.matchedBy.map((rule) => `Matched by:  ${rule}`),
+      ];
+      if (lines.length === 0) lines.push(NO_RULE_COVERS_URL);
+      process.stdout.write(`${verdict.matches ? 'match   ' : 'no match'} ${url}\n${lines.map((l) => `    ${l}\n`).join('')}`);
     }
   }
-  return misses === 0 ? 0 : 1;
+  return failures === 0 ? 0 : 1;
 }
 
 async function runCommand(opts: Opts): Promise<number> {
-  if (opts.noScript && opts.args.length > 0) throw new UsageError('The --noscript flag runs no scripts, so the run command takes none with it');
-  if (!opts.noScript && opts.args.length === 0) throw new UsageError('The run command needs at least one script, or --noscript');
-  if (opts.all && opts.url) throw new UsageError('The --all and --url flags can\'t be used together');
+  const { scripts, urls } = scriptsAndUrls(opts.args);
+  if (opts.noScript && scripts.length > 0) throw new UsageError('The --noscript flag runs no scripts, so the run command takes none with it');
+  if (!opts.noScript && scripts.length === 0) throw new UsageError('The run command needs at least one script (a .user.js file), or --noscript');
+  if (opts.all && urls.length > 0) throw new UsageError('The --all flag opens each script\'s own page, so it can\'t be used with a URL');
+  const remote = scripts.find((s) => REMOTE_SCRIPT.test(s));
+  if (remote) throw new UsageError(`The run command loads scripts from files, and ${remote} is a URL. Save it to a file first.`);
   // Flags that would silently do nothing, or wait out --fire-menu's
   // grace period for a command nothing can register.
   const clash = (flag: string, others: [boolean, string][]): void => {
     const used = others.filter(([on]) => on).map(([, name]) => name);
     if (used.length > 0) throw new UsageError(`The ${flag} flag can't be used with ${used.join(' or ')}`);
   };
-  if (opts.noTab) clash('--notab', [[opts.all, '--all'], [Boolean(opts.url), '--url'], [Boolean(opts.fireMenu), '--fire-menu']]);
+  if (opts.noTab) clash('--notab', [[opts.all, '--all'], [urls.length > 0, 'a URL'], [Boolean(opts.fireMenu), '--fire-menu']]);
   if (opts.noScript) {
     clash('--noscript', [
       [opts.all, '--all'], [Boolean(opts.fireMenu), '--fire-menu'], [Boolean(opts.values), '--values'],
@@ -401,7 +527,7 @@ async function runCommand(opts: Opts): Promise<number> {
   // environment, it just sits out the runs it can't serve.
   if (opts.devtools === true) clash('--devtools', [[opts.launch, '--launch'], [opts.extension, '--extension']]);
   const devtools = devtoolsWanted(opts.devtools) && !opts.launch && !opts.extension;
-  const files = await Promise.all(opts.args.map(scriptFile));
+  const files = await Promise.all(scripts.map(scriptFile));
   const { run } = await import('./run.js');
   // Ends on Ctrl-C, or after --seconds. With neither, the run streams
   // until interrupted, which suits a person watching it. The timer is
@@ -435,7 +561,7 @@ async function runCommand(opts: Opts): Promise<number> {
   try {
     return await run({
       files,
-      url: opts.url,
+      urls,
       all: opts.all,
       noTab: opts.noTab,
       cdp: opts.cdp,

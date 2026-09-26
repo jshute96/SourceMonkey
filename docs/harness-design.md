@@ -607,7 +607,7 @@ into pages.
   - Menu commands fire by record (`fireMenuEntry`), not by id, since
     two tabs can register the same custom id.
   - A script's default page (`defaultPageUrl` in `prepare.ts`) is
-    the one `run` opens without `--url`; `open`, `newtab` and
+    the one `run` opens when given no URL; `open`, `newtab` and
     `--all` use the same one.
   - `DialogTracker` listens for page dialogs, because Playwright
     dismisses any dialog nobody listens for, which answers a script's

@@ -298,7 +298,7 @@ command. See `docs/harness-design.md`.
 | `tests/unit/parse-sandbox-host.test.mjs` | Unit tests for `isParseVerdict` — only the three real statuses pass, so an odd reply can't read as `invalid` |
 | `tests/unit/parse-location.test.mjs` | Unit tests for probe selection and line mapping, driven by positions Chromium really reported |
 | `tests/unit/harness-cdp-endpoint.test.mjs` | Unit tests for `cdpEndpoint`: the forms `sm-dev --cdp` accepts |
-| `tests/unit/harness-cli-args.test.mjs` | Unit tests for `sm-dev`'s argument checks: `run` flag combinations, and `send` / `stop` / `list` misuse |
+| `tests/unit/harness-cli-args.test.mjs` | Unit tests for `sm-dev`'s command line: `run` flag combinations, `match` output, scripts by URL, and `send` / `stop` / `list` misuse |
 | `tests/unit/harness-devtools.test.mjs` | Unit tests for `run --devtools`: when it is on, and the message when `chrome-devtools` is missing |
 | `tests/unit/harness-page-commands.test.mjs` | Unit tests for how the page commands split a typed line into words, and name keys for `key` |
 | `tests/unit/harness-snapshot.test.mjs` | Unit tests for `snapshot`: which words are refs, and which lines `--visible` keeps |

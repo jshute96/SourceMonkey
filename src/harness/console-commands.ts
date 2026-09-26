@@ -357,7 +357,7 @@ export async function runConsoleCommand(
       return;
     }
     case 'newtab':
-      await openNewTab(ctx, rest);
+      await openNewTab(ctx, rest, cwd);
       return;
     case 'tabs': {
       if (!argument) {
@@ -564,7 +564,7 @@ export async function runConsoleCommand(
       if (mode === null) return;
       const page = rest.filter((w) => !w.startsWith('--'));
       if (page[0] === 'all' && page.length === 1) {
-        await openNewTab(ctx, ['all', ...(mode ? ['--noscript'] : [])]);
+        await openNewTab(ctx, ['all', ...(mode ? ['--noscript'] : [])], cwd);
         return;
       }
       if (page.length > 1) {
@@ -577,7 +577,7 @@ export async function runConsoleCommand(
       const target = TAB_REF.test(where) ? tabRef(ctx, where, tab) : { tab, rest: where };
       if (!target) return;
       // With the mode switched and no page named, the page it's on.
-      const url = target.rest ? pageFor(ctx, target.rest)
+      const url = target.rest ? pageFor(ctx, target.rest, cwd)
         : mode !== undefined ? target.tab.page.url()
           : current ? scriptPage(ctx, current) : null;
       if (!url) {
@@ -904,7 +904,7 @@ function printTabs(ctx: ConsoleContext): void {
 // `newtab [page]`: a tab of the run's own, controlled from the start,
 // which becomes the current one and comes to the front. `newtab all`
 // opens one per script's page instead, and leaves the current tab be.
-async function openNewTab(ctx: ConsoleContext, words: string[]): Promise<void> {
+async function openNewTab(ctx: ConsoleContext, words: string[], cwd: string): Promise<void> {
   // `--noscript` anywhere: a tab the scripts stay out of.
   // `--script` is what a new tab gets anyway.
   const mode = scriptsFlag(ctx, 'newtab', words);
@@ -965,7 +965,7 @@ async function openNewTab(ctx: ConsoleContext, words: string[]): Promise<void> {
   }
   let url: string | undefined;
   if (rest[0]) {
-    const page = pageFor(ctx, rest[0]);
+    const page = pageFor(ctx, rest[0], cwd);
     if (!page) return;
     url = page;
   }
@@ -979,8 +979,9 @@ async function openNewTab(ctx: ConsoleContext, words: string[]): Promise<void> {
 // What `open` and `newtab` take: a script by its number, meaning its
 // default page, or else a URL. A bare number can't be a URL, so the
 // two never overlap.
-function pageFor(ctx: ConsoleContext, arg: string): string | null {
-  if (!/^\d+$/.test(arg)) return withDefaultScheme(arg);
+// `cwd`: where a relative path is, the sender's for a sent command.
+function pageFor(ctx: ConsoleContext, arg: string, cwd: string): string | null {
+  if (!/^\d+$/.test(arg)) return withDefaultScheme(arg, cwd);
   const script = pickScript(ctx, arg);
   return script ? scriptPage(ctx, script) : null;
 }

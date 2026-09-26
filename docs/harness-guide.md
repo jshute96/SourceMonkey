@@ -104,21 +104,28 @@ Help:
 
 | Command | What it does |
 | --- | --- |
-| `sm-dev run <script.user.js> [--url U]` | Opens a tab at `U` (default: the first URL the script's `@match` implies), injects the script as it is on disk, and streams the script's console lines, errors, and start / skipped / error reports until Ctrl-C, `quit` or `sm-dev stop`, or for `--seconds N`. |
+| `sm-dev run <script.user.js> [url]...` | Opens a tab at each URL (default: the first URL the script's `@match` implies), injects the script as it is on disk, and streams the script's console lines, errors, and start / skipped / error reports until Ctrl-C, `quit` or `sm-dev stop`, or for `--seconds N`. |
 | `sm-dev run ... --watch` | Same, and on every save of the script or a `@require`d file, re-injects it and reloads the tabs it runs in or now matches, all at once. The typed `update` does the same on demand. |
 | `sm-dev run a.user.js b.user.js` | Injects several scripts into the same page, for interaction tests. |
-| `sm-dev match <script> [url]...` | Says whether the script would run on each URL, and which rule decided. Also checks `--url`, so a `run` command line works with `match` in its place. |
-| `sm-dev validate <path>...` | The install-time checks (header, `@require`, syntax) over files or directories, with the message the extension would show. |
+| `sm-dev match <script>... <url>...` | Says whether each script would run on each URL, with all rules that matched it (`Matched by:`) or excluded it (`Excluded by:`). A `run` command line works with `match` in its place. |
+| `sm-dev validate <path>...` | Checks script validity (header, `@require`, syntax) over files, directories or script URLs, with the message the extension would show. |
 | `sm-dev list` | Lists the runs active on this machine in a table: id (`D1`), pid, uptime, browser, how many tabs, and the scripts' files (the first few, and a count of the rest). |
 | `sm-dev send [run] <command>` | Runs a typed command in a run from another shell, and prints its output (see [Runs in the background](#runs-in-the-background)). |
 | `sm-dev stop [run]...`, `--all` | Ends a run as `quit` would. |
 
+- For `run` and `match`, arguments ending in `.user.js` are scripts,
+  and the rest are URLs. They and the flags can come in any order.
+  - Each is taken once, however often it's given.
+- A URL with no scheme gets `http://`, unless it's a local path: it
+  starts with `/`, `./` or `../`, names a file that exists, or starts
+  with a directory that does (and has no `.` in its name, so
+  `example.com/x` stays a host). A path becomes a `file://` URL.
+- `validate` and `match` also take a script by its `http(s)` URL, and
+  fetch it. `run` needs a file.
+
 Every command exits 0 on success, 1 when a check fails (a script is
 invalid, a URL doesn't match) or the command fails, and 2 when it was
 typed wrong.
-
-A URL typed without a scheme (`example.com/x`) gets `http://`, and a
-path (`/tmp/x.html`, `./x.html`) becomes a `file://` URL.
 
 Options for every command:
 
@@ -146,9 +153,9 @@ Other `run` flags:
   open when the run ends. Scripts it opened no tab for are listed at
   the end, with the reason. Works with `--extension` too, where only
   page output carries the tab's name (the extension's Log entries
-  don't say which tab). It can't be combined with `--url`.
-- `--noscript` starts with no scripts at all, on a blank page or
-  `--url`, as a browser to drive with the typed commands. The flags
+  don't say which tab). It can't be combined with a URL.
+- `--noscript` starts with no scripts at all, on a blank page or the
+  URLs given, as a browser to drive with the typed commands. The flags
   that act on scripts (`--all`, `--fire-menu`, `--values`, `--watch`)
   and `--extension` can't be combined with it.
 - `--notab` opens no tab at startup. `newtab` opens one later, and
@@ -156,7 +163,7 @@ Other `run` flags:
   (see [Which tab `run` uses](#which-tab-run-uses)). With
   `--extension`, the scripts just run in whatever pages you browse to,
   and after a `--watch` save you reload them yourself. It can't be
-  combined with `--url`, `--all` or `--fire-menu`.
+  combined with a URL, `--all` or `--fire-menu`.
 - `--values '{"key": 1}'` seeds `GM_*` storage before the script runs.
 - `--fire-menu "Label"` invokes a registered menu command once the
   page has loaded. For anything beyond one invocation, use the typed

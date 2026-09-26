@@ -53,7 +53,7 @@ test('scripts run in the tabs the run tab opens', async ({ fixtureServer, script
   const wanted = ['on /other.html?via=open', 'on /other.html?via=gm'];
   const done = run({
     files: [file],
-    url: `${fixtureServer.baseUrl}/target.html`,
+    urls: [`${fixtureServer.baseUrl}/target.html`],
     launch: true,
     collectionRoot: scriptsDir.path,
     localRoots: [],
@@ -90,7 +90,7 @@ test('a followed tab keeps its menu commands, and --fire-menu reaches them there
     `,
   });
   const { lines } = await runUntil({
-    files: [file], url: `${fixtureServer.baseUrl}/target.html`, collectionRoot: scriptsDir.path, fireMenu: 'Only here',
+    files: [file], urls: [`${fixtureServer.baseUrl}/target.html`], collectionRoot: scriptsDir.path, fireMenu: 'Only here',
   }, ['[T2] [page log] [menu] fired on /other.html']);
   expect(lines).toContain('[sm-dev] Fired menu command "Only here" on T2');
   expect(lines).toContain('[T2] [page log] [menu] fired on /other.html');
@@ -119,6 +119,31 @@ test('--all opens a tab per script page, numbered in order, and lists the skippe
   expect(skipped).toBeGreaterThan(lines.indexOf(opening[1]));
 });
 
+test('run takes URLs among its scripts and flags, in any order, one tab each', async ({ fixtureServer, scriptsDir }) => {
+  const base = fixtureServer.baseUrl;
+  const file = scriptsDir.write({
+    relativePath: 'both.user.js',
+    meta: { name: 'Both', match: ['*://*/target.html', '*://*/other.html'] },
+    body: `console.log('[both] on ' + location.pathname);`,
+  });
+  const lines = await driveCli([`${base}/target.html`, '--root', scriptsDir.path, file, `${base}/other.html`], [
+    ['[T2] [page log] [both] on /other.html', 'quit'],
+  ]);
+  expect(lines.some((l) => l.startsWith(`[sm-dev] Opening ${base}/target.html in T1 `))).toBe(true);
+  expect(lines.some((l) => l.startsWith(`[sm-dev] Opening ${base}/other.html in T2 `))).toBe(true);
+  expect(lines).toContain('[page log] [both] on /target.html');
+});
+
+test('--noscript opens each URL given once, however often it is given', async ({ fixtureServer }) => {
+  const base = fixtureServer.baseUrl;
+  const lines = await driveCli(['--noscript', `${base}/target.html`, `${base}/other.html`, `${base}/target.html`], [
+    ['Ready for commands', 'tabs'],
+    ['Tabs:', 'quit'],
+  ]);
+  expect(lines.filter((l) => l.startsWith('[sm-dev] Opening '))).toHaveLength(2);
+  expect(lines.some((l) => l.startsWith(`[sm-dev] Opening ${base}/other.html in T2 `))).toBe(true);
+});
+
 test('closing a followed tab and T1 is noticed, and the run carries on', async ({ fixtureServer, scriptsDir }) => {
   const file = scriptsDir.write({
     relativePath: 'closer.user.js',
@@ -133,7 +158,7 @@ test('closing a followed tab and T1 is noticed, and the run carries on', async (
     `,
   });
   const { code, lines } = await runUntil({
-    files: [file], url: `${fixtureServer.baseUrl}/target.html`, collectionRoot: scriptsDir.path,
+    files: [file], urls: [`${fixtureServer.baseUrl}/target.html`], collectionRoot: scriptsDir.path,
   }, ['[sm-dev] Tab T2 closed', '[sm-dev] Tab T1 closed']);
   expect(lines).toContain('[sm-dev] Tab T2 closed');
   expect(lines).toContain('[sm-dev] Tab T1 closed');
@@ -148,12 +173,12 @@ test('a document-start script in a followed tab gets a may-have-run-late note', 
   });
   const note = 'Tab T2 had already started loading, so early.user.js (run-at document-start) may have run later there than it would in the extension';
   const { lines } = await runUntil({
-    files: [file], url: `${fixtureServer.baseUrl}/target.html`, collectionRoot: scriptsDir.path,
+    files: [file], urls: [`${fixtureServer.baseUrl}/target.html`], collectionRoot: scriptsDir.path,
   }, [note]);
   expect(lines).toContain(`[sm-dev] ${note}`);
 });
 
-test('--notab opens no tab, and no scripts open a blank page or --url', async ({ fixtureServer, scriptsDir }) => {
+test('--notab opens no tab, and no scripts open a blank page or the URL given', async ({ fixtureServer, scriptsDir }) => {
   const file = scriptsDir.write({
     relativePath: 'quiet.user.js',
     meta: { name: 'Quiet', match: ['*://*/target.html'] },
@@ -167,7 +192,7 @@ test('--notab opens no tab, and no scripts open a blank page or --url', async ({
   expect(noTab.some((l) => l.startsWith('[sm-dev] Opening'))).toBe(false);
 
   const target = `${fixtureServer.baseUrl}/target.html`;
-  const { code: noScriptCode, lines } = await runUntil({ files: [], url: target, collectionRoot: scriptsDir.path }, [
+  const { code: noScriptCode, lines } = await runUntil({ files: [], urls: [target], collectionRoot: scriptsDir.path }, [
     `[sm-dev] Opening ${target} in T1`,
   ]);
   expect(noScriptCode).toBe(0);
@@ -255,7 +280,7 @@ test('load, update and reload all reload just the tabs they affect', async ({ fi
   });
   const a = write('A', 'target.html');
   const b = write('B', 'other.html');
-  const lines = await driveCli([a, '--url', `${base}/target.html`], [
+  const lines = await driveCli([a, `${base}/target.html`], [
     ['Ready for commands', `newtab ${base}/other.html`],
     ['The page commands now act on T2', `load ${b}`],
     // B matches only T2's page.
@@ -303,7 +328,7 @@ test('a tab without scripts gets none, nor do its tabs, and load and savehtml le
   const a = write('A');
   const b = write('B');
   const saved = path.join(scriptsDir.path, 'plain.html');
-  const lines = await driveCli([a, '--url', `${base}/target.html`], [
+  const lines = await driveCli([a, `${base}/target.html`], [
     ['Ready for commands', `newtab --noscript ${base}/target.html`],
     ['The page commands now act on T2', 'eval T2 window.open("other.html"), "opened"'],
     // Its popup is a tab without scripts too.
@@ -336,7 +361,7 @@ test('open --noscript switches a tab to no scripts for good, and --script back',
     body: `console.log('[A] on ' + location.pathname);`,
   });
   const badge = 'eval T1 !!document.querySelector("link[data-sm-badge]")';
-  const lines = await driveCli([a, '--url', `${base}/target.html`], [
+  const lines = await driveCli([a, `${base}/target.html`], [
     ['[page log] [A] on /target.html', 'open --noscript'],
     ['runs no scripts from now on', 'tabs'],
     // The script stays out: a reload loads without it. (Through eval,
@@ -395,7 +420,7 @@ test('open and reload switch the tab they name, or the current one, and say when
     meta: { name: 'A', match: [`${base}/target.html`] },
     body: `console.log('[A] on ' + location.pathname);`,
   });
-  const lines = await driveCli([a, '--url', `${base}/target.html`], [
+  const lines = await driveCli([a, `${base}/target.html`], [
     // Switched, and somewhere else.
     ['[page log] [A] on /target.html', `open --noscript ${base}/other.html`],
     ['T1 runs no scripts from now on', 'eval location.pathname'],
@@ -439,7 +464,7 @@ test('a tab waiting on a dialog is left out of reload all, and blocks update', a
   const b = scriptsDir.write({
     relativePath: 'b.user.js', meta: { name: 'B', match: ['*://*/other.html'] }, body: `setTimeout(() => alert('Hi'), 100);`,
   });
-  const lines = await driveCli([a, b, '--url', `${base}/target.html`], [
+  const lines = await driveCli([a, b, `${base}/target.html`], [
     ['Ready for commands', `newtab ${base}/other.html`],
     ['opened an alert dialog', 'reload all'],
     // T1 still reloads; then update, which would reach T2, refuses.
@@ -461,7 +486,7 @@ test('--watch follows a loaded script, and a save reloads only its tabs', async 
   });
   const a = write('A', 'target.html', 'one');
   const b = write('B', 'other.html', 'one');
-  const lines = await driveCli([a, '--url', `${base}/target.html`, '--watch'], [
+  const lines = await driveCli([a, `${base}/target.html`, '--watch'], [
     ['Ready for commands', `newtab ${base}/other.html`],
     ['The page commands now act on T2', `load ${b}`],
     ['[T2] [page log] [B] one', () => { write('B', 'other.html', 'two'); return ''; }],
@@ -494,7 +519,7 @@ test('--watch re-injects on a save and reloads the tab it runs in', async ({ fix
   let stop!: () => void;
   const until = new Promise<void>((resolve) => { stop = resolve; });
   const done = run({
-    files: [file], url: `${fixtureServer.baseUrl}/target.html`, watch: true, launch: true,
+    files: [file], urls: [`${fixtureServer.baseUrl}/target.html`], watch: true, launch: true,
     collectionRoot: scriptsDir.path, localRoots: [], until,
     out: (line) => {
       lines.push(line);

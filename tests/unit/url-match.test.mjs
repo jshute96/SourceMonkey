@@ -17,6 +17,7 @@ import {
   unusableMatchGroupKey,
   includePattern,
   urlMatchesScript,
+  explainUrlMatch,
 } from '../../dist/url-match.js';
 
 // ---------- matchPattern ----------
@@ -115,6 +116,25 @@ test('includePattern: invalid regex returns false without throwing', () => {
 });
 
 // ---------- urlMatchesScript ----------
+
+test('urlMatchesScript and explainUrlMatch give the same verdict', () => {
+  // Two implementations of one rule: the fast one stops early, the
+  // other lists every hit. Every mix of rule kinds, over URLs that hit
+  // each, none, and several.
+  const matchings = [
+    { matches: ['https://a.test/*'], includes: [], excludes: [] },
+    { matches: [], includes: ['*b.test*'], excludes: [] },
+    { matches: ['https://a.test/*'], includes: ['/c\\.test/'], excludes: ['*/private/*'] },
+    { matches: ['https://a.test/x#y'], includes: [], excludes: ['*#skip'] },
+    { matches: [], includes: [], excludes: [] },
+  ];
+  const urls = ['https://a.test/', 'https://a.test/private/1', 'https://b.test/', 'https://c.test/private/', 'https://a.test/x#skip', 'https://d.test/'];
+  for (const m of matchings) {
+    for (const url of urls) {
+      assert.equal(urlMatchesScript(url, m), explainUrlMatch(url, m).matches, `${JSON.stringify(m)} on ${url}`);
+    }
+  }
+});
 
 const NONE = { matches: [], includes: [], excludes: [] };
 
@@ -438,7 +458,7 @@ test('matchPatternProblem: the two messages carry the pattern and the fix', () =
 test('matchPatternProblem: a "#" in the path is flagged, with @include as the fix', () => {
   const problem = matchPatternProblem('https://example.com/page#part');
   assert.equal(ignoredMatchMessage(problem),
-    'Ignoring @match https://example.com/page#part, which includes a "#", but @match ignores the URL\'s #hash; use @include to match on the hash');
+    'Ignoring @match https://example.com/page#part, which names a #hash that @match can\'t see; use @include to match on the hash');
   // Only in the path; a query that merely looks like one is fine.
   assert.equal(matchPatternProblem('https://example.com/page?x=1*'), null);
 });
