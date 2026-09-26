@@ -1,5 +1,6 @@
-// The `sm-dev run`s active on this machine, and how another shell reaches
-// one: `sm-dev list`, `sm-dev send` and `sm-dev stop`.
+// The runs `sm-dev start` began on this machine, and how another shell
+// reaches one: `sm-dev list`, `sm-dev stop`, and the commands sent to
+// a run (`sm-dev status`, or `sm-dev send`).
 //
 // Each run that waits for commands writes a record file and listens on
 // a socket of its own, both named by its id (`D1`). A run in the
@@ -27,16 +28,30 @@ export interface RunRecord {
   scripts: string[];
   /** How many tabs it controls, where it keeps count. */
   tabs?: number;
+  /** Started by `start --detach`, and so replaced by the next one. */
+  detached?: boolean;
+  /** A detached run's output file. */
+  log?: string;
 }
 
-// Who the runs belong to, in the directory and pipe names, so two users
-// on one machine neither see nor clash with each other's runs. The uid
-// where there is one: `os.userInfo()` throws for a uid with no passwd
-// entry, as in a container run with `--user`.
-function owner(): string {
+/**
+ * Who the runs belong to, in the directory and pipe names, so two
+ * users on one machine neither see nor clash with each other's runs:
+ * the user name, kept to characters a file name can take. The uid when
+ * there is no name: `os.userInfo()` throws for a uid with no passwd
+ * entry, as in a container run with `--user`.
+ */
+export function owner(): string {
+  let name: string | undefined;
+  try {
+    name = os.userInfo().username;
+  } catch {
+    name = process.env.USER ?? process.env.USERNAME;
+  }
+  const safe = name?.replace(/[^\w.-]/g, '_');
+  if (safe) return safe;
   const uid = process.getuid?.();
-  if (uid !== undefined) return String(uid);
-  return process.env.USERNAME ?? process.env.USER ?? 'user';
+  return uid !== undefined ? String(uid) : 'user';
 }
 
 // `SM_DEV_RUNS_DIR` moves it, for tests to keep out of real runs' way.
@@ -57,18 +72,24 @@ function socketPath(id: string): string {
 
 // Runs are named D1, D2, as tabs are T1 and menu commands M1: the
 // lowest number free when the run starts, so they stay short to type.
-// A number is reused once its run has ended.
-const RUN_ID = /^[Dd](\d+)$/;
+// A number is reused once its run has ended. `start --run` can name one
+// instead: `D` and then letters, digits, `_` or `-`. Kept short, since
+// the id is part of the socket's path, which has a length limit.
+const RUN_ID = /^(?:[Dd](\d{1,32})|D([0-9A-Za-z_-]{1,32}))$/;
 
-/** Where `run` records the tabs it opened, for a later run to reuse. */
+/** Where `start` records the tabs it opened, for a later run to reuse. */
 export function runTabsPath(): string {
   return path.join(runsDir(), 'run-tabs.json');
 }
 
-/** A typed run id in its usual form (`d2` is `D2`), or null if it isn't one. */
+/**
+ * A typed run id in its usual form (`d2` is `D2`, `D02` is `D2`), or
+ * null if it isn't one. Named ones are taken as typed.
+ */
 export function runIdOf(typed: string): string | null {
   const m = RUN_ID.exec(typed);
-  return m ? `D${Number(m[1])}` : null;
+  if (!m) return null;
+  return m[1] !== undefined ? `D${BigInt(m[1])}` : `D${m[2]}`;
 }
 
 export function processAlive(pid: number): boolean {
@@ -83,7 +104,7 @@ export function processAlive(pid: number): boolean {
 
 /**
  * The directory for sm-dev's state across runs, made private to its
- * user: the runs' records and sockets, and `run`'s tab records. Created
+ * user: the runs' records and sockets, and `start`'s tab records. Created
  * when missing.
  */
 export async function ownRunsDir(): Promise<string> {
@@ -104,7 +125,14 @@ export async function ownRunsDir(): Promise<string> {
  * whose pids `stop` would signal; such a directory is refused.
  */
 export async function checkRunsDir(): Promise<string | null> {
-  const dir = runsDir();
+  return checkPrivateDir(runsDir(), 'runs');
+}
+
+/**
+ * `dir`, or null when it doesn't exist; refused when another user owns
+ * it or can write in it. `what` names it in the message (`runs`, `log`).
+ */
+export async function checkPrivateDir(dir: string, what: string): Promise<string | null> {
   let info;
   try {
     info = await lstat(dir);
@@ -113,10 +141,10 @@ export async function checkRunsDir(): Promise<string | null> {
   }
   const uid = process.getuid?.();
   if (!info.isDirectory() || (uid !== undefined && info.uid !== uid)) {
-    throw new Error(`The runs directory ${dir} belongs to another user`);
+    throw new Error(`The ${what} directory ${dir} belongs to another user`);
   }
   if (uid !== undefined && (info.mode & 0o022) !== 0) {
-    throw new Error(`The runs directory ${dir} can be written by other users. Remove it, and sm-dev makes a private one.`);
+    throw new Error(`The ${what} directory ${dir} can be written by other users. Remove it, and sm-dev makes a private one.`);
   }
   return dir;
 }
@@ -152,10 +180,10 @@ export class RunControl {
    * that fails; the run goes on without, but can't be reached from
    * another shell.
    */
-  static async open(fields: Omit<RunRecord, 'id'>, handle: SentLineHandler): Promise<RunControl> {
+  static async open(fields: Omit<RunRecord, 'id'>, handle: SentLineHandler, wanted?: string): Promise<RunControl> {
     await ownRunsDir();
     const server = net.createServer();
-    const id = await claimId(server);
+    const id = wanted === undefined ? await claimId(server) : await claimNamedId(server, wanted);
     const record = { id, ...fields };
     const control = new RunControl(record, server);
     server.on('connection', (socket) => control.serve(socket, handle));
@@ -260,6 +288,14 @@ async function claimId(server: net.Server): Promise<string> {
   }
 }
 
+// `start --run`'s id: taken as the lowest free one is, or refused when
+// a run holds it still.
+async function claimNamedId(server: net.Server, id: string): Promise<string> {
+  if (await listenOn(server, socketPath(id))) return id;
+  if (process.platform !== 'win32' && await takeStale(server, id)) return id;
+  throw new Error(`Run ${id} is running already`);
+}
+
 // Listens on `where`: false when something already holds it.
 async function listenOn(server: net.Server, where: string): Promise<boolean> {
   try {
@@ -359,7 +395,7 @@ export async function liveRuns(): Promise<RunRecord[]> {
   }
   const runs: RunRecord[] = [];
   // Only runs' records: the directory holds other state too.
-  await Promise.all(names.filter((n) => /^D\d+\.json$/.test(n)).map(async (name) => {
+  await Promise.all(names.filter((n) => n.endsWith('.json') && runIdOf(n.slice(0, -'.json'.length)) === n.slice(0, -'.json'.length)).map(async (name) => {
     const id = name.slice(0, -'.json'.length);
     let record: RunRecord;
     try {

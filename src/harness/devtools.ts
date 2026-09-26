@@ -1,4 +1,4 @@
-// `sm-dev run --devtools`: a Chrome DevTools background server for the
+// `sm-dev start --devtools`: a Chrome DevTools background server for the
 // run, and each controlled tab's page id in it.
 //
 // The DevTools command line (`chrome-devtools`, from the

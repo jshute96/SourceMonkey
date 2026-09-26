@@ -1,4 +1,4 @@
-// The CDP proxy `sm-dev run --devtools` puts between DevTools and the
+// The CDP proxy `sm-dev start --devtools` puts between DevTools and the
 // browser: a client sees only the tabs whose pages the proxy was told
 // to allow, and works with those as it would with the browser itself.
 // Driven here by a plain CDP client doing what DevTools' Puppeteer does

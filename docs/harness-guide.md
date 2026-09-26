@@ -98,22 +98,27 @@ person or an agent.
 Help:
 - `sm-dev --help` lists everything: the commands, their flags, and the
   commands a run takes.
-- `sm-dev help run` (or `sm-dev run --help`) shows one command and
+- `sm-dev help start` (or `sm-dev start --help`) shows one command and
   only the flags it takes.
 - It covers a run's typed commands too: `sm-dev help status tabs`.
+- `--help` (or `-h`) anywhere on a line shows the help for each
+  command on it, once each, and runs none of them.
+- A mistake prints only its message, not the help.
 
 | Command | What it does |
 | --- | --- |
-| `sm-dev run <script.user.js> [url]...` | Opens a tab at each URL (default: the first URL the script's `@match` implies), injects the script as it is on disk, and streams the script's console lines, errors, and start / skipped / error reports until Ctrl-C, `quit` or `sm-dev stop`, or for `--seconds N`. |
-| `sm-dev run ... --watch` | Same, and on every save of the script or a `@require`d file, re-injects it and reloads the tabs it runs in or now matches, all at once. The typed `update` does the same on demand. |
-| `sm-dev run a.user.js b.user.js` | Injects several scripts into the same page, for interaction tests. |
-| `sm-dev match <script>... <url>...` | Says whether each script would run on each URL, with all rules that matched it (`Matched by:`) or excluded it (`Excluded by:`). A `run` command line works with `match` in its place. |
+| `sm-dev start <script.user.js> [url]...` | Opens a tab at each URL (default: the first URL the script's `@match` implies), injects the script as it is on disk, and streams the script's console lines, errors, and start / skipped / error reports until Ctrl-C, `quit` or `sm-dev stop`, or for `--seconds N`. |
+| `sm-dev start ... --watch` | Same, and on every save of the script or a `@require`d file, re-injects it and reloads the tabs it runs in or now matches, all at once. The typed `update` does the same on demand. |
+| `sm-dev start a.user.js b.user.js` | Injects several scripts into the same page, for interaction tests. |
+| `sm-dev start ... --detach` | Returns once the pages have loaded and the scripts started, and leaves the run going in the background (see [Detached runs](#detached-runs)). |
+| `sm-dev match <script>... <url>...` | Says whether each script would run on each URL, with all rules that matched it (`Matched by:`) or excluded it (`Excluded by:`). A `start` command line works with `match` in its place. |
 | `sm-dev validate <path>...` | Checks script validity (header, `@require`, syntax) over files, directories or script URLs, with the message the extension would show. |
 | `sm-dev list` | Lists the runs active on this machine in a table: id (`D1`), pid, uptime, browser, how many tabs, and the scripts' files (the first few, and a count of the rest). |
-| `sm-dev send [run] <command>` | Runs a typed command in a run from another shell, and prints its output (see [Runs in the background](#runs-in-the-background)). |
-| `sm-dev stop [run]...`, `--all` | Ends a run as `quit` would. |
+| `sm-dev <command>` | Runs any command a run takes (`sm-dev eval document.title`) in the run from another shell, and prints its output (see [Runs in the background](#runs-in-the-background)). |
+| `sm-dev send <command>` | The same, and also takes several commands, one per line, or reads them from stdin. |
+| `sm-dev stop`, `--all` | Ends the run as `quit` would, or all runs. |
 
-- For `run` and `match`, arguments ending in `.user.js` are scripts,
+- For `start` and `match`, arguments ending in `.user.js` are scripts,
   and the rest are URLs. They and the flags can come in any order.
   - Each is taken once, however often it's given.
 - A URL with no scheme gets `http://`, unless it's a local path: it
@@ -121,7 +126,7 @@ Help:
   with a directory that does (and has no `.` in its name, so
   `example.com/x` stays a host). A path becomes a `file://` URL.
 - `validate` and `match` also take a script by its `http(s)` URL, and
-  fetch it. `run` needs a file.
+  fetch it. `start` needs a file.
 
 Every command exits 0 on success, 1 when a check fails (a script is
 invalid, a URL doesn't match) or the command fails, and 2 when it was
@@ -134,7 +139,16 @@ Options for every command:
   directory. Defaults to the current directory.
 - `--local DIR` adds another directory to that search; repeatable.
 
-Options for the browser commands (`run`, `clear`):
+Options for the commands that act on a run (its commands, `send`,
+`stop`, `start`):
+
+- `--run ID` names the run. It's needed only when several are active;
+  otherwise the command says so, and lists them.
+  - With `start`, it's the ID for the new run: `D` and then letters,
+    digits, `_` or `-` (`Dmain`). A run already using it is stopped
+    first.
+
+Options for the browser commands (`start`, `clear`):
 
 - `--cdp URL or port` names the browser to connect to: a URL, a
   `host:port` (`http://` is added), or just a port on this machine
@@ -145,7 +159,7 @@ Options for the browser commands (`run`, `clear`):
   `--headed` shows it. Useful when no browser is running and the page
   needs no login.
 
-Other `run` flags:
+Other `start` flags:
 
 - `--all`, with several scripts, opens each one's default page, one
   tab per distinct page, instead of only the first script's. The
@@ -160,7 +174,7 @@ Other `run` flags:
   and `--extension` can't be combined with it.
 - `--notab` opens no tab at startup. `newtab` opens one later, and
   the first it opens is T1. That tab isn't one a later run takes over
-  (see [Which tab `run` uses](#which-tab-run-uses)). With
+  (see [Which tab `start` uses](#which-tab-start-uses)). With
   `--extension`, the scripts just run in whatever pages you browse to,
   and after a `--watch` save you reload them yourself. It can't be
   combined with a URL, `--all` or `--fire-menu`.
@@ -183,15 +197,15 @@ Other `run` flags:
   `SM_DEV_DEVTOOLS=1` makes it the default, and `--nodevtools` turns it
   off again.
 
-### Which tab `run` uses
+### Which tab `start` uses
 
-In a connected browser, `run` opens a new tab, unless the tab showing
-in its window is one an earlier `run` opened and that run has ended.
+In a connected browser, `start` opens a new tab, unless the tab showing
+in its window is one an earlier run opened and that run has ended.
 Then it takes that tab over. So re-running with the old tab still
 selected reuses it rather than piling up tabs.
 
-- The tabs `run` opened are recorded in `run-tabs.json` in
-  `sm-dev-runs-<uid>` in the system temp directory, with the process
+- The tabs runs opened are recorded in `run-tabs.json` in
+  `sm-dev-runs-<user name>` in the system temp directory, with the process
   that owns each.
 - Each run only touches the entries for its own browser, so parallel
   sessions on other ports keep theirs.
@@ -256,7 +270,7 @@ the stream, rather than being answered automatically:
   says so.
 - A dialog in a tab the run doesn't use is left alone, for you to
   answer.
-- A tab already showing a dialog when `sm-dev run` starts stops it
+- A tab already showing a dialog when `sm-dev start` starts stops it
   connecting: nothing in that tab answers until the dialog closes. The
   run names the tab and waits; answer the dialog or close the tab to
   continue, or Ctrl-C to abort.
@@ -265,7 +279,7 @@ the stream, rather than being answered automatically:
 
 A script's interesting moments are not all at startup: a menu command
 may need firing twice, or only once some state exists, and what the
-script stored is worth reading between steps. So `run` also reads
+script stored is worth reading between steps. So `start` also reads
 commands from its own input while it streams.
 
 | Typed command | What it does |
@@ -338,13 +352,16 @@ current one.
   - On a large page it takes a while; add `--visible` or a selector.
 - `--visible` goes by the viewport: content scrolled out of sight
   inside a scrolling box on screen still counts.
+- A word starting with `--` that isn't one of the command's flags is
+  refused, except in free text (`eval`'s JavaScript, `type`'s text, a
+  menu label).
 - Quote a selector or text with spaces: `click '.athing .title a'`,
-  `type input 'hello world'`. Through `sm-dev send`, quote `#` too,
-  since the shell reads it as a comment: `sm-dev send click '#submit'`.
+  `type input 'hello world'`. From another shell, quote `#` too,
+  since the shell reads it as a comment: `sm-dev click '#submit'`.
 - `eval` takes the rest of the line as JavaScript, quotes and all, or
   several lines as a block (see below). A promise prints what it
   settles to.
-- Through `sm-dev send`, files are named from the sender's directory.
+- From another shell, files are named from that shell's directory.
 - `eval --script` reaches what scripts put on `window`, not their local
   variables. A `@grant none` script runs in the page's world, so plain
   `eval` reaches it.
@@ -452,7 +469,7 @@ what was there before it.
 Piping works as well as typing, for a fixed sequence:
 
 ```sh
-printf 'menu Bump\nvalues\nquit\n' | sm-dev run sites/x/y.user.js --seconds 30
+printf 'menu Bump\nvalues\nquit\n' | sm-dev start sites/x/y.user.js --seconds 30
 ```
 
 Piped input takes `eval` blocks too. Blank lines are skipped, and a
@@ -462,14 +479,15 @@ reports it rather than running half of it.
 ### Runs in the background
 
 A run started in the background (by an agent, or with `&`) has no
-terminal to type into. Other shells reach it by its id instead:
+terminal to type into. Other shells give its commands to `sm-dev`
+directly instead:
 
 ```sh
-sm-dev run sites/x/y.user.js --watch &   # prints: Started as run D1: ...
+sm-dev start sites/x/y.user.js --detach   # see Detached runs, below
 sm-dev list
-sm-dev send menu Bump                     # the command's output
-sm-dev send D1 values
-sm-dev stop                               # or stop D1, or stop --all
+sm-dev menu Bump                          # the command's output
+sm-dev values --run D1                    # when several runs are active
+sm-dev stop                               # or stop --run D1, or stop --all
 ```
 
 `list` prints a table:
@@ -480,27 +498,25 @@ D1   81234  2m      127.0.0.1:9233  2     a.user.js, b.user.js, c.user.js, (2 mo
 ```
 
 - Runs are named `D1`, `D2`, like tabs (`T1`) and menu commands (`M1`).
-  A number is reused once its run has ended.
-- `send` runs any typed command and prints its output. It returns as
-  soon as the command is done:
+  A number is reused once its run has ended. `start --run Dname`
+  picks a name instead.
+- Each command prints its output, and returns as soon as it is done:
   - A command that loads a page (`reload`, `open`, `newtab`, `load`)
     is done once the tab's scripts have started and their top-level
     code has run, so that output is in the reply.
   - `menu` and `eval` include what the handler or expression printed
     while it ran.
 - Output a script prints later, from a timer or event, only goes to
-  the run's stream. `sm-dev send logs` shows its console lines.
+  the run's stream (for a detached run, its log file). `sm-dev logs`
+  shows its console lines.
 - A command that only inspects (`status`, `values`, `snapshot`,
   `logs`, and so on) answers the sender alone. Ones that change
   something (`reload`, `click`, `menu Bump`) also show in the run's
   stream.
-- `send` and `stop` need the id only when several runs are active.
-- `send` exits 0 whenever the run answered; read its output for the
+- A command exits 0 whenever the run answered; read its output for the
   result.
-- `send` runs several commands when its one argument has several
-  lines, or reads them from stdin when it has none or `-` (see below).
-- `send accept` and `send dismiss` answer a page dialog, so a dialog
-  waits for an answer even in a headless browser.
+- `accept` and `dismiss` answer a page dialog, so a dialog waits for
+  an answer even in a headless browser.
 - `stop` ends a run as `quit` does. One that doesn't respond is
   killed.
 - Prefer `stop` to `--seconds` for a background run, so the run can't
@@ -508,11 +524,71 @@ D1   81234  2m      127.0.0.1:9233  2     a.user.js, b.user.js, c.user.js, (2 mo
 - Piping a run's output into something that stops reading (`| head`)
   ends the run.
 
-Several commands in one `send`:
+Every run's last line says it has ended. From then on, pages loaded
+don't get the scripts; pages already open keep them until reloaded,
+but nothing from them streams anywhere, and their badge turns grey.
+
+#### Detached runs
+
+`start --detach` is the way for an agent to start a background run: no
+`&`, and no guessing how long to wait before the first command.
+
+```sh
+sm-dev start sites/x/y.user.js https://example.com/ --detach
+# [sm-dev] Run D1 now running detached, with idle timeout 30 minutes
+# [sm-dev] Output log: /tmp/sm-dev-logs-you/sm-dev-20260926-063756-629.log
+sm-dev eval 'measure()'
+sm-dev stop
+```
+
+- It returns once the run would take its first command: the pages
+  have loaded and the scripts started (or a few seconds passed with
+  none starting). Its output until then is printed, then the lines
+  above.
+- It exits with the run's code if the run ends before that (a script
+  that doesn't parse, no browser to connect to).
+- Starting one stops any earlier detached run first, and reuses its
+  tab. Runs started without `--detach` are left alone.
+  - `--new` leaves the earlier ones going, and starts another beside
+    them.
+  - `--run Dname` stops only the run named that, if one is going.
+- It stops itself after 30 minutes with no command sent.
+  `--idle-seconds N` changes that, and `--idle-seconds 0` turns it
+  off. `--seconds` still sets a limit from the start.
+- Its output goes to the log file, with a timestamp starting each
+  line. Output a script prints between commands is only there. The
+  file is kept after the run ends.
+  - `sm-dev-D1.log` beside it links to the latest log of the run
+    named `D1`.
+
+#### Several commands on one line
+
+`--` separates commands, which run in order:
+
+```sh
+sm-dev start sites/x/y.user.js https://example.com/ --detach -- eval 'measure()' -- key x -- eval 'measure()'
+sm-dev start sites/x/y.user.js -- menu Bump -- values
+```
+
+- Each one's output is headed by the command (`> menu Bump`).
+- They stop at the first that fails, as a shell's `&&` would.
+- `start` can only come first, so the line holds at most one run of
+  its own, and `start` never picks up a `--run` meant for another
+  command.
+- `--run` carries on to the commands after it, and `start` sets it to
+  the run it started.
+- Without `--detach`, a run a `start` began for the commands after it
+  is stopped once they are done, and the line ends with its log
+  file's name.
+
+#### Several commands in one `send`
+
+`send` takes a list of commands as one argument, a line each, or from
+stdin:
 
 ```sh
 sm-dev send $'tabs T2\nmenu Bump\nvalues'
-sm-dev send D1 < steps.txt
+sm-dev send --run D1 < steps.txt
 sm-dev send -        # each runs on Enter; Ctrl-D ends
 ```
 
@@ -529,10 +605,6 @@ sm-dev send -        # each runs on Enter; Ctrl-D ends
 - With several arguments, `send` is still one command, so eval's
   JavaScript can be one multi-line argument.
 
-Every run's last line says it has ended. From then on, pages loaded
-don't get the scripts; pages already open keep them until reloaded,
-but nothing from them streams anywhere, and their badge turns grey.
-
 ### DevTools alongside a run
 
 The run's own commands (see
@@ -540,10 +612,10 @@ The run's own commands (see
 most of what a script needs. For the rest of DevTools (network
 requests, performance traces, Lighthouse), the `chrome-devtools`
 command (`npm i -g chrome-devtools-mcp`) can reach the run's own tabs
-with `run --devtools`:
+with `start --devtools`:
 
 ```sh
-sm-dev run sites/x/y.user.js --devtools &
+sm-dev start sites/x/y.user.js --devtools &
 # [sm-dev] DevTools: chrome-devtools --sessionId=D1 <tool> <pageId> ...
 # [sm-dev] T1 is DevTools page 3
 chrome-devtools --sessionId=D1 take_snapshot 3
@@ -568,6 +640,9 @@ chrome-devtools --sessionId=D1 evaluate_script "() => document.title" --pageId 3
 - Not with `--launch` or `--extension`, and not on Windows yet.
 
 Things to know:
+- The session id is the run's id, unless `start --run` named it
+  something that isn't hex (as DevTools requires); then it is a random
+  one, printed on the `DevTools:` line.
 - DevTools only sees the run's tabs; your other tabs are hidden from it.
 - DevTools makes the run's tabs report that they have focus, even when
   they don't, which can hide a script's focus bugs. That's why
@@ -577,7 +652,7 @@ Things to know:
   call waits on it. The run says so when that happens.
 - `evaluate_script` answers a dialog that opens while it runs with OK.
   Pass `--dialogAction dismiss`, or answer through the run (`sm-dev
-  send D1 accept`) when a dialog matters.
+  accept`) when a dialog matters.
 - To find a tab, the run briefly sets a hidden property on the page's
   `window`, under `Symbol.for('sm-dev')`.
 
@@ -687,7 +762,7 @@ For what only Chrome can answer:
   turn on "Allow User Scripts" for it once. The user's ordinary browser
   with SourceMonkey installed works too, as long as it has a
   remote-debugging port.
-- `sm-dev run --extension` pushes the script text into the extension as
+- `sm-dev start --extension` pushes the script text into the extension as
   a **scratch script**, stored only in the extension: it lands in the
   "Scratch" collection, is registered before the page opens, and is
   replaced in place on the next push of the same file name, keeping its stored values. Nothing
@@ -706,7 +781,7 @@ For what only Chrome can answer:
   `@require` is not used: the extension fetches the URL.
 - Specs stay on the push backend; for a check that needs the real
   extension, drive it from a spec with SourceMonkey's own test fixtures
-  or by hand with `sm-dev run --extension`.
+  or by hand with `sm-dev start --extension`.
 
 ## What is and isn't faithful
 
@@ -736,7 +811,7 @@ Close, but not the same:
 - A tab `GM_openInTab` opens is a real page in the same context, born
   at its URL as Chrome's would be. In the fixture no scripts are
   injected into it; the extension would inject whatever matches the
-  new page (`sm-dev run` does, see
+  new page (`sm-dev start` does, see
   [Tabs the page opens](#tabs-the-page-opens)). It is closed when the
   attachment is disposed, where the extension would leave it open, so
   a test run leaves no tabs behind. It needs a context that belongs to
@@ -747,7 +822,7 @@ Close, but not the same:
   does. There is no download bar or prompt, and no `onprogress`.
 - `GM_notification` shows nothing; a `timeout` still fires `ondone`,
   and a test delivers the click.
-- Under `sm-dev run`, the page's favicon links are not as the site
+- Under `sm-dev start`, the page's favicon links are not as the site
   left them: its icon links have `rel="sm-set-aside-icon"`, and the
   badge's own `rel="icon"` link is added. A script that reads or
   changes the favicon sees that. The fixture leaves them alone.

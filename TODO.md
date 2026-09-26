@@ -789,7 +789,7 @@ See [docs/harness-design.md](docs/harness-design.md).
   without --extension" for a relative path (`external-files.ts`). Word
   them for the writer once anything but the harness writes scratch
   scripts.
-- Scratch scripts carry only their own text, so under `sm-dev run
+- Scratch scripts carry only their own text, so under `sm-dev start
   --extension` a relative `@require` is refused (with a message saying
   so) and a local copy of a remote `@require` is not used. Pushing the
   resolved `@require` bodies along with the text would close both.
@@ -801,7 +801,7 @@ See [docs/harness-design.md](docs/harness-design.md).
 - A page the harness attached to that closes (a granted `window.close`,
   or the user closing it) leaves the tabs its scripts opened until the
   attachment is disposed.
-- `sm-dev run` gives scripts `GM_info.userAgentData` of `null`: scripts
+- `sm-dev start` gives scripts `GM_info.userAgentData` of `null`: scripts
   are prepared once at startup, while the run's tab is still on
   `about:blank` (or, with `--notab`, before any tab exists), and the
   browser only exposes `navigator.userAgentData` on secure origins. A
@@ -811,7 +811,7 @@ See [docs/harness-design.md](docs/harness-design.md).
 - Two `loadUserscript` / `inject` calls at once on one attachment can
   both add the GM runtime to a world (harmless: it installs once) and
   lose track of one of them. Serialize `inject` if it ever matters.
-- Two `writeScratchScript`s of the same new name at once (two `sm-dev run
+- Two `writeScratchScript`s of the same new name at once (two `sm-dev start
   --extension` on one file) both miss the lookup, and the second fails
   with an `Internal error`. Look the row up inside the install's lock.
 - The collections page's default move target for a scratch script is
@@ -821,7 +821,7 @@ See [docs/harness-design.md](docs/harness-design.md).
 - Move the author's `userscripts` repo onto the harness: its
   `test/fixtures.js` re-exports the harness fixture instead of
   stripping headers, `gm-stubs.js` goes, its specs become ESM, and its
-  `CLAUDE.md` and skills point at `sm-dev run` and the fixture.
+  `CLAUDE.md` and skills point at `sm-dev start` and the fixture.
 - Publishing: the package is installed from a checkout or a git tag.
   `package.json` keeps `"private": true` until then; drop it to
   publish.

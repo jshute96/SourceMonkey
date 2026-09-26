@@ -1,4 +1,4 @@
-// The commands a developer types while `sm-dev run` is streaming.
+// The commands a developer types while `sm-dev start` is streaming.
 //
 // The point is that the interesting things a script does are not all
 // available at startup: a menu command may need firing twice, or after
@@ -94,7 +94,7 @@ export interface ConsoleContext {
   out: (line: string) => void;
   /** Ends the run, as Ctrl-C does. */
   stop: () => void;
-  /** The id `sm-dev send` and `stop` know the run by, for `status`. */
+  /** The id other shells know the run by (`--run`), for `status`. */
   runId?: string;
   /** How to reach the run's DevTools server, for `status`. */
   devtools?: () => string | null;
@@ -163,7 +163,7 @@ const COMMAND_GROUPS: { title: string; lines: string[] }[] = [
 // One wording for having none, whether as a reply or in a list.
 const NO_SCRIPTS = 'No scripts are loaded';
 
-/** Where the page commands have no tab to act on; also `run --notab`'s start. */
+/** Where the page commands have no tab to act on; also `start --notab`'s start. */
 export const NO_TABS = '[sm-dev] No tabs are active. Type newtab to open one.';
 
 // The commands that act on the current tab, which there may not be.
@@ -183,11 +183,14 @@ const ID_LINES = [
   '  - Its DevTools page id, as pageId=4 (with --devtools)',
   'Elements (where a command takes a selector):',
   '  - A CSS or Playwright selector',
-  '  - e4: its ref in the latest snapshot (also ref=e4 or [ref=e4])',
+  '  - e4 or f2e6: its ref in the latest snapshot (also ref=e4 or [ref=e4])',
   'Menu commands:',
   '  - M2: its number in the tab\'s menu list',
   '  - T2.M2: menu item M2 on tab T2',
   '  - Its label',
+  'Runs (pass as --run ID to select the target run):',
+  '  - D2: run number, as reported by start and list',
+  '  - Dname: a user-chosen run ID',
 ];
 
 // A blank line between the groups.
@@ -201,6 +204,62 @@ export const CONSOLE_HELP = [
 
 // The names a command also answers to, when run and in `help`.
 const ALIASES: Record<string, string> = { script: 'scripts', tab: 'tabs', exit: 'quit', '?': 'help', keys: 'key' };
+
+// The flags each command takes; the rest take none. A word starting
+// with -- that isn't one is a mistake, said before the command does
+// anything, rather than taken as an argument (`status --bad` looking
+// for a script named that).
+const COMMAND_FLAGS: Record<string, string[]> = {
+  newtab: ['--noscript', '--script'],
+  reload: ['--noscript', '--script'],
+  open: ['--noscript', '--script'],
+  eval: ['--script'],
+  snapshot: ['--out', '--visible', '--css'],
+  screenshot: ['--full'],
+  probe: ['--html'],
+};
+
+// Commands whose last argument is free text, which may start with --
+// as content (eval's JavaScript, type's text, a menu label): only the
+// words before it are looked at, where their flags and tab go.
+const FREE_TEXT = new Set(['eval', 'type', 'accept', 'set', 'get', 'menu']);
+
+/**
+ * The mistake in a run command's flags, or null: a word starting with
+ * -- the command doesn't take. `words` are the command's, its name
+ * first. Null for a name that is no command, which is said elsewhere.
+ */
+export function commandFlagMistake(words: string[]): string | null {
+  const typed = words[0];
+  if (typed === undefined) return null;
+  const command = ALIASES[typed] ?? typed;
+  if (!COMMAND_NAMES.includes(command)) return null;
+  const known = COMMAND_FLAGS[command] ?? [];
+  const freeText = FREE_TEXT.has(command);
+  for (let i = 1; i < words.length; i++) {
+    const word = words[i];
+    if (!word.startsWith('--')) {
+      // The free text starts at its first word that is neither a flag
+      // nor the tab named before it.
+      if (freeText && !TAB_ARG.test(word)) return null;
+      continue;
+    }
+    if (!known.includes(word)) return `The ${command} command has no ${word} flag`;
+    // A flag's value, which may look like anything.
+    if (VALUE_FLAGS.has(word)) i++;
+  }
+  return null;
+}
+
+/**
+ * A command line's words, as the prompt splits them (quotes kept
+ * together), for `commandFlagMistake`.
+ */
+export function commandWords(line: string): string[] {
+  const trimmed = line.trim();
+  const name = trimmed.split(/\s+/)[0];
+  return [name, ...splitWords(trimmed.slice(name.length)).map((w) => w.text)];
+}
 
 // Commands that only look: what they print answers whoever asked, and
 // is no part of the run's story.
@@ -248,20 +307,20 @@ export function helpEntries(lines: string[], name: string): string[] {
 
 /**
  * Typed commands' help, for `help <command>...` and `sm-dev help`: each
- * one's entries under its group's heading, commands in a row from one
- * group sharing it. `unknown` are the names no command has.
+ * one's entries once, in the order `help` lists them, under its group's
+ * heading. `unknown` are the names no command has.
  */
 export function consoleCommandsHelp(names: string[]): { lines: string[]; unknown: string[] } {
   const lines: string[] = [];
   const unknown: string[] = [];
+  const groupOf = (name: string) => COMMAND_GROUPS.find((g) => helpEntries(g.lines, name).length > 0);
+  const known = [...new Set(names.map((typed) => ALIASES[typed] ?? typed))];
+  unknown.push(...names.filter((typed) => !groupOf(ALIASES[typed] ?? typed)));
+  // In the order `help` lists them, so each group's heading shows once.
+  const ordered = known.filter((name) => groupOf(name)).sort((a, b) => COMMAND_NAMES.indexOf(a) - COMMAND_NAMES.indexOf(b));
   let lastGroup: string | null = null;
-  for (const typed of names) {
-    const name = ALIASES[typed] ?? typed;
-    const group = COMMAND_GROUPS.find((g) => helpEntries(g.lines, name).length > 0);
-    if (!group) {
-      unknown.push(typed);
-      continue;
-    }
+  for (const name of ordered) {
+    const group = groupOf(name)!;
     if (group.title !== lastGroup) lines.push(...(lastGroup ? [''] : []), `${group.title}:`);
     lastGroup = group.title;
     lines.push(...helpEntries(group.lines, name).map((line) => `  ${line}`));
@@ -285,6 +344,13 @@ export async function runConsoleCommand(
   const [typedCommand, ...rest] = trimmed.split(/\s+/);
   const argument = trimmed.slice(typedCommand.length).trim();
   const command = ALIASES[typedCommand] ?? typedCommand;
+  // The sender's words when they start with the command; a whole
+  // command sent as one word is split like a typed one.
+  const flagMistake = commandFlagMistake(words?.[0] === typedCommand ? words : commandWords(trimmed));
+  if (flagMistake) {
+    ctx.out(`[sm-dev] ${flagMistake}`);
+    return;
+  }
   const current = ctx.current ?? ctx.scripts[0];
   const scriptId = current?.spec?.id;
   // Named in the output only when there is a choice to be clear about.

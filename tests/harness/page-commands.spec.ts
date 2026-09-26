@@ -1,6 +1,6 @@
 // The typed commands that drive and read a tab's page (click, type,
 // key, eval, snapshot, screenshot, savehtml, probe), driven directly
-// as `sm-dev run` runs them, against a script that adds a button and a
+// as `sm-dev start` runs them, against a script that adds a button and a
 // text field to the page and keeps its state in the scripts' world.
 
 import { readFileSync, statSync } from 'node:fs';
@@ -118,6 +118,11 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('dismiss')).toEqual(['[sm-dev] Dismissed the dialog']);
   expect(await run('screenshot')).toEqual([expect.stringContaining('The screenshot command needs a file')]);
   expect(await run('snapshot --deep')).toEqual(['[sm-dev] The snapshot command has no --deep flag']);
+  // Every command, not only the ones with flags of their own; a quoted
+  // selector with -- in it is one word, not a flag.
+  expect(await run('status --bad')).toEqual(['[sm-dev] The status command has no --bad flag']);
+  expect(await run('eval T1 --script --x')).toEqual(['[sm-dev] The eval command has no --x flag']);
+  expect(await run(`probe '.a --b'`)).not.toContainEqual(expect.stringContaining('flag'));
 
   // A navigation an expression doesn't live through is said as such,
   // not blamed on the expression.
@@ -232,5 +237,5 @@ test('snapshot refs name elements for the other commands, and it can show only t
   expect(await run(`click ${save}`)).toEqual(['[sm-dev] The page reloaded since the last snapshot. Take a new snapshot.']);
 
   // help tells how to name an element, and isn't a command itself.
-  expect((await run('help')).join('\n')).toContain('e4: its ref in the latest snapshot');
+  expect((await run('help')).join('\n')).toContain('e4 or f2e6: its ref in the latest snapshot');
 });

@@ -112,7 +112,7 @@ script **text or a file path**, never a collection.
     restores the previous enabled set when off, so a scratch script runs
     alone without touching the user's real collections. For a
     throwaway profile, `resetAllState()` wipes everything instead.
-- `sm-dev run --extension` reaches the worker through Playwright, which
+- `sm-dev start --extension` reaches the worker through Playwright, which
   lists an extension's service worker on a CDP-connected browser as
   well as a launched one. The
   worker's URL is known up front, since the manifest's fixed `key`
@@ -240,7 +240,7 @@ into pages.
   - Survives reloads (init scripts persist), so the interactive loop
     costs one keystroke. Re-injecting a script removes its
     old entries first.
-- **`tab-badge.ts`**: the badge `sm-dev run` draws over each
+- **`tab-badge.ts`**: the badge `sm-dev start` draws over each
   controlled tab's favicon. Harness mode only; under `--extension` the
   toolbar badge does this job.
   - Count and color follow the extension's toolbar badge
@@ -293,8 +293,12 @@ into pages.
     (`PageAttachment.evaluate`), in the page's default context or the
     isolated world the harness keeps for scripts. Results print as
     JSON, or as the DevTools console describes an element or function.
-  - Typed lines are split into words as a shell would; `sm-dev send`
-    passes the sender's own words and directory instead, so its quoting
+  - Each command's flags are listed in `COMMAND_FLAGS`, and any other
+    `--` word is refused before the command runs (`commandFlagMistake`).
+    For the commands that end in free text, only the words before it
+    are looked at. `sm-dev`'s up-front check uses the same function.
+  - Typed lines are split into words as a shell would; a command from
+    another shell passes that shell's own words and directory instead, so its quoting
     and relative paths hold.
   - Every console line and page error is kept per page (the newest
     thousand) for `logs`, beside the filtered stream.
@@ -314,7 +318,7 @@ into pages.
       too, so the numbers only go up, with gaps.
     - A page restored from the browser's back/forward cache brings its
       old document back, and with it the old number.
-    - The numbers start again with each `sm-dev run`.
+    - The numbers start again with each `sm-dev start`.
   - A ref is looked up through the iframes the latest snapshot showed
     it in, each step `:root >> aria-ref=…`, never by its prefix.
     - Playwright finds a ref's frame by that number, and a page restored
@@ -348,9 +352,20 @@ into pages.
 - **`cli.ts`** (`sm-dev`) and **`run.ts`**: the interactive tool,
   built on the same modules and Playwright's `connectOverCDP` (or a
   launched Chromium with `--launch`). Commands are listed in the guide.
-  `run` is in its own module so the Node-only commands never load
+  `run.ts` is its own module so the Node-only commands never load
   Playwright. The `--extension` flag switches it to the extension
   backend.
+  - A line can hold several commands, split on `--` before anything
+    else is parsed. Each has `--run` taken out first, which carries on
+    to later commands, as does the id a `start` gets.
+  - `--help` anywhere on the line is found first: the help for each
+    command named, and nothing run or checked.
+  - `start` is refused anywhere but first, before anything runs. So a
+    `start` never inherits another command's `--run` (which would make
+    it replace that run), and a line never has a run it will stop at
+    the end alongside an interactive one.
+  - A name that isn't an `sm-dev` command but is a typed one goes to
+    the run, as `send` would send it.
   - A connected browser is attached with `noDefaults`, which keeps
     Playwright's test overrides off the developer's own profile:
     - downloads rerouted to a temp folder that is deleted on disconnect;
@@ -418,7 +433,7 @@ into pages.
     - A tab switched off counts as running no script, whatever the
       host last heard from it.
 - **`runs.ts`**: the runs active on this machine, for `sm-dev list`,
-  `send` and `stop`. Node-only, so those commands never load
+  `stop` and the commands sent to a run. Node-only, so those commands never load
   Playwright.
   - A run's id is the lowest free `D<n>`. It takes one by listening on
     its socket, which only one process can. The record is written
@@ -429,9 +444,12 @@ into pages.
       freshly bound socket.
     - A lock already held means trying the next number, so one left by
       a killed run costs a number, never a hang.
+    - `start --run Dname` takes that id the same way, or fails if a run
+      holds it; `cli.ts` stops that run first.
   - A run waiting for commands writes a record file (id, pid, start
     time, browser, scripts) and listens on a Unix socket (a named pipe
-    on Windows), both in a per-user temp directory.
+    on Windows), both in a per-user temp directory (`sm-dev-runs-<user>`,
+    by user name, or uid where there is none).
   - A record is deleted when listed if its pid is gone, or its socket
     refuses connections (the pid may have been reused). The run deletes
     its own on the way out.
@@ -442,6 +460,41 @@ into pages.
     (records, sockets, tab records), it is refused if another user owns
     it or can write in it, since `stop` signals the pids its records
     name. `SM_DEV_RUNS_DIR` moves it, for tests.
+  - `start --detach` (in `cli.ts`) starts the same `start` command
+    again as a detached child process, and returns once the child is
+    ready.
+    - `start` followed by other commands on the line does the same
+      without `--detach`, and stops the run once they are done. Its
+      output stays out of theirs that way.
+    - The child's stdout and stderr go to a log file
+      (`detached-log.ts`); the parent prints the file as it grows,
+      without the line timestamps.
+      - Named `sm-dev-<timestamp>.log` in `/tmp/sm-dev-logs-<user>`
+        (`SM_DEV_LOGS_DIR` moves it, for tests), with SeeWhatISee's
+        timestamp format.
+      - Created exclusively; a name already taken moves the timestamp
+        on a millisecond.
+      - The child stamps each line it writes, by wrapping
+        `process.stdout.write` and `process.stderr.write`.
+      - Kept after the run ends.
+      - Once the run has its id, `sm-dev-<id>.log` is pointed at it: a
+        relative symlink, made under a temp name and renamed over the
+        old one.
+    - The child learns it is detached from `SM_DEV_DETACHED_LOG`, and
+      says it is ready over the Node IPC channel (`onReady`, called
+      where sent commands start being taken). The parent then exits;
+      a child that exits first passes on its exit code.
+    - Its record carries `detached` and `log`. The next `--detach`
+      (unless `--new`) stops runs marked `detached`.
+      - The old run is stopped before the new one starts, so its tab
+        is free to reuse. A new run that then fails leaves neither.
+    - The parent handles Ctrl-C, SIGTERM and SIGHUP (sent when the
+      terminal closes) while the child starts, by ending the child and
+      exiting 130. A line-scoped run is stopped on the same signals.
+    - A child whose parent has gone (a tool timeout) still becomes
+      ready; with no channel to report on, it just runs on.
+    - The idle timer is restarted as each sent command starts and ends
+      (`onActivity`), and stops the run as `quit` would.
   - `stop` expects the run's `Stopping run D1` line first. With it, it
     waits a minute for the teardown before `SIGTERM`; without it (no
     answer in 15 seconds, or a close without it), it signals at once.
@@ -482,7 +535,7 @@ into pages.
     - Once the run starts tearing down, sent lines are refused.
   - A closed stdout (`EPIPE`) ends a run through the same stop as
     Ctrl-C; other commands just exit.
-  - `stop` falls back to `SIGTERM`, which `run` handles like Ctrl-C
+  - `stop` falls back to `SIGTERM`, which `start` handles like Ctrl-C
     (on Windows it kills outright, with no cleanup).
     Either signal drops both handlers, as `quit` does, so a second one
     during teardown kills the run.
@@ -493,7 +546,7 @@ into pages.
   - And when that dialog is gone before the dismiss lands, the error is
     unhandled, and ends the run.
   - The run's own tabs also get the dialog tracker, which answers them.
-- **`stuck-tabs.ts`**: before `run` connects over CDP, finds tabs
+- **`stuck-tabs.ts`**: before `start` connects over CDP, finds tabs
   whose page doesn't answer, and waits for them.
   - Why: Playwright's connection isn't ready until it has set up every
     tab, and a tab showing a dialog answers nothing, so it hangs until
@@ -546,7 +599,7 @@ into pages.
   - The client side is a small WebSocket server of its own (handshake
     and text frames), since the harness has no WebSocket library; the
     browser side uses Node's WebSocket client.
-- **`devtools.ts`**: `run --devtools`, a Chrome DevTools background
+- **`devtools.ts`**: `start --devtools`, a Chrome DevTools background
   server per run, and each tab's page id in it.
   - The server connects through `cdp-proxy.ts`, not to the browser.
   - Started with the `chrome-devtools` command, under the run's id as
@@ -593,7 +646,7 @@ into pages.
   So `load` / `update` refuse while one is open, and
   `PageAttachment.dispose` gives up on the page after a second; detaching
   the session drops what it registered anyway.
-- **`console-commands.ts`**: the commands typed while `run` streams,
+- **`console-commands.ts`**: the commands typed while `start` streams,
   and the terminal prompt output is drawn around.
   - Each kind of thing has its own style of name: scripts `1`, tabs
     `T1`, menu commands `M1`, with `T2.` in front to name one on
@@ -607,7 +660,7 @@ into pages.
   - Menu commands fire by record (`fireMenuEntry`), not by id, since
     two tabs can register the same custom id.
   - A script's default page (`defaultPageUrl` in `prepare.ts`) is
-    the one `run` opens when given no URL; `open`, `newtab` and
+    the one `start` opens when given no URL; `open`, `newtab` and
     `--all` use the same one.
   - `DialogTracker` listens for page dialogs, because Playwright
     dismisses any dialog nobody listens for, which answers a script's
@@ -669,7 +722,7 @@ Details are in the guide; the shape is:
   `sourcemonkey/harness`.
 - Its specs are ES modules (`.mjs`, or `"type": "module"`), since
   SourceMonkey is written as ESM.
-- Its agent instructions: run `sm-dev run` while iterating, write a
+- Its agent instructions: run `sm-dev start` while iterating, write a
   spec on the harness fixture once the script is confirmed, and use
   `--extension` for the request-identity and Chrome-only checks.
 

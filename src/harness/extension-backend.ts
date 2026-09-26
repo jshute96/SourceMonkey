@@ -1,4 +1,4 @@
-// The extension backend of `sm-dev run`: the real SourceMonkey in the
+// The extension backend of `sm-dev start`: the real SourceMonkey in the
 // connected browser, with the script pushed in as text rather than
 // injected by the harness.
 //
@@ -6,7 +6,7 @@
 // src/background.ts) does the work: `writeScratchScript` installs the
 // text into the Scratch collection and registers it before it answers,
 // a rewrite replaces it in place, `soloMode` silences the user's other
-// collections for the run, and `run` prints the per-script log as the
+// collections for the run, and `start` prints the per-script log as the
 // script's reports. Playwright exposes the worker on a
 // CDP-connected browser as well as a launched one, so the same
 // `worker.evaluate` reaches it either way.

@@ -1,4 +1,4 @@
-// The commands typed into `sm-dev run`, driven directly: with several
+// The commands typed into `sm-dev start`, driven directly: with several
 // scripts loaded, `scripts` picks which one `get` and `set` reach, and
 // `menu` fires a command by label or by its M number in the list, a
 // dialog a command opens waits for a typed answer, and with several

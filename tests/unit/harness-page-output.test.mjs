@@ -1,6 +1,6 @@
 // Unit tests for src/harness/page-output.ts (compiled to
 // lib/harness/page-output.js): which page console lines and uncaught
-// errors `sm-dev run` streams.
+// errors `sm-dev start` streams.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

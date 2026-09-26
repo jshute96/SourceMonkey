@@ -1,4 +1,4 @@
-// `sm-dev run` follows the tabs its tab opens: a `window.open` popup
+// `sm-dev start` follows the tabs its tab opens: a `window.open` popup
 // and a `GM_openInTab` tab both get the loaded scripts, and their
 // lines carry the tab's name. Also `--all`'s tab per script, tabs
 // closing (T1 included), and `--fire-menu` reaching another tab.
@@ -208,7 +208,7 @@ type Step = [waitFor: string, send: string | (() => string)];
 async function driveCli(args: string[], steps: Step[]): Promise<string[]> {
   const { spawn } = await import('node:child_process');
   const cli = new URL('../../lib/harness/cli.js', import.meta.url).pathname;
-  const child = spawn(process.execPath, [cli, 'run', ...args, '--launch', '--seconds', '25'], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [cli, 'start', ...args, '--launch', '--seconds', '25'], { stdio: ['pipe', 'pipe', 'pipe'] });
   const lines: string[] = [];
   let pending = [...steps];
   let since = 0;

@@ -1,4 +1,4 @@
-// `sm-dev run`: the interactive loop. Connect to a browser, inject one
+// `sm-dev start`: the interactive loop. Connect to a browser, inject one
 // or more scripts from disk, load the page, and stream what happens
 // until interrupted.
 //
@@ -78,6 +78,18 @@ export interface RunOptions extends ConnectOptions {
   onStop?: () => void;
   /** Called once the run has a browser connection, and so something to clean up. */
   onConnected?: () => void;
+  /**
+   * Called once the run has started: its pages loaded and scripts
+   * started, and sent commands taken. With its id, or none when other
+   * shells can't reach it.
+   */
+  onReady?: (id: string | undefined) => void;
+  /** Called as each sent command starts and ends, for `--idle-seconds` to count from. */
+  onActivity?: () => void;
+  /** For `--detach`: where its output goes, recorded for `list`. */
+  detachedLog?: string;
+  /** The id `start --run` asked for, rather than the lowest free one. */
+  runId?: string;
 }
 
 // How the browser commands reach a browser: connect to one over CDP
@@ -125,7 +137,7 @@ export interface BrowserSession {
 
 /**
  * `reuseTab`: in a connected browser, take over the selected tab when
- * it is one an earlier, finished `run` opened, rather than opening
+ * it is one an earlier, finished run opened, rather than opening
  * another. See `openRunTab`.
  */
 export async function connectBrowser(
@@ -151,7 +163,7 @@ function leaveDialogsOpen(browser: Browser): void {
   }
 }
 
-// `connectBrowser`, and for `run --notab`, the same with no tab.
+// `connectBrowser`, and for `start --notab`, the same with no tab.
 async function openBrowser(
   opts: ConnectOptions, out: (line: string) => void, o: { reuseTab: boolean; openTab: true },
 ): Promise<BrowserSession | null>;
@@ -216,12 +228,12 @@ interface ScriptChange {
   next: PreparedScript;
 }
 
-/** A `run` session, whose `--notab` form has no tab. */
+/** A `start` session, whose `--notab` form has no tab. */
 type RunSession = Omit<BrowserSession, 'page'> & { page: Page | null };
 
 // ---------- Reusing a run's tab ----------
 
-// The tabs `run` has opened, across runs, so a later one can recognize
+// The tabs runs have opened, so a later one can recognize
 // them: a tab carries no mark of its own that a page couldn't also set.
 // Keyed by endpoint and the tab's CDP target id, with the pid of the
 // run that owns it, since a tab whose run is still going is not free.
@@ -374,7 +386,7 @@ function printSkipped(opts: RunOptions, start: StartPages): void {
 }
 
 export async function run(opts: RunOptions): Promise<number> {
-  const remote = new Remote(opts.out, opts.onStop);
+  const remote = new Remote(opts.out, opts.onStop, opts.onActivity);
   // Every line also goes to whoever sent the command running now.
   opts = { ...opts, out: remote.out };
   const session = await openBrowser(opts, opts.out, { reuseTab: true, openTab: !opts.noTab });
@@ -387,7 +399,8 @@ export async function run(opts: RunOptions): Promise<number> {
       started: Date.now(),
       browser: opts.launch ? 'launched' : cdpSetting(opts),
       scripts: opts.files.map(displayPath),
-    });
+      ...(opts.detachedLog ? { detached: true, log: opts.detachedLog } : {}),
+    }, opts.runId);
   }
   // The browser closing (or its connection dropping) ends the run: it
   // has nothing left to stream from. Without this the run would wait
@@ -450,6 +463,7 @@ class Remote {
   constructor(
     private readonly print: (line: string) => void,
     private readonly onStop?: () => void,
+    private readonly onActivity?: () => void,
   ) {}
 
   /**
@@ -476,11 +490,15 @@ class Remote {
     return this.control !== null;
   }
 
-  async open(record: Omit<RunRecord, 'id'>): Promise<void> {
+  async open(record: Omit<RunRecord, 'id'>, wanted?: string): Promise<void> {
     try {
-      this.control = await RunControl.open(record, this.handle);
+      this.control = await RunControl.open(record, this.handle, wanted);
       const { id } = this.control;
-      this.out(`[sm-dev] Started as run ${id}: Other shells reach it with sm-dev send ${id} <command> and sm-dev stop ${id}`);
+      if (record.log) {
+        const { linkRunLog } = await import('./detached-log.js');
+        await linkRunLog(record.log, id, this.out);
+      }
+      this.out(`[sm-dev] Started as run ${id}. Other shells reach it with sm-dev <command> --run ${id}, and end it with sm-dev stop --run ${id}.`);
     } catch (err) {
       this.out(`[sm-dev] Other shells can't reach this run: ${(err as Error).message}`);
     }
@@ -516,12 +534,21 @@ class Remote {
   }
 
   private readonly handle: SentLineHandler = async (line, reply, sent) => {
+    this.onActivity?.();
+    try {
+      return await this.run(line, reply, sent);
+    } finally {
+      this.onActivity?.();
+    }
+  };
+
+  private readonly run: SentLineHandler = async (line, reply, sent) => {
     const inspects = onlyInspects(line);
     // Not copied to other senders: it is no part of their commands.
     // An eval block's code lines as the prompt shows them.
     if (!inspects) {
       const [first, ...more] = line.split('\n');
-      this.print(`[sm-dev] Sent by sm-dev send: ${first}`);
+      this.print(`[sm-dev] Sent from another shell: ${first}`);
       for (const l of more) this.print(`... ${l}`);
     }
     // Answered straight away, even before the run is ready, and the
@@ -564,11 +591,13 @@ async function runInHarness(
     devtools?.schedule();
   });
   held.tabs = tabs;
-  // Named by the run's id, which `list` and `status` show. A run other
-  // shells can't reach has none, so a random one stands in (hex, as
-  // DevTools requires; `D1` happens to be hex too).
+  // Named by the run's id, which `list` and `status` show, when it can
+  // be: DevTools takes only hex (`D1` happens to be). A run other
+  // shells can't reach has none, and a name start --run gave isn't hex,
+  // so a random one stands in.
   if (opts.devtools && opts.until) {
-    devtools = new DevToolsLink(remote.id ?? randomBytes(3).toString('hex'), cdpSetting(opts), () => tabs.list(), opts.out);
+    const session = remote.id && /^[0-9a-f]+$/i.test(remote.id) ? remote.id : randomBytes(3).toString('hex');
+    devtools = new DevToolsLink(session, cdpSetting(opts), () => tabs.list(), opts.out);
     held.devtools = devtools;
   }
   wireHostOutput(host, opts.out, (record) => tabs.prefixOf(record));
@@ -783,6 +812,7 @@ async function runInHarness(
       if (commandsComing) setCommandsListening(ctx.tabs(), true);
       remote.arm(runner);
       stopCommands = readConsoleCommands(ctx, runner);
+      opts.onReady?.(remote.id);
       await opts.until;
     } else {
       // One load's worth of output, then leave the page as it is. Not
@@ -1268,8 +1298,13 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
     }
     const ticker = setInterval(() => { void poll(); }, 500);
     try {
-      if (opts.until) await opts.until;
-      else await sleep(1000);
+      if (opts.until) {
+        await poll();
+        opts.onReady?.(remote.id);
+        await opts.until;
+      } else {
+        await sleep(1000);
+      }
     } finally {
       clearInterval(ticker);
       watcher?.stop();

@@ -1,4 +1,4 @@
-// The favicon badge `sm-dev run` puts on the tabs it controls: the
+// The favicon badge `sm-dev start` puts on the tabs it controls: the
 // script count in the extension's toolbar-badge colors, the site's own
 // icon underneath, and grey once the run lets go of the tab.
 

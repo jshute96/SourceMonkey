@@ -171,25 +171,26 @@ command. See `docs/harness-design.md`.
 | File | Description |
 |------|-------------|
 | `src/harness/index.ts` | Public entry of the harness package: re-exports the install pipeline, host, injector, and Playwright fixture |
-| `src/harness/page-output.ts` | Which page console lines and uncaught errors `sm-dev run` streams: the scripts', not the site's |
+| `src/harness/page-output.ts` | Which page console lines and uncaught errors `sm-dev start` streams: the scripts', not the site's |
 | `src/harness/prepare.ts` | Runs the real install pipeline over a file or text under Node and returns the registrable entries, world, matching, and diagnostics |
 | `src/harness/parse-check-node.ts` | Node counterpart of the sandboxed parse check: `new Function` verdict plus `vm.Script` location probes |
 | `src/harness/host.ts` | The stand-in service worker: answers every bridge message the injected code sends, under Node, and records what scripts do |
 | `src/harness/inject.ts` | Attaches prepared scripts to a Playwright page over CDP, in the right world, with a message channel per world to the host |
 | `src/harness/fixture.ts` | The Playwright fixture a consumer repo imports: `loadUserscript`, `gm`, `reports`, `serveHtml` over a host and attachment per test |
 | `src/harness/save-html.ts` | A page's DOM as a standalone file, scripts disabled and a `<base>` added; for `savehtml` and the fixture's `saveHtml` |
-| `src/harness/command-lines.ts` | Input lines into `sm-dev run` commands: multi-line `eval {{ ... }}` blocks, comments, sent lists |
-| `src/harness/console-commands.ts` | The commands typed while `sm-dev run` streams, across its tabs, the page-dialog tracker, and the prompt |
+| `src/harness/command-lines.ts` | Input lines into `sm-dev start` commands: multi-line `eval {{ ... }}` blocks, comments, sent lists |
+| `src/harness/console-commands.ts` | The commands typed while `sm-dev start` streams, across its tabs, the page-dialog tracker, and the prompt |
 | `src/harness/page-commands.ts` | The run commands that drive and read a tab's page, from `click` and `eval` to `snapshot` and `logs` |
 | `src/harness/snapshot.ts` | `snapshot`'s element refs, its on-screen filter, and its suggested CSS selectors |
-| `src/harness/stuck-tabs.ts` | Before `sm-dev run` connects, names the tabs that don't answer (a dialog, say), and waits for them |
-| `src/harness/tab-badge.ts` | The count badge `sm-dev run` draws over controlled tabs' favicons, greyed once the run is gone |
-| `src/harness/run.ts` | `sm-dev run`: open a browser (reusing a finished run's tab), inject or push the scripts, follow tabs it opens, and stream |
+| `src/harness/stuck-tabs.ts` | Before `sm-dev start` connects, names the tabs that don't answer (a dialog, say), and waits for them |
+| `src/harness/tab-badge.ts` | The count badge `sm-dev start` draws over controlled tabs' favicons, greyed once the run is gone |
+| `src/harness/run.ts` | `sm-dev start`: open a browser (reusing a finished run's tab), inject or push the scripts, follow tabs it opens, and stream |
 | `src/harness/extension-backend.ts` | `sm-dev --extension`: finds SourceMonkey's worker in the browser and drives `writeScratchScript`, `clearScratchScripts`, `soloMode`, the script log |
 | `src/harness/cdp-proxy.ts` | A CDP endpoint that shows a client only the run's tabs, for the `--devtools` server to connect to |
-| `src/harness/devtools.ts` | `sm-dev run --devtools`: a Chrome DevTools server per run, and each tab's DevTools page id |
+| `src/harness/devtools.ts` | `sm-dev start --devtools`: a Chrome DevTools server per run, and each tab's DevTools page id |
+| `src/harness/detached-log.ts` | The log files of `sm-dev start --detach`: timestamped names in `/tmp/sm-dev-logs-<user>`, stamped lines, per-run links |
 | `src/harness/runs.ts` | The runs active on this machine: record files and control sockets behind `sm-dev list`, `send`, `stop` |
-| `src/harness/cli.ts` | The `sm-dev` command: `run`, `validate`, `match`, `clear`, `list`, `send`, `stop` |
+| `src/harness/cli.ts` | The `sm-dev` command: `start` (and `--detach`), `validate`, `match`, `clear`, `list`, `stop`, a run's commands, `--` lines |
 
 ## Tests (`tests/`)
 
@@ -299,13 +300,14 @@ command. See `docs/harness-design.md`.
 | `tests/unit/parse-sandbox-host.test.mjs` | Unit tests for `isParseVerdict` — only the three real statuses pass, so an odd reply can't read as `invalid` |
 | `tests/unit/parse-location.test.mjs` | Unit tests for probe selection and line mapping, driven by positions Chromium really reported |
 | `tests/unit/harness-cdp-endpoint.test.mjs` | Unit tests for `cdpEndpoint`: the forms `sm-dev --cdp` accepts |
-| `tests/unit/harness-cli-args.test.mjs` | Unit tests for `sm-dev`'s command line: `run` flag combinations, `match` output, scripts by URL, and `send` / `stop` / `list` misuse |
-| `tests/unit/harness-devtools.test.mjs` | Unit tests for `run --devtools`: when it is on, and the message when `chrome-devtools` is missing |
+| `tests/unit/harness-detached-log.test.mjs` | Unit tests for `start --detach`'s log files: the timestamp format and unique names |
+| `tests/unit/harness-cli-args.test.mjs` | Unit tests for `sm-dev`'s command line: `start` flags, `match` output, scripts by URL, `--run`, `--` lines, misuse |
+| `tests/unit/harness-devtools.test.mjs` | Unit tests for `start --devtools`: when it is on, and the message when `chrome-devtools` is missing |
 | `tests/unit/harness-page-commands.test.mjs` | Unit tests for how the page commands split a typed line into words, and name keys for `key` |
 | `tests/unit/harness-snapshot.test.mjs` | Unit tests for `snapshot`: which words are refs, and which lines `--visible` keeps |
 | `tests/unit/harness-runs.test.mjs` | Unit tests for the run registry: a sent line's round trip, stale records, `stop`'s SIGTERM fallback |
 | `tests/unit/harness-command-lines.test.mjs` | Unit tests for `eval {{ ... }}` blocks, comments, and lists of commands |
-| `tests/unit/harness-page-output.test.mjs` | Unit tests for which page console lines and errors `sm-dev run` shows |
+| `tests/unit/harness-page-output.test.mjs` | Unit tests for which page console lines and errors `sm-dev start` shows |
 | `tests/unit/harness-prepare.test.mjs` | Unit tests for `prepareScript` and `explainMatch` over real files on disk |
 | `tests/unit/parse-check-node.test.mjs` | Unit tests for the Node parse checker: verdict, both probes' positions, and the two probe-selection routes |
 | `tests/unit/validate-userscripts.test.mjs` | Drives the validator CLI as a subprocess over the example suites plus a hand-built offline tree |
@@ -419,11 +421,11 @@ extension, driven by the Node host in `src/harness/`.
 | `tests/harness/xhr.spec.ts` | `GM_xmlhttpRequest` through the host: load and 404, JSON, `@connect` refusals and redirects, cookies, timeout, abort |
 | `tests/harness/browser-apis.spec.ts` | The harness's tabs, menu commands, notifications, downloads and window APIs |
 | `tests/harness/bridge-trust.spec.ts` | What the page can reach: forged requests refused, isolated traffic kept out of the page, subframes ignored |
-| `tests/harness/console-commands.spec.ts` | The commands typed into `sm-dev run`: `scripts`, `values`, `menu` by M number, dialogs, and several tabs |
-| `tests/harness/run-tabs.spec.ts` | `sm-dev run` end to end: followed tabs, `--all`, `--notab`, `load` / `update` / `--watch` reloads |
+| `tests/harness/console-commands.spec.ts` | The commands typed into `sm-dev start`: `scripts`, `values`, `menu` by M number, dialogs, and several tabs |
+| `tests/harness/run-tabs.spec.ts` | `sm-dev start` end to end: followed tabs, `--all`, `--notab`, `load` / `update` / `--watch` reloads |
 | `tests/harness/cdp-proxy.spec.ts` | The `--devtools` CDP proxy with a plain CDP client: only allowed tabs, in the initial attach, late claims, own sessions |
 | `tests/harness/page-commands.spec.ts` | The run commands that drive and read a page, in both worlds, with dialogs, quoting, and files |
-| `tests/harness/run-remote.spec.ts` | `sm-dev run` as a background process: `list`, `send`, `stop`, and `--devtools` page ids, and tabs stuck on or showing dialogs |
+| `tests/harness/run-remote.spec.ts` | `sm-dev start` in the background: `--detach`, `--run`, `--` lines, sent commands, `stop`, `--devtools`, stuck tabs |
 | `tests/harness/tab-badge.spec.ts` | The favicon badge: count and colors, the site's icon under it, grey when released or unpinged, a tab taken over |
 | `tests/harness/fixture.spec.ts` | The consumer fixture from `lib/`: a script against a served page, `gm` and `reports`, the up-front URL check, the explained miss |
 

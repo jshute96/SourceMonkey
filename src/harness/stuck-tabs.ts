@@ -1,4 +1,4 @@
-// Tabs whose page doesn't answer, found before `sm-dev run` connects.
+// Tabs whose page doesn't answer, found before `sm-dev start` connects.
 //
 // Playwright's connection isn't ready until it has set up every tab in
 // the browser, and a tab showing a dialog (alert, confirm, prompt, or a

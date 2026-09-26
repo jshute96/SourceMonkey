@@ -98,6 +98,12 @@ test('typed run ids', () => {
   assert.equal(runIdOf('d02'), 'D2');
   assert.equal(runIdOf('2'), null);
   assert.equal(runIdOf('T2'), null);
+  // Named by start --run: taken as typed, with a capital D.
+  assert.equal(runIdOf('Dmain'), 'Dmain');
+  assert.equal(runIdOf('Dmy-run_2'), 'Dmy-run_2');
+  assert.equal(runIdOf('dmain'), null);
+  assert.equal(runIdOf('D'), null);
+  assert.equal(runIdOf('Da.b'), null);
 });
 
 test('a record whose process has gone is dropped', async () => {

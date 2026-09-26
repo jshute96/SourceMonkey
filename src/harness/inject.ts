@@ -590,7 +590,7 @@ export class PageAttachment implements PageLink {
       browserSession.on('Target.targetDestroyed', (ev) => { destroyed.add(ev.targetId); });
       await browserSession.send('Target.setDiscoverTargets', { discover: true });
       // Pages open before the create can't be the new one, so they are
-      // never attached to just to ask their id: under `sm-dev run` they
+      // never attached to just to ask their id: under `sm-dev start` they
       // are the developer's own tabs.
       const before = new Set(this.page.context().pages());
       const { targetId } = await browserSession.send('Target.createTarget', {

@@ -95,7 +95,7 @@ test.describe('scratch scripts', () => {
     expect(await scratchKeys()).toEqual(['scratch:scratch:///Four.user.js']);
   });
 
-  // The path `sm-dev run --extension` takes: find the worker from the
+  // The path `sm-dev start --extension` takes: find the worker from the
   // package's own copy of the manifest, push, and clear.
   test('the harness\'s ExtensionBackend finds the extension and pushes through it', async ({ extensionContext, fixtureServer }) => {
     const backend = await ExtensionBackend.connect(extensionContext);

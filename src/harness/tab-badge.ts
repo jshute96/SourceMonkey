@@ -1,4 +1,4 @@
-// A count badge over the favicon of each tab `sm-dev run` controls, so
+// A count badge over the favicon of each tab `sm-dev start` controls, so
 // those tabs stand out in the tab strip. It shows what the extension's
 // toolbar badge shows for a tab: how many scripts are in play on the
 // document, colored by how they are doing (see `computeBadge` in

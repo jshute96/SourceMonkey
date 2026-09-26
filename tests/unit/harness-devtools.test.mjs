@@ -1,4 +1,4 @@
-// Unit tests for `sm-dev run --devtools` (src/harness/devtools.ts,
+// Unit tests for `sm-dev start --devtools` (src/harness/devtools.ts,
 // compiled to lib/harness/devtools.js): when it is on, and what a run
 // says when the DevTools command line isn't installed.
 

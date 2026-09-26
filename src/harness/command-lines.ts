@@ -1,4 +1,4 @@
-// Turning lines of input into `sm-dev run` commands, for the prompt,
+// Turning lines of input into `sm-dev start` commands, for the prompt,
 // piped input, and a list of commands sent in one go.
 //
 // Most commands are one line. `eval` can take several, as a block:

@@ -1,5 +1,5 @@
 // A CDP endpoint (Chrome DevTools Protocol) that shows a client only
-// some of the browser's tabs: the run's own. `sm-dev run --devtools`
+// some of the browser's tabs: the run's own. `sm-dev start --devtools`
 // points the DevTools server at it rather than at the browser.
 //
 // Why: DevTools' Puppeteer attaches to every tab in the browser, and

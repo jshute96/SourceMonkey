@@ -1,4 +1,4 @@
-// Which of the page's console lines and uncaught errors `sm-dev run`
+// Which of the page's console lines and uncaught errors `sm-dev start`
 // streams. A busy site logs plenty of its own errors (blocked
 // trackers, failed ads) that would bury the script's lines, so by
 // default only what can be tied to a script is shown.
