@@ -144,16 +144,33 @@ async function setUp(): Promise<Setup> {
 // endpoint, and leaves it showing an alert.
 async function openForeignDialogTab(port: number, url: string): Promise<void> {
   const id = await openTab(port, url);
-  await new Promise<void>((resolve, reject) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/devtools/page/${id}`);
-    ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: 'setTimeout(() => alert("hold"), 100)' } }));
-    ws.onmessage = () => {
-      ws.close();
-      resolve();
-    };
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/devtools/page/${id}`);
+  await new Promise((resolve, reject) => {
+    ws.onopen = resolve;
     ws.onerror = () => reject(new Error('Could not reach the new tab'));
   });
-  await new Promise((r) => setTimeout(r, 300));
+  let nextId = 1;
+  let dialogOpened: () => void;
+  const opened = new Promise<void>((r) => { dialogOpened = r; });
+  const replies = new Map<number, (value: unknown) => void>();
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(String(e.data)) as { id?: number; method?: string; result?: { result?: { value?: unknown } } };
+    if (msg.method === 'Page.javascriptDialogOpening') dialogOpened();
+    if (msg.id !== undefined) replies.get(msg.id)?.(msg.result?.result?.value);
+  };
+  const send = (method: string, params: Record<string, unknown> = {}) => new Promise<unknown>((resolve) => {
+    const callId = nextId++;
+    replies.set(callId, resolve);
+    ws.send(JSON.stringify({ id: callId, method, params }));
+  });
+  // Once the tab has its page: `/json/new` returns while it still shows
+  // the blank one it starts with, and navigating away from that would
+  // drop the timer, so no dialog would ever open.
+  await expect.poll(() => send('Runtime.evaluate', { expression: 'location.href + " " + document.readyState' })).toBe(`${url} complete`);
+  await send('Page.enable');
+  await send('Runtime.evaluate', { expression: 'setTimeout(() => alert("hold"), 100)' });
+  await opened;
+  ws.close();
 }
 
 test('a background run is listed, takes sent commands, and stops', async ({ fixtureServer, scriptsDir }) => {
