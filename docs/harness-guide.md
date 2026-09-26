@@ -108,16 +108,24 @@ Help:
 
 | Command | What it does |
 | --- | --- |
-| `sm-dev start <script.user.js> [url]...` | Opens a tab at each URL (default: the first URL the script's `@match` implies), injects the script as it is on disk, and streams the script's console lines, errors, and start / skipped / error reports until Ctrl-C, `quit` or `sm-dev stop`, or for `--seconds N`. |
+| `sm-dev start <script.user.js> [url]...` | Starts a run: a process of its own that opens a tab at each URL (default: the first URL the script's `@match` implies), injects the script as it is on disk, and logs the script's console lines, errors, and start / skipped / error reports. sm-dev connects to it and shows that stream while it has commands to run (see [Runs in the background](#runs-in-the-background)). The run stops when sm-dev ends, unless `--detach`. |
 | `sm-dev start ... --watch` | Same, and on every save of the script or a `@require`d file, re-injects it and reloads the tabs it runs in or now matches, all at once. The typed `update` does the same on demand. |
 | `sm-dev start a.user.js b.user.js` | Injects several scripts into the same page, for interaction tests. |
 | `sm-dev start ... --detach` | Returns once the pages have settled (see [Waiting](#waiting)), and leaves the run going in the background (see [Detached runs](#detached-runs)). |
+| `sm-dev -i start ...`, `sm-dev -i` | After the line's commands, shows a `> ` prompt to type more at (see [The prompt](#the-prompt)). Alone, a prompt with no run yet: type `start` or `attach` there. |
+| `sm-dev attach [ID]` | Connects to a run that is going (default: `--run`'s, or the only one) and shows what it prints from now on. On its own, until the run ends or Ctrl-C, which leaves it going. |
 | `sm-dev match <script>... <url>...` | Says whether each script would run on each URL, with all rules that matched it (`Matched by:`) or excluded it (`Excluded by:`). A `start` command line works with `match` in its place. In a run it also takes the run's scripts and tabs (see [Checking scripts in a run](#checking-scripts-in-a-run)). |
 | `sm-dev validate <path>...` | Checks script validity (header, `@require`, syntax) over files, directories or script URLs, with the message the extension would show. In a run it also takes the run's scripts. |
 | `sm-dev list` | Lists the runs active on this machine in a table: id (`D1`), pid, uptime, browser, how many tabs, and the scripts' files (the first few, and a count of the rest). |
-| `sm-dev <command>` | Runs any command a run takes (`sm-dev eval document.title`) in the run from another shell, and prints its output (see [Runs in the background](#runs-in-the-background)). |
-| `sm-dev < steps.txt`, `... --stdin` | Reads commands from stdin, one per line, and sends them to the run (see [Commands from stdin](#commands-from-stdin)). |
-| `sm-dev stop`, `--all` | Ends the run as `quit` would, or all runs. |
+| `sm-dev <command>` | Runs any command a run takes (`sm-dev eval document.title`) in the run sm-dev works with, and prints its output (see [Runs in the background](#runs-in-the-background)). |
+| `sm-dev < steps.txt`, `sm-dev --stdin ...` | Reads commands from stdin, one per line, and sends them to the run (see [Commands from stdin](#commands-from-stdin)). |
+| `sm-dev stop [ID]`, `--all` | Stops the run sm-dev works with (or the one named), or every run. |
+| `exit` | Ends sm-dev, at the prompt or on a line. Runs it started without `--detach` stop with it; ones it only attached to go on. |
+
+`start` with nothing after it to keep the run going is refused:
+`The start command with nothing after it would stop the run as soon as
+it started. Add -i for a prompt, --detach to leave it running,
+--seconds N to watch it for a while, or commands after --.`
 
 - For `start` and `match`, arguments ending in `.user.js` are scripts,
   and the rest are URLs. They and the flags can come in any order.
@@ -134,23 +142,27 @@ invalid, a URL doesn't match) or the command fails, and 2 when it was
 typed wrong. `match` and `validate` exit the same way when sent to a
 run; other commands sent to a run exit 0 for now, even when they fail.
 
-Options for the whole line, which can go anywhere on it:
+Options for the whole line go first, before any command
+(`sm-dev --run D2 status`), and only on sm-dev's own command line, not
+a stdin or prompt line. Later on the line they are refused: `The --run
+flag is for the whole command line, so it goes first, before any
+command: sm-dev --run ... <command>`.
 
+- `--run ID` names the run to work with. It's needed only when several
+  are active; otherwise the command says so, and lists them.
+  - With `start`, it's the ID for the new run: `D` and then letters,
+    digits, `_` or `-` (`sm-dev --run Dmain start ...`). A run already
+    using it is stopped first.
 - `--root DIR` names the repo root, searched for local copies of
   `@require` URLs the way the extension searches a collection's
   directory. Defaults to the current directory.
 - `--local DIR` adds another directory to that search; repeatable.
-- A run keeps the ones it started with. A line that sends a command to
-  a run it didn't start refuses them.
-
-Options for the commands that act on a run (its commands, `stop`,
-`start`):
-
-- `--run ID` names the run. It's needed only when several are active;
-  otherwise the command says so, and lists them.
-  - With `start`, it's the ID for the new run: `D` and then letters,
-    digits, `_` or `-` (`Dmain`). A run already using it is stopped
-    first.
+  - A run keeps the `--root` and `--local` it started with. A line that
+    sends a command to a run it didn't start refuses them.
+- `--stdin` reads more commands from stdin once the line's are done
+  (see [Commands from stdin](#commands-from-stdin)).
+- `--interactive` (`-i`) shows a prompt once the line's commands are
+  done (see [The prompt](#the-prompt)).
 
 Options for the browser commands (`start`, `clear`):
 
@@ -185,14 +197,17 @@ Other `start` flags:
 - `--values '{"key": 1}'` seeds `GM_*` storage before the script runs.
 - `--page-errors` also shows the page's own errors (see
   [What the output looks like](#what-the-output-looks-like)).
-- `--seconds N` stops after N seconds, as a safety limit; without it
-  the stream runs until Ctrl-C, `quit` or `sm-dev stop`.
+- `--seconds N` stops the run after N seconds, as a safety limit. On
+  its own (`sm-dev start x.user.js --seconds 30`), sm-dev shows what
+  the run prints until then.
   - To wait for a page or a script, use `wait` (see
     [Waiting](#waiting)) rather than a guess at a time.
   - For a longer session, leave it off and end the run with `sm-dev
     stop`, so it can't expire mid-test.
 - `--nowait`: don't wait for the pages to settle before continuing.
   It still waits for the scripts to start.
+- `--detach`, `--new` and `--idle-seconds` are covered under
+  [Detached runs](#detached-runs).
 - `--extension` uses the real extension in that browser instead of
   the built-in stand-in (see below); `--solo` silences the other
   collections for the run.
@@ -267,8 +282,9 @@ the stream, rather than being answered automatically:
 
 - In a browser on screen, answer it there.
 - Or type `accept` (a prompt's text after it) or `dismiss`.
-- In a headless run with no typed commands, nothing could answer it,
-  so it is dismissed and reported.
+- In a headless run that can't take commands (it couldn't open its
+  socket for other shells), nothing could answer it, so it is
+  dismissed and reported.
 - While one is open, the page's JavaScript is stopped, so `menu`,
   `set`, `reload` and `open` refuse until it is answered, as do `load`
   and `update` for a dialog in any tab. `reload all` skips that tab and
@@ -284,8 +300,9 @@ the stream, rather than being answered automatically:
 
 A script's interesting moments are not all at startup: a menu command
 may need firing twice, or only once some state exists, and what the
-script stored is worth reading between steps. So `start` also reads
-commands from its own input while it streams.
+script stored is worth reading between steps. So a run takes commands
+while it goes: after `--` on the line that started it, from stdin,
+typed at the `-i` prompt, or from another shell.
 
 | Typed command | What it does |
 | --- | --- |
@@ -306,8 +323,9 @@ commands from its own input while it streams.
 | `focus [tab]` | Brings the tab to the front, un-minimizing its window |
 | `accept [text]`, `dismiss` | Answers an open dialog (see [Page dialogs](#page-dialogs)) |
 | `match [what]...`, `validate [what]...` | Check the run's scripts against its tabs, or re-read and check them (see [Checking scripts in a run](#checking-scripts-in-a-run)) |
-| `list`, `stop [--all]`, `clear --extension` | As `sm-dev list`, `stop` and `clear` do. `stop` ends this run, `stop --all` every run, and `stop --run D2` another. `clear` acts on the run's own browser, so it needs SourceMonkey installed there |
-| `help [command]`, `quit` | The list, or one command's entry (`help status`); and stop |
+| `start`, `attach [ID]`, `stop [ID] [--all]`, `exit` | sm-dev's own, as on its command line: `start` replaces the run sm-dev works with, `attach` switches to another, `stop` stops the run (or the one named, or every run) and leaves sm-dev with none, and `exit` ends sm-dev |
+| `list`, `clear --extension` | As `sm-dev list` and `clear` do |
+| `help [command]` | The list, or one command's entry (`help status`) |
 
 A `<script>` is its number in the `scripts` list, its path, file name or
 `@name`, or a piece of its name or path that no other loaded script
@@ -317,13 +335,14 @@ A `[page]` is a URL, or a script's number for its default page: the
 first page its `@match` names. Only a number counts as a script there,
 so a URL is never mistaken for one.
 
-`start` itself isn't taken in a run, which is one already: `load` adds
-a script, and `newtab` opens a page.
+`start` while sm-dev works with a run replaces that run under the same
+ID: the old one stops, and the new one starts. To add a script to the
+run instead, use `load`; to open a page, `newtab`.
 
 #### Checking scripts in a run
 
 `match` and `validate` act on the run's scripts and tabs when not given
-files, typed at its prompt or from another shell:
+files, however they are sent to it:
 
 | Command | What it checks |
 | --- | --- |
@@ -404,16 +423,16 @@ current one.
   refused, except in free text (`eval`'s JavaScript, `type`'s text, a
   menu label).
 - Quote a selector or text with spaces: `click '.athing .title a'`,
-  `type input 'hello world'`. From another shell, quote `#` too,
+  `type input 'hello world'`. On sm-dev's command line, quote `#` too,
   since the shell reads it as a comment: `sm-dev click '#submit'`.
-- Typed, a quote that starts a word groups it and is taken off, as in
-  a shell. One inside a word stays, so a selector keeps its own:
-  `probe a[href="x.html"]`. From another shell, the shell's quoting is
-  final.
+- Typed or piped in, a quote that starts a word groups it and is taken
+  off, as in a shell. One inside a word stays, so a selector keeps its
+  own: `probe a[href="x.html"]`. On the command line, the shell's
+  quoting is final.
 - `eval` takes the rest of the line as JavaScript, quotes and all, or
   several lines as a block (see below). A promise prints what it
   settles to.
-- From another shell, files are named from that shell's directory.
+- Files are named from sm-dev's directory, not the run's.
 - `eval --script` reaches what scripts put on `window`, not their local
   variables. A `@grant none` script runs in the page's world, so plain
   `eval` reaches it.
@@ -486,21 +505,35 @@ How the commands treat tabs:
   the script, so every tab sees the same ones.
 - `scripts T2.3` picks script 3 and tab T2 together.
 
-When both input and output are a terminal, commands are typed at a
-`> ` prompt:
+#### The prompt
 
+`-i` (`--interactive`), first on the line, shows a `> ` prompt once the
+line's commands are done:
+
+```sh
+sm-dev -i start sites/x/y.user.js --watch
+sm-dev -i                 # no run yet: type start or attach
+```
+
+- sm-dev reads the terminal only then. It needs a terminal, and can't
+  be combined with `--stdin`.
 - Line editing and history work as in most shells (arrows, Ctrl-A / Ctrl-E,
   Ctrl-U), and Tab completes a command name.
 - Output streamed while you type is printed above the prompt, which is
   then redrawn with what you had typed so far.
-- Ctrl-C clears a half-typed line. On an empty line, Ctrl-C or Ctrl-D
-  stops the run, except that Ctrl-C inside an `eval` block drops the
-  block.
-- A running command can't be cancelled. Ctrl-C while one runs says so,
-  and a second Ctrl-C stops the run.
-- Ctrl-Z suspends sm-dev and `fg` resumes it, as in a shell. The browser
-  keeps running meanwhile, but script calls that sm-dev answers, such as
-  `GM_xmlhttpRequest`, wait until it is resumed.
+- `--` splits a typed line into several commands, as on the command
+  line, except inside an `eval` block.
+- A command that fails is reported, and the prompt goes on.
+- Keys:
+  - Ctrl-C clears a half-typed line, and inside an `eval` block drops
+    the block.
+  - On an empty line, Ctrl-C or Ctrl-D exits, as `exit` does: a run
+    this sm-dev started without `--detach` stops, and one it only
+    attached to goes on.
+  - A running command can't be cancelled. Ctrl-C while one runs says
+    so, and a second Ctrl-C exits.
+  - Ctrl-Z suspends sm-dev and `fg` resumes it, as in a shell. The run
+    is a process of its own, so it keeps going meanwhile.
 
 `eval` can take several lines of JavaScript as a block:
 
@@ -521,10 +554,12 @@ A read waits out the page's write batching first, so `menu Bump`
 followed by `values` prints what the command just stored rather than
 what was there before it.
 
-Piping works as well as typing, for a fixed sequence:
+For a fixed sequence, put the commands on the line, or pipe them in
+with `--stdin` (see [Commands from stdin](#commands-from-stdin)):
 
 ```sh
-printf 'menu Bump\nvalues\nquit\n' | sm-dev start sites/x/y.user.js --seconds 30
+sm-dev start sites/x/y.user.js -- menu Bump -- values
+printf 'menu Bump\nvalues\n' | sm-dev --stdin start sites/x/y.user.js
 ```
 
 Piped input takes `eval` blocks too. Blank lines are skipped, and a
@@ -585,8 +620,8 @@ Giving up:
   /ads.js); the DOM is still changing (div#ticker)`.
 - An explicit `wait` that gives up fails, so a line of several commands
   (or a list in one argument, or commands piped in) stops there, and
-  says the rest weren't run. Input piped into `start` itself goes on. A
-  command's own wait that gives up only says so, since the command
+  says the rest weren't run.
+- A command's own wait that gives up only says so, since the command
   itself worked.
 - `wait log /pattern/flags` is a regular expression; any other text
   is a plain substring. Quotes around the whole text are removed first,
@@ -599,16 +634,32 @@ Giving up:
 
 ### Runs in the background
 
-A run started in the background (by an agent, or with `&`) has no
-terminal to type into. Other shells give its commands to `sm-dev`
-directly instead:
+Every run is a process of its own, in the background. `sm-dev` itself
+is a client of runs:
+
+- It works with one run at a time: `--run`'s, else the one it started
+  or attached to, else the only one going.
+- It connects to that run's socket, sends it commands, and prints what
+  comes back. Any number of sm-devs, in any shells, can work with the
+  same run.
+- `start` prints the run's startup output. After that, what sm-dev
+  shows depends on the line:
+  - A line with a command that acts (`eval`, `click`, `type`, `key`,
+    `reload`, `open`, `newtab`, `load`, `update`, `set`, firing a
+    `menu` command, `wait`, `start`, `attach`), or input with no known
+    end (`--stdin`, `-i`), follows the run's whole stream, between
+    commands too.
+  - A line of only commands that look (`status`, `values`, `get`,
+    listing `tabs`, `scripts` or `menu`, `snapshot`, `probe`, `logs`,
+    `match`, `validate`, `list`, `help`) prints just their answers.
 
 ```sh
 sm-dev start sites/x/y.user.js --detach   # see Detached runs, below
 sm-dev list
 sm-dev menu Bump                          # the command's output
-sm-dev values --run D1                    # when several runs are active
-sm-dev stop                               # or stop --run D1, or stop --all
+sm-dev --run D1 values                    # when several runs are active
+sm-dev attach D1                          # watch it; Ctrl-C leaves it going
+sm-dev stop                               # or stop D1, or stop --all
 ```
 
 `list` prints a table:
@@ -618,33 +669,42 @@ Run  PID    Uptime  Browser         Tabs  Scripts
 D1   81234  2m      127.0.0.1:9233  2     a.user.js, b.user.js, c.user.js, (2 more)
 ```
 
+The run's first line names it, and how to reach it:
+`[sm-dev] Started as run D1. Other shells reach it with sm-dev --run D1
+<command>, or sm-dev attach D1, and stop it with sm-dev stop D1.`
+
 - Runs are named `D1`, `D2`, like tabs (`T1`) and menu commands (`M1`).
-  A number is reused once its run has ended. `start --run Dname`
-  picks a name instead.
+  A number is reused once its run has ended. `sm-dev --run Dname start
+  ...` picks a name instead.
 - Each command prints its output, and returns as soon as it is done:
   - A command that loads a page (`reload`, `open`, `newtab`, `load`)
     is done once the tab's scripts have started and their top-level
     code has run, so that output is in the reply.
   - `menu` and `eval` include what the handler or expression printed
     while it ran.
-- Output a script prints later, from a timer or event, only goes to
-  the run's stream, and its log file (see [The log file](#the-log-file)).
-  `sm-dev logs` shows its console lines.
+- Output a script prints later, from a timer or event, goes to the
+  run's log file (see [The log file](#the-log-file)) and to the
+  clients following the run. `sm-dev logs` shows its console lines.
 - A command that only inspects (`status`, `values`, `snapshot`,
   `logs`, and so on) answers the sender alone. Ones that change
   something (`reload`, `click`, `menu Bump`) also show in the run's
-  stream.
+  log, and to other clients following it.
 - A command exits 0 when the run answered, 1 when an explicit `wait`
   gave up, and 2 when it was typed wrong (`ERROR:`). Otherwise read its
   output for the result.
 - `accept` and `dismiss` answer a page dialog, so a dialog waits for
   an answer even in a headless browser.
-- `stop` ends a run as `quit` does. One that doesn't respond is
-  killed.
-- Prefer `stop` to `--seconds` for a background run, so the run can't
-  expire while you're still testing.
-- Piping a run's output into something that stops reading (`| head`)
-  ends the run.
+- Ending:
+  - `stop` ends a run cleanly. One that doesn't respond is killed.
+  - `exit` (or Ctrl-C) ends sm-dev. A run it started without
+    `--detach` stops with it; a run it only attached to goes on.
+  - Prefer `stop` to `--seconds` for a background run, so the run can't
+    expire while you're still testing.
+  - Piping sm-dev's output into something that stops reading
+    (`| head`) ends sm-dev.
+- Every run stops itself after 30 minutes with no command sent, unless
+  a client is following it. `start --idle-seconds N` changes
+  that, and `--idle-seconds 0` turns it off.
 
 Every run's last line says it has ended. From then on, pages loaded
 don't get the scripts; pages already open keep them until reloaded,
@@ -663,22 +723,24 @@ sm-dev eval 'measure()'
 sm-dev stop
 ```
 
-- It returns once the run would take its first command: the pages
-  have settled (see [Waiting](#waiting)), or it gave up on them. Its
-  output until then is printed, then the lines above.
+- `--detach` changes what happens when sm-dev ends: the run goes on.
+  It also marks the run as detached, for a later `start --detach` to
+  replace (unless `--new`).
+- Alone on the line, it returns once the run would take its first
+  command: the pages have settled (see [Waiting](#waiting)), or it gave
+  up on them. Its output until then is printed, then the lines above.
+- With commands after it (`start x.user.js --detach -- eval 'measure()'`),
+  it sends them, and leaves the run going.
 - It exits with the run's code if the run ends before that (a script
   that doesn't parse, no browser to connect to).
 - Starting one stops any earlier detached run first, and reuses its
   tab. Runs started without `--detach` are left alone.
   - `--new` leaves the earlier ones going, and starts another beside
     them.
-  - `--run Dname` stops only the run named that, if one is going.
-- It stops itself after 30 minutes with no command sent.
-  `--idle-seconds N` changes that, and `--idle-seconds 0` turns it
-  off. `--seconds` still sets a limit from the start.
-- Its output goes only to its log file (see
-  [The log file](#the-log-file)), so output a script prints between
-  commands is only there.
+  - `sm-dev --run Dname start ... --detach` stops only the run named
+    that, if one is going.
+- Its output goes to its log file (see [The log file](#the-log-file)).
+  `sm-dev attach` shows it from then on.
 
 #### The log file
 
@@ -686,18 +748,26 @@ Every run keeps a log of its stream, to tail for what the scripts and
 page print on their own, or to look back at what happened when:
 - It's `/tmp/sm-dev-logs-<user>/sm-dev-<timestamp>.log`, with a
   timestamp starting each line. It's kept after the run ends.
-- Its name is printed as `Output log: ...`: first thing in a foreground
-  run, once a detached one has started, and at the end of a line that
-  started a run for its commands.
+- Its name is printed as `Output log: ...`: once a detached run has
+  started, and when sm-dev stops a run it started (at the end of the
+  line, or on `exit`).
 - `sm-dev-D1.log` beside it links to the latest log of the run named
   `D1`.
-- A detached run's output goes only there. A run in the foreground
-  prints to the terminal as usual, and copies each line to the log.
+- The run's output all goes there. A client following the run shows
+  the same lines, without the timestamps.
 - It's what the page and scripts do, not all the replies:
-  - Commands that change something show where they happened, with
-    their replies. In a detached run, and for those typed at a
-    foreground run's prompt, as `> command`. One sent to a foreground
-    run from another shell shows as `Sent from another shell: ...`.
+  - Commands a client sent that change something show where they
+    happened, with their replies, headed by who sent them and how:
+    `primary:arg > reload`, `remote:stdin > menu Bump`.
+    - Who: `primary` is the sm-dev that started the run, `remote` any
+      other.
+    - How: `arg` from its command line, `stdin` piped in, `prompt`
+      typed at `-i`.
+    - An `eval` block shows as `primary:arg > eval {{`, then `... `
+      before each line of code, then `... }}`.
+  - Clients following the run see other clients' commands headed the
+    same way. Their own go without the who (`arg > reload`), and ones
+    typed at their prompt aren't repeated.
   - Commands that only look (`status`, `snapshot`) and their replies
     are left out.
 
@@ -710,34 +780,37 @@ sm-dev start sites/x/y.user.js https://example.com/ --detach -- eval 'measure()'
 sm-dev start sites/x/y.user.js -- menu Bump -- values
 ```
 
-- Each one's output is headed by the command (`> menu Bump`).
+- Each one's output is headed by the command (`arg > menu Bump`).
 - They stop at the first that fails, as a shell's `&&` would. A
   `match` or `validate` that finds a miss doesn't stop them, and sets
   the exit code only when it comes last.
-- `start` can only come first, so the line holds at most one run of
-  its own, and `start` never picks up a `--run` meant for another
-  command.
-- `--run` carries on to the commands after it, and `start` sets it to
-  the run it started.
+- `--run` goes first, and holds for the whole line. `start` and
+  `attach` switch the line to their run.
+- A `start` while the line works with a run replaces it: in
+  `start a.user.js -- start b.user.js`, b's run replaces a's, under the
+  same ID.
 - Without `--detach`, a run a `start` began for the commands after it
   is stopped once they are done, and the line ends with its log
   file's name.
+- `--` works the same way on a line typed at the prompt or read from
+  stdin, except inside an `eval` block.
 
 #### Commands from stdin
 
 With no command on the line, commands piped in are read from stdin.
-`--stdin` anywhere on a line reads them too, after the line's own:
+`--stdin`, first on a line, reads them too, after the line's own:
 
 ```sh
 sm-dev --run D1 < steps.txt
 printf 'tabs T2\nmenu Bump\nvalues\n' | sm-dev
-sm-dev start sites/x/y.user.js --detach --stdin < steps.txt
+sm-dev --stdin start sites/x/y.user.js --detach < steps.txt
 sm-dev --stdin       # at a terminal: each runs on Enter; Ctrl-D ends
 ```
 
-- Each line is one command, split as the prompt splits a typed line.
+- Each line is one command, split as the prompt splits a typed line;
+  `--` splits it into several.
 - They run in order, each finishing before the next starts. Piped
-  ones' output is headed by the command (`> menu Bump`).
+  ones' output is headed by the command (`stdin > menu Bump`).
 - Blank lines are skipped, `#` starts a comment, and `eval {{ ... }}`
   blocks work as at the prompt.
 - A file, or what a pipe delivers at once, is checked in full first.
@@ -745,24 +818,21 @@ sm-dev --stdin       # at a terminal: each runs on Enter; Ctrl-D ends
   command, a block never closed) runs none of it.
 - Lines that come later, from a terminal or a slow writer, run as
   each is read, and a block on its `}}`.
-- Piped in, a mistake or a command that fails (a `wait` that gives up)
-  stops the rest, as on a line of several. At a terminal it's reported,
-  and you decide.
+- A mistake or a command that fails (a `wait` that gives up) stops the
+  rest, as on a line of several; a `match` or `validate` miss doesn't.
+  To decide for yourself after each, use the `-i` prompt.
 - With no command on the line or in stdin, sm-dev says so, and exits 2.
 - Without `--stdin`, a line with commands never reads stdin, so a
-  caller's open pipe doesn't hold it up. A bare `sm-dev` given a pipe
-  nothing writes to waits on it.
-- Like `--run` and `--help`, `--stdin` is taken from anywhere on the
-  line, even from among an `eval`'s words.
-- This differs from piping into `sm-dev start` without `--stdin`: that
-  run reads stdin at its own prompt, doesn't head the output with the
-  command, and keeps running once the input ends.
-- sm-dev's own commands (`list`, `stop`, `clear`, `help`, and `match`
-  or `validate` given files) run in the shell rather than going to a
-  run.
-- `start` works only as the first command, with none on the line: it
-  starts the run the rest go to. If it fails, the rest aren't run.
-- The exit code is the last command's, or 1 after a mistake.
+  caller's open pipe doesn't hold it up. That includes piping into
+  `sm-dev start`: add `--stdin` first to send it the pipe's commands.
+  A bare `sm-dev` given a pipe nothing writes to waits on it.
+- sm-dev's own commands (`start`, `attach`, `stop`, `exit`, `list`,
+  `clear`, `help`, and `match` or `validate` given files) run in
+  sm-dev rather than going to a run.
+- A `start` read from stdin starts a run the rest go to (or replaces
+  the one sm-dev works with). If it fails, the rest aren't run.
+- The exit code is the last command's, or 2 after a mistake found in
+  the up-front check (1 after one found later).
 - One argument of several lines is a list the same way, checked in
   full: `sm-dev $'tabs T2\nmenu Bump'` (bash's `$'...'` quoting turns
   `\n` into a newline). Several arguments are one command, so
@@ -778,7 +848,7 @@ command (`npm i -g chrome-devtools-mcp`) can reach the run's own tabs
 with `start --devtools`:
 
 ```sh
-sm-dev start sites/x/y.user.js --devtools &
+sm-dev start sites/x/y.user.js --devtools --detach
 # [sm-dev] DevTools: chrome-devtools --sessionId=D1 <tool> <pageId> ...
 # [sm-dev] T1 is DevTools page 3
 chrome-devtools --sessionId=D1 take_snapshot 3
@@ -803,7 +873,7 @@ chrome-devtools --sessionId=D1 evaluate_script "() => document.title" --pageId 3
 - Not with `--launch` or `--extension`, and not on Windows yet.
 
 Things to know:
-- The session id is the run's id, unless `start --run` named it
+- The session id is the run's id, unless `--run` named it
   something that isn't hex (as DevTools requires); then it is a random
   one, printed on the `DevTools:` line.
 - DevTools only sees the run's tabs; your other tabs are hidden from it.
@@ -882,7 +952,7 @@ What `sm-dev` does by hand, a spec does through the fixture:
 
 | `sm-dev` | In a spec |
 | --- | --- |
-| `run <script>` | `loadUserscript(path)` |
+| `start <script>` | `loadUserscript(path)` |
 | `--values '{…}'` | `loadUserscript(path, { values })` |
 | `menu`, `menu <label>` | `gm.menuCommands()`, `gm.fireMenu(label)` |
 | `values`, `get <key>` | `gm.list()`, `gm.get(key)` |

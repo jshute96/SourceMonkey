@@ -1,12 +1,11 @@
 // A run's log file: its stream, each line timestamped, to tail or read
-// back for what happened and when. A detached run writes its output
-// there; one in the foreground copies it there as it prints. Each file
-// is named by its start time and kept after the run ends.
+// back for what happened and when. The run's process writes its output
+// there. Each file is named by its start time and kept after the run
+// ends.
 //
 // Node-only, like runs.ts.
 
 import { randomBytes } from 'node:crypto';
-import { writeSync } from 'node:fs';
 import { mkdir, open, rename, rm, symlink, type FileHandle } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -62,34 +61,6 @@ export async function createRunLog(): Promise<{ file: string; handle: FileHandle
       }
     }
   }
-}
-
-/**
- * A log for a run in the foreground, whose output goes to the terminal:
- * `write` copies a line of it there too, timestamped.
- */
-export async function openRunLog(): Promise<{ file: string; write: (line: string) => void; close: () => Promise<void> }> {
-  const { file, handle } = await createRunLog();
-  let closed = false;
-  return {
-    file,
-    // In order with the terminal, as it prints; a log that fails only
-    // costs the log.
-    write: (line) => {
-      if (closed) return;
-      const stamp = logTimestamp();
-      try {
-        // An empty line unstamped, as a detached run's log has it.
-        writeSync(handle.fd, line.split('\n').map((l) => (l ? `${stamp} ${l}\n` : '\n')).join(''));
-      } catch {
-        closed = true;
-      }
-    },
-    close: async () => {
-      closed = true;
-      await handle.close().catch(() => undefined);
-    },
-  };
 }
 
 /**

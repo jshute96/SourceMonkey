@@ -2,11 +2,10 @@
 // reaches one: `sm-dev list`, `sm-dev stop`, and the commands sent to
 // a run (`sm-dev status`, or piped to `sm-dev`'s stdin).
 //
-// Each run that waits for commands writes a record file and listens on
-// a socket of its own, both named by its id (`D1`). A run in the
-// background, with no terminal to type into, is then still driven the
-// same way as one in the foreground: a line sent over the socket runs
-// as a typed command, and its output comes back.
+// Each run writes a record file and listens on a socket of its own,
+// both named by its id (`D1`). A run has no terminal to type into:
+// every command comes from a client over the socket, runs as a typed
+// command would, and its output comes back (see RunClient).
 //
 // Node-only: no Playwright, so `list`, `stop` and the commands sent to
 // a run work anywhere.
@@ -150,15 +149,43 @@ export async function checkPrivateDir(dir: string, what: string): Promise<string
   return dir;
 }
 
+/** Where a client's command came from: its command line, piped input, or its prompt. */
+export type CommandSource = 'arg' | 'stdin' | 'prompt';
+
+const SOURCES: readonly CommandSource[] = ['arg', 'stdin', 'prompt'];
+
+/** How a command came: the sender's directory and words, and its connection. */
+export interface SentCommand {
+  /** Where the files the command names are. */
+  cwd?: string;
+  /** The words as the sender's shell gave them. */
+  words?: string[];
+  /** Where the sender got it. `prompt`: typed by a person, rather than scripted. */
+  source: CommandSource;
+  /** The sending client's process id, as its hello gave it. */
+  pid?: number;
+  /** The connection gets the run's whole stream already (see `RunClient`). */
+  follows?: boolean;
+}
+
 /**
- * What a run does with a line another shell sent: `reply` receives the
- * output, until the returned promise settles. `hold` keeps the
- * connection open, and `reply` receiving, until the run closes it, as
- * `quit` does so the sender sees the run end.
+ * What a run does with a command a client sent: `reply` receives its
+ * output, until the returned promise settles with its exit code. `hold`
+ * keeps the connection open, and `reply` receiving, until the run
+ * closes it, as `stop` does so the sender sees the run end.
  */
-export type SentLineHandler = (
-  line: string, reply: (line: string) => void, sent?: { cwd?: string; words?: string[] },
-) => Promise<'done' | 'hold'>;
+export type SentLineHandler = (line: string, reply: (line: string) => void, sent: SentCommand) => Promise<number | 'hold'>;
+
+/** A run's handlers for its connections. */
+export interface RunHandlers {
+  command: SentLineHandler;
+  /**
+   * A connection that asked for the run's stream: `reply` receives each
+   * line the run prints from now on, until the returned function is
+   * called.
+   */
+  follow: (reply: (line: string) => void) => () => void;
+}
 
 // How long a sender gets to take the last of the output once the run
 // ends its connection, before the run drops it and exits anyway.
@@ -181,7 +208,7 @@ export class RunControl {
    * that fails; the run goes on without, but can't be reached from
    * another shell.
    */
-  static async open(fields: Omit<RunRecord, 'id'>, handle: SentLineHandler, wanted?: string): Promise<RunControl> {
+  static async open(fields: Omit<RunRecord, 'id'>, handle: RunHandlers, wanted?: string): Promise<RunControl> {
     await ownRunsDir();
     const server = net.createServer();
     const id = wanted === undefined ? await claimId(server) : await claimNamedId(server, wanted);
@@ -227,50 +254,71 @@ export class RunControl {
     clearTimeout(timer);
   }
 
-  // One line per connection: the command, then its output back, then
-  // the end of the connection.
-  private serve(socket: net.Socket, handle: SentLineHandler): void {
+  /**
+   * A client's connection: JSON messages, a line each. The first may be
+   * `{"hello": {"follow": true, "pid": 123}}`: the run's whole stream,
+   * and which client it is. Then commands, `{"line": ..., "cwd": ...,
+   * "words": [...], "source": "arg"}`, each
+   * answered with its output and then a `COMMAND_DONE` line with its
+   * exit code before the next is taken.
+   */
+  private serve(socket: net.Socket, handle: RunHandlers): void {
     this.sockets.add(socket);
-    socket.on('close', () => this.sockets.delete(socket));
-    // A sender that goes away mid-reply is no concern of the run's.
+    // A client that goes away mid-reply is no concern of the run's.
     socket.on('error', () => undefined);
+    const reply = (line: string): void => {
+      if (!socket.destroyed && socket.writable) socket.write(line + '\n');
+    };
+    let unfollow: (() => void) | null = null;
+    socket.on('close', () => {
+      this.sockets.delete(socket);
+      unfollow?.();
+    });
     let buffered = '';
-    let taken = false;
+    // One command at a time, in order; none after one the run holds.
+    let queue: Promise<unknown> = Promise.resolve();
+    let held = false;
+    // The client's, from its hello.
+    let pid: number | undefined;
     socket.setEncoding('utf8');
     socket.on('data', (chunk: string) => {
-      if (taken) return;
       buffered += chunk;
-      const end = buffered.indexOf('\n');
-      if (end < 0) return;
-      taken = true;
-      const reply = (line: string): void => {
-        if (!socket.destroyed) socket.write(line + '\n');
-      };
-      // `{"line": ..., "cwd": ..., "words": [...]}` from `sendLine`: the
-      // sender's directory, for the files the command names, and its own
-      // words. A plain line is taken as it is.
-      const text = buffered.slice(0, end).replace(/\r$/, '');
-      let line = text;
-      let sent: { cwd?: string; words?: string[] } | undefined;
-      try {
-        const message = JSON.parse(text) as { line?: unknown; cwd?: unknown; words?: unknown };
-        if (typeof message.line === 'string') {
-          line = message.line;
-          sent = {
-            cwd: typeof message.cwd === 'string' ? message.cwd : undefined,
-            words: Array.isArray(message.words) && message.words.every((w) => typeof w === 'string') ? message.words as string[] : undefined,
-          };
+      const lines = buffered.split('\n');
+      buffered = lines.pop()!;
+      for (const text of lines) {
+        let message: { hello?: { follow?: unknown; pid?: unknown }; line?: unknown; cwd?: unknown; words?: unknown; source?: unknown };
+        try {
+          message = JSON.parse(text.replace(/\r$/, '')) as typeof message;
+        } catch {
+          // Not a client's message.
+          continue;
         }
-      } catch {
-        // A plain line.
+        if (message.hello) {
+          if (typeof message.hello.pid === 'number') pid = message.hello.pid;
+          if (message.hello.follow === true && !unfollow) unfollow = handle.follow(reply);
+          continue;
+        }
+        if (typeof message.line !== 'string') continue;
+        const line = message.line;
+        const sent: SentCommand = {
+          cwd: typeof message.cwd === 'string' ? message.cwd : undefined,
+          words: Array.isArray(message.words) && message.words.every((w) => typeof w === 'string') ? message.words as string[] : undefined,
+          source: SOURCES.includes(message.source as CommandSource) ? message.source as CommandSource : 'arg',
+          pid,
+          follows: unfollow !== null,
+        };
+        queue = queue.then(async () => {
+          if (held) return;
+          try {
+            const code = await handle.command(line, reply, sent);
+            if (code === 'hold') held = true;
+            else reply(doneLine(code));
+          } catch (err) {
+            reply(`[sm-dev] ${(err as Error).message}`);
+            reply(doneLine(1));
+          }
+        });
       }
-      handle(line, reply, sent).then(
-        (outcome) => { if (outcome === 'done') socket.end(); },
-        (err: Error) => {
-          reply(`[sm-dev] ${err.message}`);
-          socket.end();
-        },
-      );
     });
   }
 }
@@ -412,65 +460,152 @@ export async function liveRuns(): Promise<RunRecord[]> {
 }
 
 /**
- * The start of the line a run sends last when a command failed (see
- * CommandRunner), with the exit code after it, for `sendLine` to report
- * rather than print. Not text a command prints.
+ * The start of the line a run sends after each command's output, with
+ * its exit code after it, for the client to take rather than print.
+ * Starts with a NUL, which no line of output does.
  */
-export const COMMAND_FAILED = '\u0000sm-dev:command-failed';
+export const COMMAND_DONE = '\u0000sm-dev:done';
 
-export function failedLine(code: number): string {
-  return `${COMMAND_FAILED} ${code}`;
+function doneLine(code: number): string {
+  return `${COMMAND_DONE} ${code}`;
 }
 
-/** `sendLine`'s failure when the run has ended. */
+/** A connection's failure when the run has ended, or was never there. */
 export class RunGoneError extends Error {}
 
 /**
- * Sends one command to a run (one line, or an eval block's several),
- * passing each line of its output to `out` as it arrives. Resolves
- * once the run closes the connection, to the command's exit code.
- * `signal` drops the connection, for a sender done waiting.
+ * A client's connection to a run, which it sends its commands over, one
+ * at a time. `follow`: also receive everything the run prints from now
+ * on, between commands too, as a person watching the run would. Output
+ * goes to `out` as it arrives, in the order the run printed it.
  */
-export function sendLine(id: string, line: string, out: (line: string) => void, signal?: AbortSignal, words?: string[]): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const socket = net.connect(socketPath(id));
-    signal?.addEventListener('abort', () => {
-      socket.destroy();
-      reject(new Error(`Stopped waiting on run ${id}`));
-    }, { once: true });
-    let connected = false;
-    let buffered = '';
-    let code = 0;
-    const take = (l: string): void => {
-      if (l.startsWith(COMMAND_FAILED)) code = Number(l.slice(COMMAND_FAILED.length).trim()) || 1;
-      else out(l);
-    };
-    socket.setEncoding('utf8');
-    socket.on('connect', () => {
-      connected = true;
-      // With this shell's directory, for the files it names, and the
-      // words as the shell gave them.
-      socket.write(JSON.stringify({ line, cwd: process.cwd(), words }) + '\n');
-    });
+export class RunClient {
+  private buffered = '';
+  private pending: { resolve: (code: number) => void; line: string } | null = null;
+  private closedBy: 'client' | 'run' | null = null;
+  /** Settles once the connection has closed, from either end. */
+  readonly ended: Promise<void>;
+  private end!: () => void;
+
+  private constructor(
+    readonly id: string,
+    private readonly socket: net.Socket,
+    private readonly out: (line: string) => void,
+  ) {
+    this.ended = new Promise((resolve) => { this.end = resolve; });
     socket.on('data', (chunk: string) => {
-      buffered += chunk;
-      const lines = buffered.split('\n');
-      buffered = lines.pop()!;
-      for (const l of lines) take(l);
+      this.buffered += chunk;
+      const lines = this.buffered.split('\n');
+      this.buffered = lines.pop()!;
+      for (const l of lines) this.take(l);
     });
-    socket.on('end', () => {
-      if (buffered) take(buffered);
-      resolve(code);
+    socket.on('close', () => {
+      if (this.buffered) this.take(this.buffered);
+      this.buffered = '';
+      this.closedBy ??= 'run';
+      // A command the run closed on (stop) is done; any other was cut
+      // off by the run ending.
+      const pending = this.pending;
+      this.pending = null;
+      if (pending) {
+        const stopping = /^\s*stop\s*$/.test(pending.line);
+        // Only when the run went; not when this end let go (Ctrl-C).
+        if (!stopping && this.closedBy === 'run') this.out(`[sm-dev] Run ${this.id} ended before the command was done`);
+        pending.resolve(stopping ? 0 : 1);
+      }
+      this.end();
     });
-    socket.on('error', (err) => {
-      if (connected) reject(new Error(`The connection to run ${id} was lost`));
-      else if (goneCode(err)) reject(new RunGoneError(`Run ${id} has ended`));
-      else reject(new Error(`Run ${id} could not be reached: ${err.message}`));
+  }
+
+  static open(id: string, out: (line: string) => void, { follow = false } = {}): Promise<RunClient> {
+    return new Promise((resolve, reject) => {
+      const socket = net.connect(socketPath(id));
+      socket.setEncoding('utf8');
+      const early = (err: NodeJS.ErrnoException): void => {
+        reject(goneCode(err) ? new RunGoneError(`Run ${id} has ended`) : new Error(`Run ${id} could not be reached: ${err.message}`));
+      };
+      socket.once('error', early);
+      socket.once('connect', () => {
+        socket.off('error', early);
+        // Lost later, it is said when a command was waiting on it.
+        socket.on('error', () => undefined);
+        // Which client this is, for the run to name where its commands came from.
+        socket.write(JSON.stringify({ hello: { follow, pid: process.pid } }) + '\n');
+        resolve(new RunClient(id, socket, out));
+      });
     });
-  });
+  }
+
+  /** Whether the connection is still open. */
+  get open(): boolean {
+    return this.closedBy === null;
+  }
+
+  /**
+   * Sends one command (one line, or an eval block's several), and
+   * resolves to its exit code once it is done. `words`: the sender's own,
+   * as its shell gave them.
+   */
+  send(line: string, { words, source = 'arg' }: { words?: string[]; source?: CommandSource } = {}): Promise<number> {
+    if (!this.open) {
+      this.out(`[sm-dev] Run ${this.id} has ended`);
+      return Promise.resolve(1);
+    }
+    return new Promise((resolve) => {
+      this.pending = { resolve, line };
+      this.socket.write(JSON.stringify({ line, cwd: process.cwd(), words, source }) + '\n');
+    });
+  }
+
+  /**
+   * Closes the connection; the run goes on. `force`: at once, not
+   * waiting for the run to take the last of it, for a client done
+   * waiting. A run that doesn't answer is let go after a moment anyway.
+   */
+  close({ force = false } = {}): Promise<void> {
+    if (this.closedBy === null) this.closedBy = 'client';
+    if (force) {
+      this.socket.destroy();
+      return this.ended;
+    }
+    this.socket.end();
+    const timer = setTimeout(() => this.socket.destroy(), CLOSE_WAIT_MS);
+    return this.ended.finally(() => clearTimeout(timer));
+  }
+
+  private take(line: string): void {
+    if (!line.startsWith(COMMAND_DONE)) {
+      this.out(line);
+      return;
+    }
+    const pending = this.pending;
+    this.pending = null;
+    pending?.resolve(Number(line.slice(COMMAND_DONE.length).trim()) || 0);
+  }
 }
 
-// How long a run gets to answer `stop` (its `quit`), and once it has,
+/**
+ * Sends one command to a run over a connection of its own, passing each
+ * line of its output to `out` as it arrives, and resolves to its exit
+ * code. `signal` drops the connection, for a sender done waiting.
+ */
+export async function sendLine(id: string, line: string, out: (line: string) => void, signal?: AbortSignal, words?: string[]): Promise<number> {
+  const client = await RunClient.open(id, out);
+  const abort = (): void => { void client.close({ force: true }); };
+  signal?.addEventListener('abort', abort, { once: true });
+  try {
+    const code = await Promise.race([
+      client.send(line, { words }),
+      new Promise<never>((_, reject) => signal?.addEventListener('abort', () => reject(new Error(`Stopped waiting on run ${id}`)), { once: true })),
+    ]);
+    await client.close();
+    return code;
+  } finally {
+    signal?.removeEventListener('abort', abort);
+  }
+}
+
+// How long a run gets to answer `stop`, and once it has,
 // how long to finish ending (a tab stopped on a dialog takes a while to
 // let go). Past either, it is sent SIGTERM, and given the first again
 // to go.
@@ -478,7 +613,7 @@ const STOP_WAIT_MS = 15_000;
 const TEARDOWN_WAIT_MS = 60_000;
 
 /**
- * Ends a run as its `quit` would, passing on what it prints as it ends.
+ * Ends a run as its `stop` would, passing on what it prints as it ends.
  * One that doesn't answer, or doesn't finish ending in time, is sent
  * SIGTERM: it ends one that never got the `stop` as Ctrl-C would, and
  * kills one stuck ending. A run found to have ended already is never

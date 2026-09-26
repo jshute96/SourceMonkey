@@ -27,11 +27,11 @@ import { fileURLToPath } from 'node:url';
 
 import { CommandAssembler, NONE_RUN, echoCommand, parseCommandList, shellWord, unclosedBlockMessage, type AssembledCommand } from './command-lines.js';
 import {
-  CONSOLE_HELP, commandFlagMistake, commandWords, consoleCommandsHelp, helpEntries, inCommand, onlyInspects, writeOutputLine,
+  CONSOLE_HELP, commandFlagMistake, commandWords, consoleCommandsHelp, helpEntries, onlyInspects, readPromptCommands, writeOutputLine,
 } from './console-commands.js';
 import { devtoolsWanted } from './devtools.js';
 // Node built-ins only, so as cheap to load as the rest here.
-import { runIdOf, type RunRecord } from './runs.js';
+import { runIdOf, type CommandSource, type RunClient, type RunRecord } from './runs.js';
 import { withDefaultScheme } from './prepare.js';
 import {
   REMOTE_SCRIPT, SCRIPT_ARG, UsageError, matchLines, prepareSource, scriptFile, scriptSources, validateLines, validateSources, validateSummary,
@@ -42,16 +42,24 @@ import {
 const INTRO = `sm-dev: develop and test userscripts against a real browser,
 with SourceMonkey's script injection and GM_* APIs behind them.
 
-Usage: sm-dev <command> [options]`;
+Usage: sm-dev [line options] <command> [options] [-- <command> ...]`;
 
 // Each command's entry, as the full help lists them and `help <command>`
 // picks them out: a line starting with the name, and indented lines
 // carrying on its description.
 const COMMAND_LINES = [
-  'start <script>... [url]...  Inject the scripts into each URL, one tab',
-  '                            each, and stream what they do (default URL:',
-  '                            the first page the first script\'s @match',
-  '                            implies)',
+  'start <script>... [url]...  Start a run: a process of its own that injects',
+  '                            the scripts into each URL, one tab each',
+  '                            (default URL: the first page the first',
+  '                            script\'s @match implies), and connect to it',
+  'attach [ID]                 Connect to a run that is going, and show what',
+  '                            it prints from now on (default: --run\'s, or',
+  '                            the only one)',
+  'stop [ID] [--all]           Stop the run (the one connected, or ID), or',
+  '                            every run',
+  'exit                        End this sm-dev. Runs it started without',
+  '                            --detach stop with it; ones it attached to',
+  '                            go on',
   'validate <path>...          Check script validity (header, @require,',
   '                            syntax) over files, directories or script',
   '                            URLs. In a run, also its loaded scripts',
@@ -67,9 +75,7 @@ const COMMAND_LINES = [
   '<command>                   Any command a run takes (listed below),',
   '                            sent to the run: sm-dev eval document.title.',
   '                            One argument of several lines is several',
-  '                            commands, one per line. Or pipe them in',
-  '                            (see --stdin)',
-  'stop [--all]                End the run, or all runs',
+  '                            commands, one per line',
   'help [command]...           List these, or one command\'s help and',
   '                            options (a run\'s typed commands too)',
 ];
@@ -79,13 +85,23 @@ const COMMAND_LINES = [
 // or widens that for one flag.
 const OPTION_GROUPS: { title: string; commands: string[]; lines: string[]; only?: Record<string, string[]> }[] = [
   {
-    title: 'Options for the whole line (used by start, validate, match)',
-    commands: ['start', 'validate', 'match'],
+    title: 'Options for the whole line, which go first, before any command',
+    // Not listed under each command's own options: they go before it.
+    commands: [],
     lines: [
+      '--run ID        The run to work with. Needed only when several are',
+      '                active. For start: the ID for the new run, which',
+      '                stops a run that has it first',
       '--root DIR      The repo root, searched for local copies of @require',
       '                URLs (default: the current directory). A run keeps',
       '                the ones it started with',
       '--local DIR     Another directory to search; repeatable',
+      '--stdin         Once the line\'s commands are done, read more from',
+      '                stdin, one per line. The default when no command is',
+      '                given and stdin is not a terminal',
+      '--interactive   Once the line\'s commands are done, show a prompt to',
+      '                type more at (-i for short). With no command, a',
+      '                prompt with no run yet: type start or attach there',
     ],
   },
   {
@@ -96,20 +112,6 @@ const OPTION_GROUPS: { title: string; commands: string[]; lines: string[]; only?
       '                port on this machine (default: $SM_DEV_CDP or 9233)',
       '--launch        Launch a Chromium instead of connecting to one',
       '--headed        With --launch: show the browser',
-    ],
-  },
-  {
-    title: 'Options for the commands that act on a run (its commands, stop, start)',
-    commands: ['stop', 'start'],
-    only: { '--stdin': ['start'] },
-    lines: [
-      '--run ID        The run to act on. Needed only when several are active.',
-      '                With start: the ID for the new run, which stops a run',
-      '                that has it first',
-      '--stdin         Anywhere on the line: once its commands are done, read',
-      '                more from stdin, one per line, and send them to the run.',
-      '                The default when no command is given and stdin is not',
-      '                a terminal',
     ],
   },
   {
@@ -125,19 +127,20 @@ const OPTION_GROUPS: { title: string; commands: string[]; lines: string[]; only?
       '--watch         Re-inject and reload when a script or its files change',
       '--values JSON   Seed GM_* storage before the script runs, e.g.',
       '                --values \'{"units":"metric"}\'',
-      '--seconds N     Stop after N seconds instead of waiting for Ctrl-C,',
-      '                quit or sm-dev stop',
-      '--detach        Return once the pages have settled (see wait),',
-      '                printing their output so far, and leave the',
-      '                run going in the background. It replaces any earlier',
-      '                detached run, unless --run names one',
+      '--seconds N     The run stops after N seconds. On its own, sm-dev',
+      '                shows what it prints until then',
+      '--detach        Leave the run going when this sm-dev ends. Alone,',
+      '                return once the pages have settled (see wait),',
+      '                printing their output so far. It replaces any',
+      '                earlier detached run, unless --run names one',
       '--new           With --detach: leave earlier detached runs going, and',
       '                start another beside them',
       '--nowait        Don\'t wait for the pages to settle before continuing',
       '                (it still waits for the scripts to start)',
       '--idle-seconds N',
-      '                With --detach: stop after N seconds with no command',
-      '                sent (default: 1800; 0 never stops)',
+      '                Stop the run after N seconds with no command sent',
+      '                and no client following it (default: 1800; 0',
+      '                never stops)',
       '--page-errors   Also show the page\'s own errors, not just the script\'s',
       '--extension     Push the script into the SourceMonkey extension in',
       '                that browser instead of injecting it; reports then',
@@ -158,20 +161,17 @@ const OPTION_GROUPS: { title: string; commands: string[]; lines: string[]; only?
 const COMMAND_DETAILS: Record<string, { about: string[]; args: string[] }> = {
   start: {
     about: [
-      'Starts a run that lasts as long as this command. It keeps a connection to',
-      'the browser, injects the scripts into each page it opens, and streams their',
-      'console lines, reports and GM_* calls back here.',
+      'Starts a run: a process of its own that keeps a connection to the browser,',
+      'injects the scripts into each page it opens, and logs their console lines,',
+      'reports and GM_* calls. This sm-dev connects to it, and shows what it prints',
+      'while there are commands to run: the ones after it on the line (after --),',
+      'from stdin with --stdin, or typed at the prompt with -i.',
       '',
-      'It is also an interactive shell: type commands at its prompt to act on the',
-      'pages and scripts. Other shells reach it by giving sm-dev those commands',
-      'directly (sm-dev status), with --run and its ID when several runs are active.',
+      'Without --detach, the run is stopped once this sm-dev ends. With --detach it',
+      'goes on, and other shells reach it with sm-dev <command>, or sm-dev attach.',
       '',
-      'With --detach, it returns once the pages have settled (loaded, scripts',
-      'started, no requests or DOM changes; see sm-dev help wait), and the run',
-      'goes on in the background.',
-      '',
-      'Commands after it on the line (after --), and from stdin with --stdin, go',
-      'to the run. Without --detach, the run is stopped once they are done.',
+      'On its own, start needs one of those, or --seconds N to show what the run',
+      'prints until it stops.',
     ],
     args: [
       '<script>...     The userscripts to inject: the arguments ending in .user.js.',
@@ -200,13 +200,13 @@ http://, and a path becomes a file:// URL.`;
 // Notes after the options, and the commands each concerns.
 const SHELL_NOTE = {
   commands: ['start'],
-  text: `While start streams, it also acts as an interactive shell, with the commands
-below. Other shells give sm-dev the same commands directly to reach it.`,
+  text: `sm-dev works with one run at a time: --run's, or the one it started or
+attached to, else the only one going. The commands below go to it, from the
+command line, stdin, or the prompt (-i).`,
 };
 
 const SEQUENCE_NOTE = `Several commands can go on one line, separated by --. They run in order,
-stopping at the first that fails. start can only come first. --run carries on
-to the commands after it, and start sets it to the run it starts:
+stopping at the first that fails:
   sm-dev start a.user.js example.com --detach -- eval document.title -- key x`;
 
 const indent = (lines: string[]): string => lines.map((line) => (line ? `  ${line}` : '')).join('\n');
@@ -291,6 +291,7 @@ function cliCommandHelp(name: string): string {
     lines.push(indent(entry));
   }
   if (options.length) lines.push('', 'Options:', indent(options));
+  lines.push('', 'The options for the whole line (--run, --root, --local, --stdin, -i) go', 'first, before any command; see sm-dev --help.');
   // The commands a run takes, typed or sent, have help of their own.
   if (name === 'start') {
     lines.push('', 'Type sm-dev help <command> for a run\'s commands (sm-dev help status), or', 'help at its prompt.');
@@ -342,7 +343,11 @@ function parseArgs(argv: string[]): Opts {
     switch (arg) {
       case '--root':
       case '--local':
-        throw new UsageError(`The ${arg} flag applies to the whole line, so it goes on the sm-dev command line`);
+      case '--run':
+      case '--stdin':
+      case '--interactive':
+      case '-i':
+        throw new UsageError(globalFlagMistake(arg));
       case '--all': opts.all = true; break;
       case '--noscript': opts.noScript = true; break;
       case '--notab': opts.noTab = true; break;
@@ -384,6 +389,7 @@ function parseArgs(argv: string[]): Opts {
         break;
       }
       default:
+        if (arg.startsWith('--run=')) throw new UsageError(globalFlagMistake('--run'));
         if (arg.startsWith('-')) throw new UsageError(`Unknown option: ${arg}`);
         if (opts.command === null) opts.command = arg;
         else opts.args.push(arg);
@@ -443,39 +449,39 @@ async function match(opts: Opts): Promise<number> {
 }
 
 /**
- * `start`. With `--detach`, or other commands after it on the line, the
- * run goes on in a background process (`detachRun`), and the commands
- * after it go to that run; otherwise it runs here, as an interactive
- * shell. `words` are the command's own, for that process.
+ * `start`: a run in a background process of its own, which it connects
+ * to (see Client). It replaces the run the client works with, under the
+ * same id; else, with `--detach`, the earlier detached runs, unless
+ * `--new`. `words` are the command's own, for that process.
  */
-async function startCommand(opts: Opts, words: string[], seq: Sequence, more: boolean): Promise<number> {
+async function startCommand(opts: Opts, words: string[], client: Client): Promise<number> {
   const { urls, files, devtools } = await checkStart(opts);
   // The background process: the run itself.
-  if (detachedLog) return runHere(opts, files, urls, devtools, seq.run);
+  if (detachedLog) return runHere(opts, files, urls, devtools, client.runId);
   const { liveRuns, stopRun } = await import('./runs.js');
   const live = await liveRuns();
-  // `--run`: the one run it replaces. Otherwise `--detach` replaces the
-  // earlier detached runs, unless `--new`. Stopped first, which also
-  // frees a tab for this one to reuse.
-  const replaced = seq.run !== undefined ? live.filter((r) => r.id === seq.run)
+  // Stopped first, which also frees a tab for this one to reuse. The
+  // new one takes the id of the one it replaces.
+  const id = client.runId;
+  const replaced = id !== undefined ? live.filter((r) => r.id === id)
     : opts.detach && !opts.newRun ? live.filter((r) => r.detached) : [];
+  await client.disconnect();
   for (const old of replaced) {
-    // Named by --run, stopRun's own line says enough.
-    if (seq.run === undefined) print(`[sm-dev] Stopping the earlier detached run ${old.id}`);
+    // Named, stopRun's own line says enough.
+    if (id === undefined) print(`[sm-dev] Stopping the earlier detached run ${old.id}`);
     await stopRun(old, print);
+    client.stopped(old.id);
   }
-  if (!opts.detach && !more) return runHere(opts, files, urls, devtools, seq.run);
-  const started = await detachRun(words.filter((w) => w !== '--detach'), seq.run);
+  const started = await detachRun(words, id);
   if (!started.id) return started.code;
-  seq.run = started.id;
-  seq.own = true;
+  client.started(started.id, started.log, started.exited, { detached: opts.detach, lasting: opts.seconds !== undefined, hold: started.hold });
   if (opts.detach) {
     const idle = opts.idleSeconds ?? DEFAULT_IDLE_SECONDS;
     print(`[sm-dev] Run ${started.id} now running detached, with ${idle > 0 ? `idle timeout ${duration(idle)}` : 'no idle timeout'}`);
     print(`[sm-dev] Output log: ${started.log}`);
-  } else {
-    seq.started = { id: started.id, log: started.log };
   }
+  // Following its stream from here, when the line does more than look.
+  if (client.follow) await client.connect();
   return 0;
 }
 
@@ -504,38 +510,19 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
   // Asked for by name, it must be able to run; on by default from the
   // environment, it just sits out the runs it can't serve.
   if (opts.devtools === true) clash('--devtools', [[opts.launch, '--launch'], [opts.extension, '--extension']]);
-  if (!opts.detach && !detachedLog) {
-    if (opts.idleSeconds !== undefined) throw new UsageError('The --idle-seconds flag only applies with --detach');
-    if (opts.newRun) throw new UsageError('The --new flag only applies with --detach');
-  }
+  if (!opts.detach && !detachedLog && opts.newRun) throw new UsageError('The --new flag only applies with --detach');
   const devtools = devtoolsWanted(opts.devtools) && !opts.launch && !opts.extension;
   const files = await Promise.all(scripts.map((s) => scriptFile(s)));
   return { urls, files, devtools };
 }
 
-// The run, in this process: until Ctrl-C, `quit`, `sm-dev stop` or
-// `--seconds`, or for a background process, its idle timeout.
+// The run, in the background process `start` began: until a client
+// sends `stop`, a signal, `--seconds`, or its idle timeout.
 async function runHere(opts: Opts, files: string[], urls: string[], devtools: boolean, runId: string | undefined): Promise<number> {
-  // A background run has no input: commands come from other shells.
-  if (detachedLog) process.stdin.destroy();
+  // The run has no input: commands come from its clients.
+  process.stdin.destroy();
   const { run } = await import('./run.js');
-  // In the foreground, the run's stream is copied to a log too (a
-  // background run's output is its log already): what the page and
-  // scripts do, and the commands typed at the prompt that change
-  // something, with their replies. Not a command that only looks, as a
-  // background run leaves those out too.
-  const { openRunLog } = await import('./run-log.js');
-  const log = detachedLog ? null : await openRunLog().catch((err: Error) => {
-    writeOutputLine(`[sm-dev] The run's output is not being logged: ${err.message}`);
-    return null;
-  });
-  const out = log ? (line: string): void => {
-    writeOutputLine(line);
-    if (!inCommand.getStore()?.inspects) log.write(line);
-  } : writeOutputLine;
-  if (log) out(`[sm-dev] Output log: ${log.file}`);
-  // Ends on Ctrl-C, or after --seconds. With neither, the run streams
-  // until interrupted, which suits a person watching it. The timer is
+  // Ends on stop, a signal, or after --seconds. The timer is
   // unreferenced so it can't hold the process open after an early
   // exit, and the listener comes off once the run has ended.
   let onSigint: (() => void) | null = null;
@@ -543,9 +530,7 @@ async function runHere(opts: Opts, files: string[], urls: string[], devtools: bo
   let stop: () => void = () => undefined;
   const until = new Promise<void>((resolve) => {
     // Also drops the signal handlers, so while a stopped run tears
-    // down, a Ctrl-C kills it rather than landing here again. That matters
-    // when a typed-command prompt did the stopping: its Ctrl-C (or
-    // quit) never reached this handler.
+    // down, a second signal kills it rather than landing here again.
     stop = () => {
       if (onSigint) {
         process.off('SIGINT', onSigint);
@@ -554,25 +539,30 @@ async function runHere(opts: Opts, files: string[], urls: string[], devtools: bo
       resolve();
     };
     // SIGTERM too, so a plain kill (or sm-dev stop, for a run it
-    // can't reach) still ends the run cleanly. Either one drops both
-    // handlers, as `quit` does, so a second signal while the run tears
-    // down kills it outright. Set once the run has connected: before
-    // that there is nothing to clean up, and a signal ends it at once,
-    // as it would any command (a wait for a stuck tab, say).
+    // can't reach) still ends the run cleanly. Set once the run has
+    // connected: before that there is nothing to clean up, and a
+    // signal ends it at once, as it would any command (a wait for a
+    // stuck tab, say).
     onSigint = () => stop();
     onOutputClosed = stop;
     if (opts.seconds !== undefined) timer = setTimeout(resolve, opts.seconds * 1000).unref();
   });
-  // A detached run ends itself once nothing has been sent it for a
-  // while, so one an agent forgot doesn't hold the browser for good.
-  // Counted from the start, and restarted as each command starts and
-  // ends, so a slow command isn't cut off.
-  const idleSeconds = detachedLog ? opts.idleSeconds ?? DEFAULT_IDLE_SECONDS : 0;
+  // The run ends itself once nothing has been sent it for a while, so
+  // one a client forgot (or a client that was killed) doesn't hold the
+  // browser for good. Counted from the start, and restarted as each
+  // command starts and ends; held off while a client follows the run.
+  const idleSeconds = opts.idleSeconds ?? DEFAULT_IDLE_SECONDS;
   let idleTimer: NodeJS.Timeout | null = null;
-  const touch = (): void => {
+  let watched = false;
+  const touch = (following = watched): void => {
+    watched = following;
     if (idleSeconds <= 0) return;
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
+      if (watched) {
+        touch();
+        return;
+      }
       writeOutputLine(`[sm-dev] Stopping: no command was sent for ${duration(idleSeconds)}`);
       stop();
     }, idleSeconds * 1000).unref();
@@ -595,38 +585,30 @@ async function runHere(opts: Opts, files: string[], urls: string[], devtools: bo
       devtools,
       collectionRoot: lineRoots.collectionRoot,
       localRoots: lineRoots.localRoots,
-      // Drawn around the typed-command prompt, when one is showing.
-      out,
-      logCommand: log ? (text, echoed) => {
-        if (!onlyInspects(text)) log.write(echoed.join('\n'));
-      } : undefined,
+      out: writeOutputLine,
       until,
       onStop: () => stop(),
       onActivity: touch,
-      detached: detachedLog !== null,
-      log: detachedLog ?? log?.file,
+      detached: opts.detach,
+      log: detachedLog ?? undefined,
       runId,
+      primaryPid,
       noWait: opts.noWait,
-      // Tells the command that started it, which then returns.
-      // One that has gone (killed by a timeout, say) leaves the run going
-      // unannounced, rather than crashing it on the closed channel.
-      onReady: detachedLog ? (id) => {
+      // Tells the client that started it, which then goes on. One that
+      // has gone (killed, say) leaves the run going unannounced, rather
+      // than crashing it on the closed channel.
+      onReady: (id) => {
         if (!process.connected) return;
         process.send?.({ ready: id ?? null }, (err: Error | null) => {
           if (!err && process.connected) process.disconnect();
         });
-      } : undefined,
+      },
       onConnected: () => {
         process.once('SIGINT', onSigint!);
         process.once('SIGTERM', onSigint!);
       },
     });
-  } catch (err) {
-    // Said by the caller too, but only to the terminal.
-    log?.write(`[sm-dev] ${(err as Error).message}`);
-    throw err;
   } finally {
-    await log?.close();
     if (timer) clearTimeout(timer);
     if (idleTimer) clearTimeout(idleTimer);
     if (onSigint) {
@@ -643,6 +625,8 @@ const DEFAULT_IDLE_SECONDS = 1800;
 // starts takes itself for a detached run too.
 const detachedLog = process.env.SM_DEV_DETACHED_LOG || null;
 delete process.env.SM_DEV_DETACHED_LOG;
+const primaryPid = Number(process.env.SM_DEV_PRIMARY_PID) || undefined;
+delete process.env.SM_DEV_PRIMARY_PID;
 if (detachedLog) {
   const { timestampOutputLines } = await import('./run-log.js');
   timestampOutputLines();
@@ -661,27 +645,39 @@ function duration(seconds: number): string {
  * Its id, or none when it ended first (with its exit code) or can't be
  * reached.
  */
-async function detachRun(words: string[], runId: string | undefined): Promise<{ code: number; id?: string; log: string }> {
+async function detachRun(words: string[], runId: string | undefined): Promise<{ code: number; id?: string; log: string; exited: Promise<number>; hold?: () => void }> {
   const { createRunLog, LOG_LINE_PREFIX } = await import('./run-log.js');
   const { spawn } = await import('node:child_process');
   const { open } = await import('node:fs/promises');
   const { file: log, handle: writing } = await createRunLog();
   const reading = await open(log, 'r');
-  const child = spawn(process.execPath, [...process.execArgv, fileURLToPath(import.meta.url), ...words, ...rootWords(), ...(runId ? ['--run', runId] : [])], {
+  const child = spawn(process.execPath, [...process.execArgv, fileURLToPath(import.meta.url), ...globalWords(runId), ...words], {
     // Its own process group, so a Ctrl-C or closed terminal here
     // doesn't reach it once it is detached. No console window of its
     // own on Windows.
     detached: true,
     windowsHide: true,
     stdio: ['ignore', writing.fd, writing.fd, 'ipc'],
-    env: { ...process.env, SM_DEV_DETACHED_LOG: log },
+    // This process, as the client that started the run, whose commands
+    // it marks as the primary's.
+    env: { ...process.env, SM_DEV_DETACHED_LOG: log, SM_DEV_PRIMARY_PID: String(process.pid) },
   });
   await writing.close();
   let ready: { id: string | null } | null = null;
   let exitCode: number | null = null;
   child.on('message', (m: { ready?: string | null }) => { if (m && 'ready' in m) ready = { id: m.ready ?? null }; });
-  child.on('exit', (code) => { exitCode = code ?? 1; });
-  child.on('error', () => { exitCode ??= 1; });
+  // Its exit code, for a client that waits for it to end (--seconds),
+  // which keeps this process alive meanwhile.
+  const exited = new Promise<number>((resolve) => {
+    child.on('exit', (code) => {
+      exitCode = code ?? 1;
+      resolve(exitCode);
+    });
+    child.on('error', () => {
+      exitCode ??= 1;
+      resolve(exitCode);
+    });
+  });
   // A Ctrl-C (or kill, or closed terminal) while it starts ends the
   // run, as it would a foreground one. A run ended that way can exit 0
   // having torn down cleanly, so that is kept apart from a success.
@@ -718,20 +714,23 @@ async function detachRun(words: string[], runId: string | undefined): Promise<{ 
     // Written before it said so.
     await passOn(true);
   } finally {
-    for (const signal of STOP_SIGNALS) process.off(signal, interrupt);
+    // Closed first: the handlers come off only with nothing left to
+    // await, so no signal lands between them and the caller taking the
+    // run on as its own.
     await reading.close();
+    for (const signal of STOP_SIGNALS) process.off(signal, interrupt);
   }
-  if (interrupted && ready === null) return { code: 130, log };
+  if (interrupted && ready === null) return { code: 130, log, exited };
   // Ended before it was ready, with nothing wrong: `--seconds 0`, say.
-  if (ready === null) return { code: exitCode || 1, log };
+  if (ready === null) return { code: exitCode || 1, log, exited };
   const { id } = ready as { id: string | null };
   if (id === null) {
     // It printed why; unreachable, it could only be killed.
     child.kill('SIGTERM');
-    return { code: 1, log };
+    return { code: 1, log, exited };
   }
   child.unref();
-  return { code: 0, id, log };
+  return { code: 0, id, log, exited, hold: () => child.ref() };
 }
 
 function checkClear(opts: Opts): void {
@@ -769,8 +768,9 @@ const NO_RUNS = 'No sm-dev runs are active';
 // stop, so it still tears down (and says so to any `sm-dev stop`).
 let onOutputClosed = (): void => process.exit(process.exitCode ?? 0);
 
+// Drawn around the prompt, when one is showing.
 function print(line: string): void {
-  process.stdout.write(line + '\n');
+  writeOutputLine(line);
 }
 
 function checkList(opts: Opts): void {
@@ -787,24 +787,148 @@ async function listCommand(opts: Opts): Promise<number> {
 }
 
 /**
- * A line's state across its commands. `--run` carries over to the
- * commands after it, and `start` sets it to the run it starts.
+ * The sm-dev process as a client of runs. It works with one run at a
+ * time, and connects to it once a command needs it: the run `--run`
+ * names, else the one it started or attached to, else the only one
+ * going. `start` connects to the run it starts, in place of the one it
+ * had (which, under the same id, it replaces); `attach` switches; `stop`
+ * leaves it with none. A run it started without `--detach` is stopped
+ * when it exits.
  */
-interface Sequence {
-  run?: string;
-  /** Whether a `start` of this line began the run, which takes its `--root` and `--local`. */
-  own?: boolean;
+class Client {
+  /** The run it works with, once there is one. */
+  runId: string | undefined;
+  /** Whether it started the run it works with, which then has the line's `--root` and `--local`. */
+  own = false;
+  /** Set by `exit`: the commands after it aren't run. */
+  exiting = false;
+  private connection: RunClient | null = null;
+  /** Runs it started without `--detach`, with their logs and exit codes. */
+  private readonly owned = new Map<string, { log: string; exited: Promise<number>; hold?: () => void }>();
+  /** Set by a `start` with `--seconds`, whose run ends on its own. */
+  private lasting: string | undefined;
+
   /**
-   * A run `start` began, without `--detach`, for the commands after it
-   * on the line: stopped once they are done.
+   * `follow`: connect for the run's whole stream, as decided for the
+   * line up front.
    */
-  started?: { id: string; log: string };
+  constructor(runId: string | undefined, readonly follow: boolean) {
+    this.runId = runId;
+  }
+
+  /**
+   * The connection to its run, made now if need be: `wanted`'s, else the
+   * one it works with, else the only one going. Works with it from then
+   * on; one that can't be reached leaves the client as it was.
+   */
+  async connect(wanted = this.runId): Promise<RunClient> {
+    if (this.finishing) throw new Error('This sm-dev is exiting');
+    if (this.connection?.open && this.connection.id === (wanted ?? this.connection.id)) return this.connection;
+    const target = await targetRun(wanted);
+    const { RunClient } = await import('./runs.js');
+    const connection = await RunClient.open(target.id, print, { follow: this.follow });
+    await this.disconnect();
+    this.connection = connection;
+    this.runId = target.id;
+    return connection;
+  }
+
+  /** Waits for its run to end on its own (or be stopped from elsewhere). */
+  async watch(): Promise<void> {
+    await this.connection?.ended;
+  }
+
+  /** Sends one of a run's commands, from `source`; its exit code. */
+  async send(text: string, source: CommandSource, words?: string[]): Promise<number> {
+    if (rootsGiven && !this.own) throw new UsageError(ROOTS_ARE_THE_RUNS);
+    const connection = await this.connect();
+    return connection.send(text, { words, source });
+  }
+
+  /** Drops the connection, leaving the run going. */
+  async disconnect(): Promise<void> {
+    const connection = this.connection;
+    this.connection = null;
+    await connection?.close();
+  }
+
+  /** The run it works with, when it is connected to one. */
+  get connected(): string | undefined {
+    return this.connection?.open ? this.connection.id : undefined;
+  }
+
+  /** A run it just started: stopped on exit unless `detached`. */
+  started(id: string, log: string, exited: Promise<number>, { detached, lasting, hold }: { detached: boolean; lasting: boolean; hold?: () => void }): void {
+    this.runId = id;
+    this.own = true;
+    if (!detached) this.owned.set(id, { log, exited, hold });
+    this.lasting = lasting && !detached ? id : undefined;
+  }
+
+  /**
+   * A run that has been stopped, and so is no longer one to work with.
+   * Its log, when this started it.
+   */
+  stopped(id: string): string | undefined {
+    const log = this.owned.get(id)?.log;
+    this.owned.delete(id);
+    if (this.lasting === id) this.lasting = undefined;
+    if (this.runId === id) {
+      this.runId = undefined;
+      this.own = false;
+    }
+    return log;
+  }
+
+  /**
+   * Waits for a run started with `--seconds` to end on its own, as the
+   * line's last word: its exit code. 0 when there is none.
+   */
+  async outlast(): Promise<number> {
+    const run = this.lasting === undefined ? undefined : this.owned.get(this.lasting);
+    if (!run) return 0;
+    // Its stream, until it ends; waited for, so this process stays.
+    await this.connect().catch(() => undefined);
+    run.hold?.();
+    const code = await run.exited;
+    this.owned.delete(this.lasting!);
+    await this.disconnect();
+    print(`[sm-dev] Output log: ${run.log}`);
+    return code;
+  }
+
+  private finishing: Promise<number> | null = null;
+
+  /**
+   * Leaves: stops the runs it started without `--detach`. 1 when one
+   * wouldn't stop. Once, however often asked (a Ctrl-C, then the end of
+   * the line).
+   */
+  finish(): Promise<number> {
+    this.finishing ??= this.stopOwned();
+    return this.finishing;
+  }
+
+  private async stopOwned(): Promise<number> {
+    this.exiting = true;
+    const connection = this.connection;
+    this.connection = null;
+    await connection?.close({ force: true });
+    const { liveRuns, stopRun } = await import('./runs.js');
+    let code = 0;
+    for (const [id, { log }] of this.owned) {
+      const record = (await liveRuns()).find((r) => r.id === id);
+      if (record && !await stopRun(record, print)) code = 1;
+      print(`[sm-dev] Output log: ${log}`);
+    }
+    this.owned.clear();
+    return code;
+  }
 }
 
 const NO_RUN_TO_USE = `${NO_RUNS}. Start one with sm-dev start.`;
 
-// The run a command acts on: the one `--run` names, else the only one
-// going.
+// The run a command acts on: the one named, else the only one going.
 async function targetRun(wanted: string | undefined): Promise<RunRecord> {
   const { liveRuns, runTable } = await import('./runs.js');
   const runs = await liveRuns();
@@ -814,25 +938,18 @@ async function targetRun(wanted: string | undefined): Promise<RunRecord> {
     return found;
   }
   if (runs.length === 0) throw new Error(NO_RUN_TO_USE);
-  if (runs.length > 1) throw new UsageError(['Several runs are active. Pick one with --run:', ...runTable(runs)].join('\n'));
+  if (runs.length > 1) throw new UsageError(['Several runs are active. Pick one with --run, or attach to one:', ...runTable(runs)].join('\n'));
   return runs[0];
 }
 
-// A `--run` value as its run id, or a usage error. A bare number is the
+// A typed run ID as the run's id, or a usage error. A bare number is the
 // likely slip, as with tabs, and gets a hint.
-async function checkedRunId(typed: string): Promise<string> {
+function checkedRunId(typed: string, flag = '--run '): string {
   const id = runIdOf(typed);
   if (id) return id;
   throw new UsageError(/^\d+$/.test(typed)
-    ? `Runs are named D1, D2 and so on. Did you mean --run D${typed}?`
+    ? `Runs are named D1, D2 and so on. Did you mean ${flag}D${typed}?`
     : `The run ID ${typed} is not valid. Run IDs are D and then letters, digits, _ or -.`);
-}
-
-// Old-style `stop D2`: the run goes in --run now.
-async function refuseRunArgument(command: string, words: string[]): Promise<void> {
-  if (words[0] === undefined) return;
-  const id = runIdOf(words[0]);
-  if (id) throw new UsageError(`Name the run with --run: sm-dev ${[command, ...words.slice(1).map(shellWord), '--run', id].join(' ')}`);
 }
 
 function isTypedCommand(name: string): boolean {
@@ -841,14 +958,12 @@ function isTypedCommand(name: string): boolean {
 
 // Takes its arguments as typed, not through parseArgs: the command
 // sent may have words of its own that look like flags (`set n -1`).
-async function sendCommand(words: string[], wanted: string | undefined): Promise<number> {
-  const { liveRuns, sendLine } = await import('./runs.js');
+async function sendCommand(words: string[], client: Client): Promise<number> {
+  const { liveRuns } = await import('./runs.js');
   await checkSend(words);
-  // With no run to take a script or page from, what the command line
-  // form needs instead.
-  const needs = RUN_OR_FILES[words[0]];
-  if (needs && wanted === undefined && (await liveRuns()).length === 0) throw new UsageError(needs);
-  const target = await targetRun(wanted);
+  // With no run to work with, what the command needs instead.
+  const needs = NEEDS_A_RUN[words[0]];
+  if (needs && client.runId === undefined && (await liveRuns()).length === 0) throw new UsageError(needs);
   const list = sentList(words);
   if (list) {
     // In order, each done before the next is sent, and each one's
@@ -857,8 +972,8 @@ async function sendCommand(words: string[], wanted: string | undefined): Promise
     // exit code is the last one's.
     let code = 0;
     for (const [i, command] of list.commands.entries()) {
-      for (const line of echoCommand(command)) print(line);
-      code = await sendLine(target.id, command.text, print);
+      for (const line of echoed('arg', command)) print(line);
+      code = await client.send(command.text, 'arg');
       if (stopsLine(code, commandWords(command.text))) {
         if (i < list.commands.length - 1) process.stderr.write(`${LINE_STOPPED}\n`);
         return code;
@@ -868,12 +983,17 @@ async function sendCommand(words: string[], wanted: string | undefined): Promise
   }
   // The words go as the shell gave them, so a selector or text with
   // spaces reaches a page command as one word.
-  return sendLine(target.id, words.join(' '), print, undefined, words);
+  return client.send(words.join(' '), 'arg', words);
 }
 
 const MATCH_NEEDS = 'The match command needs a script (a .user.js file) and at least one URL, or a run to take them from';
 const VALIDATE_NEEDS = 'The validate command needs at least one path, or a run to take the script from';
-const RUN_OR_FILES: Record<string, string> = { match: MATCH_NEEDS, validate: VALIDATE_NEEDS };
+const NEEDS_A_RUN: Record<string, string> = {
+  match: MATCH_NEEDS,
+  validate: VALIDATE_NEEDS,
+  // It would only pause, with nothing to show meanwhile.
+  wait: 'The wait command needs a run to watch. Start or attach one first.',
+};
 
 // The words `match` and `validate` take in a run only: a loaded
 // script, a tab, or all of them.
@@ -913,8 +1033,18 @@ async function checkSend(words: string[]): Promise<void> {
 }
 
 function commandMistake(words: string[]): string | null {
+  // A line-wide flag typed where only the command line takes it: on a
+  // line of stdin or the prompt, or after a command.
+  const lineFlag = (word: string | undefined): string | undefined => {
+    const flag = word?.split('=')[0];
+    return flag !== undefined && GLOBAL_FLAGS.includes(flag) ? flag : undefined;
+  };
+  const first = lineFlag(words[0]);
+  if (first) return globalFlagMistake(first);
   if (!isTypedCommand(words[0])) return unknownRunCommand(words[0]);
-  return commandFlagMistake(words);
+  const mistake = commandFlagMistake(words);
+  const flag = lineFlag(mistake?.match(/ has no (\S+) flag$/)?.[1]);
+  return flag ? globalFlagMistake(flag) : mistake;
 }
 
 // The list in one argument of several lines, checked; null for a
@@ -934,7 +1064,60 @@ function unknownRunCommand(name: string): string {
   return `${name} is not a command a run takes. Type sm-dev help to list them.`;
 }
 
-const NO_COMMANDS = 'No commands given on either command line or stdin';
+/**
+ * A command as this client echoes it, headed by where it came from
+ * (`stdin > eval {{`, then `... ` lines); the run heads other clients'
+ * commands with who sent them too (see commandMark in run.ts).
+ */
+function echoed(source: CommandSource, command: AssembledCommand): string[] {
+  const [first, ...rest] = echoCommand(command);
+  return [`${source} ${first}`, ...rest];
+}
+
+const NO_COMMANDS = 'No commands given on either the command line or stdin';
+
+/**
+ * A command read from stdin or typed at the prompt, as its words: one
+ * or more commands, split at `--` as on the command line. An `eval`
+ * block's several lines stay one. Each with the text to send a run.
+ */
+function typedCommands(text: string): { words: string[]; text: string }[] {
+  if (text.includes('\n')) return [{ words: commandWords(text), text }];
+  // The typed text of each, as typed: eval takes its quotes as they are.
+  return text.split(/(?:^|\s)--(?=\s|$)/).map((part) => part.trim()).filter(Boolean)
+    .map((part) => ({ words: commandWords(part), text: part }));
+}
+
+/** What is wrong with a command read from stdin or typed, before it runs; null when nothing. */
+async function typedMistake(words: string[]): Promise<string | null> {
+  if (!runsHere(words)) return commandMistake(words);
+  try {
+    await checkCommand(words);
+    return null;
+  } catch (err) {
+    return (err as Error).message;
+  }
+}
+
+/**
+ * Runs a command read from stdin or typed: its exit code. `echo` heads
+ * its output: once the run it goes to is found, so a missing run is
+ * said without a heading for a command that never ran.
+ */
+async function runTyped(command: { words: string[]; text: string }, client: Client, source: CommandSource, echo: () => void = () => undefined): Promise<number> {
+  if (runsHere(command.words)) {
+    echo();
+    return runOne(command.words, client);
+  }
+  try {
+    await client.connect();
+    echo();
+    // As typed, for the run to split as its prompt would.
+    return await client.send(command.text, source);
+  } catch (err) {
+    return printMistake(err);
+  }
+}
 
 // How long piped input can pause and still count as arriving at once,
 // for checking in full before any of it runs.
@@ -942,25 +1125,22 @@ const PIPED_BATCH_GAP_MS = 50;
 
 /**
  * `--stdin`, or no command and piped input: commands read from stdin,
- * one per line. A run's go to the run; sm-dev's own (`list`, `match`
- * on files) run here, `start` only as the first command of all.
- * Returns the last command's exit code (1 after a mistake), or null
- * when stdin had no commands.
+ * one per line. A run's go to the run; sm-dev's own (`list`, `start`,
+ * `match` on files) run here. Returns the last command's exit code (1
+ * after a mistake), or null when stdin had no commands.
  *
  * - A file, or what a pipe delivers at once (a heredoc, `printf`), is
- *   checked in full before any is sent, so a typo on its fifth line
+ *   checked in full before any is run, so a typo on its fifth line
  *   leaves the first four unrun.
- * - After that, and at a terminal, each command is sent once it is
- *   read, as at the run's own prompt. A mistake then is said, and the
- *   rest go on, since the commands before it have run already.
+ * - After that, each command runs once it is read.
+ * - A mistake, or a command that fails, stops the rest, as on a line of
+ *   several. A `match` or `validate` miss is an answer, and doesn't.
  */
-async function stdinCommands(seq: Sequence, first: boolean, started: () => void): Promise<number | null> {
-  const { sendLine } = await import('./runs.js');
+async function stdinCommands(client: Client): Promise<number | null> {
   const { createInterface } = await import('node:readline');
   const { fstatSync } = await import('node:fs');
-  const terminal = Boolean(process.stdin.isTTY);
   // A file ends; only a pipe needs the pause to tell a batch.
-  const file = !terminal && fstatSync(0).isFile();
+  const file = !process.stdin.isTTY && fstatSync(0).isFile();
   const lines = createInterface({ input: process.stdin, terminal: false, crlfDelay: Infinity });
   const queue: string[] = [];
   let ended = false;
@@ -986,145 +1166,181 @@ async function stdinCommands(seq: Sequence, first: boolean, started: () => void)
     return queue.shift() ?? null;
   };
   const blocks = new CommandAssembler();
-  let sent = 0;
-  let failed = false;
+  let ran = 0;
   let code = 0;
-  // Typed commands are on screen already; piped ones get a heading.
-  // The run is looked up for each, since a start among them changes it,
-  // and only once there is a command, so input with none says that.
-  // Set by a command that stopped the rest: a start that failed, or
-  // any that failed, piped in.
-  let halted = false;
-  // Commands of the batch still to send after this one.
-  let pending = 0;
-  const send = async (command: AssembledCommand): Promise<void> => {
-    if (halted) return;
-    const words = commandWords(command.text);
-    const target = runsHere(words) ? null : await targetRun(seq.run);
-    if (!terminal) for (const l of echoCommand(command)) print(l);
-    code = target ? await sendLine(target.id, command.text, print) : await runOne(words, seq, true);
-    sent++;
-    // Piped ones stop at one that fails, as a list does; typed, the
-    // person decides. A start that failed stops the rest either way,
-    // since they were meant for its run.
-    const isStart = commandName(words) === 'start';
-    if (stopsLine(code, words) && (!terminal || isStart)) {
-      halted = true;
-      if (!ended || queue.length > 0 || pending > 0) process.stderr.write(`${LINE_STOPPED}\n`);
-      return;
-    }
-    // So a Ctrl-C stops the run it began, as on the command line.
-    if (isStart && code === 0) started();
-  };
-  // What is wrong with a command, before any runs; null when nothing.
-  // `start` comes first or not at all, as on the command line.
-  // A start read first begins the run the rest go to, with the line's roots.
-  let startFirst = false;
-  // Commands read so far, mistaken ones too: only the first can start.
-  let seen = 0;
-  const mistakeIn = async (command: AssembledCommand): Promise<string | null> => {
-    const index = seen++;
-    const words = commandWords(command.text);
-    if (!runsHere(words)) return rootsGiven && !seq.own && !startFirst ? ROOTS_ARE_THE_RUNS : commandMistake(words);
-    if (commandName(words) === 'start') {
-      if (!(first && index === 0)) return START_FIRST;
-      startFirst = true;
-    }
-    try {
-      await checkCommand(words);
-      return null;
-    } catch (err) {
-      return (err as Error).message;
-    }
-  };
   // Lines read, for naming the one a block mistake is on.
   let n = 0;
-  try {
-    if (!terminal) {
-      const batch: AssembledCommand[] = [];
-      const mistakes: string[] = [];
-      let line = await next();
-      while (typeof line === 'string') {
-        n++;
-        const got = blocks.push(line);
-        if (got && 'error' in got) mistakes.push(`ERROR: Line ${n}: ${got.error}`);
-        else if (got) {
-          const mistake = await mistakeIn(got.command);
-          if (mistake) mistakes.push(...echoCommand(got.command), `ERROR: ${mistake}`);
-          else batch.push(got.command);
-        }
-        line = await next(file ? undefined : PIPED_BATCH_GAP_MS);
+  // The commands in a line read, each run in turn, echoed first. False
+  // when one stopped the rest.
+  const run = async (commands: { words: string[]; text: string }[], source: AssembledCommand, more: boolean): Promise<boolean> => {
+    for (const [i, command] of commands.entries()) {
+      const heading = commands.length > 1 ? [`stdin > ${command.text}`] : echoed('stdin', source);
+      code = await runTyped(command, client, 'stdin', () => { for (const l of heading) print(l); });
+      ran++;
+      if (client.exiting) return false;
+      if (stopsLine(code, command.words)) {
+        if (more || i < commands.length - 1 || !ended || queue.length > 0) process.stderr.write(`${LINE_STOPPED}\n`);
+        return false;
       }
-      if (line === null) {
-        const unclosed = blocks.drop();
-        if (unclosed !== null) mistakes.push(`ERROR: ${unclosedBlockMessage(unclosed)}`);
-      }
-      if (mistakes.length > 0) {
-        for (const m of mistakes) process.stderr.write(`${m}\n`);
-        process.stderr.write(`${NONE_RUN}\n`);
-        return 2;
-      }
-      for (const [i, command] of batch.entries()) {
-        pending = batch.length - i - 1;
-        await send(command);
-        if (halted) break;
-      }
-      pending = 0;
     }
-    for (let line = await next(); line !== null && !halted; line = await next()) {
-      if (typeof line !== 'string') continue;
+    return true;
+  };
+  try {
+    const batch: { commands: { words: string[]; text: string }[]; source: AssembledCommand }[] = [];
+    const mistakes: string[] = [];
+    let line = await next();
+    while (typeof line === 'string') {
       n++;
       const got = blocks.push(line);
-      if (!got) continue;
-      const mistake = 'error' in got ? `Line ${n}: ${got.error}` : await mistakeIn(got.command);
-      if (mistake) {
-        failed = true;
-        if (!terminal && !('error' in got)) for (const l of echoCommand(got.command)) process.stderr.write(`${l}\n`);
-        process.stderr.write(`ERROR: ${mistake}\n`);
-        // Piped in, a mistake stops the rest, as a failed command does.
-        if (!terminal) {
-          process.stderr.write(`${LINE_STOPPED}\n`);
-          return 1;
+      if (got && 'error' in got) mistakes.push(`ERROR: Line ${n}: ${got.error}`);
+      else if (got) {
+        const commands = typedCommands(got.command.text);
+        let wrong = false;
+        for (const command of commands) {
+          const mistake = await typedMistake(command.words);
+          if (!mistake) continue;
+          if (!wrong) mistakes.push(...echoed('stdin', got.command));
+          wrong = true;
+          mistakes.push(`ERROR: ${mistake}`);
         }
-        continue;
+        if (!wrong) batch.push({ commands, source: got.command });
       }
-      if (!('error' in got)) await send(got.command);
+      line = await next(file ? undefined : PIPED_BATCH_GAP_MS);
+    }
+    if (line === null) {
+      const unclosed = blocks.drop();
+      if (unclosed !== null) mistakes.push(`ERROR: ${unclosedBlockMessage(unclosed)}`);
+    }
+    if (mistakes.length > 0) {
+      for (const m of mistakes) process.stderr.write(`${m}\n`);
+      process.stderr.write(`${NONE_RUN}\n`);
+      return 2;
+    }
+    for (const [i, { commands, source }] of batch.entries()) {
+      if (!await run(commands, source, i < batch.length - 1)) return ran === 0 ? null : code;
+    }
+    for (let got = await next(); got !== null; got = await next()) {
+      if (typeof got !== 'string') continue;
+      n++;
+      const assembled = blocks.push(got);
+      if (!assembled) continue;
+      if ('error' in assembled) {
+        process.stderr.write(`ERROR: Line ${n}: ${assembled.error}\n${LINE_STOPPED}\n`);
+        return 1;
+      }
+      const commands = typedCommands(assembled.command.text);
+      for (const command of commands) {
+        const mistake = await typedMistake(command.words);
+        if (!mistake) continue;
+        for (const l of echoed('stdin', assembled.command)) process.stderr.write(`${l}\n`);
+        process.stderr.write(`ERROR: ${mistake}\n${LINE_STOPPED}\n`);
+        return 1;
+      }
+      if (!await run(commands, assembled.command, false)) return code;
     }
     const unclosed = blocks.drop();
     if (unclosed !== null) {
       process.stderr.write(`ERROR: ${unclosedBlockMessage(unclosed)}, so it was not run\n`);
-      failed = true;
+      return 1;
     }
   } finally {
     lines.close();
     process.stdin.pause();
   }
-  if (sent === 0 && !failed) return null;
-  return failed || halted ? Math.max(code, 1) : code;
+  return ran === 0 ? null : code;
+}
+
+/**
+ * `--interactive`: the `> ` prompt, until `exit`, Ctrl-D, or Ctrl-C on
+ * an empty line. Each command runs in turn, as typed; one that fails
+ * doesn't stop the next, since the person decides. The last one's exit
+ * code.
+ */
+function promptCommands(client: Client): Promise<number> {
+  return new Promise((resolve) => {
+    let code = 0;
+    let queue: Promise<unknown> = Promise.resolve();
+    let close: () => void = () => undefined;
+    let done = false;
+    const leave = (now = false): void => {
+      // A second Ctrl-C while a command runs: as a signal would.
+      if (now) void client.finish().finally(() => process.exit(130));
+      if (done) return;
+      done = true;
+      // After the command running now, if any.
+      void queue.then(() => {
+        close();
+        resolve(code);
+      });
+    };
+    close = readPromptCommands({ out: print, exit: leave, commands: [...CLI_COMMANDS] }, (line, hooks) => {
+      const turn = queue.then(async () => {
+        hooks?.start?.();
+        if (!line || done) return;
+        const commands = typedCommands(line);
+        // All checked before any runs, as on the command line.
+        for (const command of commands) {
+          const mistake = await typedMistake(command.words);
+          if (mistake) {
+            print(`ERROR: ${mistake}`);
+            code = 2;
+            return;
+          }
+        }
+        for (const command of commands) {
+          code = await runTyped(command, client, 'prompt');
+          if (client.exiting) {
+            leave();
+            return;
+          }
+          if (stopsLine(code, command.words)) return;
+        }
+      });
+      queue = turn.catch(() => undefined);
+      return turn;
+    });
+  });
 }
 
 // sm-dev's own commands, which run in this process rather than going
-// to a run, when read from stdin.
+// to a run, when read from stdin or typed at the prompt.
 function runsHere(words: string[]): boolean {
-  const name = commandName(words);
-  if (name === 'match' || name === 'validate') return !needsRun(takeRunFlag(words).words);
+  const name = words[0];
+  if (name === 'match' || name === 'validate') return !needsRun(words);
   return name !== undefined && HERE.has(name);
 }
 
-// Ones that need no run, so a run's own copy isn't wanted.
-const HERE = new Set(['start', 'list', 'stop', 'clear', 'help']);
+// Ones that need no run, or act on runs themselves.
+const HERE = new Set(['start', 'attach', 'stop', 'exit', 'list', 'clear', 'help']);
 
-async function checkStop(opts: Opts, run: string | undefined): Promise<void> {
-  if (opts.all && run !== undefined) throw new UsageError('The --all flag stops every run, so the stop command can\'t be used with --run');
-  if (opts.args.length > 0) {
-    await refuseRunArgument('stop', opts.args);
-    throw new UsageError('The stop command takes no arguments. Name the run with --run, or use --all.');
-  }
+/**
+ * Whether a command only looks, so a line of only such commands needn't
+ * follow the run's stream: just their own answers.
+ */
+function isQuiet(words: string[]): boolean {
+  const name = words[0];
+  if (name === undefined) return true;
+  if (name === 'start' || name === 'attach') return false;
+  if (HERE.has(name) || name === 'match' || name === 'validate') return true;
+  const list = words.length === 1 && words[0].includes('\n') ? parseCommandList(words[0]) : null;
+  if (list && !('error' in list)) return list.commands.every((c) => onlyInspects(c.text));
+  return onlyInspects(words.join(' '));
 }
 
-async function stopCommand(opts: Opts, seq: Sequence): Promise<number> {
+function checkStop(opts: Opts): string | undefined {
+  if (opts.args.length > 1) throw new UsageError('The stop command takes at most one run ID, e.g. stop D2');
+  const named = opts.args[0] === undefined ? undefined : checkedRunId(opts.args[0], 'stop ');
+  if (opts.all && named !== undefined) throw new UsageError('The --all flag stops every run, so the stop command can\'t take a run ID too');
+  return named;
+}
+
+/**
+ * `stop`: the run it works with (or the only one going), the one named,
+ * or with `--all` every run. Leaves it with no run to work with.
+ */
+async function stopCommand(opts: Opts, client: Client): Promise<number> {
   const { liveRuns, stopRun } = await import('./runs.js');
-  await checkStop(opts, seq.run);
+  const named = checkStop(opts);
   let targets: RunRecord[];
   if (opts.all) {
     const runs = await liveRuns();
@@ -1134,27 +1350,35 @@ async function stopCommand(opts: Opts, seq: Sequence): Promise<number> {
     }
     targets = runs;
   } else {
-    targets = [await targetRun(seq.run)];
+    targets = [await targetRun(named ?? client.runId)];
   }
-  // Stopped here, so not again once the line's commands are done.
-  if (targets.some((r) => r.id === seq.started?.id)) seq.started = undefined;
+  if (targets.some((r) => r.id === client.runId)) await client.disconnect();
   // Together, each run's lines tagged with its id when there are
   // several.
   const several = targets.length > 1;
   const stopped = await Promise.all(targets.map((r) => stopRun(r, several ? (line) => print(`[${r.id}] ${line}`) : print)));
+  for (const r of targets) {
+    const log = client.stopped(r.id);
+    if (log) print(`[sm-dev] Output log: ${log}`);
+  }
   return stopped.every(Boolean) ? 0 : 1;
 }
 
-// Stops the run a `start` began for the commands after it.
-async function stopStarted(seq: Sequence): Promise<number> {
-  const started = seq.started;
-  if (!started) return 0;
-  seq.started = undefined;
-  const { liveRuns, stopRun } = await import('./runs.js');
-  const record = (await liveRuns()).find((r) => r.id === started.id);
-  const stopped = record ? await stopRun(record, print) : true;
-  print(`[sm-dev] Output log: ${started.log}`);
-  return stopped ? 0 : 1;
+function checkAttach(opts: Opts): string | undefined {
+  if (opts.args.length > 1) throw new UsageError('The attach command takes at most one run ID, e.g. attach D2');
+  return opts.args[0] === undefined ? undefined : checkedRunId(opts.args[0], 'attach ');
+}
+
+/**
+ * `attach`: work with a run that is going, the one named (else `--run`'s,
+ * else the only one), and show what it prints from now on.
+ */
+async function attachCommand(opts: Opts, client: Client): Promise<number> {
+  const named = checkAttach(opts);
+  const { id } = await client.connect(named ?? globalRun);
+  client.own = false;
+  print(`[sm-dev] Attached to run ${id}`);
+  return 0;
 }
 
 const HELP_FLAGS = new Set(['--help', '-h']);
@@ -1175,13 +1399,7 @@ function lineHelp(commands: string[][]): string | null {
   if (!commands.some((words) => words.some((w) => HELP_FLAGS.has(w)))) return null;
   const names: string[] = [];
   for (const words of commands) {
-    let rest: string[];
-    try {
-      rest = takeRunFlag(words).words;
-    } catch {
-      rest = words;
-    }
-    rest = rest.filter((w) => !HELP_FLAGS.has(w));
+    const rest = words.filter((w) => !HELP_FLAGS.has(w));
     // `help status`: its topics. Otherwise the command's name, which
     // may come after its flags (`--launch start`).
     const named = rest[0] === 'help' ? rest.slice(1) : rest.filter((w) => !w.startsWith('-')).slice(0, 1);
@@ -1197,8 +1415,6 @@ const STOP_SIGNALS: NodeJS.Signals[] = process.platform === 'win32' ? ['SIGINT',
 // After a command of several that failed.
 const LINE_STOPPED = 'That command failed, so the commands after it were not run';
 
-const STDIN_FLAG = '--stdin';
-
 const ROOTS_ARE_THE_RUNS = 'The --root and --local flags are set when a run starts, and a command sent to a run uses the run\'s own';
 
 // `--root` and `--local`, for every command of the line: where the
@@ -1207,45 +1423,73 @@ const ROOTS_ARE_THE_RUNS = 'The --root and --local flags are set when a run star
 let lineRoots: ScriptRoots = { collectionRoot: process.cwd(), localRoots: [] };
 // Whether the line gave either, so one sent to a run can be refused.
 let rootsGiven = false;
+// `--run`: the run the line works with.
+let globalRun: string | undefined;
 
-// Takes `--root DIR` and `--local DIR` out of the line's words.
-function takeRootFlags(argv: string[]): string[] {
-  const rest: string[] = [];
+// The flags for the whole line, which go before any command.
+const GLOBAL_FLAGS = ['--run', '--root', '--local', '--stdin', '--interactive', '-i'];
+
+function globalFlagMistake(flag: string): string {
+  return `The ${flag} flag is for the whole command line, so it goes first, before any command: sm-dev ${flag}${VALUE_GLOBALS.has(flag) ? ' ...' : ''} <command>`;
+}
+
+const VALUE_GLOBALS = new Set(['--run', '--root', '--local']);
+
+interface GlobalFlags {
+  stdin: boolean;
+  interactive: boolean;
+  /** The words after the flags: the commands. */
+  rest: string[];
+}
+
+/**
+ * Takes the line-wide flags off the front of the line: `--run ID`,
+ * `--root DIR`, `--local DIR` (repeatable), `--stdin`, and
+ * `--interactive` (`-i`). One later on the line, among a command's
+ * words, is said to go first.
+ */
+function takeGlobalFlags(argv: string[]): GlobalFlags {
   let collectionRoot = process.cwd();
   const localRoots: string[] = [];
-  for (let i = 0; i < argv.length; i++) {
-    const word = argv[i];
-    if (word !== '--root' && word !== '--local') {
-      rest.push(word);
-      continue;
+  const flags: GlobalFlags = { stdin: false, interactive: false, rest: [] };
+  let i = 0;
+  for (; i < argv.length; i++) {
+    const [word, inline] = argv[i].startsWith('--run=') ? ['--run', argv[i].slice('--run='.length)] : [argv[i], undefined];
+    if (!GLOBAL_FLAGS.includes(word)) break;
+    if (word === '--stdin') flags.stdin = true;
+    else if (word === '--interactive' || word === '-i') flags.interactive = true;
+    else {
+      const value = inline ?? argv[++i];
+      if (value === undefined || value === '' || value === SEPARATOR) {
+        throw new UsageError(word === '--run' ? 'The --run flag needs a run ID, e.g. --run D2' : `The ${word} flag needs a value`);
+      }
+      if (word === '--run') globalRun = checkedRunId(value);
+      else if (word === '--root') collectionRoot = path.resolve(value);
+      else localRoots.push(path.resolve(value));
+      if (word !== '--run') rootsGiven = true;
     }
-    const value = argv[++i];
-    if (value === undefined || value === SEPARATOR) throw new UsageError(`The ${word} flag needs a value`);
-    if (word === '--root') collectionRoot = path.resolve(value);
-    else localRoots.push(path.resolve(value));
-    rootsGiven = true;
   }
   lineRoots = { collectionRoot, localRoots };
-  return rest;
+  flags.rest = argv.slice(i);
+  return flags;
 }
 
-// The line's roots as flags again, for a run started in the background.
-function rootWords(): string[] {
-  if (!rootsGiven) return [];
-  return ['--root', lineRoots.collectionRoot, ...lineRoots.localRoots.flatMap((dir) => ['--local', dir])];
-}
-
-// The commands from stdin, after the line's. With none on the line
-// either, says so rather than exiting without a word.
-async function runStdin(seq: Sequence, only: boolean, started: () => void): Promise<number> {
-  try {
-    const code = await stdinCommands(seq, only, started);
-    if (code !== null) return code;
-    if (!only) return 0;
-    throw new UsageError(NO_COMMANDS);
-  } catch (err) {
-    return printMistake(err);
+// The line with its leading line-wide flags (and their values) taken
+// off, for --help to look at the commands alone.
+function withoutGlobalFlags(argv: string[]): string[] {
+  let i = 0;
+  while (i < argv.length && (GLOBAL_FLAGS.includes(argv[i]) || argv[i].startsWith('--run='))) {
+    i += VALUE_GLOBALS.has(argv[i]) ? 2 : 1;
   }
+  return argv.slice(i);
+}
+
+// The line's own flags again, for a run started in the background.
+function globalWords(runId: string | undefined): string[] {
+  return [
+    ...(rootsGiven ? ['--root', lineRoots.collectionRoot, ...lineRoots.localRoots.flatMap((dir) => ['--local', dir])] : []),
+    ...(runId ? ['--run', runId] : []),
+  ];
 }
 
 // Where one command ends and the next begins, when a line has several.
@@ -1260,33 +1504,6 @@ function splitCommands(argv: string[]): string[][] {
   return commands.filter((c) => c.length > 0);
 }
 
-// Takes `--run ID` or `--run=ID` out of a command's words.
-function takeRunFlag(words: string[]): { words: string[]; run?: string } {
-  const rest: string[] = [];
-  let run: string | undefined;
-  for (let i = 0; i < words.length; i++) {
-    const word = words[i];
-    if (word === '--run') {
-      run = words[++i];
-      if (run === undefined) throw new UsageError('The --run flag needs a run ID, e.g. --run D2');
-    } else if (word.startsWith('--run=')) {
-      run = word.slice('--run='.length);
-      if (run === '') throw new UsageError('The --run flag needs a run ID, e.g. --run D2');
-    } else {
-      rest.push(word);
-    }
-  }
-  return { words: rest, run };
-}
-
-const START_FIRST = 'The start command can only come first on a line of several commands';
-
-function isStart(words: string[]): boolean {
-  return commandName(words) === 'start';
-}
-
-const STOP_THEN_STDIN = 'The --stdin flag sends commands to the line\'s run, so it can\'t be used with stop';
-
 // Whether a command's exit code stops the commands after it: any
 // failure but a miss from match or validate, which is an answer.
 function stopsLine(code: number, words: string[]): boolean {
@@ -1295,37 +1512,22 @@ function stopsLine(code: number, words: string[]): boolean {
 
 // The commands whose exit code answers a question.
 function isVerdict(words: string[]): boolean {
-  const name = commandName(words);
-  return name === 'match' || name === 'validate';
+  return words[0] === 'match' || words[0] === 'validate';
 }
-
-function isStop(words: string[]): boolean {
-  return commandName(words) === 'stop';
-}
-
-function commandName(words: string[]): string | undefined {
-  try {
-    return takeRunFlag(words).words[0];
-  } catch {
-    // A bad --run is said when the command runs.
-    return undefined;
-  }
-}
-
-
 
 // A command's own words, sorted out: help, a command sent to a run, or
-// one of sm-dev's own. `--run` is taken out already.
+// one of sm-dev's own.
 type ParsedCommand =
   | { kind: 'help'; topics: string[] }
   | { kind: 'send'; words: string[] }
   | { kind: 'cli'; opts: Opts; words: string[] };
 
+const OWN_COMMANDS = ['validate', 'match', 'start', 'attach', 'clear', 'list', 'stop', 'exit'];
+
 function parseCommand(words: string[]): ParsedCommand {
   const topics = helpTopics(words);
   if (topics) return { kind: 'help', topics };
-  // Only `--run` given.
-  if (words.length === 0) throw new UsageError('A command is needed, e.g. sm-dev status --run D2');
+  if (words.length === 0) throw new UsageError(`A command is needed. ${LIST_COMMANDS}`);
   // A run's command may come as one argument: `'eval T1 x'`. One of
   // several lines is a list of them, and never sm-dev's own.
   if (words.length === 1 && words[0].includes('\n')) return { kind: 'send', words };
@@ -1334,10 +1536,10 @@ function parseCommand(words: string[]): ParsedCommand {
   if (!CLI_COMMANDS.has(words[0]) && isTypedCommand(head)) return { kind: 'send', words };
   const opts = parseArgs(words);
   if (opts.command === null) throw new UsageError(`A command is needed. ${LIST_COMMANDS}`);
-  if (!['validate', 'match', 'start', 'clear', 'list', 'stop'].includes(opts.command)) {
+  if (!OWN_COMMANDS.includes(opts.command)) {
     // A run's ID where the command goes: the old `sm-dev D1 status`.
     const run = runIdOf(opts.command);
-    if (run) throw new UsageError(`Name the run with --run: sm-dev ${[...words.slice(1).map(shellWord), '--run', run].join(' ')}`);
+    if (run) throw new UsageError(`Name the run with --run, before the command: sm-dev --run ${run} ${words.slice(1).map(shellWord).join(' ')}`.trimEnd());
     throw new UsageError(`Unknown command: ${opts.command}. ${LIST_COMMANDS}`);
   }
   return { kind: 'cli', opts, words };
@@ -1345,15 +1547,12 @@ function parseCommand(words: string[]): ParsedCommand {
 
 /**
  * Everything about one command that can be checked before any command
- * of the line runs: its name, flags and arguments, the form of a
- * `--run`, and that `start`'s script files exist. Not whether the run,
- * tab or script it names is there, since earlier commands can change
- * that. Throws the mistake.
+ * of the line runs: its name, flags and arguments, and that `start`'s
+ * script files exist. Not whether the run, tab or script it names is
+ * there, since earlier commands can change that. Throws the mistake.
  */
 async function checkCommand(words: string[]): Promise<void> {
-  const taken = takeRunFlag(words);
-  if (taken.run !== undefined) await checkedRunId(taken.run);
-  const parsed = parseCommand(taken.words);
+  const parsed = parseCommand(words);
   if (parsed.kind === 'help') {
     if (parsed.topics.length > 0) commandHelp(parsed.topics);
     return;
@@ -1364,9 +1563,12 @@ async function checkCommand(words: string[]): Promise<void> {
     case 'validate': return checkValidate(opts);
     case 'match': return checkMatch(opts);
     case 'start': await checkStart(opts); return;
+    case 'attach': checkAttach(opts); return;
     case 'clear': return checkClear(opts);
     case 'list': return checkList(opts);
-    case 'stop': return checkStop(opts, taken.run);
+    case 'stop': checkStop(opts); return;
+    case 'exit':
+      if (opts.args.length > 0) throw new UsageError('The exit command takes no arguments');
   }
 }
 
@@ -1378,36 +1580,34 @@ function printMistake(err: unknown): number {
   return usage ? 2 : 1;
 }
 
-/**
- * One command of the line. `more`: whether others follow it. Prints its
- * own errors, and returns its exit code.
- */
-async function runOne(words: string[], seq: Sequence, more: boolean): Promise<number> {
+/** One command. Prints its own errors, and returns its exit code. */
+async function runOne(words: string[], client: Client): Promise<number> {
   try {
-    const taken = takeRunFlag(words);
-    if (taken.run !== undefined) seq.run = await checkedRunId(taken.run);
-    const parsed = parseCommand(taken.words);
+    const parsed = parseCommand(words);
     if (parsed.kind === 'help') {
-      process.stdout.write(parsed.topics.length === 0 ? usage() : commandHelp(parsed.topics));
+      for (const line of (parsed.topics.length === 0 ? usage() : commandHelp(parsed.topics)).trimEnd().split('\n')) print(line);
       return 0;
     }
-    if (parsed.kind === 'send') {
-      if (rootsGiven && !seq.own) throw new UsageError(ROOTS_ARE_THE_RUNS);
-      return await sendCommand(parsed.words, seq.run);
-    }
+    if (parsed.kind === 'send') return await sendCommand(parsed.words, client);
     const { opts } = parsed;
     switch (opts.command) {
       case 'validate': return await validate(opts);
       case 'match': return await match(opts);
-      case 'start': return await startCommand(opts, parsed.words, seq, more);
+      case 'start': return await startCommand(opts, parsed.words, client);
+      case 'attach': return await attachCommand(opts, client);
       case 'clear': return await clearCommand(opts);
       case 'list': return await listCommand(opts);
-      default: return await stopCommand(opts, seq);
+      case 'exit':
+        client.exiting = true;
+        return 0;
+      default: return await stopCommand(opts, client);
     }
   } catch (err) {
     return printMistake(err);
   }
 }
+
+const START_ALONE = 'The start command with nothing after it would stop the run as soon as it started. Add -i for a prompt, --detach to leave it running, --seconds N to watch it for a while, or commands after --.';
 
 async function main(): Promise<void> {
   // Output piped into something that stops reading early (`| head`)
@@ -1415,41 +1615,16 @@ async function main(): Promise<void> {
   // than with a stack trace.
   process.stdout.on('error', (err: NodeJS.ErrnoException) => {
     // Writes after the first failure fail as a destroyed stream.
-    if (err.code !== 'EPIPE' && err.code !== 'ERR_STREAM_DESTROYED') throw err;
+    // EIO: the terminal closed.
+    if (err.code !== 'EPIPE' && err.code !== 'ERR_STREAM_DESTROYED' && err.code !== 'EIO') throw err;
     onOutputClosed();
   });
-  let argv: string[];
-  try {
-    argv = takeRootFlags(process.argv.slice(2));
-  } catch (err) {
-    process.exitCode = printMistake(err);
-    return;
-  }
-  let commands = splitCommands(argv.filter((w) => w !== STDIN_FLAG));
-  // A line of only `--run D1` names the run for stdin's commands.
-  let lineRun: string | undefined;
-  if (commands.length === 1) {
-    try {
-      const taken = takeRunFlag(commands[0]);
-      if (taken.words.length === 0 && taken.run !== undefined) {
-        lineRun = taken.run;
-        commands = [];
-      }
-    } catch {
-      // A bad --run is said when the command runs.
-    }
-  }
-  // Piped in with no command, stdin can only be commands.
-  const stdin = argv.includes(STDIN_FLAG) || (commands.length === 0 && !process.stdin.isTTY);
-  if (lineRun !== undefined && !stdin) commands = [['--run', lineRun]];
-  if (commands.length === 0 && !stdin) {
-    process.stdout.write(usage());
-    process.exitCode = 2;
-    return;
-  }
+  const argv = process.argv.slice(2);
+  // Before anything else is checked, so a mistake doesn't stand in the
+  // way of help.
   let help: string | null;
   try {
-    help = lineHelp(commands);
+    help = lineHelp(splitCommands(withoutGlobalFlags(argv)));
   } catch (err) {
     process.exitCode = printMistake(err);
     return;
@@ -1458,78 +1633,112 @@ async function main(): Promise<void> {
     process.stdout.write(help);
     return;
   }
-  // Only first, so a start never inherits a --run meant for another
-  // command, and a line never holds two runs of its own.
-  // Its run is gone once it is done, with nothing left to send to.
-  if (stdin && commands.some(isStop)) {
-    process.exitCode = printMistake(new UsageError(STOP_THEN_STDIN));
+  let flags: GlobalFlags;
+  try {
+    flags = takeGlobalFlags(argv);
+    if (flags.interactive && flags.stdin) throw new UsageError('The --interactive flag reads the terminal, so it can\'t be used with --stdin');
+    if (flags.interactive && !process.stdin.isTTY) throw new UsageError('The --interactive flag needs a terminal. To read commands from a pipe or file, use --stdin.');
+  } catch (err) {
+    process.exitCode = printMistake(err);
     return;
   }
-  if (commands.slice(1).some(isStart)) {
-    process.exitCode = printMistake(new UsageError(START_FIRST));
+  const commands = splitCommands(flags.rest);
+  // The background process a `start` began: the run itself, which
+  // handles its own signals.
+  if (detachedLog) {
+    process.exitCode = await runOne(commands[0] ?? [], new Client(globalRun, false));
+    return;
+  }
+  // Piped in with no command, stdin can only be commands.
+  const stdin = flags.stdin || (commands.length === 0 && !flags.interactive && !process.stdin.isTTY);
+  if (commands.length === 0 && !stdin && !flags.interactive) {
+    process.stdout.write(usage());
+    process.exitCode = 2;
     return;
   }
   // Every command checked before any runs, so a typo late in the line
-  // doesn't leave the ones before it done. A lone one is checked as it
-  // runs.
-  if (commands.length > 1) {
-    let failed = 0;
-    for (const words of commands) {
-      try {
-        await checkCommand(words);
-      } catch (err) {
-        process.stderr.write(`> ${words.map(shellWord).join(' ')}\n`);
-        failed = Math.max(failed, printMistake(err));
-      }
-    }
-    if (failed) {
-      process.stderr.write(`${NONE_RUN}\n`);
-      process.exitCode = failed;
-      return;
-    }
-  }
-  const seq: Sequence = {};
-  if (lineRun !== undefined && commands.length === 0) {
+  // doesn't leave the ones before it done.
+  let failed = 0;
+  for (const words of commands) {
     try {
-      seq.run = await checkedRunId(lineRun);
+      await checkCommand(words);
     } catch (err) {
-      process.exitCode = printMistake(err);
-      return;
+      if (commands.length > 1) process.stderr.write(`arg > ${words.map(shellWord).join(' ')}\n`);
+      failed = Math.max(failed, printMistake(err));
     }
   }
-  // A Ctrl-C partway through still stops a run started for the line.
-  // Only once there is one, since a run in this process, or one still
-  // starting, handles its own.
+  if (failed) {
+    if (commands.length > 1) process.stderr.write(`${NONE_RUN}\n`);
+    process.exitCode = failed;
+    return;
+  }
+  // A `start` with nothing after it to keep it going: it would start the
+  // run and stop it again straight away. Its flags can come first.
+  const last = commands.at(-1);
+  const ending = last && parseCommand(last).kind === 'cli' ? parseArgs(last) : null;
+  if (ending?.command === 'start' && !ending.detach && ending.seconds === undefined && !stdin && !flags.interactive) {
+    process.exitCode = printMistake(new UsageError(START_ALONE));
+    return;
+  }
+  // A line that only attaches: it watches the run until it ends.
+  const watching = ending?.command === 'attach' && !stdin && !flags.interactive;
+  // Whether to follow the run's stream, decided once, up front: when
+  // the line does more than look, or has no known end.
+  const follow = flags.interactive || stdin || commands.some((words) => !isQuiet(words));
+  const client = new Client(globalRun, follow);
+  // Ctrl-C (or kill, or a closed terminal) leaves as `exit` does: the
+  // runs this started are stopped, and ones it only attached to go on.
+  // A second one kills it.
+  let interrupted = false;
   const interrupt = (): void => {
-    void stopStarted(seq).finally(() => process.exit(130));
+    if (interrupted) process.exit(130);
+    interrupted = true;
+    void client.finish().finally(() => process.exit(130));
   };
-  const listen = (on: boolean): void => {
-    for (const signal of STOP_SIGNALS) {
-      process.off(signal, interrupt);
-      if (on) process.on(signal, interrupt);
-    }
+  for (const signal of STOP_SIGNALS) process.on(signal, interrupt);
+  // Output piped into something that stopped reading (`| head`): the
+  // same, once, since what finish prints fails there too.
+  let closing = false;
+  onOutputClosed = () => {
+    if (closing) return;
+    closing = true;
+    void client.finish().finally(() => process.exit(process.exitCode ?? 0));
   };
   let code = 0;
   let stopped = false;
   try {
     // In order, stopping at the first that fails, as a shell's && would.
     for (const [i, words] of commands.entries()) {
-      if (commands.length > 1) print(`> ${words.map(shellWord).join(' ')}`);
-      code = await runOne(words, seq, stdin || i < commands.length - 1);
+      if (commands.length > 1) print(`arg > ${words.map(shellWord).join(' ')}`);
+      code = await runOne(words, client);
+      if (client.exiting) break;
       // A miss from match or validate is an answer, not a failure: the
       // line goes on, and it only sets the exit code if it is last.
       if (stopsLine(code, words)) {
-        if (i < commands.length - 1 || stdin) process.stderr.write(`${LINE_STOPPED}\n`);
+        if (i < commands.length - 1 || stdin || flags.interactive) process.stderr.write(`${LINE_STOPPED}\n`);
         stopped = true;
         break;
       }
-      listen(seq.started !== undefined);
     }
-    if (stdin && !stopped) code = await runStdin(seq, commands.length === 0, () => listen(seq.started !== undefined));
+    if (!stopped && !client.exiting) {
+      if (stdin) {
+        const read = await stdinCommands(client);
+        if (read !== null) code = read;
+        else if (commands.length === 0) code = printMistake(new UsageError(NO_COMMANDS));
+      } else if (flags.interactive) {
+        code = await promptCommands(client);
+      } else if (watching) {
+        await client.watch();
+      } else {
+        // A run started with --seconds, left to end on its own.
+        const lasted = await client.outlast();
+        if (code === 0) code = lasted;
+      }
+    }
   } finally {
-    const ended = await stopStarted(seq);
+    const ended = await client.finish();
     if (code === 0) code = ended;
-    listen(false);
+    for (const signal of STOP_SIGNALS) process.off(signal, interrupt);
   }
   process.exitCode = code;
 }

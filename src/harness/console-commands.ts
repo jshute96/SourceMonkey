@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 import type { Dialog, Page } from '@playwright/test';
 
-import { CommandAssembler, echoCommand, unclosedBlockMessage } from './command-lines.js';
+import { CommandAssembler } from './command-lines.js';
 import type { HarnessHost, MenuCommandRecord } from './host.js';
 import type { PageAttachment } from './inject.js';
 import { ACTIONS, PAGE_COMMAND_GROUPS, PAGE_COMMANDS, runPageCommand, splitWords, VALUE_FLAGS } from './page-commands.js';
@@ -113,11 +113,6 @@ export interface ConsoleContext {
   /** The run's output so far, for `wait log`. */
   output?: OutputHistory;
   /**
-   * Writes a command read at the prompt (or piped in) to the run's log,
-   * where the terminal's copy of it doesn't reach.
-   */
-  logCommand?: (text: string, echoed: string[]) => void;
-  /**
    * Where `output` stood when the previous command (that wasn't only a
    * look, like `status`) began, for `wait log`: a line the command set
    * off, printed while it waited for the page to settle, still counts.
@@ -126,8 +121,6 @@ export interface ConsoleContext {
   previousStart?: number;
   /** Where `validate` and `match` find local copies of `@require`s: the run's own. */
   roots?: ScriptRoots;
-  /** `clear --extension` in this run's browser; the scratch scripts removed. */
-  clearExtension?: () => Promise<number>;
 }
 
 /** The lines a run has printed, numbered, and a way to hear new ones. */
@@ -226,12 +219,6 @@ const COMMAND_GROUPS: { title: string; lines: string[] }[] = [
     title: 'The run',
     lines: [
       'help [command]    List these, or one command\'s help',
-      'list              List the sm-dev runs active on this machine',
-      'stop [--all]      Stop the run (as quit does), or every run;',
-      '                  --run ID stops another',
-      'clear --extension Remove every script in the extension\'s Scratch',
-      '                  collection, and turn solo mode off',
-      'quit              Stop the run',
     ],
   },
 ];
@@ -277,7 +264,7 @@ export const CONSOLE_HELP = [
 ];
 
 // The names a command also answers to, when run and in `help`.
-const ALIASES: Record<string, string> = { script: 'scripts', tab: 'tabs', exit: 'quit', '?': 'help', keys: 'key' };
+const ALIASES: Record<string, string> = { script: 'scripts', tab: 'tabs', '?': 'help', keys: 'key' };
 
 // The flags each command takes; the rest take none. A word starting
 // with -- that isn't one is a mistake, said before the command does
@@ -296,8 +283,6 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   screenshot: ['--full'],
   probe: ['--html', '--css'],
   wait: ['--timeout-seconds'],
-  stop: ['--all', '--run'],
-  clear: ['--extension'],
 };
 
 // Commands whose last argument is free text, which may start with --
@@ -352,7 +337,7 @@ export function commandFlagMistake(words: string[]): string | null {
     if (!word.startsWith('--')) continue;
     if (!known.includes(word)) return `The ${command} command has no ${word} flag`;
     // A flag's value, which may look like anything.
-    if (VALUE_FLAGS.has(word) || word === '--run') i++;
+    if (VALUE_FLAGS.has(word)) i++;
   }
   return null;
 }
@@ -370,12 +355,11 @@ export function commandWords(line: string): string[] {
 
 // Commands that only look: what they print answers whoever asked, and
 // is no part of the run's story.
-const INSPECTING = new Set(['help', 'status', 'values', 'get', 'snapshot', 'screenshot', 'savehtml', 'probe', 'logs', 'match', 'validate', 'list']);
+const INSPECTING = new Set(['help', 'status', 'values', 'get', 'snapshot', 'screenshot', 'savehtml', 'probe', 'logs', 'match', 'validate']);
 
 /**
- * Whether a command line only inspects, so its output, sent from
- * another shell, goes back to the sender alone rather than into the run's
- * stream too. `tabs`, `scripts` and `menu` inspect when they list, and
+ * Whether a command line only inspects, so its output goes back to the
+ * client that sent it alone, rather than into the run's stream too. `tabs`, `scripts` and `menu` inspect when they list, and
  * change things when they pick or fire.
  */
 export function onlyInspects(line: string): boolean {
@@ -389,8 +373,8 @@ export function onlyInspects(line: string): boolean {
 
 /**
  * Where a running command's output goes instead of the run's stream,
- * while it runs: an inspecting command sent from another shell answers
- * the sender alone. Output the page or the scripts produce meanwhile
+ * while it runs: an inspecting command answers the client that sent it
+ * alone. Output the page or the scripts produce meanwhile
  * isn't the command's, and still goes to the stream. `live` goes false
  * when the command ends, so anything it started that prints later goes
  * to the stream rather than a closed connection.
@@ -450,7 +434,7 @@ export function consoleCommandsHelp(names: string[]): { lines: string[]; unknown
 /**
  * Run one typed line. Returns once its effect has been applied, so an
  * agent driving this over a pipe can send the next line knowing the
- * previous one is done. For a line sent from another shell: `cwd` is
+ * previous one is done. For a line a client sent: `cwd` is
  * where the files it names are, and `words` are the sender's own words
  * (the line is them joined by spaces), which page commands take as
  * they are rather than splitting the line.
@@ -510,32 +494,6 @@ export async function runConsoleCommand(
       return matchCommand(ctx, args, cwd);
     case 'validate':
       return validateCommand(ctx, args, cwd);
-    case 'list': {
-      if (!takesNothing()) return 2;
-      const { liveRuns, runTable } = await import('./runs.js');
-      const runs = await liveRuns();
-      if (runs.length === 0) ctx.out('No sm-dev runs are active');
-      for (const l of runTable(runs)) ctx.out(l);
-      return;
-    }
-    case 'stop':
-      return stopCommand(ctx, args);
-    case 'clear': {
-      if (args.join(' ') !== '--extension') {
-        ctx.out(`${MISTAKE_PREFIX}The clear command needs --extension, since it clears the extension's Scratch collection`);
-        return 2;
-      }
-      if (!ctx.clearExtension) {
-        ctx.out('[sm-dev] This run cannot reach the extension. Stop the run first, then type sm-dev clear --extension.');
-        return 1;
-      }
-      const count = await ctx.clearExtension();
-      ctx.out(`[sm-dev] Removed ${count} scratch script(s)`);
-      return;
-    }
-    case 'start':
-      ctx.out(`${MISTAKE_PREFIX}This is ${ctx.runId ? `run ${ctx.runId}` : 'a run'} already. Type load to add a script, or newtab to open a page.`);
-      return 2;
     case 'help':
       if (!argument) {
         for (const l of CONSOLE_HELP) ctx.out(l ? `  ${l}` : '');
@@ -544,10 +502,6 @@ export async function runConsoleCommand(
       const { lines, unknown } = consoleCommandsHelp(rest);
       for (const name of unknown) ctx.out(`[sm-dev] ERROR: ${name} is not a command. Type help to list them.`);
       for (const l of lines) ctx.out(l ? `  ${l}` : '');
-      return;
-    case 'quit':
-      if (!takesNothing()) return;
-      ctx.stop();
       return;
     case 'menu': {
       if (argument === 'all') {
@@ -1100,42 +1054,6 @@ async function validateCommand(ctx: ConsoleContext, words: string[], cwd: string
   ctx.out('');
   ctx.out(validateSummary(sources.length - invalid, invalid));
   return invalid === 0 ? 0 : 1;
-}
-
-/**
- * `stop` in a run: this run, as `quit` does; with `--all`, every run,
- * this one last; with `--run ID`, that run.
- */
-async function stopCommand(ctx: ConsoleContext, words: string[]): Promise<number> {
-  const all = words.includes('--all');
-  const at = words.indexOf('--run');
-  const named = at >= 0 ? words[at + 1] : undefined;
-  if (at >= 0 && named === undefined) {
-    ctx.out(`${MISTAKE_PREFIX}The --run flag needs a run ID, e.g. --run D2`);
-    return 2;
-  }
-  const extra = words.filter((w, i) => w !== '--all' && i !== at && i !== at + 1);
-  if (extra.length > 0 || (all && named !== undefined)) {
-    ctx.out(`${MISTAKE_PREFIX}The stop command takes --all or --run ID, not both, and nothing else`);
-    return 2;
-  }
-  const { liveRuns, runIdOf, stopRun } = await import('./runs.js');
-  const id = named === undefined ? undefined : runIdOf(named);
-  if (named !== undefined && !id) {
-    ctx.out(`${MISTAKE_PREFIX}The run ID ${named} is not valid. Run IDs are D and then letters, digits, _ or -.`);
-    return 2;
-  }
-  if (id !== undefined && id !== ctx.runId) {
-    const record = (await liveRuns()).find((r) => r.id === id);
-    if (!record) {
-      ctx.out(`[sm-dev] There is no run ${id}. Type list to see the runs.`);
-      return 1;
-    }
-    return await stopRun(record, ctx.out) ? 0 : 1;
-  }
-  if (all) for (const record of (await liveRuns()).filter((r) => r.id !== ctx.runId)) await stopRun(record, ctx.out);
-  ctx.stop();
-  return 0;
 }
 
 // ---------- Tabs ----------
@@ -1776,10 +1694,10 @@ const COMMAND_NAMES = [...new Set(COMMAND_GROUPS
   .map((line) => line.split(/\s+/)[0])
   .filter(Boolean))];
 
-function completeCommand(line: string): [string[], string] {
+function completeFrom(names: readonly string[], line: string): [string[], string] {
   if (/\s/.test(line.trimStart())) return [[], line];
   const word = line.trimStart();
-  return [COMMAND_NAMES.filter((name) => name.startsWith(word)), word];
+  return [names.filter((name) => name.startsWith(word)), word];
 }
 
 // The prompt readline is drawing while a person types at a terminal,
@@ -1829,7 +1747,7 @@ export function writeOutputLine(line: string): void {
  */
 export type CommandRunner = (
   line: string,
-  hooks?: { start?: () => void; end?: () => void; cwd?: string; words?: string[]; answer?: (line: string) => void },
+  hooks?: { start?: () => void; end?: () => void; cwd?: string; words?: string[]; answer?: (line: string) => void; interactive?: boolean },
 ) => Promise<number>;
 
 // `answer`: where the command's own output goes instead of `ctx.out`
@@ -1851,6 +1769,9 @@ export function commandRunner(ctx: ConsoleContext): CommandRunner {
         out(l);
       };
       try {
+        // Typed at a person's prompt, `menu` needn't wait for a command
+        // still to register: the person can see what there is.
+        ctx.interactive = hooks?.interactive === true;
         const result = await runConsoleCommand(line, ctx, { cwd: hooks?.cwd, words: hooks?.words });
         code = result === false ? 1 : typeof result === 'number' ? result : 0;
         if (code === 0 && mistaken) code = 2;
@@ -1890,52 +1811,57 @@ export function setCommandsListening(tabs: ControlledTab[], listening: boolean):
   for (const tab of tabs) if (tab.dialogs) tab.dialogs.commandsListening = listening;
 }
 
+/** What the prompt needs from whoever runs its commands. */
+export interface PromptIO {
+  /** Prints a line, drawn around the prompt (see writeOutputLine). */
+  out: (line: string) => void;
+  /**
+   * Leaves: Ctrl-D, or Ctrl-C on an empty line. `now`: without waiting
+   * for the command running, as a second Ctrl-C asks.
+   */
+  exit: (now?: boolean) => void;
+  /** More names for Tab to complete: the client's own commands. */
+  commands?: readonly string[];
+}
+
 /**
- * Read commands from stdin, one per line, for as long as the run lasts.
- * Whole lines only, so a piped command split across two reads still
- * runs as one. An `eval {{` block spans lines up to its `}}` (see
- * command-lines.ts). Does nothing when stdin is already closed.
- *
- * At a terminal, shows a `> ` prompt with line editing and history
- * (readline's own keys: arrows, Ctrl-A/E, Ctrl-U and so on) and Tab
- * completion of command names, and `... ` inside a block. Ctrl-C clears
- * the typed line; on an empty one it drops an open block, and otherwise
- * it or Ctrl-D stops the run. Piped input gets neither: EOF
- * on a pipe only means no more commands, and the run goes on.
+ * The `> ` prompt of `sm-dev --interactive`, reading the terminal: line
+ * editing and history (readline's own keys: arrows, Ctrl-A/E, Ctrl-U
+ * and so on), Tab completion of command names, and `... ` inside an
+ * `eval {{` block (see command-lines.ts). Ctrl-C clears the typed
+ * line; on an empty one it drops an open block, and otherwise it or
+ * Ctrl-D leaves. Each command goes to `runLine` once typed, in order.
+ * Returns a function that closes the prompt.
  */
-export function readConsoleCommands(ctx: ConsoleContext, runLine: CommandRunner = commandRunner(ctx)): () => void {
-  if (!process.stdin.readable) return () => undefined;
-  // Otherwise nothing says the run is listening at all.
-  ctx.out('[sm-dev] Ready for commands. Type help to list them.');
+export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?: { start?: () => void }) => Promise<unknown>): () => void {
+  io.out('[sm-dev] Ready for commands. Type help to list them.');
   // A dumb terminal can't move the cursor, so writeOutputLine couldn't
   // redraw around a prompt there.
-  const terminal = Boolean(process.stdin.isTTY && process.stdout.isTTY) && process.env.TERM !== 'dumb';
-  ctx.interactive = terminal;
+  const terminal = Boolean(process.stdout.isTTY) && process.env.TERM !== 'dumb';
   const blocks = new CommandAssembler();
-  // Set once the run closes the input itself, rather than it ending.
+  // Set once the prompt is closed on purpose, rather than by Ctrl-D.
   let closing = false;
   // A message in the commands' turn, after the ones before it. The
   // empty line runs nothing.
   const say = (message: string): void => {
-    void runLine('', { start: () => ctx.out(`[sm-dev] ERROR: ${message}`) });
+    void runLine('', { start: () => io.out(`[sm-dev] ERROR: ${message}`) });
   };
-  const lines = terminal
-    ? readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      terminal: true,
-      prompt: PROMPT,
-      // Tab completes a command name, except inside an eval block,
-      // where the line is JavaScript.
-      completer: (line: string) => (blocks.open ? [[], line] : completeCommand(line)),
-    })
-    : readline.createInterface({ input: process.stdin, terminal: false });
+  const names = [...new Set([...COMMAND_NAMES, ...(io.commands ?? [])])].sort();
+  const lines = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal,
+    prompt: PROMPT,
+    // Tab completes a command name, except inside an eval block,
+    // where the line is JavaScript.
+    completer: (line: string) => (blocks.open ? [[], line] : completeFrom(names, line)),
+  });
   // Typed commands not yet done. The `> ` prompt waits for them, as a
   // shell's does, so a command's output lands before the next prompt
   // rather than under it. Typing ahead still works, on a bare line.
   let running = 0;
-  // Set by a Ctrl-C while a command runs, so a second one stops the run.
-  let stopArmed = false;
+  // Set by a Ctrl-C while a command runs, so a second one leaves.
+  let exitArmed = false;
   const promptText = (): string => (blocks.open ? BLOCK_PROMPT : running > 0 ? '' : PROMPT);
   const showPrompt = (preserveCursor: boolean): void => {
     lines.setPrompt(promptText());
@@ -1946,17 +1872,13 @@ export function readConsoleCommands(ctx: ConsoleContext, runLine: CommandRunner 
     if (got && 'error' in got) say(got.error);
     else if (got) {
       running++;
-      // Logged as it starts, in its turn among the stream's lines.
-      const text = got.command.text;
-      // As a piped list echoes it: `> eval {{`, then `... ` lines.
-      const echoed = echoCommand(got.command);
-      void runLine(text, { start: () => ctx.logCommand?.(text, echoed) }).finally(() => {
+      void runLine(got.command.text).finally(() => {
         running--;
-        if (running === 0) stopArmed = false;
-        if (terminal && running === 0 && activePrompt === lines) showPrompt(true);
+        if (running === 0) exitArmed = false;
+        if (running === 0 && activePrompt === lines) showPrompt(true);
       });
     }
-    if (terminal) showPrompt(false);
+    showPrompt(false);
   });
   // Erases the prompt and stops drawing output around it. Before the
   // interface closes, or after readline closes it itself on Ctrl-D, so
@@ -1964,55 +1886,47 @@ export function readConsoleCommands(ctx: ConsoleContext, runLine: CommandRunner 
   const dropPrompt = (): void => {
     if (activePrompt !== lines) return;
     activePrompt = null;
+    if (!terminal) return;
     readline.moveCursor(process.stdout, 0, -lines.getCursorPos().rows);
     readline.cursorTo(process.stdout, 0);
     readline.clearScreenDown(process.stdout);
   };
-  if (terminal) {
-    // readline puts the terminal in raw mode, so Ctrl-C arrives here
-    // rather than as the process's SIGINT. As in a shell, it first
-    // clears a half-typed line, and only stops the run on an empty one.
-    lines.on('SIGINT', () => {
-      if (!lines.line && blocks.open) {
-        blocks.drop();
-        // Before the output, which redraws the prompt.
-        lines.setPrompt(promptText());
-        ctx.out('[sm-dev] Dropped the eval block');
-        return;
-      }
-      // With no prompt showing, Ctrl-C looks like it would cancel the
-      // command. It can't, so the first one only says so.
-      if (!lines.line && running > 0 && !stopArmed) {
-        stopArmed = true;
-        ctx.out('[sm-dev] A command is still running, and cannot be cancelled. Press Ctrl-C again to stop the run.');
-        return;
-      }
-      if (!lines.line) {
-        ctx.stop();
-        return;
-      }
-      lines.write(null, { ctrl: true, name: 'e' });
-      lines.write(null, { ctrl: true, name: 'u' });
-    });
-    // readline handles Ctrl-Z itself. On `fg` it pauses its input and
-    // emits this event, but never resumes the input. Without this the
-    // prompt stays frozen until some output line happens to redraw it.
-    lines.on('SIGCONT', () => lines.resume());
-    lines.on('close', () => {
-      dropPrompt();
-      ctx.stop();
-    });
-    activePrompt = lines;
-    lines.prompt();
-  } else {
-    // Piped input that ends inside a block: said, rather than run
-    // half-written. Not when the run itself closes the input.
-    lines.on('close', () => {
-      if (closing) return;
-      const unclosed = blocks.drop();
-      if (unclosed !== null) say(`${unclosedBlockMessage(unclosed)}, so it was not run`);
-    });
-  }
+  // readline puts the terminal in raw mode, so Ctrl-C arrives here
+  // rather than as the process's SIGINT. As in a shell, it first
+  // clears a half-typed line, and only leaves on an empty one.
+  lines.on('SIGINT', () => {
+    if (!lines.line && blocks.open) {
+      blocks.drop();
+      // Before the output, which redraws the prompt.
+      lines.setPrompt(promptText());
+      io.out('[sm-dev] Dropped the eval block');
+      return;
+    }
+    // With no prompt showing, Ctrl-C looks like it would cancel the
+    // command. It can't, so the first one only says so.
+    if (!lines.line && running > 0 && !exitArmed) {
+      exitArmed = true;
+      io.out('[sm-dev] A command is still running, and cannot be cancelled. Press Ctrl-C again to exit.');
+      return;
+    }
+    if (!lines.line) {
+      // With a command still running, at once rather than after it.
+      io.exit(running > 0);
+      return;
+    }
+    lines.write(null, { ctrl: true, name: 'e' });
+    lines.write(null, { ctrl: true, name: 'u' });
+  });
+  // readline handles Ctrl-Z itself. On `fg` it pauses its input and
+  // emits this event, but never resumes the input. Without this the
+  // prompt stays frozen until some output line happens to redraw it.
+  lines.on('SIGCONT', () => lines.resume());
+  lines.on('close', () => {
+    dropPrompt();
+    if (!closing) io.exit();
+  });
+  if (terminal) activePrompt = lines;
+  lines.prompt();
   return () => {
     closing = true;
     dropPrompt();

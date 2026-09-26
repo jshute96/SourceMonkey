@@ -54,8 +54,10 @@ interface Setup {
   /** Runs a `chrome-devtools` command in the run's session, for its output. */
   devtools: (...args: string[]) => Promise<string>;
   /**
-   * `sm-dev start` in the background, its stdin closed, as an agent starts
-   * it. `cdp`: the browser to connect to, if not the port.
+   * `sm-dev start` in the background, its stdin closed, showing what the
+   * run prints until it is stopped (`--seconds`, long). `cdp`: the
+   * browser to connect to, if not the port. A `--root` among `args` goes
+   * first, as the line's.
    */
   startRun: (args: string[], cdp?: string) => Run;
   cleanup: () => Promise<void>;
@@ -113,7 +115,9 @@ async function setUp(): Promise<Setup> {
     piped,
     cliExit,
     startRun: (args, cdp = String(port)) => {
-      const proc = spawn(process.execPath, [CLI, 'start', '--cdp', cdp, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+      const at = args.indexOf('--root');
+      const root = at >= 0 ? args.splice(at, 2) : [];
+      const proc = spawn(process.execPath, [CLI, ...root, 'start', '--cdp', cdp, '--seconds', '600', ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
       runs.push(proc);
       const lines: string[] = [];
       const waiters = new Set<() => void>();
@@ -207,23 +211,27 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
 
     const list = await setup.cli('list');
     expect(list[0]).toMatch(/^Run\s+PID\s+Uptime\s+Browser\s+Tabs\s+Scripts$/);
-    expect(list[1]).toMatch(new RegExp(`^D1\\s+${run.proc.pid}\\s+\\S+\\s+127\\.0\\.0\\.1:${setup.port}\\s+1\\s+remote\\.user\\.js$`));
+    expect(list[1]).toMatch(new RegExp(`^D1\\s+\\d+\\s+\\S+\\s+127\\.0\\.0\\.1:${setup.port}\\s+1\\s+remote\\.user\\.js$`));
+    // Its own process, not this sm-dev's.
+    const pid = Number(list[1].split(/\s+/)[1]);
+    expect(pid).not.toBe(run.proc.pid);
 
-    expect((await setup.cli('status', '--run', 'D1'))[0]).toBe(`Run: D1 (pid ${run.proc.pid})`);
+    expect((await setup.cli('--run', 'D1', 'status'))[0]).toBe(`Run: D1 (pid ${pid})`);
     // The only run, so it needs no id. The command's own output, and
     // what it set off in the page, come back; the page's line can
     // arrive first.
     expect((await setup.cli('menu', 'Say hi')).sort()).toEqual(['[page log] [remote] hi', '[sm-dev] Fired "Say hi"']);
-    // The run's own stream says what it was sent.
-    await run.waitFor(/^\[sm-dev\] Sent from another shell: menu 'Say hi'$/);
+    // The run's own stream, which the sm-dev that started it follows,
+    // says what it was sent.
+    await run.waitFor(/^remote:arg > menu 'Say hi'$/);
     // A command that only inspects answered the sender alone.
-    expect(run.lines.some((l) => /^Run: D1 |^\[sm-dev\] Sent from another shell: status$/.test(l))).toBe(false);
+    expect(run.lines.some((l) => /^Run: D1 |^remote:arg > status$/.test(l))).toBe(false);
     // A reload is done once the script has started again and its body
     // has run, so both come back without waiting on anything more.
     const reloaded = await setup.cli('reload');
     expect(reloaded).toContain(`[sm-dev] Remote started on ${fixtureServer.baseUrl}/target.html`);
     expect(reloaded).toContain('[page log] [remote] body ran');
-    await run.waitFor(/^\[sm-dev\] Sent from another shell: reload$/);
+    await run.waitFor(/^remote:arg > reload$/);
     // A load reloads the tab, and the new script's top-level throw comes
     // back with it.
     const thrower = scriptsDir.write({ relativePath: 'thrower.user.js', meta: { name: 'Thrower', match: ['*://*/target.html'] }, body: `throw new Error('boom');` });
@@ -259,8 +267,8 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
     expect(await setup.cli('eval T1 document.title')).toEqual(['"target"']);
     // Commands piped in, with none on the line or after the line's
     // own, each headed by the command.
-    expect(await setup.piped('eval 1+1\neval {{\n2+2\n}}\n')).toEqual(['> eval 1+1', '2', '> eval {{', '... 2+2', '... }}', '4']);
-    expect(await setup.piped('eval 3\n', 'eval', 'T1', '0', '--stdin')).toEqual(['0', '> eval 3', '3']);
+    expect(await setup.piped('eval 1+1\neval {{\n2+2\n}}\n')).toEqual(['stdin > eval 1+1', '2', 'stdin > eval {{', '... 2+2', '... }}', '4']);
+    expect(await setup.piped('eval 3\n', '--stdin', 'eval', 'T1', '0')).toEqual(['0', 'stdin > eval 3', '3']);
 
     // match and validate take the run's scripts and tabs, and a miss
     // is the exit code only when it comes last.
@@ -269,20 +277,20 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
     expect(await setup.cliExit('match', '3', 'T2')).toEqual({ code: 1, lines: [`no match ${url} (T2)`, '    No @match or @include covers this URL'] });
     const goesOn = await setup.cliExit('match', '3', '--', 'eval', '1+1');
     expect(goesOn.code).toBe(0);
-    expect(goesOn.lines.slice(-2)).toEqual(['> eval 1+1', '2']);
+    expect(goesOn.lines.slice(-2)).toEqual(['arg > eval 1+1', '2']);
     const all = await setup.cliExit('validate', 'all');
     expect(all.code).toBe(0);
     expect(all.lines.at(-1)).toBe('3 ok, 0 invalid');
     // The run's roots are its own.
-    expect((await setup.cliExit('match', '--root', scriptsDir.path)).code).toBe(2);
+    expect((await setup.cliExit('--root', scriptsDir.path, 'match')).code).toBe(2);
     // A file that isn't there is a typing mistake, which stops the line.
     const typo = await setup.cliExit('match', 'nosuch.user.js', '--', 'eval', '1+1');
     expect(typo.code).toBe(2);
-    expect(typo.lines).not.toContain('> eval 1+1');
+    expect(typo.lines).not.toContain('arg > eval 1+1');
     // A loaded script by its name.
     expect((await setup.cliExit('match', 'More', 'T1')).lines[0]).toMatch(/^no match \S+ \(T1\)$/);
 
-    expect(await setup.cli('stop', '--run', 'D1')).toEqual([
+    expect(await setup.cli('stop', 'D1')).toEqual([
       '[sm-dev] Stopping run D1',
       '[sm-dev] Run D1 ended. Pages still have previously loaded scripts.',
     ]);
@@ -305,7 +313,7 @@ test('start --detach returns once started, is replaced by the next unless --new,
     });
     const url = `${fixtureServer.baseUrl}/target.html`;
     const detach = (...more: string[]): Promise<string[]> =>
-      setup.cli('start', '--cdp', String(setup.port), '--detach', file, url, '--root', scriptsDir.path, ...more);
+      setup.cli('--root', scriptsDir.path, 'start', '--cdp', String(setup.port), '--detach', file, url, ...more);
     // Back once the script has started, with its startup output.
     const first = await detach();
     expect(first).toContain(`[sm-dev] Detached started on ${url}`);
@@ -328,7 +336,7 @@ test('start --detach returns once started, is replaced by the next unless --new,
     expect(await ids()).toEqual(['Run', 'D1', 'D2']);
     // Two going, so a command has to name one.
     const several = await setup.cli('status');
-    expect(several.slice(0, 2)).toEqual(['ERROR: Several runs are active. Pick one with --run:', expect.stringMatching(/^Run\s+PID/)]);
+    expect(several.slice(0, 2)).toEqual(['ERROR: Several runs are active. Pick one with --run, or attach to one:', expect.stringMatching(/^Run\s+PID/)]);
     await expect.poll(ids, { timeout: 15_000 }).toEqual(['Run', 'D1']);
 
     // Without it, the next one stops the earlier one, and takes its id.
@@ -362,18 +370,18 @@ test('one line starts a run, sends it commands, and stops it unless detached', a
       body: `console.log('[line] body ran');`,
     });
     const url = `${fixtureServer.baseUrl}/target.html`;
-    const start = ['start', '--cdp', String(setup.port), file, url, '--root', scriptsDir.path];
+    const start = ['--root', scriptsDir.path, 'start', '--cdp', String(setup.port), file, url];
     // Not detached: stopped once the commands are done.
     const out = await setup.cli(...start, '--', 'eval', 'document.title', '--', 'status');
-    expect(out).toContain('> eval document.title');
-    expect(out[out.indexOf('> eval document.title') + 1]).toBe('"target"');
+    expect(out).toContain('arg > eval document.title');
+    expect(out[out.indexOf('arg > eval document.title') + 1]).toBe('"target"');
     expect(out.some((l) => l.startsWith('Run: D1 (pid '))).toBe(true);
     expect(out.slice(-3, -1)).toEqual(['[sm-dev] Stopping run D1', '[sm-dev] Run D1 ended. Pages still have previously loaded scripts.']);
     expect(out.at(-1)).toMatch(/^\[sm-dev\] Output log: /);
     expect(await setup.cli('list')).toEqual(['No sm-dev runs are active']);
     // The same with the commands from stdin.
-    const piped = await setup.piped('eval document.title\n', ...start, '--stdin');
-    expect(piped[piped.indexOf('> eval document.title') + 1]).toBe('"target"');
+    const piped = await setup.piped('eval document.title\n', '--stdin', ...start);
+    expect(piped[piped.indexOf('stdin > eval document.title') + 1]).toBe('"target"');
     expect(piped.slice(-3, -1)).toEqual(['[sm-dev] Stopping run D1', '[sm-dev] Run D1 ended. Pages still have previously loaded scripts.']);
     expect(await setup.cli('list')).toEqual(['No sm-dev runs are active']);
 
@@ -386,23 +394,23 @@ test('one line starts a run, sends it commands, and stops it unless detached', a
 
     // Detached, with an ID of its own: left running, and a later start
     // with that ID takes it over.
-    const kept = await setup.cli(...start, '--detach', '--run', 'Dmain', '--', 'eval', 'location.pathname');
+    const kept = await setup.cli('--run', 'Dmain', ...start, '--detach', '--', 'eval', 'location.pathname');
     expect(kept.at(-1)).toBe('"/target.html"');
     // Named by a line of only --run, stdin's commands reach it.
-    expect(await setup.piped('eval 1+1\n', '--run', 'Dmain')).toEqual(['> eval 1+1', '2']);
+    expect(await setup.piped('eval 1+1\n', '--run', 'Dmain')).toEqual(['stdin > eval 1+1', '2']);
     expect((await setup.cli('list'))[1]).toMatch(/^Dmain\s/);
-    const again = await setup.cli(...start, '--detach', '--run', 'Dmain');
+    const again = await setup.cli('--run', 'Dmain', ...start, '--detach');
     expect(again.slice(0, 2)).toEqual(['[sm-dev] Stopping run Dmain', '[sm-dev] Run Dmain ended. Pages still have previously loaded scripts.']);
     expect(again.at(-2)).toMatch(/^\[sm-dev\] Run Dmain now running detached/);
     // The old way of naming a run is pointed at the new one.
-    expect(await setup.cli('Dmain', 'status')).toEqual(['ERROR: Name the run with --run: sm-dev status --run Dmain']);
+    expect(await setup.cli('Dmain', 'status')).toEqual(['ERROR: Name the run with --run, before the command: sm-dev --run Dmain status']);
   } finally {
     await setup.cli('stop', '--all');
     await setup.cleanup();
   }
 });
 
-test('a foreground run logs its stream and the commands that change something', async ({ fixtureServer, scriptsDir }) => {
+test('a run logs its stream and the commands that change something', async ({ fixtureServer, scriptsDir }) => {
   test.setTimeout(60_000);
   const setup = await setUp();
   try {
@@ -413,21 +421,23 @@ test('a foreground run logs its stream and the commands that change something', 
     });
     // Commands piped in, as typed ones are logged. Not spawnSync, which
     // would hold up the fixture server in this process.
-    const proc = spawn(process.execPath, [CLI, 'start', '--cdp', String(setup.port), file, `${fixtureServer.baseUrl}/target.html`, '--root', scriptsDir.path], {
+    const proc = spawn(process.execPath, [CLI, '--stdin', '--root', scriptsDir.path, 'start', '--cdp', String(setup.port), file, `${fixtureServer.baseUrl}/target.html`], {
       env: setup.env, stdio: ['pipe', 'pipe', 'pipe'],
     });
     let stdout = '';
     proc.stdout!.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
-    proc.stdin!.end('status\neval {{\n1 + 1\n}}\nquit\n');
+    proc.stdin!.end('status\neval {{\n1 + 1\n}}\nexit\n');
     await exited(proc);
     const log = stdout.match(/^\[sm-dev\] Output log: (\S+)$/m)![1];
     const lines = readFileSync(log, 'utf8').trim().split('\n').map((l) => l.replace(/^\d{8}-\d{6}-\d{3} /, ''));
     expect(lines).toContain('[page log] [logged] body ran');
     // A command that changes something, as written, with its reply.
-    expect(lines.slice(lines.indexOf('> eval {{'), lines.indexOf('> eval {{') + 4)).toEqual(['> eval {{', '... 1 + 1', '... }}', '2']);
-    expect(lines).toContain('> quit');
+    expect(lines.slice(lines.indexOf('primary:stdin > eval {{'), lines.indexOf('primary:stdin > eval {{') + 4)).toEqual(['primary:stdin > eval {{', '... 1 + 1', '... }}', '2']);
+    // exit is this sm-dev's, and never reaches the run.
+    expect(lines).not.toContain('primary:stdin > exit');
+    expect(lines).toContain('primary:arg > stop');
     // One that only looks, and its reply, aren't in it.
-    expect(lines).not.toContain('> status');
+    expect(lines).not.toContain('primary:stdin > status');
     expect(lines.some((l) => l.startsWith('Run: D1'))).toBe(false);
     expect(readlinkSync(path.join(path.dirname(log), 'sm-dev-D1.log'))).toBe(path.basename(log));
   } finally {
@@ -456,7 +466,7 @@ test('--devtools reports each tab\'s page id, which chrome-devtools reaches', as
 
     // A second tab on the same URL: the one case only the marker can
     // tell apart.
-    await setup.cli('newtab', url, '--run', 'D1');
+    await setup.cli('--run', 'D1', 'newtab', url);
     const second = (await run.waitFor(/^\[sm-dev\] T2 is DevTools page \d+$/)).match(/(\d+)$/)![1];
     expect(second).not.toBe(first);
 
@@ -464,12 +474,12 @@ test('--devtools reports each tab\'s page id, which chrome-devtools reaches', as
     expect(await setup.devtools('take_snapshot', first)).toContain('RootWebArea "target"');
     // The run lists both ids with the tab, and takes either back,
     // or both as shown.
-    const t1 = (await setup.cli('tabs', '--run', 'D1')).find((l) => /^[* ] T1: /.test(l))!;
+    const t1 = (await setup.cli('--run', 'D1', 'tabs')).find((l) => /^[* ] T1: /.test(l))!;
     const ids = t1.match(/(\[targetId=[0-9A-F]+ pageId=\d+\])$/)![1];
     expect(ids).toContain(`pageId=${first}]`);
-    expect(await setup.cli('tabs', `pageId=${first}`, '--run', 'D1')).toEqual([`[sm-dev] The page commands now act on T1 (${url})`]);
-    expect(await setup.cli('tabs', `pageId=${second}`, '--run', 'D1')).toEqual([`[sm-dev] The page commands now act on T2 (${url})`]);
-    expect(await setup.cli('tabs', ids, '--run', 'D1')).toEqual([`[sm-dev] The page commands now act on T1 (${url})`]);
+    expect(await setup.cli('--run', 'D1', 'tabs', `pageId=${first}`)).toEqual([`[sm-dev] The page commands now act on T1 (${url})`]);
+    expect(await setup.cli('--run', 'D1', 'tabs', `pageId=${second}`)).toEqual([`[sm-dev] The page commands now act on T2 (${url})`]);
+    expect(await setup.cli('--run', 'D1', 'tabs', ids)).toEqual([`[sm-dev] The page commands now act on T1 (${url})`]);
     // A tab that isn't the run's, stopped on a dialog: DevTools sees
     // only the run's tabs, so it neither lists this one nor waits on it.
     await openForeignDialogTab(setup.port, `${fixtureServer.baseUrl}/other.html`);
@@ -481,7 +491,7 @@ test('--devtools reports each tab\'s page id, which chrome-devtools reaches', as
     // The marker the lookup used is gone again.
     expect(await setup.devtools('evaluate_script', '() => Symbol.for("sm-dev") in window', '--pageId', first)).toContain('false');
 
-    await setup.cli('stop', '--run', 'D1');
+    await setup.cli('stop', 'D1');
     expect(await exited(run.proc)).toBe(0);
     // The run's DevTools server went with it.
     expect(await setup.devtools('status')).toContain('not running');
@@ -506,8 +516,7 @@ test('a tab stopped on a dialog is named, and waited for, before the run connect
     // Its title, then its address.
     expect(await given.waitFor(/^  \S/)).toMatch(new RegExp(`^  (\\S+  )?${stuckUrl.replace(/[.?]/g, '\\$&')}$`));
     given.proc.kill('SIGTERM');
-    await within(exited(given.proc), 1000);
-    expect(given.proc.signalCode).toBe('SIGTERM');
+    expect(await within(exited(given.proc), 5000)).toBe(130);
 
     // Once the tab is gone, the run connects.
     const run = setup.startRun(args);
@@ -527,7 +536,7 @@ test('a tab stopped on a dialog is named, and waited for, before the run connect
     expect(await within(answered, 2000)).toBeUndefined();
     ws.close();
     expect(run.proc.exitCode).toBeNull();
-    expect((await setup.cli('status', '--run', 'D1'))[0]).toMatch(/^Run: D1 /);
+    expect((await setup.cli('--run', 'D1', 'status'))[0]).toMatch(/^Run: D1 /);
   } finally {
     await setup.cleanup();
   }

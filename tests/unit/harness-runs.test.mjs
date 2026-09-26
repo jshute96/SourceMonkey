@@ -16,7 +16,12 @@ const RUNS_DIR = mkdtempSync(path.join(os.tmpdir(), 'sm-dev-runs-test-'));
 process.env.SM_DEV_RUNS_DIR = RUNS_DIR;
 after(() => rmSync(RUNS_DIR, { recursive: true, force: true }));
 
-const { RunControl, liveRuns, runIdOf, runTable, sendLine, stopRun } = await import('../../lib/harness/runs.js');
+const { RunClient, RunControl, liveRuns, runIdOf, runTable, sendLine, stopRun } = await import('../../lib/harness/runs.js');
+
+// A run's handlers: `command` as given, and nothing to follow.
+function handlers(command, follow = () => () => undefined) {
+  return { command, follow };
+}
 
 // A run's record; `open` takes one without an id, and picks the id.
 function fields(overrides = {}) {
@@ -36,20 +41,21 @@ async function sleeper() {
   return child;
 }
 
-test('a sent line reaches the run, and its output comes back', async () => {
+test('a sent line reaches the run, and its output and exit code come back', async () => {
   const seen = [];
-  const control = await RunControl.open(fields(), async (line, reply) => {
+  const control = await RunControl.open(fields(), handlers(async (line, reply) => {
     seen.push(line);
     reply(`one ${line}`);
     reply('two');
-    return 'done';
-  });
+    return line === 'fail' ? 3 : 0;
+  }));
   try {
     assert.ok((await liveRuns()).some((r) => r.id === control.id));
     const out = [];
-    await sendLine(control.id, 'status T2', (l) => out.push(l));
+    assert.equal(await sendLine(control.id, 'status T2', (l) => out.push(l)), 0);
     assert.deepEqual(seen, ['status T2']);
     assert.deepEqual(out, ['one status T2', 'two']);
+    assert.equal(await sendLine(control.id, 'fail', () => undefined), 3);
   } finally {
     await control.close();
   }
@@ -58,22 +64,53 @@ test('a sent line reaches the run, and its output comes back', async () => {
 
 test('a held line keeps receiving until the run closes', async () => {
   let reply;
-  const control = await RunControl.open(fields(), async (_line, r) => {
+  const control = await RunControl.open(fields(), handlers(async (_line, r) => {
     reply = r;
     r('stopping');
     return 'hold';
-  });
+  }));
   const out = [];
-  const sent = sendLine(control.id, 'quit', (l) => out.push(l));
+  const sent = sendLine(control.id, 'stop', (l) => out.push(l));
   while (!reply) await new Promise((r) => setTimeout(r, 10));
   reply('ended');
   await control.close();
-  await sent;
+  assert.equal(await sent, 0);
   assert.deepEqual(out, ['stopping', 'ended']);
 });
 
+test('one connection takes commands in turn; one that follows also gets what the run prints between them', async () => {
+  const followers = new Set();
+  const control = await RunControl.open(fields(), handlers(async (line, reply, sent) => {
+    reply(`${line} ${sent.follows ? 'following' : 'not following'}`);
+    return 0;
+  }, (reply) => {
+    followers.add(reply);
+    return () => followers.delete(reply);
+  }));
+  try {
+    const quiet = [];
+    const plain = await RunClient.open(control.id, (l) => quiet.push(l));
+    assert.equal(await plain.send('a'), 0);
+    assert.equal(await plain.send('b'), 0);
+    await plain.close();
+    assert.deepEqual(quiet, ['a not following', 'b not following']);
+
+    const seen = [];
+    const following = await RunClient.open(control.id, (l) => seen.push(l), { follow: true });
+    assert.equal(await following.send('c'), 0);
+    for (const reply of followers) reply('printed meanwhile');
+    assert.equal(await following.send('d'), 0);
+    await following.close();
+    assert.deepEqual(seen, ['c following', 'printed meanwhile', 'd following']);
+    // Let go once it closed.
+    while (followers.size > 0) await new Promise((r) => setTimeout(r, 10));
+  } finally {
+    await control.close();
+  }
+});
+
 test('runs take the lowest free id, and a killed run\'s socket doesn\'t hold one', async () => {
-  const handle = async () => 'done';
+  const handle = handlers(async () => 0);
   const first = await RunControl.open(fields(), handle);
   const second = await RunControl.open(fields(), handle);
   try {

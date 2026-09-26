@@ -339,9 +339,10 @@ into pages.
     For the commands that end in free text, only the words before it
     are looked at. `sm-dev`'s up-front check uses the same function.
   - Typed lines are split into words as a shell would, except that a
-    quote opening inside a word stays in it (`a[href="x"]`); a command
-    from another shell passes that shell's own words and directory
-    instead, so its quoting and relative paths hold.
+    quote opening inside a word stays in it (`a[href="x"]`). A command
+    from sm-dev's command line passes the shell's own words instead,
+    so its quoting holds. Every command carries sm-dev's directory, for
+    relative paths.
   - Every console line and page error is kept per page (the newest
     thousand) for `logs`, beside the filtered stream.
   - A command that opens a dialog would wait on it for good (the page
@@ -406,15 +407,19 @@ into pages.
   `run.ts` is its own module so the Node-only commands never load
   Playwright. The `--extension` flag switches it to the extension
   backend.
-  - A line can hold several commands, split on `--` before anything
-    else is parsed. Each has `--run` taken out first, which carries on
-    to later commands, as does the id a `start` gets.
+  - `sm-dev` is a client of runs (`Client` in `cli.ts`); see
+    [Runs and clients](#runs-and-clients) below.
+  - The line-wide flags (`--run`, `--root`, `--local`, `--stdin`,
+    `-i`) are taken off the front of the line first. One later on the
+    line is refused, and said to go first.
+  - The rest of the line holds one or more commands, split on `--`.
+    Stdin and prompt lines are split the same way, except an `eval`
+    block, which stays one command.
   - `--help` anywhere on the line is found first: the help for each
     command named, and nothing run or checked.
-  - `start` is refused anywhere but first, before anything runs. So a
-    `start` never inherits another command's `--run` (which would make
-    it replace that run), and a line never has a run it will stop at
-    the end alongside an interactive one.
+  - Every command is checked before any runs. A lone `start` with no
+    `--detach`, `--seconds`, `--stdin`, `-i` or commands after it is
+    refused, since its run would stop at once.
   - A name that isn't an `sm-dev` command but is a typed one goes to
     the run. So does one argument of several lines, as a list.
   - A connected browser is attached with `noDefaults`, which keeps
@@ -484,7 +489,8 @@ into pages.
     - A tab switched off counts as running no script, whatever the
       host last heard from it.
 - **`runs.ts`**: the runs active on this machine, for `sm-dev list`,
-  `stop` and the commands sent to a run. Node-only, so those commands never load
+  `stop`, `attach` and the commands sent to a run, and the client's
+  connection (`RunClient`). Node-only, so those commands never load
   Playwright.
   - A run's id is the lowest free `D<n>`. It takes one by listening on
     its socket, which only one process can. The record is written
@@ -495,8 +501,8 @@ into pages.
       freshly bound socket.
     - A lock already held means trying the next number, so one left by
       a killed run costs a number, never a hang.
-    - `start --run Dname` takes that id the same way, or fails if a run
-      holds it; `cli.ts` stops that run first.
+    - `--run Dname start` takes that id the same way, or fails if a
+      run holds it; `cli.ts` stops that run first.
   - A run waiting for commands writes a record file (id, pid, start
     time, browser, scripts) and listens on a Unix socket (a named pipe
     on Windows), both in a per-user temp directory (`sm-dev-runs-<user>`,
@@ -511,96 +517,15 @@ into pages.
     (records, sockets, tab records), it is refused if another user owns
     it or can write in it, since `stop` signals the pids its records
     name. `SM_DEV_RUNS_DIR` moves it, for tests.
-  - `start --detach` (in `cli.ts`) starts the same `start` command
-    again as a detached child process, and returns once the child is
-    ready.
-    - `start` followed by other commands on the line does the same
-      without `--detach`, and stops the run once they are done. Its
-      output stays out of theirs that way.
-    - The child's stdout and stderr go to its log file (`run-log.ts`);
-      the parent prints the file as it grows, without the line
-      timestamps.
-    - A foreground run keeps a log the same way, by copying the lines
-      it prints (`openRunLog`).
-      - Each command typed or piped at its prompt goes in as
-        `> command` (`logCommand`), as it starts.
-      - Commands that only look, and what they print (known by
-        `inCommand`), are left out, as for a detached run.
-      - Named `sm-dev-<timestamp>.log` in `/tmp/sm-dev-logs-<user>`
-        (`SM_DEV_LOGS_DIR` moves it, for tests), with SeeWhatISee's
-        timestamp format.
-      - Created exclusively; a name already taken moves the timestamp
-        on a millisecond.
-      - The child stamps each line it writes, by wrapping
-        `process.stdout.write` and `process.stderr.write`.
-      - `Remote` in `run.ts` marks a sent command that changes
-        something there as `> command`, for where it happened in the
-        stream. A foreground run marks it as from another shell
-        instead, since its own are typed at its prompt.
-      - `sm-dev stop` sends `stop`, which the run takes as `quit`, so
-        the log says what was typed.
-      - Kept after the run ends.
-      - Once the run has its id, `sm-dev-<id>.log` is pointed at it: a
-        relative symlink, made under a temp name and renamed over the
-        old one.
-    - The child learns it is detached from `SM_DEV_DETACHED_LOG`, and
-      says it is ready over the Node IPC channel (`onReady`, called
-      where sent commands start being taken). The parent then exits;
-      a child that exits first passes on its exit code.
-    - Its record carries `detached` and `log`. The next `--detach`
-      (unless `--new`) stops runs marked `detached`.
-      - The old run is stopped before the new one starts, so its tab
-        is free to reuse. A new run that then fails leaves neither.
-    - The parent handles Ctrl-C, SIGTERM and SIGHUP (sent when the
-      terminal closes) while the child starts, by ending the child and
-      exiting 130. A line-scoped run is stopped on the same signals.
-    - A child whose parent has gone (a tool timeout) still becomes
-      ready; with no channel to report on, it just runs on.
-    - The idle timer is restarted as each sent command starts and ends
-      (`onActivity`), and stops the run as `quit` would.
+  - How a run and its clients talk: see
+    [Runs and clients](#runs-and-clients) below.
   - `stop` expects the run's `Stopping run D1` line first. With it, it
     waits a minute for the teardown before `SIGTERM`; without it (no
     answer in 15 seconds, or a close without it), it signals at once.
     Its connection is dropped either way, so `stop` itself never
     hangs.
-  - One line per connection: the command goes in, its output comes
-    back, and the run ends the connection.
-  - In `run.ts`, `Remote` feeds sent lines through the same
-    `commandRunner` queue as typed ones, so they never interleave.
-    - The reply ends when the command does, with no wait after it.
-      Commands wait out what they set off that has a known end instead.
-    - Every page load a command or `--watch` save makes (`loadInTab`)
-      waits for each script in the tab to report starting, being
-      skipped or throwing in the new document
-      (`HarnessHost.untilReported`), or for a dialog.
-      - Only reports stamped at or after the new document's start
-        count, so late ones from the old document don't end it.
-      - A hash-only change loads no document, and waits for nothing.
-      - A 10-second backstop, counted from the load, covers a script
-        that never reports. It is not how the end is found.
-    - `drain` (in `inject.ts`) then makes a round trip through each CDP
-      session, after a `setTimeout(0)` in the page.
-      - Needed because a script reports its start before its body runs,
-        and a MAIN-world menu handler runs a task after its push.
-      - Console lines come on Playwright's session and reports on the
-        harness's, so each gets its own round trip.
-      - Used after page loads, `menu` fires and `eval`.
-    - Inspecting commands (`onlyInspects`: `status`, `values`,
-      `snapshot`, `logs`, `tabs` / `menu` listings and so on) answer
-      the sender alone. Their lines go through the `commandOutput`
-      async-local store, so the run's stream never shows them.
-    - Commands that change things are echoed in the run's stream and
-      print there. Their sender also gets what the page and scripts
-      print during the command's turn.
-    - `quit` is held open until the run has ended, so `stop` prints its
-      end line and knows it's done.
-    - Lines arriving before the page has loaded wait for it.
-    - Once the run starts tearing down, sent lines are refused.
-  - A closed stdout (`EPIPE`) ends a run through the same stop as
-    Ctrl-C; other commands just exit.
-  - `stop` falls back to `SIGTERM`, which `start` handles like Ctrl-C
-    (on Windows it kills outright, with no cleanup).
-    Either signal drops both handlers, as `quit` does, so a second one
+  - The run handles `SIGTERM` as `stop` (on Windows it kills outright,
+    with no cleanup). The signal drops the handlers, so a second one
     during teardown kills the run.
 - **Dialogs in other tabs**: `run.ts` gives every page of a connected
   browser a dialog listener that does nothing.
@@ -621,8 +546,9 @@ into pages.
     and one quiet for 2 seconds is named: a dialog, or a busy page. (A
     page paused in the debugger still answers.)
   - The stuck tabs are asked again each second.
-  - `sm-dev` handles Ctrl-C and SIGTERM only once the run has connected,
-    so during the wait they end it at once, with nothing to clean up.
+  - The run handles SIGINT and SIGTERM only once it has connected, so
+    during the wait a signal (a Ctrl-C at the client, passed on as
+    `SIGTERM`) ends it at once, with nothing to clean up.
 - **`cdp-proxy.ts`**: a CDP endpoint that shows a client only the run's
   tabs, for the `--devtools` server to connect to.
   - Why: DevTools' Puppeteer attaches to every tab in the browser, and
@@ -709,8 +635,14 @@ into pages.
   So `load` / `update` refuse while one is open, and
   `PageAttachment.dispose` gives up on the page after a second; detaching
   the session drops what it registered anyway.
-- **`console-commands.ts`**: the commands typed while `start` streams,
-  and the terminal prompt output is drawn around.
+- **`console-commands.ts`**: a run's commands, and the `-i` prompt
+  (`readPromptCommands`) that output is drawn around.
+  - The prompt runs in the client (`cli.ts`), never in the run, which
+    doesn't read stdin at all.
+  - Each command says whether it was typed at a person's prompt
+    (`interactive`). There `menu <label>` answers at once, rather than
+    waiting a moment for a script still registering, as it does for
+    piped input.
   - Each kind of thing has its own style of name: scripts `1`, tabs
     `T1`, menu commands `M1`, with `T2.` in front to name one on
     another tab. A bare number only ever means a script; one typed
@@ -739,13 +671,13 @@ into pages.
   - Outside a block, blank lines and `#` comments are skipped.
   - A list is checked in full before any of it runs, so a `{{` after
     another command, or a block never closed, runs none of it.
-  - A list sent from another shell goes one connection per command,
-    in order. A block's newlines survive the trip, since the message
-    is JSON.
-  - A command that fails ends its reply with a marker line
-    (`COMMAND_FAILED` in `runs.ts`) carrying its exit code. It starts
-    with a NUL, which no output line starts with. `sendLine` takes it
-    off and returns the code.
+  - A list sent in one argument goes over the client's connection one
+    command at a time, in order. A block's newlines survive the trip,
+    since the message is JSON.
+  - Each command's reply ends with a marker line (`COMMAND_DONE` in
+    `runs.ts`) carrying its exit code. It starts with a NUL, which no
+    output line starts with. `RunClient` takes it off and returns the
+    code.
   - The codes: what the command returns (a number, or false for 1);
     else 2 when it printed an `ERROR:` line; a throw is 2 for a typing
     mistake and 1 otherwise. A run that is ending answers 1.
@@ -759,9 +691,133 @@ into pages.
     - What arrives without a pause (a file, or a pipe's lines within
       50ms of each other) is checked in full first, as a list is.
     - Later lines, from a terminal or a slow writer, are sent as each
-      command completes. A mistake then is said, and the rest go on.
+      command completes. A mistake then stops the rest.
     - readline holds back a last line with no newline until the input
       ends, so a half-written line is never taken early.
+
+### Runs and clients
+
+Every run is a background process of its own. The `sm-dev` process is
+only ever a client of runs.
+
+#### Starting a run
+
+- `start` (in `cli.ts`) runs the same `start` command again as a
+  detached child process, and waits for the child to be ready.
+  - The child's stdout and stderr go to its log file (`run-log.ts`);
+    the parent prints the file as it grows, without the line
+    timestamps, until the child is ready.
+  - The child learns it is the run from `SM_DEV_DETACHED_LOG`, and
+    says it is ready over the Node IPC channel (`onReady`, called
+    where sent commands start being taken). A child that exits first
+    passes on its exit code.
+  - A child whose parent has gone (a tool timeout) still becomes
+    ready; with no channel to report on, it just runs on.
+  - The parent handles Ctrl-C, SIGTERM and SIGHUP (sent when the
+    terminal closes) while the child starts, by ending the child and
+    exiting 130.
+- What it replaces, stopped before the new run starts so its tab is
+  free to reuse (a new run that then fails leaves neither):
+  - The run the client works with, whose id the new one takes.
+  - Else, with `--detach` and not `--new`, runs whose record is marked
+    `detached`.
+- The run never reads stdin. Its commands all come from clients.
+
+#### The client
+
+- `Client` in `cli.ts` holds the connection to the one run it works
+  with (`--run`'s, else the one it started or attached to, else the
+  only one), made when a command first needs it.
+- `start` and `attach` switch it to another run; `stop` leaves it with
+  none.
+- It remembers the runs it started without `--detach`. `finish()`
+  stops them, on `exit`, at the end of the line or input, or on a
+  signal. A second signal exits at once.
+- Whether it follows the run's whole stream is decided once, up
+  front: when the line has a command that isn't only a look, or its
+  input has no known end (`--stdin`, `-i`).
+- The `-i` prompt (`readPromptCommands`) and stdin reading both run in
+  the client. sm-dev's own commands (`start`, `attach`, `stop`,
+  `exit`, `list`, `clear`, `help`, `match` / `validate` on files) run
+  there; the rest go to the run.
+
+#### The protocol
+
+- One connection per client (`RunClient` in `runs.ts`), carrying JSON
+  messages, one per line.
+- An optional first `{"hello": {"follow": true}}` asks for the run's
+  whole stream from then on. `Remote.follow` in `run.ts` adds the
+  connection as a listener; no history is replayed.
+- Commands are `{"line", "cwd", "words", "interactive"}`, taken one at
+  a time.
+  - Each reply ends with a `COMMAND_DONE` line (`\u0000sm-dev:done
+    <code>`) carrying the command's exit code.
+  - `Remote.handle` returns an exit code, or `hold` for `stop`, which
+    keeps the connection open until the run closes it, so the client
+    sees the run end.
+- `sendLine` is one command over a connection of its own.
+- A run with a follower doesn't go idle: the idle timer restarts as
+  each command starts and ends, and while any client follows
+  (`onActivity(watched)`). Timed out, it stops the run as `stop` does.
+
+#### In the run
+
+- `Remote` feeds sent commands through one `commandRunner` queue, so
+  they never interleave.
+  - The reply ends when the command does, with no wait after it.
+    Commands wait out what they set off that has a known end instead.
+  - Every page load a command or `--watch` save makes (`loadInTab`)
+    waits for each script in the tab to report starting, being
+    skipped or throwing in the new document
+    (`HarnessHost.untilReported`), or for a dialog.
+    - Only reports stamped at or after the new document's start
+      count, so late ones from the old document don't end it.
+    - A hash-only change loads no document, and waits for nothing.
+    - A 10-second backstop, counted from the load, covers a script
+      that never reports. It is not how the end is found.
+  - `drain` (in `inject.ts`) then makes a round trip through each CDP
+    session, after a `setTimeout(0)` in the page.
+    - Needed because a script reports its start before its body runs,
+      and a MAIN-world menu handler runs a task after its push.
+    - Console lines come on Playwright's session and reports on the
+      harness's, so each gets its own round trip.
+    - Used after page loads, `menu` fires and `eval`.
+- Inspecting commands (`onlyInspects`: `status`, `values`,
+  `snapshot`, `logs`, `tabs` / `menu` listings and so on) answer
+  the sender alone. Their lines go through the `commandOutput`
+  async-local store, so the run's stream never shows them.
+- Commands that change things print to the run's stream. A sender not
+  following it still gets what the page and scripts print during the
+  command's turn.
+- Lines arriving before the page has loaded wait for it.
+- Once the run starts tearing down, sent lines are refused.
+
+#### The log
+
+- Every run has one: its stdout and stderr (`run-log.ts`).
+  - Named `sm-dev-<timestamp>.log` in `/tmp/sm-dev-logs-<user>`
+    (`SM_DEV_LOGS_DIR` moves it, for tests), with SeeWhatISee's
+    timestamp format.
+  - Created exclusively; a name already taken moves the timestamp
+    on a millisecond.
+  - The run stamps each line it writes, by wrapping
+    `process.stdout.write` and `process.stderr.write`.
+  - Kept after the run ends.
+  - Once the run has its id, `sm-dev-<id>.log` is pointed at it: a
+    relative symlink, made under a temp name and renamed over the
+    old one.
+- `Remote` marks a sent command that changes something as
+  `<who>:<how> > command` (see `commandMark`), for where it happened in
+  the stream. An `eval` block as `primary:arg > eval {{`, `... <code>`,
+  `... }}`.
+  - Who: `primary` when the sender's pid (from its hello) is the one
+    `start` passed the run in `SM_DEV_PRIMARY_PID`, else `remote`.
+  - How: the command's `source`, `arg`, `stdin` or `prompt`. A client
+    heads its own echoes with the source alone (`stdin > `).
+  - The mark also goes to the other followers, but not back to the
+    sender, which heads its own output.
+  - Commands that only look, and what they print (known by
+    `inCommand`), are left out.
 
 ### Service-worker additions
 

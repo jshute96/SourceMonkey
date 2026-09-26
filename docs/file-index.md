@@ -179,21 +179,21 @@ command. See `docs/harness-design.md`.
 | `src/harness/fixture.ts` | The Playwright fixture a consumer repo imports: `loadUserscript`, `gm`, `reports`, `serveHtml` over a host and attachment per test |
 | `src/harness/save-html.ts` | A page's DOM as a standalone file, scripts disabled and a `<base>` added; for `savehtml` and the fixture's `saveHtml` |
 | `src/harness/checks.ts` | `match` and `validate`'s shared half: finding the scripts named, and the lines each prints |
-| `src/harness/command-lines.ts` | Input lines into `sm-dev start` commands: multi-line `eval {{ ... }}` blocks, comments, sent lists |
-| `src/harness/console-commands.ts` | The commands typed while `sm-dev start` streams, across its tabs, the page-dialog tracker, and the prompt |
+| `src/harness/command-lines.ts` | Input lines into a run's commands: multi-line `eval {{ ... }}` blocks, comments, sent lists |
+| `src/harness/console-commands.ts` | A run's commands across its tabs, the page-dialog tracker, and the client's `-i` prompt |
 | `src/harness/page-commands.ts` | The run commands that drive and read a tab's page, from `click` and `eval` to `snapshot` and `logs` |
 | `src/harness/snapshot.ts` | `snapshot`'s element refs, its on-screen filter, and `probe --css`'s suggested CSS selectors |
 | `src/harness/stuck-tabs.ts` | Before `sm-dev start` connects, names the tabs that don't answer (a dialog, say), and waits for them |
 | `src/harness/tab-badge.ts` | The count badge `sm-dev start` draws over controlled tabs' favicons, greyed once the run is gone |
-| `src/harness/run.ts` | `sm-dev start`: open a browser (reusing a finished run's tab), inject or push the scripts, follow tabs it opens, and stream |
+| `src/harness/run.ts` | The run process `sm-dev start` spawns: open a browser, inject or push the scripts, follow tabs, serve clients |
 | `src/harness/extension-backend.ts` | `sm-dev --extension`: finds SourceMonkey's worker in the browser and drives `writeScratchScript`, `clearScratchScripts`, `soloMode`, the script log |
 | `src/harness/cdp-proxy.ts` | A CDP endpoint that shows a client only the run's tabs, for the `--devtools` server to connect to |
 | `src/harness/devtools.ts` | `sm-dev start --devtools`: a Chrome DevTools server per run, and each tab's DevTools page id |
 | `src/harness/run-log.ts` | A run's log file: timestamped names in `/tmp/sm-dev-logs-<user>`, stamped lines, per-run links |
 | `src/harness/tab-refs.ts` | Naming and picking a run's tabs (`T2`, target or page ids), the current tab, the dialog message |
 | `src/harness/wait.ts` | The `wait` command, and when a tab has settled (loaded, scripts started, no requests or DOM changes) |
-| `src/harness/runs.ts` | The runs active on this machine: record files and control sockets behind `sm-dev list`, `stop`, and commands sent to a run |
-| `src/harness/cli.ts` | The `sm-dev` command: `start` (and `--detach`), `validate`, `match`, `clear`, `list`, `stop`, a run's commands, `--` lines, `--stdin` |
+| `src/harness/runs.ts` | The runs on this machine: record files, control sockets, and the client connection (`RunClient`) to one |
+| `src/harness/cli.ts` | The `sm-dev` client: line flags, `start`, `attach`, `stop`, `exit`, `validate`, `match`, `clear`, `list`, `--stdin`, `-i` |
 
 ## Tests (`tests/`)
 

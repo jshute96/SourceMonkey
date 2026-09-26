@@ -1,6 +1,6 @@
-// `sm-dev start`: the interactive loop. Connect to a browser, inject one
-// or more scripts from disk, load the page, and stream what happens
-// until interrupted.
+// `sm-dev start`'s run: connect to a browser, inject one or more scripts
+// from disk, load the page, and log what happens, taking commands from
+// clients over its socket until stopped.
 //
 // Kept apart from cli.ts so the Node-only commands (`validate`,
 // `match`) never load Playwright, which is an optional peer dependency.
@@ -15,7 +15,7 @@ import type { Browser, BrowserContext, Page } from '@playwright/test';
 
 import { shellWord } from './command-lines.js';
 import {
-  commandOutput, commandRunner, DialogTracker, gotoInTab, inCommand, onlyInspects, readConsoleCommands, reloadTab, reloadable, setCommandsListening, skippedScriptLine, targetIdSuffix,
+  commandOutput, commandRunner, DialogTracker, gotoInTab, inCommand, onlyInspects, reloadTab, reloadable, setCommandsListening, skippedScriptLine, targetIdSuffix,
   type CommandRunner, type ConsoleContext, type ControlledTab, type OutputHistory,
 } from './console-commands.js';
 import { DevToolsLink } from './devtools.js';
@@ -27,7 +27,7 @@ import { showConsoleLine, showPageError } from './page-output.js';
 import {
   defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, prepareScript, type PreparedScript,
 } from './prepare.js';
-import { checkRunsDir, failedLine, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentLineHandler } from './runs.js';
+import { checkRunsDir, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentCommand, type SentLineHandler } from './runs.js';
 import { waitForStuckTabs } from './stuck-tabs.js';
 import { NO_TABS } from './tab-refs.js';
 import { settleTabs } from './wait.js';
@@ -73,9 +73,9 @@ export interface RunOptions extends ConnectOptions {
   localRoots: string[];
   /** Where the stream goes. */
   out: (line: string) => void;
-  /** Resolves when the run should end (Ctrl-C). Omit to return after the first load. */
+  /** Resolves when the run should end (stop, a signal, --seconds). Omit to return after the first load. */
   until?: Promise<void>;
-  /** Called when a typed `quit` asks for the run to end. */
+  /** Called when a client's `stop` asks for the run to end. */
   onStop?: () => void;
   /** Called once the run has a browser connection, and so something to clean up. */
   onConnected?: () => void;
@@ -85,16 +85,20 @@ export interface RunOptions extends ConnectOptions {
    * shells can't reach it.
    */
   onReady?: (id: string | undefined) => void;
-  /** Called as each sent command starts and ends, for `--idle-seconds` to count from. */
-  onActivity?: () => void;
-  /** Started by `--detach`: every command comes from another shell. */
+  /**
+   * Called as each sent command starts and ends, and as clients start and
+   * stop following the run, for `--idle-seconds` to count from. `watched`:
+   * whether a client follows the run now, which keeps it from going idle.
+   */
+  onActivity?: (watched: boolean) => void;
+  /** Started by `--detach`, as the run's record says, for a later `--detach` to replace. */
   detached?: boolean;
   /** The run's log file (see run-log.ts), linked by the run's id. */
   log?: string;
-  /** Writes a command typed at the prompt to the log, for a run that keeps one. */
-  logCommand?: (text: string, echoed: string[]) => void;
   /** The id `start --run` asked for, rather than the lowest free one. */
   runId?: string;
+  /** The process id of the client that started the run (see commandMark). */
+  primaryPid?: number;
   /** Don't wait for the tabs to settle before taking commands (`--nowait`). */
   noWait?: boolean;
 }
@@ -391,7 +395,7 @@ function printSkipped(opts: RunOptions, start: StartPages): void {
 }
 
 export async function run(opts: RunOptions): Promise<number> {
-  const remote = new Remote(opts.out, opts.onStop, opts.onActivity, opts.detached === true);
+  const remote = new Remote(opts.out, opts.onStop, opts.onActivity, opts.primaryPid);
   // Every line also goes to whoever sent the command running now.
   opts = { ...opts, out: remote.out };
   const session = await openBrowser(opts, opts.out, { reuseTab: true, openTab: !opts.noTab });
@@ -443,6 +447,17 @@ export async function run(opts: RunOptions): Promise<number> {
   }
 }
 
+/**
+ * How a sent command is headed in the log and to the clients following
+ * the run: who sent it (`primary`, the client that started the run, or
+ * `remote`, any other) and how it got it (`arg`, `stdin`, `prompt`), as
+ * `primary:arg >`. A client heads its own without the who.
+ */
+export function commandMark(sent: Pick<SentCommand, 'pid' | 'source'>, primaryPid: number | undefined): string {
+  const who = sent.pid !== undefined && sent.pid === primaryPid ? 'primary' : 'remote';
+  return `${who}:${sent.source} >`;
+}
+
 // A script's path as the run shows it.
 function displayPath(file: string): string {
   return path.relative(process.cwd(), file) || file;
@@ -482,17 +497,16 @@ class Remote {
     },
   };
 
-  /**
-   * `detached`: the run's stream is its log, and every command comes
-   * from another shell, so a command that changes something is marked
-   * there as `> command`, for where it happened among what the page
-   * printed.
-   */
+  // The run's stream is its log, and every command comes from a
+  // client, so a command that changes something is marked there as
+  // `> command`, for where it happened among what the page printed.
+  // `primaryPid`: the client that started the run, whose commands are
+  // marked as the primary's.
   constructor(
     private readonly print: (line: string) => void,
     private readonly onStop?: () => void,
-    private readonly onActivity?: () => void,
-    private readonly detached = false,
+    private readonly onActivity?: (watched: boolean) => void,
+    private readonly primaryPid?: number,
   ) {}
 
   /**
@@ -530,13 +544,13 @@ class Remote {
 
   async open(record: Omit<RunRecord, 'id'>, wanted?: string): Promise<void> {
     try {
-      this.control = await RunControl.open(record, this.handle, wanted);
+      this.control = await RunControl.open(record, { command: this.handle, follow: this.follow }, wanted);
       const { id } = this.control;
       if (record.log) {
         const { linkRunLog } = await import('./run-log.js');
         await linkRunLog(record.log, id, this.out);
       }
-      this.out(`[sm-dev] Started as run ${id}. Other shells reach it with sm-dev <command> --run ${id}, and end it with sm-dev stop --run ${id}.`);
+      this.out(`[sm-dev] Started as run ${id}. Other shells reach it with sm-dev --run ${id} <command>, or sm-dev attach ${id}, and stop it with sm-dev stop ${id}.`);
     } catch (err) {
       this.out(`[sm-dev] Other shells can't reach this run: ${(err as Error).message}`);
     }
@@ -571,12 +585,26 @@ class Remote {
     await this.control?.close();
   }
 
+  // The connections following the run's stream.
+  private readonly followers = new Set<(line: string) => void>();
+
+  private readonly follow = (reply: (line: string) => void): (() => void) => {
+    this.listeners.add(reply);
+    this.followers.add(reply);
+    this.onActivity?.(true);
+    return () => {
+      this.listeners.delete(reply);
+      this.followers.delete(reply);
+      this.onActivity?.(this.followers.size > 0);
+    };
+  };
+
   private readonly handle: SentLineHandler = async (line, reply, sent) => {
-    this.onActivity?.();
+    this.onActivity?.(this.followers.size > 0);
     try {
       return await this.run(line, reply, sent);
     } finally {
-      this.onActivity?.();
+      this.onActivity?.(this.followers.size > 0);
     }
   };
 
@@ -589,19 +617,26 @@ class Remote {
     if (!inspects) {
       // The sender's own words quoted as it gave them, so the command
       // reads as it was typed.
-      const shown = sent?.words ? sent.words.map(shellWord).join(' ') : line;
+      const shown = sent.words ? sent.words.map(shellWord).join(' ') : line;
       const [first, ...more] = shown.split('\n');
-      this.print(this.detached ? `> ${first}` : `[sm-dev] Sent from another shell: ${first}`);
-      for (const l of more) this.print(`... ${l}`);
+      // Headed by who sent it and how (see commandMark). An eval block
+      // as it was typed: its code between `{{` and `}}`.
+      const mark = commandMark(sent, this.primaryPid);
+      const marked = more.length === 0 ? [`${mark} ${first}`] : [`${mark} ${first} {{`, ...more.map((m) => `... ${m}`), '... }}'];
+      // To the log and the clients following the run, but not back to
+      // the one that sent it, which heads its output itself.
+      for (const l of marked) {
+        this.print(l);
+        for (const follower of this.followers) if (follower !== reply) follower(l);
+      }
     }
     // Answered straight away, even before the run is ready, and the
     // sender kept listening until the run has ended, so it sees that.
-    // `stop` is what `sm-dev stop` sends.
-    if (/^\s*(quit|exit|stop)\s*$/.test(line)) {
+    if (/^\s*stop\s*$/.test(line)) {
       // First, so `sm-dev stop` knows it was heard, and waits for the
       // teardown rather than taking the wait for no answer.
       reply(`[sm-dev] Stopping run ${this.id}`);
-      this.listeners.add(reply);
+      if (!sent.follows) this.listeners.add(reply);
       this.onStop?.();
       return 'hold';
     }
@@ -609,14 +644,15 @@ class Remote {
     await this.armed;
     if (this.ending || !this.runner) {
       reply('[sm-dev] The run is ending, so the command was not run');
-      reply(failedLine(1));
-      return 'done';
+      return 1;
     }
-    const code = await this.runner(line, inspects
-      ? { answer: reply, cwd: sent?.cwd, words: sent?.words }
-      : { start: () => this.listeners.add(reply), end: () => this.listeners.delete(reply), cwd: sent?.cwd, words: sent?.words });
-    if (code !== 0) reply(failedLine(code));
-    return 'done';
+    const hooks = { cwd: sent.cwd, words: sent.words, interactive: sent.source === 'prompt' };
+    // One that only looks answers its sender alone. One that changes
+    // things prints to the stream, which a following sender gets
+    // anyway; another gets it while the command runs.
+    return this.runner(line, inspects ? { ...hooks, answer: reply }
+      : sent.follows ? hooks
+        : { ...hooks, start: () => this.listeners.add(reply), end: () => this.listeners.delete(reply) });
   };
 }
 
@@ -630,7 +666,7 @@ async function runInHarness(
   const host = new HarnessHost();
   // Commands are only read once the page has loaded, but a prompt
   // opened before then can still wait for a typed or sent accept.
-  const commandsComing = opts.until !== undefined && (process.stdin.readable || remote.reachable);
+  const commandsComing = opts.until !== undefined && remote.reachable;
   let devtools: DevToolsLink | null = null;
   const tabs = new FollowedTabs(host, opts, session.context, commandsComing, () => {
     remote.setTabs(tabs.list().length);
@@ -792,7 +828,6 @@ async function runInHarness(
     opts.out(NO_TABS);
   }
 
-  let stopCommands: (() => void) | null = null;
   try {
     if (opts.watch) {
       watcher = watchFiles(opts, prepared, async () => {
@@ -832,21 +867,12 @@ async function runInHarness(
         runId: remote.id,
         devtools: () => (devtools?.isUp ? devtools.usage : null),
         output: remote.output,
-        logCommand: opts.logCommand,
         roots: { collectionRoot: opts.collectionRoot, localRoots: opts.localRoots },
-        clearExtension: async () => {
-          const backend = await ExtensionBackend.connect(session.context);
-          const count = await backend.clear();
-          // Solo mode off too, as sm-dev clear does.
-          await backend.solo(false);
-          return count;
-        },
       };
       commands = ctx;
       const runner = commandRunner(ctx);
       if (commandsComing) setCommandsListening(ctx.tabs(), true);
       remote.arm(runner);
-      stopCommands = readConsoleCommands(ctx, runner);
       opts.onReady?.(remote.id);
       await opts.until;
     } else {
@@ -860,7 +886,6 @@ async function runInHarness(
     // changes nothing once it sees `stopping`.
     stopping = true;
     remote.disarm();
-    stopCommands?.();
     setCommandsListening(tabs.list(), false);
     watcher?.stop();
     await queue;
@@ -1214,7 +1239,7 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
   // Nothing to run a command against: the extension runs the scripts.
   remote.arm(async (_line, hooks) => {
     hooks?.start?.();
-    opts.out('[sm-dev] A run with --extension takes no commands besides quit');
+    opts.out('[sm-dev] A run with --extension takes no commands besides stop');
     hooks?.end?.();
     return 1;
   });

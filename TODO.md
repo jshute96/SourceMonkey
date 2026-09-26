@@ -769,7 +769,7 @@ See [docs/harness-design.md](docs/harness-design.md).
 - Scratch scripts are keyed by a sanitized name, so different names can
   share one `scratch:///` URL and replace each other: `Foo Bar`,
   `Foo/Bar` and `Foo-Bar` all become `Foo-Bar.user.js`, and `sm-dev
-  run --extension` pushes `a/x.user.js` and `b/x.user.js` both as
+  start --extension` pushes `a/x.user.js` and `b/x.user.js` both as
   `x.user.js`. At least report the replacement when the header
   `@name` differs.
 - Removing a scratch script from the collections page while
@@ -828,13 +828,13 @@ See [docs/harness-design.md](docs/harness-design.md).
   or it threw: the others only print why. Have each return its exit
   code (the run already carries one back), so scripted lines can stop
   on a failure.
-- Nothing tests the interactive `> ` prompt, which only turns on when
-  stdin and stdout are terminals. A test would run `sm-dev start` in a
+- Nothing tests the interactive `> ` prompt, which only turns on with
+  `-i` at a terminal. A test would run `sm-dev -i start` in a
   pseudo-terminal (pty: Python's `pty` module, or the native `node-pty`
   package) and cover:
-  - Ctrl-C clearing a typed line, stopping the run on an empty one, and
-    dropping an open `eval` block.
-  - A second Ctrl-C while a command runs stopping the run.
+  - Ctrl-C clearing a typed line, exiting on an empty one (and stopping
+    the run it started), and dropping an open `eval` block.
+  - A second Ctrl-C while a command runs exiting.
   - Streamed output landing above the prompt, with the typed text redrawn.
   - Ctrl-Z then `fg` leaving the prompt still reading keys (readline
     pauses its input on resume). Under a pty with no job control the
