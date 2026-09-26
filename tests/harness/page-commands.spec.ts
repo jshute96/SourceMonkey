@@ -151,6 +151,44 @@ test('a tab closing mid-expression is said as such', async ({ page, fixtureServe
   expect(lines).toEqual(['[sm-dev] The tab closed before the expression finished']);
 });
 
+test('an Escape that leaves the page fullscreen says how to exit', async ({ page, fixtureServer, host, attachment, loadScript }) => {
+  const script = await loadScript({
+    relativePath: 'full.user.js',
+    meta: { name: 'Full', match: ['*://*/target.html'], grant: ['none'] },
+    body: `
+      addEventListener('keydown', (e) => {
+        if (e.key === 'f') document.querySelector('main').requestFullscreen();
+        // Escape ends it here once asked to, as some pages do themselves.
+        if (e.key === 'Escape' && window.exitOnEscape) document.exitFullscreen();
+      });
+    `,
+  });
+  await page.goto(`${fixtureServer.baseUrl}/target.html`);
+  const lines: string[] = [];
+  const tabs = [{ n: 1, page, link: attachment }];
+  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(l), stop: () => undefined };
+  const run = async (line: string) => {
+    lines.length = 0;
+    await runConsoleCommand(line, ctx);
+    return [...lines];
+  };
+  const stillFullscreen = '[sm-dev] The page is still fullscreen. Escape sent by sm-dev goes to the page rather than to Chrome. To exit, use eval document.exitFullscreen().';
+
+  // Not fullscreen: Escape is just a key, even with a later key entering it.
+  expect(await run('key Escape')).toEqual(['[sm-dev] Pressed Escape']);
+  expect(await run('key Escape f')).toEqual(['[sm-dev] Pressed Escape, f']);
+  expect(await run('eval document.fullscreenElement')).toEqual(['main#target']);
+  // The key reaches the page, and fullscreen stays.
+  expect(await run('key esc')).toEqual(['[sm-dev] Pressed Escape', stillFullscreen]);
+  expect(await run('key Shift+Escape')).toEqual(['[sm-dev] Pressed Shift+Escape', stillFullscreen]);
+  expect(await run('eval document.exitFullscreen()')).toEqual(['undefined']);
+  // A page that leaves fullscreen on Escape itself gets no note.
+  await run('eval window.exitOnEscape = true');
+  await run('key f');
+  expect(await run('key Escape')).toEqual(['[sm-dev] Pressed Escape']);
+  expect(await run('eval document.fullscreenElement')).toEqual(['null']);
+});
+
 test('snapshot refs name elements for the other commands, and it can show only the screen or add selectors', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {
   const script = await loadScript({ relativePath: 'idle.user.js', meta: { name: 'Idle', match: ['*://*/target.html'] }, body: '' });
   await page.setViewportSize({ width: 800, height: 600 });

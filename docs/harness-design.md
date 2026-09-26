@@ -307,6 +307,10 @@ into pages.
     action races the tab's dialog tracker (`untilDialog`, as `menu`
     does), and returns once a dialog is up. The settle wait's limit is
     kept in Node too, since a stopped page's own timer never fires.
+  - Keys sent over CDP go to the renderer, so Chrome's own shortcuts
+    never fire. The one that matters for scripts is Escape leaving
+    fullscreen: after an Escape, `key` checks `fullscreenElement` and
+    says how to exit when the page is still fullscreen.
 - **`snapshot.ts`**: what `snapshot` adds to Playwright's tree.
   - Refs: the tree is taken in Playwright's `ai` mode, where Playwright
     gives each element a ref, `(f<n>)?e<n>`.

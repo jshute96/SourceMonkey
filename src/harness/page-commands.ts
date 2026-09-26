@@ -60,6 +60,20 @@ export const PAGE_COMMANDS = new Set(['click', 'hover', 'type', 'key', 'eval', '
 const ACTION_TIMEOUT_MS = 5000;
 const SETTLE_QUIET_MS = 100;
 const SETTLE_MAX_MS = 3000;
+// How long a whole-page screenshot waits for the browser to capture it.
+const SCREENSHOT_TIMEOUT_MS = 5000;
+// How long a quick look into the page waits for an answer.
+const CHECK_TIMEOUT_MS = 1000;
+
+/**
+ * A quick yes/no from the page, false when it doesn't answer in time:
+ * a page stopped by a dialog or busy in a long script never does.
+ */
+export function pageSays(page: Page, check: () => boolean): Promise<boolean> {
+  const answer = page.evaluate(check).catch(() => false);
+  const timeout = new Promise<boolean>((r) => setTimeout(() => r(false), CHECK_TIMEOUT_MS).unref());
+  return Promise.race([answer, timeout]);
+}
 
 // The console lines and errors each page has had, for `logs`: all of
 // them, not only the ones the run's stream shows. The newest are kept,
@@ -285,10 +299,20 @@ export async function runPageCommand(
           return;
         }
         const named = keys.map(keyName);
+        // Escape leaves fullscreen as Chrome's own shortcut, which a key
+        // sent over CDP never reaches. The page may still leave on its
+        // own. Fullscreen before and after, so one the keys entered isn't
+        // taken for one Escape failed to leave.
+        const escape = named.some((k) => keyParts(k).at(-1) === 'Escape');
+        const isFullscreen = () => document.fullscreenElement !== null;
+        const wasFullscreen = escape && await pageSays(page, isFullscreen);
         const pressing = (async () => {
           for (const key of named) await page.keyboard.press(key);
         })();
         await act(pressing, `Pressed ${named.join(', ')}`);
+        if (wasFullscreen && !tab.dialogs?.current && await pageSays(page, isFullscreen)) {
+          say('The page is still fullscreen. Escape sent by sm-dev goes to the page rather than to Chrome. To exit, use eval document.exitFullscreen().');
+        }
         return;
       }
       case 'snapshot': {
@@ -361,7 +385,13 @@ export async function runPageCommand(
           if (await matches(page, selector, say) === null) return;
           await write(image, () => locate(page, selector).first().screenshot({ path: file(image), timeout: ACTION_TIMEOUT_MS }));
         } else {
-          await write(image, () => page.screenshot({ path: file(image), fullPage: parsed.flags['--full'] === true }));
+          try {
+            await write(image, () => page.screenshot({ path: file(image), fullPage: parsed.flags['--full'] === true, timeout: SCREENSHOT_TIMEOUT_MS }));
+          } catch (err) {
+            if ((err as Error).name !== 'TimeoutError' || page.isClosed()) throw err;
+            say(`Screenshot failed: Browser did not capture the page within ${SCREENSHOT_TIMEOUT_MS / 1000} seconds`);
+            return;
+          }
         }
         say(`Wrote ${shown(image)}${selector ? ` (${named(page, selector)})` : ''} from ${page.url()}`);
         return;

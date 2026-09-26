@@ -439,10 +439,20 @@ test('several stuck tabs, a dialog and a busy page, are all named, over a ws:// 
     const busyId = await openTab(setup.port, busy);
     const ws = new WebSocket(`ws://127.0.0.1:${setup.port}/devtools/page/${busyId}`);
     await new Promise((resolve) => { ws.onopen = resolve; });
-    await new Promise((resolve) => {
-      ws.onmessage = resolve;
-      ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: 'setTimeout(() => { for (;;); }, 100)' } }));
+    // Each call its own id, so a late reply can't answer the next one.
+    let nextId = 1;
+    const evaluate = (expression: string) => new Promise<unknown>((resolve) => {
+      const id = nextId++;
+      ws.onmessage = (e) => {
+        const reply = JSON.parse(String(e.data)) as { id?: number; result?: { result?: { value?: unknown } } };
+        if (reply.id === id) resolve(reply.result?.result?.value);
+      };
+      ws.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression } }));
     });
+    // Once the tab has its page: a loop set going in the blank one it
+    // starts with would end with that document.
+    await expect.poll(() => evaluate('location.href')).toBe(busy);
+    await evaluate('setTimeout(() => { for (;;); }, 100)');
     ws.close();
     const dialog = `${fixtureServer.baseUrl}/other.html`;
     await openForeignDialogTab(setup.port, dialog);

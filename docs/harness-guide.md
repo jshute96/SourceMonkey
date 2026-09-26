@@ -334,6 +334,13 @@ current one.
   what they did.
 - One that opens a dialog returns once the dialog is up, and says so;
   answer it with `accept` or `dismiss`.
+- Keys go to the page, not to Chrome, so Chrome's own shortcuts
+  (reload, back, zoom) do nothing.
+  - Escape doesn't leave fullscreen either. When the page is still
+    fullscreen after one, `key` says so; exit with
+    `eval document.exitFullscreen()`.
+- A whole-page `screenshot` gives up after 5 seconds if the browser
+  hasn't captured the page.
 - Anywhere a command takes a selector, it also takes a ref from the
   latest `snapshot`: `click e4` (or `ref=e4`, `[ref=e4]`). Playwright
   makes the refs; `f2e4` is one it numbered for a frame.

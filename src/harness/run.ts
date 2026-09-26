@@ -21,7 +21,7 @@ import { DevToolsLink } from './devtools.js';
 import { ExtensionBackend, type LogEntry } from './extension-backend.js';
 import { HarnessHost, type ErrorReport, type SkipReport, type StartReport } from './host.js';
 import { attachPage, targetIdOf, type PageAttachment } from './inject.js';
-import { recordLog } from './page-commands.js';
+import { pageSays, recordLog } from './page-commands.js';
 import { showConsoleLine, showPageError } from './page-output.js';
 import {
   defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, prepareScript, type PreparedScript,
@@ -323,10 +323,8 @@ async function readRunTabs(): Promise<RunTab[]> {
 // Every window's showing tab counts, so with several windows open the
 // first free one found wins. A page blocked on a dialog never answers,
 // hence the time limit.
-async function isSelected(page: Page): Promise<boolean> {
-  const visible = page.evaluate(() => document.visibilityState === 'visible').catch(() => false);
-  const timeout = new Promise<boolean>((r) => setTimeout(() => r(false), 1000).unref());
-  return Promise.race([visible, timeout]);
+function isSelected(page: Page): Promise<boolean> {
+  return pageSays(page, () => document.visibilityState === 'visible');
 }
 
 const NO_URL = 'No URL was given, and the first script\'s @match names no page to open. Give a URL.';
