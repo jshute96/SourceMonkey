@@ -137,6 +137,7 @@ events.
 | `headers-run-at/`          | `@run-at` (`document-start` / `-end` / `-idle` variants)           | multi-script  |
 | `headers-inject-into/`     | `@inject-into` (`page` MAIN-world vs `content` USER_SCRIPT-world)  | multi-script  |
 | `headers-match-hash/`      | `#hash` in `@match` / `@include` / `@exclude`, per manager        | multi-script  |
+| `headers-include-regex/`   | Regex `@include` / `@exclude`: slashes, flags, case, per manager   | multi-script  |
 | `require-scope/`           | `@require` scope in both worlds (SM-only: relative ref)            | multi-script  |
 | `xmlhttp-denied/`          | `GM_xmlhttpRequest` + `@connect` denial vs allow                  | multi-script  |
 

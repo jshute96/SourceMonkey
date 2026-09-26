@@ -1390,6 +1390,19 @@ test('prelude matcher: @match passes', async () => {
   assert.equal(match('https://example.com/x', { matches: ['https://example.com/*'], excludes: [], includes: [] }), true);
 });
 
+test('prelude matcher: a regex ignores case, as urlMatchesScript does', async () => {
+  const match = await loadPreludeMatcher();
+  const url = 'https://example.com/page';
+  for (const [m, expected] of [
+    [{ matches: [], excludes: [], includes: ['/EXAMPLE\\.COM\\/PAGE/'] }, true],
+    [{ matches: ['https://example.com/*'], excludes: ['/PAGE/'], includes: [] }, false],
+    [{ matches: [], excludes: [], includes: ['*EXAMPLE.COM*'] }, false],
+  ]) {
+    assert.equal(match(url, m), expected, JSON.stringify(m));
+    assert.equal(urlMatchesScript(url, m), expected, JSON.stringify(m));
+  }
+});
+
 test('prelude matcher: /regex/ @include matches when glob would not', async () => {
   const match = await loadPreludeMatcher();
   const m = { matches: [], excludes: [], includes: ['/^https:\\/\\/foo\\.example\\.com\\/.*$/'] };

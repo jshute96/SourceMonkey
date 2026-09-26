@@ -398,6 +398,7 @@ command. See `docs/harness-design.md`.
 | `tests/examples/window-close-focus/` | `@grant window.close` / `window.focus` example — buttons that close this tab and raise the browser window |
 | `tests/examples/headers-run-at/` | `@run-at` header example with one userscript per value (`document-start`/`-end`/`-idle`) on a shared page |
 | `tests/examples/headers-match-hash/` | How `@match`, `@include` and `@exclude` treat a URL's `#hash`, with each manager's observed results |
+| `tests/examples/headers-include-regex/` | How regex `@include` / `@exclude` treat slashes, flags and case, with each manager's results |
 | `tests/examples/headers-inject-into/` | `@inject-into` header example: MAIN-world (`page`) vs USER_SCRIPT-world (`content`) userscripts showing window-isolation |
 | `tests/examples/unsafe-window/` | `unsafeWindow` example: reading/calling/writing page globals, the isolated-world variant where it can't work, and the ungranted-reference variant |
 | `tests/examples/require-scope/` | `@require` scope example: a shared lib's top-level class/const/function reaching both injection worlds |

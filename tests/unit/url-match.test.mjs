@@ -111,6 +111,16 @@ test('includePattern: /regex/ form is honored', () => {
   assert.equal(includePattern('/example\\.com/', 'https://other.org/x'), false);
 });
 
+test('includePattern: a regex ignores case, a glob does not', () => {
+  // As Tampermonkey and Violentmonkey read a regex. A glob is Chrome's
+  // to evaluate, case-sensitively.
+  assert.equal(includePattern('/EXAMPLE\\.com\\/Page/', 'https://example.com/page'), true);
+  assert.equal(includePattern('*EXAMPLE.com/Page*', 'https://example.com/page'), false);
+  // A flag after the closing slash isn't one: the pattern is a glob,
+  // and matches nothing, as in the other managers.
+  assert.equal(includePattern('/example\\.com/i', 'https://example.com/'), false);
+});
+
 test('includePattern: invalid regex returns false without throwing', () => {
   assert.equal(includePattern('/[unclosed/', 'https://example.com/'), false);
 });

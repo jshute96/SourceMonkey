@@ -423,7 +423,8 @@
   function globRx(g) { return new RegExp("^" + escRx(g).replace(/\*/g, ".*") + "$"); }
   function includeMatch(pat, url) {
     if (pat.length >= 2 && pat.charAt(0) === "/" && pat.charAt(pat.length - 1) === "/") {
-      try { return new RegExp(pat.slice(1, -1)).test(url); } catch (_e) { return false; }
+      /* Ignoring case, as url-match.ts does. */
+      try { return new RegExp(pat.slice(1, -1), "i").test(url); } catch (_e) { return false; }
     }
     try { return globRx(pat).test(url); } catch (_e) { return false; }
   }

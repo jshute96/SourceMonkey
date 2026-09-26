@@ -407,11 +407,13 @@ export function unusableMatchGroupKey(message: string): string | null {
 
 // Test a single @include / @exclude pattern against a URL. Patterns
 // wrapped in `/.../` are regex; everything else is a `*`-glob over the
-// whole URL string.
+// whole URL string. A regex ignores case, as Tampermonkey's and
+// Violentmonkey's do. A glob doesn't: Chrome evaluates those itself,
+// case-sensitively, and this has to agree with it.
 export function includePattern(pattern: string, url: string): boolean {
   if (pattern.length >= 2 && pattern.startsWith('/') && pattern.endsWith('/')) {
     try {
-      return new RegExp(pattern.slice(1, -1)).test(url);
+      return new RegExp(pattern.slice(1, -1), 'i').test(url);
     } catch {
       return false;
     }

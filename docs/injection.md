@@ -960,6 +960,8 @@ The User Scripts API has no equivalent for `/regex/` `@include` /
   self-contained matcher equivalent to `urlMatchesScript()`. Before
   the body runs, the wrapper re-checks `location.href` and silently
   returns if it doesn't match.
+  - A regex is tested ignoring case, as Tampermonkey and Violentmonkey
+    test it. A glob stays case-sensitive, as Chrome tests it.
 
 Net effect: badge and injection stay in sync. The wrapper-side
 matcher must agree byte-for-byte with `src/url-match.ts`; a unit test
