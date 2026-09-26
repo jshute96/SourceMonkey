@@ -1,14 +1,15 @@
-// The output file of a `sm-dev start --detach`: where the run's lines go
-// once the command that started it has returned. Each file is named by
-// its start time and kept after the run ends, for reading back later.
+// A run's log file: its stream, each line timestamped, to tail or read
+// back for what happened and when. A detached run writes its output
+// there; one in the foreground copies it there as it prints. Each file
+// is named by its start time and kept after the run ends.
 //
 // Node-only, like runs.ts.
 
 import { randomBytes } from 'node:crypto';
+import { writeSync } from 'node:fs';
 import { mkdir, open, rename, rm, symlink, type FileHandle } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-
 import { StringDecoder } from 'node:string_decoder';
 
 import { checkPrivateDir, owner } from './runs.js';
@@ -17,7 +18,7 @@ import { checkPrivateDir, owner } from './runs.js';
  * Where the logs go: `/tmp/sm-dev-logs-<user>` on most machines.
  * `SM_DEV_LOGS_DIR` moves it, for tests.
  */
-export function detachedLogsDir(): string {
+export function runLogsDir(): string {
   return process.env.SM_DEV_LOGS_DIR || path.join(os.tmpdir(), `sm-dev-logs-${owner()}`);
 }
 
@@ -41,8 +42,8 @@ export const LOG_LINE_PREFIX = /^\d{8}-\d{6}-\d{3} /;
  * taken moves the timestamp on a millisecond and tries again; created
  * exclusively, so two runs starting together can't share one.
  */
-export async function createDetachedLog(): Promise<{ file: string; handle: FileHandle }> {
-  const dir = detachedLogsDir();
+export async function createRunLog(): Promise<{ file: string; handle: FileHandle }> {
+  const dir = runLogsDir();
   try {
     await mkdir(dir, { recursive: true, mode: 0o700 });
   } catch (err) {
@@ -61,6 +62,34 @@ export async function createDetachedLog(): Promise<{ file: string; handle: FileH
       }
     }
   }
+}
+
+/**
+ * A log for a run in the foreground, whose output goes to the terminal:
+ * `write` copies a line of it there too, timestamped.
+ */
+export async function openRunLog(): Promise<{ file: string; write: (line: string) => void; close: () => Promise<void> }> {
+  const { file, handle } = await createRunLog();
+  let closed = false;
+  return {
+    file,
+    // In order with the terminal, as it prints; a log that fails only
+    // costs the log.
+    write: (line) => {
+      if (closed) return;
+      const stamp = logTimestamp();
+      try {
+        // An empty line unstamped, as a detached run's log has it.
+        writeSync(handle.fd, line.split('\n').map((l) => (l ? `${stamp} ${l}\n` : '\n')).join(''));
+      } catch {
+        closed = true;
+      }
+    },
+    close: async () => {
+      closed = true;
+      await handle.close().catch(() => undefined);
+    },
+  };
 }
 
 /**

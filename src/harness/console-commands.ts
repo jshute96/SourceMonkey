@@ -17,7 +17,7 @@ import readline from 'node:readline';
 
 import type { Dialog, Page } from '@playwright/test';
 
-import { CommandAssembler, unclosedBlockMessage } from './command-lines.js';
+import { CommandAssembler, echoCommand, unclosedBlockMessage } from './command-lines.js';
 import type { HarnessHost, MenuCommandRecord } from './host.js';
 import type { PageAttachment } from './inject.js';
 import { ACTIONS, PAGE_COMMAND_GROUPS, PAGE_COMMANDS, runPageCommand, splitWords, VALUE_FLAGS } from './page-commands.js';
@@ -107,6 +107,11 @@ export interface ConsoleContext {
   devtools?: () => string | null;
   /** The run's output so far, for `wait log`. */
   output?: OutputHistory;
+  /**
+   * Writes a command read at the prompt (or piped in) to the run's log,
+   * where the terminal's copy of it doesn't reach.
+   */
+  logCommand?: (text: string, echoed: string[]) => void;
   /**
    * Where `output` stood when the previous command (that wasn't only a
    * look, like `status`) began, for `wait log`: a line the command set
@@ -370,9 +375,10 @@ export const MISTAKE_PREFIX = '[sm-dev] ERROR: ';
  * Set while a command runs, in its own async work: what it prints is
  * its reply, not something the page or a script printed on its own,
  * which `wait log` looks for. Lines from the page and scripts arrive
- * through events outside it.
+ * through events outside it. `inspects`: the command only looks, so
+ * its reply is no part of the run's log either.
  */
-export const inCommand = new AsyncLocalStorage<true>();
+export const inCommand = new AsyncLocalStorage<{ inspects: boolean }>();
 
 /**
  * The entries for `name` in a help list: a line starting with it, and
@@ -1611,7 +1617,7 @@ export function commandRunner(ctx: ConsoleContext): CommandRunner {
       const began = ctx.output?.mark();
       const name = line.trim().split(/\s+/)[0];
       try {
-        await inCommand.run(true, () => (answer ? commandOutput.run(answer, run) : run()));
+        await inCommand.run({ inspects: onlyInspects(line) }, () => (answer ? commandOutput.run(answer, run) : run()));
       } finally {
         if (answer) answer.live = false;
         else if (name && name !== 'wait' && !onlyInspects(line)) ctx.previousStart = began;
@@ -1687,7 +1693,11 @@ export function readConsoleCommands(ctx: ConsoleContext, runLine: CommandRunner 
     if (got && 'error' in got) say(got.error);
     else if (got) {
       running++;
-      void runLine(got.command.text).finally(() => {
+      // Logged as it starts, in its turn among the stream's lines.
+      const text = got.command.text;
+      // As a piped list echoes it: `> eval {{`, then `... ` lines.
+      const echoed = echoCommand(got.command);
+      void runLine(text, { start: () => ctx.logCommand?.(text, echoed) }).finally(() => {
         running--;
         if (running === 0) stopArmed = false;
         if (terminal && running === 0 && activePrompt === lines) showPrompt(true);

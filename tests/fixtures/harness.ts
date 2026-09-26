@@ -44,6 +44,8 @@ export const test = base.extend<HarnessFixtures, HarnessWorkerFixtures>({
   runsDir: [async ({}, use) => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'sm-dev-runs-test-'));
     process.env.SM_DEV_RUNS_DIR = dir;
+    // Runs keep logs too, which stay out of the real ones' way here.
+    process.env.SM_DEV_LOGS_DIR = path.join(dir, 'logs');
     await use(dir);
     rmSync(dir, { recursive: true, force: true });
   }, { scope: 'worker', auto: true }],

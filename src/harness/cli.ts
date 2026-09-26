@@ -26,7 +26,9 @@ import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
 
 import { CommandAssembler, echoCommand, parseCommandList, shellWord, unclosedBlockMessage, type AssembledCommand } from './command-lines.js';
-import { CONSOLE_HELP, commandFlagMistake, commandWords, consoleCommandsHelp, helpEntries, writeOutputLine } from './console-commands.js';
+import {
+  CONSOLE_HELP, commandFlagMistake, commandWords, consoleCommandsHelp, helpEntries, inCommand, onlyInspects, writeOutputLine,
+} from './console-commands.js';
 import { devtoolsWanted } from './devtools.js';
 // Node built-ins only, so as cheap to load as the rest here.
 import { runIdOf, type RunRecord } from './runs.js';
@@ -647,6 +649,21 @@ async function runHere(opts: Opts, files: string[], urls: string[], devtools: bo
   // A background run has no input: commands come from other shells.
   if (detachedLog) process.stdin.destroy();
   const { run } = await import('./run.js');
+  // In the foreground, the run's stream is copied to a log too (a
+  // background run's output is its log already): what the page and
+  // scripts do, and the commands typed at the prompt that change
+  // something, with their replies. Not a command that only looks, as a
+  // background run leaves those out too.
+  const { openRunLog } = await import('./run-log.js');
+  const log = detachedLog ? null : await openRunLog().catch((err: Error) => {
+    writeOutputLine(`[sm-dev] The run's output is not being logged: ${err.message}`);
+    return null;
+  });
+  const out = log ? (line: string): void => {
+    writeOutputLine(line);
+    if (!inCommand.getStore()?.inspects) log.write(line);
+  } : writeOutputLine;
+  if (log) out(`[sm-dev] Output log: ${log.file}`);
   // Ends on Ctrl-C, or after --seconds. With neither, the run streams
   // until interrupted, which suits a person watching it. The timer is
   // unreferenced so it can't hold the process open after an early
@@ -709,11 +726,15 @@ async function runHere(opts: Opts, files: string[], urls: string[], devtools: bo
       collectionRoot: opts.root,
       localRoots: opts.local,
       // Drawn around the typed-command prompt, when one is showing.
-      out: writeOutputLine,
+      out,
+      logCommand: log ? (text, echoed) => {
+        if (!onlyInspects(text)) log.write(echoed.join('\n'));
+      } : undefined,
       until,
       onStop: () => stop(),
       onActivity: touch,
-      detachedLog: detachedLog ?? undefined,
+      detached: detachedLog !== null,
+      log: detachedLog ?? log?.file,
       runId,
       noWait: opts.noWait,
       // Tells the command that started it, which then returns.
@@ -730,7 +751,12 @@ async function runHere(opts: Opts, files: string[], urls: string[], devtools: bo
         process.once('SIGTERM', onSigint!);
       },
     });
+  } catch (err) {
+    // Said by the caller too, but only to the terminal.
+    log?.write(`[sm-dev] ${(err as Error).message}`);
+    throw err;
   } finally {
+    await log?.close();
     if (timer) clearTimeout(timer);
     if (idleTimer) clearTimeout(idleTimer);
     if (onSigint) {
@@ -748,7 +774,7 @@ const DEFAULT_IDLE_SECONDS = 1800;
 const detachedLog = process.env.SM_DEV_DETACHED_LOG || null;
 delete process.env.SM_DEV_DETACHED_LOG;
 if (detachedLog) {
-  const { timestampOutputLines } = await import('./detached-log.js');
+  const { timestampOutputLines } = await import('./run-log.js');
   timestampOutputLines();
 }
 
@@ -760,16 +786,16 @@ function duration(seconds: number): string {
 
 /**
  * Starts the run in a background process of its own, whose output goes
- * to a log file (see detached-log.ts). Its output is passed on here
+ * to a log file (see run-log.ts). Its output is passed on here
  * until it says it is ready, and then this returns, leaving it running.
  * Its id, or none when it ended first (with its exit code) or can't be
  * reached.
  */
 async function detachRun(words: string[], runId: string | undefined): Promise<{ code: number; id?: string; log: string }> {
-  const { createDetachedLog, LOG_LINE_PREFIX } = await import('./detached-log.js');
+  const { createRunLog, LOG_LINE_PREFIX } = await import('./run-log.js');
   const { spawn } = await import('node:child_process');
   const { open } = await import('node:fs/promises');
-  const { file: log, handle: writing } = await createDetachedLog();
+  const { file: log, handle: writing } = await createRunLog();
   const reading = await open(log, 'r');
   const child = spawn(process.execPath, [...process.execArgv, fileURLToPath(import.meta.url), ...words, ...(runId ? ['--run', runId] : [])], {
     // Its own process group, so a Ctrl-C or closed terminal here

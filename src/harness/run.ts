@@ -87,8 +87,12 @@ export interface RunOptions extends ConnectOptions {
   onReady?: (id: string | undefined) => void;
   /** Called as each sent command starts and ends, for `--idle-seconds` to count from. */
   onActivity?: () => void;
-  /** For `--detach`: where its output goes, recorded for `list`. */
-  detachedLog?: string;
+  /** Started by `--detach`: every command comes from another shell. */
+  detached?: boolean;
+  /** The run's log file (see run-log.ts), linked by the run's id. */
+  log?: string;
+  /** Writes a command typed at the prompt to the log, for a run that keeps one. */
+  logCommand?: (text: string, echoed: string[]) => void;
   /** The id `start --run` asked for, rather than the lowest free one. */
   runId?: string;
   /** Don't wait for the tabs to settle before taking commands (`--nowait`). */
@@ -387,7 +391,7 @@ function printSkipped(opts: RunOptions, start: StartPages): void {
 }
 
 export async function run(opts: RunOptions): Promise<number> {
-  const remote = new Remote(opts.out, opts.onStop, opts.onActivity, opts.detachedLog !== undefined);
+  const remote = new Remote(opts.out, opts.onStop, opts.onActivity, opts.detached === true);
   // Every line also goes to whoever sent the command running now.
   opts = { ...opts, out: remote.out };
   const session = await openBrowser(opts, opts.out, { reuseTab: true, openTab: !opts.noTab });
@@ -400,7 +404,8 @@ export async function run(opts: RunOptions): Promise<number> {
       started: Date.now(),
       browser: opts.launch ? 'launched' : cdpSetting(opts),
       scripts: opts.files.map(displayPath),
-      ...(opts.detachedLog ? { detached: true, log: opts.detachedLog } : {}),
+      ...(opts.detached ? { detached: true } : {}),
+      ...(opts.log ? { log: opts.log } : {}),
     }, opts.runId);
   }
   // The browser closing (or its connection dropping) ends the run: it
@@ -528,7 +533,7 @@ class Remote {
       this.control = await RunControl.open(record, this.handle, wanted);
       const { id } = this.control;
       if (record.log) {
-        const { linkRunLog } = await import('./detached-log.js');
+        const { linkRunLog } = await import('./run-log.js');
         await linkRunLog(record.log, id, this.out);
       }
       this.out(`[sm-dev] Started as run ${id}. Other shells reach it with sm-dev <command> --run ${id}, and end it with sm-dev stop --run ${id}.`);
@@ -826,6 +831,7 @@ async function runInHarness(
         runId: remote.id,
         devtools: () => (devtools?.isUp ? devtools.usage : null),
         output: remote.output,
+        logCommand: opts.logCommand,
       };
       commands = ctx;
       const runner = commandRunner(ctx);

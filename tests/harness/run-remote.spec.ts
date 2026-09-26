@@ -337,6 +337,40 @@ test('one line starts a run, sends it commands, and stops it unless detached', a
   }
 });
 
+test('a foreground run logs its stream and the commands that change something', async ({ fixtureServer, scriptsDir }) => {
+  test.setTimeout(60_000);
+  const setup = await setUp();
+  try {
+    const file = scriptsDir.write({
+      relativePath: 'logged.user.js',
+      meta: { name: 'Logged', match: ['*://*/target.html'] },
+      body: `console.log('[logged] body ran');`,
+    });
+    // Commands piped in, as typed ones are logged. Not spawnSync, which
+    // would hold up the fixture server in this process.
+    const proc = spawn(process.execPath, [CLI, 'start', '--cdp', String(setup.port), file, `${fixtureServer.baseUrl}/target.html`, '--root', scriptsDir.path], {
+      env: setup.env, stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    proc.stdout!.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
+    proc.stdin!.end('status\neval {{\n1 + 1\n}}\nquit\n');
+    await exited(proc);
+    const log = stdout.match(/^\[sm-dev\] Output log: (\S+)$/m)![1];
+    const lines = readFileSync(log, 'utf8').trim().split('\n').map((l) => l.replace(/^\d{8}-\d{6}-\d{3} /, ''));
+    expect(lines).toContain('[page log] [logged] body ran');
+    // A command that changes something, as written, with its reply.
+    expect(lines.slice(lines.indexOf('> eval {{'), lines.indexOf('> eval {{') + 4)).toEqual(['> eval {{', '... 1 + 1', '... }}', '2']);
+    expect(lines).toContain('> quit');
+    // One that only looks, and its reply, aren't in it.
+    expect(lines).not.toContain('> status');
+    expect(lines.some((l) => l.startsWith('Run: D1'))).toBe(false);
+    expect(readlinkSync(path.join(path.dirname(log), 'sm-dev-D1.log'))).toBe(path.basename(log));
+  } finally {
+    await setup.cli('stop', '--all');
+    await setup.cleanup();
+  }
+});
+
 test('--devtools reports each tab\'s page id, which chrome-devtools reaches', async ({ fixtureServer, scriptsDir }) => {
   test.skip(!devtoolsInstalled, 'The chrome-devtools command is not installed');
   test.setTimeout(60_000);

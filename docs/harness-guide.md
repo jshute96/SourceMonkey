@@ -589,8 +589,8 @@ D1   81234  2m      127.0.0.1:9233  2     a.user.js, b.user.js, c.user.js, (2 mo
   - `menu` and `eval` include what the handler or expression printed
     while it ran.
 - Output a script prints later, from a timer or event, only goes to
-  the run's stream (for a detached run, its log file). `sm-dev logs`
-  shows its console lines.
+  the run's stream, and its log file (see [The log file](#the-log-file)).
+  `sm-dev logs` shows its console lines.
 - A command that only inspects (`status`, `values`, `snapshot`,
   `logs`, and so on) answers the sender alone. Ones that change
   something (`reload`, `click`, `menu Bump`) also show in the run's
@@ -637,15 +637,30 @@ sm-dev stop
 - It stops itself after 30 minutes with no command sent.
   `--idle-seconds N` changes that, and `--idle-seconds 0` turns it
   off. `--seconds` still sets a limit from the start.
-- Its output goes to the log file, with a timestamp starting each
-  line. Output a script prints between commands is only there. The
-  file is kept after the run ends.
-  - `sm-dev-D1.log` beside it links to the latest log of the run
-    named `D1`.
-  - It's the run's stream, to tail for what the scripts and page print
-    on their own. A command that changes something shows as
-    `> command`, where it happened, with its reply; a command that only
-    looks (`status`, `snapshot`) answers only the shell that sent it.
+- Its output goes only to its log file (see
+  [The log file](#the-log-file)), so output a script prints between
+  commands is only there.
+
+#### The log file
+
+Every run keeps a log of its stream, to tail for what the scripts and
+page print on their own, or to look back at what happened when:
+- It's `/tmp/sm-dev-logs-<user>/sm-dev-<timestamp>.log`, with a
+  timestamp starting each line. It's kept after the run ends.
+- Its name is printed as `Output log: ...`: first thing in a foreground
+  run, once a detached one has started, and at the end of a line that
+  started a run for its commands.
+- `sm-dev-D1.log` beside it links to the latest log of the run named
+  `D1`.
+- A detached run's output goes only there. A run in the foreground
+  prints to the terminal as usual, and copies each line to the log.
+- It's what the page and scripts do, not all the replies:
+  - Commands that change something show where they happened, with
+    their replies. In a detached run, and for those typed at a
+    foreground run's prompt, as `> command`. One sent to a foreground
+    run from another shell shows as `Sent from another shell: ...`.
+  - Commands that only look (`status`, `snapshot`) and their replies
+    are left out.
 
 #### Several commands on one line
 

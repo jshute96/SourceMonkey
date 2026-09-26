@@ -30,7 +30,7 @@ export interface RunRecord {
   tabs?: number;
   /** Started by `start --detach`, and so replaced by the next one. */
   detached?: boolean;
-  /** A detached run's output file. */
+  /** The run's log file (see run-log.ts). */
   log?: string;
 }
 

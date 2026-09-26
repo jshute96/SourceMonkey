@@ -513,9 +513,15 @@ into pages.
     - `start` followed by other commands on the line does the same
       without `--detach`, and stops the run once they are done. Its
       output stays out of theirs that way.
-    - The child's stdout and stderr go to a log file
-      (`detached-log.ts`); the parent prints the file as it grows,
-      without the line timestamps.
+    - The child's stdout and stderr go to its log file (`run-log.ts`);
+      the parent prints the file as it grows, without the line
+      timestamps.
+    - A foreground run keeps a log the same way, by copying the lines
+      it prints (`openRunLog`).
+      - Each command typed or piped at its prompt goes in as
+        `> command` (`logCommand`), as it starts.
+      - Commands that only look, and what they print (known by
+        `inCommand`), are left out, as for a detached run.
       - Named `sm-dev-<timestamp>.log` in `/tmp/sm-dev-logs-<user>`
         (`SM_DEV_LOGS_DIR` moves it, for tests), with SeeWhatISee's
         timestamp format.
