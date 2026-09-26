@@ -1033,6 +1033,13 @@ export async function buildRegistrationSpec(
     if (includeGlobs.length === 0 && !hasRegexInclude) return null;
     matches.push('<all_urls>');
     usedAllUrlsFallback = true;
+  } else if (hasRegexInclude) {
+    // A regex `@include` can cover pages no `@match` does, and Chrome
+    // can't read a regex, so registering the `@match`es alone would
+    // never inject there. Every page instead, narrowed by the wrapper,
+    // which checks the whole rule set.
+    matches.splice(0, matches.length, '<all_urls>');
+    usedAllUrlsFallback = true;
   }
 
   const declaredRunAt = normalizeDeclaredRunAt(

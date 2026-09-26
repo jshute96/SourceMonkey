@@ -955,6 +955,9 @@ The User Scripts API has no equivalent for `/regex/` `@include` /
   page, and let the wrapper narrow it. Chrome refuses a registration
   with no `matches` (*"must specify 'matches'"*), so there is nothing
   else to give it.
+  - A script with a regex `@include` gets `<all_urls>` even beside
+    `@match` lines: the regex can cover pages no `@match` does, and
+    Chrome would never inject there.
 - **Wrapper layer.** When a script has any regex pattern, the wrapper
   embeds the full `{matches, includes, excludes}` object and a small
   self-contained matcher equivalent to `urlMatchesScript()`. Before

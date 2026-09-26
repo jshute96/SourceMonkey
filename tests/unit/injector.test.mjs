@@ -848,6 +848,18 @@ test('buildRegistrationSpec: regex-only @include registers <all_urls> and defers
   assert.equal(spec.includeGlobs, undefined);
 });
 
+test('buildRegistrationSpec: a regex @include beside a @match still registers <all_urls>', async () => {
+  // Registering only the @match would never inject on a page just the
+  // regex covers.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: { matches: ['https://a.test/*'], excludes: [], includes: ['/^https:\\/\\/b\\.test\\//'] },
+  }));
+  assert.deepEqual(spec.matches, ['<all_urls>']);
+  const cfg = spec.js[0];
+  assert.ok('code' in cfg);
+  assert.match(cfg.code, /"matching"/);
+});
+
 test('buildRegistrationSpec: pure @match script omits the wrapper-side matcher block', async () => {
   const spec = await buildRegistrationSpec(makeScript());
   const cfg = spec.js[0];
