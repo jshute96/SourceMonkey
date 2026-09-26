@@ -247,6 +247,12 @@ the stream, rather than being answered automatically:
   `set`, `reload` and `open` refuse until it is answered, as do `load`
   and `update` for a dialog in any tab. `reload all` skips that tab and
   says so.
+- A dialog in a tab the run doesn't use is left alone, for you to
+  answer.
+- A tab already showing a dialog when `sm-dev run` starts stops it
+  connecting: nothing in that tab answers until the dialog closes. The
+  run names the tab and waits; answer the dialog or close the tab to
+  continue, or Ctrl-C to abort.
 
 ### Driving the script while it runs
 

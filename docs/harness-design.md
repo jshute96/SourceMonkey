@@ -486,6 +486,27 @@ into pages.
     (on Windows it kills outright, with no cleanup).
     Either signal drops both handlers, as `quit` does, so a second one
     during teardown kills the run.
+- **Dialogs in other tabs**: `run.ts` gives every page of a connected
+  browser a dialog listener that does nothing.
+  - Why: Playwright dismisses any dialog nobody listens for, in every
+    tab it's attached to, the person's own included.
+  - And when that dialog is gone before the dismiss lands, the error is
+    unhandled, and ends the run.
+  - The run's own tabs also get the dialog tracker, which answers them.
+- **`stuck-tabs.ts`**: before `run` connects over CDP, finds tabs
+  whose page doesn't answer, and waits for them.
+  - Why: Playwright's connection isn't ready until it has set up every
+    tab, and a tab showing a dialog answers nothing, so it hangs until
+    Playwright's 30-second timeout.
+  - No CDP call reports a dialog that opened before the connection, or
+    answers one: `Page.enable` stalls too, and
+    `Page.handleJavaScriptDialog` says none is showing.
+  - So each tab is sent `Runtime.evaluate('1')` on a side connection,
+    and one quiet for 2 seconds is named: a dialog, or a busy page. (A
+    page paused in the debugger still answers.)
+  - The stuck tabs are asked again each second.
+  - `sm-dev` handles Ctrl-C and SIGTERM only once the run has connected,
+    so during the wait they end it at once, with nothing to clean up.
 - **`cdp-proxy.ts`**: a CDP endpoint that shows a client only the run's
   tabs, for the `--devtools` server to connect to.
   - Why: DevTools' Puppeteer attaches to every tab in the browser, and

@@ -27,6 +27,7 @@ import {
   defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, prepareScript, type PreparedScript,
 } from './prepare.js';
 import { checkRunsDir, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentLineHandler } from './runs.js';
+import { waitForStuckTabs } from './stuck-tabs.js';
 
 export interface RunOptions extends ConnectOptions {
   files: string[];
@@ -72,6 +73,8 @@ export interface RunOptions extends ConnectOptions {
   until?: Promise<void>;
   /** Called when a typed `quit` asks for the run to end. */
   onStop?: () => void;
+  /** Called once the run has a browser connection, and so something to clean up. */
+  onConnected?: () => void;
 }
 
 // How the browser commands reach a browser: connect to one over CDP
@@ -81,6 +84,8 @@ export interface ConnectOptions {
   cdp?: string;
   launch?: boolean;
   headed?: boolean;
+  /** Resolves to give up connecting (--seconds): ends a wait for tabs that don't answer. */
+  until?: Promise<void>;
 }
 
 /**
@@ -128,6 +133,21 @@ export async function connectBrowser(
   return openBrowser(opts, out, { reuseTab, openTab: true });
 }
 
+// Playwright dismisses any dialog nobody listens for, in every tab it's
+// attached to: on a connected browser, the person's own tabs too. (A
+// launched browser has only the run's.) And
+// when the dialog is gone before its dismiss lands, the error is
+// unhandled, and ends the process. A listener that does nothing leaves
+// each dialog to whoever does answer it: the person, or the run's
+// dialog tracker in its own tabs.
+function leaveDialogsOpen(browser: Browser): void {
+  const leaveOpen = (): void => undefined;
+  for (const context of browser.contexts()) {
+    for (const page of context.pages()) page.on('dialog', leaveOpen);
+    context.on('page', (page) => page.on('dialog', leaveOpen));
+  }
+}
+
 // `connectBrowser`, and for `run --notab`, the same with no tab.
 async function openBrowser(
   opts: ConnectOptions, out: (line: string) => void, o: { reuseTab: boolean; openTab: true },
@@ -148,6 +168,9 @@ async function openBrowser(
   } else {
     endpoint = cdpSetting(opts);
     try {
+      // Playwright's connection waits on every tab, so a tab that
+      // doesn't answer is named first, and waited for.
+      if (!await waitForStuckTabs(endpoint, out, opts.until)) return null;
       // `noDefaults` keeps Playwright's test-friendly overrides off the
       // developer's own profile: downloads rerouted to a temp folder
       // that is deleted on disconnect, every tab reporting focus, and
@@ -156,12 +179,20 @@ async function openBrowser(
       // it and keeps the overrides.
       browser = await chromium.connectOverCDP(endpoint, { noDefaults: true });
     } catch (err) {
-      out(`Could not connect to a browser at ${endpoint}: ${(err as Error).message}`);
+      const message = (err as Error).message;
+      if (/Timeout \d+ms exceeded/.test(message) && /<ws connected>/.test(message)) {
+        // The browser answered, and the tabs' setup didn't finish: a tab
+        // that stopped responding after the check, or very many tabs.
+        out(`Could not connect to the browser at ${endpoint}: Connecting timed out. A tab may have stopped responding (a dialog open, or a busy page), or the browser has very many tabs. Run again to check the tabs.`);
+        return null;
+      }
+      out(`Could not connect to a browser at ${endpoint}: ${message}`);
       out('Start one with a remote-debugging port, pass --cdp, or use --launch');
       return null;
     }
   }
   const context = browser.contexts()[0] ?? await browser.newContext();
+  if (endpoint !== null) leaveDialogsOpen(browser);
   const page = !openTab ? null
     : reuseTab && endpoint !== null
       ? await openRunTab(browser, context, endpoint, out).catch(() => context.newPage())
@@ -335,6 +366,7 @@ export async function run(opts: RunOptions): Promise<number> {
   opts = { ...opts, out: remote.out };
   const session = await openBrowser(opts, opts.out, { reuseTab: true, openTab: !opts.noTab });
   if (!session) return 1;
+  opts.onConnected?.();
   // Only a run that waits for commands can be sent any.
   if (opts.until) {
     await remote.open({

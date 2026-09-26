@@ -47,8 +47,11 @@ interface Setup {
   cliIn: (cwd: string, ...args: string[]) => Promise<string[]>;
   /** Runs a `chrome-devtools` command in the run's session, for its output. */
   devtools: (...args: string[]) => Promise<string>;
-  /** `sm-dev run` in the background, its stdin closed, as an agent starts it. */
-  startRun: (args: string[]) => Run;
+  /**
+   * `sm-dev run` in the background, its stdin closed, as an agent starts
+   * it. `cdp`: the browser to connect to, if not the port.
+   */
+  startRun: (args: string[], cdp?: string) => Run;
   cleanup: () => Promise<void>;
 }
 
@@ -89,8 +92,8 @@ async function setUp(): Promise<Setup> {
     devtools,
     cli: (...args) => cliIn(process.cwd(), ...args),
     cliIn,
-    startRun: (args) => {
-      const proc = spawn(process.execPath, [CLI, 'run', '--cdp', String(port), ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    startRun: (args, cdp = String(port)) => {
+      const proc = spawn(process.execPath, [CLI, 'run', '--cdp', cdp, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
       runs.push(proc);
       const lines: string[] = [];
       const waiters = new Set<() => void>();
@@ -279,6 +282,92 @@ test('--devtools reports each tab\'s page id, which chrome-devtools reaches', as
     expect(await exited(run.proc)).toBe(0);
     // The run's DevTools server went with it.
     expect(await setup.devtools('status')).toContain('not running');
+  } finally {
+    await setup.cleanup();
+  }
+});
+
+test('a tab stopped on a dialog is named, and waited for, before the run connects', async ({ fixtureServer, scriptsDir }) => {
+  test.setTimeout(60_000);
+  const setup = await setUp();
+  try {
+    const file = scriptsDir.write({ relativePath: 'wait.user.js', meta: { name: 'Wait', match: ['*://*/target.html'] }, body: '' });
+    const stuckUrl = `${fixtureServer.baseUrl}/other.html`;
+    await openForeignDialogTab(setup.port, stuckUrl);
+    const args = [file, '--url', `${fixtureServer.baseUrl}/target.html`, '--root', scriptsDir.path];
+
+    // Ctrl-C (or a kill) while it waits ends it at once: there's
+    // nothing to clean up yet.
+    const given = setup.startRun(args);
+    await given.waitFor(/^A tab is not responding, so sm-dev can't connect to the browser over CDP:$/);
+    // Its title, then its address.
+    expect(await given.waitFor(/^  \S/)).toMatch(new RegExp(`^  (\\S+  )?${stuckUrl.replace(/[.?]/g, '\\$&')}$`));
+    given.proc.kill('SIGTERM');
+    await within(exited(given.proc), 1000);
+    expect(given.proc.signalCode).toBe('SIGTERM');
+
+    // Once the tab is gone, the run connects.
+    const run = setup.startRun(args);
+    await run.waitFor(/^It may have a dialog open, or a busy page\. Answer the dialog or close the tab to continue \(Ctrl-C to abort\)\.$/);
+    const tabs = await (await fetch(`http://127.0.0.1:${setup.port}/json`)).json() as { id: string; url: string }[];
+    await fetch(`http://127.0.0.1:${setup.port}/json/close/${tabs.find((t) => t.url === stuckUrl)!.id}`, { method: 'PUT' });
+    await run.waitFor(/^Every tab is responding now\. Connecting\.$/);
+    await run.waitFor(/^\[sm-dev\] Wait started on /);
+
+    // A dialog in a tab of the person's is left for them: not dismissed
+    // (confirm would return false), and the run doesn't fall over.
+    const id = await openTab(setup.port, `${fixtureServer.baseUrl}/other.html`);
+    const ws = new WebSocket(`ws://127.0.0.1:${setup.port}/devtools/page/${id}`);
+    await new Promise((resolve) => { ws.onopen = resolve; });
+    const answered = new Promise<boolean>((resolve) => { ws.onmessage = () => resolve(true); });
+    ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: 'confirm("keep?")' } }));
+    expect(await within(answered, 2000)).toBeUndefined();
+    ws.close();
+    expect(run.proc.exitCode).toBeNull();
+    expect((await setup.cli('send', 'D1', 'status'))[0]).toMatch(/^Run: D1 /);
+  } finally {
+    await setup.cleanup();
+  }
+});
+
+test('several stuck tabs, a dialog and a busy page, are all named, over a ws:// endpoint too', async ({ fixtureServer, scriptsDir }) => {
+  test.setTimeout(60_000);
+  const setup = await setUp();
+  try {
+    const file = scriptsDir.write({ relativePath: 'wait.user.js', meta: { name: 'Wait', match: ['*://*/target.html'] }, body: '' });
+    // Headless Chrome holds up only the front tab on a dialog, so the
+    // other is a page stuck in a loop. about:blank keeps that loop in a
+    // process of its own, clear of the fixture server's pages.
+    const busy = 'about:blank?busy';
+    const busyId = await openTab(setup.port, busy);
+    const ws = new WebSocket(`ws://127.0.0.1:${setup.port}/devtools/page/${busyId}`);
+    await new Promise((resolve) => { ws.onopen = resolve; });
+    await new Promise((resolve) => {
+      ws.onmessage = resolve;
+      ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: 'setTimeout(() => { for (;;); }, 100)' } }));
+    });
+    ws.close();
+    const dialog = `${fixtureServer.baseUrl}/other.html`;
+    await openForeignDialogTab(setup.port, dialog);
+
+    // The browser's own connection, as `--cdp` also takes it.
+    const { webSocketDebuggerUrl } = await (await fetch(`http://127.0.0.1:${setup.port}/json/version`)).json() as { webSocketDebuggerUrl: string };
+    const run = setup.startRun([file, '--url', `${fixtureServer.baseUrl}/target.html`, '--root', scriptsDir.path], webSocketDebuggerUrl);
+    await run.waitFor(/^Some tabs are not responding, so sm-dev can't connect to the browser over CDP:$/);
+    await run.waitFor(/^They may have a dialog open, or a busy page\. Answer the dialogs or close the tabs to continue \(Ctrl-C to abort\)\.$/);
+    const named = run.lines.filter((l) => l.startsWith('  '));
+    expect(named).toHaveLength(2);
+    for (const url of [busy, dialog]) expect(named.some((l) => l.endsWith(url))).toBe(true);
+
+    // Only once both are gone does it connect.
+    const tabs = await (await fetch(`http://127.0.0.1:${setup.port}/json`)).json() as { id: string; url: string }[];
+    const close = (url: string) => fetch(`http://127.0.0.1:${setup.port}/json/close/${tabs.find((t) => t.url === url)!.id}`, { method: 'PUT' });
+    await close(busy);
+    await new Promise((r) => setTimeout(r, 3000));
+    expect(run.lines).not.toContain('Every tab is responding now. Connecting.');
+    await close(dialog);
+    await run.waitFor(/^Every tab is responding now\. Connecting\.$/);
+    await run.waitFor(/^\[sm-dev\] Wait started on /);
   } finally {
     await setup.cleanup();
   }

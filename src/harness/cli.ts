@@ -425,11 +425,11 @@ async function runCommand(opts: Opts): Promise<number> {
     // SIGTERM too, so a plain kill (or sm-dev stop, for a run it
     // can't reach) still ends the run cleanly. Either one drops both
     // handlers, as `quit` does, so a second signal while the run tears
-    // down kills it outright.
+    // down kills it outright. Set once the run has connected: before
+    // that there is nothing to clean up, and a signal ends it at once,
+    // as it would any command (a wait for a stuck tab, say).
     onSigint = () => stop();
     onOutputClosed = stop;
-    process.once('SIGINT', onSigint);
-    process.once('SIGTERM', onSigint);
     if (opts.seconds !== undefined) timer = setTimeout(resolve, opts.seconds * 1000).unref();
   });
   try {
@@ -454,6 +454,10 @@ async function runCommand(opts: Opts): Promise<number> {
       out: writeOutputLine,
       until,
       onStop: () => stop(),
+      onConnected: () => {
+        process.once('SIGINT', onSigint!);
+        process.once('SIGTERM', onSigint!);
+      },
     });
   } finally {
     if (timer) clearTimeout(timer);
