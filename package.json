@@ -41,7 +41,7 @@
     "test:headed": "playwright test --project=sourcemonkey --headed --workers=1",
     "test:unit": "node scripts/build.mjs && node --test 'tests/unit/*.test.mjs'",
     "validate": "node scripts/build.mjs && node scripts/validate-userscripts.mjs",
-    "clean": "rm -rf dist lib test-results playwright-report"
+    "clean": "rm -rf dist lib .build-* test-results playwright-report"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",

@@ -25,6 +25,9 @@ dist/
 # the npm package's build output (see docs/architecture.md)
 lib/
 
+# a build in progress (see scripts/build.mjs)
+/.build-*/
+
 # playwright
 /test-results/
 /playwright-report/

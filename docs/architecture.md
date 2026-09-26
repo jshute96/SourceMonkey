@@ -466,14 +466,22 @@ takes effect:
 
 `scripts/build.mjs` is dependency-free:
 
-- Wipes `dist/` and `lib/` (only `dist/` under `--watch`, so `lib/` stays usable).
+- Builds into a temporary `.build-<pid>/` (named by the build's
+  process id), then renames each finished output over `dist/` and `lib/`.
+  - A running harness or test sees the old output until the swap, and
+    the folder is missing only for an instant during it.
+  - A process that keeps running across a swap can load old and new
+    modules together.
+  - A failed build leaves the old output in place, and the temporary
+    folder is removed however the build ends.
+- Under `--watch`, builds only `dist/`, so `lib/` stays as it was.
 - Copies `src/icons/`, `src/manifest.json`, every top-level
   `src/*.html`, and `node_modules/prismjs/*` into `dist/`, and the
   manifest into `lib/` too (the harness reads the extension key from it).
 - Inlines `src/glyph-sprite.svg` into each page as it is copied, at the
   page's `#include glyph-sprite` marker comment (see below).
-- Invokes `tsc` (optionally with `--watch`) to compile
-  `src/**/*.ts` → `dist/**/*.js`.
+- Invokes `tsc` to compile `src/**/*.ts` → `dist/**/*.js`. With
+  `--watch`, a `tsc --watch` then keeps rebuilding `dist/` in place.
 - Unless watching, runs a second `tsc` pass for `lib/` (below), and
   copies `src/generated-wrappers.d.ts` into `lib/`, since that one is
   hand-written.

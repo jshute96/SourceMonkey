@@ -8,9 +8,9 @@
 #   scripts/sm-dev run tests/examples/gm-storage/gm-storage.user.js
 #   scripts/sm-dev --help
 #
-# Runs what lib/ has, and never builds it: a build deletes lib/ before
-# recompiling it, so one started from here would fight any build
-# running in another shell. Build with `pnpm run build`.
+# Runs what lib/ has, and never builds it: a build swaps in a new lib/,
+# which would change the code under any sm-dev session already running.
+# Build with `pnpm run build`.
 
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
