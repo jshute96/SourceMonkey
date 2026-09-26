@@ -265,9 +265,9 @@ const COMMAND_FLAGS: Record<string, string[]> = {
   type: ['--nowait'],
   key: ['--nowait'],
   eval: ['--script'],
-  snapshot: ['--out', '--visible', '--css'],
+  snapshot: ['--out', '--visible'],
   screenshot: ['--full'],
-  probe: ['--html'],
+  probe: ['--html', '--css'],
   wait: ['--timeout-seconds'],
 };
 

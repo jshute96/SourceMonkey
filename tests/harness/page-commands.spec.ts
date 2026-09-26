@@ -103,7 +103,16 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(readFileSync(path.join(dir, 'page.html'), 'utf8')).toContain('Added 1');
 
   expect(await run('probe main \'.missing\'')).toEqual(['found    main  (1)', 'missing  .missing']);
-  expect(await run('probe main --html')).toEqual(['found    main  (1)', '    <main id="target">original content</main>']);
+  expect(await run('probe main --html')).toEqual(['found    main  (1)', '    html: <main id="target">original content</main>']);
+  // Both, paired for each match: the first ten, each on one line.
+  expect(await run('probe main --html --css')).toEqual(['found    main  (1)', '    selector: #target', '    html: <main id="target">original content</main>']);
+  await page.evaluate(() => document.body.insertAdjacentHTML('beforeend', Array.from({ length: 12 }, (_, i) => `<i title="n${i}">\n  ${i}\n</i>`).join('')));
+  expect(await run('probe i --css --html')).toEqual([
+    'found    i  (12)',
+    ...Array.from({ length: 10 }, (_, i) => [`    selector: i[title="n${i}"]`, `    html: <i title="n${i}"> ${i} </i>`]).flat(),
+    '    (2 more)',
+  ]);
+  await page.evaluate(() => document.querySelectorAll('i').forEach((i) => i.remove()));
   // Quotes inside a selector are its own.
   expect(await run('probe css=main[id="target"] main[id=\'target\']')).toEqual(['found    css=main[id="target"]  (1)', 'found    main[id=\'target\']  (1)']);
   expect(await run('logs')).toContain('[log] [widget] hovered');
@@ -191,7 +200,7 @@ test('an Escape that leaves the page fullscreen says how to exit', async ({ page
   expect(await run('eval document.fullscreenElement')).toEqual(['null']);
 });
 
-test('snapshot refs name elements for the other commands, and it can show only the screen or add selectors', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {
+test('snapshot refs name elements for the other commands, and it can show only the screen; probe --css gives selectors', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {
   const script = await loadScript({ relativePath: 'idle.user.js', meta: { name: 'Idle', match: ['*://*/target.html'] }, body: '' });
   await page.setViewportSize({ width: 800, height: 600 });
   await page.goto(`${fixtureServer.baseUrl}/target.html`);
@@ -241,10 +250,12 @@ test('snapshot refs name elements for the other commands, and it can show only t
   expect(scrolled.some((l) => l.includes('Far away'))).toBe(true);
   expect(scrolled.some((l) => l.includes('button "Save"'))).toBe(false);
 
-  const css = await run('snapshot --css');
-  expect(css.find((l) => l.includes('button "Save"'))).toContain(`[ref=${save}] [css=button[data-testid="save"]]`);
-  expect(css.find((l) => l.includes('Far away'))).toContain('[css=button.far]');
-  expect(css.find((l) => l.includes('textbox "Note"'))).toContain('[css=input]');
+  // probe --css: a selector for a ref's element, or one per match.
+  const selectorOf = async (selector: string): Promise<string> => (await run(`probe --css '${selector}'`))[1].replace('    selector: ', '');
+  expect(await run(`probe --css ${save}`)).toEqual([`found    ${save}  (1)`, '    selector: button[data-testid="save"]']);
+  expect(await selectorOf(refIn(scrolled, 'Far away'))).toBe('button.far');
+  expect(await selectorOf('input[aria-label=Note]')).toBe('input');
+  expect(await run('snapshot --css')).toEqual(['[sm-dev] ERROR: The snapshot command has no --css flag']);
 
   // Refs reach into a frame and a shadow root, where selectors are
   // suggested for neither; and look-alike buttons get told apart.
@@ -253,18 +264,20 @@ test('snapshot refs name elements for the other commands, and it can show only t
     document.getElementById('host')!.attachShadow({ mode: 'open' }).innerHTML = '<button>Shadowed</button>';
   });
   await expect(page.frameLocator('iframe').locator('button')).toHaveText('In frame');
-  const more = await run('snapshot --css');
-  const twins = more.filter((l) => l.includes('button "Twin"'));
-  const [first, second] = twins.map((l) => /\[css=(.*)\]$/.exec(l)![1]);
+  const twins = await run('probe --css \'body > button:nth-of-type(-n+2)\'');
+  expect(twins[0]).toBe('found    body > button:nth-of-type(-n+2)  (2)');
+  const [first, second] = twins.slice(1).map((l) => l.replace('    selector: ', ''));
   expect(first).not.toBe(second);
   for (const [i, css] of [first, second].entries()) {
     expect(await page.locator(css).count()).toBe(1);
     expect(await page.locator(css).evaluate((el, n) => el === document.querySelectorAll('body > button')[n], i)).toBe(true);
   }
-  expect(more.find((l) => l.includes('Shadowed'))).not.toContain('[css=');
-  const framed = more.find((l) => l.includes('button "In frame"'))!;
-  expect(framed).not.toContain('[css=');
-  const inFrame = /\[ref=(f\d+e\d+)\]/.exec(framed)![1];
+  const more = await run('snapshot');
+  const inFrame = refIn(more, 'In frame');
+  expect(await run(`probe --css ${inFrame} ${refIn(more, 'Shadowed')}`)).toEqual([
+    `found    ${inFrame}  (1)`, '    selector: (none: in a frame)',
+    `found    ${refIn(more, 'Shadowed')}  (1)`, '    selector: (none: in a shadow root)',
+  ]);
   expect(await run(`click ${inFrame}`)).toEqual([`[sm-dev] Clicked ${inFrame} (button "In frame")`]);
   await expect(page.frameLocator('iframe').locator('button')).toHaveText('Hit');
   expect(await run(`click ${refIn(more, 'Shadowed')}`)).toEqual([`[sm-dev] Clicked ${refIn(more, 'Shadowed')} (button "Shadowed")`]);

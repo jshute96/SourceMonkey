@@ -18,7 +18,10 @@ import type { ControlledTab } from './console-commands.js';
 import { ScriptThrew } from './inject.js';
 import { notSettledMessage, SETTLE_TIMEOUT_MS, settleTab } from './wait.js';
 import { savePageHtml } from './save-html.js';
-import { documentOf, framesAround, locate, named, noteRefs, onScreen, refOf, refProblem, tidy, withCss } from './snapshot.js';
+import { documentOf, framesAround, locate, named, noteRefs, onScreen, probeMatches, refOf, refProblem, tidy } from './snapshot.js';
+
+// How many of a selector's matches `probe --css` and `--html` show.
+const PROBE_MAX = 10;
 
 /** The commands this module runs, as `help` groups them. */
 export const PAGE_COMMAND_GROUPS: { title: string; lines: string[] }[] = [
@@ -40,15 +43,18 @@ export const PAGE_COMMAND_GROUPS: { title: string; lines: string[] }[] = [
   {
     title: 'Looking at the page (a tab first too)',
     lines: [
-      'snapshot [selector] [--visible] [--css] [--out file]',
+      'snapshot [selector] [--visible] [--out file]',
       '                  The page (or an element) as its accessibility tree,',
       '                  with a ref for each element; --visible: only what',
-      '                  is on screen; --css: a CSS selector for each',
+      '                  is on screen',
       'screenshot [selector] [--full] <file>',
       '                  Save a PNG of the page, the whole page, or an element',
       'savehtml <file>   Save the page\'s HTML, for a spec to replay',
-      'probe <selector>... [--html]',
+      'probe <selector>... [--css] [--html]',
       '                  Say which selectors match, and how many elements',
+      `                  With --css or --html, show the first ${PROBE_MAX} matches,`,
+      '                  with a unique CSS selector (if possible), and/or',
+      '                  a prefix of its HTML',
       'logs              The page\'s console lines and errors so far',
     ],
   },
@@ -335,7 +341,7 @@ export async function runPageCommand(
         return;
       }
       case 'snapshot': {
-        const parsed = takeFlags(command, input.words, { '--out': 'value', '--visible': 'bool', '--css': 'bool' });
+        const parsed = takeFlags(command, input.words, { '--out': 'value', '--visible': 'bool' });
         if (typeof parsed === 'string') {
           say(`ERROR: ${parsed}`);
           return;
@@ -364,7 +370,6 @@ export async function runPageCommand(
             const whole = await page.locator('body').ariaSnapshot({ mode: 'ai', timeout: ACTION_TIMEOUT_MS }).catch(() => null);
             if (whole !== null) noteRefs(page, whole, doc);
           }
-          if (parsed.flags['--css']) tree = await withCss(page, tree, say, () => !!tab.dialogs?.current);
           tree = tidy(tree);
         })();
         if (!await done(taking)) {
@@ -428,7 +433,7 @@ export async function runPageCommand(
         return;
       }
       case 'probe': {
-        const parsed = takeFlags(command, input.words, { '--html': 'bool' });
+        const parsed = takeFlags(command, input.words, { '--html': 'bool', '--css': 'bool' });
         if (typeof parsed === 'string') {
           say(`ERROR: ${parsed}`);
           return;
@@ -437,16 +442,36 @@ export async function runPageCommand(
           say('ERROR: The probe command needs a selector or more, e.g. probe \'.titleline\' \'#hnmain\'');
           return;
         }
+        const css = parsed.flags['--css'] === true;
+        const html = parsed.flags['--html'] === true;
         for (const selector of parsed.rest) {
-          const count = await refProblem(page, selector) ?? await countOf(page, selector);
-          if (typeof count === 'string') out(`invalid  ${selector}  (${count})`);
-          else if (count === 0) out(`missing  ${selector}`);
-          else {
-            out(`found    ${selector}  (${count})`);
-            if (parsed.flags['--html']) {
-              const html = await locate(page, selector).first().evaluate((el) => el.outerHTML).catch(() => '');
-              out(`    ${html.length > 500 ? html.slice(0, 500) + '…' : html}`);
+          const lines: string[] = [];
+          const probing = (async () => {
+            const count = await refProblem(page, selector) ?? await countOf(page, selector);
+            if (typeof count === 'string') lines.push(`invalid  ${selector}  (${count})`);
+            else if (count === 0) lines.push(`missing  ${selector}`);
+            else {
+              lines.push(`found    ${selector}  (${count})`);
+              if (!css && !html) return;
+              const found = await probeMatches(page, selector, PROBE_MAX, ACTION_TIMEOUT_MS).catch((err: Error) => plain(err));
+              if (typeof found === 'string') {
+                lines.push(`    The matches could not be read: ${found}`);
+                return;
+              }
+              for (const match of found.matches) {
+                // One in a frame only works within it, so it isn't given.
+                const none = found.framed ? 'in a frame' : match.shadow ? 'in a shadow root' : null;
+                if (css) lines.push(`    selector: ${none ? `(none: ${none})` : match.css ?? '(none found)'}`);
+                if (html) lines.push(`    html: ${match.html}`);
+              }
+              if (found.count > found.matches.length) lines.push(`    (${found.count - found.matches.length} more)`);
             }
+          })();
+          const finished = await done(probing);
+          for (const line of lines) out(line);
+          if (!finished) {
+            say('The page opened a dialog during the probe, which is waiting for an answer.');
+            return;
           }
         }
         return;

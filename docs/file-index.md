@@ -181,7 +181,7 @@ command. See `docs/harness-design.md`.
 | `src/harness/command-lines.ts` | Input lines into `sm-dev start` commands: multi-line `eval {{ ... }}` blocks, comments, sent lists |
 | `src/harness/console-commands.ts` | The commands typed while `sm-dev start` streams, across its tabs, the page-dialog tracker, and the prompt |
 | `src/harness/page-commands.ts` | The run commands that drive and read a tab's page, from `click` and `eval` to `snapshot` and `logs` |
-| `src/harness/snapshot.ts` | `snapshot`'s element refs, its on-screen filter, and its suggested CSS selectors |
+| `src/harness/snapshot.ts` | `snapshot`'s element refs, its on-screen filter, and `probe --css`'s suggested CSS selectors |
 | `src/harness/stuck-tabs.ts` | Before `sm-dev start` connects, names the tabs that don't answer (a dialog, say), and waits for them |
 | `src/harness/tab-badge.ts` | The count badge `sm-dev start` draws over controlled tabs' favicons, greyed once the run is gone |
 | `src/harness/run.ts` | `sm-dev start`: open a browser (reusing a finished run's tab), inject or push the scripts, follow tabs it opens, and stream |

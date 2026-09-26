@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { framePaths, onScreen, pageRefs, refLabels, refOf, tidy } from '../../lib/harness/snapshot.js';
+import { framePaths, onScreen, refLabels, refOf, tidy } from '../../lib/harness/snapshot.js';
 
 test('a ref is e4, f3e2, ref=e4 or [ref=e4], and nothing else is', () => {
   assert.equal(refOf('e4'), 'e4');
@@ -50,20 +50,6 @@ test('a frame\'s boxes are from its corner, and only its own box of it shows', (
     '  - iframe [ref=e2]:',
     '    - button "Top" [ref=f1e1]',
   ].join('\n'));
-});
-
-test('selectors are wanted for the page\'s elements, whatever their prefix, and not an iframe\'s', () => {
-  const tree = [
-    '- generic [ref=f3e1]:',
-    '  - link "Lists" [ref=f3e214] [cursor=pointer]:',
-    '    - /url: lists',
-    '  - iframe [ref=f3e5]:',
-    '    - button "In frame" [ref=f4e1]',
-    '    - generic [ref=f4e2]:',
-    '      - button "Deeper" [ref=f4e3]',
-    '  - button "After" [ref=f3e6]',
-  ].join('\n');
-  assert.deepEqual(pageRefs(tree), ['f3e1', 'f3e214', 'f3e5', 'f3e6']);
 });
 
 test('each ref is noted with the iframes it is in, outermost first', () => {

@@ -1,6 +1,6 @@
 // What `snapshot` adds to Playwright's accessibility tree: element refs
-// the other page commands take, only the lines on screen (--visible),
-// and a suggested CSS selector for each element (--css).
+// the other page commands take, and only the lines on screen
+// (--visible). Also `probe --css`'s suggested CSS selectors.
 //
 // The tree is Playwright's `ariaSnapshot({ mode: 'ai' })`: YAML-like
 // lines, two spaces of indent a level, each element with a `[ref=e4]`
@@ -223,52 +223,68 @@ function overlap(a: Box, b: Box): Box {
   };
 }
 
-// How many elements' selectors are worked out at once.
-const CSS_BATCH = 50;
-const CSS_TIMEOUT_MS = 2000;
-// How many elements take long enough to say so first (about 2ms each).
-const CSS_SLOW = 1000;
-
-/**
- * The tree with a suggested CSS selector after each ref, as
- * `[ref=e4] [css=#submit]`. An element gone since the snapshot, or one
- * without a selector that finds only it, gets none.
- */
-export async function withCss(
-  page: Page, tree: string, say: (line: string) => void, stopped: () => boolean,
-): Promise<string> {
-  const refs = [...new Set(pageRefs(tree))];
-  if (refs.length > CSS_SLOW) say(`Finding selectors for ${refs.length} elements takes a while. --visible or a selector gives fewer.`);
-  const found = new Map<string, string>();
-  // A dialog stops the page, so each call would wait out its timeout.
-  for (let i = 0; i < refs.length && !stopped(); i += CSS_BATCH) {
-    await Promise.all(refs.slice(i, i + CSS_BATCH).map(async (ref) => {
-      const css = await locate(page, ref).evaluate(cssFor, undefined, { timeout: CSS_TIMEOUT_MS }).catch(() => null);
-      if (css) found.set(ref, css);
-    }));
-  }
-  return tree.replace(/\[ref=([^\]]+)\]/g, (whole, ref: string) => found.has(ref) ? `${whole} [css=${found.get(ref)}]` : whole);
+/** One of a selector's matches, as `probe` shows it. */
+export interface Match {
+  /** A selector that finds only it (see `cssFor`), or null. */
+  css: string | null;
+  /** Whether it's in a shadow root, where a selector path can't reach. */
+  shadow: boolean;
+  /** Its HTML on one line, cut at `HTML_MAX` characters. */
+  html: string;
 }
 
+const HTML_MAX = 500;
+
 /**
- * The refs of a tree's lines, less those in an iframe's content: a
- * selector there would be within its frame, which the commands don't
- * look in. The ref's prefix doesn't tell, since the page's own frame
- * can have one too.
+ * The first `max` elements a selector matches, in one call to the page,
+ * and how many it matched then. `framed` when they're in a frame, where
+ * a selector would only work within it.
  */
-export function pageRefs(tree: string): string[] {
-  const refs: string[] = [];
-  // The indent of the iframe line whose content this is, if any.
-  let frameDepth: number | null = null;
-  for (const line of tree.split('\n')) {
-    const depth = /^ */.exec(line)![0].length;
-    if (frameDepth !== null && depth <= frameDepth) frameDepth = null;
-    if (frameDepth !== null) continue;
-    const ref = /\[ref=([^\]]+)\]/.exec(line)?.[1];
-    if (ref) refs.push(ref);
-    if (/^ *- '?iframe\b/.test(line)) frameDepth = depth;
+export async function probeMatches(
+  page: Page, selector: string, max: number, timeout: number,
+): Promise<{ framed: boolean; count: number; matches: Match[] }> {
+  const locator = locate(page, selector);
+  const limits = { max, htmlMax: HTML_MAX };
+  // Playwright finds a ref's element in the world it took the snapshot
+  // in, which `evaluate` looks in and `evaluateAll` doesn't.
+  if (refOf(selector)) return locator.evaluate(matchesOf, limits, { timeout });
+  return locator.evaluateAll(matchesOf, limits);
+}
+
+// Playwright sends a page function as its source, so openRoots and
+// cssFor (which are self-contained) go along by being written into it.
+// Made with `new Function` only to have that source: it never runs here.
+const matchesOf = new Function(
+  `return (els, { max, htmlMax }) => {
+    const openRoots = ${openRoots.toString()};
+    const cssFor = ${cssFor.toString()};
+    const list = Array.isArray(els) ? els : [els];
+    const roots = openRoots();
+    return {
+      framed: window !== window.top,
+      count: list.length,
+      matches: list.slice(0, max).map((el) => {
+        const html = el.outerHTML.replace(/\\s*\\n\\s*/g, ' ');
+        return {
+          css: cssFor(el, roots),
+          shadow: !(el.getRootNode() instanceof Document),
+          html: html.length > htmlMax ? html.slice(0, htmlMax) + '\\u2026' : html,
+        };
+      }),
+    };
+  };`,
+)() as (els: Element | Element[], limits: { max: number; htmlMax: number }) => { framed: boolean; count: number; matches: Match[] };
+
+/**
+ * The document and every open shadow root in it, which Playwright's CSS
+ * engine looks inside too. Runs in the page, so it's self-contained.
+ */
+export function openRoots(): (Document | ShadowRoot)[] {
+  const roots: (Document | ShadowRoot)[] = [document];
+  for (let i = 0; i < roots.length; i++) {
+    for (const e of roots[i].querySelectorAll('*')) if (e.shadowRoot) roots.push(e.shadowRoot);
   }
-  return refs;
+  return roots;
 }
 
 /**
@@ -279,24 +295,12 @@ export function pageRefs(tree: string): string[] {
  * or with a long number in them) are passed over, since they change
  * between loads or builds of a site.
  *
- * Unique as Playwright's CSS engine sees it, which looks inside open
- * shadow roots too. An element in a shadow root gets none, since a path
+ * Unique as Playwright's CSS engine sees it, across `roots` (from
+ * `openRoots`). An element in a shadow root gets none, since a path
  * can't cross into one. Runs in the page, so it's self-contained.
  */
-export function cssFor(el: Element): string | null {
+export function cssFor(el: Element, roots: (Document | ShadowRoot)[]): string | null {
   if (!(el.getRootNode() instanceof Document)) return null;
-  // The document and every open shadow root in it, found once for all
-  // of a snapshot's elements: kept on the document for a moment.
-  const cache = document as unknown as Record<symbol, { at: number; roots: (Document | ShadowRoot)[] } | undefined>;
-  const key = Symbol.for('sm-dev shadow roots');
-  let roots = cache[key] && Date.now() - cache[key].at < 1000 ? cache[key].roots : null;
-  if (!roots) {
-    roots = [document];
-    for (let i = 0; i < roots.length; i++) {
-      for (const e of roots[i].querySelectorAll('*')) if (e.shadowRoot) roots.push(e.shadowRoot);
-    }
-    cache[key] = { at: Date.now(), roots };
-  }
   const all = roots;
   const only = (selector: string): boolean => {
     try {

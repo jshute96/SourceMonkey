@@ -388,12 +388,17 @@ into pages.
     by the frame's, and clipped to it.
   - The quiet snapshot doubles the cost of `snapshot <selector>` on a
     large page. It's skipped for `body`, and a failure only costs refs.
-  - `--css` works out a selector in the page for each ref, one
-    Playwright call each (about 2ms), so large trees are slow.
+  - `probe --css` and `--html` read a selector's first matches (their
+    selectors and HTML) in one call to the page (`evaluateAll`).
+    - A ref's element takes `evaluate`, since Playwright finds it only
+      in the world it took the snapshot in.
+    - It's for a few elements. `snapshot` had a `--css` that did every
+      ref, one call each, which took seconds on a large page.
     - Uniqueness is counted across open shadow roots too, as
       Playwright's CSS engine matches there.
-    - Elements in frames or shadow roots get none, since the commands'
-      selectors can't reach into either.
+    - Elements in a frame get none, since the commands look for
+      selectors in the page's own frame. Elements in a shadow root get
+      none, since a `>` path can't cross into one.
 - **`save-html.ts`**: a page's DOM as a standalone file, for the
   `savehtml` command and the fixture's `saveHtml`.
 - **`cli.ts`** (`sm-dev`) and **`run.ts`**: the interactive tool,
