@@ -25,7 +25,7 @@ import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
 
-import { CommandAssembler, echoCommand, parseCommandList, unclosedBlockMessage, type AssembledCommand } from './command-lines.js';
+import { CommandAssembler, echoCommand, parseCommandList, shellWord, unclosedBlockMessage, type AssembledCommand } from './command-lines.js';
 import { CONSOLE_HELP, commandFlagMistake, commandWords, consoleCommandsHelp, helpEntries, writeOutputLine } from './console-commands.js';
 import { devtoolsWanted } from './devtools.js';
 // Node built-ins only, so as cheap to load as the rest here.
@@ -117,12 +117,14 @@ const OPTION_GROUPS: { title: string; commands: string[]; lines: string[]; only?
       '                --values \'{"units":"metric"}\'',
       '--seconds N     Stop after N seconds instead of waiting for Ctrl-C,',
       '                quit or sm-dev stop',
-      '--detach        Return once the pages have loaded and the scripts',
-      '                started, printing their output so far, and leave the',
+      '--detach        Return once the pages have settled (see wait),',
+      '                printing their output so far, and leave the',
       '                run going in the background. It replaces any earlier',
       '                detached run, unless --run names one',
       '--new           With --detach: leave earlier detached runs going, and',
       '                start another beside them',
+      '--nowait        Don\'t wait for the pages to settle before continuing',
+      '                (it still waits for the scripts to start)',
       '--idle-seconds N',
       '                With --detach: stop after N seconds with no command',
       '                sent (default: 1800; 0 never stops)',
@@ -154,8 +156,9 @@ const COMMAND_DETAILS: Record<string, { about: string[]; args: string[] }> = {
       'pages and scripts. Other shells reach it by giving sm-dev those commands',
       'directly (sm-dev status), with --run and its ID when several runs are active.',
       '',
-      'With --detach, it returns once the pages have loaded and the scripts',
-      'started, and the run goes on in the background.',
+      'With --detach, it returns once the pages have settled (loaded, scripts',
+      'started, no requests or DOM changes; see sm-dev help wait), and the run',
+      'goes on in the background.',
       '',
       'Commands after it on the line (after --) go to the run. Without --detach,',
       'the run is stopped once they are done.',
@@ -305,6 +308,8 @@ interface Opts {
   devtools?: boolean;
   seconds?: number;
   detach: boolean;
+  /** `start --nowait`: ready once the scripts start, without settling. */
+  noWait: boolean;
   /** `--new`: start beside earlier detached runs, not in their place. */
   newRun: boolean;
   /** `--idle-seconds`. */
@@ -317,7 +322,7 @@ const MAX_TIMER_SECONDS = Math.floor((2 ** 31 - 1) / 1000);
 function parseArgs(argv: string[]): Opts {
   const opts: Opts = {
     command: null, args: [], root: process.cwd(), local: [],
-    all: false, noScript: false, noTab: false, launch: false, headed: false, watch: false, extension: false, solo: false, pageErrors: false, detach: false, newRun: false,
+    all: false, noScript: false, noTab: false, launch: false, headed: false, watch: false, extension: false, solo: false, pageErrors: false, detach: false, newRun: false, noWait: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -354,6 +359,7 @@ function parseArgs(argv: string[]): Opts {
       case '--nodevtools': opts.devtools = false; break;
       case '--detach': opts.detach = true; break;
       case '--new': opts.newRun = true; break;
+      case '--nowait': opts.noWait = true; break;
       case '--idle-seconds': {
         const v = Number(next());
         if (!Number.isFinite(v) || v < 0) throw new UsageError('The --idle-seconds flag needs a number of seconds');
@@ -430,7 +436,8 @@ async function validate(opts: Opts): Promise<number> {
     if (REMOTE_SCRIPT.test(arg)) sources.push(...await scriptSources([arg]));
     else for (const file of await collectScripts([arg])) sources.push({ label: rel(file), file });
   }
-  if (sources.length === 0) throw new UsageError('No *.user.js files found');
+  // What it found, not how it was typed.
+  if (sources.length === 0) throw new Error('No *.user.js files found');
   let failed = 0;
   for (const source of sources) {
     const prepared = await prepareSource(source, opts);
@@ -708,6 +715,7 @@ async function runHere(opts: Opts, files: string[], urls: string[], devtools: bo
       onActivity: touch,
       detachedLog: detachedLog ?? undefined,
       runId,
+      noWait: opts.noWait,
       // Tells the command that started it, which then returns.
       // One that has gone (killed by a timeout, say) leaves the run going
       // unannounced, rather than crashing it on the closed channel.
@@ -956,17 +964,20 @@ async function sendCommand(words: string[], wanted: string | undefined): Promise
   const target = early ?? await targetRun(wanted);
   if (list) {
     // In order, each done before the next is sent, and each one's
-    // output headed by the command as it was written.
-    for (const command of list.commands) {
+    // output headed by the command as it was written. Stops at one that
+    // failed (a `wait` that timed out), as a line of several does.
+    for (const [i, command] of list.commands.entries()) {
       for (const line of echoCommand(command)) print(line);
-      await sendLine(target.id, command.text, print);
+      if (!await sendLine(target.id, command.text, print)) {
+        if (i < list.commands.length - 1) process.stderr.write(`${LINE_STOPPED}\n`);
+        return 1;
+      }
     }
     return 0;
   }
   // The words go as the shell gave them, so a selector or text with
   // spaces reaches a page command as one word.
-  await sendLine(target.id, words.join(' '), print, undefined, words);
-  return 0;
+  return await sendLine(target.id, words.join(' '), print, undefined, words) ? 0 : 1;
 }
 
 /**
@@ -1016,27 +1027,32 @@ function unknownRunCommand(name: string): string {
  */
 async function sendAsRead(
   id: string,
-  sendLine: (id: string, line: string, out: (line: string) => void) => Promise<void>,
+  sendLine: (id: string, line: string, out: (line: string) => void) => Promise<boolean>,
 ): Promise<number> {
   const { createInterface } = await import('node:readline');
   const blocks = new CommandAssembler();
-  // Typed commands are on screen already; piped ones get a heading.
-  const echo = !process.stdin.isTTY;
+  // Typed commands are on screen already; piped ones get a heading, and
+  // stop at one that fails, as a list does. Typed, the person decides.
+  const piped = !process.stdin.isTTY;
   let failed = false;
   for await (const line of createInterface({ input: process.stdin, terminal: false })) {
     const got = blocks.push(line);
     if (!got) continue;
     if ('error' in got) {
       failed = true;
-      print(got.error);
-      continue;
+      print(`ERROR: ${got.error}`);
+    } else {
+      if (piped) for (const l of echoCommand(got.command)) print(l);
+      if (!await sendLine(id, got.command.text, print)) failed = true;
     }
-    if (echo) for (const l of echoCommand(got.command)) print(l);
-    await sendLine(id, got.command.text, print);
+    if (failed && piped) {
+      process.stderr.write(`${LINE_STOPPED}\n`);
+      return 1;
+    }
   }
   const unclosed = blocks.drop();
   if (unclosed !== null) {
-    print(`${unclosedBlockMessage(unclosed)}, so it was not run`);
+    print(`ERROR: ${unclosedBlockMessage(unclosed)}, so it was not run`);
     failed = true;
   }
   return failed ? 1 : 0;
@@ -1134,6 +1150,9 @@ function lineHelp(commands: string[][]): string | null {
 // Windows has no SIGHUP to listen for.
 const STOP_SIGNALS: NodeJS.Signals[] = process.platform === 'win32' ? ['SIGINT', 'SIGTERM'] : ['SIGINT', 'SIGTERM', 'SIGHUP'];
 
+// After a command of several that failed.
+const LINE_STOPPED = 'That command failed, so the commands after it were not run';
+
 // Where one command ends and the next begins, when a line has several.
 const SEPARATOR = '--';
 
@@ -1176,10 +1195,7 @@ function isStart(words: string[]): boolean {
   }
 }
 
-// A word as a shell would need it written, for echoing a command.
-function shellWord(word: string): string {
-  return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
-}
+
 
 // A command's own words, sorted out: help, a command sent to a run, or
 // one of sm-dev's own. `--run` is taken out already.
@@ -1233,10 +1249,12 @@ async function checkCommand(words: string[]): Promise<void> {
   }
 }
 
-// Prints a command's mistake, and returns its exit code.
+// Prints a command's mistake, and returns its exit code. One in how the
+// command was typed is marked as such, apart from a failure doing it.
 function printMistake(err: unknown): number {
-  process.stderr.write(`${(err as Error).message}\n`);
-  return err instanceof UsageError ? 2 : 1;
+  const usage = err instanceof UsageError;
+  process.stderr.write(`${usage ? 'ERROR: ' : ''}${(err as Error).message}\n`);
+  return usage ? 2 : 1;
 }
 
 /**
@@ -1296,8 +1314,7 @@ async function main(): Promise<void> {
   // Only first, so a start never inherits a --run meant for another
   // command, and a line never holds two runs of its own.
   if (commands.slice(1).some(isStart)) {
-    process.stderr.write(`${START_FIRST}\n`);
-    process.exitCode = 2;
+    process.exitCode = printMistake(new UsageError(START_FIRST));
     return;
   }
   // Every command checked before any runs, so a typo late in the line
@@ -1338,7 +1355,10 @@ async function main(): Promise<void> {
     for (const [i, words] of commands.entries()) {
       if (commands.length > 1) print(`> ${words.map(shellWord).join(' ')}`);
       code = await runOne(words, seq, i < commands.length - 1);
-      if (code !== 0) break;
+      if (code !== 0) {
+        if (i < commands.length - 1) process.stderr.write(`${LINE_STOPPED}\n`);
+        break;
+      }
       listen(seq.started !== undefined);
     }
   } finally {

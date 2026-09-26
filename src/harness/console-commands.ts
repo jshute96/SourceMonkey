@@ -20,8 +20,10 @@ import type { Dialog, Page } from '@playwright/test';
 import { CommandAssembler, unclosedBlockMessage } from './command-lines.js';
 import type { HarnessHost, MenuCommandRecord } from './host.js';
 import type { PageAttachment } from './inject.js';
-import { PAGE_COMMAND_GROUPS, PAGE_COMMANDS, runPageCommand, splitWords, VALUE_FLAGS } from './page-commands.js';
+import { ACTIONS, PAGE_COMMAND_GROUPS, PAGE_COMMANDS, runPageCommand, splitWords, VALUE_FLAGS } from './page-commands.js';
 import { defaultPageUrl, NO_DEFAULT_PAGE, preparedScriptMatches, preparedScriptName, withDefaultScheme, type PreparedScript } from './prepare.js';
+import { currentTab, dialogKind, dialogWaitingMessage, NO_TABS, pickTab, TAB_ARG, tabName } from './tab-refs.js';
+import { formIndex, settleTabs, waitFor } from './wait.js';
 
 /**
  * A tab the run controls: its own, or one a controlled tab opened.
@@ -46,6 +48,11 @@ export interface ControlledTab {
   targetId?: string | null;
   /** Its page id in the run's DevTools server (`--devtools`), once found. */
   pageId?: number;
+  /**
+   * Its last load failed, or its scripts never reported (said already),
+   * so the waits after it don't wait on it again.
+   */
+  stalled?: boolean;
 }
 
 /** ` [targetId=...]`, the tab's CDP id, for the end of a line. */
@@ -98,6 +105,25 @@ export interface ConsoleContext {
   runId?: string;
   /** How to reach the run's DevTools server, for `status`. */
   devtools?: () => string | null;
+  /** The run's output so far, for `wait log`. */
+  output?: OutputHistory;
+  /**
+   * Where `output` stood when the previous command (that wasn't only a
+   * look, like `status`) began, for `wait log`: a line the command set
+   * off, printed while it waited for the page to settle, still counts.
+   * Unset before the first.
+   */
+  previousStart?: number;
+}
+
+/** The lines a run has printed, numbered, and a way to hear new ones. */
+export interface OutputHistory {
+  /** The number the next line will get. */
+  mark(): number;
+  /** The lines numbered `from` on, that are still kept. */
+  since(from: number): string[];
+  /** Calls `listener` with each new line, until the returned function is called. */
+  watch(listener: (line: string) => void): () => void;
 }
 
 // Grouped as `help` prints them.
@@ -150,6 +176,24 @@ const COMMAND_GROUPS: { title: string; lines: string[] }[] = [
       'dismiss           Answer an open dialog with Cancel',
     ],
   },
+  {
+    title: 'Waiting',
+    lines: [
+      'wait [T<n>|all]   Wait until the tab (or all tabs) settles: loaded, its',
+      '                  scripts started, and no requests or DOM changes for a',
+      '                  moment. reload, open, newtab, click, hover, type and',
+      '                  key wait like this on their own, unless given --nowait',
+      'wait selector <css>',
+      '                  Wait until an element matches',
+      'wait selector-gone <css>',
+      '                  Wait until no element matches',
+      'wait log <text>   Wait for an output line with the text (or /regex/),',
+      '                  printed since the previous command began',
+      'wait {500ms|2s}   Wait that long',
+      'wait ... --timeout-seconds S',
+      '                  Give up after S seconds (default 5)',
+    ],
+  },
   ...PAGE_COMMAND_GROUPS,
   {
     title: 'The run',
@@ -163,8 +207,6 @@ const COMMAND_GROUPS: { title: string; lines: string[] }[] = [
 // One wording for having none, whether as a reply or in a list.
 const NO_SCRIPTS = 'No scripts are loaded';
 
-/** Where the page commands have no tab to act on; also `start --notab`'s start. */
-export const NO_TABS = '[sm-dev] No tabs are active. Type newtab to open one.';
 
 // The commands that act on the current tab, which there may not be.
 const NEEDS_A_TAB = new Set(['menu', 'open', 'reload', 'focus', 'accept', 'dismiss', ...PAGE_COMMANDS]);
@@ -210,19 +252,51 @@ const ALIASES: Record<string, string> = { script: 'scripts', tab: 'tabs', exit: 
 // anything, rather than taken as an argument (`status --bad` looking
 // for a script named that).
 const COMMAND_FLAGS: Record<string, string[]> = {
-  newtab: ['--noscript', '--script'],
-  reload: ['--noscript', '--script'],
-  open: ['--noscript', '--script'],
+  newtab: ['--noscript', '--script', '--nowait'],
+  reload: ['--noscript', '--script', '--nowait'],
+  open: ['--noscript', '--script', '--nowait'],
+  click: ['--nowait'],
+  hover: ['--nowait'],
+  type: ['--nowait'],
+  key: ['--nowait'],
   eval: ['--script'],
   snapshot: ['--out', '--visible', '--css'],
   screenshot: ['--full'],
   probe: ['--html'],
+  wait: ['--timeout-seconds'],
 };
 
 // Commands whose last argument is free text, which may start with --
-// as content (eval's JavaScript, type's text, a menu label): only the
-// words before it are looked at, where their flags and tab go.
-const FREE_TEXT = new Set(['eval', 'type', 'accept', 'set', 'get', 'menu']);
+// as content (eval's JavaScript, type's text, a menu label), and how
+// many words of theirs come before it (type's selector). Only the words
+// before it are looked at for flags. `wait log`'s text too (see
+// freeTextStart).
+const FREE_TEXT: Record<string, number> = { eval: 0, type: 1, accept: 0, set: 0, get: 0, menu: 0 };
+
+/**
+ * Where a command's free text starts among its own words (the name not
+ * included): past its flags, their values, a tab, and the words it
+ * takes first. -1 when it has none.
+ */
+function freeTextStart(command: string, words: string[]): number {
+  if (command === 'wait') {
+    const at = formIndex(words);
+    return words[at] === 'log' ? at + 1 : -1;
+  }
+  const before = FREE_TEXT[command];
+  if (before === undefined) return -1;
+  let plain = 0;
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i];
+    if (word.startsWith('--')) {
+      if (VALUE_FLAGS.has(word)) i++;
+      continue;
+    }
+    if (plain === 0 && TAB_ARG.test(word)) continue;
+    if (plain++ === before) return i;
+  }
+  return -1;
+}
 
 /**
  * The mistake in a run command's flags, or null: a word starting with
@@ -235,21 +309,20 @@ export function commandFlagMistake(words: string[]): string | null {
   const command = ALIASES[typed] ?? typed;
   if (!COMMAND_NAMES.includes(command)) return null;
   const known = COMMAND_FLAGS[command] ?? [];
-  const freeText = FREE_TEXT.has(command);
-  for (let i = 1; i < words.length; i++) {
-    const word = words[i];
-    if (!word.startsWith('--')) {
-      // The free text starts at its first word that is neither a flag
-      // nor the tab named before it.
-      if (freeText && !TAB_ARG.test(word)) return null;
-      continue;
-    }
+  const text = freeTextStart(command, words.slice(1));
+  // `wait log`'s text may end with its flag.
+  const checked = text < 0 ? words.slice(1) : words.slice(1, text + 1);
+  if (command === 'wait' && text >= 0 && words.at(-2) === '--timeout-seconds') checked.push(...words.slice(-2));
+  for (let i = 0; i < checked.length; i++) {
+    const word = checked[i];
+    if (!word.startsWith('--')) continue;
     if (!known.includes(word)) return `The ${command} command has no ${word} flag`;
     // A flag's value, which may look like anything.
     if (VALUE_FLAGS.has(word)) i++;
   }
   return null;
 }
+
 
 /**
  * A command line's words, as the prompt splits them (quotes kept
@@ -289,6 +362,17 @@ export function onlyInspects(line: string): boolean {
  * to the stream rather than a closed connection.
  */
 export const commandOutput = new AsyncLocalStorage<{ line: (line: string) => void; live: boolean }>();
+
+/** How a line saying a command was typed wrong starts. */
+export const MISTAKE_PREFIX = '[sm-dev] ERROR: ';
+
+/**
+ * Set while a command runs, in its own async work: what it prints is
+ * its reply, not something the page or a script printed on its own,
+ * which `wait log` looks for. Lines from the page and scripts arrive
+ * through events outside it.
+ */
+export const inCommand = new AsyncLocalStorage<true>();
 
 /**
  * The entries for `name` in a help list: a line starting with it, and
@@ -338,7 +422,7 @@ export function consoleCommandsHelp(names: string[]): { lines: string[]; unknown
  */
 export async function runConsoleCommand(
   line: string, ctx: ConsoleContext, { cwd = process.cwd(), words }: { cwd?: string; words?: string[] } = {},
-): Promise<void> {
+): Promise<boolean | void> {
   const trimmed = line.trim();
   if (!trimmed) return;
   const [typedCommand, ...rest] = trimmed.split(/\s+/);
@@ -348,8 +432,8 @@ export async function runConsoleCommand(
   // command sent as one word is split like a typed one.
   const flagMistake = commandFlagMistake(words?.[0] === typedCommand ? words : commandWords(trimmed));
   if (flagMistake) {
-    ctx.out(`[sm-dev] ${flagMistake}`);
-    return;
+    ctx.out(`[sm-dev] ERROR: ${flagMistake}`);
+    return false;
   }
   const current = ctx.current ?? ctx.scripts[0];
   const scriptId = current?.spec?.id;
@@ -359,7 +443,7 @@ export async function runConsoleCommand(
   // silently dropped.
   const takesNothing = (): boolean => {
     if (!argument) return true;
-    ctx.out(`[sm-dev] The ${command} command takes no arguments`);
+    ctx.out(`[sm-dev] ERROR: The ${command} command takes no arguments`);
     return false;
   };
   const picked = currentTab(ctx);
@@ -379,10 +463,7 @@ export async function runConsoleCommand(
   const blockedByDialog = (tabs: ControlledTab[] = [tab]): boolean => {
     const waiting = tabs.find((t) => t.dialogs?.current);
     if (!waiting) return false;
-    const kind = dialogKind(waiting.dialogs!.current!);
-    ctx.out(waiting === tab
-      ? `[sm-dev] The page is waiting on ${kind} dialog. Type accept or dismiss first.`
-      : `[sm-dev] ${tabName(waiting)} is waiting on ${kind} dialog. Type tabs ${tabName(waiting)}, then accept or dismiss.`);
+    ctx.out(`[sm-dev] ${dialogWaitingMessage(waiting, tab)}`);
     return true;
   };
 
@@ -393,7 +474,7 @@ export async function runConsoleCommand(
         return;
       }
       const { lines, unknown } = consoleCommandsHelp(rest);
-      for (const name of unknown) ctx.out(`[sm-dev] ${name} is not a command. Type help to list them.`);
+      for (const name of unknown) ctx.out(`[sm-dev] ERROR: ${name} is not a command. Type help to list them.`);
       for (const l of lines) ctx.out(l ? `  ${l}` : '');
       return;
     case 'quit':
@@ -432,13 +513,13 @@ export async function runConsoleCommand(
       }
       // `tabs new` was newtab's old name.
       if (rest[0] === 'new') {
-        ctx.out('[sm-dev] The tabs command picks a tab. To open one, type newtab.');
-        return;
+        ctx.out('[sm-dev] ERROR: The tabs command picks a tab. To open one, type newtab.');
+        return false;
       }
       // The bracketed ids, as `tabs` shows them, are two words.
       if (rest.length > 1 && !/^\[targetId=\S+\s+pageId=\d+\]$/i.test(argument)) {
-        ctx.out('[sm-dev] The tabs command takes one tab, e.g. tabs T2');
-        return;
+        ctx.out('[sm-dev] ERROR: The tabs command takes one tab, e.g. tabs T2');
+        return false;
       }
       const picked = pickTab(ctx, argument);
       if (!picked) return;
@@ -456,8 +537,8 @@ export async function runConsoleCommand(
       const ref = tabRef(ctx, argument, tab);
       if (!ref) return;
       if (!ref.rest) {
-        ctx.out('[sm-dev] The scripts command needs a script after the tab, e.g. scripts T2.2');
-        return;
+        ctx.out('[sm-dev] ERROR: The scripts command needs a script after the tab, e.g. scripts T2.2');
+        return false;
       }
       const found = pickScript(ctx, ref.rest);
       if (!found) return;
@@ -537,8 +618,8 @@ export async function runConsoleCommand(
         return;
       }
       if (!argument) {
-        ctx.out('[sm-dev] The get command needs a key');
-        return;
+        ctx.out('[sm-dev] ERROR: The get command needs a key');
+        return false;
       }
       await settleWrites();
       ctx.out(`  ${argument} = ${JSON.stringify(ctx.host.getValue(scriptId, argument))}`);
@@ -552,14 +633,14 @@ export async function runConsoleCommand(
       const key = rest[0];
       const raw = argument.slice(key?.length ?? 0).trim();
       if (!key || !raw) {
-        ctx.out('[sm-dev] The set command needs a key and a JSON value, e.g. set units "metric"');
-        return;
+        ctx.out('[sm-dev] ERROR: The set command needs a key and a JSON value, e.g. set units "metric"');
+        return false;
       }
       let value: unknown;
       try {
         value = JSON.parse(raw);
       } catch {
-        ctx.out(`[sm-dev] ${raw} is not JSON. A string needs quotes.`);
+        ctx.out(`[sm-dev] ERROR: ${raw} is not JSON. A string needs quotes.`);
         return;
       }
       if (blockedByDialog(ctx.tabs())) return;
@@ -571,30 +652,32 @@ export async function runConsoleCommand(
       return;
     }
     case 'reload': {
-      const mode = scriptsFlag(ctx, 'reload', rest);
+      const noWait = rest.includes('--nowait');
+      const mode = scriptsFlag(ctx, 'reload', rest.filter((w) => w !== '--nowait'));
       if (mode === null) return;
       const words = rest.filter((w) => !w.startsWith('--'));
       if (words.length > 1) {
-        ctx.out('[sm-dev] The reload command takes one tab, or all');
-        return;
+        ctx.out('[sm-dev] ERROR: The reload command takes one tab, or all');
+        return false;
       }
       if (words[0] === 'all') {
         // All at once, so one slow page holds up no other.
         const all = reloadable(ctx.tabs(), ctx.out);
         for (const t of all) if (!await switchScripts(ctx, t, mode)) return;
-        await Promise.all(all.map((t) => reloadTab(t, ctx.host, ctx.out)));
+        const loaded = await Promise.all(all.map((t) => reloadTab(t, ctx.host, ctx.out)));
+        if (!noWait) await settleTabs(ctx.host, all.filter((_, i) => loaded[i]), ctx.out);
         return;
       }
       const target = words[0] ? pickTab(ctx, words[0]) : tab;
       if (!target || blockedByDialog([target])) return;
       if (!await switchScripts(ctx, target, mode)) return;
-      await reloadTab(target, ctx.host, ctx.out);
+      if (await reloadTab(target, ctx.host, ctx.out) && !noWait) await settleTabs(ctx.host, [target], ctx.out);
       return;
     }
     case 'load': {
       if (!argument) {
-        ctx.out('[sm-dev] The load command needs a script file');
-        return;
+        ctx.out('[sm-dev] ERROR: The load command needs a script file');
+        return false;
       }
       if (!ctx.loadScript) {
         ctx.out('[sm-dev] This run cannot load scripts');
@@ -626,16 +709,17 @@ export async function runConsoleCommand(
     }
     case 'open': {
       // `--noscript` / `--script` switch the tab's mode, which lasts.
-      const mode = scriptsFlag(ctx, 'open', rest);
+      const noWait = rest.includes('--nowait');
+      const mode = scriptsFlag(ctx, 'open', rest.filter((w) => w !== '--nowait'));
       if (mode === null) return;
       const page = rest.filter((w) => !w.startsWith('--'));
       if (page[0] === 'all' && page.length === 1) {
-        await openNewTab(ctx, ['all', ...(mode ? ['--noscript'] : [])], cwd);
+        await openNewTab(ctx, ['all', ...(mode ? ['--noscript'] : []), ...(noWait ? ['--nowait'] : [])], cwd);
         return;
       }
       if (page.length > 1) {
-        ctx.out('[sm-dev] The open command takes one URL or script');
-        return;
+        ctx.out('[sm-dev] ERROR: The open command takes one URL or script');
+        return false;
       }
       const where = page[0] ?? '';
       // `T2`: the selected script's page, in T2; `T2.3`: script 3's. Only
@@ -647,13 +731,17 @@ export async function runConsoleCommand(
         : mode !== undefined ? target.tab.page.url()
           : current ? scriptPage(ctx, current) : null;
       if (!url) {
-        if (!current) ctx.out('[sm-dev] The open command needs a URL, since no script is loaded');
-        return;
+        if (!current) ctx.out('[sm-dev] ERROR: The open command needs a URL, since no script is loaded');
+        return false;
       }
       if (blockedByDialog([target.tab])) return;
       if (!await switchScripts(ctx, target.tab, mode)) return;
-      await gotoInTab(target.tab, ctx.host, url, ctx.out);
+      if (await gotoInTab(target.tab, ctx.host, url, ctx.out) && !noWait) await settleTabs(ctx.host, [target.tab], ctx.out);
       return;
+    }
+    case 'wait': {
+      const own = words?.[0] === typedCommand ? words.slice(1) : commandWords(trimmed).slice(1);
+      return waitFor(ctx, own, words?.[0] === typedCommand ? null : argument);
     }
     case 'focus': {
       const target = argument ? pickTab(ctx, argument) : tab;
@@ -676,7 +764,7 @@ export async function runConsoleCommand(
         return;
       }
       if (argument && dialog.type() !== 'prompt') {
-        ctx.out(`[sm-dev] Only a prompt dialog takes text. This one is ${dialogKind(dialog)}.`);
+        ctx.out(`[sm-dev] ERROR: Only a prompt dialog takes text. This one is ${dialogKind(dialog)}.`);
         tab.dialogs!.putBack(dialog);
         return;
       }
@@ -693,8 +781,8 @@ export async function runConsoleCommand(
     }
     default: {
       if (!PAGE_COMMANDS.has(command)) {
-        ctx.out(`[sm-dev] ${command} is not a command. Type help to list them.`);
-        return;
+        ctx.out(`[sm-dev] ERROR: ${command} is not a command. Type help to list them.`);
+        return false;
       }
       // The sender's own words, when they start with the command; a
       // whole command sent as one quoted word is split like a typed one.
@@ -710,7 +798,9 @@ export async function runConsoleCommand(
       let at = 0;
       while (inHead(at) && list[at].text.startsWith('--')) at += VALUE_FLAGS.has(list[at].text) ? 2 : 1;
       let target = tab;
-      let raw = argument;
+      // Spans of the typed line taken out of it (the tab, `--nowait`),
+      // for the line as the command gets it.
+      const cut: [number, number][] = [];
       if (inHead(at) && TAB_ARG.test(list[at].text)) {
         // The ids as `tabs` shows them, `[targetId=... pageId=4]`, are
         // two words.
@@ -719,17 +809,32 @@ export async function runConsoleCommand(
         const picked = pickTab(ctx, list.slice(at, at + taken).map((w) => w.text).join(' '));
         if (!picked) return;
         target = picked;
-        if (typed) raw = argument.slice(0, list[at].start) + argument.slice(list[at + taken - 1].end);
+        cut.push([list[at].start, list[at + taken - 1].end]);
         list.splice(at, taken);
       }
       // `logs` only reads what was recorded; the rest reach into a page
       // a dialog has stopped.
       if (command !== 'logs' && blockedByDialog([target])) return;
+      // `--nowait` on an action: taken out of its words. For `type`,
+      // only before its text, which may hold the word itself.
+      let noWait = false;
+      if (ACTIONS.has(command)) {
+        const text = freeTextStart(command, list.map((w) => w.text));
+        for (let i = list.length - 1; i >= 0; i--) {
+          if (list[i].text !== '--nowait' || (text >= 0 && i >= text)) continue;
+          cut.push([list[i].start, list[i].end]);
+          list.splice(i, 1);
+          noWait = true;
+        }
+      }
+      let raw = argument;
+      for (const [start, end] of cut.sort((a, b) => b[0] - a[0])) raw = raw.slice(0, start) + raw.slice(end);
       const input = {
         words: list.map((w) => w.text),
         raw: typed ? raw : list.map((w) => w.text).join(' '),
         typed,
         scriptsRunning: runningOn(ctx, target).length > 0,
+        noWait,
       };
       await runPageCommand(command, input, target, ctx.out, cwd);
     }
@@ -788,11 +893,11 @@ function scriptsFlag(ctx: ConsoleContext, command: string, words: string[]): boo
   const flags = words.filter((w) => w.startsWith('--'));
   const unknown = flags.find((f) => f !== '--noscript' && f !== '--script');
   if (unknown) {
-    ctx.out(`[sm-dev] The ${command} command has no ${unknown} flag`);
+    ctx.out(`[sm-dev] ERROR: The ${command} command has no ${unknown} flag`);
     return null;
   }
   if (flags.includes('--noscript') && flags.includes('--script')) {
-    ctx.out(`[sm-dev] The ${command} command takes --noscript or --script, not both`);
+    ctx.out(`[sm-dev] ERROR: The ${command} command takes --noscript or --script, not both`);
     return null;
   }
   return flags.includes('--noscript') ? true : flags.includes('--script') ? false : undefined;
@@ -823,23 +928,7 @@ async function switchScripts(ctx: ConsoleContext, tab: ControlledTab, noScript: 
   return true;
 }
 
-function tabName(tab: ControlledTab): string {
-  return `T${tab.n}`;
-}
 
-// The tab the page commands act on. One that has closed gives way to
-// T1, said once so a command doesn't land somewhere unexpected.
-function currentTab(ctx: ConsoleContext): ControlledTab | undefined {
-  const open = ctx.tabs();
-  if (ctx.tab && !open.includes(ctx.tab)) {
-    // With none left, the command's own reply says so.
-    if (open[0]) ctx.out(`[sm-dev] ${tabName(ctx.tab)} has closed, so the page commands now act on ${tabName(open[0])}`);
-    ctx.tab = undefined;
-  }
-  // Remembered, so the tab closing later is noted as above.
-  ctx.tab ??= open[0];
-  return ctx.tab;
-}
 
 // ` on T2` in a heading, only when there is more than one tab to
 // tell apart.
@@ -873,13 +962,16 @@ export function reloadable(tabs: ControlledTab[], out: (line: string) => void): 
   return tabs.filter((t) => !waiting.includes(t));
 }
 
-/** Reload one tab, saying so if it fails. */
-export function reloadTab(tab: ControlledTab, host: HarnessHost, out: (line: string) => void): Promise<void> {
+/**
+ * Reload one tab, saying so if it fails. False when it failed, or its
+ * scripts never reported (said already), so nothing waits on it more.
+ */
+export function reloadTab(tab: ControlledTab, host: HarnessHost, out: (line: string) => void): Promise<boolean> {
   return loadInTab(tab, host, () => tab.page.reload(), `[sm-dev] ${tabName(tab)} could not be reloaded`, out);
 }
 
-/** Navigate one tab to `url`, saying so if it fails. */
-export function gotoInTab(tab: ControlledTab, host: HarnessHost, url: string, out: (line: string) => void): Promise<void> {
+/** Navigate one tab to `url`, as `reloadTab` reloads it. */
+export function gotoInTab(tab: ControlledTab, host: HarnessHost, url: string, out: (line: string) => void): Promise<boolean> {
   return loadInTab(tab, host, () => tab.page.goto(url), '[sm-dev] Navigation failed', out);
 }
 
@@ -898,7 +990,7 @@ const SCRIPTS_REPORT_MAX_MS = 10_000;
  */
 async function loadInTab(
   tab: ControlledTab, host: HarnessHost, load: () => Promise<unknown>, failed: string, out: (line: string) => void,
-): Promise<void> {
+): Promise<boolean> {
   const scripts = tab.link.injectedScripts().filter((s) => s.spec);
   const ids = scripts.map((s) => s.spec!.id);
   const before = tab.link.documentStart();
@@ -907,6 +999,12 @@ async function loadInTab(
   const stopped = new AbortController();
   let timer: NodeJS.Timeout | undefined;
   let onClose!: () => void;
+  let loadFailed = false;
+  // Marked on the tab too, so the waits after it (settleTabs) skip it.
+  const result = (ok: boolean): boolean => {
+    tab.stalled = !ok;
+    return ok;
+  };
   const outcome = new Promise<boolean>((resolve) => {
     onClose = () => resolve(true);
     tab.page.once('close', onClose);
@@ -928,21 +1026,24 @@ async function loadInTab(
       },
       (err: Error) => {
         out(`${failed}: ${err.message}`);
+        loadFailed = true;
         resolve(true);
       },
     );
   });
   try {
-    if (await (tab.dialogs ? tab.dialogs.untilDialog(outcome) : outcome)) return;
+    if (await (tab.dialogs ? tab.dialogs.untilDialog(outcome) : outcome)) return result(!loadFailed);
     const waiting = host.unreported(tab.link, ids, since);
     const names = scripts.filter((s) => waiting.includes(s.spec!.id)).map(preparedScriptName);
     if (names.length > 0) out(`[sm-dev] ${names.join(', ')} had not started on ${tabName(tab)} after ${SCRIPTS_REPORT_MAX_MS / 1000} seconds`);
+    return result(false);
   } finally {
     stopped.abort();
     clearTimeout(timer);
     tab.page.off('close', onClose);
   }
 }
+
 
 // `tabs`, and the end of `status` when there are several: each tab
 // with `*` on the current one, what opened it, an open dialog, and
@@ -973,7 +1074,8 @@ function printTabs(ctx: ConsoleContext): void {
 async function openNewTab(ctx: ConsoleContext, words: string[], cwd: string): Promise<void> {
   // `--noscript` anywhere: a tab the scripts stay out of.
   // `--script` is what a new tab gets anyway.
-  const mode = scriptsFlag(ctx, 'newtab', words);
+  const noWait = words.includes('--nowait');
+  const mode = scriptsFlag(ctx, 'newtab', words.filter((w) => w !== '--nowait'));
   if (mode === null) return;
   const noScript = mode === true;
   const rest = words.filter((w) => !w.startsWith('--'));
@@ -982,7 +1084,7 @@ async function openNewTab(ctx: ConsoleContext, words: string[], cwd: string): Pr
     return;
   }
   if (rest.length > 1) {
-    ctx.out('[sm-dev] The newtab command takes one URL or script');
+    ctx.out('[sm-dev] ERROR: The newtab command takes one URL or script');
     return;
   }
   const open = async (url?: string): Promise<ControlledTab | null> => {
@@ -1012,9 +1114,10 @@ async function openNewTab(ctx: ConsoleContext, words: string[], cwd: string): Pr
       return;
     }
     // All loading at once; tabs are numbered in call order.
+    const opened: ControlledTab[] = [];
     await Promise.all([...pages].map(async ([url, scripts]) => {
       try {
-        await ctx.newTab!(url, { noScript });
+        opened.push(await ctx.newTab!(url, { noScript }));
       } catch (err) {
         for (const script of scripts) {
           const i = ctx.scripts.indexOf(script);
@@ -1022,11 +1125,12 @@ async function openNewTab(ctx: ConsoleContext, words: string[], cwd: string): Pr
         }
       }
     }));
+    if (!noWait) await settleTabs(ctx.host, opened, ctx.out);
     for (const line of skipped) if (line) ctx.out(line);
     return;
   }
   if (rest[0] && TAB_REF.test(rest[0])) {
-    ctx.out(`[sm-dev] The newtab command opens a tab of its own, so it takes a URL or a script number, not ${rest[0]}`);
+    ctx.out(`[sm-dev] ERROR: The newtab command opens a tab of its own, so it takes a URL or a script number, not ${rest[0]}`);
     return;
   }
   let url: string | undefined;
@@ -1039,6 +1143,7 @@ async function openNewTab(ctx: ConsoleContext, words: string[], cwd: string): Pr
   if (!tab) return;
   ctx.tab = tab;
   await focusTab(tab.page).catch(() => undefined);
+  if (!noWait) await settleTabs(ctx.host, [tab], ctx.out);
   ctx.out(`[sm-dev] The page commands now act on ${tabName(tab)} (${tab.page.url()})`);
 }
 
@@ -1066,10 +1171,6 @@ export function skippedScriptLine(n: number, script: PreparedScript, reason: str
 // A tab reference `open` and `newtab` recognize: `T2` or `T2.3`.
 const TAB_REF = /^[Tt]\d+(\.\d+)?$/;
 
-// A tab named before a page command's own words: `T2`, or an id as the
-// output shows one. A bare hex prefix isn't taken, since it could be a
-// selector.
-const TAB_ARG = /^(\[?(targetId|pageId)=\S+|[Tt]\d+)$/i;
 
 /**
  * Splits a `T<n>.` prefix off a typed argument: `T2.3` is script 3 on
@@ -1111,53 +1212,6 @@ function runningOn(ctx: ConsoleContext, tab: ControlledTab): PreparedScript[] {
   return ctx.scripts.filter((script) => activeOn(ctx, tab, script.spec?.id));
 }
 
-// Enough of a target id to be taken for one rather than a slip.
-const MIN_TARGET_ID_PREFIX = 6;
-
-/**
- * The tab a typed argument names: `T2`, or its CDP target id (or the
- * start of one, if only one open tab's id starts that way), bare or as
- * the output shows it (`[targetId=...]`), or its DevTools page id as
- * `pageId=4`.
- */
-function pickTab(ctx: ConsoleContext, input: string): ControlledTab | null {
-  // Both ids as `tabs` shows them, `[targetId=... pageId=4]`: the target
-  // id names the tab.
-  const typed = input.replace(/^\[(targetId=[0-9a-f]+)\s+pageId=\d+\]$/i, '$1');
-  const page = /^\[?pageId=(\d+)\]?$/i.exec(typed);
-  if (page) {
-    const tab = ctx.tabs().find((t) => t.pageId === Number(page[1]));
-    if (!tab) ctx.out(`[sm-dev] No open tab is DevTools page ${page[1]}. Type tabs to list them.`);
-    return tab ?? null;
-  }
-  // As copied from the output: `targetId=ABC...`, brackets and all.
-  const arg = typed.replace(/^\[?targetId=([0-9a-f]+)\]?$/i, '$1');
-  if (arg.length >= MIN_TARGET_ID_PREFIX && /^[0-9a-f]+$/i.test(arg)) {
-    const upper = arg.toUpperCase();
-    const hits = ctx.tabs().filter((t) => t.targetId?.toUpperCase().startsWith(upper));
-    if (hits.length === 1) return hits[0];
-    if (hits.length > 1) {
-      ctx.out(`[sm-dev] Several tabs' target ids start with ${arg} (${hits.map(tabName).join(', ')}). Type more of it.`);
-      return null;
-    }
-    // Only a number could still be a tab slip (`2` for `T2`).
-    if (!/^\d+$/.test(arg)) {
-      ctx.out(`[sm-dev] No open tab's target id starts with ${arg}. Type tabs to list them.`);
-      return null;
-    }
-  }
-  const m = /^[Tt](\d+)$/.exec(arg);
-  if (!m) {
-    // A bare number is the likely slip, and has an obvious fix.
-    ctx.out(/^\d+$/.test(arg)
-      ? `[sm-dev] Tabs are named T1, T2 and so on. Did you mean T${arg}?`
-      : `[sm-dev] ${arg} is not a tab. Tabs are named T1, T2 and so on; type tabs to list them.`);
-    return null;
-  }
-  const tab = ctx.tabs().find((t) => t.n === Number(m[1]));
-  if (!tab) ctx.out(`[sm-dev] There is no open tab T${m[1]}. Type tabs to list them.`);
-  return tab ?? null;
-}
 
 // ---------- Menu commands ----------
 
@@ -1229,7 +1283,7 @@ async function fireMenu(ctx: ConsoleContext, tab: ControlledTab, argument: strin
     await new Promise((r) => setTimeout(r, 100));
   }
   const elsewhere = numbered ? undefined : elsewhereFor(ctx, tab, argument);
-  if (/^\d+$/.test(argument) && !elsewhere) ctx.out(`[sm-dev] Menu commands are named M1, M2 and so on. Did you mean M${argument}?`);
+  if (/^\d+$/.test(argument) && !elsewhere) ctx.out(`[sm-dev] ERROR: Menu commands are named M1, M2 and so on. Did you mean M${argument}?`);
   else if (elsewhere) ctx.out(`[sm-dev] "${argument}" is registered on ${tabName(elsewhere)}, not ${tabName(tab)}. Type menu ${tabName(elsewhere)}.${argument} to fire it there.`);
   else if (all().length === 0) ctx.out(noMenusMessage(ctx, tab));
   else if (numbered) ctx.out(`[sm-dev] There is no menu command M${numbered[1]}${onTab(ctx, tab)}. Type menu to list them.`);
@@ -1338,10 +1392,6 @@ async function focusTab(page: Page): Promise<void> {
 
 // ---------- Dialogs ----------
 
-function dialogKind(dialog: Dialog): string {
-  const type = dialog.type();
-  return `${/^[aeiou]/.test(type) ? 'an' : 'a'} ${type}`;
-}
 
 /**
  * The page's `alert`, `confirm`, `prompt` and `beforeunload` dialogs.
@@ -1519,35 +1569,57 @@ export function writeOutputLine(line: string): void {
  * `hooks` bracket the line's own turn, not its wait for one, so output
  * captured between them is that command's.
  */
+/**
+ * Runs a command line, resolving to false when the command failed in
+ * a way that should stop a line of several (a `wait` that timed out).
+ */
 export type CommandRunner = (
   line: string,
   hooks?: { start?: () => void; end?: () => void; cwd?: string; words?: string[]; answer?: (line: string) => void },
-) => Promise<void>;
+) => Promise<boolean>;
 
 // `answer`: where the command's own output goes instead of `ctx.out`
 // (see commandOutput).
 export function commandRunner(ctx: ConsoleContext): CommandRunner {
   let queue: Promise<void> = Promise.resolve();
   return (line, hooks) => {
+    let ok = true;
     const run = async (): Promise<void> => {
+      // A command that said it was typed wrong failed, wherever in it
+      // that was said. Commands run one at a time, so this holds only
+      // for this one.
+      const out = ctx.out;
+      ctx.out = (l) => {
+        if (l.startsWith(MISTAKE_PREFIX)) ok = false;
+        out(l);
+      };
       try {
-        await runConsoleCommand(line, ctx, { cwd: hooks?.cwd, words: hooks?.words });
+        if (await runConsoleCommand(line, ctx, { cwd: hooks?.cwd, words: hooks?.words }) === false) ok = false;
       } catch (err) {
         ctx.out(`[sm-dev] ${(err as Error).message}`);
+        ok = false;
+      } finally {
+        ctx.out = out;
       }
     };
     const done = queue.then(async () => {
       hooks?.start?.();
       const answer = hooks?.answer && { line: hooks.answer, live: true };
+      // Where this command began, for the next `wait log`. Not for one
+      // that only looks or waits, or an empty line (a message's turn):
+      // what the command before it set off still counts.
+      const began = ctx.output?.mark();
+      const name = line.trim().split(/\s+/)[0];
       try {
-        await (answer ? commandOutput.run(answer, run) : run());
+        await inCommand.run(true, () => (answer ? commandOutput.run(answer, run) : run()));
       } finally {
         if (answer) answer.live = false;
+        else if (name && name !== 'wait' && !onlyInspects(line)) ctx.previousStart = began;
         hooks?.end?.();
       }
     });
     queue = done;
-    return done;
+    return done.then(() => ok);
   };
 }
 
@@ -1586,7 +1658,7 @@ export function readConsoleCommands(ctx: ConsoleContext, runLine: CommandRunner 
   // A message in the commands' turn, after the ones before it. The
   // empty line runs nothing.
   const say = (message: string): void => {
-    void runLine('', { start: () => ctx.out(`[sm-dev] ${message}`) });
+    void runLine('', { start: () => ctx.out(`[sm-dev] ERROR: ${message}`) });
   };
   const lines = terminal
     ? readline.createInterface({

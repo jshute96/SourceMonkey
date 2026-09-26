@@ -138,3 +138,8 @@ export function parseCommandList(text: string): { commands: AssembledCommand[] }
 export function echoCommand(command: AssembledCommand): string[] {
   return command.source.map((line, i) => `${i === 0 ? '> ' : '... '}${i === 0 ? line.trim() : line}`);
 }
+
+/** A word as a shell would need it written, for echoing a command. */
+export function shellWord(word: string): string {
+  return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
+}

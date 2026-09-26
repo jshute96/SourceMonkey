@@ -13,9 +13,10 @@ import { fileURLToPath } from 'node:url';
 
 import type { Browser, BrowserContext, Page } from '@playwright/test';
 
+import { shellWord } from './command-lines.js';
 import {
-  commandOutput, commandRunner, DialogTracker, gotoInTab, NO_TABS, onlyInspects, readConsoleCommands, reloadTab, reloadable, setCommandsListening, skippedScriptLine, targetIdSuffix,
-  type CommandRunner, type ConsoleContext, type ControlledTab,
+  commandOutput, commandRunner, DialogTracker, gotoInTab, inCommand, onlyInspects, readConsoleCommands, reloadTab, reloadable, setCommandsListening, skippedScriptLine, targetIdSuffix,
+  type CommandRunner, type ConsoleContext, type ControlledTab, type OutputHistory,
 } from './console-commands.js';
 import { DevToolsLink } from './devtools.js';
 import { ExtensionBackend, type LogEntry } from './extension-backend.js';
@@ -26,8 +27,10 @@ import { showConsoleLine, showPageError } from './page-output.js';
 import {
   defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, prepareScript, type PreparedScript,
 } from './prepare.js';
-import { checkRunsDir, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentLineHandler } from './runs.js';
+import { checkRunsDir, COMMAND_FAILED, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentLineHandler } from './runs.js';
 import { waitForStuckTabs } from './stuck-tabs.js';
+import { NO_TABS } from './tab-refs.js';
+import { settleTabs } from './wait.js';
 
 export interface RunOptions extends ConnectOptions {
   files: string[];
@@ -88,6 +91,8 @@ export interface RunOptions extends ConnectOptions {
   detachedLog?: string;
   /** The id `start --run` asked for, rather than the lowest free one. */
   runId?: string;
+  /** Don't wait for the tabs to settle before taking commands (`--nowait`). */
+  noWait?: boolean;
 }
 
 // How the browser commands reach a browser: connect to one over CDP
@@ -382,7 +387,7 @@ function printSkipped(opts: RunOptions, start: StartPages): void {
 }
 
 export async function run(opts: RunOptions): Promise<number> {
-  const remote = new Remote(opts.out, opts.onStop, opts.onActivity);
+  const remote = new Remote(opts.out, opts.onStop, opts.onActivity, opts.detachedLog !== undefined);
   // Every line also goes to whoever sent the command running now.
   opts = { ...opts, out: remote.out };
   const session = await openBrowser(opts, opts.out, { reuseTab: true, openTab: !opts.noTab });
@@ -438,6 +443,9 @@ function displayPath(file: string): string {
   return path.relative(process.cwd(), file) || file;
 }
 
+// How many lines of output `wait log` can look back over.
+const HISTORY_LINES = 5000;
+
 /**
  * A run's side of `sm-dev send` and `sm-dev stop`: runs each sent line
  * as a typed command, and answers the sender with the output while it
@@ -455,11 +463,31 @@ class Remote {
   private ready!: () => void;
   private readonly armed = new Promise<void>((resolve) => { this.ready = resolve; });
   private readonly listeners = new Set<(line: string) => void>();
+  // The run's recent output, numbered, for `wait log`; the oldest go
+  // past a cap.
+  private readonly history: string[] = [];
+  private historyStart = 0;
+  private readonly watchers = new Set<(line: string) => void>();
+  readonly output: OutputHistory = {
+    mark: () => this.historyStart + this.history.length,
+    since: (from) => this.history.slice(Math.max(0, from - this.historyStart)),
+    watch: (listener) => {
+      this.watchers.add(listener);
+      return () => { this.watchers.delete(listener); };
+    },
+  };
 
+  /**
+   * `detached`: the run's stream is its log, and every command comes
+   * from another shell, so a command that changes something is marked
+   * there as `> command`, for where it happened among what the page
+   * printed.
+   */
   constructor(
     private readonly print: (line: string) => void,
     private readonly onStop?: () => void,
     private readonly onActivity?: () => void,
+    private readonly detached = false,
   ) {}
 
   /**
@@ -474,6 +502,15 @@ class Remote {
     }
     this.print(line);
     for (const listener of this.listeners) listener(line);
+    // Only what the page and scripts printed on their own: not a
+    // command's own reply (see inCommand).
+    if (inCommand.getStore()) return;
+    this.history.push(line);
+    if (this.history.length > HISTORY_LINES) {
+      this.history.shift();
+      this.historyStart++;
+    }
+    for (const watcher of [...this.watchers]) watcher(line);
   };
 
   /** The run's id, once other shells can reach it. */
@@ -540,16 +577,22 @@ class Remote {
 
   private readonly run: SentLineHandler = async (line, reply, sent) => {
     const inspects = onlyInspects(line);
-    // Not copied to other senders: it is no part of their commands.
-    // An eval block's code lines as the prompt shows them.
+    // A command that changes something, in the stream: not copied to
+    // other senders, as it is no part of their commands. An eval block's
+    // code lines as the prompt shows them. One that only looks answers
+    // its sender alone.
     if (!inspects) {
-      const [first, ...more] = line.split('\n');
-      this.print(`[sm-dev] Sent from another shell: ${first}`);
+      // The sender's own words quoted as it gave them, so the command
+      // reads as it was typed.
+      const shown = sent?.words ? sent.words.map(shellWord).join(' ') : line;
+      const [first, ...more] = shown.split('\n');
+      this.print(this.detached ? `> ${first}` : `[sm-dev] Sent from another shell: ${first}`);
       for (const l of more) this.print(`... ${l}`);
     }
     // Answered straight away, even before the run is ready, and the
     // sender kept listening until the run has ended, so it sees that.
-    if (/^\s*(quit|exit)\s*$/.test(line)) {
+    // `stop` is what `sm-dev stop` sends.
+    if (/^\s*(quit|exit|stop)\s*$/.test(line)) {
       // First, so `sm-dev stop` knows it was heard, and waits for the
       // teardown rather than taking the wait for no answer.
       reply(`[sm-dev] Stopping run ${this.id}`);
@@ -563,9 +606,10 @@ class Remote {
       reply('[sm-dev] The run is ending, so the command was not run');
       return 'done';
     }
-    await this.runner(line, inspects
+    const ok = await this.runner(line, inspects
       ? { answer: reply, cwd: sent?.cwd, words: sent?.words }
       : { start: () => this.listeners.add(reply), end: () => this.listeners.delete(reply), cwd: sent?.cwd, words: sent?.words });
+    if (!ok) reply(COMMAND_FAILED);
     return 'done';
   };
 }
@@ -760,7 +804,10 @@ async function runInHarness(
       // page whose script has not registered anything yet. A piped
       // sequence of commands would otherwise hit exactly that.
       // Nothing will start with no scripts, or no tab to run in.
-      if (prepared.length > 0 && page) await waitForFirstStart(host);
+      if (prepared.length > 0 && page) await waitForReports(host, tabs.list());
+      // Then for the tabs to settle (see wait.ts), so the first command,
+      // or `--detach`'s return, sees the page as its scripts left it.
+      if (!opts.noWait) await settleTabs(host, tabs.list(), opts.out);
       const ctx: ConsoleContext = {
         host,
         tabs: () => tabs.list(),
@@ -778,6 +825,7 @@ async function runInHarness(
         stop: () => opts.onStop?.(),
         runId: remote.id,
         devtools: () => (devtools?.isUp ? devtools.usage : null),
+        output: remote.output,
       };
       commands = ctx;
       const runner = commandRunner(ctx);
@@ -1153,6 +1201,7 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
     hooks?.start?.();
     opts.out('[sm-dev] A run with --extension takes no commands besides quit');
     hooks?.end?.();
+    return false;
   });
   let backend: ExtensionBackend;
   try {
@@ -1288,20 +1337,26 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
   return errors === 0 ? 0 : 1;
 }
 
-// Resolve when some script has reported that it started, or after a
-// grace period when none does (a URL its header does not cover, a
-// script that threw before reporting).
-async function waitForFirstStart(host: HarnessHost, timeoutMs = 5000): Promise<void> {
-  if (host.reports.started.length > 0) return;
-  await new Promise<void>((resolve) => {
-    const done = (): void => {
-      clearTimeout(timer);
-      host.off('start', done);
-      resolve();
-    };
-    const timer = setTimeout(done, timeoutMs);
-    host.on('start', done);
-  });
+// Resolve once each script in each tab's page has had its word there:
+// started, skipped (a URL its rules don't cover) or thrown. Or after a
+// grace period, for one that never says (a page that never loads).
+async function waitForReports(host: HarnessHost, tabs: ControlledTab[], timeoutMs = 5000): Promise<void> {
+  const giveUp = new AbortController();
+  const timer = setTimeout(() => giveUp.abort(), timeoutMs);
+  const gaveUp = new Promise<void>((resolve) => giveUp.signal.addEventListener('abort', () => resolve()));
+  try {
+    await Promise.race([
+      // Not one whose load already gave up, and said so.
+      Promise.all(tabs.filter((tab) => !tab.stalled).map((tab) => {
+        const ids = tab.link.scriptsInDocument().filter((s) => s.spec).map((s) => s.spec!.id);
+        return host.untilReported(tab.link, ids, tab.link.documentFirstStart(), giveUp.signal);
+      })),
+      gaveUp,
+    ]);
+  } finally {
+    clearTimeout(timer);
+    giveUp.abort();
+  }
 }
 
 function sleep(ms: number): Promise<void> {

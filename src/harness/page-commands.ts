@@ -6,7 +6,7 @@
 // Built on the run's own Playwright connection to its tabs: real input
 // events (scrolled into view, the page sees them as a person's), key
 // names as Playwright spells them (`Shift+ArrowRight`), and the
-// accessibility tree as text. Actions wait for the page to settle
+// accessibility tree as text. Actions wait for the page to settle (wait.ts)
 // before returning, so the next command sees what the last one did.
 
 import { writeFile } from 'node:fs/promises';
@@ -16,6 +16,7 @@ import type { Page } from '@playwright/test';
 
 import type { ControlledTab } from './console-commands.js';
 import { ScriptThrew } from './inject.js';
+import { notSettledMessage, SETTLE_TIMEOUT_MS, settleTab } from './wait.js';
 import { savePageHtml } from './save-html.js';
 import { documentOf, framesAround, locate, named, noteRefs, onScreen, refOf, refProblem, tidy, withCss } from './snapshot.js';
 
@@ -24,7 +25,7 @@ export const PAGE_COMMAND_GROUPS: { title: string; lines: string[] }[] = [
   {
     title: 'Driving the page (these take a tab first, e.g. T2)',
     lines: [
-      'click <selector>  Click an element, then wait for the page to settle',
+      'click <selector>  Click an element',
       'hover <selector>  Move the mouse over an element',
       'type <selector> <text>',
       '                  Type text into an element',
@@ -55,11 +56,9 @@ export const PAGE_COMMAND_GROUPS: { title: string; lines: string[] }[] = [
 
 export const PAGE_COMMANDS = new Set(['click', 'hover', 'type', 'key', 'eval', 'snapshot', 'screenshot', 'savehtml', 'probe', 'logs']);
 
-// How long an action waits for its element, and for the page to settle
-// after it.
+// How long an action waits for its element. Settling after it has its
+// own limit (wait.ts).
 const ACTION_TIMEOUT_MS = 5000;
-const SETTLE_QUIET_MS = 100;
-const SETTLE_MAX_MS = 3000;
 // How long a whole-page screenshot waits for the browser to capture it.
 const SCREENSHOT_TIMEOUT_MS = 5000;
 // How long a quick look into the page waits for an answer.
@@ -104,6 +103,9 @@ interface Word {
  * Splits a typed line into words as a shell would: 'single' and
  * "double" quotes group words, a backslash in double quotes escapes the
  * next character. So a selector or text with spaces can be one word.
+ * Unlike a shell, quotes that open inside a word stay in it (they still
+ * keep its spaces together): they are the selector's own, as in
+ * `a[href="x.html"]`, which means something else without them.
  */
 export function splitWords(line: string): Word[] {
   const words: Word[] = [];
@@ -115,19 +117,23 @@ export function splitWords(line: string): Word[] {
     let text = '';
     while (i < line.length && !/\s/.test(line[i])) {
       const c = line[i];
+      const keep = i > start;
       if (c === '\'') {
         const close = line.indexOf(c, i + 1);
         const stop = close < 0 ? line.length : close;
-        text += line.slice(i + 1, stop);
+        text += keep ? line.slice(i, stop + 1) : line.slice(i + 1, stop);
         i = stop + 1;
       } else if (c === '"') {
         // To the next unescaped quote, a backslash escaping what follows.
+        const open = i;
         i++;
         while (i < line.length && line[i] !== '"') {
           if (line[i] === '\\' && i + 1 < line.length) i++;
-          text += line[i++];
+          text += keep ? '' : line[i];
+          i++;
         }
         i++;
+        if (keep) text += line.slice(open, Math.min(i, line.length));
       } else {
         text += c;
         i++;
@@ -140,7 +146,7 @@ export function splitWords(line: string): Word[] {
 
 // A typed selector taken whole: as typed, spaces and all, unless it's
 // one quoted span ('#a b' or "#a b"), which is unquoted.
-function wholeSelector(argument: string): string {
+export function wholeSelector(argument: string): string {
   const text = argument.trim();
   const quoted = /^'([^']*)'$/.exec(text) ?? /^"((?:[^"\\]|\\.)*)"$/.exec(text);
   return quoted ? quoted[1].replace(/\\(.)/g, '$1') : text;
@@ -172,7 +178,7 @@ function takeFlags(
 }
 
 /** Flags that take a value, so the word after one isn't taken for a tab. */
-export const VALUE_FLAGS = new Set(['--out']);
+export const VALUE_FLAGS = new Set(['--out', '--timeout-seconds']);
 
 /**
  * A page command's arguments, after the tab if one was named: its
@@ -186,7 +192,12 @@ export interface PageInput {
   raw: string;
   typed: boolean;
   scriptsRunning: boolean;
+  /** `--nowait`: an action doesn't wait for the page to settle after. */
+  noWait?: boolean;
 }
+
+/** The commands that act on the page, and so settle after, unless `--nowait`. */
+export const ACTIONS = new Set(['click', 'hover', 'type', 'key']);
 
 // Image types `screenshot` can write, by the file's extension.
 const IMAGE_FILE = /\.(png|jpe?g)$/i;
@@ -218,17 +229,25 @@ export async function runPageCommand(
     if (!tab.dialogs) return finished;
     return !await tab.dialogs.untilDialog(finished.then(() => false));
   };
-  // An action, then the page settling, each stopping at a dialog.
+  // An action, then the page settling (see wait.ts), each stopping at
+  // a dialog. A page that doesn't settle in time says why, and the
+  // action still counts as done.
   const act = async (work: Promise<unknown>, what: string): Promise<void> => {
     if (!await done(work)) {
       say(`${what}. It opened a dialog, which is waiting for an answer.`);
       return;
     }
-    if (!await done(settle(page))) {
+    if (input.noWait) {
+      say(what);
+      return;
+    }
+    const settled = await settleTab(tab, tab.link.host);
+    if (!settled.settled && 'dialog' in settled) {
       say(`${what}. The page opened a dialog, which is waiting for an answer.`);
       return;
     }
     say(what);
+    if (!settled.settled && 'busy' in settled) say(notSettledMessage(tab, SETTLE_TIMEOUT_MS, settled.busy));
   };
   try {
     switch (command) {
@@ -264,7 +283,7 @@ export async function runPageCommand(
       case 'hover': {
         const selector = input.typed ? wholeSelector(input.raw) : input.words.join(' ');
         if (!selector) {
-          say(`The ${command} command needs a selector, e.g. ${command} '#submit'`);
+          say(`ERROR: The ${command} command needs a selector, e.g. ${command} '#submit'`);
           return;
         }
         const count = await matches(page, selector, say);
@@ -277,7 +296,7 @@ export async function runPageCommand(
       case 'type': {
         const words = input.words;
         if (words.length < 2) {
-          say('The type command needs a selector and the text, e.g. type \'input[name=q]\' \'hello world\'');
+          say('ERROR: The type command needs a selector and the text, e.g. type \'input[name=q]\' \'hello world\'');
           return;
         }
         const [selector, ...text] = words;
@@ -290,7 +309,7 @@ export async function runPageCommand(
       case 'key': {
         const keys = input.words;
         if (keys.length === 0) {
-          say('The key command needs a key, e.g. key j or key Shift+ArrowRight');
+          say('ERROR: The key command needs a key, e.g. key j or key Shift+ArrowRight');
           return;
         }
         const unjoined = keys.find((k) => keyParts(k).includes(''));
@@ -318,11 +337,11 @@ export async function runPageCommand(
       case 'snapshot': {
         const parsed = takeFlags(command, input.words, { '--out': 'value', '--visible': 'bool', '--css': 'bool' });
         if (typeof parsed === 'string') {
-          say(parsed);
+          say(`ERROR: ${parsed}`);
           return;
         }
         if (parsed.rest.length > 1) {
-          say('The snapshot command takes one selector; quote one with spaces');
+          say('ERROR: The snapshot command takes one selector; quote one with spaces');
           return;
         }
         const selector = parsed.rest[0] ?? 'body';
@@ -364,12 +383,12 @@ export async function runPageCommand(
       case 'screenshot': {
         const parsed = takeFlags(command, input.words, { '--full': 'bool' });
         if (typeof parsed === 'string') {
-          say(parsed);
+          say(`ERROR: ${parsed}`);
           return;
         }
         const image = parsed.rest.pop();
         if (!image || parsed.rest.length > 1) {
-          say('The screenshot command needs a file, and takes one selector before it, e.g. screenshot \'#comments\' c.png');
+          say('ERROR: The screenshot command needs a file, and takes one selector before it, e.g. screenshot \'#comments\' c.png');
           return;
         }
         if (!IMAGE_FILE.test(image)) {
@@ -399,7 +418,7 @@ export async function runPageCommand(
       case 'savehtml': {
         const words = input.words;
         if (words.length !== 1) {
-          say('The savehtml command needs a file, e.g. savehtml page.html');
+          say('ERROR: The savehtml command needs a file, e.g. savehtml page.html');
           return;
         }
         let html = '';
@@ -411,11 +430,11 @@ export async function runPageCommand(
       case 'probe': {
         const parsed = takeFlags(command, input.words, { '--html': 'bool' });
         if (typeof parsed === 'string') {
-          say(parsed);
+          say(`ERROR: ${parsed}`);
           return;
         }
         if (parsed.rest.length === 0) {
-          say('The probe command needs a selector or more, e.g. probe \'.titleline\' \'#hnmain\'');
+          say('ERROR: The probe command needs a selector or more, e.g. probe \'.titleline\' \'#hnmain\'');
           return;
         }
         for (const selector of parsed.rest) {
@@ -526,7 +545,7 @@ function plain(err: Error): string {
 }
 
 // How many elements a selector matches, or why it can't be counted.
-async function countOf(page: Page, selector: string): Promise<number | string> {
+export async function countOf(page: Page, selector: string): Promise<number | string> {
   try {
     return await locate(page, selector).count();
   } catch (err) {
@@ -551,38 +570,3 @@ async function matches(page: Page, selector: string, say: (line: string) => void
   return typeof count === 'number' && count > 0 ? count : null;
 }
 
-/**
- * Waits for what an action set off: a navigation it started to reach
- * its DOM, then the DOM to go quiet (no changes for a moment), within a
- * limit. A page that never goes quiet (an animation, a ticking clock)
- * just costs the limit. The limit is kept here, not only in the page:
- * a timer in a page a dialog has stopped never fires.
- */
-async function settle(page: Page): Promise<void> {
-  const deadline = Date.now() + SETTLE_MAX_MS;
-  // Twice at most: once more if the document went away mid-wait, as
-  // after a key press that submits a form.
-  for (let attempt = 0; attempt < 2 && Date.now() < deadline; attempt++) {
-    await page.waitForLoadState('domcontentloaded', { timeout: Math.max(1, deadline - Date.now()) }).catch(() => undefined);
-    const left = deadline - Date.now();
-    if (left <= 0) return;
-    const quiet = page.evaluate(([gap, max]) => new Promise<void>((resolve) => {
-      let timer: ReturnType<typeof setTimeout>;
-      const finish = (): void => {
-        observer.disconnect();
-        clearTimeout(timer);
-        clearTimeout(limit);
-        resolve();
-      };
-      const observer = new MutationObserver(() => {
-        clearTimeout(timer);
-        timer = setTimeout(finish, gap);
-      });
-      observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
-      timer = setTimeout(finish, gap);
-      const limit = setTimeout(finish, max);
-    }), [SETTLE_QUIET_MS, left] as const).then(() => true, () => page.isClosed());
-    const settled = await Promise.race([quiet, new Promise<boolean>((r) => setTimeout(() => r(true), left + 200).unref())]);
-    if (settled) return;
-  }
-}

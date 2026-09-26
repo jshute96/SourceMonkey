@@ -28,7 +28,7 @@
 // running on every navigation until it is detached. That turns "edit,
 // reload, look" into a one-step loop.
 
-import type { CDPSession, Page } from '@playwright/test';
+import type { CDPSession, Page, Request } from '@playwright/test';
 
 import { WRAPPER_GM_RUNTIME } from '../generated-wrappers.js';
 import { setUserAgentDataSnapshot } from '../injector.js';
@@ -41,6 +41,57 @@ import { BADGE_BINDING, TabBadge, type BadgeDocument, type BadgeOptions } from '
 // for every entry so they share one global object, the way one
 // `chrome.userScripts` world does.
 const ISOLATED_WORLD = 'sourcemonkey';
+
+// When the DOM last changed, and where, for `wait` (see wait.ts): a
+// MutationObserver from the document's start, in the isolated world so
+// the page can't see or disturb it. Under a symbol, as the scripts
+// share that world's globals. The favicon badge's own edits (tab-badge.ts
+// marks them `data-sm-*`) are not the page changing.
+const ACTIVITY_KEY = 'sm-dev-activity';
+const ACTIVITY_TRACKER = `(function(){
+  if (self !== top) return;
+  var key = Symbol.for(${JSON.stringify(ACTIVITY_KEY)});
+  if (globalThis[key]) return;
+  var state = globalThis[key] = { last: Date.now(), target: '' };
+  function ours(node) {
+    return node.nodeType === 1 && node.localName === 'link'
+      && (node.hasAttribute('data-sm-badge') || node.hasAttribute('data-sm-rel'));
+  }
+  function badgeOnly(r) {
+    if (r.type === 'attributes') return /^data-sm-/.test(r.attributeName) || ours(r.target);
+    if (r.type !== 'childList') return false;
+    var nodes = Array.prototype.slice.call(r.addedNodes).concat(Array.prototype.slice.call(r.removedNodes));
+    return nodes.length > 0 && nodes.every(ours);
+  }
+  function describe(node) {
+    var el = node.nodeType === 1 ? node : node.parentElement;
+    if (!el) return '';
+    var classes = typeof el.className === 'string' && el.className.trim()
+      ? '.' + el.className.trim().split(/\\s+/).slice(0, 2).join('.') : '';
+    return el.localName + (el.id ? '#' + el.id : '') + classes;
+  }
+  new MutationObserver(function(records){
+    var real = records.filter(function(r){ return !badgeOnly(r); });
+    if (real.length === 0) return;
+    state.last = Date.now();
+    state.target = describe(real[real.length - 1].target);
+  }).observe(document, { childList: true, subtree: true, attributes: true, characterData: true });
+})()`;
+
+/** What `activity` reads from a page, for `wait`. */
+export interface PageActivity {
+  readyState: string;
+  /** Milliseconds since the DOM last changed. */
+  sinceDom: number;
+  /** The element that changed last, as `div#id.class`. */
+  lastChanged: string;
+}
+
+/** A request the page has in flight, and for how long. */
+export interface PendingRequest {
+  url: string;
+  ms: number;
+}
 
 // Results JSON can't show, printed as the console describes them.
 const DESCRIBED = new Set(['node', 'error', 'map', 'set', 'weakmap', 'weakset', 'nodelist', 'htmlcollection', 'regexp', 'date', 'proxy', 'promise', 'generator', 'iterator']);
@@ -186,6 +237,10 @@ export interface InjectOptions {
 interface Injected {
   script: PreparedScript;
   identifiers: string[];
+  /** When it was injected, by the host's clock. */
+  at: number;
+  /** The document it was also run in at once (`immediately`), if any. */
+  into?: BadgeDocument;
 }
 
 // Pages that already have an attachment. A second attachment on the
@@ -231,6 +286,13 @@ export class PageAttachment implements PageLink {
   // Execution contexts by id, so a binding call can be traced to its
   // frame and world, and a push can find the isolated world.
   private readonly contexts = new Map<number, ContextInfo>();
+  // Requests in flight, by when each started; see `network`.
+  private readonly requests = new Map<Request, number>();
+  private lastRequestEnd = 0;
+  private readonly onRequest = (request: Request): void => { this.requests.set(request, Date.now()); };
+  private readonly onRequestEnd = (request: Request): void => {
+    if (this.requests.delete(request)) this.lastRequestEnd = Date.now();
+  };
   readonly browser: BrowserActions = {
     // A real page in the same context, so a test can `waitForEvent('page')`
     // for it as it would for the extension's tab.
@@ -333,6 +395,16 @@ export class PageAttachment implements PageLink {
       runImmediately: true,
       worldName: ISOLATED_WORLD,
     });
+    await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', {
+      source: ACTIVITY_TRACKER,
+      runImmediately: true,
+      worldName: ISOLATED_WORLD,
+    });
+    // The page's requests in flight, and when the last one ended, for
+    // `wait`. Playwright's events cover every frame of the page.
+    this.page.on('request', this.onRequest);
+    this.page.on('requestfinished', this.onRequestEnd);
+    this.page.on('requestfailed', this.onRequestEnd);
     // New documents only. Playwright's `framenavigated` also fires for
     // `pushState` and hash changes, where the injected scripts are still
     // running from the earlier document and a "skipped" would be false.
@@ -453,6 +525,49 @@ export class PageAttachment implements PageLink {
     }
     doc.spans.push([now, Infinity]);
     this.currentDocument = doc;
+  }
+
+  /**
+   * The page's document state and its DOM's last change, for `wait`.
+   * Null when there is no document to ask. Can wait on a page busy in
+   * a long script, so the caller bounds it.
+   */
+  async activity(): Promise<PageActivity | null> {
+    const contextId = this.contextFor(ISOLATED_WORLD);
+    if (contextId === null || this.closed) return null;
+    const { result, exceptionDetails } = await this.cdp.send('Runtime.evaluate', {
+      contextId,
+      returnByValue: true,
+      expression: `(() => {
+        const s = globalThis[Symbol.for(${JSON.stringify(ACTIVITY_KEY)})];
+        return { readyState: document.readyState, sinceDom: s ? Date.now() - s.last : 0, lastChanged: s ? s.target : '' };
+      })()`,
+    });
+    if (exceptionDetails) return null;
+    return result.value as PageActivity;
+  }
+
+  /**
+   * Resolves once the page's main thread has a moment with nothing to
+   * do (`requestIdleCallback`), or after `maxMs`.
+   */
+  async idle(maxMs: number): Promise<void> {
+    const contextId = this.contextFor(ISOLATED_WORLD);
+    if (contextId === null || this.closed) return;
+    await this.cdp.send('Runtime.evaluate', {
+      contextId,
+      awaitPromise: true,
+      expression: `new Promise((resolve) => requestIdleCallback(() => resolve(true), { timeout: ${maxMs} }))`,
+    });
+  }
+
+  /** The page's requests in flight, and milliseconds since one last ended. */
+  network(): { pending: PendingRequest[]; sinceLast: number } {
+    const now = Date.now();
+    return {
+      pending: [...this.requests].map(([request, at]) => ({ url: request.url(), ms: now - at })),
+      sinceLast: this.lastRequestEnd === 0 ? Infinity : now - this.lastRequestEnd,
+    };
   }
 
   // ---------- PageLink ----------
@@ -704,7 +819,9 @@ export class PageAttachment implements PageLink {
     for (const entry of prepared.spec.js) {
       identifiers.push(await this.add(entry.code, world, options.immediately === true));
     }
-    this.injected.set(id, { script: prepared, identifiers });
+    this.injected.set(id, {
+      script: prepared, identifiers, at: Date.now(), into: options.immediately ? this.currentDocument : undefined,
+    });
   }
 
   /** Detach a script; it stops running on the next navigation. */
@@ -720,6 +837,28 @@ export class PageAttachment implements PageLink {
 
   injectedScripts(): PreparedScript[] {
     return [...this.injected.values()].map((e) => e.script);
+  }
+
+  /**
+   * The injected scripts the current document runs, and so hears from:
+   * injected before it started, or run in it at once. One added later
+   * (a `load` into a tab a dialog kept from reloading) waits for the
+   * next load.
+   */
+  scriptsInDocument(): PreparedScript[] {
+    const start = this.documentFirstStart();
+    return [...this.injected.values()]
+      .filter((e) => e.at <= start || e.into === this.currentDocument)
+      .map((e) => e.script);
+  }
+
+  /**
+   * When the main frame first entered its current document. Unlike
+   * `documentStart`, the same after the back/forward cache restores it,
+   * when its scripts don't run again.
+   */
+  documentFirstStart(): number {
+    return this.currentDocument.spans[0][0];
   }
 
   private async add(code: string, world: InjectionWorld, immediately: boolean): Promise<string> {
@@ -738,6 +877,10 @@ export class PageAttachment implements PageLink {
   /** Detach everything and drop the CDP session. */
   async dispose(): Promise<void> {
     this.disposing = true;
+    this.page.off('request', this.onRequest);
+    this.page.off('requestfinished', this.onRequestEnd);
+    this.page.off('requestfailed', this.onRequestEnd);
+    this.requests.clear();
     // Grey now, while the session can still say so.
     if (this.badge) await briefly(this.badge.stop());
     const unregister = (async () => {

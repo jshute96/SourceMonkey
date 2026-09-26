@@ -60,9 +60,9 @@ test.describe('sm-dev typed commands', () => {
       '  Stored values:',
       '    get <key>         Print one stored value',
     ]);
-    expect(await run('help nope')).toEqual(['[sm-dev] nope is not a command. Type help to list them.']);
+    expect(await run('help nope')).toEqual(['[sm-dev] ERROR: nope is not a command. Type help to list them.']);
     expect(await run('status now')).toEqual(['[sm-dev] No loaded script matches now. Type scripts to list them.']);
-    expect(await run('reload now')).toEqual(['[sm-dev] now is not a tab. Tabs are named T1, T2 and so on; type tabs to list them.']);
+    expect(await run('reload now')).toEqual(['[sm-dev] ERROR: now is not a tab. Tabs are named T1, T2 and so on; type tabs to list them.']);
   });
 
   test('menu lists commands by script, and fires one by its M number', async ({ page, fixtureServer, host, attachment, loadScript }) => {
@@ -126,7 +126,7 @@ test.describe('sm-dev typed commands', () => {
     const blocked = ['[sm-dev] The page is waiting on a prompt dialog. Type accept or dismiss first.'];
     expect(await run('menu M1')).toEqual(blocked);
     expect(await run('set name "x"')).toEqual(blocked);
-    expect(await run('dismiss now')).toEqual(['[sm-dev] The dismiss command takes no arguments']);
+    expect(await run('dismiss now')).toEqual(['[sm-dev] ERROR: The dismiss command takes no arguments']);
     expect(await run('accept Alice')).toEqual(['[sm-dev] Accepted the dialog']);
     await expect.poll(() => host.getValue(script.spec!.id, 'name')).toBe('Alice');
     expect(await run('accept')).toEqual(['[sm-dev] No dialog is open']);
@@ -194,8 +194,8 @@ test.describe('sm-dev typed commands', () => {
       ]);
       expect(await run('reload ABCDEF')).toEqual(['[sm-dev] No open tab\'s target id starts with ABCDEF. Type tabs to list them.']);
       // Too short to be taken for an id, and a long number is still a slip.
-      expect(await run('focus AB12C')).toEqual(['[sm-dev] AB12C is not a tab. Tabs are named T1, T2 and so on; type tabs to list them.']);
-      expect(await run('focus 123456')).toEqual(['[sm-dev] Tabs are named T1, T2 and so on. Did you mean T123456?']);
+      expect(await run('focus AB12C')).toEqual(['[sm-dev] ERROR: AB12C is not a tab. Tabs are named T1, T2 and so on; type tabs to list them.']);
+      expect(await run('focus 123456')).toEqual(['[sm-dev] ERROR: Tabs are named T1, T2 and so on. Did you mean T123456?']);
       expect(await run('status')).toEqual([
         `Page (T1): ${target}`, 'Scripts:', row, `    Started on ${target}`, '    1 menu command',
         '    Also active on 1 other tab',
@@ -220,9 +220,9 @@ test.describe('sm-dev typed commands', () => {
       expect(await run('menu T3.M1')).toEqual(['[sm-dev] There is no open tab T3. Type tabs to list them.']);
 
       // Tabs and menu commands take their letter; a bare number gets a hint.
-      expect(await run('tabs 2')).toEqual(['[sm-dev] Tabs are named T1, T2 and so on. Did you mean T2?']);
-      expect(await run('reload 2')).toEqual(['[sm-dev] Tabs are named T1, T2 and so on. Did you mean T2?']);
-      expect(await run('menu 1')).toEqual(['[sm-dev] Menu commands are named M1, M2 and so on. Did you mean M1?']);
+      expect(await run('tabs 2')).toEqual(['[sm-dev] ERROR: Tabs are named T1, T2 and so on. Did you mean T2?']);
+      expect(await run('reload 2')).toEqual(['[sm-dev] ERROR: Tabs are named T1, T2 and so on. Did you mean T2?']);
+      expect(await run('menu 1')).toEqual(['[sm-dev] ERROR: Menu commands are named M1, M2 and so on. Did you mean M1?']);
       // A file name that starts like a tab stays a script name.
       expect(await run('scripts t1.user.js')).toEqual(['[sm-dev] No loaded script matches t1.user.js. Type scripts to list them.']);
       expect(await run('values T2')).toEqual(['Stored values:', row, '    hit = "/other.html"']);
@@ -256,8 +256,8 @@ test.describe('sm-dev typed commands', () => {
       // picks it.
       expect(await run('newtab example.com/x')).toEqual([`[sm-dev] The page commands now act on T2 (${other})`]);
       expect(opened).toEqual(['http://example.com/x']);
-      expect(await run('newtab a b')).toEqual(['[sm-dev] The newtab command takes one URL or script']);
-      expect(await run('tabs new')).toEqual(['[sm-dev] The tabs command picks a tab. To open one, type newtab.']);
+      expect(await run('newtab a b')).toEqual(['[sm-dev] ERROR: The newtab command takes one URL or script']);
+      expect(await run('tabs new')).toEqual(['[sm-dev] ERROR: The tabs command picks a tab. To open one, type newtab.']);
 
       // A closed tab gives way to T1.
       await run('tabs T2');
@@ -314,7 +314,7 @@ test.describe('sm-dev typed commands', () => {
     expect(page.url()).toBe(target);
     expect(await run('open 2')).toEqual([noPage]);
     expect(await run('newtab T1.1')).toEqual([
-      '[sm-dev] The newtab command opens a tab of its own, so it takes a URL or a script number, not T1.1',
+      '[sm-dev] ERROR: The newtab command opens a tab of its own, so it takes a URL or a script number, not T1.1',
     ]);
     await run('script 2');
     expect(await run('open')).toEqual([noPage]);

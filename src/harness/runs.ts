@@ -410,16 +410,22 @@ export async function liveRuns(): Promise<RunRecord[]> {
   return runs.sort((a, b) => a.started - b.started);
 }
 
+/**
+ * The line a run sends last when a command failed (see CommandRunner),
+ * for `sendLine` to report rather than print. Not text a command prints.
+ */
+export const COMMAND_FAILED = '\u0000sm-dev:command-failed';
+
 /** `sendLine`'s failure when the run has ended. */
 export class RunGoneError extends Error {}
 
 /**
  * Sends one command to a run (one line, or an eval block's several),
  * passing each line of its output to `out` as it arrives. Resolves
- * once the run closes the connection. `signal` drops the connection,
- * for a sender done waiting.
+ * once the run closes the connection, to whether the command worked.
+ * `signal` drops the connection, for a sender done waiting.
  */
-export function sendLine(id: string, line: string, out: (line: string) => void, signal?: AbortSignal, words?: string[]): Promise<void> {
+export function sendLine(id: string, line: string, out: (line: string) => void, signal?: AbortSignal, words?: string[]): Promise<boolean> {
   return new Promise((resolve, reject) => {
     const socket = net.connect(socketPath(id));
     signal?.addEventListener('abort', () => {
@@ -427,7 +433,12 @@ export function sendLine(id: string, line: string, out: (line: string) => void, 
       reject(new Error(`Stopped waiting on run ${id}`));
     }, { once: true });
     let connected = false;
+    let failed = false;
     let buffered = '';
+    const take = (l: string): void => {
+      if (l === COMMAND_FAILED) failed = true;
+      else out(l);
+    };
     socket.setEncoding('utf8');
     socket.on('connect', () => {
       connected = true;
@@ -439,11 +450,11 @@ export function sendLine(id: string, line: string, out: (line: string) => void, 
       buffered += chunk;
       const lines = buffered.split('\n');
       buffered = lines.pop()!;
-      for (const l of lines) out(l);
+      for (const l of lines) take(l);
     });
     socket.on('end', () => {
-      if (buffered) out(buffered);
-      resolve();
+      if (buffered) take(buffered);
+      resolve(!failed);
     });
     socket.on('error', (err) => {
       if (connected) reject(new Error(`The connection to run ${id} was lost`));
@@ -453,25 +464,26 @@ export function sendLine(id: string, line: string, out: (line: string) => void, 
   });
 }
 
-// How long a run gets to answer `quit`, and once it has, how long to
-// finish ending (a tab stopped on a dialog takes a while to let go).
-// Past either, it is sent SIGTERM, and given the first again to go.
+// How long a run gets to answer `stop` (its `quit`), and once it has,
+// how long to finish ending (a tab stopped on a dialog takes a while to
+// let go). Past either, it is sent SIGTERM, and given the first again
+// to go.
 const STOP_WAIT_MS = 15_000;
 const TEARDOWN_WAIT_MS = 60_000;
 
 /**
  * Ends a run as its `quit` would, passing on what it prints as it ends.
  * One that doesn't answer, or doesn't finish ending in time, is sent
- * SIGTERM: it ends one that never got the `quit` as Ctrl-C would, and
+ * SIGTERM: it ends one that never got the `stop` as Ctrl-C would, and
  * kills one stuck ending. A run found to have ended already is never
  * signalled, since its pid may be another process's by now. Resolves to
  * whether the run has gone.
  */
 export async function stopRun(record: RunRecord, out: (line: string) => void): Promise<boolean> {
   const abort = new AbortController();
-  // It answers `quit` with a line straight away, then ends.
+  // It answers `stop` with a line straight away, then ends.
   let answered = false;
-  const sent = sendLine(record.id, 'quit', (line) => {
+  const sent = sendLine(record.id, 'stop', (line) => {
     answered = true;
     out(line);
   }, abort.signal).then(() => 'closed' as const, (err) => (err instanceof RunGoneError ? 'gone' as const : 'failed' as const));

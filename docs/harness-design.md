@@ -281,6 +281,48 @@ into pages.
   URL so `@match` and relative URLs still hold. HAR replay is left to
   Playwright's own `routeFromHAR`. `tests/harness/fixture.spec.ts`
   drives it from `lib/` the way a consumer would.
+- **`wait.ts`**: the `wait` command, and when a tab has settled, for
+  it and the waits after `start`, loads and actions. The guide's
+  "Waiting" section lists the signals; here, where each comes from:
+  - The quiet window counts from the later of the last change and when
+    the wait began, so what an action sets off a moment later on a
+    quiet page is waited for.
+  - The DOM: a `MutationObserver` the attachment (`inject.ts`) adds to
+    each top-frame document at its start, in the isolated world,
+    recording when the DOM last changed and where. The favicon badge's
+    own `data-sm-*` edits don't count.
+  - The page's requests: Playwright's request events, tracked per page
+    by the attachment from the start, so a wait on a quiet page returns
+    at once.
+  - The scripts: the host's start/skip/error reports since the
+    document first started, from the scripts it runs (`scriptsInDocument`:
+    injected before it started, or into it directly) whose rules match
+    its URL. One that doesn't match may never report, as on
+    `about:blank`. A document the back/forward cache restored doesn't
+    run its scripts again, so its first start counts.
+  - The scripts' `GM_xmlhttpRequest` records, for the current
+    document.
+  - A look into the page that takes over a second counts as busy (a
+    long script); a dialog ends the wait, since the page stops on it.
+  - `wait log` reads the run's output history (`OutputHistory`, kept
+    by `Remote` in `run.ts`, the last few thousand lines), from where
+    the previous command began (`previousStart`, kept by
+    `commandRunner`, and not moved by a command that only looks or
+    waits).
+    - Only what the page and scripts printed goes in it. A command
+      runs inside `inCommand` (an `AsyncLocalStorage`, Node's per-call
+      context), and its own replies are kept out; page and script lines
+      arrive through events outside it.
+  - A command fails in a way that stops a line when an explicit `wait`
+    gave up (`runConsoleCommand` returns false) or it printed an
+    `ERROR:` line (a typing mistake). The run then ends its reply with a
+    marker line (`COMMAND_FAILED` in `runs.ts`) that `sendLine` turns
+    into a failure, not output.
+  - A tab whose load already gave up (`stalled`, set by `loadInTab`)
+    isn't waited on again after it.
+- **`tab-refs.ts`**: naming and picking a run's tabs (`T2`, target and
+  DevTools page ids), the current tab, and the dialog message, shared
+  by `console-commands.ts` and `wait.ts`.
 - **`page-commands.ts`**: the run commands that drive and read a tab's
   page (`click`, `type`, `key`, `eval`, `snapshot`, `screenshot`,
   `savehtml`, `probe`, `logs`), on the run's own Playwright connection.
@@ -297,9 +339,10 @@ into pages.
     `--` word is refused before the command runs (`commandFlagMistake`).
     For the commands that end in free text, only the words before it
     are looked at. `sm-dev`'s up-front check uses the same function.
-  - Typed lines are split into words as a shell would; a command from
-    another shell passes that shell's own words and directory instead, so its quoting
-    and relative paths hold.
+  - Typed lines are split into words as a shell would, except that a
+    quote opening inside a word stays in it (`a[href="x"]`); a command
+    from another shell passes that shell's own words and directory
+    instead, so its quoting and relative paths hold.
   - Every console line and page error is kept per page (the newest
     thousand) for `logs`, beside the filtered stream.
   - A command that opens a dialog would wait on it for good (the page
@@ -480,6 +523,12 @@ into pages.
         on a millisecond.
       - The child stamps each line it writes, by wrapping
         `process.stdout.write` and `process.stderr.write`.
+      - `Remote` in `run.ts` marks a sent command that changes
+        something there as `> command`, for where it happened in the
+        stream. A foreground run marks it as from another shell
+        instead, since its own are typed at its prompt.
+      - `sm-dev stop` sends `stop`, which the run takes as `quit`, so
+        the log says what was typed.
       - Kept after the run ends.
       - Once the run has its id, `sm-dev-<id>.log` is pointed at it: a
         relative symlink, made under a temp name and renamed over the

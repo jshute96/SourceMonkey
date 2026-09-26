@@ -411,7 +411,7 @@ test('open --noscript switches a tab to no scripts for good, and --script back',
   expect(lines.slice(back)).toContain('[sm-dev] T3 runs the scripts again');
   expect(lines.slice(back)).toContain('[T2] [page log] [A] on /target.html');
   expect(lines).toContain('[T4] [page log] [A] on /target.html');
-  expect(lines).toContain('[sm-dev] The newtab command takes --noscript or --script, not both');
+  expect(lines).toContain('[sm-dev] ERROR: The newtab command takes --noscript or --script, not both');
 });
 
 test('open and reload switch the tab they name, or the current one, and say when nothing changes', async ({ fixtureServer, scriptsDir }) => {
@@ -437,9 +437,9 @@ test('open and reload switch the tab they name, or the current one, and say when
     ['has no --bogus flag', 'newtab --bogus'],
     ['has no --bogus flag', 'quit'],
   ]);
-  expect(lines).toContain('[sm-dev] The open command has no --bogus flag');
-  expect(lines).toContain('[sm-dev] The reload command has no --bogus flag');
-  expect(lines).toContain('[sm-dev] The newtab command has no --bogus flag');
+  expect(lines).toContain('[sm-dev] ERROR: The open command has no --bogus flag');
+  expect(lines).toContain('[sm-dev] ERROR: The reload command has no --bogus flag');
+  expect(lines).toContain('[sm-dev] ERROR: The newtab command has no --bogus flag');
   // T1 stayed on its page when switched back.
   expect(lines.filter((l) => l === '"/other.html"')).toHaveLength(2);
 });

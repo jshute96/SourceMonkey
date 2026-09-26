@@ -818,10 +818,6 @@ See [docs/harness-design.md](docs/harness-design.md).
   "Scripts from local disk", since `scratch:///` reads as a file path
   there. A scratch script moved there is no longer removed by `sm-dev
   clear`. Offer no default for scratch rows.
-- Move the author's `userscripts` repo onto the harness: its
-  `test/fixtures.js` re-exports the harness fixture instead of
-  stripping headers, `gm-stubs.js` goes, its specs become ESM, and its
-  `CLAUDE.md` and skills point at `sm-dev start` and the fixture.
 - Publishing: the package is installed from a checkout or a git tag.
   `package.json` keeps `"private": true` until then; drop it to
   publish.

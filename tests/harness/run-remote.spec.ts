@@ -181,7 +181,7 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
     // arrive first.
     expect((await setup.cli('send', 'menu', 'Say hi')).sort()).toEqual(['[page log] [remote] hi', '[sm-dev] Fired "Say hi"']);
     // The run's own stream says what it was sent.
-    await run.waitFor(/^\[sm-dev\] Sent from another shell: menu Say hi$/);
+    await run.waitFor(/^\[sm-dev\] Sent from another shell: menu 'Say hi'$/);
     // A command that only inspects answered the sender alone.
     expect(run.lines.some((l) => /^Run: D1 |^\[sm-dev\] Sent from another shell: status$/.test(l))).toBe(false);
     // A reload is done once the script has started again and its body
@@ -270,7 +270,7 @@ test('start --detach returns once started, is replaced by the next unless --new,
     expect(await ids()).toEqual(['Run', 'D1', 'D2']);
     // Two going, so a command has to name one.
     const several = await setup.cli('status');
-    expect(several.slice(0, 2)).toEqual(['Several runs are active. Pick one with --run:', expect.stringMatching(/^Run\s+PID/)]);
+    expect(several.slice(0, 2)).toEqual(['ERROR: Several runs are active. Pick one with --run:', expect.stringMatching(/^Run\s+PID/)]);
     await expect.poll(ids, { timeout: 15_000 }).toEqual(['Run', 'D1']);
 
     // Without it, the next one stops the earlier one, and takes its id.
@@ -314,6 +314,13 @@ test('one line starts a run, sends it commands, and stops it unless detached', a
     expect(out.at(-1)).toMatch(/^\[sm-dev\] Output log: /);
     expect(await setup.cli('list')).toEqual(['No sm-dev runs are active']);
 
+    // A wait that gives up stops the line, and the run is still stopped.
+    const stopped = await setup.cli(...start, '--', 'wait', 'selector-gone', 'body', '--timeout-seconds', '0.3', '--', 'eval', '"not run"');
+    expect(stopped).toContain('[sm-dev] Wait failed: The selector body still matched on T1 after 0.3s');
+    expect(stopped).not.toContain('"not run"');
+    expect(stopped).toContain('[sm-dev] Stopping run D1');
+    expect(await setup.cli('list')).toEqual(['No sm-dev runs are active']);
+
     // Detached, with an ID of its own: left running, and a later start
     // with that ID takes it over.
     const kept = await setup.cli(...start, '--detach', '--run', 'Dmain', '--', 'eval', 'location.pathname');
@@ -323,7 +330,7 @@ test('one line starts a run, sends it commands, and stops it unless detached', a
     expect(again.slice(0, 2)).toEqual(['[sm-dev] Stopping run Dmain', '[sm-dev] Run Dmain ended. Pages still have previously loaded scripts.']);
     expect(again.at(-2)).toMatch(/^\[sm-dev\] Run Dmain now running detached/);
     // The old way of naming a run is pointed at the new one.
-    expect(await setup.cli('send', 'Dmain', 'status')).toEqual(['Name the run with --run: sm-dev send status --run Dmain']);
+    expect(await setup.cli('send', 'Dmain', 'status')).toEqual(['ERROR: Name the run with --run: sm-dev send status --run Dmain']);
   } finally {
     await setup.cli('stop', '--all');
     await setup.cleanup();

@@ -104,6 +104,8 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
 
   expect(await run('probe main \'.missing\'')).toEqual(['found    main  (1)', 'missing  .missing']);
   expect(await run('probe main --html')).toEqual(['found    main  (1)', '    <main id="target">original content</main>']);
+  // Quotes inside a selector are its own.
+  expect(await run('probe css=main[id="target"] main[id=\'target\']')).toEqual(['found    css=main[id="target"]  (1)', 'found    main[id=\'target\']  (1)']);
   expect(await run('logs')).toContain('[log] [widget] hovered');
   expect(await run('probe \'a[b\'')).toEqual(['invalid  a[b  (It isn\'t a valid selector)']);
 
@@ -117,11 +119,11 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('eval confirm("sure?")')).toContain('[sm-dev] The expression opened a dialog, which is waiting for an answer.');
   expect(await run('dismiss')).toEqual(['[sm-dev] Dismissed the dialog']);
   expect(await run('screenshot')).toEqual([expect.stringContaining('The screenshot command needs a file')]);
-  expect(await run('snapshot --deep')).toEqual(['[sm-dev] The snapshot command has no --deep flag']);
+  expect(await run('snapshot --deep')).toEqual(['[sm-dev] ERROR: The snapshot command has no --deep flag']);
   // Every command, not only the ones with flags of their own; a quoted
   // selector with -- in it is one word, not a flag.
-  expect(await run('status --bad')).toEqual(['[sm-dev] The status command has no --bad flag']);
-  expect(await run('eval T1 --script --x')).toEqual(['[sm-dev] The eval command has no --x flag']);
+  expect(await run('status --bad')).toEqual(['[sm-dev] ERROR: The status command has no --bad flag']);
+  expect(await run('eval T1 --script --x')).toEqual(['[sm-dev] ERROR: The eval command has no --x flag']);
   expect(await run(`probe '.a --b'`)).not.toContainEqual(expect.stringContaining('flag'));
 
   // A navigation an expression doesn't live through is said as such,

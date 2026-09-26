@@ -103,14 +103,15 @@ Help:
 - It covers a run's typed commands too: `sm-dev help status tabs`.
 - `--help` (or `-h`) anywhere on a line shows the help for each
   command on it, once each, and runs none of them.
-- A mistake prints only its message, not the help.
+- A mistake in how a command was typed prints `ERROR:` and its
+  message, not the help, and fails the command.
 
 | Command | What it does |
 | --- | --- |
 | `sm-dev start <script.user.js> [url]...` | Opens a tab at each URL (default: the first URL the script's `@match` implies), injects the script as it is on disk, and streams the script's console lines, errors, and start / skipped / error reports until Ctrl-C, `quit` or `sm-dev stop`, or for `--seconds N`. |
 | `sm-dev start ... --watch` | Same, and on every save of the script or a `@require`d file, re-injects it and reloads the tabs it runs in or now matches, all at once. The typed `update` does the same on demand. |
 | `sm-dev start a.user.js b.user.js` | Injects several scripts into the same page, for interaction tests. |
-| `sm-dev start ... --detach` | Returns once the pages have loaded and the scripts started, and leaves the run going in the background (see [Detached runs](#detached-runs)). |
+| `sm-dev start ... --detach` | Returns once the pages have settled (see [Waiting](#waiting)), and leaves the run going in the background (see [Detached runs](#detached-runs)). |
 | `sm-dev match <script>... <url>...` | Says whether each script would run on each URL, with all rules that matched it (`Matched by:`) or excluded it (`Excluded by:`). A `start` command line works with `match` in its place. |
 | `sm-dev validate <path>...` | Checks script validity (header, `@require`, syntax) over files, directories or script URLs, with the message the extension would show. |
 | `sm-dev list` | Lists the runs active on this machine in a table: id (`D1`), pid, uptime, browser, how many tabs, and the scripts' files (the first few, and a count of the rest). |
@@ -181,10 +182,14 @@ Other `start` flags:
 - `--values '{"key": 1}'` seeds `GM_*` storage before the script runs.
 - `--page-errors` also shows the page's own errors (see
   [What the output looks like](#what-the-output-looks-like)).
-- `--seconds N` stops after N seconds, for a one-off bounded check;
-  without it the stream runs until Ctrl-C, `quit` or `sm-dev stop`.
-  For a longer session, leave it off and end the run with `sm-dev
-  stop`, so it can't expire mid-test.
+- `--seconds N` stops after N seconds, as a safety limit; without it
+  the stream runs until Ctrl-C, `quit` or `sm-dev stop`.
+  - To wait for a page or a script, use `wait` (see
+    [Waiting](#waiting)) rather than a guess at a time.
+  - For a longer session, leave it off and end the run with `sm-dev
+    stop`, so it can't expire mid-test.
+- `--nowait`: don't wait for the pages to settle before continuing.
+  It still waits for the scripts to start.
 - `--extension` uses the real extension in that browser instead of
   the built-in stand-in (see below); `--solo` silences the other
   collections for the run.
@@ -326,9 +331,9 @@ current one.
 | `probe <selector>... [--html]` | Which selectors match, and how many; `--html` prints each first match |
 | `logs` | Every console line and error the page has had, not only the ones the stream shows |
 
-- `click`, `hover`, `type` and `key` wait for the page to settle (its
-  DOM quiet for a moment) before returning, so the next command sees
-  what they did.
+- `click`, `hover`, `type` and `key` wait for the page to settle (see
+  [Waiting](#waiting)) before returning, so the next command sees what
+  they did. `--nowait` skips that.
 - One that opens a dialog returns once the dialog is up, and says so;
   answer it with `accept` or `dismiss`.
 - Keys go to the page, not to Chrome, so Chrome's own shortcuts
@@ -362,6 +367,10 @@ current one.
 - Quote a selector or text with spaces: `click '.athing .title a'`,
   `type input 'hello world'`. From another shell, quote `#` too,
   since the shell reads it as a comment: `sm-dev click '#submit'`.
+- Typed, a quote that starts a word groups it and is taken off, as in
+  a shell. One inside a word stays, so a selector keeps its own:
+  `probe a[href="x.html"]`. From another shell, the shell's quoting is
+  final.
 - `eval` takes the rest of the line as JavaScript, quotes and all, or
   several lines as a block (see below). A promise prints what it
   settles to.
@@ -483,6 +492,72 @@ Piped input takes `eval` blocks too. Blank lines are skipped, and a
 line starting with `#` is a comment. Input that ends inside a block
 reports it rather than running half of it.
 
+### Waiting
+
+`wait` holds the next command until something has happened, in place
+of a guess at a time:
+
+```sh
+sm-dev start x.user.js https://example.com/ -- screenshot before.png \
+  -- click '.btn' -- wait log saved -- snapshot --visible -- logs
+```
+
+| Form | Waits until |
+| --- | --- |
+| `wait [T<n>\|all]` | The tab (or all tabs) settles |
+| `wait selector <css>` | An element matches |
+| `wait selector-gone <css>` | No element matches |
+| `wait log <text>` or `wait log /regex/` | The run prints a matching line |
+| `wait {500ms\|2s}` | That long passes |
+
+A tab has settled when all of these hold together for 200ms:
+- The document has loaded.
+- Each script the page runs whose rules cover it has started (or been
+  skipped, or thrown).
+- None of its scripts' `GM_xmlhttpRequest`s is in flight, apart from
+  ones open over 3 seconds.
+- None of the page's requests is in flight, apart from ones open over
+  3 seconds (a socket, a stream, a long poll).
+- The DOM hasn't changed.
+- Then the page's main thread has a moment with nothing to do.
+
+Timers aren't waited for: they are set up to run later. A short one
+that matters changes the DOM when it fires, which the 200ms catches.
+For a script that finishes later than that, print a line when done and
+`wait log` for it.
+
+Limits of the heuristic:
+- A request over 3 seconds that the page is still waiting on (a slow
+  API call) counts as long-lived, so the page can settle before its
+  results show. `wait selector` for them instead.
+- A resource that never finishes loading holds the page's `load`
+  event, so the page never settles.
+
+Waits of their own:
+- `start` settles its tabs before taking commands (or `--detach`
+  returning). `start --nowait` skips that.
+- `click`, `hover`, `type`, `key`, `reload`, `open` and `newtab` settle
+  the tabs they touch before returning. Each takes `--nowait`.
+
+Giving up:
+- The waits other than a delay give up after 5 seconds, or
+  `--timeout-seconds S`, and say what was still busy:
+  `T1 did not settle within 5s: 2 requests pending (/api/poll,
+  /ads.js); the DOM is still changing (div#ticker)`.
+- An explicit `wait` that gives up fails, so a line of several commands
+  (or a `send` list, or commands piped to `send -`) stops there, and
+  says the rest weren't run. Input piped into `start` itself goes on. A
+  command's own wait that gives up only says so, since the command
+  itself worked.
+- `wait log /pattern/flags` is a regular expression; any other text
+  is a plain substring. Quotes around the whole text are removed first,
+  so `wait log "/abc/"` is a regex too. For the literal characters, use
+  `wait log /\/abc\//`.
+- `wait log` looks at lines the page and scripts printed since the
+  previous command began (not counting a `wait` or a command that only
+  looks), so one a click set off while it settled counts. Then at new
+  ones. sm-dev's own replies aren't looked at.
+
 ### Runs in the background
 
 A run started in the background (by an agent, or with `&`) has no
@@ -520,8 +595,9 @@ D1   81234  2m      127.0.0.1:9233  2     a.user.js, b.user.js, c.user.js, (2 mo
   `logs`, and so on) answers the sender alone. Ones that change
   something (`reload`, `click`, `menu Bump`) also show in the run's
   stream.
-- A command exits 0 whenever the run answered; read its output for the
-  result.
+- A command exits 0 when the run answered, 1 when an explicit `wait`
+  gave up, and 2 when it was typed wrong (`ERROR:`). Otherwise read its
+  output for the result.
 - `accept` and `dismiss` answer a page dialog, so a dialog waits for
   an answer even in a headless browser.
 - `stop` ends a run as `quit` does. One that doesn't respond is
@@ -549,9 +625,8 @@ sm-dev stop
 ```
 
 - It returns once the run would take its first command: the pages
-  have loaded and the scripts started (or a few seconds passed with
-  none starting). Its output until then is printed, then the lines
-  above.
+  have settled (see [Waiting](#waiting)), or it gave up on them. Its
+  output until then is printed, then the lines above.
 - It exits with the run's code if the run ends before that (a script
   that doesn't parse, no browser to connect to).
 - Starting one stops any earlier detached run first, and reuses its
@@ -567,6 +642,10 @@ sm-dev stop
   file is kept after the run ends.
   - `sm-dev-D1.log` beside it links to the latest log of the run
     named `D1`.
+  - It's the run's stream, to tail for what the scripts and page print
+    on their own. A command that changes something shows as
+    `> command`, where it happened, with its reply; a command that only
+    looks (`status`, `snapshot`) answers only the shell that sent it.
 
 #### Several commands on one line
 

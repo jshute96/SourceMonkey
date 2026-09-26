@@ -11,11 +11,21 @@ const words = (line) => splitWords(line).map((w) => w.text);
 
 test('quotes group words, as in a shell', () => {
   assert.deepEqual(words(`type 'input[name=q]' "hello world"`), ['type', 'input[name=q]', 'hello world']);
-  assert.deepEqual(words(`a"b c"d 'e'`), ['ab cd', 'e']);
+  assert.deepEqual(words(`'e' "f"`), ['e', 'f']);
   assert.deepEqual(words(`"say \\"hi\\""`), ['say "hi"']);
   assert.deepEqual(words(`  spaced   out  `), ['spaced', 'out']);
   // An unclosed quote runs to the end.
   assert.deepEqual(words(`'unclosed text`), ['unclosed text']);
+});
+
+test('quotes inside a word are the word\'s own, as in a selector', () => {
+  assert.deepEqual(words(`probe css=a[href="security.html"]`), ['probe', 'css=a[href="security.html"]']);
+  // They still keep its spaces together.
+  assert.deepEqual(words(`a[title="a b"] x`), ['a[title="a b"]', 'x']);
+  assert.deepEqual(words(`a"b c"d`), ['a"b c"d']);
+  assert.deepEqual(words(`p[data-x='1 2']`), [`p[data-x='1 2']`]);
+  // A word quoted whole is unquoted, with inner quotes as they are.
+  assert.deepEqual(words(`'a[href="x y"]'`), ['a[href="x y"]']);
 });
 
 test('key names are case-insensitive, with common aliases', () => {
