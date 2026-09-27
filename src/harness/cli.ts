@@ -35,7 +35,7 @@ import { devtoolsWanted } from './devtools.js';
 import { runIdOf, type CommandSource, type RunClient, type RunRecord } from './runs.js';
 import { withDefaultScheme } from './prepare.js';
 import {
-  REMOTE_SCRIPT, SCRIPT_ARG, UsageError, matchLines, prepareSource, scriptFile, scriptSources, validateLines, validateSources, validateSummary,
+  REMOTE_SCRIPT, SCRIPT_ARG, UsageError, expandPathArgs, matchLines, prepareSource, scriptFile, scriptSources, validateLines, validateSources, validateSummary,
   type ScriptRoots,
 } from './checks.js';
 
@@ -165,8 +165,10 @@ async function validate(opts: Opts): Promise<number> {
   return failed === 0 ? 0 : 1;
 }
 
-// `start` and `match` arguments: scripts, and the URLs the rest are.
-function scriptsAndUrls(args: string[]): { scripts: string[]; urls: string[] } {
+// `start` and `match` arguments: scripts, and the URLs the rest are,
+// after globs are expanded and directories searched for scripts.
+function scriptsAndUrls(words: string[]): { scripts: string[]; urls: string[] } {
+  const args = expandPathArgs(words, process.cwd(), { scripts: true });
   return {
     // Each once, so a repeat is neither checked nor opened twice.
     scripts: [...new Set(args.filter((a) => SCRIPT_ARG.test(a)))],
@@ -175,7 +177,8 @@ function scriptsAndUrls(args: string[]): { scripts: string[]; urls: string[] } {
 }
 
 // Every script against every URL, in the order given. Arguments can
-// come in any order: a `.user.js` one is a script, the rest are URLs.
+// come in any order: a `.user.js` one (or a directory of them) is a
+// script, the rest are URLs.
 function checkMatch(opts: Opts): void {
   const { scripts, urls } = scriptsAndUrls(opts.args);
   if (scripts.length === 0 || urls.length === 0) {

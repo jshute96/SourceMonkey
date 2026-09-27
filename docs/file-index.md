@@ -179,6 +179,7 @@ command. See `docs/harness-design.md`.
 | `src/harness/fixture.ts` | The Playwright fixture a consumer repo imports: `loadUserscript`, `gm`, `reports`, `serveHtml` over a host and attachment per test |
 | `src/harness/save-html.ts` | A page's DOM as a standalone file, scripts disabled and a `<base>` added; for `savehtml` and the fixture's `saveHtml` |
 | `src/harness/checks.ts` | `match` and `validate`'s shared half: finding the scripts named, and the lines each prints |
+| `src/harness/path-args.ts` | Globs (`*`, `**`) and directory searches for sm-dev's file arguments |
 | `src/harness/command-lines.ts` | Input lines into a run's commands: multi-line `eval {{ ... }}` blocks, comments, sent lists |
 | `src/harness/command-list.ts` | Every sm-dev command in one list, in `--help`'s sections, with each command's arguments and options, and its renderer |
 | `src/harness/console-commands.ts` | A run's commands across its tabs, the page-dialog tracker, and the client's `--interactive` prompt |
@@ -307,6 +308,7 @@ command. See `docs/harness-design.md`.
 | `tests/unit/harness-cdp-endpoint.test.mjs` | Unit tests for `cdpEndpoint`: the forms `sm-dev --cdp` accepts |
 | `tests/unit/harness-run-log.test.mjs` | Unit tests for a run's log files: the timestamp format and unique names |
 | `tests/unit/harness-wait.test.mjs` | Unit tests for `wait`'s delays and the message when a tab doesn't settle |
+| `tests/unit/harness-path-args.test.mjs` | Unit tests for sm-dev's glob matching and file argument expansion |
 | `tests/unit/harness-cli-args.test.mjs` | Unit tests for `sm-dev`'s command line: `start` flags, `match` output, scripts by URL, `--run`, `--` lines, misuse |
 | `tests/unit/harness-devtools.test.mjs` | Unit tests for `start --devtools`: when it is on, and the message when `chrome-devtools` is missing |
 | `tests/unit/harness-page-commands.test.mjs` | Unit tests for how the page commands split a typed line into words, and name keys for `key` |

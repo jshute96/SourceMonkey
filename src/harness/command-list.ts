@@ -115,7 +115,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         usage: 'start <script>... [url]...',
         about: ['Start a server process and connect to a browser.', 'Load the listed userscripts.', 'Open a tab for each listed URL.', 'Starts with the ID from --run. Stops existing runs with that ID.'],
         args: [
-          { term: '<script>...', about: 'Filenames ending in .user.js.' },
+          { term: '<script>...', about: 'Files ending in .user.js, directories, or globs.' },
           { term: '[url]...', about: ['URLs to open.', 'Default: the first script\'s default page (from @match).'] },
         ],
         optionGroups: [
@@ -189,7 +189,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     commands: [
       { usage: 'scripts', about: 'List the loaded scripts.' },
       { usage: 'script <script>', about: 'Select the active script by ID. With T2.3, pick tab T2 too.' },
-      { usage: 'load <file>', about: 'Load another script from disk.' },
+      { usage: 'load <script>...', about: 'Load more scripts from disk: files, directories, or globs. See Files and file patterns.' },
       { usage: 'update [script]', about: 'Re-read one (or all) scripts from disk, and reload all affected tabs.' },
     ],
     subsections: [
@@ -438,15 +438,15 @@ export const HELP_SECTIONS: HelpSection[] = [
           { term: '2', about: 'Script ID in the scripts list.' },
           { term: 'T2.3', about: 'Script 3, on tab T2.' },
           { term: '<name>', about: ['Its name, file name or path, or a unique substring.', '(Only in commands that expect script names.)'] },
-          { term: '<file>.user.js', about: 'A script file.' },
-          { term: '<url>.user.js', about: 'A script file loaded from a URL.' },
+          { term: '<file>', about: 'A script file. (Ending with .user.js)' },
+          { term: '<url>', about: 'A script file loaded from a URL. (Ending with .user.js)' },
         ],
       },
       {
         title: 'Pages',
         items: [
           { term: '<url>', about: 'A URL. Protocol (e.g. http://) is optional.' },
-          { term: '<path>', about: 'A file on disk, interpreted as a file:// URL.' },
+          { term: '<file>', about: 'A file on disk, interpreted as a file:// URL.' },
         ],
       },
       {
@@ -477,6 +477,23 @@ export const HELP_SECTIONS: HelpSection[] = [
         items: [
           { term: 'D2', about: 'Its number, as reported by start, status, list.' },
           { term: 'Dname', about: 'A user-chosen ID passed in with --run.' },
+        ],
+      },
+    ],
+  },
+  {
+    title: 'Files and file patterns',
+    text: ['Commands that take filenames accept:'],
+    items: [
+      { term: '<filename>', about: 'A file name, optionally with a path.' },
+      { term: '<directory>', about: 'Matches all .user.js files under it.' },
+      {
+        term: '<glob>',
+        about: [
+          'Matches files against a pattern, e.g. src/*.user.js.',
+          '* matches any characters in one path part.',
+          '** matches zero or more directories. It must be a whole directory part, and not the last.',
+          'Fail if no files match.',
         ],
       },
     ],
@@ -544,7 +561,9 @@ function sectionLines(section: HelpSection, indent: number): string[] {
   const inner = indent + 2;
   const lines = [`${' '.repeat(indent)}${section.title}:`];
   lines.push(...paragraphLines(section.text ?? [], inner));
-  for (const item of section.items ?? []) lines.push(...itemLines(item.term, item.about, inner));
+  // Under the section's text, if any, as options are below.
+  const itemIndent = section.text ? inner + 2 : inner;
+  for (const item of section.items ?? []) lines.push(...itemLines(item.term, item.about, itemIndent));
   for (const command of section.commands ?? []) {
     if (command.gap) lines.push('');
     lines.push(...itemLines(command.usage, command.about, inner));

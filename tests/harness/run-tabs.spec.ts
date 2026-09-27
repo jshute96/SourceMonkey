@@ -296,8 +296,9 @@ test('load, update and reload all reload just the tabs they affect', async ({ fi
     ['[page log] [A] on /target.html', 'scripts'],
     ['Loaded scripts:', 'get k'],
     ['k = 1', `load ${b}`],
+    // A directory: its scripts, both loaded already.
     ['is already loaded', `load ${scriptsDir.path}`],
-    ['is a directory', 'load nothing.user.js'],
+    ['already loaded, as script 1', 'load nothing.user.js'],
     ['No such file or directory', () => { write('B', 'other.html', 'syntax error here('); return 'update 2'; }],
     ['INVALID', 'reload all'],
     ['[page log] [A] on /target.html', 'exit'],
@@ -312,7 +313,9 @@ test('load, update and reload all reload just the tabs they affect', async ({ fi
   expect(lines).toContain('* 2: B (b.user.js)');
   expect(lines).toContain('  k = 1');
   expect(lines).toContain(`[sm-dev] ${b} is already loaded, as script 2. Type update 2 to re-read it.`);
-  expect(lines).toContain(`[sm-dev] ${scriptsDir.path} is a directory. Name a .user.js file.`);
+  expect(lines).toContain(`[sm-dev] ${a} is already loaded, as script 1. Type update 1 to re-read it.`);
+  // Once for `load ${b}`, once for the directory.
+  expect(lines.filter((l) => l === `[sm-dev] ${b} is already loaded, as script 2. Type update 2 to re-read it.`)).toHaveLength(2);
   expect(lines).toContain('[sm-dev] No such file or directory: nothing.user.js');
   // The failed update changed nothing, so reloaded nothing.
   const invalid = lines.findIndex((l) => l.startsWith('INVALID'));

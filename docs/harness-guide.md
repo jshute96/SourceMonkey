@@ -117,7 +117,7 @@ Help:
 | `sm-dev --interactive start ...`, `sm-dev --interactive` | After the line's commands, shows a `> ` prompt to type more at (see [The prompt](#the-prompt)). Alone, a prompt with no run yet: type `start` or `attach` there. |
 | `sm-dev attach [ID]` | Connects to a run that is going (default: `--run`'s, or the only one) and shows what it prints from now on. On its own, until the run ends or Ctrl-C, which leaves it going. |
 | `sm-dev match <script>... <url>...` | Says whether each script would run on each URL, with all rules that matched it (`Matched by:`) or excluded it (`Excluded by:`). A `start` command line works with `match` in its place. In a run it also takes the run's scripts and tabs (see [Checking scripts in a run](#checking-scripts-in-a-run)). |
-| `sm-dev validate <path>...` | Checks script validity (header, `@require`, syntax) over files, directories or script URLs, with the message the extension would show. In a run it also takes the run's scripts. |
+| `sm-dev validate <path>...` | Checks script validity (header, `@require`, syntax) over files, directories, globs or script URLs, with the message the extension would show. In a run it also takes the run's scripts. |
 | `sm-dev list` | Lists the runs active on this machine in a table: id (`D1`), pid, uptime, browser, how many tabs, and the scripts' files (the first few, and a count of the rest). |
 | `sm-dev <command>` | Runs any command a run takes (`sm-dev eval document.title`) in the run sm-dev works with, and prints its output (see [Runs in the background](#runs-in-the-background)). |
 | `sm-dev < steps.txt`, `sm-dev --stdin ...` | Reads commands from stdin, one per line, and sends them to the run (see [Commands from stdin](#commands-from-stdin)). |
@@ -132,6 +132,23 @@ it started. Add --interactive for a prompt, --detach to leave it running,
 - For `start` and `match`, arguments ending in `.user.js` are scripts,
   and the rest are URLs. They and the flags can come in any order.
   - Each is taken once, however often it's given.
+- Where scripts are expected (`start`, `match`, `validate`, `load`):
+  - A directory stands for all `*.user.js` files under it (skipping
+    `node_modules` and hidden directories).
+  - A glob is expanded by sm-dev itself, so it also works quoted, on
+    stdin and at the prompt. `*` matches within a name, and `**` any
+    number of directories: `src/*.user.js`, `**/*.user.js`.
+  - `**` must be a whole path part, and not the last one: `a**`,
+    `**.user.js` and `src/**` are errors.
+  - A glob's matches are then taken as scripts or URLs as above, so
+    `pages/**/*.html` gives `start` and `match` pages.
+  - A word whose first part isn't a directory here (`example.com/*`,
+    `localhost/*`) is a URL, not a glob.
+  - In `start`, a glob's non-script matches each open a tab.
+  - Symbolic links to directories are only followed where named, not
+    while searching.
+  - A glob that matches nothing, or a directory with no scripts, is an
+    error.
 - A URL with no scheme gets `http://`, unless it's a local path: it
   starts with `/`, `./` or `../`, names a file that exists, or starts
   with a directory that does (and has no `.` in its name, so
@@ -351,7 +368,7 @@ typed at the `--interactive` prompt, or from another shell.
 | --- | --- |
 | `scripts` | Lists the loaded scripts, numbered |
 | `script <script>` | Picks the script `get` and `set` act on (the first, until changed). `scripts <script>` works too |
-| `load <file>` | Loads another script from disk, and reloads the tabs it matches |
+| `load <script>...` | Loads more scripts from disk (files, directories, globs), and reloads the tabs they match. Quote a path with spaces. |
 | `update [script]` | Re-reads one script from disk, or all (with no argument, or `all`), as `--watch` does on a save. Only a script whose file or local `@require`s were modified since it was read counts, so touching a file forces it. Reloads, all at once, the tabs where an updated script runs or where its rules now match. Stored values are kept |
 | `status` | Prints the run (and its DevTools address, with `--devtools`), the page's URL, any open dialog, each script's state there (started or skipped, and counts of its menu commands, stored values and errors that are not zero), and, with several tabs open, the tab list |
 | `menu` | Lists the registered menu commands, numbered `M1`, `M2`, under the script that registered each |

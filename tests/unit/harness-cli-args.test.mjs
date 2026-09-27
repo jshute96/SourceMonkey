@@ -71,6 +71,13 @@ test('match takes several scripts and URLs in any order, a heading per script', 
   assert.match(none.stderr, /^ERROR: The match command needs a script \(a \.user\.js file\) and at least one URL, or a run to take them from$/m);
 });
 
+test('match expands a glob in the examples directory into its script and pages; a host with * stays a URL', () => {
+  const cwd = fileURLToPath(new URL('../examples/', import.meta.url));
+  const r = spawnSync(process.execPath, [CLI, 'match', 'gm-menu/*', 'localhost/*'], { encoding: 'utf8', cwd });
+  assert.match(r.stdout, /^match {4}file:\/\/.*\/gm-menu\/gm-menu\.html$/m);
+  assert.match(r.stdout, /^no match http:\/\/localhost\/\*$/m);
+});
+
 test('match gives a script that can never match its per-URL answer, and a broken one only its status', () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'sm-match-'));
   try {

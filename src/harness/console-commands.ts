@@ -27,7 +27,7 @@ import { defaultPageUrl, NO_DEFAULT_PAGE, preparedScriptMatches, preparedScriptN
 import { currentTab, dialogKind, dialogWaitingMessage, NO_TABS, pickTab, TAB_ARG, tabName } from './tab-refs.js';
 import { formIndex, settleTabs, waitFor } from './wait.js';
 import {
-  SCRIPT_ARG, UsageError, matchLines, prepareSource, rel, scriptSources, validateLines, validateSources, validateSummary,
+  SCRIPT_ARG, UsageError, expandPathArg, expandPathArgs, matchLines, prepareSource, rel, scriptSources, validateLines, validateSources, validateSummary,
   type ScriptRoots, type ScriptSource,
 } from './checks.js';
 
@@ -506,8 +506,12 @@ export async function runConsoleCommand(
       }
       // Its injection reaches every tab, so any tab's dialog blocks it.
       if (blockedByDialog(ctx.tabs())) return;
-      // A relative path sent from another directory is the sender's.
-      await ctx.loadScript(cwd !== process.cwd() && !path.isAbsolute(argument) ? path.resolve(cwd, argument) : argument);
+      // In words, so a quoted path keeps its spaces. All expanded
+      // first, so a glob matching nothing loads none.
+      for (const file of expandPathArgs(args, cwd, { scripts: true })) {
+        // A relative path sent from another directory is the sender's.
+        await ctx.loadScript(cwd !== process.cwd() && !path.isAbsolute(file) ? path.resolve(cwd, file) : file);
+      }
       return;
     }
     case 'update': {
@@ -755,10 +759,12 @@ async function matchCommand(ctx: ConsoleContext, words: string[], cwd: string): 
     } else if (ctx.scripts.some((script) => preparedScriptMatches(script, word))) {
       // A loaded script by its exact name or path, before a file or URL.
       loaded.push(...ctx.scripts.filter((script) => preparedScriptMatches(script, word)));
-    } else if (SCRIPT_ARG.test(word)) {
-      files.push(word);
     } else {
-      pages.push({ url: withDefaultScheme(word, cwd) });
+      // A glob expanded, a directory taken for its scripts.
+      for (const found of expandPathArg(word, cwd, { scripts: true })) {
+        if (SCRIPT_ARG.test(found)) files.push(found);
+        else pages.push({ url: withDefaultScheme(found, cwd) });
+      }
     }
   }
   if (allScripts) loaded.splice(0, loaded.length, ...ctx.scripts);

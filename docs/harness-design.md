@@ -714,6 +714,19 @@ into pages.
   - `match` and `validate` share checks.ts between the command line and
     a run, so both print the same lines. In a run they read its loaded
     scripts and tabs (console-commands.ts).
+  - File arguments go through `expandPathArg` (checks.ts), for `start`,
+    `match`, `validate` and `load`:
+    - Globs are expanded by path-args.ts rather than the shell, since
+      stdin and prompt lines never see a shell.
+    - Only words with `*` and no scheme are globs; `?` and `[` stay
+      literal, since URLs use them. A relative word whose first part
+      isn't a directory here reads as a host (`localhost/*`).
+    - Directory symlinks aren't followed by `**` or a directory
+      search, so a link up the tree can't loop.
+    - A directory stands for its scripts. Expanding to nothing is a
+      usage error.
+    - `globMistake` refuses a `**` that isn't a whole path part, or is
+      the last one, before any file is read.
   - Commands from stdin (`--stdin`, or piped with no command) go
     through a `CommandAssembler` as lines arrive:
     - What arrives without a pause (a file, or a pipe's lines within

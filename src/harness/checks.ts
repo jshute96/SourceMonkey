@@ -4,11 +4,12 @@
 // also offers its loaded scripts and open tabs (console-commands.ts).
 // Both print the same lines, so an answer reads the same either way.
 
-import { readdir, stat } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import { isMarkupContentType, looksLikeMarkup, markupResponseMessage } from '../markup-response.js';
 import { unusableMatchGroupKey } from '../url-match.js';
+import { HAS_SCHEME, globFiles, globMistake, isDirectory, isGlob, walkScripts } from './path-args.js';
 import { NO_RULE_COVERS_URL, explainMatch, isDirectoryMessage, noSuchFileMessage, prepareScript, type PreparedScript } from './prepare.js';
 
 // A mistake in how the command was typed, as opposed to a failure while
@@ -21,7 +22,8 @@ export interface ScriptRoots {
   localRoots: string[];
 }
 
-// A `start` or `match` argument that names a script rather than a page.
+// A `start` or `match` argument that names a script rather than a page
+// (after expandPathArg: a directory there stands for its scripts).
 export const SCRIPT_ARG = /\.user\.js$/i;
 
 // A script named by a web address rather than a path: `validate` and
@@ -39,28 +41,23 @@ export function rel(file: string, cwd = process.cwd()): string {
 
 /**
  * `validate`'s arguments as scripts, in the order given: a web address
- * is fetched, a directory searched for `*.user.js` files.
+ * is fetched, a glob expanded, a directory searched for `*.user.js`
+ * files.
  */
 export async function validateSources(inputs: string[], cwd = process.cwd()): Promise<ScriptSource[]> {
   const sources: ScriptSource[] = [];
   for (const input of inputs) {
-    if (REMOTE_SCRIPT.test(input)) sources.push(...await scriptSources([input], cwd));
-    else for (const file of await collectScripts([input], cwd)) sources.push({ label: rel(file, cwd), file });
+    if (REMOTE_SCRIPT.test(input)) {
+      sources.push(...await scriptSources([input], cwd));
+      continue;
+    }
+    for (const found of expandPathArg(input, cwd, { scripts: true })) {
+      await statInput(found, cwd);
+      const file = path.resolve(cwd, found);
+      sources.push({ label: rel(file, cwd), file });
+    }
   }
-  // What it found, not how it was typed.
-  if (sources.length === 0) throw new Error('No *.user.js files found');
   return sources;
-}
-
-async function collectScripts(inputs: string[], cwd: string): Promise<string[]> {
-  const found: string[] = [];
-  for (const input of inputs) {
-    const full = path.resolve(cwd, input);
-    const info = await statInput(input, cwd);
-    if (info.isDirectory()) await walk(full, found);
-    else found.push(full);
-  }
-  return found;
 }
 
 // The script a command was pointed at, checked up front so a typo is
@@ -77,15 +74,32 @@ function statInput(input: string, cwd: string): ReturnType<typeof stat> {
   });
 }
 
-async function walk(dir: string, out: string[]): Promise<void> {
-  const entries = await readdir(dir, { withFileTypes: true });
-  entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  for (const entry of entries) {
-    if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) await walk(full, out);
-    else if (entry.name.endsWith('.user.js')) out.push(full);
+/**
+ * A word as the paths it stands for, relative when it was: a glob's matches, sorted; with `scripts`, a directory's
+ * `*.user.js` files, searched in full. Any other word as it is.
+ */
+export function expandPathArg(word: string, cwd = process.cwd(), opts: { scripts?: boolean } = {}): string[] {
+  // Not the current directory, which an empty word would resolve to.
+  if (word === '') return [word];
+  if (isGlob(word, cwd)) {
+    const mistake = globMistake(word);
+    if (mistake) throw new UsageError(mistake);
+    const found = globFiles(word, cwd);
+    if (found.length === 0) throw new UsageError(`No files match ${word}`);
+    return found;
   }
+  if (opts.scripts && !HAS_SCHEME.test(word) && isDirectory(path.resolve(cwd, word))) {
+    const found: string[] = [];
+    walkScripts(path.resolve(cwd, word), word, found);
+    if (found.length === 0) throw new UsageError(`No .user.js files found under ${word}`);
+    return found;
+  }
+  return [word];
+}
+
+/** Each word expanded, in order, each path once. */
+export function expandPathArgs(words: string[], cwd = process.cwd(), opts: { scripts?: boolean } = {}): string[] {
+  return [...new Set(words.flatMap((word) => expandPathArg(word, cwd, opts)))];
 }
 
 // Local ones checked, remote ones fetched, all up front, so a mistyped
