@@ -22,8 +22,12 @@ export interface RunRecord {
   pid: number;
   /** When it started, in epoch milliseconds. */
   started: number;
-  /** The browser: its CDP endpoint, or `launched` for `--launch`. */
+  /** The browser's CDP endpoint (`launched` from an older sm-dev). */
   browser: string;
+  /** A browser the run launched, which closes when the run ends. */
+  owned?: boolean;
+  /** A browser without a window. */
+  headless?: boolean;
   /** The loaded scripts' paths, as the run names them. */
   scripts: string[];
   /** How many tabs it controls, where it keeps count. */
@@ -698,7 +702,7 @@ export function runTable(records: RunRecord[], now = Date.now()): string[] {
         r.id,
         String(r.pid),
         uptime(now - r.started),
-        r.browser.replace(/^https?:\/\//, ''),
+        browserLabel(r),
         r.tabs === undefined ? '-' : String(r.tabs),
         shown.length > 0 ? shown.join(', ') : '-',
       ];
@@ -707,6 +711,26 @@ export function runTable(records: RunRecord[], now = Date.now()): string[] {
   const widths = rows[0].map((_, i) => Math.max(...rows.map((row) => row[i].length)));
   // The last column unpadded, so no line ends in spaces.
   return rows.map((row) => row.map((cell, i) => (i < row.length - 1 ? cell.padEnd(widths[i]) : cell)).join('  ').trimEnd());
+}
+
+/**
+ * A run's browser as `list` shows it: `127.0.0.1:9233`, with
+ * `(owned, headless)` after it when so. `status` words it as a
+ * sentence (see `browserSentence`).
+ */
+export function browserLabel(r: Pick<RunRecord, 'browser' | 'owned' | 'headless'>): string {
+  const marks = [r.owned && 'owned', r.headless && 'headless'].filter(Boolean);
+  const where = r.browser.replace(/^https?:\/\//, '');
+  return marks.length > 0 ? `${where} (${marks.join(', ')})` : where;
+}
+
+/**
+ * A run's browser as `status` says it: `connected to owned headless
+ * browser 127.0.0.1:9233`. `how` changes the first words (`launched`).
+ */
+export function browserSentence(r: Pick<RunRecord, 'browser' | 'owned' | 'headless'>, how = 'connected to'): string {
+  const marks = [r.owned && 'owned', r.headless && 'headless'].filter(Boolean);
+  return `${how} ${[...marks, 'browser'].join(' ')} ${r.browser.replace(/^https?:\/\//, '')}`;
 }
 
 function uptime(ms: number): string {

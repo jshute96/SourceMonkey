@@ -30,10 +30,10 @@ for the manager's half of the picture.
 ## What you need
 
 - Node 22+ and pnpm.
-- A Chromium that Playwright can reach. Either let Playwright launch
-  one, or start one yourself with a remote-debugging port and connect
-  to it (the `userscripts` repo does the latter so Google sign-in
-  works).
+- A Chromium that Playwright can reach, with a remote-debugging
+  port: `sm-dev --open-browser` starts one (see
+  [Launching a browser](#launching-a-browser)), or start one yourself.
+  `--temp-browser` instead launches a throwaway one for each run.
 - For the extension backend only: that browser started with
   `--load-extension=<path to SourceMonkey's dist>`.
 
@@ -165,16 +165,57 @@ command: sm-dev --run ... <command>`.
 - `--interactive` (`-i`) shows a prompt once the line's commands are
   done (see [The prompt](#the-prompt)).
 
-Options for the browser commands (`start`, `clear`):
+Browser options:
 
 - `--cdp URL or port` names the browser to connect to: a URL, a
   `host:port` (`http://` is added), or just a port on this machine
   (`9222` or `:9222`). An IPv6 host needs brackets (`[::1]:9222`).
   Defaults to the `SM_DEV_CDP` environment variable, which takes the
   same forms, then port 9233.
-- `--launch` starts a Chromium instead of connecting to one, and
-  `--headed` shows it. Useful when no browser is running and the page
-  needs no login.
+  - As a global option it holds for the whole line (and
+    `--open-browser`).
+    After `start` or `clear`, it's for that command alone.
+- `--open-browser` and `--profile DIR` start a browser that stays open (see
+  [Launching a browser](#launching-a-browser)).
+- `--temp-browser` launches a hidden Chromium for each run instead,
+  with an empty profile, closed when the run ends. `--headed` shows
+  it. Useful for a throwaway run whose page needs no login.
+- These are global options, so they go first:
+  `sm-dev --temp-browser start x.user.js`. One browser choice per
+  line: `--temp-browser` can't go with `--cdp` or `--open-browser`, and
+  after `--open-browser`, `start` takes no `--cdp` of its own.
+- `--temp-browser` and `--headed` need a `start` on the line (or
+  `-i` or `--stdin`, where one can come).
+
+### Launching a browser
+
+`sm-dev --open-browser` starts a browser for runs to connect to, and
+leaves it open after sm-dev ends:
+
+```sh
+sm-dev --open-browser                           # just the browser
+sm-dev --open-browser start x.user.js --detach  # the browser, then a run in it
+sm-dev --open-browser --cdp 9300                # another one, on port 9300
+```
+
+- It has a window, and listens on `--cdp`'s port (9233 by default),
+  which is where later commands connect. Close it as any browser: by
+  closing its window.
+- Google Chrome when it's installed (it handles Google sign-in), else
+  Playwright's Chromium. `SM_DEV_BROWSER` names another binary.
+- Its profile is kept, so sign-ins and extensions carry over:
+  `~/.config/sm-dev/browser-profile-<port>`, or `--profile DIR`.
+  - One per port, since only one browser at a time can use a
+    profile. One already in use is refused, naming the port its
+    browser is on.
+- A browser already answering on the port is used as it is, whatever
+  its profile, so `--open-browser` can go on any command line.
+- It can't start one on another machine: `--cdp` has to be a port
+  alone (`9300`), or one on `127.0.0.1` or `localhost`.
+- A browser that can't start, or whose port doesn't open within 10
+  seconds, is closed again, with the reason.
+- Its output goes to `sm-dev-browser.log` in the profile directory, and the
+  log's last line is shown if it fails to start.
 
 Other `start` flags:
 
@@ -668,9 +709,16 @@ sm-dev stop                               # or stop D1, or stop --all
 `list` prints a table:
 
 ```
-Run  PID    Uptime  Browser         Tabs  Scripts
-D1   81234  2m      127.0.0.1:9233  2     a.user.js, b.user.js, c.user.js, (2 more)
+Run  PID    Uptime  Browser                            Tabs  Scripts
+D1   81234  2m      127.0.0.1:9233                     2     a.user.js, b.user.js, c.user.js, (2 more)
+D2   81502  1m      127.0.0.1:41234 (owned, headless)  1     a.user.js
 ```
+
+- Browser is where the run's browser takes CDP (Chrome DevTools
+  Protocol) connections. `owned`
+  marks one the run launched (`--temp-browser`), which closes when it ends;
+  `headless`, one without a window. `status` says the same on its
+  `Run:` line: `connected to owned headless browser 127.0.0.1:41234`.
 
 The run's first line names it, and how to reach it:
 `[sm-dev] Started as run D1. Other shells reach it with sm-dev --run D1
@@ -758,6 +806,9 @@ page print on their own, or to look back at what happened when:
   `D1`.
 - The run's output all goes there. A client following the run shows
   the same lines, without the timestamps.
+- Its first line says which browser the run uses:
+  `Connected to browser 127.0.0.1:9233 (Chrome 153.0.8010.12)`, or
+  `Launched owned headless browser ...` for `--temp-browser`.
 - It's what the page and scripts do, not all the replies:
   - Commands a client sent that change something show where they
     happened, with their replies, headed by who sent them and how:
@@ -873,7 +924,7 @@ chrome-devtools --sessionId=D1 evaluate_script "() => document.title" --pageId 3
   on without it.
 - A tab whose page id isn't found after several tries is named; reload
   it to try again.
-- Not with `--launch` or `--extension`, and not on Windows yet.
+- Not with `--temp-browser` or `--extension`, and not on Windows yet.
 
 Things to know:
 - The session id is the run's id, unless `--run` named it

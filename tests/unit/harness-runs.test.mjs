@@ -16,7 +16,7 @@ const RUNS_DIR = mkdtempSync(path.join(os.tmpdir(), 'sm-dev-runs-test-'));
 process.env.SM_DEV_RUNS_DIR = RUNS_DIR;
 after(() => rmSync(RUNS_DIR, { recursive: true, force: true }));
 
-const { RunClient, RunControl, liveRuns, runIdOf, runTable, sendLine, stopRun } = await import('../../lib/harness/runs.js');
+const { browserSentence, RunClient, RunControl, liveRuns, runIdOf, runTable, sendLine, stopRun } = await import('../../lib/harness/runs.js');
 
 // A run's handlers: `command` as given, and nothing to follow.
 function handlers(command, follow = () => () => undefined) {
@@ -195,11 +195,18 @@ test('list prints a table', () => {
     run({ id: 'D1', pid: 42, scripts: ['sites/x/y.user.js', 'z.user.js'], tabs: 1 }),
     run({ id: 'D2', pid: 4567, scripts: ['a.user.js', 'b.user.js', 'c.user.js', 'd.user.js', 'e.user.js'], tabs: 3 }),
     // No tab count where the run keeps none (--extension).
-    run({ id: 'D3', pid: 7, started: now - 3_725_000, browser: 'launched', scripts: [] }),
+    run({ id: 'D3', pid: 7, started: now - 3_725_000, browser: 'http://127.0.0.1:41234', owned: true, headless: true, scripts: [] }),
+    run({ id: 'D4', pid: 8, headless: true, scripts: [] }),
   ], now), [
-    'Run  PID   Uptime  Browser         Tabs  Scripts',
-    'D1   42    2m      127.0.0.1:9233  1     y.user.js, z.user.js',
-    'D2   4567  2m      127.0.0.1:9233  3     a.user.js, b.user.js, c.user.js, (2 more)',
-    'D3   7     1h02m   launched        -     -',
+    'Run  PID   Uptime  Browser                            Tabs  Scripts',
+    'D1   42    2m      127.0.0.1:9233                     1     y.user.js, z.user.js',
+    'D2   4567  2m      127.0.0.1:9233                     3     a.user.js, b.user.js, c.user.js, (2 more)',
+    'D3   7     1h02m   127.0.0.1:41234 (owned, headless)  -     -',
+    'D4   8     2m      127.0.0.1:9233 (headless)          -     -',
   ]);
+});
+
+test('status says the browser as a sentence', () => {
+  assert.equal(browserSentence({ browser: 'http://127.0.0.1:9233' }), 'connected to browser 127.0.0.1:9233');
+  assert.equal(browserSentence({ browser: 'http://127.0.0.1:41234', owned: true, headless: true }), 'connected to owned headless browser 127.0.0.1:41234');
 });

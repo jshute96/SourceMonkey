@@ -8,6 +8,7 @@
 import { randomBytes } from 'node:crypto';
 import { watch, type FSWatcher } from 'node:fs';
 import { readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { createServer, type AddressInfo } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -27,7 +28,7 @@ import { showConsoleLine, showPageError } from './page-output.js';
 import {
   defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, prepareScript, type PreparedScript,
 } from './prepare.js';
-import { checkRunsDir, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentCommand, type SentLineHandler } from './runs.js';
+import { browserSentence, checkRunsDir, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentCommand, type SentLineHandler } from './runs.js';
 import { waitForStuckTabs } from './stuck-tabs.js';
 import { NO_TABS } from './tab-refs.js';
 import { settleTabs } from './wait.js';
@@ -105,10 +106,11 @@ export interface RunOptions extends ConnectOptions {
 
 // How the browser commands reach a browser: connect to one over CDP
 // (the default, for the developer's own logged-in browser) or launch
-// a fresh Chromium.
+// a fresh Chromium (`--temp-browser`).
 export interface ConnectOptions {
   cdp?: string;
-  launch?: boolean;
+  /** `--temp-browser`: launch a Chromium of the run's own instead. */
+  tempBrowser?: boolean;
   headed?: boolean;
   /** Resolves to give up connecting (--seconds): ends a wait for tabs that don't answer. */
   until?: Promise<void>;
@@ -137,6 +139,12 @@ function cdpSetting(opts: ConnectOptions): string {
 
 export interface BrowserSession {
   browser: Browser;
+  /** The browser's CDP endpoint, a launched one's too. */
+  endpoint: string;
+  /** Launched for this run (`--temp-browser`), and closed with it. */
+  launched: boolean;
+  /** Running without a window. */
+  headless: boolean;
   context: BrowserContext;
   page: Page;
   /**
@@ -174,6 +182,35 @@ function leaveDialogsOpen(browser: Browser): void {
   }
 }
 
+// A port free on this machine now, for a launched browser's CDP.
+// Something else could take it before the browser does; the browser
+// still starts (Playwright talks to it over a pipe), and only what
+// `list` shows would be wrong.
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.on('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address() as AddressInfo;
+      server.close(() => resolve(port));
+    });
+  });
+}
+
+// Whether a connected browser runs without a window: its user agent
+// then says HeadlessChrome. (The product name does only in the old
+// headless mode, not in --headless=new.) Unknown counts as not.
+async function isHeadless(browser: Browser): Promise<boolean> {
+  try {
+    const cdp = await browser.newBrowserCDPSession();
+    const { userAgent } = await cdp.send('Browser.getVersion');
+    await cdp.detach().catch(() => undefined);
+    return /\bHeadlessChrome\//.test(userAgent);
+  } catch {
+    return false;
+  }
+}
+
 // `connectBrowser`, and for `start --notab`, the same with no tab.
 async function openBrowser(
   opts: ConnectOptions, out: (line: string) => void, o: { reuseTab: boolean; openTab: true },
@@ -188,9 +225,15 @@ async function openBrowser(
 ): Promise<RunSession | null> {
   const { chromium } = await import('@playwright/test');
   let browser: Browser;
+  // Set for a connected browser only.
   let endpoint: string | null = null;
-  if (opts.launch) {
-    browser = await chromium.launch({ headless: !opts.headed });
+  // A launched one gets a port too, so other tools (a debugger, a
+  // second Playwright) can connect to it, and `list` can say where.
+  let launchedAt: string | null = null;
+  if (opts.tempBrowser) {
+    const port = await freePort();
+    browser = await chromium.launch({ headless: !opts.headed, args: [`--remote-debugging-port=${port}`] });
+    launchedAt = cdpEndpoint(String(port));
   } else {
     endpoint = cdpSetting(opts);
     try {
@@ -213,7 +256,7 @@ async function openBrowser(
         return null;
       }
       out(`Could not connect to a browser at ${endpoint}: ${message}`);
-      out('Start one with a remote-debugging port, pass --cdp, or use --launch');
+      out('Start one with sm-dev --open-browser, pass --cdp, or use --temp-browser');
       return null;
     }
   }
@@ -225,6 +268,9 @@ async function openBrowser(
       : await context.newPage();
   return {
     browser,
+    endpoint: endpoint ?? launchedAt!,
+    launched: endpoint === null,
+    headless: endpoint === null ? !opts.headed : await isHeadless(browser),
     context,
     page,
     // On a connected browser `close()` only drops the connection; the
@@ -400,13 +446,18 @@ export async function run(opts: RunOptions): Promise<number> {
   opts = { ...opts, out: remote.out };
   const session = await openBrowser(opts, opts.out, { reuseTab: true, openTab: !opts.noTab });
   if (!session) return 1;
+  // Which browser, for the stream and the log.
+  const browserIs = { browser: session.endpoint, owned: session.launched, headless: session.headless };
+  opts.out(`[sm-dev] ${capitalized(browserSentence(browserIs, session.launched ? 'launched' : 'connected to'))} (Chrome ${session.browser.version()})`);
   opts.onConnected?.();
   // Only a run that waits for commands can be sent any.
   if (opts.until) {
     await remote.open({
       pid: process.pid,
       started: Date.now(),
-      browser: opts.launch ? 'launched' : cdpSetting(opts),
+      browser: session.endpoint,
+      ...(session.launched ? { owned: true } : {}),
+      ...(session.headless ? { headless: true } : {}),
       scripts: opts.files.map(displayPath),
       ...(opts.detached ? { detached: true } : {}),
       ...(opts.log ? { log: opts.log } : {}),
@@ -678,8 +729,8 @@ async function runInHarness(
   // shells can't reach has none, and a name start --run gave isn't hex,
   // so a random one stands in.
   if (opts.devtools && opts.until) {
-    const session = remote.id && /^[0-9a-f]+$/i.test(remote.id) ? remote.id : randomBytes(3).toString('hex');
-    devtools = new DevToolsLink(session, cdpSetting(opts), () => tabs.list(), opts.out);
+    const name = remote.id && /^[0-9a-f]+$/i.test(remote.id) ? remote.id : randomBytes(3).toString('hex');
+    devtools = new DevToolsLink(name, session.endpoint, () => tabs.list(), opts.out);
     held.devtools = devtools;
   }
   wireHostOutput(host, opts.out, (record) => tabs.prefixOf(record));
@@ -866,6 +917,7 @@ async function runInHarness(
         stop: () => opts.onStop?.(),
         runId: remote.id,
         devtools: () => (devtools?.isUp ? devtools.usage : null),
+        browser: browserSentence({ browser: session.endpoint, owned: session.launched, headless: session.headless }),
         output: remote.output,
         roots: { collectionRoot: opts.collectionRoot, localRoots: opts.localRoots },
       };
@@ -1399,13 +1451,17 @@ async function waitForReports(host: HarnessHost, tabs: ControlledTab[], timeoutM
   }
 }
 
+function capitalized(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // Whether a person can see the browser, and so answer its dialogs.
 function browserVisible(opts: ConnectOptions): boolean {
-  return !opts.launch || opts.headed === true;
+  return !opts.tempBrowser || opts.headed === true;
 }
 
 function sameEntry(a: LogEntry, b: LogEntry): boolean {

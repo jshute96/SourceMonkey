@@ -349,11 +349,21 @@ export const HELP_SECTIONS: HelpSection[] = [
         ],
       },
       {
-        title: 'Browser selection (for start and clear)',
+        title: 'Browser selection',
         options: [
-          { term: '--cdp URL|PORT', about: ['The browser to connect to: a URL, host:port, or port.', '(Default: $SM_DEV_CDP or 9233)'], commands: BROWSER },
-          { term: '--launch', about: 'Launch a browser instead of connecting to one.', commands: BROWSER },
-          { term: '--headed', about: 'With --launch: make the browser visible, not hidden.', commands: BROWSER },
+          { term: '--cdp URL|PORT', about: ['The browser to connect to, and where --open-browser starts one: a URL, host:port, or port.', '(Default: $SM_DEV_CDP or 9233)'], commands: BROWSER },
+          {
+            term: '--open-browser',
+            about: [
+              'Start a browser, if one isn\'t running on --cdp (which must be a port or on localhost target).',
+              'Starts it headed (with a visible window), and leaves it open after sm-dev ends.',
+              'Uses Google Chrome if installed, else Chromium.',
+              'Used alone (sm-dev --open-browser), just start the browser.',
+            ],
+          },
+          { term: '--profile DIR', about: ['With --open-browser: the browser profile, kept between launches.', '(Default: ~/.config/sm-dev/browser-profile-<port>)'] },
+          { term: '--temp-browser', about: 'Instead, launch a hidden browser for each run, with an empty profile, and close it when the run ends.' },
+          { term: '--headed', about: 'With --temp-browser: make its window visible.' },
         ],
       },
       {

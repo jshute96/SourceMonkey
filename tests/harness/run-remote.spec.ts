@@ -211,12 +211,12 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
 
     const list = await setup.cli('list');
     expect(list[0]).toMatch(/^Run\s+PID\s+Uptime\s+Browser\s+Tabs\s+Scripts$/);
-    expect(list[1]).toMatch(new RegExp(`^D1\\s+\\d+\\s+\\S+\\s+127\\.0\\.0\\.1:${setup.port}\\s+1\\s+remote\\.user\\.js$`));
+    expect(list[1]).toMatch(new RegExp(`^D1\\s+\\d+\\s+\\S+\\s+127\\.0\\.0\\.1:${setup.port} \\(headless\\)\\s+1\\s+remote\\.user\\.js$`));
     // Its own process, not this sm-dev's.
     const pid = Number(list[1].split(/\s+/)[1]);
     expect(pid).not.toBe(run.proc.pid);
 
-    expect((await setup.cli('--run', 'D1', 'status'))[0]).toBe(`Run: D1 (pid ${pid})`);
+    expect((await setup.cli('--run', 'D1', 'status'))[0]).toBe(`Run: D1 (pid ${pid}), connected to headless browser 127.0.0.1:${setup.port}`);
     // The only run, so it needs no id. The command's own output, and
     // what it set off in the page, come back; the page's line can
     // arrive first.
@@ -322,8 +322,10 @@ test('start --detach returns once started, is replaced by the next unless --new,
     const log = first.at(-1)!.match(/^\[sm-dev\] Output log: (\S+\.log)$/)![1];
     expect(path.basename(log)).toMatch(/^sm-dev-\d{8}-\d{6}-\d{3}\.log$/);
     // Stamped in the file, though not as printed.
-    expect(readFileSync(log, 'utf8')).toMatch(/^\d{8}-\d{6}-\d{3} \[sm-dev\] Started as run D1\. /);
-    expect(first[0]).toMatch(/^\[sm-dev\] Started as run D1\. /);
+    // First, the browser it's using.
+    expect(readFileSync(log, 'utf8')).toMatch(new RegExp(`^\\d{8}-\\d{6}-\\d{3} \\[sm-dev\\] Connected to headless browser 127\\.0\\.0\\.1:${setup.port} \\(Chrome [\\d.]+\\)\\n\\d{8}-\\d{6}-\\d{3} \\[sm-dev\\] Started as run D1\\. `));
+    expect(first[0]).toMatch(/^\[sm-dev\] Connected to headless browser /);
+    expect(first[1]).toMatch(/^\[sm-dev\] Started as run D1\. /);
     // Found by the run's id too.
     expect(readlinkSync(path.join(path.dirname(log), 'sm-dev-D1.log'))).toBe(path.basename(log));
     expect(await setup.cli('eval', 'document.title')).toEqual(['"target"']);

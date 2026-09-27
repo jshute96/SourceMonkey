@@ -111,6 +111,8 @@ export interface ConsoleContext {
   runId?: string;
   /** How to reach the run's DevTools server, for `status`. */
   devtools?: () => string | null;
+  /** The run's browser, for `status`: `connected to browser 127.0.0.1:9233`. */
+  browser?: string;
   /** The run's output so far, for `wait log`. */
   output?: OutputHistory;
   /**
@@ -390,7 +392,7 @@ export async function runConsoleCommand(
     case 'status': {
       // Takes no arguments: scripts and tabs give those lists in full.
       if (!takesNothing()) return false;
-      if (ctx.runId) ctx.out(`Run: ${ctx.runId} (pid ${process.pid})`);
+      if (ctx.runId) ctx.out(`Run: ${ctx.runId} (pid ${process.pid})${ctx.browser ? `, ${ctx.browser}` : ''}`);
       const devtools = ctx.devtools?.();
       if (devtools) ctx.out(`DevTools: ${devtools}`);
       // With no tab, still the scripts and what they have stored.

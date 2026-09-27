@@ -11,7 +11,7 @@ import { run, type RunOptions } from '../../lib/harness/run.js';
 
 // Run until every `wanted` text has appeared in a line, or 10s.
 async function runUntil(
-  opts: Omit<RunOptions, 'out' | 'until' | 'launch' | 'localRoots'>,
+  opts: Omit<RunOptions, 'out' | 'until' | 'tempBrowser' | 'localRoots'>,
   wanted: string[],
 ): Promise<{ code: number; lines: string[] }> {
   const lines: string[] = [];
@@ -19,7 +19,7 @@ async function runUntil(
   const until = new Promise<void>((resolve) => { stop = resolve; });
   const done = run({
     ...opts,
-    launch: true,
+    tempBrowser: true,
     localRoots: [],
     out: (line) => {
       lines.push(line);
@@ -54,7 +54,7 @@ test('scripts run in the tabs the run tab opens', async ({ fixtureServer, script
   const done = run({
     files: [file],
     urls: [`${fixtureServer.baseUrl}/target.html`],
-    launch: true,
+    tempBrowser: true,
     collectionRoot: scriptsDir.path,
     localRoots: [],
     out: (line) => {
@@ -170,7 +170,7 @@ test('--notab opens no tab, and no scripts open a blank page or the URL given', 
   });
   const noTab: string[] = [];
   const code = await run({
-    files: [file], noTab: true, launch: true, collectionRoot: scriptsDir.path, localRoots: [], out: (l) => noTab.push(l),
+    files: [file], noTab: true, tempBrowser: true, collectionRoot: scriptsDir.path, localRoots: [], out: (l) => noTab.push(l),
   });
   expect(code).toBe(0);
   expect(noTab.some((l) => l.startsWith('[sm-dev] Opening'))).toBe(false);
@@ -195,7 +195,7 @@ async function driveCli(args: string[], steps: Step[]): Promise<string[]> {
   // The line's own flags go first.
   const at = args.indexOf('--root');
   const root = at >= 0 ? args.splice(at, 2) : [];
-  const child = spawn(process.execPath, [cli, '--stdin', ...root, 'start', ...args, '--launch', '--seconds', '25'], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [cli, '--stdin', ...root, '--temp-browser', 'start', ...args, '--seconds', '25'], { stdio: ['pipe', 'pipe', 'pipe'] });
   const lines: string[] = [];
   let pending = [...steps];
   let since = 0;
@@ -520,7 +520,7 @@ test('--watch re-injects on a save and reloads the tab it runs in', async ({ fix
   let stop!: () => void;
   const until = new Promise<void>((resolve) => { stop = resolve; });
   const done = run({
-    files: [file], urls: [`${fixtureServer.baseUrl}/target.html`], watch: true, launch: true,
+    files: [file], urls: [`${fixtureServer.baseUrl}/target.html`], watch: true, tempBrowser: true,
     collectionRoot: scriptsDir.path, localRoots: [], until,
     out: (line) => {
       lines.push(line);

@@ -16,7 +16,12 @@ const CLI = fileURLToPath(new URL('../../lib/harness/cli.js', import.meta.url));
 const SCRIPT = fileURLToPath(new URL('../examples/gm-menu/gm-menu.user.js', import.meta.url));
 
 function run(...args) {
-  const r = spawnSync(process.execPath, [CLI, 'start', ...args], { encoding: 'utf8' });
+  return cliLine('start', ...args);
+}
+
+// A whole command line, global options and all.
+function cliLine(...args) {
+  const r = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8' });
   return { code: r.status, out: (r.stdout + r.stderr).trim().split('\n')[0] };
 }
 
@@ -330,7 +335,7 @@ test('--idle-seconds and --new need --detach', () => {
 });
 
 test('--devtools refuses the runs it can\'t serve', () => {
-  assert.deepEqual(run(SCRIPT, '--devtools', '--launch'), { code: 2, out: 'ERROR: The --devtools flag can\'t be used with --launch' });
+  assert.deepEqual(cliLine('--temp-browser', 'start', SCRIPT, '--devtools'), { code: 2, out: 'ERROR: The --devtools flag can\'t be used with --temp-browser' });
   assert.deepEqual(run(SCRIPT, '--devtools', '--extension'), { code: 2, out: 'ERROR: The --devtools flag can\'t be used with --extension' });
 });
 
@@ -415,4 +420,33 @@ test('help covers a run\'s commands and aliases, and refuses unknown names', () 
   // ? is help, and keys is key.
   assert.equal(help('?', 'keys').out, help('help', 'key').out);
   assert.deepEqual(help('help', 'nope'), { code: 2, out: 'ERROR: nope is not a command. Type sm-dev --help to list them.\n' });
+});
+
+test('the browser options are global, and only one browser is chosen', () => {
+  assert.deepEqual(run(SCRIPT, '--open-browser'), {
+    code: 2,
+    out: 'ERROR: The --open-browser flag is for the whole command line, so it goes first, before any command: sm-dev --open-browser <command>',
+  });
+  for (const flag of ['--temp-browser', '--headed']) {
+    assert.deepEqual(run(SCRIPT, flag), { code: 2, out: `ERROR: The ${flag} flag is for the whole command line, so it goes first, before any command: sm-dev ${flag} <command>` });
+  }
+  assert.deepEqual(run(SCRIPT, '--profile', 'x'), { code: 2, out: 'ERROR: The --profile flag is for the whole command line, so it goes first, before any command: sm-dev --profile ... <command>' });
+  assert.deepEqual(cliLine('--headed', 'start', SCRIPT), { code: 2, out: 'ERROR: The --headed flag only applies with --temp-browser' });
+  assert.deepEqual(cliLine('--profile', 'x', 'start', SCRIPT), { code: 2, out: 'ERROR: The --profile flag only applies with --open-browser' });
+  assert.deepEqual(cliLine('--cdp', '9222', '--temp-browser', 'start', SCRIPT), { code: 2, out: 'ERROR: The --temp-browser flag can\'t be used with --cdp' });
+  assert.deepEqual(cliLine('--temp-browser', 'start', SCRIPT, '--cdp', '9222'), { code: 2, out: 'ERROR: The --temp-browser flag can\'t be used with --cdp' });
+  assert.deepEqual(cliLine('--open-browser', '--temp-browser', 'start', SCRIPT), { code: 2, out: 'ERROR: The --temp-browser flag can\'t be used with --open-browser' });
+  // Given on a line with no start, they'd do nothing.
+  assert.deepEqual(cliLine('--temp-browser', 'eval', '1'), { code: 2, out: 'ERROR: The --temp-browser flag is for the runs a start begins, and this line has no start' });
+  assert.deepEqual(cliLine('--temp-browser', 'clear', '--extension'), { code: 2, out: 'ERROR: The clear command clears a browser\'s SourceMonkey, and a --temp-browser has none' });
+  // start's own --cdp would go elsewhere than the browser --open-browser starts.
+  assert.deepEqual(cliLine('--open-browser', 'start', SCRIPT, '--cdp', '9300', '--detach'), { code: 2, out: 'ERROR: The start command connects to the browser --open-browser starts, so give --cdp once, first: sm-dev --open-browser --cdp ... start ...' });
+  // A value in the same word, and not the next option taken for one.
+  assert.deepEqual(cliLine('--cdp=9222', '--temp-browser', 'start', SCRIPT), { code: 2, out: 'ERROR: The --temp-browser flag can\'t be used with --cdp' });
+  assert.deepEqual(cliLine('--cdp', '--open-browser'), { code: 2, out: 'ERROR: The --cdp flag needs a value' });
+  assert.deepEqual(cliLine('--open-browser', '--cdp', 'http://127.0.0.1'), { code: 2, out: 'ERROR: The --open-browser flag starts a browser on this machine, so --cdp must be a local port, not 127.0.0.1' });
+  assert.deepEqual(cliLine('--open-browser', '--cdp', 'http://abc.com:234/xxx'), { code: 2, out: 'ERROR: The --open-browser flag starts a browser on this machine, so --cdp must be a local port, not abc.com:234/xxx' });
+  assert.deepEqual(cliLine('--open-browser', '--cdp', 'localhost:9222/xxx'), { code: 2, out: 'ERROR: The --open-browser flag starts a browser on this machine, so --cdp must be a local port, not localhost:9222/xxx' });
+  assert.deepEqual(cliLine('--open-browser', '--cdp', '[::1]:9222'), { code: 2, out: 'ERROR: The --open-browser flag starts a browser on this machine, so --cdp must be a local port, not [::1]:9222' });
+  assert.deepEqual(cliLine('--open-browser', '--cdp', 'example.com:9222'), { code: 2, out: 'ERROR: The --open-browser flag starts a browser on this machine, so --cdp must be a local port, not example.com:9222' });
 });

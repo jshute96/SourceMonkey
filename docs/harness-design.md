@@ -403,15 +403,23 @@ into pages.
   `savehtml` command and the fixture's `saveHtml`.
 - **`cli.ts`** (`sm-dev`) and **`run.ts`**: the interactive tool,
   built on the same modules and Playwright's `connectOverCDP` (or a
-  launched Chromium with `--launch`). Commands are listed in the guide.
+  launched Chromium with `--temp-browser`). Commands are listed in the guide.
   `run.ts` is its own module so the Node-only commands never load
   Playwright. The `--extension` flag switches it to the extension
   backend.
   - `sm-dev` is a client of runs (`Client` in `cli.ts`); see
     [Runs and clients](#runs-and-clients) below.
-  - The line-wide flags (`--run`, `--root`, `--local`, `--stdin`,
-    `-i`) are taken off the front of the line first. One later on the
-    line is refused, and said to go first.
+  - A launched Chromium gets a free debugging port too (Playwright
+    itself talks to it over a pipe), so other tools can connect, and
+    `list` shows where. A connected browser is headless when the user
+    agent Chrome's `Browser.getVersion` gives says `HeadlessChrome`.
+  - The global options (`--run`, `--root`, `--local`, `--stdin`,
+    `-i`, and the browser's `--cdp`, `--open-browser`, `--profile`,
+    `--temp-browser`, `--headed`) are taken off the front of the line
+    first. One later on the line is refused, and said to go first;
+    `--cdp`, which `start` and `clear` also take, excepted.
+    - The run's own process gets the browser's options again, as
+      global options, on its command line.
   - The rest of the line holds one or more commands, split on `--`.
     Stdin and prompt lines are split the same way, except an `eval`
     block, which stays one command.
@@ -494,6 +502,19 @@ into pages.
       if that load fails, they run on there.
     - A tab switched off counts as running no script, whatever the
       host last heard from it.
+- **`browser-launch.ts`**: `sm-dev --open-browser`, a browser that outlives
+  sm-dev, started before the line's commands.
+  - Spawned on its own (detached), not with Playwright's `launch`,
+    which ties the browser to the Node process.
+  - Idempotent: a browser answering on the port is used as is.
+  - A profile per port, since Chrome locks a profile (`SingletonLock`,
+    a link to `host-pid`), and a second browser on it hands its
+    window to the first and drops its own debugging port. A lock
+    whose process is alive is refused, naming that browser's port
+    (from its command line, via `ps`).
+  - Google Chrome's usual install paths first, then Playwright's
+    Chromium. `SM_DEV_BROWSER` and `SM_DEV_BROWSER_ARGS` override,
+    which the tests use for a headless Chromium.
 - **`runs.ts`**: the runs active on this machine, for `sm-dev list`,
   `stop`, `attach` and the commands sent to a run, and the client's
   connection (`RunClient`). Node-only, so those commands never load
@@ -510,7 +531,7 @@ into pages.
     - `--run Dname start` takes that id the same way, or fails if a
       run holds it; `cli.ts` stops that run first.
   - A run waiting for commands writes a record file (id, pid, start
-    time, browser, scripts) and listens on a Unix socket (a named pipe
+    time, browser and whether it's owned or headless, scripts) and listens on a Unix socket (a named pipe
     on Windows), both in a per-user temp directory (`sm-dev-runs-<user>`,
     by user name, or uid where there is none).
   - A record is deleted when listed if its pid is gone, or its socket
