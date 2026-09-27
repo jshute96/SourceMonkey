@@ -27,8 +27,9 @@ import { fileURLToPath } from 'node:url';
 
 import { CommandAssembler, NONE_RUN, echoCommand, parseCommandList, shellWord, unclosedBlockMessage, type AssembledCommand } from './command-lines.js';
 import {
-  CONSOLE_HELP, commandFlagMistake, commandWords, consoleCommandsHelp, helpEntries, onlyInspects, readPromptCommands, writeOutputLine,
+  commandFlagMistake, commandWords, onlyInspects, readPromptCommands, writeOutputLine,
 } from './console-commands.js';
+import { OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, commandNamed, commandsHelp, fullHelp } from './command-list.js';
 import { devtoolsWanted } from './devtools.js';
 // Node built-ins only, so as cheap to load as the rest here.
 import { runIdOf, type CommandSource, type RunClient, type RunRecord } from './runs.js';
@@ -39,264 +40,14 @@ import {
 } from './checks.js';
 
 
-const INTRO = `sm-dev: develop and test userscripts against a real browser,
-with SourceMonkey's script injection and GM_* APIs behind them.
-
-Usage: sm-dev [line options] <command> [options] [-- <command> ...]`;
-
-// Each command's entry, as the full help lists them and `help <command>`
-// picks them out: a line starting with the name, and indented lines
-// carrying on its description.
-const COMMAND_LINES = [
-  'start <script>... [url]...  Start a run: a process of its own that injects',
-  '                            the scripts into each URL, one tab each',
-  '                            (default URL: the first page the first',
-  '                            script\'s @match implies), and connect to it',
-  'attach [ID]                 Connect to a run that is going, and show what',
-  '                            it prints from now on (default: --run\'s, or',
-  '                            the only one)',
-  'stop [ID] [--all]           Stop the run (the one connected, or ID), or',
-  '                            every run',
-  'exit                        End this sm-dev. Runs it started without',
-  '                            --detach stop with it; ones it attached to',
-  '                            go on',
-  'validate <path>...          Check script validity (header, @require,',
-  '                            syntax) over files, directories or script',
-  '                            URLs. In a run, also its loaded scripts',
-  '                            (validate alone: the selected one)',
-  'match <script>... <url>...  Say whether each script would run on each',
-  '                            URL, and which header rules matched or',
-  '                            excluded it. In a run, also its scripts and',
-  '                            tabs (match alone: the selected script on',
-  '                            the current tab)',
-  'clear --extension           Remove every script in the extension\'s',
-  '                            Scratch collection and turn solo mode off',
-  'list                        List sm-dev runs active on this machine',
-  '<command>                   Any command a run takes (listed below),',
-  '                            sent to the run: sm-dev eval document.title.',
-  '                            One argument of several lines is several',
-  '                            commands, one per line',
-  'help [command]...           List these, or one command\'s help and',
-  '                            options (a run\'s typed commands too)',
-];
-
-// The flags, grouped as the full help shows them. `commands` are the
-// ones a group's flags apply to, for `help <command>`; `only` narrows
-// or widens that for one flag.
-const OPTION_GROUPS: { title: string; commands: string[]; lines: string[]; only?: Record<string, string[]> }[] = [
-  {
-    title: 'Options for the whole line, which go first, before any command',
-    // Not listed under each command's own options: they go before it.
-    commands: [],
-    lines: [
-      '--run ID        The run to work with. Needed only when several are',
-      '                active. For start: the ID for the new run, which',
-      '                stops a run that has it first',
-      '--root DIR      The repo root, searched for local copies of @require',
-      '                URLs (default: the current directory). A run keeps',
-      '                the ones it started with',
-      '--local DIR     Another directory to search; repeatable',
-      '--stdin         Once the line\'s commands are done, read more from',
-      '                stdin, one per line. The default when no command is',
-      '                given and stdin is not a terminal',
-      '--interactive   Once the line\'s commands are done, show a prompt to',
-      '                type more at (-i for short). With no command, a',
-      '                prompt with no run yet: type start or attach there',
-    ],
-  },
-  {
-    title: 'Options for the browser commands (start, clear)',
-    commands: ['start', 'clear'],
-    lines: [
-      '--cdp URL|PORT  Browser to connect to: a URL, host:port, or just a',
-      '                port on this machine (default: $SM_DEV_CDP or 9233)',
-      '--launch        Launch a Chromium instead of connecting to one',
-      '--headed        With --launch: show the browser',
-    ],
-  },
-  {
-    title: 'Options for start',
-    commands: ['start'],
-    lines: [
-      '--all           Open each script\'s default page, one tab per page,',
-      '                instead of only the first script\'s',
-      '--noscript      Start with no scripts, as a browser to drive with the',
-      '                typed commands (a blank page unless a URL is given)',
-      '--notab         Open no tab at startup; type newtab to open one.',
-      '                With --extension, the pages you browse to run them',
-      '--watch         Re-inject and reload when a script or its files change',
-      '--values JSON   Seed GM_* storage before the script runs, e.g.',
-      '                --values \'{"units":"metric"}\'',
-      '--seconds N     The run stops after N seconds. On its own, sm-dev',
-      '                shows what it prints until then',
-      '--detach        Leave the run going when this sm-dev ends. Alone,',
-      '                return once the pages have settled (see wait),',
-      '                printing their output so far. It replaces any',
-      '                earlier detached run, unless --run names one',
-      '--new           With --detach: leave earlier detached runs going, and',
-      '                start another beside them',
-      '--nowait        Don\'t wait for the pages to settle before continuing',
-      '                (it still waits for the scripts to start)',
-      '--idle-seconds N',
-      '                Stop the run after N seconds with no command sent',
-      '                and no client following it (default: 1800; 0',
-      '                never stops)',
-      '--page-errors   Also show the page\'s own errors, not just the script\'s',
-      '--extension     Push the script into the SourceMonkey extension in',
-      '                that browser instead of injecting it; reports then',
-      '                come from the script\'s own Log tab',
-      '--solo          With --extension: disable every other collection for',
-      '                the run and restore them after',
-      '--devtools      Also start a Chrome DevTools server for the run, and',
-      '                print each tab\'s page id in it, for the chrome-devtools',
-      '                command. Default: on when $SM_DEV_DEVTOOLS is 1',
-      '--nodevtools    Don\'t, even when $SM_DEV_DEVTOOLS is 1',
-    ],
-  },
-];
-
-// What `sm-dev help <command>` shows in place of the one-line entry,
-// for the commands that need more: what the command does, then its
-// arguments. The options follow.
-const COMMAND_DETAILS: Record<string, { about: string[]; args: string[] }> = {
-  start: {
-    about: [
-      'Starts a run: a process of its own that keeps a connection to the browser,',
-      'injects the scripts into each page it opens, and logs their console lines,',
-      'reports and GM_* calls. This sm-dev connects to it, and shows what it prints',
-      'while there are commands to run: the ones after it on the line (after --),',
-      'from stdin with --stdin, or typed at the prompt with -i.',
-      '',
-      'Without --detach, the run is stopped once this sm-dev ends. With --detach it',
-      'goes on, and other shells reach it with sm-dev <command>, or sm-dev attach.',
-      '',
-      'On its own, start needs one of those, or --seconds N to show what the run',
-      'prints until it stops.',
-    ],
-    args: [
-      '<script>...     The userscripts to inject: the arguments ending in .user.js.',
-      '                None with --noscript',
-      '[url]...        The pages to open, one tab each: the other arguments.',
-      '                Default URL: the first page the first script\'s @match',
-      '                implies',
-    ],
-  },
-  match: {
-    about: [
-      'Says whether each script would run on each URL, listing all header rules',
-      'that matched it (Matched by:) or excluded it (Excluded by:).',
-    ],
-    args: [
-      '<script>...     The userscripts to check: the arguments ending in .user.js.',
-      '                A script\'s http(s) URL is fetched',
-      '<url>...        The URLs to check them against: the other arguments',
-    ],
-  },
-};
-
-const ARGS_NOTE = `Scripts, URLs and options can come in any order. A URL with no scheme gets
-http://, and a path becomes a file:// URL.`;
-
-// Notes after the options, and the commands each concerns.
-const SHELL_NOTE = {
-  commands: ['start'],
-  text: `sm-dev works with one run at a time: --run's, or the one it started or
-attached to, else the only one going. The commands below go to it, from the
-command line, stdin, or the prompt (-i).`,
-};
-
-const SEQUENCE_NOTE = `Several commands can go on one line, separated by --. They run in order,
-stopping at the first that fails:
-  sm-dev start a.user.js example.com --detach -- eval document.title -- key x`;
-
-const indent = (lines: string[]): string => lines.map((line) => (line ? `  ${line}` : '')).join('\n');
-
-// The command lines and options alone: what a usage error prints.
-const USAGE = `${INTRO}
-
-Commands:
-${indent(COMMAND_LINES)}
-
-${OPTION_GROUPS[0].title}:
-${indent(OPTION_GROUPS[0].lines)}
-
-${OPTION_GROUPS[1].title}:
-${indent(OPTION_GROUPS[1].lines)}
-
-For start and match, a .user.js argument is a script, and the rest are URLs.
-${ARGS_NOTE}
-
-${OPTION_GROUPS.slice(2).map((group) => `${group.title}:\n${indent(group.lines)}`).join('\n\n')}
-
-${SEQUENCE_NOTE}
-
-${SHELL_NOTE.text}
-`;
-
-// Above the commands a run takes, in `--help` and `help <command>`.
-// The usage's `<command>` entry and `--run` say how to give them.
-const RUN_COMMANDS_HEADING = 'Commands for a run:';
-
-// The whole of `--help`: the commands above, then the ones a run takes,
-// as its own `help` lists them.
-function usage(): string {
-  return `${USAGE}
-${RUN_COMMANDS_HEADING}
-${indent(CONSOLE_HELP)}
-`;
-}
-
-// Not `<command>`, which stands for the run's.
 // After a mistake, in place of the whole help, which would bury it.
 const LIST_COMMANDS = 'Type sm-dev --help to list the commands.';
 
-const CLI_COMMANDS = new Set(COMMAND_LINES.filter((line) => !/^[\s<]/.test(line)).map((line) => line.split(' ')[0]));
-
-/**
- * `sm-dev help <command>...`: each command's entry, then the flags and
- * notes that concern it, once each and in the full help's order. A
- * run's typed commands (`status`) get their entry from its `help`, all
- * under one heading. Throws for a name that is neither.
- */
+// `sm-dev help <command>...`, or the mistake for a name that is no command.
 function commandHelp(names: string[]): string {
-  const unknown = names.filter((name) => !CLI_COMMANDS.has(name) && !isTypedCommand(name));
+  const { text, unknown } = commandsHelp(names);
   if (unknown.length > 0) throw new UsageError(`${unknown.join(', ')} ${unknown.length === 1 ? 'is' : 'are'} not ${unknown.length === 1 ? 'a command' : 'commands'}. Type sm-dev --help to list them.`);
-  const unique = [...new Set(names)];
-  // sm-dev's own commands in the order the full help lists them, then
-  // a run's together under one heading, in its help's order. A name
-  // that is both (help) gets both.
-  const order = [...CLI_COMMANDS];
-  const blocks = unique.filter((name) => CLI_COMMANDS.has(name))
-    .sort((a, b) => order.indexOf(a) - order.indexOf(b))
-    .map(cliCommandHelp);
-  const typed = unique.filter(isTypedCommand);
-  if (typed.length > 0) blocks.push([RUN_COMMANDS_HEADING, '', indent(consoleCommandsHelp(typed).lines)].join('\n'));
-  return blocks.join('\n\n') + '\n';
-}
-
-// One sm-dev command's usage line, entry, the flags it takes, and notes.
-function cliCommandHelp(name: string): string {
-  const entry = helpEntries(COMMAND_LINES, name);
-  // A flag's lines are an entry too, named by the flag.
-  const options = OPTION_GROUPS.flatMap((group) => group.lines
-    .filter((line) => !/^\s/.test(line))
-    .map((line) => line.split(/\s+/)[0])
-    .filter((flag) => (group.only?.[flag] ?? group.commands).includes(name))
-    .flatMap((flag) => helpEntries(group.lines, flag)));
-  const details = COMMAND_DETAILS[name];
-  const lines = [`Usage: sm-dev ${entry[0].split(/\s{2,}/)[0]}${options.length ? ' [options]' : ''}`, ''];
-  if (details) {
-    lines.push(...details.about, '', 'Arguments:', indent(details.args), '', ARGS_NOTE);
-  } else {
-    lines.push(indent(entry));
-  }
-  if (options.length) lines.push('', 'Options:', indent(options));
-  lines.push('', 'The options for the whole line (--run, --root, --local, --stdin, -i) go', 'first, before any command; see sm-dev --help.');
-  // The commands a run takes, typed or sent, have help of their own.
-  if (name === 'start') {
-    lines.push('', 'Type sm-dev help <command> for a run\'s commands (sm-dev help status), or', 'help at its prompt.');
-  }
-  return lines.join('\n');
+  return text;
 }
 
 interface Opts {
@@ -953,7 +704,8 @@ function checkedRunId(typed: string, flag = '--run '): string {
 }
 
 function isTypedCommand(name: string): boolean {
-  return consoleCommandsHelp([name]).unknown.length === 0;
+  const command = commandNamed(name);
+  return command !== null && RUN_COMMAND_NAMES.includes(command);
 }
 
 // Takes its arguments as typed, not through parseArgs: the command
@@ -1273,7 +1025,7 @@ function promptCommands(client: Client): Promise<number> {
         resolve(code);
       });
     };
-    close = readPromptCommands({ out: print, exit: leave, commands: [...CLI_COMMANDS] }, (line, hooks) => {
+    close = readPromptCommands({ out: print, exit: leave }, (line, hooks) => {
       const turn = queue.then(async () => {
         hooks?.start?.();
         if (!line || done) return;
@@ -1386,7 +1138,7 @@ const HELP_FLAGS = new Set(['--help', '-h']);
 // The `help` command's topics, or null for another command; empty for
 // the whole help. `--help` is handled for the whole line (`lineHelp`).
 function helpTopics(argv: string[]): string[] | null {
-  return argv[0] === 'help' ? argv.slice(1) : null;
+  return argv[0] === 'help' || argv[0] === '?' ? argv.slice(1) : null;
 }
 
 /**
@@ -1402,10 +1154,10 @@ function lineHelp(commands: string[][]): string | null {
     const rest = words.filter((w) => !HELP_FLAGS.has(w));
     // `help status`: its topics. Otherwise the command's name, which
     // may come after its flags (`--launch start`).
-    const named = rest[0] === 'help' ? rest.slice(1) : rest.filter((w) => !w.startsWith('-')).slice(0, 1);
+    const named = rest[0] === 'help' || rest[0] === '?' ? rest.slice(1) : rest.filter((w) => !w.startsWith('-')).slice(0, 1);
     for (const name of named) if (!names.includes(name)) names.push(name);
   }
-  return names.length === 0 ? usage() : commandHelp(names);
+  return names.length === 0 ? fullHelp() : commandHelp(names);
 }
 
 // The signals that end sm-dev: Ctrl-C, kill, and a closed terminal.
@@ -1522,7 +1274,6 @@ type ParsedCommand =
   | { kind: 'send'; words: string[] }
   | { kind: 'cli'; opts: Opts; words: string[] };
 
-const OWN_COMMANDS = ['validate', 'match', 'start', 'attach', 'clear', 'list', 'stop', 'exit'];
 
 function parseCommand(words: string[]): ParsedCommand {
   const topics = helpTopics(words);
@@ -1531,12 +1282,12 @@ function parseCommand(words: string[]): ParsedCommand {
   // A run's command may come as one argument: `'eval T1 x'`. One of
   // several lines is a list of them, and never sm-dev's own.
   if (words.length === 1 && words[0].includes('\n')) return { kind: 'send', words };
-  if ((words[0] === 'match' || words[0] === 'validate') && needsRun(words)) return { kind: 'send', words };
+  if (SHARED_COMMANDS.has(words[0]) && needsRun(words)) return { kind: 'send', words };
   const head = words.length === 1 ? words[0].trim().split(/\s+/)[0] : words[0];
-  if (!CLI_COMMANDS.has(words[0]) && isTypedCommand(head)) return { kind: 'send', words };
+  if (!OWN_COMMANDS.has(words[0]) && isTypedCommand(head)) return { kind: 'send', words };
   const opts = parseArgs(words);
   if (opts.command === null) throw new UsageError(`A command is needed. ${LIST_COMMANDS}`);
-  if (!OWN_COMMANDS.includes(opts.command)) {
+  if (!OWN_COMMANDS.has(opts.command)) {
     // A run's ID where the command goes: the old `sm-dev D1 status`.
     const run = runIdOf(opts.command);
     if (run) throw new UsageError(`Name the run with --run, before the command: sm-dev --run ${run} ${words.slice(1).map(shellWord).join(' ')}`.trimEnd());
@@ -1585,7 +1336,7 @@ async function runOne(words: string[], client: Client): Promise<number> {
   try {
     const parsed = parseCommand(words);
     if (parsed.kind === 'help') {
-      for (const line of (parsed.topics.length === 0 ? usage() : commandHelp(parsed.topics)).trimEnd().split('\n')) print(line);
+      for (const line of (parsed.topics.length === 0 ? fullHelp() : commandHelp(parsed.topics)).trimEnd().split('\n')) print(line);
       return 0;
     }
     if (parsed.kind === 'send') return await sendCommand(parsed.words, client);
@@ -1652,7 +1403,7 @@ async function main(): Promise<void> {
   // Piped in with no command, stdin can only be commands.
   const stdin = flags.stdin || (commands.length === 0 && !flags.interactive && !process.stdin.isTTY);
   if (commands.length === 0 && !stdin && !flags.interactive) {
-    process.stdout.write(usage());
+    process.stdout.write(fullHelp());
     process.exitCode = 2;
     return;
   }

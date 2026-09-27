@@ -360,7 +360,7 @@ test('open --noscript switches a tab to no scripts for good, and --script back',
   const base = fixtureServer.baseUrl;
   const a = scriptsDir.write({
     relativePath: 'a.user.js',
-    // A page of its own, for open all to open.
+    // A page of its own, for newtab all to open.
     meta: { name: 'A', match: [`${base}/target.html`] },
     body: `console.log('[A] on ' + location.pathname);`,
   });
@@ -379,7 +379,7 @@ test('open --noscript switches a tab to no scripts for good, and --script back',
     ['false', 'open --script'],
     ['runs the scripts again', 'eval new Promise((r) => setTimeout(r, 1500)).then(() => "waited")'],
     ['"waited"', badge],
-    ['true', 'open all --noscript'],
+    ['true', 'newtab all --noscript'],
     ['Opening', 'newtab --noscript 1'],
     ['The page commands now act on T3', 'tabs'],
     // reload switches too: every tab back to scripts, then T1 off.
@@ -403,7 +403,7 @@ test('open --noscript switches a tab to no scripts for good, and --script back',
   // update left the switched tab alone.
   expect(lines).toContain('[sm-dev] No open tab runs or matches the updated scripts, so none was reloaded');
   expect(lines.filter((l) => l === 'false' || l === 'true')).toEqual(['false', 'true']);
-  // open all --noscript: the script's page, in a tab without scripts.
+  // newtab all --noscript: the script's page, in a tab without scripts.
   expect(lines.some((l) => /^ {2}T2: .*target\.html \(no scripts\)/.test(l))).toBe(true);
   // newtab --noscript with a script's number: its page, without it.
   expect(lines.some((l) => /^\* T3: .*target\.html \(no scripts\)/.test(l))).toBe(true);
@@ -444,14 +444,14 @@ test('open and reload switch the tab they name, or the current one, and say when
   expect(lines.filter((l) => l === '"/other.html"')).toHaveLength(2);
 });
 
-test('open all --noscript opens its tabs with none open', async ({ fixtureServer, scriptsDir }) => {
+test('newtab all --noscript opens its tabs with none open', async ({ fixtureServer, scriptsDir }) => {
   const a = scriptsDir.write({
     relativePath: 'a.user.js',
     meta: { name: 'A', match: [`${fixtureServer.baseUrl}/target.html`] },
     body: `console.log('[A] on ' + location.pathname);`,
   });
   const lines = await driveCli([a, '--notab'], [
-    ['No tabs are active', 'open all --noscript'],
+    ['No tabs are active', 'newtab all --noscript'],
     ['Opening', 'tabs'],
     ['Tabs:', 'exit'],
   ]);

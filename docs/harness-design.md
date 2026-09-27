@@ -334,10 +334,10 @@ into pages.
     (`PageAttachment.evaluate`), in the page's default context or the
     isolated world the harness keeps for scripts. Results print as
     JSON, or as the DevTools console describes an element or function.
-  - Each command's flags are listed in `COMMAND_FLAGS`, and any other
-    `--` word is refused before the command runs (`commandFlagMistake`).
-    For the commands that end in free text, only the words before it
-    are looked at. `sm-dev`'s up-front check uses the same function.
+  - Each command's flags are the options its help lists
+    (`command-list.ts`), and any other `--` word is refused before the
+    command runs (`commandFlagMistake`). For the commands that end in
+    free text, only the words before it are looked at. `sm-dev`'s up-front check uses the same function.
   - Typed lines are split into words as a shell would, except that a
     quote opening inside a word stays in it (`a[href="x"]`). A command
     from sm-dev's command line passes the shell's own words instead,
@@ -417,6 +417,12 @@ into pages.
     block, which stays one command.
   - `--help` anywhere on the line is found first: the help for each
     command named, and nothing run or checked.
+  - The help is data in `command-list.ts`: sections of commands, each
+    with its arguments and options, rendered and wrapped to fit.
+    - `help <command>` picks one command out of it, with the options
+      any section lists for it.
+    - A run command's accepted flags, the names Tab completes, and
+      which commands go to a run all come from the same list.
   - Every command is checked before any runs. A lone `start` with no
     `--detach`, `--seconds`, `--stdin`, `-i` or commands after it is
     refused, since its run would stop at once.

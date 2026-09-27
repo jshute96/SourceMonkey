@@ -336,7 +336,7 @@ export function isDirectoryMessage(input: string): string {
   return `${input} is a directory. Name a .user.js file.`;
 }
 
-/** Why a script has no default page, as `--all` and `open all` report it. */
+/** Why a script has no default page, as `--all` and `newtab all` report it. */
 export const NO_DEFAULT_PAGE = 'Its @match names no page to open';
 
 /**

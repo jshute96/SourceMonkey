@@ -47,20 +47,6 @@ test.describe('sm-dev typed commands', () => {
       'Stored values:', '  1: First (first.user.js)', '    who = "one"', '* 2: Second (second.user.js)', '    who = "changed"',
     ]);
     expect(await run('values 1')).toEqual(['Stored values:', '  1: First (first.user.js)', '    who = "one"']);
-    // Groups set apart by blank lines, which aren't indented.
-    const help = await run('help');
-    expect(help).toContain('');
-    expect(help).not.toContain('  ');
-    expect(help[help.indexOf('') + 1]).toBe('  Menu commands:');
-    expect(await run('help status get')).toEqual([
-      '  Scripts:',
-      '    status [what]     Show the tab\'s URL and each script\'s status there;',
-      '                      or one script (3, T2.3), a tab (T2), or all tabs',
-      '',
-      '  Stored values:',
-      '    get <key>         Print one stored value',
-    ]);
-    expect(await run('help nope')).toEqual(['[sm-dev] ERROR: nope is not a command. Type help to list them.']);
     expect(await run('status now')).toEqual(['[sm-dev] No loaded script matches now. Type scripts to list them.']);
     expect(await run('reload now')).toEqual(['[sm-dev] ERROR: now is not a tab. Tabs are named T1, T2 and so on; type tabs to list them.']);
   });
@@ -236,11 +222,8 @@ test.describe('sm-dev typed commands', () => {
       expect(await run('update')).toEqual(['[sm-dev] This run cannot update scripts']);
       expect(await run('load x.user.js')).toEqual(['[sm-dev] This run cannot load scripts']);
 
-      expect(await run('values all')).toEqual([
-        'Stored values:',
-        `* Tab T1: ${target}`, `  ${row}`, '      hit = "/other.html"',
-        `  Tab T2: ${other}`, `  ${row}`, '      hit = "/other.html"',
-      ]);
+      // Every script's, once: values belong to the script, not the tab.
+      expect(await run('values all')).toEqual(await run('values'));
       expect(await run('status all')).toEqual([
         `* Tab T1: ${target}`, '  Scripts:', `  ${row}`, `      Started on ${target}`, '      1 menu command, 1 stored value',
         `  Tab T2: ${other}`, '  Scripts:', `  ${row}`, `      Started on ${other}`, '      1 menu command, 1 stored value',
@@ -328,8 +311,9 @@ test.describe('sm-dev typed commands', () => {
     expect(await run('newtab all')).toEqual([skipped]);
     expect(opened).toEqual([target]);
     opened.length = 0;
+    expect(await run('open all')).toEqual(['[sm-dev] ERROR: The open command navigates one tab. To open a tab for each script, use newtab all.']);
 
-    // With every tab closed, the tab commands say so, and open all
+    // With every tab closed, the tab commands say so, and newtab all
     // still opens.
     tabs.pop();
     expect(await run('tabs')).toEqual(['Tabs:', '  No active tabs']);
@@ -352,7 +336,7 @@ test.describe('sm-dev typed commands', () => {
       ctx.scripts = scripts;
     }
     expect(await run('menu')).toEqual(['[sm-dev] No tabs are active. Type newtab to open one.']);
-    expect(await run('open all')).toEqual([skipped]);
+    expect(await run('newtab all')).toEqual([skipped]);
     expect(opened).toEqual([target]);
   });
 

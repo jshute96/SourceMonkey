@@ -281,7 +281,7 @@ test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
   assert.deepEqual(cli('eval', 'T2', '--x'), { code: 2, out: 'ERROR: The eval command has no --x flag' });
   assert.deepEqual(cli('eval', 'x', '--y'), { code: 1, out: 'No sm-dev runs are active. Start one with sm-dev start.' });
   // -h anywhere is help, even among a run's command's words.
-  assert.deepEqual(cli('type', 'input', '-h'), { code: 0, out: 'Commands for a run:' });
+  assert.deepEqual(cli('type', 'input', '-h'), { code: 0, out: 'Usage: sm-dev type [tab] <selector> <text> [options]' });
 });
 
 test('several commands on a line are checked before any runs, then run in order, stopping at the first that fails', () => {
@@ -334,13 +334,19 @@ test('--devtools refuses the runs it can\'t serve', () => {
   assert.deepEqual(run(SCRIPT, '--devtools', '--extension'), { code: 2, out: 'ERROR: The --devtools flag can\'t be used with --extension' });
 });
 
-test('--help lists the commands a run takes too', () => {
+test('--help lists every command, in sections, and how to name things', () => {
   const r = spawnSync(process.execPath, [CLI, '--help'], { encoding: 'utf8' });
   assert.equal(r.status, 0);
-  assert.match(r.stdout, /^Commands for a run:$/m);
-  assert.match(r.stdout, /^ {6}- Dname: /m);
-  assert.match(r.stdout, /^ {4}click <selector> /m);
+  assert.match(r.stdout, /^Global options:$/m);
+  assert.match(r.stdout, /^Concurrent runs:$/m);
+  assert.match(r.stdout, /^ {2}Checking scripts:$/m);
+  assert.match(r.stdout, /^ {2}click \[tab\] <selector>\n {20}Click an element\.$/m);
   assert.match(r.stdout, /^ {4}menu \[what\] /m);
+  // Unindented, beside the commands.
+  assert.match(r.stdout, /^Specifying objects:$/m);
+  assert.match(r.stdout, /^ {4}Dname {11}A user-chosen/m);
+  // Every line fits a terminal.
+  for (const line of r.stdout.split('\n')) assert.ok(line.length <= 79, line);
 });
 
 function help(...args) {
@@ -351,12 +357,20 @@ function help(...args) {
 test('help for one command shows its entry and only its flags', () => {
   const match = help('help', 'match');
   assert.equal(match.code, 0);
-  assert.match(match.out, /^Usage: sm-dev match <script>\.\.\. <url>\.\.\.$/m);
-  assert.match(match.out, /^Arguments:\n {2}<script>\.\.\. +The userscripts to check/m);
-  assert.match(match.out, /^Scripts, URLs and options can come in any order\./m);
-  // The line's own flags go before the command, and are pointed at.
-  assert.match(match.out, /^The options for the whole line \(--run, --root, --local, --stdin, -i\) go$/m);
+  assert.match(match.out, /^Usage: sm-dev match \[script\]\.\.\. \[url\]\.\.\.$/m);
+  assert.match(match.out, /^Arguments:\n {2}all-scripts +In a run/m);
+  // Its section's note comes along.
+  assert.match(match.out, /^Without a run, these check script files and URLs\./m);
+  // The global options go before the command, and are pointed at.
+  assert.match(match.out, /^The global options \(--run, --root, --local, --stdin, -i\) go first/m);
   assert.doesNotMatch(match.out, /--cdp|--watch|^ {2}start /m);
+  // A section's options, only for the commands that take them.
+  assert.match(help('help', 'click').out, /^Common options:\n {2}--nowait /m);
+  assert.doesNotMatch(help('help', 'eval').out, /--nowait/);
+  // start's own groups, then the ones it shares.
+  const start = help('help', 'start').out;
+  assert.ok(start.indexOf('Lifetime:') < start.indexOf('Browser selection'));
+  assert.match(start, /^ {2}--solo /m);
   // --help before or after the command asks the same.
   assert.equal(help('match', '--help').out, match.out);
   assert.equal(help('--help', 'match').out, match.out);
@@ -368,30 +382,39 @@ test('--help anywhere on a line shows each command\'s help once, and runs nothin
   const r = help('list', '--', 'status', '--bad', '--', 'eval', 'x', '--help', '--', 'status');
   assert.equal(r.code, 0);
   assert.match(r.out, /^Usage: sm-dev list$/m);
-  assert.equal(r.out.match(/^ {4}status \[what\] /gm).length, 1);
-  // Once each, in the full help's order, a run's under one heading.
+  assert.equal(r.out.match(/^Usage: sm-dev status /gm).length, 1);
+  // Once each, in the full help's order.
   const all = help('stop', '--', 'eval', '1', '--', 'list', '--', 'status', '--', 'newtab', '--', 'status', '--help').out;
-  assert.ok(all.indexOf('Usage: sm-dev stop') < all.indexOf('Usage: sm-dev list'));
-  assert.equal(all.match(/^Commands for a run:$/gm).length, 1);
-  assert.ok(all.indexOf('    status [what]') < all.indexOf('    newtab [page]'));
-  assert.ok(all.indexOf('    newtab [page]') < all.indexOf('    eval <js>'));
-  assert.match(r.out, /^ {4}eval <js> /m);
+  assert.ok(all.indexOf('Usage: sm-dev list') < all.indexOf('Usage: sm-dev stop'));
+  assert.ok(all.indexOf('Usage: sm-dev status') < all.indexOf('Usage: sm-dev newtab'));
+  assert.ok(all.indexOf('Usage: sm-dev newtab') < all.indexOf('Usage: sm-dev eval'));
+  assert.match(r.out, /^Usage: sm-dev eval \[tab\] <js> \[options\]$/m);
   assert.doesNotMatch(r.out, /No sm-dev runs|has no --bad flag/);
   assert.deepEqual(help('list', '--', 'frob', '-h'), { code: 2, out: 'ERROR: frob is not a command. Type sm-dev --help to list them.\n' });
 });
 
-test('help covers a run\'s typed commands, and refuses unknown names', () => {
-  const typed = help('help', 'status', 'scripts', 'get');
+test('each run command takes the flags its help lists, and no others', async () => {
+  const { commandFlags } = await import('../../lib/harness/command-list.js');
+  const loads = ['--noscript', '--script', '--nowait'];
+  const expected = {
+    newtab: loads, open: loads, reload: loads,
+    click: ['--nowait'], hover: ['--nowait'], type: ['--nowait'], key: ['--nowait'],
+    eval: ['--script'], snapshot: ['--visible', '--out'], screenshot: ['--full'], probe: ['--css', '--html'],
+    wait: ['--timeout-seconds'], status: [], values: [], menu: [], tabs: [], focus: [],
+  };
+  for (const [name, flags] of Object.entries(expected)) assert.deepEqual(commandFlags(name).sort(), [...flags].sort(), name);
+});
+
+test('help covers a run\'s commands and aliases, and refuses unknown names', () => {
+  const typed = help('help', 'status', 'script', 'get');
   assert.equal(typed.code, 0);
-  assert.match(typed.out, /^Commands for a run:$/m);
-  // Two from one group share its heading.
-  assert.equal(typed.out.match(/^ {2}Scripts:$/gm).length, 1);
-  assert.match(typed.out, /^ {4}status \[what\] /m);
-  assert.match(typed.out, /^ {4}get <key> /m);
+  assert.match(typed.out, /^Usage: sm-dev status \[what\]$/m);
+  assert.match(typed.out, /^Usage: sm-dev script <script>$/m);
+  assert.match(typed.out, /^Usage: sm-dev get <key>$/m);
   assert.doesNotMatch(typed.out, /menu \[what\]/);
+  // Every form of a command of several.
+  assert.equal(help('help', 'wait').out.match(/^ {2}wait /gm).length, 5);
+  // ? is help, and keys is key.
+  assert.equal(help('?', 'keys').out, help('help', 'key').out);
   assert.deepEqual(help('help', 'nope'), { code: 2, out: 'ERROR: nope is not a command. Type sm-dev --help to list them.\n' });
-  // help is both, and shows both.
-  const both = help('help', 'help').out;
-  assert.match(both, /^Usage: sm-dev help \[command\]\.\.\.$/m);
-  assert.match(both, /^ {4}help \[command\] {4}List these/m);
 });

@@ -14,51 +14,12 @@ import path from 'node:path';
 
 import type { Page } from '@playwright/test';
 
+import { PROBE_MAX } from './command-list.js';
 import type { ControlledTab } from './console-commands.js';
 import { ScriptThrew } from './inject.js';
 import { notSettledMessage, SETTLE_TIMEOUT_MS, settleTab } from './wait.js';
 import { savePageHtml } from './save-html.js';
 import { documentOf, framesAround, locate, named, noteRefs, onScreen, probeMatches, refOf, refProblem, tidy } from './snapshot.js';
-
-// How many of a selector's matches `probe --css` and `--html` show.
-const PROBE_MAX = 10;
-
-/** The commands this module runs, as `help` groups them. */
-export const PAGE_COMMAND_GROUPS: { title: string; lines: string[] }[] = [
-  {
-    title: 'Driving the page (these take a tab first, e.g. T2)',
-    lines: [
-      'click <selector>  Click an element',
-      'hover <selector>  Move the mouse over an element',
-      'type <selector> <text>',
-      '                  Type text into an element',
-      'key <keys>...     Press keys in order: key j Shift+ArrowRight Escape',
-      '                  (standard key names, case-insensitive, plus modifiers',
-      '                  ctrl/shift/alt/meta/cmd, short names like esc, etc)',
-      'eval <js>         Evaluate in the page and print the result;',
-      '                  eval --script evaluates in the scripts\' world;',
-      '                  eval {{ starts multi-line block, ended by }}',
-    ],
-  },
-  {
-    title: 'Looking at the page (a tab first too)',
-    lines: [
-      'snapshot [selector] [--visible] [--out file]',
-      '                  The page (or an element) as its accessibility tree,',
-      '                  with a ref for each element; --visible: only what',
-      '                  is on screen',
-      'screenshot [selector] [--full] <file>',
-      '                  Save a PNG of the page, the whole page, or an element',
-      'savehtml <file>   Save the page\'s HTML, for a spec to replay',
-      'probe <selector>... [--css] [--html]',
-      '                  Say which selectors match, and how many elements',
-      `                  With --css or --html, show the first ${PROBE_MAX} matches,`,
-      '                  with a unique CSS selector (if possible), and/or',
-      '                  a prefix of its HTML',
-      'logs              The page\'s console lines and errors so far',
-    ],
-  },
-];
 
 export const PAGE_COMMANDS = new Set(['click', 'hover', 'type', 'key', 'eval', 'snapshot', 'screenshot', 'savehtml', 'probe', 'logs']);
 

@@ -96,11 +96,12 @@ drives it. Everything it prints is plain text meant to be read by a
 person or an agent.
 
 Help:
-- `sm-dev --help` lists everything: the commands, their flags, and the
-  commands a run takes.
-- `sm-dev help start` (or `sm-dev start --help`) shows one command and
-  only the flags it takes.
-- It covers a run's typed commands too: `sm-dev help status tabs`.
+- `sm-dev --help` lists everything, in sections: global options,
+  command input, then every command (sm-dev's own and a run's) grouped
+  by what it works on, and how to name scripts, tabs and the rest.
+- `sm-dev help start` (or `sm-dev start --help`) shows one command:
+  its usage, arguments, and only the options it takes.
+- It takes several names at once: `sm-dev help status tabs`.
 - `--help` (or `-h`) anywhere on a line shows the help for each
   command on it, once each, and runs none of them.
 - A mistake in how a command was typed prints `ERROR:` and its
@@ -306,26 +307,27 @@ typed at the `-i` prompt, or from another shell.
 
 | Typed command | What it does |
 | --- | --- |
-| `scripts` | Lists the loaded scripts, numbered (`script` works too) |
-| `scripts <script>` | Picks the script `get` and `set` act on (the first, until changed) |
+| `scripts` | Lists the loaded scripts, numbered |
+| `script <script>` | Picks the script `get` and `set` act on (the first, until changed). `scripts <script>` works too |
 | `load <file>` | Loads another script from disk, and reloads the tabs it matches |
 | `update [script]` | Re-reads one script from disk, or all (with no argument, or `all`), as `--watch` does on a save. Only a script whose file or local `@require`s were modified since it was read counts, so touching a file forces it. Reloads, all at once, the tabs where an updated script runs or where its rules now match. Stored values are kept |
 | `status [what]` | Prints the page's URL, any open dialog, and each script's state: started or skipped, and counts of its menu commands, stored values and errors (those that are not zero). Also takes a script, a tab (`T2`, `T2.3`) or `all` |
 | `menu` | Lists the registered menu commands, numbered `M1`, `M2`, under the script that registered each |
 | `menu <M-number or label>` | Fires one, as picking it from the toolbar would. Piped in while none is registered yet, it waits a moment for a script that is still loading |
-| `values [script]` | Prints what every script has stored, or just one script |
+| `values [what]` | Prints what every script has stored (`all` too), one script's, or those of the scripts running on a tab (`T2`) |
 | `get <key>` | Prints one stored value |
 | `set <key> <json>` | Stores a value, as another tab's write would: a running script sees it and its change listeners fire |
-| `tabs [tab]` | Lists the controlled tabs, or picks the one the page commands act on (see [Several tabs](#several-tabs)) |
+| `tabs` | Lists the controlled tabs (see [Several tabs](#several-tabs)) |
+| `tab <tab>` | Picks the tab the page commands act on. `tabs <tab>` works too |
 | `newtab [page]` | Opens a new tab with the scripts, picks it and brings it to the front. `newtab all` opens one per script's default page. `newtab --noscript [page]` opens one the scripts stay out of (see [Driving and reading the page](#driving-and-reading-the-page)) |
 | `reload [tab]` | Reloads the page, or another tab's. `reload all` reloads every tab at once. `--noscript` / `--script` switch the tabs' scripts off or back on first |
-| `open [page]` | Navigates to a URL, or to a script's default page: the selected script's when bare, or one by number (`open 2`, or `open T2.3` in T2). `open all` is `newtab all`. `--noscript` / `--script` switch the tab's scripts off or back on (see [Driving and reading the page](#driving-and-reading-the-page)) |
+| `open [page]` | Navigates to a URL, or to a script's default page: the selected script's when bare, or one by number (`open 2`, or `open T2.3` in T2). `--noscript` / `--script` switch the tab's scripts off or back on (see [Driving and reading the page](#driving-and-reading-the-page)) |
 | `focus [tab]` | Brings the tab to the front, un-minimizing its window |
 | `accept [text]`, `dismiss` | Answers an open dialog (see [Page dialogs](#page-dialogs)) |
 | `match [what]...`, `validate [what]...` | Check the run's scripts against its tabs, or re-read and check them (see [Checking scripts in a run](#checking-scripts-in-a-run)) |
 | `start`, `attach [ID]`, `stop [ID] [--all]`, `exit` | sm-dev's own, as on its command line: `start` replaces the run sm-dev works with, `attach` switches to another, `stop` stops the run (or the one named, or every run) and leaves sm-dev with none, and `exit` ends sm-dev |
 | `list`, `clear --extension` | As `sm-dev list` and `clear` do |
-| `help [command]` | The list, or one command's entry (`help status`) |
+| `help [command]`, `?` | Every command, in sections, or one command's usage, arguments and options (`help status`) |
 
 A `<script>` is its number in the `scripts` list, its path, file name or
 `@name`, or a piece of its name or path that no other loaded script
@@ -488,7 +490,7 @@ How the commands treat tabs:
 - `newtab [page]` opens a tab of your own with the scripts, picks it
   and brings it to the front. Unlike one you open in the browser, it
   is controlled from the start. It stays open when the run ends.
-- `newtab all` (or `open all`) opens one tab per script's default
+- `newtab all` opens one tab per script's default
   page, as `--all` does at startup, and leaves the picked tab as it
   was. Scripts it opened no tab for are listed at the end.
 - `tabs` lists each tab's URL, which tab opened it, any open dialog,
@@ -497,8 +499,9 @@ How the commands treat tabs:
 - `status` covers the picked tab. A script also running on other tabs
   gets an `Also active on N other tabs` line, and the tab list follows
   at the bottom.
-- `status all`, `menu all` and `values all` show every tab in turn,
-  each under a `Tab T<n>: <url>` heading.
+- `status all` and `menu all` show every tab in turn, each under a
+  `Tab T<n>: <url>` heading.
+- `values all` is every script's values, as `values` alone is.
 - `menu T2` lists T2's commands, and `menu T2.M1` fires one there
   without switching tabs.
 - `values T2` shows the scripts running on T2. Stored values belong to

@@ -21,7 +21,8 @@ import type { Dialog, Page } from '@playwright/test';
 import { CommandAssembler } from './command-lines.js';
 import type { HarnessHost, MenuCommandRecord } from './host.js';
 import type { PageAttachment } from './inject.js';
-import { ACTIONS, PAGE_COMMAND_GROUPS, PAGE_COMMANDS, runPageCommand, splitWords, VALUE_FLAGS } from './page-commands.js';
+import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, commandFlags } from './command-list.js';
+import { ACTIONS, PAGE_COMMANDS, runPageCommand, splitWords, VALUE_FLAGS } from './page-commands.js';
 import { defaultPageUrl, NO_DEFAULT_PAGE, preparedScriptMatches, preparedScriptName, withDefaultScheme, type PreparedScript } from './prepare.js';
 import { currentTab, dialogKind, dialogWaitingMessage, NO_TABS, pickTab, TAB_ARG, tabName } from './tab-refs.js';
 import { formIndex, settleTabs, waitFor } from './wait.js';
@@ -133,96 +134,6 @@ export interface OutputHistory {
   watch(listener: (line: string) => void): () => void;
 }
 
-// Grouped as `help` prints them.
-const COMMAND_GROUPS: { title: string; lines: string[] }[] = [
-  {
-    title: 'Scripts',
-    lines: [
-      'scripts [script]  List the loaded scripts; with one, pick the script',
-      '                  get and set act on (T2.3 picks tab T2 too)',
-      'status [what]     Show the tab\'s URL and each script\'s status there;',
-      '                  or one script (3, T2.3), a tab (T2), or all tabs',
-      'load <file>       Load another script from disk',
-      'update [script]   Re-read one script from disk, or all (as --watch',
-      '                  does on a save), and reload the tabs it affects',
-    ],
-  },
-  {
-    title: 'Menu commands',
-    lines: [
-      'menu [what]       List the tab\'s menu commands, a tab\'s (T2), or all',
-      '                  tabs\'; with a number (M2, T2.M2) or a label, fire one',
-    ],
-  },
-  {
-    title: 'Stored values',
-    lines: [
-      'values [what]     Print what every script has stored, or one script\'s,',
-      '                  or the scripts running on a tab (T2), or on all tabs',
-      'get <key>         Print one stored value',
-      'set <key> <json>  Store a value, as another tab\'s write would',
-    ],
-  },
-  {
-    title: 'The page',
-    lines: [
-      'tabs [tab]        List the tabs the run controls; with one, pick the',
-      '                  tab the commands for the page act on',
-      'newtab [page]     Open a new tab with the scripts, pick it and focus',
-      '                  it; with all, one tab for each script\'s page;',
-      '                  newtab --noscript [page] opens one without them',
-      'reload [T<n>|all] Reload the page, another tab\'s, or every tab;',
-      '                  --noscript and --script switch them as open does',
-      'open [page]       Navigate to a URL, or to a script\'s default page',
-      '                  (the selected script\'s, or one by number: 2, T2.3);',
-      '                  open all is newtab all. --noscript switches the',
-      '                  tab to run no scripts, and --script to run them',
-      '                  again, for every later load',
-      'focus [T<n>]      Bring the tab to the front',
-      'accept [text]     Answer an open dialog with OK (a prompt with text)',
-      'dismiss           Answer an open dialog with Cancel',
-    ],
-  },
-  {
-    title: 'Waiting',
-    lines: [
-      'wait [T<n>|all]   Wait until the tab (or all tabs) settles: loaded, its',
-      '                  scripts started, and no requests or DOM changes for a',
-      '                  moment. reload, open, newtab, click, hover, type and',
-      '                  key wait like this on their own, unless given --nowait',
-      'wait selector <css>',
-      '                  Wait until an element matches',
-      'wait selector-gone <css>',
-      '                  Wait until no element matches',
-      'wait log <text>   Wait for an output line with the text (or /regex/),',
-      '                  printed since the previous command began',
-      'wait {500ms|2s}   Wait that long',
-      'wait ... --timeout-seconds S',
-      '                  Give up after S seconds (default 5)',
-    ],
-  },
-  ...PAGE_COMMAND_GROUPS,
-  {
-    title: 'Checking scripts',
-    lines: [
-      'match [what]...   Say whether scripts run on pages, and which header',
-      '                  rules decided it: the selected script on the tab,',
-      '                  unless others are named. what: a script (3, T2.3, a',
-      '                  .user.js file), a tab (T2), a URL, all-scripts,',
-      '                  all-tabs, or all (every script on every tab)',
-      'validate [what]   Re-read a script from disk and check it, without',
-      '                  loading it: the selected one, one by number, all',
-      '                  loaded scripts, or files and directories',
-    ],
-  },
-  {
-    title: 'The run',
-    lines: [
-      'help [command]    List these, or one command\'s help',
-    ],
-  },
-];
-
 // One wording for having none, whether as a reply or in a list.
 const NO_SCRIPTS = 'No scripts are loaded';
 
@@ -230,60 +141,9 @@ const NO_SCRIPTS = 'No scripts are loaded';
 // The commands that act on the current tab, which there may not be.
 const NEEDS_A_TAB = new Set(['menu', 'open', 'reload', 'focus', 'accept', 'dismiss', ...PAGE_COMMANDS]);
 
-// How a command's argument names each kind of thing. Kept out of
-// COMMAND_GROUPS, whose first words are the command names Tab
-// completes.
-const ID_LINES = [
-  'Scripts:',
-  '  - 2: its number in the scripts list',
-  '  - T2.3: script 3, on tab T2',
-  '  - Its name, file name or path, or a unique substring',
-  'Tabs:',
-  '  - T2: its number in the tabs list',
-  '  - Its CDP targetId (first 6 or more characters), optionally with targetId=',
-  '  - Its DevTools page id, as pageId=4 (with --devtools)',
-  'Elements (where a command takes a selector):',
-  '  - A CSS or Playwright selector',
-  '  - e4 or f2e6: its ref in the latest snapshot (also ref=e4 or [ref=e4])',
-  'Menu commands:',
-  '  - M2: its number in the tab\'s menu list',
-  '  - T2.M2: menu item M2 on tab T2',
-  '  - Its label',
-  'Runs (pass as --run ID to select the target run):',
-  '  - D2: run number, as reported by start and list',
-  '  - Dname: a user-chosen run ID',
-];
-
-// A blank line between the groups.
-/** The commands' help, as `help` prints it, for `sm-dev --help` too. */
-export const CONSOLE_HELP = [
-  ...COMMAND_GROUPS.flatMap((group, i) => [...(i > 0 ? [''] : []), `${group.title}:`, ...group.lines.map((line) => `  ${line}`)]),
-  '',
-  'IDs to select objects:',
-  ...ID_LINES.map((line) => `  ${line}`),
-];
-
-// The names a command also answers to, when run and in `help`.
-const ALIASES: Record<string, string> = { script: 'scripts', tab: 'tabs', '?': 'help', keys: 'key' };
-
-// The flags each command takes; the rest take none. A word starting
-// with -- that isn't one is a mistake, said before the command does
-// anything, rather than taken as an argument (`status --bad` looking
-// for a script named that).
-const COMMAND_FLAGS: Record<string, string[]> = {
-  newtab: ['--noscript', '--script', '--nowait'],
-  reload: ['--noscript', '--script', '--nowait'],
-  open: ['--noscript', '--script', '--nowait'],
-  click: ['--nowait'],
-  hover: ['--nowait'],
-  type: ['--nowait'],
-  key: ['--nowait'],
-  eval: ['--script'],
-  snapshot: ['--out', '--visible'],
-  screenshot: ['--full'],
-  probe: ['--html', '--css'],
-  wait: ['--timeout-seconds'],
-};
+// `script` and `tab` pick one, as `scripts` and `tabs` do given one,
+// so each is run as its plural.
+const RUN_ALIASES: Record<string, string> = { ...ALIASES, script: 'scripts', tab: 'tabs' };
 
 // Commands whose last argument is free text, which may start with --
 // as content (eval's JavaScript, type's text, a menu label), and how
@@ -319,15 +179,18 @@ function freeTextStart(command: string, words: string[]): number {
 
 /**
  * The mistake in a run command's flags, or null: a word starting with
- * -- the command doesn't take. `words` are the command's, its name
- * first. Null for a name that is no command, which is said elsewhere.
+ * -- the command doesn't take (its help lists the ones it does). Said
+ * before the command does anything, rather than taken as an argument
+ * (`status --bad` looking for a script named that). `words` are the
+ * command's, its name first. Null for a name that is no command, which
+ * is said elsewhere.
  */
 export function commandFlagMistake(words: string[]): string | null {
   const typed = words[0];
   if (typed === undefined) return null;
   const command = ALIASES[typed] ?? typed;
-  if (!COMMAND_NAMES.includes(command)) return null;
-  const known = COMMAND_FLAGS[command] ?? [];
+  if (!RUN_COMMAND_NAMES.includes(command)) return null;
+  const known = commandFlags(command);
   const text = freeTextStart(command, words.slice(1));
   // `wait log`'s text may end with its flag.
   const checked = text < 0 ? words.slice(1) : words.slice(1, text + 1);
@@ -364,7 +227,7 @@ const INSPECTING = new Set(['help', 'status', 'values', 'get', 'snapshot', 'scre
  */
 export function onlyInspects(line: string): boolean {
   const [typed = '', ...rest] = line.trim().split(/\s+/);
-  const command = ALIASES[typed] ?? typed;
+  const command = RUN_ALIASES[typed] ?? typed;
   if (INSPECTING.has(command)) return true;
   if (command === 'tabs' || command === 'scripts') return rest.length === 0;
   if (command === 'menu') return rest.length === 0 || (rest.length === 1 && (rest[0] === 'all' || /^[Tt]\d+$/.test(rest[0])));
@@ -394,44 +257,6 @@ export const MISTAKE_PREFIX = '[sm-dev] ERROR: ';
 export const inCommand = new AsyncLocalStorage<{ inspects: boolean }>();
 
 /**
- * The entries for `name` in a help list: a line starting with it, and
- * the indented lines that carry on its description. Empty when none
- * does. A command with several entries gets them all.
- */
-export function helpEntries(lines: string[], name: string): string[] {
-  const found: string[] = [];
-  let taking = false;
-  for (const line of lines) {
-    if (!/^\s/.test(line)) taking = line.split(/\s+/)[0] === name;
-    if (taking) found.push(line);
-  }
-  return found;
-}
-
-/**
- * Typed commands' help, for `help <command>...` and `sm-dev help`: each
- * one's entries once, in the order `help` lists them, under its group's
- * heading. `unknown` are the names no command has.
- */
-export function consoleCommandsHelp(names: string[]): { lines: string[]; unknown: string[] } {
-  const lines: string[] = [];
-  const unknown: string[] = [];
-  const groupOf = (name: string) => COMMAND_GROUPS.find((g) => helpEntries(g.lines, name).length > 0);
-  const known = [...new Set(names.map((typed) => ALIASES[typed] ?? typed))];
-  unknown.push(...names.filter((typed) => !groupOf(ALIASES[typed] ?? typed)));
-  // In the order `help` lists them, so each group's heading shows once.
-  const ordered = known.filter((name) => groupOf(name)).sort((a, b) => COMMAND_NAMES.indexOf(a) - COMMAND_NAMES.indexOf(b));
-  let lastGroup: string | null = null;
-  for (const name of ordered) {
-    const group = groupOf(name)!;
-    if (group.title !== lastGroup) lines.push(...(lastGroup ? [''] : []), `${group.title}:`);
-    lastGroup = group.title;
-    lines.push(...helpEntries(group.lines, name).map((line) => `  ${line}`));
-  }
-  return { lines, unknown };
-}
-
-/**
  * Run one typed line. Returns once its effect has been applied, so an
  * agent driving this over a pipe can send the next line knowing the
  * previous one is done. For a line a client sent: `cwd` is
@@ -446,7 +271,7 @@ export async function runConsoleCommand(
   if (!trimmed) return;
   const [typedCommand, ...rest] = trimmed.split(/\s+/);
   const argument = trimmed.slice(typedCommand.length).trim();
-  const command = ALIASES[typedCommand] ?? typedCommand;
+  const command = RUN_ALIASES[typedCommand] ?? typedCommand;
   // The sender's words when they start with the command; a whole
   // command sent as one word is split like a typed one.
   const flagMistake = commandFlagMistake(words?.[0] === typedCommand ? words : commandWords(trimmed));
@@ -466,10 +291,8 @@ export async function runConsoleCommand(
     return false;
   };
   const picked = currentTab(ctx);
-  // Every controlled tab can be closed, T1 included. `open all` opens
-  // tabs, so it needs none.
-  const opensAll = command === 'open' && rest.filter((w) => !w.startsWith('--')).join(' ') === 'all';
-  if (!picked && NEEDS_A_TAB.has(command) && !opensAll) {
+  // Every controlled tab can be closed, T1 included.
+  if (!picked && NEEDS_A_TAB.has(command)) {
     ctx.out(NO_TABS);
     return;
   }
@@ -494,15 +317,6 @@ export async function runConsoleCommand(
       return matchCommand(ctx, args, cwd);
     case 'validate':
       return validateCommand(ctx, args, cwd);
-    case 'help':
-      if (!argument) {
-        for (const l of CONSOLE_HELP) ctx.out(l ? `  ${l}` : '');
-        return;
-      }
-      const { lines, unknown } = consoleCommandsHelp(rest);
-      for (const name of unknown) ctx.out(`[sm-dev] ERROR: ${name} is not a command. Type help to list them.`);
-      for (const l of lines) ctx.out(l ? `  ${l}` : '');
-      return;
     case 'menu': {
       if (argument === 'all') {
         ctx.out('Menu commands:');
@@ -607,15 +421,9 @@ export async function runConsoleCommand(
         ctx.out(`[sm-dev] ${NO_SCRIPTS}`);
         return;
       }
-      if (argument === 'all') {
-        await settleWrites();
-        // The values are each script's, the same on every tab; per
-        // tab, this shows which scripts are running there to use them.
-        ctx.out('Stored values:');
-        printPerTab(ctx, tab, (t) => valueLines(ctx, runningOn(ctx, t)), 'No script is running here');
-        return;
-      }
-      const ref = tabRef(ctx, argument, tab);
+      // The values are each script's, the same on every tab, so all is
+      // every script's, as with nothing named, not a list per tab.
+      const ref = tabRef(ctx, argument === 'all' ? '' : argument, tab);
       if (!ref) return;
       let scripts = ctx.scripts;
       if (ref.rest) {
@@ -735,9 +543,10 @@ export async function runConsoleCommand(
       const mode = scriptsFlag(ctx, 'open', rest.filter((w) => w !== '--nowait'));
       if (mode === null) return;
       const page = rest.filter((w) => !w.startsWith('--'));
+      // Rather than a page at http://all.
       if (page[0] === 'all' && page.length === 1) {
-        await openNewTab(ctx, ['all', ...(mode ? ['--noscript'] : []), ...(noWait ? ['--nowait'] : [])], cwd);
-        return;
+        ctx.out('[sm-dev] ERROR: The open command navigates one tab. To open a tab for each script, use newtab all.');
+        return false;
       }
       if (page.length > 1) {
         ctx.out('[sm-dev] ERROR: The open command takes one URL or script');
@@ -1688,12 +1497,6 @@ function settleWrites(): Promise<void> {
   return new Promise((r) => setTimeout(r, WRITE_FLUSH_MS));
 }
 
-// A command with several entries in the help is listed once.
-const COMMAND_NAMES = [...new Set(COMMAND_GROUPS
-  .flatMap((group) => group.lines)
-  .map((line) => line.split(/\s+/)[0])
-  .filter(Boolean))];
-
 function completeFrom(names: readonly string[], line: string): [string[], string] {
   if (/\s/.test(line.trimStart())) return [[], line];
   const word = line.trimStart();
@@ -1820,8 +1623,6 @@ export interface PromptIO {
    * for the command running, as a second Ctrl-C asks.
    */
   exit: (now?: boolean) => void;
-  /** More names for Tab to complete: the client's own commands. */
-  commands?: readonly string[];
 }
 
 /**
@@ -1846,7 +1647,7 @@ export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?:
   const say = (message: string): void => {
     void runLine('', { start: () => io.out(`[sm-dev] ERROR: ${message}`) });
   };
-  const names = [...new Set([...COMMAND_NAMES, ...(io.commands ?? [])])].sort();
+  const names = [...COMMAND_NAMES].sort();
   const lines = readline.createInterface({
     input: process.stdin,
     output: process.stdout,

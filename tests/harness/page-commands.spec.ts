@@ -288,7 +288,4 @@ test('snapshot refs name elements for the other commands, and it can show only t
   expect(await run(`probe ${save}`)).toEqual([`found    ${save}  (1)`]);
   await page.reload();
   expect(await run(`click ${save}`)).toEqual(['[sm-dev] The page reloaded since the last snapshot. Take a new snapshot.']);
-
-  // help tells how to name an element, and isn't a command itself.
-  expect((await run('help')).join('\n')).toContain('e4 or f2e6: its ref in the latest snapshot');
 });

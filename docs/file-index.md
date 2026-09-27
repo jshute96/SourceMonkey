@@ -180,6 +180,7 @@ command. See `docs/harness-design.md`.
 | `src/harness/save-html.ts` | A page's DOM as a standalone file, scripts disabled and a `<base>` added; for `savehtml` and the fixture's `saveHtml` |
 | `src/harness/checks.ts` | `match` and `validate`'s shared half: finding the scripts named, and the lines each prints |
 | `src/harness/command-lines.ts` | Input lines into a run's commands: multi-line `eval {{ ... }}` blocks, comments, sent lists |
+| `src/harness/command-list.ts` | Every sm-dev command in one list, in `--help`'s sections, with each command's arguments and options, and its renderer |
 | `src/harness/console-commands.ts` | A run's commands across its tabs, the page-dialog tracker, and the client's `-i` prompt |
 | `src/harness/page-commands.ts` | The run commands that drive and read a tab's page, from `click` and `eval` to `snapshot` and `logs` |
 | `src/harness/snapshot.ts` | `snapshot`'s element refs, its on-screen filter, and `probe --css`'s suggested CSS selectors |
