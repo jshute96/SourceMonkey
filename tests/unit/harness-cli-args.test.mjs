@@ -313,15 +313,15 @@ test('several commands on a line are checked before any runs, then run in order,
   assert.equal(r.stderr, 'No sm-dev runs are active. Start one with sm-dev start.\nThat command failed, so the commands after it were not run\n');
 });
 
-test('start needs something to keep it going, and -i a terminal', () => {
+test('start needs something to keep it going, and --interactive a terminal', () => {
   const line = (...args) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
   // Alone, it would start the run and stop it again straight away.
   const alone = line('start', SCRIPT);
   assert.equal(alone.status, 2);
-  assert.match(alone.stderr, /^ERROR: The start command with nothing after it would stop the run as soon as it started\. Add -i for a prompt, --detach/);
+  assert.match(alone.stderr, /^ERROR: The start command with nothing after it would stop the run as soon as it started\. Add --interactive for a prompt, --detach/);
   // The prompt reads the terminal, which a pipe isn't.
-  assert.equal(line('-i').stderr, 'ERROR: The --interactive flag needs a terminal. To read commands from a pipe or file, use --stdin.\n');
-  assert.equal(line('-i', '--stdin', 'list').stderr, 'ERROR: The --interactive flag reads the terminal, so it can\'t be used with --stdin\n');
+  assert.equal(line('--interactive').stderr, 'ERROR: The --interactive flag needs a terminal. To read commands from a pipe or file, use --stdin.\n');
+  assert.equal(line('--interactive', '--stdin', 'list').stderr, 'ERROR: The --interactive flag reads the terminal, so it can\'t be used with --stdin\n');
 });
 
 test('timers longer than Node can wait are refused', () => {

@@ -414,9 +414,9 @@ into pages.
     `list` shows where. A connected browser is headless when the user
     agent Chrome's `Browser.getVersion` gives says `HeadlessChrome`.
   - The global options (`--run`, `--root`, `--local`, `--stdin`,
-    `-i`, and the browser's `--cdp`, `--open-browser`, `--profile`,
-    `--temp-browser`, `--headed`) are taken off the front of the line
-    first. One later on the line is refused, and said to go first;
+    `--interactive`, and the browser's `--cdp`, `--open-browser`,
+    `--profile`, `--temp-browser`, `--headed`) are taken off the front
+    of the line first. One later on the line is refused, and said to go first;
     `--cdp`, which `start` and `clear` also take, excepted.
     - The run's own process gets the browser's options again, as
       global options, on its command line.
@@ -432,8 +432,8 @@ into pages.
     - A run command's accepted flags, the names Tab completes, and
       which commands go to a run all come from the same list.
   - Every command is checked before any runs. A lone `start` with no
-    `--detach`, `--seconds`, `--stdin`, `-i` or commands after it is
-    refused, since its run would stop at once.
+    `--detach`, `--seconds`, `--stdin`, `--interactive` or commands
+    after it is refused, since its run would stop at once.
   - A name that isn't an `sm-dev` command but is a typed one goes to
     the run. So does one argument of several lines, as a list.
   - A connected browser is attached with `noDefaults`, which keeps
@@ -662,8 +662,9 @@ into pages.
   So `load` / `update` refuse while one is open, and
   `PageAttachment.dispose` gives up on the page after a second; detaching
   the session drops what it registered anyway.
-- **`console-commands.ts`**: a run's commands, and the `-i` prompt
-  (`readPromptCommands`) that output is drawn around.
+- **`console-commands.ts`**: a run's commands, and the
+  `--interactive` prompt (`readPromptCommands`) that output is drawn
+  around.
   - The prompt runs in the client (`cli.ts`), never in the run, which
     doesn't read stdin at all.
   - Each command says whether it was typed at a person's prompt
@@ -762,9 +763,9 @@ only ever a client of runs.
   signal. A second signal exits at once.
 - Whether it follows the run's whole stream is decided once, up
   front: when the line has a command that isn't only a look, or its
-  input has no known end (`--stdin`, `-i`).
-- The `-i` prompt (`readPromptCommands`) and stdin reading both run in
-  the client. sm-dev's own commands (`start`, `attach`, `stop`,
+  input has no known end (`--stdin`, `--interactive`).
+- The `--interactive` prompt (`readPromptCommands`) and stdin reading
+  both run in the client. sm-dev's own commands (`start`, `attach`, `stop`,
   `exit`, `list`, `clear`, `help`, `match` / `validate` on files) run
   there; the rest go to the run.
 

@@ -95,7 +95,6 @@ function parseArgs(argv: string[]): Opts {
       case '--run':
       case '--stdin':
       case '--interactive':
-      case '-i':
       case '--profile':
       case '--temp-browser':
       case '--headed':
@@ -1193,7 +1192,7 @@ let lineHeaded = false;
 
 
 // The flags for the whole line, which go before any command.
-const GLOBAL_FLAGS = ['--run', '--root', '--local', '--stdin', '--interactive', '-i', '--cdp', '--open-browser', '--profile', '--temp-browser', '--headed'];
+const GLOBAL_FLAGS = ['--run', '--root', '--local', '--stdin', '--interactive', '--cdp', '--open-browser', '--profile', '--temp-browser', '--headed'];
 
 function globalFlagMistake(flag: string): string {
   return `The ${flag} flag is for the whole command line, so it goes first, before any command: sm-dev ${flag}${VALUE_GLOBALS.has(flag) ? ' ...' : ''} <command>`;
@@ -1211,7 +1210,7 @@ interface GlobalFlags {
 /**
  * Takes the global options off the front of the line: `--run ID`,
  * `--root DIR`, `--local DIR` (repeatable), `--stdin`, `--interactive`
- * (`-i`), and the browser's: `--cdp`, `--open-browser`, `--profile`,
+ * and the browser's: `--cdp`, `--open-browser`, `--profile`,
  * `--temp-browser`, `--headed`. One later on the line, among a
  * command's words, is said to go first.
  */
@@ -1224,7 +1223,7 @@ function takeGlobalFlags(argv: string[]): GlobalFlags {
     const [word, inline] = splitInline(argv[i]);
     if (!GLOBAL_FLAGS.includes(word)) break;
     if (word === '--stdin') flags.stdin = true;
-    else if (word === '--interactive' || word === '-i') flags.interactive = true;
+    else if (word === '--interactive') flags.interactive = true;
     else if (word === '--open-browser') lineOpenBrowser = true;
     else if (word === '--temp-browser') lineTempBrowser = true;
     else if (word === '--headed') lineHeaded = true;
@@ -1398,7 +1397,7 @@ async function runOne(words: string[], client: Client): Promise<number> {
   }
 }
 
-const START_ALONE = 'The start command with nothing after it would stop the run as soon as it started. Add -i for a prompt, --detach to leave it running, --seconds N to watch it for a while, or commands after --.';
+const START_ALONE = 'The start command with nothing after it would stop the run as soon as it started. Add --interactive for a prompt, --detach to leave it running, --seconds N to watch it for a while, or commands after --.';
 
 async function main(): Promise<void> {
   // Output piped into something that stops reading early (`| head`)

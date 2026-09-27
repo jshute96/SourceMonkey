@@ -829,7 +829,8 @@ See [docs/harness-design.md](docs/harness-design.md).
   code (the run already carries one back), so scripted lines can stop
   on a failure.
 - Nothing tests the interactive `> ` prompt, which only turns on with
-  `-i` at a terminal. A test would run `sm-dev -i start` in a
+  `--interactive` at a terminal. A test would run
+  `sm-dev --interactive start` in a
   pseudo-terminal (pty: Python's `pty` module, or the native `node-pty`
   package) and cover:
   - Ctrl-C clearing a typed line, exiting on an empty one (and stopping

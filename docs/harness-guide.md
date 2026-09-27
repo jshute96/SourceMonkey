@@ -96,9 +96,10 @@ drives it. Everything it prints is plain text meant to be read by a
 person or an agent.
 
 Help:
-- `sm-dev --help` lists everything, in sections: global options,
-  command input, then every command (sm-dev's own and a run's) grouped
-  by what it works on, and how to name scripts, tabs and the rest.
+- `sm-dev --help` lists everything, in sections: command input,
+  examples, then all commands (sm-dev's own and a run's) grouped by
+  what they work on, then the global and common options, and how to
+  name scripts, tabs and the rest.
 - `sm-dev help start` (or `sm-dev start --help`) shows one command:
   its usage, arguments, and only the options it takes.
 - It takes several names at once: `sm-dev help status tabs`.
@@ -113,7 +114,7 @@ Help:
 | `sm-dev start ... --watch` | Same, and on every save of the script or a `@require`d file, re-injects it and reloads the tabs it runs in or now matches, all at once. The typed `update` does the same on demand. |
 | `sm-dev start a.user.js b.user.js` | Injects several scripts into the same page, for interaction tests. |
 | `sm-dev start ... --detach` | Returns once the pages have settled (see [Waiting](#waiting)), and leaves the run going in the background (see [Detached runs](#detached-runs)). |
-| `sm-dev -i start ...`, `sm-dev -i` | After the line's commands, shows a `> ` prompt to type more at (see [The prompt](#the-prompt)). Alone, a prompt with no run yet: type `start` or `attach` there. |
+| `sm-dev --interactive start ...`, `sm-dev --interactive` | After the line's commands, shows a `> ` prompt to type more at (see [The prompt](#the-prompt)). Alone, a prompt with no run yet: type `start` or `attach` there. |
 | `sm-dev attach [ID]` | Connects to a run that is going (default: `--run`'s, or the only one) and shows what it prints from now on. On its own, until the run ends or Ctrl-C, which leaves it going. |
 | `sm-dev match <script>... <url>...` | Says whether each script would run on each URL, with all rules that matched it (`Matched by:`) or excluded it (`Excluded by:`). A `start` command line works with `match` in its place. In a run it also takes the run's scripts and tabs (see [Checking scripts in a run](#checking-scripts-in-a-run)). |
 | `sm-dev validate <path>...` | Checks script validity (header, `@require`, syntax) over files, directories or script URLs, with the message the extension would show. In a run it also takes the run's scripts. |
@@ -125,7 +126,7 @@ Help:
 
 `start` with nothing after it to keep the run going is refused:
 `The start command with nothing after it would stop the run as soon as
-it started. Add -i for a prompt, --detach to leave it running,
+it started. Add --interactive for a prompt, --detach to leave it running,
 --seconds N to watch it for a while, or commands after --.`
 
 - For `start` and `match`, arguments ending in `.user.js` are scripts,
@@ -162,7 +163,7 @@ command: sm-dev --run ... <command>`.
     sends a command to a run it didn't start refuses them.
 - `--stdin` reads more commands from stdin once the line's are done
   (see [Commands from stdin](#commands-from-stdin)).
-- `--interactive` (`-i`) shows a prompt once the line's commands are
+- `--interactive` shows a prompt once the line's commands are
   done (see [The prompt](#the-prompt)).
 
 Browser options:
@@ -185,7 +186,7 @@ Browser options:
   line: `--temp-browser` can't go with `--cdp` or `--open-browser`, and
   after `--open-browser`, `start` takes no `--cdp` of its own.
 - `--temp-browser` and `--headed` need a `start` on the line (or
-  `-i` or `--stdin`, where one can come).
+  `--interactive` or `--stdin`, where one can come).
 
 ### Launching a browser
 
@@ -344,7 +345,7 @@ A script's interesting moments are not all at startup: a menu command
 may need firing twice, or only once some state exists, and what the
 script stored is worth reading between steps. So a run takes commands
 while it goes: after `--` on the line that started it, from stdin,
-typed at the `-i` prompt, or from another shell.
+typed at the `--interactive` prompt, or from another shell.
 
 | Typed command | What it does |
 | --- | --- |
@@ -551,12 +552,12 @@ How the commands treat tabs:
 
 #### The prompt
 
-`-i` (`--interactive`), first on the line, shows a `> ` prompt once the
+`--interactive`, first on the line, shows a `> ` prompt once the
 line's commands are done:
 
 ```sh
-sm-dev -i start sites/x/y.user.js --watch
-sm-dev -i                 # no run yet: type start or attach
+sm-dev --interactive start sites/x/y.user.js --watch
+sm-dev --interactive      # no run yet: type start or attach
 ```
 
 - sm-dev reads the terminal only then. It needs a terminal, and can't
@@ -691,8 +692,8 @@ is a client of runs:
   - A line with a command that acts (`eval`, `click`, `type`, `key`,
     `reload`, `open`, `newtab`, `load`, `update`, `set`, firing a
     `menu` command, `wait`, `start`, `attach`), or input with no known
-    end (`--stdin`, `-i`), follows the run's whole stream, between
-    commands too.
+    end (`--stdin`, `--interactive`), follows the run's whole stream,
+    between commands too.
   - A line of only commands that look (`status`, `values`, `get`,
     listing `tabs`, `scripts` or `menu`, `snapshot`, `probe`, `logs`,
     `match`, `validate`, `list`, `help`) prints just their answers.
@@ -816,7 +817,7 @@ page print on their own, or to look back at what happened when:
     - Who: `primary` is the sm-dev that started the run, `remote` any
       other.
     - How: `arg` from its command line, `stdin` piped in, `prompt`
-      typed at `-i`.
+      typed at the `--interactive` prompt.
     - An `eval` block shows as `primary:arg > eval {{`, then `... `
       before each line of code, then `... }}`.
   - Clients following the run see other clients' commands headed the
@@ -874,7 +875,7 @@ sm-dev --stdin       # at a terminal: each runs on Enter; Ctrl-D ends
   each is read, and a block on its `}}`.
 - A mistake or a command that fails (a `wait` that gives up) stops the
   rest, as on a line of several; a `match` or `validate` miss doesn't.
-  To decide for yourself after each, use the `-i` prompt.
+  To decide for yourself after each, use the `--interactive` prompt.
 - With no command on the line or in stdin, sm-dev says so, and exits 2.
 - Without `--stdin`, a line with commands never reads stdin, so a
   caller's open pipe doesn't hold it up. That includes piping into
