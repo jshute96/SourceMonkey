@@ -361,8 +361,6 @@ test('help for one command shows its entry and only its flags', () => {
   assert.match(match.out, /^Arguments:\n {2}all-scripts +In a run/m);
   // Its section's note comes along.
   assert.match(match.out, /^Without a run, these check script files and URLs\./m);
-  // The global options go before the command, and are pointed at.
-  assert.match(match.out, /^The global options \(--run, --root, --local, --stdin, -i\) go first/m);
   assert.doesNotMatch(match.out, /--cdp|--watch|^ {2}start /m);
   // A section's options, only for the commands that take them.
   assert.match(help('help', 'click').out, /^Common options:\n {2}--nowait /m);
@@ -382,7 +380,7 @@ test('--help anywhere on a line shows each command\'s help once, and runs nothin
   const r = help('list', '--', 'status', '--bad', '--', 'eval', 'x', '--help', '--', 'status');
   assert.equal(r.code, 0);
   assert.match(r.out, /^Usage: sm-dev list$/m);
-  assert.equal(r.out.match(/^Usage: sm-dev status /gm).length, 1);
+  assert.equal(r.out.match(/^Usage: sm-dev status$/gm).length, 1);
   // Once each, in the full help's order.
   const all = help('stop', '--', 'eval', '1', '--', 'list', '--', 'status', '--', 'newtab', '--', 'status', '--help').out;
   assert.ok(all.indexOf('Usage: sm-dev list') < all.indexOf('Usage: sm-dev stop'));
@@ -408,7 +406,7 @@ test('each run command takes the flags its help lists, and no others', async () 
 test('help covers a run\'s commands and aliases, and refuses unknown names', () => {
   const typed = help('help', 'status', 'script', 'get');
   assert.equal(typed.code, 0);
-  assert.match(typed.out, /^Usage: sm-dev status \[what\]$/m);
+  assert.match(typed.out, /^Usage: sm-dev status$/m);
   assert.match(typed.out, /^Usage: sm-dev script <script>$/m);
   assert.match(typed.out, /^Usage: sm-dev get <key>$/m);
   assert.doesNotMatch(typed.out, /menu \[what\]/);

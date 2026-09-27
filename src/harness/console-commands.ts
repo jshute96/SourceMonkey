@@ -388,32 +388,21 @@ export async function runConsoleCommand(
       return;
     }
     case 'status': {
-      if (!argument || argument === 'all') {
-        if (ctx.runId) ctx.out(`Run: ${ctx.runId} (pid ${process.pid})`);
-        const devtools = ctx.devtools?.();
-        if (devtools) ctx.out(`DevTools: ${devtools}`);
-      }
+      // Takes no arguments: scripts and tabs give those lists in full.
+      if (!takesNothing()) return false;
+      if (ctx.runId) ctx.out(`Run: ${ctx.runId} (pid ${process.pid})`);
+      const devtools = ctx.devtools?.();
+      if (devtools) ctx.out(`DevTools: ${devtools}`);
       // With no tab, still the scripts and what they have stored.
-      if (!tab && (!argument || argument === 'all' || !TAB_REF.test(argument))) {
-        const script = argument && argument !== 'all' ? pickScript(ctx, argument) : undefined;
-        if (script === null) return;
+      if (!tab) {
         ctx.out(NO_TABS);
-        for (const l of statusLines(ctx, undefined, script ? [script] : ctx.scripts, false)) ctx.out(l);
+        for (const l of statusLines(ctx, undefined)) ctx.out(l);
         return;
       }
-      if (argument === 'all') {
-        printPerTab(ctx, tab, (t) => statusLines(ctx, t, ctx.scripts, false));
-        return;
-      }
-      const ref = tabRef(ctx, argument, tab);
-      if (!ref) return;
-      const script = ref.rest ? pickScript(ctx, ref.rest) : undefined;
-      if (script === null) return;
       const several = ctx.tabs().length > 1;
-      ctx.out(`Page${several ? ` (${tabName(ref.tab)})` : ''}: ${ref.tab.page.url()}`);
-      for (const l of statusLines(ctx, ref.tab, script ? [script] : ctx.scripts, true)) ctx.out(l);
-      // The other tabs too, unless one script was asked about.
-      if (several && !script) printTabs(ctx);
+      ctx.out(`Page${several ? ` (${tabName(tab)})` : ''}: ${tab.page.url()}`);
+      for (const l of statusLines(ctx, tab)) ctx.out(l);
+      if (several) printTabs(ctx);
       return;
     }
     case 'values': {
@@ -585,7 +574,7 @@ export async function runConsoleCommand(
     }
     case 'accept':
     case 'dismiss': {
-      if (command === 'dismiss' && !takesNothing()) return;
+      if (command === 'dismiss' && !takesNothing()) return false;
       const dialog = tab.dialogs?.take();
       if (!dialog) {
         const elsewhere = ctx.tabs().find((t) => t.dialogs?.current);
@@ -1285,12 +1274,11 @@ function fire(tab: ControlledTab, fired: Promise<boolean>): Promise<boolean> {
 // ---------- status and values ----------
 
 // Each script's state on a tab: an open dialog there, then per script
-// its last start or skip, its counts, and its last error. `others`
-// adds a line for a script also running on other tabs, which the `all`
-// form shows anyway.
-// With no `tab`, only what doesn't depend on one: stored values and
-// errors.
-function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined, scripts: PreparedScript[], others: boolean): string[] {
+// its last start or skip, its counts, its last error, and how many
+// other tabs it is running on. With no `tab`, only what doesn't depend
+// on one: stored values and errors.
+function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined): string[] {
+  const { scripts } = ctx;
   const { reports } = ctx.host;
   const lines: string[] = [];
   const dialog = tab?.dialogs?.current;
@@ -1326,7 +1314,6 @@ function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined, script
     if (counts.length > 0) lines.push(`    ${counts.join(', ')}`);
     const last = errors.at(-1);
     if (last) lines.push(`    Last error: ${last.message}`);
-    if (!others) continue;
     const elsewhere = ctx.tabs().filter((t) => t !== tab && activeOn(ctx, t, id)).length;
     if (elsewhere > 0) lines.push(`    Also active on ${elsewhere} other tab${elsewhere === 1 ? '' : 's'}`);
   }

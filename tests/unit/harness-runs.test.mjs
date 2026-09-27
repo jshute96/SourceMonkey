@@ -52,9 +52,9 @@ test('a sent line reaches the run, and its output and exit code come back', asyn
   try {
     assert.ok((await liveRuns()).some((r) => r.id === control.id));
     const out = [];
-    assert.equal(await sendLine(control.id, 'status T2', (l) => out.push(l)), 0);
-    assert.deepEqual(seen, ['status T2']);
-    assert.deepEqual(out, ['one status T2', 'two']);
+    assert.equal(await sendLine(control.id, 'menu T2', (l) => out.push(l)), 0);
+    assert.deepEqual(seen, ['menu T2']);
+    assert.deepEqual(out, ['one menu T2', 'two']);
     assert.equal(await sendLine(control.id, 'fail', () => undefined), 3);
   } finally {
     await control.close();

@@ -311,7 +311,7 @@ typed at the `-i` prompt, or from another shell.
 | `script <script>` | Picks the script `get` and `set` act on (the first, until changed). `scripts <script>` works too |
 | `load <file>` | Loads another script from disk, and reloads the tabs it matches |
 | `update [script]` | Re-reads one script from disk, or all (with no argument, or `all`), as `--watch` does on a save. Only a script whose file or local `@require`s were modified since it was read counts, so touching a file forces it. Reloads, all at once, the tabs where an updated script runs or where its rules now match. Stored values are kept |
-| `status [what]` | Prints the page's URL, any open dialog, and each script's state: started or skipped, and counts of its menu commands, stored values and errors (those that are not zero). Also takes a script, a tab (`T2`, `T2.3`) or `all` |
+| `status` | Prints the run (and its DevTools address, with `--devtools`), the page's URL, any open dialog, each script's state there (started or skipped, and counts of its menu commands, stored values and errors that are not zero), and, with several tabs open, the tab list |
 | `menu` | Lists the registered menu commands, numbered `M1`, `M2`, under the script that registered each |
 | `menu <M-number or label>` | Fires one, as picking it from the toolbar would. Piped in while none is registered yet, it waits a moment for a script that is still loading |
 | `values [what]` | Prints what every script has stored (`all` too), one script's, or those of the scripts running on a tab (`T2`) |
@@ -499,8 +499,8 @@ How the commands treat tabs:
 - `status` covers the picked tab. A script also running on other tabs
   gets an `Also active on N other tabs` line, and the tab list follows
   at the bottom.
-- `status all` and `menu all` show every tab in turn, each under a
-  `Tab T<n>: <url>` heading.
+- `menu all` shows every tab in turn, each under a `Tab T<n>: <url>`
+  heading.
 - `values all` is every script's values, as `values` alone is.
 - `menu T2` lists T2's commands, and `menu T2.M1` fires one there
   without switching tabs.

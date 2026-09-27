@@ -56,59 +56,6 @@ const SETTLING = ['start', ...TAB_LOADS, 'click', 'hover', 'type', 'key'];
 
 export const HELP_SECTIONS: HelpSection[] = [
   {
-    title: 'Global options',
-    text: ['These go first, before any command, and apply for later commands.'],
-    subsections: [
-      {
-        title: 'Where to get input commands (after processing command-line arguments)',
-        options: [
-          { term: '--stdin', about: ['Read commands from stdin.', 'This is the default when command-line has no commands and stdin is piped input.'] },
-          { term: '--interactive, -i', about: 'Read commands interactively from a prompt.' },
-        ],
-      },
-      {
-        title: 'Browser selection (for start and clear)',
-        options: [
-          { term: '--cdp URL|PORT', about: ['The browser to connect to: a URL, host:port, or port.', '(Default: $SM_DEV_CDP or 9233)'], commands: BROWSER },
-          { term: '--launch', about: 'Launch a browser instead of connecting to one.', commands: BROWSER },
-          { term: '--headed', about: 'With --launch: make the browser visible, not hidden.', commands: BROWSER },
-        ],
-      },
-      {
-        title: 'Server selection',
-        options: [
-          {
-            term: '--run ID',
-            about: [
-              'A label to identify which sm-dev instance to use, or what to label a newly started run.',
-              'Only needed when multiple are active.',
-              'Default new names are D1, D2, etc.',
-              'If only one run is active, it\'s chosen by default.',
-            ],
-          },
-        ],
-      },
-      {
-        title: 'Search paths',
-        options: [
-          { term: '--root DIR', about: ['The repo root, searched for local copies of @require URLs.', '(Default: the current directory)'] },
-          { term: '--local DIR', about: 'Additional directory to search. Can repeat.' },
-        ],
-      },
-    ],
-  },
-  {
-    title: 'Common options',
-    text: ['These apply for multiple commands.'],
-    options: [
-      {
-        term: '--nowait',
-        about: ['Don\'t wait for the page to settle after the action.', 'By default, most page actions wait for the page to settle before continuing.'],
-        commands: SETTLING,
-      },
-    ],
-  },
-  {
     title: 'Command input',
     text: [
       'Commands run in order, stopping at the first that fails.',
@@ -204,13 +151,8 @@ export const HELP_SECTIONS: HelpSection[] = [
     title: 'Status',
     commands: [
       {
-        usage: 'status [what]',
+        usage: 'status',
         about: 'Show overall status, script list, and tab list.',
-        args: [
-          { term: '3, T2.3', about: 'One script.' },
-          { term: 'T2', about: 'One tab.' },
-          { term: 'all', about: 'Every tab.' },
-        ],
       },
     ],
   },
@@ -393,6 +335,59 @@ export const HELP_SECTIONS: HelpSection[] = [
     options: [
       { term: '--extension', about: 'Push the scripts into the extension\'s Scratch collection instead of injecting them.', commands: ['start'] },
       { term: '--solo', about: 'With --extension: Disable all other collections, and run only the started scripts, until this run ends.', commands: ['start'] },
+    ],
+  },
+  {
+    title: 'Global options',
+    text: ['These go first, before any command, and apply for later commands.'],
+    subsections: [
+      {
+        title: 'Where to get input commands (after processing command-line arguments)',
+        options: [
+          { term: '--stdin', about: ['Read commands from stdin.', 'This is the default when command-line has no commands and stdin is piped input.'] },
+          { term: '--interactive, -i', about: 'Read commands interactively from a prompt.' },
+        ],
+      },
+      {
+        title: 'Browser selection (for start and clear)',
+        options: [
+          { term: '--cdp URL|PORT', about: ['The browser to connect to: a URL, host:port, or port.', '(Default: $SM_DEV_CDP or 9233)'], commands: BROWSER },
+          { term: '--launch', about: 'Launch a browser instead of connecting to one.', commands: BROWSER },
+          { term: '--headed', about: 'With --launch: make the browser visible, not hidden.', commands: BROWSER },
+        ],
+      },
+      {
+        title: 'Server selection',
+        options: [
+          {
+            term: '--run ID',
+            about: [
+              'A label to identify which sm-dev instance to use, or what to label a newly started run.',
+              'Only needed when multiple are active.',
+              'Default new names are D1, D2, etc.',
+              'If only one run is active, it\'s chosen by default.',
+            ],
+          },
+        ],
+      },
+      {
+        title: 'Search paths',
+        options: [
+          { term: '--root DIR', about: ['The repo root, searched for local copies of @require URLs.', '(Default: the current directory)'] },
+          { term: '--local DIR', about: 'Additional directory to search. Can repeat.' },
+        ],
+      },
+    ],
+  },
+  {
+    title: 'Common options',
+    text: ['These apply for multiple commands.'],
+    options: [
+      {
+        term: '--nowait',
+        about: ['Don\'t wait for the page to settle after the action.', 'By default, most page actions wait for the page to settle before continuing.'],
+        commands: SETTLING,
+      },
     ],
   },
   {
@@ -625,7 +620,6 @@ function commandBlock(name: string): string[] {
   const text = [...forms[0].section.text ?? []];
   while (text.at(-1) === '') text.pop();
   if (text.length > 0) lines.push('', ...paragraphLines(text, 0));
-  lines.push('', ...wrap('The global options (--run, --root, --local, --stdin, -i) go first, before any command. See sm-dev --help.', WIDTH));
   return lines;
 }
 

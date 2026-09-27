@@ -47,7 +47,8 @@ test.describe('sm-dev typed commands', () => {
       'Stored values:', '  1: First (first.user.js)', '    who = "one"', '* 2: Second (second.user.js)', '    who = "changed"',
     ]);
     expect(await run('values 1')).toEqual(['Stored values:', '  1: First (first.user.js)', '    who = "one"']);
-    expect(await run('status now')).toEqual(['[sm-dev] No loaded script matches now. Type scripts to list them.']);
+    expect(await run('values now')).toEqual(['[sm-dev] No loaded script matches now. Type scripts to list them.']);
+    expect(await run('status now')).toEqual(['[sm-dev] ERROR: The status command takes no arguments']);
     expect(await run('reload now')).toEqual(['[sm-dev] ERROR: now is not a tab. Tabs are named T1, T2 and so on; type tabs to list them.']);
   });
 
@@ -188,9 +189,7 @@ test.describe('sm-dev typed commands', () => {
         'Tabs:', `* T1: ${target} [targetId=AB12CD34EF56AB12CD34EF56AB12CD34]`, '   * 1: Menus',
         `  T2: ${other} (opened by T1) [targetId=AB12CD99EF56AB12CD34EF56AB12CD34]`, '     1: Menus',
       ]);
-      expect(await run('status T2.1')).toEqual([
-        `Page (T2): ${other}`, 'Scripts:', row, `    Started on ${other}`, '    1 menu command', '    Also active on 1 other tab',
-      ]);
+      expect(await run('status T2')).toEqual(['[sm-dev] ERROR: The status command takes no arguments']);
       expect(await run('menu')).toEqual(['Menu commands on T1:', row, '    M1: Hit /target.html']);
       expect(await run('menu all')).toEqual([
         'Menu commands:',
@@ -224,10 +223,6 @@ test.describe('sm-dev typed commands', () => {
 
       // Every script's, once: values belong to the script, not the tab.
       expect(await run('values all')).toEqual(await run('values'));
-      expect(await run('status all')).toEqual([
-        `* Tab T1: ${target}`, '  Scripts:', `  ${row}`, `      Started on ${target}`, '      1 menu command, 1 stored value',
-        `  Tab T2: ${other}`, '  Scripts:', `  ${row}`, `      Started on ${other}`, '      1 menu command, 1 stored value',
-      ]);
 
       // Picking a tab moves the page commands and the default for menu.
       expect(await run('tabs T2')).toEqual([`[sm-dev] The page commands now act on T2 (${other})`]);
@@ -322,11 +317,6 @@ test.describe('sm-dev typed commands', () => {
       '  1: Pages (pages.user.js)', '    Not running, since no tabs are active',
       '* 2: Wild (wild.user.js)', '    Not running, since no tabs are active',
     ]);
-    expect(await run('status 1')).toEqual([
-      '[sm-dev] No tabs are active. Type newtab to open one.', 'Scripts:',
-      '  1: Pages (pages.user.js)', '    Not running, since no tabs are active',
-    ]);
-    expect(await run('status T1')).toEqual(['[sm-dev] There is no open tab T1. Type tabs to list them.']);
     // With no scripts loaded (--noscript), the lists say so.
     const scripts = ctx.scripts;
     ctx.scripts = [];
