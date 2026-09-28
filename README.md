@@ -47,12 +47,16 @@ See [docs/harness-guide.md](docs/harness-guide.md) to use it, and
 [docs/harness-design.md](docs/harness-design.md) for how it works.
 
 For coding agents, [skills/SourceMonkey-dev](skills/SourceMonkey-dev/SKILL.md)
-is a skill with recipes for developing and testing with these tools. It
-ships in the package, so a userscript repo can link it in:
+is a skill with recipes for developing and testing with these tools.
+[skills/SourceMonkey-friction](skills/SourceMonkey-friction/SKILL.md)
+is optional: it has agents record a friction log of problems hit using
+these tools, as feedback for improving them later. Both ship in the
+package, so a userscript repo can link them in:
 
 ```sh
 mkdir -p .claude/skills
 ln -s ../../node_modules/sourcemonkey/skills/SourceMonkey-dev .claude/skills/
+ln -s ../../node_modules/sourcemonkey/skills/SourceMonkey-friction .claude/skills/
 ```
 
 ### Example userscripts

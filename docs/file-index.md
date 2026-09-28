@@ -25,6 +25,7 @@ One-line descriptions of every source file, grouped by directory.
 | `.claude/settings.json` | Local dev settings — Bash permissions for `pnpm` commands |
 | `.claude/commands/codereview.md` | `/codereview` slash command — launches a background review subagent |
 | `.claude/skills/SourceMonkey-dev` | Symlink to `skills/SourceMonkey-dev/`, so agents here load the harness skill too |
+| `.claude/skills/SourceMonkey-friction` | Symlink to `skills/SourceMonkey-friction/`, so agents here log tool friction too |
 | `.claude/commands/pushreview.md` | `/pushreview` slash command — `/codereview` then commit + push if clean |
 
 ## Build Scripts (`scripts/`)
@@ -462,9 +463,9 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 | `tests/greasyfork-examples/report.mjs` | Runs `analysis.sql` and renders the results as `analysis.html` |
 | `tests/greasyfork-examples/analysis.html` | Generated HTML report of corpus statistics, rendered from `analysis.sql` |
 
-## Agent skill (`skills/SourceMonkey-dev/`)
+## Agent skills (`skills/`)
 
-For userscript repos to install, so their coding agents know how to use `sm-dev` and the harness.
+For userscript repos to install, so their coding agents know how to use `sm-dev` and the harness, and report where the tools got in the way.
 
 | File | Description |
 |------|-------------|
@@ -473,6 +474,8 @@ For userscript repos to install, so their coding agents know how to use `sm-dev`
 | `skills/SourceMonkey-dev/references/cdp.md` | Raw CDP recipes beside a run: wheel, right-click, drag, window size, fullscreen, per-frame tracing |
 | `skills/SourceMonkey-dev/references/specs.md` | Writing Playwright specs with the harness fixture: example, sm-dev-to-fixture mapping, network requests |
 | `skills/SourceMonkey-dev/scripts/cdp.mjs` | Dependency-free helper that sends CDP calls to a tab (by `targetId`) or the browser, printing JSON results |
+| `skills/SourceMonkey-friction/SKILL.md` | When and how to log friction with the SourceMonkey tools in the shared `../SourceMonkey-friction.md` log |
+| `skills/SourceMonkey-friction/references/template.md` | The friction log's starting file: title, tags, and the entry format |
 
 ## Docs (`docs/`)
 

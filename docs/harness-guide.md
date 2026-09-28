@@ -16,7 +16,9 @@ and [sm-dev-design.md](sm-dev-design.md).
 
 For coding agents, the
 [SourceMonkey-dev skill](../skills/SourceMonkey-dev/SKILL.md) is a
-shorter, task-focused version of this guide.
+shorter, task-focused version of this guide, and the
+[SourceMonkey-friction skill](../skills/SourceMonkey-friction/SKILL.md)
+has them log where the tools got in the way.
 
 ## Contents
 

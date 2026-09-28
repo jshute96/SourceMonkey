@@ -80,6 +80,14 @@ user before elaborating further. Default to action over planning.
   `~/.claude/plugins/cache/wookstar-claude-plugins/tampermonkey/<ver>/skills/tampermonkey/references/`)
   when implementing anything that touches userscript semantics.
 
+## Working on userscripts with our tools
+- When developing, debugging or testing userscripts with `sm-dev` or the
+  harness (not when changing the tools themselves), use the
+  `SourceMonkey-dev` skill for how to work with them.
+- Apply the `SourceMonkey-friction` skill too: when that work is
+  finished (committed or abandoned) and ran into friction with the
+  tools or the skill, log it as the skill describes.
+
 ## Code Changes
 - Use the file index to help find relevant files.
 - When changing behavior, read existing design docs to understand previous designs and intentions. Ask questions if unsure if we should change those requirements.

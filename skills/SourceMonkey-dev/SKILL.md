@@ -49,6 +49,8 @@ Where to look:
   prints the results as JSON.
 - `pnpm sm-dev --help`, or `pnpm sm-dev help <command>`: the
   authoritative, current reference.
+- The `SourceMonkey-friction` skill, when installed: log where these
+  tools got in the way once the task is done.
 - Full docs, when the above isn't enough:
   [harness-guide.md](https://github.com/jshute96/SourceMonkey/blob/main/docs/harness-guide.md).
   Long; search it rather than reading it through.
