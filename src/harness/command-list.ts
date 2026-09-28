@@ -125,6 +125,9 @@ export const HELP_SECTIONS: HelpSection[] = [
               { term: '--all', about: 'Open each script\'s default page, one tab per page.' },
               { term: '--noscript', about: 'Start with no scripts loaded.' },
               { term: '--notab', about: 'Open no tabs at startup. (Use newtab later.)' },
+              { term: '--from-saved', about: 'Serve .html files as saved page snapshots, at their embedded URLs by default. See Saved pages.' },
+              { term: '--url URL', about: 'With --from-saved and one .html file: The URL to serve it at.' },
+              { term: '--offline', about: 'With --from-saved: Block network requests from the saved pages.' },
             ],
           },
           {
@@ -229,14 +232,20 @@ export const HELP_SECTIONS: HelpSection[] = [
         about: 'Open a URL in the current tab.',
         args: [
           { term: '<url>', about: 'A URL.' },
+          { term: '<file>', about: 'A file, or a glob matching one.' },
           { term: '<script ID>', about: 'A script\'s default page.' },
           { term: '(default)', about: 'The selected script\'s default page.' },
         ],
         gap: true,
       },
       {
-        usage: 'newtab [url|script|all]',
-        about: ['Open a new tab, select it and focus it.', 'With a script ID: one tab with that script\'s default URL.', 'With all: one tab for each script\'s default URL.'],
+        usage: 'newtab [page...|all]',
+        about: [
+          'Open a new tab for each page (a URL, file, glob or script ID), or a blank tab.',
+          'The first new tab is selected and focused.',
+          'With a script ID: that script\'s default URL.',
+          'With all: one tab for each script\'s default URL.',
+        ],
         gap: true,
       },
       { usage: 'reload [T<n>|all]', about: 'Reload this tab, another tab, or all tabs.', gap: true },
@@ -246,6 +255,20 @@ export const HELP_SECTIONS: HelpSection[] = [
     options: [
       { term: '--noscript', about: 'Run no scripts in the tab. (Sticky)', commands: TAB_LOADS },
       { term: '--script', about: 'Run the scripts in the tab again. (Undo --noscript.)', commands: TAB_LOADS },
+      { term: '--from-saved', about: 'Serve .html files as saved page snapshots, at their embedded URLs by default.', commands: ['newtab', 'open'] },
+      { term: '--url URL', about: 'With --from-saved and one .html file: The URL to serve it at.', commands: ['newtab', 'open'] },
+      { term: '--offline', about: 'With --from-saved: Block network requests from the saved pages.', commands: ['newtab', 'open'] },
+    ],
+    subsections: [
+      {
+        title: 'Saved pages',
+        text: [
+          'With --from-saved, pages contents are served from saved html snapshot files. Chrome shows the page running at its original URL, so the page and its scripts work as on the live site. --offline blocks network requests to other live pages.',
+          '',
+          'Page URLs are taken from the header comment in the HTML file if present. Otherwise, pass the URL with --url.',
+          'The tab keeps serving that URL from the file, rereading it on reloads.',
+        ],
+      },
     ],
   },
   {
@@ -544,7 +567,8 @@ function itemLines(term: string, about: string | string[], indent: number): stri
   const pad = ' '.repeat(ABOUT_COLUMN);
   const about_ = aboutLines(about, WIDTH - ABOUT_COLUMN).map((line) => pad + line);
   const lead = ' '.repeat(indent) + term;
-  if (lead.length + 1 > ABOUT_COLUMN) return [lead, ...about_];
+  // At least two spaces before the text, or it reads as part of the term.
+  if (lead.length + 2 > ABOUT_COLUMN) return [lead, ...about_];
   return [lead.padEnd(ABOUT_COLUMN) + (about_[0]?.trimStart() ?? ''), ...about_.slice(1)];
 }
 

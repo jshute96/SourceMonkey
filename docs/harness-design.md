@@ -400,7 +400,36 @@ into pages.
       selectors in the page's own frame. Elements in a shadow root get
       none, since a `>` path can't cross into one.
 - **`save-html.ts`**: a page's DOM as a standalone file, for the
-  `savehtml` command and the fixture's `saveHtml`.
+  `savehtml` command and the fixture's `saveHtml`, with a header of
+  where it came from, and the reader for that header.
+  - The URL goes in the "saved from" comment of Internet Explorer's
+    Mark of the Web, which Chrome's Save Page As still writes, so
+    either kind of file reads the same.
+- **`saved-pages.ts`**: serving a saved file back at its URL, for
+  `--from-saved` and the fixture's `serveHtml`.
+  - `pagesToOpen` sorts a command's pages for `start`, `open` and
+    `newtab` alike: with `--from-saved`, the local `.html` files become
+    saved pages and the rest stay URLs, and every file is checked
+    before any tab opens.
+  - Served with a `page.route` on the real URL, not as a `file://`
+    page, so matching, origin, cookies and relative URLs are the
+    site's. The same holds under `--extension`, whose own injection
+    only sees the URL.
+  - A `<name>_files` folder beside the file (a browser's "Webpage,
+    Complete" save) is served from disk: the page links it relatively,
+    so requests under that path on the page's URL map into the folder,
+    and never outside it.
+  - The service-worker bypass also lasts for the tab's life, so live
+    pages loaded in that tab later skip their service workers too.
+  - A site's service worker would answer before the route, so the
+    page's network domain is told to bypass it (best effort).
+  - The route is added once per tab and reads the tab's `saved` per
+    request, so replacing it needs no new route, and each load reads
+    the file fresh.
+  - It stays for the tab's life. While a tab has any route, Playwright
+    intercepts all its requests and Chromium skips its HTTP cache, so
+    live pages in that tab load a little differently. Accepted, since
+    the guide already sends the live page to another tab.
 - **`cli.ts`** (`sm-dev`) and **`run.ts`**: the interactive tool,
   built on the same modules and Playwright's `connectOverCDP` (or a
   launched Chromium with `--temp-browser`). Commands are listed in the guide.
@@ -715,12 +744,12 @@ into pages.
     a run, so both print the same lines. In a run they read its loaded
     scripts and tabs (console-commands.ts).
   - File arguments go through `expandPathArg` (checks.ts), for `start`,
-    `match`, `validate` and `load`:
+    `match`, `validate`, `load`, `open` and `newtab`:
     - Globs are expanded by path-args.ts rather than the shell, since
       stdin and prompt lines never see a shell.
     - Only words with `*` and no scheme are globs; `?` and `[` stay
-      literal, since URLs use them. A relative word whose first part
-      isn't a directory here reads as a host (`localhost/*`).
+      literal, since URLs use them. A host-like word is a glob too
+      (`localhost/*`). A URL containing `*` must include its scheme.
     - Directory symlinks aren't followed by `**` or a directory
       search, so a link up the tree can't loop.
     - A directory stands for its scripts. Expanding to nothing is a

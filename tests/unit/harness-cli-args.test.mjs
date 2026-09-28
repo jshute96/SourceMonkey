@@ -71,11 +71,15 @@ test('match takes several scripts and URLs in any order, a heading per script', 
   assert.match(none.stderr, /^ERROR: The match command needs a script \(a \.user\.js file\) and at least one URL, or a run to take them from$/m);
 });
 
-test('match expands a glob in the examples directory into its script and pages; a host with * stays a URL', () => {
+test('match expands a glob in the examples directory into its script and pages; * in a URL needs its scheme', () => {
   const cwd = fileURLToPath(new URL('../examples/', import.meta.url));
-  const r = spawnSync(process.execPath, [CLI, 'match', 'gm-menu/*', 'localhost/*'], { encoding: 'utf8', cwd });
+  const r = spawnSync(process.execPath, [CLI, 'match', 'gm-menu/*', 'http://localhost/*'], { encoding: 'utf8', cwd });
   assert.match(r.stdout, /^match {4}file:\/\/.*\/gm-menu\/gm-menu\.html$/m);
   assert.match(r.stdout, /^no match http:\/\/localhost\/\*$/m);
+  // Without a scheme, a word with * is a glob, even one that looks like a host.
+  const bare = spawnSync(process.execPath, [CLI, 'match', 'gm-menu/*', 'localhost/*'], { encoding: 'utf8', cwd });
+  assert.equal(bare.status, 2);
+  assert.match(bare.stdout + bare.stderr, /No files match localhost\/\*/);
 });
 
 test('match gives a script that can never match its per-URL answer, and a broken one only its status', () => {
@@ -92,7 +96,8 @@ test('match gives a script that can never match its per-URL answer, and a broken
       `no match ${page}`,
       '    No @match or @include covers this URL',
       '',
-      path.relative(process.cwd(), broken),
+      // Outside this directory: as it was given, never with ../.
+      broken,
       'INVALID script',
       '',
     ].join('\n'));
@@ -166,6 +171,40 @@ test('--notab refuses the flags that need a tab', () => {
   assert.deepEqual(run(SCRIPT, 'x.com', '--all'), { code: 2, out: 'ERROR: The --all flag opens each script\'s own page, so it can\'t be used with a URL' });
   assert.deepEqual(run(SCRIPT, '--notab', 'x.com'), { code: 2, out: 'ERROR: The --notab flag can\'t be used with a URL' });
   assert.deepEqual(run(SCRIPT, '--notab', '--all'), { code: 2, out: 'ERROR: The --notab flag can\'t be used with --all' });
+});
+
+test('--from-saved needs .html files it can read that name their URLs, and --url only for one', () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'sm-dev-saved-'));
+  try {
+    const bare = path.join(dir, 'bare.html');
+    writeFileSync(bare, '<html><body></body></html>');
+    const saved = path.join(dir, 'saved.html');
+    writeFileSync(saved, '<!-- saved from url=(0020)https://example.com -->\n<html></html>');
+    const none = path.join(dir, 'none.html');
+    assert.deepEqual(run(SCRIPT, none, '--from-saved'), { code: 2, out: `ERROR: No such file or directory: ${none}` });
+    assert.deepEqual(run(SCRIPT, bare, '--from-saved'), { code: 2, out: `ERROR: ${bare} does not say what URL it was saved from. Open it by itself, with --url.` });
+    const blank = path.join(dir, 'blank.html');
+    writeFileSync(blank, '<!-- saved from url=(0011)about:blank -->\n<html></html>');
+    assert.deepEqual(run(SCRIPT, blank, '--from-saved'), {
+      code: 2, out: `ERROR: ${blank} can only be served at an http or https URL, not about:blank. Open it by itself, with --url.`,
+    });
+    assert.deepEqual(run(SCRIPT, '--from-saved', '--notab'), { code: 2, out: 'ERROR: The --from-saved flag can\'t be used with --notab' });
+    assert.deepEqual(run(SCRIPT, 'example.com', '--from-saved'), { code: 2, out: 'ERROR: The --from-saved flag opens .html files, and none was given' });
+    assert.deepEqual(run(SCRIPT, saved, bare, '--from-saved', '--url', 'https://x.test/'), {
+      code: 2, out: 'ERROR: The --url flag gives the URL for one saved page, so it goes with --from-saved and a single .html file',
+    });
+    assert.deepEqual(run(SCRIPT, '--url', 'https://x.test/'), {
+      code: 2, out: 'ERROR: The --url flag gives the URL for one saved page, so it goes with --from-saved and a single .html file',
+    });
+    assert.deepEqual(run(SCRIPT, '--offline'), { code: 2, out: 'ERROR: The --offline flag goes with --from-saved' });
+    assert.deepEqual(run(SCRIPT, saved, '--from-saved', '--url', 'https://x.test/', '--url', 'https://y.test/'), { code: 2, out: 'ERROR: The --url flag can be given once' });
+    // A mistyped name is no file, rather than a host to open live.
+    assert.deepEqual(run(SCRIPT, saved, 'pgae.html', '--from-saved'), { code: 2, out: 'ERROR: No such file or directory: pgae.html' });
+    // A glob with no scheme is files only, and must match one.
+    assert.deepEqual(run(SCRIPT, path.join(dir, 'nothing*.html'), '--from-saved'), { code: 2, out: `ERROR: No files match ${path.join(dir, 'nothing*.html')}` });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // An empty runs directory of its own, so runs active on this machine
@@ -406,8 +445,9 @@ test('--help anywhere on a line shows each command\'s help once, and runs nothin
 test('each run command takes the flags its help lists, and no others', async () => {
   const { commandFlags } = await import('../../lib/harness/command-list.js');
   const loads = ['--noscript', '--script', '--nowait'];
+  const saved = [...loads, '--from-saved', '--url', '--offline'];
   const expected = {
-    newtab: loads, open: loads, reload: loads,
+    newtab: saved, open: saved, reload: loads,
     click: ['--nowait'], hover: ['--nowait'], type: ['--nowait'], key: ['--nowait'],
     eval: ['--script'], snapshot: ['--visible', '--out'], screenshot: ['--full'], probe: ['--css', '--html'],
     wait: ['--timeout-seconds'], status: [], values: [], menu: [], tabs: [], focus: [],

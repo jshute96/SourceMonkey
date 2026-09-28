@@ -19,6 +19,7 @@ import type { ControlledTab } from './console-commands.js';
 import { ScriptThrew } from './inject.js';
 import { notSettledMessage, SETTLE_TIMEOUT_MS, settleTab } from './wait.js';
 import { savePageHtml } from './save-html.js';
+import { shownPath } from './prepare.js';
 import { documentOf, framesAround, locate, named, noteRefs, onScreen, probeMatches, refOf, refProblem, tidy } from './snapshot.js';
 
 export const PAGE_COMMANDS = new Set(['click', 'hover', 'type', 'key', 'eval', 'snapshot', 'screenshot', 'savehtml', 'probe', 'logs']);
@@ -145,20 +146,21 @@ function takeFlags(
 }
 
 /** Flags that take a value, so the word after one isn't taken for a tab. */
-export const VALUE_FLAGS = new Set(['--out', '--timeout-seconds']);
+export const VALUE_FLAGS = new Set(['--out', '--timeout-seconds', '--url']);
 
 /**
  * A page command's arguments, after the tab if one was named: its
  * words, and the rest of the line as typed. Typed, the words come from
  * splitting the line (so quotes group words); sent from another shell,
  * they are the sender's own, and the line is them joined by spaces.
- * `scriptsRunning`: whether any script runs in the tab's page now.
+ * `userscripts`: the ones running in the tab's page now, as a saved
+ * file's header names them (`userscriptLabel`).
  */
 export interface PageInput {
   words: string[];
   raw: string;
   typed: boolean;
-  scriptsRunning: boolean;
+  userscripts: string[];
   /** `--nowait`: an action doesn't wait for the page to settle after. */
   noWait?: boolean;
 }
@@ -182,10 +184,7 @@ export async function runPageCommand(
   const { page } = tab;
   // A file it names, from `cwd`, and as said back.
   const file = (name: string): string => path.resolve(cwd, name);
-  const shown = (name: string): string => {
-    const rel = path.relative(cwd, file(name));
-    return rel && !rel.startsWith('..') ? rel : file(name);
-  };
+  const shown = (name: string): string => shownPath(file(name), cwd);
   // `work`, or false as soon as a dialog opens during it. A dialog stops
   // the page, so `work` would wait on it for good. The tracker says
   // what opened; the command just stops waiting.
@@ -388,9 +387,9 @@ export async function runPageCommand(
           return;
         }
         let html = '';
-        await write(words[0], async () => { html = await savePageHtml(page, file(words[0])); });
+        await write(words[0], async () => { html = await savePageHtml(page, file(words[0]), input.userscripts); });
         say(`Wrote ${shown(words[0])} (${html.length} chars) from ${page.url()}`);
-        if (input.scriptsRunning) say('It has the scripts\' changes in it. For a spec to replay, save it from a tab without scripts (newtab --noscript).');
+        if (input.userscripts.length > 0) say('It has the scripts\' changes in it, and its header lists them. For a copy without them, save it from a tab without scripts (newtab --noscript).');
         return;
       }
       case 'probe': {

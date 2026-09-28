@@ -28,7 +28,7 @@ export interface RunRecord {
   owned?: boolean;
   /** A browser without a window. */
   headless?: boolean;
-  /** The loaded scripts' paths, as the run names them. */
+  /** The loaded scripts' full paths. `list` shows their file names. */
   scripts: string[];
   /** How many tabs it controls, where it keeps count. */
   tabs?: number;

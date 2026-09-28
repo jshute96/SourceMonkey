@@ -34,6 +34,7 @@ import { devtoolsWanted } from './devtools.js';
 // Node built-ins only, so as cheap to load as the rest here.
 import { runIdOf, type CommandSource, type RunClient, type RunRecord } from './runs.js';
 import { withDefaultScheme } from './prepare.js';
+import { ONE_URL, pagesToOpen, type PageWord, type SavedPageStart } from './saved-pages.js';
 import {
   REMOTE_SCRIPT, SCRIPT_ARG, UsageError, expandPathArgs, matchLines, prepareSource, scriptFile, scriptSources, validateLines, validateSources, validateSummary,
   type ScriptRoots,
@@ -72,6 +73,12 @@ interface Opts {
   newRun: boolean;
   /** `--idle-seconds`. */
   idleSeconds?: number;
+  /** `--from-saved`: the `.html` files among the pages are opened as saved pages. */
+  fromSaved: boolean;
+  /** `--url`: with `fromSaved` and one saved page, the URL to serve it at. */
+  url?: string;
+  /** `--offline`: with `fromSaved`, the saved pages' network requests are blocked. */
+  offline: boolean;
 }
 
 // The longest a Node timer waits: past it, it fires at once instead.
@@ -80,7 +87,7 @@ const MAX_TIMER_SECONDS = Math.floor((2 ** 31 - 1) / 1000);
 function parseArgs(argv: string[]): Opts {
   const opts: Opts = {
     command: null, args: [],
-    all: false, noScript: false, noTab: false, watch: false, extension: false, solo: false, pageErrors: false, detach: false, newRun: false, noWait: false,
+    all: false, noScript: false, noTab: false, watch: false, extension: false, solo: false, pageErrors: false, detach: false, newRun: false, noWait: false, fromSaved: false, offline: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -124,6 +131,12 @@ function parseArgs(argv: string[]): Opts {
       case '--detach': opts.detach = true; break;
       case '--new': opts.newRun = true; break;
       case '--nowait': opts.noWait = true; break;
+      case '--from-saved': opts.fromSaved = true; break;
+      case '--url':
+        if (opts.url !== undefined) throw new UsageError(ONE_URL);
+        opts.url = next();
+        break;
+      case '--offline': opts.offline = true; break;
       case '--idle-seconds': {
         const v = Number(next());
         if (!Number.isFinite(v) || v < 0) throw new UsageError('The --idle-seconds flag needs a number of seconds');
@@ -167,12 +180,19 @@ async function validate(opts: Opts): Promise<number> {
 
 // `start` and `match` arguments: scripts, and the URLs the rest are,
 // after globs are expanded and directories searched for scripts.
-function scriptsAndUrls(words: string[]): { scripts: string[]; urls: string[] } {
+// `pages`: the rest as typed, beside their URLs.
+function scriptsAndUrls(words: string[]): { scripts: string[]; urls: string[]; pages: PageWord[] } {
   const args = expandPathArgs(words, process.cwd(), { scripts: true });
+  // Each once, so a repeat is neither checked nor opened twice.
+  const pages = new Map<string, PageWord>();
+  for (const word of args.filter((a) => !SCRIPT_ARG.test(a))) {
+    const url = withDefaultScheme(word);
+    if (!pages.has(url)) pages.set(url, { word, url });
+  }
   return {
-    // Each once, so a repeat is neither checked nor opened twice.
     scripts: [...new Set(args.filter((a) => SCRIPT_ARG.test(a)))],
-    urls: [...new Set(args.filter((a) => !SCRIPT_ARG.test(a)).map((a) => withDefaultScheme(a)))],
+    urls: [...pages.keys()],
+    pages: [...pages.values()],
   };
 }
 
@@ -208,9 +228,9 @@ async function match(opts: Opts): Promise<number> {
  * `--new`. `words` are the command's own, for that process.
  */
 async function startCommand(opts: Opts, words: string[], client: Client): Promise<number> {
-  const { urls, files, devtools } = await checkStart(opts);
+  const { urls, files, scripts, devtools, saved } = await checkStart(opts);
   // The background process: the run itself.
-  if (detachedLog) return runHere(opts, files, urls, devtools, client.runId);
+  if (detachedLog) return runHere(opts, { files, given: scripts, urls, saved }, devtools, client.runId);
   const { liveRuns, stopRun } = await import('./runs.js');
   const live = await liveRuns();
   // Stopped first, which also frees a tab for this one to reuse. The
@@ -241,8 +261,8 @@ async function startCommand(opts: Opts, words: string[], client: Client): Promis
 // `start`'s arguments and flags, checked: its URLs, and its script
 // files, which must exist. Also done before a line of several commands
 // runs any.
-async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]; devtools: boolean }> {
-  const { scripts, urls } = scriptsAndUrls(opts.args);
+async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]; scripts: string[]; devtools: boolean; saved: (SavedPageStart | null)[] }> {
+  const { scripts, urls, pages } = scriptsAndUrls(opts.args);
   if (opts.noScript && scripts.length > 0) throw new UsageError('The --noscript flag runs no scripts, so the start command takes none with it');
   if (!opts.noScript && scripts.length === 0) throw new UsageError('The start command needs at least one script (a .user.js file), or --noscript');
   if (opts.all && urls.length > 0) throw new UsageError('The --all flag opens each script\'s own page, so it can\'t be used with a URL');
@@ -268,12 +288,22 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
   if (!opts.detach && !detachedLog && opts.newRun) throw new UsageError('The --new flag only applies with --detach');
   const devtools = devtoolsWanted(opts.devtools) && !lineTempBrowser && !opts.extension;
   const files = await Promise.all(scripts.map((s) => scriptFile(s)));
-  return { urls, files, devtools };
+  if (opts.fromSaved) clash('--from-saved', [[opts.all, '--all'], [opts.noTab, '--notab']]);
+  // Read before the run starts, so a file that can't be opened is said now.
+  const opened = await pagesToOpen(pages, opts);
+  return { urls: opened.map((p) => p.url), files, scripts, devtools, saved: opened.map((p) => p.saved ?? null) };
 }
 
 // The run, in the background process `start` began: until a client
-// sends `stop`, a signal, `--seconds`, or its idle timeout.
-async function runHere(opts: Opts, files: string[], urls: string[], devtools: boolean, runId: string | undefined): Promise<number> {
+// sends `stop`, a signal, `--seconds`, or its idle timeout. Given the
+// scripts' files (and each as typed), and the pages to open with the
+// saved page each serves, if any.
+async function runHere(
+  opts: Opts,
+  { files, given, urls, saved }: { files: string[]; given: string[]; urls: string[]; saved: (SavedPageStart | null)[] },
+  devtools: boolean,
+  runId: string | undefined,
+): Promise<number> {
   // The run has no input: commands come from its clients.
   process.stdin.destroy();
   const { run } = await import('./run.js');
@@ -326,7 +356,9 @@ async function runHere(opts: Opts, files: string[], urls: string[], devtools: bo
   try {
     return await run({
       files,
+      given,
       urls,
+      saved,
       all: opts.all,
       noTab: opts.noTab,
       cdp: opts.cdp ?? lineCdp,

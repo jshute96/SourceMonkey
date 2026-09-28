@@ -332,8 +332,8 @@ export function noSuchFileMessage(input: string): string {
 }
 
 /** A script path that names a directory, for `start` and the typed `load`. */
-export function isDirectoryMessage(input: string): string {
-  return `${input} is a directory. Name a .user.js file.`;
+export function isDirectoryMessage(input: string, remedy = 'Name a .user.js file.'): string {
+  return `${input} is a directory. ${remedy}`;
 }
 
 /** Why a script has no default page, as `--all` and `newtab all` report it. */
@@ -350,32 +350,53 @@ export function defaultPageUrl(script: PreparedScript): string | null {
 
 /**
  * A typed URL with `http://` added when it has no scheme, so
- * `example.com/x` works. A path becomes a `file://` URL instead: one
- * starting `/`, `./` or `../`, one naming a file that exists in `cwd`,
- * or one starting with a directory there (`pages/x.html`). `host:port`
- * would otherwise read as a scheme, so only a scheme followed by `//`,
- * or one of the kinds that never have it, counts.
+ * `example.com/x` works. Only a word that starts with a host reads so:
+ * one with a dot, `localhost`, a port (`localhost:8080/x`) or an IPv6
+ * address (`[::1]/x`). Any other is a path, made a `file://` URL: one
+ * starting `/` or `.`, one naming a file that exists in `cwd`, or one
+ * whose first part has no dot (`pages/x.html`), existing or not. `host:port` would
+ * otherwise read as a scheme, so only a scheme followed by `//`, or one
+ * of the kinds that never have it, counts.
  */
 export function withDefaultScheme(url: string, cwd = process.cwd()): string {
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) return url;
   if (/^(about|blob|data|file|javascript|mailto|view-source):/i.test(url)) return url;
-  if (/^\.{0,2}\//.test(url) || isLocalPath(url, cwd)) return pathToFileURL(path.resolve(cwd, url)).toString();
+  if (/^[./]/.test(url) || isLocalPath(url, cwd)) return pathToFileURL(path.resolve(cwd, url)).toString();
   return `http://${url}`;
 }
 
-// A scheme-less word that is a file in `cwd`, or starts with a
-// directory there. Not a first part with a dot, which reads as a host
-// even when a repo has a folder by that name (`example.com/`).
+// A scheme-less word that is a file in `cwd`, or doesn't start with a
+// host. A web address's host has a dot, except `localhost`; and a
+// directory is rarely named with one, so a first part with a dot reads
+// as a host even when a repo has a folder by that name (`example.com/`).
 function isLocalPath(input: string, cwd: string): boolean {
-  const is = (p: string, kind: 'isFile' | 'isDirectory'): boolean => {
-    try {
-      return statSync(path.resolve(cwd, p))[kind]();
-    } catch {
-      return false;
-    }
-  };
+  try {
+    if (statSync(path.resolve(cwd, input)).isFile()) return true;
+  } catch {
+    // Not a file here; the first part decides.
+  }
   const first = input.split('/')[0];
-  return is(input, 'isFile') || (first !== '' && !first.includes('.') && is(first, 'isDirectory'));
+  return !(first.includes('.') || /^localhost$/i.test(first) || /:\d+$/.test(first) || first.startsWith('['));
+}
+
+/**
+ * A path to show: relative to `cwd` when it's inside it, else
+ * `outside` (by default the full path). Never one climbing out with
+ * `../`, which is harder to read than either.
+ */
+export function shownPath(file: string, cwd = process.cwd(), outside = file): string {
+  const relative = path.relative(cwd, file);
+  const inside = relative !== '' && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  return inside ? relative : outside;
+}
+
+/**
+ * Where a loaded script is, to show beside its name (`shownPath`).
+ * Its `relativePath` stays what identifies it, as in the extension.
+ */
+export function preparedScriptPath(script: PreparedScript): string {
+  const url = script.script.fileUrl;
+  return url.startsWith('file:') ? shownPath(fileURLToPath(url)) : script.script.relativePath;
 }
 
 /** The script's `@name`, else the path it was loaded from. */

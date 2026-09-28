@@ -10,7 +10,7 @@ import path from 'node:path';
 import { isMarkupContentType, looksLikeMarkup, markupResponseMessage } from '../markup-response.js';
 import { unusableMatchGroupKey } from '../url-match.js';
 import { HAS_SCHEME, globFiles, globMistake, isDirectory, isGlob, walkScripts } from './path-args.js';
-import { NO_RULE_COVERS_URL, explainMatch, isDirectoryMessage, noSuchFileMessage, prepareScript, type PreparedScript } from './prepare.js';
+import { NO_RULE_COVERS_URL, explainMatch, isDirectoryMessage, noSuchFileMessage, prepareScript, shownPath, type PreparedScript } from './prepare.js';
 
 // A mistake in how the command was typed, as opposed to a failure while
 // carrying it out: the one kind that exits 2.
@@ -34,11 +34,6 @@ export const REMOTE_SCRIPT = /^https?:\/\//i;
 // `label` is how the output names it.
 export type ScriptSource = { label: string; file: string } | { label: string; url: string; text: string };
 
-/** A path as the output shows it: relative to `cwd` when under it. */
-export function rel(file: string, cwd = process.cwd()): string {
-  return path.relative(cwd, file) || file;
-}
-
 /**
  * `validate`'s arguments as scripts, in the order given: a web address
  * is fetched, a glob expanded, a directory searched for `*.user.js`
@@ -54,7 +49,9 @@ export async function validateSources(inputs: string[], cwd = process.cwd()): Pr
     for (const found of expandPathArg(input, cwd, { scripts: true })) {
       await statInput(found, cwd);
       const file = path.resolve(cwd, found);
-      sources.push({ label: rel(file, cwd), file });
+      // Outside `cwd`, as the word gave it: a directory's files under
+      // the directory as typed.
+      sources.push({ label: shownPath(file, cwd, found), file });
     }
   }
   return sources;
@@ -81,7 +78,7 @@ function statInput(input: string, cwd: string): ReturnType<typeof stat> {
 export function expandPathArg(word: string, cwd = process.cwd(), opts: { scripts?: boolean } = {}): string[] {
   // Not the current directory, which an empty word would resolve to.
   if (word === '') return [word];
-  if (isGlob(word, cwd)) {
+  if (isGlob(word)) {
     const mistake = globMistake(word);
     if (mistake) throw new UsageError(mistake);
     const found = globFiles(word, cwd);
@@ -108,7 +105,7 @@ export async function scriptSources(inputs: string[], cwd = process.cwd()): Prom
   return Promise.all(inputs.map(async (input): Promise<ScriptSource> => {
     if (!REMOTE_SCRIPT.test(input)) {
       const file = await scriptFile(input, cwd);
-      return { label: rel(file, cwd), file };
+      return { label: shownPath(file, cwd, input), file };
     }
     // Its final URL, past any redirect, for relative @requires to resolve against.
     const { url, text } = await fetchScript(input);

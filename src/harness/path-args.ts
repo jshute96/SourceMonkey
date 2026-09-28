@@ -18,18 +18,13 @@ export const HAS_SCHEME = /^[a-z][a-z0-9+.-]+:/i;
 const SEPARATORS = path.sep === '\\' ? /[/\\]+/ : /\/+/;
 
 /**
- * Whether a word is a glob: a path with a `*` in it. Not a URL, with a
- * scheme or without: a relative word whose first part has no `*` and
- * isn't a directory here (`example.com/*`, `localhost/*`) reads as a
- * host. Unlike withDefaultScheme, a directory here wins over a dot.
+ * Whether a word is a glob: one with a `*` and no `scheme:` in front.
+ * A URL to open always has a scheme or a host with a dot, and no web
+ * page is at a `*`, so `example.com/*` is a glob too (and an error if
+ * it matches no file).
  */
-export function isGlob(word: string, cwd = process.cwd()): boolean {
-  if (!word.includes('*') || HAS_SCHEME.test(word)) return false;
-  if (path.isAbsolute(word)) return true;
-  const parts = word.split(SEPARATORS);
-  const first = parts[0];
-  if (parts.length === 1 || first.includes('*') || first === '.' || first === '..') return true;
-  return isDirectory(path.resolve(cwd, first));
+export function isGlob(word: string): boolean {
+  return word.includes('*') && !HAS_SCHEME.test(word);
 }
 
 export function isDirectory(file: string): boolean {

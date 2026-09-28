@@ -13,9 +13,9 @@
 // See docs/harness-guide.md for the user-facing description.
 
 import { test as base } from '@playwright/test';
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { savePageHtml } from './save-html.js';
+import { savePageHtml, userscriptLabel } from './save-html.js';
+import { companionFiles, loadSavedPage, routeSavedPage, savedPageUrl } from './saved-pages.js';
 
 import {
   HarnessHost,
@@ -103,12 +103,14 @@ export interface HarnessFixtures {
   reports: ReportsApi;
   /**
    * Serve a saved HTML file at `url` on this page, so `@match` and
-   * relative URLs behave as on the live site. The URL is matched
-   * exactly, query string included, fragment ignored. Other requests
-   * fall through to the page's other routes and then the network,
-   * unless `block` is set, which aborts them.
+   * relative URLs behave as on the live site. Without `url`, the one
+   * the file's header records (`saveHtml` writes it). The URL is
+   * matched exactly, query string included, fragment ignored. Other
+   * requests fall through to the page's other routes and then the
+   * network, unless `block` is set, which aborts them. Resolves to the
+   * URL served, for the spec to go to.
    */
-  serveHtml: (file: string, url: string, options?: { block?: boolean }) => Promise<void>;
+  serveHtml: (file: string, url?: string, options?: { block?: boolean }) => Promise<string>;
   /**
    * Write the page's current DOM to `file`, for `serveHtml` to
    * replay later. The same file the `savehtml` run command writes: run a spec
@@ -239,44 +241,29 @@ export const test = base.extend<HarnessFixtures>({
     });
   },
 
-  saveHtml: async ({ page }, use) => {
-    await use(async (file) => { await savePageHtml(page, file); });
+  saveHtml: async ({ page, attachment, host }, use) => {
+    await use(async (file) => {
+      const running = attachment.injectedScripts().filter((s) => s.spec && host.isRunning(attachment, s.spec.id));
+      await savePageHtml(page, file, running.map(userscriptLabel));
+    });
   },
 
   serveHtml: async ({ page }, use) => {
     await use(async (file, url, options = {}) => {
-      const html = await readFile(file, 'utf8');
-      const wanted = comparableUrl(url);
-      await page.route('**/*', async (route) => {
-        if (comparableUrl(route.request().url()) === wanted) {
-          await route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html });
-          return;
-        }
-        if (options.block) {
-          await route.abort();
-          return;
-        }
-        // `fallback`, not `continue`: Playwright runs route handlers
-        // newest first, and only `fallback` hands a request to the next
-        // one. That lets a second snapshot, or a HAR, sit beside this
-        // route.
-        await route.fallback();
-      });
+      const { html, header } = await loadSavedPage(file);
+      const found = savedPageUrl(file, header, url, 'Pass one to serveHtml.');
+      if ('problem' in found) throw new Error(found.problem);
+      const at = found.url;
+      await routeSavedPage(page, () => ({
+        url: at,
+        html: async () => html,
+        block: options.block ? () => true : undefined,
+        name: file,
+        companion: companionFiles(file, at),
+      }));
+      return at;
     });
   },
 });
-
-// The browser reports `https://example.test` as `https://example.test/`
-// and never reports a fragment, so both sides are normalized the same
-// way before comparing.
-function comparableUrl(raw: string): string {
-  try {
-    const u = new URL(raw);
-    u.hash = '';
-    return u.href;
-  } catch {
-    return raw;
-  }
-}
 
 export { expect } from '@playwright/test';

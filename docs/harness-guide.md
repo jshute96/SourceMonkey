@@ -142,17 +142,25 @@ it started. Add --interactive for a prompt, --detach to leave it running,
     `**.user.js` and `src/**` are errors.
   - A glob's matches are then taken as scripts or URLs as above, so
     `pages/**/*.html` gives `start` and `match` pages.
-  - A word whose first part isn't a directory here (`example.com/*`,
-    `localhost/*`) is a URL, not a glob.
+  - A word with a `*` and no scheme is always a glob, even one that
+    looks like a host (`example.com/*`). A URL with a `*` needs its
+    `http://`.
   - In `start`, a glob's non-script matches each open a tab.
+  - `open` and `newtab` expand globs too: `newtab` opens a tab per
+    match, and `open` takes a glob that matches one file.
   - Symbolic links to directories are only followed where named, not
     while searching.
   - A glob that matches nothing, or a directory with no scripts, is an
     error.
-- A URL with no scheme gets `http://`, unless it's a local path: it
-  starts with `/`, `./` or `../`, names a file that exists, or starts
-  with a directory that does (and has no `.` in its name, so
-  `example.com/x` stays a host). A path becomes a `file://` URL.
+- A URL with no scheme gets `http://` only when it starts with a host:
+  one with a `.` (`example.com/x`), `localhost`, a port
+  (`localhost:3000/x`), or an IPv6 address (`[::1]/x`).
+  - Any other word is a local path, made a `file://` URL: one starting
+    with `/` or `.`, one naming a file that exists, or one whose first
+    part has no `.` (`pages/x.html`), existing or not.
+  - With `--from-saved`, a word ending `.html` or `.htm` is a file even
+    where it would read as a host, so a mistyped name is reported as
+    missing rather than opened live. Give such a URL its `http://`.
 - `validate` and `match` also take a script by its `http(s)` URL, and
   fetch it. `start` needs a file.
 
@@ -248,6 +256,10 @@ Other `start` flags:
   URLs given, as a browser to drive with the typed commands. The flags
   that act on scripts (`--all`, `--values`, `--watch`)
   and `--extension` can't be combined with it.
+- `--from-saved` opens each `.html` file given as a saved page, at
+  the URL it was saved from, with `--url` and `--offline` as for
+  `newtab`. See [Saved pages](#saved-pages). Not with `--all` or
+  `--notab`.
 - `--notab` opens no tab at startup. `newtab` opens one later, and
   the first it opens is T1. That tab isn't one a later run takes over
   (see [Which tab `start` uses](#which-tab-start-uses)). With
@@ -370,7 +382,7 @@ typed at the `--interactive` prompt, or from another shell.
 | `script <script>` | Picks the script `get` and `set` act on (the first, until changed). `scripts <script>` works too |
 | `load <script>...` | Loads more scripts from disk (files, directories, globs), and reloads the tabs they match. Quote a path with spaces. |
 | `update [script]` | Re-reads one script from disk, or all (with no argument, or `all`), as `--watch` does on a save. Only a script whose file or local `@require`s were modified since it was read counts, so touching a file forces it. Reloads, all at once, the tabs where an updated script runs or where its rules now match. Stored values are kept |
-| `status` | Prints the run (and its DevTools address, with `--devtools`), the page's URL, any open dialog, each script's state there (started or skipped, and counts of its menu commands, stored values and errors that are not zero), and, with several tabs open, the tab list |
+| `status` | Prints the run (and its DevTools address, with `--devtools`), the tab list as `tabs` shows it, and each script's state on the current tab (started or skipped, and counts of its menu commands, stored values and errors that are not zero) |
 | `menu` | Lists the registered menu commands, numbered `M1`, `M2`, under the script that registered each |
 | `menu <M-number or label>` | Fires one, as picking it from the toolbar would. Piped in while none is registered yet, it waits a moment for a script that is still loading |
 | `values [what]` | Prints what every script has stored (`all` too), one script's, or those of the scripts running on a tab (`T2`) |
@@ -378,9 +390,9 @@ typed at the `--interactive` prompt, or from another shell.
 | `set <key> <json>` | Stores a value, as another tab's write would: a running script sees it and its change listeners fire |
 | `tabs` | Lists the controlled tabs (see [Several tabs](#several-tabs)) |
 | `tab <tab>` | Picks the tab the page commands act on. `tabs <tab>` works too |
-| `newtab [page]` | Opens a new tab with the scripts, picks it and brings it to the front. `newtab all` opens one per script's default page. `newtab --noscript [page]` opens one the scripts stay out of (see [Driving and reading the page](#driving-and-reading-the-page)) |
+| `newtab [page...\|all]` | Opens a new tab with the scripts for each page, or a blank tab; the first new tab is picked and brought to the front. `newtab all` opens one per script's default page. `--from-saved` opens `.html` files as saved pages (see [Saved pages](#saved-pages)). `newtab --noscript [page]` opens one the scripts stay out of (see [Driving and reading the page](#driving-and-reading-the-page)) |
 | `reload [tab]` | Reloads the page, or another tab's. `reload all` reloads every tab at once. `--noscript` / `--script` switch the tabs' scripts off or back on first |
-| `open [page]` | Navigates to a URL, or to a script's default page: the selected script's when bare, or one by number (`open 2`, or `open T2.3` in T2). `--noscript` / `--script` switch the tab's scripts off or back on (see [Driving and reading the page](#driving-and-reading-the-page)) |
+| `open [page]` | Navigates to a URL or file (a glob matching one), or to a script's default page: the selected script's when bare, or one by number (`open 2`, or `open T2.3` in T2). `--noscript` / `--script` switch the tab's scripts off or back on (see [Driving and reading the page](#driving-and-reading-the-page)) |
 | `focus [tab]` | Brings the tab to the front, un-minimizing its window |
 | `accept [text]`, `dismiss` | Answers an open dialog (see [Page dialogs](#page-dialogs)) |
 | `match [what]...`, `validate [what]...` | Check the run's scripts against its tabs, or re-read and check them (see [Checking scripts in a run](#checking-scripts-in-a-run)) |
@@ -445,7 +457,7 @@ current one.
 | `eval --script <js>` | The same in the scripts' world, where a script without `@grant none` keeps its globals |
 | `snapshot [selector] [--visible] [--out file]` | The page (or an element) as its accessibility tree, one line per element, each with a ref. `--visible`: only what's on screen. `--out` writes it to a file |
 | `screenshot [selector] [--full] <file>` | A PNG of what's showing, of the whole page (`--full`), or of one element |
-| `savehtml <file>` | The page's HTML, for a spec to replay with `serveHtml` |
+| `savehtml <file>` | The page's HTML, for `--from-saved` or a spec's `serveHtml` to replay (see [Saved pages](#saved-pages)) |
 | `probe <selector>... [--html] [--css]` | Which selectors match, and how many. For the first 10 matches, `--css` prints a CSS selector for each and `--html` its HTML, paired when both are given |
 | `logs` | Every console line and error the page has had, not only the ones the stream shows |
 
@@ -494,12 +506,63 @@ current one.
   several lines as a block (see below). A promise prints what it
   settles to.
 - Files are named from sm-dev's directory, not the run's.
+- Paths in output are relative to the current directory when inside
+  it, and otherwise in full, never climbing with `../`.
+  - `validate`, `match` and a script that fails to load name it as
+    typed.
+  - `list` shows only file names, to fit its table.
 - `eval --script` reaches what scripts put on `window`, not their local
   variables. A `@grant none` script runs in the page's world, so plain
   `eval` reaches it.
 - A saved page has the scripts' changes in it, and a spec replaying it
   would apply them twice. For one to replay, open the page with
   `newtab --noscript <url>` and save that.
+
+#### Saved pages
+
+`savehtml` saves the page's DOM, and `--from-saved` opens it again as
+if it were the live page, so the scripts can be tried against it with
+no login or live data.
+- Saving:
+  - The page's own JavaScript is kept but disabled, so it can't
+    re-fetch or rebuild what was saved.
+  - A header records the URL, and each userscript running in the tab
+    (`<!-- SourceMonkey: userscript active: Name 1.2.0 -->`).
+  - A page saved with Chrome's Save Page As records its URL the same
+    way, so it opens too.
+  - A "Webpage, Complete" save (Chrome or Firefox) also writes a
+    `<name>_files` folder beside it. Its files are served from disk,
+    even with `--offline`. Unlike a `savehtml` file, such a page keeps
+    its own JavaScript running.
+- Opening: `--from-saved` on `open`, `newtab` or `start` opens each
+  `.html` file given as a saved page, one per tab: `open page.html
+  --from-saved`, `newtab 'saves/*.html' --from-saved`.
+  - The tab loads the recorded URL, and the file answers it.
+  - URLs given beside the files open live, as without the flag.
+  - `--url <url>` serves a single file at another URL, or one that
+    records none. With several files it's an error: open such a file
+    by itself.
+  - `--from-saved` with no `.html` file is an error.
+  - Scripts match the URL as on the live site: nothing is forced to
+    run.
+  - Its network requests (images, styles, fetches) go to the live
+    site. `--offline` blocks them instead.
+  - The file is only known by its URL: a page whose own JavaScript
+    changes it (`history.pushState`) sends its requests live from
+    then on, even with `--offline`.
+  - A file saved with userscripts running gets a warning, since their
+    changes are in it and they will run again.
+- It's sticky, for that URL only:
+  - `reload` serves the file again, re-read from disk, so it can be
+    edited between loads. If it can't be read, the page and the run's
+    output both say why.
+  - Other URLs in the tab load from the live site; coming back serves
+    the file. Tabs it opens don't inherit it.
+  - Another `--from-saved` replaces it. For the live page at the same
+    URL, use another tab.
+- `tabs` and `status` show `(from saved: page.html)` after the URL
+  while it shows, or `(from saved: page.html, offline)` with
+  `--offline`.
 
 #### Tabs without scripts
 
@@ -546,18 +609,20 @@ How the commands treat tabs:
 - Any tab can be closed, T1 included, and the run notes it. With none
   left, `tabs` says `No active tabs`, `status` still lists the scripts
   with their stored values and errors, and `newtab` opens another.
-- `newtab [page]` opens a tab of your own with the scripts, picks it
-  and brings it to the front. Unlike one you open in the browser, it
-  is controlled from the start. It stays open when the run ends.
+- `newtab [page...|all]` opens a tab of your own with the scripts for each
+  page (a URL, file, glob or script number), or a blank tab. The first
+  new tab is picked and brought to the front. Unlike one you open in
+  the browser, it is controlled from the start. It stays open when the
+  run ends.
 - `newtab all` opens one tab per script's default
   page, as `--all` does at startup, and leaves the picked tab as it
   was. Scripts it opened no tab for are listed at the end.
 - `tabs` lists each tab's URL, which tab opened it, any open dialog,
   and the scripts running there, with `*` on the picked tab and, under it,
   on the selected script.
-- `status` covers the picked tab. A script also running on other tabs
-  gets an `Also active on N other tabs` line, and the tab list follows
-  at the bottom.
+- `status` lists the tabs first, then the scripts on the picked tab
+  (`Scripts (on T2):`). A script also running on other tabs gets an
+  `Also active on N other tabs` line.
 - `menu all` shows every tab in turn, each under a `Tab T<n>: <url>`
   heading.
 - `values all` is every script's values, as `values` alone is.
@@ -1014,7 +1079,7 @@ What the fixture provides:
 | `loadUserscript(path, options?)` | Prepares the file with the real pipeline and attaches it to `page` (before the navigation that should see it). A relative path is taken from the Playwright config's root. Options: `values` to seed storage, `url` to check the match now and throw if it misses, `copy` to load the same file again as a second installed copy (its own id and storage), `collectionRoot` and `localRoots` for `@require` lookups (default: the config's root). Throws with the extension's own message if the script is invalid. Call it twice for two scripts on one page. |
 | `gm` | `get(key)`, `set(key, value)` (reaches a running script like another tab's write), `list()`, `menuCommands()`, `fireMenu(label)`, `openedTabs()`, `notifications()`, `clickNotification(requestId)`, `closeNotification(requestId)`, `downloads()`, `requests()`, `failHosts(...hosts)` (a synthetic 503 for those hosts, to force a fallback path), `interceptRequests(fn)` (answer any request from the test). Values and commands are per script; when several are loaded, name one by the path it was loaded from, its basename, or its `@name`. |
 | `reports` | `started()`, `skipped()` (with the rule that missed), `errors()` (message and stack). `await reports.waitForStart()` is the usual gate before interacting; when nothing starts it says which script was skipped where, and why. |
-| `serveHtml(file, url, { block? })` | Routes a saved HTML file at `url` (matched exactly, query string included), so `@match` and relative URLs behave as on the live site. Other requests fall through to the page's other routes and the network, unless `block` is set. Pair with Playwright's `routeFromHAR` for pages that fetch data. |
+| `serveHtml(file, url?, { block? })` | Routes a saved HTML file at `url` (matched exactly, query string included), so `@match` and relative URLs behave as on the live site. Without `url`, the one the file records. Resolves to the URL, to `page.goto`. A `<name>_files` folder beside the file is served too. Other requests fall through to the page's other routes and the network, unless `block` is set. Pair with Playwright's `routeFromHAR` for pages that fetch data. |
 | `saveHtml(file)` | Writes the page's current DOM to `file`, for `serveHtml` to replay later. The same file the `savehtml` run command writes. |
 | `host`, `attachment` | The underlying objects, for anything the two above don't cover. |
 
@@ -1031,7 +1096,7 @@ What `sm-dev` does by hand, a spec does through the fixture:
 | `set <key> <json>` | `gm.set(key, value)` |
 | `reload`, `open <url>` | `page.reload()`, `page.goto(url)` |
 | `savehtml <file>` | `saveHtml(file)` |
-| (a saved page) | `serveHtml(file, url)` |
+| `open <file> --from-saved` | `page.goto(await serveHtml(file))` |
 | `click`, `type`, `key`, `eval`, `screenshot` | Playwright's own `page` and locator methods |
 | `probe <selector>` | `page.locator(selector).count()` |
 | `snapshot` | `locator.ariaSnapshot({ mode: 'ai' })` |

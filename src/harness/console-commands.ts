@@ -23,11 +23,16 @@ import type { HarnessHost, MenuCommandRecord } from './host.js';
 import type { PageAttachment } from './inject.js';
 import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, commandFlags } from './command-list.js';
 import { ACTIONS, PAGE_COMMANDS, runPageCommand, splitWords, VALUE_FLAGS } from './page-commands.js';
-import { defaultPageUrl, NO_DEFAULT_PAGE, preparedScriptMatches, preparedScriptName, withDefaultScheme, type PreparedScript } from './prepare.js';
+import { defaultPageUrl, NO_DEFAULT_PAGE, preparedScriptMatches, preparedScriptName, preparedScriptPath, shownPath, withDefaultScheme, type PreparedScript } from './prepare.js';
 import { currentTab, dialogKind, dialogWaitingMessage, NO_TABS, pickTab, TAB_ARG, tabName } from './tab-refs.js';
 import { formIndex, settleTabs, waitFor } from './wait.js';
+import { userscriptLabel, type SavedPageHeader } from './save-html.js';
 import {
-  SCRIPT_ARG, UsageError, expandPathArg, expandPathArgs, matchLines, prepareSource, rel, scriptSources, validateLines, validateSources, validateSummary,
+  comparableUrl, ONE_URL, openingSavedLine, pagesToOpen, routeSavedPage, savedPageServe,
+  type PageToOpen, type PageWord, type SavedPageFile, type SavedPageStart,
+} from './saved-pages.js';
+import {
+  SCRIPT_ARG, UsageError, expandPathArg, expandPathArgs, matchLines, prepareSource, scriptSources, validateLines, validateSources, validateSummary,
   type ScriptRoots, type ScriptSource,
 } from './checks.js';
 
@@ -43,6 +48,8 @@ export interface ControlledTab {
   link: PageAttachment;
   /** Opened with `newtab --noscript`, or by such a tab: no scripts run in it. */
   noScript?: boolean;
+  /** Serving a saved page, from `--from-saved`. */
+  saved?: SavedPageFile;
   /** The page's JavaScript dialogs, for `accept` and `dismiss`. */
   dialogs?: DialogTracker;
   /** The number of the tab that opened this one. */
@@ -85,7 +92,7 @@ export interface ConsoleContext {
    * Open a new controlled tab, at `url` or blank, for `newtab`.
    * Absent where the caller can't open one.
    */
-  newTab?: (url?: string, options?: { noScript?: boolean }) => Promise<ControlledTab>;
+  newTab?: (url?: string, options?: { noScript?: boolean; saved?: SavedPageStart }) => Promise<ControlledTab>;
   /** Switch a tab to running no scripts, or back, for `open --noscript` / `--script`. */
   setTabScripts?: (tab: ControlledTab, noScript: boolean) => Promise<void>;
   /** Load another script from disk, for `load`. */
@@ -342,8 +349,7 @@ export async function runConsoleCommand(
       return;
     }
     case 'newtab':
-      await openNewTab(ctx, rest, cwd);
-      return;
+      return openNewTab(ctx, args, cwd);
     case 'tabs': {
       if (!argument) {
         printTabs(ctx);
@@ -401,10 +407,10 @@ export async function runConsoleCommand(
         for (const l of statusLines(ctx, undefined)) ctx.out(l);
         return;
       }
-      const several = ctx.tabs().length > 1;
-      ctx.out(`Page${several ? ` (${tabName(tab)})` : ''}: ${tab.page.url()}`);
+      // The tabs first, each with its URL, ids and any dialog; then
+      // the scripts on the current one, which is marked there.
+      printTabs(ctx);
       for (const l of statusLines(ctx, tab)) ctx.out(l);
-      if (several) printTabs(ctx);
       return;
     }
     case 'values': {
@@ -533,18 +539,24 @@ export async function runConsoleCommand(
       return;
     }
     case 'open': {
-      // `--noscript` / `--script` switch the tab's mode, which lasts.
-      const noWait = rest.includes('--nowait');
-      const mode = scriptsFlag(ctx, 'open', rest.filter((w) => w !== '--nowait'));
+      // `--noscript` / `--script` switch the tab's mode, which lasts,
+      // as does `--from-saved`.
+      // Quotes group words (`args`), so a file name can have spaces.
+      const flags = pageFlags(ctx, args);
+      if (!flags) return false;
+      const words = flags.words;
+      const noWait = words.includes('--nowait');
+      const mode = scriptsFlag(ctx, 'open', words.filter((w) => w !== '--nowait'));
       if (mode === null) return;
-      const page = rest.filter((w) => !w.startsWith('--'));
+      // A glob stands for the files it matches, of which it takes one.
+      const page = words.filter((w) => !w.startsWith('--')).flatMap((w) => expandPathArg(w, cwd));
       // Rather than a page at http://all.
       if (page[0] === 'all' && page.length === 1) {
         ctx.out('[sm-dev] ERROR: The open command navigates one tab. To open a tab for each script, use newtab all.');
         return false;
       }
       if (page.length > 1) {
-        ctx.out('[sm-dev] ERROR: The open command takes one URL or script');
+        ctx.out('[sm-dev] ERROR: The open command opens one page, so it takes one URL, file or script. To open several, use newtab.');
         return false;
       }
       const where = page[0] ?? '';
@@ -552,16 +564,22 @@ export async function runConsoleCommand(
       // those shapes, so a host like `t2.example.com` stays a URL.
       const target = TAB_REF.test(where) ? tabRef(ctx, where, tab) : { tab, rest: where };
       if (!target) return;
+      const named = target.rest ? pageFor(ctx, target.rest, cwd) : undefined;
+      if (named === null) return false;
+      const [opening] = await pagesToOpen(named ? [{ word: target.rest, url: named }] : [], flags, cwd);
       // With the mode switched and no page named, the page it's on.
-      const url = target.rest ? pageFor(ctx, target.rest, cwd)
-        : mode !== undefined ? target.tab.page.url()
-          : current ? scriptPage(ctx, current) : null;
+      const url = opening?.url ?? (mode !== undefined ? target.tab.page.url()
+        : current ? scriptPage(ctx, current) : null);
       if (!url) {
         if (!current) ctx.out('[sm-dev] ERROR: The open command needs a URL, since no script is loaded');
         return false;
       }
       if (blockedByDialog([target.tab])) return;
       if (!await switchScripts(ctx, target.tab, mode)) return;
+      if (opening?.saved) {
+        await serveSavedPage(target.tab, opening.saved, ctx.out, target.tab.noScript === true || ctx.scripts.length === 0);
+        ctx.out(openingSavedLine(opening.saved.given, url, tabName(target.tab)));
+      }
       if (await gotoInTab(target.tab, ctx.host, url, ctx.out) && !noWait) await settleTabs(ctx.host, [target.tab], ctx.out);
       return;
     }
@@ -659,7 +677,7 @@ export async function runConsoleCommand(
         words: list.map((w) => w.text),
         raw: typed ? raw : list.map((w) => w.text).join(' '),
         typed,
-        scriptsRunning: runningOn(ctx, target).length > 0,
+        userscripts: runningOn(ctx, target).map(userscriptLabel),
         noWait,
       };
       await runPageCommand(command, input, target, ctx.out, cwd);
@@ -671,8 +689,9 @@ export async function runConsoleCommand(
 // that says something the name doesn't.
 function scriptLabel(script: PreparedScript): string {
   const name = preparedScriptName(script);
-  const file = script.script.relativePath;
-  return name === file ? name : `${name} (${file})`;
+  const file = preparedScriptPath(script);
+  // No `@name`: the name is its file already, so the path alone.
+  return name === script.script.relativePath || name === file ? file : `${name} (${file})`;
 }
 
 // One script's row in any list of them: its number in the `scripts` list,
@@ -847,7 +866,7 @@ async function validateCommand(ctx: ConsoleContext, words: string[], cwd: string
       return 1;
     }
     const file = fileURLToPath(url);
-    reread.push({ label: rel(file, cwd), file });
+    reread.push({ label: shownPath(file, cwd), file });
   }
   // The loaded scripts first, in their order, then the paths.
   sources.unshift(...reread);
@@ -879,6 +898,75 @@ function scriptsFlag(ctx: ConsoleContext, command: string, words: string[]): boo
     return null;
   }
   return flags.includes('--noscript') ? true : flags.includes('--script') ? false : undefined;
+}
+
+// `--from-saved`, `--url URL` and `--offline` taken out of a command's
+// words; null (said why) when `--url` has no value. What they combine
+// with is `pagesToOpen`'s to check.
+function pageFlags(ctx: ConsoleContext, words: string[]): { words: string[]; fromSaved: boolean; url?: string; offline: boolean } | null {
+  const at = words.indexOf('--url');
+  if (at >= 0 && (words[at + 1] === undefined || words[at + 1].startsWith('--'))) {
+    ctx.out('[sm-dev] ERROR: The --url flag needs a URL, e.g. --url https://example.com/page');
+    return null;
+  }
+  if (at >= 0 && words.indexOf('--url', at + 1) >= 0) {
+    ctx.out(`[sm-dev] ERROR: ${ONE_URL}`);
+    return null;
+  }
+  return {
+    words: words.filter((w, i) => w !== '--from-saved' && w !== '--offline' && (at < 0 || (i !== at && i !== at + 1))),
+    fromSaved: words.includes('--from-saved'),
+    url: at >= 0 ? words[at + 1] : undefined,
+    offline: words.includes('--offline'),
+  };
+}
+
+/**
+ * Warns when a saved page was saved with userscripts running: their
+ * changes are in it, so running them again may apply them twice.
+ * Nothing to say for a tab that runs none.
+ */
+export function warnSavedUserscripts(out: (line: string) => void, given: string, header: SavedPageHeader, noScript: boolean): void {
+  if (noScript || header.userscripts.length === 0) return;
+  out(`[sm-dev] ${given} was saved with userscripts running, so their changes are already in it: ${header.userscripts.join(', ')}`);
+}
+
+// The pages already routed for saved pages. The route reads the tab's
+// `saved` on each request, so it is added once per page.
+const routedPages = new WeakSet<Page>();
+
+/**
+ * Makes `tab` serve `saved` from now on: its URL gets the file, read
+ * fresh on each load. It lasts until another saved page replaces it;
+ * loading another URL in the tab goes to the live site meanwhile.
+ */
+/**
+ * Starts serving a saved page in `tab` (`serveSaved`), first warning of
+ * the userscripts whose changes its file has, unless `runsNone`: the
+ * tab runs no scripts, or none are loaded.
+ */
+export async function serveSavedPage(tab: ControlledTab, saved: SavedPageStart, out: (line: string) => void, runsNone: boolean): Promise<void> {
+  const { userscripts, ...file } = saved;
+  warnSavedUserscripts(out, file.given, { url: file.url, userscripts }, runsNone);
+  await serveSaved(tab, file, out);
+}
+
+export async function serveSaved(tab: ControlledTab, saved: SavedPageFile, out: (line: string) => void): Promise<void> {
+  tab.saved = saved;
+  if (routedPages.has(tab.page)) return;
+  routedPages.add(tab.page);
+  await routeSavedPage(tab.page, () => (tab.saved ? savedPageServe(tab.page, tab.saved, out) : undefined));
+}
+
+// Whether the tab shows its saved page now.
+function showingSaved(tab: ControlledTab): boolean {
+  return tab.saved !== undefined && comparableUrl(tab.page.url()) === comparableUrl(tab.saved.url);
+}
+
+// ` (from saved: page.html)` after a tab's URL, while it shows its saved page.
+function savedSuffix(tab: ControlledTab): string {
+  if (!showingSaved(tab)) return '';
+  return ` (from saved: ${tab.saved!.given}${tab.saved!.offline ? ', offline' : ''})`;
 }
 
 // Switches a tab to run no scripts (`noScript` true) or the scripts
@@ -1033,7 +1121,7 @@ function printTabs(ctx: ConsoleContext): void {
   for (const tab of ctx.tabs()) {
     const opener = tab.openedBy ? ` (opened by T${tab.openedBy})` : '';
     const none = tab.noScript ? ' (no scripts)' : '';
-    ctx.out(`${tab === current ? '* ' : '  '}${tabName(tab)}: ${tab.page.url()}${none}${opener}${tabIdsSuffix(tab)}`);
+    ctx.out(`${tab === current ? '* ' : '  '}${tabName(tab)}: ${tab.page.url()}${savedSuffix(tab)}${none}${opener}${tabIdsSuffix(tab)}`);
     const dialog = tab.dialogs?.current;
     if (dialog) ctx.out(`    Waiting on ${dialogKind(dialog)} dialog: ${JSON.stringify(dialog.message())}`);
     const running = runningOn(ctx, tab);
@@ -1046,10 +1134,15 @@ function printTabs(ctx: ConsoleContext): void {
   }
 }
 
-// `newtab [page]`: a tab of the run's own, controlled from the start,
-// which becomes the current one and comes to the front. `newtab all`
-// opens one per script's page instead, and leaves the current tab be.
-async function openNewTab(ctx: ConsoleContext, words: string[], cwd: string): Promise<void> {
+// `newtab [page]...`: a tab of the run's own for each page (a URL, a
+// script's number, a file or a glob of them), controlled from the start.
+// The first becomes the current tab and comes to the front. `newtab all`
+// (one per script's page) leaves the current tab be.
+// False (said why) for a mistake, so a list of commands stops there.
+async function openNewTab(ctx: ConsoleContext, given: string[], cwd: string): Promise<boolean | void> {
+  const flags = pageFlags(ctx, given);
+  if (!flags) return false;
+  const { words } = flags;
   // `--noscript` anywhere: a tab the scripts stay out of.
   // `--script` is what a new tab gets anyway.
   const noWait = words.includes('--nowait');
@@ -1061,68 +1154,76 @@ async function openNewTab(ctx: ConsoleContext, words: string[], cwd: string): Pr
     ctx.out('[sm-dev] This run cannot open tabs');
     return;
   }
-  if (rest.length > 1) {
-    ctx.out('[sm-dev] ERROR: The newtab command takes one URL or script');
-    return;
+  if (rest.includes('all')) {
+    if (rest.length > 1 || flags.fromSaved || flags.url !== undefined || flags.offline) {
+      ctx.out('[sm-dev] ERROR: The newtab command takes all by itself, to open each script\'s page');
+      return false;
+    }
+    return openScriptPages(ctx, noScript, noWait);
   }
-  const open = async (url?: string): Promise<ControlledTab | null> => {
+  const tabRef = rest.find((w) => TAB_REF.test(w));
+  if (tabRef) {
+    ctx.out(`[sm-dev] ERROR: The newtab command opens a tab of its own, so it takes URLs, files or script numbers, not ${tabRef}`);
+    return false;
+  }
+  const named: PageWord[] = [];
+  for (const word of rest.flatMap((w) => expandPathArg(w, cwd))) {
+    const url = pageFor(ctx, word, cwd);
+    if (!url) return false;
+    named.push({ word, url });
+  }
+  const pages = await pagesToOpen(named, flags, cwd);
+  const open = async (page?: PageToOpen): Promise<ControlledTab | null> => {
     try {
-      return await ctx.newTab!(url, { noScript });
+      return await ctx.newTab!(page?.url, { noScript, saved: page?.saved });
     } catch (err) {
       ctx.out(`[sm-dev] The new tab could not be opened: ${(err as Error).message}`);
       return null;
     }
   };
-  if (rest[0] === 'all') {
-    // One tab per distinct page; the scripts with none, or whose tab
-    // failed, are listed at the end, after the tabs' own output.
-    const pages = new Map<string, PreparedScript[]>();
-    const skipped: string[] = [];
-    if (ctx.scripts.length === 0) {
-      ctx.out(`[sm-dev] ${NO_SCRIPTS}`);
-      return;
-    }
-    ctx.scripts.forEach((script, i) => {
-      const url = defaultPageUrl(script);
-      if (!url) skipped[i] = skippedScriptLine(i + 1, script, NO_DEFAULT_PAGE);
-      else pages.set(url, [...(pages.get(url) ?? []), script]);
-    });
-    if (pages.size === 0) {
-      ctx.out('[sm-dev] No tab was opened, since no script\'s @match names a page to open');
-      return;
-    }
-    // All loading at once; tabs are numbered in call order.
-    const opened: ControlledTab[] = [];
-    await Promise.all([...pages].map(async ([url, scripts]) => {
-      try {
-        opened.push(await ctx.newTab!(url, { noScript }));
-      } catch (err) {
-        for (const script of scripts) {
-          const i = ctx.scripts.indexOf(script);
-          skipped[i] = skippedScriptLine(i + 1, script, `The tab could not be opened: ${(err as Error).message}`);
-        }
-      }
-    }));
-    if (!noWait) await settleTabs(ctx.host, opened, ctx.out);
-    for (const line of skipped) if (line) ctx.out(line);
-    return;
-  }
-  if (rest[0] && TAB_REF.test(rest[0])) {
-    ctx.out(`[sm-dev] ERROR: The newtab command opens a tab of its own, so it takes a URL or a script number, not ${rest[0]}`);
-    return;
-  }
-  let url: string | undefined;
-  if (rest[0]) {
-    const page = pageFor(ctx, rest[0], cwd);
-    if (!page) return;
-    url = page;
-  }
-  const tab = await open(url);
+  // All loading at once, numbered in call order as `newtab all`'s are.
+  const opened = (await Promise.all((pages.length > 0 ? pages : [undefined]).map(open))).filter((t) => t !== null);
+  const [tab] = opened;
   if (!tab) return;
   ctx.tab = tab;
   await focusTab(tab.page).catch(() => undefined);
-  if (!noWait) await settleTabs(ctx.host, [tab], ctx.out);
+  if (!noWait) await settleTabs(ctx.host, opened, ctx.out);
   ctx.out(`[sm-dev] The page commands now act on ${tabName(tab)} (${tab.page.url()})`);
+}
+
+// `newtab all`: one tab per distinct script page; the scripts with
+// none, or whose tab failed, are listed at the end, after the tabs'
+// own output.
+async function openScriptPages(ctx: ConsoleContext, noScript: boolean, noWait: boolean): Promise<void> {
+  const pages = new Map<string, PreparedScript[]>();
+  const skipped: string[] = [];
+  if (ctx.scripts.length === 0) {
+    ctx.out(`[sm-dev] ${NO_SCRIPTS}`);
+    return;
+  }
+  ctx.scripts.forEach((script, i) => {
+    const url = defaultPageUrl(script);
+    if (!url) skipped[i] = skippedScriptLine(i + 1, script, NO_DEFAULT_PAGE);
+    else pages.set(url, [...(pages.get(url) ?? []), script]);
+  });
+  if (pages.size === 0) {
+    ctx.out('[sm-dev] No tab was opened, since no script\'s @match names a page to open');
+    return;
+  }
+  // All loading at once; tabs are numbered in call order.
+  const opened: ControlledTab[] = [];
+  await Promise.all([...pages].map(async ([url, scripts]) => {
+    try {
+      opened.push(await ctx.newTab!(url, { noScript }));
+    } catch (err) {
+      for (const script of scripts) {
+        const i = ctx.scripts.indexOf(script);
+        skipped[i] = skippedScriptLine(i + 1, script, `The tab could not be opened: ${(err as Error).message}`);
+      }
+    }
+  }));
+  if (!noWait) await settleTabs(ctx.host, opened, ctx.out);
+  for (const line of skipped) if (line) ctx.out(line);
 }
 
 // What `open` and `newtab` take: a script by its number, meaning its
@@ -1289,9 +1390,7 @@ function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined): strin
   const { scripts } = ctx;
   const { reports } = ctx.host;
   const lines: string[] = [];
-  const dialog = tab?.dialogs?.current;
-  if (dialog) lines.push(`Waiting on ${dialogKind(dialog)} dialog: ${JSON.stringify(dialog.message())}`);
-  lines.push('Scripts:');
+  lines.push(tab ? `Scripts (on ${tabName(tab)}):` : 'Scripts:');
   if (scripts.length === 0) lines.push(`  ${NO_SCRIPTS}`);
   for (const script of scripts) {
     const id = script.spec?.id;

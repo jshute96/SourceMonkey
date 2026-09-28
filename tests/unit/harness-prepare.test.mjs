@@ -202,13 +202,19 @@ test('explainMatch: names the rule that decided, and every rule that covers the 
     { matches: false, rule: null, matchedBy: [], excludedBy: [] });
 });
 
-test('withDefaultScheme reads an existing file, or a path under an existing directory, as a file', () => {
+test('withDefaultScheme reads an existing file, or a word not starting with a host, as a file', () => {
   // Run from the repo root, where these exist and `docs.example` doesn't.
   const here = (p) => pathToFileURL(path.resolve(p)).toString();
   assert.equal(withDefaultScheme('README.md'), here('README.md'));
   assert.equal(withDefaultScheme('tests/examples/index.html'), here('tests/examples/index.html'));
   assert.equal(withDefaultScheme('tests/no-such-page.html'), here('tests/no-such-page.html'));
   assert.equal(withDefaultScheme('docs.example/x'), 'http://docs.example/x');
+  // No dot, no port, not localhost: a path, even one that doesn't exist.
+  assert.equal(withDefaultScheme('nowhere/x'), here('nowhere/x'));
+  assert.equal(withDefaultScheme('localhost/x'), 'http://localhost/x');
+  assert.equal(withDefaultScheme('[::1]/x'), 'http://[::1]/x');
+  // Starting with a dot: a path, though its first part has one.
+  assert.equal(withDefaultScheme('.hidden.example/x'), here('.hidden.example/x'));
 });
 
 test('withDefaultScheme adds http:// only where a URL has no scheme', () => {

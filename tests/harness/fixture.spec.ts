@@ -2,7 +2,7 @@
 // driven here from `lib/` the way that repo would: `loadUserscript`,
 // `gm`, `reports`, and `serveHtml`.
 
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -96,5 +96,49 @@ test.describe('consumer fixture', () => {
     await loadUserscript(path.join(repo, 'greet.user.js'), { collectionRoot: repo });
     await page.goto('https://example.test/items/8');
     await expect(page.locator('#target')).toHaveText('hello from Greeter');
+  });
+
+  test('saveHtml records the URL and running scripts, and serveHtml defaults to that URL', async ({ page, repo, loadUserscript, serveHtml, saveHtml }) => {
+    await serveHtml(path.join(repo, 'snapshot.html'), 'https://example.test/items/9', { block: true });
+    await loadUserscript(path.join(repo, 'greet.user.js'), { collectionRoot: repo });
+    await page.goto('https://example.test/items/9');
+    await expect(page.locator('#target')).toHaveText('hello from Greeter');
+    const recorded = path.join(repo, 'recorded.html');
+    await saveHtml(recorded);
+    const header = (await readFile(recorded, 'utf8')).split('\n').slice(0, 3);
+    expect(header).toEqual([
+      '<!DOCTYPE html>',
+      '<!-- saved from url=(0028)https://example.test/items/9 -->',
+      '<!-- SourceMonkey: userscript active: Greeter -->',
+    ]);
+
+    await page.goto('about:blank');
+    expect(await serveHtml(recorded)).toBe('https://example.test/items/9');
+    await page.goto('https://example.test/items/9');
+    await expect(page.locator('#target')).toHaveText('hello from Greeter');
+  });
+
+  test('serveHtml serves the <name>_files folder a browser saves beside the page', async ({ page, repo, serveHtml }) => {
+    // As Chrome's Save Page As, Webpage Complete, writes one.
+    const folder = path.join(repo, 'My Page _ Site_files');
+    await mkdir(folder);
+    await writeFile(path.join(folder, 'style.css'), '#target { color: rgb(1, 2, 3); }');
+    await writeFile(path.join(folder, 'app.js'), 'document.getElementById("target").textContent = "ran";');
+    await writeFile(path.join(repo, 'My Page _ Site.html'), [
+      '<!DOCTYPE html>',
+      '<!-- saved from url=(0029)https://example.test/items/10 -->',
+      '<html><head><link rel="stylesheet" href="./My Page _ Site_files/style.css"></head>',
+      '<body><main id="target">saved</main><script src="./My Page _ Site_files/app.js"></script></body></html>',
+    ].join('\n'));
+    // Named relatively, and served with everything else blocked, so
+    // nothing comes from the network.
+    const url = await serveHtml(path.relative(process.cwd(), path.join(repo, 'My Page _ Site.html')), undefined, { block: true });
+    await page.goto(url);
+    await expect(page.locator('#target')).toHaveText('ran');
+    await expect(page.locator('#target')).toHaveCSS('color', 'rgb(1, 2, 3)');
+    const status = (p: string) => page.evaluate((u) => fetch(u).then((r) => r.status), p);
+    expect(await status('./My Page _ Site_files/missing.css')).toBe(404);
+    // Never outside the folder: this one isn't served, so it's blocked.
+    await expect(status('./My Page _ Site_files/..%2F..%2Fgreet.user.js')).rejects.toThrow(/Failed to fetch/);
   });
 });

@@ -9,7 +9,7 @@ import { DialogTracker, runConsoleCommand, type ConsoleContext } from '../../lib
 import { attachPage } from '../../lib/harness/inject.js';
 
 test.describe('sm-dev typed commands', () => {
-  test('scripts picks the script values, get and set act on', async ({ page, fixtureServer, host, attachment, loadScript }) => {
+  test('scripts picks the script values, get and set act on', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {
     const spec = (name: string, value: string) => ({
       relativePath: `${name.toLowerCase()}.user.js`,
       meta: { name, match: ['*://*/target.html'], grant: ['GM_setValue'] },
@@ -30,29 +30,29 @@ test.describe('sm-dev typed commands', () => {
     };
 
     expect(await run('get who')).toEqual(['  who = "one"']);
-    expect(await run('scripts')).toEqual(['Loaded scripts:', '* 1: First (first.user.js)', '  2: Second (second.user.js)']);
-    expect(await run('script 2')).toEqual(['[sm-dev] Using Second (second.user.js) for get and set']);
+    expect(await run('scripts')).toEqual(['Loaded scripts:', `* 1: First (${scriptsDir.path}/first.user.js)`, `  2: Second (${scriptsDir.path}/second.user.js)`]);
+    expect(await run('script 2')).toEqual([`[sm-dev] Using Second (${scriptsDir.path}/second.user.js) for get and set`]);
     expect(await run('get who')).toEqual(['  who = "two"']);
     expect(await run('set who "changed"')).toEqual(['[sm-dev] Set who (Second)']);
     expect(host.getValue(second.spec!.id, 'who')).toBe('changed');
     expect(host.getValue(first.spec!.id, 'who')).toBe('one');
     // By exact file name, or by a piece of a name that only one has.
-    expect(await run('scripts first.user.js')).toEqual(['[sm-dev] Using First (first.user.js) for get and set']);
-    expect(await run('scripts cond')).toEqual(['[sm-dev] Using Second (second.user.js) for get and set']);
+    expect(await run('scripts first.user.js')).toEqual([`[sm-dev] Using First (${scriptsDir.path}/first.user.js) for get and set`]);
+    expect(await run('scripts cond')).toEqual([`[sm-dev] Using Second (${scriptsDir.path}/second.user.js) for get and set`]);
     expect(await run('scripts user.js')).toEqual(['[sm-dev] Several loaded scripts match user.js (1, 2). Name one by its number.']);
     expect(await run('scripts Nobody')).toEqual(['[sm-dev] No loaded script matches Nobody. Type scripts to list them.']);
     expect(await run('scripts 3')).toEqual(['[sm-dev] There is no script 3. Type scripts to list them.']);
 
     expect(await run('values')).toEqual([
-      'Stored values:', '  1: First (first.user.js)', '    who = "one"', '* 2: Second (second.user.js)', '    who = "changed"',
+      'Stored values:', `  1: First (${scriptsDir.path}/first.user.js)`, '    who = "one"', `* 2: Second (${scriptsDir.path}/second.user.js)`, '    who = "changed"',
     ]);
-    expect(await run('values 1')).toEqual(['Stored values:', '  1: First (first.user.js)', '    who = "one"']);
+    expect(await run('values 1')).toEqual(['Stored values:', `  1: First (${scriptsDir.path}/first.user.js)`, '    who = "one"']);
     expect(await run('values now')).toEqual(['[sm-dev] No loaded script matches now. Type scripts to list them.']);
     expect(await run('status now')).toEqual(['[sm-dev] ERROR: The status command takes no arguments']);
     expect(await run('reload now')).toEqual(['[sm-dev] ERROR: now is not a tab. Tabs are named T1, T2 and so on; type tabs to list them.']);
   });
 
-  test('menu lists commands by script, and fires one by its M number', async ({ page, fixtureServer, host, attachment, loadScript }) => {
+  test('menu lists commands by script, and fires one by its M number', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {
     const script = await loadScript({
       relativePath: 'menus.user.js',
       meta: { name: 'Menus', match: ['*://*/target.html'], grant: ['GM_registerMenuCommand', 'GM_setValue'] },
@@ -71,7 +71,7 @@ test.describe('sm-dev typed commands', () => {
       return [...lines];
     };
 
-    expect(await run('menu')).toEqual(['Menu commands:', '* 1: Menus (menus.user.js)', '    M1: Say one', '    M2: Say two']);
+    expect(await run('menu')).toEqual(['Menu commands:', `* 1: Menus (${scriptsDir.path}/menus.user.js)`, '    M1: Say one', '    M2: Say two']);
     expect(await run('menu M2')).toEqual(['[sm-dev] Fired "Say two"']);
     await expect.poll(() => host.getValue(script.spec!.id, 'said')).toBe(2);
     expect(await run('menu Say one')).toEqual(['[sm-dev] Fired "Say one"']);
@@ -125,7 +125,7 @@ test.describe('sm-dev typed commands', () => {
     await expect.poll(() => host.getValue(script.spec!.id, 'name')).toBe('Bob');
   });
 
-  test('with several tabs, commands act on the picked one, or on all', async ({ page, fixtureServer, host, attachment, loadScript }) => {
+  test('with several tabs, commands act on the picked one, or on all', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {
     const script = await loadScript({
       relativePath: 'menus.user.js',
       meta: { name: 'Menus', match: ['*://*/target.html', '*://*/other.html'], grant: ['GM_registerMenuCommand', 'GM_setValue'] },
@@ -160,7 +160,7 @@ test.describe('sm-dev typed commands', () => {
         await runConsoleCommand(line, ctx);
         return [...lines];
       };
-      const row = '* 1: Menus (menus.user.js)';
+      const row = `* 1: Menus (${scriptsDir.path}/menus.user.js)`;
       // The reload re-registers T2's command for its new document.
       const fromT2Menus = () => host.reports.menuCommands.filter((m) => host.pageOf(m) === attachment2).length;
 
@@ -184,10 +184,10 @@ test.describe('sm-dev typed commands', () => {
       expect(await run('focus AB12C')).toEqual(['[sm-dev] ERROR: AB12C is not a tab. Tabs are named T1, T2 and so on; type tabs to list them.']);
       expect(await run('focus 123456')).toEqual(['[sm-dev] ERROR: Tabs are named T1, T2 and so on. Did you mean T123456?']);
       expect(await run('status')).toEqual([
-        `Page (T1): ${target}`, 'Scripts:', row, `    Started on ${target}`, '    1 menu command',
-        '    Also active on 1 other tab',
         'Tabs:', `* T1: ${target} [targetId=AB12CD34EF56AB12CD34EF56AB12CD34]`, '   * 1: Menus',
         `  T2: ${other} (opened by T1) [targetId=AB12CD99EF56AB12CD34EF56AB12CD34]`, '     1: Menus',
+        'Scripts (on T1):', row, `    Started on ${target}`, '    1 menu command',
+        '    Also active on 1 other tab',
       ]);
       expect(await run('status T2')).toEqual(['[sm-dev] ERROR: The status command takes no arguments']);
       expect(await run('menu')).toEqual(['Menu commands on T1:', row, '    M1: Hit /target.html']);
@@ -227,14 +227,14 @@ test.describe('sm-dev typed commands', () => {
       // Picking a tab moves the page commands and the default for menu.
       expect(await run('tabs T2')).toEqual([`[sm-dev] The page commands now act on T2 (${other})`]);
       expect(await run('menu M1')).toEqual(['[sm-dev] Fired "Hit /other.html"']);
-      expect(await run('scripts T1.1')).toEqual(['[sm-dev] Using Menus (menus.user.js) for get and set, and T1 for the page commands']);
+      expect(await run('scripts T1.1')).toEqual([`[sm-dev] Using Menus (${scriptsDir.path}/menus.user.js) for get and set, and T1 for the page commands`]);
       expect(await run('menu')).toEqual(['Menu commands on T1:', row, '    M1: Hit /target.html']);
 
       // `newtab` opens one, with a bare host given a scheme, and
       // picks it.
       expect(await run('newtab example.com/x')).toEqual([`[sm-dev] The page commands now act on T2 (${other})`]);
       expect(opened).toEqual(['http://example.com/x']);
-      expect(await run('newtab a b')).toEqual(['[sm-dev] ERROR: The newtab command takes one URL or script']);
+      expect(await run('newtab all example.com/y')).toEqual(['[sm-dev] ERROR: The newtab command takes all by itself, to open each script\'s page']);
       expect(await run('tabs new')).toEqual(['[sm-dev] ERROR: The tabs command picks a tab. To open one, type newtab.']);
 
       // A closed tab gives way to T1.
@@ -249,7 +249,7 @@ test.describe('sm-dev typed commands', () => {
     }
   });
 
-  test('open and newtab take a script, meaning its default page', async ({ page, fixtureServer, host, attachment, loadScript }) => {
+  test('open and newtab take a script, meaning its default page', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {
     const target = `${fixtureServer.baseUrl}/target.html`;
     const pages = await loadScript({
       relativePath: 'pages.user.js',
@@ -278,7 +278,7 @@ test.describe('sm-dev typed commands', () => {
       await runConsoleCommand(line, ctx);
       return [...lines];
     };
-    const noPage = '[sm-dev] Wild (wild.user.js): Its @match names no page to open. Give a URL instead.';
+    const noPage = `[sm-dev] Wild (${scriptsDir.path}/wild.user.js): Its @match names no page to open. Give a URL instead.`;
 
     // Bare, the selected script's page; by number or T<n>.<n>, that script's.
     expect(await run('open')).toEqual([]);
@@ -291,8 +291,13 @@ test.describe('sm-dev typed commands', () => {
     expect(await run('open T1')).toEqual([]);
     expect(page.url()).toBe(target);
     expect(await run('open 2')).toEqual([noPage]);
+    expect(await run('newtab all --offline')).toEqual(['[sm-dev] ERROR: The newtab command takes all by itself, to open each script\'s page']);
+    // A glob matching several files is more than open can load.
+    expect(await run(`open ${scriptsDir.path}/*.user.js`)).toEqual([
+      '[sm-dev] ERROR: The open command opens one page, so it takes one URL, file or script. To open several, use newtab.',
+    ]);
     expect(await run('newtab T1.1')).toEqual([
-      '[sm-dev] ERROR: The newtab command opens a tab of its own, so it takes a URL or a script number, not T1.1',
+      '[sm-dev] ERROR: The newtab command opens a tab of its own, so it takes URLs, files or script numbers, not T1.1',
     ]);
     await run('script 2');
     expect(await run('open')).toEqual([noPage]);
@@ -302,7 +307,7 @@ test.describe('sm-dev typed commands', () => {
     expect(opened).toEqual([target]);
     opened.length = 0;
     // One tab per script that has a page, and the rest listed after.
-    const skipped = '[sm-dev] Skipped script 2, Wild (wild.user.js): Its @match names no page to open';
+    const skipped = `[sm-dev] Skipped script 2, Wild (${scriptsDir.path}/wild.user.js): Its @match names no page to open`;
     expect(await run('newtab all')).toEqual([skipped]);
     expect(opened).toEqual([target]);
     opened.length = 0;
@@ -314,8 +319,8 @@ test.describe('sm-dev typed commands', () => {
     expect(await run('tabs')).toEqual(['Tabs:', '  No active tabs']);
     expect(await run('status')).toEqual([
       '[sm-dev] No tabs are active. Type newtab to open one.', 'Scripts:',
-      '  1: Pages (pages.user.js)', '    Not running, since no tabs are active',
-      '* 2: Wild (wild.user.js)', '    Not running, since no tabs are active',
+      `  1: Pages (${scriptsDir.path}/pages.user.js)`, '    Not running, since no tabs are active',
+      `* 2: Wild (${scriptsDir.path}/wild.user.js)`, '    Not running, since no tabs are active',
     ]);
     // With no scripts loaded (--noscript), the lists say so.
     const scripts = ctx.scripts;

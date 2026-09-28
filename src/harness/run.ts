@@ -16,8 +16,8 @@ import type { Browser, BrowserContext, Page } from '@playwright/test';
 
 import { shellWord } from './command-lines.js';
 import {
-  commandOutput, commandRunner, DialogTracker, gotoInTab, inCommand, onlyInspects, reloadTab, reloadable, setCommandsListening, skippedScriptLine, targetIdSuffix,
-  type CommandRunner, type ConsoleContext, type ControlledTab, type OutputHistory,
+  commandOutput, commandRunner, DialogTracker, gotoInTab, inCommand, onlyInspects, reloadTab, reloadable, serveSavedPage, setCommandsListening, skippedScriptLine, targetIdSuffix,
+  warnSavedUserscripts, type CommandRunner, type ConsoleContext, type ControlledTab, type OutputHistory,
 } from './console-commands.js';
 import { DevToolsLink } from './devtools.js';
 import { ExtensionBackend, type LogEntry } from './extension-backend.js';
@@ -26,8 +26,9 @@ import { attachPage, targetIdOf, type PageAttachment } from './inject.js';
 import { pageSays, recordLog } from './page-commands.js';
 import { showConsoleLine, showPageError } from './page-output.js';
 import {
-  defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, prepareScript, type PreparedScript,
+  defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, preparedScriptPath, prepareScript, shownPath, type PreparedScript,
 } from './prepare.js';
+import { comparableUrl, openingSavedLine, routeSavedPage, savedPageServe, type SavedPageStart } from './saved-pages.js';
 import { browserSentence, checkRunsDir, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentCommand, type SentLineHandler } from './runs.js';
 import { waitForStuckTabs } from './stuck-tabs.js';
 import { NO_TABS } from './tab-refs.js';
@@ -35,11 +36,23 @@ import { settleTabs } from './wait.js';
 
 export interface RunOptions extends ConnectOptions {
   files: string[];
+  /** `files` as they were typed, in the same order, for errors to name them so. */
+  given?: string[];
+  /**
+   * Each file's name as typed, `given` and those `load` adds: a file
+   * that won't prepare is named as the person named it.
+   */
+  typed?: Map<string, string>;
   /**
    * The pages to open, one tab each. Defaults to the first URL the first
    * script's `@match` implies.
    */
   urls?: string[];
+  /**
+   * `--from-saved`: for each of `urls`, the saved page its tab serves
+   * there, or null for a live one.
+   */
+  saved?: (SavedPageStart | null)[];
   /**
    * Open each script's default page, one tab per distinct page, rather
    * than one page for the first script.
@@ -392,6 +405,8 @@ const NO_URL_ALL = 'None of the scripts\' @match names a page to open. Give a UR
 // the reason printed, when there is none.
 interface StartPages {
   urls: string[];
+  /** For each of `urls`, the saved page served there, or null. */
+  saved: (SavedPageStart | null)[];
   /** Whether the URLs were given, rather than the scripts' own pages. */
   given?: boolean;
   /** Scripts `--all` found no page for, printed once the rest are open. */
@@ -399,15 +414,21 @@ interface StartPages {
 }
 
 function startPages(opts: RunOptions, prepared: PreparedScript[]): StartPages | null {
-  if (opts.noTab) return { urls: [], skipped: [] };
-  const given = [...new Set(opts.urls ?? [])];
+  if (opts.noTab) return { urls: [], saved: [], skipped: [] };
+  // Each page once. Two saved files can be served at one URL, in a tab each.
+  const pairs = new Map<string, { url: string; saved: SavedPageStart | null }>();
+  (opts.urls ?? []).forEach((url, i) => {
+    const saved = opts.saved?.[i] ?? null;
+    pairs.set(`${url}\n${saved?.file ?? ''}`, { url, saved });
+  });
+  const given: StartPages = { urls: [...pairs.values()].map((p) => p.url), saved: [...pairs.values()].map((p) => p.saved), given: true, skipped: [] };
   // `--noscript`: the tab as it opened, blank, unless URLs are given.
-  if (prepared.length === 0) return { urls: given, given: true, skipped: [] };
+  if (prepared.length === 0) return given;
   if (!opts.all) {
-    if (given.length > 0) return { urls: given, given: true, skipped: [] };
+    if (given.urls.length > 0) return given;
     const url = defaultPageUrl(prepared[0]);
     if (!url) opts.out(NO_URL);
-    return url ? { urls: [url], skipped: [] } : null;
+    return url ? { urls: [url], saved: [null], skipped: [] } : null;
   }
   const urls = new Set<string>();
   const skipped: StartPages['skipped'] = [];
@@ -420,7 +441,7 @@ function startPages(opts: RunOptions, prepared: PreparedScript[]): StartPages | 
     opts.out(NO_URL_ALL);
     return null;
   }
-  return { urls: [...urls], skipped };
+  return { urls: [...urls], saved: [...urls].map(() => null), skipped };
 }
 
 // A page whose tab failed to open. A URL that was given is named; a
@@ -443,7 +464,7 @@ function printSkipped(opts: RunOptions, start: StartPages): void {
 export async function run(opts: RunOptions): Promise<number> {
   const remote = new Remote(opts.out, opts.onStop, opts.onActivity, opts.primaryPid);
   // Every line also goes to whoever sent the command running now.
-  opts = { ...opts, out: remote.out };
+  opts = { ...opts, out: remote.out, typed: new Map(opts.files.map((file, i) => [file, opts.given?.[i] ?? file])) };
   const session = await openBrowser(opts, opts.out, { reuseTab: true, openTab: !opts.noTab });
   if (!session) return 1;
   // Which browser, for the stream and the log.
@@ -458,7 +479,7 @@ export async function run(opts: RunOptions): Promise<number> {
       browser: session.endpoint,
       ...(session.launched ? { owned: true } : {}),
       ...(session.headless ? { headless: true } : {}),
-      scripts: opts.files.map(displayPath),
+      scripts: opts.files,
       ...(opts.detached ? { detached: true } : {}),
       ...(opts.log ? { log: opts.log } : {}),
     }, opts.runId);
@@ -507,11 +528,6 @@ export async function run(opts: RunOptions): Promise<number> {
 export function commandMark(sent: Pick<SentCommand, 'pid' | 'source'>, primaryPid: number | undefined): string {
   const who = sent.pid !== undefined && sent.pid === primaryPid ? 'primary' : 'remote';
   return `${who}:${sent.source} >`;
-}
-
-// A script's path as the run shows it.
-function displayPath(file: string): string {
-  return path.relative(process.cwd(), file) || file;
 }
 
 // How many lines of output `wait log` can look back over.
@@ -624,7 +640,7 @@ class Remote {
 
   /** Records the loaded scripts, after `load` adds one. */
   setScripts(files: string[]): void {
-    void this.control?.update({ scripts: files.map(displayPath) });
+    void this.control?.update({ scripts: files });
   }
 
   /** Records how many tabs the run controls, as they open and close. */
@@ -773,7 +789,7 @@ async function runInHarness(
     return done;
   };
   const injected = (script: PreparedScript): void =>
-    opts.out(`[sm-dev] Injected ${script.script.relativePath} in world ${script.world}, run-at ${script.runAt}`);
+    opts.out(`[sm-dev] Injected ${preparedScriptPath(script)} in world ${script.world}, run-at ${script.runAt}`);
   // Put `next` in place everywhere, and reload the tabs `changed` affects.
   const apply = async (next: PreparedScript[], changed: ScriptChange[], none: string): Promise<void> => {
     for (const c of changed) injected(c.next);
@@ -836,6 +852,7 @@ async function runInHarness(
       opts.out(`[sm-dev] ${input} is already loaded, as script ${already + 1}. Type update ${already + 1} to re-read it.`);
       return;
     }
+    opts.typed?.set(file, input);
     const fresh = await prepareAll(opts, [file]);
     if (!fresh || stopping) return;
     const script = fresh[0];
@@ -859,14 +876,19 @@ async function runInHarness(
     // get a tab of their own.
     // All are set up first (numbered in call order), then announced in
     // order, then loaded at once.
-    const more = await Promise.all(urls.slice(1).map((url) => tabs.createTab().then(
-      (tab) => ({ tab, url }),
+    const more = await Promise.all(urls.slice(1).map((url, i) => tabs.createTab().then(
+      (tab) => ({ tab, url, saved: start.saved[i + 1] }),
       (err) => {
         tabFailed(opts, start, prepared, url, err as Error);
         return null;
       },
     )));
-    const opened = more.filter((m): m is { tab: ControlledTab; url: string } => m !== null);
+    const opened = more.filter((m) => m !== null);
+    // Each saved page served before its tab is announced, which then
+    // names the file.
+    for (const [tab, saved] of [[t1, start.saved[0]] as const, ...opened.map((o) => [o.tab, o.saved] as const)]) {
+      if (tab && saved) await serveSavedPage(tab, saved, opts.out, prepared.length === 0);
+    }
     // T1 is gone only if a page closed it on its own already.
     if (t1) tabs.announce(t1, urls[0]);
     for (const { tab, url } of opened) tabs.announce(tab, url);
@@ -1118,8 +1140,9 @@ class FollowedTabs {
    * tabs the page opens. `noScript`: one the scripts stay out of, for
    * `newtab --noscript`.
    */
-  async newTab(url?: string, { noScript = false } = {}): Promise<ControlledTab> {
+  async newTab(url?: string, { noScript = false, saved }: { noScript?: boolean; saved?: SavedPageStart } = {}): Promise<ControlledTab> {
     const tab = await this.createTab(noScript);
+    if (saved) await serveSavedPage(tab, saved, this.opts.out, noScript || this.scripts.length === 0);
     this.announce(tab, url);
     if (url) await this.navigate(tab, url);
     return tab;
@@ -1152,8 +1175,9 @@ class FollowedTabs {
 
   /** The line a tab the run opens gets: where it's going, and its id. */
   announce(tab: ControlledTab, url?: string): void {
-    this.opts.out(url
-      ? `[sm-dev] Opening ${url} in T${tab.n}${targetIdSuffix(tab.targetId)}`
+    const saved = url && tab.saved && comparableUrl(url) === comparableUrl(tab.saved.url) ? tab.saved : undefined;
+    this.opts.out(saved ? `${openingSavedLine(saved.given, url!, `T${tab.n}`)}${targetIdSuffix(tab.targetId)}`
+      : url ? `[sm-dev] Opening ${url} in T${tab.n}${targetIdSuffix(tab.targetId)}`
       : `[sm-dev] Tab T${tab.n} opened${targetIdSuffix(tab.targetId)}`);
   }
 
@@ -1234,7 +1258,7 @@ class FollowedTabs {
     if (!loaded) return;
     for (const script of scripts) {
       if (!explainMatch(script.matching, url).matches || !ranLate(script, readyState)) continue;
-      this.opts.out(`[sm-dev] Tab T${n} had already started loading, so ${script.script.relativePath} (run-at ${script.runAt}) may have run later there than it would in the extension`);
+      this.opts.out(`[sm-dev] Tab T${n} had already started loading, so ${preparedScriptPath(script)} (run-at ${script.runAt}) may have run later there than it would in the extension`);
     }
   }
 
@@ -1321,14 +1345,14 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
       const text = await readFile(fileURLToPath(script.script.fileUrl), 'utf8');
       const result = await backend.push(text, path.basename(script.script.relativePath));
       if (result.status !== 'ok') {
-        opts.out(`INVALID  ${script.script.relativePath}\n    ${result.errorMessage ?? ''}`);
+        opts.out(`INVALID  ${typedName(opts, fileURLToPath(script.script.fileUrl))}\n    ${result.errorMessage ?? ''}`);
         return false;
       }
-      pushed.set(result.scriptId, script.script.relativePath);
+      pushed.set(result.scriptId, preparedScriptPath(script));
       held.injected = true;
       const entries = await backend.log(result.scriptId).catch(() => [] as LogEntry[]);
       lastPrinted.set(result.scriptId, entries[entries.length - 1] ?? null);
-      opts.out(`[sm-dev] Pushed to Scratch: ${script.script.relativePath}${result.replaced ? ' (replaced)' : ''}`);
+      opts.out(`[sm-dev] Pushed to Scratch: ${preparedScriptPath(script)}${result.replaced ? ' (replaced)' : ''}`);
     }
     return true;
   };
@@ -1384,13 +1408,23 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
       tabPage.on('close', () => opts.out(`[sm-dev] Tab T${n} closed`));
       wirePageOutput(tabPage, { ...opts, out }, false);
       await DialogTracker.attach(tabPage, out, { visible: browserVisible(opts) });
-      return { n, url, page: tabPage, targetId: await targetIdOf(tabPage) };
+      return { n, url, page: tabPage, targetId: await targetIdOf(tabPage), saved: start.saved[i] };
     }));
+    // The extension's own injection sees the URL, so serving the saved
+    // page is all it takes.
+    for (const o of opened) {
+      if (!o?.saved) continue;
+      const { userscripts, ...file } = o.saved;
+      warnSavedUserscripts(opts.out, file.given, { url: file.url, userscripts }, false);
+      await routeSavedPage(o.page, () => savedPageServe(o.page, file, opts.out));
+    }
     const pages: Page[] = [];
     for (const o of opened) {
       if (!o) continue;
       pages.push(o.page);
-      opts.out(`[sm-dev] Opening ${o.url} in T${o.n}${targetIdSuffix(o.targetId)}`);
+      opts.out(o.saved
+        ? `${openingSavedLine(o.saved.given, o.url, `T${o.n}`)}${targetIdSuffix(o.targetId)}`
+        : `[sm-dev] Opening ${o.url} in T${o.n}${targetIdSuffix(o.targetId)}`);
     }
     await Promise.all(opened.map((o) => o && o.page.goto(o.url)
       .catch((err) => opts.out(`[sm-dev] Navigation failed: ${(err as Error).message}`))));
@@ -1477,12 +1511,18 @@ async function filesStamp(script: PreparedScript): Promise<string> {
   return paths.map((p, i) => `${p}:${times[i]}`).join('|');
 }
 
+// A script file as the person typed it, for an error to name it as
+// they did; else as paths are shown.
+function typedName(opts: RunOptions, file: string): string {
+  return opts.typed?.get(file) ?? shownPath(file);
+}
+
 async function prepareAll(opts: RunOptions, files = opts.files): Promise<PreparedScript[] | null> {
   const out: PreparedScript[] = [];
   for (const file of files) {
     const p = await prepareScript({ file, collectionRoot: opts.collectionRoot, localRoots: opts.localRoots });
     if (p.status !== 'ok') {
-      opts.out(`INVALID  ${path.relative(process.cwd(), file)}\n    ${p.diagnostic}`);
+      opts.out(`INVALID  ${typedName(opts, file)}\n    ${p.diagnostic}`);
       return null;
     }
     for (const log of p.startupLogs) opts.out(`[sm-dev] ${log.level}: ${log.message}`);

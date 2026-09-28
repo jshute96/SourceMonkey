@@ -71,9 +71,10 @@ test('a directory link named in the pattern is followed, not while searching', (
   assert.deepEqual(expandPathArg('sub', root, { scripts: true }), ['sub/c.user.js', 'sub/deep/d.user.js']);
 });
 
-test('a host with a * is a URL, not a glob, unless its first part is a directory here', () => {
-  assert.deepEqual(expandPathArg('example.com/*', root, { scripts: true }), ['example.com/*']);
-  assert.deepEqual(expandPathArg('localhost/*', root, { scripts: true }), ['localhost/*']);
+test('a word with a * and no scheme is a glob, even one that looks like a host', () => {
+  assert.throws(() => expandPathArg('example.com/*', root, { scripts: true }), /No files match example\.com\/\*/);
+  assert.throws(() => expandPathArg('localhost/*', root, { scripts: true }), /No files match localhost\/\*/);
+  assert.deepEqual(expandPathArg('http://localhost/*', root, { scripts: true }), ['http://localhost/*']);
   assert.deepEqual(expandPathArg('sub/*', root), ['sub/c.user.js']);
 });
 

@@ -3,7 +3,7 @@
 // lines carry the tab's name. Also `--all`'s tab per script, tabs
 // closing (T1 included), and `menu` firing a command on another tab.
 
-import { existsSync, utimesSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { test, expect } from '../fixtures/harness.js';
@@ -90,7 +90,7 @@ test('--all opens a tab per script page, numbered in order, and lists the skippe
   const files = [write('A', `${base}/target.html`), write('B', `${base}/other.html`), write('C', '*://*/*'), write('D', `${base}/other.html`)];
   const { lines } = await runUntil({ files, all: true, collectionRoot: scriptsDir.path }, [
     '[page log] [A] on /target.html', '[T2] [page log] [B] on /other.html', '[T2] [page log] [D] on /other.html',
-    'Skipped script 3, C (c.user.js): Its @match names no page to open',
+    `Skipped script 3, C (${scriptsDir.path}/c.user.js): Its @match names no page to open`,
   ]);
   // Each with the id a CDP session alongside can name the tab by.
   expect(lines.some((l) => new RegExp(`^\\[sm-dev\\] Opening ${base}/target\\.html in T1 \\[targetId=[0-9A-F]{32}\\]$`).test(l))).toBe(true);
@@ -99,7 +99,7 @@ test('--all opens a tab per script page, numbered in order, and lists the skippe
   expect(opening).toHaveLength(2);
   expect(opening[1]).toMatch(new RegExp(`^\\[sm-dev\\] Opening ${base}/other\\.html in T2 \\[targetId=[0-9A-F]{32}\\]$`));
   expect(lines.filter((l) => /Tab T\d+ opened/.test(l))).toEqual([]);
-  const skipped = lines.indexOf('[sm-dev] Skipped script 3, C (c.user.js): Its @match names no page to open');
+  const skipped = lines.indexOf(`[sm-dev] Skipped script 3, C (${scriptsDir.path}/c.user.js): Its @match names no page to open`);
   expect(skipped).toBeGreaterThan(lines.indexOf(opening[1]));
 });
 
@@ -155,7 +155,7 @@ test('a document-start script in a followed tab gets a may-have-run-late note', 
     meta: { name: 'Early', match: ['*://*/target.html', '*://*/other.html'], runAt: 'document-start' },
     body: `if (location.pathname.endsWith('target.html')) window.open('other.html');`,
   });
-  const note = 'Tab T2 had already started loading, so early.user.js (run-at document-start) may have run later there than it would in the extension';
+  const note = `Tab T2 had already started loading, so ${scriptsDir.path}/early.user.js (run-at document-start) may have run later there than it would in the extension`;
   const { lines } = await runUntil({
     files: [file], urls: [`${fixtureServer.baseUrl}/target.html`], collectionRoot: scriptsDir.path,
   }, [note]);
@@ -271,7 +271,7 @@ test('--noscript: a blank page, and the lists say there are no scripts', async (
   // The tab as it opened, blank: nothing to open.
   expect(lines.some((l) => l.startsWith('[sm-dev] Tab T1 opened [targetId='))).toBe(true);
   expect(lines.some((l) => l.startsWith('[sm-dev] Opening'))).toBe(false);
-  expect(lines).toContain('Page: about:blank');
+  expect(lines.some((l) => /^\* T1: about:blank \[targetId=/.test(l))).toBe(true);
   expect(lines).toContain('  No scripts are loaded');
 });
 
@@ -310,7 +310,7 @@ test('load, update and reload all reload just the tabs they affect', async ({ fi
   // stored value are kept.
   expect(lines).toContain('[sm-dev] Reloading T1');
   expect(lines).not.toContain('[sm-dev] Reloading T1, T2');
-  expect(lines).toContain('* 2: B (b.user.js)');
+  expect(lines).toContain(`* 2: B (${scriptsDir.path}/b.user.js)`);
   expect(lines).toContain('  k = 1');
   expect(lines).toContain(`[sm-dev] ${b} is already loaded, as script 2. Type update 2 to re-read it.`);
   expect(lines).toContain(`[sm-dev] ${a} is already loaded, as script 1. Type update 1 to re-read it.`);
@@ -537,4 +537,152 @@ test('--watch re-injects on a save and reloads the tab it runs in', async ({ fix
   expect(lines).toContain('[sm-dev] Change detected, re-injecting');
   expect(lines).toContain('[sm-dev] Reloading T1');
   expect(lines).toContain('[page log] [saved] after');
+});
+
+test('--from-saved serves a saved page at its URL, and the scripts match it', async ({ fixtureServer, scriptsDir }) => {
+  const base = fixtureServer.baseUrl;
+  const a = scriptsDir.write({
+    relativePath: 'a.user.js',
+    meta: { name: 'A', match: ['*://*/target.html'], extra: ['// @version     1.2.0'] },
+    body: `console.log('[A] on ' + location.pathname + ' titled ' + document.title);`,
+  });
+  const plain = path.join(scriptsDir.path, 'plain.html');
+  const scripted = path.join(scriptsDir.path, 'scripted.html');
+  const lines = await driveCli([a, `${base}/target.html`], [
+    ['Started as run', `savehtml ${scripted}`],
+    ['Wrote', `newtab --noscript ${base}/target.html`],
+    ['The page commands now act on T2', 'eval document.title = "as saved"'],
+    ['"as saved"', `savehtml ${plain}`],
+    ['Wrote', `newtab --from-saved ${plain}`],
+    // The scripts match it by its URL, and run on the saved copy.
+    ['[T3] [page log] [A] on /target.html titled as saved', 'tabs'],
+    ['Tabs:', 'status'],
+    ['Scripts (on T3)', () => {
+      writeFileSync(plain, readFileSync(plain, 'utf8').replace('as saved', 'edited'));
+      return 'reload';
+    }],
+    // Read again from disk on each load.
+    ['titled edited', 'tab T1'],
+    ['now act on T1', `open ${scripted} --from-saved`],
+    ['[page log] [A] on /target.html titled target', 'exit'],
+  ]);
+  const header = readFileSync(scripted, 'utf8').split('\n').slice(0, 3);
+  expect(header).toEqual([
+    '<!DOCTYPE html>',
+    `<!-- saved from url=(${String(`${base}/target.html`.length).padStart(4, '0')})${base}/target.html -->`,
+    '<!-- SourceMonkey: userscript active: A 1.2.0 -->',
+  ]);
+  expect(readFileSync(plain, 'utf8')).not.toContain('SourceMonkey: userscript active');
+  expect(lines.some((l) => /^\[sm-dev\] Opening \S*plain\.html as http\S*\/target\.html in T3 \[targetId=/.test(l))).toBe(true);
+  expect(lines.filter((l) => /^\* T3: \S*\/target\.html \(from saved: \/\S*plain\.html\)/.test(l))).toHaveLength(2);
+  // Saved with A running, so opening it says A's changes are in it.
+  expect(lines.some((l) => /^\[sm-dev\] .*scripted\.html was saved with userscripts running, so their changes are already in it: A 1\.2\.0$/.test(l))).toBe(true);
+  expect(lines.filter((l) => l.includes('was saved with userscripts running'))).toHaveLength(1);
+});
+
+test('start --from-saved opens T1 on the saved page, and --offline blocks the rest', async ({ fixtureServer, scriptsDir }) => {
+  const base = fixtureServer.baseUrl;
+  const url = `${base}/target.html`;
+  const a = scriptsDir.write({
+    relativePath: 'a.user.js',
+    meta: { name: 'A', match: ['*://*/target.html'] },
+    body: `console.log('[A] on ' + location.pathname + ' titled ' + document.title);`,
+  });
+  // As Chrome's Save Page As writes one.
+  const file = path.join(scriptsDir.path, 'chrome.html');
+  writeFileSync(file, `<!DOCTYPE html>\n<!-- saved from url=(${String(url.length).padStart(4, '0')})${url} -->\n<html><head><title>from chrome</title></head><body></body></html>`);
+  const lines = await driveCli([a, '--from-saved', file, '--offline'], [
+    ['[page log] [A] on /target.html titled from chrome', 'eval fetch("other.html").then(() => "fetched", () => "blocked")'],
+    ['"blocked"', 'exit'],
+  ]);
+  expect(lines.some((l) => /Opening .*chrome\.html as .*\/target\.html in T1/.test(l))).toBe(true);
+});
+
+test('--from-saved lasts for its URL only, --offline lets links out, and a missing file is said', async ({ fixtureServer, scriptsDir }) => {
+  const base = fixtureServer.baseUrl;
+  const url = `${base}/target.html`;
+  const a = scriptsDir.write({
+    relativePath: 'a.user.js',
+    meta: { name: 'A', match: ['*://*/target.html', '*://*/other.html'] },
+    body: `console.log('[A] on ' + location.pathname + ' titled ' + document.title);`,
+  });
+  // A space in its name, as a browser's own saves have, so typed it's quoted.
+  const file = path.join(scriptsDir.path, 'saved page.html');
+  writeFileSync(file, `<!DOCTYPE html>\n<!-- saved from url=(${String(url.length).padStart(4, '0')})${url} -->\n<html><head><title>saved</title></head><body></body></html>`);
+  const lines = await driveCli([a, url], [
+    ['Started as run', `open --from-saved '${file}' --offline`],
+    ['[A] on /target.html titled saved', 'eval fetch("other.html").then(() => "fetched", () => "blocked")'],
+    // A new page in the tab isn't blocked, and loads live.
+    ['"blocked"', `open ${base}/other.html`],
+    ['[A] on /other.html', 'eval fetch("other.html").then(() => "fetched", () => "blocked")'],
+    // Back at its URL, the file again.
+    ['"fetched"', `open ${url}`],
+    ['[A] on /target.html titled saved', 'eval window.open("target.html"), "opened"'],
+    // A tab it opens gets the live page.
+    ['[T2] [page log] [A] on /target.html titled target', () => {
+      unlinkSync(file);
+      return 'reload T1';
+    }],
+    // A mistake ends the commands, so it goes last.
+    ['No such file or directory', `open ${url} --from-saved`],
+  ]);
+  expect(lines).toContain('[sm-dev] ERROR: The --from-saved flag opens .html files, and none was given');
+  expect(lines).toContain(`[sm-dev] No such file or directory: ${file}`);
+});
+
+test('--from-saved opens every .html file a glob matches, beside live URLs, and --url serves one elsewhere', async ({ fixtureServer, scriptsDir }) => {
+  const base = fixtureServer.baseUrl;
+  const a = scriptsDir.write({
+    relativePath: 'a.user.js',
+    meta: { name: 'A', match: ['*://*/target.html', '*://*/other.html'] },
+    body: `console.log('[A] on ' + location.pathname + ' titled ' + document.title);`,
+  });
+  const save = (name: string, url: string | null, title: string): string => {
+    const file = path.join(scriptsDir.path, name);
+    const header = url ? `<!-- saved from url=(${String(url.length).padStart(4, '0')})${url} -->\n` : '';
+    writeFileSync(file, `<!DOCTYPE html>\n${header}<html><head><title>${title}</title></head><body></body></html>`);
+    return file;
+  };
+  save('multi one.html', `${base}/target.html`, 'one');
+  save('multi two.html', `${base}/other.html`, 'two');
+  const bare = save('bare.html', null, 'bare');
+  const lines = await driveCli([a, '--notab'], [
+    ['Started as run', `newtab '${scriptsDir.path}/multi*.html' ${base}/target.html --from-saved`],
+    // Each in a tab of its own, in order: the two files, then the live page.
+    ['[T3] [page log] [A] on /target.html titled target', 'tabs'],
+    ['Tabs:', `newtab ${bare} --from-saved --url ${base}/other.html`],
+    ['[T4] [page log] [A] on /other.html titled bare', 'exit'],
+  ]);
+  expect(lines).toContain('[page log] [A] on /target.html titled one');
+  expect(lines).toContain('[T2] [page log] [A] on /other.html titled two');
+  expect(lines.filter((l) => /^ {2}T\d: .*\(from saved: /.test(l) || /^\* T\d: .*\(from saved: /.test(l))).toHaveLength(2);
+});
+
+test('newtab of several saved pages picks the first, serves their _files folders, and shows offline', async ({ fixtureServer, scriptsDir }) => {
+  const base = fixtureServer.baseUrl;
+  const a = scriptsDir.write({
+    relativePath: 'a.user.js',
+    meta: { name: 'A', match: ['*://*/target.html', '*://*/other.html'] },
+    body: `console.log('[A] on ' + location.pathname + ' titled ' + document.title);`,
+  });
+  const save = (name: string, url: string): void => {
+    writeFileSync(path.join(scriptsDir.path, `${name}.html`), [
+      '<!DOCTYPE html>',
+      `<!-- saved from url=(${String(url.length).padStart(4, '0')})${url} -->`,
+      `<html><head><title>${name}</title><link rel="stylesheet" href="./${name}_files/s.css"></head><body></body></html>`,
+    ].join('\n'));
+    mkdirSync(path.join(scriptsDir.path, `${name}_files`));
+    writeFileSync(path.join(scriptsDir.path, `${name}_files`, 's.css'), 'body { color: rgb(1, 2, 3); }');
+  };
+  save('x one', `${base}/target.html`);
+  save('x two', `${base}/other.html`);
+  const lines = await driveCli([a, `${base}/target.html`], [
+    ['Started as run', `newtab '${scriptsDir.path}/x *.html' --from-saved --offline`],
+    ['[T3] [page log] [A] on /other.html titled x two', 'status'],
+    // The first new tab is the current one.
+    ['Scripts (on T2)', 'eval T2 getComputedStyle(document.body).color'],
+    // Served from the folder beside the file, though offline.
+    ['"rgb(1, 2, 3)"', 'exit'],
+  ]);
+  expect(lines.some((l) => /^\* T2: \S*\/target\.html \(from saved: .*x one\.html, offline\)/.test(l))).toBe(true);
 });

@@ -172,12 +172,13 @@ command. See `docs/harness-design.md`.
 |------|-------------|
 | `src/harness/index.ts` | Public entry of the harness package: re-exports the install pipeline, host, injector, and Playwright fixture |
 | `src/harness/page-output.ts` | Which page console lines and uncaught errors `sm-dev start` streams: the scripts', not the site's |
-| `src/harness/prepare.ts` | Runs the real install pipeline over a file or text under Node and returns the registrable entries, world, matching, and diagnostics |
+| `src/harness/prepare.ts` | Runs the real install pipeline over a file or text under Node and returns the registrable entries, world, matching, and diagnostics; also how paths are shown |
 | `src/harness/parse-check-node.ts` | Node counterpart of the sandboxed parse check: `new Function` verdict plus `vm.Script` location probes |
 | `src/harness/host.ts` | The stand-in service worker: answers every bridge message the injected code sends, under Node, and records what scripts do |
 | `src/harness/inject.ts` | Attaches prepared scripts to a Playwright page over CDP, in the right world, with a message channel per world to the host |
-| `src/harness/fixture.ts` | The Playwright fixture a consumer repo imports: `loadUserscript`, `gm`, `reports`, `serveHtml` over a host and attachment per test |
-| `src/harness/save-html.ts` | A page's DOM as a standalone file, scripts disabled and a `<base>` added; for `savehtml` and the fixture's `saveHtml` |
+| `src/harness/fixture.ts` | The Playwright fixture a consumer repo imports: `loadUserscript`, `gm`, `reports`, `serveHtml`, `saveHtml` per test |
+| `src/harness/save-html.ts` | Saving a page's DOM with a header of its URL and running userscripts, and reading that header |
+| `src/harness/saved-pages.ts` | Serving a saved page at its URL for `--from-saved` and `serveHtml`, with its `_files` folder |
 | `src/harness/checks.ts` | `match` and `validate`'s shared half: finding the scripts named, and the lines each prints |
 | `src/harness/path-args.ts` | Globs (`*`, `**`) and directory searches for sm-dev's file arguments |
 | `src/harness/command-lines.ts` | Input lines into a run's commands: multi-line `eval {{ ... }}` blocks, comments, sent lists |
@@ -317,6 +318,7 @@ command. See `docs/harness-design.md`.
 | `tests/unit/harness-command-lines.test.mjs` | Unit tests for `eval {{ ... }}` blocks, comments, and lists of commands |
 | `tests/unit/harness-page-output.test.mjs` | Unit tests for which page console lines and errors `sm-dev start` shows |
 | `tests/unit/harness-prepare.test.mjs` | Unit tests for `prepareScript` and `explainMatch` over real files on disk |
+| `tests/unit/harness-saved-header.test.mjs` | Unit tests for writing and reading a saved page's header: its URL and the userscripts that were running |
 | `tests/unit/parse-check-node.test.mjs` | Unit tests for the Node parse checker: verdict, both probes' positions, and the two probe-selection routes |
 | `tests/unit/validate-userscripts.test.mjs` | Drives the validator CLI as a subprocess over the example suites plus a hand-built offline tree |
 | `tests/unit/diagnostic-location.test.mjs` | Unit tests for the diagnostic label + validator, especially what they do with a partial location |
@@ -430,7 +432,7 @@ extension, driven by the Node host in `src/harness/`.
 | `tests/harness/browser-apis.spec.ts` | The harness's tabs, menu commands, notifications, downloads and window APIs |
 | `tests/harness/bridge-trust.spec.ts` | What the page can reach: forged requests refused, isolated traffic kept out of the page, subframes ignored |
 | `tests/harness/console-commands.spec.ts` | The commands typed into `sm-dev start`: `scripts`, `values`, `menu` by M number, dialogs, and several tabs |
-| `tests/harness/run-tabs.spec.ts` | `sm-dev start` end to end: followed tabs, `--all`, `--notab`, `load` / `update` / `--watch` reloads |
+| `tests/harness/run-tabs.spec.ts` | `sm-dev start` end to end: followed tabs, `--all`, `--notab`, `load` / `update` / `--watch` reloads, `--from-saved` |
 | `tests/harness/cdp-proxy.spec.ts` | The `--devtools` CDP proxy with a plain CDP client: only allowed tabs, in the initial attach, late claims, own sessions |
 | `tests/harness/page-commands.spec.ts` | The run commands that drive and read a page, in both worlds, with dialogs, quoting, and files |
 | `tests/harness/wait.spec.ts` | `wait` in its forms, the actions settling on their own, `--nowait`, and what a busy page reports |
