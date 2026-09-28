@@ -46,6 +46,15 @@ userscripts installs SourceMonkey as a package and gets two things:
 See [docs/harness-guide.md](docs/harness-guide.md) to use it, and
 [docs/harness-design.md](docs/harness-design.md) for how it works.
 
+For coding agents, [skills/SourceMonkey-dev](skills/SourceMonkey-dev/SKILL.md)
+is a skill with recipes for developing and testing with these tools. It
+ships in the package, so a userscript repo can link it in:
+
+```sh
+mkdir -p .claude/skills
+ln -s ../../node_modules/sourcemonkey/skills/SourceMonkey-dev .claude/skills/
+```
+
 ### Example userscripts
 
 [`tests/examples`](tests/examples/README.md) includes example scripts

@@ -24,6 +24,7 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `.claude/settings.json` | Local dev settings — Bash permissions for `pnpm` commands |
 | `.claude/commands/codereview.md` | `/codereview` slash command — launches a background review subagent |
+| `.claude/skills/SourceMonkey-dev` | Symlink to `skills/SourceMonkey-dev/`, so agents here load the harness skill too |
 | `.claude/commands/pushreview.md` | `/pushreview` slash command — `/codereview` then commit + push if clean |
 
 ## Build Scripts (`scripts/`)
@@ -460,6 +461,18 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 | `tests/greasyfork-examples/analysis.sql` | Annotated analysis queries over `corpus.db`, one `-- @report` block per table |
 | `tests/greasyfork-examples/report.mjs` | Runs `analysis.sql` and renders the results as `analysis.html` |
 | `tests/greasyfork-examples/analysis.html` | Generated HTML report of corpus statistics, rendered from `analysis.sql` |
+
+## Agent skill (`skills/SourceMonkey-dev/`)
+
+For userscript repos to install, so their coding agents know how to use `sm-dev` and the harness.
+
+| File | Description |
+|------|-------------|
+| `skills/SourceMonkey-dev/SKILL.md` | The skill: what the tools are, working rules, the core loop, and recipes for common development tasks |
+| `skills/SourceMonkey-dev/references/commands.md` | `sm-dev` commands summarized by task, with naming, waiting and `eval` details |
+| `skills/SourceMonkey-dev/references/cdp.md` | Raw CDP recipes beside a run: wheel, right-click, drag, window size, fullscreen, per-frame tracing |
+| `skills/SourceMonkey-dev/references/specs.md` | Writing Playwright specs with the harness fixture: example, sm-dev-to-fixture mapping, network requests |
+| `skills/SourceMonkey-dev/scripts/cdp.mjs` | Dependency-free helper that sends CDP calls to a tab (by `targetId`) or the browser, printing JSON results |
 
 ## Docs (`docs/`)
 

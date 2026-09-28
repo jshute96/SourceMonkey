@@ -14,6 +14,10 @@ It has two parts:
 For how it works inside, see [harness-design.md](harness-design.md)
 and [sm-dev-design.md](sm-dev-design.md).
 
+For coding agents, the
+[SourceMonkey-dev skill](../skills/SourceMonkey-dev/SKILL.md) is a
+shorter, task-focused version of this guide.
+
 ## Contents
 
 - [What you get](#what-you-get)

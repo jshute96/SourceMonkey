@@ -16,7 +16,8 @@
     "./*": "./lib/*.js"
   },
   "files": [
-    "lib"
+    "lib",
+    "skills"
   ],
   "bin": {
     "sm-dev": "./lib/harness/cli.js"

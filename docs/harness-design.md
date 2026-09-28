@@ -120,7 +120,8 @@ Two facts make the push backend cheap:
   - `exports`: `./harness` for the harness entry, and `./*` mapping to
     `lib/*.js` so pure modules such as `url-match` and
     `userscript-header` are importable too.
-  - `files: ["lib"]` and `bin: { "sm-dev": ... }`.
+  - `files: ["lib", "skills"]` (the agent skill ships beside the code)
+    and `bin: { "sm-dev": ... }`.
   - A `prepare` script that runs the build, so a git install produces
     `lib/`.
   - `@playwright/test` as an optional peer dependency, used only by the
