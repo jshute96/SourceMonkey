@@ -235,10 +235,10 @@ test('--notab: the first tab opened is T1, unprefixed like a normal run\'s', asy
   const target = `${fixtureServer.baseUrl}/target.html`;
   const lines = await driveCli([file, '--notab'], [
     ['Started as run', 'status'],
-    ['Not running, since no tabs are active', `newtab ${target}`],
+    ['1: Hello (', `newtab ${target}`],
     ['[page log] [hello] on /target.html', 'exit'],
   ]);
-  expect(lines).toContain('[sm-dev] No tabs are active. Type newtab to open one.');
+  expect(lines).toContain('[sm-dev] No tabs are active. Use newtab to open one.');
   expect(lines.some((l) => l.startsWith(`[sm-dev] Opening ${target} in T1 [targetId=`))).toBe(true);
   // Both the page's lines and the harness's own, without a [T1] prefix.
   expect(lines).toContain('[page log] [hello] on /target.html');
@@ -294,7 +294,7 @@ test('load, update and reload all reload just the tabs they affect', async ({ fi
     // Untouched, so nothing to do; touched, only A's tab reloads.
     ["hasn't changed on disk", () => { touch(a); return 'update all'; }],
     ['[page log] [A] on /target.html', 'scripts'],
-    ['Loaded scripts:', 'get k'],
+    ['Loaded scripts (', 'get k'],
     ['k = 1', `load ${b}`],
     // A directory: its scripts, both loaded already.
     ['is already loaded', `load ${scriptsDir.path}`],
@@ -557,7 +557,7 @@ test('--from-saved serves a saved page at its URL, and the scripts match it', as
     // The scripts match it by its URL, and run on the saved copy.
     ['[T3] [page log] [A] on /target.html titled as saved', 'tabs'],
     ['Tabs:', 'status'],
-    ['Scripts (on T3)', () => {
+    ['Scripts (with status on active tab T3)', () => {
       writeFileSync(plain, readFileSync(plain, 'utf8').replace('as saved', 'edited'));
       return 'reload';
     }],
@@ -680,7 +680,7 @@ test('newtab of several saved pages picks the first, serves their _files folders
     ['Started as run', `newtab '${scriptsDir.path}/x *.html' --from-saved --offline`],
     ['[T3] [page log] [A] on /other.html titled x two', 'status'],
     // The first new tab is the current one.
-    ['Scripts (on T2)', 'eval T2 getComputedStyle(document.body).color'],
+    ['Scripts (with status on active tab T2)', 'eval T2 getComputedStyle(document.body).color'],
     // Served from the folder beside the file, though offline.
     ['"rgb(1, 2, 3)"', 'exit'],
   ]);

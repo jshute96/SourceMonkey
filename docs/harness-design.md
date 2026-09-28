@@ -873,7 +873,7 @@ only ever a client of runs.
   - The run stamps each line it writes, by wrapping
     `process.stdout.write` and `process.stderr.write`.
   - Kept after the run ends.
-  - Once the run has its id, `sm-dev-<id>.log` is pointed at it: a
+  - Once the run has its id, `<id>.log` is pointed at it: a
     relative symlink, made under a temp name and renamed over the
     old one.
 - `Remote` marks a sent command that changes something as

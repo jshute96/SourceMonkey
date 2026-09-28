@@ -7,7 +7,7 @@ import type { Dialog } from '@playwright/test';
 import type { ConsoleContext, ControlledTab } from './console-commands.js';
 
 /** Where the page commands have no tab to act on; also `start --notab`'s start. */
-export const NO_TABS = '[sm-dev] No tabs are active. Type newtab to open one.';
+export const NO_TABS = '[sm-dev] No tabs are active. Use newtab to open one.';
 
 // A tab named before a page command's own words: `T2`, or an id as the
 // output shows one. A bare hex prefix isn't taken, since it could be a
@@ -48,7 +48,7 @@ export function pickTab(ctx: ConsoleContext, input: string): ControlledTab | nul
   const page = /^\[?pageId=(\d+)\]?$/i.exec(typed);
   if (page) {
     const tab = ctx.tabs().find((t) => t.pageId === Number(page[1]));
-    if (!tab) ctx.out(`[sm-dev] No open tab is DevTools page ${page[1]}. Type tabs to list them.`);
+    if (!tab) ctx.out(`[sm-dev] No open tab is DevTools page ${page[1]}. Use tabs to list them.`);
     return tab ?? null;
   }
   // As copied from the output: `targetId=ABC...`, brackets and all.
@@ -63,7 +63,7 @@ export function pickTab(ctx: ConsoleContext, input: string): ControlledTab | nul
     }
     // Only a number could still be a tab slip (`2` for `T2`).
     if (!/^\d+$/.test(arg)) {
-      ctx.out(`[sm-dev] No open tab's target id starts with ${arg}. Type tabs to list them.`);
+      ctx.out(`[sm-dev] No open tab's target id starts with ${arg}. Use tabs to list them.`);
       return null;
     }
   }
@@ -72,11 +72,11 @@ export function pickTab(ctx: ConsoleContext, input: string): ControlledTab | nul
     // A bare number is the likely slip, and has an obvious fix.
     ctx.out(/^\d+$/.test(arg)
       ? `[sm-dev] ERROR: Tabs are named T1, T2 and so on. Did you mean T${arg}?`
-      : `[sm-dev] ERROR: ${arg} is not a tab. Tabs are named T1, T2 and so on; type tabs to list them.`);
+      : `[sm-dev] ERROR: ${arg} is not a tab. Tabs are named T1, T2 and so on; use tabs to list them.`);
     return null;
   }
   const tab = ctx.tabs().find((t) => t.n === Number(m[1]));
-  if (!tab) ctx.out(`[sm-dev] There is no open tab T${m[1]}. Type tabs to list them.`);
+  if (!tab) ctx.out(`[sm-dev] There is no open tab T${m[1]}. Use tabs to list them.`);
   return tab ?? null;
 }
 

@@ -319,7 +319,7 @@ test('start --detach returns once started, is replaced by the next unless --new,
     expect(first).toContain(`[sm-dev] Detached started on ${url}`);
     expect(first).toContain('[page log] [detached] body ran');
     expect(first.at(-2)).toBe('[sm-dev] Run D1 now running detached, with idle timeout 30 minutes');
-    const log = first.at(-1)!.match(/^\[sm-dev\] Output log: (\S+\.log)$/)![1];
+    const log = first.at(-1)!.match(/^\[sm-dev\] Output log: (\S+\.log) \(D1\.log\)$/)![1];
     expect(path.basename(log)).toMatch(/^sm-dev-\d{8}-\d{6}-\d{3}\.log$/);
     // Stamped in the file, though not as printed.
     // First, the browser it's using.
@@ -327,7 +327,7 @@ test('start --detach returns once started, is replaced by the next unless --new,
     expect(first[0]).toMatch(/^\[sm-dev\] Connected to headless browser /);
     expect(first[1]).toMatch(/^\[sm-dev\] Started as run D1\. /);
     // Found by the run's id too.
-    expect(readlinkSync(path.join(path.dirname(log), 'sm-dev-D1.log'))).toBe(path.basename(log));
+    expect(readlinkSync(path.join(path.dirname(log), 'D1.log'))).toBe(path.basename(log));
     expect(await setup.cli('eval', 'document.title')).toEqual(['"target"']);
 
     // With --new, another beside it. Three seconds with nothing sent,
@@ -352,9 +352,9 @@ test('start --detach returns once started, is replaced by the next unless --new,
     expect(readFileSync(log, 'utf8')).toMatch(/ \[sm-dev\] Run D1 ended\. /);
     expect(next.at(-2)).toMatch(/^\[sm-dev\] Run D1 now running detached/);
     // The id's link moved on to the new run's log.
-    const nextLog = next.at(-1)!.match(/^\[sm-dev\] Output log: (\S+\.log)$/)![1];
+    const nextLog = next.at(-1)!.match(/^\[sm-dev\] Output log: (\S+\.log) \(D1\.log\)$/)![1];
     expect(nextLog).not.toBe(log);
-    expect(readlinkSync(path.join(path.dirname(log), 'sm-dev-D1.log'))).toBe(path.basename(nextLog));
+    expect(readlinkSync(path.join(path.dirname(log), 'D1.log'))).toBe(path.basename(nextLog));
     expect(await ids()).toEqual(['Run', 'D1']);
   } finally {
     await setup.cli('stop', '--all');
@@ -378,8 +378,12 @@ test('one line starts a run, sends it commands, and stops it unless detached', a
     expect(out).toContain('arg > eval document.title');
     expect(out[out.indexOf('arg > eval document.title') + 1]).toBe('"target"');
     expect(out.some((l) => l.startsWith('Run: D1 (pid '))).toBe(true);
+    // The same log, and its link, as the last line names.
+    const logLine = out.find((l) => l.startsWith('Log: '));
+    expect(logLine).toBeDefined();
+    expect(out.at(-1)).toBe(`[sm-dev] Output log: ${logLine!.slice('Log: '.length)}`);
     expect(out.slice(-3, -1)).toEqual(['[sm-dev] Stopping run D1', '[sm-dev] Run D1 ended. Pages still have previously loaded scripts.']);
-    expect(out.at(-1)).toMatch(/^\[sm-dev\] Output log: /);
+    expect(out.at(-1)).toMatch(/^\[sm-dev\] Output log: \S+ \(D1\.log\)$/);
     expect(await setup.cli('list')).toEqual(['No sm-dev runs are active']);
     // The same with the commands from stdin.
     const piped = await setup.piped('eval document.title\n', '--stdin', ...start);
@@ -430,7 +434,7 @@ test('a run logs its stream and the commands that change something', async ({ fi
     proc.stdout!.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
     proc.stdin!.end('status\neval {{\n1 + 1\n}}\nexit\n');
     await exited(proc);
-    const log = stdout.match(/^\[sm-dev\] Output log: (\S+)$/m)![1];
+    const log = stdout.match(/^\[sm-dev\] Output log: (\S+) \(D1\.log\)$/m)![1];
     const lines = readFileSync(log, 'utf8').trim().split('\n').map((l) => l.replace(/^\d{8}-\d{6}-\d{3} /, ''));
     expect(lines).toContain('[page log] [logged] body ran');
     // A command that changes something, as written, with its reply.
@@ -441,7 +445,7 @@ test('a run logs its stream and the commands that change something', async ({ fi
     // One that only looks, and its reply, aren't in it.
     expect(lines).not.toContain('primary:stdin > status');
     expect(lines.some((l) => l.startsWith('Run: D1'))).toBe(false);
-    expect(readlinkSync(path.join(path.dirname(log), 'sm-dev-D1.log'))).toBe(path.basename(log));
+    expect(readlinkSync(path.join(path.dirname(log), 'D1.log'))).toBe(path.basename(log));
   } finally {
     await setup.cli('stop', '--all');
     await setup.cleanup();

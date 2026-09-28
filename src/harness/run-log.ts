@@ -97,8 +97,21 @@ export function timestampOutputLines(): void {
   }
 }
 
+/** The link to a run's latest log, beside it: `D1.log`. */
+function runLogLinkName(id: string): string {
+  return `${id}.log`;
+}
+
 /**
- * Points `sm-dev-<run id>.log`, beside the log, at it: the latest log of
+ * A log's full path, and its link's name when it has one, for printing:
+ * `/tmp/sm-dev-logs-you/sm-dev-20260926-063756-629.log (D1.log)`.
+ */
+export function runLogLabel(file: string, id: string | undefined): string {
+  return id && process.platform !== 'win32' ? `${file} (${runLogLinkName(id)})` : file;
+}
+
+/**
+ * Points `<run id>.log`, beside the log, at it: the latest log of
  * a run with that id, found by the id alone. Swapped in by a rename, so
  * the link is never missing or half made. A failure only costs the
  * link, so it is said and the run goes on.
@@ -107,7 +120,7 @@ export async function linkRunLog(file: string, id: string, out: (line: string) =
   // A file symlink there takes admin rights or Developer Mode, so most
   // runs would only say it failed.
   if (process.platform === 'win32') return;
-  const link = path.join(path.dirname(file), `sm-dev-${id}.log`);
+  const link = path.join(path.dirname(file), runLogLinkName(id));
   const temp = `${link}.${randomBytes(4).toString('hex')}.tmp`;
   try {
     // Relative, so the pair still works if the directory is moved.

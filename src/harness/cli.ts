@@ -33,6 +33,7 @@ import { OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, commandNamed, command
 import { devtoolsWanted } from './devtools.js';
 // Node built-ins only, so as cheap to load as the rest here.
 import { runIdOf, type CommandSource, type RunClient, type RunRecord } from './runs.js';
+import { runLogLabel } from './run-log.js';
 import { withDefaultScheme } from './prepare.js';
 import { ONE_URL, pagesToOpen, type PageWord, type SavedPageStart } from './saved-pages.js';
 import {
@@ -251,7 +252,7 @@ async function startCommand(opts: Opts, words: string[], client: Client): Promis
   if (opts.detach) {
     const idle = opts.idleSeconds ?? DEFAULT_IDLE_SECONDS;
     print(`[sm-dev] Run ${started.id} now running detached, with ${idle > 0 ? `idle timeout ${duration(idle)}` : 'no idle timeout'}`);
-    print(`[sm-dev] Output log: ${started.log}`);
+    print(`[sm-dev] Output log: ${runLogLabel(started.log, started.id)}`);
   }
   // Following its stream from here, when the line does more than look.
   if (client.follow) await client.connect();
@@ -673,15 +674,17 @@ class Client {
    * line's last word: its exit code. 0 when there is none.
    */
   async outlast(): Promise<number> {
-    const run = this.lasting === undefined ? undefined : this.owned.get(this.lasting);
+    // Kept, since stopped() can clear lasting while this waits.
+    const id = this.lasting;
+    const run = id === undefined ? undefined : this.owned.get(id);
     if (!run) return 0;
     // Its stream, until it ends; waited for, so this process stays.
     await this.connect().catch(() => undefined);
     run.hold?.();
     const code = await run.exited;
-    this.owned.delete(this.lasting!);
+    this.owned.delete(id!);
     await this.disconnect();
-    print(`[sm-dev] Output log: ${run.log}`);
+    print(`[sm-dev] Output log: ${runLogLabel(run.log, id)}`);
     return code;
   }
 
@@ -707,7 +710,7 @@ class Client {
     for (const [id, { log }] of this.owned) {
       const record = (await liveRuns()).find((r) => r.id === id);
       if (record && !await stopRun(record, print)) code = 1;
-      print(`[sm-dev] Output log: ${log}`);
+      print(`[sm-dev] Output log: ${runLogLabel(log, id)}`);
     }
     this.owned.clear();
     return code;
@@ -1148,7 +1151,7 @@ async function stopCommand(opts: Opts, client: Client): Promise<number> {
   const stopped = await Promise.all(targets.map((r) => stopRun(r, several ? (line) => print(`[${r.id}] ${line}`) : print)));
   for (const r of targets) {
     const log = client.stopped(r.id);
-    if (log) print(`[sm-dev] Output log: ${log}`);
+    if (log) print(`[sm-dev] Output log: ${runLogLabel(log, r.id)}`);
   }
   return stopped.every(Boolean) ? 0 : 1;
 }

@@ -25,6 +25,7 @@ import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, commandFlags } from './comma
 import { ACTIONS, PAGE_COMMANDS, runPageCommand, splitWords, VALUE_FLAGS } from './page-commands.js';
 import { defaultPageUrl, NO_DEFAULT_PAGE, preparedScriptMatches, preparedScriptName, preparedScriptPath, shownPath, withDefaultScheme, type PreparedScript } from './prepare.js';
 import { currentTab, dialogKind, dialogWaitingMessage, NO_TABS, pickTab, TAB_ARG, tabName } from './tab-refs.js';
+import { runLogLabel } from './run-log.js';
 import { formIndex, settleTabs, waitFor } from './wait.js';
 import { userscriptLabel, type SavedPageHeader } from './save-html.js';
 import {
@@ -116,6 +117,8 @@ export interface ConsoleContext {
   stop: () => void;
   /** The id other shells know the run by (`--run`), for `status`. */
   runId?: string;
+  /** The run's log file (see run-log.ts), for `status`. */
+  log?: string;
   /** How to reach the run's DevTools server, for `status`. */
   devtools?: () => string | null;
   /** The run's browser, for `status`: `connected to browser 127.0.0.1:9233`. */
@@ -357,7 +360,7 @@ export async function runConsoleCommand(
       }
       // `tabs new` was newtab's old name.
       if (rest[0] === 'new') {
-        ctx.out('[sm-dev] ERROR: The tabs command picks a tab. To open one, type newtab.');
+        ctx.out('[sm-dev] ERROR: The tabs command picks a tab. To open one, use newtab.');
         return false;
       }
       // The bracketed ids, as `tabs` shows them, are two words.
@@ -373,9 +376,12 @@ export async function runConsoleCommand(
     }
     case 'scripts': {
       if (!argument) {
-        ctx.out('Loaded scripts:');
+        ctx.out(`Loaded scripts${activityHeading(picked)}:`);
         if (ctx.scripts.length === 0) ctx.out(`  ${NO_SCRIPTS}`);
-        for (const script of ctx.scripts) ctx.out(scriptRow(ctx, script));
+        for (const script of ctx.scripts) {
+          ctx.out(scriptRow(ctx, script));
+          if (picked) ctx.out(activityLine(ctx, picked, script.spec?.id));
+        }
         return;
       }
       const ref = tabRef(ctx, argument, tab);
@@ -399,16 +405,12 @@ export async function runConsoleCommand(
       // Takes no arguments: scripts and tabs give those lists in full.
       if (!takesNothing()) return false;
       if (ctx.runId) ctx.out(`Run: ${ctx.runId} (pid ${process.pid})${ctx.browser ? `, ${ctx.browser}` : ''}`);
+      if (ctx.log) ctx.out(`Log: ${runLogLabel(ctx.log, ctx.runId)}`);
       const devtools = ctx.devtools?.();
       if (devtools) ctx.out(`DevTools: ${devtools}`);
-      // With no tab, still the scripts and what they have stored.
-      if (!tab) {
-        ctx.out(NO_TABS);
-        for (const l of statusLines(ctx, undefined)) ctx.out(l);
-        return;
-      }
       // The tabs first, each with its URL, ids and any dialog; then
-      // the scripts on the current one, which is marked there.
+      // the scripts on the current one, which is marked there. With no
+      // tab, still the scripts and what they have stored.
       printTabs(ctx);
       for (const l of statusLines(ctx, tab)) ctx.out(l);
       return;
@@ -625,7 +627,7 @@ export async function runConsoleCommand(
     }
     default: {
       if (!PAGE_COMMANDS.has(command)) {
-        ctx.out(`[sm-dev] ERROR: ${command} is not a command. Type help to list them.`);
+        ctx.out(`[sm-dev] ERROR: ${command} is not a command. Use help to list them.`);
         return false;
       }
       // The sender's own words, when they start with the command; a
@@ -710,7 +712,7 @@ function scriptRow(ctx: ConsoleContext, script: PreparedScript): string {
 function pickScript(ctx: ConsoleContext, arg: string): PreparedScript | null {
   if (/^\d+$/.test(arg)) {
     const script = ctx.scripts[Number(arg) - 1];
-    if (!script) ctx.out(`[sm-dev] There is no script ${arg}. Type scripts to list them.`);
+    if (!script) ctx.out(`[sm-dev] There is no script ${arg}. Use scripts to list them.`);
     return script ?? null;
   }
   const exact = ctx.scripts.filter((script) => preparedScriptMatches(script, arg));
@@ -721,7 +723,7 @@ function pickScript(ctx: ConsoleContext, arg: string): PreparedScript | null {
     || script.script.relativePath.toLowerCase().includes(needle));
   if (hits.length === 1) return hits[0];
   if (hits.length === 0) {
-    ctx.out(`[sm-dev] No loaded script matches ${arg}. Type scripts to list them.`);
+    ctx.out(`[sm-dev] No loaded script matches ${arg}. Use scripts to list them.`);
   } else {
     const numbers = hits.map((script) => ctx.scripts.indexOf(script) + 1).join(', ');
     ctx.out(`[sm-dev] Several loaded scripts match ${arg} (${numbers}). Name one by its number.`);
@@ -1012,10 +1014,6 @@ function activeOn(ctx: ConsoleContext, tab: ControlledTab, scriptId: string | un
   // be a start from before, since a load with none says nothing.
   if (tab.noScript) return false;
   return scriptId !== undefined && ctx.host.isRunning(tab.link, scriptId);
-}
-
-function lastStartAndSkip(ctx: ConsoleContext, tab: ControlledTab, scriptId: string | undefined) {
-  return scriptId === undefined ? {} : ctx.host.lastStartAndSkip(tab.link, scriptId);
 }
 
 /**
@@ -1365,8 +1363,8 @@ async function fireMenu(ctx: ConsoleContext, tab: ControlledTab, argument: strin
   if (/^\d+$/.test(argument) && !elsewhere) ctx.out(`[sm-dev] ERROR: Menu commands are named M1, M2 and so on. Did you mean M${argument}?`);
   else if (elsewhere) ctx.out(`[sm-dev] "${argument}" is registered on ${tabName(elsewhere)}, not ${tabName(tab)}. Type menu ${tabName(elsewhere)}.${argument} to fire it there.`);
   else if (all().length === 0) ctx.out(noMenusMessage(ctx, tab));
-  else if (numbered) ctx.out(`[sm-dev] There is no menu command M${numbered[1]}${onTab(ctx, tab)}. Type menu to list them.`);
-  else ctx.out(`[sm-dev] No menu command named "${argument}" is registered${onTab(ctx, tab)}. Type menu to list them.`);
+  else if (numbered) ctx.out(`[sm-dev] There is no menu command M${numbered[1]}${onTab(ctx, tab)}. Use menu to list them.`);
+  else ctx.out(`[sm-dev] No menu command named "${argument}" is registered${onTab(ctx, tab)}. Use menu to list them.`);
 }
 
 // Another tab with a menu command of that label.
@@ -1383,14 +1381,14 @@ function fire(tab: ControlledTab, fired: Promise<boolean>): Promise<boolean> {
 // ---------- status and values ----------
 
 // Each script's state on a tab: an open dialog there, then per script
-// its last start or skip, its counts, its last error, and how many
-// other tabs it is running on. With no `tab`, only what doesn't depend
-// on one: stored values and errors.
+// where it is active, its counts, and its last error. With no `tab`,
+// only what doesn't depend on one: stored values and errors.
+// The lines under a script are indented to start under its name.
 function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined): string[] {
   const { scripts } = ctx;
   const { reports } = ctx.host;
   const lines: string[] = [];
-  lines.push(tab ? `Scripts (on ${tabName(tab)}):` : 'Scripts:');
+  lines.push(`Scripts${activityHeading(tab)}:`);
   if (scripts.length === 0) lines.push(`  ${NO_SCRIPTS}`);
   for (const script of scripts) {
     const id = script.spec?.id;
@@ -1399,18 +1397,13 @@ function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined): strin
       // Errors are the script's, from tabs since closed, so still told.
       const values = id ? Object.keys(ctx.host.getValues(id)).length : 0;
       const errors = reports.errors.filter((r) => r.scriptId === id);
-      lines.push('    Not running, since no tabs are active');
       const counts = [count(values, 'stored value'), count(errors.length, 'error')].filter((c) => !c.startsWith('0 '));
-      if (counts.length > 0) lines.push(`    ${counts.join(', ')}`);
+      if (counts.length > 0) lines.push(`${DETAIL}${counts.join(', ')}`);
       const last = errors.at(-1);
-      if (last) lines.push(`    Last error: ${last.message}`);
+      if (last) lines.push(`${DETAIL}Last error: ${last.message}`);
       continue;
     }
-    // The newer of its last start and last skip says where it stands.
-    const { started, skipped } = lastStartAndSkip(ctx, tab, id);
-    if (skipped && (!started || skipped.at > started.at)) lines.push(`    Skipped on ${skipped.url}: ${skipped.reason}`);
-    else if (started) lines.push(`    Started on ${started.url}`);
-    else lines.push('    Not started');
+    lines.push(activityLine(ctx, tab, id));
     const errors = fromTab(ctx, tab, reports.errors).filter((r) => r.scriptId === id);
     const menus = fromTab(ctx, tab, reports.menuCommands).filter((r) => r.scriptId === id).length;
     // Stored values are the script's, shared by every tab.
@@ -1418,13 +1411,31 @@ function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined): strin
     // Only the counts that aren't zero, and no line when none is.
     const counts = [count(menus, 'menu command'), count(values, 'stored value'), count(errors.length, 'error')]
       .filter((c) => !c.startsWith('0 '));
-    if (counts.length > 0) lines.push(`    ${counts.join(', ')}`);
+    if (counts.length > 0) lines.push(`${DETAIL}${counts.join(', ')}`);
     const last = errors.at(-1);
-    if (last) lines.push(`    Last error: ${last.message}`);
-    const elsewhere = ctx.tabs().filter((t) => t !== tab && activeOn(ctx, t, id)).length;
-    if (elsewhere > 0) lines.push(`    Also active on ${elsewhere} other tab${elsewhere === 1 ? '' : 's'}`);
+    if (last) lines.push(`${DETAIL}Last error: ${last.message}`);
   }
   return lines;
+}
+
+// Under a `scriptRow`, lined up with the script's name (`* 1: `) when
+// its number is one digit.
+const DETAIL = '     ';
+
+// A script list's heading names the tab its `activityLine`s are about.
+// None with no tab.
+function activityHeading(tab: ControlledTab | undefined): string {
+  return tab ? ` (with status on active tab ${tabName(tab)})` : '';
+}
+
+// Whether a script is active on the tab the heading names, and on
+// which others: `Not active (Active on T1,T2.)`.
+function activityLine(ctx: ConsoleContext, tab: ControlledTab, id: string | undefined): string {
+  const active = activeOn(ctx, tab, id);
+  const here = active ? 'Active' : 'Not active';
+  const elsewhere = ctx.tabs().filter((t) => t !== tab && activeOn(ctx, t, id)).map(tabName);
+  if (elsewhere.length === 0) return `${DETAIL}${here}`;
+  return `${DETAIL}${here} (${active ? 'Also active' : 'Active'} on ${elsewhere.join(',')}.)`;
 }
 
 function valueLines(ctx: ConsoleContext, scripts: PreparedScript[]): string[] {
@@ -1729,7 +1740,7 @@ export interface PromptIO {
  * Returns a function that closes the prompt.
  */
 export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?: { start?: () => void }) => Promise<unknown>): () => void {
-  io.out('[sm-dev] Ready for commands. Type help to list them.');
+  io.out('[sm-dev] Ready for commands. Use help to list them.');
   // A dumb terminal can't move the cursor, so writeOutputLine couldn't
   // redraw around a prompt there.
   const terminal = Boolean(process.stdout.isTTY) && process.env.TERM !== 'dumb';

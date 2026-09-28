@@ -938,6 +938,7 @@ async function runInHarness(
         out: opts.out,
         stop: () => opts.onStop?.(),
         runId: remote.id,
+        ...(opts.log ? { log: opts.log } : {}),
         devtools: () => (devtools?.isUp ? devtools.usage : null),
         browser: browserSentence({ browser: session.endpoint, owned: session.launched, headless: session.headless }),
         output: remote.output,

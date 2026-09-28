@@ -378,11 +378,11 @@ typed at the `--interactive` prompt, or from another shell.
 
 | Typed command | What it does |
 | --- | --- |
-| `scripts` | Lists the loaded scripts, numbered |
+| `scripts` | Lists the loaded scripts, numbered, and where each is active |
 | `script <script>` | Picks the script `get` and `set` act on (the first, until changed). `scripts <script>` works too |
 | `load <script>...` | Loads more scripts from disk (files, directories, globs), and reloads the tabs they match. Quote a path with spaces. |
 | `update [script]` | Re-reads one script from disk, or all (with no argument, or `all`), as `--watch` does on a save. Only a script whose file or local `@require`s were modified since it was read counts, so touching a file forces it. Reloads, all at once, the tabs where an updated script runs or where its rules now match. Stored values are kept |
-| `status` | Prints the run (and its DevTools address, with `--devtools`), the tab list as `tabs` shows it, and each script's state on the current tab (started or skipped, and counts of its menu commands, stored values and errors that are not zero) |
+| `status` | Prints the run and its log file (and its DevTools address, with `--devtools`), the tab list as `tabs` shows it, and each script's state on the current tab (active or not, the other tabs it is active on, and counts of its menu commands, stored values and errors that are not zero) |
 | `menu` | Lists the registered menu commands, numbered `M1`, `M2`, under the script that registered each |
 | `menu <M-number or label>` | Fires one, as picking it from the toolbar would. Piped in while none is registered yet, it waits a moment for a script that is still loading |
 | `values [what]` | Prints what every script has stored (`all` too), one script's, or those of the scripts running on a tab (`T2`) |
@@ -390,7 +390,7 @@ typed at the `--interactive` prompt, or from another shell.
 | `set <key> <json>` | Stores a value, as another tab's write would: a running script sees it and its change listeners fire |
 | `tabs` | Lists the controlled tabs (see [Several tabs](#several-tabs)) |
 | `tab <tab>` | Picks the tab the page commands act on. `tabs <tab>` works too |
-| `newtab [page...\|all]` | Opens a new tab with the scripts for each page, or a blank tab; the first new tab is picked and brought to the front. `newtab all` opens one per script's default page. `--from-saved` opens `.html` files as saved pages (see [Saved pages](#saved-pages)). `newtab --noscript [page]` opens one the scripts stay out of (see [Driving and reading the page](#driving-and-reading-the-page)) |
+| `newtab [page...\|all]` | Opens a new tab with the scripts for each page, or a blank tab; the first new tab becomes the current tab and is brought to the front. `newtab all` opens one per script's default page. `--from-saved` opens `.html` files as saved pages (see [Saved pages](#saved-pages)). `newtab --noscript [page]` opens one the scripts stay out of (see [Driving and reading the page](#driving-and-reading-the-page)) |
 | `reload [tab]` | Reloads the page, or another tab's. `reload all` reloads every tab at once. `--noscript` / `--script` switch the tabs' scripts off or back on first |
 | `open [page]` | Navigates to a URL or file (a glob matching one), or to a script's default page: the selected script's when bare, or one by number (`open 2`, or `open T2.3` in T2). `--noscript` / `--script` switch the tab's scripts off or back on (see [Driving and reading the page](#driving-and-reading-the-page)) |
 | `focus [tab]` | Brings the tab to the front, un-minimizing its window |
@@ -603,26 +603,31 @@ alongside the run to name the same tab:
   on its own.
 
 How the commands treat tabs:
-- `tabs T2` picks the tab that `status`, `menu`, `reload`, `open`,
-  `focus`, `accept` and `dismiss` act on. It starts as T1. If the
-  picked tab closes, the first one still open takes over.
+- `tabs T2` makes T2 the current tab, which `status`, `menu`,
+  `reload`, `open`, `focus`, `accept` and `dismiss` act on. It starts
+  as T1. If the current tab closes, the first one still open takes over.
 - Any tab can be closed, T1 included, and the run notes it. With none
   left, `tabs` says `No active tabs`, `status` still lists the scripts
   with their stored values and errors, and `newtab` opens another.
 - `newtab [page...|all]` opens a tab of your own with the scripts for each
   page (a URL, file, glob or script number), or a blank tab. The first
-  new tab is picked and brought to the front. Unlike one you open in
-  the browser, it is controlled from the start. It stays open when the
-  run ends.
+  new tab becomes the current tab and is brought to the front. Unlike
+  one you open in the browser, it is controlled from the start. It
+  stays open when the run ends.
 - `newtab all` opens one tab per script's default
-  page, as `--all` does at startup, and leaves the picked tab as it
+  page, as `--all` does at startup, and leaves the current tab as it
   was. Scripts it opened no tab for are listed at the end.
 - `tabs` lists each tab's URL, which tab opened it, any open dialog,
-  and the scripts running there, with `*` on the picked tab and, under it,
+  and the scripts running there, with `*` on the current tab and, under it,
   on the selected script.
-- `status` lists the tabs first, then the scripts on the picked tab
-  (`Scripts (on T2):`). A script also running on other tabs gets an
-  `Also active on N other tabs` line.
+- `status` lists the tabs first, then the scripts on the current tab.
+- `status` and `scripts` give each script a line saying whether it runs
+  on the current tab, and on which others:
+  - The list's heading names the tab:
+    `Scripts (with status on active tab T1):`.
+  - Each script's line: `Active`, `Active (Also active on T2,T4.)`, or
+    `Not active (Active on T2.)`.
+  - With no tabs open, there is no heading note and no line.
 - `menu all` shows every tab in turn, each under a `Tab T<n>: <url>`
   heading.
 - `values all` is every script's values, as `values` alone is.
@@ -852,7 +857,7 @@ but nothing from them streams anywhere, and their badge turns grey.
 ```sh
 sm-dev start sites/x/y.user.js https://example.com/ --detach
 # [sm-dev] Run D1 now running detached, with idle timeout 30 minutes
-# [sm-dev] Output log: /tmp/sm-dev-logs-you/sm-dev-20260926-063756-629.log
+# [sm-dev] Output log: /tmp/sm-dev-logs-you/sm-dev-20260926-063756-629.log (D1.log)
 sm-dev eval 'measure()'
 sm-dev stop
 ```
@@ -882,10 +887,10 @@ Every run keeps a log of its stream, to tail for what the scripts and
 page print on their own, or to look back at what happened when:
 - It's `/tmp/sm-dev-logs-<user>/sm-dev-<timestamp>.log`, with a
   timestamp starting each line. It's kept after the run ends.
-- Its name is printed as `Output log: ...`: once a detached run has
-  started, and when sm-dev stops a run it started (at the end of the
-  line, or on `exit`).
-- `sm-dev-D1.log` beside it links to the latest log of the run named
+- Its name is printed as `Output log: <path> (D1.log)`: once a detached
+  run has started, and when sm-dev stops a run it started (at the end of
+  the line, or on `exit`). `status` shows it too, as `Log: ...`.
+- `D1.log` beside it links to the latest log of the run named
   `D1`.
 - The run's output all goes there. A client following the run shows
   the same lines, without the timestamps.
