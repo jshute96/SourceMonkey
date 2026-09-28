@@ -123,8 +123,11 @@ It runs against real headless Chromium with `chrome.userScripts`,
   - `fixtureServer` (worker-scoped) — local HTTP server serving
     `tests/fixtures/pages/` first, with `tests/examples/` mounted as
     a fallback root so example pages are reachable at
-    `${baseUrl}/<api>/page.html`. Two routes are not files:
+    `${baseUrl}/<api>/page.html`. Some routes are not files:
     - `/__slow/<name>?ms=N` — delays a tiny JS/PNG response.
+    - `/__sandbox/<page>` — serves a fixture page with a
+      `Content-Security-Policy: sandbox` header, which a `<meta>` CSP
+      can't set.
     - `/__echo?delay=N` — reflects the request's method, target and
       headers back as JSON, so a test can see what actually went on the
       wire (forbidden headers are invisible from the page that asked

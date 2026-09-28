@@ -125,6 +125,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/unsafe-window-use.ts` | Text scan for an ungranted `unsafeWindow` reference (and for a source that declares the name itself) |
 | `src/composed-source.ts` | Concatenates `@require` bodies ahead of the script body; owns the injected entry's line layout for both run paths |
 | `src/tab-status.ts` | Pure helpers for per-tab badge view (expected ∪ actual classification incl. NOT LOADED, color, row-label formatter) and per-tab document LRU |
+| `src/missing-scripts.ts` | Log warnings for scripts that matched a page but never started, and the CSP `sandbox` check sm-dev shares |
 | `src/debug-log.ts` | Debug-logging gate for verbose lifecycle messages; off by default, toggled via `chrome.storage.local.smDebugLogging` |
 | `src/phase-timing.ts` | Debug-gated timers behind the refresh / registration paths: per-sequence phases plus cumulative fan-out totals |
 | `src/storage-scan.ts` | Wrapper for every full-namespace `storage.local.get(null)`, naming each scan and its cost under debug logging |
@@ -237,6 +238,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/injection.spec.ts` | End-to-end userscript injection: matching, non-matching, lenient-`@match`, and multiple-script cases |
 | `tests/e2e/sync-window.spec.ts` | A navigation racing a registration sync still gets injected, and the set never empties mid-sync |
 | `tests/e2e/badge.spec.ts` | Per-tab badge classifications: green/red/orange/purple plus MISSING and post-update RELOAD |
+| `tests/e2e/sandbox-csp.spec.ts` | Pages sent with a CSP `sandbox` header: MAIN-world scripts skipped, USER_SCRIPT-world ones run, the Log hint |
 | `tests/e2e/reload-without-scripts.spec.ts` | "Reload page with no userscripts": one-shot skip, grey NOT LOADED badge, info Log entry, row presence |
 | `tests/e2e/focus-refresh.spec.ts` | Focus-triggered refresh: a tab switch or a page's own focus report picks up a local edit; http scripts stay unfetched |
 | `tests/e2e/reload-fast-path.spec.ts` | Reload triggers sm:check-pending → swap to fresh body on this reload; non-reload navs, world changes, and a newly-needed runtime don't |
@@ -393,6 +395,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/gm-window-control.test.mjs` | Unit tests for the SW-side `window.close` / `window.focus` driver (tab close, tab select + window raise, minimized restore, failures) |
 | `tests/e2e/window-close-focus.spec.ts` | E2E for `@grant window.close` / `window.focus` — the tab really closes and re-selects, overrides are per-grant, the page's own methods stay native, and the per-document grant leak is pinned |
 | `tests/unit/tab-status.test.mjs` | Unit tests for the per-tab badge classification + report-merge helpers |
+| `tests/unit/missing-scripts.test.mjs` | Unit tests for the never-started Log warnings, their hints, and the CSP `sandbox` check |
 | `tests/examples/README.md` | Overview of the interactive userscript example pages; how to serve and use as a cross-manager compliance reference |
 | `tests/examples/index.html` | Index page linking the per-example subdirs |
 | `tests/examples/examples.css` | Shared styling for all example pages |
@@ -434,7 +437,7 @@ extension, driven by the Node host in `src/harness/`.
 | `tests/harness/browser-apis.spec.ts` | The harness's tabs, menu commands, notifications, downloads and window APIs |
 | `tests/harness/bridge-trust.spec.ts` | What the page can reach: forged requests refused, isolated traffic kept out of the page, subframes ignored |
 | `tests/harness/console-commands.spec.ts` | The commands typed into `sm-dev start`: `scripts`, `values`, `menu` by M number, dialogs, and several tabs |
-| `tests/harness/run-tabs.spec.ts` | `sm-dev start` end to end: followed tabs, `--all`, `--notab`, `load` / `update` / `--watch` reloads, `--from-saved` |
+| `tests/harness/run-tabs.spec.ts` | `sm-dev start` end to end: followed tabs, `--all`, `--notab`, `load` / `update` / `--watch` reloads, `--from-saved`, sandboxed pages |
 | `tests/harness/cdp-proxy.spec.ts` | The `--devtools` CDP proxy with a plain CDP client: only allowed tabs, in the initial attach, late claims, own sessions |
 | `tests/harness/page-commands.spec.ts` | The run commands that drive and read a page, in both worlds, with dialogs, quoting, and files |
 | `tests/harness/wait.spec.ts` | `wait` in its forms, the actions settling on their own, `--nowait`, and what a busy page reports |

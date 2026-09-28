@@ -12,6 +12,7 @@
 // to unit test without the chrome.* surface.
 
 import type { MatchedScript } from './match-index.js';
+import type { InjectionWorld } from './injector.js';
 
 export type ScriptRunState = 'started' | 'error';
 
@@ -54,6 +55,23 @@ export interface TabMatchState {
   // MISSING (orange) — nothing is wrong, the user asked for this.
   // Dies with the document like everything else on this state.
   scriptsSkipped?: boolean;
+  // What our wrappers' own reports say about this document, for
+  // explaining a script that never started (src/missing-scripts.ts):
+  //   - `reportedWorlds`: the worlds a wrapper reported from. A world
+  //     listed here is one Chrome did inject into.
+  //   - `opaqueOrigin`: some wrapper saw `self.origin === 'null'`, which
+  //     on an http(s) page means a CSP `sandbox` header.
+  reportedWorlds?: InjectionWorld[];
+  opaqueOrigin?: boolean;
+  // Set once the post-load check for scripts that never started has
+  // run, so it logs at most once per document.
+  missingChecked?: boolean;
+  // The scripts that matched when the document was first seen. Only
+  // these are checked for never starting: one that matched only a later
+  // pushState URL, or was installed after the document committed, was
+  // never going to be injected into it. Absent on records from before
+  // the field existed, which check every match.
+  loadMatchIds?: string[];
 }
 
 export type RowStatus =
@@ -359,5 +377,24 @@ export function applyScriptReport(
   return {
     ...state,
     actual: { ...state.actual, [id]: report },
+  };
+}
+
+// Pure: note that a wrapper in `world` reported from this document, and
+// whether it saw an opaque origin. Identity-returns when nothing is new,
+// so the caller can skip a storage write.
+export function notePageReport(
+  state: TabMatchState,
+  world: InjectionWorld,
+  opaqueOrigin: boolean,
+): TabMatchState {
+  const worlds = state.reportedWorlds ?? [];
+  const newWorld = !worlds.includes(world);
+  const newOpaque = opaqueOrigin && !state.opaqueOrigin;
+  if (!newWorld && !newOpaque) return state;
+  return {
+    ...state,
+    ...(newWorld ? { reportedWorlds: [...worlds, world] } : {}),
+    ...(newOpaque ? { opaqueOrigin: true } : {}),
   };
 }

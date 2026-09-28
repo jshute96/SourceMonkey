@@ -103,12 +103,14 @@ import {
   getDocState,
   markScriptStale,
   mergeMatches,
+  notePageReport,
   setCurrentDoc,
   writeDocState,
   type ActualStatus,
   type TabMatchState,
   type TabRecord,
 } from './tab-status.js';
+import { describeMissingScript, findMissingScripts } from './missing-scripts.js';
 import {
   _resetUpdaterStateForTests,
   replayScriptLogsAtBoot,
@@ -1070,6 +1072,16 @@ async function updateTabMatches(
   if (restored ? prev.scriptsSkipped : isSkippingScripts(tabId, docId)) {
     state.scriptsSkipped = true;
   }
+  // What the document's reports said about it, and whether its
+  // never-started check already ran, belong to the document too.
+  if (restored) {
+    if (prev.reportedWorlds) state.reportedWorlds = prev.reportedWorlds;
+    if (prev.opaqueOrigin) state.opaqueOrigin = true;
+    if (prev.missingChecked) state.missingChecked = true;
+    if (prev.loadMatchIds) state.loadMatchIds = prev.loadMatchIds;
+  } else {
+    state.loadMatchIds = incoming.map((m) => m.id);
+  }
   const nextRecord = setCurrentDoc(record, docId, state);
   await setTabRecord(tabId, nextRecord);
   if (incoming.length > 0 && trigger === 'navigation') {
@@ -1515,6 +1527,38 @@ function installNavigationListeners(): void {
     if (d.frameId !== 0) return;
     enqueueTabWork(d.tabId, () => updateTabMatches(d.tabId, d.url, d.documentId ?? null, 'navigation'));
   });
+  // A grace period after the load, since a document-idle script only
+  // starts at the load and then waits on its check-pending reply
+  // (bounded at 2s by the wrapper).
+  wn.onCompleted.addListener((d) => {
+    if (d.frameId !== 0 || !d.documentId) return;
+    const documentId = d.documentId;
+    setTimeout(() => {
+      enqueueTabWork(d.tabId, () => logMissingScripts(d.tabId, documentId));
+    }, MISSING_SCRIPT_GRACE_MS);
+  });
+}
+
+const MISSING_SCRIPT_GRACE_MS = 3000;
+
+// Once per document: a Log warning for each script that matched it but
+// never reported, with what the document's other reports suggest about
+// why. The badge already shows these as MISSING; this says it where the
+// script's own history is kept. See src/missing-scripts.ts.
+async function logMissingScripts(tabId: number, documentId: string): Promise<void> {
+  const record = await getTabRecord(tabId);
+  const state = getDocState(record, documentId);
+  if (!state || state.missingChecked) return;
+  for (const script of findMissingScripts(state, await rejectedScriptIds())) {
+    console.log(`[SourceMonkey] never started ${getScriptLogLabel(script.id)} tab=${tabId} ${state.url}`);
+    logScriptEvent(script.id, {
+      level: 'warning',
+      source: 'script-wrapper',
+      tabId,
+      message: describeMissingScript(script, state),
+    });
+  }
+  await setTabRecord(tabId, writeDocState(record, documentId, { ...state, missingChecked: true }));
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {
@@ -3697,6 +3741,8 @@ function installScriptMessageListener(): void {
       loadedAt?: number;
       fromLoadedAt?: number;
       reason?: string;
+      opaqueOrigin?: boolean;
+      __viaBridge?: boolean;
     };
     enqueueTabWork(tabId, () => recordScriptReport(tabId, sender, type, payload));
   });
@@ -3807,6 +3853,8 @@ async function recordScriptReport(
     loadedAt?: number;
     fromLoadedAt?: number;
     reason?: string;
+    opaqueOrigin?: boolean;
+    __viaBridge?: boolean;
   },
 ): Promise<void> {
   const id = payload.id;
@@ -3940,17 +3988,26 @@ async function recordScriptReport(
     // matches / preserve actual.
     if (!senderUrl || !INJECTABLE_SCHEME.test(senderUrl)) return;
     await ensureLoaded();
+    const matches = findMatchesForUrl(senderUrl);
     state = {
       documentId: senderDocId,
       url: senderUrl,
-      matches: findMatchesForUrl(senderUrl),
+      matches,
       actual: {},
+      loadMatchIds: matches.map((m) => m.id),
     };
   }
   const report: ActualStatus = type === SM_ERROR_MSG
     ? { state: 'error', name, message: String(payload.message ?? '') }
     : { state: 'started', name };
   let next = applyScriptReport(state, id, report);
+  // What this report says about the document itself, for explaining
+  // another script that never starts here (see missing-scripts.ts).
+  next = notePageReport(
+    next,
+    payload.__viaBridge === true ? 'MAIN' : 'USER_SCRIPT',
+    payload.opaqueOrigin === true,
+  );
   if (type === SM_SWAPPED_MSG) {
     // The swap landed the latest body, so any prior stale marker for
     // this id (e.g. from an earlier sm:start on this same documentId)

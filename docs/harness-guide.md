@@ -521,6 +521,11 @@ them (blocked trackers, failed ad requests) to bury the script's lines.
   - a throw deep inside page code (a framework's event dispatch) that
     the script's frame has scrolled off the stack.
 - `logs` shows everything the page logged, filtered or not.
+- A page whose `Content-Security-Policy` header sandboxes it without
+  `allow-scripts` blocks scripts in the page's own context (`@grant
+  none`, `@inject-into page`), under sm-dev and in the extension
+  alike. On each load of such a page, the run names the loaded scripts
+  that this blocks and suggests `@inject-into content`.
 
 ## Sending commands
 

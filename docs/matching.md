@@ -425,6 +425,41 @@ synchronous throw. The SW listens on
 map keyed by script ID. See [injection.md](injection.md#message-flow)
 for the wrapper-side payloads.
 
+### Scripts that never start
+
+A MISSING row says a script matched but never reported. Once the page
+has loaded, the script's Log says so too, with what we can tell about
+why (`src/missing-scripts.ts`):
+
+- **When**: `webNavigation.onCompleted` for the top frame, plus a 3s
+  grace period for document-idle scripts still waiting on their
+  check-pending reply. At most once per document (`missingChecked`).
+- **Which scripts**: those that matched when the document was first
+  seen (`loadMatchIds`), with no report, and not already explained by
+  REJECTED or NOT LOADED.
+  - Not ones that matched only a later pushState URL, or were installed
+    after the document committed. Those are MISSING on the badge but
+    were never going to be injected.
+- **What the document's other reports add**: every wrapper report
+  carries `opaqueOrigin` (`self.origin === 'null'`), and the SW knows
+  its world from `__viaBridge`. Both are kept per document as
+  `reportedWorlds` / `opaqueOrigin`.
+- **The hint**, for a MAIN-world script:
+  - Another MAIN-world script reported → the page isn't blocking that
+    world.
+  - Else an opaque origin on an http(s) page → the page is sandboxed.
+    A CSP `sandbox` header without `allow-scripts` turns off script in
+    the page's own world, so Chrome silently skips MAIN-world
+    registrations there. Suggests `@inject-into content`.
+  - Else nothing to go on → names the possibility and what header to
+    check. Left off on file:// pages, which have no headers.
+- **For a USER_SCRIPT-world script**, it only notes whether other
+  USER_SCRIPT-world scripts started.
+- No probing: the extension doesn't refetch the page or inject test
+  code to find out more. sm-dev, which sees the response headers, says
+  it directly (see `docs/sm-dev-design.md`).
+- Pinned by `tests/e2e/sandbox-csp.spec.ts`.
+
 ### documentId is the lifecycle key
 
 `chrome.userScripts` injects exactly once per document. Fragment

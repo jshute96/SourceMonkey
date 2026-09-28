@@ -30,6 +30,7 @@ import {
 } from './prepare.js';
 import { comparableUrl, openingSavedLine, routeSavedPage, savedPageServe, type SavedPageStart } from './saved-pages.js';
 import { browserSentence, checkRunsDir, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentCommand, type SentLineHandler } from './runs.js';
+import { cspBlocksPageScripts, sandboxedPageWarning } from '../missing-scripts.js';
 import { waitForStuckTabs } from './stuck-tabs.js';
 import { NO_TABS } from './tab-refs.js';
 import { settleTabs } from './wait.js';
@@ -753,6 +754,7 @@ async function runInHarness(
   // T1, unless `--notab`; then the first tab `newtab` opens is T1.
   if (page) {
     wirePageOutput(page, opts, true);
+    wireSandboxCheck(page, () => tabs.firstTabScripts, opts.out);
     const dialogs = await DialogTracker.attach(page, opts.out, { visible: browserVisible(opts), commandsComing });
     // Attached before preparing, so a reused tab already on a secure
     // page gives the scripts' GM_info the browser's userAgentData.
@@ -994,6 +996,10 @@ class FollowedTabs {
   // The scripts every tab gets: the latest after `load`, `update` and
   // `--watch` saves.
   private scripts: PreparedScript[] = [];
+  // What T1 runs now: none once `open --noscript` switched it off.
+  get firstTabScripts(): readonly PreparedScript[] {
+    return this.first?.noScript ? [] : this.scripts;
+  }
   // The rest, while they are open.
   private readonly tabs = new Map<Page, { tab: ControlledTab; attachment: PageAttachment; ready: boolean }>();
   // Every tab's number by its attachment, kept after it closes, so a
@@ -1209,6 +1215,10 @@ class FollowedTabs {
       this.onTabsChanged();
     });
     wirePageOutput(page, { ...this.opts, out }, true);
+    // Not for a tab with no scripts, which gets none either way. Read
+    // from the tab once it exists, since `open --script` switches it.
+    let tabNow: ControlledTab | null = null;
+    wireSandboxCheck(page, () => ((tabNow?.noScript ?? noScript) ? [] : this.scripts), out);
     const dialogs = await DialogTracker.attach(page, out, {
       visible: browserVisible(this.opts),
       commandsComing: this.commandsComing,
@@ -1225,6 +1235,7 @@ class FollowedTabs {
       return;
     }
     const entry = { tab: { n, page, link: attachment, dialogs, openedBy: opener, targetId, noScript }, attachment, ready: false };
+    tabNow = entry.tab;
     this.tabs.set(page, entry);
     this.onTabsChanged();
     const url = page.url();
@@ -1408,6 +1419,7 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
       const out = i === 0 ? opts.out : (line: string): void => opts.out(`[T${n}] ${line}`);
       tabPage.on('close', () => opts.out(`[sm-dev] Tab T${n} closed`));
       wirePageOutput(tabPage, { ...opts, out }, false);
+      wireSandboxCheck(tabPage, () => prepared, out);
       await DialogTracker.attach(tabPage, out, { visible: browserVisible(opts) });
       return { n, url, page: tabPage, targetId: await targetIdOf(tabPage), saved: start.saved[i] };
     }));
@@ -1553,6 +1565,32 @@ function wireHostOutput(host: HarnessHost, print: (line: string) => void, prefix
         ? `[sm-dev] GM_deleteValue ${w.key}`
         : `[sm-dev] GM_setValue ${w.key} = ${JSON.stringify(w.value)}`);
     }
+  });
+}
+
+// A page whose CSP sandboxes it without allow-scripts gets no MAIN-world
+// userscripts in a real manager, and Chrome says nothing about it. Said
+// on each load of one that the run's MAIN-world scripts match. See
+// src/missing-scripts.ts.
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+function wireSandboxCheck(page: Page, scripts: () => readonly PreparedScript[], out: (line: string) => void): void {
+  page.on('response', (response) => {
+    try {
+      // A redirect's own headers don't apply to the page it leads to.
+      // Not every 3xx: a 304 is the page itself, revalidated.
+      if (REDIRECT_STATUSES.has(response.status())) return;
+      if (!response.request().isNavigationRequest() || response.frame() !== page.mainFrame()) return;
+    } catch {
+      // A service worker's response has no frame.
+      return;
+    }
+    const url = response.url();
+    void response.headerValue('content-security-policy').then((csp) => {
+      if (!csp || !cspBlocksPageScripts(csp)) return;
+      const blocked = scripts().filter((s) => s.world === 'MAIN' && explainMatch(s.matching, url).matches);
+      if (blocked.length > 0) out(`[sm-dev] ${sandboxedPageWarning(blocked.map(preparedScriptPath))}`);
+    }, () => undefined);
   });
 }
 

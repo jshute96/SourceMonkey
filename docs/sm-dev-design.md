@@ -477,6 +477,22 @@ It also holds the run's own tabs:
   so tabs opened together are numbered in call order.
 - It hands the commands the list of open tabs.
 
+### Sandboxed pages (`wireSandboxCheck` in `run.ts`)
+
+A CSP `sandbox` header without `allow-scripts` turns off script in the
+page's own world, and Chrome skips MAIN-world scripts there without a
+word. The extension can only infer it after the fact (see
+[matching.md](matching.md#scripts-that-never-start)); sm-dev sees the
+response, so it says so directly.
+
+- Watches each tab's main-frame navigation responses, in both backends,
+  skipping redirects, whose headers don't apply to the page.
+- Warns on each load of such a page that the run's MAIN-world scripts
+  match, naming them. The check and the wording live in
+  `src/missing-scripts.ts`, shared with the extension's Log hint.
+- The harness's own CDP injection is blocked there too, so under sm-dev
+  those scripts also time out without starting.
+
 ### Applying script changes
 
 `load`, `update`, and a `--watch` save all go through

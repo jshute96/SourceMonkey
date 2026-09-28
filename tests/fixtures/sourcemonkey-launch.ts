@@ -273,6 +273,16 @@ export async function createFixtureServer(pagesDir: string, examplesDir: string)
         else send();
         return;
       }
+      // `/__sandbox/<page>` serves a fixture page with a CSP `sandbox`
+      // header, which a <meta> CSP can't set. See sandbox-csp.spec.ts.
+      if (url.pathname.startsWith('/__sandbox/')) {
+        res.setHeader('Content-Security-Policy', 'sandbox');
+        if (serveStaticFile(res, pagesDir, url.pathname.slice('/__sandbox/'.length))) return;
+        res.removeHeader('Content-Security-Policy');
+        res.statusCode = 404;
+        res.end();
+        return;
+      }
       const name = url.pathname.replace(/^\//, '') || 'index.html';
       if (serveStaticFile(res, pagesDir, name)) return;
       if (serveStaticFile(res, examplesDir, name)) return;

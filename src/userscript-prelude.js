@@ -171,7 +171,15 @@
       return true;
     } catch (_e) { return false; }
   }
+  /* Whether this document has an opaque origin, carried on every report
+     so the SW can explain a script that never started here: on an
+     http(s) page it means a CSP `sandbox` header, which keeps Chrome
+     from injecting MAIN-world scripts at all. See
+     src/missing-scripts.ts. */
+  var OPAQUE_ORIGIN = false;
+  try { OPAQUE_ORIGIN = self.origin === "null"; } catch (_oE) {}
   function send(payload) {
+    try { payload.opaqueOrigin = OPAQUE_ORIGIN; } catch (_pE) {}
     try {
       if (hasOwnRuntimeChannel()) {
         var p = chrome.runtime.sendMessage(payload);
