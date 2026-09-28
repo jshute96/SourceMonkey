@@ -440,6 +440,8 @@ takes effect:
   harness other repos install: the push backend that runs the injected
   code without the extension, and scratch scripts pushed into the real
   one. User-facing side in [harness-guide.md](harness-guide.md).
+- [sm-dev-design.md](sm-dev-design.md) — internals of the harness's
+  `sm-dev` command-line tool: runs and clients, tabs, page commands.
 - [logging.md](logging.md) — SW console-message catalog, log IDs
   (basename + `#N` dupes), and the debug-logging gate.
 - [names-and-paths.md](names-and-paths.md) — the decode-for-display

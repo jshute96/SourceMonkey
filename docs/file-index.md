@@ -166,7 +166,7 @@ One-line descriptions of every source file, grouped by directory.
 
 Node-side code Chrome never loads. Compiled into `lib/harness/`, and
 published as the `sourcemonkey/harness` entry and the `sm-dev`
-command. See `docs/harness-design.md`.
+command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 
 | File | Description |
 |------|-------------|
@@ -502,5 +502,6 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 | `docs/file-changes.md` | Files changed behind SourceMonkey's back: the drop-on-refresh rule per collection kind, the paint-time chips, the collection's "refresh pending" chip |
 | `docs/local-delete.md` | Deleting a local copy: what can be deleted and why, the dialog, dependency files, order and failure |
 | `docs/local-copy.md` | Local copies of a script: the Downloads collection, why `chrome.downloads`, the dialog, header rewriting, dependency layout, what's next |
-| `docs/harness-design.md` | The harness other repos install: the push backend that runs the injected code without the extension, the extension backend, `sm-dev` |
+| `docs/harness-design.md` | The harness other repos install: the push backend that runs the injected code without the extension, and the extension backend |
+| `docs/sm-dev-design.md` | Internals of the `sm-dev` tool: runs and clients, command input, tabs, page commands, waiting, DevTools |
 | `docs/harness-guide.md` | User-facing: what a userscript repo installs, the `sm-dev` commands, the Playwright fixture API, what is and isn't faithful |
