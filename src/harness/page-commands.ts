@@ -9,7 +9,7 @@
 // accessibility tree as text. Actions wait for the page to settle (wait.ts)
 // before returning, so the next command sees what the last one did.
 
-import { readFile, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { Page } from '@playwright/test';
@@ -17,6 +17,7 @@ import type { Page } from '@playwright/test';
 import { PROBE_MAX } from './command-list.js';
 import type { ControlledTab } from './console-commands.js';
 import { ScriptThrew } from './inject.js';
+import { readInputFile } from './input-file.js';
 import { notSettledMessage, SETTLE_TIMEOUT_MS, settleTab } from './wait.js';
 import { savePageHtml } from './save-html.js';
 import { shownPath } from './prepare.js';
@@ -250,13 +251,9 @@ export async function runPageCommand(
             return;
           }
           try {
-            expression = await readFile(file(from), 'utf8');
+            expression = readInputFile(file(from), shown(from));
           } catch (err) {
-            say(`ERROR: Couldn't read ${shown(from)}: ${readProblem(err as NodeJS.ErrnoException)}`);
-            return;
-          }
-          if (!expression.trim()) {
-            say(`ERROR: The file ${shown(from)} is empty`);
+            say(`ERROR: ${(err as Error).message}`);
             return;
           }
         }
@@ -558,14 +555,6 @@ function keyParts(typed: string): string[] {
 // Playwright's message as a person should see it: its first line,
 // without the method it came from (`locator.click: `), capitalized, and
 // with plain words for the common cases.
-// Why a file couldn't be read, in plain words.
-function readProblem(err: NodeJS.ErrnoException): string {
-  if (err.code === 'ENOENT') return 'The file does not exist';
-  if (err.code === 'EISDIR') return 'It\'s a folder';
-  if (err.code === 'EACCES') return 'Permission was refused';
-  return plain(err);
-}
-
 function plain(err: Error): string {
   const first = err.message.split('\n')[0].replace(/^(\w+(\.\w+)+: )+/, '').replace(/\.$/, '');
   const key = /Unknown key: "(.+)"/.exec(first);

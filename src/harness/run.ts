@@ -679,7 +679,7 @@ class Remote {
   private readonly run: SentLineHandler = async (line, reply, sent) => {
     const inspects = onlyInspects(line);
     // A command that changes something, in the stream: not copied to
-    // other senders, as it is no part of their commands. An eval block's
+    // other senders, as it is no part of their commands. A {{ block's
     // code lines as the prompt shows them. One that only looks answers
     // its sender alone.
     if (!inspects) {
@@ -687,7 +687,7 @@ class Remote {
       // reads as it was typed.
       const shown = sent.words ? sent.words.map(shellWord).join(' ') : line;
       const [first, ...more] = shown.split('\n');
-      // Headed by who sent it and how (see commandMark). An eval block
+      // Headed by who sent it and how (see commandMark). A {{ block
       // as it was typed: its code between `{{` and `}}`.
       const mark = commandMark(sent, this.primaryPid);
       const marked = more.length === 0 ? [`${mark} ${first}`] : [`${mark} ${first} {{`, ...more.map((m) => `... ${m}`), '... }}'];
@@ -1343,7 +1343,6 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
   const start = startPages(opts, prepared);
   if (!start) return 2;
   const { urls } = start;
-  if (opts.values) opts.out('[sm-dev] The --values flag is ignored with --extension, since the extension keeps its own storage');
   const pushed = new Map<string, string>();
   // The extension's per-script log is the report stream here; it is
   // polled, since nothing pushes it to Node. Only what this run adds is

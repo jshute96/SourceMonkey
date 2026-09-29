@@ -546,7 +546,7 @@ export class RunClient {
   }
 
   /**
-   * Sends one command (one line, or an eval block's several), and
+   * Sends one command (one line, or a {{ block's several), and
    * resolves to its exit code once it is done. `words`: the sender's own,
    * as its shell gave them.
    */

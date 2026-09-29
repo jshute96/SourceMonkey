@@ -321,14 +321,19 @@ $R menu 'Toggle dark'   # fire by label (or: menu M1)
 $R values               # what the scripts stored
 $R get lastItem
 $R set units '"metric"' # JSON; running scripts' change listeners fire
+$R set prefs --file prefs.json                 # long JSON, from a file
 $R start ... --values '{"units": "metric"}'    # seed before the script runs
+$R start ... --values-file values.json         # seed from a JSON file
 ```
 
+- `set <key> {{` ... `}}` takes several lines of JSON, on stdin or at a
+  prompt, as `eval` does. Send it in a heredoc (see
+  [Multi-step sequences](#multi-step-sequences)).
 - Reads wait for the script's write batching, so `menu X` then
   `values` shows what X stored.
 - Stored values belong to the script and survive `update` and reloads.
-  Under `--extension` they live in the extension, and `--values` does
-  nothing.
+  Under `--extension` they live in the extension, so `--values` and
+  `--values-file` can't be used with it.
 
 ### Working from a saved page
 
@@ -401,8 +406,9 @@ doesn't stop them.
 $R start sites/x/y.user.js https://x.com/ --detach -- click '.open' -- wait selector '#modal' -- snapshot '#modal'
 ```
 
-A longer script, or any `eval` with quotes in it, reads better as a
-heredoc (no shell quoting); each line is a command:
+A longer script, or any `eval` or `set` with quotes in it (JSON
+strings included), reads better as a heredoc (no shell quoting).
+Each line is a command:
 
 ```sh
 $R --stdin <<'EOF'
@@ -416,9 +422,11 @@ EOF
 ```
 
 - Blank lines and `# comments` are skipped.
-- `eval {{` ... `}}` spans several lines of JavaScript (see
+- A `{{` ... `}}` block spans several lines: JavaScript for
+  `eval {{`, JSON for `set <key> {{` (see
   [references/commands.md](references/commands.md#eval)).
-- `eval --file probe.js` runs JavaScript from a file.
+- `--file` reads the same from a file instead:
+  `eval --file probe.js`, `set <key> --file value.json`.
 - The whole input is checked before anything runs, so a typo runs
   nothing.
 

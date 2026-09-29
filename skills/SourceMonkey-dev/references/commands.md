@@ -44,6 +44,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `start <script>... [url]... --detach` | Start a run in the background; returns once pages settle |
 | `start ... --watch` | Re-inject and reload on each save of a script or local `@require` |
 | `start ... --values '<json>'` | Seed GM storage first |
+| `start ... --values-file <path>` | Seed GM storage first, from a JSON file |
 | `start ... --page-errors` | Also stream the site's own errors |
 | `start ... --all` | Open each script's default page, a tab each |
 | `start ... --noscript` | No scripts: just a browser to drive |
@@ -125,6 +126,7 @@ old) or DOM changes for 200ms. Timers aren't waited for.
 | `menu <label or M1>` | Fire one |
 | `values [script\|T2]` | Stored values |
 | `get <key>`, `set <key> <json>` | One value; `set` fires change listeners |
+| `set <key> --file <path>` | The value from a JSON file (or a `{{` block, as `eval` takes) |
 
 ## eval
 

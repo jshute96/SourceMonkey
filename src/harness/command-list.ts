@@ -144,6 +144,7 @@ export const HELP_SECTIONS: HelpSection[] = [
             options: [
               { term: '--watch', about: 'Re-inject and reload when a script or its files change.' },
               { term: '--values JSON', about: ['Seed GM_* storage before the scripts run,', 'e.g. --values \'{"units":"metric"}\'.'] },
+              { term: '--values-file <path>', about: 'Seed GM_* storage from a file holding a JSON object.' },
               { term: '--page-errors', about: 'Also show errors from the page (not just the script).' },
             ],
           },
@@ -371,7 +372,11 @@ export const HELP_SECTIONS: HelpSection[] = [
             ],
           },
           { usage: 'get <key>', about: 'Print one value for the selected script.', gap: true },
-          { usage: 'set <key> <json>', about: 'Store a value for the selected script.' },
+          {
+            usage: 'set <key> <json>',
+            about: ['Store a value for the selected script.', 'set <key> {{ starts a multi-line block of JSON, ended by }}.'],
+            options: [{ term: '--file <path>', about: 'Read the JSON from a file, in place of <json>.' }],
+          },
         ],
       },
       {

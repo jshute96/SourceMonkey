@@ -184,9 +184,10 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/saved-pages.ts` | Serving a saved page at its URL for `--from-saved` and `serveHtml`, with its `_files` folder |
 | `src/harness/checks.ts` | `match` and `validate`'s shared half: finding the scripts named, and the lines each prints |
 | `src/harness/path-args.ts` | Globs (`*`, `**`) and directory searches for sm-dev's file arguments |
-| `src/harness/command-lines.ts` | Input lines into a run's commands: multi-line `eval {{ ... }}` blocks, comments, sent lists |
+| `src/harness/command-lines.ts` | Input lines into a run's commands: multi-line `{{ ... }}` blocks (`eval`, `set`), comments, sent lists |
 | `src/harness/command-list.ts` | Every sm-dev command in one list, in `--help`'s sections, with each command's arguments and options, and its renderer |
 | `src/harness/console-commands.ts` | A run's commands across its tabs, the page-dialog tracker, and the client's `--interactive` prompt |
+| `src/harness/input-file.ts` | Reads a file a command names for its contents (`eval --file`, `set --file`, `--values-file`) |
 | `src/harness/page-commands.ts` | The run commands that drive and read a tab's page, from `click` and `eval` to `snapshot` and `logs` |
 | `src/harness/snapshot.ts` | `snapshot`'s element refs, its on-screen filter, and `probe --css`'s suggested CSS selectors |
 | `src/harness/browser-launch.ts` | `sm-dev --open-browser`: starts a browser that stays open, on a kept profile per port, unless one is up |
@@ -319,7 +320,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/harness-page-commands.test.mjs` | Unit tests for how the page commands split a typed line into words, and name keys for `key` |
 | `tests/unit/harness-snapshot.test.mjs` | Unit tests for `snapshot`: which words are refs, and which lines `--visible` keeps |
 | `tests/unit/harness-runs.test.mjs` | Unit tests for the run registry: a sent line's round trip, stale records, `stop`'s SIGTERM fallback |
-| `tests/unit/harness-command-lines.test.mjs` | Unit tests for `eval {{ ... }}` blocks, comments, and lists of commands |
+| `tests/unit/harness-command-lines.test.mjs` | Unit tests for `{{ ... }}` blocks, comments, and lists of commands |
 | `tests/unit/harness-page-output.test.mjs` | Unit tests for which page console lines and errors `sm-dev start` shows |
 | `tests/unit/harness-prepare.test.mjs` | Unit tests for `prepareScript` and `explainMatch` over real files on disk |
 | `tests/unit/harness-saved-header.test.mjs` | Unit tests for writing and reading a saved page's header: its URL and the userscripts that were running |

@@ -299,11 +299,11 @@ Command marks:
 Turns input lines into commands, for the prompt, piped input, and a
 list sent in one go (`parseCommandList`).
 
-- `eval ... {{` opens a multi-line block and a line of just `}}`
-  closes it.
-  - Not `{` / `}`: a line of just `}` ends any JavaScript function.
-  - The block reaches `eval` as its first line, a newline, then the
-    code with its line breaks kept, so `//` comments still work.
+- `eval ... {{` or `set <key> {{` opens a multi-line block and a line
+  of just `}}` closes it.
+  - The markers are doubled because a line of just `}` is common in
+    JavaScript and JSON (the end of a function or object). A single
+    `}` would end the block too early.
 - Outside a block, blank lines and `#` comments are skipped.
 - A list is checked in full before any of it runs, so a `{{` after
   another command, or a block never closed, runs none of it.

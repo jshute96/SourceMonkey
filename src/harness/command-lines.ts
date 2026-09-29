@@ -1,7 +1,8 @@
 // Turning lines of input into `sm-dev start` commands, for the prompt,
 // piped input, and a list of commands sent in one go.
 //
-// Most commands are one line. `eval` can take several, as a block:
+// Most commands are one line. `eval` (its JavaScript) and `set` (its
+// JSON) can take several, as a block:
 //
 //   eval T2 --script {{
 //   const rows = [...document.querySelectorAll('.athing')];
@@ -10,12 +11,12 @@
 //
 // `{{` ending the first line opens the block, and a line that is just
 // `}}` closes it. Not `{` / `}`: a line holding only `}` ends any
-// JavaScript function, so it would close the block early, where one
-// holding only `}}` almost never appears.
+// JavaScript function or JSON object, so it would close the block
+// early, where one holding only `}}` almost never appears.
 //
 // Outside a block, blank lines are skipped and a line starting with `#`
 // is a comment (no command starts with `#`). Inside one, every line is
-// the JavaScript's own.
+// the block's own.
 
 /** One command, ready for `runConsoleCommand`. */
 export interface AssembledCommand {
@@ -33,15 +34,18 @@ export interface AssembledCommand {
 const OPEN = '{{';
 const CLOSE = '}}';
 
+// The commands that take a block.
+const BLOCK_COMMANDS = new Set(['eval', 'set']);
+
 /**
- * A `{{` after a command other than eval. Its lines up to `}}` are
+ * A `{{` after a command that takes no block. Its lines up to `}}` are
  * skipped, not run one by one as commands.
  */
-export const ONLY_EVAL_TAKES_A_BLOCK = 'Only the eval command takes a {{ block, so its lines up to }} are skipped';
+export const NOT_A_BLOCK_COMMAND = 'Only the eval and set commands take a {{ block, so its lines up to }} are skipped';
 
-/** An eval block the input ended inside of. */
+/** A block the input ended inside of. */
 export function unclosedBlockMessage(line: number): string {
-  return `The eval block on line ${line} has no }} line to end it`;
+  return `The {{ block on line ${line} has no }} line to end it`;
 }
 
 /**
@@ -77,7 +81,7 @@ export class CommandAssembler {
         this.drop();
         return null;
       }
-      // The code keeps its own line breaks, so `//` comments and
+      // The block keeps its own line breaks, so `//` comments and
       // statements without semicolons read as they were written.
       if (this.body.some((l) => l.trim())) command.text += '\n' + this.body.join('\n');
       this.block = null;
@@ -88,8 +92,8 @@ export class CommandAssembler {
     const words = trimmed.split(/\s+/);
     if (words.length > 1 && words.at(-1) === OPEN) {
       this.block = { text: trimmed.slice(0, -OPEN.length).trimEnd(), source: [line], line: n };
-      this.refused = words[0] !== 'eval';
-      return this.refused ? { error: ONLY_EVAL_TAKES_A_BLOCK } : null;
+      this.refused = !BLOCK_COMMANDS.has(words[0]);
+      return this.refused ? { error: NOT_A_BLOCK_COMMAND } : null;
     }
     return { command: { text: trimmed, source: [line], line: n } };
   }

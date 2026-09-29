@@ -22,6 +22,7 @@ import { CommandAssembler } from './command-lines.js';
 import type { HarnessHost, MenuCommandRecord } from './host.js';
 import type { PageAttachment } from './inject.js';
 import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, commandFlags } from './command-list.js';
+import { readJsonFile } from './input-file.js';
 import { ACTIONS, PAGE_COMMANDS, runPageCommand, splitWords, VALUE_FLAGS } from './page-commands.js';
 import { defaultPageUrl, NO_DEFAULT_PAGE, preparedScriptMatches, preparedScriptName, preparedScriptPath, shownPath, withDefaultScheme, type PreparedScript } from './prepare.js';
 import { currentTab, dialogKind, dialogWaitingMessage, NO_TABS, pickTab, TAB_ARG, tabName } from './tab-refs.js';
@@ -459,18 +460,49 @@ export async function runConsoleCommand(
         ctx.out(`[sm-dev] ${NO_SCRIPTS}`);
         return;
       }
-      const key = rest[0];
-      const raw = argument.slice(key?.length ?? 0).trim();
-      if (!key || !raw) {
-        ctx.out('[sm-dev] ERROR: The set command needs a key and a JSON value, e.g. set units "metric"');
-        return false;
-      }
+      // `set <key> <json>`, the JSON maybe a `{{` block's lines, or
+      // `set <key> --file <path>` (the flag first works too). A JSON
+      // value never starts with --, so the flag can't be one. The key
+      // is on the command's own line, never the block's first.
+      const headArgs = words?.[0] === typedCommand ? args : commandWords(trimmed.split('\n')[0]).slice(1);
+      const fileAt = headArgs[0] === '--file' ? 0 : headArgs[1] === '--file' ? 1 : -1;
+      let key: string | undefined;
       let value: unknown;
-      try {
-        value = JSON.parse(raw);
-      } catch {
-        ctx.out(`[sm-dev] ERROR: ${raw} is not JSON. A string needs quotes.`);
-        return;
+      if (fileAt >= 0) {
+        const from = headArgs[fileAt + 1];
+        key = fileAt === 0 ? headArgs[2] : headArgs[0];
+        if (!key || !from || from.startsWith('--') || args.length > 3) {
+          ctx.out('[sm-dev] ERROR: The set command takes a key and one file, e.g. set units --file units.json');
+          return false;
+        }
+        const file = path.resolve(cwd, from);
+        try {
+          value = readJsonFile(file, shownPath(file, cwd));
+        } catch (err) {
+          ctx.out(`[sm-dev] ERROR: ${(err as Error).message}`);
+          return;
+        }
+      } else {
+        key = headArgs[0];
+        const raw = argument.slice(key?.length ?? 0).trim();
+        if (!key || !raw) {
+          ctx.out('[sm-dev] ERROR: The set command needs a key and a JSON value, e.g. set units "metric"');
+          return false;
+        }
+        if (raw.startsWith('--')) {
+          ctx.out(`[sm-dev] ERROR: The set command has no ${raw.split(/\s/)[0]} flag`);
+          return false;
+        }
+        try {
+          value = JSON.parse(raw);
+        } catch (err) {
+          // A bare word typed inline is most likely a string without
+          // its quotes; a block's JSON is just broken.
+          ctx.out(raw.includes('\n')
+            ? `[sm-dev] ERROR: The value of ${key} is not JSON: ${(err as Error).message}`
+            : `[sm-dev] ERROR: ${raw} is not JSON. A string needs quotes.`);
+          return;
+        }
       }
       if (blockedByDialog(ctx.tabs())) return;
       // Through the host, so a running script sees it on its next read
@@ -1613,7 +1645,7 @@ function completeFrom(names: readonly string[], line: string): [string[], string
 let activePrompt: readline.Interface | null = null;
 
 const PROMPT = '> ';
-// While an eval block is open.
+// While a {{ block is open.
 const BLOCK_PROMPT = '... ';
 
 /**
@@ -1734,7 +1766,7 @@ export interface PromptIO {
  * The `> ` prompt of `sm-dev --interactive`, reading the terminal: line
  * editing and history (readline's own keys: arrows, Ctrl-A/E, Ctrl-U
  * and so on), Tab completion of command names, and `... ` inside an
- * `eval {{` block (see command-lines.ts). Ctrl-C clears the typed
+ * `{{` block (see command-lines.ts). Ctrl-C clears the typed
  * line; on an empty one it drops an open block, and otherwise it or
  * Ctrl-D leaves. Each command goes to `runLine` once typed, in order.
  * Returns a function that closes the prompt.
@@ -1758,8 +1790,8 @@ export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?:
     output: process.stdout,
     terminal,
     prompt: PROMPT,
-    // Tab completes a command name, except inside an eval block,
-    // where the line is JavaScript.
+    // Tab completes a command name, except inside a {{ block,
+    // where the line is the block's (JavaScript or JSON).
     completer: (line: string) => (blocks.open ? [[], line] : completeFrom(names, line)),
   });
   // Typed commands not yet done. The `> ` prompt waits for them, as a
@@ -1805,7 +1837,7 @@ export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?:
       blocks.drop();
       // Before the output, which redraws the prompt.
       lines.setPrompt(promptText());
-      io.out('[sm-dev] Dropped the eval block');
+      io.out('[sm-dev] Dropped the {{ block');
       return;
     }
     // With no prompt showing, Ctrl-C looks like it would cancel the

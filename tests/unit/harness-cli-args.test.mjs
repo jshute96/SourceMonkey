@@ -167,6 +167,29 @@ test('--noscript refuses the flags that act on scripts', () => {
   assert.deepEqual(run('--noscript', '--extension'), { code: 2, out: 'ERROR: The --noscript flag can\'t be used with --extension' });
 });
 
+test('--values-file reads a JSON object, and says what is wrong with one', () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'sm-values-'));
+  try {
+    const file = (name, text) => {
+      writeFileSync(path.join(dir, name), text);
+      return path.join(dir, name);
+    };
+    const list = file('list.json', '[1]');
+    assert.deepEqual(run(SCRIPT, '--values-file', list), { code: 2, out: `ERROR: The file ${list} needs to hold a JSON object, e.g. {"units":"metric"}` });
+    const bad = file('bad.json', '{ units: 1 }');
+    assert.match(run(SCRIPT, '--values-file', bad).out, /^ERROR: The file .*bad\.json is not JSON: \S/);
+    const missing = path.join(dir, 'nope.json');
+    assert.deepEqual(run(SCRIPT, '--values-file', missing), { code: 2, out: `ERROR: Couldn't read ${missing}: The file does not exist` });
+    const good = file('good.json', '{"units":"metric"}');
+    assert.deepEqual(run(SCRIPT, '--values', '{}', '--values-file', good), { code: 2, out: 'ERROR: The --values-file flag can\'t be used with --values' });
+    assert.deepEqual(run(SCRIPT, '--extension', '--values-file', good), { code: 2, out: 'ERROR: The --values-file flag can\'t be used with --extension' });
+    assert.deepEqual(run(SCRIPT, '--values', '{}', '--extension'), { code: 2, out: 'ERROR: The --values flag can\'t be used with --extension' });
+    assert.deepEqual(run('--noscript', '--values-file', good), { code: 2, out: 'ERROR: The --noscript flag can\'t be used with --values-file' });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('--notab refuses the flags that need a tab', () => {
   assert.deepEqual(run(SCRIPT, 'x.com', '--all'), { code: 2, out: 'ERROR: The --all flag opens each script\'s own page, so it can\'t be used with a URL' });
   assert.deepEqual(run(SCRIPT, '--notab', 'x.com'), { code: 2, out: 'ERROR: The --notab flag can\'t be used with a URL' });
@@ -238,8 +261,8 @@ test('piped stdin is commands with none on the line, or with --stdin, checked in
     stderr: [
       'stdin > evel 1',
       'ERROR: evel is not a command a run takes. Type sm-dev help to list them.',
-      'ERROR: Line 3: Only the eval command takes a {{ block, so its lines up to }} are skipped',
-      'ERROR: The eval block on line 5 has no }} line to end it',
+      'ERROR: Line 3: Only the eval and set commands take a {{ block, so its lines up to }} are skipped',
+      'ERROR: The {{ block on line 5 has no }} line to end it',
       'None of the commands were run.',
       '',
     ].join('\n'),
@@ -291,7 +314,7 @@ test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
   // A list of only comments sends nothing.
   assert.deepEqual(cli('# a comment\n\n'), { code: 2, out: `ERROR: ${NO_COMMANDS}` });
   assert.deepEqual(cli('tabs {{\n}}'), {
-    code: 2, out: 'ERROR: Line 1: Only the eval command takes a {{ block, so its lines up to }} are skipped. None of the commands were run.',
+    code: 2, out: 'ERROR: Line 1: Only the eval and set commands take a {{ block, so its lines up to }} are skipped. None of the commands were run.',
   });
   const none = { code: 1, out: 'No sm-dev runs are active. Start one with sm-dev start.' };
   assert.deepEqual(cli('status'), none);
@@ -450,7 +473,7 @@ test('each run command takes the flags its help lists, and no others', async () 
     newtab: saved, open: saved, reload: loads,
     click: ['--nowait'], hover: ['--nowait'], type: ['--nowait'], key: ['--nowait'],
     eval: ['--script', '--file'], snapshot: ['--visible', '--out'], screenshot: ['--full'], probe: ['--css', '--html'],
-    wait: ['--timeout-seconds'], status: [], values: [], menu: [], tabs: [], focus: [],
+    wait: ['--timeout-seconds'], status: [], values: [], set: ['--file'], menu: [], tabs: [], focus: [],
   };
   for (const [name, flags] of Object.entries(expected)) assert.deepEqual(commandFlags(name).sort(), [...flags].sort(), name);
 });

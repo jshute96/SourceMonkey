@@ -4,6 +4,9 @@
 // dialog a command opens waits for a typed answer, and with several
 // tabs the commands name them as T1, T2 and act on the one picked.
 
+import { writeFileSync } from 'node:fs';
+import path from 'node:path';
+
 import { test, expect } from '../fixtures/harness.js';
 import { DialogTracker, runConsoleCommand, type ConsoleContext } from '../../lib/harness/console-commands.js';
 import { attachPage } from '../../lib/harness/inject.js';
@@ -25,7 +28,7 @@ test.describe('sm-dev typed commands', () => {
     const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [first, second], out: (l) => lines.push(l), stop: () => undefined };
     const run = async (line: string) => {
       lines.length = 0;
-      await runConsoleCommand(line, ctx);
+      await runConsoleCommand(line, ctx, { cwd: scriptsDir.path });
       return [...lines];
     };
 
@@ -54,6 +57,27 @@ test.describe('sm-dev typed commands', () => {
     expect(await run('values now')).toEqual(['[sm-dev] No loaded script matches now. Use scripts to list them.']);
     expect(await run('status now')).toEqual(['[sm-dev] ERROR: The status command takes no arguments']);
     expect(await run('reload now')).toEqual(['[sm-dev] ERROR: now is not a tab. Tabs are named T1, T2 and so on; use tabs to list them.']);
+    // Several lines of JSON, as a {{ block gives them, or from a file,
+    // the flag before the key or after it.
+    expect(await run('set prefs\n{\n  "units": "metric"\n}')).toEqual(['[sm-dev] Set prefs (Second)']);
+    expect(host.getValue(second.spec!.id, 'prefs')).toEqual({ units: 'metric' });
+    writeFileSync(path.join(scriptsDir.path, 'prefs.json'), '{ "units": "imperial" }\n');
+    expect(await run('set prefs --file prefs.json')).toEqual(['[sm-dev] Set prefs (Second)']);
+    expect(host.getValue(second.spec!.id, 'prefs')).toEqual({ units: 'imperial' });
+    expect(await run('set --file prefs.json other')).toEqual(['[sm-dev] Set other (Second)']);
+    writeFileSync(path.join(scriptsDir.path, 'bad.json'), '{ units: 1 }');
+    expect(await run('set prefs --file bad.json')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The file bad\.json is not JSON: \S/)]);
+    expect(await run('set prefs --file nope.json')).toEqual(['[sm-dev] ERROR: Couldn\'t read nope.json: The file does not exist']);
+    // A quoted path, with a space in it.
+    writeFileSync(path.join(scriptsDir.path, 'my prefs.json'), '{ "units": "si" }');
+    expect(await run('set spaced --file "my prefs.json"')).toEqual(['[sm-dev] Set spaced (Second)']);
+    expect(host.getValue(second.spec!.id, 'spaced')).toEqual({ units: 'si' });
+    // The key is on the command's line, not the block's first.
+    expect(await run('set\nfoo 1')).toEqual(['[sm-dev] ERROR: The set command needs a key and a JSON value, e.g. set units "metric"']);
+    expect(await run('set prefs\n{ "a": 1,\n}')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The value of prefs is not JSON: \S/)]);
+    expect(await run('set prefs --flie x.json')).toEqual(['[sm-dev] ERROR: The set command has no --flie flag']);
+    expect(await run('set prefs --file')).toEqual(['[sm-dev] ERROR: The set command takes a key and one file, e.g. set units --file units.json']);
+    expect(host.getValue(second.spec!.id, 'prefs')).toEqual({ units: 'imperial' });
   });
 
   test('menu lists commands by script, and fires one by its M number', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {

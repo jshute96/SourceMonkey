@@ -1,12 +1,12 @@
 // Unit tests for src/harness/command-lines.ts (compiled to
-// lib/harness/command-lines.js): `eval {{ ... }}` blocks, comments, and
+// lib/harness/command-lines.js): `{{ ... }}` blocks, comments, and
 // lists of commands sent in one go.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  CommandAssembler, ONLY_EVAL_TAKES_A_BLOCK, echoCommand, parseCommandList, unclosedBlockMessage,
+  CommandAssembler, NOT_A_BLOCK_COMMAND, echoCommand, parseCommandList, unclosedBlockMessage,
 } from '../../lib/harness/command-lines.js';
 
 const texts = (result) => result.commands.map((c) => c.text);
@@ -43,13 +43,17 @@ test('an empty block is eval with nothing to evaluate', () => {
   assert.deepEqual(texts(parseCommandList('eval {{\n\n}}')), ['eval']);
 });
 
+test('a set block is its JSON, lines and all', () => {
+  assert.deepEqual(texts(parseCommandList('set prefs {{\n{\n  "units": "metric"\n}\n}}')), ['set prefs\n{\n  "units": "metric"\n}']);
+});
+
 test('{{ after another command refuses the whole list', () => {
-  assert.deepEqual(parseCommandList('status\ntabs {{\n}}'), { error: `Line 2: ${ONLY_EVAL_TAKES_A_BLOCK}. None of the commands were run.` });
+  assert.deepEqual(parseCommandList('status\ntabs {{\n}}'), { error: `Line 2: ${NOT_A_BLOCK_COMMAND}. None of the commands were run.` });
 });
 
 test('a refused block\'s lines are skipped, not run as commands', () => {
   const a = new CommandAssembler();
-  assert.deepEqual(a.push('tabs {{'), { error: ONLY_EVAL_TAKES_A_BLOCK });
+  assert.deepEqual(a.push('tabs {{'), { error: NOT_A_BLOCK_COMMAND });
   assert.equal(a.open, true);
   assert.equal(a.push('reload'), null);
   assert.equal(a.push('quit'), null);

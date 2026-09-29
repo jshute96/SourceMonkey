@@ -366,6 +366,7 @@ running, --seconds N to watch it for a while, or commands after --.`
 | `--noscript` | Start with no scripts, as a browser to drive |
 | `--from-saved` | Open `.html` files as saved pages, at their URLs |
 | `--values '<json>'` | Seed `GM_*` storage first |
+| `--values-file <path>` | Seed `GM_*` storage first, from a JSON file |
 | `--page-errors` | Also stream the page's own errors |
 | `--nowait` | Don't wait for the pages to settle |
 | `--seconds N` | Stop the run after N seconds |
@@ -439,7 +440,8 @@ What to open:
   - Can't be combined with a URL or `--all`.
 - `--noscript` starts with no scripts at all, on a blank page or the
   URLs given, as a browser to drive with the run commands. Can't be
-  combined with `--all`, `--values`, `--watch` or `--extension`.
+  combined with `--all`, `--values`, `--values-file`, `--watch` or
+  `--extension`.
 - `--from-saved` opens each `.html` file given as a saved page, at the
   URL it was saved from, with `--url` and `--offline` as for `newtab`.
   See [Saved pages](#saved-pages). Not with `--all` or `--notab`.
@@ -450,6 +452,8 @@ The scripts:
   and reloads the tabs it runs in or now matches, all at once. (The run
   command `update` does the same on demand.)
 - `--values '{"key": 1}'` seeds `GM_*` storage before the script runs.
+  `--values-file values.json` does the same from a file holding a JSON
+  object.
 - `--page-errors` also shows the page's own errors (see
   [What the stream shows](#what-the-stream-shows)).
 
@@ -578,12 +582,12 @@ sm-dev --interactive      # no run yet: type start or attach
 - Output streamed while you type is printed above the prompt, which is
   then redrawn with what you had typed so far.
 - `--` splits a typed line into several commands, as on the command
-  line, except inside an `eval` block.
+  line, except inside a `{{` block.
 - A command that fails is reported, and the prompt goes on.
 
 Keys:
 
-- Ctrl-C clears a half-typed line, and inside an `eval` block drops the
+- Ctrl-C clears a half-typed line, and inside a `{{` block drops the
   block.
 - On an empty line, Ctrl-C or Ctrl-D exits, as `exit` does: a run this
   sm-dev started without `--detach` stops, and one it only attached to
@@ -620,7 +624,7 @@ EOF
 - Each line is one command; `--` splits it into several.
 - They run in order, each finishing before the next starts. Their
   output is headed by the command (`stdin > menu Bump`).
-- Blank lines are skipped, `#` starts a comment, and `eval` blocks work
+- Blank lines are skipped, `#` starts a comment, and `{{` blocks work
   as at the prompt.
 - A file, or what a pipe delivers at once, is checked in full first. A
   mistake anywhere in it (an unknown command, a `{{` after another
@@ -646,10 +650,10 @@ When stdin is read:
 - A bare `sm-dev` given a pipe nothing writes to waits on it.
 - With no command on the line or in stdin, sm-dev says so, and exits 2.
 
-### Multi-line `eval`
+### Multi-line `eval` and `set`
 
 `eval` can take several lines of JavaScript as a block, at the prompt
-or on stdin:
+or on stdin, and `set` several lines of JSON:
 
 ```
 > eval T2 --script {{
@@ -658,12 +662,20 @@ or on stdin:
 ... }}
 ```
 
+```
+> set prefs {{
+... { "units": "metric", "limit": 20 }
+... }}
+```
+
 - `{{` at the end of the line opens the block, and a line of just `}}`
-  closes it. A lone `}` is JavaScript, so it doesn't end the block.
+  closes it. A lone `}` is JavaScript or JSON, so it doesn't end the
+  block.
 - A tab and flags go before the `{{`.
-- Only `eval` takes a block; `{{` after another command is refused.
+- Only `eval` and `set` take a block; `{{` after another command is
+  refused.
 - The prompt shows `... ` while a block is open.
-- `--` inside a block is JavaScript, not a command separator.
+- `--` inside a block is the block's own, not a command separator.
 - Input that ends inside a block reports it rather than running half of
   it.
 
@@ -748,6 +760,7 @@ The options:
 | `values [what]` | Prints what all scripts have stored (`all` too), one script's, or those of the scripts running on a tab (`T2`) |
 | `get <key>` | Prints one stored value |
 | `set <key> <json>` | Stores a value, as another tab's write would: a running script sees it and its change listeners fire |
+| `set <key> --file <path>` | Stores a value read from a JSON file; a running script sees it and its change listeners fire |
 
 - `update` only counts a script whose file or local `@require`s were
   modified since it was read, so touching a file forces it.
@@ -967,8 +980,8 @@ current one.
 | `type <selector> <text>` | Types into an element, key by key |
 | `key <keys>...` | Presses keys in order: `key j Shift+ArrowRight Escape` (`keys` works too) |
 | `eval <js>` | Evaluates in the page and prints the result |
-| `eval --script <js>` | The same in the scripts' world |
-| `eval --file <path>` | Evaluates a JavaScript file (with `--script` too, in either order) |
+| `eval --script <js>` | Evaluates in the scripts' world |
+| `eval --file <path>` | Evaluates JavaScript from a file |
 | `snapshot [selector] [--visible] [--out file]` | The page (or an element) as its accessibility tree, one line per element, each with a ref. `--visible`: only what's on screen. `--out` writes it to a file |
 | `screenshot [selector] [--full] <file>` | A PNG of what's showing, of the whole page (`--full`), or of one element |
 | `savehtml <file>` | The page's HTML, to replay later (see [Saved pages](#saved-pages)) |
@@ -994,7 +1007,7 @@ current one.
 ### `eval`
 
 - Takes the rest of the line as JavaScript, quotes and all, or several
-  lines as a block (see [Multi-line `eval`](#multi-line-eval)).
+  lines as a block (see [Multi-line `eval` and `set`](#multi-line-eval-and-set)).
 - `eval --file probe.js` takes the JavaScript from a file instead,
   for a reusable probe with no shell quoting.
 - The value is the last expression, as in the DevTools console.
@@ -1547,7 +1560,8 @@ Chrome can answer:
 
 ### Differences from the push backend
 
-- `--values` has no effect: the extension keeps its own storage.
+- `--values` and `--values-file` can't be used: the extension keeps
+  its own storage, which the run can't seed.
 - Only the script's own text is pushed, not the files beside it. A
   relative `@require` is refused, and a local copy of a remote
   `@require` is not used: the extension fetches the URL.

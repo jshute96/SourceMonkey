@@ -31,6 +31,7 @@ import {
 } from './console-commands.js';
 import { OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, commandNamed, commandsHelp, fullHelp } from './command-list.js';
 import { devtoolsWanted } from './devtools.js';
+import { readJsonFile } from './input-file.js';
 // Node built-ins only, so as cheap to load as the rest here.
 import { runIdOf, type CommandSource, type RunClient, type RunRecord } from './runs.js';
 import { runLogLabel } from './run-log.js';
@@ -61,6 +62,8 @@ interface Opts {
   cdp?: string;
   watch: boolean;
   values?: Record<string, unknown>;
+  /** Which flag gave `values`, to name in messages. */
+  valuesFlag?: string;
   extension: boolean;
   solo: boolean;
   pageErrors: boolean;
@@ -113,15 +116,29 @@ function parseArgs(argv: string[]): Opts {
       case '--notab': opts.noTab = true; break;
       case '--cdp': opts.cdp = next(); break;
       case '--watch': opts.watch = true; break;
-      case '--values': {
-        const raw = next();
-        try {
-          const parsed: unknown = JSON.parse(raw);
-          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new TypeError('not an object');
-          opts.values = parsed as Record<string, unknown>;
-        } catch {
-          throw new UsageError('The --values flag needs a JSON object');
+      case '--values':
+      case '--values-file': {
+        const given = next();
+        if (opts.valuesFlag && opts.valuesFlag !== arg) throw new UsageError(`The ${arg} flag can't be used with ${opts.valuesFlag}`);
+        let parsed: unknown;
+        if (arg === '--values') {
+          try {
+            parsed = JSON.parse(given);
+          } catch {
+            throw new UsageError('The --values flag needs a JSON object');
+          }
+        } else {
+          try {
+            parsed = readJsonFile(path.resolve(given), given);
+          } catch (err) {
+            throw new UsageError((err as Error).message);
+          }
         }
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          throw new UsageError(arg === '--values' ? 'The --values flag needs a JSON object' : `The file ${given} needs to hold a JSON object, e.g. {"units":"metric"}`);
+        }
+        opts.values = parsed as Record<string, unknown>;
+        opts.valuesFlag = arg;
         break;
       }
       case '--extension': opts.extension = true; break;
@@ -246,7 +263,11 @@ async function startCommand(opts: Opts, words: string[], client: Client): Promis
     await stopRun(old, print);
     client.stopped(old.id);
   }
-  const started = await detachRun(words, id);
+  // The values as read here, not the file again: a pipe or `<(...)`
+  // is spent by now, and the process doesn't inherit it anyway.
+  const valuesAt = words.indexOf('--values-file');
+  const sent = valuesAt < 0 ? words : [...words.slice(0, valuesAt), '--values', JSON.stringify(opts.values), ...words.slice(valuesAt + 2)];
+  const started = await detachRun(sent, id);
   if (!started.id) return started.code;
   client.started(started.id, started.log, started.exited, { detached: opts.detach, lasting: opts.seconds !== undefined, hold: started.hold });
   if (opts.detach) {
@@ -277,12 +298,14 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
   if (opts.noTab) clash('--notab', [[opts.all, '--all'], [urls.length > 0, 'a URL']]);
   if (opts.noScript) {
     clash('--noscript', [
-      [opts.all, '--all'], [Boolean(opts.values), '--values'],
+      [opts.all, '--all'], [Boolean(opts.values), opts.valuesFlag ?? '--values'],
       [opts.watch, '--watch'], [opts.extension, '--extension'], [opts.solo, '--solo'],
     ]);
   }
   // Asked for by name, it must be able to run; on by default from the
   // environment, it just sits out the runs it can't serve.
+  // The extension keeps its own storage, which a run can't seed.
+  if (opts.valuesFlag) clash(opts.valuesFlag, [[opts.extension, '--extension']]);
   if (opts.devtools === true) clash('--devtools', [[lineTempBrowser, '--temp-browser'], [opts.extension, '--extension']]);
   if (lineTempBrowser && opts.cdp !== undefined) throw new UsageError('The --temp-browser flag can\'t be used with --cdp');
   if (lineOpenBrowser && opts.cdp !== undefined) throw new UsageError('The start command connects to the browser --open-browser starts, so give --cdp once, first: sm-dev --open-browser --cdp ... start ...');
