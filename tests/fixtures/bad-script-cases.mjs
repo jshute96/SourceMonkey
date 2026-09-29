@@ -3,11 +3,11 @@
 //
 //   - `tests/e2e/bad-scripts.spec.ts` — adds the directory as a real
 //     collection in a real browser, and reads the stored rows back.
-//   - `tests/unit/validate-userscripts.test.mjs` — runs the offline
-//     CLI over the same directory under Node.
+//   - `tests/unit/harness-validate.test.mjs` — runs `sm-dev validate`
+//     over the same directory under Node.
 //
 // The table lives here rather than in either test because the point of
-// having both is that they must agree: the CLI's whole claim is that it
+// having both is that they must agree: `sm-dev validate`'s claim is that it
 // reproduces what the extension does at install time. Two copies of the
 // expectations would let them drift apart silently, which is precisely
 // the failure neither test could then detect.

@@ -31,12 +31,13 @@ listing.
 | `download-scripts.mjs` | `corpus.json` | `files/`, `download-report.json` | [Downloads](#downloading-the-scripts-themselves) each script, then its dependencies |
 | `record-results.mjs` | `corpus.json`, `files/` | `corpus.json` findings | **Records individual facts about one script at a time** (a test result, tag or note) as you learn them. [More](#test-results). Its `validate` subcommand is the one bulk step |
 | `build-db.mjs` | `corpus.json`, `files/` | `corpus.db` | [Loads everything into SQLite](#analysis-database) |
+| `validate-corpus.mjs` | `files/` | stdout, `--json` file | [Validates](#validating-the-corpus) every downloaded script offline; `record-results.mjs validate` runs it |
 | `render-analysis.mjs` | `corpus.db`, `analysis.sql` | `analysis.html` | Renders the statistics report |
 | `serve-results.mjs` | `results.html`, `corpus.json` | | [Serves the results page](#viewing-results) on localhost |
 | `corpus.mjs` | | | Shared helpers: locked `corpus.json` updates, URL to `files/` path mapping |
 
 The tools that parse headers import the extension's compiled code from
-`dist/`, so run `pnpm run build` first.
+`dist/` (or `lib/`), so run `pnpm run build` first.
 
 ### Rebuilding from a fresh checkout
 
@@ -194,15 +195,15 @@ Once the scripts are downloaded, SourceMonkey's install-time checks
 run over all of them without a browser:
 
 ```sh
-pnpm run validate --offline-root tests/greasyfork-examples/files \
-                  tests/greasyfork-examples/files
+node tests/greasyfork-examples/validate-corpus.mjs \
+  --offline-root tests/greasyfork-examples/files tests/greasyfork-examples/files
 ```
 
 `--offline-root` serves every dependency URL out of `files/` instead of
 the network, so the run is reproducible and makes no requests.
 `record-results.mjs validate` runs the same check and records each verdict in
 `corpus.json` (see [Test results](#test-results)). See
-[docs/offline-validation.md](../../docs/offline-validation.md) for the
+[docs/corpus-validation.md](../../docs/corpus-validation.md) for the
 tool and [docs/corpus-validation-results.md](../../docs/corpus-validation-results.md)
 for the last run's findings.
 

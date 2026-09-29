@@ -33,7 +33,7 @@ import { fileURLToPath } from 'node:url';
 import type { BrowserContext, Page } from '@playwright/test';
 
 import { test, expect } from '../fixtures/extension';
-// The expectations are shared with the offline CLI's test — see the
+// The expectations are shared with `sm-dev validate`'s test — see the
 // header of that module for why they can't live in either test.
 import {
   BAD_CASES,
@@ -113,7 +113,7 @@ test.describe('bad-examples corpus', () => {
         } else {
           expect(at?.column, `unexpected error column for ${c.file}`).toBeUndefined();
         }
-        // The *rendered* form is asserted by the offline CLI's test
+        // The *rendered* form is asserted by `sm-dev validate`'s test
         // instead (`locationPattern`, same fixture). Splitting it that
         // way keeps each test on the thing it is actually about — the
         // browser stores structure, the CLI prints text — while the

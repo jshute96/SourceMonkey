@@ -796,7 +796,9 @@ On their own, with files:
   `match` in its place.
 - `sm-dev validate <path>...` checks script validity (header,
   `@require`, syntax) over files, directories, globs or script URLs,
-  with the message the extension would show.
+  with the message the extension would show, plus all warnings (each
+  with its line). `UNCHECKED` means the syntax check couldn't finish;
+  the script still loads.
 - These run in the shell, run or no run.
 
 In a run, not given files, they act on the run's scripts and tabs:

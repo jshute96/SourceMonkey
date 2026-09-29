@@ -70,7 +70,7 @@ function stripLeadingBom(source: string): string {
 //
 // Named constants rather than inline literals because these strings are
 // both the message and the value something compares against — today the
-// offline validator, which groups failures by message. A reworded
+// corpus validator, which groups failures by message. A reworded
 // literal would silently stop matching.
 //
 // Phrased to read correctly in all three places they appear: alone in

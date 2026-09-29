@@ -431,10 +431,9 @@ takes effect:
   content-derived verdict carries (header problems, bad `@require`s,
   syntax errors): which file and line it names, who produces one, and
   how each surface turns it into a click through to the code.
-- [offline-validation.md](offline-validation.md) — the install-time
-  checks as a command-line tool: how it runs the production pipeline
-  outside a browser, the offline dependency root, and what the report
-  groups. Findings over the GreasyFork corpus are in
+- [corpus-validation.md](corpus-validation.md) — the install-time
+  checks over the GreasyFork corpus: the offline dependency root, and
+  what the report groups. Findings over the GreasyFork corpus are in
   [corpus-validation-results.md](corpus-validation-results.md).
 - [harness-design.md](harness-design.md) — the development and testing
   harness other repos install: the push backend that runs the injected

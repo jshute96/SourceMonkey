@@ -223,8 +223,8 @@ The compile-only check is in (see
 ## GreasyFork corpus findings
 
 Running the install-time checks over the top-2000 GreasyFork scripts
-(`pnpm run validate`, see
-[docs/offline-validation.md](docs/offline-validation.md)) turns
+(`validate-corpus.mjs`, see
+[docs/corpus-validation.md](docs/corpus-validation.md)) turns
 "scripts SourceMonkey would refuse" into a measured list. Full results,
 with the evidence behind each item, are in
 [docs/corpus-validation-results.md](docs/corpus-validation-results.md);
@@ -750,11 +750,6 @@ Adding any of these is a catalog entry + a body — nothing structural.
 
 See [docs/harness-design.md](docs/harness-design.md).
 
-- `sm-dev validate` has no offline mode: a remote `@require` with no
-  local stand-in is fetched from the network. The corpus validator
-  (`scripts/validate-userscripts.mjs --offline-root`) still has its own
-  fetch shim for that; folding it into `prepareScript` as a fetch
-  override would let the two share one driver.
 - A tab `GM_openInTab` opens under the push backend gets no scripts;
   the extension would inject whatever matches it. Attaching after the
   tab exists would only reach its next document, so this needs the

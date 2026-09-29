@@ -2,7 +2,7 @@
 // Record individual facts about one corpus script at a time in corpus.json, as
 // they're learned: the result of trying it on its target site, a tag, a dated
 // note. It doesn't compute anything over the corpus; the one bulk command is
-// `validate`, which records the offline validator's verdict for every script.
+// `validate`, which records the corpus validator's verdict for every script.
 //
 // This is the only tool that writes findings. Every write goes through
 // updateCorpus(), so parallel agents can record results at once.
@@ -10,9 +10,9 @@
 // Usage:
 //   node tests/greasyfork-examples/record-results.mjs <command> [args]
 //
-//   validate                 run the offline validator over every downloaded
+//   validate                 run the corpus validator over every downloaded
 //                            script and import the verdicts (needs `pnpm run build`)
-//   import-validation FILE   import an existing `pnpm run validate --json FILE`
+//   import-validation FILE   import an existing `validate-corpus.mjs --json FILE`
 //                            run; names resolve against --base (default: repo root)
 //   show ID                  print one record
 //   list [filters]           one line per script, in listing order:
@@ -241,7 +241,7 @@ async function runValidator(opts) {
   const dir = await mkdtemp(path.join(tmpdir(), 'sm-validate-'));
   const json = path.join(dir, 'results.json');
   try {
-    const args = ['scripts/validate-userscripts.mjs', '--offline-root', opts.root, '--json', json, '--quiet', ...byFile.keys()];
+    const args = ['tests/greasyfork-examples/validate-corpus.mjs', '--offline-root', opts.root, '--json', json, '--quiet', ...byFile.keys()];
     const code = await new Promise((resolve, reject) => {
       const child = spawn(process.execPath, args, { cwd: REPO_ROOT, stdio: 'inherit' });
       child.on('error', reject);

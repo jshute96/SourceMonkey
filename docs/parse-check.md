@@ -507,10 +507,11 @@ knows a column, so `ParseLocation` pins both coordinates present.
 
 ## Outside the browser
 
-The same check runs as a CLI over files on disk — `new Function` under
-Node, with `vm.Script` standing in for the `<script>` location probes.
+The same check runs under Node for `sm-dev validate` and the corpus
+validator: `new Function`, with `vm.Script` standing in for the
+`<script>` location probes (`src/harness/parse-check-node.ts`).
 Everything from `selectParseLocation` onward is this code, unchanged.
-See [offline-validation.md](offline-validation.md).
+See [harness-design.md](harness-design.md#preparets-script-in-injectable-script-out).
 
 ## Testing
 
@@ -528,7 +529,7 @@ See [offline-validation.md](offline-validation.md).
   construct). Add the directory as a collection to see the real messages.
   The expectations live in `tests/fixtures/bad-script-cases.mjs` and
   are pinned twice: by `bad-scripts.spec.ts` in Chromium and by
-  `tests/unit/validate-userscripts.test.mjs` under Node, which is what
+  `tests/unit/harness-validate.test.mjs` under Node, which is what
   keeps the two engines' answers verified against each other. The same
   directory covers the header diagnostics — see
   [diagnostics.md](diagnostics.md).

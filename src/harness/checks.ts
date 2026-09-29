@@ -10,7 +10,7 @@ import path from 'node:path';
 import { isMarkupContentType, looksLikeMarkup, markupResponseMessage } from '../markup-response.js';
 import { unusableMatchGroupKey } from '../url-match.js';
 import { HAS_SCHEME, globFiles, globMistake, isDirectory, isGlob, walkScripts } from './path-args.js';
-import { NO_RULE_COVERS_URL, explainMatch, isDirectoryMessage, noSuchFileMessage, prepareScript, shownPath, type PreparedScript } from './prepare.js';
+import { NO_RULE_COVERS_URL, explainMatch, isDirectoryMessage, noSuchFileMessage, parseCheckWarning, prepareScript, shownPath, warningLines, type PreparedScript } from './prepare.js';
 
 // A mistake in how the command was typed, as opposed to a failure while
 // carrying it out: the one kind that exits 2.
@@ -151,15 +151,47 @@ export function prepareSource(source: ScriptSource, roots: ScriptRoots): Promise
     : prepareScript({ text: source.text, sourceUrl: source.url, ...roots });
 }
 
-/** `validate`'s lines for one script, and whether it is valid. */
-export function validateLines(label: string, prepared: PreparedScript): { lines: string[]; ok: boolean } {
-  if (prepared.status !== 'ok') return { lines: [`INVALID  ${label}`, `    ${prepared.diagnostic}`], ok: false };
-  return { lines: [`ok       ${label}`, ...prepared.startupLogs.map((l) => `    ${l.level}: ${l.message}`)], ok: true };
+/**
+ * `validate`'s verdict on a script. `unchecked` is valid as far as the
+ * checks went, but the syntax check couldn't decide: the script still
+ * loads, as it does in the extension, so it doesn't fail the command.
+ */
+export type ValidateVerdict = 'ok' | 'invalid' | 'unchecked';
+
+/**
+ * `validate`'s lines for one script, and its verdict: the verdict and
+ * why, then every warning, each with the line it's about.
+ */
+export function validateLines(label: string, prepared: PreparedScript): { lines: string[]; verdict: ValidateVerdict } {
+  const warnings = warningLines(prepared, { parseCheck: false }).map((line) => `    ${line}`);
+  if (prepared.status !== 'ok') {
+    return { lines: [`INVALID  ${label}`, `    ${prepared.diagnostic}`, ...warnings], verdict: 'invalid' };
+  }
+  if (prepared.parseCheckNote) {
+    return { lines: [`UNCHECKED ${label}`, `    ${parseCheckWarning(prepared.parseCheckNote)}`, ...warnings], verdict: 'unchecked' };
+  }
+  return { lines: [`ok       ${label}`, ...warnings], verdict: 'ok' };
+}
+
+/**
+ * `validate` over `sources`: each script's lines, then the counts.
+ * Exits 1 when any is invalid.
+ */
+export async function validateAll(sources: ScriptSource[], roots: ScriptRoots, out: (line: string) => void): Promise<number> {
+  const counts: Record<ValidateVerdict, number> = { ok: 0, invalid: 0, unchecked: 0 };
+  for (const source of sources) {
+    const { lines, verdict } = validateLines(source.label, await prepareSource(source, roots));
+    counts[verdict]++;
+    for (const line of lines) out(line);
+  }
+  out('');
+  out(validateSummary(counts));
+  return counts.invalid === 0 ? 0 : 1;
 }
 
 /** The line after `validate`'s scripts. */
-export function validateSummary(ok: number, invalid: number): string {
-  return `${ok} ok, ${invalid} invalid`;
+function validateSummary(counts: Record<ValidateVerdict, number>): string {
+  return `${counts.ok} ok, ${counts.invalid} invalid${counts.unchecked ? `, ${counts.unchecked} unchecked` : ''}`;
 }
 
 /**

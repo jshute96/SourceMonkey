@@ -474,7 +474,7 @@ test('matchPatternProblem: a "#" in the path is flagged, with @include as the fi
 });
 
 test('unusableMatchGroupKey: elides the pattern, and declines anything else', () => {
-  // What the offline validator groups a survey by. Two scripts with
+  // What the corpus validator groups a survey by. Two scripts with
   // different bad patterns and the same mistake must key alike.
   const a = unusableMatchMessage(matchPatternProblem('https://example.com'));
   const b = unusableMatchMessage(matchPatternProblem('https://other.example'));

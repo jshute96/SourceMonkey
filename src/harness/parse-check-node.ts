@@ -1,8 +1,7 @@
 // Node counterpart of `src/parse-sandbox.ts` — the compile-only parse
-// check, run under Node's V8 instead of Chrome's. Used by the offline
-// validator (`scripts/validate-userscripts.mjs`) and the development
-// harness (`prepare.ts`), both of which run the install pipeline
-// outside a browser.
+// check, run under Node's V8 instead of Chrome's. Used by the development
+// harness (`prepare.ts`), which runs the install pipeline outside a
+// browser for `sm-dev` and the corpus validator.
 //
 // The extension can only do this inside a sandboxed extension page,
 // because MV3's CSP forbids `eval` everywhere else and the location

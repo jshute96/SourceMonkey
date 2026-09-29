@@ -1,19 +1,16 @@
-// The offline validator CLI (`scripts/validate-userscripts.mjs`), driven
-// the way a user drives it: as a subprocess, over real directories, with
-// its own `--json` output read back.
+// The corpus validator (`tests/greasyfork-examples/validate-corpus.mjs`),
+// driven the way it's used: as a subprocess, over a hand-built offline
+// tree, with its own `--json` output read back.
 //
-// Not an in-process import, deliberately. The CLI's arg parsing, script
-// discovery, `fetch` replacement and reporting are as much of the tool
-// as the checking is, and each of them has a failure mode that returns
-// *zero problems found* — a mistyped flag, a walker that matches
-// nothing, a fetch shim that isn't installed. A test that reached past
+// Not an in-process import, deliberately. Its arg parsing, script
+// discovery, offline fetch and reporting each have a failure mode that
+// returns *zero problems found* (a mistyped flag, a walker that matches
+// nothing, a fetch that never reached the tree). A test reaching past
 // them into the internals would pass while the tool reported an empty
 // corpus as clean.
 //
-// The expectations for `tests/bad-examples/` come from the same module
-// `tests/e2e/bad-scripts.spec.ts` uses, so this test and the browser one
-// are asserting the same table. That is the whole claim being made: the
-// CLI reproduces what the extension does at install time.
+// The checking itself is `sm-dev validate`'s, tested against the
+// browser's verdicts in harness-validate.test.mjs.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -25,19 +22,11 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
-import {
-  BAD_CASES,
-  expectedErrorLine,
-  expectedFilePattern,
-  badScriptFilesOnDisk,
-  locationPattern,
-} from '../fixtures/bad-script-cases.mjs';
-
 const execFileAsync = promisify(execFile);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-const CLI = path.join(REPO_ROOT, 'scripts', 'validate-userscripts.mjs');
+const CLI = path.join(REPO_ROOT, 'tests', 'greasyfork-examples', 'validate-corpus.mjs');
 
 /**
  * Run the CLI and return its parsed `--json` records. Paths in the
@@ -63,57 +52,6 @@ async function runValidator(args) {
 function byBasename(records) {
   return new Map(records.map((r) => [path.basename(r.name), r]));
 }
-
-test('every script in tests/examples validates clean', async () => {
-  const { records, stdout } = await runValidator(['tests/examples']);
-  // The suite is the reference for well-formed scripts, so anything
-  // other than a clean sweep is either a broken example or a validator
-  // that has started rejecting valid input.
-  // Except one that is flagged on purpose: it shows that an @match
-  // naming a #hash never runs here, while Violentmonkey runs it.
-  const bad = records.filter((r) => r.category !== 'ok');
-  assert.deepEqual(bad.map((r) => `${r.name}: ${r.detail ?? r.message}`), [
-    'tests/examples/headers-match-hash/match-hash.user.js: @match … names a #hash that @match can\'t see, so this script would never run on any page; use @include to match on the hash',
-  ]);
-  // Guard against the walker silently matching nothing — an empty run
-  // reports zero failures too.
-  assert.ok(records.length >= 20, `expected the examples suite, got ${records.length} scripts`);
-  // The printed summary is the product for a CLI, and it is derived
-  // separately from the JSON — a reporter that lost its counts (or its
-  // output) would otherwise pass every assertion above.
-  assert.match(stdout, new RegExp(`Scripts checked: ${records.length}\\b`));
-  assert.match(stdout, new RegExp(`ok:\\s+${records.length - bad.length} \\(`));
-  assert.match(stdout, new RegExp(`invalid:\\s+${bad.length} \\(`));
-});
-
-test('tests/bad-examples produces the same verdicts the browser records', async () => {
-  const { records } = await runValidator(['tests/bad-examples']);
-  const got = byBasename(records);
-
-  for (const c of BAD_CASES) {
-    const r = got.get(c.file);
-    assert.ok(r, `missing result for ${c.file}`);
-    assert.equal(r.status, c.expectedStatus, `wrong status for ${c.file}`);
-    if (c.errorMatcher) {
-      assert.match(r.message ?? '', c.errorMatcher, `wrong message for ${c.file}`);
-    } else {
-      assert.equal(r.message ?? '', '', `expected no message for ${c.file}`);
-    }
-    if (c.errorIn) {
-      // The same location assertion the e2e spec makes, read off the
-      // example's own `>>> the error` marker rather than written down.
-      // The CLI renders it through `describeDiagnostic`, exactly as the
-      // extension's own surfaces do, so one pattern checks both.
-      assert.match(r.message ?? '', locationPattern(c), `wrong location for ${c.file}`);
-      assert.match(r.location?.file ?? '', expectedFilePattern(c), `wrong file for ${c.file}`);
-      assert.equal(r.location?.line, expectedErrorLine(c), `wrong line for ${c.file}`);
-    }
-  }
-
-  // Every file on disk was seen — catches a new bad example that the
-  // walker skips or that nobody added expectations for.
-  assert.deepEqual([...got.keys()].sort(), badScriptFilesOnDisk());
-});
 
 // ---------- Offline mode ----------
 //
@@ -187,8 +125,14 @@ test('offline mode resolves @require URLs out of the tree', async (t) => {
     ].join('\n'),
   });
 
-  const { records } = await runValidator(['--offline-root', root, root]);
+  const { records, stdout } = await runValidator(['--offline-root', root, root]);
   const got = byBasename(records);
+  // The printed summary is derived separately from the JSON, so a
+  // reporter that lost its counts would otherwise pass everything below.
+  assert.equal(records.length, 4);
+  assert.match(stdout, /Scripts checked: 4\b/);
+  assert.match(stdout, /ok:\s+1 \(/);
+  assert.match(stdout, /invalid:\s+3 \(/);
 
   assert.equal(got.get('good.user.js')?.status, 'ok', got.get('good.user.js')?.message);
   assert.equal(got.get('dead.user.js')?.status, 'invalid');

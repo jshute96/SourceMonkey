@@ -1434,7 +1434,7 @@ out while the check is still to come.
   the same `onCommitted`, and `gate()` coalesces the two calls
   regardless of which arrives first, so a split rule would let the
   opportunistic call decide for the fast path. Install, the Refresh
-  buttons, Refresh All and the offline CLI all wait for the verdict.
+  buttons, Refresh All and `sm-dev validate` all wait for the verdict.
 - Content that didn't move still costs nothing either way — the
   `parseCheckedHash` short-circuit is applied before the mode is
   consulted.

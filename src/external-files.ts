@@ -66,8 +66,7 @@ import {
 export const MAX_FILE_BYTES = 1024 * 1024;
 
 // Rendered in whole MB when the cap divides evenly, so messages say
-// "1 MB" rather than "1024 KB". Exported because the offline validator
-// reports the cap too, and two renderings of one number could disagree.
+// "1 MB" rather than "1024 KB".
 export const CAP_TEXT = MAX_FILE_BYTES % (1024 * 1024) === 0
   ? `${MAX_FILE_BYTES / (1024 * 1024)} MB`
   : `${Math.round(MAX_FILE_BYTES / 1024)} KB`;
@@ -91,7 +90,7 @@ const HTTP_STATUS_PREFIX = 'The server returned HTTP ';
 // These read as facts rather than as a list of possibilities because
 // the fetcher now reports which case it hit. It used to return a bare
 // `null`, so a single message had to cover "no response", "an HTTP
-// error", and "over the limit" at once — and the offline validator
+// error", and "over the limit" at once — and the corpus validator
 // reconstructed the real cause from a fetch log to make its report
 // useful.
 export function describeFetchFailure(failure: FetchFailure): string {
@@ -148,8 +147,9 @@ const FETCH_FAILURE_REASONS: Record<FetchFailure['reason'], true> = {
 
 // Did this text come out of `describeFetchFailure`?
 //
-// Exists for `scripts/validate-userscripts.mjs`, which substitutes its
-// own wording when the offline mirror's 404 is an artifact of the
+// Exists for the corpus validator
+// (`tests/greasyfork-examples/validate-corpus.mjs`), which substitutes
+// its own wording when the offline mirror's 404 is an artifact of the
 // mirror rather than a real server answer — it has to recognize a
 // fetch-layer failure to know when that substitution applies.
 //
@@ -979,7 +979,7 @@ async function fetchFileBytes(
       // our own code broke its contract — which is what the reader is
       // being told, and why `isFetchFailureMessage` correctly declines
       // it. Phrasing it as one of the fetch failures would both invite
-      // the offline validator to substitute mirror wording for a bug of
+      // the corpus validator to substitute mirror wording for a bug of
       // ours, and put a second `could not be fetched: ` colon into a
       // string that already lands after `@require <ref>: `.
       errorMessage: `Internal error: the file fetcher failed unexpectedly (${

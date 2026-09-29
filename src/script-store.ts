@@ -530,7 +530,7 @@ export interface HeaderProblem {
 }
 
 // The messages `validateHeader` can return. Exported for the same
-// reason the split errors are (see `userscript-header.ts`): the offline
+// reason the split errors are (see `userscript-header.ts`): the corpus
 // validator groups failures by message, so these are the strings it
 // matches against rather than literals maintained in two places.
 //
@@ -542,7 +542,7 @@ export const NO_MATCH_OR_INCLUDE =
   'No @match or @include in the metadata block, so this script would never run on any page';
 
 // Opens every parse-check verdict (`Syntax error: <what V8 said>`).
-// Exported for the same reason as the constants above: the offline
+// Exported for the same reason as the constants above: the corpus
 // validator groups its survey by the message AFTER this prefix, so it
 // has to strip exactly what we wrote. It used to carry its own regex,
 // which stopped matching the moment this string was recased — and a
@@ -926,10 +926,10 @@ export function localFileLogMessages(
 // referencing the same canonical URL share one fetch — and a require
 // + a resource pointing at the same URL also share a single fetch.
 //
-// Exported for `scripts/validate-userscripts.mjs`, which runs this
-// half of the pipeline over a corpus of files on disk — the point of
-// that tool is to exercise the production path, so it calls this
-// rather than restating the sequence.
+// Exported for the development harness (`src/harness/prepare.ts`),
+// which runs this half of the pipeline under Node for `sm-dev` and the
+// corpus validator. The point is to exercise the production path, so
+// it calls this rather than restating the sequence.
 export async function applyFiles(
   built: StoredScript,
   prior: StoredScript | undefined,
@@ -938,8 +938,8 @@ export async function applyFiles(
   now: number,
   // What this script's collection says about local stand-ins — whether
   // they're allowed, and the collection's own root. Defaults to
-  // disabled so the offline validator (and any other caller outside the
-  // extension) keeps the plain declared-URL behavior.
+  // disabled so a caller outside the extension keeps the plain
+  // declared-URL behavior.
   localFiles: LocalFileScope = { enabled: false },
   // Whether to wait for the parse verdict before returning. Defaults to
   // 'await' so every caller that hasn't thought about it keeps today's
@@ -1062,7 +1062,7 @@ export type ParseChecker = (script: StoredScript) => Promise<ParseVerdict | null
 //
 //   - 'await'  — the verdict is part of the row the caller receives.
 //                Everything a user is watching (Install, the Refresh
-//                buttons, Refresh All, the offline CLI) uses this.
+//                buttons, Refresh All, the harness) uses this.
 //   - 'defer'  — skip the round trip, return the row unchecked, and let
 //                the caller run the check afterwards
 //                (`checkParsesInBackground`). The row keeps no

@@ -392,7 +392,7 @@ export function unusableMatchMessage(problem: MatchPatternProblem): string {
 // One of those messages with the offending pattern elided, or null when
 // the message is something else. What a bulk survey groups on — dozens
 // of scripts making the same mistake with different URLs are one row,
-// not dozens (`scripts/validate-userscripts.mjs`).
+// not dozens (`tests/greasyfork-examples/validate-corpus.mjs`).
 //
 // Derived from the constants above rather than matching the wording: a
 // recognizer that carries its own copy of the sentence goes stale the

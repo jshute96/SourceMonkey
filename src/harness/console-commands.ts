@@ -34,7 +34,7 @@ import {
   type PageToOpen, type PageWord, type SavedPageFile, type SavedPageStart,
 } from './saved-pages.js';
 import {
-  SCRIPT_ARG, UsageError, expandPathArg, expandPathArgs, matchLines, prepareSource, scriptSources, validateLines, validateSources, validateSummary,
+  SCRIPT_ARG, UsageError, expandPathArg, expandPathArgs, matchLines, prepareSource, scriptSources, validateAll, validateSources,
   type ScriptRoots, type ScriptSource,
 } from './checks.js';
 
@@ -911,15 +911,7 @@ async function validateCommand(ctx: ConsoleContext, words: string[], cwd: string
   }
   // The loaded scripts first, in their order, then the paths.
   sources.unshift(...reread);
-  let invalid = 0;
-  for (const source of sources) {
-    const { lines, ok } = validateLines(source.label, await prepareSource(source, rootsOf(ctx, cwd)));
-    if (!ok) invalid++;
-    for (const line of lines) ctx.out(line);
-  }
-  ctx.out('');
-  ctx.out(validateSummary(sources.length - invalid, invalid));
-  return invalid === 0 ? 0 : 1;
+  return validateAll(sources, rootsOf(ctx, cwd), (line) => ctx.out(line));
 }
 
 // ---------- Tabs ----------

@@ -38,7 +38,7 @@ import { runLogLabel } from './run-log.js';
 import { withDefaultScheme } from './prepare.js';
 import { ONE_URL, pagesToOpen, type PageWord, type SavedPageStart } from './saved-pages.js';
 import {
-  REMOTE_SCRIPT, SCRIPT_ARG, UsageError, expandPathArgs, matchLines, prepareSource, scriptFile, scriptSources, validateLines, validateSources, validateSummary,
+  REMOTE_SCRIPT, SCRIPT_ARG, UsageError, expandPathArgs, matchLines, prepareSource, scriptFile, scriptSources, validateAll, validateSources,
   type ScriptRoots,
 } from './checks.js';
 
@@ -185,15 +185,7 @@ function checkValidate(opts: Opts): void {
 
 async function validate(opts: Opts): Promise<number> {
   checkValidate(opts);
-  const sources = await validateSources(opts.args);
-  let failed = 0;
-  for (const source of sources) {
-    const { lines, ok } = validateLines(source.label, await prepareSource(source, lineRoots));
-    if (!ok) failed++;
-    for (const line of lines) print(line);
-  }
-  print(`\n${validateSummary(sources.length - failed, failed)}`);
-  return failed === 0 ? 0 : 1;
+  return validateAll(await validateSources(opts.args), lineRoots, print);
 }
 
 // `start` and `match` arguments: scripts, and the URLs the rest are,

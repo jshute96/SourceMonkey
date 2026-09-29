@@ -507,22 +507,19 @@ for known per-manager divergences.
 
 ### Validate userscripts from the command line
 
-The install-time checks — header validation, `@require` / `@resource`
-loading, and the compile-only syntax check — also run as a CLI, over
-files on disk and with no browser involved:
+`sm-dev validate` runs the install-time checks (header validation,
+`@require` / `@resource` loading, and the compile-only syntax check)
+over files on disk, with no browser involved:
 
 ```sh
-pnpm run validate path/to/scripts/          # a directory, or single files
-pnpm run validate --offline-root DIR PATH   # dependencies from a local tree
-pnpm run validate --json out.json PATH      # per-script results
+scripts/sm-dev validate path/to/scripts/    # a directory, or single files
 ```
 
 It reports each script as `ok` or `invalid` with the same message the
-extension would show, grouped by failure type. `--offline-root` serves
-every `@require` / `@resource` URL out of a downloaded tree instead of
-the network, which is how the GreasyFork corpus
-(`tests/greasyfork-examples/`) gets checked in bulk. See
-[docs/offline-validation.md](docs/offline-validation.md). That corpus
+extension would show, plus any warnings. The GreasyFork corpus
+(`tests/greasyfork-examples/`) has its own bulk validator that serves
+dependencies from a downloaded tree; see
+[docs/corpus-validation.md](docs/corpus-validation.md). That corpus
 also tracks per-script test results; see its
 [README](tests/greasyfork-examples/README.md#test-results).
 
@@ -555,7 +552,6 @@ scripts/zip_extension.sh   # writes /tmp/SourceMonkey.zip
 
 - `src/` — extension source (TypeScript + manifest + HTML).
 - `scripts/build.mjs` — bundler-free build script.
-- `scripts/validate-userscripts.mjs` — offline validator CLI (above).
 - `scripts/zip_extension.sh` — builds and zips `dist/` for distribution.
 - `scripts/release-extension.sh` — cuts a tagged GitHub release with the
   zip attached.

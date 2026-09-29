@@ -25,15 +25,11 @@ real-browser end-to-end suite for everything that touches the
   its own `README.md`). Playwright's `testMatch` covers only
   `e2e/**` and `examples/**`, so nothing here runs as a test.
 
-`pnpm run validate` is a fourth thing again — not a test runner, but it
-does check scripts. It runs the install-time pipeline over files on
-disk with no browser, across `tests/examples/`, `tests/bad-examples/`,
-or the GreasyFork corpus. See
-[offline-validation.md](offline-validation.md).
+`sm-dev validate` runs the install-time pipeline over files on disk
+with no browser. `tests/unit/harness-validate.test.mjs` spawns it over
+`tests/examples/` and `tests/bad-examples/`.
 
-- The CLI itself is tested by `tests/unit/validate-userscripts.test.mjs`,
-  which spawns it over both example suites.
-- Its `tests/bad-examples/` expectations live in
+- `validate`'s `tests/bad-examples/` expectations live in
   `tests/fixtures/bad-script-cases.mjs` and are shared with
   `tests/e2e/bad-scripts.spec.ts`, which asserts the same table against
   the real extension in Chromium. One table, two runners: they can't

@@ -352,6 +352,17 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
 - `match` and `validate` share `checks.ts` between the command line and
   a run, so both print the same lines. In a run they read its loaded
   scripts and tabs.
+- `validate` gives each script one of three verdicts:
+  - `ok`;
+  - `INVALID`, with the message the viewer would show;
+  - `UNCHECKED`: the syntax check couldn't decide (it fails open, see
+    [parse-check.md](parse-check.md#failing-open)). The script still
+    loads, as in the extension, so this doesn't fail the command,
+    but it isn't reported as `ok` either.
+- Under each script it prints every warning, valid or not, with the
+  line it is about: the load-time notes the viewer's Log tab shows
+  (`warningLines` in `prepare.ts`). `start` and `load` print the same
+  lines, with an undecided syntax check as a `warn:` line.
 - File arguments go through `expandPathArg`, for `start`, `match`,
   `validate`, `load`, `open` and `newtab`.
 - Globs are expanded by `path-args.ts` rather than the shell, since

@@ -158,9 +158,9 @@ $R validate 'sites/**/*.user.js'       # or a glob (quoted: sm-dev expands it)
 
 ```
 INVALID  sites/x/bad.user.js
-    Syntax error: Unexpected token ';' (in bad.user.js, line 5, column 11)
+    Syntax error: Unexpected token ';' (in sites/x/bad.user.js, line 5, column 11)
 ok       sites/x/y.user.js
-    warn: Ignoring unsupported @grant GM_frobnicate
+    warn: Ignoring unsupported @grant GM_frobnicate (in sites/x/y.user.js, line 6)
 
 1 ok, 1 invalid
 ```
@@ -172,6 +172,9 @@ ok       sites/x/y.user.js
 - `warn:` lines don't make it invalid, but read them. An unsupported
   or misspelled `@grant` is ignored, so that `GM_*` name won't exist
   at runtime.
+- `UNCHECKED` means the syntax check couldn't finish (e.g. very deep
+  nesting). The script still loads and the exit code is 0, but its
+  syntax wasn't verified.
 - An invalid script is refused by `start` and `loadUserscript` with the
   same message, so fixing it here saves a failed run.
 - It doesn't check that `@grant` covers every `GM_*` the code calls; a

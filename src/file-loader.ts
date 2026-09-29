@@ -88,7 +88,7 @@ export type ResolveFailure =
   | { failed: true; reason: 'unsupported-scheme'; scheme: string };
 
 // Yes/no form, for the callers that only need a URL or nothing —
-// syntax highlighting's link detection, the icon resolver, the offline
+// syntax highlighting's link detection, the icon resolver, the corpus
 // validator. A thin wrapper rather than a second implementation: the
 // two used to be one function and the rules must not drift.
 export function resolveScriptResource(
@@ -498,7 +498,7 @@ async function fetchFileBytesFetch(
   // layer, and whatever status this leg's `fetch` synthesises means the
   // same thing the XHR leg's `onerror` does — the file wouldn't read.
   // Reporting it as `HTTP <n>` would make the two legs describe one
-  // situation differently, which is what the offline validator's fetch
+  // situation differently, which is what the corpus validator's fetch
   // shim exposed.
   if (!response.ok && response.status !== 0) return fetchFailed('unreadable-file');
   // Answered, but we aren't allowed to look.

@@ -201,7 +201,7 @@ export function textFromRoots(roots: readonly string[]): string {
 // contexts (service worker, collections page, viewer), so each loads
 // once at startup and then tracks `storage.onChanged`. Defaults to
 // none, which is also what any caller outside the extension (the
-// offline validator) sees.
+// corpus validator) sees.
 let configuredRoots: string[] = [];
 let loadOnce: Promise<void> | null = null;
 // Bumped by anything that publishes a newer value, so an initial read
@@ -287,7 +287,7 @@ export function _setLocalRootsForTests(roots: readonly string[]): void {
 export interface LocalFileScope {
   enabled: boolean;
   // The collection's stored `path`. Optional: the viewer's preview has
-  // no collection row at all, and neither does the offline validator.
+  // no collection row at all, and neither does the corpus validator.
   collectionPath?: string;
 }
 

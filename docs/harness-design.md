@@ -173,10 +173,21 @@ run in Node, except for the strings they send into pages.
     host).
   - Two files sharing a basename stay distinct.
 - Calls are serialized: the local-roots setting the override resolver
-  reads is process-wide.
-- `scripts/validate-userscripts.mjs` has its own driver (it has an
-  offline dependency root the harness doesn't), and shares the Node
-  parse checker in `parse-check-node.ts`.
+  reads is process-wide, and so is the state behind the `fetch`
+  override and the parse-check note below.
+- A `fetch` option answers every dependency fetch in place of the
+  network and disk. The corpus validator uses it to serve `@require`s
+  from its downloaded tree ([corpus-validation.md](corpus-validation.md)).
+- A syntax check that couldn't decide (V8 threw something other than a
+  `SyntaxError`) leaves the script `ok`, as in the extension. It is
+  returned as `parseCheckNote`, and `validate` reports the script as
+  `UNCHECKED`.
+- Where Node differs from the extension:
+  - The compile is Node's V8, not Chrome's (`parse-check-node.ts`). A
+    very new syntax feature, or a `SyntaxError`'s wording, can differ.
+  - On a line over ~1020 characters (any minified file) the column
+    falls back to 1: V8 clips the frame it renders in `err.stack`. The
+    line is still exact.
 
 ### `host.ts`: the stand-in service worker
 

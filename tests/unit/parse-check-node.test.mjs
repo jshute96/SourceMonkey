@@ -1,6 +1,6 @@
 // The Node port of the sandbox's compile-only parse check
-// (`src/harness/parse-check-node.ts`), which `scripts/validate-userscripts.mjs`
-// uses in place of Chrome's sandboxed page.
+// (`src/harness/parse-check-node.ts`), which the harness (`sm-dev
+// validate` and the rest) uses in place of Chrome's sandboxed page.
 //
 // What's worth pinning here is the part that had to be rewritten: the
 // verdict is `new Function` either way, but the location probes go

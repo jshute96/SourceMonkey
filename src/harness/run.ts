@@ -26,7 +26,7 @@ import { attachPage, targetIdOf, type PageAttachment } from './inject.js';
 import { pageSays, recordLog } from './page-commands.js';
 import { showConsoleLine, showPageError } from './page-output.js';
 import {
-  defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, preparedScriptPath, prepareScript, shownPath, type PreparedScript,
+  defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, preparedScriptPath, prepareScript, shownPath, warningLines, type PreparedScript,
 } from './prepare.js';
 import { comparableUrl, openingSavedLine, routeSavedPage, savedPageServe, type SavedPageStart } from './saved-pages.js';
 import { browserSentence, checkRunsDir, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentCommand, type SentLineHandler } from './runs.js';
@@ -1537,7 +1537,7 @@ async function prepareAll(opts: RunOptions, files = opts.files): Promise<Prepare
       opts.out(`INVALID  ${typedName(opts, file)}\n    ${p.diagnostic}`);
       return null;
     }
-    for (const log of p.startupLogs) opts.out(`[sm-dev] ${log.level}: ${log.message}`);
+    for (const line of warningLines(p)) opts.out(`[sm-dev] ${line}`);
     out.push(p);
   }
   return out;

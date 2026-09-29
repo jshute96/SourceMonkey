@@ -123,7 +123,7 @@ export function startPhaseTimer(label: string): PhaseTimer {
 //
 // Global to the JS context rather than threaded through: reaching the
 // leaf call sites otherwise means a parameter through `applyFiles`,
-// `attachFiles` and both per-kind loaders, plus the offline validator
+// `attachFiles` and both per-kind loaders, plus the corpus validator
 // that shares them. For a debug-only diagnostic that is a bad trade.
 // The cost is that two concurrently refreshing collections land in one
 // bucket — which is why the report is emitted per REFRESH PASS, where

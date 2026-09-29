@@ -114,6 +114,24 @@ export interface PrepareOptions {
    * a path replaces the first.
    */
   copy?: string;
+  /**
+   * Answers every `fetch` made while preparing (in practice, the
+   * `@require` / `@resource` fetches) in place of the network and
+   * disk, `file://` included. The corpus validator serves
+   * dependencies out of a downloaded tree this way.
+   */
+  fetch?: (url: string) => Promise<Response>;
+}
+
+/**
+ * Why the syntax check couldn't reach a verdict. The script stays `ok`
+ * (the check fails open, see docs/parse-check.md), so this is a warning:
+ *   - `inconclusive`: V8 threw something other than a SyntaxError.
+ *   - `errored`: composing the text to check threw.
+ */
+export interface ParseCheckNote {
+  kind: 'inconclusive' | 'errored';
+  message: string;
 }
 
 export interface PreparedScript {
@@ -127,6 +145,8 @@ export interface PreparedScript {
   diagnostic?: string;
   /** Non-fatal parse-time notes: an unknown `@grant`, an ignored `@match`. */
   startupLogs: readonly StartupLog[];
+  /** Set when the syntax check couldn't decide; the script stays `ok`. */
+  parseCheckNote?: ParseCheckNote;
   /** The registration Chrome would get, entries in order. Null when invalid. */
   spec: RegistrationEntries | null;
   world: InjectionWorld;
@@ -158,6 +178,11 @@ async function packageVersion(): Promise<string> {
 
 let seamsInstalled = false;
 
+// Per-call state the seams read. Safe as module state only because
+// `prepareScript` serializes calls.
+let fetchOverride: PrepareOptions['fetch'] | undefined;
+let parseCheckNote: ParseCheckNote | undefined;
+
 // `file-loader.ts` reads every dependency through the global `fetch`,
 // which Node doesn't implement for `file://`. Wrap it once; http(s)
 // passes straight through to the real one.
@@ -169,6 +194,7 @@ function installNodeSeams(): void {
     const url = typeof input === 'string' ? input
       : input instanceof URL ? input.href
       : input.url;
+    if (fetchOverride) return fetchOverride(url);
     if (!url.startsWith('file:')) return realFetch(input, init);
     let body: ArrayBuffer;
     try {
@@ -189,9 +215,20 @@ function installNodeSeams(): void {
   // Same two steps the extension's checkers perform: compose the exact
   // text the injected entry compiles, then map the reported position
   // back to the file it was written in. Only the compile is Node's.
+  //
+  // The pipeline swallows a check that couldn't decide (it fails
+  // open), so the note is kept here for `validate` to show.
   setParseChecker(async (script) => {
-    const checked = await buildParseCheckSource(script, await packageVersion());
-    return attachParseLocation(checkParseNode(checked.text), checked);
+    let checked;
+    try {
+      checked = await buildParseCheckSource(script, await packageVersion());
+    } catch (err) {
+      parseCheckNote = { kind: 'errored', message: String((err as Error)?.message ?? err) };
+      throw err;
+    }
+    const verdict = attachParseLocation(checkParseNode(checked.text), checked);
+    if (verdict?.status === 'unknown') parseCheckNote = { kind: 'inconclusive', message: verdict.message ?? '' };
+    return verdict;
   });
 }
 
@@ -205,7 +242,15 @@ function installNodeSeams(): void {
 let chain: Promise<unknown> = Promise.resolve();
 
 export function prepareScript(opts: PrepareOptions): Promise<PreparedScript> {
-  const run = chain.then(() => prepareScriptNow(opts));
+  const run = chain.then(async () => {
+    fetchOverride = opts.fetch;
+    parseCheckNote = undefined;
+    try {
+      return await prepareScriptNow(opts);
+    } finally {
+      fetchOverride = undefined;
+    }
+  });
   chain = run.catch(() => undefined);
   return run;
 }
@@ -257,6 +302,7 @@ async function prepareScriptNow(opts: PrepareOptions): Promise<PreparedScript> {
     script,
     status: script.status,
     startupLogs: script.startupLogs ?? [],
+    ...(parseCheckNote && { parseCheckNote }),
     spec,
     world: resolveScriptWorld(script),
     runAt: normalizeDeclaredRunAt(script.header ? getValue(script.header, 'run-at') : undefined) as RunAt,
@@ -306,6 +352,24 @@ function asEntries(spec: RegistrationSpec | null): RegistrationEntries | null {
 function dirUrl(dir: string): string {
   const url = pathToFileURL(path.resolve(dir)).toString();
   return url.endsWith('/') ? url : url + '/';
+}
+
+/** What a `ParseCheckNote` means for the person reading it. */
+export function parseCheckWarning(note: ParseCheckNote): string {
+  const why = note.message ? ` (${note.message})` : '';
+  return `The syntax check could not finish${why}, so syntax errors were not checked. The script still loads.`;
+}
+
+/**
+ * Every warning from preparing the script, as `<level>: <message>`
+ * with the line each is about: the load-time notes the viewer's Log
+ * tab shows, then (unless `parseCheck` is false) a syntax check that
+ * couldn't decide.
+ */
+export function warningLines(prepared: PreparedScript, { parseCheck = true } = {}): string[] {
+  const lines = prepared.startupLogs.map((l) => `${l.level}: ${describeDiagnostic(l.message, l.location)}`);
+  if (parseCheck && prepared.parseCheckNote) lines.push(`warn: ${parseCheckWarning(prepared.parseCheckNote)}`);
+  return lines;
 }
 
 // ---------- Matching ----------

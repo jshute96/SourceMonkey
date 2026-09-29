@@ -1,20 +1,20 @@
 # Corpus validation results
 
-A snapshot of what `scripts/validate-userscripts.mjs` finds when it
-runs SourceMonkey's install-time checks over the scripts we have — the
-repo's own example suites, then the top-2000 GreasyFork scripts.
+A snapshot of what SourceMonkey's install-time checks find over the
+scripts we have: the repo's own example suites, then the top-2000
+GreasyFork scripts.
 
-See [offline-validation.md](offline-validation.md) for the tool, and
+See [corpus-validation.md](corpus-validation.md) for the tool, and
 [tests/greasyfork-examples/README.md](../tests/greasyfork-examples/README.md)
 for how the corpus is built.
 
 ## The example suites
 
 Run these first — they're fast, they need no downloaded corpus, and
-they're the check that the CLI still agrees with the browser:
+they're the check that Node still agrees with the browser:
 
 ```sh
-pnpm run validate tests/examples tests/bad-examples
+scripts/sm-dev validate tests/examples tests/bad-examples
 ```
 
 | Suite | Result |
@@ -31,8 +31,8 @@ pnpm run validate tests/examples tests/bad-examples
   missing `@name`, missing `@match`), a `@require` that isn't there,
   and syntax errors in the body, in a `@require`, from a join-only
   collision, and from each brace-imbalance shape.
-- Both suites are asserted automatically — see "Testing" in
-  [offline-validation.md](offline-validation.md).
+- Both suites are asserted automatically by
+  `tests/unit/harness-validate.test.mjs`.
 
 ## The GreasyFork corpus
 
@@ -40,8 +40,8 @@ Command, Node 22.22 (V8's verdict is the tool's verdict, so the version
 is part of the result):
 
 ```sh
-pnpm run validate --offline-root tests/greasyfork-examples/files \
-                  tests/greasyfork-examples/files
+node tests/greasyfork-examples/validate-corpus.mjs \
+  --offline-root tests/greasyfork-examples/files tests/greasyfork-examples/files
 ```
 
 | | Scripts | |
@@ -139,7 +139,7 @@ the program is ours, not theirs. Rate: 3 in 2000 (0.15%).
 |------|--------|
 | 2 × unterminated metadata block | `// ==/UserScript==////` and `// ==/UserScript==vvvvar thisUrl = …` — the closing marker has trailing junk on its own line, which our end-of-line-anchored regex won't match |
 | 1 × no metadata block | the file opens `/// ==UserScript==` — three slashes |
-| 3 × `@require` served HTML | two `http://cdn.staticfile.org/jquery/…` URLs and one `gitcdn.link` URL now answer with an HTML page; the content-type gate catches exactly the soft failure it exists for |
+| 3 × `@require` served HTML | two `http://cdn.staticfile.org/jquery/…` URLs and one `gitcdn.link` URL now answer with an HTML page; the markup check catches exactly the soft failure it exists for |
 | 1 × `data:` URL `@require` | `data:application/javascript,%3Bwindow.Vue%3DVue%3B…` — an inline shim, rejected outright; the bytes are in the ref, so no fetch is involved |
 
 The header cases are parser strictness: Tampermonkey's markers are

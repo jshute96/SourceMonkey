@@ -50,9 +50,9 @@ so a rewording can't quietly stop matching what compares against them:
 | `ignoredMatchMessage`, `unusableMatchMessage` | `url-match.ts` |
 
 The same rule covers anything that *recognizes* a message rather than
-prints it. `scripts/validate-userscripts.mjs` groups its survey by
-message, and used to do it with regexes over the wording — which went
-stale silently the first time these were recased, mislabelling whole
+prints it. The corpus validator (`validate-corpus.mjs`) groups its
+survey by message, and used to do it with regexes over the wording —
+which went stale silently the first time these were recased, mislabelling whole
 buckets without failing. It now imports `SYNTAX_ERROR_PREFIX`, and calls
 `isFetchFailureMessage` (`external-files.ts`) and
 `unusableMatchGroupKey` (`url-match.ts`) — each derived from the
@@ -680,8 +680,8 @@ The lesson worth keeping:
   - The expected locations live in `tests/fixtures/bad-script-cases.mjs`
     and are pinned twice: by `bad-scripts.spec.ts` against the stored
     `errorLocation` in Chromium, and by
-    `tests/unit/validate-userscripts.test.mjs` against the offline CLI's
-    report under Node. Both go through `locationPattern`, so the two
+    `tests/unit/harness-validate.test.mjs` against `sm-dev validate`'s
+    output under Node. Both go through `locationPattern`, so the two
     engines' answers stay checked against each other.
   - Lines are read off each example's `>>> the error` marker rather than
     written down, except for the header failures — those are about a tag

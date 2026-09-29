@@ -63,7 +63,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 
 | Command | Does |
 | --- | --- |
-| `validate <path>...` | Header, `@require` and syntax checks (files, dirs, globs) |
+| `validate <path>...` | Header, `@require` and syntax checks, plus warnings (files, dirs, globs) |
 | `match <script>... <url>...` | Would it run there; which rule decided |
 | `match`, `match all` | In a run: the selected script on the current tab; all scripts on all tabs |
 | `scripts`, `script <script>` | List; pick the one `get`/`set`/`match` use |
