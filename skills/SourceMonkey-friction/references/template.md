@@ -11,10 +11,12 @@ log, and what each entry should cover.
 
 Tag each friction item with one or more of:
 
-- `[tools]`: sm-dev, the harness, the skill, or the script manager.
+- `[tools]`: the dev tools: sm-dev, the Playwright harness, and the skills.
+- `[SM]`: the SourceMonkey script manager itself (the extension): injection, `GM_*` APIs, header handling.
 - `[general]`: general issues making scripts work, which could come up on many sites.
 - `[site-specific]`: this site or this script.
 - `[unknown]`: not sure which.
+- `[bug]`: added to one of the above when it looks clearly broken, rather than missing or awkward.
 
 Template:
 

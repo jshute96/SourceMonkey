@@ -333,6 +333,14 @@ node tests/greasyfork-examples/serve-results.mjs   # then open http://localhost:
 - Opened straight from disk, Chrome won't let the page fetch another file, so
   it asks you to choose `corpus.json`. You navigate to it once; after that the
   page offers to reopen the same file with one click.
+- The filters, Notes setting and sort are kept in the URL, so a browser
+  reload keeps them and the link reproduces the view. Reset clears them.
+- Notes show in a full-width row under each script. The Notes selector sets
+  them all to hidden, short or full.
+  - Short shows the first entry, cut at three lines, with a Show full button
+    when anything is hidden.
+  - Full lets the browser's find (Ctrl+F) search them.
+  - Each row's Show / Hide button overrides the setting for that row.
 
 ### Derived tags
 
@@ -348,7 +356,8 @@ SourceMonkey doesn't support but that don't make it invalid:
   ignores ([supported-headers.md](../../docs/supported-headers.md)).
 
 Hand-added `tags` are for what only running the script shows, such as an
-unsupported feature the checks can't see.
+unsupported feature the checks can't see. Give a new one a description in
+`HELP.tag` in `results.html`, which shows it as the tag's tooltip.
 
 ### Parallel writers
 

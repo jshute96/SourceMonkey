@@ -7000,7 +7000,19 @@
       "status": "ok",
       "date": "2026-09-29",
       "version": "2.0.1"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-09-29",
+      "version": "2.0.1"
+    },
+    "notes": [
+      {
+        "date": "2026-09-29",
+        "version": "2.0.1",
+        "text": "On `aqwwiki.wikidot.com/sort-by-all-swords` (logged out), hovering \"013 CyberSkulls Breaker Blade (AC)\" fetched that item page and showed its image (`i.imgur.com/Hyk2wX3.png`) as a floating preview beside the link; moving the mouse to the sidebar removed it.\n\nHarmless script bug: its capturing `mouseenter` listener on `document` also sees non-element targets and throws `event.target.matches is not a function`."
+      }
+    ]
   },
   "10292": {
     "listing": {
@@ -8783,7 +8795,19 @@
       "status": "ok",
       "date": "2026-09-29",
       "version": "3.7"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-09-29",
+      "version": "3.7"
+    },
+    "notes": [
+      {
+        "date": "2026-09-29",
+        "version": "3.7",
+        "text": "On a public photo page (`/photos/nasa2explore/55555975472/`, logged out) the script adds a \"Download\" item to the top nav bar linking to the displayed image (`live.staticflickr.com/..._z.jpg`), and lifts `.main-photo` to `z-index: 10000` so right-click reaches it.\n\nNot exercised: that photo allows downloads, so there was no protection layer to remove, and the `/sizes/l/` page already had Flickr's own download link, which the script correctly leaves alone."
+      }
+    ]
   },
   "13881": {
     "listing": {
@@ -15449,7 +15473,28 @@
       "status": "ok",
       "date": "2026-09-29",
       "version": "1.0.10"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-09-29",
+      "version": "1.0.10"
+    },
+    "tags": [
+      "trusted-types"
+    ],
+    "notes": [
+      {
+        "date": "2026-09-29",
+        "version": "1.0.10",
+        "text": "On a YouTube watch page the script throws `Failed to set the innerHTML property ... requires TrustedHTML assignment` while building its button bar, so no buttons appear. It is `@grant none` (runs in the page world), and YouTube enforces Trusted Types there; the script needs a `trustedTypes` policy or DOM building without `innerHTML`. Any manager running it in the page world hits this.\n\nVimeo showed a Cloudflare \"Verify you are human\" page to the headless test browser, so it could not be tried there. On that page (no `<video>`) the loader also throws every second (`Cannot set properties of null (setting enforcer_loop_iid)`), since `video_speed_buttons` returns null without a video."
+      },
+      {
+        "date": "2026-09-29",
+        "version": "1.0.10",
+        "text": "Retried Vimeo in the visible `sm-dev --open-browser` browser, on `vimeo.com/1084537`: the script runs without errors, but no speed bar appears either. None of its container selectors (`.clip_info-wrapper`, ...) exist on current Vimeo, so it builds the bar in its floating fallback `div`, and then never attaches that div: it tests `candidate === null`, but `Array.prototype.find` returns `undefined` when nothing matches. Confirmed with logging added to a copy (`loader_loop` runs every second and finds no `.vsb-container`). Script bug, on top of the YouTube Trusted Types failure."
+      }
+    ]
   },
   "30545": {
     "listing": {
@@ -21322,7 +21367,25 @@
       ],
       "date": "2026-09-29",
       "version": "1.0.14"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-09-29",
+      "version": "1.0.14"
+    },
+    "notes": [
+      {
+        "date": "2026-09-29",
+        "version": "1.0.14",
+        "text": "Could not reach a Reddit page to try it on:\n- `old.reddit.com/r/pics/top/` redirects logged-out visitors to `/login/?reason=lor2`.\n- `www.reddit.com` passes a JS challenge, then shows \"You've been blocked by network security\" to the headless test browser.\n\nThe script did start and register its menu command on both. SourceMonkey ran it in the page world, since it reads `unsafeWindow` without `@grant unsafeWindow` (sm-dev says so at load)."
+      },
+      {
+        "date": "2026-09-29",
+        "version": "1.0.14",
+        "text": "Retried in the visible `sm-dev --open-browser` browser, which Reddit lets through (logged out, current `www.reddit.com` UI).\n\n- **Media expansion works.** In `/r/pics/comments/1wr1ulw/`, a comment linking `a.disquscdn.com/.../original.jpg` got an inline `<img class=reddit-inline-media>` after the link, lazy-loaded when scrolled into view (526px wide). Links Reddit already renders as images are skipped, as intended.\n- **Comment expansion does nothing.** It looks for `[id^=moreComments-] p, .morecomments a, .deepthread a`; none exist on the current Reddit UI, which has about 50 \"more replies\" buttons on that page instead. The site changed.\n\nThe earlier headless attempt was blocked (\"blocked by network security\"), and old.reddit sends logged-out visitors to a login page."
+      }
+    ]
   },
   "370954": {
     "listing": {
@@ -25615,7 +25678,25 @@
       "status": "ok",
       "date": "2026-09-29",
       "version": "0.5.3"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "sourcemonkey",
+      "date": "2026-09-29",
+      "version": "0.5.3"
+    },
+    "notes": [
+      {
+        "date": "2026-09-29",
+        "version": "0.5.3",
+        "text": "Amazon serves headless Chrome an error page, so this was tried in the visible `sm-dev --open-browser` browser, on logged-out search pages (`/s?k=...`).\n\nWhen it runs after `<body>` exists it works: with `showStats` seeded on, the stats box showed \"Removed: 18\" (11 sponsored products, 5 search-clutter blocks, 2 Rufus), and no sponsored-label elements were left. The three menu commands register.\n\n**SourceMonkey bug:** in about 1 of 4 fresh loads the body ran while the page had only `<head>`, despite `@run-at document-body`, and threw `Cannot read properties of null (reading appendChild)` in `createStatsBox`, so nothing was removed on that load. Cause, in `waitForRunAt` (`src/userscript-prelude.js`):\n- It watches `document.documentElement` with a `MutationObserver` until `document.body` appears, and on an exception from `observe()` it runs the body at once.\n- sm-dev injects with CDP `Page.addScriptToEvaluateOnNewDocument`, where `document.documentElement` is still null (checked with Playwright's `addInitScript`), so `observe()` throws and the gate opens as soon as the script's go-ahead arrives.\n- Observing `document` instead, or waiting for `documentElement` first, would fix it. Not checked in the extension, where `document_start` scripts may already have a `documentElement`."
+      },
+      {
+        "date": "2026-09-29",
+        "version": "0.5.3",
+        "text": "Checked in the real extension (a throwaway Playwright spec, a page whose `<body>` arrives 800ms after `<head>`): there `document.documentElement` exists at `document_start`, and `@run-at document-body` scripts in both worlds waited for the body on every load. So the early start happens only in sm-dev, not in the extension. The script would likely pass in the extension."
+      }
+    ]
   },
   "388949": {
     "listing": {
@@ -29379,7 +29460,20 @@
       "status": "ok",
       "date": "2026-09-29",
       "version": "1.2.2"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-09-29",
+      "version": "1.2.2"
+    },
+    "notes": [
+      {
+        "date": "2026-09-29",
+        "version": "1.2.2",
+        "text": "The script is CSS only: it labels any `[data-ow][data-oh]` element with those attributes (the original width and height). On `google.com/search?q=lighthouse&udm=2` SourceMonkey injected the style, but no element on the page has `data-ow` / `data-oh` any more (Google now keeps the sizes in inline JSON), so nothing is labelled. The site changed; the script needs rewriting.\n\nHeadless Chrome got Google's \"unusual traffic\" (`/sorry/`) page; this was tried in the visible `sm-dev --open-browser` browser."
+      }
+    ]
   },
   "404112": {
     "listing": {
@@ -36449,7 +36543,19 @@
       "status": "ok",
       "date": "2026-09-29",
       "version": "1.0.29"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-09-29",
+      "version": "1.0.29"
+    },
+    "notes": [
+      {
+        "date": "2026-09-29",
+        "version": "1.0.29",
+        "text": "On www.bing.com (compared against a tab without the script): the footer, headline, trivia, `.below_sbox` and `.vs` blocks are hidden, the search placeholder is cleared, and page scrolling is locked (`overflowY: hidden`). Several other targeted ids (`#est_switch`, `#id_rh`, `#sa_ai_block`, ...) are not on the current page, so those rules are dead.\n\nOne secondary feature fails, by the script: `SearchBoxEditor` runs 10ms after load and throws `Cannot read properties of null (reading style)`, because Bing builds `#sb_form` from script later (it is not in the served HTML). So the transparent search-box styling never applies. The same race exists in any manager.\n\nThe script re-runs its whole pass every 1ms forever (`setInterval(..., 1)`), which keeps rewriting the placeholder, so the page never looks settled to sm-dev."
+      }
+    ]
   },
   "431021": {
     "listing": {
@@ -38212,7 +38318,19 @@
       "status": "ok",
       "date": "2026-09-29",
       "version": "3.1.5"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-09-29",
+      "version": "3.1.5"
+    },
+    "notes": [
+      {
+        "date": "2026-09-29",
+        "version": "3.1.5",
+        "text": "On a logged-out watch page (`dQw4w9WgXcQ`) the script fetched `returnyoutubedislikeapi.com` and put a dislike count (\"519K\") in a `span#text` inside the visible dislike button. A tab without the script shows no count there.\n\nNot tried: clicking like or dislike, which submits a vote to the API (a side effect), and Shorts or mobile pages."
+      }
+    ]
   },
   "436359": {
     "listing": {
@@ -40011,7 +40129,19 @@
       "status": "ok",
       "date": "2026-09-29",
       "version": "0.7.6.1"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-09-29",
+      "version": "0.7.6.1"
+    },
+    "notes": [
+      {
+        "date": "2026-09-29",
+        "version": "0.7.6.1",
+        "text": "Logged out, on a YouTube search for \"cats\":\n- The four Shorts shelves (`grid-shelf-view-model`) are hidden; of 51 `/shorts` links only one stays visible.\n- The three menu commands register, relabel themselves when fired, store their flag (`Hide_Shorts_Video = false`), and toggle the CSS live: disabling \"Hide Shorts Renderer\" brings the shelves back, enabling hides them again.\n- Opening `/shorts/ih7q2SE5M18` directly redirects to `/watch?v=ih7q2SE5M18`.\n\nThe one miss is site drift, not SourceMonkey: the mini-guide \"Shorts\" entry stays visible because the rule keys on `ytd-mini-guide-entry-renderer[aria-label=Shorts]`, and that element no longer has an `aria-label` (the title is on its inner `<a>`)."
+      }
+    ]
   },
   "441756": {
     "listing": {
@@ -47243,7 +47373,23 @@
       "status": "ok",
       "date": "2026-09-29",
       "version": "1.25.1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "sourcemonkey",
+      "date": "2026-09-29",
+      "version": "1.25.1"
+    },
+    "tags": [
+      "needs-page-globals"
+    ],
+    "notes": [
+      {
+        "date": "2026-09-29",
+        "version": "1.25.1",
+        "text": "On `atcoder.jp/contests/abc300/tasks/abc300_a` the script starts in SourceMonkey's isolated world (it has `GM_*` grants and never names `unsafeWindow`), then loops forever on `JQuery is not loaded. Retry after N ms`: it waits for a bare `jQuery` global, which is AtCoder's own copy on the page. Tampermonkey runs such scripts in the page context, where page globals are visible, and the script is written for Tampermonkey.\n\nWith `// @inject-into page` added to a copy it works: the 1.25.1 update dialog, Markdown / copy / translate buttons on each statement section, VJudge and Luogu links (fetched through `GM_xmlhttpRequest`), and the settings entry in the nav bar. One remaining error there, `Failed to load Monaco Editor: TypeError: Failed to fetch`, is the page-world `fetch` of `mirrors.sustech.edu.cn`, not a SourceMonkey API.\n\nSo this is a compatibility gap: granted scripts that read page globals without `unsafeWindow`."
+      }
+    ]
   },
   "471477": {
     "listing": {

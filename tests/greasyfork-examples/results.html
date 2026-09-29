@@ -31,7 +31,10 @@ h1 { font-size:1.4rem; margin:0 0 .25rem; }
 .controls input[type=search] { min-width:16rem; }
 input, select, button { font:inherit; color:inherit; background:var(--bg); border:1px solid var(--line); border-radius:4px; padding:.25rem .4rem; }
 button { cursor:pointer; background:var(--head); }
-#count { color:var(--muted); }
+button:hover { border-color:var(--muted); }
+button:active { filter:brightness(.9); transform:translateY(1px); }
+button:disabled { opacity:.6; cursor:default; transform:none; }
+#count, #reload-status { color:var(--muted); }
 #loader { border:1px solid var(--line); border-radius:6px; padding:1rem; max-width:44rem; }
 #loader p { margin:0 0 .75rem; }
 #loader button { margin-right:.5rem; }
@@ -55,13 +58,20 @@ a { color:var(--accent); }
 .s-na { color:var(--na); font-weight:600; }
 .detail, .stamp { color:var(--muted); font-size:.85em; }
 .stale { color:var(--na); font-size:.85em; }
-.notes { min-width:18rem; }
-/* Long validation errors would make every row a screen tall; scroll within the cell. */
-.notes > div.clip { max-height:7.5em; overflow-y:auto; }
-.note-entry { margin-bottom:.35rem; overflow-wrap:anywhere; }
-.note-entry p { display:inline; margin:0; }
-.note-entry ul { margin:.2rem 0 0 1.2rem; padding:0; }
-.note-entry.warn { background:var(--warn-bg); border-radius:3px; padding:0 .25rem; }
+/* Notes show in a full-width row under the script's row; the Notes column only toggles it. */
+.toggle { padding:0 .4rem; font-size:.85em; white-space:nowrap; }
+tr.has-notes > td { border-bottom:none; }
+tr.notes-row > td { padding:.1rem .5rem .6rem 2.5rem; }
+.notes-body { max-width:60rem; }
+/* Short: the first entry only, cut at three lines with an ellipsis; a Show full button follows when anything is cut. */
+.notes-body.short .note-entry:not(:first-child) { display:none; }
+.notes-body.short .note-entry:first-child { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3;
+                                            overflow:hidden; margin-bottom:0; }
+.more { margin-top:.3rem; padding:0 .4rem; font-size:.85em; }
+.note-entry { margin-bottom:.6rem; overflow-wrap:anywhere; }
+.note-entry p { margin:.2rem 0; }
+.note-entry ul { margin:.2rem 0 .2rem 1.2rem; padding:0; }
+.note-entry.warn { background:var(--warn-bg); border-radius:3px; padding:.1rem .35rem; }
 code { font-size:.9em; background:var(--head); padding:0 .25rem; border-radius:3px; }
 [hidden] { display:none !important; }
 </style>
@@ -81,11 +91,15 @@ code { font-size:.9em; background:var(--head); padding:0 .25rem; border-radius:3
 
 <div id="view" hidden>
 <div class="controls">
-  <input id="q" type="search" placeholder="Search name, id, site, tag, notes">
-  <label>Valid <select id="valid"><option value="">all</option><option>ok</option><option>invalid</option><option>tool error</option></select></label>
-  <label>Test <select id="test"></select></label>
-  <label>Tag <select id="tag"></select></label>
+  <input id="q" type="search" autocomplete="off" placeholder="Search name, id, site, tag, notes">
+  <label>Valid <select id="valid" data-kind="valid" autocomplete="off"><option value="">all</option><option>ok</option><option value="(messages)">warnings or errors</option><option value="invalid">errors (invalid)</option><option>tool error</option></select></label>
+  <label>Test <select id="test" data-kind="test" autocomplete="off"></select></label>
+  <label>Tag <select id="tag" data-kind="tag" autocomplete="off"></select></label>
+  <label title="How every row's notes show. Full lets the browser's find (Ctrl+F) see all of them.">Notes
+    <select id="notes-mode" autocomplete="off"><option value="hidden">hidden</option><option value="short" selected>short</option><option value="full">full</option></select></label>
   <button id="reload" title="Read corpus.json again">Reload</button>
+  <button id="reset" title="Clear the filters and sorting, and show notes short">Reset</button>
+  <span id="reload-status"></span>
   <span id="count"></span>
 </div>
 <table>
@@ -104,6 +118,62 @@ code { font-size:.9em; background:var(--head); padding:0 .25rem; border-radius:3
 const $ = (id) => document.getElementById(id);
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const cls = (s) => 's-' + s.replace(/[^a-z]/g, '');
+
+// ---------- Tooltips ----------
+
+// What each status, detail and tag means. Reasons and blames mirror REASONS and
+// BLAMES in record-results.mjs; hand-added tags need an entry here to get one.
+const HELP = {
+  valid: {
+    'ok': 'Valid: SourceMonkey would install it. It may still have validation warnings.',
+    '(messages)': 'Validation reported something: an error, or warnings on a valid script',
+    'invalid': 'Invalid: SourceMonkey would refuse to install it. The Notes say why.',
+    'tool error': 'The validator itself failed on this script, so there is no verdict',
+  },
+  test: {
+    'tested': 'Any recorded test result',
+    'untested': 'Not tried on its target site yet',
+    'pass': 'Tried on its target site, and it did what it says',
+    'fail': 'Tried on its target site, and it did not work. The detail says whose fault.',
+    'n/a': 'Could not be tried meaningfully. The detail says why.',
+  },
+  detail: {
+    'requires-login': 'Needs an account on the target site',
+    'paid': 'Needs a paid subscription or purchase',
+    'geo-blocked': 'The site refuses our region',
+    'site-gone': 'The target site no longer exists or answers',
+    'needs-interaction': 'Only does something after a manual flow we can\'t script',
+    'not-web': 'Targets local files, browser pages, or no real site',
+    'other-browser': 'Relies on another browser\'s features (Firefox-only APIs, old Opera)',
+    'other': 'Another reason. The Notes explain.',
+    'sourcemonkey': 'SourceMonkey\'s fault: a missing feature or a bug',
+    'script': 'The script\'s fault: broken, or out of date against the current site',
+    'unknown': 'Not yet known whose fault it is',
+  },
+  tag: {
+    '(any)': 'Scripts with any tag',
+    'malformed-grant': 'A @grant line that isn\'t an API name (some scripts use them as comments). Found by validation.',
+    'ignored-match': 'A @match Chrome would refuse, which SourceMonkey drops. Found by validation.',
+    'trusted-types': 'Fails where the site enforces Trusted Types, e.g. by assigning innerHTML in the page world',
+    'needs-page-globals': 'Reads the page\'s own globals (like its jQuery) without unsafeWindow, which works in Tampermonkey but not in SourceMonkey\'s isolated world',
+  },
+};
+
+/** The tooltip for a value, or '' when there is none. */
+function helpFor(kind, value) {
+  if (kind === 'test' && value.includes(':')) {
+    const [status, detail] = value.split(':');
+    const why = HELP.detail[detail];
+    return (status === 'fail' ? 'Failed' : 'Not testable') + (why ? '. ' + why + '.' : '');
+  }
+  if (kind === 'tag') {
+    let m;
+    if ((m = /^unsupported-grant:(.+)$/.exec(value))) return 'Grants ' + m[1] + ', which SourceMonkey doesn\'t provide, so it is undefined at runtime. Found by validation.';
+    if ((m = /^ignored-header:(.+)$/.exec(value))) return 'Uses ' + m[1] + ', which another manager acts on and SourceMonkey ignores. Found by validation.';
+  }
+  return HELP[kind]?.[value] ?? '';
+}
+const titleAttr = (kind, value) => { const t = helpFor(kind, value); return t ? ' title="' + esc(t) + '"' : ''; };
 
 // ---------- Building rows from corpus.json ----------
 
@@ -136,19 +206,30 @@ function markdown(text) {
   return out.join('');
 }
 
-/** The notes cell: validation first (it describes the current copy), then notes newest first. */
-function notesHtml(record) {
-  const parts = [];
-  const stamp = (e) => '<span class="stamp">' + esc(e.date) + (e.version ? ' · v' + esc(e.version) : '') + '</span>';
+/**
+ * The notes, in display order: validation first (it describes the current
+ * copy), then notes newest first. Each is {stamp, label, text, markdown, warn}.
+ */
+function noteEntries(record) {
   const valid = record.valid;
-  if (valid?.error) parts.push('<div class="note-entry">' + stamp(valid) + ' <b>Invalid:</b> ' + esc(valid.error) + '</div>');
-  for (const w of valid?.warnings ?? []) {
-    parts.push('<div class="note-entry warn">' + stamp(valid) + ' <b>Warning:</b> ' + esc(w) + '</div>');
-  }
-  for (const note of [...(record.notes ?? [])].reverse()) {
-    parts.push('<div class="note-entry">' + stamp(note) + ' ' + markdown(note.text) + '</div>');
-  }
-  return parts.join('');
+  const entries = [];
+  if (valid?.error) entries.push({ stamp: valid, label: 'Invalid', text: valid.error });
+  for (const w of valid?.warnings ?? []) entries.push({ stamp: valid, label: 'Validation warning', text: w, warn: true });
+  for (const note of [...(record.notes ?? [])].reverse()) entries.push({ stamp: note, text: note.text, markdown: true });
+  return entries;
+}
+
+/** The full notes, shown in the row that opens below a script's row. */
+function notesHtml(entries) {
+  const stamp = (e) => '<span class="stamp">' + esc(e.date) + (e.version ? ' · v' + esc(e.version) : '') + '</span>';
+  return entries.map((e) => {
+    const head = stamp(e.stamp) + (e.label ? ' <b>' + e.label + ':</b> ' : ' ');
+    let body = e.markdown ? markdown(e.text) : esc(e.text);
+    // Start a note's first paragraph on the stamp's line, so the stamp doesn't
+    // use up one of the lines short mode shows.
+    body = body.startsWith('<p>') ? '<p>' + head + body.slice(3) : head + body;
+    return '<div class="note-entry' + (e.warn ? ' warn' : '') + '">' + body + '</div>';
+  }).join('');
 }
 
 function rowData(id, record) {
@@ -158,20 +239,23 @@ function rowData(id, record) {
   const test = record.test;
   // A result recorded against a different copy than the one downloaded now.
   const stale = test?.version && record.version && test.version !== record.version ? test.version : '';
-  const noteText = [record.valid?.error, ...(record.valid?.warnings ?? []), ...(record.notes ?? []).map((n) => n.text)]
-    .filter(Boolean).join(' ');
+  const entries = noteEntries(record);
+  const noteText = entries.map((e) => (e.label ? e.label + ': ' : '') + e.text).join(' ');
   return {
     rank: listing.rank, id: Number(id), name: listing.name, url: listing.info_page,
     installs: listing.total_installs, updated: listing.updated_date, version: record.version ?? '',
     sites, valid: record.valid?.status ?? '', tags,
+    // Validation said something: an error, or warnings on a valid script.
+    validMessages: Boolean(record.valid?.error || record.valid?.warnings?.length),
     test: test?.status ?? '', detail: test?.reason ?? test?.blame ?? '', tested: test?.date ?? '', stale,
-    noteText, notesHtml: notesHtml(record),
+    noteText, notesHtml: notesHtml(entries),
     search: (id + ' ' + listing.name + ' ' + sites.join(' ') + ' ' + tags.join(' ') + ' ' + noteText).toLowerCase(),
   };
 }
 
 function rowElement(d) {
   const tr = document.createElement('tr');
+  tr.dataset.id = d.id;
   const sites = d.sites.length > 4 ? d.sites.slice(0, 4).join(', ') + ' +' + (d.sites.length - 4) : d.sites.join(', ');
   tr.innerHTML =
     '<td class="num">' + (d.rank ?? '') + '</td>' +
@@ -181,33 +265,53 @@ function rowElement(d) {
     '<td class="nowrap">' + esc(d.updated) + '</td>' +
     '<td class="version">' + esc(d.version) + '</td>' +
     '<td class="sites" title="' + esc(d.sites.join(', ')) + '">' + esc(sites) + '</td>' +
-    '<td class="' + cls(d.valid) + '">' + esc(d.valid) + '</td>' +
-    '<td class="tags">' + d.tags.map((t) => '<span>' + esc(t) + '</span>').join('') + '</td>' +
-    '<td><span class="' + cls(d.test) + '">' + esc(d.test) + '</span>' +
-      (d.detail ? ' <span class="detail">' + esc(d.detail) + '</span>' : '') +
+    '<td class="' + cls(d.valid) + '"' + titleAttr('valid', d.valid) + '>' + esc(d.valid) + '</td>' +
+    '<td class="tags">' + d.tags.map((t) => '<span' + titleAttr('tag', t) + '>' + esc(t) + '</span>').join('') + '</td>' +
+    '<td><span class="' + cls(d.test) + '"' + titleAttr('test', d.test) + '>' + esc(d.test) + '</span>' +
+      (d.detail ? ' <span class="detail"' + titleAttr('detail', d.detail) + '>' + esc(d.detail) + '</span>' : '') +
       (d.stale ? '<div class="stale" title="Tested against a different version than the one downloaded now">tested v' + esc(d.stale) + '</div>' : '') + '</td>' +
     '<td class="nowrap">' + esc(d.tested) + '</td>' +
-    '<td class="notes"><div class="clip">' + d.notesHtml + '</div></td>';
+    '<td>' + (d.notesHtml ? '<button class="toggle" data-id="' + d.id + '"></button>' : '') + '</td>';
+  return tr;
+}
+
+/** The full-width row under a script's row that holds its whole notes. */
+function notesRowElement(d) {
+  const tr = document.createElement('tr');
+  tr.className = 'notes-row';
+  tr.innerHTML = '<td colspan="' + document.querySelectorAll('thead th').length + '"><div class="notes-body">' + d.notesHtml + '</div>' +
+    '<button class="more" data-id="' + d.id + '" hidden></button></td>';
   return tr;
 }
 
 // ---------- Filtering and sorting ----------
 
 let rows = [];
+let shown = [];
 let sortKey = 'rank', sortDir = 1;
+// How each row's notes show: the Notes mode, unless the row was set on its own
+// (its Show/Hide button, or Show full under short notes). Changing the mode resets rows.
+const noteView = new Map();
+const viewOf = (id) => noteView.get(id) ?? $('notes-mode').value;
 const blank = (v) => v === '' || v === null || v === undefined;
 
 /** Replace a select's options, keeping the current choice when it still exists. */
-function setOptions(select, fixed, values) {
+function setOptions(select, kind, fixed, values) {
   const current = select.value;
-  select.innerHTML = fixed.map(([v, label]) => '<option value="' + esc(v) + '">' + esc(label) + '</option>').join('') +
-    values.map((v) => '<option value="' + esc(v) + '">' + esc(v) + '</option>').join('');
+  const option = (v, label) => '<option value="' + esc(v) + '"' + titleAttr(kind, v) + '>' + esc(label) + '</option>';
+  select.innerHTML = fixed.map(([v, label]) => option(v, label)).join('') + values.map((v) => option(v, v)).join('');
   if ([...select.options].some((o) => o.value === current)) select.value = current;
+  selectTitle(select);
+}
+
+/** A select's own tooltip describes its current choice (the options carry theirs too). */
+function selectTitle(select) {
+  select.title = helpFor(select.dataset.kind, select.value);
 }
 
 function show(corpus, source) {
   const data = Object.entries(corpus).filter(([, r]) => r.listing).map(([id, r]) => rowData(id, r));
-  rows = data.map((d) => ({ d, tr: rowElement(d) }));
+  rows = data.map((d) => ({ d, tr: rowElement(d), notesTr: null }));
 
   const count = (pred) => data.filter(pred).length;
   $('summary').innerHTML = data.length.toLocaleString('en-US') + ' scripts · ' + [
@@ -218,22 +322,81 @@ function show(corpus, source) {
     count((d) => d.test === 'n/a') + ' not testable',
     count((d) => d.test === '') + ' untested',
   ].join(' · ') + '. From <code>' + esc(source) + '</code>, recorded with <code>record-results.mjs</code>.';
-  setOptions($('test'), [['', 'all'], ['untested', 'untested'], ['pass', 'pass'], ['fail', 'fail'], ['n/a', 'n/a']],
+  setOptions($('test'), 'test', [['', 'all'], ['tested', 'tested'], ['untested', 'untested'], ['pass', 'pass'], ['fail', 'fail'], ['n/a', 'n/a']],
     [...new Set(data.filter((d) => d.detail).map((d) => d.test + ':' + d.detail))].sort());
-  setOptions($('tag'), [['', 'all'], ['(any)', '(any tag)']], [...new Set(data.flatMap((d) => d.tags))].sort());
+  setOptions($('tag'), 'tag', [['', 'all'], ['(any)', '(any tag)']], [...new Set(data.flatMap((d) => d.tags))].sort());
 
+  if (!restoredFromUrl) restoreFromUrl();
   $('loader').hidden = true;
   $('view').hidden = false;
   apply();
 }
 
+// ---------- Settings in the URL ----------
+// The filters, Notes setting and sort live in the query string, so a reload
+// keeps them and a link reproduces the view. Only non-default values appear.
+
+const URL_FIELDS = { q: 'q', valid: 'valid', test: 'test', tag: 'tag', notes: 'notes-mode' };
+const DEFAULTS = { q: '', valid: '', test: '', tag: '', notes: 'short' };
+let restoredFromUrl = false;
+
+// Looked up by comparison, not a selector: the key can come from the URL.
+const sortHeader = (key) => [...document.querySelectorAll('th[data-key]')].find((th) => th.dataset.key === key);
+
+function setSort(key, dir, clicked = false) {
+  sortKey = key;
+  sortDir = dir;
+  document.querySelectorAll('th').forEach((h) => h.removeAttribute('data-dir'));
+  const th = sortHeader(key);
+  // The default order (by rank) shows no arrow unless its header was clicked, as on a fresh page.
+  if (th && (clicked || !(key === 'rank' && dir === 1))) th.dataset.dir = dir > 0 ? 'asc' : 'desc';
+}
+
+/** Apply the URL's settings once the Test and Tag choices exist (they come from the data). */
+function restoreFromUrl() {
+  restoredFromUrl = true;
+  const params = new URLSearchParams(location.search);
+  for (const [param, id] of Object.entries(URL_FIELDS)) {
+    const el = $(id);
+    el.value = params.get(param) ?? DEFAULTS[param];
+    // A value the select doesn't offer (a tag no script has any more) leaves it blank; fall back.
+    if (el.value !== (params.get(param) ?? DEFAULTS[param])) el.value = DEFAULTS[param];
+    if (el.dataset.kind) selectTitle(el);
+  }
+  const sort = params.get('sort');
+  const key = sort?.replace(/^-/, '');
+  if (key && sortHeader(key)) setSort(key, sort.startsWith('-') ? -1 : 1);
+}
+
+function saveToUrl() {
+  const params = new URLSearchParams();
+  for (const [param, id] of Object.entries(URL_FIELDS)) {
+    if ($(id).value !== DEFAULTS[param]) params.set(param, $(id).value);
+  }
+  if (!(sortKey === 'rank' && sortDir === 1)) params.set('sort', (sortDir < 0 ? '-' : '') + sortKey);
+  const query = params.toString();
+  try {
+    history.replaceState(null, '', location.pathname + (query ? '?' + query : '') + location.hash);
+  } catch {
+    // Some file:// setups refuse it; the page works the same, just without the URL.
+  }
+}
+
+$('reset').addEventListener('click', () => {
+  for (const [param, id] of Object.entries(URL_FIELDS)) $(id).value = DEFAULTS[param];
+  for (const id of ['valid', 'test', 'tag']) selectTitle($(id));
+  noteView.clear();
+  setSort('rank', 1);
+  apply();
+});
+
 function apply() {
   const q = $('q').value.trim().toLowerCase();
   const valid = $('valid').value, test = $('test').value, tag = $('tag').value;
-  const shown = rows.filter(({ d }) =>
+  shown = rows.filter(({ d }) =>
     (!q || d.search.includes(q)) &&
-    (!valid || d.valid === valid) &&
-    (!test || (test === 'untested' ? d.test === '' : test.includes(':') ? test === d.test + ':' + d.detail : d.test === test)) &&
+    (!valid || (valid === '(messages)' ? d.validMessages : d.valid === valid)) &&
+    (!test || testMatches(test, d)) &&
     (!tag || (tag === '(any)' ? d.tags.length > 0 : d.tags.includes(tag))));
   shown.sort((a, b) => {
     let x = a.d[sortKey], y = b.d[sortKey];
@@ -242,18 +405,76 @@ function apply() {
     if (typeof x === 'number' && typeof y === 'number') return (x - y) * sortDir;
     return String(x).localeCompare(String(y)) * sortDir || (a.d.rank ?? Infinity) - (b.d.rank ?? Infinity);
   });
-  $('rows').replaceChildren(...shown.map((r) => r.tr));
+  render();
   $('count').textContent = shown.length + ' of ' + rows.length + ' scripts';
+  saveToUrl();
 }
 
+function testMatches(choice, d) {
+  if (choice === 'tested') return d.test !== '';
+  if (choice === 'untested') return d.test === '';
+  if (choice.includes(':')) return choice === d.test + ':' + d.detail;
+  return d.test === choice;
+}
+
+/** Put the shown rows in the table, each followed by its notes row unless hidden. */
+function render() {
+  $('rows').replaceChildren(...shown.flatMap((r) => {
+    const view = r.d.notesHtml ? viewOf(r.d.id) : 'hidden';
+    r.tr.classList.toggle('has-notes', view !== 'hidden');
+    const button = r.tr.querySelector('.toggle');
+    if (button) button.textContent = view === 'hidden' ? 'Show' : 'Hide';
+    if (view === 'hidden') return [r.tr];
+    r.notesTr ??= notesRowElement(r.d);
+    r.notesTr.querySelector('.notes-body').classList.toggle('short', view === 'short');
+    return [r.tr, r.notesTr];
+  }));
+  updateMoreButtons();
+}
+
+/** Show "Show full" under short notes that hide something: later entries, or lines past the cut. */
+function updateMoreButtons() {
+  // Read every size before changing any button: interleaving the two makes the
+  // browser redo the table's layout once per row, which is slow at this size.
+  const updates = [...$('rows').querySelectorAll('.more')].map((button) => {
+    const body = button.previousElementSibling;
+    const entries = body.querySelectorAll('.note-entry');
+    const short = body.classList.contains('short');
+    return { button, short, hiddenEntries: entries.length - 1,
+             clipped: short && entries[0].scrollHeight > entries[0].clientHeight + 1 };
+  });
+  for (const { button, short, hiddenEntries, clipped } of updates) {
+    button.hidden = !short || (!hiddenEntries && !clipped);
+    button.textContent = 'Show full' + (hiddenEntries ? ' (' + hiddenEntries + ' more ' + (hiddenEntries > 1 ? 'entries' : 'entry') + ')' : '');
+  }
+}
+
+$('rows').addEventListener('click', (ev) => {
+  const button = ev.target.closest('.toggle');
+  const more = ev.target.closest('.more');
+  if (button) {
+    const id = Number(button.dataset.id);
+    // Showing a row on its own while the mode hides everything shows it in full.
+    noteView.set(id, viewOf(id) !== 'hidden' ? 'hidden' : $('notes-mode').value === 'hidden' ? 'full' : $('notes-mode').value);
+  } else if (more) {
+    noteView.set(Number(more.dataset.id), 'full');
+  } else return;
+  render();
+});
+$('notes-mode').addEventListener('input', () => { noteView.clear(); render(); saveToUrl(); });
+// A narrower window can clip notes that fit before, and a wider one the reverse.
+let resizeTimer;
+window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(updateMoreButtons, 150); });
+
 document.querySelectorAll('th[data-key]').forEach((th) => th.addEventListener('click', () => {
-  sortDir = sortKey === th.dataset.key ? -sortDir : (th.dataset.desc ? -1 : 1);
-  sortKey = th.dataset.key;
-  document.querySelectorAll('th').forEach((h) => h.removeAttribute('data-dir'));
-  th.dataset.dir = sortDir > 0 ? 'asc' : 'desc';
+  const key = th.dataset.key;
+  setSort(key, sortKey === key ? -sortDir : (th.dataset.desc ? -1 : 1), true);
   apply();
 }));
 for (const id of ['q', 'valid', 'test', 'tag']) $(id).addEventListener('input', apply);
+for (const id of ['valid', 'test', 'tag']) $(id).addEventListener('input', () => selectTitle($(id)));
+// The Valid choices are fixed in the HTML; give them their tooltips here.
+for (const o of $('valid').options) o.title = helpFor('valid', o.value);
 
 // ---------- Loading corpus.json ----------
 
@@ -302,8 +523,9 @@ async function readHandle(h) {
   show(JSON.parse(await (await h.getFile()).text()), h.name);
 }
 
+/** Returns true once the chosen file is shown, or false when a plain file dialog was opened (its change event loads it). */
 async function pickCorpus() {
-  if (!window.showOpenFilePicker) { $('file-input').click(); return; }
+  if (!window.showOpenFilePicker) { $('file-input').click(); return false; }
   const [picked] = await showOpenFilePicker({
     id: 'sm-corpus-json',
     startIn: handle ?? 'documents',
@@ -312,15 +534,23 @@ async function pickCorpus() {
   handle = picked;
   await saveHandle(handle);
   await readHandle(handle);
+  return true;
 }
 
 async function reload() {
+  const button = $('reload'), status = $('reload-status');
+  button.disabled = true;
+  status.textContent = 'Reloading…';
   try {
     if (location.protocol !== 'file:') await fetchCorpus();
     else if (handle) await readHandle(handle);
-    else await pickCorpus();
+    else if (!(await pickCorpus())) { status.textContent = ''; return; }
+    status.textContent = 'Reloaded at ' + new Date().toLocaleTimeString();
   } catch (err) {
+    status.textContent = '';
     if (err.name !== 'AbortError') loadError(err.message);
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -331,6 +561,8 @@ $('reopen').addEventListener('click', () => readHandle(handle).catch((err) => lo
 $('file-input').addEventListener('change', async (event) => {
   const file = event.target.files[0];
   if (!file) return;
+  // Cleared so choosing the same file again still fires a change event.
+  event.target.value = '';
   try { show(JSON.parse(await file.text()), file.name); } catch (err) { loadError(err.message); }
 });
 $('reload').addEventListener('click', reload);
