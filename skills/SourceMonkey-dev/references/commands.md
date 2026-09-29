@@ -101,6 +101,8 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | --- | --- |
 | `click <sel>`, `hover <sel>` | Real mouse input, scrolled into view |
 | `type <sel> <text>` | Type key by key |
+| `type <sel> {{` | Type several lines exactly (line breaks are Enter; the final one before `}}` isn't typed) |
+| `type <sel> --file <path>` | Type a file's text exactly, including a final line break |
 | `key <keys>...` | `key j Shift+ArrowRight ctrl+end esc` |
 | `accept [text]`, `dismiss` | Answer an open dialog |
 | `--nowait` | On any of these: don't wait for the page to settle |

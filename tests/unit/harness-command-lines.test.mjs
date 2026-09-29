@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  CommandAssembler, NOT_A_BLOCK_COMMAND, echoCommand, parseCommandList, unclosedBlockMessage,
+  CommandAssembler, NOT_A_BLOCK_COMMAND, TEXT_AFTER_CLOSE, echoCommand, parseCommandList, unclosedBlockMessage,
 } from '../../lib/harness/command-lines.js';
 
 const texts = (result) => result.commands.map((c) => c.text);
@@ -39,12 +39,22 @@ test('a lone } inside a block is JavaScript, and }} may be indented', () => {
   assert.deepEqual(texts(result), ['eval\nfunction f() {\n  return 1;\n}\nf()']);
 });
 
-test('an empty block is eval with nothing to evaluate', () => {
-  assert.deepEqual(texts(parseCommandList('eval {{\n\n}}')), ['eval']);
+test('a block\'s blank lines and trailing spaces are kept, an empty one is no text', () => {
+  assert.deepEqual(texts(parseCommandList('eval {{\n}}')), ['eval']);
+  assert.deepEqual(texts(parseCommandList('type #a {{\nx  \n\n}}')), ['type #a\nx  \n']);
 });
 
 test('a set block is its JSON, lines and all', () => {
   assert.deepEqual(texts(parseCommandList('set prefs {{\n{\n  "units": "metric"\n}\n}}')), ['set prefs\n{\n  "units": "metric"\n}']);
+});
+
+test('words after a }} are an error, but }}); and }}, are the block\'s', () => {
+  assert.deepEqual(parseCommandList('type #a {{\nhi\n}} --nowait\nstatus'), { error: `Line 3: ${TEXT_AFTER_CLOSE}. None of the commands were run.` });
+  assert.deepEqual(texts(parseCommandList('eval {{\nf(() => {g({\n}});\n}}')), ['eval\nf(() => {g({\n}});']);
+  const a = new CommandAssembler();
+  a.push('set k {{');
+  assert.deepEqual(a.push('}} x'), { error: TEXT_AFTER_CLOSE });
+  assert.equal(a.open, false);
 });
 
 test('{{ after another command refuses the whole list', () => {

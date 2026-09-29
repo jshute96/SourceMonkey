@@ -1,21 +1,22 @@
 // Files named on a command line for what they hold (`eval --file`,
-// `set --file`, `start --values-file`): read whole, with what went wrong
+// `set --file`, `type --file`, `start --values-file`): read whole, with what went wrong
 // in plain words for an `ERROR:` line.
 
 import { readFileSync } from 'node:fs';
 
 /**
  * The text of `file`, which is `shown` in messages. Throws an Error
- * saying why it couldn't be read, or that it is empty.
+ * saying why it couldn't be read, or that it is empty: nothing, or
+ * only whitespace unless `blankOk` (text to type may be just that).
  */
-export function readInputFile(file: string, shown: string): string {
+export function readInputFile(file: string, shown: string, { blankOk = false } = {}): string {
   let text: string;
   try {
     text = readFileSync(file, 'utf8');
   } catch (err) {
     throw new Error(`Couldn't read ${shown}: ${readProblem(err as NodeJS.ErrnoException)}`);
   }
-  if (!text.trim()) throw new Error(`The file ${shown} is empty`);
+  if (blankOk ? !text : !text.trim()) throw new Error(`The file ${shown} is empty`);
   return text;
 }
 

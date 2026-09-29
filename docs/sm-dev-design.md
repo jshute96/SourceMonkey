@@ -283,7 +283,8 @@ Command marks:
   completes, and which commands go to a run.
 - Any other `--` word is refused before the command runs
   (`commandFlagMistake`). For commands that end in free text, only the
-  words before it are looked at. sm-dev's up-front check uses the same
+  words before it are looked at, and only on the command's own line,
+  not a `{{` block's. sm-dev's up-front check uses the same
   function.
 
 ### Word splitting
@@ -299,11 +300,14 @@ Command marks:
 Turns input lines into commands, for the prompt, piped input, and a
 list sent in one go (`parseCommandList`).
 
-- `eval ... {{` or `set <key> {{` opens a multi-line block and a line
-  of just `}}` closes it.
+- `eval ... {{`, `set <key> {{` or `type <selector> {{` opens a
+  multi-line block and a line of just `}}` closes it.
   - The markers are doubled because a line of just `}` is common in
     JavaScript and JSON (the end of a function or object). A single
     `}` would end the block too early.
+  - A `}}` followed by a space and more words is an error, not the
+    block's line, so misplaced flags aren't silently typed or
+    evaluated. `}});` and `}},` stay the block's.
 - Outside a block, blank lines and `#` comments are skipped.
 - A list is checked in full before any of it runs, so a `{{` after
   another command, or a block never closed, runs none of it.

@@ -1,8 +1,8 @@
 // Turning lines of input into `sm-dev start` commands, for the prompt,
 // piped input, and a list of commands sent in one go.
 //
-// Most commands are one line. `eval` (its JavaScript) and `set` (its
-// JSON) can take several, as a block:
+// Most commands are one line. `eval` (its JavaScript), `set` (its
+// JSON) and `type` (its text) can take several, as a block:
 //
 //   eval T2 --script {{
 //   const rows = [...document.querySelectorAll('.athing')];
@@ -35,13 +35,22 @@ const OPEN = '{{';
 const CLOSE = '}}';
 
 // The commands that take a block.
-const BLOCK_COMMANDS = new Set(['eval', 'set']);
+const BLOCK_COMMANDS = new Set(['eval', 'set', 'type']);
 
 /**
  * A `{{` after a command that takes no block. Its lines up to `}}` are
  * skipped, not run one by one as commands.
  */
-export const NOT_A_BLOCK_COMMAND = 'Only the eval and set commands take a {{ block, so its lines up to }} are skipped';
+export const NOT_A_BLOCK_COMMAND = 'Only the eval, set and type commands take a {{ block, so its lines up to }} are skipped';
+
+/**
+ * A `}}` line with more after it (`}} --nowait`). Only a line of just
+ * `}}` closes a block, so the line would otherwise be taken as the
+ * block's, leaving it open. Not `}});` or `}},`, which end JavaScript
+ * calls and JSON objects: only words after a space.
+ */
+export const TEXT_AFTER_CLOSE = 'Nothing can follow }} on its line, so the block is dropped (put flags before the {{)';
+const CLOSE_WITH_TEXT = /^}}\s+\S/;
 
 /** A block the input ended inside of. */
 export function unclosedBlockMessage(line: number): string {
@@ -70,6 +79,10 @@ export class CommandAssembler {
     const n = ++this.count;
     const trimmed = line.trim();
     if (this.block) {
+      if (CLOSE_WITH_TEXT.test(trimmed)) {
+        this.drop();
+        return { error: TEXT_AFTER_CLOSE };
+      }
       if (trimmed !== CLOSE) {
         this.block.source.push(line);
         this.body.push(line);
@@ -83,7 +96,8 @@ export class CommandAssembler {
       }
       // The block keeps its own line breaks, so `//` comments and
       // statements without semicolons read as they were written.
-      if (this.body.some((l) => l.trim())) command.text += '\n' + this.body.join('\n');
+      // Even blank lines are content: `type` types them.
+      if (this.body.length > 0) command.text += '\n' + this.body.join('\n');
       this.block = null;
       this.body = [];
       return { command };

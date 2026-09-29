@@ -307,7 +307,12 @@ export const HELP_SECTIONS: HelpSection[] = [
     commands: [
       { usage: 'click [tab] <selector>', about: 'Click an element.' },
       { usage: 'hover [tab] <selector>', about: 'Move the mouse over an element.', gap: true },
-      { usage: 'type [tab] <selector> <text>', about: 'Type text into an element. (Text box, etc.)', gap: true },
+      {
+        usage: 'type [tab] <selector> <text>',
+        about: ['Type text into an element. (Text box, etc.)', 'type <selector> {{ starts multi-line text, ended by }}.'],
+        options: [{ term: '--file <path>', about: 'Type a file\'s text, in place of <text>.' }],
+        gap: true,
+      },
       { usage: 'key [tab] <keys>...', about: ['Press keys in order, using common key names.', 'e.g. key j Shift+ArrowRight Escape'], gap: true },
       {
         usage: 'eval [tab] <js>',

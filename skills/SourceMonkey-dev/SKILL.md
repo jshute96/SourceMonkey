@@ -406,8 +406,9 @@ doesn't stop them.
 $R start sites/x/y.user.js https://x.com/ --detach -- click '.open' -- wait selector '#modal' -- snapshot '#modal'
 ```
 
-A longer script, or any `eval` or `set` with quotes in it (JSON
-strings included), reads better as a heredoc (no shell quoting).
+A longer script, or any command with quotes in its arguments (JSON
+strings and selectors included), reads better as a heredoc (no shell
+quoting).
 Each line is a command:
 
 ```sh
@@ -423,10 +424,10 @@ EOF
 
 - Blank lines and `# comments` are skipped.
 - A `{{` ... `}}` block spans several lines: JavaScript for
-  `eval {{`, JSON for `set <key> {{` (see
-  [references/commands.md](references/commands.md#eval)).
-- `--file` reads the same from a file instead:
-  `eval --file probe.js`, `set <key> --file value.json`.
+  `eval {{`, JSON for `set <key> {{`, text for `type <selector> {{`
+  (see [references/commands.md](references/commands.md#eval)).
+- `--file` reads the same from a file instead: `eval --file probe.js`,
+  `set <key> --file value.json`, `type <selector> --file notes.txt`.
 - The whole input is checked before anything runs, so a typo runs
   nothing.
 

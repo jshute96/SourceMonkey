@@ -893,7 +893,7 @@ const NO_COMMANDS = 'No commands given on either the command line or stdin';
 
 /**
  * A command read from stdin or typed at the prompt, as its words: one
- * or more commands, split at `--` as on the command line. An `eval`
+ * or more commands, split at `--` as on the command line. A `{{`
  * block's several lines stay one. Each with the text to send a run.
  */
 function typedCommands(text: string): { words: string[]; text: string }[] {

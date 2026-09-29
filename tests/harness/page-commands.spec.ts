@@ -80,6 +80,25 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   // Through the keys alias, case-insensitive.
   expect(await run('keys end shift+home')).toEqual(['[sm-dev] Pressed End, Shift+Home']);
   expect(await run('eval document.querySelector("input").value')).toEqual(['"hello wor"']);
+  // Several lines as a block, exactly: spaces kept, each line break an
+  // Enter. From a file, as it is. The flag and selector
+  // are on the command's line; a flag-like word in the text is text.
+  await page.evaluate(() => { const t = document.createElement('textarea'); t.id = 'notes'; document.body.append(t); });
+  const notes = 'eval document.querySelector("#notes").value';
+  expect(await run('type #notes\n--nowait first  line\nend')).toEqual(['[sm-dev] Typed into #notes']);
+  expect(await run(notes)).toEqual(['"--nowait first  line\\nend"']);
+  writeFileSync(path.join(scriptsDir.path, 'notes.txt'), 'a\r\nb\r\n');
+  expect(await run('type --file notes.txt #notes', scriptsDir.path)).toEqual(['[sm-dev] Typed into #notes']);
+  expect(await run(notes)).toEqual(['"--nowait first  line\\nenda\\nb\\n"']);
+  // Spaces and a blank line at the end are typed too.
+  expect(await run('type #notes\n  \n')).toEqual(['[sm-dev] Typed into #notes']);
+  expect(await run(notes)).toEqual(['"--nowait first  line\\nenda\\nb\\n  \\n"']);
+  expect(await run('type\n#notes x')).toEqual(['[sm-dev] ERROR: The type command takes one selector before {{. Quote a selector that has spaces.']);
+  expect(await run('type #notes --file notes.txt\nx', scriptsDir.path)).toEqual(['[sm-dev] ERROR: The type command takes text or --file, not both']);
+  expect(await run('type #notes --file nope.txt', scriptsDir.path)).toEqual(['[sm-dev] ERROR: Couldn\'t read nope.txt: The file does not exist']);
+  expect(await run('type #notes --file')).toEqual(['[sm-dev] ERROR: The type command takes a selector and one file, e.g. type \'#notes\' --file notes.txt']);
+  expect(await run('type #notes b\nc')).toEqual(['[sm-dev] ERROR: The type command takes one selector before {{. Quote a selector that has spaces.']);
+  await page.evaluate(() => document.querySelector('#notes')!.remove());
 
   const tree = await run('snapshot');
   expect(tree.some((l) => /^  - button "Added 1" \[ref=e\d+\]$/.test(l))).toBe(true);

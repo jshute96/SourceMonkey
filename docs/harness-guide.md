@@ -650,10 +650,15 @@ When stdin is read:
 - A bare `sm-dev` given a pipe nothing writes to waits on it.
 - With no command on the line or in stdin, sm-dev says so, and exits 2.
 
-### Multi-line `eval` and `set`
+### Multi-line blocks
 
-`eval` can take several lines of JavaScript as a block, at the prompt
-or on stdin, and `set` several lines of JSON:
+Some commands take several lines as a block, at the prompt or on stdin:
+
+- `eval`: JavaScript.
+- `set <key>`: JSON.
+- `type <selector>`: text, typed exactly as written, spaces and blank
+  lines included, each line break pressed as Enter. The line break
+  before `}}` isn't typed; end with a blank line for a final Enter.
 
 ```
 > eval T2 --script {{
@@ -671,9 +676,11 @@ or on stdin, and `set` several lines of JSON:
 - `{{` at the end of the line opens the block, and a line of just `}}`
   closes it. A lone `}` is JavaScript or JSON, so it doesn't end the
   block.
-- A tab and flags go before the `{{`.
-- Only `eval` and `set` take a block; `{{` after another command is
-  refused.
+- A tab and flags go before the `{{`. Words after a `}}` (`}} --nowait`)
+  are an error, and the block is dropped. (`}});` or `}},` is still the
+  block's own.)
+- Only `eval`, `set` and `type` take a block; `{{` after another
+  command is refused.
 - The prompt shows `... ` while a block is open.
 - `--` inside a block is the block's own, not a command separator.
 - Input that ends inside a block reports it rather than running half of
@@ -978,6 +985,7 @@ current one.
 | --- | --- |
 | `click <selector>`, `hover <selector>` | A real mouse click or hover, scrolled into view. With several matches, the first |
 | `type <selector> <text>` | Types into an element, key by key |
+| `type <selector> --file <path>` | Types a file's text into an element, a last line break included |
 | `key <keys>...` | Presses keys in order: `key j Shift+ArrowRight Escape` (`keys` works too) |
 | `eval <js>` | Evaluates in the page and prints the result |
 | `eval --script <js>` | Evaluates in the scripts' world |
@@ -1007,7 +1015,7 @@ current one.
 ### `eval`
 
 - Takes the rest of the line as JavaScript, quotes and all, or several
-  lines as a block (see [Multi-line `eval` and `set`](#multi-line-eval-and-set)).
+  lines as a block (see [Multi-line blocks](#multi-line-blocks)).
 - `eval --file probe.js` takes the JavaScript from a file instead,
   for a reusable probe with no shell quoting.
 - The value is the last expression, as in the DevTools console.

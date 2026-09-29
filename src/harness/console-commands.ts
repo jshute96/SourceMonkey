@@ -280,14 +280,21 @@ export const inCommand = new AsyncLocalStorage<{ inspects: boolean }>();
 export async function runConsoleCommand(
   line: string, ctx: ConsoleContext, { cwd = process.cwd(), words }: { cwd?: string; words?: string[] } = {},
 ): Promise<number | boolean | void> {
-  const trimmed = line.trim();
+  // A block's lines (after the first line break) are kept as they are,
+  // spaces at the end included, since `type` types them.
+  const block = line.includes('\n');
+  const trimmed = block ? line.trimStart() : line.trim();
   if (!trimmed) return;
   const [typedCommand, ...rest] = trimmed.split(/\s+/);
-  const argument = trimmed.slice(typedCommand.length).trim();
+  // A block's line break is kept even with nothing before it on the
+  // command's line (`type {{`), so its first line isn't taken as the
+  // command's.
+  const argument = trimmed.slice(typedCommand.length).replace(/^[^\S\n]+/, '');
   const command = RUN_ALIASES[typedCommand] ?? typedCommand;
   // The sender's words when they start with the command; a whole
   // command sent as one word is split like a typed one.
-  const flagMistake = commandFlagMistake(words?.[0] === typedCommand ? words : commandWords(trimmed));
+  // Only the command's own line: a block's lines are its content.
+  const flagMistake = commandFlagMistake(words?.[0] === typedCommand ? words : commandWords(trimmed.split('\n')[0]));
   if (flagMistake) {
     ctx.out(`[sm-dev] ERROR: ${flagMistake}`);
     return false;
@@ -699,7 +706,7 @@ export async function runConsoleCommand(
       if (ACTIONS.has(command)) {
         const text = freeTextStart(command, list.map((w) => w.text));
         for (let i = list.length - 1; i >= 0; i--) {
-          if (list[i].text !== '--nowait' || (text >= 0 && i >= text)) continue;
+          if (list[i].text !== '--nowait' || (text >= 0 && i >= text) || !inHead(i)) continue;
           cut.push([list[i].start, list[i].end]);
           list.splice(i, 1);
           noWait = true;

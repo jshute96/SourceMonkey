@@ -295,15 +295,52 @@ export async function runPageCommand(
         return;
       }
       case 'type': {
-        const words = input.words;
-        if (words.length < 2) {
+        // `type <selector> <text>`, or the text as a `{{` block's lines
+        // (exactly, each line break an Enter), or `--file <path>` (the
+        // flag first works too). Typed, the selector and flag are on
+        // the command's own line.
+        const headEnd = input.typed ? input.raw.indexOf('\n') : -1;
+        const words = headEnd < 0 ? input.words : splitWords(input.raw.slice(0, headEnd)).map((w) => w.text);
+        const fileAt = words[0] === '--file' ? 0 : words[1] === '--file' ? 1 : -1;
+        let selector: string | undefined;
+        let text: string;
+        if (fileAt >= 0) {
+          const from = words[fileAt + 1];
+          selector = fileAt === 0 ? words[2] : words[0];
+          if (headEnd >= 0) {
+            say('ERROR: The type command takes text or --file, not both');
+            return;
+          }
+          if (!selector || !from || from.startsWith('--') || words.length > 3) {
+            say('ERROR: The type command takes a selector and one file, e.g. type \'#notes\' --file notes.txt');
+            return;
+          }
+          try {
+            // The file's text as it is, a last line break included.
+            // Windows line breaks as one Enter each, not two.
+            text = readInputFile(file(from), shown(from), { blankOk: true }).replace(/\r\n?/g, '\n');
+          } catch (err) {
+            say(`ERROR: ${(err as Error).message}`);
+            return;
+          }
+        } else if (headEnd >= 0) {
+          if (words.length !== 1) {
+            say('ERROR: The type command takes one selector before {{. Quote a selector that has spaces.');
+            return;
+          }
+          selector = words[0];
+          text = input.raw.slice(headEnd + 1);
+        } else {
+          [selector] = words;
+          text = words.slice(1).join(' ');
+        }
+        if (!selector || !text) {
           say('ERROR: The type command needs a selector and the text, e.g. type \'input[name=q]\' \'hello world\'');
           return;
         }
-        const [selector, ...text] = words;
         const count = await matches(page, selector, say);
         if (count === null) return;
-        const typing = locate(page, selector).first().pressSequentially(text.join(' '), { timeout: ACTION_TIMEOUT_MS });
+        const typing = locate(page, selector).first().pressSequentially(text, { timeout: ACTION_TIMEOUT_MS });
         await act(typing, `Typed into ${named(page, selector)}${count > 1 ? ` (the first of ${count} matches)` : ''}`);
         return;
       }
