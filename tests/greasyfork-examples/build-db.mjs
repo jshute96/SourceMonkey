@@ -1,34 +1,35 @@
 #!/usr/bin/env node
-// Load the GreasyFork corpus into a SQLite database for analysis: the CSV's
-// script metadata, plus everything parsed out of the downloaded script bodies
-// (header lines, @require and @resource dependencies, file sizes).
+// Load the GreasyFork corpus into a SQLite database for analysis: corpus.json's
+// listing metadata and test findings, plus everything parsed out of the
+// downloaded script bodies (header lines, @require and @resource dependencies,
+// file sizes).
 //
 // Usage:
 //   node tests/greasyfork-examples/build-db.mjs [options]
 //
-//   --csv PATH   input CSV (default tests/greasyfork-examples/top-scripts.csv)
+//   --corpus PATH  script list and findings (default tests/greasyfork-examples/corpus.json)
 //   --root PATH  download root (default tests/greasyfork-examples/files)
 //   --db PATH    database to write (default tests/greasyfork-examples/corpus.db)
 //
 // The database is rebuilt from scratch each run — it's derived data, and both
-// inputs (the CSV and the file tree) are cheap to re-read.
+// inputs (corpus.json and the file tree) are cheap to re-read.
 //
 // Requires a build (`pnpm run build`): the header parsing reuses the extension's
 // own metadata-block parser from `dist/userscript-header.js`, so the database
 // sees headers exactly the way SourceMonkey does.
 
 import { DatabaseSync } from 'node:sqlite';
-import { readFile, rm, stat } from 'node:fs/promises';
+import { rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseHeader } from '../../dist/userscript-header.js';
 import {
-  detectMaxFilename, findExisting, parseCsv, parseResourceValue, readDownloaded, resolveDependencyUrl,
+  CORPUS_JSON, classifyPattern, detectMaxFilename, findExisting, listingRows, parseResourceValue, readCorpus, readDownloaded, resolveDependencyUrl,
 } from './corpus.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const DEFAULTS = {
-  csv: path.join(REPO_ROOT, 'tests/greasyfork-examples/top-scripts.csv'),
+  corpus: CORPUS_JSON,
   root: path.join(REPO_ROOT, 'tests/greasyfork-examples/files'),
   db: path.join(REPO_ROOT, 'tests/greasyfork-examples/corpus.db'),
 };
@@ -50,6 +51,7 @@ function parseArgs(argv) {
 const SCHEMA = `
 CREATE TABLE Scripts (
   id             INTEGER PRIMARY KEY,
+  rank           INTEGER,  -- position in the listing; NULL once a script drops out
   name           TEXT NOT NULL,
   info_page      TEXT NOT NULL,
   script_url     TEXT NOT NULL,
@@ -121,6 +123,36 @@ CREATE TABLE ScriptMatches (
   path_glob    INTEGER NOT NULL
 );
 
+-- The findings recorded in corpus.json (see record-results.mjs), flattened for SQL.
+-- One row per script that has any finding.
+CREATE TABLE ScriptResults (
+  script_id     INTEGER PRIMARY KEY REFERENCES Scripts(id),
+  version       TEXT,  -- @version of the downloaded copy
+  valid_status  TEXT,  -- ok | invalid | tool error; NULL when never validated
+  valid_error   TEXT,
+  valid_date    TEXT,
+  test_status   TEXT,  -- pass | fail | n/a; NULL when never tried
+  test_reason   TEXT,  -- why a test was n/a
+  test_blame    TEXT,  -- whose fault a failure is
+  test_date     TEXT,
+  test_version  TEXT
+);
+
+-- Tags from both sources: 'validation' (derived by import-validation, e.g.
+-- unsupported-grant:GM_cookie) and 'manual' (added while testing).
+CREATE TABLE ScriptTags (
+  script_id INTEGER NOT NULL REFERENCES Scripts(id),
+  tag       TEXT NOT NULL,
+  source    TEXT NOT NULL
+);
+
+CREATE TABLE ScriptNotes (
+  script_id INTEGER NOT NULL REFERENCES Scripts(id),
+  date      TEXT NOT NULL,
+  version   TEXT,
+  text      TEXT NOT NULL
+);
+
 CREATE INDEX idx_matches_script ON ScriptMatches(script_id);
 CREATE INDEX idx_matches_site ON ScriptMatches(site);
 CREATE INDEX idx_headers_script ON ScriptHeaders(script_id);
@@ -137,74 +169,6 @@ async function fileFacts(root, url) {
   return { size: info.size, local_filename: path.relative(root, file) };
 }
 
-/**
- * A host portion resolves to a single site when stripping one leading `*.`
- * leaves no wildcard: `*.youtube.com` and `www.youtube.com` both attribute to a
- * site, while `*`, `*.the-west.*`, and `` do not.
- */
-function resolveSite(hostPattern) {
-  let host = hostPattern.toLowerCase();
-  if (host.startsWith('*.')) host = host.slice(2);
-  if (host === '' || host.includes('*')) return null;
-  return host.replace(/:\d+$/, ''); // ports aren't part of the site identity
-}
-
-/**
- * Decompose one `@match` / `@include` argument.
- *
- * `shape` answers "how open-ended is this pattern" over the host and path only:
- * no `*` is absolute, a single trailing `*` is a prefix, and a `*` before the
- * end makes it an inner glob — a wildcard host or a wildcard path segment.
- *
- * The scheme is deliberately left out of that judgement. `*://` is the ordinary
- * way to write "http or https" and says nothing about how broadly a pattern
- * reaches, but counting it would push every `*://site.com/*` into the inner-glob
- * bucket and swamp the patterns that really do match mid-URL. Scheme wildcards
- * are tracked on their own in `scheme_glob`.
- *
- * @include also allows regex forms delimited by slashes, which get their own
- * shape, as does the `<all_urls>` keyword.
- */
-function classifyPattern(raw) {
-  const pattern = raw.trim();
-  if (!pattern) return null;
-
-  const base = { pattern, scheme: '', host_pattern: '', site: null, scheme_glob: 0, host_glob: 0, path_glob: 0 };
-  // @include regexes are delimited by slashes and aren't glob patterns at all.
-  // A few lines in the corpus open with `/` but never close (an unterminated
-  // regex); those fall through and get classified as globs with an empty host,
-  // which is as sensible as anything for a line no manager can honour.
-  if (pattern.length > 1 && pattern.startsWith('/') && pattern.endsWith('/')) {
-    return { ...base, shape: 'regex' };
-  }
-  // `<all_urls>` is a keyword, not a URL shape — it means "any scheme, any host".
-  if (pattern === '<all_urls>') {
-    return { ...base, shape: 'all-urls', scheme: '*', host_pattern: '*', scheme_glob: 1, host_glob: 1, path_glob: 1 };
-  }
-
-  const scheme = /^([^:/]*):\/\//.exec(pattern);
-  const rest = scheme ? pattern.slice(scheme[0].length) : pattern;
-  const slash = rest.indexOf('/');
-  const hostPattern = slash === -1 ? rest : rest.slice(0, slash);
-  const pathPattern = slash === -1 ? '' : rest.slice(slash);
-
-  const stars = (rest.match(/\*/g) ?? []).length;
-  const shape = stars === 0 ? 'absolute'
-    : stars === 1 && rest.endsWith('*') ? 'prefix-glob'
-    : 'inner-glob';
-
-  return {
-    pattern,
-    shape,
-    scheme: scheme ? scheme[1] : '',
-    host_pattern: hostPattern,
-    site: resolveSite(hostPattern),
-    scheme_glob: scheme && scheme[1].includes('*') ? 1 : 0,
-    host_glob: hostPattern.includes('*') ? 1 : 0,
-    path_glob: pathPattern.includes('*') ? 1 : 0,
-  };
-}
-
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   await detectMaxFilename(opts.root, { create: false });
@@ -217,10 +181,10 @@ async function main() {
   db.exec(SCHEMA);
 
   const insertScript = db.prepare(`
-    INSERT INTO Scripts (id, name, info_page, script_url, total_installs, daily_installs,
+    INSERT INTO Scripts (id, rank, name, info_page, script_url, total_installs, daily_installs,
                          ratings_good, ratings_ok, ratings_bad, created_date, updated_date,
                          size, local_filename)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const insertHeader = db.prepare(`
     INSERT INTO ScriptHeaders (script_id, header_field, header_field_full, header_field_suffix, argument)
     VALUES (?, ?, ?, ?, ?)`);
@@ -234,23 +198,41 @@ async function main() {
                                scheme_glob, host_glob, path_glob)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
-  const rows = parseCsv(await readFile(opts.csv, 'utf8'));
+  const corpus = await readCorpus(opts.corpus);
+  const rows = listingRows(corpus);
+  const insertResult = db.prepare(`
+    INSERT INTO ScriptResults (script_id, version, valid_status, valid_error, valid_date,
+                               test_status, test_reason, test_blame, test_date, test_version)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const insertTag = db.prepare('INSERT INTO ScriptTags (script_id, tag, source) VALUES (?, ?, ?)');
+  const insertNote = db.prepare('INSERT INTO ScriptNotes (script_id, date, version, text) VALUES (?, ?, ?, ?)');
+  const insertFindings = (id, record) => {
+    const { valid, test } = record;
+    if (valid || test || record.tags || record.notes) {
+      insertResult.run(id, record.version ?? null,
+        valid?.status ?? null, valid?.error ?? null, valid?.date ?? null,
+        test?.status ?? null, test?.reason ?? null, test?.blame ?? null, test?.date ?? null,
+        test?.version ?? null);
+    }
+    for (const tag of valid?.tags ?? []) insertTag.run(id, tag, 'validation');
+    for (const tag of record.tags ?? []) insertTag.run(id, tag, 'manual');
+    for (const note of record.notes ?? []) insertNote.run(id, note.date, note.version ?? null, note.text);
+  };
   const stats = { scripts: 0, missingBodies: 0, headers: 0, noHeaderBlock: 0, requires: 0, resources: 0, matches: 0 };
 
   db.exec('BEGIN');
   for (const row of rows) {
     const id = Number(row.id);
     const facts = await fileFacts(opts.root, row.script_url);
-    // Number('') is 0, which would turn a missing rating into a real zero.
-    const num = (value) => (value === '' ? null : Number(value));
     insertScript.run(
-      id, row.name, row.info_page, row.script_url,
-      num(row.total_installs), num(row.daily_installs),
-      num(row.ratings_good), num(row.ratings_ok), num(row.ratings_bad),
+      id, row.rank, row.name, row.info_page, row.script_url,
+      row.total_installs, row.daily_installs,
+      row.ratings_good, row.ratings_ok, row.ratings_bad,
       row.created_date, row.updated_date,
       facts.size, facts.local_filename,
     );
     stats.scripts++;
+    insertFindings(id, corpus[id]);
 
     const downloaded = await readDownloaded(opts.root, row.script_url);
     if (!downloaded) { stats.missingBodies++; continue; }

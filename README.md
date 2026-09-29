@@ -522,7 +522,9 @@ extension would show, grouped by failure type. `--offline-root` serves
 every `@require` / `@resource` URL out of a downloaded tree instead of
 the network, which is how the GreasyFork corpus
 (`tests/greasyfork-examples/`) gets checked in bulk. See
-[docs/offline-validation.md](docs/offline-validation.md).
+[docs/offline-validation.md](docs/offline-validation.md). That corpus
+also tracks per-script test results; see its
+[README](tests/greasyfork-examples/README.md#test-results).
 
 ### Releasing
 

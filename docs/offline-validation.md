@@ -157,7 +157,15 @@ would go stale the next time the wording improves.
 
 `--json FILE` writes one record per script — name, status, category,
 message, the structured `location` when the verdict has one, and the
-dependency URL when one failed.
+dependency URL when one failed. It also carries fields the text report
+leaves out:
+
+- `errorMessage`, the message without its location, for a consumer
+  that renders `location` its own way.
+- `version`, the script's `@version`.
+- `warnings`, the load-time diagnostics the viewer's Log tab would show
+  (an unsupported `@grant`, a refused `@match`, …), each as
+  `{ level, message, location? }`. They never change the verdict.
 
 ## Testing
 
@@ -204,6 +212,9 @@ under a minute, once they're downloaded:
 pnpm run validate --offline-root tests/greasyfork-examples/files \
                   tests/greasyfork-examples/files
 ```
+
+`tests/greasyfork-examples/record-results.mjs validate` runs the same
+pass and records each script's verdict in the corpus's `corpus.json`.
 
 See [tests/greasyfork-examples/README.md](../tests/greasyfork-examples/README.md)
 for how the corpus is downloaded, and

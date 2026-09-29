@@ -1,0 +1,353 @@
+<!doctype html>
+<!--
+  Viewer for corpus.json: one sortable, filterable row per script, with its
+  validation verdict, test status, tags and notes. Static; it reads corpus.json
+  when it loads, so it never needs regenerating.
+
+  - Served (node tests/greasyfork-examples/serve-results.mjs), it fetches
+    corpus.json from beside itself.
+  - Opened as a file:// page, Chrome won't let it fetch, so it asks you to pick
+    corpus.json once and remembers the choice (see pickCorpus below).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GreasyFork corpus results</title>
+<style>
+:root { color-scheme: light dark; --fg:#1a1a1a; --bg:#fff; --muted:#5c5c5c; --line:#e0e0e0; --head:#f5f5f5; --accent:#0b5fff;
+        --ok:#1a7f37; --bad:#c62828; --na:#8a6d00; --warn-bg:#fff6d6; }
+@media (prefers-color-scheme: dark) {
+  :root { --fg:#e8e8e8; --bg:#16181c; --muted:#9aa0a6; --line:#2c3038; --head:#1e2128; --accent:#7aa2ff;
+          --ok:#56c26a; --bad:#ff7b72; --na:#e3b341; --warn-bg:#3a3216; }
+}
+* { box-sizing: border-box; }
+body { margin:0; padding:1.5rem 1rem 4rem; background:var(--bg); color:var(--fg);
+       font:14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+h1 { font-size:1.4rem; margin:0 0 .25rem; }
+.sub { color:var(--muted); margin:0 0 1rem; }
+.controls { display:flex; flex-wrap:wrap; gap:.5rem 1rem; align-items:center; margin-bottom:.75rem; position:sticky; top:0;
+            background:var(--bg); padding:.5rem 0; z-index:2; }
+.controls input[type=search] { min-width:16rem; }
+input, select, button { font:inherit; color:inherit; background:var(--bg); border:1px solid var(--line); border-radius:4px; padding:.25rem .4rem; }
+button { cursor:pointer; background:var(--head); }
+#count { color:var(--muted); }
+#loader { border:1px solid var(--line); border-radius:6px; padding:1rem; max-width:44rem; }
+#loader p { margin:0 0 .75rem; }
+#loader button { margin-right:.5rem; }
+.error { color:var(--bad); }
+table { border-collapse:collapse; width:100%; }
+th, td { border-bottom:1px solid var(--line); padding:.35rem .5rem; text-align:left; vertical-align:top; }
+th { background:var(--head); cursor:pointer; user-select:none; white-space:nowrap; position:sticky; top:2.9rem; z-index:1; }
+th[data-dir=asc]::after { content:" \25B2"; font-size:.7em; }
+th[data-dir=desc]::after { content:" \25BC"; font-size:.7em; }
+td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+td.nowrap { white-space:nowrap; }
+a { color:var(--accent); }
+.name { min-width:10rem; max-width:18rem; }
+.version { max-width:6rem; overflow-wrap:anywhere; }
+.sites { min-width:9rem; max-width:13rem; color:var(--muted); font-size:.9em; overflow-wrap:break-word; }
+.tags { max-width:12rem; }
+.tags span { display:inline-block; background:var(--head); border:1px solid var(--line); border-radius:3px; padding:0 .3rem;
+             margin:0 .2rem .2rem 0; font-size:.85em; white-space:nowrap; }
+.s-ok, .s-pass { color:var(--ok); font-weight:600; }
+.s-invalid, .s-fail, .s-toolerror { color:var(--bad); font-weight:600; }
+.s-na { color:var(--na); font-weight:600; }
+.detail, .stamp { color:var(--muted); font-size:.85em; }
+.stale { color:var(--na); font-size:.85em; }
+.notes { min-width:18rem; }
+/* Long validation errors would make every row a screen tall; scroll within the cell. */
+.notes > div.clip { max-height:7.5em; overflow-y:auto; }
+.note-entry { margin-bottom:.35rem; overflow-wrap:anywhere; }
+.note-entry p { display:inline; margin:0; }
+.note-entry ul { margin:.2rem 0 0 1.2rem; padding:0; }
+.note-entry.warn { background:var(--warn-bg); border-radius:3px; padding:0 .25rem; }
+code { font-size:.9em; background:var(--head); padding:0 .25rem; border-radius:3px; }
+[hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<h1>GreasyFork corpus results</h1>
+<p class="sub" id="summary">Findings from <code>corpus.json</code>, recorded with <code>record-results.mjs</code>.</p>
+
+<div id="loader" hidden>
+  <p>This page was opened as a local file, so it can't read <code>corpus.json</code> by itself.
+     Either serve it (<code>node tests/greasyfork-examples/serve-results.mjs</code>), or choose the file:</p>
+  <button id="reopen" hidden></button>
+  <button id="pick">Choose corpus.json…</button>
+  <input id="file-input" type="file" accept=".json,application/json" hidden>
+  <p class="error" id="load-error" hidden></p>
+</div>
+
+<div id="view" hidden>
+<div class="controls">
+  <input id="q" type="search" placeholder="Search name, id, site, tag, notes">
+  <label>Valid <select id="valid"><option value="">all</option><option>ok</option><option>invalid</option><option>tool error</option></select></label>
+  <label>Test <select id="test"></select></label>
+  <label>Tag <select id="tag"></select></label>
+  <button id="reload" title="Read corpus.json again">Reload</button>
+  <span id="count"></span>
+</div>
+<table>
+<thead><tr>
+  <th data-key="rank">#</th><th data-key="id">ID</th><th data-key="name">Name</th>
+  <th data-key="installs" data-desc="1">Installs</th><th data-key="updated" data-desc="1">Updated</th>
+  <th data-key="version">Version</th><th data-key="sites">Sites</th><th data-key="valid">Valid</th>
+  <th data-key="tags">Tags</th><th data-key="test">Test</th><th data-key="tested" data-desc="1">Tested</th>
+  <th data-key="noteText">Notes</th>
+</tr></thead>
+<tbody id="rows"></tbody>
+</table>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const cls = (s) => 's-' + s.replace(/[^a-z]/g, '');
+
+// ---------- Building rows from corpus.json ----------
+
+/**
+ * Just enough markdown for notes: paragraphs, `- ` bullets, `code`, **bold**,
+ * *italic*, [links](url) and bare URLs. Everything is escaped first, so a note
+ * can't inject markup.
+ */
+function markdown(text) {
+  const inline = (line) => esc(line)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<em>$2</em>')
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2">$1</a>')
+    .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2">$2</a>');
+  const out = [];
+  let list = null;
+  let para = [];
+  const flushPara = () => { if (para.length) out.push('<p>' + para.map(inline).join(' ') + '</p>'); para = []; };
+  const flushList = () => { if (list) out.push('<ul>' + list.map((i) => '<li>' + inline(i) + '</li>').join('') + '</ul>'); list = null; };
+  for (const line of text.split('\n')) {
+    const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
+    if (bullet) { flushPara(); (list ??= []).push(bullet[1]); }
+    else if (line.trim() === '') { flushPara(); flushList(); }
+    else if (list && /^\s+/.test(line)) list[list.length - 1] += ' ' + line.trim();
+    else { flushList(); para.push(line.trim()); }
+  }
+  flushPara();
+  flushList();
+  return out.join('');
+}
+
+/** The notes cell: validation first (it describes the current copy), then notes newest first. */
+function notesHtml(record) {
+  const parts = [];
+  const stamp = (e) => '<span class="stamp">' + esc(e.date) + (e.version ? ' · v' + esc(e.version) : '') + '</span>';
+  const valid = record.valid;
+  if (valid?.error) parts.push('<div class="note-entry">' + stamp(valid) + ' <b>Invalid:</b> ' + esc(valid.error) + '</div>');
+  for (const w of valid?.warnings ?? []) {
+    parts.push('<div class="note-entry warn">' + stamp(valid) + ' <b>Warning:</b> ' + esc(w) + '</div>');
+  }
+  for (const note of [...(record.notes ?? [])].reverse()) {
+    parts.push('<div class="note-entry">' + stamp(note) + ' ' + markdown(note.text) + '</div>');
+  }
+  return parts.join('');
+}
+
+function rowData(id, record) {
+  const listing = record.listing;
+  const tags = [...(record.valid?.tags ?? []), ...(record.tags ?? [])];
+  const sites = record.sites ?? [];
+  const test = record.test;
+  // A result recorded against a different copy than the one downloaded now.
+  const stale = test?.version && record.version && test.version !== record.version ? test.version : '';
+  const noteText = [record.valid?.error, ...(record.valid?.warnings ?? []), ...(record.notes ?? []).map((n) => n.text)]
+    .filter(Boolean).join(' ');
+  return {
+    rank: listing.rank, id: Number(id), name: listing.name, url: listing.info_page,
+    installs: listing.total_installs, updated: listing.updated_date, version: record.version ?? '',
+    sites, valid: record.valid?.status ?? '', tags,
+    test: test?.status ?? '', detail: test?.reason ?? test?.blame ?? '', tested: test?.date ?? '', stale,
+    noteText, notesHtml: notesHtml(record),
+    search: (id + ' ' + listing.name + ' ' + sites.join(' ') + ' ' + tags.join(' ') + ' ' + noteText).toLowerCase(),
+  };
+}
+
+function rowElement(d) {
+  const tr = document.createElement('tr');
+  const sites = d.sites.length > 4 ? d.sites.slice(0, 4).join(', ') + ' +' + (d.sites.length - 4) : d.sites.join(', ');
+  tr.innerHTML =
+    '<td class="num">' + (d.rank ?? '') + '</td>' +
+    '<td class="num"><a href="' + esc(d.url) + '">' + d.id + '</a></td>' +
+    '<td class="name">' + esc(d.name) + '</td>' +
+    '<td class="num">' + (d.installs ?? '').toLocaleString('en-US') + '</td>' +
+    '<td class="nowrap">' + esc(d.updated) + '</td>' +
+    '<td class="version">' + esc(d.version) + '</td>' +
+    '<td class="sites" title="' + esc(d.sites.join(', ')) + '">' + esc(sites) + '</td>' +
+    '<td class="' + cls(d.valid) + '">' + esc(d.valid) + '</td>' +
+    '<td class="tags">' + d.tags.map((t) => '<span>' + esc(t) + '</span>').join('') + '</td>' +
+    '<td><span class="' + cls(d.test) + '">' + esc(d.test) + '</span>' +
+      (d.detail ? ' <span class="detail">' + esc(d.detail) + '</span>' : '') +
+      (d.stale ? '<div class="stale" title="Tested against a different version than the one downloaded now">tested v' + esc(d.stale) + '</div>' : '') + '</td>' +
+    '<td class="nowrap">' + esc(d.tested) + '</td>' +
+    '<td class="notes"><div class="clip">' + d.notesHtml + '</div></td>';
+  return tr;
+}
+
+// ---------- Filtering and sorting ----------
+
+let rows = [];
+let sortKey = 'rank', sortDir = 1;
+const blank = (v) => v === '' || v === null || v === undefined;
+
+/** Replace a select's options, keeping the current choice when it still exists. */
+function setOptions(select, fixed, values) {
+  const current = select.value;
+  select.innerHTML = fixed.map(([v, label]) => '<option value="' + esc(v) + '">' + esc(label) + '</option>').join('') +
+    values.map((v) => '<option value="' + esc(v) + '">' + esc(v) + '</option>').join('');
+  if ([...select.options].some((o) => o.value === current)) select.value = current;
+}
+
+function show(corpus, source) {
+  const data = Object.entries(corpus).filter(([, r]) => r.listing).map(([id, r]) => rowData(id, r));
+  rows = data.map((d) => ({ d, tr: rowElement(d) }));
+
+  const count = (pred) => data.filter(pred).length;
+  $('summary').innerHTML = data.length.toLocaleString('en-US') + ' scripts · ' + [
+    count((d) => d.valid === 'ok') + ' valid',
+    count((d) => d.valid === 'invalid') + ' invalid',
+    count((d) => d.test === 'pass') + ' passed',
+    count((d) => d.test === 'fail') + ' failed',
+    count((d) => d.test === 'n/a') + ' not testable',
+    count((d) => d.test === '') + ' untested',
+  ].join(' · ') + '. From <code>' + esc(source) + '</code>, recorded with <code>record-results.mjs</code>.';
+  setOptions($('test'), [['', 'all'], ['untested', 'untested'], ['pass', 'pass'], ['fail', 'fail'], ['n/a', 'n/a']],
+    [...new Set(data.filter((d) => d.detail).map((d) => d.test + ':' + d.detail))].sort());
+  setOptions($('tag'), [['', 'all'], ['(any)', '(any tag)']], [...new Set(data.flatMap((d) => d.tags))].sort());
+
+  $('loader').hidden = true;
+  $('view').hidden = false;
+  apply();
+}
+
+function apply() {
+  const q = $('q').value.trim().toLowerCase();
+  const valid = $('valid').value, test = $('test').value, tag = $('tag').value;
+  const shown = rows.filter(({ d }) =>
+    (!q || d.search.includes(q)) &&
+    (!valid || d.valid === valid) &&
+    (!test || (test === 'untested' ? d.test === '' : test.includes(':') ? test === d.test + ':' + d.detail : d.test === test)) &&
+    (!tag || (tag === '(any)' ? d.tags.length > 0 : d.tags.includes(tag))));
+  shown.sort((a, b) => {
+    let x = a.d[sortKey], y = b.d[sortKey];
+    if (Array.isArray(x)) { x = x.join(','); y = y.join(','); }
+    if (blank(x) !== blank(y)) return blank(x) ? 1 : -1;
+    if (typeof x === 'number' && typeof y === 'number') return (x - y) * sortDir;
+    return String(x).localeCompare(String(y)) * sortDir || (a.d.rank ?? Infinity) - (b.d.rank ?? Infinity);
+  });
+  $('rows').replaceChildren(...shown.map((r) => r.tr));
+  $('count').textContent = shown.length + ' of ' + rows.length + ' scripts';
+}
+
+document.querySelectorAll('th[data-key]').forEach((th) => th.addEventListener('click', () => {
+  sortDir = sortKey === th.dataset.key ? -sortDir : (th.dataset.desc ? -1 : 1);
+  sortKey = th.dataset.key;
+  document.querySelectorAll('th').forEach((h) => h.removeAttribute('data-dir'));
+  th.dataset.dir = sortDir > 0 ? 'asc' : 'desc';
+  apply();
+}));
+for (const id of ['q', 'valid', 'test', 'tag']) $(id).addEventListener('input', apply);
+
+// ---------- Loading corpus.json ----------
+
+function loadError(message) {
+  $('load-error').textContent = message;
+  $('load-error').hidden = false;
+  $('loader').hidden = false;
+}
+
+// Served over http: corpus.json sits beside this page.
+async function fetchCorpus() {
+  const response = await fetch('corpus.json', { cache: 'no-store' });
+  if (!response.ok) throw new Error('Could not load corpus.json: The server returned HTTP ' + response.status);
+  show(await response.json(), 'corpus.json');
+}
+
+// Opened from disk: Chrome won't let a file:// page fetch its neighbours, so
+// the user picks the file. With the File System Access API the handle is kept
+// in IndexedDB, so later visits (and Reload) re-read it after one permission
+// click, and the picker's `id` makes Chrome reopen in the same directory.
+// Without that API, a plain file input works but asks every time.
+const DB_NAME = 'sm-corpus-results';
+function idb(mode, fn) {
+  return new Promise((resolve, reject) => {
+    const open = indexedDB.open(DB_NAME, 1);
+    open.onupgradeneeded = () => open.result.createObjectStore('handles');
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const tx = open.result.transaction('handles', mode);
+      const req = fn(tx.objectStore('handles'));
+      tx.oncomplete = () => resolve(req.result);
+      tx.onerror = () => reject(tx.error);
+    };
+  });
+}
+const savedHandle = () => idb('readonly', (s) => s.get('corpus')).catch(() => undefined);
+const saveHandle = (h) => idb('readwrite', (s) => s.put(h, 'corpus')).catch(() => undefined);
+
+let handle = null;
+
+async function readHandle(h) {
+  if ((await h.queryPermission({ mode: 'read' })) !== 'granted'
+      && (await h.requestPermission({ mode: 'read' })) !== 'granted') {
+    throw new Error('Permission to read ' + h.name + ' was not granted');
+  }
+  show(JSON.parse(await (await h.getFile()).text()), h.name);
+}
+
+async function pickCorpus() {
+  if (!window.showOpenFilePicker) { $('file-input').click(); return; }
+  const [picked] = await showOpenFilePicker({
+    id: 'sm-corpus-json',
+    startIn: handle ?? 'documents',
+    types: [{ description: 'corpus.json', accept: { 'application/json': ['.json'] } }],
+  });
+  handle = picked;
+  await saveHandle(handle);
+  await readHandle(handle);
+}
+
+async function reload() {
+  try {
+    if (location.protocol !== 'file:') await fetchCorpus();
+    else if (handle) await readHandle(handle);
+    else await pickCorpus();
+  } catch (err) {
+    if (err.name !== 'AbortError') loadError(err.message);
+  }
+}
+
+$('pick').addEventListener('click', () => pickCorpus().catch((err) => {
+  if (err.name !== 'AbortError') loadError(err.message);
+}));
+$('reopen').addEventListener('click', () => readHandle(handle).catch((err) => loadError(err.message)));
+$('file-input').addEventListener('change', async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  try { show(JSON.parse(await file.text()), file.name); } catch (err) { loadError(err.message); }
+});
+$('reload').addEventListener('click', reload);
+
+(async () => {
+  if (location.protocol !== 'file:') {
+    try { await fetchCorpus(); } catch (err) { loadError(err.message); }
+    return;
+  }
+  $('loader').hidden = false;
+  handle = window.showOpenFilePicker ? await savedHandle() : null;
+  if (handle) {
+    // Reading needs a click: Chrome only re-grants file access on a user gesture.
+    $('reopen').textContent = 'Open ' + handle.name + ' again';
+    $('reopen').hidden = false;
+  }
+})();
+</script>
+</body>
+</html>

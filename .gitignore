@@ -40,10 +40,13 @@ lib/
 /.chrome-violentmonkey-profile/
 
 # GreasyFork corpus: bulky or machine-specific inputs and derived data.
-# The checked-in top-scripts.csv is the artifact these reproduce from.
+# The checked-in corpus.json is the artifact these reproduce from.
 tests/greasyfork-examples/greasyfork-dump
 tests/greasyfork-examples/files
 tests/greasyfork-examples/greasyfork-dump/
 tests/greasyfork-examples/files/
 tests/greasyfork-examples/corpus.db*
 tests/greasyfork-examples/download-report.json
+# record-results.mjs's lock and in-flight temp files.
+tests/greasyfork-examples/corpus.json.lock
+tests/greasyfork-examples/corpus.json.tmp-*

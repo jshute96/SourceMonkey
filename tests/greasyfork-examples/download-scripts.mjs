@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Download the userscripts listed in top-scripts.csv, then the unique
+// Download the userscripts listed in corpus.json, then the unique
 // `@require` libraries and `@resource` assets they pull in, into a URL-shaped
 // tree on disk.
 //
@@ -14,9 +14,9 @@
 // Usage:
 //   node tests/greasyfork-examples/download-scripts.mjs [options]
 //
-//   --csv PATH         input CSV (default tests/greasyfork-examples/top-scripts.csv)
+//   --corpus PATH      script list (default tests/greasyfork-examples/corpus.json)
 //   --root PATH        download root (default tests/greasyfork-examples/files)
-//   --count N          only the first N scripts from the CSV (default: all)
+//   --count N          only the first N scripts, in listing order (default: all)
 //   --delay MS         pause between requests (default 200)
 //   --concurrency N    parallel requests (default 1 — be polite)
 //   --force            re-download files that already exist on disk
@@ -33,16 +33,15 @@
 //   - 404/410 dead links are recorded and otherwise ignored
 // Re-running resumes, since files already on disk are skipped.
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseHeader, getValues } from '../../dist/userscript-header.js';
 import {
-  dependencyUrlFor, detectMaxFilename, exists, parseCsv, readDownloaded, resolveTarget, urlToPath,
+  CORPUS_JSON, dependencyUrlFor, detectMaxFilename, exists, listingRows, readCorpus, readDownloaded, resolveTarget, urlToPath,
 } from './corpus.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const DEFAULT_CSV = path.join(REPO_ROOT, 'tests/greasyfork-examples/top-scripts.csv');
 const DEFAULT_ROOT = path.join(REPO_ROOT, 'tests/greasyfork-examples/files');
 const REPORT_PATH = path.join(REPO_ROOT, 'tests/greasyfork-examples/download-report.json');
 
@@ -53,7 +52,7 @@ const USER_AGENT =
 
 function parseArgs(argv) {
   const opts = {
-    csv: DEFAULT_CSV,
+    corpus: CORPUS_JSON,
     root: DEFAULT_ROOT,
     count: Infinity,
     delay: 200,
@@ -73,7 +72,7 @@ function parseArgs(argv) {
       return value;
     };
     switch (arg) {
-      case '--csv': opts.csv = path.resolve(next()); break;
+      case '--corpus': opts.corpus = path.resolve(next()); break;
       case '--root': opts.root = path.resolve(next()); break;
       case '--count': opts.count = Number(next()); break;
       case '--delay': opts.delay = Number(next()); break;
@@ -292,12 +291,12 @@ async function main() {
   const opts = parseArgs(process.argv.slice(2));
   const maxFilename = await detectMaxFilename(opts.root);
   if (maxFilename < 255) console.info(`Filesystem caps filenames at ${maxFilename} bytes; longer names get hashed`);
-  const rows = parseCsv(await readFile(opts.csv, 'utf8'));
+  const rows = listingRows(await readCorpus(opts.corpus));
   const scriptUrls = rows
     .map((row) => row.script_url)
     .filter((url) => url)
     .slice(0, opts.count === Infinity ? undefined : opts.count);
-  console.info(`${scriptUrls.length} script URLs from ${path.relative(REPO_ROOT, opts.csv)}`);
+  console.info(`${scriptUrls.length} script URLs from ${path.relative(REPO_ROOT, opts.corpus)}`);
 
   const report = { root: opts.root, scripts: null, requires: null, resources: null };
   const aborted = () => Object.values(report).some((phase) => phase?.aborted);

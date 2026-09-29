@@ -64,6 +64,7 @@ import {
   MAX_FILE_BYTES,
 } from '../dist/external-files.js';
 import {
+  getValue,
   NO_METADATA_BLOCK,
   UNTERMINATED_METADATA_BLOCK,
 } from '../dist/userscript-header.js';
@@ -589,7 +590,22 @@ async function main() {
         // the bare message, which is what groups.
         if (script.errorMessage) {
           record.message = describeDiagnostic(script.errorMessage, script.errorLocation);
+          // The two halves as well, for a consumer that wants to render the
+          // location its own way (record-results.mjs shortens the file name).
+          record.errorMessage = script.errorMessage;
           if (script.errorLocation) record.location = script.errorLocation;
+        }
+        const version = script.header ? getValue(script.header, 'version') : undefined;
+        if (version) record.version = version.trim();
+        // The load-time diagnostics the Log tab shows (an unsupported
+        // `@grant`, a `@match` Chrome refuses, …). They don't change
+        // the verdict, so they only reach the JSON, not the report.
+        if (script.startupLogs?.length) {
+          record.warnings = script.startupLogs.map((log) => ({
+            level: log.level,
+            message: log.message,
+            ...(log.location && { location: log.location }),
+          }));
         }
       } catch (err) {
         // The pipeline itself threw — a read error, or a bug. Reported

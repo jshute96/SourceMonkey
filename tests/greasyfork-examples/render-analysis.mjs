@@ -3,7 +3,7 @@
 // self-contained HTML page of tables.
 //
 // Usage:
-//   node tests/greasyfork-examples/report.mjs [options]
+//   node tests/greasyfork-examples/render-analysis.mjs [options]
 //
 //   --db PATH   database to query (default tests/greasyfork-examples/corpus.db)
 //   --sql PATH  query file (default tests/greasyfork-examples/analysis.sql)
