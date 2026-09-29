@@ -42,7 +42,16 @@ Template:
 - <what the run was>: `<sm-dev log path>`
 ```
 
-A later finding about an entry goes at its end, under its own heading:
+Later notes on one item go under it as dated sub-bullets. A fixed item's
+text, and its sub-bullets other than the `Fixed` one, get struck through:
+
+```markdown
+1. ~~[tag] **<short summary>.** <what happened>.~~
+   - ~~Investigated (YYYY-MM-DD): <what was found>~~
+   - Fixed (YYYY-MM-DD, <short commit id>): <what changed>
+```
+
+A later finding about the entry as a whole goes at its end, under its own heading:
 
 ```markdown
 ### Update YYYY-MM-DD

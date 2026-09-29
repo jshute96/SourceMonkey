@@ -37,10 +37,10 @@ at the end, so one task doesn't produce many separate notes.
   task's entry instead of starting a new one. It's the same task when
   the entry has today's date and the same topic in its heading, and
   this repo on its `Repo:` line.
-- Otherwise, don't edit earlier entries. If you learn more about an
-  issue logged earlier (like what the real problem was), append a
-  dated update at the end of that entry rather than rewriting it: a
-  `### Update YYYY-MM-DD` heading, then what was learned.
+- Otherwise, don't rewrite earlier entries. If you learn more about an
+  issue logged earlier (like what the real problem was, or that it's
+  now fixed), add a dated note to it instead, as in
+  [Notes on earlier items](#notes-on-earlier-items).
 - Other sessions may write to the same file. Re-read it just before
   adding to it, and add rather than rewriting the whole file.
 
@@ -78,3 +78,26 @@ Follow the template in the log file (or
 Be specific: exact commands, error text, and what you tried. An entry
 should make sense to someone fixing the tools months later, without
 the session transcript.
+
+## Notes on earlier items
+
+When an item logged earlier is looked into or fixed, add a sub-bullet
+under that item, starting with a dated label:
+
+- `Investigated (YYYY-MM-DD): <what was found>`: looked into, not fixed.
+- `Fixed (YYYY-MM-DD, <short commit id>): <what changed>`: a change
+  should fix it.
+  - Leave out the commit id when there isn't one clear commit.
+  - Leave out the description when there's nothing to say beyond that
+    it was fixed: `Fixed (YYYY-MM-DD, abc1234).`
+
+When an item is fixed, strike through its text and its other
+sub-bullets with `~~...~~`, leaving the `Fixed` bullet plain, so open
+items stand out.
+
+- Strikethrough doesn't cross paragraph or list-item breaks, so wrap
+  each paragraph and bullet separately.
+
+A finding about the entry as a whole, rather than one item, goes at
+the entry's end: a `### Update YYYY-MM-DD` heading, then what was
+learned.
