@@ -350,6 +350,24 @@ export const HELP_SECTIONS: HelpSection[] = [
         ],
       },
       {
+        title: 'Sending raw CDP (Chrome DevTools Protocol) calls',
+        text: [
+          'Use it for what no other command does. Each cdp command is one CDP session.',
+          'A {{ block or --file holds multiple Method calls, one per line, run sequentially in that session, stopping after errors.',
+          'Lines starting with # are comments.',
+          'params is a JSON object, bare or in single quotes.',
+          '',
+        ],
+        commands: [
+          {
+            usage: 'cdp [tab] <Method> [params]',
+            about: ['Make one Method call, and print the result as JSON.', 'e.g. cdp Input.insertText \'{"text": "hello"}\''],
+          },
+          { usage: 'cdp [tab] {{', about: 'Make multiple Method calls, one per line, ended by }}.', gap: true },
+          { usage: 'cdp [tab] --file <path>', about: 'Make multiple Method calls from a file, one per line.', gap: true },
+        ],
+      },
+      {
         title: 'Menus',
         commands: [
           {

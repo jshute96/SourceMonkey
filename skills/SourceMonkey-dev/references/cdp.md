@@ -1,48 +1,66 @@
 # Raw CDP alongside a run
 
-sm-dev drives tabs over CDP (Chrome DevTools Protocol), but it doesn't
-own the connection: the browser's debugging port takes other clients at
-the same time. Use it for what sm-dev has no command for, on the same
-tab, while the run goes on.
+sm-dev drives tabs over CDP (Chrome DevTools Protocol). For what it has
+no command for, send raw calls to the same tab while the run goes on.
 
 - Protocol reference: https://chromedevtools.github.io/devtools-protocol/
-- The port: 9233 by default, or the `--cdp` / `$SM_DEV_CDP` sm-dev
-  uses. A `--temp-browser` run picks a random one. `status` shows it on
-  its `Run:` line (`browser 127.0.0.1:9233`).
-- The tab: the `targetId` in `tabs` or `status`. Never pick a tab by
-  URL.
 - Afterwards, `$R wait` lets the page settle, and `$R eval` or
   `$R logs` shows the effect in sm-dev's terms.
 
-## The helper: `scripts/cdp.mjs`
+## The `cdp` command
 
-One connection, one or more calls, each result printed as JSON:
+One call, its result printed as JSON:
 
 ```sh
-CDP="node .claude/skills/SourceMonkey-dev/scripts/cdp.mjs"   # this skill's directory
-T=$($R tabs | grep -o 'targetId=[0-9A-F]*' | head -1)    # the first tab listed
-
-$CDP $T Runtime.evaluate '{"expression": "document.title", "returnByValue": true}'
-$CDP --cdp 9300 $T Page.reload                           # another port
-$CDP browser Browser.getVersion                          # browser-level domains
+$R cdp Runtime.evaluate '{"expression": "document.title", "returnByValue": true}'
+$R cdp T2 Page.reload                              # another tab
+$R cdp Browser.getVersion                          # browser-level domains work too
 ```
 
-- The target is a `targetId` (whole, 6+ characters, or pasted as
-  `targetId=...`), or `browser` for `Browser.*` and `Target.*`.
-- Several calls in one line run in order on one connection:
-  `$CDP $T Method1 '{...}' Method2 '{...}'`. It stops at the first that
-  fails.
-- Results go to stdout. Errors go to stderr, one line each, with exit
-  code 1, so `W=$($CDP ...)` captures only a result.
+- It acts on the current tab, or the one named first (`T2`,
+  `targetId=...`).
+- Several calls go in a `{{` block, one per line, run in order on one
+  session. It stops at the first that fails, and says why:
+
+  ```sh
+  $R --stdin <<'EOF'
+  cdp T2 {{
+  Page.enable
+  Page.getNavigationHistory
+  }}
+  EOF
+  ```
+
+- `cdp --file calls.txt` reads the calls from a file, one per line.
+- In a block or file, blank lines and lines starting with `#` are skipped.
+- Params go on the method's line: bare, or in single quotes (which may
+  hold `'` in the JSON's strings).
+- `Browser.*` and `Target.*` work from the tab's session, and default
+  to its tab: `Browser.getWindowForTarget` with no params gives the
+  tab's window.
 - Each call gets 10 seconds. One that never answers (a navigating
-  `Runtime.evaluate`, a page stopped on a dialog) fails with a message.
-- **Session state ends when it exits.** `Emulation.*` overrides,
-  enabled domains and event subscriptions last only as long as the
-  connection. For those, hold a connection open in your own script
-  (below), and clear what you set before it exits.
-- It can't listen for events. For that, write a script.
+  `Runtime.evaluate`, a paused page) fails with a message.
+- `cdp` doesn't wait for the page to settle. Run `wait` after it.
+- **Session state ends with the command.** `Emulation.*` overrides,
+  enabled domains and event subscriptions last only as long as its
+  session: one command, or one block.
+  - To use one across sm-dev commands, hold a connection open in your
+    own script (below), and clear what you set before it exits.
+- `cdp` can't listen for events. For that, write a script.
 
 ## Your own script
+
+sm-dev's connection doesn't own the browser: its CDP port accepts other
+clients at the same time.
+
+- The port: 9233 by default, or the `--cdp` / `$SM_DEV_CDP` sm-dev
+  uses. A `--temp-browser` run picks a random one. `status` shows it on
+  its `Run:` line (`browser 127.0.0.1:9233`).
+- The tab: its `targetId`. The run prints it when it opens the tab
+  (`Opening <url> in T1 [targetId=...]`), and `tabs` lists them all.
+  Never pick a tab by URL.
+- Or read it from the tab itself, with no text to scrape:
+  `$R cdp T2 Target.getTargetInfo` gives `targetInfo.targetId`.
 
 Node 22+ has a built-in `WebSocket`, so a script needs no dependencies:
 
@@ -103,8 +121,7 @@ Real wheel input, which the page sees differently from a synthetic
 `WheelEvent` (targeting, default scrolling, passive listeners):
 
 ```sh
-$CDP $T Input.dispatchMouseEvent '{"type": "mouseWheel", "x": 400, "y": 300, "deltaX": 0, "deltaY": 600}'
-$R wait -- eval scrollY
+$R cdp Input.dispatchMouseEvent '{"type": "mouseWheel", "x": 400, "y": 300, "deltaX": 0, "deltaY": 600}' -- wait -- eval scrollY
 ```
 
 - Pinch zoom on a trackpad arrives as a wheel event with `ctrlKey`: add
@@ -115,9 +132,12 @@ $R wait -- eval scrollY
 A click is a press and a release at the same point:
 
 ```sh
-$CDP $T \
-  Input.dispatchMouseEvent '{"type": "mousePressed", "x": 50, "y": 50, "button": "right", "clickCount": 1}' \
-  Input.dispatchMouseEvent '{"type": "mouseReleased", "x": 50, "y": 50, "button": "right", "clickCount": 1}'
+$R --stdin <<'EOF'
+cdp {{
+Input.dispatchMouseEvent {"type": "mousePressed", "x": 50, "y": 50, "button": "right", "clickCount": 1}
+Input.dispatchMouseEvent {"type": "mouseReleased", "x": 50, "y": 50, "button": "right", "clickCount": 1}
+}}
+EOF
 ```
 
 - `button`: `left`, `middle`, `right`, `back`, `forward`.
@@ -137,11 +157,15 @@ $CDP $T \
 Press, move in steps, release:
 
 ```sh
-$CDP $T \
-  Input.dispatchMouseEvent '{"type": "mousePressed", "x": 100, "y": 100, "button": "left", "clickCount": 1}' \
-  Input.dispatchMouseEvent '{"type": "mouseMoved", "x": 150, "y": 100, "button": "left", "buttons": 1}' \
-  Input.dispatchMouseEvent '{"type": "mouseMoved", "x": 200, "y": 100, "button": "left", "buttons": 1}' \
-  Input.dispatchMouseEvent '{"type": "mouseReleased", "x": 200, "y": 100, "button": "left", "clickCount": 1}'
+$R --stdin <<'EOF'
+cdp {{
+Input.dispatchMouseEvent {"type": "mousePressed", "x": 100, "y": 100, "button": "left", "clickCount": 1}
+Input.dispatchMouseEvent {"type": "mouseMoved", "x": 150, "y": 100, "button": "left", "buttons": 1}
+Input.dispatchMouseEvent {"type": "mouseMoved", "x": 200, "y": 100, "button": "left", "buttons": 1}
+Input.dispatchMouseEvent {"type": "mouseReleased", "x": 200, "y": 100, "button": "left", "clickCount": 1}
+}}
+wait
+EOF
 ```
 
 - This drives pointer and mouse listeners (sliders, canvas, most
@@ -155,8 +179,8 @@ $CDP $T \
 In a browser with a window (`--open-browser`, or the person's own):
 
 ```sh
-W=$($CDP browser Browser.getWindowForTarget "{\"targetId\": \"${T#targetId=}\"}" | grep -o '"windowId": [0-9]*' | grep -o '[0-9]*$')
-$CDP browser Browser.setWindowBounds "{\"windowId\": $W, \"bounds\": {\"windowState\": \"normal\", \"width\": 900, \"height\": 700}}"
+W=$($R cdp Browser.getWindowForTarget | grep -o '"windowId": [0-9]*' | grep -o '[0-9]*$')
+$R cdp Browser.setWindowBounds "{\"windowId\": $W, \"bounds\": {\"windowState\": \"normal\", \"width\": 900, \"height\": 700}}"
 $R wait -- eval '[innerWidth, innerHeight]'
 ```
 
@@ -226,8 +250,9 @@ EOF
 ### Other things worth knowing
 
 - **Dark mode, reduced motion, print**: `Emulation.setEmulatedMedia`
-  with `features` (`prefers-color-scheme: dark`). Session-scoped, so
-  from a script that stays connected.
+  with `features` (`prefers-color-scheme: dark`). Session-scoped: set
+  it and check the page (`Runtime.evaluate`, `Page.captureScreenshot`)
+  in one `cdp {{` block, or from a script that stays connected.
 - **Network**: `Network.enable` in a script, then
   `Network.requestWillBeSent` / `Network.responseReceived` events;
   `Network.getResponseBody` for a body. The script's own

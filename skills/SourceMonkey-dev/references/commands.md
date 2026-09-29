@@ -91,6 +91,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `eval <js>` | Evaluate in the page; prints JSON (promises awaited) |
 | `eval --script <js>` | Evaluate in the scripts' world |
 | `eval --file <path>` | Evaluate a JavaScript file |
+| `cdp <Method> [json]` | A raw CDP call on the tab; the result as JSON. A `{{` block or `--file` holds several, one per line (see [cdp.md](cdp.md)) |
 | `screenshot [sel] [--full] <file>` | PNG of the view, the page, or an element |
 | `savehtml <file>` | Save the DOM for `--from-saved` / `serveHtml` |
 | `logs` | All console lines and errors so far |

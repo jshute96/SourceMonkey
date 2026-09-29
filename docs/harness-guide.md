@@ -659,6 +659,7 @@ Some commands take several lines as a block, at the prompt or on stdin:
 - `type <selector>`: text, typed exactly as written, spaces and blank
   lines included, each line break pressed as Enter. The line break
   before `}}` isn't typed; end with a blank line for a final Enter.
+- `cdp`: calls, one per line, sharing a session (see [`cdp`](#cdp)).
 
 ```
 > eval T2 --script {{
@@ -679,7 +680,7 @@ Some commands take several lines as a block, at the prompt or on stdin:
 - A tab and flags go before the `{{`. Words after a `}}` (`}} --nowait`)
   are an error, and the block is dropped. (`}});` or `}},` is still the
   block's own.)
-- Only `eval`, `set` and `type` take a block; `{{` after another
+- Only `eval`, `set`, `type` and `cdp` take a block; `{{` after another
   command is refused.
 - The prompt shows `... ` while a block is open.
 - `--` inside a block is the block's own, not a command separator.
@@ -924,6 +925,8 @@ alongside the run to name the same tab:
   line the run prints when it opens or finds the tab, and in `tabs`.
 - It's the `targetId` CDP's `Target.*` calls take, and in a browser you
   connected to, the `id` in its `/json/list`.
+- The `cdp` command needs neither id nor port: it sends calls to the
+  tab through the run itself.
 - A command that takes a tab alone (`tabs`, `reload`, `focus`) also
   takes the id: whole, its first 6 or more characters, or pasted as
   shown, `targetId=` and all.
@@ -995,6 +998,7 @@ current one.
 | `savehtml <file>` | The page's HTML, to replay later (see [Saved pages](#saved-pages)) |
 | `probe <selector>... [--html] [--css]` | Which selectors match, and how many |
 | `logs` | All console lines and errors the page has had, not only the ones the stream shows |
+| `cdp <Method> [params]` | Sends a raw CDP call to the tab and prints the result as JSON (see [`cdp`](#cdp)) |
 
 ### Actions
 
@@ -1059,6 +1063,37 @@ current one.
   one per match.
   - It passes over ids and classes that look generated (`css-1x2y3z`).
   - Elements in a frame or a shadow root get none; use their ref.
+
+### `cdp`
+
+`cdp` sends raw CDP calls to the tab, for what can't be done with sm-dev commands
+(mouse wheel, right-click, window size). Each command, or block, opens a CDP
+session of its own:
+
+```sh
+sm-dev cdp Input.dispatchMouseEvent '{"type": "mouseWheel", "x": 400, "y": 300, "deltaX": 0, "deltaY": 600}' -- wait
+```
+
+```
+> cdp {{
+... Emulation.setEmulatedMedia {"features": [{"name": "prefers-color-scheme", "value": "dark"}]}
+... Runtime.evaluate {"expression": "matchMedia('(prefers-color-scheme: dark)').matches"}
+... }}
+```
+
+- A call is a `Domain.method`, then its params as a JSON object (bare,
+  or in single quotes).
+- One call per command. A `{{` block, or `--file <path>`, holds
+  several, one per line, sharing a session. They run in order and stop
+  at the first failure.
+  - Blank lines and `#` comments are skipped, and a mistake names its
+    line.
+- `Browser.*` and `Target.*` work too, and default to the tab
+  (`Browser.getWindowForTarget` with no params).
+- The session ends with the command or block, and with it anything
+  set for it (`Emulation.*` overrides, enabled domains).
+- `cdp` doesn't wait for the page to settle, and each call gets 10
+  seconds to answer.
 
 ### `screenshot`
 

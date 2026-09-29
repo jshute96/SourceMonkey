@@ -2,7 +2,8 @@
 // piped input, and a list of commands sent in one go.
 //
 // Most commands are one line. `eval` (its JavaScript), `set` (its
-// JSON) and `type` (its text) can take several, as a block:
+// JSON), `type` (its text) and `cdp` (one call per line) can take
+// several, as a block:
 //
 //   eval T2 --script {{
 //   const rows = [...document.querySelectorAll('.athing')];
@@ -35,13 +36,13 @@ const OPEN = '{{';
 const CLOSE = '}}';
 
 // The commands that take a block.
-const BLOCK_COMMANDS = new Set(['eval', 'set', 'type']);
+const BLOCK_COMMANDS = new Set(['eval', 'set', 'type', 'cdp']);
 
 /**
  * A `{{` after a command that takes no block. Its lines up to `}}` are
  * skipped, not run one by one as commands.
  */
-export const NOT_A_BLOCK_COMMAND = 'Only the eval, set and type commands take a {{ block, so its lines up to }} are skipped';
+export const NOT_A_BLOCK_COMMAND = 'Only the eval, set, type and cdp commands take a {{ block, so its lines up to }} are skipped';
 
 /**
  * A `}}` line with more after it (`}} --nowait`). Only a line of just

@@ -185,6 +185,33 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   ]);
   await expect(page.locator('button')).toHaveText('Add one');
 
+  // Raw CDP on the same tab: each result as JSON, stopping at a failure.
+  expect(await run('cdp Runtime.evaluate \'{"expression": "document.title", "returnByValue": true}\'')).toEqual([
+    JSON.stringify({ result: { type: 'string', value: 'target' } }, null, 2),
+  ]);
+  expect(await run('cdp T1 Target.getTargetInfo')).toEqual([expect.stringContaining('"type": "page"')]);
+  expect(await run('cdp Nope.nothing')).toEqual([expect.stringMatching(/^\[sm-dev\] Nope\.nothing failed: /)]);
+  expect(await run('cdp nope')).toEqual([expect.stringContaining('nope is not a CDP method')]);
+  expect(await run('cdp Page.enable Page.reload')).toEqual([expect.stringContaining('A cdp command makes one call')]);
+  // A block's calls share a session, so an override one sets holds for
+  // the next; it ends with the command.
+  const dark = '{"expression": "matchMedia(\'(prefers-color-scheme: dark)\').matches", "returnByValue": true}';
+  expect(await run(`cdp T1\nEmulation.setEmulatedMedia {"features": [{"name": "prefers-color-scheme", "value": "dark"}]}\nRuntime.evaluate ${dark}`)).toEqual([
+    '{}', JSON.stringify({ result: { type: 'boolean', value: true } }, null, 2),
+  ]);
+  expect(await run(`cdp Runtime.evaluate ${dark}`)).toEqual([JSON.stringify({ result: { type: 'boolean', value: false } }, null, 2)]);
+  // The same calls from a file.
+  writeFileSync(path.join(scriptsDir.path, 'calls.txt'), 'Runtime.evaluate {"expression": "1 + 1"}\nRuntime.evaluate {"expression": "2 + 2"}\n');
+  expect(await run('cdp --file calls.txt', scriptsDir.path)).toEqual([
+    JSON.stringify({ result: { type: 'number', value: 2, description: '2' } }, null, 2),
+    JSON.stringify({ result: { type: 'number', value: 4, description: '4' } }, null, 2),
+  ]);
+  expect(await run('cdp --file calls.txt Page.reload', scriptsDir.path)).toEqual([expect.stringContaining('not both')]);
+  expect(await run('cdp --file')).toEqual(['[sm-dev] ERROR: The --file flag needs a file of calls, e.g. cdp --file calls.txt']);
+  // A dialog a call opens stops the wait, and says so.
+  expect(await run('cdp Runtime.evaluate {"expression": "alert(1)"}')).toContain('[sm-dev] Runtime.evaluate opened a dialog, which is waiting for an answer.');
+  expect(await run('accept')).toEqual(['[sm-dev] Accepted the dialog']);
+
   // Enter submitting a form: the command returns once the next page is
   // there, so the next command sees it.
   expect(await run('type \'input[name=q]\' kittens')).toEqual(['[sm-dev] Typed into input[name=q]']);

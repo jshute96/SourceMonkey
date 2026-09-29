@@ -300,8 +300,8 @@ Command marks:
 Turns input lines into commands, for the prompt, piped input, and a
 list sent in one go (`parseCommandList`).
 
-- `eval ... {{`, `set <key> {{` or `type <selector> {{` opens a
-  multi-line block and a line of just `}}` closes it.
+- `eval ... {{`, `set <key> {{`, `type <selector> {{` or `cdp ... {{`
+  opens a multi-line block and a line of just `}}` closes it.
   - The markers are doubled because a line of just `}` is common in
     JavaScript and JSON (the end of a function or object). A single
     `}` would end the block too early.
@@ -611,8 +611,8 @@ fixture see the site's own icon, and a failed badge doesn't fail a tab.
 ### Driving the page (`page-commands.ts`)
 
 The run commands that drive and read a tab's page (`click`, `type`,
-`key`, `eval`, `snapshot`, `screenshot`, `savehtml`, `probe`, `logs`),
-on the run's own Playwright connection.
+`key`, `eval`, `snapshot`, `screenshot`, `savehtml`, `probe`, `logs`,
+`cdp`), on the run's own Playwright connection.
 
 - Real input comes from Playwright's locators and keyboard; the
   accessibility tree from `ariaSnapshot`.
@@ -627,6 +627,16 @@ on the run's own Playwright connection.
     `let` redeclarable). A top-level `return` is a syntax error there,
     so code that fails with that runs again wrapped in
     `(async () => { ... })()`. The syntax error means nothing ran.
+- `cdp` opens a fresh CDP session on the tab (`newCDPSession`) for each
+  command and detaches it after.
+  - Settings the calls make (like `Emulation.*` overrides) end when
+    the command does, and never reach the run's own session.
+  - Being a run command, it needs no `targetId` or port: the run
+    already has the tab.
+  - A command makes one call. A `{{` block or `--file` makes several,
+    one per line, so which calls share a session is always plain.
+  - Typed calls are read from the raw text, not split into words,
+    which would take the quotes out of their JSON.
 - Every console line and page error is kept per page (the newest
   thousand) for `logs`, beside the filtered stream (`page-output.ts`).
 - Keys sent over CDP go to the renderer, so Chrome's own shortcuts

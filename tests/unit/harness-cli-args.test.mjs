@@ -261,7 +261,7 @@ test('piped stdin is commands with none on the line, or with --stdin, checked in
     stderr: [
       'stdin > evel 1',
       'ERROR: evel is not a command a run takes. Type sm-dev help to list them.',
-      'ERROR: Line 3: Only the eval, set and type commands take a {{ block, so its lines up to }} are skipped',
+      'ERROR: Line 3: Only the eval, set, type and cdp commands take a {{ block, so its lines up to }} are skipped',
       'ERROR: The {{ block on line 5 has no }} line to end it',
       'None of the commands were run.',
       '',
@@ -314,7 +314,7 @@ test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
   // A list of only comments sends nothing.
   assert.deepEqual(cli('# a comment\n\n'), { code: 2, out: `ERROR: ${NO_COMMANDS}` });
   assert.deepEqual(cli('tabs {{\n}}'), {
-    code: 2, out: 'ERROR: Line 1: Only the eval, set and type commands take a {{ block, so its lines up to }} are skipped. None of the commands were run.',
+    code: 2, out: 'ERROR: Line 1: Only the eval, set, type and cdp commands take a {{ block, so its lines up to }} are skipped. None of the commands were run.',
   });
   const none = { code: 1, out: 'No sm-dev runs are active. Start one with sm-dev start.' };
   assert.deepEqual(cli('status'), none);

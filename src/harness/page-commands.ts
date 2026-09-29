@@ -1,6 +1,6 @@
-// The typed commands that act on a tab's page directly: drive it (click,
-// hover, type, key, eval) and look at it (snapshot, screenshot,
-// savehtml, probe, logs). console-commands.ts picks the tab and hands
+// The typed commands that act on a tab's page directly: drive it
+// (click, hover, type, key, eval), look at it (snapshot, screenshot,
+// savehtml, probe, logs), and send it raw CDP calls (cdp). console-commands.ts picks the tab and hands
 // the rest of the line here.
 //
 // Built on the run's own Playwright connection to its tabs: real input
@@ -23,7 +23,7 @@ import { savePageHtml } from './save-html.js';
 import { shownPath } from './prepare.js';
 import { documentOf, framesAround, locate, named, noteRefs, onScreen, probeMatches, refOf, refProblem, tidy } from './snapshot.js';
 
-export const PAGE_COMMANDS = new Set(['click', 'hover', 'type', 'key', 'eval', 'snapshot', 'screenshot', 'savehtml', 'probe', 'logs']);
+export const PAGE_COMMANDS = new Set(['click', 'hover', 'type', 'key', 'eval', 'snapshot', 'screenshot', 'savehtml', 'probe', 'logs', 'cdp']);
 
 // How long an action waits for its element. Settling after it has its
 // own limit (wait.ts).
@@ -32,6 +32,10 @@ const ACTION_TIMEOUT_MS = 5000;
 const SCREENSHOT_TIMEOUT_MS = 5000;
 // How long a quick look into the page waits for an answer.
 const CHECK_TIMEOUT_MS = 1000;
+// How long each `cdp` call waits for its reply.
+const CDP_TIMEOUT_MS = 10_000;
+// A CDP method name, `Domain.method`, which starts each `cdp` call.
+const CDP_METHOD = /^[A-Za-z]+\.[A-Za-z]+$/;
 
 /**
  * A quick yes/no from the page, false when it doesn't answer in time:
@@ -508,6 +512,73 @@ export async function runPageCommand(
         }
         return;
       }
+      case 'cdp': {
+        // `--file <path>`: the calls from a file, one per line, as a block
+        // has them.
+        let calls: CdpCall[] | string;
+        if (input.words[0] === '--file') {
+          const name = input.words[1];
+          if (name === undefined || name.startsWith('--')) {
+            say('ERROR: The --file flag needs a file of calls, e.g. cdp --file calls.txt');
+            return;
+          }
+          if (input.words.length > 2 || (input.typed && input.raw.includes('\n'))) {
+            say('ERROR: The cdp command takes calls or --file <path>, not both');
+            return;
+          }
+          try {
+            calls = cdpCallsTyped(readInputFile(file(name), shown(name)), { first: 1, name: (n) => `${shown(name)}, line ${n}` });
+          } catch (err) {
+            say(`ERROR: ${(err as Error).message}`);
+            return;
+          }
+        } else if (input.typed && input.raw.includes('\n')) {
+          calls = cdpCallsTyped(input.raw, { first: 0, name: (n) => `Line ${n} of the block` });
+        } else {
+          calls = input.typed ? cdpCallsTyped(input.raw) : cdpCalls(input.words);
+        }
+        if (typeof calls === 'string') {
+          say(`ERROR: ${calls}`);
+          return;
+        }
+        // A session of its own, detached at the end, so what a call
+        // sets for its session (Emulation.* overrides, enabled domains)
+        // ends with the command, as it does for any CDP client.
+        const session = await page.context().newCDPSession(page);
+        try {
+          for (const { method, params } of calls) {
+            let result: unknown;
+            const sent = session.send(method as never, params as never).then((r) => { result = r; });
+            // A reply may never come: a Runtime.evaluate that navigates
+            // the page, a page paused in the debugger.
+            const timeout = new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), CDP_TIMEOUT_MS).unref());
+            let outcome: boolean | 'timeout';
+            try {
+              outcome = await Promise.race([done(sent), timeout]);
+            } catch (err) {
+              // Playwright's wrapping, `Protocol error (Page.nope): `, repeats the method.
+              const message = plain(err as Error).replace(/^Protocol error \([^)]*\): /, '');
+              say(page.isClosed() ? `The tab closed before ${method} finished` : `${method} failed: ${message.charAt(0).toUpperCase()}${message.slice(1)}`);
+              return;
+            }
+            if (outcome === 'timeout') {
+              say(`${method} got no answer within ${CDP_TIMEOUT_MS / 1000} seconds. A call that navigates the page, or a paused page, never answers.`);
+              return;
+            }
+            if (!outcome) {
+              say(`${method} opened a dialog, which is waiting for an answer.`);
+              return;
+            }
+            out(JSON.stringify(result, null, 2));
+          }
+        } finally {
+          // Not waited for: with a dialog open, detaching doesn't finish
+          // until it's answered, and the command must return so that
+          // accept or dismiss can run.
+          session.detach().catch(() => undefined);
+        }
+        return;
+      }
       case 'logs': {
         if (input.words.length > 0) {
           say('The logs command takes nothing besides a tab');
@@ -522,6 +593,89 @@ export async function runPageCommand(
   } catch (err) {
     say(page.isClosed() ? `The tab closed before the ${command} command finished` : `The ${command} command failed: ${plain(err as Error)}`);
   }
+}
+
+const CDP_USAGE = 'e.g. cdp Input.dispatchMouseEvent \'{"type": "mouseWheel", "x": 400, "y": 300, "deltaX": 0, "deltaY": 600}\'';
+const ONE_CALL = 'A cdp command makes one call. For several in one session, put one per line in a cdp {{ block.';
+const notAMethod = (word: string): string => `${word} is not a CDP method. Methods are named Domain.method, as in Page.reload.`;
+
+type CdpCall = { method: string; params: object };
+
+/**
+ * `cdp`'s one call, as a client sent it. Its words are joined back into
+ * a line, so params split at their spaces still read as one. A message
+ * saying what's wrong instead.
+ */
+export function cdpCalls(words: string[]): CdpCall[] | string {
+  if (words.length === 0) return `The cdp command needs a method, ${CDP_USAGE}`;
+  const call = cdpCallLine(words.join(' '));
+  return typeof call === 'string' ? call : [call];
+}
+
+/**
+ * `cdp`'s calls as typed (at the prompt, piped, a `{{` block, or a
+ * `--file`): one per line, all in one session. Not split into words
+ * first, which would take the quotes out of JSON strings. Blank lines
+ * and `#` comments are skipped.
+ * - `lines`: for a block or file, how to name a line in a message, from
+ *   its number. A block's first line is the command's own, line 0.
+ */
+export function cdpCallsTyped(raw: string, lines?: { first: number; name: (n: number) => string }): CdpCall[] | string {
+  const calls: CdpCall[] = [];
+  for (const [i, line] of raw.split('\n').entries()) {
+    const text = line.trim();
+    if (!text || text.startsWith('#')) continue;
+    const call = cdpCallLine(text);
+    if (typeof call === 'string') return lines ? `${lines.name(lines.first + i)}: ${call}` : call;
+    calls.push(call);
+  }
+  if (calls.length === 0) return `The cdp command needs a method, ${CDP_USAGE}`;
+  return calls;
+}
+
+/**
+ * One call: a `Domain.method`, then its params as a JSON object (`{}`
+ * when none), bare or in single quotes. Quotes of either kind may be in
+ * the JSON's strings.
+ */
+function cdpCallLine(text: string): CdpCall | string {
+  const [method] = text.split(/\s/, 1);
+  if (!CDP_METHOD.test(method)) return notAMethod(method);
+  let params = text.slice(method.length).trim();
+  if (CDP_METHOD.test(params.split(/\s/, 1)[0])) return ONE_CALL;
+  const quoted = params.startsWith('\'{');
+  let after = '';
+  if (quoted || params.startsWith('{')) {
+    const stop = jsonObjectEnd(params, quoted ? 1 : 0);
+    if (stop < 0) return `The params for ${method} have no closing }. A call and its params go on one line.`;
+    if (quoted && params[stop] !== '\'') return `The params for ${method} open with a ' that doesn't close after them`;
+    after = params.slice(quoted ? stop + 1 : stop).trim();
+    params = params.slice(quoted ? 1 : 0, stop);
+  }
+  if (after) return CDP_METHOD.test(after.split(/\s/, 1)[0]) ? ONE_CALL : `The params for ${method} have more after them: ${after}`;
+  if (!params) return { method, params: {} };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(params);
+  } catch (err) {
+    return `The params for ${method} are not valid JSON (${(err as Error).message}): ${params}`;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return `The params for ${method} must be a JSON object: ${params}`;
+  return { method, params: parsed };
+}
+
+// Where the JSON object starting at `from` ends: past its closing brace,
+// braces in strings not counted. -1 if it never closes.
+function jsonObjectEnd(text: string, from: number): number {
+  let depth = 0;
+  for (let i = from; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') {
+      for (i++; i < text.length && text[i] !== '"'; i++) if (text[i] === '\\') i++;
+    } else if (c === '{' || c === '[') depth++;
+    else if ((c === '}' || c === ']') && --depth === 0) return i + 1;
+  }
+  return -1;
 }
 
 // Writes a file, saying which and why when it can't be.

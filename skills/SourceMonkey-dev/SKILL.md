@@ -30,10 +30,10 @@ description: Develop, debug and test userscripts with SourceMonkey's sm-dev tool
   - Anything sm-dev has no command for (back button, window size, mouse
     wheel, right-click), do over CDP directly, in the same tab, while
     the run goes on.
-  - This skill ships a helper for that, `scripts/cdp.mjs`. See
+  - `$R cdp` sends raw calls to a tab. See
     [Beyond sm-dev: raw CDP](#beyond-sm-dev-raw-cdp).
 
-Paths below like `scripts/cdp.mjs` and `references/...` are relative
+Paths below like `references/...` are relative
 to this skill's directory (where this `SKILL.md` is, for example
 `.claude/skills/SourceMonkey-dev/`).
 
@@ -44,9 +44,6 @@ Where to look:
 - [references/cdp.md](references/cdp.md): raw CDP recipes.
 - [references/specs.md](references/specs.md): writing Playwright specs
   with the harness fixture.
-- [scripts/cdp.mjs](scripts/cdp.mjs): a dependency-free helper that
-  sends CDP calls to a tab by its `targetId`, or to the browser, and
-  prints the results as JSON.
 - `pnpm sm-dev --help`, or `pnpm sm-dev help <command>`: the
   authoritative, current reference.
 - The `SourceMonkey-friction` skill, when installed: log where these
@@ -392,7 +389,7 @@ $R savehtml pages/some-page.html              # the DOM, with the URL recorded
 - `newtab <url>` opens another controlled tab and makes it current;
   `tab T1` switches back. Page commands take a tab first:
   `click T2 '.x'`, `eval T2 location.href`, `menu T2.M1`.
-- `tabs` lists them with their `targetId`s.
+- `tabs` lists them with their `targetId`s, for your own CDP clients.
 - `reload all` reloads every tab; `wait all` waits for every tab to
   settle.
 
@@ -424,35 +421,32 @@ EOF
 
 - Blank lines and `# comments` are skipped.
 - A `{{` ... `}}` block spans several lines: JavaScript for
-  `eval {{`, JSON for `set <key> {{`, text for `type <selector> {{`
-  (see [references/commands.md](references/commands.md#eval)).
+  `eval {{`, JSON for `set <key> {{`, text for `type <selector> {{`,
+  CDP calls for `cdp {{` (see [references/commands.md](references/commands.md#eval)).
 - `--file` reads the same from a file instead: `eval --file probe.js`,
-  `set <key> --file value.json`, `type <selector> --file notes.txt`.
+  `set <key> --file value.json`, `type <selector> --file notes.txt`,
+  `cdp --file calls.txt`.
 - The whole input is checked before anything runs, so a typo runs
   nothing.
 
 ### Beyond sm-dev: raw CDP
 
-sm-dev's connection doesn't own the browser. Its CDP port takes other
-clients at the same time, so do what sm-dev can't directly, on the
-same tab. The quickest way is the skill's helper, `scripts/cdp.mjs`:
+For what sm-dev has no command for, `cdp` sends a raw CDP call to a
+tab (the current one, or `T2` first), and prints the result as JSON.
+A `{{` block, or `--file`, holds several calls, one per line, on one
+session:
 
 ```sh
-CDP="node .claude/skills/SourceMonkey-dev/scripts/cdp.mjs"   # this skill's directory
-T=$($R tabs | grep -o 'targetId=[0-9A-F]*' | head -1)        # the first tab listed
-
-$CDP $T Input.dispatchMouseEvent '{"type":"mouseWheel","x":400,"y":300,"deltaX":0,"deltaY":600}'
+$R cdp Input.dispatchMouseEvent '{"type":"mouseWheel","x":400,"y":300,"deltaX":0,"deltaY":600}'
+$R cdp T2 Page.getNavigationHistory
 ```
 
-- [references/cdp.md](references/cdp.md) has its usage, and recipes:
+- [references/cdp.md](references/cdp.md) has details and recipes:
   back and forward, window size, mouse wheel, right-click and modifier
   clicks, drag, fullscreen, per-frame tracing.
-- The port: 9233 or the `--cdp` sm-dev was given, but a
-  `--temp-browser` run picks a random one. `status`'s `Run:` line shows
-  it (`browser 127.0.0.1:41234`); pass it as `--cdp 41234`.
-- Any other CDP tool works too: your own Node script, or Playwright's
-  `chromium.connectOverCDP`. Target the tab by the `targetId` sm-dev
-  prints.
+- `cdp` doesn't wait for the page to settle. Run `wait` after it.
+- For events, or state that outlasts one command, connect your own CDP
+  client alongside the run (see the reference).
 - For DevTools' own tools (network requests, performance traces,
   Lighthouse), `start --devtools` runs a Chrome DevTools MCP server on
   the run's tabs, for the `chrome-devtools` command. MCP (Model Context

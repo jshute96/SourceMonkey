@@ -57,6 +57,10 @@ test('words after a }} are an error, but }}); and }}, are the block\'s', () => {
   assert.equal(a.open, false);
 });
 
+test('a cdp block is its calls, one per line', () => {
+  assert.deepEqual(texts(parseCommandList('cdp T2 {{\nPage.enable\nPage.reload {"ignoreCache": true}\n}}')), ['cdp T2\nPage.enable\nPage.reload {"ignoreCache": true}']);
+});
+
 test('{{ after another command refuses the whole list', () => {
   assert.deepEqual(parseCommandList('status\ntabs {{\n}}'), { error: `Line 2: ${NOT_A_BLOCK_COMMAND}. None of the commands were run.` });
 });
