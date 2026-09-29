@@ -401,7 +401,8 @@ doesn't stop them.
 $R start sites/x/y.user.js https://x.com/ --detach -- click '.open' -- wait selector '#modal' -- snapshot '#modal'
 ```
 
-A longer script reads better as a heredoc; each line is a command:
+A longer script, or any `eval` with quotes in it, reads better as a
+heredoc (no shell quoting); each line is a command:
 
 ```sh
 $R --stdin <<'EOF'
@@ -417,6 +418,7 @@ EOF
 - Blank lines and `# comments` are skipped.
 - `eval {{` ... `}}` spans several lines of JavaScript (see
   [references/commands.md](references/commands.md#eval)).
+- `eval --file probe.js` runs JavaScript from a file.
 - The whole input is checked before anything runs, so a typo runs
   nothing.
 

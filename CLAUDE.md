@@ -25,6 +25,7 @@ repository. See `README.md` for setup instructions and available commands.
     - README should be concise and easy to read, without excessive details. It shouldn't list every feature or behavior, or implementation details of how things work.
     - Use other `docs/*.md` files for more details.
   - Always update `docs/file-index.md` when the file set changes or file descriptions become stale.
+  - When changing `sm-dev` or the harness (commands, flags, output, behavior), update the `skills/SourceMonkey-dev/` instructions (`SKILL.md`, `references/*.md`) to match, where they cover it.
   - Include all significant changes in the commit message.
 
 ## Development Conventions

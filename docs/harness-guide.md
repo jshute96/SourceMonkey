@@ -968,6 +968,7 @@ current one.
 | `key <keys>...` | Presses keys in order: `key j Shift+ArrowRight Escape` (`keys` works too) |
 | `eval <js>` | Evaluates in the page and prints the result |
 | `eval --script <js>` | The same in the scripts' world |
+| `eval --file <path>` | Evaluates a JavaScript file (with `--script` too, in either order) |
 | `snapshot [selector] [--visible] [--out file]` | The page (or an element) as its accessibility tree, one line per element, each with a ref. `--visible`: only what's on screen. `--out` writes it to a file |
 | `screenshot [selector] [--full] <file>` | A PNG of what's showing, of the whole page (`--full`), or of one element |
 | `savehtml <file>` | The page's HTML, to replay later (see [Saved pages](#saved-pages)) |
@@ -994,6 +995,14 @@ current one.
 
 - Takes the rest of the line as JavaScript, quotes and all, or several
   lines as a block (see [Multi-line `eval`](#multi-line-eval)).
+- `eval --file probe.js` takes the JavaScript from a file instead,
+  for a reusable probe with no shell quoting.
+- The value is the last expression, as in the DevTools console.
+  - Code with a top-level `return`, written as a function body, works
+    too: it runs again as an async function's body, and prints what
+    it returns.
+  - Its `const`/`let` then stay in that function, where console-style
+    code keeps them for later `eval`s.
 - Prints JSON, or an element's or function's description. A promise
   prints what it settles to.
 - `eval --script` runs in the scripts' world, where a script without

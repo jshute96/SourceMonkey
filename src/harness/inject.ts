@@ -107,6 +107,14 @@ function threw(details: { text: string; exception?: unknown }): ScriptThrew {
   return new ScriptThrew(thrown.split('\n')[0]);
 }
 
+// A top-level `return` in `eval`'s code: V8's syntax error for it.
+// Only as the code compiled, which has no stack trace. One thrown as it
+// ran (by an inner `eval("return")`) had its side effects already.
+function isIllegalReturn(details: { exception?: unknown; stackTrace?: unknown }): boolean {
+  const exception = details.exception as RemoteObject | undefined;
+  return !details.stackTrace && exception?.className === 'SyntaxError' && (exception.description ?? '').startsWith('SyntaxError: Illegal return statement');
+}
+
 // The parts of CDP's `Runtime.RemoteObject` that `evaluate` reads.
 interface RemoteObject {
   type: string;
@@ -115,6 +123,7 @@ interface RemoteObject {
   unserializableValue?: string;
   objectId?: string;
   description?: string;
+  className?: string;
 }
 const BINDING = '__smHarnessBridge';
 const RUNTIME_BINDING = '__smHarnessRuntime';
@@ -624,9 +633,18 @@ export class PageAttachment implements PageLink {
   async evaluate(expression: string, world: 'page' | 'scripts'): Promise<string> {
     const contextId = this.contextFor(world === 'page' ? '' : ISOLATED_WORLD);
     if (contextId === null) throw new Error(world === 'page' ? 'The page has no document to evaluate in' : 'The scripts\' world isn\'t set up in this document');
-    const { result, exceptionDetails } = await this.cdp.send('Runtime.evaluate', {
+    let { result, exceptionDetails } = await this.cdp.send('Runtime.evaluate', {
       expression, contextId, awaitPromise: true, replMode: true, userGesture: true,
     });
+    // Code written as a function body (`return` at the top level) is a
+    // syntax error as console input. Nothing ran, so it's safe to run
+    // again as an async function's body, whose `return` is the value.
+    // The newline keeps a trailing `// comment` off the closing `})`.
+    if (exceptionDetails && isIllegalReturn(exceptionDetails)) {
+      ({ result, exceptionDetails } = await this.cdp.send('Runtime.evaluate', {
+        expression: `(async () => {\n${expression}\n})()`, contextId, awaitPromise: true, userGesture: true,
+      }));
+    }
     if (exceptionDetails) throw threw(exceptionDetails);
     // A promise, as `eval fetch(url).then(...)` gives: what it settles
     // to, where the console would show the promise itself.

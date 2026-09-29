@@ -310,8 +310,15 @@ export const HELP_SECTIONS: HelpSection[] = [
       { usage: 'key [tab] <keys>...', about: ['Press keys in order, using common key names.', 'e.g. key j Shift+ArrowRight Escape'], gap: true },
       {
         usage: 'eval [tab] <js>',
-        about: ['Evaluate JavaScript in the page and print the result.', 'eval {{ starts a multi-line block, ended by }}.'],
-        options: [{ term: '--script', about: 'Evaluate in the scripts\' world.' }],
+        about: [
+          'Evaluate JavaScript in the page and print the result.',
+          'The last expression is the result, as in the DevTools console. A top-level return works too.',
+          'eval {{ starts a multi-line block, ended by }}.',
+        ],
+        options: [
+          { term: '--script', about: 'Evaluate in the scripts\' world.' },
+          { term: '--file <path>', about: 'Evaluate a JavaScript file, in place of <js>.' },
+        ],
         gap: true,
       },
     ],

@@ -89,6 +89,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `probe <sel>... [--css] [--html]` | Which match and how many; selector / HTML of the first 10 |
 | `eval <js>` | Evaluate in the page; prints JSON (promises awaited) |
 | `eval --script <js>` | Evaluate in the scripts' world |
+| `eval --file <path>` | Evaluate a JavaScript file |
 | `screenshot [sel] [--full] <file>` | PNG of the view, the page, or an element |
 | `savehtml <file>` | Save the DOM for `--from-saved` / `serveHtml` |
 | `logs` | All console lines and errors so far |
@@ -129,6 +130,12 @@ old) or DOM changes for 200ms. Timers aren't waited for.
 
 - The rest of the line is JavaScript: `eval document.title`. Quote it
   for the shell when it has spaces or special characters.
+- The value is the last expression, as in the DevTools console. A
+  top-level `return` works too (the code runs as a function body).
+  Its `const`/`let` then stay in that function, not kept for later
+  evals.
+- `eval --file probe.js` runs a file's JavaScript, with no shell
+  quoting: handy for a probe you run more than once.
 - Several lines, on stdin or at a prompt:
 
   ```

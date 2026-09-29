@@ -449,7 +449,7 @@ test('each run command takes the flags its help lists, and no others', async () 
   const expected = {
     newtab: saved, open: saved, reload: loads,
     click: ['--nowait'], hover: ['--nowait'], type: ['--nowait'], key: ['--nowait'],
-    eval: ['--script'], snapshot: ['--visible', '--out'], screenshot: ['--full'], probe: ['--css', '--html'],
+    eval: ['--script', '--file'], snapshot: ['--visible', '--out'], screenshot: ['--full'], probe: ['--css', '--html'],
     wait: ['--timeout-seconds'], status: [], values: [], menu: [], tabs: [], focus: [],
   };
   for (const [name, flags] of Object.entries(expected)) assert.deepEqual(commandFlags(name).sort(), [...flags].sort(), name);

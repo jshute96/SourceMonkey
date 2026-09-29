@@ -3,7 +3,7 @@
 // as `sm-dev start` runs them, against a script that adds a button and a
 // text field to the page and keeps its state in the scripts' world.
 
-import { readFileSync, statSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { test, expect } from '../fixtures/harness.js';
@@ -91,6 +91,30 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   const dir = scriptsDir.path;
   expect(await run('snapshot --out tree.txt T1', dir)).toEqual([expect.stringMatching(/^\[sm-dev\] Wrote tree\.txt \(\d+ lines\) from http/)]);
   expect(readFileSync(path.join(dir, 'tree.txt'), 'utf8')).toContain('button "Added 1"');
+  // Code written as a function body: its `return` is the value.
+  expect(await run('eval const n = 2; return n * 3')).toEqual(['6']);
+  expect(await run('eval await 0; return document.title')).toEqual(['"target"']);
+  // Thrown as it ran, not as it compiled: not run again.
+  expect(await run('eval window.runs = (window.runs ?? 0) + 1; eval("return 1")')).toEqual(['[sm-dev] The expression threw: SyntaxError: Illegal return statement']);
+  expect(await run('eval runs')).toEqual(['1']);
+  // A file's JavaScript, the flags in either order, and a trailing
+  // comment kept off the wrapper's closing.
+  writeFileSync(path.join(dir, 'probe.js'), 'const c = widget.clicks;\nreturn { c } // done');
+  expect(await run('eval --file probe.js --script', dir)).toEqual(['{\n  "c": 1\n}']);
+  expect(await run('eval --script T1 --file probe.js', dir)).toEqual(['{\n  "c": 1\n}']);
+  expect(await run('eval --file nope.js', dir)).toEqual(['[sm-dev] ERROR: Couldn\'t read nope.js: The file does not exist']);
+  expect(await run('eval --file probe.js 1 + 1', dir)).toEqual(['[sm-dev] ERROR: The eval command takes JavaScript or --file, not both']);
+  expect(await run('eval --file', dir)).toEqual(['[sm-dev] ERROR: The --file flag needs a JavaScript file, e.g. eval --file probe.js']);
+  expect(await run('eval --file --script', dir)).toEqual(['[sm-dev] ERROR: The --file flag needs a JavaScript file, e.g. eval --file probe.js']);
+  expect(await run('eval --file probe.js --file probe.js', dir)).toEqual(['[sm-dev] ERROR: The eval command takes one --file']);
+  mkdirSync(path.join(dir, 'probes'));
+  expect(await run('eval --file probes', dir)).toEqual(['[sm-dev] ERROR: Couldn\'t read probes: It\'s a folder']);
+  writeFileSync(path.join(dir, 'blank.js'), '\n');
+  expect(await run('eval --file blank.js', dir)).toEqual(['[sm-dev] ERROR: The file blank.js is empty']);
+  // Sent from another shell, as `sm-dev eval --file probe.js` does.
+  lines.length = 0;
+  await runConsoleCommand('eval --file probe.js --script', ctx, { cwd: dir, words: ['eval', '--file', 'probe.js', '--script'] });
+  expect(lines).toEqual(['{\n  "c": 1\n}']);
   expect(await run('screenshot button b.png', dir)).toEqual([expect.stringMatching(/^\[sm-dev\] Wrote b\.png \(button\) from http/)]);
   expect(statSync(path.join(dir, 'b.png')).size).toBeGreaterThan(0);
   expect(await run('screenshot --full whole.png', dir)).toEqual([expect.stringMatching(/^\[sm-dev\] Wrote whole\.png from http/)]);

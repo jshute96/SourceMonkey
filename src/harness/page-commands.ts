@@ -9,7 +9,7 @@
 // accessibility tree as text. Actions wait for the page to settle (wait.ts)
 // before returning, so the next command sees what the last one did.
 
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { Page } from '@playwright/test';
@@ -146,7 +146,7 @@ function takeFlags(
 }
 
 /** Flags that take a value, so the word after one isn't taken for a tab. */
-export const VALUE_FLAGS = new Set(['--out', '--timeout-seconds', '--url']);
+export const VALUE_FLAGS = new Set(['--file', '--out', '--timeout-seconds', '--url']);
 
 /**
  * A page command's arguments, after the tab if one was named: its
@@ -218,12 +218,50 @@ export async function runPageCommand(
   try {
     switch (command) {
       case 'eval': {
-        // JavaScript: typed, the line as it is, its quotes its own.
-        const world: 'page' | 'scripts' = input.words[0] === '--script' ? 'scripts' : 'page';
-        let expression = input.typed ? input.raw.trim() : input.words.slice(world === 'scripts' ? 1 : 0).join(' ');
-        if (input.typed && world === 'scripts') expression = expression.replace(/^--script(\s+|$)/, '');
+        // Its flags lead (`--script`, `--file <path>`, either order),
+        // on the command's own line: an eval block's code is not looked
+        // through for them. Then JavaScript: typed, the rest of the line
+        // as it is, its quotes its own.
+        const words = input.typed ? splitWords(input.raw) : input.words.map((text) => ({ text, start: -1, end: -1 }));
+        const headEnd = input.typed ? input.raw.indexOf('\n') : -1;
+        const flagAt = (i: number): string | undefined => (headEnd < 0 || (words[i]?.start ?? headEnd) < headEnd ? words[i]?.text : undefined);
+        let world: 'page' | 'scripts' = 'page';
+        let from: string | undefined;
+        let at = 0;
+        for (; flagAt(at) === '--script' || flagAt(at) === '--file'; at++) {
+          if (flagAt(at) === '--script') {
+            world = 'scripts';
+            continue;
+          }
+          if (from !== undefined) {
+            say('ERROR: The eval command takes one --file');
+            return;
+          }
+          from = flagAt(++at);
+          if (from === undefined || from.startsWith('--')) {
+            say('ERROR: The --file flag needs a JavaScript file, e.g. eval --file probe.js');
+            return;
+          }
+        }
+        let expression = input.typed ? input.raw.slice(at ? words[at - 1].end : 0).trim() : input.words.slice(at).join(' ');
+        if (from !== undefined) {
+          if (expression) {
+            say('ERROR: The eval command takes JavaScript or --file, not both');
+            return;
+          }
+          try {
+            expression = await readFile(file(from), 'utf8');
+          } catch (err) {
+            say(`ERROR: Couldn't read ${shown(from)}: ${readProblem(err as NodeJS.ErrnoException)}`);
+            return;
+          }
+          if (!expression.trim()) {
+            say(`ERROR: The file ${shown(from)} is empty`);
+            return;
+          }
+        }
         if (!expression) {
-          say('The eval command needs an expression, e.g. eval document.title');
+          say('ERROR: The eval command needs an expression, e.g. eval document.title');
           return;
         }
         let result = '';
@@ -520,6 +558,14 @@ function keyParts(typed: string): string[] {
 // Playwright's message as a person should see it: its first line,
 // without the method it came from (`locator.click: `), capitalized, and
 // with plain words for the common cases.
+// Why a file couldn't be read, in plain words.
+function readProblem(err: NodeJS.ErrnoException): string {
+  if (err.code === 'ENOENT') return 'The file does not exist';
+  if (err.code === 'EISDIR') return 'It\'s a folder';
+  if (err.code === 'EACCES') return 'Permission was refused';
+  return plain(err);
+}
+
 function plain(err: Error): string {
   const first = err.message.split('\n')[0].replace(/^(\w+(\.\w+)+: )+/, '').replace(/\.$/, '');
   const key = /Unknown key: "(.+)"/.exec(first);

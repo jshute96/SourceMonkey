@@ -619,6 +619,10 @@ on the run's own Playwright connection.
   (`PageAttachment.evaluate`), in the page's default context or the
   isolated world the harness keeps for scripts. Results print as JSON,
   or as the DevTools console describes an element or function.
+  - It evaluates as console input (CDP `replMode`: top-level `await`,
+    `let` redeclarable). A top-level `return` is a syntax error there,
+    so code that fails with that runs again wrapped in
+    `(async () => { ... })()`. The syntax error means nothing ran.
 - Every console line and page error is kept per page (the newest
   thousand) for `logs`, beside the filtered stream (`page-output.ts`).
 - Keys sent over CDP go to the renderer, so Chrome's own shortcuts
