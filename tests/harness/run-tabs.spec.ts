@@ -118,9 +118,9 @@ test('run takes URLs among its scripts and flags, in any order, one tab each', a
   expect(lines).toContain('[page log] [both] on /target.html');
 });
 
-test('--noscript opens each URL given once, however often it is given', async ({ fixtureServer }) => {
+test('start with no scripts opens each URL given once, however often it is given', async ({ fixtureServer }) => {
   const base = fixtureServer.baseUrl;
-  const lines = await driveCli(['--noscript', `${base}/target.html`, `${base}/other.html`, `${base}/target.html`], [
+  const lines = await driveCli([`${base}/target.html`, `${base}/other.html`, `${base}/target.html`], [
     ['Started as run', 'tabs'],
     ['Tabs:', 'exit'],
   ]);
@@ -289,8 +289,8 @@ test('a followed tab keeps its menu commands, and menu fires them there', async 
   expect(lines).toContain('[T2] [page log] [menu] fired on /other.html');
 });
 
-test('--noscript: a blank page, and the lists say there are no scripts', async () => {
-  const lines = await driveCli(['--noscript'], [
+test('start with no scripts: a blank page, and the lists say there are no scripts', async () => {
+  const lines = await driveCli([], [
     ['Started as run', 'status'],
     ['No scripts are loaded', 'exit'],
   ]);
@@ -462,12 +462,15 @@ test('open and reload switch the tab they name, or the current one, and say when
     // A tab named, no page: its own page, back with the scripts.
     ['[T2] [page log] [A] on /target.html', 'open T1 --script'],
     ['T1 runs the scripts again', 'eval T1 location.pathname'],
+    // A tab named, then a page.
+    ['"/other.html"', `open T1 ${base}/target.html#t1`],
+    ['[A] on /target.html', 'eval T1 location.hash'],
     // reload with no tab named: the current one, T2.
-    ['"/other.html"', 'reload --noscript'],
+    ['"#t1"', 'reload --noscript'],
     // A mistake, found before it is sent, stops the piped commands.
     ['T2 runs no scripts from now on', 'open --bogus'],
   ]);
-  expect(lines).toContain('ERROR: The open command has no --bogus flag');
+  expect(lines).toContain('ERROR: The open command has no --bogus flag. It takes --noscript, --script, --from-saved, --url, --offline, --nowait.');
   expect(lines).toContain('That command failed, so the commands after it were not run');
   // T1 stayed on its page when switched back.
   expect(lines.filter((l) => l === '"/other.html"')).toHaveLength(2);

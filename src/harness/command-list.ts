@@ -112,18 +112,17 @@ export const HELP_SECTIONS: HelpSection[] = [
     ],
     commands: [
       {
-        usage: 'start <script>... [url]...',
+        usage: 'start [script]... [url]...',
         about: ['Start a server process and connect to a browser.', 'Load the listed userscripts.', 'Open a tab for each listed URL.', 'Starts with the ID from --run. Stops existing runs with that ID.'],
         args: [
-          { term: '<script>...', about: 'Files ending in .user.js, directories, or globs.' },
-          { term: '[url]...', about: ['URLs to open.', 'Default: the first script\'s default page (from @match).'] },
+          { term: '[script]...', about: 'Files ending in .user.js, directories, or globs.' },
+          { term: '[url]...', about: ['URLs to open.', 'Default: the first script\'s default page (from @match), or a blank tab.'] },
         ],
         optionGroups: [
           {
             title: 'Tabs at startup',
             options: [
               { term: '--all', about: 'Open each script\'s default page, one tab per page.' },
-              { term: '--noscript', about: 'Start with no scripts loaded.' },
               { term: '--notab', about: 'Open no tabs at startup. (Use newtab later.)' },
               { term: '--from-saved', about: 'Serve .html files as saved page snapshots, at their embedded URLs by default. See Saved pages.' },
               { term: '--url URL', about: 'With --from-saved and one .html file: The URL to serve it at.' },
@@ -229,8 +228,8 @@ export const HELP_SECTIONS: HelpSection[] = [
       { usage: 'tabs', about: 'List the tabs this run controls.' },
       { usage: 'tab <tab>', about: 'Select the active tab by ID.' },
       {
-        usage: 'open [page]',
-        about: 'Open a URL in the current tab.',
+        usage: 'open [tab] [page]',
+        about: 'Open a URL in the current tab, or the tab named (T2).',
         args: [
           { term: '<url>', about: 'A URL.' },
           { term: '<file>', about: 'A file, or a glob matching one.' },
@@ -318,9 +317,18 @@ export const HELP_SECTIONS: HelpSection[] = [
           { term: '--button <name>', about: 'left (the default), right or middle.' },
           { term: '--modifiers <keys>', about: 'Keys held during the click, e.g. Shift or Control+Alt.' },
           { term: '--count <n>', about: 'Clicks in a row: 2 double-clicks, 3 triple-clicks.' },
+          { term: '--at <x,y>', about: 'Where in the element, in pixels from its top left corner (default: its center).' },
         ],
       },
-      { usage: 'hover [tab] <selector>', about: 'Move the mouse over an element.', gap: true },
+      {
+        usage: 'hover [tab] <selector>',
+        about: 'Move the mouse over an element.',
+        options: [
+          { term: '--modifiers <keys>', about: 'Keys held, e.g. Alt.' },
+          { term: '--at <x,y>', about: 'Where in the element, in pixels from its top left corner (default: its center).' },
+        ],
+        gap: true,
+      },
       {
         usage: 'type [tab] <selector> <text>',
         about: ['Type text into an element. (Text box, etc.)', 'type <selector> {{ starts multi-line text, ended by }}.'],
@@ -735,6 +743,16 @@ export function commandFlags(name: string): string[] {
   // And any a form's usage names itself (`cdp [tab] --file <path>`).
   const inUsage = formsOf(name).flatMap(({ command }) => command.usage.match(/--[\w-]+/g) ?? []);
   return [...new Set([...options, ...inUsage])];
+}
+
+/**
+ * A command's flag it doesn't have, naming the ones it does, so a near
+ * miss (`--timeout` for `--timeout-seconds`) shows the right one.
+ */
+export function noSuchFlag(command: string, flag: string, known: string[] = commandFlags(command)): string {
+  const flags = known.filter((f) => f !== '--help');
+  const takes = flags.length === 0 ? 'It takes no flags.' : `It takes ${flags.join(', ')}.`;
+  return `The ${command} command has no ${flag} flag. ${takes}`;
 }
 
 // One command's help: its usage, what it does, its arguments and options.

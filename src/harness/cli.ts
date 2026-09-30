@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 
 import { CommandAssembler, NONE_RUN, echoCommand, parseCommandList, shellWord, unclosedBlockMessage, type AssembledCommand } from './command-lines.js';
 import {
-  commandFlagMistake, commandWords, onlyInspects, readPromptCommands, writeOutputLine,
+  commandFlagMistake, commandWords, onlyInspects, readPromptCommands, unknownCommandFlag, writeOutputLine,
 } from './console-commands.js';
 import { OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, commandNamed, commandsHelp, fullHelp } from './command-list.js';
 import { devtoolsWanted } from './devtools.js';
@@ -35,6 +35,7 @@ import { readJsonFile } from './input-file.js';
 // Node built-ins only, so as cheap to load as the rest here.
 import { runIdOf, type CommandSource, type RunClient, type RunRecord } from './runs.js';
 import { runLogLabel } from './run-log.js';
+import { staleBuildWarning } from './stale-build.js';
 import { withDefaultScheme } from './prepare.js';
 import { ONE_URL, pagesToOpen, type PageWord, type SavedPageStart } from './saved-pages.js';
 import {
@@ -57,7 +58,6 @@ interface Opts {
   command: string | null;
   args: string[];
   all: boolean;
-  noScript: boolean;
   noTab: boolean;
   cdp?: string;
   watch: boolean;
@@ -91,7 +91,7 @@ const MAX_TIMER_SECONDS = Math.floor((2 ** 31 - 1) / 1000);
 function parseArgs(argv: string[]): Opts {
   const opts: Opts = {
     command: null, args: [],
-    all: false, noScript: false, noTab: false, watch: false, extension: false, solo: false, pageErrors: false, detach: false, newRun: false, noWait: false, fromSaved: false, offline: false,
+    all: false, noTab: false, watch: false, extension: false, solo: false, pageErrors: false, detach: false, newRun: false, noWait: false, fromSaved: false, offline: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -112,7 +112,6 @@ function parseArgs(argv: string[]): Opts {
       case '--open-browser':
         throw new UsageError(globalFlagMistake(arg));
       case '--all': opts.all = true; break;
-      case '--noscript': opts.noScript = true; break;
       case '--notab': opts.noTab = true; break;
       case '--cdp': opts.cdp = next(); break;
       case '--watch': opts.watch = true; break;
@@ -171,6 +170,8 @@ function parseArgs(argv: string[]): Opts {
       }
       default:
         if (arg.startsWith('--run=')) throw new UsageError(globalFlagMistake('--run'));
+        // Once a start flag; a start given no scripts is one now.
+        if (arg === '--noscript' && opts.command === 'start') throw new UsageError('The start command no longer takes --noscript. Give it no scripts to start without any.');
         if (arg.startsWith('-')) throw new UsageError(`Unknown option: ${arg}`);
         if (opts.command === null) opts.command = arg;
         else opts.args.push(arg);
@@ -196,6 +197,9 @@ function scriptsAndUrls(words: string[]): { scripts: string[]; urls: string[]; p
   // Each once, so a repeat is neither checked nor opened twice.
   const pages = new Map<string, PageWord>();
   for (const word of args.filter((a) => !SCRIPT_ARG.test(a))) {
+    // A script misnamed would otherwise be opened as a page, leaving
+    // the run with no scripts.
+    if (/\.js$/i.test(word) && !/^[a-z][a-z0-9+.-]*:/i.test(word)) throw new UsageError(`${word} is not a userscript: Its name doesn't end in .user.js`);
     const url = withDefaultScheme(word);
     if (!pages.has(url)) pages.set(url, { word, url });
   }
@@ -277,8 +281,6 @@ async function startCommand(opts: Opts, words: string[], client: Client): Promis
 // runs any.
 async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]; scripts: string[]; devtools: boolean; saved: (SavedPageStart | null)[] }> {
   const { scripts, urls, pages } = scriptsAndUrls(opts.args);
-  if (opts.noScript && scripts.length > 0) throw new UsageError('The --noscript flag runs no scripts, so the start command takes none with it');
-  if (!opts.noScript && scripts.length === 0) throw new UsageError('The start command needs at least one script (a .user.js file), or --noscript');
   if (opts.all && urls.length > 0) throw new UsageError('The --all flag opens each script\'s own page, so it can\'t be used with a URL');
   const remote = scripts.find((s) => REMOTE_SCRIPT.test(s));
   if (remote) throw new UsageError(`The start command loads scripts from files, and ${remote} is a URL. Save it to a file first.`);
@@ -288,11 +290,14 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
     if (used.length > 0) throw new UsageError(`The ${flag} flag can't be used with ${used.join(' or ')}`);
   };
   if (opts.noTab) clash('--notab', [[opts.all, '--all'], [urls.length > 0, 'a URL']]);
-  if (opts.noScript) {
-    clash('--noscript', [
+  // With no scripts, just a browser to drive: the flags that act on
+  // scripts would do nothing.
+  if (scripts.length === 0) {
+    const used = ([
       [opts.all, '--all'], [Boolean(opts.values), opts.valuesFlag ?? '--values'],
       [opts.watch, '--watch'], [opts.extension, '--extension'], [opts.solo, '--solo'],
-    ]);
+    ] as [boolean, string][]).filter(([on]) => on).map(([, name]) => name);
+    if (used.length > 0) throw new UsageError(`The start command was given no scripts, so it can't take ${used.join(' or ')}`);
   }
   // Asked for by name, it must be able to run; on by default from the
   // environment, it just sits out the runs it can't serve.
@@ -849,9 +854,8 @@ function commandMistake(words: string[]): string | null {
   const first = lineFlag(words[0]);
   if (first) return globalFlagMistake(first);
   if (!isTypedCommand(words[0])) return unknownRunCommand(words[0]);
-  const mistake = commandFlagMistake(words);
-  const flag = lineFlag(mistake?.match(/ has no (\S+) flag$/)?.[1]);
-  return flag ? globalFlagMistake(flag) : mistake;
+  const flag = lineFlag(unknownCommandFlag(words)?.flag);
+  return flag ? globalFlagMistake(flag) : commandFlagMistake(words);
 }
 
 // The list in one argument of several lines, checked; null for a
@@ -1462,6 +1466,11 @@ async function main(): Promise<void> {
     if (err.code !== 'EPIPE' && err.code !== 'ERR_STREAM_DESTROYED' && err.code !== 'EIO') throw err;
     onOutputClosed();
   });
+  // Not again from a detached run's own process, nor where tests turn it off.
+  if (!detachedLog && !process.env.SM_DEV_NO_STALE_WARNING) {
+    const stale = staleBuildWarning();
+    if (stale) process.stderr.write(`${stale}\n`);
+  }
   const argv = process.argv.slice(2);
   // Before anything else is checked, so a mistake doesn't stand in the
   // way of help.

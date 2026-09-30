@@ -103,6 +103,10 @@ working on both), also add this to `package.json`:
   peer dependency resolves to your copy.
 - Re-run `pnpm install` after rebuilding SourceMonkey, since the copy
   is taken at install time.
+  - It copies SourceMonkey's `lib/` as it is, without building it, so
+    build there first (`pnpm run build`).
+  - `sm-dev` warns when the SourceMonkey checkout has changes the copy
+    lacks, and says which of the two steps is needed.
 
 ### Running `sm-dev`
 
@@ -188,6 +192,8 @@ What a run prints as it goes:
   URL`), and nothing runs.
 - A header problem prints the same wording the extension's viewer
   would, and nothing is injected.
+- A long stored value is cut after 100 characters in its `GM_setValue`
+  line; `get` and `values` show it whole.
 
 Once the script works, capture it in a spec (see
 [Writing specs](#writing-specs-the-playwright-fixture)):
@@ -243,7 +249,7 @@ up:
 - A `T<n>.` prefix names one on another tab: `T2.3` is script 3 there,
   `T2.M1` that tab's first menu command.
 - Tabs and menu commands always take their letter. `2` alone means
-  script 2; typed where a tab or menu command belongs, it gets a hint
+  script 2; given where a tab or menu command belongs, it gets a hint
   (`Did you mean T2?`).
 - A script can also be named by its path, file name, or `@name`, or a
   piece of its name or path that no other loaded script shares.
@@ -338,7 +344,7 @@ Any Chromium started with
 ## Starting a run
 
 ```sh
-sm-dev start <script.user.js>... [url]... [options]
+sm-dev start [script.user.js]... [url]... [options]
 ```
 
 - Opens a tab at each URL, injects the scripts as they are on disk, and
@@ -363,7 +369,6 @@ running, --seconds N to watch it for a while, or commands after --.`
 | `--new` | With `--detach`, keep earlier detached runs going |
 | `--all` | Open each script's default page, one tab per page |
 | `--notab` | Open no tab at startup |
-| `--noscript` | Start with no scripts, as a browser to drive |
 | `--from-saved` | Open `.html` files as saved pages, at their URLs |
 | `--values '<json>'` | Seed `GM_*` storage first |
 | `--values-file <path>` | Seed `GM_*` storage first, from a JSON file |
@@ -438,10 +443,10 @@ What to open:
   - With `--extension`, the scripts just run in whatever pages you
     browse to, and after a `--watch` save you reload them yourself.
   - Can't be combined with a URL or `--all`.
-- `--noscript` starts with no scripts at all, on a blank page or the
-  URLs given, as a browser to drive with the run commands. Can't be
-  combined with `--all`, `--values`, `--values-file`, `--watch` or
-  `--extension`.
+- With no scripts given, it starts as a browser to drive with the run
+  commands, on a blank page or the URLs given. `load` adds scripts
+  later. It can't be combined with `--all`, `--values`,
+  `--values-file`, `--watch`, `--extension` or `--solo`.
 - `--from-saved` opens each `.html` file given as a saved page, at the
   URL it was saved from, with `--url` and `--offline` as for `newtab`.
   See [Saved pages](#saved-pages). Not with `--all` or `--notab`.
@@ -555,9 +560,11 @@ sm-dev start sites/x/y.user.js https://example.com/ --detach -- eval 'measure()'
 ```
 
 - Each one's output is headed by the command (`arg > menu Bump`).
-- They stop at the first that fails, as a shell's `&&` would. A `match`
-  or `validate` that finds a miss doesn't stop them, and sets the exit
-  code only when it comes last.
+- They stop at the first that fails, as a shell's `&&` would: an
+  invalid command, a `click` or `hover` whose element
+  never became ready, an `eval` that threw, a `wait` that gave up. A
+  `match` or `validate` that finds a miss doesn't stop them, and sets
+  the exit code only when it comes last.
 - `start` and `attach` switch the rest of the line to their run.
   - In `start a.user.js -- start b.user.js`, b's run replaces a's,
     under the same ID.
@@ -700,8 +707,8 @@ Some commands take several lines as a block, at the prompt or on stdin:
 - A word starting with `--` that isn't one of the command's flags is
   refused, except in free text (`eval`'s JavaScript, `type`'s text, a
   menu label).
-- A mistake in how a command was typed prints `ERROR:` and its message,
-  not the help, and fails the command.
+- An invalid command prints `ERROR:` and its message, not the help,
+  and fails.
 
 ### Global options
 
@@ -737,7 +744,7 @@ The options:
 - Paths in output are relative to the current directory when inside
   it, and otherwise in full, never climbing with `../`.
   - `validate`, `match` and a script that fails to load name it as
-    typed.
+    given.
   - `list` shows only file names, to fit its table.
 
 ### Exit codes
@@ -745,11 +752,16 @@ The options:
 - 0 on success.
 - 1 when a check fails (a script is invalid, a URL doesn't match), the
   command fails, or an explicit `wait` gave up.
-- 2 when it was typed wrong (`ERROR:`).
-- Sent to a run, `match`, `validate` and a `wait` that gives up exit as
-  above. Other commands sent to a run exit 0 when the run answered (or
-  2 when typed wrong), even when they fail, for now. Read their output
-  for the result.
+- 2 for an invalid command (`ERROR:`).
+- Sent to a run, these exit as above: `match`, `validate`, a `wait`
+  that gives up, `menu`, `open`, and the page commands (`click`,
+  `eval`, `cdp` and the rest).
+  - `probe` reports a missing selector without failing. Use it to
+    check for an element that may not be there.
+  - An `eval` or `cdp` call cut off by the page loading a new document
+    succeeds, since navigating may have been the point.
+  - A few other commands exit 0 when the run answered (or 2 for an
+    invalid command), even when they fail, for now. Read their output.
 - For a line or input of several commands, the code is the last one
   run's, or 2 after a mistake found in the up-front check (1 after one
   found later).
@@ -835,7 +847,7 @@ In a run, not given files, they act on the run's scripts and tabs:
 | `tab <tab>` | Picks the current tab, which the page commands act on. `tabs <tab>` works too |
 | `newtab [page...\|all]` | Opens a new tab with the scripts for each page, or a blank tab |
 | `closetab [tab...\|all]` | Closes the current tab, the tabs named, or all of them. Runs the pages' `beforeunload` handlers unless `--force` (see [Page dialogs](#page-dialogs)) |
-| `open [page]` | Navigates the tab to a URL or file (a glob matching one), or to a script's default page |
+| `open [tab] [page]` | Navigates the current tab, or the one named, to a URL or file (a glob matching one), or to a script's default page |
 | `reload [tab\|all]` | Reloads the page, another tab's, or all tabs at once. `--noscript` / `--script` switch the tabs' scripts off or back on first |
 | `focus [tab]` | Brings the tab to the front, un-minimizing its window |
 | `accept [text]`, `dismiss` | Answers an open dialog (see [Page dialogs](#page-dialogs)) |
@@ -1000,6 +1012,7 @@ current one.
 | --- | --- |
 | `click <selector>`, `hover <selector>` | A real mouse click or hover, scrolled into view. With several matches, the first |
 | `click <selector> --button right --modifiers Shift --count 2` | A right or middle click, with keys held, or a double (`--count 2`) or triple click |
+| `click <selector> --at 300,12`, `hover <selector> --modifiers Alt --at 4,4` | At a point in the element, in pixels from its top left corner, rather than its center. `hover` takes `--modifiers` too |
 | `type <selector> <text>` | Types into an element, key by key |
 | `type <selector> --file <path>` | Types a file's text into an element, a last line break included |
 | `key <keys>...` | Presses keys in order: `key j Shift+ArrowRight Escape` (`keys` works too) |
@@ -1195,6 +1208,10 @@ sm-dev start x.user.js https://example.com/ -- screenshot before.png \
 | `wait log <text>` or `wait log /regex/` | The run prints a matching line |
 | `wait {500ms\|2s}` | That long passes |
 
+- A tab goes first: `wait T2 selector .x`. One after the form's word
+  (`wait selector T2 .x`) is refused, rather than taken for the
+  selector.
+
 ### When a tab has settled
 
 All of these hold together for 200ms:
@@ -1254,6 +1271,10 @@ Limits of the heuristic:
   command began (not counting a `wait` or a command that only looks),
   so one a click set off while it settled counts. Then at new ones.
 - sm-dev's own replies aren't looked at.
+- It sees the lines the run's stream shows. The site's own console
+  lines, which `logs` shows, aren't among them.
+- A flag other than `--timeout-seconds` at the end of its text
+  (`--timeout 40`) is refused, rather than looked for as text.
 
 ## Background runs and logs
 
@@ -1326,7 +1347,13 @@ D2   81502  1m      127.0.0.1:41234 (owned, headless)  1     a.user.js
 - `owned` marks one the run launched (`--temp-browser`), which closes
   when it ends; `headless`, one without a window.
 - `status` says the same on its `Run:` line:
-  `connected to owned headless browser 127.0.0.1:41234`.
+  `connected to owned headless browser 127.0.0.1:41234 (no extension)`.
+  - `has SourceMonkey`, `SourceMonkey disabled` or `no extension`
+    says whether the real extension is there, for `--extension`.
+    Checked each time. It doesn't check "Allow User Scripts".
+  - A disabled copy installed from the Chrome Web Store shows as `no
+    extension`; one loaded unpacked shows as disabled.
+  - The run's first line says it too, after the Chrome version.
 
 ### How a run ends
 
@@ -1637,8 +1664,10 @@ Chrome can answer:
 
 Under the push backend (the default):
 
-- Header validation, URL matching, `@run-at`, `@noframes`, `@require`
-  scope and local overrides, `@grant` gating, world choice.
+- Header validation, URL matching, `@require` scope and local
+  overrides, `@grant` gating, world choice.
+- `@run-at` order, apart from the early-start cases under
+  [Known differences](#known-differences-under-the-push-backend).
 - `GM_*` storage semantics, including the write batching and broadcast
   to other pages running the script.
 - `@connect` gating of `GM_xmlhttpRequest`.
@@ -1678,6 +1707,20 @@ Under the push backend (the default):
   icon links have `rel="sm-set-aside-icon"`, and the badge's own
   `rel="icon"` link is added. A script that reads or changes the
   favicon sees that. The fixture leaves them alone.
+
+### Known differences under the push backend
+
+These apply to `sm-dev start` and to specs alike.
+
+- Scripts run in the top frame only. A script meant for an iframe
+  (`@match` of the frame's URL, no `@noframes`) never starts there.
+- `@run-at document-start` code (and its `@require`s) can run before
+  `<html>` exists, and `document-body` code before `<body>` does.
+- The isolated world enforces the page's Trusted Types policy, so a
+  granted script setting `innerHTML` fails on sites like YouTube. The
+  extension's `USER_SCRIPT` world is exempt.
+- A `GM_setValue` made just before the page unloads (a "save and
+  reload" button, a `beforeunload` handler) can be lost.
 
 ### Not faithful: use the extension backend
 

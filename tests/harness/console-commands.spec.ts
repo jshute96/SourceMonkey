@@ -75,7 +75,10 @@ test.describe('sm-dev typed commands', () => {
     // The key is on the command's line, not the block's first.
     expect(await run('set\nfoo 1')).toEqual(['[sm-dev] ERROR: The set command needs a key and a JSON value, e.g. set units "metric"']);
     expect(await run('set prefs\n{ "a": 1,\n}')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The value of prefs is not JSON: \S/)]);
-    expect(await run('set prefs --flie x.json')).toEqual(['[sm-dev] ERROR: The set command has no --flie flag']);
+    // Single quotes around the JSON, as a shell would take them.
+    expect(await run('set quoted \'["a"]\'')).toEqual(['[sm-dev] Set quoted (Second)']);
+    expect(host.getValue(second.spec!.id, 'quoted')).toEqual(['a']);
+    expect(await run('set prefs --flie x.json')).toEqual(['[sm-dev] ERROR: The set command has no --flie flag. It takes --file.']);
     expect(await run('set prefs --file')).toEqual(['[sm-dev] ERROR: The set command takes a key and one file, e.g. set units --file units.json']);
     expect(host.getValue(second.spec!.id, 'prefs')).toEqual({ units: 'imperial' });
   });
@@ -103,6 +106,7 @@ test.describe('sm-dev typed commands', () => {
     expect(await run('menu M2')).toEqual(['[sm-dev] Fired "Say two"']);
     await expect.poll(() => host.getValue(script.spec!.id, 'said')).toBe(2);
     expect(await run('menu Say one')).toEqual(['[sm-dev] Fired "Say one"']);
+    expect(await run('menu \'Say one\'')).toEqual(['[sm-dev] Fired "Say one"']);
     await expect.poll(() => host.getValue(script.spec!.id, 'said')).toBe(1);
     // A wrong name is reported at once while others are registered.
     const started = Date.now();
@@ -430,7 +434,7 @@ test.describe('sm-dev typed commands', () => {
       `  1: Pages (${scriptsDir.path}/pages.user.js)`,
       `* 2: Wild (${scriptsDir.path}/wild.user.js)`,
     ]);
-    // With no scripts loaded (--noscript), the lists say so.
+    // With no scripts loaded, the lists say so.
     const scripts = ctx.scripts;
     ctx.scripts = [];
     try {

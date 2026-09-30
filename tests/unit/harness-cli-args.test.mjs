@@ -13,6 +13,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const CLI = fileURLToPath(new URL('../../lib/harness/cli.js', import.meta.url));
+// Outputs are compared exactly, so no warning that lib/ is older than src/.
+process.env.SM_DEV_NO_STALE_WARNING = '1';
 const SCRIPT = fileURLToPath(new URL('../examples/gm-menu/gm-menu.user.js', import.meta.url));
 
 function run(...args) {
@@ -152,19 +154,14 @@ test('validate and match fetch a script given as a URL, and run refuses one', as
   }
 });
 
-test('--noscript refuses scripts, and a run needs one without it', () => {
-  assert.deepEqual(run('--noscript', SCRIPT), {
-    code: 2, out: 'ERROR: The --noscript flag runs no scripts, so the start command takes none with it',
-  });
-  assert.deepEqual(run(), { code: 2, out: 'ERROR: The start command needs at least one script (a .user.js file), or --noscript' });
-});
-
-test('--noscript refuses the flags that act on scripts', () => {
-  assert.deepEqual(run('--noscript', '--watch'), { code: 2, out: 'ERROR: The --noscript flag can\'t be used with --watch' });
-  assert.deepEqual(run('--noscript', '--all', '--values', '{}'), {
-    code: 2, out: 'ERROR: The --noscript flag can\'t be used with --all or --values',
-  });
-  assert.deepEqual(run('--noscript', '--extension'), { code: 2, out: 'ERROR: The --noscript flag can\'t be used with --extension' });
+test('start with no scripts refuses the flags that act on scripts', () => {
+  const none = 'ERROR: The start command was given no scripts, so it can\'t take';
+  assert.deepEqual(run('--watch'), { code: 2, out: `${none} --watch` });
+  assert.deepEqual(run('--all', '--values', '{}'), { code: 2, out: `${none} --all or --values` });
+  assert.deepEqual(run('--extension'), { code: 2, out: `${none} --extension` });
+  assert.deepEqual(run('--noscript'), { code: 2, out: 'ERROR: The start command no longer takes --noscript. Give it no scripts to start without any.' });
+  // A script not named .user.js is refused, not opened as a page.
+  assert.deepEqual(run('helper.js'), { code: 2, out: 'ERROR: helper.js is not a userscript: Its name doesn\'t end in .user.js' });
 });
 
 test('--values-file reads a JSON object, and says what is wrong with one', () => {
@@ -184,7 +181,7 @@ test('--values-file reads a JSON object, and says what is wrong with one', () =>
     assert.deepEqual(run(SCRIPT, '--values', '{}', '--values-file', good), { code: 2, out: 'ERROR: The --values-file flag can\'t be used with --values' });
     assert.deepEqual(run(SCRIPT, '--extension', '--values-file', good), { code: 2, out: 'ERROR: The --values-file flag can\'t be used with --extension' });
     assert.deepEqual(run(SCRIPT, '--values', '{}', '--extension'), { code: 2, out: 'ERROR: The --values flag can\'t be used with --extension' });
-    assert.deepEqual(run('--noscript', '--values-file', good), { code: 2, out: 'ERROR: The --noscript flag can\'t be used with --values-file' });
+    assert.deepEqual(run('--values-file', good), { code: 2, out: 'ERROR: The start command was given no scripts, so it can\'t take --values-file' });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -348,11 +345,13 @@ test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
   // Only line-wide flags: stdin is read for commands, and has none.
   assert.deepEqual(cli('--root', '.'), { code: 2, out: `ERROR: ${NO_COMMANDS}` });
   // A run's command with a flag it doesn't take, refused before any run is looked for.
-  assert.deepEqual(cli('status', '--bad'), { code: 2, out: 'ERROR: The status command has no --bad flag' });
-  for (const name of ['open', 'reload', 'newtab']) assert.deepEqual(cli(name, '--bogus'), { code: 2, out: `ERROR: The ${name} command has no --bogus flag` });
-  assert.deepEqual(cli('snapshot --out f --bad'), { code: 2, out: 'ERROR: The snapshot command has no --bad flag' });
+  assert.deepEqual(cli('status', '--bad'), { code: 2, out: 'ERROR: The status command has no --bad flag. It takes no flags.' });
+  for (const name of ['open', 'reload', 'newtab']) assert.match(cli(name, '--bogus').out, new RegExp(`^ERROR: The ${name} command has no --bogus flag\\. It takes --noscript, --script, `));
+  // The flags it does take, for a near miss.
+  assert.deepEqual(cli('wait', '--timeout', '9'), { code: 2, out: 'ERROR: The wait command has no --timeout flag. It takes --timeout-seconds.' });
+  assert.deepEqual(cli('snapshot --out f --bad'), { code: 2, out: 'ERROR: The snapshot command has no --bad flag. It takes --visible, --out.' });
   // In free text, -- is content: eval's JavaScript here.
-  assert.deepEqual(cli('eval', 'T2', '--x'), { code: 2, out: 'ERROR: The eval command has no --x flag' });
+  assert.deepEqual(cli('eval', 'T2', '--x'), { code: 2, out: 'ERROR: The eval command has no --x flag. It takes --script, --file.' });
   assert.deepEqual(cli('eval', 'x', '--y'), { code: 1, out: 'No sm-dev runs are active. Start one with sm-dev start.' });
   // -h anywhere is help, even among a run's command's words.
   assert.deepEqual(cli('type', 'input', '-h'), { code: 0, out: 'Usage: sm-dev type [tab] <selector> <text> [options]' });
@@ -472,7 +471,7 @@ test('each run command takes the flags its help lists, and no others', async () 
   const expected = {
     newtab: saved, open: saved, reload: loads,
     closetab: ['--force'], cdp: ['--file'],
-    click: ['--button', '--count', '--modifiers', '--nowait'], hover: ['--nowait'], type: ['--nowait', '--file'], key: ['--nowait'],
+    click: ['--at', '--button', '--count', '--modifiers', '--nowait'], hover: ['--at', '--modifiers', '--nowait'], type: ['--nowait', '--file'], key: ['--nowait'],
     eval: ['--script', '--file'], snapshot: ['--visible', '--out'], screenshot: ['--full'], probe: ['--css', '--html'],
     wait: ['--timeout-seconds'], status: [], values: [], set: ['--file'], menu: [], tabs: [], focus: [],
   };

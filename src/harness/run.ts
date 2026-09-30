@@ -20,7 +20,7 @@ import {
   warnSavedUserscripts, type CommandRunner, type ConsoleContext, type ControlledTab, type OutputHistory,
 } from './console-commands.js';
 import { DevToolsLink } from './devtools.js';
-import { ExtensionBackend, type LogEntry } from './extension-backend.js';
+import { ExtensionBackend, extensionLabel, sourceMonkeyState, type LogEntry } from './extension-backend.js';
 import { HarnessHost, type ErrorReport, type SkipReport, type StartReport } from './host.js';
 import { attachPage, targetIdOf, type PageAttachment } from './inject.js';
 import { pageSays, recordLog } from './page-commands.js';
@@ -426,7 +426,7 @@ function startPages(opts: RunOptions, prepared: PreparedScript[]): StartPages | 
     pairs.set(`${url}\n${saved?.file ?? ''}`, { url, saved });
   });
   const given: StartPages = { urls: [...pairs.values()].map((p) => p.url), saved: [...pairs.values()].map((p) => p.saved), given: true, skipped: [] };
-  // `--noscript`: the tab as it opened, blank, unless URLs are given.
+  // No scripts: the tab as it opened, blank, unless URLs are given.
   if (prepared.length === 0) return given;
   if (!opts.all) {
     if (given.urls.length > 0) return given;
@@ -473,7 +473,8 @@ export async function run(opts: RunOptions): Promise<number> {
   if (!session) return 1;
   // Which browser, for the stream and the log.
   const browserIs = { browser: session.endpoint, owned: session.launched, headless: session.headless };
-  opts.out(`[sm-dev] ${capitalized(browserSentence(browserIs, session.launched ? 'launched' : 'connected to'))} (Chrome ${session.browser.version()})`);
+  const extension = extensionLabel(await sourceMonkeyState(session.endpoint));
+  opts.out(`[sm-dev] ${capitalized(browserSentence(browserIs, session.launched ? 'launched' : 'connected to'))} (Chrome ${session.browser.version()}${extension ? `, ${extension}` : ''})`);
   opts.onConnected?.();
   // Only a run that waits for commands can be sent any.
   if (opts.until) {
@@ -946,6 +947,7 @@ async function runInHarness(
         ...(opts.log ? { log: opts.log } : {}),
         devtools: () => (devtools?.isUp ? devtools.usage : null),
         browser: browserSentence({ browser: session.endpoint, owned: session.launched, headless: session.headless }),
+        extension: () => sourceMonkeyState(session.endpoint),
         output: remote.output,
         roots: { collectionRoot: opts.collectionRoot, localRoots: opts.localRoots },
       };
@@ -1565,9 +1567,21 @@ function wireHostOutput(host: HarnessHost, print: (line: string) => void, prefix
     for (const w of r.writes) {
       out(r, w.deleted
         ? `[sm-dev] GM_deleteValue ${w.key}`
-        : `[sm-dev] GM_setValue ${w.key} = ${JSON.stringify(w.value)}`);
+        : `[sm-dev] GM_setValue ${w.key} = ${shortValue(w.value)}`);
     }
   });
+}
+
+// Longer stored values are cut in `GM_setValue` lines, so a cache a
+// script stores doesn't bury the rest of the output. `values` and
+// `get` show them whole.
+const VALUE_SHOWN_CHARS = 100;
+
+function shortValue(value: unknown): string {
+  const json = JSON.stringify(value) ?? String(value);
+  if (json.length <= VALUE_SHOWN_CHARS) return json;
+  // By code point, so an emoji isn't cut in half.
+  return `${Array.from(json).slice(0, VALUE_SHOWN_CHARS).join('')}... (${json.length} chars; get shows it all)`;
 }
 
 // A page whose CSP sandboxes it without allow-scripts gets no MAIN-world

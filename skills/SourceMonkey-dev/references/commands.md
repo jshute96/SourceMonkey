@@ -14,9 +14,13 @@ sm-dev [global options] <command> [args] [-- <command> ...]
   `--root DIR`, `--local DIR`.
 - `--` separates commands. They run in order and stop at the first
   failure (a `match` or `validate` miss excepted).
-- Exit codes: 0 success, 1 a check failed or a `wait` gave up, 2 typed
-  wrong (`ERROR:`). Most other commands sent to a run exit 0 even when
-  they fail: read the output.
+- Exit codes: 0 success, 1 a command failed (a check missed, no
+  element, an `eval` threw, a `wait` gave up), 2 invalid command
+  (`ERROR:`). A few commands still exit 0 when they fail, and `probe`
+  reports a missing selector without failing: read the output.
+- An unknown flag's error lists the flags the command takes.
+- Quotes: in `--stdin` lines, most commands take off one level of
+  quotes around an argument. `eval` doesn't: its line is JavaScript.
 
 ## Names
 
@@ -41,13 +45,13 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 
 | Command | Does |
 | --- | --- |
-| `start <script>... [url]... --detach` | Start a run in the background; returns once pages settle |
+| `start [script]... [url]... --detach` | Start a run in the background; returns once pages settle |
 | `start ... --watch` | Re-inject and reload on each save of a script or local `@require` |
 | `start ... --values '<json>'` | Seed GM storage first |
 | `start ... --values-file <path>` | Seed GM storage first, from a JSON file |
 | `start ... --page-errors` | Also stream the site's own errors |
 | `start ... --all` | Open each script's default page, a tab each |
-| `start ... --noscript` | No scripts: just a browser to drive |
+| `start [url]...` | No scripts: just a browser to drive (`load` adds them later) |
 | `start ... --notab` | No tab at first; `newtab` later |
 | `start ... --extension [--solo]` | Push into the real extension instead |
 | `clear --extension` | Drop the extension's scratch scripts; turn solo mode off |
@@ -78,7 +82,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `newtab [page...]` | Open a controlled tab (becomes current) |
 | `newtab --noscript <url>` | A tab the scripts stay out of (sticky) |
 | `closetab [T2 T3...\|all]` | Close the current tab, the ones named, or all. A page's "Leave site?" dialog waits for `accept`/`dismiss`; `--force` skips it |
-| `open [page]` | Navigate the current tab |
+| `open [tab] [page]` | Navigate the current tab, or the one named |
 | `reload [T2\|all]` | Reload |
 | `focus [tab]` | Bring to the front |
 | `--from-saved [--offline] [--url U]` | On `newtab`/`open`/`start`: serve `.html` files at their recorded URL |
@@ -103,6 +107,8 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | --- | --- |
 | `click <sel>`, `hover <sel>` | Real mouse input, scrolled into view. A failure names the check that failed (hidden, disabled, moving, covered by what) |
 | `click <sel> --button right --modifiers Shift --count 2` | Right or middle button, keys held (`Control+Alt`), double or triple click |
+| `click <sel> --at 300,12`, `hover <sel> --at 4,4` | At that point in the element (pixels from its top left), not its center |
+| `hover <sel> --modifiers Alt` | Keys held during the hover |
 | `type <sel> <text>` | Type key by key |
 | `type <sel> {{` | Type several lines exactly (line breaks are Enter; the final one before `}}` isn't typed) |
 | `type <sel> --file <path>` | Type a file's text exactly, including a final line break |
@@ -117,8 +123,12 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `wait [T2\|all]` | The tab to settle |
 | `wait selector <css>`, `wait selector-gone <css>` | An element to appear / disappear |
 | `wait log <text>`, `wait log /regex/` | A line printed since the previous command began |
-| `wait 500ms` | Time (last resort) |
+| `wait 500ms`, `wait 2s` | Time (last resort) |
 | `--timeout-seconds S` | Give up after S seconds (default 5). On `wait log`, put it after the text |
+
+- A tab goes before the form: `wait T2 selector '.x'`.
+- `wait log` sees the lines the run prints, not the site's own console
+  lines (`logs` has those).
 
 Settled means: loaded, scripts started, no requests (under 3 seconds
 old) or DOM changes for 200ms. Timers aren't waited for.

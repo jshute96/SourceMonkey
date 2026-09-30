@@ -12,9 +12,9 @@
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { Page } from '@playwright/test';
+import type { Page, Request } from '@playwright/test';
 
-import { PROBE_MAX } from './command-list.js';
+import { noSuchFlag, PROBE_MAX } from './command-list.js';
 import type { ControlledTab } from './console-commands.js';
 import { ScriptThrew } from './inject.js';
 import { readInputFile } from './input-file.js';
@@ -138,7 +138,7 @@ function takeFlags(
       continue;
     }
     const kind = known[w];
-    if (!kind) return `The ${command} command has no ${w} flag`;
+    if (!kind) return noSuchFlag(command, w);
     if (kind === 'bool') {
       flags[w] = true;
     } else {
@@ -151,7 +151,9 @@ function takeFlags(
 }
 
 // `click`'s flags, all taking a value.
-const CLICK_FLAGS = { '--button': 'value', '--modifiers': 'value', '--count': 'value' } as const;
+const CLICK_FLAGS = { '--button': 'value', '--modifiers': 'value', '--count': 'value', '--at': 'value' } as const;
+// The ones `hover` takes too.
+const HOVER_FLAGS = new Set(['--modifiers', '--at']);
 
 // The keys `click --modifiers` can hold, as Playwright names them.
 const MODIFIERS = ['Alt', 'Control', 'ControlOrMeta', 'Meta', 'Shift'] as const;
@@ -186,11 +188,14 @@ const IMAGE_FILE = /\.(png|jpe?g)$/i;
  * Runs one of `PAGE_COMMANDS` on `tab`. Reports through `out`, and
  * resolves once the command and what it set off are done, or once a
  * dialog it opened is waiting for an answer: the page stops until then,
- * and `accept` or `dismiss` can't run while this does.
+ * and `accept` or `dismiss` can't run while this does. False when it
+ * failed (no element, a timeout, an expression that threw), so a line
+ * of several commands stops there. A mistake in how it was typed is an
+ * `ERROR:` line, which stops the line too.
  */
 export async function runPageCommand(
   command: string, input: PageInput, tab: ControlledTab, out: (line: string) => void, cwd = process.cwd(),
-): Promise<void> {
+): Promise<boolean | void> {
   const say = (line: string): void => out(`[sm-dev] ${line}`);
   const { page } = tab;
   // A file it names, from `cwd`, and as said back.
@@ -279,10 +284,14 @@ export async function runPageCommand(
             return;
           }
         } catch (err) {
-          if (err instanceof ScriptThrew) say(`The expression threw: ${err.message}`);
-          else if (page.isClosed()) say('The tab closed before the expression finished');
-          else if (/context was destroyed|Cannot find context|navigated or closed/i.test((err as Error).message)) say('The page navigated away before the expression finished');
-          else say(`Internal error: ${(err as Error).message}`);
+          // Navigating or closing may be what the expression was for, so
+          // those aren't failures.
+          if (page.isClosed()) say('The tab closed before the expression finished');
+          else if (CUT_OFF_BY_NAVIGATION.test((err as Error).message)) say('The page navigated away before the expression finished');
+          else {
+            say(err instanceof ScriptThrew ? `The expression threw: ${err.message}` : `Internal error: ${(err as Error).message}`);
+            return false;
+          }
           return;
         }
         // Its console lines come through another session than its result.
@@ -292,7 +301,7 @@ export async function runPageCommand(
       }
       case 'click':
       case 'hover': {
-        const options = command === 'click' ? clickOptions(input) : { selector: input.typed ? wholeSelector(input.raw) : input.words.join(' '), click: {}, how: [] };
+        const options = clickOptions(input, command as 'click' | 'hover');
         if (typeof options === 'string') {
           say(`ERROR: ${options}`);
           return;
@@ -303,11 +312,11 @@ export async function runPageCommand(
           return;
         }
         const count = await matches(page, selector, say);
-        if (count === null) return;
+        if (count === null) return false;
         const target = locate(page, selector).first();
         const action = command === 'click'
           ? target.click({ ...options.click, timeout: ACTION_TIMEOUT_MS })
-          : target.hover({ timeout: ACTION_TIMEOUT_MS });
+          : target.hover({ modifiers: options.click.modifiers, position: options.click.position, timeout: ACTION_TIMEOUT_MS });
         const how = options.how.length > 0 ? ` with ${options.how.join(', ')}` : '';
         await act(action, `${command === 'click' ? 'Clicked' : 'Hovered over'} ${named(page, selector)}${count > 1 ? ` (the first of ${count} matches)` : ''}${how}`);
         return;
@@ -357,7 +366,7 @@ export async function runPageCommand(
           return;
         }
         const count = await matches(page, selector, say);
-        if (count === null) return;
+        if (count === null) return false;
         const typing = locate(page, selector).first().pressSequentially(text, { timeout: ACTION_TIMEOUT_MS });
         await act(typing, `Typed into ${named(page, selector)}${count > 1 ? ` (the first of ${count} matches)` : ''}`);
         return;
@@ -370,7 +379,7 @@ export async function runPageCommand(
         }
         const unjoined = keys.find((k) => keyParts(k).includes(''));
         if (unjoined) {
-          say(`${unjoined} has a + with no key on one side. Join keys with +, as in Shift+Tab.`);
+          say(`ERROR: ${unjoined} has a + with no key on one side. Join keys with +, as in Shift+Tab.`);
           return;
         }
         const named = keys.map(keyName);
@@ -401,7 +410,7 @@ export async function runPageCommand(
           return;
         }
         const selector = parsed.rest[0] ?? 'body';
-        if (await matches(page, selector, say) === null) return;
+        if (await matches(page, selector, say) === null) return false;
         const visible = parsed.flags['--visible'] === true;
         let tree = '';
         const taking = (async () => {
@@ -447,16 +456,16 @@ export async function runPageCommand(
           return;
         }
         if (!IMAGE_FILE.test(image)) {
-          say(`The screenshot command writes a .png or .jpg file, and ${image} is neither. Name the file last.`);
+          say(`ERROR: The screenshot command writes a .png or .jpg file, and ${image} is neither. Name the file last.`);
           return;
         }
         const selector = parsed.rest[0];
         if (selector) {
           if (parsed.flags['--full']) {
-            say('The --full flag is for the whole page, not an element');
+            say('ERROR: The --full flag is for the whole page, not an element');
             return;
           }
-          if (await matches(page, selector, say) === null) return;
+          if (await matches(page, selector, say) === null) return false;
           await write(image, () => locate(page, selector).first().screenshot({ path: file(image), timeout: ACTION_TIMEOUT_MS }));
         } else {
           try {
@@ -464,7 +473,7 @@ export async function runPageCommand(
           } catch (err) {
             if ((err as Error).name !== 'TimeoutError' || page.isClosed()) throw err;
             say(`Screenshot failed: Browser did not capture the page within ${SCREENSHOT_TIMEOUT_MS / 1000} seconds`);
-            return;
+            return false;
           }
         }
         say(`Wrote ${shown(image)}${selector ? ` (${named(page, selector)})` : ''} from ${page.url()}`);
@@ -559,8 +568,21 @@ export async function runPageCommand(
         // sets for its session (Emulation.* overrides, enabled domains)
         // ends with the command, as it does for any CDP client.
         const session = await page.context().newCDPSession(page);
+        // A call that navigates the page is cut off, or never answers,
+        // which is no failure when navigating was its point.
+        // - Cut off: its error says so.
+        // - No answer: a new document loaded during the call (with a
+        //   navigation request), not a hash or pushState change.
+        // An error of another kind is the call's own, whatever the page
+        // did meanwhile (a Page.reload before it lands during the next).
+        let navigated = false;
+        const onRequest = (request: Request): void => {
+          if (request.isNavigationRequest() && request.frame() === page.mainFrame()) navigated = true;
+        };
+        page.on('request', onRequest);
         try {
           for (const { method, params } of calls) {
+            navigated = false;
             let result: unknown;
             const sent = session.send(method as never, params as never).then((r) => { result = r; });
             // A reply may never come: a Runtime.evaluate that navigates
@@ -572,12 +594,20 @@ export async function runPageCommand(
             } catch (err) {
               // Playwright's wrapping, `Protocol error (Page.nope): `, repeats the method.
               const message = plain(err as Error).replace(/^Protocol error \([^)]*\): /, '');
-              say(page.isClosed() ? `The tab closed before ${method} finished` : `${method} failed: ${message.charAt(0).toUpperCase()}${message.slice(1)}`);
-              return;
+              if (page.isClosed() || CUT_OFF_BY_NAVIGATION.test(message)) {
+                say(page.isClosed() ? `The tab closed before ${method} finished` : `${method} got no answer, since the page navigated`);
+                return;
+              }
+              say(`${method} failed: ${message.charAt(0).toUpperCase()}${message.slice(1)}`);
+              return false;
             }
             if (outcome === 'timeout') {
-              say(`${method} got no answer within ${CDP_TIMEOUT_MS / 1000} seconds. A call that navigates the page, or a paused page, never answers.`);
-              return;
+              if (navigated) {
+                say(`${method} got no answer, since the page navigated`);
+                return;
+              }
+              say(`${method} got no answer within ${CDP_TIMEOUT_MS / 1000} seconds. A paused page never answers.`);
+              return false;
             }
             if (!outcome) {
               say(`${method} opened a dialog, which is waiting for an answer.`);
@@ -590,12 +620,13 @@ export async function runPageCommand(
           // until it's answered, and the command must return so that
           // accept or dismiss can run.
           session.detach().catch(() => undefined);
+          page.off('request', onRequest);
         }
         return;
       }
       case 'logs': {
         if (input.words.length > 0) {
-          say('The logs command takes nothing besides a tab');
+          say('ERROR: The logs command takes nothing besides a tab');
           return;
         }
         const lines = logs.get(page) ?? [];
@@ -606,8 +637,12 @@ export async function runPageCommand(
     }
   } catch (err) {
     say(page.isClosed() ? `The tab closed before the ${command} command finished` : `The ${command} command failed: ${plain(err as Error)}`);
+    return false;
   }
 }
+
+// How CDP and Playwright say a call was cut off by the page leaving.
+const CUT_OFF_BY_NAVIGATION = /context was destroyed|Cannot find context|navigated or closed/i;
 
 const CDP_USAGE = 'e.g. cdp Input.dispatchMouseEvent \'{"type": "mouseWheel", "x": 400, "y": 300, "deltaX": 0, "deltaY": 600}\'';
 const ONE_CALL = 'A cdp command makes one call. For several in one session, put one per line in a cdp {{ block.';
@@ -757,24 +792,27 @@ function keyParts(typed: string): string[] {
   return typed === '+' ? ['+'] : typed.endsWith('++') ? [...typed.slice(0, -2).split('+'), '+'] : typed.split('+');
 }
 
-// Playwright's click options that `click`'s flags set.
+// Playwright's click (and hover) options that `click`'s flags set.
 interface ClickFlags {
   button?: 'left' | 'right' | 'middle';
   modifiers?: (typeof MODIFIERS)[number][];
   clickCount?: number;
+  position?: { x: number; y: number };
 }
 
 /**
- * `click`'s selector and flags: Playwright's options for them, and how
- * the click differs from a plain one, as said after it (`the right
- * button`). Or what's wrong with them. Typed, the selector is the rest
- * of the line as typed, less the flags and their values.
+ * `click`'s or `hover`'s selector and flags: Playwright's options for
+ * them, and how the action differs from a plain one, as said after it
+ * (`the right button`). Or what's wrong with them. Typed, the selector
+ * is the rest of the line as typed, less the flags and their values.
  */
-export function clickOptions(input: Pick<PageInput, 'words' | 'raw' | 'typed'>): {
+export function clickOptions(input: Pick<PageInput, 'words' | 'raw' | 'typed'>, command: 'click' | 'hover' = 'click'): {
   selector: string;
   click: ClickFlags;
   how: string[];
 } | string {
+  const known: Record<string, 'bool' | 'value'> = command === 'click' ? CLICK_FLAGS
+    : Object.fromEntries(Object.entries(CLICK_FLAGS).filter(([flag]) => HOVER_FLAGS.has(flag)));
   const flags: Record<string, string> = {};
   let selector: string;
   if (input.typed) {
@@ -782,15 +820,15 @@ export function clickOptions(input: Pick<PageInput, 'words' | 'raw' | 'typed'>):
     let rest = input.raw;
     // Cut from the end, so the earlier spans stay where they were.
     for (let i = words.length - 1; i >= 0; i--) {
-      if (!Object.hasOwn(CLICK_FLAGS, words[i].text)) continue;
+      if (!Object.hasOwn(known, words[i].text)) continue;
       const value = words[i + 1];
-      if (!value || Object.hasOwn(CLICK_FLAGS, value.text)) return `The ${words[i].text} flag needs a value`;
+      if (!value || Object.hasOwn(known, value.text)) return `The ${words[i].text} flag needs a value`;
       flags[words[i].text] = value.text;
       rest = rest.slice(0, words[i].start) + rest.slice(value.end);
     }
     selector = wholeSelector(rest);
   } else {
-    const parsed = takeFlags('click', input.words, CLICK_FLAGS);
+    const parsed = takeFlags(command, input.words, known);
     if (typeof parsed === 'string') return parsed;
     Object.assign(flags, parsed.flags);
     selector = parsed.rest.join(' ');
@@ -815,6 +853,12 @@ export function clickOptions(input: Pick<PageInput, 'words' | 'raw' | 'typed'>):
     if (!Number.isInteger(count) || count < 1 || count > 10) return `The --count flag takes a number of clicks from 1 to 10, not ${flags['--count']}`;
     click.clickCount = count;
     if (count > 1) how.push(`${count} clicks`);
+  }
+  if (flags['--at'] !== undefined) {
+    const at = /^(\d+(?:\.\d+)?),(\d+(?:\.\d+)?)$/.exec(flags['--at'].replace(/\s/g, ''));
+    if (!at) return `The --at flag takes x,y in pixels from the element's top left corner, e.g. --at 10,5, not ${flags['--at']}`;
+    click.position = { x: Number(at[1]), y: Number(at[2]) };
+    how.push(`the mouse at ${at[1]},${at[2]} in it`);
   }
   return { selector, click, how };
 }

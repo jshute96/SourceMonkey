@@ -38,14 +38,21 @@ $R cdp Browser.getVersion                          # browser-level domains work 
 - `Browser.*` and `Target.*` work from the tab's session, and default
   to its tab: `Browser.getWindowForTarget` with no params gives the
   tab's window.
-- Each call gets 10 seconds. One that never answers (a navigating
-  `Runtime.evaluate`, a paused page) fails with a message.
+- Each call gets 10 seconds. One that never answers (a paused page)
+  fails with a message. One cut off by the page navigating (a
+  navigating `Runtime.evaluate`) says so, and counts as done.
 - `cdp` doesn't wait for the page to settle. Run `wait` after it.
 - **Session state ends with the command.** `Emulation.*` overrides,
   enabled domains and event subscriptions last only as long as its
   session: one command, or one block.
   - To use one across sm-dev commands, hold a connection open in your
     own script (below), and clear what you set before it exits.
+  - So a call that sets something up for a later navigation
+    (`Page.addScriptToEvaluateOnNewDocument`) goes in the same block as
+    the `Page.navigate`.
+- **A call can't use an earlier call's result.** An `objectId` from
+  `Runtime.evaluate` can't be passed to the next call in a block. For
+  chains like that, write a script.
 - `cdp` can't listen for events. For that, write a script.
 
 ## Your own script
@@ -130,17 +137,20 @@ $R cdp Input.dispatchMouseEvent '{"type": "mouseWheel", "x": 400, "y": 300, "del
 ### Clicks at a point
 
 **On an element, don't use CDP.** Use sm-dev's `click`, which finds
-the element's center, scrolls to it, and checks nothing covers it:
+the element's center (or the point `--at` gives), scrolls to it, and
+checks nothing covers it:
 
 ```sh
 $R click e14 --button right            # or middle
 $R click '.item' --modifiers Shift     # Control+Alt, etc.
 $R click '.word' --count 2             # double-click
+$R click '.row' --at 300,12            # a point in it, from its top left
 ```
 
-Raw CDP is only needed for a point that isn't an element's center: a spot in
-a canvas, or a word inside a paragraph. Move there first (pages that
-react to hover need it), then press and release at the same point:
+Raw CDP is only needed for a point `click` can't aim at: one on no
+element it can find, or where its checks (covered, moving) get in the
+way. Move there first (pages that react to hover need it), then press
+and release at the same point:
 
 ```sh
 $R --stdin <<'EOF'

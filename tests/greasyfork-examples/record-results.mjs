@@ -26,6 +26,9 @@
 //                              --reason R   why it's n/a, with --test n/a only (see REASONS)
 //                              --blame B    whose fault a failure is (see BLAMES)
 //                              --note TEXT  markdown; --note-file PATH reads it from a file
+//                              --replace-note N  the note replaces note N (from 1, in the
+//                                           order show lists them) instead of adding one
+//                              --remove-note N   drop note N (from 1)
 //                              --tag T / --untag T  (repeatable)
 //                              --version V  default: the @version of the copy in files/ now
 //                              --date D     default: today (YYYY-MM-DD)
@@ -85,7 +88,7 @@ const COMMAND_OPTIONS = {
   'import-validation': ['base', 'date'],
   'show': [],
   'list': ['untested', 'test', 'valid', 'tag', 'limit'],
-  'set': ['test', 'reason', 'blame', 'note', 'note-file', 'tag', 'untag', 'version', 'date'],
+  'set': ['test', 'reason', 'blame', 'note', 'note-file', 'replace-note', 'remove-note', 'tag', 'untag', 'version', 'date'],
 };
 
 function parseArgs(command, argv) {
@@ -291,7 +294,13 @@ async function setFinding(opts) {
   if ((opts.test === 'fail' || opts.test === 'n/a') && !note) {
     throw new Error(`A --test ${opts.test} result needs a --note saying what happened`);
   }
-  if (!opts.test && !note && !opts.tag.length && !opts.untag.length) throw new Error('Nothing to set. Pass --test, --note, --tag or --untag.');
+  if (opts['replace-note'] !== undefined && !note) throw new Error('The --replace-note option needs the new --note or --note-file');
+  const removing = opts['remove-note'] !== undefined;
+  // Which note --remove-note N means would depend on whether a new one went first.
+  if (removing && note) throw new Error('Pass --remove-note by itself, without --note or --note-file');
+  if (!opts.test && !note && !removing && !opts.tag.length && !opts.untag.length) {
+    throw new Error('Nothing to set. Pass --test, --note, --remove-note, --tag or --untag.');
+  }
 
   const date = opts.date ?? today();
   const fileVersion = opts.version === undefined ? await downloadedVersion(opts, id) : undefined;
@@ -306,7 +315,15 @@ async function setFinding(opts) {
       if (opts.blame) record.test.blame = opts.blame;
       Object.assign(record.test, stamp);
     }
-    if (note) (record.notes ??= []).push({ ...stamp, text: note });
+    if (opts['replace-note'] !== undefined) {
+      const at = noteIndex(record, opts['replace-note'], '--replace-note');
+      record.notes[at] = { ...stamp, text: note };
+    } else if (note) (record.notes ??= []).push({ ...stamp, text: note });
+    if (removing) {
+      const at = noteIndex(record, opts['remove-note'], '--remove-note');
+      record.notes.splice(at, 1);
+      if (!record.notes.length) delete record.notes;
+    }
     if (opts.tag.length || opts.untag.length) {
       const tags = new Set(record.tags ?? []);
       for (const tag of opts.tag) tags.add(tag);
@@ -316,6 +333,17 @@ async function setFinding(opts) {
     }
   });
   console.info(`Updated ${id}`);
+}
+
+/** Where note `which` (a number from 1) is in the record's notes. */
+function noteIndex(record, which, flag) {
+  const count = record.notes?.length ?? 0;
+  const n = Number(which);
+  if (!count) throw new Error(`The ${flag} option needs a note to act on, and this script has none`);
+  if (!Number.isInteger(n) || n < 1 || n > count) {
+    throw new Error(`The ${flag} option takes a note number from 1 to ${count}, not ${which}`);
+  }
+  return n - 1;
 }
 
 async function show(opts) {

@@ -273,6 +273,41 @@ Command marks:
 - A name that isn't an `sm-dev` command but is a run command goes to
   the run. So does one argument of several lines, as a list.
 
+### Is SourceMonkey installed (`sourceMonkeyState`)
+
+- The run's first line and `status` say `has SourceMonkey`,
+  `SourceMonkey disabled` or `no extension`; `status` asks again each
+  time.
+- First `Extensions.getExtensions`, which lists unpacked extensions,
+  enabled or not: how SourceMonkey is usually loaded.
+- Otherwise (a Web Store install, or a Chrome without that call), a
+  hidden target (not in the tab strip) is sent to the extension's
+  `manifest.json`.
+  - It loads only when the extension is installed and enabled, and runs
+    none of the extension's code. So a disabled Web Store install reads
+    as absent.
+  - The target lasts only as long as the check's connection.
+- It uses a WebSocket of its own to the browser, since Playwright's
+  browser session can't send to the new target. About 30ms.
+- A check that fails or takes over 3 seconds says nothing, and the
+  socket is closed however it ends.
+
+### A stale build (`stale-build.ts`)
+
+- `scripts/build.mjs` writes `lib/build-info.json`: the checkout it
+  built from, and when the build started.
+- At startup, `cli.ts` warns on stderr when that checkout's `src/` has a
+  file modified since.
+  - Not in a detached run's own process.
+  - Not with `SM_DEV_NO_STALE_WARNING` set, as the test suites set it:
+    they compare sm-dev's output exactly.
+- The fix it names depends on where this sm-dev runs:
+  - In the checkout: `pnpm run build`.
+  - In an installed copy (a userscript repo): `pnpm install` there,
+    after `pnpm run build` in the checkout when its own `lib/` is
+    stale too. `pnpm install` copies `lib/` without building it.
+- No `build-info.json`, or no checkout at that path: no warning.
+
 ### Help and flags (`command-list.ts`)
 
 - The help is data: sections of commands, each with its arguments and
@@ -339,13 +374,16 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
 
 ### Exit codes
 
-- A command's code is what it returns (a number, or false for 1).
-- Else 2 when it printed an `ERROR:` line.
-- A throw is 2 for a typing mistake and 1 otherwise.
+- 2 when it printed an `ERROR:` line (an invalid command), even if it
+  also failed.
+- Else what it returns (a number, or false for 1).
+- A throw is 2 for an invalid command and 1 otherwise.
 - A run that is ending answers 1.
 - Any failure stops a line of several, such as an explicit `wait`
-  that gave up (`runConsoleCommand` returns false) or an `ERROR:` line
-  (a typing mistake).
+  that gave up, or a page command or `menu` that failed (no element,
+  a timeout, an `eval` that threw). `runConsoleCommand` returns false
+  for those, as `runPageCommand` does. An `ERROR:` line (a typing
+  mistake) stops it too.
   - Except a `match` or `validate` miss (1), which is an answer.
 
 ### File arguments (`checks.ts`, `path-args.ts`)
@@ -568,7 +606,7 @@ response, so it says so directly.
 
 - Each kind of thing has its own style of name: scripts `1`, tabs `T1`,
   menu commands `M1`, with `T2.` in front to name one on another tab.
-- A bare number only ever means a script. One typed where a tab or menu
+- A bare number only ever means a script. One given where a tab or menu
   command belongs gets a "Did you mean T2?" hint.
 - A `T<n>.` split only happens before a number or `M<n>` (or, for
   `menu`, a label), so a file name like `t1.user.js` stays a script.

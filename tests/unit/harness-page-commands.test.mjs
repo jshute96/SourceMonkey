@@ -124,6 +124,19 @@ test('click says what is wrong with its flags', () => {
   assert.equal(typed('e4 --button back'), 'back is not a mouse button. Use left, right or middle.');
   assert.equal(typed('e4 --modifiers Shift+Q'), 'Q is not a modifier key. Use Alt, Control, ControlOrMeta, Meta, Shift, joined by +.');
   assert.equal(typed('e4 --count 0'), 'The --count flag takes a number of clicks from 1 to 10, not 0');
+  assert.equal(typed('e4 --at 5'), 'The --at flag takes x,y in pixels from the element\'s top left corner, e.g. --at 10,5, not 5');
+});
+
+test('click and hover take --at, and hover --modifiers but no click-only flags', () => {
+  assert.deepEqual(clickOptions({ raw: '.row --at 300,12', typed: true, words: [] }), {
+    selector: '.row', click: { position: { x: 300, y: 12 } }, how: ['the mouse at 300,12 in it'],
+  });
+  const hover = (raw) => clickOptions({ raw, typed: true, words: [] }, 'hover');
+  assert.deepEqual(hover('img --modifiers Alt --at 4,4'), {
+    selector: 'img', click: { modifiers: ['Alt'], position: { x: 4, y: 4 } }, how: ['Alt held', 'the mouse at 4,4 in it'],
+  });
+  assert.equal(clickOptions({ raw: '', typed: false, words: ['img', '--count', '2'] }, 'hover'),
+    'The hover command has no --count flag. It takes --modifiers, --at, --nowait.');
 });
 
 test('a timed-out action says which check its element kept failing', () => {

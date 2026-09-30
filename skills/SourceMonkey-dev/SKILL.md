@@ -59,6 +59,10 @@ Where to look:
   loaded, scripts started, no requests or DOM changes for a moment.
   For anything later, wait for the signal itself: `wait log <text>`,
   `wait selector <css>`, `wait selector-gone <css>`.
+  - Waits give up after 5 seconds. Pass `--timeout-seconds S` for a
+    slow site, and keep S under your shell tool's own time limit.
+  - With no signal to wait for (sampling something over time), use
+    `wait 2s`, not `sleep`.
 - **Don't use `--seconds`.** A run that expires mid-test leaves pages
   with no script, and results that look like bugs. Use `--detach`, and
   `stop` when done.
@@ -80,6 +84,9 @@ Where to look:
 - **Real sites have real data.** Only do reversible actions on
   account or shopping pages, and never submit or save. Use a saved
   page when that isn't enough.
+  - The `--open-browser` browser may be signed in to the person's
+    accounts. Stay read-only there: don't change any data or settings,
+    or do anything else with side effects.
 
 ## Getting a browser
 
@@ -95,6 +102,20 @@ or use --temp-browser`.
   pages with no login.
 - If the person already has a browser on the port, use it: their tabs
   are left alone, and only the run's own tabs are touched.
+
+The headless `--temp-browser` is often blocked by large sites (Reddit,
+Google, Amazon, Vimeo, IMDb, parts of YouTube).
+
+- The block page still loads, so `start` reports the script as
+  started on it. Check the page (`eval document.title`, `screenshot`)
+  before believing a result.
+- Use `--open-browser` for those sites from the start.
+
+In the shared `--open-browser` browser:
+
+- Its background tabs are throttled, and a hidden tab can make
+  `click` fail. `focus` brings the run's tab to the front.
+- `stop` leaves the run's tabs open. `closetab all` first.
 
 ## The core loop
 
@@ -247,6 +268,14 @@ $R screenshot shot.png               # then look at the PNG
   disabled or moving, or another element covered it (named). Fix that
   (hover first, wait, close the overlay) rather than clicking its
   pixels over `cdp`, which skips those checks.
+- `--at x,y` clicks or hovers at a point in the element (pixels from
+  its top left corner), for a spot other than its center, e.g. a row's
+  empty space rather than the link in its middle. `hover` takes
+  `--modifiers` too.
+- A scroll from `eval` (`scrollIntoView`, `scrollBy`) fires no
+  `wheel` event, so a script that watches for the user scrolling won't
+  see it. Send a real wheel event over `cdp` (see
+  [Mouse wheel](references/cdp.md#mouse-wheel)).
 - Keys go to the page, not to Chrome: Chrome's shortcuts (back, reload,
   zoom, Escape leaving fullscreen) don't fire.
 - A command that opens a dialog (`alert`, `confirm`, `prompt`) returns
@@ -281,6 +310,10 @@ $R eval --script 'myScript.relayout(); myScript.state'
   and pick a name the site won't collide with.
 - It reaches what's on `window`, not local variables. Expose what you
   want to see.
+  - The script's `GM_*` functions aren't there either. Read storage
+    with `values` and `get`, and change it with `set`.
+  - With `@grant none`, `--script` is just the page (there's no
+    `unsafeWindow`).
 
 Log what happens, and wait for it instead of sleeping:
 
@@ -296,6 +329,17 @@ $R wait log '/saved record \d+/'           # a regex
 
 - `wait log` also matches lines printed since the previous command
   began, so a line printed during the click counts.
+- It sees the lines the run's output shows: the script's, and
+  `[name]`-prefixed page lines. The site's other console lines, which
+  `logs` shows, aren't among them.
+- A command returns once the page settles, which can come before a
+  script's delayed setup (a timer, a retry loop). `wait log` for the
+  script's own ready line before driving it.
+- Errors a script throws later, from events and timers, show in the
+  output of whatever command was running, or only in `logs` if none
+  was. Check `logs` before calling a script clean.
+- `GM_log` shows as `<name> GM_log: ...` in the output. In the
+  extension, it also goes to the page console and the script's Log tab.
 - Async work fired from an event handler: have it log on completion
   and `wait log` for that, rather than polling the DOM for a state
   that may be intermediate.
@@ -397,7 +441,8 @@ $R savehtml pages/some-page.html              # the DOM, with the URL recorded
   alone.
 - `newtab <url>` opens another controlled tab and makes it current;
   `tab T1` switches back. Page commands take a tab first:
-  `click T2 '.x'`, `eval T2 location.href`, `menu T2.M1`.
+  `click T2 '.x'`, `eval T2 location.href`, `open T2 <url>`,
+  `wait T2 selector '.x'`, `menu T2.M1`.
 - `closetab` closes the current tab; `closetab T2 T3` or `closetab all`
   close others. A page that asks first ("Leave site?") shows its
   dialog, answered with `accept` or `dismiss`; `--force` skips it.
@@ -408,8 +453,10 @@ $R savehtml pages/some-page.html              # the DOM, with the URL recorded
 ### Multi-step sequences
 
 Commands on one line run in order and stop at the first failure (a
-`wait` that gives up included), like `&&`. A `match` or `validate` miss
-doesn't stop them.
+`click` with no element, an `eval` that threw, a `wait` that gives up),
+like `&&`. A `match` or `validate` miss doesn't stop them, nor does an
+`eval` or `cdp` call cut off by a navigation it set off. To check for
+an element that may not be there, use `probe`, which doesn't fail.
 
 ```sh
 $R start sites/x/y.user.js https://x.com/ --detach -- click '.open' -- wait selector '#modal' -- snapshot '#modal'
@@ -432,14 +479,20 @@ EOF
 ```
 
 - Blank lines and `# comments` are skipped.
+- Quotes: most commands take one level of quotes off, as a shell
+  would (`menu 'Toggle dark'`). `set` takes off single quotes around
+  its JSON (`set k '["a"]'`), since double quotes are JSON's own.
+  `eval` takes off none: the rest of its line is JavaScript as
+  written, so `eval "abc"` is a string.
 - A `{{` ... `}}` block spans several lines: JavaScript for
   `eval {{`, JSON for `set <key> {{`, text for `type <selector> {{`,
   CDP calls for `cdp {{` (see [references/commands.md](references/commands.md#eval)).
+- `{{` ends its line, and the block's content starts on the next.
 - `--file` reads the same from a file instead: `eval --file probe.js`,
   `set <key> --file value.json`, `type <selector> --file notes.txt`,
   `cdp --file calls.txt`.
-- The whole input is checked before anything runs, so a typo runs
-  nothing.
+- The whole input is checked before anything runs, so an invalid
+  command anywhere in it runs nothing.
 
 ### Beyond sm-dev: raw CDP
 
@@ -495,8 +548,16 @@ $R clear --extension     # drop scratch scripts; restores other collections
 ```
 
 - Needs SourceMonkey loaded in that browser, with "Allow User Scripts"
-  on. Ask the person, or see
-  [Setting it up](https://github.com/jshute96/SourceMonkey/blob/main/docs/harness-guide.md#setting-it-up).
+  on.
+  - The run's first line (`Connected to browser ... (Chrome ...,
+    has SourceMonkey)`) and `status` say whether the extension is
+    there: `has SourceMonkey`, `SourceMonkey disabled` or `no
+    extension`. They can't see "Allow User Scripts".
+  - If the extension is missing or disabled, ask the person, or see
+    [Setting it up](https://github.com/jshute96/SourceMonkey/blob/main/docs/harness-guide.md#setting-it-up).
+  - A `--temp-browser` starts with a fresh profile, so it never has
+    the extension. Use the `--open-browser` browser, once the
+    extension is loaded there.
 - The script is pushed as a scratch script; relative `@require`s are
   refused, and remote ones are fetched live, not from local copies.
 - Output is the script's Log tab entries plus page console lines.
@@ -535,11 +596,23 @@ test('adds the button', async ({ page, loadUserscript, gm, reports }) => {
   extension.
 - **A page global is `undefined` in the script**: it's in the isolated
   world. Use `unsafeWindow`, or `@grant none`.
+- **The script never runs in an iframe**: sm-dev injects into the top
+  frame only.
+- **It works in sm-dev but not in the extension, or the reverse**: see
+  [Known differences](https://github.com/jshute96/SourceMonkey/blob/main/docs/harness-guide.md#known-differences-under-the-push-backend):
+  `document-start` code before `<html>` exists, Trusted Types in the
+  isolated world, a `GM_setValue` lost to an unload. Check in the
+  extension (above).
+- **A command is `Unknown`, or behaves unlike these docs**: sm-dev may
+  be older than the SourceMonkey source (it warns, and says what to
+  run). Ask the person before building, since it changes the code
+  under other running sessions.
 - **The script seems stale**: check the reload lines after the save, or
   `update` (it skips files whose modification time hasn't changed; a
   `touch` forces it).
-- **After changing SourceMonkey itself**: `pnpm install` in the
-  userscript repo. The dependency is a copy taken at install time.
+- **After changing SourceMonkey itself**: `pnpm run build` there, then
+  `pnpm install` in the userscript repo. The dependency is a copy of
+  the build, taken at install time, and sm-dev warns when it's behind.
 - **`start` hangs connecting**: a tab in that browser is showing a
   dialog. The run names it; answer it or close the tab.
 - **Commands refuse with a dialog open**: `accept` or `dismiss` first.

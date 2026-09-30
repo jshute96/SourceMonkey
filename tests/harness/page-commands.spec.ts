@@ -72,11 +72,16 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   // The ids as `tabs` shows them name the tab.
   expect(await run('eval [targetId=ABCDEF0123456789 pageId=7] document.title')).toEqual(['"target"']);
   expect(await run('hover button')).toEqual(['[sm-dev] Hovered over button']);
+  expect(await run('hover button --modifiers Shift --at 2,2')).toEqual(['[sm-dev] Hovered over button with Shift held, the mouse at 2,2 in it']);
+  // A command that failed is false, so a line of several stops there.
+  expect(await runConsoleCommand('click \'#nothing\'', ctx)).toBe(false);
+  expect(await runConsoleCommand('eval nothing.here', ctx)).toBe(false);
+  expect(await runConsoleCommand('eval 1', ctx)).not.toBe(false);
 
   expect(await run('type \'input[aria-label=Note]\' \'hello world\'')).toEqual(['[sm-dev] Typed into input[aria-label=Note]']);
   expect(await run('key Backspace Backspace')).toEqual(['[sm-dev] Pressed Backspace, Backspace']);
   expect(await run('key Nope')).toEqual(['[sm-dev] The key command failed: Nope is not a key name. Keys are named as in Enter, ArrowLeft, Shift+Tab (case-insensitive), or a single character.']);
-  expect(await run('key Shift+')).toEqual(['[sm-dev] Shift+ has a + with no key on one side. Join keys with +, as in Shift+Tab.']);
+  expect(await run('key Shift+')).toEqual(['[sm-dev] ERROR: Shift+ has a + with no key on one side. Join keys with +, as in Shift+Tab.']);
   // Through the keys alias, case-insensitive.
   expect(await run('keys end shift+home')).toEqual(['[sm-dev] Pressed End, Shift+Home']);
   expect(await run('eval document.querySelector("input").value')).toEqual(['"hello wor"']);
@@ -137,7 +142,7 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('screenshot button b.png', dir)).toEqual([expect.stringMatching(/^\[sm-dev\] Wrote b\.png \(button\) from http/)]);
   expect(statSync(path.join(dir, 'b.png')).size).toBeGreaterThan(0);
   expect(await run('screenshot --full whole.png', dir)).toEqual([expect.stringMatching(/^\[sm-dev\] Wrote whole\.png from http/)]);
-  expect(await run('screenshot button', dir)).toEqual(['[sm-dev] The screenshot command writes a .png or .jpg file, and button is neither. Name the file last.']);
+  expect(await run('screenshot button', dir)).toEqual(['[sm-dev] ERROR: The screenshot command writes a .png or .jpg file, and button is neither. Name the file last.']);
   expect(await run('savehtml nowhere/x.html', dir)).toEqual(['[sm-dev] The savehtml command failed: Could not write nowhere/x.html: Its folder doesn\'t exist']);
   const saved = await run('savehtml page.html', dir);
   expect(saved[0]).toMatch(/^\[sm-dev\] Wrote page\.html \(\d+ chars\) from http/);
@@ -171,11 +176,11 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('eval confirm("sure?")')).toContain('[sm-dev] The expression opened a dialog, which is waiting for an answer.');
   expect(await run('dismiss')).toEqual(['[sm-dev] Dismissed the dialog']);
   expect(await run('screenshot')).toEqual([expect.stringContaining('The screenshot command needs a file')]);
-  expect(await run('snapshot --deep')).toEqual(['[sm-dev] ERROR: The snapshot command has no --deep flag']);
+  expect(await run('snapshot --deep')).toEqual(['[sm-dev] ERROR: The snapshot command has no --deep flag. It takes --visible, --out.']);
   // Every command, not only the ones with flags of their own; a quoted
   // selector with -- in it is one word, not a flag.
-  expect(await run('status --bad')).toEqual(['[sm-dev] ERROR: The status command has no --bad flag']);
-  expect(await run('eval T1 --script --x')).toEqual(['[sm-dev] ERROR: The eval command has no --x flag']);
+  expect(await run('status --bad')).toEqual(['[sm-dev] ERROR: The status command has no --bad flag. It takes no flags.']);
+  expect(await run('eval T1 --script --x')).toEqual(['[sm-dev] ERROR: The eval command has no --x flag. It takes --script, --file.']);
   expect(await run(`probe '.a --b'`)).not.toContainEqual(expect.stringContaining('flag'));
 
   // A navigation an expression doesn't live through is said as such,
@@ -200,6 +205,12 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
     '{}', JSON.stringify({ result: { type: 'boolean', value: true } }, null, 2),
   ]);
   expect(await run(`cdp Runtime.evaluate ${dark}`)).toEqual([JSON.stringify({ result: { type: 'boolean', value: false } }, null, 2)]);
+  // A call cut off by the page loading a new document succeeds; a later
+  // call's own failure still fails, the navigation being over by then.
+  expect(await runConsoleCommand('cdp Runtime.evaluate {"expression": "new Promise(() => location.reload())", "awaitPromise": true}', ctx)).not.toBe(false);
+  await expect(page.locator('button')).toHaveText(/Add one|Added/);
+  expect(await runConsoleCommand('cdp\nPage.reload\nNope.nothing', ctx)).toBe(false);
+  await expect(page.locator('button')).toHaveText(/Add one|Added/);
   // The same calls from a file.
   writeFileSync(path.join(scriptsDir.path, 'calls.txt'), 'Runtime.evaluate {"expression": "1 + 1"}\nRuntime.evaluate {"expression": "2 + 2"}\n');
   expect(await run('cdp --file calls.txt', scriptsDir.path)).toEqual([
@@ -363,7 +374,7 @@ test('snapshot refs name elements for the other commands, and it can show only t
   expect(await run(`probe --css ${save}`)).toEqual([`found    ${save}  (1)`, '    selector: button[data-testid="save"]']);
   expect(await selectorOf(refIn(scrolled, 'Far away'))).toBe('button.far');
   expect(await selectorOf('input[aria-label=Note]')).toBe('input');
-  expect(await run('snapshot --css')).toEqual(['[sm-dev] ERROR: The snapshot command has no --css flag']);
+  expect(await run('snapshot --css')).toEqual(['[sm-dev] ERROR: The snapshot command has no --css flag. It takes --visible, --out.']);
 
   // Refs reach into a frame and a shadow root, where selectors are
   // suggested for neither; and look-alike buttons get told apart.

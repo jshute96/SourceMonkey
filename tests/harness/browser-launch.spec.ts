@@ -42,7 +42,7 @@ test('--open-browser starts a lasting browser once, on a profile of its port', a
     // Still up once sm-dev has ended, and asked again, used as it is,
     // here by a run that connects to it.
     expect((await fetch(`http://127.0.0.1:${port}/json/version`)).ok).toBe(true);
-    const started = cli('--cdp', String(port), '--open-browser', 'start', '--noscript', 'about:blank', '--detach');
+    const started = cli('--cdp', String(port), '--open-browser', 'start', 'about:blank', '--detach');
     expect(started.code).toBe(0);
     expect(started.out.split('\n')[0]).toBe(`[sm-dev] A browser is already running at 127.0.0.1:${port}`);
     expect(cli('list').out).toMatch(new RegExp(`^D1 .* 127\\.0\\.0\\.1:${port} \\(headless\\) `, 'm'));

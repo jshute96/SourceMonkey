@@ -190,6 +190,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/page-commands.ts` | The run commands that drive and read a tab's page, from `click` and `eval` to `snapshot`, `logs` and raw `cdp` calls |
 | `src/harness/snapshot.ts` | `snapshot`'s element refs, its on-screen filter, and `probe --css`'s suggested CSS selectors |
 | `src/harness/browser-launch.ts` | `sm-dev --open-browser`: starts a browser that stays open, on a kept profile per port, unless one is up |
+| `src/harness/stale-build.ts` | Warns when sm-dev (in the checkout, or an installed copy) is older than the SourceMonkey source |
 | `src/harness/stuck-tabs.ts` | Before `sm-dev start` connects, names the tabs that don't answer (a dialog, say), and waits for them |
 | `src/harness/tab-badge.ts` | The count badge `sm-dev start` draws over controlled tabs' favicons, greyed once the run is gone |
 | `src/harness/run.ts` | The run process `sm-dev start` spawns: open a browser, inject or push the scripts, follow tabs, serve clients |
@@ -445,6 +446,7 @@ extension, driven by the Node host in `src/harness/`.
 | `tests/harness/browser-launch.spec.ts` | `sm-dev --open-browser`: a browser that outlives sm-dev, started once, and its profile's lock |
 | `tests/harness/run-remote.spec.ts` | `sm-dev start` driven from other shells: `--detach`, `--run`, `--` lines, sent commands, logs, `--devtools`, stuck tabs |
 | `tests/harness/tab-badge.spec.ts` | The favicon badge: count and colors, the site's icon under it, grey when released or unpinged, a tab taken over |
+| `tests/harness/extension-state.spec.ts` | Whether sm-dev sees SourceMonkey in a browser: loaded unpacked, absent, or no browser to ask |
 | `tests/harness/fixture.spec.ts` | The consumer fixture from `lib/`: a script against a served page, `gm` and `reports`, the up-front URL check, the explained miss |
 
 ## GreasyFork Corpus Tooling (`tests/greasyfork-examples/`)

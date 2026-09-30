@@ -19,11 +19,12 @@ import { fileURLToPath } from 'node:url';
 import type { Dialog, Page } from '@playwright/test';
 
 import { CommandAssembler } from './command-lines.js';
+import { extensionLabel, type ExtensionState } from './extension-backend.js';
 import type { HarnessHost, MenuCommandRecord } from './host.js';
 import type { PageAttachment } from './inject.js';
-import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, commandFlags } from './command-list.js';
+import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, commandFlags, noSuchFlag } from './command-list.js';
 import { readJsonFile } from './input-file.js';
-import { ACTIONS, PAGE_COMMANDS, runPageCommand, splitWords, VALUE_FLAGS } from './page-commands.js';
+import { ACTIONS, PAGE_COMMANDS, runPageCommand, splitWords, VALUE_FLAGS, wholeSelector } from './page-commands.js';
 import { defaultPageUrl, NO_DEFAULT_PAGE, preparedScriptMatches, preparedScriptName, preparedScriptPath, shownPath, withDefaultScheme, type PreparedScript } from './prepare.js';
 import { currentTab, dialogKind, dialogWaitingMessage, NO_TABS, pickTab, TAB_ARG, tabName } from './tab-refs.js';
 import { runLogLabel } from './run-log.js';
@@ -124,6 +125,8 @@ export interface ConsoleContext {
   devtools?: () => string | null;
   /** The run's browser, for `status`: `connected to browser 127.0.0.1:9233`. */
   browser?: string;
+  /** Whether SourceMonkey is there now, for `status`; null when unknown. */
+  extension?: () => Promise<ExtensionState | null>;
   /** The run's output so far, for `wait log`. */
   output?: OutputHistory;
   /**
@@ -199,6 +202,12 @@ function freeTextStart(command: string, words: string[]): number {
  * is said elsewhere.
  */
 export function commandFlagMistake(words: string[]): string | null {
+  const unknown = unknownCommandFlag(words);
+  return unknown && noSuchFlag(unknown.command, unknown.flag);
+}
+
+/** The flag `commandFlagMistake` is about, and its command, or null. */
+export function unknownCommandFlag(words: string[]): { command: string; flag: string } | null {
   const typed = words[0];
   if (typed === undefined) return null;
   const command = ALIASES[typed] ?? typed;
@@ -211,7 +220,7 @@ export function commandFlagMistake(words: string[]): string | null {
   for (let i = 0; i < checked.length; i++) {
     const word = checked[i];
     if (!word.startsWith('--')) continue;
-    if (!known.includes(word)) return `The ${command} command has no ${word} flag`;
+    if (!known.includes(word)) return { command, flag: word };
     // A flag's value, which may look like anything.
     if (VALUE_FLAGS.has(word)) i++;
   }
@@ -257,7 +266,7 @@ export function onlyInspects(line: string): boolean {
  */
 export const commandOutput = new AsyncLocalStorage<{ line: (line: string) => void; live: boolean }>();
 
-/** How a line saying a command was typed wrong starts. */
+/** How a line saying a command was invalid starts. */
 export const MISTAKE_PREFIX = '[sm-dev] ERROR: ';
 
 /**
@@ -344,7 +353,7 @@ export async function runConsoleCommand(
         return;
       }
       const ref = tabRef(ctx, argument, tab, true);
-      if (!ref) return;
+      if (!ref) return false;
       if (!ref.rest) {
         const lines = menuLines(ctx, ref.tab);
         if (lines.length === 0) {
@@ -355,9 +364,9 @@ export async function runConsoleCommand(
         for (const l of lines) ctx.out(l);
         return;
       }
-      if (blockedByDialog([ref.tab])) return;
-      await fireMenu(ctx, ref.tab, ref.rest);
-      return;
+      if (blockedByDialog([ref.tab])) return false;
+      // A label quoted as a whole, as a shell would have taken it.
+      return fireMenu(ctx, ref.tab, wholeSelector(ref.rest));
     }
     case 'newtab':
       return openNewTab(ctx, args, cwd);
@@ -414,7 +423,11 @@ export async function runConsoleCommand(
     case 'status': {
       // Takes no arguments: scripts and tabs give those lists in full.
       if (!takesNothing()) return false;
-      if (ctx.runId) ctx.out(`Run: ${ctx.runId} (pid ${process.pid})${ctx.browser ? `, ${ctx.browser}` : ''}`);
+      if (ctx.runId) {
+        // Asked each time, since the person may install it mid-run.
+        const extension = ctx.browser ? extensionLabel(await ctx.extension?.() ?? null) : '';
+        ctx.out(`Run: ${ctx.runId} (pid ${process.pid})${ctx.browser ? `, ${ctx.browser}${extension ? ` (${extension})` : ''}` : ''}`);
+      }
       if (ctx.log) ctx.out(`Log: ${runLogLabel(ctx.log, ctx.runId)}`);
       const devtools = ctx.devtools?.();
       if (devtools) ctx.out(`DevTools: ${devtools}`);
@@ -493,13 +506,16 @@ export async function runConsoleCommand(
         }
       } else {
         key = headArgs[0];
-        const raw = argument.slice(key?.length ?? 0).trim();
+        let raw = argument.slice(key?.length ?? 0).trim();
+        // JSON in single quotes, as a shell would have taken them. JSON
+        // itself never starts with one.
+        raw = /^'([^']*)'$/.exec(raw)?.[1] ?? raw;
         if (!key || !raw) {
           ctx.out('[sm-dev] ERROR: The set command needs a key and a JSON value, e.g. set units "metric"');
           return false;
         }
         if (raw.startsWith('--')) {
-          ctx.out(`[sm-dev] ERROR: The set command has no ${raw.split(/\s/)[0]} flag`);
+          ctx.out(`[sm-dev] ERROR: ${noSuchFlag('set', raw.split(/\s/)[0])}`);
           return false;
         }
         try {
@@ -593,6 +609,14 @@ export async function runConsoleCommand(
       if (mode === null) return;
       // A glob stands for the files it matches, of which it takes one.
       const page = words.filter((w) => !w.startsWith('--')).flatMap((w) => expandPathArg(w, cwd));
+      // `open T2 <page>`: a tab first, as page commands take one.
+      let inTab: ControlledTab | undefined;
+      if (page.length === 2 && TAB_ARG.test(page[0])) {
+        const picked = pickTab(ctx, page[0]);
+        if (!picked) return false;
+        inTab = picked;
+        page.shift();
+      }
       // Rather than a page at http://all.
       if (page[0] === 'all' && page.length === 1) {
         ctx.out('[sm-dev] ERROR: The open command navigates one tab. To open a tab for each script, use newtab all.');
@@ -605,8 +629,8 @@ export async function runConsoleCommand(
       const where = page[0] ?? '';
       // `T2`: the selected script's page, in T2; `T2.3`: script 3's. Only
       // those shapes, so a host like `t2.example.com` stays a URL.
-      const target = TAB_REF.test(where) ? tabRef(ctx, where, tab) : { tab, rest: where };
-      if (!target) return;
+      const target = inTab ? { tab: inTab, rest: where } : TAB_REF.test(where) ? tabRef(ctx, where, tab) : { tab, rest: where };
+      if (!target) return false;
       const named = target.rest ? pageFor(ctx, target.rest, cwd) : undefined;
       if (named === null) return false;
       const [opening] = await pagesToOpen(named ? [{ word: target.rest, url: named }] : [], flags, cwd);
@@ -617,13 +641,14 @@ export async function runConsoleCommand(
         if (!current) ctx.out('[sm-dev] ERROR: The open command needs a URL, since no script is loaded');
         return false;
       }
-      if (blockedByDialog([target.tab])) return;
-      if (!await switchScripts(ctx, target.tab, mode)) return;
+      if (blockedByDialog([target.tab])) return false;
+      if (!await switchScripts(ctx, target.tab, mode)) return false;
       if (opening?.saved) {
         await serveSavedPage(target.tab, opening.saved, ctx.out, target.tab.noScript === true || ctx.scripts.length === 0);
         ctx.out(openingSavedLine(opening.saved.given, url, tabName(target.tab)));
       }
-      if (await gotoInTab(target.tab, ctx.host, url, ctx.out) && !noWait) await settleTabs(ctx.host, [target.tab], ctx.out);
+      if (!await gotoInTab(target.tab, ctx.host, url, ctx.out)) return false;
+      if (!noWait) await settleTabs(ctx.host, [target.tab], ctx.out);
       return;
     }
     case 'wait': {
@@ -694,14 +719,14 @@ export async function runConsoleCommand(
         const pair = /^\[targetId=[^\]]+$/i.test(list[at].text) && /^pageId=\d+\]$/i.test(list[at + 1]?.text ?? '');
         const taken = pair ? 2 : 1;
         const picked = pickTab(ctx, list.slice(at, at + taken).map((w) => w.text).join(' '));
-        if (!picked) return;
+        if (!picked) return false;
         target = picked;
         cut.push([list[at].start, list[at + taken - 1].end]);
         list.splice(at, taken);
       }
       // `logs` only reads what was recorded; the rest reach into a page
       // a dialog has stopped.
-      if (command !== 'logs' && blockedByDialog([target])) return;
+      if (command !== 'logs' && blockedByDialog([target])) return false;
       // `--nowait` on an action: taken out of its words. For `type`,
       // only before its text, which may hold the word itself.
       let noWait = false;
@@ -723,7 +748,7 @@ export async function runConsoleCommand(
         userscripts: runningOn(ctx, target).map(userscriptLabel),
         noWait,
       };
-      await runPageCommand(command, input, target, ctx.out, cwd);
+      return runPageCommand(command, input, target, ctx.out, cwd);
     }
   }
 }
@@ -925,7 +950,7 @@ function scriptsFlag(ctx: ConsoleContext, command: string, words: string[]): boo
   const flags = words.filter((w) => w.startsWith('--'));
   const unknown = flags.find((f) => f !== '--noscript' && f !== '--script');
   if (unknown) {
-    ctx.out(`[sm-dev] ERROR: The ${command} command has no ${unknown} flag`);
+    ctx.out(`[sm-dev] ERROR: ${noSuchFlag(command, unknown)}`);
     return null;
   }
   if (flags.includes('--noscript') && flags.includes('--script')) {
@@ -1444,7 +1469,8 @@ function noMenusMessage(ctx: ConsoleContext, tab: ControlledTab): string {
 // once, as is any miss typed at a terminal.
 const MENU_WAIT_MS = 5000;
 
-async function fireMenu(ctx: ConsoleContext, tab: ControlledTab, argument: string): Promise<void> {
+// False when nothing was fired.
+async function fireMenu(ctx: ConsoleContext, tab: ControlledTab, argument: string): Promise<boolean> {
   const all = (): MenuCommandRecord[] => menuGroups(ctx, tab).flatMap((group) => group.commands);
   const numbered = /^[Mm](\d+)$/.exec(argument);
   const deadline = Date.now() + MENU_WAIT_MS;
@@ -1459,13 +1485,13 @@ async function fireMenu(ctx: ConsoleContext, tab: ControlledTab, argument: strin
       // away, as in the middle of a navigation.
       if (!await fire(tab, ctx.host.fireMenuEntry(entry))) {
         ctx.out(`[sm-dev] The menu command "${entry.name}" could not be fired, since the page that registered it has gone away`);
-        return;
+        return false;
       }
       ctx.out(`[sm-dev] Fired "${entry.name}"`);
       // A MAIN-world handler runs in a later task than the push, so the
       // command ends once the page has run it, with what it printed.
       if (!tab.dialogs?.current) await fire(tab, tab.link.drain().then(() => true));
-      return;
+      return true;
     }
     // Registered on another tab is an answer too, not worth waiting past.
     if (ctx.interactive || commands.length > 0 || Date.now() >= deadline || elsewhereFor(ctx, tab, argument)) break;
@@ -1477,6 +1503,7 @@ async function fireMenu(ctx: ConsoleContext, tab: ControlledTab, argument: strin
   else if (all().length === 0) ctx.out(noMenusMessage(ctx, tab));
   else if (numbered) ctx.out(`[sm-dev] There is no menu command M${numbered[1]}${onTab(ctx, tab)}. Use menu to list them.`);
   else ctx.out(`[sm-dev] No menu command named "${argument}" is registered${onTab(ctx, tab)}. Use menu to list them.`);
+  return false;
 }
 
 // Another tab with a menu command of that label.
@@ -1689,7 +1716,7 @@ export class DialogTracker {
     const message = dialog.message();
     const what = `The page opened ${dialogKind(dialog)} dialog${message ? `: ${JSON.stringify(message)}` : ''}`;
     if (!this.visible && !this.commandsListening) {
-      this.out(`[sm-dev] ${what}. Dismissed it, since nothing can answer it in a headless run without typed commands.`);
+      this.out(`[sm-dev] ${what}. Dismissed it, since nothing can answer it in a headless run that takes no commands.`);
       void dialog.dismiss().catch(() => undefined);
       return;
     }
@@ -1776,9 +1803,9 @@ export type CommandRunner = (
 export function commandRunner(ctx: ConsoleContext): CommandRunner {
   let queue: Promise<unknown> = Promise.resolve();
   return (line, hooks) => {
-    // The exit code: what the command returned (a number, or false for
-    // 1); else 2 when it said it was typed wrong, wherever in it that
-    // was said; else 0. A throw is 2 for a typing mistake (a file that
+    // The exit code: 2 when it said it was invalid, wherever in it
+    // that was said; else what the command returned (a number, or false
+    // for 1); else 0. A throw is 2 for an invalid command (a file that
     // isn't there), 1 otherwise. Commands run one at a time, so the
     // mistake watch holds only for this one.
     let code = 0;
@@ -1795,7 +1822,8 @@ export function commandRunner(ctx: ConsoleContext): CommandRunner {
         ctx.interactive = hooks?.interactive === true;
         const result = await runConsoleCommand(line, ctx, { cwd: hooks?.cwd, words: hooks?.words });
         code = result === false ? 1 : typeof result === 'number' ? result : 0;
-        if (code === 0 && mistaken) code = 2;
+        // An invalid command is 2, even when it also said it failed.
+        if (mistaken) code = 2;
       } catch (err) {
         ctx.out(`${err instanceof UsageError ? MISTAKE_PREFIX : '[sm-dev] '}${(err as Error).message}`);
         code = err instanceof UsageError ? 2 : 1;

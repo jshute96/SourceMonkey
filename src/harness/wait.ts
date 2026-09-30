@@ -19,6 +19,7 @@
 // short one that matters changes the DOM when it fires, which the
 // window catches, since it starts no earlier than the wait.
 
+import { noSuchFlag } from './command-list.js';
 import type { ConsoleContext, ControlledTab } from './console-commands.js';
 import type { HarnessHost } from './host.js';
 import { countOf, wholeSelector } from './page-commands.js';
@@ -53,6 +54,7 @@ const SELECTOR_LOOK_MS = 1000;
 // How the replies of the waits with something to match start, so each
 // says plainly whether it got it.
 const WAIT_DONE = '[sm-dev] Wait done: ';
+const TIMEOUT_NEEDS_SECONDS = `The --timeout-seconds flag needs a number of seconds, up to ${MAX_WAIT_SECONDS}`;
 const WAIT_FAILED = '[sm-dev] Wait failed: ';
 const LOG_MATCHED = '[sm-dev] Wait matched log line: ';
 
@@ -160,7 +162,7 @@ export function notSettledMessage(tab: { n: number }, timeoutMs: number, busy: s
  * line shows up; or a plain delay. `words` are the command's own;
  * `typedArgument` is the line after `wait` as typed, for a selector or
  * `wait log`'s text as written, or null when a sender gave the words.
- * False when it gave up or was typed wrong, so a line of several
+ * False when it gave up or was invalid, so a line of several
  * commands stops there.
  */
 export async function waitFor(ctx: ConsoleContext, words: string[], typedArgument: string | null): Promise<boolean> {
@@ -184,7 +186,7 @@ export async function waitFor(ctx: ConsoleContext, words: string[], typedArgumen
       continue;
     }
     const value = Number(head[++i]);
-    if (!(value > 0) || value > MAX_WAIT_SECONDS) return mistake(`The --timeout-seconds flag needs a number of seconds, up to ${MAX_WAIT_SECONDS}`);
+    if (!(value > 0) || value > MAX_WAIT_SECONDS) return mistake(TIMEOUT_NEEDS_SECONDS);
     timeoutMs = value * 1000;
     timed = true;
   }
@@ -194,12 +196,22 @@ export async function waitFor(ctx: ConsoleContext, words: string[], typedArgumen
     let text = typedArgument !== null
       ? typedArgument.replace(/^[\s\S]*?(?:^|\s)log(?:\s+|$)/, '')
       : words.slice(formAt + 1, trailing ? -2 : undefined).join(' ');
+    let quoted: RegExpExecArray | null = null;
     if (typedArgument !== null) {
       if (trailing) text = text.replace(/\s+--timeout-seconds\s+\S+\s*$/, '');
       // Quoted as a whole, as a sender's shell would have taken it.
-      const quoted = /^(['"])(.*)\1$/.exec(text.trim());
+      quoted = /^(['"])(.*)\1$/.exec(text.trim());
       text = quoted ? quoted[2] : text.trim();
     }
+    // A near miss of --timeout-seconds ending unquoted text (`--timeout
+    // 40`), which would otherwise be looked for as part of it. Only that
+    // flag, since log text may well end in other `--words`. From a
+    // shell, only as a word of its own: one inside quoted text shares
+    // its word with the text.
+    const ending = (typedArgument !== null ? text.split(/\s+/) : words.slice(formAt + 1, trailing ? -2 : undefined)).slice(-2);
+    const flag = quoted || /^\/.+\/[a-z]*$/.test(text) ? undefined : ending.find((w) => /^--timeout[\w-]*$/.test(w));
+    if (flag === '--timeout-seconds') return mistake(TIMEOUT_NEEDS_SECONDS);
+    if (flag) return mistake(noSuchFlag('wait', flag));
     return waitForLog(ctx, text, timeoutMs);
   }
 
@@ -241,6 +253,9 @@ export async function waitFor(ctx: ConsoleContext, words: string[], typedArgumen
       : /(?:^|\s)selector(?:-gone)?\s+([\s\S]*)$/.exec(typedArgument)?.[1].replace(/(^|\s)--timeout-seconds\s+\S+/g, '');
     const selector = typedSelector != null ? wholeSelector(typedSelector) : rest.slice(at + 1).join(' ');
     if (!selector) return mistake(`The wait ${kind} command needs a selector, e.g. wait ${kind} '#results'`);
+    const [first, ...more] = selector.split(/\s+/);
+    const timeout = timed ? ` --timeout-seconds ${timeoutMs / 1000}` : '';
+    if (more.length > 0 && TAB_ARG.test(first)) return mistake(`The tab goes before the word ${kind}: wait ${first} ${kind} ${more.join(' ')}${timeout}`);
     if (rest[0] === 'all') return mistake(`The wait ${kind} command looks in one tab. Name it (T2), or leave it out for the current one.`);
     return waitForSelector(ctx, tabs[0], selector, kind === 'selector', timeoutMs);
   }

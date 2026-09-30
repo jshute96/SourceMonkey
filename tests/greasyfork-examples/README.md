@@ -283,14 +283,24 @@ node $R set 14178 --test pass --note "Redirect links rewritten on a bing.com sea
 node $R set 14178 --test fail --blame sourcemonkey --note-file /tmp/why.md
 node $R set 14178 --test n/a --reason requires-login --note "Every matched page needs an account"
 node $R set 14178 --tag needs-GM_cookie
+node $R set 14178 --replace-note 1 --note "Better wording"   # notes number from 1, in the order show lists them
+node $R set 14178 --remove-note 2
 ```
 
 `validate` needs a build (`pnpm run build`), like the other tools.
 
+To try a script on its site, run it with `sm-dev`, pointing it at the
+downloaded `@require`s so a dead or flaky host doesn't stop the run.
+Give the run an ID of your own, since other agents may be testing too:
+
+```sh
+scripts/sm-dev --run D<yours> --local tests/greasyfork-examples/files start "<file from show>" <url> --detach
+```
+
 - It records a verdict for every downloaded script, `tool error` included.
 - A listed script that isn't downloaded has its `valid`, `sites`,
   `version` and `file` cleared, so an old verdict can't pass for a current one.
-- Each command refuses options it doesn't take, so a typo fails loudly.
+- Each command refuses options it doesn't take, so a misspelled one fails loudly.
 
 ### Record format
 
@@ -304,7 +314,7 @@ Beside `listing`, a record can hold:
 | `valid` | `validate` | The latest offline verdict: `status` (`ok` / `invalid` / `tool error`), `error`, `warnings`, derived `tags`, `date`, `version` |
 | `test` | `set --test` | The latest run on the target site: `status`, `reason` or `blame`, `date`, `version` |
 | `tags` | `set --tag` / `--untag` | Hand-added labels |
-| `notes` | `set --note` | Append-only `{ date, version, text }` list; `text` is markdown |
+| `notes` | `set --note` | `{ date, version, text }` list, oldest first; `text` is markdown. `--replace-note` / `--remove-note` fix one |
 
 - **Test statuses:**
   - `pass`: the script does what it promises.

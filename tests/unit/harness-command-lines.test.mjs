@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  CommandAssembler, NOT_A_BLOCK_COMMAND, TEXT_AFTER_CLOSE, echoCommand, parseCommandList, unclosedBlockMessage,
+  CommandAssembler, NOT_A_BLOCK_COMMAND, OPEN_NOT_LAST, TEXT_AFTER_CLOSE, echoCommand, parseCommandList, unclosedBlockMessage,
 } from '../../lib/harness/command-lines.js';
 
 const texts = (result) => result.commands.map((c) => c.text);
@@ -32,6 +32,16 @@ test('an eval block keeps its lines, and the tab and flags before {{', () => {
     'eval T2 --script\n  const rows = [...document.querySelectorAll(".athing")];\n\n  // ids\n  #not a comment in here\n  rows.map((r) => r.id)',
     'values',
   ]);
+});
+
+test('code after {{ on its line is refused, rather than its lines run as commands', () => {
+  assert.deepEqual(parseCommandList('eval {{ const x = 1;\nx\n}}'), { error: `Line 1: ${OPEN_NOT_LAST}. None of the commands were run.` });
+  assert.deepEqual(parseCommandList('eval --script {{ x }}'), { error: `Line 1: ${OPEN_NOT_LAST}. None of the commands were run.` });
+  // type's text may hold the word.
+  assert.deepEqual(texts(parseCommandList('type #a a {{ b')), ['type #a a {{ b']);
+  // As may a quoted string.
+  assert.deepEqual(texts(parseCommandList('eval tpl.split(\' {{ \')')), ['eval tpl.split(\' {{ \')']);
+  assert.deepEqual(texts(parseCommandList('set k "a {{ b"')), ['set k "a {{ b"']);
 });
 
 test('a lone } inside a block is JavaScript, and }} may be indented', () => {

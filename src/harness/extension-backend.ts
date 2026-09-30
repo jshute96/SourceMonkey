@@ -53,6 +53,103 @@ export async function sourceMonkeyExtensionId(): Promise<string> {
   return cachedId;
 }
 
+/** Whether SourceMonkey is in a browser, as `sourceMonkeyState` finds it. */
+export type ExtensionState = 'installed' | 'disabled' | 'absent';
+
+type CdpReply = { result?: Record<string, unknown>; error?: { message: string } };
+
+/**
+ * Whether SourceMonkey is installed and enabled in the browser at
+ * `endpoint` (its CDP address), for `status` and the run's first lines.
+ * Null when it couldn't be told. Over a WebSocket of its own, since
+ * Playwright's browser session can't reach the target the fallback
+ * makes. It can't see "Allow User Scripts".
+ *
+ * - `Extensions.getExtensions` lists the unpacked extensions, enabled
+ *   or not, which is how SourceMonkey is usually loaded.
+ * - Otherwise (a Web Store install, or a Chrome without that call), a
+ *   hidden target (no tab in the tab strip) is sent to the extension's
+ *   manifest.json. It loads only when the extension is installed and
+ *   enabled, and runs none of its code. So a disabled Web Store install
+ *   reads as absent.
+ */
+export async function sourceMonkeyState(endpoint: string, timeoutMs = 3000): Promise<ExtensionState | null> {
+  // Ends the check however it ends: the fetch, and the socket, which
+  // may be opened after the time is up.
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), timeoutMs);
+  const probe = async (): Promise<ExtensionState> => {
+    const url = /^wss?:/.test(endpoint) ? endpoint
+      : ((await (await fetch(`${endpoint}/json/version`, { signal: abort.signal })).json()) as { webSocketDebuggerUrl: string }).webSocketDebuggerUrl;
+    abort.signal.throwIfAborted();
+    const socket = new WebSocket(url);
+    const waiting = new Map<number, (reply: CdpReply) => void>();
+    // Closing answers every call still waiting, so none is left hanging.
+    const close = (): void => {
+      socket.close();
+      for (const answer of waiting.values()) answer({ error: { message: 'The check ended' } });
+      waiting.clear();
+    };
+    abort.signal.addEventListener('abort', close);
+    try {
+      await new Promise((resolve, reject) => {
+        socket.onopen = resolve;
+        socket.onerror = () => reject(new Error('The browser\'s CDP socket could not be opened'));
+        abort.signal.addEventListener('abort', () => reject(new Error('The check took too long')));
+      });
+      let last = 0;
+      socket.onmessage = (event) => {
+        const reply = JSON.parse(String(event.data));
+        waiting.get(reply.id)?.(reply);
+        waiting.delete(reply.id);
+      };
+      const send = async (method: string, params: object, sessionId?: string): Promise<Record<string, unknown>> => {
+        const id = ++last;
+        const reply = await new Promise<CdpReply>((resolve) => {
+          waiting.set(id, resolve);
+          socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
+        });
+        if (reply.error) throw new Error(`${method} failed: ${reply.error.message}`);
+        return reply.result ?? {};
+      };
+      const id = await sourceMonkeyExtensionId();
+      const listed = await send('Extensions.getExtensions', {}).then(
+        (r) => (r.extensions as { id: string; enabled: boolean }[] | undefined)?.find((e) => e.id === id),
+        () => undefined,
+      );
+      if (listed) return listed.enabled ? 'installed' : 'disabled';
+      abort.signal.throwIfAborted();
+      const { targetId } = await send('Target.createTarget', { url: 'about:blank', hidden: true }) as { targetId: string };
+      try {
+        const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true }) as { sessionId: string };
+        const loaded = await send('Page.navigate', { url: `chrome-extension://${id}/manifest.json` }, sessionId);
+        return loaded.errorText ? 'absent' : 'installed';
+      } finally {
+        // Closing the socket would close it too: the target belongs to
+        // this connection.
+        if (!abort.signal.aborted) await send('Target.closeTarget', { targetId }).catch(() => undefined);
+      }
+    } finally {
+      close();
+    }
+  };
+  try {
+    return await probe();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** How `status` and the run's first lines say it. Empty when not known. */
+export function extensionLabel(state: ExtensionState | null): string {
+  return state === null ? '' : { installed: 'has SourceMonkey', disabled: 'SourceMonkey disabled', absent: 'no extension' }[state];
+}
+
+const NOT_INSTALLED = 'SourceMonkey is not installed in this browser. Load it there as an unpacked extension, with Allow User Scripts on '
+  + '(see https://github.com/jshute96/SourceMonkey/blob/main/docs/harness-guide.md#setting-it-up).';
+
 // The extension's worker in this context. An idle worker is not
 // listed, so when it is missing an extension page is opened to wake
 // it: any page of the extension will do, and the collections page has
@@ -70,7 +167,7 @@ export async function findExtensionWorker(ctx: BrowserContext, timeoutMs = 10000
     try {
       await page.goto(workerUrl.replace(/background\.js$/, 'collections.html'));
     } catch {
-      throw new Error('SourceMonkey is not installed in this browser');
+      throw new Error(NOT_INSTALLED);
     }
     while (Date.now() < deadline) {
       const w = listed();

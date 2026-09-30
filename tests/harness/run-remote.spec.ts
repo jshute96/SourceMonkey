@@ -216,7 +216,7 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
     const pid = Number(list[1].split(/\s+/)[1]);
     expect(pid).not.toBe(run.proc.pid);
 
-    expect((await setup.cli('--run', 'D1', 'status'))[0]).toBe(`Run: D1 (pid ${pid}), connected to headless browser 127.0.0.1:${setup.port}`);
+    expect((await setup.cli('--run', 'D1', 'status'))[0]).toBe(`Run: D1 (pid ${pid}), connected to headless browser 127.0.0.1:${setup.port} (no extension)`);
     // The only run, so it needs no id. The command's own output, and
     // what it set off in the page, come back; the page's line can
     // arrive first.
@@ -283,7 +283,7 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
     expect(all.lines.at(-1)).toBe('3 ok, 0 invalid');
     // The run's roots are its own.
     expect((await setup.cliExit('--root', scriptsDir.path, 'match')).code).toBe(2);
-    // A file that isn't there is a typing mistake, which stops the line.
+    // A file that isn't there makes an invalid command, which stops the line.
     const typo = await setup.cliExit('match', 'nosuch.user.js', '--', 'eval', '1+1');
     expect(typo.code).toBe(2);
     expect(typo.lines).not.toContain('arg > eval 1+1');
@@ -323,7 +323,7 @@ test('start --detach returns once started, is replaced by the next unless --new,
     expect(path.basename(log)).toMatch(/^sm-dev-\d{8}-\d{6}-\d{3}\.log$/);
     // Stamped in the file, though not as printed.
     // First, the browser it's using.
-    expect(readFileSync(log, 'utf8')).toMatch(new RegExp(`^\\d{8}-\\d{6}-\\d{3} \\[sm-dev\\] Connected to headless browser 127\\.0\\.0\\.1:${setup.port} \\(Chrome [\\d.]+\\)\\n\\d{8}-\\d{6}-\\d{3} \\[sm-dev\\] Started as run D1\\. `));
+    expect(readFileSync(log, 'utf8')).toMatch(new RegExp(`^\\d{8}-\\d{6}-\\d{3} \\[sm-dev\\] Connected to headless browser 127\\.0\\.0\\.1:${setup.port} \\(Chrome [\\d.]+, no extension\\)\\n\\d{8}-\\d{6}-\\d{3} \\[sm-dev\\] Started as run D1\\. `));
     expect(first[0]).toMatch(/^\[sm-dev\] Connected to headless browser /);
     expect(first[1]).toMatch(/^\[sm-dev\] Started as run D1\. /);
     // Found by the run's id too.

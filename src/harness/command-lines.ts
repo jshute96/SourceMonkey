@@ -19,6 +19,8 @@
 // is a comment (no command starts with `#`). Inside one, every line is
 // the block's own.
 
+import { splitWords } from './page-commands.js';
+
 /** One command, ready for `runConsoleCommand`. */
 export interface AssembledCommand {
   /**
@@ -52,6 +54,12 @@ export const NOT_A_BLOCK_COMMAND = 'Only the eval, set, type and cdp commands ta
  */
 export const TEXT_AFTER_CLOSE = 'Nothing can follow }} on its line, so the block is dropped (put flags before the {{)';
 const CLOSE_WITH_TEXT = /^}}\s+\S/;
+
+/**
+ * A `{{` with code after it on its line (`eval {{ const x = 1`). The
+ * block's lines would otherwise each run as a command.
+ */
+export const OPEN_NOT_LAST = 'A {{ block\'s content starts on the line after the {{, and its }} goes on a line of its own';
 
 /** A block the input ended inside of. */
 export function unclosedBlockMessage(line: number): string {
@@ -109,6 +117,11 @@ export class CommandAssembler {
       this.block = { text: trimmed.slice(0, -OPEN.length).trimEnd(), source: [line], line: n };
       this.refused = !BLOCK_COMMANDS.has(words[0]);
       return this.refused ? { error: NOT_A_BLOCK_COMMAND } : null;
+    }
+    // Not `type`, whose text may hold the word. Split as a command's
+    // words are, so a {{ in a quoted string is left alone.
+    if (words[0] !== 'type' && BLOCK_COMMANDS.has(words[0]) && splitWords(trimmed).slice(1, -1).some((w) => w.text === OPEN)) {
+      return { error: OPEN_NOT_LAST };
     }
     return { command: { text: trimmed, source: [line], line: n } };
   }
