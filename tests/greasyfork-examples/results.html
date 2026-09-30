@@ -189,6 +189,11 @@ const HELP = {
     'needs-xhr-onprogress': 'Relies on GM_xmlhttpRequest\'s onprogress, which SourceMonkey never fires',
     'tld-include': 'Uses Tampermonkey\'s .tld host form in @include (any top-level domain), which SourceMonkey doesn\'t support',
     'inline-script-csp': 'Inserts an inline <script> element, which SourceMonkey\'s USER_SCRIPT world CSP blocks in the extension',
+    'connect-subdomain': 'Declares a bare @connect domain and needs its subdomains, which Tampermonkey allows but SourceMonkey doesn\'t',
+    'shadows-window': 'Declares a top-level const window, which breaks SourceMonkey\'s own unsafeWindow binding in the same scope',
+    'gm-on-window': 'Reads GM_* functions as window properties (window.GM_xmlhttpRequest), which Violentmonkey provides and SourceMonkey doesn\'t',
+    'idle-after-load': 'Sets itself up in a window load handler, which never runs when the script starts after load, as SourceMonkey\'s document-idle does',
+    'contextmenu-on-mousedown': 'Expects the contextmenu event after mouseup, as on Windows. On Linux and macOS Chrome it comes on mousedown.',
   },
 };
 
@@ -472,17 +477,32 @@ function testMatches(choice, d) {
 }
 
 /** Put the shown rows in the table, each followed by its notes row unless hidden. */
+/** Set a row's Show/Hide state, and return its <tr>s: the row, then its notes row if shown. */
+function rowView(r) {
+  const view = r.d.notesHtml ? viewOf(r.d.id) : 'hidden';
+  r.tr.classList.toggle('has-notes', view !== 'hidden');
+  const button = r.tr.querySelector('.toggle');
+  if (button) button.textContent = view === 'hidden' ? 'Show' : 'Hide';
+  if (view === 'hidden') return [r.tr];
+  r.notesTr ??= notesRowElement(r.d);
+  r.notesTr.querySelector('.notes-body').classList.toggle('short', view === 'short');
+  return [r.tr, r.notesTr];
+}
+
 function render() {
-  $('rows').replaceChildren(...shown.flatMap((r) => {
-    const view = r.d.notesHtml ? viewOf(r.d.id) : 'hidden';
-    r.tr.classList.toggle('has-notes', view !== 'hidden');
-    const button = r.tr.querySelector('.toggle');
-    if (button) button.textContent = view === 'hidden' ? 'Show' : 'Hide';
-    if (view === 'hidden') return [r.tr];
-    r.notesTr ??= notesRowElement(r.d);
-    r.notesTr.querySelector('.notes-body').classList.toggle('short', view === 'short');
-    return [r.tr, r.notesTr];
-  }));
+  $('rows').replaceChildren(...shown.flatMap(rowView));
+  updateMoreButtons();
+}
+
+/**
+ * Re-render one row in place, for its Show/Hide or Show full button. A full
+ * render() would detach the button that was just clicked, and removing the
+ * focused element makes Chrome scroll a filtered table back to the top.
+ */
+function renderRow(id) {
+  const r = rows.find((row) => row.d.id === id);
+  if (r.notesTr?.isConnected) r.notesTr.remove();
+  r.tr.after(...rowView(r).slice(1));
   updateMoreButtons();
 }
 
@@ -506,14 +526,16 @@ function updateMoreButtons() {
 $('rows').addEventListener('click', (ev) => {
   const button = ev.target.closest('.toggle');
   const more = ev.target.closest('.more');
+  let id;
   if (button) {
-    const id = Number(button.dataset.id);
+    id = Number(button.dataset.id);
     // Showing a row on its own while the mode hides everything shows it in full.
     noteView.set(id, viewOf(id) !== 'hidden' ? 'hidden' : $('notes-mode').value === 'hidden' ? 'full' : $('notes-mode').value);
   } else if (more) {
-    noteView.set(Number(more.dataset.id), 'full');
+    id = Number(more.dataset.id);
+    noteView.set(id, 'full');
   } else return;
-  render();
+  renderRow(id);
 });
 $('rows').addEventListener('click', (event) => {
   const button = event.target.closest('.copy-path');
