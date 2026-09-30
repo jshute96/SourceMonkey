@@ -36,6 +36,8 @@ listing.
 | `serve-results.mjs` | `results.html`, `corpus.json` | | [Serves the results page](#viewing-results) on localhost |
 | `corpus.mjs` | | | Shared helpers: locked `corpus.json` updates, URL to `files/` path mapping |
 
+Each script takes `--help`, which prints its usage.
+
 The tools that parse headers import the extension's compiled code from
 `dist/` (or `lib/`), so run `pnpm run build` first.
 
@@ -149,9 +151,10 @@ https://update.greasyfork.org/scripts/25253/ZOOM%20HACK%20for%20Blobleio%21.user
   differ only there.
 - **Over-long names** get truncated with `~<hash>` spliced in before the
   extension (`AC-baidu-%E9%87%8D…%E5%BA%94~efdc1ce2.user.js`). Percent-encoded
-  CJK costs 9 bytes per character, which overruns the filesystem's per-name
-  limit — 255 bytes normally, but only 143 on an eCryptfs-encrypted home, so
-  the tool probes for the real ceiling at startup.
+  CJK costs 9 bytes per character, which can overrun the filesystem's
+  per-name limit: 255 bytes normally, but only 143 on an eCryptfs-encrypted
+  home. Names are cut at 143 bytes on every machine, so a script's path
+  depends only on its URL, and corpus.json can store it.
 
 ### The greasyfork.org mirror
 
@@ -285,8 +288,8 @@ node $R set 14178 --tag needs-GM_cookie
 `validate` needs a build (`pnpm run build`), like the other tools.
 
 - It records a verdict for every downloaded script, `tool error` included.
-- A listed script that isn't downloaded has its `valid`, `sites` and
-  `version` cleared, so an old verdict can't pass for a current one.
+- A listed script that isn't downloaded has its `valid`, `sites`,
+  `version` and `file` cleared, so an old verdict can't pass for a current one.
 - Each command refuses options it doesn't take, so a typo fails loudly.
 
 ### Record format
@@ -296,6 +299,7 @@ Beside `listing`, a record can hold:
 | Field | Written by | Contents |
 |-------|------------|----------|
 | `version` | `validate` | `@version` of the downloaded copy |
+| `file` | `validate` | Where the downloaded copy is, relative to `files/` |
 | `sites` | `validate` | What its `@match` / `@include` lines target, for the results page: a site, a host pattern, a regex, or `*` |
 | `valid` | `validate` | The latest offline verdict: `status` (`ok` / `invalid` / `tool error`), `error`, `warnings`, derived `tags`, `date`, `version` |
 | `test` | `set --test` | The latest run on the target site: `status`, `reason` or `blame`, `date`, `version` |
@@ -333,6 +337,18 @@ node tests/greasyfork-examples/serve-results.mjs   # then open http://localhost:
 - Opened straight from disk, Chrome won't let the page fetch another file, so
   it asks you to choose `corpus.json`. You navigate to it once; after that the
   page offers to reopen the same file with one click.
+- Every link opens in a new tab.
+- Under each name:
+  - "Code" opens the downloaded copy in a viewer tab (this page with
+    `?view=<id>`). A link straight to the `.user.js` file would make a
+    userscript manager offer to install it.
+  - "Copy filename" copies the file's full path, for opening it in an editor. Served,
+    the page reads where `files/` is from `files/_location.json`, which every
+    tool that uses `files/` writes.
+- Any static server that serves this folder works for the page and viewer,
+  not just `serve-results.mjs`.
+- Opened from disk, the viewer asks once for access to the `files/` folder,
+  since Chrome won't let the page read it otherwise.
 - The filters, Notes setting and sort are kept in the URL, so a browser
   reload keeps them and the link reproduces the view. Reset clears them.
 - Notes show in a full-width row under each script. The Notes selector sets

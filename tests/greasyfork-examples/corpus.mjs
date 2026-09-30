@@ -6,12 +6,35 @@
 // or trample each other's writes to corpus.json.
 
 import { createHash, randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { access, mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** The corpus record file: the GreasyFork listing plus every test finding. */
 export const CORPUS_JSON = fileURLToPath(new URL('./corpus.json', import.meta.url));
+
+/**
+ * Handle `--help` / `-h` for a tool: when `argv` has either, print the
+ * comment block at the top of the tool's source (its usage docs, so the two
+ * can't drift apart) and return true, for the tool to stop there.
+ */
+export function printHelp(argv, moduleUrl) {
+  if (!argv.includes('--help') && !argv.includes('-h')) return false;
+  process.stdout.write(helpText(moduleUrl));
+  return true;
+}
+
+/** A tool's help: the comment block at the top of its source, uncommented. */
+export function helpText(moduleUrl) {
+  const lines = [];
+  for (const line of readFileSync(fileURLToPath(moduleUrl), 'utf8').split('\n')) {
+    if (line.startsWith('#!')) continue;
+    if (!line.startsWith('//')) break;
+    lines.push(line.replace(/^\/\/ ?/, ''));
+  }
+  return `${lines.join('\n').trim()}\n`;
+}
 
 /** Read the corpus: `{ "<id>": record }`. */
 export async function readCorpus(file = CORPUS_JSON) {
@@ -33,7 +56,7 @@ export function listingRows(corpus) {
 
 // Record keys in the order they are written, so a record reads the same way
 // whichever tool last touched it and a diff shows only what changed.
-const RECORD_KEYS = ['listing', 'version', 'sites', 'valid', 'test', 'tags', 'notes'];
+const RECORD_KEYS = ['listing', 'version', 'file', 'sites', 'valid', 'test', 'tags', 'notes'];
 
 function canonicalRecord(record) {
   const out = {};
@@ -105,52 +128,46 @@ async function writeCorpus(file, corpus) {
   await rename(tmp, file);
 }
 
-// Percent-encoded CJK script names are long — each character costs 9 bytes as
-// `%XX%XX%XX` — and blow past the filesystem's per-name limit. That limit isn't
-// always the familiar 255: an eCryptfs-encrypted home (Ubuntu's "encrypt my
-// home directory") caps names at 143 bytes, so we probe for the real ceiling
-// instead of assuming. Over-long names get truncated with a hash of the full
-// segment spliced in, keeping them unique and deterministic while the leading
-// text and the `.user.js` suffix stay readable.
-let maxSegmentBytes = 255;
+// Percent-encoded CJK script names are long (each character costs 9 bytes as
+// `%XX%XX%XX`) and can overrun the filesystem's per-name limit. That's 255
+// bytes normally, but only 143 on an eCryptfs-encrypted home (Ubuntu's
+// "encrypt my home directory"). Names are cut at 143 everywhere, not at the
+// local limit, so a script's path depends only on its URL: corpus.json stores
+// it, and every machine agrees. The limit is per name, not per path, so the
+// checkout's depth doesn't matter. A cut name keeps its leading text and
+// `.user.js` suffix, with a hash of the whole name spliced in to keep it unique.
+const MAX_SEGMENT_BYTES = 143;
 
 /**
- * Probe the per-filename limit under `root` and remember it. Every tool touching
- * the tree must call this first, or it will compute different paths than the one
- * that wrote the files. The ladder finds the largest value that works, which is
- * the real ceiling only when it is one of the listed sizes — good enough, since
- * the point is to stay under it.
+ * Check the download root before using it. Writers pass `create: true` to make
+ * it; read-only callers leave it off, so a mistyped --root fails loudly instead
+ * of quietly reporting nothing downloaded.
  *
- * Read-only callers pass `create: false` so a mistyped --root fails loudly
- * instead of quietly creating an empty tree and reporting nothing downloaded.
+ * Also records where the root is, in LOCATION_FILE inside it, for results.html:
+ * a page from a static server can't otherwise learn the full paths it copies.
+ * Rewritten only when it has changed, e.g. after the checkout moved.
  */
-export async function detectMaxFilename(root, { create = true } = {}) {
+export async function checkRoot(root, { create = false } = {}) {
   if (create) await mkdir(root, { recursive: true });
   else if (!(await stat(root).then((i) => i.isDirectory(), () => false))) {
     throw new Error(`Download root does not exist: ${root}`);
   }
-  for (const limit of [255, 143, 120, 64]) {
-    const probe = path.join(root, 'x'.repeat(limit));
-    try {
-      await writeFile(probe, '');
-      await rm(probe);
-      maxSegmentBytes = limit;
-      return limit;
-    } catch (err) {
-      if (err.code !== 'ENAMETOOLONG') throw err;
-    }
-  }
-  throw new Error(`Could not find a usable filename length under ${root}`);
+  const location = path.join(root, LOCATION_FILE);
+  const content = JSON.stringify({ dir: path.resolve(root) }) + '\n';
+  if ((await readFile(location, 'utf8').catch(() => '')) !== content) await writeFile(location, content);
 }
 
+/** Written by checkRoot. No host name starts with `_`, so it can't clash with a download. */
+export const LOCATION_FILE = '_location.json';
+
 function clampSegment(segment) {
-  if (Buffer.byteLength(segment) <= maxSegmentBytes) return segment;
+  if (Buffer.byteLength(segment) <= MAX_SEGMENT_BYTES) return segment;
   const hash = createHash('sha1').update(segment).digest('hex').slice(0, 8);
   const suffix = segment.endsWith('.user.js') ? '.user.js' : path.extname(segment).slice(0, 16);
   const marker = `~${hash}`;
   // URL path segments are ASCII after `new URL()` percent-encodes them, so a
   // byte budget is a character budget here.
-  const keep = maxSegmentBytes - Buffer.byteLength(marker) - Buffer.byteLength(suffix);
+  const keep = MAX_SEGMENT_BYTES - Buffer.byteLength(marker) - Buffer.byteLength(suffix);
   // Don't cut through a `%XX` escape. A partial multi-byte sequence can still
   // survive (a whole `%E9` that needed two more bytes), so the prefix is
   // readable rather than guaranteed-decodable; the hash keeps it unique.

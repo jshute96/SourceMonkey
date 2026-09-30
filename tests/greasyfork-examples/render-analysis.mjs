@@ -13,6 +13,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { printHelp } from './corpus.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const DEFAULTS = {
@@ -175,6 +176,7 @@ code { font-size:.85em; background:var(--head); padding:.1rem .3rem; border-radi
 `;
 
 async function main() {
+  if (printHelp(process.argv.slice(2), import.meta.url)) return;
   const opts = parseArgs(process.argv.slice(2));
   const db = new DatabaseSync(opts.db, { readOnly: true });
   const reports = parseReports(await readFile(opts.sql, 'utf8'));

@@ -459,10 +459,10 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 | `tests/greasyfork-examples/corpus.json` | Top 2000 GreasyFork scripts by installs, plus validation and test findings for each; the checked-in source of truth |
 | `tests/greasyfork-examples/validate-corpus.mjs` | CLI that runs the install-time checks over the corpus offline and groups failures, with JSON output |
 | `tests/greasyfork-examples/record-results.mjs` | CLI that records findings in `corpus.json`: imports offline validation, sets test results, tags, and notes |
-| `tests/greasyfork-examples/serve-results.mjs` | Serves `results.html` and `corpus.json` on localhost so the page can read the corpus |
-| `tests/greasyfork-examples/results.html` | Static page that reads `corpus.json` into a sortable, filterable table of validity, test status, tags, notes |
+| `tests/greasyfork-examples/serve-results.mjs` | Serves `results.html`, `corpus.json` and the downloaded scripts on localhost, for the results page |
+| `tests/greasyfork-examples/results.html` | Static page that reads `corpus.json` into a sortable, filterable table of findings, plus a viewer for each script's code |
 | `tests/greasyfork-examples/download-scripts.mjs` | CLI that downloads the corpus's userscripts plus their `@require` / `@resource` dependencies into a URL-shaped tree |
-| `tests/greasyfork-examples/files/` | Downloaded userscripts, `@require` libraries, and `@resource` assets at `<host>/<url-path>` (gitignored) |
+| `tests/greasyfork-examples/files/` | Downloaded userscripts, `@require` libraries, and `@resource` assets at `<host>/<url-path>`, plus `_location.json` (gitignored) |
 | `tests/greasyfork-examples/download-report.json` | Last download run's counts, dead links, and failed URLs (gitignored) |
 | `tests/greasyfork-examples/corpus.mjs` | Shared corpus helpers: locked atomic `corpus.json` updates, URL↔on-disk-path mapping, `@match` parsing |
 | `tests/greasyfork-examples/build-db.mjs` | Loads `corpus.json` and downloaded files into `corpus.db` (scripts, headers, match patterns, deps, findings) |

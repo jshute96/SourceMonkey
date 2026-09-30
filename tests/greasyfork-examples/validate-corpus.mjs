@@ -46,7 +46,7 @@ import { prepareScript } from '../../lib/harness/prepare.js';
 // names, `<path>/index` for a path that is also a directory prefix) is
 // defined by the downloader, so the lookup comes from there rather
 // than being guessed at here.
-import { detectMaxFilename, findExisting } from './corpus.mjs';
+import { checkRoot, findExisting, helpText } from './corpus.mjs';
 
 // ---------- CLI ----------
 
@@ -87,15 +87,6 @@ function parseArgs(argv) {
   }
   return opts;
 }
-
-const USAGE = `Usage: node tests/greasyfork-examples/validate-corpus.mjs [options] <path>...
-
-  --offline-root DIR   serve @require/@resource from a downloaded tree
-  --json FILE          write per-script results as JSON
-  --limit N            stop after N scripts
-  --examples N         example names per failure group (default 3)
-  --quiet              summary only
-`;
 
 // ---------- Finding scripts ----------
 
@@ -381,21 +372,18 @@ async function main() {
   try {
     opts = parseArgs(process.argv.slice(2));
   } catch (err) {
-    process.stderr.write(`${err.message}\n\n${USAGE}`);
+    process.stderr.write(`${err.message}. Run with --help for usage.\n`);
     process.exitCode = 2;
     return;
   }
   if (opts.help || opts.paths.length === 0) {
-    process.stdout.write(USAGE);
+    process.stdout.write(helpText(import.meta.url));
     process.exitCode = opts.help ? 0 : 1;
     return;
   }
 
   if (opts.offlineRoot) {
-    // The downloader probes the filesystem's per-filename limit and
-    // truncates over-long names to fit; every reader has to probe the
-    // same way or it computes different paths than the writer did.
-    await detectMaxFilename(opts.offlineRoot, { create: false });
+    await checkRoot(opts.offlineRoot);
   }
 
   const files = await collectScripts(opts.paths, opts.limit);

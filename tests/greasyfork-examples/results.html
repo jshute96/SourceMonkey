@@ -8,12 +8,20 @@
     corpus.json from beside itself.
   - Opened as a file:// page, Chrome won't let it fetch, so it asks you to pick
     corpus.json once and remembers the choice (see pickCorpus below).
+  - Every link opens in a new tab.
+  - Each script's "Code" button opens this page as a viewer (?view=<id>), which
+    reads the downloaded copy (corpus.json's `file`) and shows it as text. A
+    link straight to a .user.js file would be taken by a userscript manager as
+    an install; a fetch isn't. Served (by any server), it fetches the file;
+    from disk, it asks once for access to files/ (see viewFile below).
+  - The "Copy filename" button copies the downloaded copy's full path, for an editor.
 -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GreasyFork corpus results</title>
+<base target="_blank">
 <style>
 :root { color-scheme: light dark; --fg:#1a1a1a; --bg:#fff; --muted:#5c5c5c; --line:#e0e0e0; --head:#f5f5f5; --accent:#0b5fff;
         --ok:#1a7f37; --bad:#c62828; --na:#8a6d00; --warn-bg:#fff6d6; }
@@ -48,6 +56,14 @@ td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap
 td.nowrap { white-space:nowrap; }
 a { color:var(--accent); }
 .name { min-width:10rem; max-width:18rem; }
+.code-links { display:flex; gap:.3rem; margin-top:.15rem; }
+h1 { overflow-wrap:anywhere; }
+#viewer .sub { display:flex; gap:.5rem; align-items:baseline; }
+#viewer .sub button { flex:none; }
+/* Break anywhere, not at the path's hyphens, so it fills each line the same way. */
+#viewer-path { min-width:0; word-break:break-all; }
+#source { margin:0; padding:.75rem; background:var(--head); border:1px solid var(--line); border-radius:6px;
+          font:12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space:pre-wrap; overflow-wrap:anywhere; tab-size:4; }
 .version { max-width:6rem; overflow-wrap:anywhere; }
 .sites { min-width:9rem; max-width:13rem; color:var(--muted); font-size:.9em; overflow-wrap:break-word; }
 .tags { max-width:12rem; }
@@ -59,7 +75,8 @@ a { color:var(--accent); }
 .detail, .stamp { color:var(--muted); font-size:.85em; }
 .stale { color:var(--na); font-size:.85em; }
 /* Notes show in a full-width row under the script's row; the Notes column only toggles it. */
-.toggle { padding:0 .4rem; font-size:.85em; white-space:nowrap; }
+/* .toggle is the Notes column's Show/Hide; .small shares its look. */
+.toggle, .small { padding:0 .4rem; font-size:.85em; white-space:nowrap; }
 tr.has-notes > td { border-bottom:none; }
 tr.notes-row > td { padding:.1rem .5rem .6rem 2.5rem; }
 .notes-body { max-width:60rem; }
@@ -87,6 +104,14 @@ code { font-size:.9em; background:var(--head); padding:0 .25rem; border-radius:3
   <button id="pick">Choose corpus.json…</button>
   <input id="file-input" type="file" accept=".json,application/json" hidden>
   <p class="error" id="load-error" hidden></p>
+</div>
+
+<div id="viewer" hidden>
+  <p class="sub"><button class="copy-path" id="viewer-copy" title="Copy full path">Copy filename</button><code id="viewer-path"></code></p>
+  <p id="viewer-access" hidden>This page was opened as a local file, so it needs permission to read the downloaded scripts.
+     <button id="viewer-allow">Allow reading files/…</button></p>
+  <p class="error" id="viewer-error" hidden></p>
+  <pre id="source" hidden></pre>
 </div>
 
 <div id="view" hidden>
@@ -156,6 +181,14 @@ const HELP = {
     'ignored-match': 'A @match Chrome would refuse, which SourceMonkey drops. Found by validation.',
     'trusted-types': 'Fails where the site enforces Trusted Types, e.g. by assigning innerHTML in the page world',
     'needs-page-globals': 'Reads the page\'s own globals (like its jQuery) without unsafeWindow, which works in Tampermonkey but not in SourceMonkey\'s isolated world',
+    'connect-undeclared': 'Uses GM_xmlhttpRequest with no @connect, so SourceMonkey blocks every request. Tampermonkey asks the user and Violentmonkey allows them.',
+    'needs-onreadystatechange': 'Waits for GM_xmlhttpRequest\'s onreadystatechange, which SourceMonkey never fires',
+    'mutation-events': 'Relies on mutation events like DOMNodeInserted, which Chrome removed in 2024',
+    'run-at-context-menu': 'Uses @run-at context-menu, which SourceMonkey doesn\'t support, so it runs on every page load instead of from the right-click menu',
+    'xhr-response-readystate': 'Checks readyState on GM_xmlhttpRequest\'s response, which SourceMonkey leaves unset',
+    'needs-xhr-onprogress': 'Relies on GM_xmlhttpRequest\'s onprogress, which SourceMonkey never fires',
+    'tld-include': 'Uses Tampermonkey\'s .tld host form in @include (any top-level domain), which SourceMonkey doesn\'t support',
+    'inline-script-csp': 'Inserts an inline <script> element, which SourceMonkey\'s USER_SCRIPT world CSP blocks in the extension',
   },
 };
 
@@ -242,7 +275,7 @@ function rowData(id, record) {
   const entries = noteEntries(record);
   const noteText = entries.map((e) => (e.label ? e.label + ': ' : '') + e.text).join(' ');
   return {
-    rank: listing.rank, id: Number(id), name: listing.name, url: listing.info_page,
+    rank: listing.rank, id: Number(id), name: listing.name, url: listing.info_page, file: record.file,
     installs: listing.total_installs, updated: listing.updated_date, version: record.version ?? '',
     sites, valid: record.valid?.status ?? '', tags,
     // Validation said something: an error, or warnings on a valid script.
@@ -253,6 +286,27 @@ function rowData(id, record) {
   };
 }
 
+// Where the downloaded files are on disk, for copying a file's full path. From
+// disk, it's beside this page. Served, it's in files/_location.json, which the
+// corpus tools write (checkRoot in corpus.mjs); until one has run, paths are
+// copied from the repo root.
+const REPO_FILES_DIR = 'tests/greasyfork-examples/files';
+let filesDir = location.protocol === 'file:'
+  ? decodeURIComponent(location.pathname.replace(/\/[^/]*$/, '')) + '/files'
+  : REPO_FILES_DIR;
+
+const fullPath = (file) => filesDir + '/' + file;
+
+/** The "Code" button, to this page's viewer, and the "Copy filename" button. */
+function codeLinks(d) {
+  if (!d.file) return '';
+  // `name` last: a URL ending in .user.js, even in its query, may look like an
+  // install to a userscript manager.
+  const view = '?' + new URLSearchParams({ view: d.id, file: d.file, name: d.name });
+  return '<div class="code-links"><button class="small view-code" data-view="' + esc(view) + '" title="View the downloaded copy">Code</button>' +
+    '<button class="small copy-path" data-file="' + esc(d.file) + '" title="Copy full path">Copy filename</button></div>';
+}
+
 function rowElement(d) {
   const tr = document.createElement('tr');
   tr.dataset.id = d.id;
@@ -260,7 +314,7 @@ function rowElement(d) {
   tr.innerHTML =
     '<td class="num">' + (d.rank ?? '') + '</td>' +
     '<td class="num"><a href="' + esc(d.url) + '">' + d.id + '</a></td>' +
-    '<td class="name">' + esc(d.name) + '</td>' +
+    '<td class="name">' + esc(d.name) + codeLinks(d) + '</td>' +
     '<td class="num">' + (d.installs ?? '').toLocaleString('en-US') + '</td>' +
     '<td class="nowrap">' + esc(d.updated) + '</td>' +
     '<td class="version">' + esc(d.version) + '</td>' +
@@ -461,6 +515,12 @@ $('rows').addEventListener('click', (ev) => {
   } else return;
   render();
 });
+$('rows').addEventListener('click', (event) => {
+  const button = event.target.closest('.copy-path');
+  if (button) copyPath(button, button.dataset.file);
+  const code = event.target.closest('.view-code');
+  if (code) window.open(code.dataset.view, '_blank');
+});
 $('notes-mode').addEventListener('input', () => { noteView.clear(); render(); saveToUrl(); });
 // A narrower window can clip notes that fit before, and a wider one the reverse.
 let resizeTimer;
@@ -491,6 +551,15 @@ async function fetchCorpus() {
   show(await response.json(), 'corpus.json');
 }
 
+async function fetchFilesDir() {
+  try {
+    const response = await fetch('files/_location.json', { cache: 'no-store' });
+    if (response.ok) filesDir = (await response.json()).dir ?? filesDir;
+  } catch {
+    // Keep the repo-relative default: it's only for copying paths.
+  }
+}
+
 // Opened from disk: Chrome won't let a file:// page fetch its neighbours, so
 // the user picks the file. With the File System Access API the handle is kept
 // in IndexedDB, so later visits (and Reload) re-read it after one permission
@@ -510,8 +579,9 @@ function idb(mode, fn) {
     };
   });
 }
-const savedHandle = () => idb('readonly', (s) => s.get('corpus')).catch(() => undefined);
-const saveHandle = (h) => idb('readwrite', (s) => s.put(h, 'corpus')).catch(() => undefined);
+// Keys: 'corpus' for corpus.json, 'files' for the files/ folder the viewer reads.
+const savedHandle = (key = 'corpus') => idb('readonly', (s) => s.get(key)).catch(() => undefined);
+const saveHandle = (h, key = 'corpus') => idb('readwrite', (s) => s.put(h, key)).catch(() => undefined);
 
 let handle = null;
 
@@ -567,8 +637,117 @@ $('file-input').addEventListener('change', async (event) => {
 });
 $('reload').addEventListener('click', reload);
 
-(async () => {
+// ---------- Copying paths ----------
+
+async function copyPath(button, file) {
+  const label = button.textContent;
+  try {
+    await navigator.clipboard.writeText(fullPath(file));
+    button.textContent = 'Copied';
+  } catch {
+    button.textContent = 'Copy failed';
+  }
+  setTimeout(() => { button.textContent = label; }, 1500);
+}
+
+// ---------- Viewer (?view=<id>&name=…&file=…) ----------
+
+// The code links open this page in a new tab as a viewer for one downloaded
+// script. The file comes in the URL (its corpus.json `file`), so the viewer
+// needn't load the corpus. Served, it fetches the file from the server; from
+// disk, Chrome won't let the page read a neighbour, so it asks for the files/
+// folder once and keeps the handle, as for corpus.json.
+
+function viewerError(message) {
+  $('viewer-error').textContent = message;
+  $('viewer-error').hidden = false;
+}
+
+function showSource(text) {
+  $('viewer-access').hidden = true;
+  $('source').textContent = text;
+  $('source').hidden = false;
+}
+
+/** Read `file` (a path under files/) through a directory handle for files/. */
+async function readUnder(dir, file) {
+  const parts = file.split('/');
+  for (const part of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(part);
+  return (await (await dir.getFileHandle(parts.at(-1))).getFile()).text();
+}
+
+async function readFromDisk(dir, file) {
+  try {
+    showSource(await readUnder(dir, file));
+  } catch (err) {
+    if (err.name !== 'NotFoundError') throw err;
+    throw new Error('The chosen folder has no ' + file + '. Choose tests/greasyfork-examples/files.');
+  }
+}
+
+async function viewFile(params) {
+  const file = params.get('file');
+  $('summary').hidden = true;
+  $('viewer').hidden = false;
+  if (!file) throw new Error('This viewer link names no file');
+  document.title = params.get('name') || file.split('/').pop();
+  document.querySelector('h1').textContent = document.title;
+  $('viewer-path').textContent = REPO_FILES_DIR + '/' + file;
+  $('viewer-copy').addEventListener('click', () => copyPath($('viewer-copy'), file));
+
   if (location.protocol !== 'file:') {
+    // Any server that serves this folder works (serve-results.mjs, or another
+    // static server). The names on disk keep their percent-encoding, so each
+    // part is encoded again for the URL.
+    const url = 'files/' + file.split('/').map(encodeURIComponent).join('/');
+    const response = await fetch(url, { cache: 'no-store' });
+    if (!response.ok) throw new Error('Could not load files/' + file + ': The server returned HTTP ' + response.status);
+    showSource(await response.text());
+    return;
+  }
+  if (!window.showDirectoryPicker) {
+    throw new Error('This browser can\'t read local folders. Serve the page instead (node tests/greasyfork-examples/serve-results.mjs).');
+  }
+  let dir = await savedHandle('files');
+  // After a failure, the button picks a folder afresh: the saved one may be
+  // the wrong folder, or gone.
+  const offerChoice = (err) => {
+    viewerError(err.message);
+    dir = null;
+    $('viewer-allow').textContent = 'Choose the files/ folder…';
+    $('viewer-access').hidden = false;
+  };
+  $('viewer-allow').addEventListener('click', async () => {
+    $('viewer-error').hidden = true;
+    try {
+      if (dir && (await dir.requestPermission({ mode: 'read' })) !== 'granted') throw new Error('Permission to read ' + dir.name + ' was not granted');
+      const picked = dir ?? await showDirectoryPicker({ id: 'sm-corpus-files', mode: 'read' });
+      await readFromDisk(picked, file);
+      // Kept only once it has worked, so a wrong pick isn't offered again.
+      if (!dir) await saveHandle(picked, 'files');
+      dir = picked;
+    } catch (err) {
+      if (err.name !== 'AbortError') offerChoice(err);
+    }
+  });
+  if (dir && (await dir.queryPermission({ mode: 'read' })) === 'granted') {
+    try { await readFromDisk(dir, file); } catch (err) { offerChoice(err); }
+    return;
+  }
+  // Granting access needs a click.
+  $('viewer-allow').textContent = dir ? 'Allow reading ' + dir.name + '/' : 'Choose the files/ folder…';
+  $('viewer-access').hidden = false;
+}
+
+(async () => {
+  const params = new URLSearchParams(location.search);
+  if (params.has('view')) {
+    if (location.protocol !== 'file:') await fetchFilesDir();
+    try { await viewFile(params); } catch (err) { viewerError(err.message); }
+    return;
+  }
+  if (location.protocol !== 'file:') {
+    await fetchFilesDir();
     try { await fetchCorpus(); } catch (err) { loadError(err.message); }
     return;
   }

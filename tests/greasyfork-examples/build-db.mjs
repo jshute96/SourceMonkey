@@ -24,7 +24,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseHeader } from '../../dist/userscript-header.js';
 import {
-  CORPUS_JSON, classifyPattern, detectMaxFilename, findExisting, listingRows, parseResourceValue, readCorpus, readDownloaded, resolveDependencyUrl,
+  CORPUS_JSON, classifyPattern, checkRoot, findExisting, listingRows, parseResourceValue, readCorpus, readDownloaded, resolveDependencyUrl,
+  printHelp,
 } from './corpus.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -170,8 +171,9 @@ async function fileFacts(root, url) {
 }
 
 async function main() {
+  if (printHelp(process.argv.slice(2), import.meta.url)) return;
   const opts = parseArgs(process.argv.slice(2));
-  await detectMaxFilename(opts.root, { create: false });
+  await checkRoot(opts.root);
 
   // Drop the WAL sidecars too: SQLite would treat a stray -wal next to a
   // freshly created database as content to recover.

@@ -23,12 +23,13 @@
 //                              --limit N
 //   set ID [options]         record a finding:
 //                              --test pass|fail|n/a
-//                              --reason R   why it's n/a (see REASONS)
+//                              --reason R   why it's n/a, with --test n/a only (see REASONS)
 //                              --blame B    whose fault a failure is (see BLAMES)
 //                              --note TEXT  markdown; --note-file PATH reads it from a file
 //                              --tag T / --untag T  (repeatable)
 //                              --version V  default: the @version of the copy in files/ now
 //                              --date D     default: today (YYYY-MM-DD)
+//   help                     print this (so does --help or -h, anywhere)
 //
 // Global: --corpus PATH (default corpus.json here), --root PATH (download root).
 // The record format is described in README.md ("Test results").
@@ -43,7 +44,7 @@ import { resolveGrants } from '../../dist/gm-api-catalog.js';
 import { describeDiagnostic } from '../../dist/diagnostic-location.js';
 import { matchPatternProblem } from '../../dist/url-match.js';
 import {
-  CORPUS_JSON, detectMaxFilename, findExisting, listingRows, patternTarget, readCorpus, updateCorpus,
+  CORPUS_JSON, checkRoot, findExisting, listingRows, patternTarget, printHelp, readCorpus, updateCorpus,
 } from './corpus.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -128,7 +129,7 @@ function oneOf(value, allowed, what) {
 
 /** Absolute on-disk path → script id, for every downloaded corpus script. */
 async function scriptFiles(corpus, root) {
-  await detectMaxFilename(root, { create: false });
+  await checkRoot(root);
   const byFile = new Map();
   for (const row of listingRows(corpus)) {
     const file = await findExisting(root, row.script_url);
@@ -207,18 +208,19 @@ async function importValidation(opts, results, unchecked = []) {
     if (tags.length) valid.tags = tags;
     valid.date = date;
     if (result.version) valid.version = result.version;
-    updates.set(id, { version: result.version, sites: targetSites(source), valid });
+    updates.set(id, { version: result.version, file: path.relative(opts.root, file), sites: targetSites(source), valid });
   }
 
   await updateCorpus(opts.corpus, (live) => {
     for (const id of unchecked) {
       const record = live[id];
-      if (record) { delete record.valid; delete record.sites; delete record.version; }
+      if (record) { delete record.valid; delete record.sites; delete record.version; delete record.file; }
     }
     for (const [id, update] of updates) {
       const record = live[id] ?? (live[id] = {});
       if (update.version) record.version = update.version;
       else delete record.version;
+      record.file = update.file;
       if (update.sites.length) record.sites = update.sites;
       else delete record.sites;
       record.valid = update.valid;
@@ -267,7 +269,7 @@ async function runValidator(opts) {
 async function downloadedVersion(opts, id) {
   const listing = (await readCorpus(opts.corpus))[id]?.listing;
   if (!listing) return undefined;
-  await detectMaxFilename(opts.root, { create: false });
+  await checkRoot(opts.root);
   const file = await findExisting(opts.root, listing.script_url);
   const header = file && parseHeader(await readFile(file, 'utf8'));
   return (header && getValue(header, 'version')?.trim()) || undefined;
@@ -277,11 +279,13 @@ async function setFinding(opts) {
   const [id] = opts.positional;
   if (!/^\d+$/.test(id ?? '')) throw new Error('The set command needs a numeric script id');
   oneOf(opts.test, TEST_STATUSES, 'test status');
+  // Before the value checks, so a free-text reason on a fail says to use the
+  // note, rather than listing the n/a reasons.
+  if (opts.reason && opts.test !== 'n/a') throw new Error('The --reason option only goes with --test n/a. Explain other results with --note.');
+  if (opts.blame && opts.test !== 'fail') throw new Error('The --blame option only goes with --test fail');
   oneOf(opts.reason, REASONS, 'reason');
   oneOf(opts.blame, BLAMES, 'blame');
   if (opts.date && !/^\d{4}-\d{2}-\d{2}$/.test(opts.date)) throw new Error('The --date option must be YYYY-MM-DD');
-  if (opts.reason && opts.test !== 'n/a') throw new Error('The --reason option only goes with --test n/a');
-  if (opts.blame && opts.test !== 'fail') throw new Error('The --blame option only goes with --test fail');
   const note = opts['note-file'] ? (await readFile(opts['note-file'], 'utf8')).trim() : opts.note?.trim();
   // A bare status is no use to the next reader; say what was seen.
   if ((opts.test === 'fail' || opts.test === 'n/a') && !note) {
@@ -321,9 +325,7 @@ async function show(opts) {
   const record = corpus[id];
   if (!record) throw new Error(`No script ${id} in the corpus`);
   console.log(JSON.stringify(record, null, 2));
-  // Not stored in the record: the path depends on the filesystem's name-length
-  // limit (see detectMaxFilename), so it differs between machines.
-  await detectMaxFilename(opts.root, { create: false });
+  await checkRoot(opts.root);
   const file = record.listing && await findExisting(opts.root, record.listing.script_url);
   console.log(`\nFile: ${file ? path.relative(process.cwd(), file) : '(not downloaded)'}`);
 }
@@ -356,10 +358,12 @@ async function list(opts) {
 }
 
 async function main() {
-  const [command, ...rest] = process.argv.slice(2);
+  const argv = process.argv.slice(2);
+  if (printHelp(argv[0] === 'help' ? ['--help'] : argv, import.meta.url)) return;
+  const [command, ...rest] = argv;
   if (!Object.hasOwn(COMMAND_OPTIONS, command ?? '')) {
     throw new Error(`${command ? `Unknown command "${command}"` : 'No command given'}. ` +
-      `Use one of: ${Object.keys(COMMAND_OPTIONS).join(', ')}. See the comment at the top of this file.`);
+      `Use one of: ${Object.keys(COMMAND_OPTIONS).join(', ')}. Run with --help for usage.`);
   }
   const opts = parseArgs(command, rest);
   switch (command) {

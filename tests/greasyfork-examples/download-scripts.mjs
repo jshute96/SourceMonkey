@@ -38,7 +38,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseHeader, getValues } from '../../dist/userscript-header.js';
 import {
-  CORPUS_JSON, dependencyUrlFor, detectMaxFilename, exists, listingRows, readCorpus, readDownloaded, resolveTarget, urlToPath,
+  CORPUS_JSON, dependencyUrlFor, checkRoot, exists, listingRows, readCorpus, readDownloaded, resolveTarget, urlToPath,
+  printHelp,
 } from './corpus.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -288,9 +289,9 @@ async function collectDependencies(scriptUrls, opts, tag) {
 }
 
 async function main() {
+  if (printHelp(process.argv.slice(2), import.meta.url)) return;
   const opts = parseArgs(process.argv.slice(2));
-  const maxFilename = await detectMaxFilename(opts.root);
-  if (maxFilename < 255) console.info(`Filesystem caps filenames at ${maxFilename} bytes; longer names get hashed`);
+  await checkRoot(opts.root, { create: true });
   const rows = listingRows(await readCorpus(opts.corpus));
   const scriptUrls = rows
     .map((row) => row.script_url)

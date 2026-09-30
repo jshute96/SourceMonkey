@@ -28,7 +28,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CORPUS_JSON, updateCorpus } from './corpus.mjs';
+import { CORPUS_JSON, printHelp, updateCorpus } from './corpus.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const ORIGIN = 'https://greasyfork.org';
@@ -141,6 +141,7 @@ function parseListingPage(html) {
 }
 
 async function main() {
+  if (printHelp(process.argv.slice(2), import.meta.url)) return;
   const opts = parseArgs(process.argv.slice(2));
   const files = opts.files.length > 0 ? opts.files : await defaultFiles(opts.dir);
   if (files.length === 0) throw new Error(`No gfpage*.html files found in ${opts.dir}`);
