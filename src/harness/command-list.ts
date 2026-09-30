@@ -21,9 +21,40 @@ export interface HelpItem {
   commands?: string[];
 }
 
+/**
+ * How a command's words are read (command-args.ts): what its arguments
+ * are, beside its flags.
+ * - `none`: none.
+ * - `words`: separate words, quotes grouping one; `max` of them.
+ * - `selector`: the rest of the line as typed, less the flags, which can
+ *   be anywhere (a selector never starts with --).
+ * - `text`: `before` words, then the rest of the line as typed. Flags
+ *   come before it; a `--word` in it is its own.
+ */
+export interface ArgSyntax {
+  args: 'none' | 'words' | 'selector' | 'text';
+  max?: number;
+  before?: number;
+  /** A tab (T2, targetId=...) can lead its arguments. */
+  tab?: boolean;
+  /** It takes a `{{` block of lines. */
+  block?: boolean;
+  /** Its text can hold a `{{` word (type's), rather than one being a slip. */
+  bracesInText?: boolean;
+  /** Text quoted as a whole is unquoted: `any` quotes (default), `single` (JSON), or `none` (JavaScript). */
+  unquote?: 'any' | 'single' | 'none';
+  /** Its flags can also end unquoted text, and a near miss of one there is refused (wait log). */
+  trailingFlags?: boolean;
+}
+
 export interface HelpCommand {
   /** The command's name, then its arguments. */
   usage: string;
+  /**
+   * How its words are read; `words` when not given. A form named by a
+   * keyword (`wait log <text>`) has its own.
+   */
+  syntax?: ArgSyntax;
   about: string | string[];
   args?: HelpItem[];
   options?: HelpItem[];
@@ -51,6 +82,11 @@ export interface HelpSection {
 }
 
 const BROWSER = ['start', 'clear'];
+
+// The common syntaxes.
+const NONE: ArgSyntax = { args: 'none' };
+const WORDS: ArgSyntax = { args: 'words' };
+const TEXT: ArgSyntax = { args: 'text' };
 const TAB_LOADS = ['newtab', 'open', 'reload'];
 const SETTLING = ['start', ...TAB_LOADS, 'click', 'hover', 'type', 'key'];
 
@@ -100,8 +136,8 @@ export const HELP_SECTIONS: HelpSection[] = [
   {
     title: 'General commands',
     commands: [
-      { usage: 'help [command]...', about: 'Show commands and options.' },
-      { usage: 'exit', about: 'End this sm-dev. Runs it started without --detach stop.' },
+      { usage: 'help [command]...', syntax: WORDS, about: 'Show commands and options.' },
+      { usage: 'exit', syntax: NONE, about: 'End this sm-dev. Runs it started without --detach stop.' },
     ],
   },
   {
@@ -113,6 +149,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     commands: [
       {
         usage: 'start [script]... [url]...',
+        syntax: WORDS,
         about: ['Start a server process and connect to a browser.', 'Load the listed userscripts.', 'Open a tab for each listed URL.', 'Starts with the ID from --run. Stops existing runs with that ID.'],
         args: [
           { term: '[script]...', about: 'Files ending in .user.js, directories, or globs.' },
@@ -172,10 +209,10 @@ export const HELP_SECTIONS: HelpSection[] = [
       '',
     ],
     commands: [
-      { usage: 'start <script>... [url]...', about: 'Start a run, and connect to it. See Starting a run.', pointer: true },
-      { usage: 'list', about: 'List the active runs.' },
-      { usage: 'attach [ID]', about: 'Connect to an existing run.' },
-      { usage: 'stop [ID|--all]', about: 'Stop a run, or all runs.' },
+      { usage: 'start [script]... [url]...', about: 'Start a run, and connect to it. See Starting a run.', pointer: true },
+      { usage: 'list', syntax: NONE, about: 'List the active runs.' },
+      { usage: 'attach [ID]', syntax: { args: 'words', max: 1 }, about: 'Connect to an existing run.' },
+      { usage: 'stop [ID|--all]', syntax: { args: 'words', max: 1 }, about: 'Stop a run, or all runs.' },
     ],
   },
   {
@@ -183,6 +220,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     commands: [
       {
         usage: 'status',
+        syntax: NONE,
         about: 'Show overall status, script list, and tab list.',
       },
     ],
@@ -190,10 +228,10 @@ export const HELP_SECTIONS: HelpSection[] = [
   {
     title: 'Scripts',
     commands: [
-      { usage: 'scripts', about: 'List the loaded scripts.' },
+      { usage: 'scripts', syntax: TEXT, about: 'List the loaded scripts.' },
       { usage: 'script <script>', about: 'Select the active script by ID. With T2.3, pick tab T2 too.' },
-      { usage: 'load <script>...', about: 'Load more scripts from disk: files, directories, or globs. See Files and file patterns.' },
-      { usage: 'update [script]', about: 'Re-read one (or all) scripts from disk, and reload all affected tabs.' },
+      { usage: 'load <script>...', syntax: WORDS, about: 'Load more scripts from disk: files, directories, or globs. See Files and file patterns.' },
+      { usage: 'update [script]', syntax: TEXT, about: 'Re-read one (or all) scripts from disk, and reload all affected tabs.' },
     ],
     subsections: [
       {
@@ -205,6 +243,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         commands: [
           {
             usage: 'match [script]... [url]...',
+            syntax: WORDS,
             about: 'Report whether each script would run on each page, and list the header rules that matched or excluded it.',
             args: [
               { term: 'all-scripts', about: 'In a run: all loaded scripts.' },
@@ -214,6 +253,7 @@ export const HELP_SECTIONS: HelpSection[] = [
           },
           {
             usage: 'validate [script]...',
+            syntax: WORDS,
             about: ['Check scripts (headers, syntax, @requires) without loading them.', 'With a directory, all scripts under it.'],
             args: [{ term: 'all', about: 'In a run: all loaded scripts.' }],
             gap: true,
@@ -225,10 +265,11 @@ export const HELP_SECTIONS: HelpSection[] = [
   {
     title: 'Tabs',
     commands: [
-      { usage: 'tabs', about: 'List the tabs this run controls.' },
+      { usage: 'tabs', syntax: { args: 'words', max: 1, tab: true }, about: 'List the tabs this run controls.' },
       { usage: 'tab <tab>', about: 'Select the active tab by ID.' },
       {
         usage: 'open [tab] [page]',
+        syntax: { args: 'words', max: 2 },
         about: 'Open a URL in the current tab, or the tab named (T2).',
         args: [
           { term: '<url>', about: 'A URL.' },
@@ -240,6 +281,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       },
       {
         usage: 'newtab [page...|all]',
+        syntax: WORDS,
         about: [
           'Open a new tab for each page (a URL, file, glob or script ID), or a blank tab.',
           'The first new tab is selected and focused.',
@@ -250,12 +292,13 @@ export const HELP_SECTIONS: HelpSection[] = [
       },
       {
         usage: 'closetab [T<n>...|all]',
+        syntax: WORDS,
         about: ['Close this tab, the tabs named, or all tabs.', 'A page that asks first ("Leave site?") shows its dialog, for accept or dismiss.'],
         options: [{ term: '--force', about: 'Close without running the pages\' beforeunload handlers.' }],
         gap: true,
       },
-      { usage: 'reload [T<n>|all]', about: 'Reload this tab, another tab, or all tabs.', gap: true },
-      { usage: 'focus [T<n>]', about: 'Bring the tab to the front.', gap: true },
+      { usage: 'reload [T<n>|all]', syntax: { args: 'words', max: 1, tab: true }, about: 'Reload this tab, another tab, or all tabs.', gap: true },
+      { usage: 'focus [T<n>]', syntax: { args: 'words', max: 1, tab: true }, about: 'Bring the tab to the front.', gap: true },
     ],
     optionsTitle: 'Options for open, newtab, reload',
     options: [
@@ -282,6 +325,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     commands: [
       {
         usage: 'snapshot [tab] [selector]',
+        syntax: { args: 'selector', tab: true },
         about: ['Print the page, or an element, as its accessibility tree, with a ref for each element.'],
         options: [
           { term: '--visible', about: 'Only what is on screen.' },
@@ -290,13 +334,15 @@ export const HELP_SECTIONS: HelpSection[] = [
       },
       {
         usage: 'screenshot [tab] [selector] <file>',
+        syntax: { args: 'words', max: 2, tab: true },
         about: 'Save a PNG of what is on screen, or of an element.',
         options: [{ term: '--full', about: 'The whole page.' }],
         gap: true,
       },
-      { usage: 'savehtml [tab] <file>', about: 'Save the page\'s HTML (live DOM snapshot).', gap: true },
+      { usage: 'savehtml [tab] <file>', syntax: { args: 'words', max: 1, tab: true }, about: 'Save the page\'s HTML (live DOM snapshot).', gap: true },
       {
         usage: 'probe [tab] <selector>...',
+        syntax: { args: 'words', tab: true },
         about: ['Look up selectors.', 'Report which are found, how many times.'],
         options: [
           { term: '--css', about: `For the first ${PROBE_MAX} matches, show a unique CSS selector, if one exists.` },
@@ -304,7 +350,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         ],
         gap: true,
       },
-      { usage: 'logs [tab]', about: 'Print the page\'s console log and errors so far.', gap: true },
+      { usage: 'logs [tab]', syntax: { args: 'none', tab: true }, about: 'Print the page\'s console log and errors so far.', gap: true },
     ],
   },
   {
@@ -312,6 +358,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     commands: [
       {
         usage: 'click [tab] <selector>',
+        syntax: { args: 'selector', tab: true },
         about: 'Click an element.',
         options: [
           { term: '--button <name>', about: 'left (the default), right or middle.' },
@@ -322,6 +369,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       },
       {
         usage: 'hover [tab] <selector>',
+        syntax: { args: 'selector', tab: true },
         about: 'Move the mouse over an element.',
         options: [
           { term: '--modifiers <keys>', about: 'Keys held, e.g. Alt.' },
@@ -331,13 +379,15 @@ export const HELP_SECTIONS: HelpSection[] = [
       },
       {
         usage: 'type [tab] <selector> <text>',
+        syntax: { args: 'text', before: 1, tab: true, block: true, bracesInText: true },
         about: ['Type text into an element. (Text box, etc.)', 'type <selector> {{ starts multi-line text, ended by }}.'],
         options: [{ term: '--file <path>', about: 'Type a file\'s text, in place of <text>.' }],
         gap: true,
       },
-      { usage: 'key [tab] <keys>...', about: ['Press keys in order, using common key names.', 'e.g. key j Shift+ArrowRight Escape'], gap: true },
+      { usage: 'key [tab] <keys>...', syntax: { args: 'words', tab: true }, about: ['Press keys in order, using common key names.', 'e.g. key j Shift+ArrowRight Escape'], gap: true },
       {
         usage: 'eval [tab] <js>',
+        syntax: { args: 'text', tab: true, block: true, unquote: 'none' },
         about: [
           'Evaluate JavaScript in the page and print the result.',
           'The last expression is the result, as in the DevTools console. A top-level return works too.',
@@ -356,15 +406,16 @@ export const HELP_SECTIONS: HelpSection[] = [
         commands: [
           {
             usage: 'wait [T<n>|all]',
+            syntax: { args: 'words', tab: true },
             about: [
               'Wait until one tab, or all tabs, settles.',
               'Meaning: The page loaded, its scripts ran, and no requests or DOM changes happened for a short interval.',
               'Most commands doing browser actions wait by default before returning, unless they have --nowait.',
             ],
           },
-          { usage: 'wait selector <css>', about: 'Wait until an element matches.', gap: true },
-          { usage: 'wait selector-gone <css>', about: 'Wait until no element matches.' },
-          { usage: 'wait log <text>', about: 'Wait for an output line with the text, or matching /regex/, printed since the previous command began.', gap: true },
+          { usage: 'wait selector <css>', syntax: { args: 'selector' }, about: 'Wait until an element matches.', gap: true },
+          { usage: 'wait selector-gone <css>', syntax: { args: 'selector' }, about: 'Wait until no element matches.' },
+          { usage: 'wait log <text>', syntax: { args: 'text', trailingFlags: true }, about: 'Wait for an output line with the text, or matching /regex/, printed since the previous command began.', gap: true },
           { usage: 'wait <time>', about: 'Wait that long, e.g. 500ms or 2s.', gap: true },
         ],
         options: [
@@ -383,6 +434,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         commands: [
           {
             usage: 'cdp [tab] <Method> [params]',
+            syntax: { args: 'text', tab: true, block: true, unquote: 'none' },
             about: ['Make one Method call, and print the result as JSON.', 'e.g. cdp Input.insertText \'{"text": "hello"}\''],
           },
           { usage: 'cdp [tab] {{', about: 'Make multiple Method calls, one per line, ended by }}.', gap: true },
@@ -394,6 +446,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         commands: [
           {
             usage: 'menu [what]',
+            syntax: { args: 'text', unquote: 'none' },
             about: 'List the tab\'s menu commands, or fire one.',
             args: [
               { term: 'T2', about: 'List a tab\'s.' },
@@ -409,6 +462,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         commands: [
           {
             usage: 'values [what]',
+            syntax: TEXT,
             about: 'Print values scripts have stored in GM Storage.',
             args: [
               { term: '<script>', about: 'One script.' },
@@ -416,9 +470,10 @@ export const HELP_SECTIONS: HelpSection[] = [
               { term: 'T2', about: 'Scripts running on a tab.' },
             ],
           },
-          { usage: 'get <key>', about: 'Print one value for the selected script.', gap: true },
+          { usage: 'get <key>', syntax: TEXT, about: 'Print one value for the selected script.', gap: true },
           {
             usage: 'set <key> <json>',
+            syntax: { args: 'text', before: 1, block: true, unquote: 'single' },
             about: ['Store a value for the selected script.', 'set <key> {{ starts a multi-line block of JSON, ended by }}.'],
             options: [{ term: '--file <path>', about: 'Read the JSON from a file, in place of <json>.' }],
           },
@@ -427,8 +482,8 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         title: 'Dialog boxes',
         commands: [
-          { usage: 'accept [text]', about: 'Answer an open dialog with OK, and a prompt with the text.' },
-          { usage: 'dismiss', about: 'Answer an open dialog with Cancel.' },
+          { usage: 'accept [text]', syntax: TEXT, about: 'Answer an open dialog with OK, and a prompt with the text.' },
+          { usage: 'dismiss', syntax: NONE, about: 'Answer an open dialog with Cancel.' },
         ],
       },
     ],
@@ -437,7 +492,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     title: 'Controlling the SourceMonkey extension',
     text: ['Instead of injecting the scripts itself, a run can push them into the SourceMonkey extension in the browser it connects to.', ''],
     commands: [
-      { usage: 'clear --extension', about: 'Remove all scripts in the extension\'s Scratch collection, and turn solo mode off.' },
+      { usage: 'clear --extension', syntax: NONE, about: 'Remove all scripts in the extension\'s Scratch collection, and turn solo mode off.' },
     ],
     optionsTitle: 'Options for start',
     options: [
@@ -739,10 +794,50 @@ function optionGroupsOf(name: string): { title: string; options: HelpItem[] }[] 
  * first word of each option's term.
  */
 export function commandFlags(name: string): string[] {
-  const options = optionGroupsOf(name).flatMap((group) => group.options.map((item) => item.term.split(/[\s,]/)[0]));
-  // And any a form's usage names itself (`cdp [tab] --file <path>`).
-  const inUsage = formsOf(name).flatMap(({ command }) => command.usage.match(/--[\w-]+/g) ?? []);
-  return [...new Set([...options, ...inUsage])];
+  return Object.keys(commandSyntax(name).flags);
+}
+
+/** How command-args.ts reads a command's words. */
+export interface CommandSyntax {
+  /** Its syntax, before any form's keyword. */
+  base: ArgSyntax;
+  /** Each form's, by its keyword (`wait log`). */
+  forms: Record<string, ArgSyntax>;
+  /** Its flags: each takes a value, or none. */
+  flags: Record<string, 'bool' | 'value'>;
+  /** What a value flag's value is, as its help names it (`<path>`, `FILE`). */
+  values: Record<string, string>;
+  /** Its usage lines, without `sm-dev`, for messages. */
+  usage: string[];
+}
+
+/** A command's syntax, from its help; `words` and no flags for a name that is none. */
+export function commandSyntax(name: string): CommandSyntax {
+  const forms = formsOf(name);
+  const syntax: CommandSyntax = { base: WORDS, forms: {}, flags: {}, values: {}, usage: forms.map(({ command }) => command.usage) };
+  for (const { command } of forms) {
+    // A form named by a keyword (`wait log <text>`), or the command's own.
+    const keyword = /^\S+ ([a-z][a-z-]*)(\s|$)/.exec(command.usage)?.[1];
+    if (keyword && command.syntax) syntax.forms[keyword] = command.syntax;
+    else if (command.syntax) syntax.base = command.syntax;
+  }
+  // `--out FILE`: a value; `--visible`: none.
+  for (const group of optionGroupsOf(name)) {
+    for (const item of group.options) {
+      const [flag, value] = item.term.split(/\s+/);
+      if (!flag.startsWith('--')) continue;
+      const name = flag.split(',')[0];
+      syntax.flags[name] = value ? 'value' : 'bool';
+      if (value) syntax.values[name] = value;
+    }
+  }
+  for (const { command } of forms) {
+    for (const [, flag, value] of command.usage.matchAll(/(--[\w-]+)(?:\s+(<[^>]+>))?/g)) {
+      syntax.flags[flag] ??= value ? 'value' : 'bool';
+      if (value) syntax.values[flag] ??= value;
+    }
+  }
+  return syntax;
 }
 
 /**
@@ -750,8 +845,7 @@ export function commandFlags(name: string): string[] {
  * miss (`--timeout` for `--timeout-seconds`) shows the right one.
  */
 export function noSuchFlag(command: string, flag: string, known: string[] = commandFlags(command)): string {
-  const flags = known.filter((f) => f !== '--help');
-  const takes = flags.length === 0 ? 'It takes no flags.' : `It takes ${flags.join(', ')}.`;
+  const takes = known.length === 0 ? 'It takes no flags.' : `It takes ${known.join(', ')}.`;
   return `The ${command} command has no ${flag} flag. ${takes}`;
 }
 

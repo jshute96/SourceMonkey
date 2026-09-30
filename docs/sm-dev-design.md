@@ -314,21 +314,45 @@ Command marks:
   options, rendered and wrapped to fit.
   - `help <command>` picks one command out of it, with the options any
     section lists for it.
-- The same list gives a run command's accepted flags (from its options
-  and its usage lines, like `cdp [tab] --file <path>`), the names Tab
-  completes, and which commands go to a run.
-- Any other `--` word is refused before the command runs
-  (`commandFlagMistake`). For commands that end in free text, only the
-  words before it are looked at, and only on the command's own line,
-  not a `{{` block's. sm-dev's up-front check uses the same
-  function.
+- The same list gives each command's syntax (`commandSyntax`), the
+  names Tab completes, and which commands go to a run.
+  - Its flags come from its options and usage lines (`cdp [tab] --file
+    <path>`). One whose term names a value (`--out FILE`) takes one.
+  - Its `syntax` says what its arguments are. See below.
 
-### Word splitting
+### Reading a command's words (`command-args.ts`)
 
-- Typed lines are split into words as a shell would, except that a
-  quote opening inside a word stays in it (`a[href="x"]`).
-- A command from sm-dev's command line passes the shell's own words
-  instead, so its quoting holds.
+One parser, `parseCommandArgs`, for every command: sm-dev's own
+(`start`, `stop`, ...) and a run's. It runs before a command does, and
+sm-dev's up-front check runs it too.
+
+- Words:
+  - Typed lines are split as a shell would, except that a quote opening
+    inside a word stays in it (`a[href="x"]`).
+  - A command from sm-dev's command line passes the shell's own words
+    instead, so its quoting holds.
+- Flags:
+  - `--name`, or `--name value` / `--name=value` for one that takes a
+    value. Unknown flags, missing or empty values, values on flags that
+    take none, and repeats are refused.
+  - A quoted word is never a flag.
+  - `--help` where a flag can go is a request for the command's help
+    (`help` in the result). The prompt, stdin and the run show
+    `help <command>`'s text for it.
+  - The global options (`--run`, `--root`, `--local`, which can repeat,
+    ...) go before any command, and `takeGlobalFlags` in `cli.ts` reads
+    them.
+- Arguments, by the command's syntax:
+  - `none`, or `words` (at most `max`).
+  - `selector`: the rest of the line as typed, less its flags, which
+    can go anywhere (a selector never starts with `--`).
+  - `text`: some words, then the rest of the line as typed. Flags go
+    before it; its `--words` are its own. Unquoted as a whole unless
+    it's JavaScript or JSON.
+- Also declared: a leading tab (`tab`), a `{{` block (`block`), and
+  flags that may end unquoted text, with a near miss there refused
+  (`trailingFlags`, for `wait log`).
+- A form named by a keyword has its own syntax (`wait log <text>`).
 - Every command carries sm-dev's directory, for relative paths.
 
 ### Lines, blocks and lists (`command-lines.ts`)

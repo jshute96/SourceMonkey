@@ -209,9 +209,6 @@ export const OFFLINE_NEEDS_SAVED = 'The --offline flag goes with --from-saved';
 /** `--url` without `--from-saved` and exactly one saved page. */
 export const URL_NEEDS_ONE_SAVED = 'The --url flag gives the URL for one saved page, so it goes with --from-saved and a single .html file';
 
-/** A second `--url`. */
-export const ONE_URL = 'The --url flag can be given once';
-
 /** `--from-saved` with no page to open from a file. */
 export const NO_SAVED_FILE = 'The --from-saved flag opens .html files, and none was given';
 

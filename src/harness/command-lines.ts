@@ -19,7 +19,8 @@
 // is a comment (no command starts with `#`). Inside one, every line is
 // the block's own.
 
-import { splitWords } from './page-commands.js';
+import { splitWords } from './command-args.js';
+import { ALIASES, COMMAND_NAMES, commandSyntax } from './command-list.js';
 
 /** One command, ready for `runConsoleCommand`. */
 export interface AssembledCommand {
@@ -37,14 +38,14 @@ export interface AssembledCommand {
 const OPEN = '{{';
 const CLOSE = '}}';
 
-// The commands that take a block.
-const BLOCK_COMMANDS = new Set(['eval', 'set', 'type', 'cdp']);
+// The commands that take a block, as their syntax says.
+const BLOCK_COMMANDS = new Set(COMMAND_NAMES.filter((name) => commandSyntax(name).base.block).sort());
 
 /**
  * A `{{` after a command that takes no block. Its lines up to `}}` are
  * skipped, not run one by one as commands.
  */
-export const NOT_A_BLOCK_COMMAND = 'Only the eval, set, type and cdp commands take a {{ block, so its lines up to }} are skipped';
+export const NOT_A_BLOCK_COMMAND = `Only the ${listed([...BLOCK_COMMANDS])} commands take a {{ block, so its lines up to }} are skipped`;
 
 /**
  * A `}}` line with more after it (`}} --nowait`). Only a line of just
@@ -60,6 +61,11 @@ const CLOSE_WITH_TEXT = /^}}\s+\S/;
  * block's lines would otherwise each run as a command.
  */
 export const OPEN_NOT_LAST = 'A {{ block\'s content starts on the line after the {{, and its }} goes on a line of its own';
+
+// `a, b and c`.
+function listed(names: string[]): string {
+  return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+}
 
 /** A block the input ended inside of. */
 export function unclosedBlockMessage(line: number): string {
@@ -115,12 +121,13 @@ export class CommandAssembler {
     const words = trimmed.split(/\s+/);
     if (words.length > 1 && words.at(-1) === OPEN) {
       this.block = { text: trimmed.slice(0, -OPEN.length).trimEnd(), source: [line], line: n };
-      this.refused = !BLOCK_COMMANDS.has(words[0]);
+      this.refused = !BLOCK_COMMANDS.has(ALIASES[words[0]] ?? words[0]);
       return this.refused ? { error: NOT_A_BLOCK_COMMAND } : null;
     }
-    // Not `type`, whose text may hold the word. Split as a command's
-    // words are, so a {{ in a quoted string is left alone.
-    if (words[0] !== 'type' && BLOCK_COMMANDS.has(words[0]) && splitWords(trimmed).slice(1, -1).some((w) => w.text === OPEN)) {
+    // Not where the text may hold the word (type's). Split as a
+    // command's words are, so a {{ in a quoted string is left alone.
+    const name = ALIASES[words[0]] ?? words[0];
+    if (BLOCK_COMMANDS.has(name) && !commandSyntax(name).base.bracesInText && splitWords(trimmed).slice(1, -1).some((w) => w.text === OPEN)) {
       return { error: OPEN_NOT_LAST };
     }
     return { command: { text: trimmed, source: [line], line: n } };

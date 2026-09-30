@@ -18,9 +18,12 @@ sm-dev [global options] <command> [args] [-- <command> ...]
   element, an `eval` threw, a `wait` gave up), 2 invalid command
   (`ERROR:`). A few commands still exit 0 when they fail, and `probe`
   reports a missing selector without failing: read the output.
-- An unknown flag's error lists the flags the command takes.
+- Flags take a value after a space or `=` (`--out f.txt`,
+  `--out=f.txt`). An unknown flag's error lists the flags the command
+  takes; stray arguments are refused, with the command's usage.
 - Quotes: in `--stdin` lines, most commands take off one level of
-  quotes around an argument. `eval` doesn't: its line is JavaScript.
+  quotes around an argument. `eval` and `cdp` don't: their quotes are
+  JavaScript's and JSON's. A quoted word is never a flag.
 
 ## Names
 

@@ -101,7 +101,8 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('type\n#notes x')).toEqual(['[sm-dev] ERROR: The type command takes one selector before {{. Quote a selector that has spaces.']);
   expect(await run('type #notes --file notes.txt\nx', scriptsDir.path)).toEqual(['[sm-dev] ERROR: The type command takes text or --file, not both']);
   expect(await run('type #notes --file nope.txt', scriptsDir.path)).toEqual(['[sm-dev] ERROR: Couldn\'t read nope.txt: The file does not exist']);
-  expect(await run('type #notes --file')).toEqual(['[sm-dev] ERROR: The type command takes a selector and one file, e.g. type \'#notes\' --file notes.txt']);
+  expect(await run('type #notes --file')).toEqual(['[sm-dev] ERROR: The --file flag needs a value: --file <path>']);
+  expect(await run('type --file notes.txt')).toEqual(['[sm-dev] ERROR: The type command takes a selector and one file, e.g. type \'#notes\' --file notes.txt']);
   expect(await run('type #notes b\nc')).toEqual(['[sm-dev] ERROR: The type command takes one selector before {{. Quote a selector that has spaces.']);
   await page.evaluate(() => document.querySelector('#notes')!.remove());
 
@@ -128,9 +129,9 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('eval --script T1 --file probe.js', dir)).toEqual(['{\n  "c": 1\n}']);
   expect(await run('eval --file nope.js', dir)).toEqual(['[sm-dev] ERROR: Couldn\'t read nope.js: The file does not exist']);
   expect(await run('eval --file probe.js 1 + 1', dir)).toEqual(['[sm-dev] ERROR: The eval command takes JavaScript or --file, not both']);
-  expect(await run('eval --file', dir)).toEqual(['[sm-dev] ERROR: The --file flag needs a JavaScript file, e.g. eval --file probe.js']);
-  expect(await run('eval --file --script', dir)).toEqual(['[sm-dev] ERROR: The --file flag needs a JavaScript file, e.g. eval --file probe.js']);
-  expect(await run('eval --file probe.js --file probe.js', dir)).toEqual(['[sm-dev] ERROR: The eval command takes one --file']);
+  expect(await run('eval --file', dir)).toEqual(['[sm-dev] ERROR: The --file flag needs a value: --file <path>']);
+  expect(await run('eval --file --script', dir)).toEqual(['[sm-dev] ERROR: The --file flag needs a value: --file <path>']);
+  expect(await run('eval --file probe.js --file probe.js', dir)).toEqual(['[sm-dev] ERROR: The --file flag can be given once']);
   mkdirSync(path.join(dir, 'probes'));
   expect(await run('eval --file probes', dir)).toEqual(['[sm-dev] ERROR: Couldn\'t read probes: It\'s a folder']);
   writeFileSync(path.join(dir, 'blank.js'), '\n');
@@ -218,7 +219,7 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
     JSON.stringify({ result: { type: 'number', value: 4, description: '4' } }, null, 2),
   ]);
   expect(await run('cdp --file calls.txt Page.reload', scriptsDir.path)).toEqual([expect.stringContaining('not both')]);
-  expect(await run('cdp --file')).toEqual(['[sm-dev] ERROR: The --file flag needs a file of calls, e.g. cdp --file calls.txt']);
+  expect(await run('cdp --file')).toEqual(['[sm-dev] ERROR: The --file flag needs a value: --file <path>']);
   // A dialog a call opens stops the wait, and says so.
   expect(await run('cdp Runtime.evaluate {"expression": "alert(1)"}')).toContain('[sm-dev] Runtime.evaluate opened a dialog, which is waiting for an answer.');
   expect(await run('accept')).toEqual(['[sm-dev] Accepted the dialog']);

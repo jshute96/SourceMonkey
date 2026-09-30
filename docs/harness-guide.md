@@ -687,26 +687,43 @@ Some commands take several lines as a block, at the prompt or on stdin:
 - A tab and flags go before the `{{`. Words after a `}}` (`}} --nowait`)
   are an error, and the block is dropped. (`}});` or `}},` is still the
   block's own.)
-- Only `eval`, `set`, `type` and `cdp` take a block; `{{` after another
+- Only `cdp`, `eval`, `set` and `type` take a block; `{{` after another
   command is refused.
 - The prompt shows `... ` while a block is open.
 - `--` inside a block is the block's own, not a command separator.
 - Input that ends inside a block reports it rather than running half of
   it.
 
-### Quoting
+### Quoting and flags
 
-- Quote a selector or text with spaces: `click '.athing .title a'`,
-  `type input 'hello world'`.
+- Quote a selector or text with spaces: `probe '.athing .title a'`,
+  `type input 'hello world'`. `click`, `hover`, `snapshot` and `wait
+  selector` take the rest of the line as the selector, so need no
+  quotes: `click .athing .title a`.
 - On sm-dev's command line, quote `#` too, since the shell reads it as
   a comment: `sm-dev click '#submit'`. The shell's quoting is final
   there.
 - Typed or piped in, a quote that starts a word groups it and is taken
   off, as in a shell. One inside a word stays, so a selector keeps its
   own: `probe a[href="x.html"]`.
-- A word starting with `--` that isn't one of the command's flags is
-  refused, except in free text (`eval`'s JavaScript, `type`'s text, a
-  menu label).
+- Text quoted as a whole is unquoted, for a menu label, `type`'s text,
+  `wait log`'s text: `menu 'Toggle dark'`, `menu T2.'Toggle dark'`. A
+  quoted menu label is always a label, even `menu 'all'`. `set` takes off single
+  quotes only, since JSON's strings are double-quoted. `eval` and
+  `cdp` take off none: their quotes are JavaScript's and JSON's.
+- Flags:
+  - A flag that takes a value takes it after a space or `=`:
+    `--out tree.txt`, `--out=tree.txt`.
+  - An unknown flag, a missing or empty value, a value on a flag that
+    takes none, and a flag given twice are refused. An unknown flag's
+    error names the flags the command takes.
+  - `--help` on any command shows its help, as `help <command>` does,
+    rather than running it.
+  - A quoted word is never a flag: `probe '--x'` looks for `--x`.
+  - In free text (`eval`'s JavaScript, `type`'s text, a menu label), a
+    `--word` is the text's own. Flags go before it.
+- Arguments a command doesn't take are refused: `status now`, `logs T2
+  x`, `stop D1 D2` (with its usage).
 - An invalid command prints `ERROR:` and its message, not the help,
   and fails.
 
@@ -1273,8 +1290,9 @@ Limits of the heuristic:
 - sm-dev's own replies aren't looked at.
 - It sees the lines the run's stream shows. The site's own console
   lines, which `logs` shows, aren't among them.
-- A flag other than `--timeout-seconds` at the end of its text
-  (`--timeout 40`) is refused, rather than looked for as text.
+- A near miss of `--timeout-seconds` ending unquoted text (`--timeout
+  40`) is refused, rather than looked for as text. Other `--words` in
+  the text are text.
 
 ## Background runs and logs
 

@@ -31,12 +31,12 @@ export function staleBuildWarning(): string | null {
   if (!info || !newerFile(path.join(info.source, 'src'), info.builtAt)) return null;
   const checkoutLib = path.join(info.source, 'lib');
   if (path.resolve(checkoutLib) === LIB_DIR) {
-    return 'sm-dev: src/ has changes newer than lib/, so this sm-dev may lack them. Run pnpm run build to include them.';
+    return 'sm-dev: src/ has changes newer than lib/, so this sm-dev may be out of date. Run pnpm run build to rebuild.';
   }
   // An installed copy: the checkout's own build may already be newer.
   const checkout = buildInfo(checkoutLib);
   const built = checkout !== null && !newerFile(path.join(info.source, 'src'), checkout.builtAt);
-  return `sm-dev: SourceMonkey at ${info.source} has changes since this copy was installed, so it may lack them. `
+  return `sm-dev: SourceMonkey at ${info.source} has changes since this copy was installed, so it may be out of date. `
     + (built ? 'Run pnpm install here to copy its new build.' : `Run pnpm run build in ${info.source}, then pnpm install here.`);
 }
 
