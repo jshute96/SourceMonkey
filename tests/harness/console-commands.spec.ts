@@ -276,6 +276,87 @@ test.describe('sm-dev typed commands', () => {
     }
   });
 
+  test('closetab closes the current tab, the tabs named, or all', async ({ page, host, attachment }) => {
+    const [p2, p3, p4, p5] = await Promise.all([1, 2, 3, 4].map(() => page.context().newPage()));
+    const all = [page, p2, p3, p4].map((pg, i) => ({ n: i + 1, page: pg, link: attachment }));
+    const lines: string[] = [];
+    // The run drops a tab from its list once it closes.
+    let open = all;
+    const ctx: ConsoleContext = { host, tabs: () => open.filter((t) => !t.page.isClosed()), scripts: [], out: (l) => lines.push(l), stop: () => undefined };
+    const run = async (line: string) => {
+      lines.length = 0;
+      await runConsoleCommand(line, ctx);
+      return [...lines];
+    };
+    await run('tabs T2');
+
+    // A tab that isn't open closes none.
+    expect(await run('closetab T3 T9')).toEqual(['[sm-dev] There is no open tab T9. Use tabs to list them.']);
+    expect(p3.isClosed()).toBe(false);
+    expect(await run('closetab all T3')).toEqual(['[sm-dev] ERROR: The closetab command takes all by itself, to close all tabs']);
+    expect(await run('closetab T3 T4')).toEqual([]);
+    expect([p3.isClosed(), p4.isClosed()]).toEqual([true, true]);
+    // With none named, the current one, and the page commands move on.
+    expect(await run('closetab')).toEqual(['[sm-dev] T2 has closed, so the page commands now act on T1']);
+    expect(p2.isClosed()).toBe(true);
+
+    // Not the fixture's own page, which the fixture closes.
+    open = [{ n: 5, page: p5, link: attachment }];
+    ctx.tab = undefined;
+    expect(await run('closetab all')).toEqual([]);
+    expect(p5.isClosed()).toBe(true);
+    expect(await run('closetab')).toEqual(['[sm-dev] No tabs are active. Use newtab to open one.']);
+  });
+
+  test('closetab runs beforeunload, so a page that asks first waits on accept or dismiss', async ({ page, fixtureServer, host, attachment }) => {
+    const lines: string[] = [];
+    const asker = await page.context().newPage();
+    const dialogs = await DialogTracker.attach(asker, (l) => lines.push(l), { visible: false, commandsComing: true });
+    await asker.goto(`${fixtureServer.baseUrl}/target.html`);
+    await asker.evaluate(() => window.addEventListener('beforeunload', (e) => e.preventDefault()));
+    // Chrome asks only on a page the person has used.
+    await asker.mouse.click(5, 5);
+    const tabs = [{ n: 1, page, link: attachment }, { n: 2, page: asker, link: attachment, dialogs }];
+    const ctx: ConsoleContext = { host, tabs: () => tabs.filter((t) => !t.page.isClosed()), scripts: [], out: (l) => lines.push(l), stop: () => undefined };
+    const run = async (line: string) => {
+      lines.length = 0;
+      await runConsoleCommand(line, ctx);
+      return [...lines];
+    };
+    await run('tabs T2');
+
+    const asks = ['[sm-dev] The page opened a beforeunload dialog. Type accept to leave the page or dismiss to stay.'];
+    expect(await run('closetab')).toEqual(asks);
+    // Waiting on it, it's left open; the others still close.
+    const other = await page.context().newPage();
+    tabs.push({ n: 3, page: other, link: attachment });
+    expect(await run('closetab T2 T3')).toEqual(['[sm-dev] T2 is waiting on a beforeunload dialog, so it was not closed. Answer it, or use closetab T2 --force.']);
+    expect([asker.isClosed(), other.isClosed()]).toEqual([false, true]);
+    await run('dismiss');
+    expect(asker.isClosed()).toBe(false);
+    expect(await run('closetab')).toEqual(asks);
+    await run('accept');
+    await expect.poll(() => asker.isClosed()).toBe(true);
+  });
+
+  test('closetab --force closes a tab whose dialog waits', async ({ page, fixtureServer, host, attachment }) => {
+    const lines: string[] = [];
+    const asker = await page.context().newPage();
+    const dialogs = await DialogTracker.attach(asker, (l) => lines.push(l), { visible: false, commandsComing: true });
+    await asker.goto(`${fixtureServer.baseUrl}/target.html`);
+    await asker.evaluate(() => window.addEventListener('beforeunload', (e) => e.preventDefault()));
+    await asker.mouse.click(5, 5);
+    const tabs = [{ n: 1, page, link: attachment }, { n: 2, page: asker, link: attachment, dialogs }];
+    const ctx: ConsoleContext = { host, tabs: () => tabs.filter((t) => !t.page.isClosed()), scripts: [], out: (l) => lines.push(l), stop: () => undefined };
+    await runConsoleCommand('closetab T2', ctx);
+    expect(lines).toEqual(['[sm-dev] The page opened a beforeunload dialog. Type accept to leave the page or dismiss to stay.']);
+    // Forced, even while its dialog waits.
+    lines.length = 0;
+    await runConsoleCommand('closetab T2 --force', ctx);
+    expect(lines).toEqual([]);
+    expect(asker.isClosed()).toBe(true);
+  });
+
   test('open and newtab take a script, meaning its default page', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {
     const target = `${fixtureServer.baseUrl}/target.html`;
     const pages = await loadScript({

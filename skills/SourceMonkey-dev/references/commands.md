@@ -77,6 +77,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `tabs`, `tab T2` | List (with targetIds); pick the current tab |
 | `newtab [page...]` | Open a controlled tab (becomes current) |
 | `newtab --noscript <url>` | A tab the scripts stay out of (sticky) |
+| `closetab [T2 T3...\|all]` | Close the current tab, the ones named, or all. A page's "Leave site?" dialog waits for `accept`/`dismiss`; `--force` skips it |
 | `open [page]` | Navigate the current tab |
 | `reload [T2\|all]` | Reload |
 | `focus [tab]` | Bring to the front |
@@ -100,7 +101,8 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 
 | Command | Does |
 | --- | --- |
-| `click <sel>`, `hover <sel>` | Real mouse input, scrolled into view |
+| `click <sel>`, `hover <sel>` | Real mouse input, scrolled into view. A failure names the check that failed (hidden, disabled, moving, covered by what) |
+| `click <sel> --button right --modifiers Shift --count 2` | Right or middle button, keys held (`Control+Alt`), double or triple click |
 | `type <sel> <text>` | Type key by key |
 | `type <sel> {{` | Type several lines exactly (line breaks are Enter; the final one before `}}` isn't typed) |
 | `type <sel> --file <path>` | Type a file's text exactly, including a final line break |

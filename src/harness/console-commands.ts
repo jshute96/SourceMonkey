@@ -152,7 +152,7 @@ const NO_SCRIPTS = 'No scripts are loaded';
 
 
 // The commands that act on the current tab, which there may not be.
-const NEEDS_A_TAB = new Set(['menu', 'open', 'reload', 'focus', 'accept', 'dismiss', ...PAGE_COMMANDS]);
+const NEEDS_A_TAB = new Set(['menu', 'open', 'reload', 'focus', 'closetab', 'accept', 'dismiss', ...PAGE_COMMANDS]);
 
 // `script` and `tab` pick one, as `scripts` and `tabs` do given one,
 // so each is run as its plural.
@@ -361,6 +361,8 @@ export async function runConsoleCommand(
     }
     case 'newtab':
       return openNewTab(ctx, args, cwd);
+    case 'closetab':
+      return closeTabs(ctx, args, tab);
     case 'tabs': {
       if (!argument) {
         printTabs(ctx);
@@ -1163,6 +1165,85 @@ function printTabs(ctx: ConsoleContext): void {
   }
 }
 
+// How long `closetab` waits for a tab to close, or to ask first.
+const CLOSE_TIMEOUT_MS = 5000;
+
+// `closetab [tab...|all] [--force]`: closes the current tab, the tabs
+// named, or all of them. Each is named before any closes, so a slip
+// closes none. The tabs' own close handlers say each closed.
+//
+// The page's beforeunload handlers run, as when a person closes a tab,
+// so a page that asks first ("Leave site?") shows its dialog, which the
+// dialog tracker reports for `accept` (leave) or `dismiss` (stay).
+// `--force` skips them.
+async function closeTabs(ctx: ConsoleContext, args: string[], current: ControlledTab): Promise<void | false> {
+  const force = args.includes('--force');
+  const words = args.filter((w) => w !== '--force');
+  let tabs: ControlledTab[];
+  if (words.length === 1 && words[0] === 'all') {
+    tabs = ctx.tabs();
+  } else if (words.length === 0) {
+    tabs = [current];
+  } else {
+    tabs = [];
+    for (let i = 0; i < words.length; i++) {
+      // The ids as `tabs` shows them, `[targetId=... pageId=4]`, are two words.
+      const pair = /^\[targetId=[^\]]+$/i.test(words[i]) && /^pageId=\d+\]$/i.test(words[i + 1] ?? '');
+      if (words[i] === 'all') {
+        ctx.out('[sm-dev] ERROR: The closetab command takes all by itself, to close all tabs');
+        return false;
+      }
+      const picked = pickTab(ctx, pair ? `${words[i]} ${words[++i]}` : words[i]);
+      if (!picked) return;
+      if (!tabs.includes(picked)) tabs.push(picked);
+    }
+  }
+  // A page stopped by a dialog can't run its beforeunload, so it's left
+  // open, as `reload all` leaves it; the rest still close.
+  const waiting = force ? [] : tabs.filter((t) => t.dialogs?.current);
+  for (const t of waiting) {
+    ctx.out(`[sm-dev] ${tabName(t)} is waiting on ${dialogKind(t.dialogs!.current!)} dialog, so it was not closed. Answer it, or use closetab ${tabName(t)} --force.`);
+  }
+  await Promise.all(tabs.filter((t) => !waiting.includes(t)).map((t) => closeTab(ctx, t, force)));
+  // Says where the page commands act now, if their tab closed.
+  currentTab(ctx);
+}
+
+// Closes one tab for `closetab`, and says if it didn't close: it asked
+// first (its dialog, reported by the tracker, is waiting on an answer),
+// or it didn't close in time.
+async function closeTab(ctx: ConsoleContext, tab: ControlledTab, force: boolean): Promise<void> {
+  const { page } = tab;
+  if (force) {
+    // A page stopped on a dialog never finishes closing, so the dialog
+    // goes first: a beforeunload one accepted, which leaves the page,
+    // any other dismissed.
+    const dialog = tab.dialogs?.take();
+    if (dialog) await (dialog.type() === 'beforeunload' ? dialog.accept() : dialog.dismiss()).catch(() => undefined);
+    await page.close({ runBeforeUnload: false }).catch(() => undefined);
+    return;
+  }
+  let timer: NodeJS.Timeout | undefined;
+  let onClose = (): void => undefined;
+  const closedOrLate = new Promise<void>((resolve) => {
+    onClose = resolve;
+    page.once('close', onClose);
+    timer = setTimeout(resolve, CLOSE_TIMEOUT_MS);
+  });
+  // Watched from before the close, which may open it at once. Its
+  // dialog, if it asks, is said by the tracker, along with what accept
+  // and dismiss do with it.
+  const asking = tab.dialogs?.untilDialog(closedOrLate.then(() => false)) ?? closedOrLate.then(() => false);
+  // With beforeunload run, Playwright doesn't wait for the close.
+  await page.close({ runBeforeUnload: true }).catch(() => undefined);
+  const asked = await asking;
+  clearTimeout(timer);
+  page.off('close', onClose);
+  if (!asked && !page.isClosed()) {
+    ctx.out(`[sm-dev] ${tabName(tab)} didn't close within ${CLOSE_TIMEOUT_MS / 1000} seconds. Use closetab --force to close it without running its beforeunload handlers.`);
+  }
+}
+
 // `newtab [page]...`: a tab of the run's own for each page (a URL, a
 // script's number, a file or a glob of them), controlled from the start.
 // The first becomes the current tab and comes to the front. `newtab all`
@@ -1614,7 +1695,8 @@ export class DialogTracker {
     }
     this.current = dialog;
     this.currentOrdinal = ordinal;
-    const typed = `type ${dialog.type() === 'prompt' ? 'accept [text]' : 'accept'} or dismiss`;
+    const typed = dialog.type() === 'beforeunload' ? 'type accept to leave the page or dismiss to stay'
+      : `type ${dialog.type() === 'prompt' ? 'accept [text]' : 'accept'} or dismiss`;
     const how = !this.visible ? `${typed[0].toUpperCase()}${typed.slice(1)}`
       : this.commandsListening ? `Answer it in the browser, or ${typed}`
         : 'Answer it in the browser';

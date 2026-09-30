@@ -246,7 +246,10 @@ async function openBrowser(
   let launchedAt: string | null = null;
   if (opts.tempBrowser) {
     const port = await freePort();
-    browser = await chromium.launch({ headless: !opts.headed, args: [`--remote-debugging-port=${port}`] });
+    // Muted when hidden: a page's sound (a video site's autoplay) has
+    // no window to say where it comes from. A headed one keeps it.
+    const args = [`--remote-debugging-port=${port}`, ...(opts.headed ? [] : ['--mute-audio'])];
+    browser = await chromium.launch({ headless: !opts.headed, args });
     launchedAt = cdpEndpoint(String(port));
   } else {
     endpoint = cdpSetting(opts);

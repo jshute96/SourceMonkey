@@ -479,7 +479,7 @@ For userscript repos to install, so their coding agents know how to use `sm-dev`
 |------|-------------|
 | `skills/SourceMonkey-dev/SKILL.md` | The skill: what the tools are, working rules, the core loop, and recipes for common development tasks |
 | `skills/SourceMonkey-dev/references/commands.md` | `sm-dev` commands summarized by task, with naming, waiting and `eval` details |
-| `skills/SourceMonkey-dev/references/cdp.md` | Raw CDP recipes beside a run: wheel, right-click, drag, window size, fullscreen, per-frame tracing |
+| `skills/SourceMonkey-dev/references/cdp.md` | Raw CDP recipes beside a run: wheel, clicks at a point, drag, window size, fullscreen, per-frame tracing |
 | `skills/SourceMonkey-dev/references/specs.md` | Writing Playwright specs with the harness fixture: example, sm-dev-to-fixture mapping, network requests |
 | `skills/SourceMonkey-friction/SKILL.md` | When and how to log friction with the SourceMonkey tools in the shared `../SourceMonkey-friction.md` log |
 | `skills/SourceMonkey-friction/references/template.md` | The friction log's starting file: title, tags, and the entry format |

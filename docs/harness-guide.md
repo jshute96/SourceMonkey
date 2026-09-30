@@ -834,6 +834,7 @@ In a run, not given files, they act on the run's scripts and tabs:
 | `tabs` | Lists the controlled tabs |
 | `tab <tab>` | Picks the current tab, which the page commands act on. `tabs <tab>` works too |
 | `newtab [page...\|all]` | Opens a new tab with the scripts for each page, or a blank tab |
+| `closetab [tab...\|all]` | Closes the current tab, the tabs named, or all of them. Runs the pages' `beforeunload` handlers unless `--force` (see [Page dialogs](#page-dialogs)) |
 | `open [page]` | Navigates the tab to a URL or file (a glob matching one), or to a script's default page |
 | `reload [tab\|all]` | Reloads the page, another tab's, or all tabs at once. `--noscript` / `--script` switch the tabs' scripts off or back on first |
 | `focus [tab]` | Brings the tab to the front, un-minimizing its window |
@@ -970,7 +971,16 @@ the stream, rather than being answered automatically.
 - While one is open, the page's JavaScript is stopped, so:
   - `menu`, `set`, `reload` and `open` refuse until it is answered;
   - `load` and `update` refuse for a dialog in any tab;
-  - `reload all` skips that tab and says so.
+  - `reload all` skips that tab and says so;
+  - `closetab` leaves that tab open and says so, unless `--force`.
+- `closetab` runs the page's `beforeunload` handlers, as closing a tab
+  by hand does. A page that asks first ("Leave site?") opens a
+  `beforeunload` dialog: `accept` leaves and closes the tab, `dismiss`
+  keeps it open.
+  - Chrome only asks on a page that has had a click or key press
+    (sm-dev's `click`, `type` and `key` count).
+  - `closetab --force` closes without running the handlers, even with
+    a dialog open.
 - A command that opens a dialog returns once the dialog is up, and says
   so.
 - A dialog in a tab the run doesn't use is left alone, for you to
@@ -989,6 +999,7 @@ current one.
 | Run command | What it does |
 | --- | --- |
 | `click <selector>`, `hover <selector>` | A real mouse click or hover, scrolled into view. With several matches, the first |
+| `click <selector> --button right --modifiers Shift --count 2` | A right or middle click, with keys held, or a double (`--count 2`) or triple click |
 | `type <selector> <text>` | Types into an element, key by key |
 | `type <selector> --file <path>` | Types a file's text into an element, a last line break included |
 | `key <keys>...` | Presses keys in order: `key j Shift+ArrowRight Escape` (`keys` works too) |
@@ -1009,6 +1020,11 @@ current one.
   they did. `--nowait` skips that.
 - One that opens a dialog returns once the dialog is up; answer it with
   `accept` or `dismiss`.
+- `click` and `hover` wait up to 5 seconds for their element to be
+  visible, not moving, and not covered by another element (`click`:
+  also enabled).
+  - Failing, they say which check it kept failing, and name a covering
+    element.
 - `key` takes the standard key names, case-insensitive (`home`,
   `ctrl+end`), and common short ones (`ctrl`, `cmd`, `esc`, `pgdn`,
   `del`).
@@ -1069,7 +1085,7 @@ current one.
 ### `cdp`
 
 `cdp` sends raw CDP calls to the tab, for what can't be done with sm-dev commands
-(mouse wheel, right-click, window size). Each command, or block, opens a CDP
+(mouse wheel, drag, window size). Each command, or block, opens a CDP
 session of its own:
 
 ```sh

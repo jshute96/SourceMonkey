@@ -28,7 +28,7 @@ description: Develop, debug and test userscripts with SourceMonkey's sm-dev tool
     [Testing in the real extension](#testing-in-the-real-extension)).
 - **The browser's CDP port stays open** to you as well.
   - Anything sm-dev has no command for (back button, window size, mouse
-    wheel, right-click), do over CDP directly, in the same tab, while
+    wheel, drag), do over CDP directly, in the same tab, while
     the run goes on.
   - `$R cdp` sends raw calls to a tab. See
     [Beyond sm-dev: raw CDP](#beyond-sm-dev-raw-cdp).
@@ -231,6 +231,8 @@ $R click e14                        # refs work anywhere a selector does
 
 ```sh
 $R click '[aria-label="Next"]'
+$R click e14 --button right          # also middle; --modifiers Shift+Control
+$R click '.word' --count 2           # double-click (3: triple)
 $R key j j Shift+ArrowRight
 $R type 'input[name=q]' 'hello world'
 $R hover '.card:first-child'
@@ -241,6 +243,10 @@ $R screenshot shot.png               # then look at the PNG
 
 - Clicks, hovers and keys are real input (scrolled into view, trusted
   events), so the page can't tell them from a person's.
+- A `click` or `hover` that fails says why: the element stayed hidden,
+  disabled or moving, or another element covered it (named). Fix that
+  (hover first, wait, close the overlay) rather than clicking its
+  pixels over `cdp`, which skips those checks.
 - Keys go to the page, not to Chrome: Chrome's shortcuts (back, reload,
   zoom, Escape leaving fullscreen) don't fire.
 - A command that opens a dialog (`alert`, `confirm`, `prompt`) returns
@@ -392,6 +398,9 @@ $R savehtml pages/some-page.html              # the DOM, with the URL recorded
 - `newtab <url>` opens another controlled tab and makes it current;
   `tab T1` switches back. Page commands take a tab first:
   `click T2 '.x'`, `eval T2 location.href`, `menu T2.M1`.
+- `closetab` closes the current tab; `closetab T2 T3` or `closetab all`
+  close others. A page that asks first ("Leave site?") shows its
+  dialog, answered with `accept` or `dismiss`; `--force` skips it.
 - `tabs` lists them with their `targetId`s, for your own CDP clients.
 - `reload all` reloads every tab; `wait all` waits for every tab to
   settle.
@@ -445,8 +454,8 @@ $R cdp T2 Page.getNavigationHistory
 ```
 
 - [references/cdp.md](references/cdp.md) has details and recipes:
-  back and forward, window size, mouse wheel, right-click and modifier
-  clicks, drag, fullscreen, per-frame tracing.
+  back and forward, window size, mouse wheel, clicks at a point,
+  drag, fullscreen, per-frame tracing.
 - `cdp` doesn't wait for the page to settle. Run `wait` after it.
 - For events, or state that outlasts one command, connect your own CDP
   client alongside the run (see the reference).

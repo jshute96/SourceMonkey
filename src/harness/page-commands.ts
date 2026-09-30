@@ -150,8 +150,14 @@ function takeFlags(
   return { flags, rest };
 }
 
+// `click`'s flags, all taking a value.
+const CLICK_FLAGS = { '--button': 'value', '--modifiers': 'value', '--count': 'value' } as const;
+
+// The keys `click --modifiers` can hold, as Playwright names them.
+const MODIFIERS = ['Alt', 'Control', 'ControlOrMeta', 'Meta', 'Shift'] as const;
+
 /** Flags that take a value, so the word after one isn't taken for a tab. */
-export const VALUE_FLAGS = new Set(['--file', '--out', '--timeout-seconds', '--url']);
+export const VALUE_FLAGS = new Set(['--file', '--out', '--timeout-seconds', '--url', ...Object.keys(CLICK_FLAGS)]);
 
 /**
  * A page command's arguments, after the tab if one was named: its
@@ -286,7 +292,12 @@ export async function runPageCommand(
       }
       case 'click':
       case 'hover': {
-        const selector = input.typed ? wholeSelector(input.raw) : input.words.join(' ');
+        const options = command === 'click' ? clickOptions(input) : { selector: input.typed ? wholeSelector(input.raw) : input.words.join(' '), click: {}, how: [] };
+        if (typeof options === 'string') {
+          say(`ERROR: ${options}`);
+          return;
+        }
+        const { selector } = options;
         if (!selector) {
           say(`ERROR: The ${command} command needs a selector, e.g. ${command} '#submit'`);
           return;
@@ -294,8 +305,11 @@ export async function runPageCommand(
         const count = await matches(page, selector, say);
         if (count === null) return;
         const target = locate(page, selector).first();
-        const action = command === 'click' ? target.click({ timeout: ACTION_TIMEOUT_MS }) : target.hover({ timeout: ACTION_TIMEOUT_MS });
-        await act(action, `${command === 'click' ? 'Clicked' : 'Hovered over'} ${named(page, selector)}${count > 1 ? ` (the first of ${count} matches)` : ''}`);
+        const action = command === 'click'
+          ? target.click({ ...options.click, timeout: ACTION_TIMEOUT_MS })
+          : target.hover({ timeout: ACTION_TIMEOUT_MS });
+        const how = options.how.length > 0 ? ` with ${options.how.join(', ')}` : '';
+        await act(action, `${command === 'click' ? 'Clicked' : 'Hovered over'} ${named(page, selector)}${count > 1 ? ` (the first of ${count} matches)` : ''}${how}`);
         return;
       }
       case 'type': {
@@ -743,16 +757,104 @@ function keyParts(typed: string): string[] {
   return typed === '+' ? ['+'] : typed.endsWith('++') ? [...typed.slice(0, -2).split('+'), '+'] : typed.split('+');
 }
 
+// Playwright's click options that `click`'s flags set.
+interface ClickFlags {
+  button?: 'left' | 'right' | 'middle';
+  modifiers?: (typeof MODIFIERS)[number][];
+  clickCount?: number;
+}
+
+/**
+ * `click`'s selector and flags: Playwright's options for them, and how
+ * the click differs from a plain one, as said after it (`the right
+ * button`). Or what's wrong with them. Typed, the selector is the rest
+ * of the line as typed, less the flags and their values.
+ */
+export function clickOptions(input: Pick<PageInput, 'words' | 'raw' | 'typed'>): {
+  selector: string;
+  click: ClickFlags;
+  how: string[];
+} | string {
+  const flags: Record<string, string> = {};
+  let selector: string;
+  if (input.typed) {
+    const words = splitWords(input.raw);
+    let rest = input.raw;
+    // Cut from the end, so the earlier spans stay where they were.
+    for (let i = words.length - 1; i >= 0; i--) {
+      if (!Object.hasOwn(CLICK_FLAGS, words[i].text)) continue;
+      const value = words[i + 1];
+      if (!value || Object.hasOwn(CLICK_FLAGS, value.text)) return `The ${words[i].text} flag needs a value`;
+      flags[words[i].text] = value.text;
+      rest = rest.slice(0, words[i].start) + rest.slice(value.end);
+    }
+    selector = wholeSelector(rest);
+  } else {
+    const parsed = takeFlags('click', input.words, CLICK_FLAGS);
+    if (typeof parsed === 'string') return parsed;
+    Object.assign(flags, parsed.flags);
+    selector = parsed.rest.join(' ');
+  }
+  const click: ClickFlags = {};
+  const how: string[] = [];
+  const button = flags['--button']?.toLowerCase();
+  if (button !== undefined) {
+    if (button !== 'left' && button !== 'right' && button !== 'middle') return `${flags['--button']} is not a mouse button. Use left, right or middle.`;
+    click.button = button;
+    if (button !== 'left') how.push(`the ${button} button`);
+  }
+  if (flags['--modifiers'] !== undefined) {
+    const keys = flags['--modifiers'].split(/[+,]/).filter(Boolean).map(keyName);
+    const bad = keys.find((key) => !(MODIFIERS as readonly string[]).includes(key));
+    if (bad !== undefined || keys.length === 0) return `${bad ?? flags['--modifiers']} is not a modifier key. Use ${MODIFIERS.join(', ')}, joined by +.`;
+    click.modifiers = keys as (typeof MODIFIERS)[number][];
+    how.push(`${keys.join('+')} held`);
+  }
+  if (flags['--count'] !== undefined) {
+    const count = Number(flags['--count']);
+    if (!Number.isInteger(count) || count < 1 || count > 10) return `The --count flag takes a number of clicks from 1 to 10, not ${flags['--count']}`;
+    click.clickCount = count;
+    if (count > 1) how.push(`${count} clicks`);
+  }
+  return { selector, click, how };
+}
+
 // Playwright's message as a person should see it: its first line,
 // without the method it came from (`locator.click: `), capitalized, and
 // with plain words for the common cases.
-function plain(err: Error): string {
+export function plain(err: Error): string {
   const first = err.message.split('\n')[0].replace(/^(\w+(\.\w+)+: )+/, '').replace(/\.$/, '');
   const key = /Unknown key: "(.+)"/.exec(first);
   if (key) return `${key[1]} is not a key name. Keys are named as in Enter, ArrowLeft, Shift+Tab (case-insensitive), or a single character.`;
   const timeout = /Timeout (\d+)ms exceeded/.exec(first);
-  if (timeout) return `The element wasn't ready (visible, stable, and not covered) within ${Number(timeout[1]) / 1000} seconds`;
+  if (timeout) return notReady(err.message, Number(timeout[1]) / 1000);
   return first.charAt(0).toUpperCase() + first.slice(1);
+}
+
+// Longest a covering element's HTML is shown, in characters.
+const COVER_HTML_MAX = 150;
+
+/**
+ * Why an action timed out waiting on its element, from the last check
+ * Playwright's call log says failed (it retries them until the timeout).
+ * A log that names none keeps the general wording.
+ */
+function notReady(message: string, seconds: number): string {
+  // The call log's lines are dimmed with terminal color codes.
+  const lines = message.replace(/\x1b\[\d+m/g, '').split('\n').map((line) => line.trim().replace(/^- /, ''));
+  const within = `for ${seconds} seconds`;
+  for (const line of lines.reverse()) {
+    const covered = /^(.+) intercepts pointer events$/.exec(line);
+    if (covered) {
+      const html = covered[1].length > COVER_HTML_MAX ? `${covered[1].slice(0, COVER_HTML_MAX)}…` : covered[1];
+      return `The element stayed covered ${within}, by ${html}`;
+    }
+    if (line === 'element is not visible') return `The element stayed hidden (or zero-size) ${within}`;
+    if (line === 'element is not enabled') return `The element stayed disabled ${within}`;
+    if (line === 'element is not stable') return `The element kept moving ${within}`;
+    if (line === 'element is outside of the viewport') return `The element stayed outside the viewport ${within}, where it can't be scrolled to`;
+  }
+  return `The element wasn't ready (visible, stable, and not covered) within ${seconds} seconds`;
 }
 
 // How many elements a selector matches, or why it can't be counted.

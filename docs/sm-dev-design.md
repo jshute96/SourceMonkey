@@ -279,7 +279,8 @@ Command marks:
   options, rendered and wrapped to fit.
   - `help <command>` picks one command out of it, with the options any
     section lists for it.
-- The same list gives a run command's accepted flags, the names Tab
+- The same list gives a run command's accepted flags (from its options
+  and its usage lines, like `cdp [tab] --file <path>`), the names Tab
   completes, and which commands go to a run.
 - Any other `--` word is refused before the command runs
   (`commandFlagMistake`). For commands that end in free text, only the
@@ -392,6 +393,8 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
 - A launched Chromium (`--temp-browser`) gets a free debugging port
   too, so other tools can connect, and `list` shows where. (Playwright
   itself talks to it over a pipe.)
+- A hidden one is started with `--mute-audio`, so pages (e.g. video sites)
+  play no sound; a `--headed` one keeps its sound.
 
 ### `--open-browser` (`browser-launch.ts`)
 
@@ -451,6 +454,17 @@ and waits for them.
     as `menu` does), and returns once a dialog is up.
   - The settle wait's limit is kept in Node too, since a stopped page's
     own timer never fires.
+- `closetab` closes with the page's `beforeunload` handlers run, as a
+  person closing the tab would.
+  - A page that asks first opens a `beforeunload` dialog, which the
+    tracker reports like any other: `accept` leaves, `dismiss` stays.
+  - Playwright doesn't wait for such a close, so `closetab` races the
+    close against the tracker for 5 seconds, and names a tab that did
+    neither.
+  - A tab already on a dialog is left open and named, as `reload all`
+    leaves it, while the others close.
+  - `--force` closes without the handlers. It answers an open dialog
+    first (a page stopped on one never finishes closing).
 
 ## Tabs
 
@@ -627,6 +641,9 @@ The run commands that drive and read a tab's page (`click`, `type`,
 
 - Real input comes from Playwright's locators and keyboard; the
   accessibility tree from `ariaSnapshot`.
+- An action whose element never passes Playwright's checks times out.
+  The error names the last check its call log says failed (hidden,
+  disabled, moving, covered by which element), not the general list.
 - Actions then wait for the page to settle (see [Waiting](#waiting-waitts)):
   a navigation they started to reach its DOM, then a MutationObserver
   in the page quiet for 100ms, within 3 seconds.

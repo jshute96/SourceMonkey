@@ -249,6 +249,12 @@ export const HELP_SECTIONS: HelpSection[] = [
         ],
         gap: true,
       },
+      {
+        usage: 'closetab [T<n>...|all]',
+        about: ['Close this tab, the tabs named, or all tabs.', 'A page that asks first ("Leave site?") shows its dialog, for accept or dismiss.'],
+        options: [{ term: '--force', about: 'Close without running the pages\' beforeunload handlers.' }],
+        gap: true,
+      },
       { usage: 'reload [T<n>|all]', about: 'Reload this tab, another tab, or all tabs.', gap: true },
       { usage: 'focus [T<n>]', about: 'Bring the tab to the front.', gap: true },
     ],
@@ -305,7 +311,15 @@ export const HELP_SECTIONS: HelpSection[] = [
   {
     title: 'Driving the page',
     commands: [
-      { usage: 'click [tab] <selector>', about: 'Click an element.' },
+      {
+        usage: 'click [tab] <selector>',
+        about: 'Click an element.',
+        options: [
+          { term: '--button <name>', about: 'left (the default), right or middle.' },
+          { term: '--modifiers <keys>', about: 'Keys held during the click, e.g. Shift or Control+Alt.' },
+          { term: '--count <n>', about: 'Clicks in a row: 2 double-clicks, 3 triple-clicks.' },
+        ],
+      },
       { usage: 'hover [tab] <selector>', about: 'Move the mouse over an element.', gap: true },
       {
         usage: 'type [tab] <selector> <text>',
@@ -448,8 +462,8 @@ export const HELP_SECTIONS: HelpSection[] = [
             ],
           },
           { term: '--profile DIR', about: ['With --open-browser: the browser profile, kept between launches.', '(Default: ~/.config/sm-dev/browser-profile-<port>)'] },
-          { term: '--temp-browser', about: 'Instead, launch a hidden browser for each run, with an empty profile, and close it when the run ends.' },
-          { term: '--headed', about: 'With --temp-browser: make its window visible.' },
+          { term: '--temp-browser', about: 'Instead, launch a hidden, muted browser for each run, with an empty profile, and close it when the run ends.' },
+          { term: '--headed', about: 'With --temp-browser: make its window visible, with sound.' },
         ],
       },
       {
@@ -717,7 +731,10 @@ function optionGroupsOf(name: string): { title: string; options: HelpItem[] }[] 
  * first word of each option's term.
  */
 export function commandFlags(name: string): string[] {
-  return optionGroupsOf(name).flatMap((group) => group.options.map((item) => item.term.split(/[\s,]/)[0]));
+  const options = optionGroupsOf(name).flatMap((group) => group.options.map((item) => item.term.split(/[\s,]/)[0]));
+  // And any a form's usage names itself (`cdp [tab] --file <path>`).
+  const inUsage = formsOf(name).flatMap(({ command }) => command.usage.match(/--[\w-]+/g) ?? []);
+  return [...new Set([...options, ...inUsage])];
 }
 
 // One command's help: its usage, what it does, its arguments and options.

@@ -127,13 +127,25 @@ $R cdp Input.dispatchMouseEvent '{"type": "mouseWheel", "x": 400, "y": 300, "del
 - Pinch zoom on a trackpad arrives as a wheel event with `ctrlKey`: add
   `"modifiers": 2`.
 
-### Right-click, middle-click, modifier clicks
+### Clicks at a point
 
-A click is a press and a release at the same point:
+**On an element, don't use CDP.** Use sm-dev's `click`, which finds
+the element's center, scrolls to it, and checks nothing covers it:
+
+```sh
+$R click e14 --button right            # or middle
+$R click '.item' --modifiers Shift     # Control+Alt, etc.
+$R click '.word' --count 2             # double-click
+```
+
+Raw CDP is only needed for a point that isn't an element's center: a spot in
+a canvas, or a word inside a paragraph. Move there first (pages that
+react to hover need it), then press and release at the same point:
 
 ```sh
 $R --stdin <<'EOF'
 cdp {{
+Input.dispatchMouseEvent {"type": "mouseMoved", "x": 50, "y": 50}
 Input.dispatchMouseEvent {"type": "mousePressed", "x": 50, "y": 50, "button": "right", "clickCount": 1}
 Input.dispatchMouseEvent {"type": "mouseReleased", "x": 50, "y": 50, "button": "right", "clickCount": 1}
 }}
@@ -145,10 +157,14 @@ EOF
   Shift-click is `"modifiers": 8` on both events; Ctrl-Shift is 10.
 - Double-click: a press/release with `clickCount: 1`, then another with
   `clickCount: 2`.
-- The page gets `contextmenu` and `auxclick` events. Chrome's own
-  context menu can't be driven over CDP, so its entries (an
-  extension's included) can't be picked; fire userscript menu commands
-  with `$R menu`.
+- Get the point from the page (see [Where an element is](#where-an-element-is)).
+
+Either way:
+
+- A right-click gives the page `contextmenu` and `auxclick` events.
+  Chrome's own context menu can't be driven over CDP, so its entries
+  (an extension's included) can't be picked; fire userscript menu
+  commands with `$R menu`.
 - A Ctrl- or middle-click on a link opens a tab that the run follows
   (it has an opener), as `T2`.
 

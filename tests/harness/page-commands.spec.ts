@@ -232,6 +232,44 @@ test('a tab closing mid-expression is said as such', async ({ page, fixtureServe
   expect(lines).toEqual(['[sm-dev] The tab closed before the expression finished']);
 });
 
+test('click takes a button, modifiers and a count, and says which check its element failed', async ({ page, fixtureServer, host, attachment, loadScript }) => {
+  const script = await loadScript({ relativePath: 'idle.user.js', meta: { name: 'Idle', match: ['*://*/target.html'] }, body: '' });
+  await page.goto(`${fixtureServer.baseUrl}/target.html`);
+  await page.evaluate(() => {
+    const button = document.createElement('button');
+    button.textContent = 'Press';
+    // Each mouse event it gets: its type, button, click count and Shift.
+    (window as unknown as { seen: string[] }).seen = [];
+    for (const type of ['click', 'dblclick', 'auxclick', 'contextmenu']) {
+      button.addEventListener(type, (e) => {
+        const m = e as MouseEvent;
+        (window as unknown as { seen: string[] }).seen.push(`${type} ${m.button} ${m.detail}${m.shiftKey ? ' shift' : ''}`);
+        e.preventDefault();
+      });
+    }
+    document.body.append(button);
+  });
+  const lines: string[] = [];
+  const tabs = [{ n: 1, page, link: attachment }];
+  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(l), stop: () => undefined };
+  const run = async (line: string) => {
+    lines.length = 0;
+    await runConsoleCommand(line, ctx);
+    return [...lines];
+  };
+  const seen = async () => page.evaluate(() => (window as unknown as { seen: string[] }).seen.splice(0));
+
+  expect(await run('click --button right button')).toEqual(['[sm-dev] Clicked button with the right button']);
+  expect(await seen()).toEqual(['contextmenu 2 0', 'auxclick 2 1']);
+  expect(await run('click T1 button --count 2 --modifiers shift')).toEqual(['[sm-dev] Clicked button with Shift held, 2 clicks']);
+  expect(await seen()).toEqual(['click 0 1 shift', 'click 0 2 shift', 'dblclick 0 2 shift']);
+  expect(await run('click button --button back')).toEqual(['[sm-dev] ERROR: back is not a mouse button. Use left, right or middle.']);
+
+  // Covered, it says by what, rather than listing what it might be.
+  await page.evaluate(() => document.body.insertAdjacentHTML('beforeend', '<div id="over" style="position:fixed;inset:0"></div>'));
+  expect(await run('click button')).toEqual(['[sm-dev] The click command failed: The element stayed covered for 5 seconds, by <div id="over"></div>']);
+});
+
 test('an Escape that leaves the page fullscreen says how to exit', async ({ page, fixtureServer, host, attachment, loadScript }) => {
   const script = await loadScript({
     relativePath: 'full.user.js',

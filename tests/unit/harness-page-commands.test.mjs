@@ -1,11 +1,12 @@
 // Unit tests for how the page commands split a typed line into words,
-// name the keys `key` presses, and read `cdp`'s calls (src/harness/page-commands.ts,
+// name the keys `key` presses, read `click`'s flags and `cdp`'s calls,
+// and word Playwright's errors (src/harness/page-commands.ts,
 // compiled to lib/harness/page-commands.js).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { cdpCalls, cdpCallsTyped, keyName, splitWords } from '../../lib/harness/page-commands.js';
+import { cdpCalls, cdpCallsTyped, clickOptions, keyName, plain, splitWords } from '../../lib/harness/page-commands.js';
 
 const words = (line) => splitWords(line).map((w) => w.text);
 
@@ -99,4 +100,41 @@ test('typed cdp keeps the quotes in its JSON, and takes one call per line', () =
     cdpCallsTyped('\nPage.enable\nnope', { first: 0, name: (n) => `Line ${n} of the block` }),
     'Line 2 of the block: nope is not a CDP method. Methods are named Domain.method, as in Page.reload.',
   );
+});
+
+test('click takes its flags anywhere around the selector', () => {
+  const typed = (raw) => clickOptions({ raw, typed: true, words: [] });
+  assert.deepEqual(typed(`--button right div > a`), { selector: 'div > a', click: { button: 'right' }, how: ['the right button'] });
+  assert.deepEqual(typed(`'#a b' --count 2 --modifiers ctrl+shift`), {
+    selector: '#a b', click: { clickCount: 2, modifiers: ['Control', 'Shift'] }, how: ['Control+Shift held', '2 clicks'],
+  });
+  // A word that's an object's own property is no flag.
+  assert.deepEqual(typed(`toString`), { selector: 'toString', click: {}, how: [] });
+  // Plain values say nothing extra.
+  assert.deepEqual(typed(`e4 --button left --count 1`), { selector: 'e4', click: { button: 'left', clickCount: 1 }, how: [] });
+  // Sent as words from another shell.
+  assert.deepEqual(clickOptions({ raw: '', typed: false, words: ['e4', '--modifiers', 'Alt'] }), {
+    selector: 'e4', click: { modifiers: ['Alt'] }, how: ['Alt held'],
+  });
+});
+
+test('click says what is wrong with its flags', () => {
+  const typed = (raw) => clickOptions({ raw, typed: true, words: [] });
+  assert.equal(typed('e4 --button'), 'The --button flag needs a value');
+  assert.equal(typed('e4 --button back'), 'back is not a mouse button. Use left, right or middle.');
+  assert.equal(typed('e4 --modifiers Shift+Q'), 'Q is not a modifier key. Use Alt, Control, ControlOrMeta, Meta, Shift, joined by +.');
+  assert.equal(typed('e4 --count 0'), 'The --count flag takes a number of clicks from 1 to 10, not 0');
+});
+
+test('a timed-out action says which check its element kept failing', () => {
+  // As Playwright words it: the call log's lines dimmed, the last check last.
+  const log = (...checks) => new Error(['locator.click: Timeout 5000ms exceeded.', 'Call log:',
+    '\x1b[2m  - waiting for locator(\'#x\')\x1b[22m',
+    ...checks.map((c) => `\x1b[2m      - ${c}\x1b[22m`)].join('\n'));
+  assert.equal(plain(log('element is not visible')), 'The element stayed hidden (or zero-size) for 5 seconds');
+  assert.equal(plain(log('element is not visible', 'element is not stable')), 'The element kept moving for 5 seconds');
+  assert.equal(plain(log('element is not enabled')), 'The element stayed disabled for 5 seconds');
+  assert.equal(plain(log('element is visible, enabled and stable', '<div id="over"></div> intercepts pointer events')),
+    'The element stayed covered for 5 seconds, by <div id="over"></div>');
+  assert.equal(plain(log()), 'The element wasn\'t ready (visible, stable, and not covered) within 5 seconds');
 });

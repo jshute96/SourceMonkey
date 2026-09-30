@@ -471,7 +471,8 @@ test('each run command takes the flags its help lists, and no others', async () 
   const saved = [...loads, '--from-saved', '--url', '--offline'];
   const expected = {
     newtab: saved, open: saved, reload: loads,
-    click: ['--nowait'], hover: ['--nowait'], type: ['--nowait', '--file'], key: ['--nowait'],
+    closetab: ['--force'], cdp: ['--file'],
+    click: ['--button', '--count', '--modifiers', '--nowait'], hover: ['--nowait'], type: ['--nowait', '--file'], key: ['--nowait'],
     eval: ['--script', '--file'], snapshot: ['--visible', '--out'], screenshot: ['--full'], probe: ['--css', '--html'],
     wait: ['--timeout-seconds'], status: [], values: [], set: ['--file'], menu: [], tabs: [], focus: [],
   };

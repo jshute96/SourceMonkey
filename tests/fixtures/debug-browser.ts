@@ -33,7 +33,7 @@ export async function launchDebugBrowser(): Promise<DebugBrowser> {
   // In a process group of its own, so its helper processes can be
   // stopped with it.
   const browser = spawn(chromium.executablePath(), [
-    '--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${path.join(dir, 'profile')}`,
+    '--headless=new', '--mute-audio', `--remote-debugging-port=${port}`, `--user-data-dir=${path.join(dir, 'profile')}`,
     '--no-first-run', '--no-default-browser-check', 'about:blank',
   ], { stdio: 'ignore', detached: true });
   let up = false;
