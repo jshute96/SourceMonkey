@@ -16,6 +16,7 @@
 import type { BrowserContext, Page, Worker } from '@playwright/test';
 
 import { SM_DEV_EVENT } from '../sm-dev-link.js';
+import type { StackLayout } from '../composed-source.js';
 import { ExtensionBackend, findExtensionWorker, sourceMonkeyExtensionId, type LogEntry, type PushResult } from './extension-backend.js';
 
 // How long a claim lasts unrenewed, and how often it's renewed. A killed
@@ -248,6 +249,11 @@ export class ExtensionLink {
     return this.call((id) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.getScriptLog(id), scriptId);
   }
 
+  /** How the script's injected entry maps back to its files; see `remapStackText`. */
+  async stackLayout(scriptId: string): Promise<StackLayout | null> {
+    return this.call((id) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.getStackLayout(id), scriptId);
+  }
+
   /** A script's stored values, in the wire form the extension keeps. */
   async values(scriptId: string): Promise<Record<string, unknown>> {
     return this.call((id) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.getGmValues(id), scriptId);
@@ -299,6 +305,7 @@ interface Api {
   setTabScriptsOff(tabId: number, off: boolean): Promise<void>;
   writeScratchScript(args: { text: string; name?: string }): Promise<PushResult>;
   getScriptLog(scriptId: string): Promise<LogEntry[]>;
+  getStackLayout(scriptId: string): Promise<StackLayout | null>;
   getGmValues(scriptId: string): Promise<Record<string, unknown>>;
   writeGmValues(scriptId: string, writes: { key: string; value?: unknown; deleted?: boolean }[]): Promise<void>;
   fireActionContextMenuItem(tabId: number, scriptId: string, commandId: string): Promise<{ ok: boolean }>;

@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { showConsoleLine, showPageError } from '../../lib/harness/page-output.js';
+import { decodeOwnRefs, hostReportedError, isPreludeLine, showConsoleLine, showPageError } from '../../lib/harness/page-output.js';
 
 const SCRIPT = 'sourcemonkey://SourceMonkey/my-script/my-script.user.js';
 const PRELUDE = 'sourcemonkey://SourceMonkey/__prelude.js';
@@ -54,4 +54,22 @@ test("the page's own throws show only with pageErrors", () => {
 
 test('a thrown non-Error value has no stack to judge by, so it shows', () => {
   assert.equal(showPageError('nope', { pageErrors: false, hostReports: true }), true);
+});
+
+test('our own stack refs are decoded once for display; others are left as they are', () => {
+  // A file named `a%20b.user.js` is in its sourceURL as `a%2520b`.
+  const own = 'sourcemonkey://SourceMonkey/a%2520b/a%2520b.user.js';
+  const shown = 'sourcemonkey://SourceMonkey/a%20b/a%20b.user.js';
+  assert.equal(decodeOwnRefs(`boom\n    at f (${own}:3:7)`), `boom\n    at f (${shown}:3:7)`);
+  const cdn = 'https://cdn.test/a%20b.js:1:2';
+  assert.equal(decodeOwnRefs(`at ${cdn} and ${own}:1:1`), `at ${cdn} and ${shown}:1:1`);
+  assert.equal(decodeOwnRefs('100% plain'), '100% plain');
+});
+
+test('the prelude\'s lines and host-reported throws are recognized as repeats', () => {
+  assert.equal(isPreludeLine('[SourceMonkey] x threw'), true);
+  assert.equal(isPreludeLine('[x] SourceMonkey'), false);
+  assert.equal(hostReportedError(`Error: x\n    at f (${SCRIPT}:1:2)`, true), true);
+  assert.equal(hostReportedError(`Error: x\n    at f (${SCRIPT}:1:2)`, false), false);
+  assert.equal(hostReportedError(`Error: x\n    at f (${PRELUDE}:1:2)`, true), false);
 });

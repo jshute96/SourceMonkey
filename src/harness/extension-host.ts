@@ -21,6 +21,9 @@
 
 import { SM_ABANDONED_MSG, SM_ERROR_MSG, SM_START_MSG, SM_SWAPPED_MSG } from '../injector.js';
 import { SKIP_REASON_SM_DEV } from '../sm-dev-link.js';
+import { remapStackText } from '../stack-link.js';
+import type { StackLayout } from '../composed-source.js';
+import { decodeOwnRefs } from './page-output.js';
 import { HarnessHost, valueCodec, type MenuCommandRecord, type PageLink } from './host.js';
 import type { ConsoleContext, OtherScript } from './console-commands.js';
 import type { ExtensionEvent, ExtensionLink } from './extension-link.js';
@@ -54,6 +57,8 @@ export class ExtensionHost extends HarnessHost {
   // The extension's script id by the run's, and back.
   private readonly extensionIds = new Map<string, string>();
   private readonly runIds = new Map<string, string>();
+  // Each pushed script's line layout, by the extension's id.
+  private readonly layouts = new Map<string, StackLayout>();
   private readonly tabs = new Map<number, TabState>();
   private readonly tabsByPage = new Map<PageLink, number>();
   // Events from tabs the run is setting up, by tab id, with when they came.
@@ -75,9 +80,24 @@ export class ExtensionHost extends HarnessHost {
   /** The run's script `runId` is the extension's `extensionId`. */
   setPushed(runId: string, extensionId: string): void {
     const before = this.extensionIds.get(runId);
-    if (before) this.runIds.delete(before);
+    if (before) {
+      this.runIds.delete(before);
+      this.layouts.delete(before);
+    }
     this.extensionIds.set(runId, extensionId);
     this.runIds.set(extensionId, runId);
+  }
+
+  /** How the extension's script `extensionId` maps back to its files, if known. */
+  setLayout(extensionId: string, layout: StackLayout | null): void {
+    if (layout) this.layouts.set(extensionId, layout);
+    else this.layouts.delete(extensionId);
+  }
+
+  // The extension runs the scripts under its own entry URLs, so their
+  // stack lines map by the extension's layouts, not the prepared ones.
+  override remapStack(text: string): string {
+    return remapStackText(text, this.layouts.values());
   }
 
   /** The run's script the extension knows as `extensionId`, if any. */
@@ -194,7 +214,7 @@ export class ExtensionHost extends HarnessHost {
       const runId = this.runIds.get(event.scriptId);
       // A report's own entry (started, threw, skipped) prints as the report.
       if (!runId || event.fromReport) return;
-      this.printLog(this.nameOf(runId), event.entry.level, event.entry.message);
+      this.printLog(this.nameOf(runId), event.entry.level, decodeOwnRefs(this.remapStack(event.entry.message)));
       return;
     }
     if (event.kind === 'values') {

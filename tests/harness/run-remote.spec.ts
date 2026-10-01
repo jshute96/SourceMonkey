@@ -416,6 +416,46 @@ test('one line starts a run, sends it commands, and stops it unless detached', a
   }
 });
 
+test('a reused tab drops the last run\'s scripts; nodes print as tags; own refs decode; wait log sees unstreamed lines', async ({ fixtureServer, scriptsDir }) => {
+  test.setTimeout(60_000);
+  const setup = await setUp();
+  try {
+    const url = `${fixtureServer.baseUrl}/target.html`;
+    const ticker = scriptsDir.write({
+      relativePath: 'ticker.user.js',
+      meta: { name: 'Ticker', match: ['*://*/target.html'] },
+      body: `setInterval(() => console.log('[ticker] tick'), 10);`,
+    });
+    const first = await setup.cli('--root', scriptsDir.path, 'start', '--cdp', String(setup.port), ticker, url, '--', 'wait', 'log', 'tick');
+    expect(first).toContain('[page log] [ticker] tick');
+    expect(first).toContain('[sm-dev] Run D1 ended. Pages still have previously loaded scripts.');
+
+    const nodes = scriptsDir.write({
+      // A `%20` in the file name itself, which its stack refs keep.
+      relativePath: 'my%20nodes.user.js',
+      meta: { name: 'Nodes', match: ['*://*/target.html'] },
+      body: `console.debug(document.getElementById('target'));
+        console.warn('[nodes] at', document.body, 2);
+        (function boom() { throw new Error('boom'); })();`,
+    });
+    const second = await setup.cli(
+      '--root', scriptsDir.path, 'start', '--cdp', String(setup.port), nodes, url,
+      // Logged from the page, with no `[name]`, so the stream leaves it out.
+      '--', 'eval', 'setTimeout(() => console.log("KEYUP", 143), 100)',
+      '--', 'wait', 'log', 'KEYUP',
+    );
+    expect(second).toContain('[sm-dev] Reusing the selected tab, which an earlier run opened');
+    expect(second.filter((l) => l.includes('[ticker]'))).toEqual([]);
+    expect(second).toContain('[page debug] <main id="target">');
+    expect(second).toContain('[page warning] [nodes] at <body> 2');
+    expect(second).toContain('[sm-dev] Wait matched log line: [page log] KEYUP 143');
+    expect(second.some((l) => l.includes('at boom (sourcemonkey://SourceMonkey/my%20nodes/my%20nodes.user.js:'))).toBe(true);
+  } finally {
+    await setup.cli('stop', '--all');
+    await setup.cleanup();
+  }
+});
+
 test('a run logs its stream and the commands that change something', async ({ fixtureServer, scriptsDir }) => {
   test.setTimeout(60_000);
   const setup = await setUp();

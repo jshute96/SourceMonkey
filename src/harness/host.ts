@@ -38,6 +38,7 @@ import {
   type GmDownloadEvent,
 } from '../gm-download.js';
 import { isAllowedTabUrl, tabUrlRefusedMessage } from '../gm-tab.js';
+import { remapStackText } from '../stack-link.js';
 import { access, mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -406,6 +407,16 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
     return [...this.scripts.keys()];
   }
 
+  /**
+   * `text` with each stack frame from an attached script's injected
+   * entry pointed at the file and line it was written in: a
+   * `@require`, or the script itself. Without this, a script with
+   * `@require`s reports lines counted from the top of the requires.
+   */
+  remapStack(text: string): string {
+    return remapStackText(text, [...this.scripts.values()].map((s) => s.stackLayout));
+  }
+
   attachPage(page: PageLink): void {
     this.pages.add(page);
   }
@@ -558,7 +569,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
       case 'sm:error': {
         const report: ErrorReport = this.baseReport(payload, from, {
           message: str(payload.message),
-          stack: str(payload.stack),
+          stack: this.remapStack(str(payload.stack)),
         });
         this.reports.errors.push(report);
         this.notify('script-error', report);

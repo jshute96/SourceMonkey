@@ -131,8 +131,9 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `--timeout-seconds S` | Give up after S seconds (default 5). On `wait log`, put it after the text |
 
 - A tab goes before the form: `wait T2 selector '.x'`.
-- `wait log` sees the lines the run prints, not the site's own console
-  lines (`logs` has those).
+- `wait log` sees the lines the run prints, and also the page's other
+  console lines and errors that `logs` shows. Those are matched in the
+  form the run would print them: `[page log] KEYUP 143`.
 
 Settled means: loaded, scripts started, no requests (under 3 seconds
 old) or DOM changes for 200ms. Timers aren't waited for.

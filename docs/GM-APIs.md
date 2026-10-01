@@ -291,10 +291,10 @@ Architecture:
 
 - Page-side `GM_xmlhttpRequest(details)` returns `{abort}`
   synchronously. The runtime stores the callbacks
-  (`onload`/`onerror`/`ontimeout`/`onabort`) keyed by a generated
-  request id (callbacks aren't serializable across the bridge), and
-  ships a `sm:gm-xhr-start` envelope to the SW with the serializable
-  request fields.
+  (`onload`/`onerror`/`ontimeout`/`onabort`/`onreadystatechange`)
+  keyed by a generated request id (callbacks aren't serializable
+  across the bridge), and ships a `sm:gm-xhr-start` envelope to the
+  SW with the serializable request fields.
 - SW (`src/gm-xhr.ts`) runs `fetch(url, init)` against an
   `AbortController`. On settle it ships a single `sm:gm-xhr-event`
   back to the originating tab via `chrome.tabs.sendMessage`. The
@@ -374,6 +374,7 @@ Response shape on `onload`:
 | `response`       | `responseText` for `text`; parsed object for `json`. |
 | `responseHeaders`| Multi-line `Name: value\r\n…` (TM/VM convention).  |
 | `finalUrl`       | Same as `responseURL`.                             |
+| `readyState`     | `4`, set page-side on every terminal event; `onreadystatechange` gets it just before the terminal callback. |
 
 Binary responseTypes (Phase 9): `blob`, `arraybuffer`, `document`.
 The SW reads `await res.arrayBuffer()` and ships the bytes back as
@@ -405,6 +406,10 @@ Strict-by-default: a script with no `@connect` lines in its header
 is **blocked** from every `GM_xmlhttpRequest`. Scripts must declare
 the hosts they intend to reach.
 
+- A script that grants `GM_xmlhttpRequest` with no `@connect` gets a
+  parse-time warning (`extractStartupLogs` in `script-store.ts`), so
+  the block isn't silent.
+
 Stricter than either reference manager:
 
 - TM prompts the user when a script reaches an undeclared host.
@@ -418,8 +423,15 @@ Grammar (lower-case before matching):
 - `*` — wildcard, allow any host.
 - `self` — allow the script's own `@match`/`@include` hosts (and
   `*.host` subdomains in those globs contribute `host`).
-- `example.com` — exact host match.
-- `*.example.com` — `example.com` itself **and** any subdomain.
+- `example.com` — that host **and** any subdomain, as TM documents
+  (`@connect example.com` covers `api.example.com`). Matched on whole
+  labels, so `evilexample.com` doesn't match.
+  - An IP address or single-label name (`127.0.0.1`, `localhost`,
+    `com`) matches only exactly, so a bare rule can't cover a TLD or
+    an IP range.
+  - Multi-label public suffixes aren't special-cased: `@connect co.uk`
+    covers all of `.co.uk`.
+- `*.example.com` — the same: `example.com` itself **and** any subdomain.
 - A scheme-prefixed URL like `https://example.com` is accepted and
   normalized to its host.
 
@@ -1252,10 +1264,18 @@ too.
 ## DOM injection (`GM_addStyle` / `GM_addElement`)
 
 Both run entirely in USER_SCRIPT world — no SW round-trip, no per-
-script state. USER_SCRIPT-world DOM mutations are CSP-exempt (the
-same dispensation content scripts get), so userscripts can inject
-into pages that ship strict `Content-Security-Policy: script-src
-'self'` without `unsafe-inline`.
+script state. The page's CSP (Content Security Policy) doesn't apply
+to what they insert from that world:
+
+- `<style>` rules apply even where the page's `style-src` omits
+  `'unsafe-inline'`.
+- `<script>` elements are checked against the USER_SCRIPT world's
+  own CSP instead, which allows inline code and any `src` (as in
+  Tampermonkey). So they run even under a strict page `script-src`.
+  See [injection.md](injection.md#lifecycle) for the
+  world config.
+- The same holds for elements a script inserts itself
+  (`document.createElement('script')`), not just via the GM API.
 
 - `GM_addStyle(css)` — creates a `<style>`, sets `textContent`,
   appends to `document.head || document.documentElement`. Returns

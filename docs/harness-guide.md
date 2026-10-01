@@ -194,6 +194,11 @@ What a run prints as it goes:
   would, and nothing is injected.
 - A long stored value is cut after 100 characters in its `GM_setValue`
   line; `get` and `values` show it whole.
+- A DOM node logged to the console, at any level, prints as its opening
+  tag (`<main id="target">`), cut at 120 characters.
+- Stack refs to a script's own `sourcemonkey://SourceMonkey/...` URLs
+  print decoded once, as the viewer's Log tab shows them, so a file
+  named `a%20b.user.js` reads as that, not `a%2520b.user.js`.
 
 Once the script works, capture it in a spec (see
 [Writing specs](#writing-specs-the-playwright-fixture)):
@@ -516,6 +521,10 @@ it takes that tab over, so re-running with the old tab still selected
 reuses it rather than piling up tabs.
 
 - A tab whose run is still going is never taken.
+- The earlier run's scripts still run in a reused tab's page. Its
+  console lines and errors are dropped until the new run's first page
+  load there, so they don't show as the new run's. A run that opens no
+  page there (no scripts, no URL) keeps them.
 - With several windows open, each window's showing tab counts, and the
   first free one found is taken.
 - The tabs runs opened are recorded in `run-tabs.json` in
@@ -543,6 +552,10 @@ them (blocked trackers, failed ad requests) to bury the script's lines.
   - a thrown value that isn't an `Error` (it has no stack, so it is
     always shown).
 - A script's own throw prints once, as `<name> threw:`.
+- Stack lines name the file and line the code was written on, as the
+  extension's Log tab does. A script's `@require`s run concatenated
+  ahead of it, so the raw frames count from the top of the requires;
+  sm-dev maps them back, and a frame in a require names the require.
 - `--page-errors` shows the rest too. Reach for it when the script may
   be breaking the page, or when it runs code outside its own file:
   - a `<script>` element it adds to the page;
@@ -1308,8 +1321,9 @@ Limits of the heuristic:
   command began (not counting a `wait` or a command that only looks),
   so one a click set off while it settled counts. Then at new ones.
 - sm-dev's own replies aren't looked at.
-- It sees the lines the run's stream shows. The site's own console
-  lines, which `logs` shows, aren't among them.
+- It sees the lines the run's stream shows, and the page's other
+  console lines and errors that `logs` shows, matched in the form the
+  stream would print them (`[page log] KEYUP 143`).
 - A near miss of `--timeout-seconds` ending unquoted text (`--timeout
   40`) is refused, rather than looked for as text. Other `--words` in
   the text are text.
@@ -1550,7 +1564,7 @@ test('adds the button to the toolbar', async ({ page, loadUserscript, gm, report
 | --- | --- |
 | `loadUserscript(path, options?)` | Prepares the file with the real pipeline and attaches it to `page`, before the navigation that should see it |
 | `gm` | The scripts' storage, menu commands, and recorded `GM_*` side effects |
-| `reports` | `started()`, `skipped()` (with the rule that missed), `errors()` (message and stack) |
+| `reports` | `started()`, `skipped()` (with the rule that missed), `errors()` (message and stack, its lines mapped to the `@require` or script file as in the run's output) |
 | `serveHtml(file, url?, { block? })` | Routes a saved HTML file at its URL, so `@match` and relative URLs behave as on the live site |
 | `saveHtml(file)` | Writes the page's current DOM to `file`, for `serveHtml` to replay later |
 | `host`, `attachment` | The underlying objects, for anything the others don't cover |
@@ -1734,8 +1748,10 @@ Under the push backend (the default):
 
 - Header validation, URL matching, `@require` scope and local
   overrides, `@grant` gating, world choice.
-- `@run-at` order, apart from the early-start cases under
-  [Known differences](#known-differences-under-the-push-backend).
+- `@run-at` order, including `document-start` code seeing `<html>`
+  and `document-body` code seeing `<body>`. But see
+  [Known differences](#known-differences-under-the-push-backend) for
+  `document-start` against early page scripts.
 - `GM_*` storage semantics, including the write batching and broadcast
   to other pages running the script.
 - `@connect` gating of `GM_xmlhttpRequest`.
@@ -1782,11 +1798,18 @@ These apply to `sm-dev start` and to specs alike.
 
 - Scripts run in the top frame only. A script meant for an iframe
   (`@match` of the frame's URL, no `@noframes`) never starts there.
-- `@run-at document-start` code (and its `@require`s) can run before
-  `<html>` exists, and `document-body` code before `<body>` does.
+- A `@run-at document-start` script usually runs after the page's
+  early `<head>` scripts, where the extension usually runs it first.
+  - Before it runs, it waits for a reply that goes through Node in
+    sm-dev, a much longer trip than the extension's.
+  - A script that must get in first (to capture or hook `fetch`,
+    `XMLHttpRequest`, `addEventListener`) may miss page code here.
 - The isolated world enforces the page's Trusted Types policy, so a
   granted script setting `innerHTML` fails on sites like YouTube. The
   extension's `USER_SCRIPT` world is exempt.
+- An inline `<script>` a granted script inserts (`createElement`,
+  `GM_addElement`) is blocked by a strict page `script-src`. The
+  extension runs it, as Tampermonkey does.
 - A `GM_setValue` made just before the page unloads (a "save and
   reload" button, a `beforeunload` handler) can be lost.
 
