@@ -283,6 +283,25 @@ export async function createFixtureServer(pagesDir: string, examplesDir: string)
         res.end();
         return;
       }
+      // `/__slowbody/<page>?ms=N` sends the headers at once and the
+      // page's bytes N ms later, so the browser has made the new
+      // document well before the parser can create <html>. Clamped
+      // like `/__slow/`'s ms.
+      if (url.pathname.startsWith('/__slowbody/')) {
+        const raw = Number(url.searchParams.get('ms') ?? '0');
+        const ms = Number.isFinite(raw) ? Math.max(0, Math.min(5000, raw)) : 0;
+        const file = path.join(pagesDir, url.pathname.slice('/__slowbody/'.length));
+        const rel = path.relative(pagesDir, file);
+        if (rel.startsWith('..') || path.isAbsolute(rel) || !fs.existsSync(file)) {
+          res.statusCode = 404;
+          res.end();
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.flushHeaders();
+        setTimeout(() => res.end(fs.readFileSync(file)), ms);
+        return;
+      }
       const name = url.pathname.replace(/^\//, '') || 'index.html';
       if (serveStaticFile(res, pagesDir, name)) return;
       if (serveStaticFile(res, examplesDir, name)) return;

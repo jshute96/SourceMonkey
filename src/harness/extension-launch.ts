@@ -42,9 +42,9 @@ export interface LaunchedExtensionBrowser {
 /**
  * Launches Chromium with SourceMonkey loaded. Throws an error saying why
  * when it can't. It has one blank tab, opened after the warm-up (see
- * `warmUp`), for the run's first tab.
+ * `warmUp`), for the run's first tab. `args`: more Chrome flags.
  */
-export async function launchExtensionBrowser(headed: boolean): Promise<LaunchedExtensionBrowser> {
+export async function launchExtensionBrowser(headed: boolean, args: string[] = []): Promise<LaunchedExtensionBrowser> {
   if (!existsSync(path.join(EXTENSION_DIR, 'manifest.json'))) {
     throw new Error(`The built extension is missing from ${EXTENSION_DIR}. ${rebuildAdvice()}`);
   }
@@ -60,7 +60,7 @@ export async function launchExtensionBrowser(headed: boolean): Promise<LaunchedE
     // Port 0 has Chrome pick a free port and write it to the profile.
     // A port picked here could be taken before Chrome binds it, and the
     // run would connect to whatever took it.
-    context = await launch(profile, headed, ['--remote-debugging-port=0']);
+    context = await launch(profile, headed, ['--remote-debugging-port=0', ...args]);
     const port = readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0].trim();
     // This Playwright client isn't the run's, so it leaves the run's
     // dialogs to the run.

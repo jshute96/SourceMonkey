@@ -22,7 +22,7 @@ import { readInputFile } from './input-file.js';
 import { notSettledMessage, SETTLE_TIMEOUT_MS, settleTab } from './wait.js';
 import { savePageHtml } from './save-html.js';
 import { shownPath } from './prepare.js';
-import { documentOf, framesAround, locate, named, noteRefs, onScreen, probeMatches, refOf, refProblem, tidy } from './snapshot.js';
+import { documentOf, framesAround, locate, named, noteRefs, onScreen, probeMatches, refOf, refProblem, tidy, withoutDocument } from './snapshot.js';
 
 export const PAGE_COMMANDS = new Set(['click', 'hover', 'type', 'key', 'eval', 'snapshot', 'screenshot', 'savehtml', 'probe', 'logs', 'cdp']);
 
@@ -271,7 +271,9 @@ export async function runPageCommand(
         return;
       }
       case 'snapshot': {
-        const selector = input.text || 'body';
+        // The whole page is `:root`, not `body`: scripts often add their
+        // panels to <html>, after <body>.
+        const selector = input.text || ':root';
         if (await matches(page, selector, say) === null) return false;
         const visible = input.flags['--visible'] === true;
         let tree = '';
@@ -286,12 +288,15 @@ export async function runPageCommand(
           // Refs resolve against the latest snapshot only, so one of part
           // of the page is followed by one of the whole, quietly, to keep
           // the rest's refs working. An element keeps its ref across
-          // snapshots. Failing, it costs only those refs.
-          if (selector !== 'body') {
-            const whole = await page.locator('body').ariaSnapshot({ mode: 'ai', timeout: ACTION_TIMEOUT_MS }).catch(() => null);
+          // snapshots. The whole is all of `:root`, or a part's elements
+          // outside <body> would lose their refs to it. Failing, it costs
+          // only those refs.
+          if (input.text) {
+            const whole = await page.locator(':root').ariaSnapshot({ mode: 'ai', timeout: ACTION_TIMEOUT_MS }).catch(() => null);
             if (whole !== null) noteRefs(page, whole, doc);
           }
-          tree = tidy(tree);
+          // The whole page's, however named (`:root`, `html`).
+          tree = tidy(withoutDocument(tree));
         })();
         if (!await done(taking)) {
           say('The page opened a dialog during the snapshot, which is waiting for an answer.');

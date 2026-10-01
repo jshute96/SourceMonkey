@@ -114,7 +114,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/styles.css` | Cross-page shared stylesheet linked by every extension page: the header bar and page column, the button surface, collection bubble + scheme chip, display-name, warning banner, modal dialog shell, install-target select, tab strip, site favicons |
 | `src/script-sites.ts` | Rewrites a script's URL into the hosting site's listing page (Greasy Fork, Sleazy Fork, OpenUserJS, gists) and decides the viewer's row |
 | `src/script-links.ts` | Pure helpers for the viewer's link rendering: URL/text tokenizer, header-tag classifier sets, `// @tag value` line parser |
-| `src/stack-link.ts` | Pure stack-ref helpers: `parseStackRefs` splits a log message into text + `{url, line, col}` runs; `displayRefText` decodes our own URLs for reading |
+| `src/stack-link.ts` | Pure stack-ref helpers: parse refs in a log message, decode our URLs for reading, map a stack's lines back to its files |
 | `src/script-source-url.ts` | Canonical `sourcemonkey://SourceMonkey/…` URL builders for every `{code}` entry — main, config, prelude, require, plus page-wide bridge / GM runtime |
 | `src/script-url-hash.ts` | Pure `parseHash` / `buildHash` for the viewer's `#<filename>[:<line>[:<col>]]` / `#Log` URL fragment |
 | `src/userscript-header.ts` | Parser for the `// ==UserScript== … // ==/UserScript==` metadata block + header/body splitter, with per-tag line numbers |
@@ -122,7 +122,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/match-index.ts` | In-memory cache of injectable scripts' matching info, execution world, and which load from disk, kept in sync with `chrome.storage.local`; reports which rows moved, skipping probe-only writes |
 | `src/injector.ts` | Incrementally syncs the enabled script set into `chrome.userScripts`, re-checking unverified rows first, and wraps each body with an activation/error shim |
 | `src/unsafe-window-use.ts` | Text scan for an ungranted `unsafeWindow` reference, ignoring a source that declares the name itself |
-| `src/composed-source.ts` | Concatenates `@require` bodies ahead of the script body; owns the injected entry's line layout for both run paths |
+| `src/composed-source.ts` | Concatenates `@require` bodies ahead of the script body; owns the injected entry's line layout, for both run paths and stack mapping |
 | `src/tab-status.ts` | Pure helpers for per-tab badge view (expected ∪ actual classification incl. NOT LOADED, color, row-label formatter) and per-tab document LRU |
 | `src/missing-scripts.ts` | Log warnings for scripts that matched a page but never started, and the CSP `sandbox` check sm-dev shares |
 | `src/debug-log.ts` | Debug-logging gate for verbose lifecycle messages; off by default, toggled via `chrome.storage.local.smDebugLogging` |
@@ -173,7 +173,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | File | Description |
 |------|-------------|
 | `src/harness/index.ts` | Public entry of the harness package: re-exports the install pipeline, host, injector, and Playwright fixture |
-| `src/harness/page-output.ts` | Which page console lines and uncaught errors `sm-dev start` streams: the scripts', not the site's |
+| `src/harness/page-output.ts` | Which page console lines and errors `sm-dev start` streams (the scripts'), and how logged DOM nodes read |
 | `src/harness/prepare.ts` | Runs the real install pipeline over a file or text under Node and returns the registrable entries, world, matching, and diagnostics; also how paths are shown |
 | `src/harness/parse-check-node.ts` | Node counterpart of the sandboxed parse check: `new Function` verdict plus `vm.Script` location probes |
 | `src/harness/host.ts` | The stand-in service worker: answers every bridge message the injected code sends, under Node, and records what scripts do |
@@ -190,6 +190,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/input-file.ts` | Reads a file a command names for its contents (`eval`, `set`, `type` and `cdp`'s `--file`, `--values-file`) |
 | `src/harness/page-commands.ts` | The run commands that drive and read a tab's page, from `click` and `eval` to `snapshot`, `logs` and raw `cdp` calls |
 | `src/harness/snapshot.ts` | `snapshot`'s element refs, its on-screen filter, and `probe --css`'s suggested CSS selectors |
+| `src/harness/browser-lang.ts` | `sm-dev start --lang`: checks the tags and sets them on tabs; builds GM requests' `Accept-Language` |
 | `src/harness/browser-launch.ts` | `sm-dev --open-browser`: starts a browser that stays open, on a kept profile per port, unless one is up |
 | `src/harness/stale-build.ts` | Warns when sm-dev (in the checkout, or an installed copy) is older than the SourceMonkey source |
 | `src/harness/stuck-tabs.ts` | Before `sm-dev start` connects, names the tabs that don't answer (a dialog, say), and waits for them |
@@ -201,7 +202,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/devtools.ts` | `sm-dev start --devtools`: a Chrome DevTools server per run, and each tab's DevTools page id |
 | `src/harness/run-log.ts` | A run's log file: timestamped names in `/tmp/sm-dev-logs-<user>`, stamped lines, per-run links |
 | `src/harness/tab-refs.ts` | Naming and picking a run's tabs (`T2`, target or page ids), the current tab, the dialog message |
-| `src/harness/wait.ts` | The `wait` command, and when a tab has settled (loaded, scripts started, no requests or DOM changes) |
+| `src/harness/wait.ts` | The `wait` command, when a tab has settled (loaded, scripts started, quiet), and when a load is done |
 | `src/harness/runs.ts` | The runs on this machine: record files, control sockets, and the client connection (`RunClient`) to one |
 | `src/harness/cli.ts` | The `sm-dev` client: global options, `start`, `attach`, `stop`, `exit`, `validate`, `match`, `clear`, `list`, `--stdin`, `--interactive` |
 
@@ -229,11 +230,15 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/fixtures/pages/blank.html` | Minimal fixture page served by the in-test HTTP server |
 | `tests/fixtures/pages/target.html` | Fixture page with a known `#target` element for injection assertions |
 | `tests/fixtures/pages/other.html` | Fixture page used to verify scripts skip non-matching URLs |
-| `tests/fixtures/pages/run-at.html` | Fixture page with a slow-blocker script + `#log` list used by the @run-at readyState-window test |
+| `tests/fixtures/pages/run-at.html` | Fixture page with a slow-blocker script + `#log` list used by the @run-at readyState-window and harness run-at timing tests |
+| `tests/fixtures/pages/window-stop.html` | Fixture page that calls `window.stop()` while an image is pending, so `load` never fires |
 | `tests/fixtures/pages/slow-dcl.html` | Fixture page held at readyState=loading for ~1s, so DOMContentLoaded lands well after the reload fast-path window |
 | `tests/fixtures/pages/page-globals.html` | Fixture page defining page-realm globals, so MAIN-vs-isolated world access can be asserted |
 | `tests/fixtures/pages/wide-icon.svg` | A red 2:1 SVG sized only by its viewBox, the site icon the favicon-badge tests draw under the badge |
+| `tests/fixtures/pages/stopped.html` | Fixture page that stops its own load with `window.stop()`, so it never fires `load` |
 | `tests/fixtures/pages/strict-csp.html` | Fixture page with `style-src 'none'`, for the MAIN-world CSP-blocked-style report |
+| `tests/fixtures/pages/strict-script-csp.html` | Fixture page with `script-src 'self'`, for which CSP governs userscript-inserted scripts |
+| `tests/fixtures/pages/set-page-global.js` | Script that sets a page global, loaded as an external `<script src>` by the CSP tests |
 | `tests/e2e/smoke.spec.ts` | Smoke test: SW loads, collections page renders, fixture server responds |
 | `tests/e2e/exclude-globs.spec.ts` | E2E for `@exclude`: excluded pages stay untouched, a later-added `@exclude` takes effect, plus a Chrome `update`-vs-globs probe |
 | `tests/e2e/include-only.spec.ts` | E2E for `@match`-less scripts: a glob-only `@include` injects and stays in its glob, plus a Chrome `includeGlobs` semantics probe |
@@ -297,7 +302,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/collection-display.test.mjs` | Unit tests for collection-display helpers: type classification, manifest flag, short-name inference, effective display name |
 | `tests/unit/script-sites.test.mjs` | Unit tests for the hosting-site page rewrites, the cross-spelling identity key, and the row's suppression rules |
 | `tests/unit/script-links.test.mjs` | Unit tests for the viewer link helpers: URL/text tokenizer + `// @tag value` line parser + header-marker detectors |
-| `tests/unit/stack-link.test.mjs` | Unit tests for `parseStackRefs` (URL + line/col extraction, query strings, ports) and `displayRefText` (which URLs decode) |
+| `tests/unit/stack-link.test.mjs` | Unit tests for `parseStackRefs` (ref extraction), `displayRefText` (which URLs decode) and `remapStackText` |
 | `tests/unit/script-source-url.test.mjs` | Unit tests for the canonical `sourcemonkey://SourceMonkey/…` URL builders — every URL shape, plus label encoding (dedup `#N`, spaces, emoji) |
 | `tests/unit/bytes.test.mjs` | Base64 round-trip for the byte helpers, including the empty body and past the 32 KiB chunk boundary |
 | `tests/unit/script-url-hash.test.mjs` | Unit tests for `parseHash` / `buildHash`: filename/line/col forms, percent encoding, round-trip, and invalid-input fallbacks |
@@ -321,7 +326,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/harness-devtools.test.mjs` | Unit tests for `start --devtools`: when it is on, and the message when `chrome-devtools` is missing |
 | `tests/unit/harness-page-commands.test.mjs` | Unit tests for how the page commands name keys for `key`, read `click`'s flags and `cdp` calls, and word errors |
 | `tests/unit/harness-command-args.test.mjs` | Unit tests for the command parser: quotes, flags with `=` or not, tabs, text, forms, refused arguments |
-| `tests/unit/harness-snapshot.test.mjs` | Unit tests for `snapshot`: which words are refs, and which lines `--visible` keeps |
+| `tests/unit/harness-snapshot.test.mjs` | Unit tests for `snapshot`: which words are refs, which lines `--visible` keeps, the whole page's tree |
 | `tests/unit/harness-runs.test.mjs` | Unit tests for the run registry: a sent line's round trip, stale records, `stop`'s SIGTERM fallback |
 | `tests/unit/harness-command-lines.test.mjs` | Unit tests for `{{ ... }}` blocks, comments, and lists of commands |
 | `tests/unit/harness-page-output.test.mjs` | Unit tests for which page console lines and errors `sm-dev start` shows |
@@ -345,6 +350,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/options-local-roots.spec.ts` | Options-page local-file-override roots box: hydration, saving, format complaints, missing-directory warnings |
 | `tests/e2e/requires.spec.ts` | End-to-end `@require` coverage: file:// / HTTP relative path prefetch, `.js` suffix + traversal rejection, cross-script dedup, manual-vs-opportunistic refresh policy |
 | `tests/e2e/log-stack-mapping.spec.ts` | Log tab maps `err.stack` lines back to the `@require`/body they came from; clicks and the CSV export follow that mapping |
+| `tests/e2e/stack-lines.spec.ts` | The service worker's stack layout, which `sm-dev --extension` maps with, sends a logged throw to the `@require` and script lines |
 | `tests/e2e/log-export.spec.ts` | Log tab's Save / Copy buttons: save dialog, cancel + write-failure reporting, download fallback, clipboard text, empty-log disable |
 | `tests/unit/injector.test.mjs` | Unit tests for the injector: spec build, active-spec collection, refusal logging, retry limits, sync serialization and scoping |
 | `tests/unit/generated-wrappers.test.mjs` | Guard test: each minified wrapper (`WRAPPER_*`) is a single line of valid JS with load-bearing tokens intact |
@@ -363,6 +369,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/versions-navigation.spec.ts` | E2E for the panel's place on the page, its keyboard walk, and selecting copies from it in place: click / Enter / Space / new-tab, where focus lands, sticky sections, Back, the preview's merged box |
 | `tests/e2e/compare.spec.ts` | E2E tests for the compare page: fields table, per-file tabs and chips, view controls, swap, preview side, missing copy |
 | `tests/e2e/other-versions.spec.ts` | E2E tests for the other-versions panel: absolute-URL matching across collection kinds, per-row toggle, Refresh all, removing the copy on screen, the preview's callout / banner / install-offer section, the heading fold |
+| `tests/e2e/user-script-world-csp.spec.ts` | E2E tests for userscript-inserted `<script>` elements (inline and `src`) under the world CSP and a strict page CSP |
 | `tests/e2e/gm-dom.spec.ts` | E2E tests for `GM_addStyle` / `GM_addElement` — CSS application, tag-aware default parent (head/body), explicit-parent form, GM4 alias, permission gating, the MAIN-world CSP-blocked report |
 | `tests/e2e/gm-clipboard.spec.ts` | E2E tests for `GM_setClipboard` via `navigator.clipboard.writeText` — text round-trip, GM4 alias, permission gating |
 | `tests/e2e/gm-broadcast.spec.ts` | E2E tests for cross-tab `GM_setValue` broadcast — tab B sees tab A's write, survives an SW restart, re-syncs after a missed write or delete |
@@ -379,8 +386,8 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/gm-xhr-credentials.spec.ts` | E2E tests for `GM_xmlhttpRequest` cookies — credentialed by default, withheld by a truthy `anonymous` |
 | `tests/e2e/gm-xhr-headers.spec.ts` | E2E tests for `GM_xmlhttpRequest` header surgery — overrides reach the wire, URL tag stays inside the browser, rule torn down after |
 | `tests/e2e/gm-xhr-binary.spec.ts` | E2E tests for `GM_xmlhttpRequest` binary path — arraybuffer/blob/document via base64 wire reconstruction |
-| `tests/e2e/gm-connect.spec.ts` | E2E tests for `@connect` gating — no-connect blocked, matching exact allowed, `*` wildcard, subdomain match, mismatched host blocked |
-| `tests/unit/gm-connect.test.mjs` | Unit tests for `@connect` parsing/matching — wildcard, self, exact, subdomain, scheme-prefixed normalization, malformed entries |
+| `tests/e2e/gm-connect.spec.ts` | E2E tests for `@connect` gating — no-connect blocked, matching host allowed, `*` wildcard, subdomain match, mismatched host blocked |
+| `tests/unit/gm-connect.test.mjs` | Unit tests for `@connect` parsing/matching — wildcard, self, bare host, subdomain, scheme-prefixed normalization, malformed entries |
 | `tests/unit/gm-download.test.mjs` | Unit tests for the `GM_download` SW dispatcher (URL/name validation, terminal events, timeout, abort, progress polling) |
 | `tests/unit/gm-xhr-headers.test.mjs` | Unit tests for XHR header classification, DNR rule building, and per-request URL tagging |
 | `tests/unit/gm-tab.test.mjs` | Unit tests for the `GM_openInTab` SW dispatcher (mapping, close routing, originator cleanup) |
@@ -439,13 +446,15 @@ extension, driven by the Node host in `src/harness/`.
 | File | Description |
 |------|-------------|
 | `tests/harness/inject.spec.ts` | Injection end to end: start and error reports, URL misses, world choice, storage seeding and writes, cross-page broadcast, remove and re-inject |
+| `tests/harness/run-at.spec.ts` | `@run-at` timing under the push backend: start sees `<html>`, body sees `<body>`, idle runs after `window.stop()` |
 | `tests/harness/xhr.spec.ts` | `GM_xmlhttpRequest` through the host: load and 404, JSON, `@connect` refusals and redirects, cookies, timeout, abort |
 | `tests/harness/browser-apis.spec.ts` | The harness's tabs, menu commands, notifications, downloads and window APIs |
 | `tests/harness/bridge-trust.spec.ts` | What the page can reach: forged requests refused, isolated traffic kept out of the page, subframes ignored |
-| `tests/harness/console-commands.spec.ts` | The commands typed into `sm-dev start`: `scripts`, `values`, `menu` by M number, dialogs, and several tabs |
-| `tests/harness/run-tabs.spec.ts` | `sm-dev start` end to end: followed tabs, `--all`, `--notab`, `load` / `update` / `--watch` reloads, `--from-saved`, sandboxed pages |
+| `tests/harness/console-commands.spec.ts` | The commands typed into `sm-dev start`: `scripts`, `values`, `menu` by M number, dialogs, several tabs, stopped loads |
+| `tests/harness/run-tabs.spec.ts` | `sm-dev start` end to end: followed tabs, `--all`, `--notab`, `load` / `update` / `--watch` reloads, `--from-saved`, sandboxed pages, `--lang` |
 | `tests/harness/cdp-proxy.spec.ts` | The `--devtools` CDP proxy with a plain CDP client: only allowed tabs, in the initial attach, late claims, own sessions |
 | `tests/harness/page-commands.spec.ts` | The run commands that drive and read a page, in both worlds, with dialogs, quoting, and files |
+| `tests/harness/stack-lines.spec.ts` | sm-dev's `threw` reports and console lines name the `@require` or script line a stack frame came from |
 | `tests/harness/wait.spec.ts` | `wait` in its forms, the actions settling on their own, `--nowait`, and what a busy page reports |
 | `tests/harness/browser-launch.spec.ts` | `sm-dev --open-browser`: a browser that outlives sm-dev, started once, and its profile's lock |
 | `tests/harness/run-remote.spec.ts` | `sm-dev start` driven from other shells: `--detach`, `--run`, `--` lines, sent commands, logs, `--devtools`, stuck tabs |

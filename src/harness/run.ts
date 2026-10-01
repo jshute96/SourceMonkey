@@ -12,29 +12,33 @@ import { createServer, type AddressInfo } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { Browser, BrowserContext, Page } from '@playwright/test';
+import type { Browser, BrowserContext, ConsoleMessage, Page } from '@playwright/test';
 
 import { shellWord } from './command-lines.js';
 import {
   commandOutput, commandRunner, DialogTracker, gotoInTab, inCommand, leaveDialogsOpen, onlyInspects, reloadTab, reloadable, serveSavedPage, setCommandsListening, skippedScriptLine, targetIdSuffix,
   warnSavedUserscripts, type CommandRunner, type ConsoleContext, type ControlledTab, type OutputHistory,
 } from './console-commands.js';
+import { applyLang, langLaunchArgs } from './browser-lang.js';
 import { DevToolsLink } from './devtools.js';
 import { ExtensionBackend, extensionLabel, sourceMonkeyState, type LogEntry } from './extension-backend.js';
 import { launchExtensionBrowser } from './extension-launch.js';
 import { HarnessHost, type ErrorReport, type SkipReport, type StartReport } from './host.js';
 import { attachPage, targetIdOf, type PageAttachment } from './inject.js';
 import { pageSays, recordLog } from './page-commands.js';
-import { showConsoleLine, showPageError } from './page-output.js';
+import { consoleText, decodeOwnRefs, hostReportedError, isPreludeLine, showConsoleLine, showPageError } from './page-output.js';
 import {
   defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, preparedScriptPath, prepareScript, shownPath, warningLines, type PreparedScript,
 } from './prepare.js';
 import { comparableUrl, openingSavedLine, routeSavedPage, savedPageServe, type SavedPageStart } from './saved-pages.js';
 import { browserSentence, checkRunsDir, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentCommand, type SentLineHandler } from './runs.js';
 import { cspBlocksPageScripts, sandboxedPageWarning } from '../missing-scripts.js';
+import { unsupportedRunAt } from '../userscript-header.js';
+import { remapStackText } from '../stack-link.js';
+import type { StackLayout } from '../composed-source.js';
 import { waitForStuckTabs } from './stuck-tabs.js';
 import { NO_TABS } from './tab-refs.js';
-import { settleTabs } from './wait.js';
+import { loadPage, settleTabs } from './wait.js';
 
 export interface RunOptions extends ConnectOptions {
   files: string[];
@@ -84,6 +88,8 @@ export interface RunOptions extends ConnectOptions {
   localRoots: string[];
   /** Where the stream goes. */
   out: (line: string) => void;
+  /** Where a line goes that `wait log` can match but the stream leaves out. */
+  hear?: (line: string) => void;
   /** Resolves when the run should end (stop, a signal, --seconds). Omit to return after the first load. */
   until?: Promise<void>;
   /** Called when a client's `stop` asks for the run to end. */
@@ -128,6 +134,11 @@ export interface ConnectOptions {
    */
   extension?: boolean;
   headed?: boolean;
+  /**
+   * `--lang`: the languages the run's tabs prefer (see browser-lang.ts).
+   * A `tempBrowser` is launched with them too.
+   */
+  lang?: string[];
   /** Resolves to give up connecting (--seconds): ends a wait for tabs that don't answer. */
   until?: Promise<void>;
 }
@@ -238,7 +249,7 @@ async function openBrowser(
   if (opts.tempBrowser && opts.extension) {
     let launched;
     try {
-      launched = await launchExtensionBrowser(opts.headed === true);
+      launched = await launchExtensionBrowser(opts.headed === true, langLaunchArgs(opts.lang));
     } catch (err) {
       out(`Could not launch a browser with SourceMonkey: ${(err as Error).message}`);
       return null;
@@ -256,7 +267,7 @@ async function openBrowser(
     const port = await freePort();
     // Muted when hidden: a page's sound (a video site's autoplay) has
     // no window to say where it comes from. A headed one keeps it.
-    const args = [`--remote-debugging-port=${port}`, ...(opts.headed ? [] : ['--mute-audio'])];
+    const args = [`--remote-debugging-port=${port}`, ...(opts.headed ? [] : ['--mute-audio']), ...langLaunchArgs(opts.lang)];
     browser = await chromium.launch({ headless: !opts.headed, args });
     launchedAt = cdpEndpoint(String(port));
   } else {
@@ -368,7 +379,10 @@ async function openRunTab(
       }
     }
   }
-  if (page) out('[sm-dev] Reusing the selected tab, which an earlier run opened');
+  if (page) {
+    out('[sm-dev] Reusing the selected tab, which an earlier run opened');
+    staleTabs.add(page);
+  }
   page ??= await context.newPage();
   const id = await targetIdOf(page);
   if (!id) return page;
@@ -385,6 +399,14 @@ async function openRunTab(
   await writeRunTabs(kept).catch(() => undefined);
   return page;
 }
+
+// Reused tabs whose page is still the earlier run's, with its scripts
+// running. Their console lines and errors would show as this run's, so
+// they are dropped until the run's first navigation commits there. A
+// run with nothing to open there (no scripts, no URL) keeps the page as
+// it is, lines and all. The page is left alone otherwise, so a run that
+// fails before loading anything hasn't erased it.
+const staleTabs = new WeakSet<Page>();
 
 // Written whole and renamed into place, so a run reading it meanwhile
 // never sees half a file, which it would take for an empty one and
@@ -484,7 +506,7 @@ function printSkipped(opts: RunOptions, start: StartPages): void {
 export async function run(opts: RunOptions): Promise<number> {
   const remote = new Remote(opts.out, opts.onStop, opts.onActivity, opts.primaryPid);
   // Every line also goes to whoever sent the command running now.
-  opts = { ...opts, out: remote.out, typed: new Map(opts.files.map((file, i) => [file, opts.given?.[i] ?? file])) };
+  opts = { ...opts, out: remote.out, hear: remote.hear, typed: new Map(opts.files.map((file, i) => [file, opts.given?.[i] ?? file])) };
   const session = await openBrowser(opts, opts.out, { reuseTab: true, openTab: !opts.noTab });
   if (!session) return 1;
   // Which browser, for the stream and the log.
@@ -611,6 +633,14 @@ class Remote {
     }
     this.print(line);
     for (const listener of this.listeners) listener(line);
+    this.hear(line);
+  };
+
+  /**
+   * Keeps a line for `wait log` without printing it: a page console
+   * line the stream leaves out, which `logs` still shows.
+   */
+  readonly hear = (line: string): void => {
     // Only what the page and scripts printed on their own: not a
     // command's own reply (see inCommand).
     if (inCommand.getStore()) return;
@@ -775,12 +805,13 @@ async function runInHarness(
   wireHostOutput(host, opts.out, (record) => tabs.prefixOf(record));
   // T1, unless `--notab`; then the first tab `newtab` opens is T1.
   if (page) {
-    wirePageOutput(page, opts, true);
+    wirePageOutput(page, opts, true, (text) => host.remapStack(text));
     wireSandboxCheck(page, () => tabs.firstTabScripts, opts.out);
     const dialogs = await DialogTracker.attach(page, opts.out, { visible: browserVisible(opts), commandsComing });
     // Attached before preparing, so a reused tab already on a secure
     // page gives the scripts' GM_info the browser's userAgentData.
     // Otherwise it stays null (see TODO.md).
+    await applyLang(page, opts.lang, opts.out);
     const attachment = await attachPage(page, host);
     held.attachment = attachment;
     await attachment.showBadge();
@@ -791,6 +822,7 @@ async function runInHarness(
   const start = startPages(opts, prepared);
   if (!start) return 2;
   const { urls } = start;
+  if (page && urls.length === 0) staleTabs.delete(page);
 
   // The loaded scripts, and the files they came from, in step: `load`
   // adds to both, `update` and `--watch` replace scripts in place.
@@ -813,7 +845,7 @@ async function runInHarness(
     return done;
   };
   const injected = (script: PreparedScript): void =>
-    opts.out(`[sm-dev] Injected ${preparedScriptPath(script)} in world ${script.world}, run-at ${script.runAt}`);
+    opts.out(`[sm-dev] Injected ${preparedScriptPath(script)} in world ${script.world}, run-at ${runAtLabel(script)}`);
   // Put `next` in place everywhere, and reload the tabs `changed` affects.
   const apply = async (next: PreparedScript[], changed: ScriptChange[], none: string): Promise<void> => {
     for (const c of changed) injected(c.next);
@@ -1227,7 +1259,7 @@ class FollowedTabs {
   private async setUp(page: Page, n: number, opener?: number, announce = true, noScript = false): Promise<void> {
     // T1 goes unprefixed, as the run's own does, when `--notab` makes
     // the first tab opened T1.
-    const out = n === 1 ? this.opts.out : (line: string): void => this.opts.out(`[T${n}] ${line}`);
+    const { out, hear } = tabOutput(this.opts, n);
     // First, so a tab that closes during the awaits below is still
     // noticed.
     let announced = false;
@@ -1237,7 +1269,7 @@ class FollowedTabs {
       this.opts.out(`[sm-dev] Tab T${n} closed`);
       this.onTabsChanged();
     });
-    wirePageOutput(page, { ...this.opts, out }, true);
+    wirePageOutput(page, { ...this.opts, out, hear }, true, (text) => this.host.remapStack(text));
     // Not for a tab with no scripts, which gets none either way. Read
     // from the tab once it exists, since `open --script` switches it.
     let tabNow: ControlledTab | null = null;
@@ -1246,6 +1278,7 @@ class FollowedTabs {
       visible: browserVisible(this.opts),
       commandsComing: this.commandsComing,
     });
+    await applyLang(page, this.opts.lang, out);
     const attachment = await attachPage(page, this.host);
     this.numbers.set(attachment, n);
     // Its count would be of scripts that are kept out on purpose.
@@ -1286,7 +1319,7 @@ class FollowedTabs {
     while (this.scripts !== scripts) {
       scripts = this.scripts;
       await this.swapScripts(attachment, scripts);
-      await page.reload().catch(() => undefined);
+      await loadPage(page, (o) => page.reload(o)).catch(() => undefined);
     }
     entry.ready = true;
     if (scripts !== initial) return;
@@ -1368,6 +1401,7 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
   const start = startPages(opts, prepared);
   if (!start) return 2;
   const { urls } = start;
+  if (page && urls.length === 0) staleTabs.delete(page);
   const pushed = new Map<string, string>();
   // The extension's per-script log is the report stream here; it is
   // polled, since nothing pushes it to Node. Only what this run adds is
@@ -1375,6 +1409,10 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
   // than a count: the log rotates at a cap, and a count would go quiet
   // once it did.
   const lastPrinted = new Map<string, LogEntry | null>();
+  // Each pushed script's line layout, for stack lines in its Log
+  // entries and the page's console lines.
+  const layouts = new Map<string, StackLayout>();
+  const remapStack = (text: string): string => remapStackText(text, layouts.values());
   let errors = 0;
   const pushAll = async (scripts: PreparedScript[]): Promise<boolean> => {
     for (const script of scripts) {
@@ -1385,6 +1423,9 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
         return false;
       }
       pushed.set(result.scriptId, preparedScriptPath(script));
+      const layout = await backend.stackLayout(result.scriptId).catch(() => null);
+      if (layout) layouts.set(result.scriptId, layout);
+      else layouts.delete(result.scriptId);
       held.injected = true;
       const entries = await backend.log(result.scriptId).catch(() => [] as LogEntry[]);
       lastPrinted.set(result.scriptId, entries[entries.length - 1] ?? null);
@@ -1413,7 +1454,7 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
         }
         for (const entry of entries.slice(at + 1)) {
           if (entry.level === 'error') errors++;
-          opts.out(`[sm-dev] ${name} ${entry.level}: ${entry.message}`);
+          opts.out(`[sm-dev] ${name} ${entry.level}: ${decodeOwnRefs(remapStack(entry.message))}`);
         }
         if (entries.length > 0) lastPrinted.set(scriptId, entries[entries.length - 1]);
       }
@@ -1440,12 +1481,13 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
         tabFailed(opts, start, prepared, url, err as Error);
         return null;
       }
-      const out = i === 0 ? opts.out : (line: string): void => opts.out(`[T${n}] ${line}`);
+      const { out, hear } = tabOutput(opts, n);
       // Not once the run is ending: a launched browser closes its tabs then.
       tabPage.on('close', () => { if (!ended) opts.out(`[sm-dev] Tab T${n} closed`); });
-      wirePageOutput(tabPage, { ...opts, out }, false);
+      wirePageOutput(tabPage, { ...opts, out, hear }, false, remapStack);
       wireSandboxCheck(tabPage, () => prepared, out);
       await DialogTracker.attach(tabPage, out, { visible: browserVisible(opts) });
+      await applyLang(tabPage, opts.lang, out);
       return { n, url, page: tabPage, targetId: await targetIdOf(tabPage), saved: start.saved[i] };
     }));
     // The extension's own injection sees the URL, so serving the saved
@@ -1464,7 +1506,7 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
         ? `${openingSavedLine(o.saved.given, o.url, `T${o.n}`)}${targetIdSuffix(o.targetId)}`
         : `[sm-dev] Opening ${o.url} in T${o.n}${targetIdSuffix(o.targetId)}`);
     }
-    await Promise.all(opened.map((o) => o && o.page.goto(o.url)
+    await Promise.all(opened.map((o) => o && loadPage(o.page, (nav) => o.page.goto(o.url, nav))
       .catch((err) => opts.out(`[sm-dev] Navigation failed: ${(err as Error).message}`))));
     if (!page) opts.out('[sm-dev] No tab was opened. The scripts run in the pages you browse to.');
     printSkipped(opts, start);
@@ -1475,7 +1517,7 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
         const next = await prepareAll(opts);
         if (!next || !(await pushAll(next))) return;
         // All at once, so one slow page holds up no other.
-        await Promise.all(pages.map((p) => p.reload().catch(() => undefined)));
+        await Promise.all(pages.map((p) => loadPage(p, (o) => p.reload(o)).catch(() => undefined)));
         // With --notab the pages are the person's own, so theirs to reload.
         if (pages.length === 0) opts.out('[sm-dev] Reload your tabs to run the new version');
       });
@@ -1550,8 +1592,16 @@ async function filesStamp(script: PreparedScript): Promise<string> {
   return paths.map((p, i) => `${p}:${times[i]}`).join('|');
 }
 
+// The `Injected` line's run-at, naming a declared value we don't
+// honor (a typo) so a run shows why the script ran at load.
+function runAtLabel(script: PreparedScript): string {
+  const declared = unsupportedRunAt(script.script.header);
+  return declared === undefined ? script.runAt : `${script.runAt} (@run-at ${declared} is not supported)`;
+}
+
 // A script file as the person typed it, for an error to name it as
 // they did; else as paths are shown.
+
 function typedName(opts: RunOptions, file: string): string {
   return opts.typed?.get(file) ?? shownPath(file);
 }
@@ -1576,8 +1626,8 @@ function wireHostOutput(host: HarnessHost, print: (line: string) => void, prefix
   host.on('start', (r: StartReport) => out(r, `[sm-dev] ${r.name} started on ${r.url}`));
   host.on('skip', (r: SkipReport) => out(r, `[sm-dev] ${r.name} skipped on ${r.url}: ${r.reason}`));
   host.on('script-error', (r: ErrorReport) => {
-    out(r, `[sm-dev] ${r.name} threw: ${r.message}`);
-    if (r.stack) for (const line of r.stack.split('\n').slice(1, 4)) out(r, `    ${line.trim()}`);
+    out(r, `[sm-dev] ${r.name} threw: ${decodeOwnRefs(r.message)}`);
+    if (r.stack) for (const line of r.stack.split('\n').slice(1, 4)) out(r, `    ${decodeOwnRefs(line.trim())}`);
   });
   host.on('log', (r) => out(r, `[sm-dev] ${r.name} GM_log: ${r.message}`));
   host.on('request', (r) => out(r, `[sm-dev] GM_xmlhttpRequest ${r.method} ${r.url}: ${r.outcome}${r.status ? ' ' + r.status : ''}${r.error ? ' ' + r.error : ''}`));
@@ -1632,23 +1682,78 @@ function wireSandboxCheck(page: Page, scripts: () => readonly PreparedScript[], 
   });
 }
 
+// A tab's lines are tagged `[T<n>]`, except T1's, as the run's own are.
+function tabOutput(opts: Pick<RunOptions, 'out' | 'hear'>, n: number): Pick<RunOptions, 'out' | 'hear'> {
+  if (n === 1) return { out: opts.out, hear: opts.hear };
+  return {
+    out: (line) => opts.out(`[T${n}] ${line}`),
+    hear: opts.hear && ((line) => opts.hear!(`[T${n}] ${line}`)),
+  };
+}
+
 // `hostReports`: the harness host already prints a script's own throws,
 // so the page's copy of those is skipped. See page-output.ts.
-function wirePageOutput(page: Page, opts: Pick<RunOptions, 'out' | 'pageErrors'>, hostReports: boolean): void {
+// `remapStack` points stack frames in a logged line (`console.error(err)`
+// prints the stack) at the `@require` or script line they came from;
+// see `HarnessHost.remapStack`. It runs before `decodeOwnRefs`, since it
+// matches the scripts' URLs as the page wrote them (still encoded).
+function wirePageOutput(
+  page: Page,
+  opts: Pick<RunOptions, 'out' | 'hear' | 'pageErrors'>,
+  hostReports: boolean,
+  remapStack: (text: string) => string,
+): void {
   const pageErrors = opts.pageErrors ?? false;
-  page.on('console', (msg) => {
-    const line = { type: msg.type(), text: msg.text(), url: msg.location().url, argCount: msg.args().length };
-    // Every line, for `logs`; the stream shows the script's.
+  const show = (msg: ConsoleMessage, text: string): void => {
+    const line = { type: msg.type(), text: decodeOwnRefs(remapStack(text)), url: msg.location().url, argCount: msg.args().length };
+    // Every line, for `logs`; the stream shows the script's. `wait log`
+    // sees them all but the prelude's repeats, in the stream's form.
     recordLog(page, `[${line.type}] ${line.text}`);
-    if (showConsoleLine(line, pageErrors)) opts.out(`[page ${line.type}] ${line.text}`);
+    const shown = `[page ${line.type}] ${line.text}`;
+    if (showConsoleLine(line, pageErrors)) opts.out(shown);
+    else if (!isPreludeLine(line.text)) opts.hear?.(shown);
+  };
+  // Never throws, as the queue below has no one to report to.
+  const showSafely = (msg: ConsoleMessage, text: string): void => {
+    try {
+      show(msg, text);
+    } catch {
+      // Nothing to do: the line is lost.
+    }
+  };
+  // A line that logs a DOM node is described from the page, which
+  // takes a round trip; the lines after it wait, to stay in order.
+  let pending: Promise<void> | null = null;
+  page.on('console', (msg) => {
+    if (staleTabs.has(page)) return;
+    if (!pending && !msg.args().some((arg) => arg.asElement())) {
+      show(msg, msg.text());
+      return;
+    }
+    const next: Promise<void> = (pending ?? Promise.resolve())
+      .then(() => consoleText(msg))
+      .then((text) => showSafely(msg, text), () => showSafely(msg, msg.text()))
+      .finally(() => { if (pending === next) pending = null; });
+    pending = next;
   });
   // Which page load each line came from.
   page.on('framenavigated', (frame) => {
-    if (frame === page.mainFrame()) recordLog(page, `--- ${frame.url()}`);
+    if (frame !== page.mainFrame()) return;
+    staleTabs.delete(page);
+    recordLog(page, `--- ${frame.url()}`);
   });
+  // The uncaught error's stack is not mapped, and must not be:
+  // `showPageError` drops a script's throw the host already reported by
+  // finding the script's `.user.js` URL in it (`SCRIPT_BODY_FRAME`), and
+  // a throw inside a `@require` carries that URL only unmapped. Only the
+  // message is printed anyway.
   page.on('pageerror', (err) => {
-    recordLog(page, `[error] ${err.message}`);
-    if (showPageError(err.stack ?? err.message, { pageErrors, hostReports })) opts.out(`[page error] ${err.message}`);
+    if (staleTabs.has(page)) return;
+    const message = decodeOwnRefs(err.message);
+    const stack = err.stack ?? err.message;
+    recordLog(page, `[error] ${message}`);
+    if (showPageError(stack, { pageErrors, hostReports })) opts.out(`[page error] ${message}`);
+    else if (!hostReportedError(stack, hostReports)) opts.hear?.(`[page error] ${message}`);
   });
 }
 

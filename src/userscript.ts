@@ -194,7 +194,7 @@ import { buildHash } from './script-url-hash.js';
 import { dlog } from './debug-log.js';
 import { displayRefText, parseStackRefs } from './stack-link.js';
 import { remapStackRef, type MappedSegment, type StackRef } from './source-map.js';
-import { USER_SOURCE_START_LINE, composeSource } from './composed-source.js';
+import { stackLayout } from './composed-source.js';
 import { buildRequireSourceUrl, buildSourceUrl } from './script-source-url.js';
 import { CodeTabsView, type CodeTab } from './code-tabs.js';
 import { makeCopyButton } from './copy-button.js';
@@ -1914,9 +1914,10 @@ function storedTabs(script: StoredScript): CodeTab[] {
     (r) => buildRequireSourceUrl(label, r.url),
   );
   // Re-derive the injected entry's line layout so the Log tab can undo
-  // it — see `resolveLogRef`. Same shared `composeSource` the injector
-  // runs, given the same URLs and the same start line, so the segments
-  // are the ones the registered entry's source map was built from.
+  // it — see `resolveLogRef`. `stackLayout` runs the same shared
+  // `composeSource` the injector runs, given the same URLs and the same
+  // start line, so the segments are the ones the registered entry's
+  // source map was built from.
   //
   // Memoised: this concatenates every `@require` body with the script
   // to find the offsets, then discards the text. Renders fire on any
@@ -1927,15 +1928,11 @@ function storedTabs(script: StoredScript): CodeTab[] {
   const layoutKey = `${script.id}@${script.loadedAt}:${label}`;
   if (layoutKey !== stackLayoutKey) {
     stackLayoutKey = layoutKey;
-    const composed = composeSource(script, {
-      requireUrls: requireSourceUrls,
-      mainUrl: mainSourceUrl,
-      startLine: USER_SOURCE_START_LINE,
-    });
-    stackSegments = composed.segments;
-    stackBodyLineCount = composed.lineCount;
+    const layout = stackLayout(script, label);
+    stackSegments = layout.segments;
+    stackEntryUrl = layout.entryUrl;
+    stackBodyLineCount = layout.lineCount;
   }
-  stackEntryUrl = mainSourceUrl;
   const tabs: CodeTab[] = [{
     kind: 'code',
     label: scriptBasename(script.relativePath),

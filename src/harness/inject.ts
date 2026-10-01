@@ -34,6 +34,7 @@ import { WRAPPER_GM_RUNTIME } from '../generated-wrappers.js';
 import { setUserAgentDataSnapshot } from '../injector.js';
 import { GM_RUNTIME_SOURCE_URL } from '../script-source-url.js';
 import type { BrowserActions, HarnessHost, OpenedTab, PageLink } from './host.js';
+import { isLanguageTag } from './browser-lang.js';
 import type { InjectionWorld, PreparedScript } from './prepare.js';
 import { BADGE_BINDING, TabBadge, type BadgeDocument, type BadgeOptions } from './tab-badge.js';
 
@@ -282,6 +283,9 @@ export class PageAttachment implements PageLink {
    */
   onOpenedTab: ((tab: Page) => void) | null = null;
   private mainFrameId = '';
+  // The current document's languages, read once, keyed by the scripts'
+  // world's context in it (a new document gets a new one).
+  private languagesRead: { contextId: number; value: Promise<readonly string[]> } | null = null;
   // The main frame's recent documents by loader id, for the badge: one
   // restored from the back/forward cache is the same document again,
   // with the reports it sent before.
@@ -377,6 +381,9 @@ export class PageAttachment implements PageLink {
     this.cdp.on('Runtime.executionContextCreated', ({ context }) => {
       const aux = (context.auxData ?? {}) as { frameId?: string; isDefault?: boolean };
       this.contexts.set(context.id, { frameId: aux.frameId ?? '', name: context.name, isDefault: aux.isDefault === true });
+      // Read as the document starts, before a script can open a dialog
+      // that would hold the read up.
+      if (aux.frameId === this.mainFrameId && context.name === ISOLATED_WORLD) void this.languages();
     });
     this.cdp.on('Runtime.executionContextDestroyed', (ev) => { this.contexts.delete(ev.executionContextId); });
     this.cdp.on('Runtime.executionContextsCleared', () => { this.contexts.clear(); });
@@ -697,6 +704,30 @@ export class PageAttachment implements PageLink {
     if (this.closed) return [];
     const cookies = await this.page.context().cookies(url);
     return cookies.map((c) => ({ name: c.name, value: c.value }));
+  }
+
+  // The languages the page reports (the browser's, or `--lang`'s), so
+  // a GM_xmlhttpRequest or GM_download sent from Node asks for them as
+  // the extension's requests do.
+  //
+  // - Read once per document: they can't change within one (`--lang`
+  //   applies from the next load), and a request then never waits on
+  //   the page, which answers nothing while it shows a dialog.
+  // - From the scripts' world, where the page's own code can't redefine
+  //   `navigator.languages`.
+  // - Empty (no header) when there is no document, or the read doesn't
+  //   answer within a second.
+  async languages(): Promise<readonly string[]> {
+    const contextId = this.contextFor(ISOLATED_WORLD);
+    if (contextId === null || this.closed) return [];
+    if (this.languagesRead?.contextId !== contextId) {
+      const value = this.cdp.send('Runtime.evaluate', { contextId, returnByValue: true, expression: '[...navigator.languages]' })
+        // Only what looks like a tag, so nothing odd reaches a header.
+        .then(({ result }) => (Array.isArray(result.value) ? result.value.filter(isLanguageTag) : []), () => []);
+      this.languagesRead = { contextId, value };
+    }
+    const read = this.languagesRead.value;
+    return Promise.race([read, new Promise<readonly string[]>((r) => setTimeout(() => r([]), 1000).unref())]);
   }
 
   // A tab created the way `chrome.tabs.create({url})` creates one: the

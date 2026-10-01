@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>window.stop</title>
+  </head>
+  <body>
+    <div id="target">window.stop</div>
+    <!-- A slow image keeps `load` pending; window.stop() then cancels
+         it, so `load` never fires on this page. -->
+    <img src="/__slow/pending.png?ms=3000" />
+    <script>window.stop();</script>
+  </body>
+</html>

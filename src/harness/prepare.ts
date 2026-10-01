@@ -56,6 +56,7 @@ import { explainUrlMatch, type UrlMatchExplanation } from '../url-match.js';
 import { scriptBasename } from '../script-display.js';
 import { representativeMatch } from '../match-targets.js';
 import { sha256Hex } from '../bytes.js';
+import { stackLayout, type StackLayout } from '../composed-source.js';
 import type { ApiSubsystem } from '../gm-api-catalog.js';
 import { checkParseNode } from './parse-check-node.js';
 
@@ -159,6 +160,12 @@ export interface PreparedScript {
   grantedSubsystems: Set<ApiSubsystem>;
   /** The `@require` URLs, resolved, with where each was read from. */
   requires: { url: string; localUrl?: string }[];
+  /**
+   * How the injected entry's lines map back to the script and its
+   * `@require`s, for rewriting stack traces (`remapStackText`). No
+   * segments when nothing moved: no `@require`s, or an invalid script.
+   */
+  stackLayout: StackLayout;
 }
 
 let handlerVersionDefault: string | null = null;
@@ -311,6 +318,7 @@ async function prepareScriptNow(opts: PrepareOptions): Promise<PreparedScript> {
     needsGmRuntime: needsGmRuntime(script.header),
     grantedSubsystems: grantedSubsystems(script.header),
     requires: (script.requires ?? []).map((r) => ({ url: r.url, localUrl: r.localUrl })),
+    stackLayout: spec ? stackLayout(script, logLabel) : { entryUrl: '', segments: [], lineCount: 0 },
   };
   if (script.errorMessage) {
     out.errorMessage = script.errorMessage;

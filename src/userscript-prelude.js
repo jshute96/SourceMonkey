@@ -394,19 +394,27 @@
   /* @run-at gating. Each script's entry drives its own deferral; the
      prelude calls back into runMain when the lifecycle event fires. */
   function waitForRunAt(declared, cb) {
-    if (declared === "document-start") { cb(); return; }
+    /* `document-start` waits for <html> to exist; `document-body` for
+       <body>. In the extension Chrome injects document_start scripts
+       after the root element is created, so the start check passes at
+       once. sm-dev injects with CDP's `addScriptToEvaluateOnNewDocument`
+       (CDP: the Chrome DevTools Protocol), which runs before the parser
+       has made <html>, so both gates may have to wait.
+       - The observer is on `document` itself, the only node that
+         exists that early. `subtree` lets the body wait see <body>
+         land under an <html> that didn't exist when we started.
+       - Mutation records are delivered at the microtask checkpoint the
+         parser runs before each page <script>, so the start gate opens
+         before any page script. The body still waits for the async
+         `sm:check-pending` decision too (`flushPending`), so early page
+         scripts can run first; in sm-dev, whose reply goes through
+         Node, they usually do. */
+    if (declared === "document-start") {
+      waitForNode(function () { return document.documentElement; }, false, true, cb);
+      return;
+    }
     if (declared === "document-body") {
-      if (document.body) { cb(); return; }
-      var obs;
-      try {
-        obs = new MutationObserver(function () {
-          if (document.body) {
-            try { obs.disconnect(); } catch (_eo) {}
-            cb();
-          }
-        });
-        obs.observe(document.documentElement, { childList: true });
-      } catch (_e) { cb(); }
+      waitForNode(function () { return document.body; }, true, false, cb);
       return;
     }
     if (declared === "document-end") {
@@ -414,9 +422,53 @@
       document.addEventListener("DOMContentLoaded", function () { cb(); }, { once: true });
       return;
     }
-    /* document-idle (default). */
+    /* document-idle (default). `load` alone isn't enough: a page that
+       calls `window.stop()` never fires it, though readyState still
+       reaches "complete". On a normal page `load` follows the
+       "complete" readystatechange in the same task, so that change only
+       arms a zero-delay fallback: the body still runs after `load`
+       where there is one, and once either way. */
     if (document.readyState === "complete") { cb(); return; }
-    window.addEventListener("load", function () { cb(); }, { once: true });
+    var idleDone = false;
+    var runIdle = function () {
+      if (idleDone) return;
+      idleDone = true;
+      window.removeEventListener("load", runIdle);
+      document.removeEventListener("readystatechange", onReadyState);
+      cb();
+    };
+    var onReadyState = function () {
+      if (document.readyState === "complete") setTimeout(runIdle, 0);
+    };
+    window.addEventListener("load", runIdle);
+    document.addEventListener("readystatechange", onReadyState);
+  }
+
+  /* Calls `cb` (at most once) when `get()` returns a node. The wait
+     ends at DOMContentLoaded: a document that has no such node by then
+     (XML, SVG) never will, and a `subtree` observer left on it would
+     wake on every later DOM change. At that point `runAnyway` decides:
+     - document-start runs anyway, as it did before it waited at all.
+     - document-body quietly gives up, matching Tampermonkey's "runs if
+       the body element exists". */
+  function waitForNode(get, subtree, runAnyway, cb) {
+    if (get()) { cb(); return; }
+    var done = false;
+    var obs = null;
+    var finish = function (run) {
+      if (done) return;
+      done = true;
+      try { if (obs) obs.disconnect(); } catch (_eo) {}
+      try { document.removeEventListener("DOMContentLoaded", onEnd, true); } catch (_er) {}
+      if (run) cb();
+    };
+    var onEnd = function () { finish(!!get() || runAnyway); };
+    if (document.readyState !== "loading") { onEnd(); return; }
+    try {
+      obs = new MutationObserver(function () { if (get()) finish(true); });
+      obs.observe(document, { childList: true, subtree: subtree });
+      document.addEventListener("DOMContentLoaded", onEnd, true);
+    } catch (_e) { finish(true); }
   }
 
   /* ---------- matcher (regex-aware URL recheck) ---------- */
@@ -553,9 +605,9 @@
       entry.matched = matchScript(location.href, cfg.matching);
       if (!entry.matched) return entry;
     }
-    /* Async listeners up early so a synchronous throw inside a require
-       entry (which runs BEFORE the main body's deferred callback) is
-       still attributed correctly through the window error listener. */
+    /* Async listeners up early, before any of the script's code (its
+       @requires and body, which run together in the deferred `__smRun`
+       callback) can schedule work whose errors they attribute. */
     installAsyncListeners(entry);
     /* Past the matcher, so only a document we actually run on reports
        its focus. Not per-script — the flag inside is module-scoped. */
@@ -579,9 +631,10 @@
          answers is bounded by `awaitDecision`'s own 2s safety timeout,
          not by the lifecycle listener never getting installed.
 
-       `document-start` is unchanged either way: `waitForRunAt` calls
-       back synchronously for it, so the decision is the only gate left
-       and the body still runs as early as it safely can. */
+       `document-start` is unchanged either way: once <html> exists
+       (always, in the extension) `waitForRunAt` calls back
+       synchronously for it, so the decision is the only gate left and
+       the body still runs as early as it safely can. */
     waitForRunAt(cfg.runAt, function () {
       entry.runAtFired = true;
       flushPending(entry);
