@@ -41,7 +41,7 @@ export interface SmApi {
   soloMode(on: boolean): Promise<void>;
   // sm-dev's tab claims (src/sm-dev-link.ts).
   claimTab(tabId: number, runId: string, allow: string[] | null, ttlMs: number): Promise<void>;
-  renewRun(runId: string, ttlMs: number, allow?: string[] | null): Promise<void>;
+  renewRun(runId: string, ttlMs: number, allow: string[] | null, tabs?: { tabId: number; scriptsOff?: boolean }[]): Promise<number>;
   releaseRun(runId: string): Promise<void>;
   setTabScriptsOff(tabId: number, off: boolean): Promise<void>;
   // Move an installed script from one scripts collection to another.

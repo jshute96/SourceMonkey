@@ -221,7 +221,9 @@ export function computeBadge(
   if (anyError) color = BADGE_RED;
   else if (anyReload) color = BADGE_PURPLE;
   else if (anyMismatch) color = BADGE_ORANGE;
-  else if (anySkipped) color = BADGE_GREY;
+  // Grey says nothing ran: not for a tab where some scripts were kept
+  // out (an sm-dev claim) and the rest ran.
+  else if (anySkipped && !rows.some((r) => r.status === 'OK')) color = BADGE_GREY;
 
   const title = ['SourceMonkey', ...rows.map((r) => formatRowLabel(r))].join('\n');
 

@@ -837,6 +837,16 @@ See [docs/harness-design.md](docs/harness-design.md).
     stop signal is dropped, but sending SIGCONT still runs readline's
     resume path.
 
+## sm-dev extension runs: follow-ups
+
+- After SourceMonkey's worker restarts mid-run, the events from while it
+  was stopped are lost (the run says so). Catch up by reading each
+  pushed script's Log once after the restart. See
+  [docs/sm-dev-extension.md](docs/sm-dev-extension.md#when-the-sw-restarts).
+- A tab a run tab opens is set up after its scripts ran, so their
+  console lines from that first load don't reach the run (the reports
+  do).
+
 ## Scratch scripts shared between sm-dev runs
 
 - Two extension runs in one browser share the Scratch collection, and a

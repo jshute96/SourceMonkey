@@ -297,7 +297,7 @@ interface SourceMonkeyApi {
   // the run's tabs, null for none. `renewRun` extends the run's claims
   // and its event subscription, and changes `allow` when given.
   claimTab: (tabId: number, runId: string, allow: string[] | null, ttlMs: number) => Promise<void>;
-  renewRun: (runId: string, ttlMs: number, allow?: string[] | null) => Promise<void>;
+  renewRun: (runId: string, ttlMs: number, allow: string[] | null, tabs?: { tabId: number; scriptsOff?: boolean }[]) => Promise<number>;
   releaseRun: (runId: string) => Promise<void>;
   setTabScriptsOff: (tabId: number, off: boolean) => Promise<void>;
   moveScript: (scriptId: string, target: InstallTarget) => Promise<StoredScript | null>;
@@ -760,7 +760,7 @@ const api: SourceMonkeyApi = {
 (self as unknown as { SourceMonkey: SourceMonkeyApi }).SourceMonkey = api;
 
 // sm-dev runs hear each Log entry as it is written (sm-dev-link.ts).
-onScriptLogEntry((scriptId, entry) => emitSmDevEvent({ kind: 'log', scriptId, entry }));
+onScriptLogEntry((scriptId, entry, fromReport) => emitSmDevEvent({ kind: 'log', scriptId, entry, ...(fromReport ? { fromReport } : {}) }));
 // Loaded early, so the first check-pending after a restart waits less.
 void claimsReady();
 
@@ -1117,7 +1117,7 @@ async function updateTabMatches(
   } else {
     await claimsReady();
     const claim = activeClaim(tabId);
-    if (claim) state.smDevAllow = claim.allow;
+    if (claim) state.smDevAllow = claim.scriptsOff ? null : claim.allow;
   }
   // What the document's reports said about it, and whether its
   // never-started check already ran, belong to the document too.
@@ -2756,10 +2756,12 @@ async function handleTabOpen(
   // From a tab an sm-dev run controls, the new tab is the run's too.
   await claimsReady();
   const claimed = activeClaim(originatorTabId) !== null;
-  return openGmTab(payload, originatorTabId, claimed ? async (tabId) => {
-    await inheritClaim(originatorTabId, tabId);
-    emitSmDevEvent({ kind: 'tab-opened', sourceTabId: originatorTabId, tabId, url: payload.url });
-  } : undefined);
+  const result = await openGmTab(payload, originatorTabId, claimed ? (tabId) => inheritClaim(originatorTabId, tabId) : undefined);
+  // Once its URL is loading, so the run can tell its page by that.
+  if (claimed && result.ok && result.tabId != null) {
+    emitSmDevEvent({ kind: 'tab-opened', sourceTabId: originatorTabId, tabId: result.tabId, url: payload.url });
+  }
+  return result;
 }
 
 // GM_openInTab close-event routing happens inside the main
@@ -3975,6 +3977,8 @@ async function recordScriptReport(
   if (type === SM_START_MSG) {
     console.log(`[SourceMonkey] start ${label}${tabPart} ${senderUrl}`);
     logScriptEvent(id, {
+      // The run hears this as a report, so not again as a Log entry.
+      fromReport: true,
       level: 'info',
       source: 'script-wrapper',
       tabId,
@@ -3988,6 +3992,8 @@ async function recordScriptReport(
       `(loadedAt ${payload.fromLoadedAt ?? '?'} -> ${payload.loadedAt ?? '?'})`,
     );
     logScriptEvent(id, {
+      // The run hears this as a report, so not again as a Log entry.
+      fromReport: true,
       level: 'info',
       source: 'script-wrapper',
       tabId,
@@ -4005,6 +4011,8 @@ async function recordScriptReport(
     // Not in the script's Log for a tab sm-dev controls: it happens on
     // every load there, to scripts the person didn't ask anything of.
     if (payload.reason !== SKIP_REASON_SM_DEV) logScriptEvent(id, {
+      // The run hears this as a report, so not again as a Log entry.
+      fromReport: true,
       // A skip the user asked for is information, not a warning.
       level: payload.reason === SKIP_REASON_RELOAD_WITHOUT_SCRIPTS ? 'info' : 'warning',
       source: 'script-wrapper',
@@ -4032,6 +4040,8 @@ async function recordScriptReport(
     // didn't give us a stack — older browsers / errors thrown from
     // primitive values won't carry one.
     logScriptEvent(id, {
+      // The run hears this as a report, so not again as a Log entry.
+      fromReport: true,
       level: 'error',
       source: 'script-wrapper',
       tabId,

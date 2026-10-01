@@ -9,6 +9,7 @@ import { ScriptsDir } from '../fixtures/scripts-dir';
 import { activeTabId, allScripts, hasBadgeColor, waitForTabState, type SmApi } from '../fixtures/sw-api';
 
 const GREY = '#757575';
+const GREEN = '#2e7d32';
 
 test.describe('sm-dev tab claims', () => {
   let scriptsDir: ScriptsDir;
@@ -100,5 +101,72 @@ test.describe('sm-dev tab claims', () => {
     await new Promise((r) => setTimeout(r, 500));
     await page.reload();
     await expect.poll(() => ran(page, 'kept')).toBe('ran');
+  });
+
+  test('a tab where only some scripts were kept out stays green', async ({ extensionContext, fixtureServer, sm, getServiceWorker }) => {
+    const { allowed } = await twoScripts(sm, fixtureServer.baseUrl);
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    const tabId = await activeTabId(getServiceWorker);
+    await sm.claimTab(tabId, 'R1', [allowed], 60_000);
+    await page.reload();
+    await waitForTabState(sm, tabId, (s) => s.title.includes('Kept | NOT LOADED') && hasBadgeColor(s, GREEN), 'green with Kept not loaded');
+  });
+
+  test('a claimed tab with its scripts off runs none, its own included, and calls none missing', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    const { allowed } = await twoScripts(sm, fixtureServer.baseUrl);
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    const tabId = await activeTabId(getServiceWorker);
+    await sm.claimTab(tabId, 'R1', [allowed], 60_000);
+    await sm.setTabScriptsOff(tabId, true);
+    await page.reload();
+    await waitForTabState(sm, tabId, (s) => s.title.includes('Allowed | NOT LOADED') && hasBadgeColor(s, GREY), 'all not loaded');
+    expect(await ran(page, 'allowed')).toBeNull();
+  });
+
+  test('a renewal claims a lost tab again, if it is still open', async ({ extensionContext, fixtureServer, sm, getServiceWorker }) => {
+    await twoScripts(sm, fixtureServer.baseUrl);
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    const tabId = await activeTabId(getServiceWorker);
+    // As if the extension reloaded, losing the claim.
+    await sm.claimTab(tabId, 'R1', null, 60_000);
+    await sm.releaseRun('R1');
+    expect(await sm.renewRun('R1', 60_000, null, [{ tabId }, { tabId: 999_999 }])).toBe(1);
+    await page.reload();
+    await waitForTabState(sm, tabId, (s) => hasBadgeColor(s, GREY), 'grey again');
+    expect(await ran(page, 'kept')).toBeNull();
+  });
+
+  test('a tab GM_openInTab opens from a claimed tab is claimed before it loads', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'opener.user.js',
+      meta: { name: 'Opener', match: [`${fixtureServer.baseUrl}/target.html`], grant: ['GM_openInTab'] },
+      body: `GM_openInTab(location.href.replace('target.html', 'other.html'));`,
+    });
+    scriptsDir.write({
+      relativePath: 'kept.user.js',
+      meta: { name: 'Kept', match: [`${fixtureServer.baseUrl}/other.html`], runAt: 'document-start' },
+      body: `document.documentElement.dataset.kept = 'ran';`,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+    const opener = (await allScripts(sm)).find((x) => x.relativePath === 'opener.user.js')!.id;
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/blank.html`);
+    const tabId = await activeTabId(getServiceWorker);
+    await sm.claimTab(tabId, 'R1', [opener], 60_000);
+    const [opened] = await Promise.all([
+      extensionContext.waitForEvent('page'),
+      page.goto(`${fixtureServer.baseUrl}/target.html`),
+    ]);
+    await expect.poll(() => opened.url()).toContain('/other.html');
+    await opened.waitForLoadState('load');
+    expect(await ran(opened, 'kept')).toBeNull();
   });
 });

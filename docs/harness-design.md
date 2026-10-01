@@ -335,7 +335,7 @@ for the rows):
 - No new message transport into the extension: Playwright's worker
   handle serves both a launched and a CDP-connected browser.
 
-### Driving it (`extension-backend.ts`)
+### Driving it (`extension-link.ts`, `extension-host.ts`)
 
 - `sm-dev start --extension` reaches the worker through Playwright,
   which lists an extension's service worker on a CDP-connected browser
@@ -343,8 +343,10 @@ for the rows):
 - The worker's URL is known up front, since the manifest's fixed `key`
   fixes the extension id. An idle worker is woken by opening the
   collections page.
-- Reports are the script's own Log tab entries, polled. Only those
-  added after the push are printed.
+- The run claims its tabs, so only its scratch scripts run there, and
+  hears the extension's events (starts, errors, Log entries, menus,
+  values) as they happen. Its commands work as in a harness run. See
+  [sm-dev-extension.md](sm-dev-extension.md).
 - `--solo` turns solo mode on for the run and off after.
 - `sm-dev clear --extension` drops the scratch scripts.
 

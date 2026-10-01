@@ -531,7 +531,7 @@ export async function run(opts: RunOptions): Promise<number> {
     await held.tabs?.dispose().catch(() => undefined);
     await held.attachment?.dispose().catch(() => undefined);
     // Its tabs run the extension's scripts again from their next load.
-    if (opts.solo && held.extension) await (await held.extension.backend()).solo(false).catch(() => undefined);
+    if (opts.solo && held.extension) await held.extension.backend().then((b) => b.solo(false)).catch(() => undefined);
     await held.extension?.close();
     await session.done().catch(() => undefined);
     // On every way out, so a page tested after this is never taken
@@ -762,6 +762,8 @@ async function runInHarness(
   // pushes them into it, claims its tabs so only they run there, and
   // its host is filled from the extension's events (extension-host.ts).
   // Everything else is the same. See docs/sm-dev-extension.md.
+  // A run with no scripts claims no tabs: it's a browser whose
+  // SourceMonkey runs its own collections.
   let link: ExtensionLink | null = null;
   let host: HarnessHost;
   if (opts.extension) {
@@ -775,14 +777,17 @@ async function runInHarness(
     // Turned back off at the run's end, in `run`.
     if (opts.solo) await (await link.backend()).solo(true);
     host = new ExtensionHost(link, (name, level, message) => opts.out(`[sm-dev] ${name} ${level}: ${message}`));
+    link.onRestart((restored) => opts.out('[sm-dev] SourceMonkey\'s background script restarted, so what the scripts did meanwhile may be missing here.'
+      + (restored > 0 ? ` It had lost its hold on ${restored === 1 ? 'one of the run\'s tabs' : `${restored} of the run's tabs`}, which it has again.` : '')));
   } else {
     host = new HarnessHost();
   }
+  const claiming = link !== null && opts.files.length > 0;
   // Commands are only read once the page has loaded, but a prompt
   // opened before then can still wait for a typed or sent accept.
   const commandsComing = opts.until !== undefined && remote.reachable;
   let devtools: DevToolsLink | null = null;
-  const tabs = new FollowedTabs(host, opts, session.context, commandsComing, link, () => {
+  const tabs = new FollowedTabs(host, opts, session.context, commandsComing, link, claiming, () => {
     remote.setTabs(tabs.list().length);
     devtools?.schedule();
   });
@@ -800,8 +805,8 @@ async function runInHarness(
   // T1, unless `--notab`; then the first tab `newtab` opens is T1.
   if (page) {
     // Claimed first, before it loads the run's page.
-    const tabId = link ? await claimTab(link, page, opts.out) : undefined;
-    if (link && tabId === undefined) return 1;
+    const tabId = link && claiming ? await claimTab(link, page, opts.out) : undefined;
+    if (claiming && tabId === undefined) return 1;
     wirePageOutput(page, opts, true);
     wireSandboxCheck(page, () => tabs.firstTabScripts, opts.out);
     const dialogs = await DialogTracker.attach(page, opts.out, { visible: browserVisible(opts), commandsComing });
@@ -840,10 +845,12 @@ async function runInHarness(
     queue = done.catch(() => undefined);
     return done;
   };
-  const injected = (script: PreparedScript): void =>
-    opts.out(link
-      ? `[sm-dev] Pushed to Scratch: ${preparedScriptPath(script)}`
-      : `[sm-dev] Injected ${preparedScriptPath(script)} in world ${script.world}, run-at ${script.runAt}`);
+  // Said by `push` instead with `--extension`.
+  const injected = (script: PreparedScript): void => {
+    if (!link) opts.out(`[sm-dev] Injected ${preparedScriptPath(script)} in world ${script.world}, run-at ${script.runAt}`);
+  };
+  // The run's scripts by the file name the extension keeps them by.
+  const pushedNames = new Map<string, PreparedScript>();
   // With `--extension`: the scripts' text into the extension, as scratch
   // scripts, and the run's tabs told to let them run. False, having said
   // why, when the extension refused one.
@@ -851,20 +858,30 @@ async function runInHarness(
     if (!link) return true;
     const extensionHost = host as ExtensionHost;
     for (const script of list) {
-      const text = await readFile(fileURLToPath(script.script.fileUrl), 'utf8');
-      const result = await link.push(text, path.basename(script.script.relativePath));
-      if (result.status !== 'ok') {
-        opts.out(`INVALID  ${typedName(opts, fileURLToPath(script.script.fileUrl))}\n    ${result.errorMessage ?? ''}`);
+      const file = fileURLToPath(script.script.fileUrl);
+      const name = path.basename(script.script.relativePath);
+      // One scratch script per file name, so two of the run's would be one.
+      const other = pushedNames.get(name);
+      if (other && other.spec!.id !== script.spec!.id) {
+        opts.out(`[sm-dev] ${typedName(opts, file)} can't be pushed: ${typedName(opts, fileURLToPath(other.script.fileUrl))} has the same file name, and the extension keeps scratch scripts by file name. Rename one of them.`);
         return false;
       }
+      const text = await readFile(file, 'utf8');
+      const result = await link.push(text, name);
+      if (result.status !== 'ok') {
+        opts.out(`INVALID  ${typedName(opts, file)}\n    ${result.errorMessage ?? ''}`);
+        return false;
+      }
+      pushedNames.set(name, script);
       extensionHost.setPushed(script.spec!.id, result.scriptId);
+      opts.out(`[sm-dev] Pushed to Scratch: ${preparedScriptPath(script)}${result.replaced ? ' (replaced)' : ''}`);
     }
     await link.setAllow(extensionHost.pushedIds());
     return true;
   };
   // Put `next` in place everywhere, and reload the tabs `changed` affects.
-  const apply = async (next: PreparedScript[], changed: ScriptChange[], none: string): Promise<void> => {
-    if (!(await push(changed.map((c) => c.next)))) return;
+  const apply = async (next: PreparedScript[], changed: ScriptChange[], none: string, pushed = false): Promise<void> => {
+    if (!pushed && !(await push(changed.map((c) => c.next)))) return;
     for (const c of changed) injected(c.next);
     scripts = next;
     if (next.length > 0) held.injected = true;
@@ -910,6 +927,10 @@ async function runInHarness(
     await apply(next, changed, 'No open tab runs or matches the updated scripts, so none was reloaded');
   });
   const load = (input: string): Promise<void> => serial(async () => {
+    if (link && !claiming) {
+      opts.out('[sm-dev] This run started with no scripts, so its tabs run the extension\'s own collections, and it can\'t load one. Start a run with the script instead.');
+      return;
+    }
     const file = path.resolve(input);
     const info = await stat(file).catch(() => null);
     if (!info) {
@@ -930,12 +951,15 @@ async function runInHarness(
     if (!fresh || stopping) return;
     const script = fresh[0];
     const n = scripts.length + 1;
+    // Before it counts as loaded, so a push the extension refuses
+    // leaves the run as it was.
+    if (!(await push([script])) || stopping) return;
     files.push(file);
     remote.setScripts(files);
     stamps.set(script, await filesStamp(script));
     if (opts.values) host.seedValues(script.spec!.id, opts.values);
     opts.out(`[sm-dev] Loaded ${input} as script ${n}`);
-    await apply([...scripts, script], [{ next: script }], `No open tab matches it, so none was reloaded. Type open ${n} to open its page.`);
+    await apply([...scripts, script], [{ next: script }], `No open tab matches it, so none was reloaded. Type open ${n} to open its page.`, true);
   });
   // Seeded once. An update keeps the store, so values the script wrote
   // since survive it.
@@ -974,13 +998,14 @@ async function runInHarness(
     ]);
     printSkipped(opts, start);
   } else {
-    opts.out(NO_TABS);
+    // A one-shot extension run takes no `newtab`.
+    opts.out(link && !opts.until ? '[sm-dev] No tab was opened. The scripts run in the pages you browse to.' : NO_TABS);
   }
 
   try {
     if (opts.watch) {
       watcher = watchFiles(opts, prepared, async () => {
-        opts.out('[sm-dev] Change detected, re-injecting');
+        opts.out(`[sm-dev] Change detected, ${link ? 're-pushing' : 're-injecting'}`);
         await update();
       });
     }
@@ -1018,6 +1043,7 @@ async function runInHarness(
         devtools: () => (devtools?.isUp ? devtools.usage : null),
         browser: browserSentence({ browser: session.endpoint, owned: session.launched, headless: session.headless }),
         extension: () => sourceMonkeyState(session.endpoint),
+        ...(link ? { backend: 'SourceMonkey extension, as scratch scripts' } : {}),
         output: remote.output,
         roots: { collectionRoot: opts.collectionRoot, localRoots: opts.localRoots },
       };
@@ -1110,13 +1136,15 @@ class FollowedTabs {
     // Whether typed commands will be read, so a new tab's dialog waits
     // for a typed answer rather than being dismissed.
     private readonly commandsComing: boolean,
-    // With `--extension`, the run's connection to it: each tab is
-    // claimed, and the tabs a page opens come from its events.
+    // With `--extension`, the run's connection to it: tabs are only
+    // watched, and with `claiming` each is claimed, and the tabs a page
+    // opens come from its events.
     private readonly link: ExtensionLink | null,
+    private readonly claiming: boolean,
     // Called as tabs join the list or close.
     private readonly onTabsChanged: () => void = () => undefined,
   ) {
-    if (link) {
+    if (link && claiming) {
       for (const p of context.pages()) this.notOpenedByScripts.add(p);
       link.onEvent((event) => {
         if (event.kind === 'tab-opened') void this.adoptOpened(event);
@@ -1235,7 +1263,7 @@ class FollowedTabs {
   // With `--extension` they come from its events instead (`adoptOpened`),
   // which name the tab, as a claim needs.
   private follow(attachment: PageAttachment, opener: number): void {
-    if (this.link) return;
+    if (this.claiming) return;
     attachment.page.on('popup', (tab) => this.adopt(tab, opener));
     attachment.onOpenedTab = (tab) => this.adopt(tab, opener);
   }
@@ -1269,7 +1297,7 @@ class FollowedTabs {
     this.announce(tab, url);
     if (url) await this.navigate(tab, url);
     // A claimed tab with nowhere to go leaves the extension's page.
-    else if (this.link) await tab.page.goto('about:blank').catch(() => undefined);
+    else if (this.claiming) await tab.page.goto('about:blank').catch(() => undefined);
     return tab;
   }
 
@@ -1284,7 +1312,7 @@ class FollowedTabs {
       const page = await this.context.newPage();
       this.notOpenedByScripts.add(page);
       try {
-        const tabId = this.link ? await this.link.claimPage(page) : undefined;
+        const tabId = this.link && this.claiming ? await this.link.claimPage(page, noScript) : undefined;
         await this.setUp(page, n, undefined, false, noScript, tabId);
       } catch (err) {
         // Nothing controls it, so it would only be in the way.
@@ -1343,11 +1371,10 @@ class FollowedTabs {
       visible: browserVisible(this.opts),
       commandsComing: this.commandsComing,
     });
+    // An opened tab may have loaded already, with its events from that
+    // document waiting.
+    const shown = page.url();
     const attachment = await attachPage(page, this.host, this.attachOptions);
-    if (this.link && tabId !== undefined) {
-      this.extensionHost.addTab(attachment, tabId);
-      if (noScript) await this.link.setTabScriptsOff(tabId, true);
-    }
     this.numbers.set(attachment, n);
     // Its count would be of scripts that are kept out on purpose.
     if (!noScript) await attachment.showBadge();
@@ -1366,6 +1393,8 @@ class FollowedTabs {
     const loaded = url !== '' && url !== 'about:blank';
     announced = true;
     if (announce) this.opts.out(`[sm-dev] Tab T${n} opened${loaded ? ` at ${url}` : ''}${noScript ? ' (no scripts)' : ''}${opener ? `, from T${opener}` : ''}${targetIdSuffix(targetId)}`);
+    // After it's announced, so the events it had waiting print under it.
+    if (tabId !== undefined) this.extensionHost.addTab(attachment, tabId, opener !== undefined && shown !== '' && shown !== 'about:blank');
     if (noScript) {
       this.follow(attachment, n);
       entry.ready = true;
@@ -1378,7 +1407,9 @@ class FollowedTabs {
     // navigation, so a miss on it is noted here. Before injecting, as
     // it also clears the document's menu commands, which the scripts
     // are about to register.
-    if (loaded) this.host.noteNavigation(attachment, scripts);
+    // Not with `--extension`, whose host already has the events of the
+    // document the tab is showing.
+    if (loaded && !this.link) this.host.noteNavigation(attachment, scripts);
     for (const script of scripts) await attachment.inject(script, { immediately: true });
     this.follow(attachment, n);
     // A `load`, `update` or `--watch` save while this tab was being set
@@ -1393,7 +1424,8 @@ class FollowedTabs {
     if (scripts !== initial) return;
     if (!loaded) return;
     for (const script of scripts) {
-      if (!explainMatch(script.matching, url).matches || !ranLate(script, readyState)) continue;
+      // The extension ran them on time.
+      if (this.link || !explainMatch(script.matching, url).matches || !ranLate(script, readyState)) continue;
       this.opts.out(`[sm-dev] Tab T${n} had already started loading, so ${preparedScriptPath(script)} (run-at ${script.runAt}) may have run later there than it would in the extension`);
     }
   }
@@ -1411,7 +1443,7 @@ class FollowedTabs {
     if (tab !== this.first && [...this.tabs.values()].some((t) => t.tab === tab && !t.ready)) {
       throw new Error('It\'s still being set up. Try again in a moment.');
     }
-    const tabId = this.link ? this.extensionHost.tabIdOf(tab.link) : undefined;
+    const tabId = this.link && this.claiming ? this.extensionHost.tabIdOf(tab.link) : undefined;
     if (this.link && tabId !== undefined) await this.link.setTabScriptsOff(tabId, noScript);
     if (noScript) {
       await this.swapScripts(tab.link, []);
@@ -1428,25 +1460,30 @@ class FollowedTabs {
   /**
    * With `--extension`: a tab one of the run's tabs opened, as the
    * extension says (a link, `window.open`, `GM_openInTab`), which it has
-   * already claimed for the run. Its page is the one not otherwise
-   * accounted for: opened by the opener's page if Playwright knows, else
-   * at the event's URL, else the newest. Waits a few seconds for
-   * Playwright to report it.
+   * already claimed for the run. Its page is one not otherwise accounted
+   * for, opened by the opener's page (`window.open`, as Playwright
+   * knows), or else at the event's URL. Never a guess past that: a
+   * page the person opened mustn't be taken for it. Waits a few seconds
+   * for Playwright to report it, and for the opener's own setup.
    */
   private async adoptOpened(event: Extract<ExtensionEvent, { kind: 'tab-opened' }>): Promise<void> {
-    const opener = this.list().find((t) => this.extensionHost.tabIdOf(t.link) === event.sourceTabId);
-    if (!opener || this.disposed) return;
+    // Its events wait for the setup.
+    this.extensionHost.expectTab(event.tabId);
+    const wanted = comparableUrl(event.url);
     const deadline = Date.now() + 5000;
     while (Date.now() < deadline && !this.disposed) {
-      const candidates = this.context.pages().filter((p) => !this.notOpenedByScripts.has(p) && !this.tabs.has(p) && !p.isClosed());
-      let found: Page | undefined;
-      for (const p of candidates) {
-        if (await p.opener().catch(() => null) === opener.page) found = p;
-      }
-      found ??= candidates.find((p) => p.url() === event.url) ?? candidates.at(-1);
-      if (found) {
-        this.adopt(found, opener.n, event.tabId);
-        return;
+      const opener = this.list().find((t) => this.extensionHost.tabIdOf(t.link) === event.sourceTabId);
+      if (opener) {
+        const candidates = this.context.pages().filter((p) => !this.notOpenedByScripts.has(p) && !this.tabs.has(p) && !p.isClosed());
+        let found: Page | undefined;
+        for (const p of candidates) {
+          if (await p.opener().catch(() => null) === opener.page) found = p;
+        }
+        found ??= candidates.find((p) => comparableUrl(p.url()) === wanted);
+        if (found) {
+          this.adopt(found, opener.n, event.tabId);
+          return;
+        }
       }
       await sleep(100);
     }

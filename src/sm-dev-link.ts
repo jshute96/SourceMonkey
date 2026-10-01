@@ -111,21 +111,41 @@ export async function setTabScriptsOff(tabId: number, off: boolean): Promise<voi
   persist();
 }
 
+/** A tab a run holds, as the run knows it, for `renewRun` to restore. */
+export interface RunTab {
+  tabId: number;
+  scriptsOff?: boolean;
+}
+
 /**
- * Extends a run's claims and event subscription by `ttlMs`, and, when
- * given, changes which scripts its tabs allow (after a push changed the
+ * Extends a run's claims and event subscription by `ttlMs`, and sets
+ * which scripts its tabs allow (it changes when a push changes the
  * run's scripts).
+ *
+ * `tabs` are the tabs the run holds. One whose claim is gone (it ran
+ * out while the worker was stopped, or an extension reload cleared the
+ * session storage) is claimed again, if the tab is still open. Returns
+ * how many were.
  */
-export async function renewRun(runId: string, ttlMs: number, allow?: string[] | null): Promise<void> {
+export async function renewRun(runId: string, ttlMs: number, allow: string[] | null, tabs: RunTab[] = []): Promise<number> {
   await claimsReady();
   const expires = Date.now() + ttlMs;
   for (const claim of claims.values()) {
     if (claim.runId !== runId) continue;
     claim.expires = expires;
-    if (allow !== undefined) claim.allow = allow;
+    claim.allow = allow;
+  }
+  let restored = 0;
+  for (const tab of tabs) {
+    if (claims.has(tab.tabId)) continue;
+    const open = await chrome.tabs.get(tab.tabId).then(() => true, () => false);
+    if (!open) continue;
+    claims.set(tab.tabId, { runId, allow, expires, ...(tab.scriptsOff ? { scriptsOff: true } : {}) });
+    restored++;
   }
   subscribers.set(runId, expires);
   persist();
+  return restored;
 }
 
 /** Ends a run's claims and its event subscription. */

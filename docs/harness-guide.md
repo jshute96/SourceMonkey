@@ -436,15 +436,16 @@ What to open:
   - The extra tabs are T2, T3, and stay open when the run ends.
   - Scripts it opened no tab for are listed at the end, with the
     reason.
-  - Works with `--extension` too, where only page output carries the
-    tab's name (the extension's Log entries don't say which tab).
+  - Works with `--extension` too.
   - Can't be combined with a URL.
 - `--notab` opens no tab at startup. `newtab` opens one later, and the
   first it opens is T1.
   - That tab isn't one a later run takes over (see
     [Which tab `start` uses](#which-tab-start-uses)).
-  - With `--extension`, the scripts just run in whatever pages you
-    browse to, and after a `--watch` save you reload them yourself.
+  - With `--extension`, the scripts also run in pages you browse to
+    yourself, with the extension's other scripts, and after a `--watch`
+    save you reload them yourself. The run reports only on the tabs it
+    opens (`newtab`).
   - Can't be combined with a URL or `--all`.
 - With no scripts given, it starts as a browser to drive with the run
   commands, on a blank page or the URLs given. `load` adds scripts
@@ -452,7 +453,8 @@ What to open:
   `--values-file`, `--watch` or `--solo`.
   - With `--extension`, it's a browser whose SourceMonkey runs its own
     collections. With `--temp-browser --headed`, that's a throwaway
-    browser with the extension, to try by hand.
+    browser with the extension, to try by hand. Its tabs aren't
+    claimed, so it can't `load` a script.
 - `--from-saved` opens each `.html` file given as a saved page, at the
   URL it was saved from, with `--url` and `--offline` as for `newtab`.
   See [Saved pages](#saved-pages). Not with `--all` or `--notab`.
@@ -527,8 +529,7 @@ them (blocked trackers, failed ad requests) to bury the script's lines.
   - errors whose stack runs through the script;
   - a thrown value that isn't an `Error` (it has no stack, so it is
     always shown).
-- A script's own throw prints once, as `<name> threw:` (with
-  `--extension`, also as the Log tab's entry).
+- A script's own throw prints once, as `<name> threw:`.
 - `--page-errors` shows the rest too. Reach for it when the script may
   be breaking the page, or when it runs code outside its own file:
   - a `<script>` element it adds to the page;

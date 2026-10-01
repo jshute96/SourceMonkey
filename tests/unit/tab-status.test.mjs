@@ -87,6 +87,29 @@ test('computeBadge: skipped document → NOT_LOADED, GREY', () => {
   assert.match(view.title, /Alpha \| NOT LOADED/);
 });
 
+test('computeBadge: an sm-dev claim keeps the rest out, and stays green when the allowed ones ran', () => {
+  // A tab an sm-dev run controls: only `smDevAllow` may run; the rest
+  // were told to skip, so NOT_LOADED, and the tab isn't greyed while
+  // something did run.
+  const view = computeBadge({
+    documentId: DOC, url: 'https://x',
+    matches: [expected('a', 'Alpha'), expected('b', 'Beta')],
+    actual: { a: { state: 'started', name: 'Alpha' } },
+    smDevAllow: ['a'],
+  });
+  assert.deepEqual(view.rows.map((r) => [r.name, r.status]), [['Alpha', 'OK'], ['Beta', 'NOT_LOADED']]);
+  assert.equal(view.color, BADGE_GREEN);
+  // Nothing allowed: nothing ran, so grey.
+  const none = computeBadge({
+    documentId: DOC, url: 'https://x',
+    matches: [expected('a', 'Alpha')],
+    actual: {},
+    smDevAllow: null,
+  });
+  assert.equal(none.rows[0].status, 'NOT_LOADED');
+  assert.equal(none.color, BADGE_GREY);
+});
+
 test('computeBadge: NOT_LOADED beats REJECTED, but any real disagreement beats GREY', () => {
   // A refused registration didn't get to matter on a document where
   // nothing was going to run; an UNEXPECTED report still did.

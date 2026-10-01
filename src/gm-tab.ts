@@ -123,8 +123,15 @@ export async function openGmTab(
     entry.tabId = created.id;
     tabIdToRequest.set(created.id, payload.requestId);
     if (beforeLoad) {
-      await beforeLoad(created.id);
-      await chrome.tabs.update(created.id, { url: payload.url });
+      try {
+        await beforeLoad(created.id);
+        // Closed meanwhile, by the script or the person: nothing to load.
+        if (!entry.closeRequested) await chrome.tabs.update(created.id, { url: payload.url });
+      } catch (err) {
+        // The tab opened, so the script is told so. A tab gone before
+        // its URL loaded is reported closed by the onRemoved listener.
+        console.info('[SourceMonkey] GM_openInTab: could not load the URL into the new tab:', err);
+      }
     }
     if (entry.closeRequested) {
       // The page called close() before create resolved. Close

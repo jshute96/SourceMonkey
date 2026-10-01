@@ -161,13 +161,16 @@ export interface AppendLogInput {
   // Optional override for the timestamp (tests use this to keep output
   // deterministic). Production callers omit it and get Date.now().
   timestamp?: number;
+  // The entry records a script's own report (started, threw, skipped),
+  // which sm-dev runs already hear as a report event. Not stored.
+  fromReport?: boolean;
 }
 
 // Told of each entry the worker writes, for the events sm-dev runs
 // hear (sm-dev-link.ts). Set by the worker only.
-let entryListener: ((scriptId: string, entry: LogEntry) => void) | null = null;
+let entryListener: ((scriptId: string, entry: LogEntry, fromReport: boolean) => void) | null = null;
 
-export function onScriptLogEntry(listener: (scriptId: string, entry: LogEntry) => void): void {
+export function onScriptLogEntry(listener: (scriptId: string, entry: LogEntry, fromReport: boolean) => void): void {
   entryListener = listener;
 }
 
@@ -266,7 +269,7 @@ async function writeEntry(
   if (counts && isHigher(input.level, priorLevel)) toSet[mk] = input.level;
   await chrome.storage.session.set(toSet);
   try {
-    entryListener?.(scriptId, entry);
+    entryListener?.(scriptId, entry, input.fromReport === true);
   } catch {
     // A listener's failure is no reason to lose the entry's other effects.
   }
