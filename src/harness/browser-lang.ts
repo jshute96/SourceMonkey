@@ -9,11 +9,25 @@
 // keep the browser's languages. A headless `--temp-browser` is also
 // launched with Chrome's own language flags, which reach those too,
 // and a popup's first load.
+//
+// sm-dev sends `GM_xmlhttpRequest` and `GM_download` from Node, not the
+// tab, so the host adds the tab's `Accept-Language` itself (see
+// `acceptLanguageHeader`), with or without `--lang`, as the extension's
+// requests carry the browser's.
 
 import type { Page } from '@playwright/test';
 
 /** What `--lang` takes, for its messages. */
 export const LANG_NEEDS = 'The --lang flag needs a language tag like zh-CN, or a list like zh-CN,en';
+
+// A language first, then subtags: Intl alone also takes private-use
+// tags (`x-foo`), which no browser sends.
+const LANGUAGE_TAG = /^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$/;
+
+/** Whether `value` looks like a language tag (`en`, `zh-CN`). */
+export function isLanguageTag(value: unknown): value is string {
+  return typeof value === 'string' && LANGUAGE_TAG.test(value);
+}
 
 function notATag(tag: string): Error {
   return new Error(`The --lang flag got ${tag}, which is not a language tag. It needs one like zh-CN, or a list like zh-CN,en.`);
@@ -28,9 +42,7 @@ export function parseLang(text: string): string[] {
   const tags = text.split(',').map((t) => t.trim());
   if (tags.some((t) => t === '')) throw new Error(LANG_NEEDS);
   for (const tag of tags) {
-    // A language first, then subtags: Intl alone also takes private-use
-    // tags (`x-foo`), which no browser sends.
-    if (!/^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$/.test(tag)) throw notATag(tag);
+    if (!isLanguageTag(tag)) throw notATag(tag);
     try {
       Intl.getCanonicalLocales(tag);
     } catch {
@@ -38,6 +50,15 @@ export function parseLang(text: string): string[] {
     }
   }
   return [...new Set(Intl.getCanonicalLocales(tags))];
+}
+
+/**
+ * The `Accept-Language` header Chrome sends for a tab's languages
+ * (`navigator.languages`): the first as is, then descending q-values,
+ * `zh-CN,en;q=0.9,fr;q=0.8`, never below 0.1.
+ */
+export function acceptLanguageHeader(languages: readonly string[]): string {
+  return languages.map((lang, i) => (i === 0 ? lang : `${lang};q=${Math.max(1, 10 - i) / 10}`)).join(',');
 }
 
 /** Chrome's own flags for the languages, for a browser the run launches. */

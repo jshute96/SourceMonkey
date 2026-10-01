@@ -190,7 +190,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/input-file.ts` | Reads a file a command names for its contents (`eval`, `set`, `type` and `cdp`'s `--file`, `--values-file`) |
 | `src/harness/page-commands.ts` | The run commands that drive and read a tab's page, from `click` and `eval` to `snapshot`, `logs` and raw `cdp` calls |
 | `src/harness/snapshot.ts` | `snapshot`'s element refs, its on-screen filter, and `probe --css`'s suggested CSS selectors |
-| `src/harness/browser-lang.ts` | `sm-dev start --lang`: checks the language tags, and sets them on each tab and a launched browser |
+| `src/harness/browser-lang.ts` | `sm-dev start --lang`: checks the tags and sets them on tabs; builds GM requests' `Accept-Language` |
 | `src/harness/browser-launch.ts` | `sm-dev --open-browser`: starts a browser that stays open, on a kept profile per port, unless one is up |
 | `src/harness/stale-build.ts` | Warns when sm-dev (in the checkout, or an installed copy) is older than the SourceMonkey source |
 | `src/harness/stuck-tabs.ts` | Before `sm-dev start` connects, names the tabs that don't answer (a dialog, say), and waits for them |

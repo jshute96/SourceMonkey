@@ -162,12 +162,12 @@ const STOPPED_POLL_MS = 100;
  * has loaded. A page that stops its own load with `window.stop()`
  * counts as loaded: its readyState goes to complete, but it never
  * fires `load`, which a plain `goto` waits for until it times out.
- * Says which: `stopped` when it never fired `load`. Rejects with the
- * navigation's own error, or when the page doesn't load in time.
+ * Rejects with the navigation's own error, or when the page doesn't
+ * load in time.
  */
 export async function loadPage(
   page: Page, navigate: (opts: { waitUntil: 'commit'; timeout: number }) => Promise<unknown>, timeoutMs = LOAD_TIMEOUT_MS,
-): Promise<'loaded' | 'stopped'> {
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   await navigate({ waitUntil: 'commit', timeout: timeoutMs });
   let ended = false;
@@ -189,12 +189,6 @@ export async function loadPage(
   })();
   try {
     if (!await Promise.race([load, stopped])) throw new Error(`The page did not finish loading within ${seconds(timeoutMs)}`);
-    // A load that fired has its start in the navigation's timing.
-    const fired = await page.evaluate(() => {
-      const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
-      return !nav || nav.loadEventStart > 0;
-    }).catch(() => true);
-    return fired ? 'loaded' : 'stopped';
   } finally {
     ended = true;
     load.catch(() => undefined);

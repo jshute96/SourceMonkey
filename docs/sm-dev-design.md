@@ -484,6 +484,19 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
   - In a `--headed` one they may not apply: on Linux, Chrome takes its
     language from `LANGUAGE`, and `--accept-lang` is a headless switch.
     Untested; the tab's session still applies.
+- `GM_xmlhttpRequest` and `GM_download` go out from Node, which would
+  send `Accept-Language: *`. The host adds the requesting page's
+  instead, with or without `--lang`.
+  - Built from its `navigator.languages` (`PageLink.languages`) with
+    descending q-values (`acceptLanguageHeader`), as Chrome and the
+    `--lang` override build it. Chromium's headless shell differs
+    (no header by default), which is harmless.
+  - Read once per document, from the scripts' world, with a 1s cap: a
+    request never waits on a page held by a dialog, and the page's
+    own code can't change the value.
+  - A header the script sets wins.
+  - Matches the extension, whose requests carry the browser's
+    languages.
 - Playwright's test runner gives the contexts it launches a locale of
   its own, which holds the override. So the spec checks a launched
   browser through the `sm-dev` command line.

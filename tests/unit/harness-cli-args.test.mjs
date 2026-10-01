@@ -424,6 +424,15 @@ test('--lang takes language tags, alone or in a list, and refuses anything else'
   ]) assert.deepEqual(run(SCRIPT, '--lang', given), { code: 2, out: message });
 });
 
+test('the Accept-Language a request sent from Node carries is built as Chrome builds it', async () => {
+  const { acceptLanguageHeader } = await import('../../lib/harness/browser-lang.js');
+  assert.equal(acceptLanguageHeader(['en-US']), 'en-US');
+  assert.equal(acceptLanguageHeader(['zh-CN', 'en', 'fr']), 'zh-CN,en;q=0.9,fr;q=0.8');
+  // Never below 0.1.
+  const many = Array.from({ length: 12 }, (_, i) => `l${i}`);
+  assert.match(acceptLanguageHeader(many), /l9;q=0\.1,l10;q=0\.1,l11;q=0\.1$/);
+});
+
 test('--devtools refuses the runs it can\'t serve', () => {
   assert.deepEqual(cliLine('--temp-browser', 'start', SCRIPT, '--devtools'), { code: 2, out: 'ERROR: The --devtools flag can\'t be used with --temp-browser' });
   assert.deepEqual(run(SCRIPT, '--devtools', '--extension'), { code: 2, out: 'ERROR: The --devtools flag can\'t be used with --extension' });

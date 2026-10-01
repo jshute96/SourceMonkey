@@ -364,8 +364,7 @@ test.describe('sm-dev typed commands', () => {
 
   test('open and reload count a page that stopped its own load as loaded', async ({ page, fixtureServer, host, attachment, loadScript }) => {
     const stopped = `${fixtureServer.baseUrl}/stopped.html`;
-    // document-end: an idle script waits for the `load` that never comes.
-    const script = await loadScript({ relativePath: 'stop.user.js', meta: { name: 'Stop', match: [stopped], runAt: 'document-end' }, body: '' });
+    const script = await loadScript({ relativePath: 'stop.user.js', meta: { name: 'Stop', match: [stopped] }, body: '' });
     const lines: string[] = [];
     const tabs = [{ n: 1, page, link: attachment }];
     const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(l), stop: () => undefined };

@@ -1025,7 +1025,7 @@ const SCRIPTS_REPORT_MAX_MS = 10_000;
  * what to say, before the error, if the load fails.
  */
 async function loadInTab(
-  tab: ControlledTab, host: HarnessHost, load: () => Promise<'loaded' | 'stopped'>, failed: string, out: (line: string) => void,
+  tab: ControlledTab, host: HarnessHost, load: () => Promise<void>, failed: string, out: (line: string) => void,
 ): Promise<boolean> {
   const scripts = tab.link.injectedScripts().filter((s) => s.spec);
   const ids = scripts.map((s) => s.spec!.id);
@@ -1036,9 +1036,6 @@ async function loadInTab(
   let timer: NodeJS.Timeout | undefined;
   let onClose!: () => void;
   let loadFailed = false;
-  // The page stopped its own load (`window.stop()`), so never fired
-  // `load`: worth naming when scripts then don't start.
-  let stoppedLoad = false;
   // Marked on the tab too, so the waits after it (settleTabs) skip it.
   const result = (ok: boolean): boolean => {
     tab.stalled = !ok;
@@ -1048,8 +1045,7 @@ async function loadInTab(
     onClose = () => resolve(true);
     tab.page.once('close', onClose);
     load().then(
-      async (how) => {
-        stoppedLoad = how === 'stopped';
+      async () => {
         await tab.link.caughtUp();
         since = tab.link.documentStart();
         // Only the hash changed: no new document, so nothing starts again.
@@ -1076,8 +1072,7 @@ async function loadInTab(
     const waiting = host.unreported(tab.link, ids, since);
     const names = scripts.filter((s) => waiting.includes(s.spec!.id)).map(preparedScriptName);
     if (names.length > 0) {
-      out(`[sm-dev] ${names.join(', ')} had not started on ${tabName(tab)} after ${SCRIPTS_REPORT_MAX_MS / 1000} seconds${stoppedLoad
-        ? '. The page stopped its own load (window.stop()), so it never fired its load event.' : ''}`);
+      out(`[sm-dev] ${names.join(', ')} had not started on ${tabName(tab)} after ${SCRIPTS_REPORT_MAX_MS / 1000} seconds`);
     }
     return result(false);
   } finally {

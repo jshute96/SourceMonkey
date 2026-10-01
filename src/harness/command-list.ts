@@ -182,10 +182,7 @@ export const HELP_SECTIONS: HelpSection[] = [
               { term: '--values JSON', about: ['Seed GM_* storage before the scripts run,', 'e.g. --values \'{"units":"metric"}\'.'] },
               { term: '--values-file <path>', about: 'Seed GM_* storage from a file holding a JSON object.' },
               { term: '--page-errors', about: 'Also show errors from the page (not just the script).' },
-              {
-                term: '--lang LIST',
-                about: ['Set the languages the run\'s tabs prefer: navigator.language(s), Accept-Language, and Intl\'s locale,', 'e.g. --lang zh-CN or --lang zh-CN,en.'],
-              },
+              { term: '--lang LIST', about: 'Set the languages the run\'s tabs prefer, e.g. --lang zh-CN or --lang zh-CN,en.' },
             ],
           },
           {

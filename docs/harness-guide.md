@@ -490,9 +490,11 @@ The browser's language:
 - A headless `--temp-browser` is also launched with Chrome's `--lang`
   and `--accept-lang`, which reach those iframes and workers too, and a
   popup's first page. Use it when a script runs in frames.
-- `GM_xmlhttpRequest` doesn't go through the tab (sm-dev sends it from
-  Node, and the extension from its service worker), so its requests
-  don't carry the languages.
+- `GM_xmlhttpRequest` and `GM_download` requests ask for the tab's
+  languages too, unless the script sets `Accept-Language` itself.
+  - With `--lang` and `--extension` in a connected browser they carry
+    the browser's own languages instead: the extension sends them from
+    its service worker, which the tab's setting doesn't reach.
 
 The run's lifetime:
 

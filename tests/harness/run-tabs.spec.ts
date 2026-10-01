@@ -724,15 +724,19 @@ test('newtab of several saved pages picks the first, serves their _files folders
 
 test('--lang sets the languages of each tab, in a launched browser and in one connected to', async ({ fixtureServer, scriptsDir }) => {
   test.setTimeout(60_000);
+  // `xhrHeader`: a GM_xmlhttpRequest, sent from Node, asks for the same
+  // languages as the tab's own request.
   const file = scriptsDir.write({
     relativePath: 'lang.user.js',
-    meta: { name: 'Lang', match: ['*://*/target.html*'] },
+    meta: { name: 'Lang', match: ['*://*/target.html*'], grant: ['GM_xmlhttpRequest'], connect: ['127.0.0.1'] },
     body: `
-      fetch('/__echo').then((r) => r.json()).then((echo) => {
+      const echo = (url) => new Promise((resolve) => GM_xmlhttpRequest({ url, responseType: 'json', onload: (r) => resolve(r.response) }));
+      Promise.all([fetch('/__echo').then((r) => r.json()), echo(location.origin + '/__echo')]).then(([page, xhr]) => {
         console.log('[lang] ' + location.search + ' ' + JSON.stringify({
           languages: navigator.languages,
           intl: Intl.DateTimeFormat().resolvedOptions().locale,
-          header: echo.headers['accept-language'],
+          header: page.headers['accept-language'],
+          xhrHeader: xhr.headers['accept-language'],
         }));
       });
     `,
@@ -744,7 +748,8 @@ test('--lang sets the languages of each tab, in a launched browser and in one co
     for (const w of wanted) {
       const line = lines.find((l) => l.includes(w));
       expect(line, `${w} in ${where}`).toBeDefined();
-      expect(JSON.parse(line!.slice(line!.indexOf('{')))).toEqual({ languages: ['zh-CN', 'en'], intl: 'zh-CN', header: expect.stringMatching(/^zh-CN,en/) });
+      const got = JSON.parse(line!.slice(line!.indexOf('{')));
+      expect(got).toEqual({ languages: ['zh-CN', 'en'], intl: 'zh-CN', header: expect.stringMatching(/^zh-CN,en/), xhrHeader: got.header });
     }
   };
 
