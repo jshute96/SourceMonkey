@@ -90,11 +90,11 @@ import {
   wrapPreludeEntry,
 } from '../../dist/injector.js';
 import {
-  USER_SOURCE_START_LINE,
   composeRequiredBody,
-  composeSource,
+  stackLayout,
 } from '../../dist/composed-source.js';
 import { remapStackRef } from '../../dist/source-map.js';
+import { remapStackText } from '../../dist/stack-link.js';
 import { buildRequireSourceUrl, buildSourceUrl } from '../../dist/script-source-url.js';
 import { WRAPPER_BRIDGE, WRAPPER_PRELUDE } from '../../dist/generated-wrappers.js';
 import { urlMatchesScript } from '../../dist/url-match.js';
@@ -111,6 +111,7 @@ test('normalizeDeclaredRunAt: recognized values pass through (lowercased)', () =
 test('normalizeDeclaredRunAt: missing / unknown values default to document-idle', () => {
   assert.equal(normalizeDeclaredRunAt(undefined), 'document-idle');
   assert.equal(normalizeDeclaredRunAt(''), 'document-idle');
+  // Defensive only: validateHeader refuses context-menu scripts first.
   assert.equal(normalizeDeclaredRunAt('context-menu'), 'document-idle');
   assert.equal(normalizeDeclaredRunAt('whatever'), 'document-idle');
 });
@@ -276,6 +277,81 @@ test('wrapCombinedEntry: requires and body land in ONE shared scope', () => {
   };
   new Function('self', wrapped)(stub);
   assert.equal(got, 'from-require:ok');
+});
+
+test('wrapCombinedEntry: the user program shadows our bindings instead of clashing', () => {
+  // Our `const`s sit in the wrap function; the user program runs in a
+  // scope nested inside it. So `const window = unsafeWindow` no longer
+  // puts our `const unsafeWindow = window;` in its TDZ, and the
+  // redeclarations real scripts make are ordinary shadowing.
+  const wrapped = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    requireUrls: ['sourcemonkey://SourceMonkey/x/cdn/lib.js'],
+    gmBindings: 'const unsafeWindow = window; const GM_info = "ours"; const GM_setValue = 1; ',
+    script: scriptWith({
+      bodyText: [
+        'const window = unsafeWindow;',
+        'let GM_info = "mine";',
+        'var GM_setValue = 2;',
+        'var __smE = 3;',
+        'function GM_addStyle() { return "own"; }',
+        'return [window.app, GM_info, GM_setValue, __smE, GM_addStyle(), lib].join(",");',
+      ].join('\n'),
+      requires: [req('const self = "lib-self"; const lib = self;')],
+    }),
+  });
+  let got;
+  const stub = {
+    __smPrelude: { send: () => {} },
+    __smRun: (_id, fn) => { got = fn({ decision: {}, cfg: { name: 'n', id: 'abc', loadedAt: 0 } }); },
+  };
+  new Function('self', 'window', wrapped)(stub, { app: 'page' });
+  assert.equal(got, 'page,mine,2,3,own,lib-self');
+});
+
+test('wrapCombinedEntry: a leading "use strict" applies, as in TM and VM', () => {
+  // The script is the nested scope's first statement, so its directive
+  // is a real one and the program is strict: a plain call gets
+  // undefined as `this`, not the global object.
+  const wrapped = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    script: scriptWith({ bodyText: '"use strict";\nreturn (function () { return this; })() === undefined;' }),
+  });
+  let got = 'unset';
+  const stub = {
+    __smPrelude: { send: () => {} },
+    __smRun: (_id, fn) => { got = fn({ decision: {}, cfg: { name: 'n', id: 'abc', loadedAt: 0 } }); },
+  };
+  new Function('self', wrapped)(stub);
+  assert.equal(got, true);
+});
+
+test('wrapCombinedEntry: the nested scope adds no lines', () => {
+  // Line N of the body must stay generated line N (no requires), and the
+  // entry keeps the same number of lines, so the source map and the
+  // viewer's stack mapping need no adjustment.
+  const wrapped = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    script: scriptWith({ bodyText: 'L1\nL2' }),
+  });
+  const lines = wrapped.split('\n');
+  assert.match(lines[0], /L1$/);
+  assert.equal(lines[1], 'L2');
+  assert.equal(lines[2], '})();});');
+  assert.match(lines[3], /^\/\/# sourceURL=/);
+});
+
+test('buildSwapEvalBody: the swapped body shadows our bindings too', async () => {
+  // The swap evals the bindings and the body in one call, so it needs
+  // the same nested scope as the registered entry.
+  const script = makeScript({
+    header: { tags: [{ tag: 'name', value: 'X' }, { tag: 'grant', value: 'GM_setValue' }] },
+    bodyText: 'const GM_info = "mine"; var GM_setValue = 2; return [GM_info, GM_setValue].join(",");',
+  });
+  const { body } = await buildSwapEvalBody(script, '0.0.0', 'a.user.js');
+  assert.match(body, /const GM_info = /);
+  assert.match(body, /const GM_setValue = /);
+  assert.equal((0, eval)(body), 'mine,2');
 });
 
 test('wrapCombinedEntry: a `;` separator defeats ASI hazards at the seam', () => {
@@ -606,9 +682,9 @@ test('buildSwapEvalBody: a swapped body with @requires shares their scope', asyn
     }],
   });
   const { body } = await buildSwapEvalBody(script, '0.0.0', 'a.user.js');
-  // The swap eval is a single (0,eval) of this string, so evaluating
-  // it in one scope is exactly what the prelude does.
-  assert.equal(new Function(`${body}`)(), 'from-require:ok');
+  // The swap eval is a single (0,eval) of this string, exactly what the
+  // prelude does. Its completion value is the nested scope's result.
+  assert.equal((0, eval)(body), 'from-require:ok');
   // It carries the same inline source map a fresh registration emits,
   // so devtools splits a hot-swapped script back into its original
   // files instead of showing concatenated line numbers.
@@ -672,11 +748,11 @@ test('buildSwapEvalBody: passes through plain body when no header (defensive)', 
   // Headerless scripts aren't a production case (validateHeader
   // rejects them), but the helper should still return something
   // eval-able rather than throwing. No preamble and no requires means
-  // the body passes through untouched — same shape the registered
-  // path emits after its wrap head.
+  // the body passes through untouched inside the nested user-program
+  // scope — same shape the registered path emits after its wrap head.
   const script = { ...makeScript(), header: null };
   const { body } = await buildSwapEvalBody(script, '0.0.0');
-  assert.equal(body, 'console.log("hi");');
+  assert.equal(body, '(()=>{console.log("hi");\n})();');
 });
 
 // ---------- buildRegistrationSpec ----------
@@ -1869,13 +1945,11 @@ function markerScript() {
   });
 }
 
-// What the viewer computes, from the stored script alone.
+// What the viewer (and sm-dev) computes, from the stored script alone.
 function viewerSegments(script, label) {
-  return composeSource(script, {
-    requireUrls: (script.requires ?? []).map((r) => buildRequireSourceUrl(label, r.url)),
-    mainUrl: buildSourceUrl(label),
-    startLine: USER_SOURCE_START_LINE,
-  }).segments;
+  const layout = stackLayout(script, label);
+  assert.equal(layout.entryUrl, buildSourceUrl(label));
+  return layout.segments;
 }
 
 function assertRoundTrip(code, script, label) {
@@ -1928,6 +2002,30 @@ test('registered entry: the body marker maps to its real line in the stored file
   const got = remapStackRef({ url: entryUrl, line: gen, col: 1 }, entryUrl, viewerSegments(script, label));
   const storedBody = composeRequiredBody({ ...script, requires: [] });
   assert.equal(storedBody.split('\n')[got.line - 1], 'BODY_MARKER;');
+});
+
+test('remapStackText: a stack from the registered entry names each file at its own line', async () => {
+  // The plain-text form sm-dev prints, end to end: real generated
+  // lines in, the require's URL and line (and the body's) out.
+  const script = markerScript();
+  const label = 'a.user.js';
+  const spec = await buildRegistrationSpec(script, '0.0.0', label);
+  const entryUrl = buildSourceUrl(label);
+  const code = spec.js[2].code;
+  const stack = [
+    'Error: boom',
+    `    at f (${entryUrl}:${generatedLineOf(code, 'A_MARKER;')}:3)`,
+    `    at ${entryUrl}:${generatedLineOf(code, 'BODY_MARKER;')}:1`,
+    '    at https://example.com/app.js:10:2',
+  ].join('\n');
+  const storedBody = composeRequiredBody({ ...script, requires: [] });
+  const bodyLine = storedBody.split('\n').indexOf('BODY_MARKER;') + 1;
+  assert.equal(remapStackText(stack, [stackLayout(script, label)]), [
+    'Error: boom',
+    `    at f (${buildRequireSourceUrl(label, 'https://cdn/a.js')}:2:3)`,
+    `    at ${entryUrl}:${bodyLine}:1`,
+    '    at https://example.com/app.js:10:2',
+  ].join('\n'));
 });
 
 // ---------- registerWithFallback: every refused attempt is logged ----------

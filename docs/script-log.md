@@ -703,7 +703,7 @@ Behavior:
 ### What the Log tab does
 
 - Recomputes the entry's segment layout from the stored script, via
-  the shared `composeSource` in `src/composed-source.ts`.
+  the shared `stackLayout` in `src/composed-source.ts`.
 - Applies it with `remapStackRef` (`src/source-map.ts`) to each ref
   `parseStackRefs` found.
 - Re-renders the ref text with the mapped URL and line, so the string
@@ -711,6 +711,27 @@ Behavior:
   artifact of our injection and means nothing to the script's author.
 - Routes the click to the tab that owns the mapped URL — which is how
   a stack ref reaches a `@require` tab at all.
+
+### Other readers of stacks
+
+- sm-dev prints stacks as text: `threw` reports, console lines that
+  carry a stack (`console.error(err)`), and with `--extension` the Log
+  tab's entries.
+- It rewrites them with `remapStackText` (`src/stack-link.ts`), the
+  same `remapStackRef` applied to every ref in a string.
+- The layout comes from `stackLayout` (`src/composed-source.ts`), the
+  helper the Log tab uses too:
+  - the harness computes it when it prepares the script;
+  - `--extension` runs ask the service worker for the stored script's
+    (`getStackLayout` on its test surface).
+- Refs from scripts it doesn't know stay as they were. So do refs to
+  an entry URL that scripts with different layouts share (two
+  `foo.user.js` files in one sm-dev run), rather than risk naming the
+  wrong file.
+- A ref on a line of our own wrap (the head with the GM bindings, a
+  seam) has no original line, so it is renamed to the script's
+  `__wrapper.js` at the generated line. Left alone, it would read as
+  that line of the user's file.
 
 ### Refs are decoded for display
 
@@ -771,10 +792,13 @@ Behavior:
   `__prelude.js`. They pass through untouched.
 - Generated lines that belong to our wrap rather than to user code:
   the head, the `// @require` marker lines, the `;` ASI guards, the
-  closing `});`. Guessing at a neighbouring line would point the user
-  at unrelated code.
+  closing `})();});`. Guessing at a neighbouring line would point the
+  user at unrelated code. These render as plain text, not links.
 - Scripts with no `@require`. Nothing was concatenated, so nothing
   moved, and the reported lines are already original.
+  - Except the closing line just past the body: it is ours, and shows
+    up in every synchronous throw's stack as the call into the nested
+    user-program scope. It renders as plain text too.
 - Columns are passed through rather than mapped, and that is exact:
   composition moves whole lines and never code within a line.
 - Line numbers are counted the way V8 counts them (`\r`, `\r\n`,

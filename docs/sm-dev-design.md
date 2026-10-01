@@ -59,6 +59,7 @@ flowchart LR
 | `tab-badge.ts` | The favicon badge on controlled tabs |
 | `save-html.ts`, `saved-pages.ts` | Saving a page, and serving it back at its URL |
 | `browser-launch.ts` | `--open-browser` |
+| `browser-lang.ts` | `start --lang`: the languages the run's tabs prefer |
 | `stuck-tabs.ts` | Waiting out unresponsive tabs before connecting |
 | `cdp-proxy.ts`, `devtools.ts` | `--devtools` |
 | `page-output.ts` | Which page console lines and errors the run streams |
@@ -459,6 +460,47 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
 - A hidden one is started with `--mute-audio`, so pages (e.g. video sites)
   play no sound; a `--headed` one keeps its sound.
 
+### Languages (`--lang`, `browser-lang.ts`)
+
+- Each tab the run sets up gets a CDP session of its own, left open,
+  since an override lasts only while its session does. On it:
+  - `Emulation.setUserAgentOverride` with an empty `userAgent` and the
+    list as `acceptLanguage`: `navigator.language(s)` and the header.
+    The empty agent keeps the browser's own, and its client hints
+    (`navigator.userAgentData`), which a real agent without metadata
+    would drop.
+  - `Emulation.setLocaleOverride` with the first language, for `Intl`.
+    Only one connection can hold it, so it goes last, and a refusal is
+    said without failing the tab.
+- The session reaches the tab's own frames only. Cross-site iframes
+  and workers are targets of their own, and keep the browser's
+  languages (the iframe's requests do carry the header).
+  - Reaching them would take auto-attaching to child targets, beside
+    Playwright's own auto-attach, which holds new targets until it
+    resumes them. Not done.
+- A headless launched browser also gets Chrome's `--lang` and
+  `--accept-lang`, which reach what a tab's session doesn't (iframes,
+  workers, a popup's first page). They don't change `Intl`.
+  - In a `--headed` one they may not apply: on Linux, Chrome takes its
+    language from `LANGUAGE`, and `--accept-lang` is a headless switch.
+    Untested; the tab's session still applies.
+- `GM_xmlhttpRequest` and `GM_download` go out from Node, which would
+  send `Accept-Language: *`. The host adds the requesting page's
+  instead, with or without `--lang`.
+  - Built from its `navigator.languages` (`PageLink.languages`) with
+    descending q-values (`acceptLanguageHeader`), as Chrome and the
+    `--lang` override build it. Chromium's headless shell differs
+    (no header by default), which is harmless.
+  - Read once per document, from the scripts' world, with a 1s cap: a
+    request never waits on a page held by a dialog, and the page's
+    own code can't change the value.
+  - A header the script sets wins.
+  - Matches the extension, whose requests carry the browser's
+    languages.
+- Playwright's test runner gives the contexts it launches a locale of
+  its own, which holds the override. So the spec checks a launched
+  browser through the `sm-dev` command line.
+
 ### `--temp-browser` with `--extension` (`extension-launch.ts`)
 
 - Launches Playwright's Chromium with `--load-extension` pointing at the
@@ -563,6 +605,11 @@ and waits for them.
   with the owning pid.
 - A later run can take over a finished run's selected tab.
 - A tab carries no mark a page couldn't fake, hence the file.
+- A taken tab's page still runs the earlier run's scripts. Its console
+  lines and errors are dropped (`staleTabs`) until the run's first
+  navigation there commits, or kept if the run opens no page there.
+  - Not navigated away first: a run that fails before loading anything
+    leaves the page as it was.
 
 ### Followed tabs (`FollowedTabs` in `run.ts`)
 
@@ -756,6 +803,13 @@ The run commands that drive and read a tab's page (`click`, `type`,
     which would take the quotes out of their JSON.
 - Every console line and page error is kept per page (the newest
   thousand) for `logs`, beside the filtered stream (`page-output.ts`).
+- A console line that logs a DOM node is described from the page
+  (`consoleText`: its opening tag), not Playwright's `JSHandle@node`.
+  That takes a round trip, so the page's later console lines queue
+  behind it to keep their order. A lookup that takes over a second (a
+  dialog open, a paused page) prints Playwright's text instead.
+- Our own `sourcemonkey://` stack refs in stream lines are decoded once
+  for display (`decodeOwnRefs`, sharing the viewer's `displayRefText`).
 - Keys sent over CDP go to the renderer, so Chrome's own shortcuts
   never fire. The one that matters for scripts is Escape leaving
   fullscreen: after an Escape, `key` checks `fullscreenElement` and
@@ -788,11 +842,16 @@ each element a ref, `(f<n>)?e<n>`.
   - Playwright finds a ref's frame by that number, and a page restored
     by Back keeps refs numbered for a frame Playwright has since
     renumbered ("Invalid frame in aria-ref selector").
+- The whole page is `:root`, not `body`: scripts often add their panels
+  to `<html>`, after `<body>`. Its `- document` line is left out, and
+  the rest shown a level less indented.
 - Playwright resolves refs against the latest snapshot only. So a
   snapshot of part of the page is followed by a quiet one of the whole,
   which keeps the rest's refs working.
-  - That doubles the cost of `snapshot <selector>` on a large page.
-    It's skipped for `body`, and a failure only costs refs.
+  - That doubles the cost of `snapshot <selector>` on a large page. A
+    failure only costs refs.
+  - When the whole was `body`, refs from a part outside it (such as a
+    panel) stopped working at once.
 - Each page's latest snapshot is noted with its document's
   `performance.timeOrigin`, new with each load. A ref used after a load
   says so, not that no element has it, since Playwright's own record of
@@ -852,6 +911,10 @@ where each comes from.
   script). A dialog ends the wait, since the page stops on it.
 - A tab whose load already gave up (`stalled`, set by `loadInTab`)
   isn't waited on again after it.
+- A load (`loadPage`, for `open`, `reload` and the tabs `start` opens)
+  ends at the page's `load` event, or when its `readyState` is
+  `complete` without one: a page that calls `window.stop()` never
+  fires `load`.
 
 `wait log`:
 
@@ -860,6 +923,11 @@ where each comes from.
 - Starts from where the previous command began (`previousStart`, kept
   by `commandRunner`, and not moved by a command that only looks or
   waits).
+- Page console lines and errors the stream filters out
+  (`page-output.ts`) go in too, through `Remote.hear`, in the form the
+  stream would print them. So `wait log` sees what `logs` shows, except
+  the prelude's `[SourceMonkey]` lines and page errors that repeat a
+  host report.
 - Only what the page and scripts printed goes in it. A command runs
   inside `inCommand` (an `AsyncLocalStorage`, Node's per-call context),
   and its own replies are kept out; page and script lines arrive

@@ -128,6 +128,18 @@ export function framesAround(page: Page, selector: string): string[] {
 }
 
 /**
+ * A tree of the whole page (`:root`) without its top `- document`
+ * line, which only wraps the rest, and with the rest a level less
+ * indented: as a snapshot of `body` would look, plus what is outside
+ * it. A tree that doesn't start that way is left as it is.
+ */
+export function withoutDocument(tree: string): string {
+  const [first, ...rest] = tree.split('\n');
+  if (!/^- document\b.*:$/.test(first) || rest.some((l) => !l.startsWith('  '))) return tree;
+  return rest.map((l) => l.slice(2)).join('\n');
+}
+
+/**
  * A tree as `snapshot` prints it: without `[cursor=pointer]` on links
  * and buttons, which always have it. Elsewhere it stays, since it marks
  * something clickable that isn't a link or button.

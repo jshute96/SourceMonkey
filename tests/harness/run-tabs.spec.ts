@@ -3,11 +3,17 @@
 // lines carry the tab's name. Also `--all`'s tab per script, tabs
 // closing (T1 included), and `menu` firing a command on another tab.
 
+import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { chromium } from '@playwright/test';
 
 import { test, expect } from '../fixtures/harness.js';
 import { run, type RunOptions } from '../../lib/harness/run.js';
+
+const CLI = fileURLToPath(new URL('../../lib/harness/cli.js', import.meta.url));
 
 // Run until every `wanted` text has appeared in a line, or 10s.
 async function runUntil(
@@ -714,4 +720,80 @@ test('newtab of several saved pages picks the first, serves their _files folders
     ['"rgb(1, 2, 3)"', 'exit'],
   ]);
   expect(lines.some((l) => /^\* T2: \S*\/target\.html \(from saved: .*x one\.html, offline\)/.test(l))).toBe(true);
+});
+
+test('--lang sets the languages of each tab, in a launched browser and in one connected to', async ({ fixtureServer, scriptsDir }) => {
+  test.setTimeout(60_000);
+  // `xhrHeader`: a GM_xmlhttpRequest, sent from Node, asks for the same
+  // languages as the tab's own request.
+  const file = scriptsDir.write({
+    relativePath: 'lang.user.js',
+    meta: { name: 'Lang', match: ['*://*/target.html*'], grant: ['GM_xmlhttpRequest'], connect: ['127.0.0.1'] },
+    body: `
+      const echo = (url) => new Promise((resolve) => GM_xmlhttpRequest({ url, responseType: 'json', onload: (r) => resolve(r.response) }));
+      Promise.all([fetch('/__echo').then((r) => r.json()), echo(location.origin + '/__echo')]).then(([page, xhr]) => {
+        console.log('[lang] ' + location.search + ' ' + JSON.stringify({
+          languages: navigator.languages,
+          intl: Intl.DateTimeFormat().resolvedOptions().locale,
+          header: page.headers['accept-language'],
+          xhrHeader: xhr.headers['accept-language'],
+        }));
+      });
+    `,
+  });
+  const urls = [`${fixtureServer.baseUrl}/target.html?one`, `${fixtureServer.baseUrl}/target.html?two`];
+  // Two tabs: T1, and T2 the run opens itself.
+  const wanted = ['[lang] ?one ', '[lang] ?two '];
+  const expectLangs = (lines: string[], where: string): void => {
+    for (const w of wanted) {
+      const line = lines.find((l) => l.includes(w));
+      expect(line, `${w} in ${where}`).toBeDefined();
+      const got = JSON.parse(line!.slice(line!.indexOf('{')));
+      expect(got).toEqual({ languages: ['zh-CN', 'en'], intl: 'zh-CN', header: expect.stringMatching(/^zh-CN,en/), xhrHeader: got.header });
+    }
+  };
+
+  // A launched browser, from the command line: in this process,
+  // Playwright's test runner would give the browser a locale of its own.
+  const cli = await new Promise<string>((resolve) => {
+    execFile(process.execPath, [CLI, '--temp-browser', '--root', scriptsDir.path, 'start', '--lang', 'zh-cn,en', file, ...urls, '--', 'wait', 'log', '[lang] ?two'],
+      (_err, stdout, stderr) => resolve(stdout + stderr));
+  });
+  expectLangs(cli.split('\n'), 'a launched browser');
+
+  // A browser the run connects to, as a shared one.
+  const port = await new Promise<number>((resolve) => {
+    const server = net.createServer().listen(0, '127.0.0.1', () => {
+      const { port: free } = server.address() as net.AddressInfo;
+      server.close(() => resolve(free));
+    });
+  });
+  const shared = await chromium.launch({ args: [`--remote-debugging-port=${port}`] });
+  try {
+    const lines: string[] = [];
+    let stop!: () => void;
+    const until = new Promise<void>((resolve) => { stop = resolve; });
+    const done = run({
+      files: [file],
+      urls,
+      cdp: String(port),
+      lang: ['zh-CN', 'en'],
+      collectionRoot: scriptsDir.path,
+      localRoots: [],
+      out: (line) => {
+        lines.push(line);
+        if (wanted.every((w) => lines.some((l) => l.includes(w)))) stop();
+      },
+      until,
+    });
+    const timer = setTimeout(stop, 15000);
+    try {
+      await done;
+    } finally {
+      clearTimeout(timer);
+    }
+    expectLangs(lines, 'a connected browser');
+  } finally {
+    await shared.close();
+  }
 });

@@ -38,6 +38,8 @@ import {
   type GmDownloadEvent,
 } from '../gm-download.js';
 import { isAllowedTabUrl, tabUrlRefusedMessage } from '../gm-tab.js';
+import { remapStackText } from '../stack-link.js';
+import { acceptLanguageHeader } from './browser-lang.js';
 import { access, mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -59,6 +61,12 @@ export interface PageLink {
    * cookies at all.
    */
   cookiesFor?(url: string): Promise<{ name: string; value: string }[]>;
+  /**
+   * The page's `navigator.languages`, for the `Accept-Language` of a
+   * request sent from Node. Optional: without it requests carry
+   * Node's default.
+   */
+  languages?(): Promise<readonly string[]>;
   /** Browser-side actions a script can ask for. Optional: without
    * them `GM_openInTab`, `window.close` and `window.focus` are refused. */
   browser?: BrowserActions;
@@ -394,6 +402,16 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
     return [...this.scripts.keys()];
   }
 
+  /**
+   * `text` with each stack frame from an attached script's injected
+   * entry pointed at the file and line it was written in: a
+   * `@require`, or the script itself. Without this, a script with
+   * `@require`s reports lines counted from the top of the requires.
+   */
+  remapStack(text: string): string {
+    return remapStackText(text, [...this.scripts.values()].map((s) => s.stackLayout));
+  }
+
   attachPage(page: PageLink): void {
     this.pages.add(page);
   }
@@ -538,7 +556,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
       case 'sm:error': {
         const report: ErrorReport = this.baseReport(payload, from, {
           message: str(payload.message),
-          stack: str(payload.stack),
+          stack: this.remapStack(str(payload.stack)),
         });
         this.reports.errors.push(report);
         this.notify('script-error', report);
@@ -824,6 +842,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
         outgoing.headers = { ...(request.headers ?? {}), cookie: jar.map((c) => `${c.name}=${c.value}`).join('; ') };
       }
     }
+    outgoing.headers = await withAcceptLanguage(outgoing.headers ?? {}, from);
     if (starting.aborted) {
       await emit({ kind: 'abort' });
       return;
@@ -952,7 +971,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
         const jar = await from.cookiesFor(url).catch(() => []);
         if (jar.length > 0) headers.cookie = jar.map((c) => `${c.name}=${c.value}`).join('; ');
       }
-      const res = await fetch(url, { headers, signal: controller.signal });
+      const res = await fetch(url, { headers: await withAcceptLanguage(headers, from), signal: controller.signal });
       if (!res.ok) {
         await emit({
           kind: 'error',
@@ -1132,4 +1151,13 @@ async function claimUniquePath(wanted: string, claimed: Set<string>): Promise<st
 
 function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
+}
+
+// A request sent from Node asks for the page's languages, as one from
+// the extension carries the browser's (Node would send `*`). A header
+// the script set wins.
+async function withAcceptLanguage(headers: Record<string, string>, from: PageLink): Promise<Record<string, string>> {
+  if (!from.languages || Object.keys(headers).some((h) => h.toLowerCase() === 'accept-language')) return headers;
+  const languages = await from.languages().catch(() => []);
+  return languages.length > 0 ? { ...headers, 'accept-language': acceptLanguageHeader(languages) } : headers;
 }

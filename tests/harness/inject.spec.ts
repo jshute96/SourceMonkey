@@ -99,6 +99,24 @@ test.describe('harness injection', () => {
     await expect(page.locator('#target')).toHaveAttribute('data-main', 'object');
   });
 
+  test('a script redeclaring wrapper-provided names shadows them, as in the extension', async ({ page, fixtureServer, loadScript }) => {
+    // The harness injects the extension's own registration entries, so
+    // it gets the same nested user-program scope (see wrapCombinedEntry).
+    await loadScript({
+      relativePath: 'shadow.user.js',
+      meta: { name: 'Shadow', match: ['*://*/page-globals.html'], grant: ['unsafeWindow', 'GM_setValue'] },
+      body: `
+        const window = unsafeWindow;
+        let GM_info = 'mine';
+        var GM_setValue = 0;
+        document.getElementById('target').dataset.shadow =
+          [window.__PAGE_APP__.name, GM_info, GM_setValue].join(',');
+      `,
+    });
+    await page.goto(`${fixtureServer.baseUrl}/page-globals.html`);
+    await expect(page.locator('#target')).toHaveAttribute('data-shadow', 'page-app,mine,0');
+  });
+
   test('GM_setValue writes reach the host and GM_getValue reads a seeded value', async ({ page, fixtureServer, host, loadScript }) => {
     const prepared = await loadScript({
       relativePath: 'store.user.js',

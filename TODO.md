@@ -48,6 +48,29 @@ A backlog of **candidates**, not a list of obligations.
     timeout, measured from when the wrapper asked. A window that
     outlives it gets a reply nobody is listening for, and the entry is
     already marked consumed. Leave real margin.
+- `@run-at document-start` isn't guaranteed to run before page scripts.
+  - The body waits for the async `sm:check-pending` reply, while the
+    parser can run the page's early `<head>` scripts. The extension
+    usually wins (~1-5ms reply); sm-dev, whose reply goes through Node,
+    usually loses (a documented known difference in harness-guide.md).
+  - Tampermonkey users expect it to run first: scripts that hook
+    `fetch`, `XMLHttpRequest` or `addEventListener` miss page code
+    otherwise.
+  - Plan: `document-start` scripts don't wait for the reply at all;
+    they run the registered body immediately.
+    - The fast-path swap is given up for them. The reload's own
+      `setupReloadFastPath` still refreshes in the background, and the
+      badge flips to RELOAD when an update lands, so an edit is picked
+      up on the second reload. (For local files the focus-triggered
+      refresh usually registers it before the first.)
+    - The other use of the reply, the "Reload with no userscripts"
+      `skip`, needs a synchronous channel instead: when arming the
+      marker, write a flag into the tab's `sessionStorage` before
+      reloading, and have the wrapper read and clear it at
+      `document-start`. Check subframes (other origins have their own
+      `sessionStorage`) and pages that block storage.
+    - Removes the sm-dev known difference too, so update
+      harness-guide.md and injection.md (Concurrent gates).
 - Make an icon that works
 
 ## Source maps for stack traces
@@ -99,17 +122,14 @@ What is still unmapped:
   a library still lands in the isolated world with no binding. The
   requires arrive on a later pipeline step (`attachFiles`) than the flag
   is derived on, and a require refresh would have to re-derive it.
-  - The related half is already handled: a `@require` that *declares*
-    the name suppresses our binding at emission time, so the library's
-    own `const unsafeWindow = …` isn't a duplicate declaration.
   - The scan also has no regex-literal state, so a `/['"]/` opens a
     string, and a literal ending in `\/\/` reads as a line comment;
     either can swallow a later reference. Normally that just leaves the
     script behaving as it did before the feature. The one bad case is a
-    swallowed *declaration* with a visible use after it: the binding is
-    then emitted beside the script's own and the install-time parse check
-    fails the row. No corpus script hits it; a real tokenizer (or the one
-    the parse check already has in its sandbox) would close it.
+    swallowed *declaration* with a visible use after it: the script then
+    moves to MAIN world for a binding it shadows anyway. No corpus script
+    hits it; a real tokenizer (or the one the parse check already has in
+    its sandbox) would close it.
 
 - **Find the real `chrome.userScripts.register()` size limit.** One
   script with four 90 KB requires measures ~1 MB of `js[]` (the source
@@ -121,22 +141,6 @@ What is still unmapped:
   progressively larger scripts until it rejects, so the ceiling is a
   measured fact — and a check that the failure really is as visible as
   the fallback path suggests.
-- **Wrap identifiers a `@require` can collide with.** The wrap
-  declares `GM`, `GM_info`, every granted `GM_*`, `unsafeWindow` and
-  `__sm*` in the same scope as the user program, so a library doing
-  `const unsafeWindow = window.wrappedJSObject || window;` — a real
-  idiom — is a parse failure. The install-time parse check now catches
-  it and names the script (see [docs/parse-check.md](docs/parse-check.md)),
-  so it fails visibly rather than silently — but the script still can't
-  run. Renaming our internals (or moving the preamble reads onto
-  `__smE`, which would also fix the `self` / `window` TDZ case) would
-  make it work instead.
-  - Measured over the GreasyFork top 2000: this is the *only* thing
-    that made a real-world script fail to compile — 3 scripts, all of
-    them fine under Tampermonkey (`var …, GM;`, the
-    `if (typeof GM_setValue === 'undefined') { var GM_setValue = … }`
-    polyfill, and a script shipping its own `function GM_addStyle`).
-    See [docs/corpus-validation-results.md](docs/corpus-validation-results.md).
 
 ## Reload fast-path — remaining cost
 
@@ -166,13 +170,6 @@ of a 500 ms budget, the decision lands at ~243 ms. What remains:
 The compile-only check is in (see
 [docs/parse-check.md](docs/parse-check.md)). What it doesn't do yet:
 
-- **Compile with the wrap's own declarations.** The check omits the
-  wrap head's `var` preamble, the `__smE` parameter and the GM
-  prelude, so a script declaring `const __smE`, `let __smDecision` or
-  `const __smGmSnap` passes and then fails at injection. Every such
-  name is `__sm`-prefixed so the risk is small, and it errs toward
-  false-accept. Compiling with `new Function('__smE', preamble + src)`
-  would close it.
 - **Place a brace imbalance at its cause, not its symptom.** A stray or
   missing `}` is reported by the raw probe at the brace itself, which
   is right — but only when the raw probe is the one chosen, via a
@@ -266,6 +263,16 @@ gates, or the emitted wrap — the rate is the regression signal.
   (`data:application/javascript,%3Bwindow.Vue%3DVue%3B…`). Cheap to
   support for the `application/javascript` form, since the bytes are
   in the ref and no fetch is involved.
+- **`@run-at context-menu` scripts are refused** (2 in the corpus).
+  - Real support would be a `chrome.contextMenus` item that injects the
+    script once into the current tab.
+  - Until then, one rough edge: a script installed from a URL whose
+    upstream copy *adds* `@run-at context-menu` keeps its last good
+    copy running on page load, flagged REFRESH FAILED with "Fetched
+    copy is not a valid userscript". That rule exists for login or
+    error pages served in place of a script, and its wording is wrong
+    for a valid Tampermonkey script. Accepted for now: it's the last
+    good copy, and the case is rare.
 
 ## Cross-manager coverage
 
@@ -716,7 +723,7 @@ Adding any of these is a catalog entry + a body — nothing structural.
 
 - **`self` subdomain handling.** TM/VM treat `self` as "the
   script's own origins OR their subdomains"; SourceMonkey matches
-  exact host only. See `src/gm-connect.ts#hostMatchesRule`. Fix:
+  `self` hosts exactly. See `src/gm-connect.ts#hostMatchesRule`. Fix:
   fall through to the subdomain check against `selfHosts` as a set
   of bases. Documented limitation pending a real compat report.
 - **`self` with a `.tld` host.** `extractSelfHosts` takes
@@ -724,7 +731,7 @@ Adding any of these is a catalog entry + a body — nothing structural.
   www.google.com. Matching `selfHosts` with the `.tld` reading from
   `url-match.ts` would fix it.
 - **Port handling is asymmetric.** A user-supplied port in
-  `@connect example.com:8443` (no scheme) lands in the `exact`
+  `@connect example.com:8443` (no scheme) lands in the `host`
   branch as `host = "example.com:8443"`, but request matching
   goes through `URL.hostname` which strips the port — so the rule
   never matches. Either strip ports consistently when parsing rules

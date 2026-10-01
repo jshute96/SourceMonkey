@@ -17,6 +17,8 @@
 
 import { decodeForDisplay } from './script-display.js';
 import { ROOT } from './script-source-url.js';
+import { remapStackRef } from './source-map.js';
+import type { StackLayout } from './composed-source.js';
 
 export type RefRun =
   | { kind: 'text'; text: string }
@@ -98,4 +100,52 @@ export function parseStackRefs(text: string): RefRun[] {
 // put `sourcemonkey://elsewhere/…` in its own log message.
 export function displayRefText(text: string, url: string): string {
   return url.startsWith(`${ROOT}/`) ? decodeForDisplay(text) : text;
+}
+
+// Rewrite every ref in `text` (an `Error.stack`, or a console line that
+// carries one) that points into a script's concatenated entry, so it
+// names the `@require` or the script at its own line. For plain-text
+// readers of stacks, such as sm-dev's output; the Log tab maps refs one
+// at a time as it paints them (`resolveLogRef` in userscript.ts).
+//
+// `layouts` are the scripts that may have logged it. A ref stays as it
+// was when it matches none of their entry URLs, or an entry URL that
+// scripts with different layouts share: two `foo.user.js` files run by
+// sm-dev both get `.../foo/foo.user.js`, and mapping with the wrong
+// one's layout would name a confidently wrong file and line.
+//
+// A ref on a line of our own wrap (the head, which holds the GM
+// bindings, a `// @require` marker, a seam, the closing brace) has no
+// original line. Left alone it would read as that line of the user's
+// file, so it is renamed to the script's `__wrapper.js` instead, at
+// the generated line.
+export function remapStackText(text: string, layouts: Iterable<StackLayout>): string {
+  if (!text.includes(`${ROOT}/`)) return text;
+  const byUrl = new Map<string, StackLayout | null>();
+  for (const layout of layouts) {
+    const seen = byUrl.get(layout.entryUrl);
+    if (seen === undefined) byUrl.set(layout.entryUrl, layout);
+    else if (seen && !sameSegments(seen, layout)) byUrl.set(layout.entryUrl, null);
+  }
+  return parseStackRefs(text).map((run) => {
+    if (run.kind === 'text') return run.text;
+    const layout = byUrl.get(run.url);
+    if (!layout || layout.segments.length === 0) return run.text;
+    const ref = remapStackRef(run, layout.entryUrl, layout.segments);
+    if (ref) return `${ref.url}:${ref.line}:${ref.col}`;
+    const folder = layout.entryUrl.slice(0, layout.entryUrl.lastIndexOf('/'));
+    return `${folder}/${WRAPPER_FILE}:${run.line}:${run.col}`;
+  }).join('');
+}
+
+// The name `remapStackText` gives frames on our own wrap's lines.
+export const WRAPPER_FILE = '__wrapper.js';
+
+// Two copies of one script (sm-dev's `copy`) share a URL and a layout,
+// so they don't make the URL ambiguous.
+function sameSegments(a: StackLayout, b: StackLayout): boolean {
+  return a.segments.length === b.segments.length && a.segments.every((s, i) => {
+    const t = b.segments[i];
+    return s.url === t.url && s.generatedLine === t.generatedLine && s.lineCount === t.lineCount;
+  });
 }

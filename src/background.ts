@@ -59,6 +59,7 @@ import {
 } from './http-read.js';
 import { checkParses, resetParseCheckFailures } from './parse-check.js';
 import { buildParseCheckSource } from './injector.js';
+import { stackLayout, type StackLayout } from './composed-source.js';
 import { attachParseLocation } from './parse-location.js';
 import {
   isParseCheckDisabled,
@@ -157,6 +158,8 @@ import {
   type CollectionOptions,
   type InstallTarget,
   type NewCollectionSpec,
+  backfillHeaderProblems,
+  backfillStartupLogs,
   backfillUsesUnsafeWindow,
   type StoredScript,
   type StoredCollection,
@@ -388,6 +391,11 @@ interface SourceMonkeyApi {
   // script in a dupe group gets which `#N` is decided by UUID sort, so
   // a test that needs the label cannot predict it — it has to ask.
   getScriptLogLabel: (scriptId: string) => Promise<string>;
+  // How the script's injected entry maps back to its files, for
+  // `sm-dev --extension` to rewrite stack lines in the Log entries and
+  // console lines it prints. Segment contents are left out: only the
+  // line numbers are needed. Null for a script that isn't stored.
+  getStackLayout: (scriptId: string) => Promise<StackLayout | null>;
   // GM_registerMenuCommand test surface. Playwright can't click the
   // real Chrome action context menu, so tests need a way to (a) read
   // back what we would have rendered for a tab and (b) synthesize the
@@ -555,6 +563,12 @@ const api: SourceMonkeyApi = {
   // `scriptLogLabel`, not `getScriptLogLabel` — the awaited form, so a
   // test never races the id table and gets a UUID prefix back.
   getScriptLogLabel: scriptLogLabel,
+  getStackLayout: async (scriptId: string) => {
+    const script = await getScript(scriptId);
+    if (!script) return null;
+    const layout = stackLayout(script, await scriptLogLabel(scriptId));
+    return { ...layout, segments: layout.segments.map((seg) => ({ ...seg, content: '' })) };
+  },
   checkParses,
   setParseCheckEnabled: async (enabled: boolean) => {
     await setParseCheckDisabled(!enabled);
@@ -781,14 +795,26 @@ chrome.runtime.onInstalled.addListener((details) => {
   // row said, so without this the ungranted-`unsafeWindow` handling
   // would never reach the scripts already installed. Re-syncs only when
   // something actually changed, since the flag decides a script's world.
+  //
+  // Then re-derive the rows' parse-time warnings (`startupLogs`), for
+  // the same reason: a check added in an update would otherwise never
+  // reach an unchanged script. They ride in the registration's config,
+  // hence the re-sync.
+  //
+  // Last, re-run the header checks, so a script a newer check refuses
+  // (e.g. `@run-at context-menu`) stops running instead of keeping its
+  // old `ok` row.
   void (async () => {
     try {
-      const changed = await backfillUsesUnsafeWindow();
-      if (changed === 0) return;
-      console.log(`[SourceMonkey] backfilled usesUnsafeWindow on ${changed} script row(s)`);
-      await syncRegistrations();
+      const flagged = await backfillUsesUnsafeWindow();
+      if (flagged > 0) console.log(`[SourceMonkey] backfilled usesUnsafeWindow on ${flagged} script row(s)`);
+      const relogged = await backfillStartupLogs();
+      if (relogged > 0) console.log(`[SourceMonkey] re-derived startup logs on ${relogged} script row(s)`);
+      const refused = await backfillHeaderProblems();
+      if (refused > 0) console.log(`[SourceMonkey] marked ${refused} script row(s) invalid by a newer header check`);
+      if (flagged + relogged + refused > 0) await syncRegistrations();
     } catch (err) {
-      console.info('[SourceMonkey] usesUnsafeWindow backfill failed:', err);
+      console.info('[SourceMonkey] script row backfill failed:', err);
     }
   })();
   if (details.reason !== 'install') return;
@@ -4067,7 +4093,7 @@ let parseCheckRuns = 0;
 const compileParseChecker: ParseChecker = async (script) => {
   if (await isParseCheckDisabled()) return null;
   parseCheckRuns++;
-  const source = await buildParseCheckSource(script, chrome.runtime.getManifest().version);
+  const source = buildParseCheckSource(script);
   const verdicts = await checkParses([source.text]);
   // Same resolution the page checker does, through the same helper —
   // the two routes differ only in transport, and a verdict that named

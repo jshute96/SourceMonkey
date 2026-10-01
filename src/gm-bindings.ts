@@ -277,8 +277,9 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
     }
   }
   // DOM subsystem: in-page DOM mutations, no per-script state needed
-  // beyond what the bodies pass through. CSP-exempt in USER_SCRIPT
-  // world.
+  // beyond what the bodies pass through. Exempt from the page's CSP
+  // in USER_SCRIPT world (scripts follow the world CSP instead; see
+  // ensureWorldConfigured in injector.ts).
   if (spec.subsystem === 'dom') {
     switch (spec.name) {
       case 'GM_addStyle':

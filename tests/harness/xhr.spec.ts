@@ -42,6 +42,43 @@ test.describe('harness GM_xmlhttpRequest', () => {
     expect(host.reports.requests[0]).toMatchObject({ method: 'GET', outcome: 'load', status: 200 });
   });
 
+  test('onreadystatechange gets readyState 4 before every terminal callback', async ({ page, fixtureServer, host, loadScript }) => {
+    await loadScript({
+      ...requester(['127.0.0.1']),
+      body: `
+        const out = (text) => { document.getElementById('target').textContent = text; };
+        window.addEventListener('message', (ev) => {
+          if (!ev.data || ev.data.kind !== 'send') return;
+          const seen = [];
+          // The terminal object's readyState, status and responseText
+          // length: the empty-text fields must exist on every outcome.
+          const end = (kind) => (r) => out(seen.concat(
+            kind + r.readyState + ' ' + r.status + ' ' + r.responseText.length).join(','));
+          const control = GM_xmlhttpRequest({
+            ...ev.data.details,
+            onreadystatechange: (r) => seen.push('rsc' + r.readyState + ' ' + r.status),
+            onload: end('load'),
+            onerror: end('error'),
+            ontimeout: end('timeout'),
+            onabort: end('abort'),
+          });
+          if (ev.data.abortAfter != null) setTimeout(() => control.abort(), ev.data.abortAfter);
+        });
+      `,
+    });
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect.poll(() => host.reports.started.length).toBe(1);
+    await send(page, { url: `${fixtureServer.baseUrl}/other.html` });
+    await expect(page.locator('#target')).toHaveText(/^rsc4 200,load4 200 [1-9]/);
+    await send(page, { url: 'http://127.0.0.1:1/never' });
+    await expect(page.locator('#target')).toHaveText('rsc4 0,error4 0 0');
+    await send(page, { url: `${fixtureServer.baseUrl}/__slow/other.html?ms=3000`, timeout: 200 });
+    await expect(page.locator('#target')).toHaveText('rsc4 0,timeout4 0 0');
+    await page.evaluate((url) => window.postMessage({ kind: 'send', details: { url }, abortAfter: 50 }, '*'),
+      `${fixtureServer.baseUrl}/__slow/other.html?ms=3000`);
+    await expect(page.locator('#target')).toHaveText('rsc4 0,abort4 0 0');
+  });
+
   test('a 404 still fires onload', async ({ page, fixtureServer, host, loadScript }) => {
     await loadScript(requester(['127.0.0.1']));
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
@@ -92,6 +129,65 @@ test.describe('harness GM_xmlhttpRequest', () => {
     await send(page, { url: `${fixtureServer.baseUrl}/__echo`, responseType: 'json', anonymous: true });
     await expect(page.locator('#target')).toContainText('load 200');
     expect(await echoedCookie()).toBeUndefined();
+  });
+
+  test('a request asks for the page\'s languages, unless the script sets its own', async ({ page, fixtureServer, host, loadScript }) => {
+    await loadScript(requester(['127.0.0.1']));
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect.poll(() => host.reports.started.length).toBe(1);
+    const pageHeader = await page.evaluate(() => fetch('/__echo').then((r) => r.json()).then((j) => j.headers['accept-language']));
+    expect(pageHeader).toBeTruthy();
+    await send(page, { url: `${fixtureServer.baseUrl}/__echo`, responseType: 'json' });
+    await expect(page.locator('#target')).toContainText('load 200');
+    const text = (await page.locator('#target').textContent()) ?? '';
+    expect(JSON.parse(text.replace(/^load 200 /, '')).headers['accept-language']).toBe(pageHeader);
+    // A header the script sets wins.
+    await page.locator('#target').evaluate((el) => { el.textContent = ''; });
+    await send(page, { url: `${fixtureServer.baseUrl}/__echo`, responseType: 'json', headers: { 'Accept-Language': 'fr' } });
+    await expect(page.locator('#target')).toContainText('load 200');
+    const own = (await page.locator('#target').textContent()) ?? '';
+    expect(JSON.parse(own.replace(/^load 200 /, '')).headers['accept-language']).toBe('fr');
+  });
+
+  test('a request goes out while the page shows a dialog', async ({ page, fixtureServer, host, loadScript }) => {
+    // The languages for its header come from the page, which answers
+    // nothing while an alert is up: they must not hold the request.
+    let heard!: (language: string) => void;
+    const reached = new Promise<string>((resolve) => { heard = resolve; });
+    const server = http.createServer((req, res) => {
+      heard(String(req.headers['accept-language'] ?? ''));
+      res.end('ok');
+    });
+    await new Promise<void>((resolve) => server.listen(0, 'localhost', resolve));
+    const port = (server.address() as { port: number }).port;
+    try {
+      await loadScript({
+        ...requester(['localhost']),
+        body: `
+          window.addEventListener('message', (ev) => {
+            if (ev.data?.kind !== 'send') return;
+            GM_xmlhttpRequest({ url: ev.data.url });
+            alert('hold');
+          });
+        `,
+      });
+      await page.goto(`${fixtureServer.baseUrl}/target.html`);
+      await expect.poll(() => host.reports.started.length).toBe(1);
+      const pageHeader = await page.evaluate(() => fetch('/__echo').then((r) => r.json()).then((j) => j.headers['accept-language']));
+      let whileOpen: string | null = null;
+      const dismissed = new Promise<void>((resolve) => {
+        page.once('dialog', async (dialog) => {
+          whileOpen = await Promise.race([reached, new Promise<null>((r) => setTimeout(() => r(null), 3000))]);
+          await dialog.dismiss();
+          resolve();
+        });
+      });
+      await page.evaluate((url) => window.postMessage({ kind: 'send', url }, '*'), `http://localhost:${port}/`);
+      await dismissed;
+      expect(whileOpen).toBe(pageHeader);
+    } finally {
+      server.close();
+    }
   });
 
   test('a timeout fires ontimeout', async ({ page, fixtureServer, host, loadScript }) => {

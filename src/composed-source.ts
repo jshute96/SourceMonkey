@@ -49,6 +49,7 @@
 import { joinFullSource } from './userscript-header.js';
 import type { StoredScript } from './script-store.js';
 import type { MappedSegment } from './source-map.js';
+import { buildRequireSourceUrl, buildSourceUrl } from './script-source-url.js';
 
 // Where each original file's text lands in the concatenated output.
 // `opts.requireUrls[i]` is the synthetic devtools URL for
@@ -161,6 +162,38 @@ export function composeSource(
   text += mainSource;
 
   return { text, segments, lineCount: countLines(text) };
+}
+
+// ---------- The layout stack traces need ----------
+//
+// What it takes to map an `Error.stack` frame from the injected entry
+// back to its file: the sourceURL V8 stamps on every frame of that
+// entry, and the segment list for it. Built from the stored script and
+// its log label alone, so every reader of stacks derives the same
+// answer as the injector without seeing the injected code: the
+// viewer's Log tab, sm-dev's output, and the service worker's test
+// surface (which sm-dev's `--extension` runs read it through).
+//
+// No segments when the script has no `@require`s: then nothing moved,
+// and frames already name the right line. See
+// `remapStackRef` / `remapStackText`.
+//
+// `lineCount` is the user program's lines (requires + body): a frame
+// past it is on our wrap's closing line, not the user's.
+export interface StackLayout {
+  entryUrl: string;
+  segments: readonly MappedSegment[];
+  lineCount: number;
+}
+
+export function stackLayout(script: StoredScript, logLabel: string): StackLayout {
+  const entryUrl = buildSourceUrl(logLabel);
+  const { segments, lineCount } = composeSource(script, {
+    requireUrls: (script.requires ?? []).map((r) => buildRequireSourceUrl(logLabel, r.url)),
+    mainUrl: entryUrl,
+    startLine: USER_SOURCE_START_LINE,
+  });
+  return { entryUrl, segments, lineCount };
 }
 
 // Count lines the way V8 does, which is what the source map has to

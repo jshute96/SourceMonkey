@@ -104,10 +104,23 @@ fails.
     [Rejected registrations](#rejected-registrations).
   - Not every write is reported — see
     [What an incremental sync must not disturb](#what-an-incremental-sync-must-not-disturb).
-- **One-time world config** — `chrome.userScripts.configureWorld({
-  messaging: true })` is called before the first `register()`. This is
-  what lets the injected wrapper call `chrome.runtime.sendMessage`
-  back to the SW.
+- **One-time world config** — `chrome.userScripts.configureWorld()`
+  is called before the first `register()`.
+  - `messaging: true` lets the injected wrapper call
+    `chrome.runtime.sendMessage` back to the SW.
+  - `csp: "script-src 'self' 'unsafe-eval' 'unsafe-inline' *"` is the
+    USER_SCRIPT world's own CSP. `'unsafe-eval'` lets the reload
+    fast-path eval the script body.
+  - Chrome also checks `<script>` elements inserted from this world
+    against it, instead of the page's CSP. `'unsafe-inline'` and `*`
+    let userscripts inject page code (inline, or by `src`), which is
+    otherwise refused on every page.
+  - The new capability this grants: userscript-inserted `<script>`
+    elements run in the page realm even under a strict page
+    `script-src`. Tampermonkey 5.5 sets the same world CSP, so it
+    allows this too.
+  - Inline event handlers and `javascript:` URLs a userscript adds
+    stay under the page CSP.
 
 ### The sync is incremental
 
@@ -531,12 +544,50 @@ We register every userscript at Chrome's `document_start` and the
 wrapper itself awaits the matching lifecycle event before invoking
 the user body. This is the TM/VM pattern.
 
-- `document-start` — wrapper runs the body immediately.
+- `document-start` — the gate opens immediately, once
+  `document.documentElement` (`<html>`) exists.
+  - In the extension it always does by then.
+  - sm-dev injects earlier, before the parser makes `<html>`, so there
+    the wrapper waits for it with a `MutationObserver` on `document`.
+  - Mutation records are delivered before the first page `<script>`
+    runs, so the gate opens ahead of page scripts. The body still
+    waits for the async [check-pending decision](#reload-fast-path),
+    so early page scripts can run first (in sm-dev, usually).
+  - If `<html>` is still missing at `DOMContentLoaded`, the body runs
+    anyway.
 - `document-body` — wrapper waits for `document.body` (via a
-  `MutationObserver` on `documentElement` if body isn't there yet).
+  `MutationObserver` on `document`, with `subtree` so it also sees a
+  `<body>` added under an `<html>` that didn't exist yet).
+  - Observing `document` rather than `<html>` also keeps the wait
+    alive across a `document.open()` rewrite, which replaces `<html>`.
+  - A document with no `<body>` by `DOMContentLoaded` (XML, SVG)
+    never runs the script, as in Tampermonkey ("injected if the body
+    element exists"). The observer is dropped then, so it doesn't wake
+    on every later DOM change.
 - `document-end` — wrapper waits for `DOMContentLoaded`.
 - `document-idle` (default / unknown values) — wrapper waits for
   `window`'s `load` event.
+  - A page that calls `window.stop()` never fires `load`, but its
+    `readyState` still reaches `complete`. That change arms a
+    zero-delay fallback, so the body runs there too.
+  - On a normal page `load` comes in the same task as that change, so
+    the body still runs after `load`, and only once.
+  - An unknown value (a typo) gets a parse-time warning
+    (`unsupportedRunAtWarning`): Log tab, `sm-dev validate`, and
+    sm-dev's `Injected` line.
+
+**Gap: `@run-at context-menu` is not supported.** In Tampermonkey
+(Chrome only) it means "don't run on load; add a right-click menu item
+that runs the script once on the current page", like a bookmarklet.
+
+- We have no such menu item, so the script is refused: `validateHeader`
+  stores it `invalid` (`CONTEXT_MENU_UNSUPPORTED`) and it never runs.
+- Not a `document-idle` fallback like other unknown values: that would
+  run an on-request action unprompted on every matching page load, and
+  these scripts usually `@match` all pages (TM ignores
+  `@include`/`@exclude` for them).
+- `backfillHeaderProblems` applies this to already-installed scripts
+  on extension update.
 
 Why not just pass `runAt` through to `chrome.userScripts.register`:
 
@@ -702,10 +753,11 @@ sandboxed page and returns a verdict, see
   unsafeWindow` does.
 - A source that **declares** the name — `const unsafeWindow =
   window.wrappedJSObject || window;`, a real cross-browser idiom — is
-  left alone. Our binding is a `const` in the same scope, so adding one
-  beside it would turn a working script into a SyntaxError. The same
-  check runs over `@require` bodies at emission time, where a library
-  declaring the name is what the main body is usually referencing.
+  left alone. It reads its own binding, never ours, so there is nothing
+  to move worlds for.
+  - Our binding would be harmless beside it: the script's declaration
+    shadows it (see [The user program scope](#the-user-program-scope)).
+    So a `@require` declaring the name needs no special case either.
 - Two limits, both erring towards today's behavior: regex literals are
   not recognized (a `/['"]/` opens a string state, and a literal ending
   in `\/\/` reads as a line comment, either of which can swallow a
@@ -813,7 +865,8 @@ whole `GM_*` surface works there too.
 ##### Costs of running in MAIN
 
 - **Page CSP applies to DOM injection.** `GM_addStyle` /
-  `GM_addElement` are CSP-exempt in USER_SCRIPT world but not in MAIN.
+  `GM_addElement` escape the page's CSP in USER_SCRIPT world but not
+  in MAIN.
   A page whose `style-src` omits `'unsafe-inline'` will drop an
   injected `<style>`'s rules on the floor. The runtime detects that
   (a connected `<style>` with no `.sheet`) and files one warning per
@@ -1076,6 +1129,9 @@ The combined user-program entry is wrapped (in `wrapCombinedEntry`) to:
   requires are concatenated into the same function, to library
   top-level code too. One copy serves both; see
   [GM-APIs.md](GM-APIs.md#bindings-layout-in-the-wrapper).
+- Run the user program (requires + body) in a scope nested inside the
+  one holding those bindings — see
+  [The user program scope](#the-user-program-scope).
 - Carry a `//# sourceURL=sourcemonkey://SourceMonkey/<folder>/<name>.user.js`
   directive so devtools labels the script and the prelude's
   async-error listeners can attribute errors by stack inspection.
@@ -1097,6 +1153,67 @@ When the body fires (inside the prelude's `runMain`), the prelude:
   is undefined) it falls back to a `sourcemonkey-bridge-sync` DOM
   event the bridge picks up — see [MAIN-world traffic — the
   bridge](#main-world-traffic--the-bridge).
+
+### The user program scope
+
+The entry has two scopes, one inside the other:
+
+```
+self.__smRun(id,function(__smE){<__sm* vars><GM bindings><GM prelude>return(()=>{
+<requires, then the script's own source>
+})();});
+```
+
+- **Outer** (the wrap function): our own declarations — the `__sm*`
+  preamble, `const GM_info`, granted `GM_*`, `const unsafeWindow =
+  window;`.
+- **Inner** (an arrow function): the user program. Its top-level
+  declarations shadow ours, as they do under Tampermonkey (TM) and
+  Violentmonkey (VM). Before this, both shared one scope, so:
+  - `const window = unsafeWindow;` put our `const unsafeWindow =
+    window;` in the temporal dead zone (TDZ) of the script's `window`,
+    a ReferenceError that killed the script.
+  - `const unsafeWindow = …`, `let GM_info`, a `var GM_setValue`
+    polyfill or an own `function GM_addStyle` were duplicate-declaration
+    SyntaxErrors.
+
+Why an arrow function rather than a block:
+
+- A block scopes only `let`/`const`/`class`; a `var` or a sloppy-mode
+  function declaration would still clash in the outer scope.
+- An arrow keeps the wrap function's `this`, so top-level `this` is
+  unchanged, with no page-overridable `.call(this)`.
+- Top-level `return` still works. Top-level `await` stays a
+  SyntaxError.
+
+The user program is the arrow body's first statement, so a leading
+`"use strict"` is a real directive and the whole program runs in strict
+mode, as in Tampermonkey and Violentmonkey:
+
+- It's the first file's directive that counts, as if the files were
+  concatenated: a first `@require` that starts with one makes the
+  script strict, and the script's own after a `@require` does nothing.
+  - Tampermonkey and Violentmonkey do the same: VM in
+    `tests/examples/use-strict`, TM checked once by hand (it can't take
+    that example's relative `@require`).
+  - That includes a first `@require` that is empty or only comments:
+    the `;` we put between files is then the first statement, so the
+    script's own directive still does nothing. What TM and VM do there
+    is untested.
+- Before the nested scope it never applied, since our own statements
+  came first. Scripts that relied on that (assigning undeclared
+  variables under a top-level `'use strict'`) now throw, as they do in
+  Tampermonkey and Violentmonkey.
+
+The opener and closer sit on lines that already exist, so no line
+moves: the source map and the Log tab's stack mapping are unaffected.
+
+- A synchronous throw's stack gains one frame on the closer line, where
+  the arrow is called. That line is ours, so the Log tab shows it as
+  plain text rather than a link (see
+  [script-log.md](script-log.md#what-is-left-unmapped-deliberately)).
+The reload swap eval and the install-time parse check use the same
+arrangement (see [parse-check.md](parse-check.md#what-is-checked)).
 
 ### Async-error attribution
 
@@ -1623,8 +1740,8 @@ Why it matters:
   decision callback running at all.
 
 `document-start` gets no free wait — `waitForRunAt` calls back
-synchronously — so the decision is its only gate, and the 2s safety
-timeout remains the hard ceiling for every `@run-at`.
+synchronously once `<html>` exists — so the decision is its only gate,
+and the 2s safety timeout remains the hard ceiling for every `@run-at`.
 
 ### Caveats
 

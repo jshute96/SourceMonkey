@@ -4,7 +4,23 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { framePaths, onScreen, refLabels, refOf, tidy } from '../../lib/harness/snapshot.js';
+import { framePaths, onScreen, refLabels, refOf, tidy, withoutDocument } from '../../lib/harness/snapshot.js';
+
+test('a whole page\'s tree goes without its document line, a level less indented', () => {
+  const tree = [
+    '- document [ref=e9]:',
+    '  - generic [active] [ref=e1]:',
+    '    - button "Save" [ref=e2]',
+    '  - button "Panel" [ref=e3]',
+  ].join('\n');
+  assert.equal(withoutDocument(tree), [
+    '- generic [active] [ref=e1]:',
+    '  - button "Save" [ref=e2]',
+    '- button "Panel" [ref=e3]',
+  ].join('\n'));
+  // Anything else stays as it is.
+  for (const other of ['- generic [ref=e1]:\n  - button "a" [ref=e2]', '- document [ref=e1]']) assert.equal(withoutDocument(other), other);
+});
 
 test('a ref is e4, f3e2, ref=e4 or [ref=e4], and nothing else is', () => {
   assert.equal(refOf('e4'), 'e4');

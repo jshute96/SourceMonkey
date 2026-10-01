@@ -156,9 +156,16 @@ What the stream looks like:
 - `[sm-dev]` lines are the harness's reports; `[page log]` lines are
   console output from the script (or `[name]`-prefixed lines).
 - Lines from other tabs are prefixed with `[T2]`.
+- A DOM node logged to the console prints as its opening tag,
+  `<div id="x" class="a b">`, cut at 120 characters.
 - The site's own errors are hidden. Add `--page-errors` to `start` when
   the script may be breaking the page, or runs code outside its file
   (an added `<script>`, `eval`).
+- For a script that acts on the site's or browser's language, add
+  `--lang zh-CN` (or `--lang zh-CN,en`) to `start`: the run's tabs then
+  report it in `navigator.language(s)`, `Accept-Language` and `Intl`.
+  In a connected browser, cross-site iframes and workers keep the
+  browser's languages; use `--temp-browser` for a script in frames.
 
 A person at a terminal can use `pnpm sm-dev --interactive start ...`
 for a `> ` prompt instead. An agent should use `--detach` and separate
@@ -235,7 +242,10 @@ $R click e14                        # refs work anywhere a selector does
   `e14` (`f2e6` inside a frame). `snapshot <selector>` shows part of the
   page; `--out file` saves a large one.
 - Refs only last until the page changes: take a new snapshot after a
-  reload or navigation.
+  reload or navigation. Refs from `snapshot <selector>` and from the
+  whole page both work.
+- `snapshot` includes panels a script adds after `<body>` and inside
+  open shadow roots.
 - `probe --css` skips ids and classes that look generated
   (`css-1x2y3z`). Elements inside a shadow root or frame get no
   selector; use the ref.
@@ -331,9 +341,11 @@ $R wait log '/saved record \d+/'           # a regex
 
 - `wait log` also matches lines printed since the previous command
   began, so a line printed during the click counts.
-- It sees the lines the run's output shows: the script's, and
-  `[name]`-prefixed page lines. The site's other console lines, which
-  `logs` shows, aren't among them.
+- It sees every console line and error from the run's tabs, as `logs`
+  does, including the site's own lines the stream leaves out. Each is
+  matched as the stream would print it: `[page log] KEYUP 143`.
+- So a loose pattern (`error`, `done`) can match the site's own lines;
+  use the script's `[name]` prefix or a regex.
 - A command returns once the page settles, which can come before a
   script's delayed setup (a timer, a retry loop). `wait log` for the
   script's own ready line before driving it.
@@ -606,8 +618,9 @@ test('adds the button', async ({ page, loadUserscript, gm, reports }) => {
   frame only.
 - **It works in sm-dev but not in the extension, or the reverse**: see
   [Known differences](https://github.com/jshute96/SourceMonkey/blob/main/docs/harness-guide.md#known-differences-under-the-push-backend):
-  `document-start` code before `<html>` exists, Trusted Types in the
-  isolated world, a `GM_setValue` lost to an unload. Check in the
+  `document-start` code running after early page scripts, Trusted
+  Types in the isolated world, an inserted inline `<script>` blocked by
+  a strict page CSP, a `GM_setValue` lost to an unload. Check in the
   extension (above).
 - **A command is `Unknown`, or behaves unlike these docs**: sm-dev may
   be older than the SourceMonkey source (it warns, and says what to

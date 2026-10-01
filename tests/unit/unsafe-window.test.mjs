@@ -464,19 +464,17 @@ test('buildGmBindingsForScript: @grant none plus a reference gets the alias and 
   assert.doesNotMatch(js, /const GM_setValue/);
 });
 
-test('buildGmBindingsForScript: a @require that declares the name suppresses ours', async () => {
-  // The requires and the body are one program, so two `const
-  // unsafeWindow` declarations in it is a SyntaxError that takes the
-  // whole registered entry down — including the parse check at install.
+test('buildGmBindingsForScript: a @require that declares the name keeps our binding', async () => {
+  // The user program runs in a scope nested inside our bindings, so the
+  // library's own `const unsafeWindow` shadows ours instead of being a
+  // duplicate declaration. Nothing needs to step aside.
   const script = makeScript({
     header: grantHeader('GM_setValue'),
     usesUnsafeWindow: true,
     requires: [{ url: 'https://lib/x.js', source: 'const unsafeWindow = window.wrappedJSObject || window;' }],
   });
   const { js } = await buildGmBindingsForScript(script, '0.0.0');
-  assert.doesNotMatch(js, /const unsafeWindow = window;/);
-  // The script still runs in MAIN, which is where that library's own
-  // `window` needs to be.
+  assert.match(js, /const unsafeWindow = window;/);
   assert.equal(resolveScriptWorld(script), 'MAIN');
 });
 
@@ -523,8 +521,8 @@ test('extractStartupLogs: a grant-free script pinned isolated is warned too', ()
 });
 
 test('buildGmBindingsForScript: a @require that only READS the name keeps our binding', async () => {
-  // The suppression is for a require that declares the name. A library
-  // that merely uses it needs the binding as much as the body does.
+  // A library that merely uses the name needs the binding as much as
+  // the body does.
   const { js } = await buildGmBindingsForScript(makeScript({
     header: grantHeader('GM_setValue'),
     usesUnsafeWindow: true,

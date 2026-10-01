@@ -1,11 +1,16 @@
 // `@connect` URL gating for `GM_xmlhttpRequest`.
 //
-// VM's @connect grammar:
+// @connect grammar (following Tampermonkey's docs):
 //   - `*` — wildcard, allow any host.
 //   - `self` — allow same-origin requests (matched against the
 //     script's @match / @include hosts).
-//   - `example.com` — exact host match.
-//   - `*.example.com` — match `example.com` itself OR any subdomain.
+//   - `example.com` — that host OR any subdomain of it
+//     (`api.example.com`), as Tampermonkey documents. A label-boundary
+//     match: `evilexample.com` does not match. IP addresses and
+//     single-label names (`127.0.0.1`, `localhost`, `com`) match only
+//     exactly, so a bare rule can't stand for a whole TLD or IP range.
+//     Multi-label public suffixes (`co.uk`) are not special-cased.
+//   - `*.example.com` — `example.com` itself OR any subdomain.
 //
 // SW-side validation: when a script issues `GM_xmlhttpRequest`, the
 // SW pulls the script's stored header, parses out the `@connect`
@@ -13,17 +18,20 @@
 // any of them.
 //
 // Default policy: a script with NO `@connect` lines is BLOCKED from
-// all cross-origin requests. This matches VM. TM is more
-// lenient — flagging scripts without @connect as a separate concern
-// — but the stricter posture is the right default for a userscript
+// all cross-origin requests. Both reference managers are more
+// lenient (TM asks the user; VM doesn't enforce @connect at all),
+// but the stricter posture is the right default for a userscript
 // manager that takes the trust model seriously.
 
 import { getValues, type ParsedHeader } from './userscript-header.js';
 
 // Each entry is one parsed @connect line.
 export interface ConnectRule {
-  kind: 'wildcard' | 'self' | 'exact' | 'subdomain';
-  // For `exact` and `subdomain`, the host (lowercased). Missing
+  // `host` is a bare host (`example.com`) and `subdomain` a
+  // `*.example.com` form. Both match the host and its subdomains,
+  // except that a bare IP or single-label `host` matches only exactly.
+  kind: 'wildcard' | 'self' | 'host' | 'subdomain';
+  // For `host` and `subdomain`, the host (lowercased). Missing
   // otherwise.
   host?: string;
 }
@@ -46,12 +54,12 @@ export function parseConnectEntry(raw: string): ConnectRule | null {
   try {
     if (/^[a-z]+:\/\//.test(t)) {
       const u = new URL(t);
-      return { kind: 'exact', host: u.hostname };
+      return { kind: 'host', host: u.hostname };
     }
   } catch {
     // Fall through — treat the raw value as a host.
   }
-  return { kind: 'exact', host: t };
+  return { kind: 'host', host: t };
 }
 
 // Parse every `@connect` line from a header, dropping empties.
@@ -82,14 +90,35 @@ export function hostMatchesRule(
       // See TODO.md "@connect self subdomain handling" — known
       // cross-manager divergence pending a real compat report.
       return selfHosts.has(h);
-    case 'exact':
-      return rule.host === h;
+    case 'host':
+      // A bare `example.com` covers its subdomains too, as Tampermonkey
+      // documents. But not a bare IP or single label: `@connect 0.0.1`
+      // must not reach `127.0.0.1`, nor `@connect com` all of `.com`.
+      if (!rule.host) return false;
+      if (h === rule.host) return true;
+      return !isExactOnlyHost(rule.host) && h.endsWith('.' + rule.host);
     case 'subdomain':
+      // The `.` prefix keeps it to whole labels, so `evilexample.com`
+      // doesn't match `*.example.com`.
       if (!rule.host) return false;
       return h === rule.host || h.endsWith('.' + rule.host);
     default:
       return false;
   }
+}
+
+// A bare `@connect` host that has no subdomains to cover: an IP
+// address (all-numeric dotted, or IPv6 with `:`), or a single label
+// (`localhost`, `com`).
+function isExactOnlyHost(host: string): boolean {
+  return /^[\d.]+$/.test(host) || host.includes(':') || !host.includes('.');
+}
+
+// True when the header has no usable `@connect` rule, so all its
+// `GM_xmlhttpRequest` calls are refused. The same parse enforcement
+// uses, so a header whose `@connect` lines are all malformed counts.
+export function hasNoConnectRules(header: ParsedHeader): boolean {
+  return parseConnectRules(header).length === 0;
 }
 
 // Extract the set of "self" hosts from a script header's match/
