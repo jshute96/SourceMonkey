@@ -158,7 +158,6 @@ test('start with no scripts refuses the flags that act on scripts', () => {
   const none = 'ERROR: The start command was given no scripts, so it can\'t take';
   assert.deepEqual(run('--watch'), { code: 2, out: `${none} --watch` });
   assert.deepEqual(run('--all', '--values', '{}'), { code: 2, out: `${none} --all or --values` });
-  assert.deepEqual(run('--extension', '--solo'), { code: 2, out: `${none} --solo` });
   assert.deepEqual(run('--noscript'), { code: 2, out: 'ERROR: The start command no longer takes --noscript. Give it no scripts to start without any.' });
   // A script not named .user.js is refused, not opened as a page.
   assert.deepEqual(run('helper.js'), { code: 2, out: 'ERROR: helper.js is not a userscript: Its name doesn\'t end in .user.js' });

@@ -304,11 +304,11 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
   if (opts.noTab) clash('--notab', [[opts.all, '--all'], [urls.length > 0, 'a URL']]);
   // With no scripts, just a browser to drive: the flags that act on
   // scripts would do nothing. (`--extension` alone is a browser whose
-  // SourceMonkey runs its own collections; `--solo` would silence them.)
+  // SourceMonkey runs its own collections.)
   if (scripts.length === 0) {
     const used = ([
       [opts.all, '--all'], [Boolean(opts.values), opts.valuesFlag ?? '--values'],
-      [opts.watch, '--watch'], [opts.solo, '--solo'],
+      [opts.watch, '--watch'],
     ] as [boolean, string][]).filter(([on]) => on).map(([, name]) => name);
     if (used.length > 0) throw new UsageError(`The start command was given no scripts, so it can't take ${used.join(' or ')}`);
   }
@@ -387,6 +387,10 @@ async function runHere(
     }, idleSeconds * 1000).unref();
   };
   touch();
+  // Retired: a run's tabs keep SourceMonkey's other scripts out on
+  // their own (docs/sm-dev-extension.md#retiring---solo). Still taken,
+  // for a while, so a command line that has it keeps working.
+  if (opts.solo) writeOutputLine('[sm-dev] The --solo flag is no longer needed, and does nothing: a run\'s tabs keep SourceMonkey\'s other scripts out on their own.');
   try {
     return await run({
       files,
@@ -401,7 +405,6 @@ async function runHere(
       watch: opts.watch,
       values: opts.values,
       extension: opts.extension,
-      solo: opts.solo,
       pageErrors: opts.pageErrors,
       devtools,
       collectionRoot: lineRoots.collectionRoot,

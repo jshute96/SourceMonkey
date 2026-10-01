@@ -347,8 +347,9 @@ for the rows):
   hears the extension's events (starts, errors, Log entries, menus,
   values) as they happen. Its commands work as in a harness run. See
   [sm-dev-extension.md](sm-dev-extension.md).
-- `--solo` turns solo mode on for the run and off after.
-- `sm-dev clear --extension` drops the scratch scripts.
+- `sm-dev clear --extension` drops the scratch scripts, and turns solo
+  mode off. (`--solo`, which turned it on for a run, is retired: the
+  run's claims keep other scripts out of its tabs.)
 
 ## Compliance check for the host
 

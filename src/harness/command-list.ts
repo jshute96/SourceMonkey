@@ -496,12 +496,12 @@ export const HELP_SECTIONS: HelpSection[] = [
     title: 'Controlling the SourceMonkey extension',
     text: ['Instead of injecting the scripts itself, a run can push them into the SourceMonkey extension in the browser it connects to.', ''],
     commands: [
-      { usage: 'clear --extension', syntax: NONE, about: 'Remove all scripts in the extension\'s Scratch collection, and turn solo mode off.' },
+      { usage: 'clear --extension', syntax: NONE, about: 'Remove all scripts in the extension\'s Scratch collection, and turn off solo mode, which an older sm-dev\'s --solo may have left on.' },
     ],
     optionsTitle: 'Options for start',
     options: [
       { term: '--extension', about: 'Push the scripts into the extension\'s Scratch collection instead of injecting them. A --temp-browser installs the extension itself.', commands: ['start'] },
-      { term: '--solo', about: 'With --extension: Disable all other collections, and run only the started scripts, until this run ends.', commands: ['start'] },
+      { term: '--solo', about: 'No longer needed, and does nothing: a run\'s tabs keep SourceMonkey\'s other scripts out on their own.', commands: ['start'] },
     ],
   },
   {

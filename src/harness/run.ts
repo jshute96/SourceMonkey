@@ -72,8 +72,6 @@ export interface RunOptions extends ConnectOptions {
   watch?: boolean;
   /** Seed `GM_*` storage for every script before it runs. */
   values?: Record<string, unknown>;
-  /** With `extension`: disable every other collection for the run. */
-  solo?: boolean;
   /** Also stream the page's own errors, not just ones from the scripts. */
   pageErrors?: boolean;
   /**
@@ -531,7 +529,6 @@ export async function run(opts: RunOptions): Promise<number> {
     await held.tabs?.dispose().catch(() => undefined);
     await held.attachment?.dispose().catch(() => undefined);
     // Its tabs run the extension's scripts again from their next load.
-    if (opts.solo && held.extension) await held.extension.backend().then((b) => b.solo(false)).catch(() => undefined);
     await held.extension?.close();
     await session.done().catch(() => undefined);
     // On every way out, so a page tested after this is never taken
@@ -774,8 +771,6 @@ async function runInHarness(
       return 1;
     }
     held.extension = link;
-    // Turned back off at the run's end, in `run`.
-    if (opts.solo) await (await link.backend()).solo(true);
     host = new ExtensionHost(link, (name, level, message) => opts.out(`[sm-dev] ${name} ${level}: ${message}`));
     link.onRestart((restored) => opts.out('[sm-dev] SourceMonkey\'s background script restarted, so what the scripts did meanwhile may be missing here.'
       + (restored > 0 ? ` It had lost its hold on ${restored === 1 ? 'one of the run\'s tabs' : `${restored} of the run's tabs`}, which it has again.` : '')));

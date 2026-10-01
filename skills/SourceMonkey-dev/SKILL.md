@@ -543,10 +543,10 @@ Use it when the question is about Chrome itself:
   UI.
 
 ```sh
-$R start sites/x/y.user.js https://x.com/ --extension --solo --detach
+$R start sites/x/y.user.js https://x.com/ --extension --detach
 # ... same commands ...
 $R stop
-$R clear --extension     # drop scratch scripts; restores other collections
+$R clear --extension     # drop scratch scripts
 ```
 
 - Needs SourceMonkey in the browser, with "Allow User Scripts" on.

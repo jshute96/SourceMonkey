@@ -10,7 +10,7 @@ two backends:
 
 Status: being built. Done: the shared commands, tab claims (in both
 kinds of run), the event stream, and the extension's other scripts
-(E1, ...). Not yet: retiring `--solo`, and the icon marker. User-facing behavior is in
+(E1, ...), and retiring `--solo`. Not yet: the icon marker. User-facing behavior is in
 [harness-guide.md](harness-guide.md#the-extension-backend).
 
 ## Goals
@@ -184,9 +184,9 @@ sm-dev knows a tab by its CDP target id; the extension knows it by its
     same tab otherwise.
   - To test a script alongside installed ones, push those as scratch
     scripts too.
-- So once claims exist, `--solo` goes:
-  - For a while it is accepted and says that a run's tabs now keep
-    other scripts out on their own; then it is removed.
+- So `--solo` goes:
+  - For a while it is accepted, does nothing, and says that a run's
+    tabs now keep other scripts out on their own; then it is removed.
   - `clear --extension` still turns solo mode off, for a browser left
     in it by an older sm-dev.
   - The extension's `soloMode` API stays only while e2e tests use it.

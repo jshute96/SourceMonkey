@@ -389,7 +389,7 @@ running, --seconds N to watch it for a while, or commands after --.`
 | `--nowait` | Don't wait for the pages to settle |
 | `--seconds N` | Stop the run after N seconds |
 | `--idle-seconds N` | Stop after N idle seconds (default 30 minutes; `0` never) |
-| `--extension`, `--solo` | Use the real extension; silence its other collections |
+| `--extension` | Use the real extension |
 | `--devtools` | Start a Chrome DevTools server for the run |
 
 Details on each are in [`start` options in detail](#start-options-in-detail).
@@ -460,7 +460,7 @@ What to open:
 - With no scripts given, it starts as a browser to drive with the run
   commands, on a blank page or the URLs given. `load` adds scripts
   later. It can't be combined with `--all`, `--values`,
-  `--values-file`, `--watch` or `--solo`.
+  `--values-file` or `--watch`.
   - With `--extension`, it's a browser whose SourceMonkey runs its own
     collections. With `--temp-browser --headed`, that's a throwaway
     browser with the extension, to try by hand. Its tabs aren't
@@ -498,8 +498,7 @@ The run's lifetime:
 Other modes:
 
 - `--extension` uses the real extension in that browser instead of the
-  built-in stand-in; `--solo` silences the other collections for the
-  run. See [The extension backend](#the-extension-backend).
+  built-in stand-in. See [The extension backend](#the-extension-backend).
 - `--devtools` starts a Chrome DevTools server for the run. See
   [DevTools alongside a run](#devtools-alongside-a-run).
   `SM_DEV_DEVTOOLS=1` makes it the default, and `--nodevtools` turns it
@@ -1669,7 +1668,7 @@ For a browser that keeps the extension (and your logins):
 3. On SourceMonkey's details page there, turn on "Allow User Scripts".
 4. Start runs with `--extension`:
    ```sh
-   sm-dev start my-script.user.js https://example.com/ --extension --solo
+   sm-dev start my-script.user.js https://example.com/ --extension
    ```
 5. When done, drop the scratch scripts with `sm-dev clear --extension`.
 
@@ -1703,12 +1702,13 @@ For a browser that keeps the extension (and your logins):
     `get` and `set`.
   - Outside a `--temp-browser`, `set` on one needs `--force`, since it
     changes your real data: `set key --force <json>`.
-- `--solo` disables all other collections for the run and restores them
-  after, so the scratch script runs without noise from the rest.
 - `sm-dev clear --extension` drops all scratch scripts and their stored
-  values, and turns solo mode off. If a `--solo` run was killed rather
-  than stopped, this is how to get the other collections back; they are
-  restored to how they were.
+  values.
+  - It also turns off solo mode, which `--solo` turned on before runs
+    claimed their tabs, should an older sm-dev have left it on. The
+    other collections are restored to how they were.
+- `--solo` is no longer needed, and does nothing: the run's tabs keep
+  the extension's other scripts out on their own.
 
 ### Differences from the push backend
 
@@ -1811,5 +1811,5 @@ These apply to `sm-dev start` and to specs alike.
 - **`sm-dev start` hangs at connect**: a tab in the browser is showing
   a dialog. The run names it; answer the dialog or close the tab (see
   [Page dialogs](#page-dialogs)).
-- **The other collections stay disabled after `--solo`**: the run was
-  killed. `sm-dev clear --extension` restores them.
+- **The other collections stay disabled**: an older sm-dev's `--solo`
+  run was killed. `sm-dev clear --extension` restores them.
