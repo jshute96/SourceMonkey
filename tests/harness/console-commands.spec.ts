@@ -79,7 +79,8 @@ test.describe('sm-dev typed commands', () => {
     expect(await run('set quoted \'["a"]\'')).toEqual(['[sm-dev] Set quoted (Second)']);
     expect(host.getValue(second.spec!.id, 'quoted')).toEqual(['a']);
     expect(await run('set prefs --flie x.json')).toEqual(['[sm-dev] ERROR: The set command has no --flie flag. It takes --file.']);
-    expect(await run('set prefs --file')).toEqual(['[sm-dev] ERROR: The set command takes a key and one file, e.g. set units --file units.json']);
+    expect(await run('set prefs --file')).toEqual(['[sm-dev] ERROR: The --file flag needs a value: --file <path>']);
+    expect(await run('set --file prefs.json')).toEqual(['[sm-dev] ERROR: The set command takes a key and one file, e.g. set units --file units.json']);
     expect(host.getValue(second.spec!.id, 'prefs')).toEqual({ units: 'imperial' });
   });
 

@@ -14,7 +14,8 @@ import path from 'node:path';
 
 import type { Page, Request } from '@playwright/test';
 
-import { noSuchFlag, PROBE_MAX } from './command-list.js';
+import type { ParsedArgs } from './command-args.js';
+import { PROBE_MAX } from './command-list.js';
 import type { ControlledTab } from './console-commands.js';
 import { ScriptThrew } from './inject.js';
 import { readInputFile } from './input-file.js';
@@ -65,121 +66,18 @@ export function recordLog(page: Page, line: string): void {
   if (lines.length > LOG_LIMIT) lines.splice(0, lines.length - LOG_LIMIT);
 }
 
-/** A word of a typed line, and where it starts and ends in the line. */
-interface Word {
-  text: string;
-  start: number;
-  end: number;
-}
-
-/**
- * Splits a typed line into words as a shell would: 'single' and
- * "double" quotes group words, a backslash in double quotes escapes the
- * next character. So a selector or text with spaces can be one word.
- * Unlike a shell, quotes that open inside a word stay in it (they still
- * keep its spaces together): they are the selector's own, as in
- * `a[href="x.html"]`, which means something else without them.
- */
-export function splitWords(line: string): Word[] {
-  const words: Word[] = [];
-  let i = 0;
-  while (i < line.length) {
-    while (i < line.length && /\s/.test(line[i])) i++;
-    if (i >= line.length) break;
-    const start = i;
-    let text = '';
-    while (i < line.length && !/\s/.test(line[i])) {
-      const c = line[i];
-      const keep = i > start;
-      if (c === '\'') {
-        const close = line.indexOf(c, i + 1);
-        const stop = close < 0 ? line.length : close;
-        text += keep ? line.slice(i, stop + 1) : line.slice(i + 1, stop);
-        i = stop + 1;
-      } else if (c === '"') {
-        // To the next unescaped quote, a backslash escaping what follows.
-        const open = i;
-        i++;
-        while (i < line.length && line[i] !== '"') {
-          if (line[i] === '\\' && i + 1 < line.length) i++;
-          text += keep ? '' : line[i];
-          i++;
-        }
-        i++;
-        if (keep) text += line.slice(open, Math.min(i, line.length));
-      } else {
-        text += c;
-        i++;
-      }
-    }
-    words.push({ text, start, end: i });
-  }
-  return words;
-}
-
-// A typed selector taken whole: as typed, spaces and all, unless it's
-// one quoted span ('#a b' or "#a b"), which is unquoted.
-export function wholeSelector(argument: string): string {
-  const text = argument.trim();
-  const quoted = /^'([^']*)'$/.exec(text) ?? /^"((?:[^"\\]|\\.)*)"$/.exec(text);
-  return quoted ? quoted[1].replace(/\\(.)/g, '$1') : text;
-}
-
-// The flags a command takes, split from its other words.
-function takeFlags(
-  command: string, words: string[], known: Record<string, 'bool' | 'value'>,
-): { flags: Record<string, string | true>; rest: string[] } | string {
-  const flags: Record<string, string | true> = {};
-  const rest: string[] = [];
-  for (let i = 0; i < words.length; i++) {
-    const w = words[i];
-    if (!w.startsWith('--')) {
-      rest.push(w);
-      continue;
-    }
-    const kind = known[w];
-    if (!kind) return noSuchFlag(command, w);
-    if (kind === 'bool') {
-      flags[w] = true;
-    } else {
-      const value = words[++i];
-      if (value === undefined) return `The ${w} flag needs a value`;
-      flags[w] = value;
-    }
-  }
-  return { flags, rest };
-}
-
-// `click`'s flags, all taking a value.
-const CLICK_FLAGS = { '--button': 'value', '--modifiers': 'value', '--count': 'value', '--at': 'value' } as const;
-// The ones `hover` takes too.
-const HOVER_FLAGS = new Set(['--modifiers', '--at']);
-
 // The keys `click --modifiers` can hold, as Playwright names them.
 const MODIFIERS = ['Alt', 'Control', 'ControlOrMeta', 'Meta', 'Shift'] as const;
 
-/** Flags that take a value, so the word after one isn't taken for a tab. */
-export const VALUE_FLAGS = new Set(['--file', '--out', '--timeout-seconds', '--url', ...Object.keys(CLICK_FLAGS)]);
-
 /**
- * A page command's arguments, after the tab if one was named: its
- * words, and the rest of the line as typed. Typed, the words come from
- * splitting the line (so quotes group words); sent from another shell,
- * they are the sender's own, and the line is them joined by spaces.
- * `userscripts`: the ones running in the tab's page now, as a saved
- * file's header names them (`userscriptLabel`).
+ * A page command's arguments, read by its syntax (command-args.ts), the
+ * tab already taken from them. `userscripts`: the ones running in the
+ * tab's page now, as a saved file's header names them
+ * (`userscriptLabel`).
  */
-export interface PageInput {
-  words: string[];
-  raw: string;
-  typed: boolean;
+export interface PageInput extends ParsedArgs {
   userscripts: string[];
-  /** `--nowait`: an action doesn't wait for the page to settle after. */
-  noWait?: boolean;
 }
-
-/** The commands that act on the page, and so settle after, unless `--nowait`. */
-export const ACTIONS = new Set(['click', 'hover', 'type', 'key']);
 
 // Image types `screenshot` can write, by the file's extension.
 const IMAGE_FILE = /\.(png|jpe?g)$/i;
@@ -219,7 +117,7 @@ export async function runPageCommand(
       say(`${what}. It opened a dialog, which is waiting for an answer.`);
       return;
     }
-    if (input.noWait) {
+    if (input.flags['--nowait']) {
       say(what);
       return;
     }
@@ -234,33 +132,12 @@ export async function runPageCommand(
   try {
     switch (command) {
       case 'eval': {
-        // Its flags lead (`--script`, `--file <path>`, either order),
-        // on the command's own line: an eval block's code is not looked
-        // through for them. Then JavaScript: typed, the rest of the line
-        // as it is, its quotes its own.
-        const words = input.typed ? splitWords(input.raw) : input.words.map((text) => ({ text, start: -1, end: -1 }));
-        const headEnd = input.typed ? input.raw.indexOf('\n') : -1;
-        const flagAt = (i: number): string | undefined => (headEnd < 0 || (words[i]?.start ?? headEnd) < headEnd ? words[i]?.text : undefined);
-        let world: 'page' | 'scripts' = 'page';
-        let from: string | undefined;
-        let at = 0;
-        for (; flagAt(at) === '--script' || flagAt(at) === '--file'; at++) {
-          if (flagAt(at) === '--script') {
-            world = 'scripts';
-            continue;
-          }
-          if (from !== undefined) {
-            say('ERROR: The eval command takes one --file');
-            return;
-          }
-          from = flagAt(++at);
-          if (from === undefined || from.startsWith('--')) {
-            say('ERROR: The --file flag needs a JavaScript file, e.g. eval --file probe.js');
-            return;
-          }
-        }
-        let expression = input.typed ? input.raw.slice(at ? words[at - 1].end : 0).trim() : input.words.slice(at).join(' ');
-        if (from !== undefined) {
+        // Its JavaScript: the rest of the line as typed, its quotes its
+        // own, or a block's lines, or a file's.
+        const world = input.flags['--script'] ? 'scripts' : 'page';
+        const from = input.flags['--file'];
+        let expression = [input.text, input.block].filter((part) => part).join('\n');
+        if (typeof from === 'string') {
           if (expression) {
             say('ERROR: The eval command takes JavaScript or --file, not both');
             return;
@@ -301,7 +178,7 @@ export async function runPageCommand(
       }
       case 'click':
       case 'hover': {
-        const options = clickOptions(input, command as 'click' | 'hover');
+        const options = clickOptions(input.flags, input.text ?? '');
         if (typeof options === 'string') {
           say(`ERROR: ${options}`);
           return;
@@ -326,19 +203,15 @@ export async function runPageCommand(
         // (exactly, each line break an Enter), or `--file <path>` (the
         // flag first works too). Typed, the selector and flag are on
         // the command's own line.
-        const headEnd = input.typed ? input.raw.indexOf('\n') : -1;
-        const words = headEnd < 0 ? input.words : splitWords(input.raw.slice(0, headEnd)).map((w) => w.text);
-        const fileAt = words[0] === '--file' ? 0 : words[1] === '--file' ? 1 : -1;
-        let selector: string | undefined;
+        const [selector] = input.words;
+        const from = input.flags['--file'];
         let text: string;
-        if (fileAt >= 0) {
-          const from = words[fileAt + 1];
-          selector = fileAt === 0 ? words[2] : words[0];
-          if (headEnd >= 0) {
+        if (typeof from === 'string') {
+          if (input.text || input.block !== undefined) {
             say('ERROR: The type command takes text or --file, not both');
             return;
           }
-          if (!selector || !from || from.startsWith('--') || words.length > 3) {
+          if (!selector) {
             say('ERROR: The type command takes a selector and one file, e.g. type \'#notes\' --file notes.txt');
             return;
           }
@@ -350,16 +223,14 @@ export async function runPageCommand(
             say(`ERROR: ${(err as Error).message}`);
             return;
           }
-        } else if (headEnd >= 0) {
-          if (words.length !== 1) {
+        } else if (input.block !== undefined) {
+          if (input.text || !selector) {
             say('ERROR: The type command takes one selector before {{. Quote a selector that has spaces.');
             return;
           }
-          selector = words[0];
-          text = input.raw.slice(headEnd + 1);
+          text = input.block;
         } else {
-          [selector] = words;
-          text = words.slice(1).join(' ');
+          text = input.text ?? '';
         }
         if (!selector || !text) {
           say('ERROR: The type command needs a selector and the text, e.g. type \'input[name=q]\' \'hello world\'');
@@ -400,18 +271,9 @@ export async function runPageCommand(
         return;
       }
       case 'snapshot': {
-        const parsed = takeFlags(command, input.words, { '--out': 'value', '--visible': 'bool' });
-        if (typeof parsed === 'string') {
-          say(`ERROR: ${parsed}`);
-          return;
-        }
-        if (parsed.rest.length > 1) {
-          say('ERROR: The snapshot command takes one selector; quote one with spaces');
-          return;
-        }
-        const selector = parsed.rest[0] ?? 'body';
+        const selector = input.text || 'body';
         if (await matches(page, selector, say) === null) return false;
-        const visible = parsed.flags['--visible'] === true;
+        const visible = input.flags['--visible'] === true;
         let tree = '';
         const taking = (async () => {
           const doc = await documentOf(page);
@@ -435,7 +297,7 @@ export async function runPageCommand(
           say('The page opened a dialog during the snapshot, which is waiting for an answer.');
           return;
         }
-        const outFile = parsed.flags['--out'];
+        const outFile = input.flags['--out'];
         if (typeof outFile === 'string') {
           await write(outFile, () => writeFile(file(outFile), tree + '\n'));
           say(`Wrote ${shown(outFile)} (${tree.split('\n').length} lines) from ${page.url()}`);
@@ -445,13 +307,9 @@ export async function runPageCommand(
         return;
       }
       case 'screenshot': {
-        const parsed = takeFlags(command, input.words, { '--full': 'bool' });
-        if (typeof parsed === 'string') {
-          say(`ERROR: ${parsed}`);
-          return;
-        }
-        const image = parsed.rest.pop();
-        if (!image || parsed.rest.length > 1) {
+        const rest = [...input.words];
+        const image = rest.pop();
+        if (!image) {
           say('ERROR: The screenshot command needs a file, and takes one selector before it, e.g. screenshot \'#comments\' c.png');
           return;
         }
@@ -459,9 +317,9 @@ export async function runPageCommand(
           say(`ERROR: The screenshot command writes a .png or .jpg file, and ${image} is neither. Name the file last.`);
           return;
         }
-        const selector = parsed.rest[0];
+        const selector = rest[0];
         if (selector) {
-          if (parsed.flags['--full']) {
+          if (input.flags['--full']) {
             say('ERROR: The --full flag is for the whole page, not an element');
             return;
           }
@@ -469,7 +327,7 @@ export async function runPageCommand(
           await write(image, () => locate(page, selector).first().screenshot({ path: file(image), timeout: ACTION_TIMEOUT_MS }));
         } else {
           try {
-            await write(image, () => page.screenshot({ path: file(image), fullPage: parsed.flags['--full'] === true, timeout: SCREENSHOT_TIMEOUT_MS }));
+            await write(image, () => page.screenshot({ path: file(image), fullPage: input.flags['--full'] === true, timeout: SCREENSHOT_TIMEOUT_MS }));
           } catch (err) {
             if ((err as Error).name !== 'TimeoutError' || page.isClosed()) throw err;
             say(`Screenshot failed: Browser did not capture the page within ${SCREENSHOT_TIMEOUT_MS / 1000} seconds`);
@@ -492,18 +350,13 @@ export async function runPageCommand(
         return;
       }
       case 'probe': {
-        const parsed = takeFlags(command, input.words, { '--html': 'bool', '--css': 'bool' });
-        if (typeof parsed === 'string') {
-          say(`ERROR: ${parsed}`);
-          return;
-        }
-        if (parsed.rest.length === 0) {
+        if (input.words.length === 0) {
           say('ERROR: The probe command needs a selector or more, e.g. probe \'.titleline\' \'#hnmain\'');
           return;
         }
-        const css = parsed.flags['--css'] === true;
-        const html = parsed.flags['--html'] === true;
-        for (const selector of parsed.rest) {
+        const css = input.flags['--css'] === true;
+        const html = input.flags['--html'] === true;
+        for (const selector of input.words) {
           const lines: string[] = [];
           const probing = (async () => {
             const count = await refProblem(page, selector) ?? await countOf(page, selector);
@@ -539,13 +392,9 @@ export async function runPageCommand(
         // `--file <path>`: the calls from a file, one per line, as a block
         // has them.
         let calls: CdpCall[] | string;
-        if (input.words[0] === '--file') {
-          const name = input.words[1];
-          if (name === undefined || name.startsWith('--')) {
-            say('ERROR: The --file flag needs a file of calls, e.g. cdp --file calls.txt');
-            return;
-          }
-          if (input.words.length > 2 || (input.typed && input.raw.includes('\n'))) {
+        const name = input.flags['--file'];
+        if (typeof name === 'string') {
+          if (input.text || input.block !== undefined) {
             say('ERROR: The cdp command takes calls or --file <path>, not both');
             return;
           }
@@ -555,10 +404,11 @@ export async function runPageCommand(
             say(`ERROR: ${(err as Error).message}`);
             return;
           }
-        } else if (input.typed && input.raw.includes('\n')) {
-          calls = cdpCallsTyped(input.raw, { first: 0, name: (n) => `Line ${n} of the block` });
+        } else if (input.block !== undefined) {
+          // The command's own line is line 0, the block's first line 1.
+          calls = cdpCallsTyped(`${input.text ?? ''}\n${input.block}`, { first: 0, name: (n) => `Line ${n} of the block` });
         } else {
-          calls = input.typed ? cdpCallsTyped(input.raw) : cdpCalls(input.words);
+          calls = cdpCallsTyped(input.text ?? '');
         }
         if (typeof calls === 'string') {
           say(`ERROR: ${calls}`);
@@ -625,10 +475,6 @@ export async function runPageCommand(
         return;
       }
       case 'logs': {
-        if (input.words.length > 0) {
-          say('ERROR: The logs command takes nothing besides a tab');
-          return;
-        }
         const lines = logs.get(page) ?? [];
         if (lines.length === 0) say('No console lines or errors yet');
         for (const line of lines) out(line);
@@ -651,21 +497,10 @@ const notAMethod = (word: string): string => `${word} is not a CDP method. Metho
 type CdpCall = { method: string; params: object };
 
 /**
- * `cdp`'s one call, as a client sent it. Its words are joined back into
- * a line, so params split at their spaces still read as one. A message
- * saying what's wrong instead.
- */
-export function cdpCalls(words: string[]): CdpCall[] | string {
-  if (words.length === 0) return `The cdp command needs a method, ${CDP_USAGE}`;
-  const call = cdpCallLine(words.join(' '));
-  return typeof call === 'string' ? call : [call];
-}
-
-/**
- * `cdp`'s calls as typed (at the prompt, piped, a `{{` block, or a
- * `--file`): one per line, all in one session. Not split into words
- * first, which would take the quotes out of JSON strings. Blank lines
- * and `#` comments are skipped.
+ * `cdp`'s calls (on its line, in a `{{` block, or in a `--file`): one
+ * per line, all in one session. Not split into words first, which would
+ * take the quotes out of JSON strings. Blank lines and `#` comments are
+ * skipped.
  * - `lines`: for a block or file, how to name a line in a message, from
  *   its number. A block's first line is the command's own, line 0.
  */
@@ -801,38 +636,17 @@ interface ClickFlags {
 }
 
 /**
- * `click`'s or `hover`'s selector and flags: Playwright's options for
- * them, and how the action differs from a plain one, as said after it
- * (`the right button`). Or what's wrong with them. Typed, the selector
- * is the rest of the line as typed, less the flags and their values.
+ * `click`'s or `hover`'s flags as Playwright's options for them, with
+ * its selector, and how the action differs from a plain one, as said
+ * after it (`the right button`). Or what's wrong with them. Which flags
+ * each takes is its syntax's (command-list.ts).
  */
-export function clickOptions(input: Pick<PageInput, 'words' | 'raw' | 'typed'>, command: 'click' | 'hover' = 'click'): {
+export function clickOptions(given: Record<string, string | true>, selector: string): {
   selector: string;
   click: ClickFlags;
   how: string[];
 } | string {
-  const known: Record<string, 'bool' | 'value'> = command === 'click' ? CLICK_FLAGS
-    : Object.fromEntries(Object.entries(CLICK_FLAGS).filter(([flag]) => HOVER_FLAGS.has(flag)));
-  const flags: Record<string, string> = {};
-  let selector: string;
-  if (input.typed) {
-    const words = splitWords(input.raw);
-    let rest = input.raw;
-    // Cut from the end, so the earlier spans stay where they were.
-    for (let i = words.length - 1; i >= 0; i--) {
-      if (!Object.hasOwn(known, words[i].text)) continue;
-      const value = words[i + 1];
-      if (!value || Object.hasOwn(known, value.text)) return `The ${words[i].text} flag needs a value`;
-      flags[words[i].text] = value.text;
-      rest = rest.slice(0, words[i].start) + rest.slice(value.end);
-    }
-    selector = wholeSelector(rest);
-  } else {
-    const parsed = takeFlags(command, input.words, known);
-    if (typeof parsed === 'string') return parsed;
-    Object.assign(flags, parsed.flags);
-    selector = parsed.rest.join(' ');
-  }
+  const flags = Object.fromEntries(Object.entries(given).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
   const click: ClickFlags = {};
   const how: string[] = [];
   const button = flags['--button']?.toLowerCase();

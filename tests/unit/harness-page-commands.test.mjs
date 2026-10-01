@@ -1,33 +1,18 @@
-// Unit tests for how the page commands split a typed line into words,
-// name the keys `key` presses, read `click`'s flags and `cdp`'s calls,
+// Unit tests for how the page commands name the keys `key` presses, read `click`'s flags and `cdp`'s calls,
 // and word Playwright's errors (src/harness/page-commands.ts,
 // compiled to lib/harness/page-commands.js).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { cdpCalls, cdpCallsTyped, clickOptions, keyName, plain, splitWords } from '../../lib/harness/page-commands.js';
+import { parseCommandArgs } from '../../lib/harness/command-args.js';
+import { cdpCallsTyped, clickOptions, keyName, plain } from '../../lib/harness/page-commands.js';
 
-const words = (line) => splitWords(line).map((w) => w.text);
-
-test('quotes group words, as in a shell', () => {
-  assert.deepEqual(words(`type 'input[name=q]' "hello world"`), ['type', 'input[name=q]', 'hello world']);
-  assert.deepEqual(words(`'e' "f"`), ['e', 'f']);
-  assert.deepEqual(words(`"say \\"hi\\""`), ['say "hi"']);
-  assert.deepEqual(words(`  spaced   out  `), ['spaced', 'out']);
-  // An unclosed quote runs to the end.
-  assert.deepEqual(words(`'unclosed text`), ['unclosed text']);
-});
-
-test('quotes inside a word are the word\'s own, as in a selector', () => {
-  assert.deepEqual(words(`probe css=a[href="security.html"]`), ['probe', 'css=a[href="security.html"]']);
-  // They still keep its spaces together.
-  assert.deepEqual(words(`a[title="a b"] x`), ['a[title="a b"]', 'x']);
-  assert.deepEqual(words(`a"b c"d`), ['a"b c"d']);
-  assert.deepEqual(words(`p[data-x='1 2']`), [`p[data-x='1 2']`]);
-  // A word quoted whole is unquoted, with inner quotes as they are.
-  assert.deepEqual(words(`'a[href="x y"]'`), ['a[href="x y"]']);
-});
+// click's or hover's options, from a line as the command's syntax reads it.
+const clickLine = (line, command = 'click') => {
+  const parsed = parseCommandArgs(command, { line });
+  return 'error' in parsed ? parsed.error : clickOptions(parsed.flags, parsed.text);
+};
 
 test('key names are case-insensitive, with common aliases', () => {
   assert.equal(keyName('home'), 'Home');
@@ -58,20 +43,20 @@ test('an unknown name is passed on as typed', () => {
 });
 
 test('cdp reads one method with its JSON params', () => {
-  assert.deepEqual(cdpCalls(['Page.reload']), [{ method: 'Page.reload', params: {} }]);
-  assert.deepEqual(cdpCalls(['Input.dispatchMouseEvent', '{"type": "mousePressed"}']), [{ method: 'Input.dispatchMouseEvent', params: { type: 'mousePressed' } }]);
+  assert.deepEqual(cdpCallsTyped(['Page.reload'].join(' ')), [{ method: 'Page.reload', params: {} }]);
+  assert.deepEqual(cdpCallsTyped(['Input.dispatchMouseEvent', '{"type": "mousePressed"}'].join(' ')), [{ method: 'Input.dispatchMouseEvent', params: { type: 'mousePressed' } }]);
   // Params split at their spaces still read as one.
-  assert.deepEqual(cdpCalls(['Runtime.evaluate', '{"expression":', '"1', '+', '1"}']), [{ method: 'Runtime.evaluate', params: { expression: '1 + 1' } }]);
+  assert.deepEqual(cdpCallsTyped(['Runtime.evaluate', '{"expression":', '"1', '+', '1"}'].join(' ')), [{ method: 'Runtime.evaluate', params: { expression: '1 + 1' } }]);
 });
 
 test('cdp says what is wrong with its call', () => {
-  assert.match(cdpCalls([]), /^The cdp command needs a method/);
-  assert.equal(cdpCalls(['{"x": 1}']), '{"x": is not a CDP method. Methods are named Domain.method, as in Page.reload.');
-  assert.match(cdpCalls(['Page.reload', '{nope}']), /^The params for Page.reload are not valid JSON/);
-  assert.match(cdpCalls(['Page.reload', '[1]']), /^The params for Page.reload must be a JSON object/);
-  assert.match(cdpCalls(['Page.enable', 'Page.reload']), /^A cdp command makes one call/);
-  // The same message for trailing words, sent or typed.
-  assert.equal(cdpCalls(['Page.reload', '{}', 'x']), 'The params for Page.reload have more after them: x');
+  assert.match(cdpCallsTyped([].join(' ')), /^The cdp command needs a method/);
+  assert.equal(cdpCallsTyped(['{"x": 1}'].join(' ')), '{"x": is not a CDP method. Methods are named Domain.method, as in Page.reload.');
+  assert.match(cdpCallsTyped(['Page.reload', '{nope}'].join(' ')), /^The params for Page.reload are not valid JSON/);
+  assert.match(cdpCallsTyped('Page.reload [1]'), /^The params for Page.reload must be a JSON object/);
+  assert.match(cdpCallsTyped(['Page.enable', 'Page.reload'].join(' ')), /^A cdp command makes one call/);
+  // Trailing words after the params.
+  assert.equal(cdpCallsTyped(['Page.reload', '{}', 'x'].join(' ')), 'The params for Page.reload have more after them: x');
 });
 
 test('typed cdp keeps the quotes in its JSON, and takes one call per line', () => {
@@ -103,7 +88,7 @@ test('typed cdp keeps the quotes in its JSON, and takes one call per line', () =
 });
 
 test('click takes its flags anywhere around the selector', () => {
-  const typed = (raw) => clickOptions({ raw, typed: true, words: [] });
+  const typed = (line) => clickLine(line);
   assert.deepEqual(typed(`--button right div > a`), { selector: 'div > a', click: { button: 'right' }, how: ['the right button'] });
   assert.deepEqual(typed(`'#a b' --count 2 --modifiers ctrl+shift`), {
     selector: '#a b', click: { clickCount: 2, modifiers: ['Control', 'Shift'] }, how: ['Control+Shift held', '2 clicks'],
@@ -112,15 +97,16 @@ test('click takes its flags anywhere around the selector', () => {
   assert.deepEqual(typed(`toString`), { selector: 'toString', click: {}, how: [] });
   // Plain values say nothing extra.
   assert.deepEqual(typed(`e4 --button left --count 1`), { selector: 'e4', click: { button: 'left', clickCount: 1 }, how: [] });
-  // Sent as words from another shell.
-  assert.deepEqual(clickOptions({ raw: '', typed: false, words: ['e4', '--modifiers', 'Alt'] }), {
+  // Sent as words from another shell, and a flag's value after =.
+  const sent = parseCommandArgs('click', { words: ['e4', '--modifiers=Alt'] });
+  assert.deepEqual(clickOptions(sent.flags, sent.text), {
     selector: 'e4', click: { modifiers: ['Alt'] }, how: ['Alt held'],
   });
 });
 
 test('click says what is wrong with its flags', () => {
-  const typed = (raw) => clickOptions({ raw, typed: true, words: [] });
-  assert.equal(typed('e4 --button'), 'The --button flag needs a value');
+  const typed = (line) => clickLine(line);
+  assert.equal(typed('e4 --button'), 'The --button flag needs a value: --button <name>');
   assert.equal(typed('e4 --button back'), 'back is not a mouse button. Use left, right or middle.');
   assert.equal(typed('e4 --modifiers Shift+Q'), 'Q is not a modifier key. Use Alt, Control, ControlOrMeta, Meta, Shift, joined by +.');
   assert.equal(typed('e4 --count 0'), 'The --count flag takes a number of clicks from 1 to 10, not 0');
@@ -128,14 +114,14 @@ test('click says what is wrong with its flags', () => {
 });
 
 test('click and hover take --at, and hover --modifiers but no click-only flags', () => {
-  assert.deepEqual(clickOptions({ raw: '.row --at 300,12', typed: true, words: [] }), {
+  assert.deepEqual(clickLine('.row --at 300,12'), {
     selector: '.row', click: { position: { x: 300, y: 12 } }, how: ['the mouse at 300,12 in it'],
   });
-  const hover = (raw) => clickOptions({ raw, typed: true, words: [] }, 'hover');
+  const hover = (line) => clickLine(line, 'hover');
   assert.deepEqual(hover('img --modifiers Alt --at 4,4'), {
     selector: 'img', click: { modifiers: ['Alt'], position: { x: 4, y: 4 } }, how: ['Alt held', 'the mouse at 4,4 in it'],
   });
-  assert.equal(clickOptions({ raw: '', typed: false, words: ['img', '--count', '2'] }, 'hover'),
+  assert.equal(hover('img --count 2'),
     'The hover command has no --count flag. It takes --modifiers, --at, --nowait.');
 });
 

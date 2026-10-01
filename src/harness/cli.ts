@@ -27,9 +27,10 @@ import { fileURLToPath } from 'node:url';
 
 import { CommandAssembler, NONE_RUN, echoCommand, parseCommandList, shellWord, unclosedBlockMessage, type AssembledCommand } from './command-lines.js';
 import {
-  commandFlagMistake, commandWords, onlyInspects, readPromptCommands, unknownCommandFlag, writeOutputLine,
+  commandWords, onlyInspects, readPromptCommands, runCommandHelp, runCommandMistake, writeOutputLine,
 } from './console-commands.js';
-import { OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, commandNamed, commandsHelp, fullHelp } from './command-list.js';
+import { parseCommandArgs } from './command-args.js';
+import { OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, commandNamed, commandSyntax, commandsHelp, fullHelp } from './command-list.js';
 import { devtoolsWanted } from './devtools.js';
 import { readJsonFile } from './input-file.js';
 // Node built-ins only, so as cheap to load as the rest here.
@@ -37,7 +38,7 @@ import { runIdOf, type CommandSource, type RunClient, type RunRecord } from './r
 import { runLogLabel } from './run-log.js';
 import { staleBuildWarning } from './stale-build.js';
 import { withDefaultScheme } from './prepare.js';
-import { ONE_URL, pagesToOpen, type PageWord, type SavedPageStart } from './saved-pages.js';
+import { pagesToOpen, type PageWord, type SavedPageStart } from './saved-pages.js';
 import {
   REMOTE_SCRIPT, SCRIPT_ARG, UsageError, expandPathArgs, matchLines, prepareSource, scriptFile, scriptSources, validateAll, validateSources,
   type ScriptRoots,
@@ -57,6 +58,8 @@ function commandHelp(names: string[]): string {
 interface Opts {
   command: string | null;
   args: string[];
+  /** `--help`: show the command's help rather than run it. */
+  help?: boolean;
   all: boolean;
   noTab: boolean;
   cdp?: string;
@@ -88,56 +91,75 @@ interface Opts {
 // The longest a Node timer waits: past it, it fires at once instead.
 const MAX_TIMER_SECONDS = Math.floor((2 ** 31 - 1) / 1000);
 
+// sm-dev's own commands' flags that take a value, for finding the
+// command's name past the flags that may come before it (`--detach
+// start`).
+const OWN_VALUE_FLAGS = new Set([...OWN_COMMANDS].flatMap((name) => Object.entries(commandSyntax(name).flags)
+  .filter(([, kind]) => kind === 'value').map(([flag]) => flag)));
+
 function parseArgs(argv: string[]): Opts {
   const opts: Opts = {
     command: null, args: [],
     all: false, noTab: false, watch: false, extension: false, solo: false, pageErrors: false, detach: false, newRun: false, noWait: false, fromSaved: false, offline: false,
   };
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    const next = (): string => {
-      const v = argv[++i];
-      if (v === undefined) throw new UsageError(`The ${arg} flag needs a value`);
-      return v;
-    };
-    switch (arg) {
-      case '--root':
-      case '--local':
-      case '--run':
-      case '--stdin':
-      case '--interactive':
-      case '--profile':
-      case '--temp-browser':
-      case '--headed':
-      case '--open-browser':
-        throw new UsageError(globalFlagMistake(arg));
+  // The command's name: the first word that is no flag, nor a flag's value.
+  let at = 0;
+  while (at < argv.length && argv[at].startsWith('-')) at += OWN_VALUE_FLAGS.has(argv[at]) ? 2 : 1;
+  // None: said by the caller, as is a name that is no command of sm-dev's own.
+  if (at >= argv.length) return opts;
+  opts.command = argv[at];
+  const rest = [...argv.slice(0, at), ...argv.slice(at + 1)];
+  if (!OWN_COMMANDS.has(opts.command)) {
+    opts.args = rest;
+    return opts;
+  }
+  const parsed = parseCommandArgs(opts.command, { words: rest });
+  if ('error' in parsed) {
+    const flag = parsed.flag;
+    // One for the whole line, which this command doesn't take itself.
+    if (flag && GLOBAL_FLAGS.includes(flag) && !Object.hasOwn(commandSyntax(opts.command).flags, flag)) throw new UsageError(globalFlagMistake(flag));
+    // Once a start flag; a start given no scripts is one now.
+    if (flag === '--noscript' && opts.command === 'start') throw new UsageError('The start command no longer takes --noscript. Give it no scripts to start without any.');
+    throw new UsageError(parsed.error);
+  }
+  if (parsed.help) {
+    opts.help = true;
+    return opts;
+  }
+  opts.args = parsed.words;
+  // A single-dash word is no argument of these commands' (`-x`).
+  const dashed = opts.args.find((word) => /^-./.test(word));
+  if (dashed) throw new UsageError(`Unknown option: ${dashed}`);
+  for (const [flag, value] of Object.entries(parsed.flags)) {
+    // Each flag's syntax, value or none, is its help's (command-list.ts).
+    const text = typeof value === 'string' ? value : '';
+    switch (flag) {
       case '--all': opts.all = true; break;
       case '--notab': opts.noTab = true; break;
-      case '--cdp': opts.cdp = next(); break;
+      case '--cdp': opts.cdp = text; break;
       case '--watch': opts.watch = true; break;
       case '--values':
       case '--values-file': {
-        const given = next();
-        if (opts.valuesFlag && opts.valuesFlag !== arg) throw new UsageError(`The ${arg} flag can't be used with ${opts.valuesFlag}`);
-        let parsed: unknown;
-        if (arg === '--values') {
+        if (opts.valuesFlag) throw new UsageError(`The ${flag} flag can't be used with ${opts.valuesFlag}`);
+        let given: unknown;
+        if (flag === '--values') {
           try {
-            parsed = JSON.parse(given);
+            given = JSON.parse(text);
           } catch {
             throw new UsageError('The --values flag needs a JSON object');
           }
         } else {
           try {
-            parsed = readJsonFile(path.resolve(given), given);
+            given = readJsonFile(path.resolve(text), text);
           } catch (err) {
             throw new UsageError((err as Error).message);
           }
         }
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-          throw new UsageError(arg === '--values' ? 'The --values flag needs a JSON object' : `The file ${given} needs to hold a JSON object, e.g. {"units":"metric"}`);
+        if (!given || typeof given !== 'object' || Array.isArray(given)) {
+          throw new UsageError(flag === '--values' ? 'The --values flag needs a JSON object' : `The file ${text} needs to hold a JSON object, e.g. {"units":"metric"}`);
         }
-        opts.values = parsed as Record<string, unknown>;
-        opts.valuesFlag = arg;
+        opts.values = given as Record<string, unknown>;
+        opts.valuesFlag = flag;
         break;
       }
       case '--extension': opts.extension = true; break;
@@ -149,32 +171,22 @@ function parseArgs(argv: string[]): Opts {
       case '--new': opts.newRun = true; break;
       case '--nowait': opts.noWait = true; break;
       case '--from-saved': opts.fromSaved = true; break;
-      case '--url':
-        if (opts.url !== undefined) throw new UsageError(ONE_URL);
-        opts.url = next();
-        break;
+      case '--url': opts.url = text; break;
       case '--offline': opts.offline = true; break;
       case '--idle-seconds': {
-        const v = Number(next());
-        if (!Number.isFinite(v) || v < 0) throw new UsageError('The --idle-seconds flag needs a number of seconds');
+        const v = Number(text);
+        if (!text || !Number.isFinite(v) || v < 0) throw new UsageError('The --idle-seconds flag needs a number of seconds');
         if (v > MAX_TIMER_SECONDS) throw new UsageError(`The --idle-seconds flag can be at most ${MAX_TIMER_SECONDS}`);
         opts.idleSeconds = v;
         break;
       }
       case '--seconds': {
-        const v = Number(next());
-        if (!Number.isFinite(v) || v < 0) throw new UsageError('The --seconds flag needs a number');
+        const v = Number(text);
+        if (!text || !Number.isFinite(v) || v < 0) throw new UsageError('The --seconds flag needs a number');
         if (v > MAX_TIMER_SECONDS) throw new UsageError(`The --seconds flag can be at most ${MAX_TIMER_SECONDS}`);
         opts.seconds = v;
         break;
       }
-      default:
-        if (arg.startsWith('--run=')) throw new UsageError(globalFlagMistake('--run'));
-        // Once a start flag; a start given no scripts is one now.
-        if (arg === '--noscript' && opts.command === 'start') throw new UsageError('The start command no longer takes --noscript. Give it no scripts to start without any.');
-        if (arg.startsWith('-')) throw new UsageError(`Unknown option: ${arg}`);
-        if (opts.command === null) opts.command = arg;
-        else opts.args.push(arg);
     }
   }
   return opts;
@@ -583,12 +595,7 @@ function print(line: string): void {
   writeOutputLine(line);
 }
 
-function checkList(opts: Opts): void {
-  if (opts.args.length > 0) throw new UsageError('The list command takes no arguments');
-}
-
-async function listCommand(opts: Opts): Promise<number> {
-  checkList(opts);
+async function listCommand(): Promise<number> {
   const { liveRuns, runTable } = await import('./runs.js');
   const runs = await liveRuns();
   if (runs.length === 0) print(NO_RUNS);
@@ -837,26 +844,31 @@ async function checkSend(words: string[]): Promise<void> {
   const list = sentList(words);
   // A command can come as one word (`sm-dev 'eval T1 x'`), split then
   // as the prompt would.
-  const commands = list ? list.commands.map((c) => commandWords(c.text))
-    : words.length === 1 ? [commandWords(words[0])] : [words];
+  const commands = list ? list.commands.map((c) => ({ line: c.text }))
+    : words.length === 1 ? [{ line: words[0] }] : [{ words }];
   for (const command of commands) {
     const mistake = commandMistake(command);
     if (mistake) throw new UsageError(mistake);
   }
 }
 
-function commandMistake(words: string[]): string | null {
+// What's wrong with a run command, before it's sent: as typed (a
+// line), or as the sender's words.
+function commandMistake(input: { line: string } | { words: string[] }): string | null {
   // A global option typed where only the command line takes it: on a
   // line of stdin or the prompt, or after a command.
   const lineFlag = (word: string | undefined): string | undefined => {
     const flag = word?.split('=')[0];
     return flag !== undefined && GLOBAL_FLAGS.includes(flag) ? flag : undefined;
   };
-  const first = lineFlag(words[0]);
+  const name = 'line' in input ? input.line.trim().split(/\s+/)[0] : input.words[0];
+  const first = lineFlag(name);
   if (first) return globalFlagMistake(first);
-  if (!isTypedCommand(words[0])) return unknownRunCommand(words[0]);
-  const flag = lineFlag(unknownCommandFlag(words)?.flag);
-  return flag ? globalFlagMistake(flag) : commandFlagMistake(words);
+  if (!isTypedCommand(name)) return unknownRunCommand(name);
+  const mistake = runCommandMistake(input);
+  if (!mistake) return null;
+  const flag = lineFlag(mistake.flag);
+  return flag ? globalFlagMistake(flag) : mistake.error;
 }
 
 // The list in one argument of several lines, checked; null for a
@@ -901,8 +913,8 @@ function typedCommands(text: string): { words: string[]; text: string }[] {
 }
 
 /** What is wrong with a command read from stdin or typed, before it runs; null when nothing. */
-async function typedMistake(words: string[]): Promise<string | null> {
-  if (!runsHere(words)) return commandMistake(words);
+async function typedMistake({ words, text }: { words: string[]; text: string }): Promise<string | null> {
+  if (!runsHere(words)) return commandMistake({ line: text });
   try {
     await checkCommand(words);
     return null;
@@ -917,6 +929,13 @@ async function typedMistake(words: string[]): Promise<string | null> {
  * said without a heading for a command that never ran.
  */
 async function runTyped(command: { words: string[]; text: string }, client: Client, source: CommandSource, echo: () => void = () => undefined): Promise<number> {
+  // `--help` on a run's command: its help, from here, with no run needed.
+  const help = runCommandHelp({ line: command.text });
+  if (help) {
+    echo();
+    print(commandsHelp([help]).text.trimEnd());
+    return 0;
+  }
   if (runsHere(command.words)) {
     echo();
     return runOne(command.words, client);
@@ -1009,7 +1028,7 @@ async function stdinCommands(client: Client): Promise<number | null> {
         const commands = typedCommands(got.command.text);
         let wrong = false;
         for (const command of commands) {
-          const mistake = await typedMistake(command.words);
+          const mistake = await typedMistake(command);
           if (!mistake) continue;
           if (!wrong) mistakes.push(...echoed('stdin', got.command));
           wrong = true;
@@ -1042,7 +1061,7 @@ async function stdinCommands(client: Client): Promise<number | null> {
       }
       const commands = typedCommands(assembled.command.text);
       for (const command of commands) {
-        const mistake = await typedMistake(command.words);
+        const mistake = await typedMistake(command);
         if (!mistake) continue;
         for (const l of echoed('stdin', assembled.command)) process.stderr.write(`${l}\n`);
         process.stderr.write(`ERROR: ${mistake}\n${LINE_STOPPED}\n`);
@@ -1092,7 +1111,7 @@ function promptCommands(client: Client): Promise<number> {
         const commands = typedCommands(line);
         // All checked before any runs, as on the command line.
         for (const command of commands) {
-          const mistake = await typedMistake(command.words);
+          const mistake = await typedMistake(command);
           if (mistake) {
             print(`ERROR: ${mistake}`);
             code = 2;
@@ -1140,7 +1159,6 @@ function isQuiet(words: string[]): boolean {
 }
 
 function checkStop(opts: Opts): string | undefined {
-  if (opts.args.length > 1) throw new UsageError('The stop command takes at most one run ID, e.g. stop D2');
   const named = opts.args[0] === undefined ? undefined : checkedRunId(opts.args[0], 'stop ');
   if (opts.all && named !== undefined) throw new UsageError('The --all flag stops every run, so the stop command can\'t take a run ID too');
   return named;
@@ -1177,7 +1195,6 @@ async function stopCommand(opts: Opts, client: Client): Promise<number> {
 }
 
 function checkAttach(opts: Opts): string | undefined {
-  if (opts.args.length > 1) throw new UsageError('The attach command takes at most one run ID, e.g. attach D2');
   return opts.args[0] === undefined ? undefined : checkedRunId(opts.args[0], 'attach ');
 }
 
@@ -1198,7 +1215,10 @@ const HELP_FLAGS = new Set(['--help', '-h']);
 // The `help` command's topics, or null for another command; empty for
 // the whole help. `--help` is handled for the whole line (`lineHelp`).
 function helpTopics(argv: string[]): string[] | null {
-  return argv[0] === 'help' || argv[0] === '?' ? argv.slice(1) : null;
+  if (argv[0] !== 'help' && argv[0] !== '?') return null;
+  // `help --help`: help's own help, as for any command.
+  const topics = argv.slice(1).filter((w) => !HELP_FLAGS.has(w));
+  return topics.length === 0 && argv.length > 1 ? ['help'] : topics;
 }
 
 /**
@@ -1214,7 +1234,9 @@ function lineHelp(commands: string[][]): string | null {
     const rest = words.filter((w) => !HELP_FLAGS.has(w));
     // `help status`: its topics. Otherwise the command's name, which
     // may come after its flags (`--detach start`).
-    const named = rest[0] === 'help' || rest[0] === '?' ? rest.slice(1) : rest.filter((w) => !w.startsWith('-')).slice(0, 1);
+    // `help --help` alone: help's own.
+    const topics = rest.length === 1 ? ['help'] : rest.slice(1);
+    const named = rest[0] === 'help' || rest[0] === '?' ? topics : rest.filter((w) => !w.startsWith('-')).slice(0, 1);
     for (const name of named) if (!names.includes(name)) names.push(name);
   }
   return names.length === 0 ? fullHelp() : commandHelp(names);
@@ -1382,8 +1404,11 @@ function parseCommand(words: string[]): ParsedCommand {
   if (SHARED_COMMANDS.has(words[0]) && needsRun(words)) return { kind: 'send', words };
   const head = words.length === 1 ? words[0].trim().split(/\s+/)[0] : words[0];
   if (!OWN_COMMANDS.has(words[0]) && isTypedCommand(head)) return { kind: 'send', words };
+  // One of sm-dev's own sent as one word (`'stop D1'`): split as typed.
+  if (words.length === 1 && OWN_COMMANDS.has(head) && head !== words[0]) return parseCommand(commandWords(words[0]));
   const opts = parseArgs(words);
   if (opts.command === null) throw new UsageError(`A command is needed. ${LIST_COMMANDS}`);
+  if (opts.help) return { kind: 'help', topics: [opts.command] };
   if (!OWN_COMMANDS.has(opts.command)) {
     // A run's ID where the command goes: the old `sm-dev D1 status`.
     const run = runIdOf(opts.command);
@@ -1413,10 +1438,7 @@ async function checkCommand(words: string[]): Promise<void> {
     case 'start': await checkStart(opts); return;
     case 'attach': checkAttach(opts); return;
     case 'clear': return checkClear(opts);
-    case 'list': return checkList(opts);
     case 'stop': checkStop(opts); return;
-    case 'exit':
-      if (opts.args.length > 0) throw new UsageError('The exit command takes no arguments');
   }
 }
 
@@ -1444,7 +1466,7 @@ async function runOne(words: string[], client: Client): Promise<number> {
       case 'start': return await startCommand(opts, parsed.words, client);
       case 'attach': return await attachCommand(opts, client);
       case 'clear': return await clearCommand(opts);
-      case 'list': return await listCommand(opts);
+      case 'list': return await listCommand();
       case 'exit':
         client.exiting = true;
         return 0;

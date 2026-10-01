@@ -19,10 +19,10 @@
 // short one that matters changes the DOM when it fires, which the
 // window catches, since it starts no earlier than the wait.
 
-import { noSuchFlag } from './command-list.js';
 import type { ConsoleContext, ControlledTab } from './console-commands.js';
 import type { HarnessHost } from './host.js';
-import { countOf, wholeSelector } from './page-commands.js';
+import type { ParsedArgs } from './command-args.js';
+import { countOf } from './page-commands.js';
 import { explainMatch, preparedScriptName } from './prepare.js';
 import { refProblem } from './snapshot.js';
 import { currentTab, dialogWaitingMessage, NO_TABS, pickTab, TAB_ARG, tabName } from './tab-refs.js';
@@ -159,66 +159,42 @@ export function notSettledMessage(tab: { n: number }, timeoutMs: number, busy: s
 
 /**
  * `wait`: until a tab settles, an element appears or goes, or an output
- * line shows up; or a plain delay. `words` are the command's own;
- * `typedArgument` is the line after `wait` as typed, for a selector or
- * `wait log`'s text as written, or null when a sender gave the words.
- * False when it gave up or was invalid, so a line of several
- * commands stops there.
+ * line shows up; or a plain delay. `parsed`: its words, as its syntax
+ * reads them (command-args.ts). False when it gave up or was invalid,
+ * so a line of several commands stops there.
  */
-export async function waitFor(ctx: ConsoleContext, words: string[], typedArgument: string | null): Promise<boolean> {
+export async function waitFor(ctx: ConsoleContext, parsed: ParsedArgs): Promise<boolean> {
   const mistake = (text: string): false => {
     ctx.out(`[sm-dev] ERROR: ${text}`);
     return false;
   };
-  // The form's word (`log`, `selector`, ...) comes after the flags and
-  // an optional tab; only there is `log` the log form, whose text is
-  // its own but for a `--timeout-seconds S` ending it.
-  const formAt = formIndex(words);
-  const isLog = words[formAt] === 'log';
-  const trailing = isLog && words.length >= formAt + 3 && words[words.length - 2] === '--timeout-seconds';
-  const head = isLog ? [...words.slice(0, formAt), ...(trailing ? words.slice(-2) : [])] : words;
   let timeoutMs = SETTLE_TIMEOUT_MS;
-  let timed = false;
-  const rest: string[] = [];
-  for (let i = 0; i < head.length; i++) {
-    if (head[i] !== '--timeout-seconds') {
-      rest.push(head[i]);
-      continue;
-    }
-    const value = Number(head[++i]);
+  const timeout = parsed.flags['--timeout-seconds'];
+  if (timeout !== undefined) {
+    const value = Number(timeout);
     if (!(value > 0) || value > MAX_WAIT_SECONDS) return mistake(TIMEOUT_NEEDS_SECONDS);
     timeoutMs = value * 1000;
-    timed = true;
   }
 
-  if (isLog) {
-    if (rest.length > 0) return mistake('The wait log command takes no tab, since it watches all of the run\'s output');
-    let text = typedArgument !== null
-      ? typedArgument.replace(/^[\s\S]*?(?:^|\s)log(?:\s+|$)/, '')
-      : words.slice(formAt + 1, trailing ? -2 : undefined).join(' ');
-    let quoted: RegExpExecArray | null = null;
-    if (typedArgument !== null) {
-      if (trailing) text = text.replace(/\s+--timeout-seconds\s+\S+\s*$/, '');
-      // Quoted as a whole, as a sender's shell would have taken it.
-      quoted = /^(['"])(.*)\1$/.exec(text.trim());
-      text = quoted ? quoted[2] : text.trim();
+  if (parsed.form === 'log') {
+    if (parsed.tab !== undefined) return mistake('The wait log command takes no tab, since it watches all of the run\'s output');
+    return waitForLog(ctx, parsed.text ?? '', timeoutMs);
+  }
+
+  const [word, ...more] = parsed.words;
+  if (more.length > 0) {
+    // `wait all selector .x`: `all` isn't a tab, so the form wasn't taken.
+    if (word === 'all' && (more[0] === 'selector' || more[0] === 'selector-gone')) {
+      return mistake(`The wait ${more[0]} command looks in one tab. Name it (T2), or leave it out for the current one.`);
     }
-    // A near miss of --timeout-seconds ending unquoted text (`--timeout
-    // 40`), which would otherwise be looked for as part of it. Only that
-    // flag, since log text may well end in other `--words`. From a
-    // shell, only as a word of its own: one inside quoted text shares
-    // its word with the text.
-    const ending = (typedArgument !== null ? text.split(/\s+/) : words.slice(formAt + 1, trailing ? -2 : undefined)).slice(-2);
-    const flag = quoted || /^\/.+\/[a-z]*$/.test(text) ? undefined : ending.find((w) => /^--timeout[\w-]*$/.test(w));
-    if (flag === '--timeout-seconds') return mistake(TIMEOUT_NEEDS_SECONDS);
-    if (flag) return mistake(noSuchFlag('wait', flag));
-    return waitForLog(ctx, text, timeoutMs);
+    const valid = word === 'all' || parseDelay(word) !== null;
+    return mistake(`The wait command takes a tab, all, selector, selector-gone, log, or a delay such as 500ms or 2s, not ${valid ? more.join(' ') : word}`);
   }
 
   // A plain delay.
-  const delay = rest.length === 1 ? parseDelay(rest[0]) : null;
+  const delay = word !== undefined && parsed.tab === undefined ? parseDelay(word) : null;
   if (delay !== null) {
-    if (timed) return mistake('A delay takes no --timeout-seconds');
+    if (timeout !== undefined) return mistake('A delay takes no --timeout-seconds');
     if (delay > MAX_WAIT_SECONDS * 1000) return mistake(`A delay can be at most ${MAX_WAIT_SECONDS}s`);
     await new Promise((resolve) => setTimeout(resolve, delay));
     return true;
@@ -226,15 +202,12 @@ export async function waitFor(ctx: ConsoleContext, words: string[], typedArgumen
 
   // The tab, or all of them.
   let tabs: ControlledTab[];
-  let at = 0;
-  if (rest[0] === 'all') {
-    tabs = ctx.tabs();
-    at = 1;
-  } else if (rest[0] !== undefined && TAB_ARG.test(rest[0])) {
-    const picked = pickTab(ctx, rest[0]);
+  if (parsed.tab !== undefined) {
+    const picked = pickTab(ctx, parsed.tab);
     if (!picked) return false;
     tabs = [picked];
-    at = 1;
+  } else if (word === 'all') {
+    tabs = ctx.tabs();
   } else {
     const current = currentTab(ctx);
     tabs = current ? [current] : [];
@@ -244,35 +217,17 @@ export async function waitFor(ctx: ConsoleContext, words: string[], typedArgumen
     return false;
   }
 
-  const kind = rest[at];
-  if (kind === undefined) return waitToSettle(ctx, tabs, timeoutMs);
+  const kind = parsed.form;
   if (kind === 'selector' || kind === 'selector-gone') {
-    // Typed, as it was typed, as `click` takes one: splitting it into
-    // words would take the quotes out of `a[href="..."]`.
-    const typedSelector = typedArgument === null ? null
-      : /(?:^|\s)selector(?:-gone)?\s+([\s\S]*)$/.exec(typedArgument)?.[1].replace(/(^|\s)--timeout-seconds\s+\S+/g, '');
-    const selector = typedSelector != null ? wholeSelector(typedSelector) : rest.slice(at + 1).join(' ');
+    const selector = parsed.text ?? '';
     if (!selector) return mistake(`The wait ${kind} command needs a selector, e.g. wait ${kind} '#results'`);
     const [first, ...more] = selector.split(/\s+/);
-    const timeout = timed ? ` --timeout-seconds ${timeoutMs / 1000}` : '';
-    if (more.length > 0 && TAB_ARG.test(first)) return mistake(`The tab goes before the word ${kind}: wait ${first} ${kind} ${more.join(' ')}${timeout}`);
-    if (rest[0] === 'all') return mistake(`The wait ${kind} command looks in one tab. Name it (T2), or leave it out for the current one.`);
+    const timed = timeout !== undefined ? ` --timeout-seconds ${timeout}` : '';
+    if (more.length > 0 && TAB_ARG.test(first)) return mistake(`The tab goes before the word ${kind}: wait ${first} ${kind} ${more.join(' ')}${timed}`);
     return waitForSelector(ctx, tabs[0], selector, kind === 'selector', timeoutMs);
   }
-  return mistake(`The wait command takes a tab, all, selector, selector-gone, log, or a delay such as 500ms or 2s, not ${kind}`);
-}
-
-/**
- * Where the form's word goes among `wait`'s words: after its flags (and
- * their values) and an optional tab or `all`. Also for the flag check,
- * which leaves `wait log`'s text alone.
- */
-export function formIndex(words: string[]): number {
-  let i = 0;
-  while (words[i] === '--timeout-seconds') i += 2;
-  if (words[i] === 'all' || (words[i] !== undefined && TAB_ARG.test(words[i]))) i++;
-  while (words[i] === '--timeout-seconds') i += 2;
-  return i;
+  if (word === undefined || word === 'all') return waitToSettle(ctx, tabs, timeoutMs);
+  return mistake(`The wait command takes a tab, all, selector, selector-gone, log, or a delay such as 500ms or 2s, not ${word}`);
 }
 
 // `wait [T<n>|all]`: each tab settling, all at once.

@@ -185,6 +185,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/path-args.ts` | Globs (`*`, `**`) and directory searches for sm-dev's file arguments |
 | `src/harness/command-lines.ts` | Input lines into a run's commands: multi-line `{{ ... }}` blocks (`eval`, `set`, `type`, `cdp`), comments, sent lists |
 | `src/harness/command-list.ts` | Every sm-dev command in one list, in `--help`'s sections, with each command's arguments and options, and its renderer |
+| `src/harness/command-args.ts` | The one parser of every sm-dev command's words: quotes, flags, a leading tab, text, forms, blocks |
 | `src/harness/console-commands.ts` | A run's commands across its tabs, the page-dialog tracker, and the client's `--interactive` prompt |
 | `src/harness/input-file.ts` | Reads a file a command names for its contents (`eval`, `set`, `type` and `cdp`'s `--file`, `--values-file`) |
 | `src/harness/page-commands.ts` | The run commands that drive and read a tab's page, from `click` and `eval` to `snapshot`, `logs` and raw `cdp` calls |
@@ -318,7 +319,8 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/harness-path-args.test.mjs` | Unit tests for sm-dev's glob matching and file argument expansion |
 | `tests/unit/harness-cli-args.test.mjs` | Unit tests for `sm-dev`'s command line: `start` flags, `match` output, scripts by URL, `--run`, `--` lines, misuse |
 | `tests/unit/harness-devtools.test.mjs` | Unit tests for `start --devtools`: when it is on, and the message when `chrome-devtools` is missing |
-| `tests/unit/harness-page-commands.test.mjs` | Unit tests for how the page commands split a typed line into words, name keys for `key`, and read `cdp` calls |
+| `tests/unit/harness-page-commands.test.mjs` | Unit tests for how the page commands name keys for `key`, read `click`'s flags and `cdp` calls, and word errors |
+| `tests/unit/harness-command-args.test.mjs` | Unit tests for the command parser: quotes, flags with `=` or not, tabs, text, forms, refused arguments |
 | `tests/unit/harness-snapshot.test.mjs` | Unit tests for `snapshot`: which words are refs, and which lines `--visible` keeps |
 | `tests/unit/harness-runs.test.mjs` | Unit tests for the run registry: a sent line's round trip, stale records, `stop`'s SIGTERM fallback |
 | `tests/unit/harness-command-lines.test.mjs` | Unit tests for `{{ ... }}` blocks, comments, and lists of commands |
