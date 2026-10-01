@@ -1687,6 +1687,12 @@ For a browser that keeps the extension (and your logins):
   its other scripts out of them, across reloads and in the tabs they
   open, until the run ends. Tabs you open yourself run everything. See
   [sm-dev-extension.md](sm-dev-extension.md#tab-claims).
+- `scripts` and `status` also list the extension's own scripts that
+  match the current tab, as E1, E2, ..., with their status.
+  - `values E1` shows one's stored values, and `scripts E1` picks it for
+    `get` and `set`.
+  - Outside a `--temp-browser`, `set` on one needs `--force`, since it
+    changes your real data: `set key --force <json>`.
 - `--solo` disables all other collections for the run and restores them
   after, so the scratch script runs without noise from the rest.
 - `sm-dev clear --extension` drops all scratch scripts and their stored

@@ -24,7 +24,7 @@ const LEASE_MS = 30_000;
 const RENEW_MS = 10_000;
 
 /** The calls an extension run needs, which an older SourceMonkey lacks. */
-const NEEDED_CALLS = ['claimTab', 'renewRun', 'releaseRun', 'setTabScriptsOff', 'writeGmValues'];
+const NEEDED_CALLS = ['claimTab', 'renewRun', 'releaseRun', 'setTabScriptsOff', 'writeGmValues', 'scriptsOnTab'];
 
 /** Said when the extension in the browser is older than these calls. */
 export const EXTENSION_TOO_OLD = 'SourceMonkey in this browser is older than this sm-dev, so it can\'t run --extension runs. '
@@ -254,6 +254,11 @@ export class ExtensionLink {
     await this.call(({ id, w }) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.writeGmValues(id, w), { id: scriptId, w: writes });
   }
 
+  /** The scripts the toolbar badge lists for a tab, with their status and collection. */
+  async scriptsOnTab(tabId: number): Promise<{ id: string; name: string; status: string; collection: string }[]> {
+    return this.call((id) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.scriptsOnTab(id), tabId);
+  }
+
   /** Fires a menu command in a tab, as clicking it in the toolbar menu does. */
   async fireMenu(tabId: number, scriptId: string, commandId: string): Promise<boolean> {
     const result = await this.call(({ t, s, c }) =>
@@ -293,4 +298,5 @@ interface Api {
   getGmValues(scriptId: string): Promise<Record<string, unknown>>;
   writeGmValues(scriptId: string, writes: { key: string; value?: unknown; deleted?: boolean }[]): Promise<void>;
   fireActionContextMenuItem(tabId: number, scriptId: string, commandId: string): Promise<{ ok: boolean }>;
+  scriptsOnTab(tabId: number): Promise<{ id: string; name: string; status: string; collection: string }[]>;
 }

@@ -572,6 +572,10 @@ $R clear --extension     # drop scratch scripts; restores other collections
   and page console lines.
 - The run's tabs run only its own scripts: the extension's other
   scripts are kept out of them. Tabs you open yourself run everything.
+  - `scripts` lists those others on the tab as E1, E2, ...;
+    `values E1` reads one's stored values, and `scripts E1` picks it
+    for `get`/`set` (`set key --force <json>` outside a
+    `--temp-browser`, since that's the person's real data).
 - **Before building on a new request path, send one real request
   from it here.**
   - A request that works from the page can still be refused from the

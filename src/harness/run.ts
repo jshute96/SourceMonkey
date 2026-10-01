@@ -1043,7 +1043,11 @@ async function runInHarness(
         devtools: () => (devtools?.isUp ? devtools.usage : null),
         browser: browserSentence({ browser: session.endpoint, owned: session.launched, headless: session.headless }),
         extension: () => sourceMonkeyState(session.endpoint),
-        ...(link ? { backend: 'SourceMonkey extension, as scratch scripts' } : {}),
+        ...(link ? {
+          backend: 'SourceMonkey extension, as scratch scripts',
+          // A throwaway browser's data is the run's own.
+          others: (host as ExtensionHost).otherScripts(!session.launched),
+        } : {}),
         output: remote.output,
         roots: { collectionRoot: opts.collectionRoot, localRoots: opts.localRoots },
       };

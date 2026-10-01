@@ -9,8 +9,8 @@ two backends:
   SourceMonkey as scratch scripts, and the extension runs them.
 
 Status: being built. Done: the shared commands, tab claims for
-extension runs, and the event stream. Not yet: claims in harness runs,
-the extension's other scripts (E1, ...), retiring `--solo`, and the
+extension runs, the event stream, and the extension's other scripts
+(E1, ...). Not yet: claims in harness runs, retiring `--solo`, and the
 icon marker. User-facing behavior is in
 [harness-guide.md](harness-guide.md#the-extension-backend).
 
@@ -84,8 +84,8 @@ icon marker. User-facing behavior is in
     `fireActionContextMenuItem`;
   - claims: `claimTab`, `renewRun`, `releaseRun`, `setTabScriptsOff`
     (below).
-- To add: `scriptsOnTab(tabId)`, what the toolbar badge shows for a
-  tab, for the extension's other scripts (E1, ...).
+  - the extension's other scripts: `scriptsOnTab(tabId)`, the rows the
+    toolbar badge shows for a tab, with each one's collection.
 - Scripts are named by the extension's script id, a UUID kept stable
   across refreshes ([script-identity.md](script-identity.md)).
   - A re-push of the same file name keeps the script's id and its
@@ -333,14 +333,17 @@ or a second run pointed at a `--temp-browser`'s port.
     `Removed from the extension` or `Disabled in the extension`.
 - **Scripts installed in the extension**: a separate list, shown only
   when there are any.
-  - The extension's other scripts that are active on the current tab,
-    named E1, E2, ... in the order sm-dev first sees them, kept for the
-    run.
-  - `get`/`set`/`values`, `menu` and `logs` take them too. `set` on one
-    needs `--force` outside a `--temp-browser`, since it changes the
-    person's real data.
-  - `load`, `update` and `--watch` don't apply: the run didn't push
-    them.
+  - The extension's other scripts that match the current tab, as its
+    toolbar badge lists them, named E1, E2, ... in the order sm-dev
+    first sees them, kept for the run.
+  - The run's claim keeps them out of its tabs, so their status there
+    is "Kept out of the run's tabs".
+  - `values E1` shows one's values; `scripts E1` picks it for `get`
+    and `set`. `set` on one needs `--force` outside a `--temp-browser`,
+    since it changes the person's real data.
+  - `menu` and `logs` don't take them: they never run in the run's
+    tabs. `load`, `update` and `--watch` don't apply either: the run
+    didn't push them.
 
 ## The toolbar badge in a claimed tab
 

@@ -7,7 +7,8 @@ import { existsSync } from 'node:fs';
 import { chromium } from '@playwright/test';
 
 import { test, expect } from '../fixtures/harness.js';
-import { findExtensionWorker } from '../../lib/harness/extension-backend.js';
+import { renderUserscript } from '../fixtures/scripts-dir.js';
+import { ExtensionBackend, findExtensionWorker } from '../../lib/harness/extension-backend.js';
 import { launchExtensionBrowser } from '../../lib/harness/extension-launch.js';
 import { run } from '../../lib/harness/run.js';
 
@@ -83,10 +84,6 @@ test('an extension run takes the run commands: status, values, set, menu, eval, 
       }
     `,
   });
-  const { spawn } = await import('node:child_process');
-  const cli = new URL('../../lib/harness/cli.js', import.meta.url).pathname;
-  const child = spawn(process.execPath, [cli, '--stdin', '--temp-browser', 'start', '--extension', file, `${fixtureServer.baseUrl}/target.html`, '--seconds', '70'],
-    { stdio: ['pipe', 'pipe', 'pipe'] });
   // Each command once the line before it shows up.
   const steps: [string, string][] = [
     ['GM_setValue count = 1', 'status'],
@@ -102,6 +99,66 @@ test('an extension run takes the run commands: status, values, set, menu, eval, 
     ['[T2] [sm-dev] Cmds started on', 'newtab'],
     ['Tab T3 opened', 'stop'],
   ];
+  const { lines, left } = await driveCli(['--temp-browser', 'start', '--extension', file, `${fixtureServer.baseUrl}/target.html`], steps);
+  const text = lines.join('\n');
+  expect(left, text).toEqual([]);
+  expect(text).toContain('/cmds.user.js');
+  expect(text).toMatch(/\* 1: Cmds \(.*cmds\.user\.js\)/);
+});
+
+test('the extension\'s own scripts on the tab are E1, ..., kept out, and their values reachable', async ({ fixtureServer, scriptsDir }) => {
+  test.setTimeout(90_000);
+  // A browser with another script already installed (as a scratch
+  // script the run didn't push), which has stored a value.
+  const launched = await launchExtensionBrowser(false);
+  try {
+    const browser = await chromium.connectOverCDP(launched.endpoint);
+    const context = browser.contexts()[0];
+    const backend = await ExtensionBackend.connect(context);
+    await backend.push(renderUserscript({
+      relativePath: 'other.user.js',
+      meta: { name: 'Other', match: ['*://*/target.html'], grant: ['GM_setValue'] },
+      body: `GM_setValue('seen', 1); document.title = 'other ran';`,
+    }), 'other.user.js');
+    const page = await context.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page).toHaveTitle('other ran');
+    await browser.close();
+
+    const file = scriptsDir.write({
+      relativePath: 'mine.user.js',
+      meta: { name: 'Mine', match: ['*://*/target.html'] },
+      body: `console.log('[mine] title ' + document.title);`,
+    });
+    const { lines, left } = await driveCli(['--cdp', launched.endpoint, 'start', '--extension', file, `${fixtureServer.baseUrl}/target.html`], [
+      ['Mine started on', 'scripts'],
+      ['E1: Other', 'values E1'],
+      ['seen = 1', 'scripts E1'],
+      ['Using E1: Other', 'set seen --force 2'],
+      ['Set seen', 'get seen'],
+      // Not a throwaway browser, so without --force it refuses (which
+      // ends a --stdin run).
+      ['seen = 2', 'set seen 3'],
+    ]);
+    const text = lines.join('\n');
+    expect(left, text).toEqual([]);
+    expect(text).toContain('Add --force to do it');
+    // Kept out of the run's tab: only the run's own script ran there.
+    expect(text).toContain('Kept out of the run\'s tabs');
+    expect(text).not.toContain('other ran');
+  } finally {
+    await launched.close();
+  }
+});
+
+// Drives the real CLI through its input: each command is sent once a
+// line containing its trigger shows up. Returns the output, and the
+// steps that never got sent.
+async function driveCli(args: string[], steps: [string, string][]): Promise<{ lines: string[]; left: [string, string][] }> {
+  const { spawn } = await import('node:child_process');
+  const cli = new URL('../../lib/harness/cli.js', import.meta.url).pathname;
+  const child = spawn(process.execPath, [cli, '--stdin', ...args, '--seconds', '70'], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const left = [...steps];
   const lines: string[] = [];
   let buffer = '';
   const onData = (chunk: Buffer): void => {
@@ -110,8 +167,8 @@ test('an extension run takes the run commands: status, values, set, menu, eval, 
     buffer = parts.pop() ?? '';
     for (const line of parts) {
       lines.push(line);
-      if (steps[0] && line.includes(steps[0][0])) {
-        const command = steps.shift()![1];
+      if (left[0] && line.includes(left[0][0])) {
+        const command = left.shift()![1];
         child.stdin.write(`${command}\n`);
         // The client reads stdin until it ends.
         if (command === 'stop') child.stdin.end();
@@ -125,8 +182,5 @@ test('an extension run takes the run commands: status, values, set, menu, eval, 
   const timer = setTimeout(() => child.kill(), 75_000);
   await exited;
   clearTimeout(timer);
-  const text = lines.join('\n');
-  expect(steps, text).toEqual([]);
-  expect(text).toContain('/cmds.user.js');
-  expect(text).toMatch(/\* 1: Cmds \(.*cmds\.user\.js\)/);
-});
+  return { lines, left };
+}

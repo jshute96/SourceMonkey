@@ -21,6 +21,7 @@
 
 import { SKIP_REASON_SM_DEV } from '../sm-dev-link.js';
 import { HarnessHost, valueCodec, type MenuCommandRecord, type PageLink } from './host.js';
+import type { ConsoleContext, OtherScript } from './console-commands.js';
 import type { ExtensionEvent, ExtensionLink } from './extension-link.js';
 
 /** What the host needs of a tab's attachment, to order its events. */
@@ -56,6 +57,10 @@ export class ExtensionHost extends HarnessHost {
   private readonly tabsByPage = new Map<PageLink, number>();
   // Events from tabs the run is setting up, by tab id, with when they came.
   private readonly early = new Map<number, { at: number; events: TabEvent[] }>();
+  // The extension's own scripts the run has listed, by label (`E1`), and
+  // each one's label by its id, kept for the run.
+  private readonly others = new Map<string, OtherScript>();
+  private readonly otherLabels = new Map<string, string>();
 
   constructor(
     private readonly link: ExtensionLink,
@@ -120,18 +125,56 @@ export class ExtensionHost extends HarnessHost {
 
   override async valuesOf(scriptId: string): Promise<Record<string, unknown>> {
     const id = this.extensionIds.get(scriptId);
-    if (!id) return {};
-    const { decodeValue } = valueCodec();
-    const wire = await this.link.values(id);
-    return Object.fromEntries(Object.entries(wire).map(([k, v]) => [k, decodeValue(v)]));
+    return id ? this.extensionValues(id) : {};
   }
 
   override async setValues(scriptId: string, values: Record<string, unknown>): Promise<void> {
     const id = this.extensionIds.get(scriptId);
     if (!id) throw new Error('Internal error: The script was never pushed into the extension');
+    await this.writeExtensionValues(id, values);
+  }
+
+  // A script's values by the extension's id, decoded.
+  private async extensionValues(id: string): Promise<Record<string, unknown>> {
+    const { decodeValue } = valueCodec();
+    const wire = await this.link.values(id);
+    return Object.fromEntries(Object.entries(wire).map(([k, v]) => [k, decodeValue(v)]));
+  }
+
+  private async writeExtensionValues(id: string, values: Record<string, unknown>): Promise<void> {
     const { encodeValue } = valueCodec();
     await this.link.writeValues(id, Object.entries(values).map(([key, v]) =>
       (v === undefined ? { key, deleted: true } : { key, value: encodeValue(v) })));
+  }
+
+  /**
+   * The extension's own scripts, for the commands (`ConsoleContext.others`).
+   * `guarded`: `set` on one changes the person's real data.
+   */
+  otherScripts(guarded: boolean): NonNullable<ConsoleContext['others']> {
+    return {
+      guarded,
+      byLabel: (label) => this.others.get(label),
+      onTab: async (tab) => {
+        const tabId = this.tabsByPage.get(tab.link);
+        if (tabId === undefined) return [];
+        const rows = await this.link.scriptsOnTab(tabId);
+        return rows.filter((row) => !this.runIds.has(row.id)).map((row) => {
+          let label = this.otherLabels.get(row.id);
+          if (!label) {
+            label = `E${this.otherLabels.size + 1}`;
+            this.otherLabels.set(row.id, label);
+          }
+          const other: OtherScript = {
+            label, name: row.name, collection: row.collection, status: row.status,
+            values: () => this.extensionValues(row.id),
+            setValues: (values) => this.writeExtensionValues(row.id, values),
+          };
+          this.others.set(label, other);
+          return other;
+        });
+      },
+    };
   }
 
   override async fireMenuEntry(entry: MenuCommandRecord): Promise<boolean> {

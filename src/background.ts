@@ -131,6 +131,7 @@ import {
   resetCollectionRowReads,
   type RefreshBatch,
   getScript,
+  getCollection,
   getCollections,
   getCollectionWithScripts,
   isFirstRunComplete,
@@ -176,6 +177,7 @@ import {
   type LogLevel,
   type LogEntry,
 } from './script-log.js';
+import { effectiveDisplayName } from './collection-display.js';
 import {
   activeClaim,
   claimAllows,
@@ -300,6 +302,10 @@ interface SourceMonkeyApi {
   renewRun: (runId: string, ttlMs: number, allow: string[] | null, tabs?: { tabId: number; scriptsOff?: boolean }[]) => Promise<number>;
   releaseRun: (runId: string) => Promise<void>;
   setTabScriptsOff: (tabId: number, off: boolean) => Promise<void>;
+  // The scripts the toolbar badge lists for a tab's current document,
+  // with their status and collection: sm-dev's list of the extension's
+  // scripts on the page.
+  scriptsOnTab: (tabId: number) => Promise<{ id: string; name: string; status: string; collection: string }[]>;
   moveScript: (scriptId: string, target: InstallTarget) => Promise<StoredScript | null>;
   // Remove one installed script row (a container copy), as the viewer's
   // trash can does.
@@ -663,6 +669,16 @@ const api: SourceMonkeyApi = {
   renewRun,
   releaseRun,
   setTabScriptsOff,
+  scriptsOnTab: async (tabId) => {
+    const state = getCurrentState(await getTabRecord(tabId));
+    if (!state) return [];
+    const view = computeBadge(state, await rejectedScriptIds());
+    return Promise.all(view.rows.map(async (row) => {
+      const script = await getScript(row.id);
+      const collection = script ? await getCollection(script.collectionId) : undefined;
+      return { id: row.id, name: row.name, status: row.status, collection: collection ? effectiveDisplayName(collection) : '' };
+    }));
+  },
   syncNow: () => syncNowForTests(),
   replayScriptLogsAtBoot,
   clearUpdateRateLimit: () => { _resetUpdaterStateForTests(); },

@@ -228,7 +228,7 @@ export const HELP_SECTIONS: HelpSection[] = [
   {
     title: 'Scripts',
     commands: [
-      { usage: 'scripts', syntax: TEXT, about: 'List the loaded scripts.' },
+      { usage: 'scripts', syntax: TEXT, about: 'List the loaded scripts, and with --extension, SourceMonkey\'s own scripts on the current tab (E1, ...).' },
       { usage: 'script <script>', about: 'Select the active script by ID. With T2.3, pick tab T2 too.' },
       { usage: 'load <script>...', syntax: WORDS, about: 'Load more scripts from disk: files, directories, or globs. See Files and file patterns.' },
       { usage: 'update [script]', syntax: TEXT, about: 'Re-read one (or all) scripts from disk, and reload all affected tabs.' },
@@ -466,6 +466,7 @@ export const HELP_SECTIONS: HelpSection[] = [
             about: 'Print values scripts have stored in GM Storage.',
             args: [
               { term: '<script>', about: 'One script.' },
+              { term: 'E1', about: 'With --extension: one of SourceMonkey\'s own scripts, as scripts lists them.' },
               { term: 'all', about: 'All scripts. (Default)' },
               { term: 'T2', about: 'Scripts running on a tab.' },
             ],
@@ -475,7 +476,10 @@ export const HELP_SECTIONS: HelpSection[] = [
             usage: 'set <key> <json>',
             syntax: { args: 'text', before: 1, block: true, unquote: 'single' },
             about: ['Store a value for the selected script.', 'set <key> {{ starts a multi-line block of JSON, ended by }}.'],
-            options: [{ term: '--file <path>', about: 'Read the JSON from a file, in place of <json>.' }],
+            options: [
+              { term: '--file <path>', about: 'Read the JSON from a file, in place of <json>.' },
+              { term: '--force', about: 'With --extension, for one of SourceMonkey\'s own scripts (E1, ...) outside a --temp-browser: Change its real stored data.' },
+            ],
           },
         ],
       },

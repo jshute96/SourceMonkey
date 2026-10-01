@@ -86,6 +86,20 @@ function tabIdsSuffix(tab: ControlledTab): string {
   return ids.length > 0 ? ` [${ids.join(' ')}]` : '';
 }
 
+/**
+ * One of the extension's own scripts, which an `--extension` run didn't
+ * push: named E1, E2, ... for the run, in the order it first sees them.
+ */
+export interface OtherScript {
+  label: string;
+  name: string;
+  collection: string;
+  /** What the toolbar badge says of it on the tab it was listed for. */
+  status: string;
+  values(): Promise<Record<string, unknown>>;
+  setValues(values: Record<string, unknown>): Promise<void>;
+}
+
 export interface ConsoleContext {
   host: HarnessHost;
   /** The controlled tabs still open, T1 first. */
@@ -105,6 +119,17 @@ export interface ConsoleContext {
   updateScripts?: (scripts?: PreparedScript[]) => Promise<void>;
   /** The scripts this run injected, in load order. */
   scripts: PreparedScript[];
+  /** With `--extension`: the extension's own scripts (see `OtherScript`). */
+  others?: {
+    /** Those on the tab's page, as its toolbar badge lists them. */
+    onTab(tab: ControlledTab): Promise<OtherScript[]>;
+    /** One already listed, by its label (`E2`). */
+    byLabel(label: string): OtherScript | undefined;
+    /** `set` on one changes the person's own data, so needs `--force`. */
+    guarded: boolean;
+  };
+  /** One of `others` picked for `get` and `set` (`scripts E1`), in place of `current`. */
+  currentOther?: OtherScript;
   /**
    * The script `get` and `set` act on. Starts as the first; `scripts`
    * changes it.
@@ -299,8 +324,10 @@ export async function runConsoleCommand(
   const { flags } = parsed;
   const current = ctx.current ?? ctx.scripts[0];
   const scriptId = current?.spec?.id;
+  const other = ctx.currentOther;
   // Named in the output only when there is a choice to be clear about.
-  const whose = ctx.scripts.length > 1 && current ? ` (${preparedScriptName(current)})` : '';
+  const whose = other ? ` (${other.label}: ${other.name})`
+    : ctx.scripts.length > 1 && current ? ` (${preparedScriptName(current)})` : '';
   const picked = currentTab(ctx);
   // Every controlled tab can be closed, T1 included.
   if (!picked && NEEDS_A_TAB.has(command)) {
@@ -383,6 +410,14 @@ export async function runConsoleCommand(
           ctx.out(scriptRow(ctx, script));
           if (picked) ctx.out(activityLine(ctx, picked, script.spec?.id));
         }
+        for (const l of await otherLines(ctx, picked)) ctx.out(l);
+        return;
+      }
+      if (OTHER_LABEL.test(text)) {
+        const found = pickOther(ctx, text);
+        if (!found) return false;
+        ctx.currentOther = found;
+        ctx.out(`[sm-dev] Using ${found.label}: ${found.name} for get and set`);
         return;
       }
       const ref = tabRef(ctx, text, tab);
@@ -394,6 +429,7 @@ export async function runConsoleCommand(
       const found = pickScript(ctx, ref.rest);
       if (!found) return false;
       ctx.current = found;
+      ctx.currentOther = undefined;
       if (!ref.named) {
         ctx.out(`[sm-dev] Using ${scriptLabel(found)} for get and set`);
         return;
@@ -417,9 +453,18 @@ export async function runConsoleCommand(
       // tab, still the scripts and what they have stored.
       printTabs(ctx);
       for (const l of await statusLines(ctx, tab)) ctx.out(l);
+      for (const l of await otherLines(ctx, tab)) ctx.out(l);
       return;
     }
     case 'values': {
+      if (OTHER_LABEL.test(text)) {
+        const found = pickOther(ctx, text);
+        if (!found) return false;
+        ctx.out('Stored values:');
+        ctx.out(`  ${found.label}: ${found.name} (${found.collection})`);
+        for (const l of valueEntries(await found.values())) ctx.out(l);
+        return;
+      }
       if (ctx.scripts.length === 0) {
         ctx.out(`[sm-dev] ${NO_SCRIPTS}`);
         return;
@@ -446,7 +491,7 @@ export async function runConsoleCommand(
       return;
     }
     case 'get': {
-      if (!scriptId) {
+      if (!scriptId && !other) {
         ctx.out(`[sm-dev] ${NO_SCRIPTS}`);
         return;
       }
@@ -455,11 +500,12 @@ export async function runConsoleCommand(
         return false;
       }
       await settleWrites();
-      ctx.out(`  ${text} = ${JSON.stringify((await ctx.host.valuesOf(scriptId))[text])}`);
+      const values = other ? await other.values() : await ctx.host.valuesOf(scriptId!);
+      ctx.out(`  ${text} = ${JSON.stringify(values[text])}`);
       return;
     }
     case 'set': {
-      if (!scriptId) {
+      if (!scriptId && !other) {
         ctx.out(`[sm-dev] ${NO_SCRIPTS}`);
         return;
       }
@@ -502,7 +548,15 @@ export async function runConsoleCommand(
       // Through the host, so a running script sees it on its next read
       // and its value-change listeners fire, as another tab's write
       // would.
-      await ctx.host.setValues(scriptId, { [key]: value });
+      if (other) {
+        if (ctx.others?.guarded && flags['--force'] !== true) {
+          ctx.out(`[sm-dev] ERROR: ${other.label} is one of SourceMonkey's own scripts, so this would change its real stored data. Add --force to do it.`);
+          return false;
+        }
+        await other.setValues({ [key]: value });
+      } else {
+        await ctx.host.setValues(scriptId!, { [key]: value });
+      }
       ctx.out(`[sm-dev] Set ${key}${whose}`);
       return;
     }
@@ -1498,12 +1552,53 @@ async function valueLines(ctx: ConsoleContext, scripts: PreparedScript[]): Promi
   for (const script of scripts) {
     lines.push(scriptRow(ctx, script));
     const id = script.spec?.id;
-    const values = id ? await ctx.host.valuesOf(id) : {};
-    const keys = Object.keys(values);
-    if (keys.length === 0) lines.push('    Nothing stored');
-    for (const key of keys) lines.push(`    ${key} = ${JSON.stringify(values[key])}`);
+    lines.push(...valueEntries(id ? await ctx.host.valuesOf(id) : {}));
   }
   return lines;
+}
+
+// One script's values, a line each, under its row.
+function valueEntries(values: Record<string, unknown>): string[] {
+  const keys = Object.keys(values);
+  if (keys.length === 0) return ['    Nothing stored'];
+  return keys.map((key) => `    ${key} = ${JSON.stringify(values[key])}`);
+}
+
+// `E1`: one of the extension's own scripts (see `OtherScript`).
+const OTHER_LABEL = /^E\d+$/i;
+
+// The other script `label` names, or null having said why.
+function pickOther(ctx: ConsoleContext, label: string): OtherScript | null {
+  if (!ctx.others) {
+    ctx.out(`[sm-dev] ERROR: ${label.toUpperCase()} names one of the extension's own scripts, and only an --extension run has those`);
+    return null;
+  }
+  const found = ctx.others.byLabel(label.toUpperCase());
+  if (!found) ctx.out(`[sm-dev] There is no script ${label.toUpperCase()}. Use scripts to list them.`);
+  return found ?? null;
+}
+
+// How `scripts` and `status` show an extension script's badge status.
+const OTHER_STATUS: Record<string, string> = {
+  OK: 'Running',
+  ERROR: 'Threw an error',
+  REJECTED: 'Refused by Chrome',
+  MISSING: 'Not started',
+  UNEXPECTED: 'Running, though it doesn\'t match',
+  RELOAD: 'Changed since it started',
+  NOT_LOADED: 'Kept out of the run\'s tabs',
+};
+
+// The extension's own scripts on `tab`, for `scripts` and `status`. None
+// outside an `--extension` run, or when there are none.
+async function otherLines(ctx: ConsoleContext, tab: ControlledTab | undefined): Promise<string[]> {
+  if (!ctx.others || !tab) return [];
+  const others = await ctx.others.onTab(tab).catch(() => [] as OtherScript[]);
+  if (others.length === 0) return [];
+  return [
+    `Scripts installed in the extension, on ${tabName(tab)}:`,
+    ...others.map((o) => `${o === ctx.currentOther ? '* ' : '  '}${o.label}: ${o.name} (${o.collection}): ${OTHER_STATUS[o.status] ?? o.status}`),
+  ];
 }
 
 function count(n: number, noun: string): string {
