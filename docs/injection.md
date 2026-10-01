@@ -554,6 +554,11 @@ the user body. This is the TM/VM pattern.
 - `document-end` — wrapper waits for `DOMContentLoaded`.
 - `document-idle` (default / unknown values) — wrapper waits for
   `window`'s `load` event.
+  - A page that calls `window.stop()` never fires `load`, but its
+    `readyState` still reaches `complete`. That change arms a
+    zero-delay fallback, so the body runs there too.
+  - On a normal page `load` comes in the same task as that change, so
+    the body still runs after `load`, and only once.
 
 Why not just pass `runAt` through to `chrome.userScripts.register`:
 

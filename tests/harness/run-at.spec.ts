@@ -80,4 +80,15 @@ test.describe('harness @run-at timing', () => {
     expect(await page.evaluate(() => (window as unknown as Record<string, unknown>).__smSvgBody)).toBeUndefined();
     expect(host.reports.errors).toEqual([]);
   });
+
+  test('document-idle runs on a page that calls window.stop(), where load never fires', async ({ page, fixtureServer, host, loadScript }) => {
+    await loadScript({
+      relativePath: 'idle.user.js',
+      meta: { name: 'Idle', match: ['*://*/window-stop.html'], grant: ['none'] },
+      body: `document.getElementById('target').textContent = 'idle ran';`,
+    });
+    await page.goto(`${fixtureServer.baseUrl}/window-stop.html`, { waitUntil: 'commit' });
+    await expect(page.locator('#target')).toHaveText('idle ran');
+    expect(host.reports.started).toHaveLength(1);
+  });
 });

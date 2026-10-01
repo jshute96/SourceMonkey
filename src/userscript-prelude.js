@@ -421,9 +421,26 @@
       document.addEventListener("DOMContentLoaded", function () { cb(); }, { once: true });
       return;
     }
-    /* document-idle (default). */
+    /* document-idle (default). `load` alone isn't enough: a page that
+       calls `window.stop()` never fires it, though readyState still
+       reaches "complete". On a normal page `load` follows the
+       "complete" readystatechange in the same task, so that change only
+       arms a zero-delay fallback: the body still runs after `load`
+       where there is one, and once either way. */
     if (document.readyState === "complete") { cb(); return; }
-    window.addEventListener("load", function () { cb(); }, { once: true });
+    var idleDone = false;
+    var runIdle = function () {
+      if (idleDone) return;
+      idleDone = true;
+      window.removeEventListener("load", runIdle);
+      document.removeEventListener("readystatechange", onReadyState);
+      cb();
+    };
+    var onReadyState = function () {
+      if (document.readyState === "complete") setTimeout(runIdle, 0);
+    };
+    window.addEventListener("load", runIdle);
+    document.addEventListener("readystatechange", onReadyState);
   }
 
   /* Calls `cb` (at most once) when `get()` returns a node. The wait
