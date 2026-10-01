@@ -504,6 +504,13 @@ test.describe('log stack mapping', () => {
     const line = Number(/plain\.user\.js:(\d+):/.exec(text ?? '')?.[1]);
     const stored = fs.readFileSync(path.join(scriptsDir.path, 'plain.user.js'), 'utf8');
     expect(stored.split('\n')[line - 1]).toContain('plain-boom');
+    // The stack also has a frame on the wrap's closing line, just past
+    // the end of the file (where the nested user-program scope is
+    // called). It's ours, so it stays plain text, not a link.
+    const row = page.locator('#log-pane td.log-msg', { hasText: 'plain-boom' }).first();
+    const lineCount = stored.split('\n').length;
+    await expect(row).toContainText(`plain.user.js:${lineCount + 1}:`);
+    await expect(row.locator('.log-stack-link')).toHaveCount(1);
 
     await page.close();
   });

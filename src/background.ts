@@ -4076,7 +4076,7 @@ let parseCheckRuns = 0;
 const compileParseChecker: ParseChecker = async (script) => {
   if (await isParseCheckDisabled()) return null;
   parseCheckRuns++;
-  const source = await buildParseCheckSource(script, chrome.runtime.getManifest().version);
+  const source = buildParseCheckSource(script);
   const verdicts = await checkParses([source.text]);
   // Same resolution the page checker does, through the same helper —
   // the two routes differ only in transport, and a verdict that named

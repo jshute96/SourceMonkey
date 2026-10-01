@@ -70,6 +70,14 @@ Specs that opt out of a manager via
     install both variants; TM prefetches `@require` URLs at the install
     prompt, so expect that install to error or stall rather than
     complete.
+- **`use-strict/`** (the "with a @require" test) — skipped under **TM
+  only**, for the same relative `@require` reason. The rest of the
+  example (a top-level `'use strict'` in both worlds) runs under all
+  managers.
+  - TM's `@require` behavior was checked once by hand, with a library
+    served from an absolute local URL: as in VM and SM, a first
+    library's `'use strict'` makes the script strict, and the script's
+    own after a library does nothing.
 - **`gm-download/`** (the two tests that let a download complete) —
   skipped under **VM**. Not a VM bug: a Chromium one.
   - VM saves a download by clicking an anchor on a

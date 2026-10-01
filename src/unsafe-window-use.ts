@@ -34,22 +34,23 @@
 //     `\/\/` reads as a line comment — either can swallow real code.
 //     Normally that costs a missed reference, which leaves the script
 //     behaving as it does today. If it swallows a DECLARATION while
-//     leaving a use visible, the emitted binding is a duplicate and the
-//     install-time parse check fails the row by name — visible, not
-//     silent, but a regression. No corpus script hits it.
+//     leaving a use visible, the script moves to MAIN world and gets a
+//     binding it shadows anyway: it loses its isolation for nothing,
+//     but still runs. No corpus script hits it.
 //   - A script that DECLARES the name — `const unsafeWindow =
 //     window.wrappedJSObject || window;`, a real cross-browser idiom —
 //     answers false, including in a declarator list or a destructuring
-//     pattern. Our binding is a `const` in the same scope, so emitting
-//     one there would turn a working script into a duplicate-
-//     declaration SyntaxError. The check is scope-blind, so a
-//     declaration inside a function suppresses the whole script: that
-//     direction only costs the feature.
+//     pattern. Its references read its own binding, never ours, so
+//     there is nothing to move worlds for. (Our binding would be
+//     harmless beside it: the user program runs in a nested scope, so
+//     the script's declaration shadows it. See wrapCombinedEntry in
+//     injector.ts.) The check is scope-blind, so a declaration inside a
+//     function suppresses the whole script: that direction only costs
+//     the feature.
 //
 // Only the script's own body is scanned, not its `@require` bodies: the
-// requires arrive on a later pipeline step (`attachFiles`) and a
-// library's own `unsafeWindow` declaration is exactly the case above.
-// See TODO.md.
+// requires arrive on a later pipeline step (`attachFiles`). See
+// TODO.md.
 
 const IDENT = /[$\w]/;
 
@@ -155,10 +156,8 @@ const KEYWORD = /(?:^|[^$\w.])(?:var|let|const)(?![$\w])/g;
 const DECLARATOR_SPAN = 2000;
 
 // Is `unsafeWindow` a NAME BEING BOUND anywhere in this source, rather
-// than a value being read? Our binding is a `const` in the same scope as
-// the user program, so emitting one beside the source's own declaration
-// is a duplicate-declaration SyntaxError — it would turn a script that
-// works today into an `invalid` row at install time.
+// than a value being read? A script that binds the name reads its own
+// value, so it gets neither our binding nor the move to MAIN world.
 //
 // Walks each `var` / `let` / `const` declarator list, tracking bracket
 // depth and whether the current declarator has passed its `=`:
@@ -204,15 +203,6 @@ function declaresBinding(code: string): boolean {
     }
   }
   return false;
-}
-
-// The source brings its own `unsafeWindow` binding, so ours would be a
-// duplicate declaration in the same scope. Checked against `@require`
-// bodies too (see `buildGmBindingsForScript`): a library declaring the
-// name is the case the main body is usually referencing.
-export function sourceDeclaresUnsafeWindow(text: string | null | undefined): boolean {
-  if (!text || text.indexOf('unsafeWindow') === -1) return false;
-  return declaresBinding(stripQuotedAndComments(text));
 }
 
 export function sourceUsesUnsafeWindow(bodyText: string | null | undefined): boolean {

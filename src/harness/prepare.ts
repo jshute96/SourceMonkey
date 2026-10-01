@@ -228,7 +228,7 @@ function installNodeSeams(): void {
   setParseChecker(async (script) => {
     let checked;
     try {
-      checked = await buildParseCheckSource(script, await packageVersion());
+      checked = buildParseCheckSource(script);
     } catch (err) {
       parseCheckNote = { kind: 'errored', message: String((err as Error)?.message ?? err) };
       throw err;
@@ -318,7 +318,7 @@ async function prepareScriptNow(opts: PrepareOptions): Promise<PreparedScript> {
     needsGmRuntime: needsGmRuntime(script.header),
     grantedSubsystems: grantedSubsystems(script.header),
     requires: (script.requires ?? []).map((r) => ({ url: r.url, localUrl: r.localUrl })),
-    stackLayout: spec ? stackLayout(script, logLabel) : { entryUrl: '', segments: [] },
+    stackLayout: spec ? stackLayout(script, logLabel) : { entryUrl: '', segments: [], lineCount: 0 },
   };
   if (script.errorMessage) {
     out.errorMessage = script.errorMessage;
