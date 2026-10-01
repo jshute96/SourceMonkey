@@ -177,19 +177,23 @@ export function composeSource(
 // No segments when the script has no `@require`s: then nothing moved,
 // and frames already name the right line. See
 // `remapStackRef` / `remapStackText`.
+//
+// `lineCount` is the user program's lines (requires + body): a frame
+// past it is on our wrap's closing line, not the user's.
 export interface StackLayout {
   entryUrl: string;
   segments: readonly MappedSegment[];
+  lineCount: number;
 }
 
 export function stackLayout(script: StoredScript, logLabel: string): StackLayout {
   const entryUrl = buildSourceUrl(logLabel);
-  const segments = composeSource(script, {
+  const { segments, lineCount } = composeSource(script, {
     requireUrls: (script.requires ?? []).map((r) => buildRequireSourceUrl(logLabel, r.url)),
     mainUrl: entryUrl,
     startLine: USER_SOURCE_START_LINE,
-  }).segments;
-  return { entryUrl, segments };
+  });
+  return { entryUrl, segments, lineCount };
 }
 
 // Count lines the way V8 does, which is what the source map has to

@@ -57,7 +57,7 @@ export const checkScriptParses: ParseChecker = async (script) => {
     // startup — delaying its first render for a check most page loads
     // never run.
     const { buildParseCheckSource } = await import('./injector.js');
-    const source = await buildParseCheckSource(script, chrome.runtime.getManifest().version);
+    const source = buildParseCheckSource(script);
     const verdicts = await ensureHost().compile([source.text]);
     // Resolved here rather than by the caller: `source` is what maps a
     // reported line back to a file, and this is the last point where

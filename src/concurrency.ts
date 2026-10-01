@@ -118,7 +118,7 @@ export const PROBE_URLS_PER_SCRIPT_CONCURRENCY = 4;
 // The list this bounds is normally empty — a row keeps its verdict
 // until its content changes. The pass that isn't empty is the first
 // sync after a SourceMonkey update: `parseCheckKey` carries the
-// extension version (the checked text contains OUR `GM_*` bindings), so
+// extension version (how we wrap the program decides what parses), so
 // an upgrade makes every stored row stale at once, and every compile
 // composes the body plus each `@require` in memory before shipping it
 // to the sandbox. Registration waits on the whole pass, so this is a

@@ -29,8 +29,10 @@
 //            scripts in the same world also get initialized.
 //   js[2]  — the whole user program: every `@require` concatenated
 //            ahead of the script's own body, wrapped in
-//            `self.__smRun(id,function(__smE){<gm bindings>…<source>})`
-//            so it runs only after the prelude's matcher +
+//            `self.__smRun(id,function(__smE){<gm bindings>…
+//            return(()=>{<source>\n})();})` (the source in a
+//            nested scope; see USER_SCOPE_OPEN), so it runs only after
+//            the prelude's matcher +
 //            check-pending + @run-at gates resolve. Trailing
 //            `//# sourceURL=sourcemonkey://<id>/<name>.user.js`, plus
 //            an inline source map when the script has requires.
@@ -81,7 +83,6 @@ import {
   WRAPPER_PRELUDE,
 } from './generated-wrappers.js';
 import { findApi, resolveGrants, type ApiSubsystem } from './gm-api-catalog.js';
-import { sourceDeclaresUnsafeWindow } from './unsafe-window-use.js';
 import { scanAllStorage } from './storage-scan.js';
 import { canonicalMatchPatterns, matchPatternProblem } from './url-match.js';
 import { dlog } from './debug-log.js';
@@ -420,17 +421,66 @@ export function wrapPreludeEntry(): string {
   return WRAPPER_PRELUDE + `\n//# sourceURL=${PRELUDE_SOURCE_URL}\n`;
 }
 
+// The nested scope the user program (requires + body) runs in, inside
+// the scope holding our own declarations: the `__sm*` preamble, the GM
+// bindings (`const GM_info`, granted `GM_*`, `const unsafeWindow =
+// window;`) and the GM prelude. Without it those shared ONE scope with
+// the user program, and real scripts broke:
+//
+//   - `const window = unsafeWindow;` put our `const unsafeWindow =
+//     window;` in the temporal dead zone (TDZ: a `let`/`const` read
+//     before its declaration runs) of the script's `window`, a
+//     ReferenceError that killed the script (GreasyFork 531756).
+//   - `const unsafeWindow = …`, `let GM_info`, a `var GM_setValue`
+//     polyfill or an own `function GM_addStyle` were duplicate-
+//     declaration SyntaxErrors, so the script never ran. All of these
+//     work under TM and VM, whose GM names live in an outer scope too.
+//
+// Why an arrow FUNCTION, not a block:
+//
+//   - A block only scopes `let`/`const`/`class`. A `var` or a sloppy-
+//     mode function declaration still lands in the enclosing function
+//     scope and clashes with our `const`s there.
+//   - An arrow keeps the wrap function's `this` and `arguments`, so
+//     top-level `this` is unchanged. A `function` would need
+//     `.call(this)`, a lookup a page can tamper with in MAIN world.
+//   - Top-level `return` still works (it returns from the arrow), and
+//     top-level `await` stays a SyntaxError, as it was.
+//
+// The user program is the arrow's first statement, so a leading
+// `"use strict"` is a real directive and applies to the whole program,
+// as in Tampermonkey and Violentmonkey (tests/examples/use-strict).
+// Like theirs, it's the first file's: a first `@require` that starts
+// with one makes the script strict too, and the script's own after a
+// `@require` does nothing, even when that `@require` is empty (our `;`
+// between files is then the first statement). (Before the nested scope it never applied:
+// our own statements came first.)
+//
+// The opener goes on the head's line and the closer on the line that
+// already holds the wrap's `});`, so no line moves: generated line
+// numbers, the source map and the viewer's stack mapping are unchanged.
+// The close starts with a newline so a body ending in a `//` comment
+// can't swallow it.
+//
+// The registered wrap `return`s the arrow's result, so the wrap
+// function still returns whatever a top-level `return` gave (the
+// prelude ignores it; unit tests read it). The swap eval is global
+// code, where `return` is illegal; its completion value is the arrow's
+// result anyway.
+const USER_SCOPE_OPEN = '(()=>{';
+const USER_SCOPE_CLOSE = '\n})();';
+
 // Wrap the whole user program — every `@require` plus the script's own
 // body — as ONE js[] entry. Output shape:
 //
-//   self.__smRun("<id>",function(__smE){<DECL PREAMBLE><GM BINDINGS><GM PRELUDE>
+//   self.__smRun("<id>",function(__smE){<DECL PREAMBLE><GM BINDINGS><GM PRELUDE>return(()=>{
 //   // @require <url 1>
 //   <require 1 line 1>
 //   ...
 //   ;
 //   <main body line 1>
 //   ...
-//   });
+//   })();});
 //   //# sourceURL=<main url>
 //   //# sourceMappingURL=data:application/json;…   (only when requires exist)
 //
@@ -456,6 +506,10 @@ export function wrapPreludeEntry(): string {
 //     require's top-level `GM_setValue` reads a live cache.
 //   - The GM binding block ships once per script instead of once per
 //     require.
+//
+// The user program runs in its own nested scope (`USER_SCOPE_OPEN` /
+// `USER_SCOPE_CLOSE`), so its top-level declarations shadow ours rather
+// than clashing. See the note on those constants.
 //
 // Line numbers:
 //
@@ -490,7 +544,7 @@ export function wrapCombinedEntry(args: {
     `var __smSend=self.__smPrelude.send;`;
   // gmBindings and gmPrelude are already single-line strings (or
   // empty), so the head stays on one physical line.
-  const head = `self.__smRun(${idLit},function(__smE){${declPreamble}${args.gmBindings}${args.gmPrelude}`;
+  const head = `self.__smRun(${idLit},function(__smE){${declPreamble}${args.gmBindings}${args.gmPrelude}return${USER_SCOPE_OPEN}`;
 
   if ((args.script.requires ?? []).length === 0) {
     // Nothing to concatenate, so nothing shifts and no map is needed.
@@ -499,7 +553,7 @@ export function wrapCombinedEntry(args: {
     // original line N and lets the viewer pass refs through unmapped.
     // `buildSwapEvalBody` mirrors this exactly — see NO_REQUIRE_LAYOUT
     // in composed-source.ts.
-    return head + composeRequiredBody(args.script) + `\n});\n//# sourceURL=${args.sourceUrl}\n`;
+    return head + composeRequiredBody(args.script) + `${USER_SCOPE_CLOSE}});\n//# sourceURL=${args.sourceUrl}\n`;
   }
 
   // Head occupies generated line 0; user source starts below it.
@@ -508,7 +562,7 @@ export function wrapCombinedEntry(args: {
     mainUrl: args.sourceUrl,
     startLine: USER_SOURCE_START_LINE,
   });
-  const code = head + '\n' + composed.text + `\n});\n`;
+  const code = head + '\n' + composed.text + `${USER_SCOPE_CLOSE}});\n`;
   const map = buildSourceMap({
     file: args.sourceUrl,
     segments: composed.segments,
@@ -735,51 +789,29 @@ export async function buildGmBindingsForScript(
   // bridge gate can be asked for (`grantedSubsystems` is header-derived
   // and unchanged), so this adds no capability, only a `window` alias.
   //
-  // Suppressed when a `@require` declares the name itself: the requires
-  // and the body are one program (Mode A — see injection-modes.md), so
-  // our `const` beside the library's would be a SyntaxError that takes
-  // the whole entry down. The script still runs in MAIN, which is where
-  // the library's own `window.wrappedJSObject || window` wants to be.
+  // A `@require` that declares the name itself needs no special case:
+  // the user program runs in a nested scope (see wrapCombinedEntry), so
+  // the library's own `const unsafeWindow = …` shadows ours.
   const emittedNames = script.usesUnsafeWindow === true
     && !grantedNames.includes('unsafeWindow')
-    && !(script.requires ?? []).some((r) => sourceDeclaresUnsafeWindow(r.source))
     ? [...grantedNames, 'unsafeWindow']
     : grantedNames;
   return emitGmBindings(emittedNames, buildGmInfoInput(script, scriptHandlerVersion, grantedNames));
 }
 
-// The exact text the registered entry compiles as a function body,
-// minus our own wrap head — i.e. everything a syntax error in
-// user-supplied code could come from, in the scope it actually lands
-// in. This is what `src/parse-check.ts` hands to `new Function`.
+// The user program exactly as the registered entry compiles it: every
+// `@require` body then the script's own source, as one function body —
+// i.e. everything a syntax error in user-supplied code could come from,
+// in the kind of scope it actually lands in. This is what
+// `src/parse-check.ts` hands to `new Function`.
 //
-// Includes the GM bindings deliberately. They are `const` declarations
-// in the same scope as the user program, so a library doing
-// `const unsafeWindow = window.wrappedJSObject || window;` — a real
-// idiom — is a duplicate declaration and a genuine parse failure.
-// Checking the user source alone would call that script healthy and
-// let it fail at injection time, which is the whole thing we are
-// trying to stop doing.
-//
-// NOT included: the wrap head itself (`self.__smRun(id,function(__smE){`),
-// its `var` preamble, and the GM prelude. The head is ours and always
-// valid, and on its own it leaves an unbalanced brace that
-// `new Function` would reject.
-//
-// Included by way of `js`, and worth knowing: the `@resource` literal
-// that `resource.init` carries. Every base64 blob is re-parsed on each
-// check. It lives in `js` so the reload swap gets it (see
-// gm-bindings.ts); if that cost ever shows up, hand the checker a
-// stripped `js` rather than moving the call back.
-//
-// That leaves a small gap, in the safe direction. `var x` beside
-// another `var x` is legal, but `var x` beside `let`/`const`/`class x`
-// is a SyntaxError — and so is redeclaring the `__smE` parameter. So a
-// script writing `const __smE`, `let __smDecision` or `const __smGmSnap`
-// passes this check and fails at injection. Every such name is `__sm`-
-// prefixed, so the practical risk is negligible; the run-time seal
-// entry still reports it. Closing it properly means compiling with the
-// parameter name and the preamble included — see TODO.md.
+// Our own declarations (the wrap head, its `var` preamble, the GM
+// bindings and prelude) are NOT included, and need not be: the user
+// program runs in a nested scope of its own (`USER_SCOPE_OPEN`), so
+// nothing it declares can clash with them. That nested scope is a
+// function body, as `new Function`'s is, so a top-level `return` is
+// judged as it will run, and a leading `"use strict"` applies to the
+// whole program, as there (see USER_SCOPE_OPEN).
 //
 // Returns provenance alongside the text. A syntax error is reported as
 // a line in the COMPOSED program, which is not a line of any file the
@@ -798,27 +830,18 @@ export interface ParseCheckSource {
   lineCount: number;
 }
 
-export async function buildParseCheckSource(
-  script: StoredScript,
-  scriptHandlerVersion: string,
-): Promise<ParseCheckSource> {
-  // World-agnostic since MAIN-world scripts get the same bindings as
-  // USER_SCRIPT ones (the runtime picks its transport at init), so the
-  // parse check compiles what will actually be injected in either world.
-  const gmEmit = await buildGmBindingsForScript(script, scriptHandlerVersion);
-  // The preamble always occupies at least one WHOLE line, even when
-  // `gmEmit.js` is empty, and two things rest on that:
-  //
-  //   - The user's first line is never at offset 0. A `#!` hashbang is
-  //     legal only there, so it stays the syntax error it also is in
-  //     the real injected entry (which likewise wraps the source), and
-  //     the location probes can't be handed a source that parses as a
-  //     shebang script.
-  //   - The offset below is derived from what was actually emitted
-  //     rather than assumed to be 1 — the same discipline
-  //     `composeSource` applies internally, and for the same reason:
-  //     assumed line counts drift from emitted ones.
-  const preamble = gmEmit.js + '\n';
+export function buildParseCheckSource(script: StoredScript): ParseCheckSource {
+  // A blank first line of our own, so the user's first line is never at
+  // offset 0: a `#!` hashbang is legal only there, so it stays the
+  // syntax error it also is in the real injected entry (which wraps the
+  // source), and the location probes can't be handed a source that
+  // parses as a shebang script. Blank, not a statement, so a leading
+  // `"use strict"` still applies, as in the injected entry (see
+  // USER_SCOPE_OPEN). The offset below is derived from it rather than
+  // assumed to be 1 — the same discipline `composeSource` applies
+  // internally, and for the same reason: assumed line counts drift
+  // from emitted ones.
+  const preamble = '\n';
   const startLine = countLines(preamble) - 1;
   const requires = script.requires ?? [];
   const composed = composeSource(script, {
@@ -863,10 +886,16 @@ export async function buildParseCheckSource(
 // purpose: a refresh that ADDS a storage grant needs the init even
 // though the registered wrapper never asked for a snapshot.
 //
+// The composed source runs in the same nested scope as the registered
+// entry (`USER_SCOPE_OPEN` / `USER_SCOPE_CLOSE`), so a body redeclaring
+// a binding name shadows it here too. It also keeps the body's
+// top-level `var`s and functions off the page's global object, which
+// a bare indirect eval would otherwise create there.
+//
 // Line layout matches `wrapCombinedEntry` exactly: preamble on
 // generated line 0, user source from `USER_SOURCE_START_LINE`. That
-// costs a leading blank line when there are no bindings to prepend,
-// and buys a single answer to "which file is generated line N?" for
+// costs a leading line holding only the scope opener when there are no
+// bindings to prepend, and buys a single answer to "which file is generated line N?" for
 // both run paths — the viewer's Log tab maps stack refs without
 // knowing whether the script was registered or hot-swapped. See
 // src/composed-source.ts.
@@ -888,7 +917,7 @@ export async function buildSwapEvalBody(
   // gmEmit.js is single-line and ends with a space (or is empty), so
   // it occupies generated line 0 exactly as `wrapCombinedEntry`'s wrap
   // head does.
-  const head = gmEmit.js;
+  const head = gmEmit.js + USER_SCOPE_OPEN;
   if (requires.length === 0) {
     // No newline, matching the registered path's no-require branch:
     // the body's first line shares line 0 with the preamble, so
@@ -897,7 +926,7 @@ export async function buildSwapEvalBody(
     // every logged stack line for the majority of scripts, which have
     // no `@require` — and with no segments to map by, the viewer
     // could not detect it, let alone correct it.
-    return { body: head + composeRequiredBody(script), needsValues: gmEmit.needsValues };
+    return { body: head + composeRequiredBody(script) + USER_SCOPE_CLOSE, needsValues: gmEmit.needsValues };
   }
   const composed = composeSource(script, {
     requireUrls: requires.map((r) => buildRequireSourceUrl(logLabel, r.url)),
@@ -912,10 +941,11 @@ export async function buildSwapEvalBody(
   const map = buildSourceMap({
     file: sourceUrl,
     segments: composed.segments,
-    totalLines: 1 + composed.lineCount,
+    // head + user source + the scope's closing line
+    totalLines: 1 + composed.lineCount + 1,
   });
   return {
-    body: head + '\n' + composed.text + '\n' + inlineSourceMapComment(map),
+    body: head + '\n' + composed.text + USER_SCOPE_CLOSE + '\n' + inlineSourceMapComment(map),
     needsValues: gmEmit.needsValues,
   };
 }

@@ -23,11 +23,12 @@
  *            onto the queue, because the queue lives on globalThis.
  *   js[2]  — the whole user program: every @require concatenated ahead
  *                of the script's own body, all wrapped in
- *                `__smRun("id",function(){<gm bindings on same line>
- *                 <user source>\n})`, so it runs only after the
+ *                `__smRun("id",function(__smE){<gm bindings>return(()=>{
+ *                 <user source>\n})();})`, so it runs only after the
  *                matcher + check-pending + @run-at gates resolve.
  *                Concatenation is what gives requires and the body one
- *                shared scope. Trailing
+ *                shared scope, nested inside the bindings' scope so
+ *                its declarations shadow ours. Trailing
  *                `//# sourceURL=sourcemonkey://<id>/<name>.user.js`,
  *                plus an inline source map when requires are present so
  *                devtools still splits them into separate files.

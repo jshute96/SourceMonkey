@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Userscript examples for a top-level 'use strict'</title>
+  <link rel="stylesheet" href="../examples.css" />
+</head>
+<body>
+  <header>
+    <h1>Userscript examples for a top-level <code>'use strict'</code></h1>
+  </header>
+  <main>
+    <p>Each script reports whether it runs in strict mode:</p>
+    <ul>
+      <li><code>page</code> and <code>content</code>: one in each world,
+        starting with <code>'use strict';</code> right after the
+        metadata block. Both should be on.</li>
+      <li><code>strict-lib</code>: no directive of its own, but its
+        <code>@require</code> starts with one. Should be on.</li>
+      <li><code>own-after-lib</code>: its own <code>'use strict'</code>
+        after a plain <code>@require</code>. Should be off, as in
+        Tampermonkey and Violentmonkey.</li>
+    </ul>
+    <h2>Log</h2>
+    <ul id="log"></ul>
+  </main>
+</body>
+</html>

@@ -56,7 +56,10 @@ SourceMonkey actually does today.
 `emitGmBindings` returns `{js, prelude}` — both strings are
 spliced into the combined user-program wrap function
 (`wrapCombinedEntry` in `src/injector.ts`), so they're locals of that
-function and visible to the user body via closure:
+function and visible to the user body via closure. The user program
+runs in a scope nested inside it, so a script declaring one of these
+names shadows ours (see
+[injection.md](injection.md#the-user-program-scope)):
 
 - `js` — lazy `const GM_X = ...` declarations plus the GM4 alias
   object. Each declaration only dereferences `window.__SM_GM__`
@@ -125,9 +128,7 @@ output ships whether the script lands in USER_SCRIPT or MAIN.
   worlds. What makes it correct is the world, not the binding — see
   [injection.md](injection.md#unsafewindow-forces-main-world).
   - Emitted for a script that only *uses* the name too, with no
-    `@grant` line for it (`StoredScript.usesUnsafeWindow`). Suppressed
-    when a `@require` declares the name itself, since ours would be a
-    duplicate `const` in the same scope.
+    `@grant` line for it (`StoredScript.usesUnsafeWindow`).
 - Everything else — including the `window.onurlchange` event surface
   and the `window.close` / `window.focus` overrides — delegates to
   `window.__SM_GM__`, which is registered in whichever worlds have a

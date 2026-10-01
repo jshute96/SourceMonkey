@@ -792,10 +792,13 @@ Behavior:
   `__prelude.js`. They pass through untouched.
 - Generated lines that belong to our wrap rather than to user code:
   the head, the `// @require` marker lines, the `;` ASI guards, the
-  closing `});`. Guessing at a neighbouring line would point the user
-  at unrelated code.
+  closing `})();});`. Guessing at a neighbouring line would point the
+  user at unrelated code. These render as plain text, not links.
 - Scripts with no `@require`. Nothing was concatenated, so nothing
   moved, and the reported lines are already original.
+  - Except the closing line just past the body: it is ours, and shows
+    up in every synchronous throw's stack as the call into the nested
+    user-program scope. It renders as plain text too.
 - Columns are passed through rather than mapped, and that is exact:
   composition moves whole lines and never code within a line.
 - Line numbers are counted the way V8 counts them (`\r`, `\r\n`,
