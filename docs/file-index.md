@@ -173,7 +173,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | File | Description |
 |------|-------------|
 | `src/harness/index.ts` | Public entry of the harness package: re-exports the install pipeline, host, injector, and Playwright fixture |
-| `src/harness/page-output.ts` | Which page console lines and uncaught errors `sm-dev start` streams: the scripts', not the site's |
+| `src/harness/page-output.ts` | Which page console lines and errors `sm-dev start` streams (the scripts'), and how logged DOM nodes read |
 | `src/harness/prepare.ts` | Runs the real install pipeline over a file or text under Node and returns the registrable entries, world, matching, and diagnostics; also how paths are shown |
 | `src/harness/parse-check-node.ts` | Node counterpart of the sandboxed parse check: `new Function` verdict plus `vm.Script` location probes |
 | `src/harness/host.ts` | The stand-in service worker: answers every bridge message the injected code sends, under Node, and records what scripts do |
