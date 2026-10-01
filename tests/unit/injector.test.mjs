@@ -89,11 +89,11 @@ import {
   wrapPreludeEntry,
 } from '../../dist/injector.js';
 import {
-  USER_SOURCE_START_LINE,
   composeRequiredBody,
-  composeSource,
+  stackLayout,
 } from '../../dist/composed-source.js';
 import { remapStackRef } from '../../dist/source-map.js';
+import { remapStackText } from '../../dist/stack-link.js';
 import { buildRequireSourceUrl, buildSourceUrl } from '../../dist/script-source-url.js';
 import { WRAPPER_BRIDGE, WRAPPER_PRELUDE } from '../../dist/generated-wrappers.js';
 import { urlMatchesScript } from '../../dist/url-match.js';
@@ -110,6 +110,7 @@ test('normalizeDeclaredRunAt: recognized values pass through (lowercased)', () =
 test('normalizeDeclaredRunAt: missing / unknown values default to document-idle', () => {
   assert.equal(normalizeDeclaredRunAt(undefined), 'document-idle');
   assert.equal(normalizeDeclaredRunAt(''), 'document-idle');
+  // Defensive only: validateHeader refuses context-menu scripts first.
   assert.equal(normalizeDeclaredRunAt('context-menu'), 'document-idle');
   assert.equal(normalizeDeclaredRunAt('whatever'), 'document-idle');
 });
@@ -1804,13 +1805,11 @@ function markerScript() {
   });
 }
 
-// What the viewer computes, from the stored script alone.
+// What the viewer (and sm-dev) computes, from the stored script alone.
 function viewerSegments(script, label) {
-  return composeSource(script, {
-    requireUrls: (script.requires ?? []).map((r) => buildRequireSourceUrl(label, r.url)),
-    mainUrl: buildSourceUrl(label),
-    startLine: USER_SOURCE_START_LINE,
-  }).segments;
+  const layout = stackLayout(script, label);
+  assert.equal(layout.entryUrl, buildSourceUrl(label));
+  return layout.segments;
 }
 
 function assertRoundTrip(code, script, label) {
@@ -1863,6 +1862,30 @@ test('registered entry: the body marker maps to its real line in the stored file
   const got = remapStackRef({ url: entryUrl, line: gen, col: 1 }, entryUrl, viewerSegments(script, label));
   const storedBody = composeRequiredBody({ ...script, requires: [] });
   assert.equal(storedBody.split('\n')[got.line - 1], 'BODY_MARKER;');
+});
+
+test('remapStackText: a stack from the registered entry names each file at its own line', async () => {
+  // The plain-text form sm-dev prints, end to end: real generated
+  // lines in, the require's URL and line (and the body's) out.
+  const script = markerScript();
+  const label = 'a.user.js';
+  const spec = await buildRegistrationSpec(script, '0.0.0', label);
+  const entryUrl = buildSourceUrl(label);
+  const code = spec.js[2].code;
+  const stack = [
+    'Error: boom',
+    `    at f (${entryUrl}:${generatedLineOf(code, 'A_MARKER;')}:3)`,
+    `    at ${entryUrl}:${generatedLineOf(code, 'BODY_MARKER;')}:1`,
+    '    at https://example.com/app.js:10:2',
+  ].join('\n');
+  const storedBody = composeRequiredBody({ ...script, requires: [] });
+  const bodyLine = storedBody.split('\n').indexOf('BODY_MARKER;') + 1;
+  assert.equal(remapStackText(stack, [stackLayout(script, label)]), [
+    'Error: boom',
+    `    at f (${buildRequireSourceUrl(label, 'https://cdn/a.js')}:2:3)`,
+    `    at ${entryUrl}:${bodyLine}:1`,
+    '    at https://example.com/app.js:10:2',
+  ].join('\n'));
 });
 
 // ---------- registerWithFallback: every refused attempt is logged ----------

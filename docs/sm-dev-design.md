@@ -592,6 +592,11 @@ and waits for them.
   with the owning pid.
 - A later run can take over a finished run's selected tab.
 - A tab carries no mark a page couldn't fake, hence the file.
+- A taken tab's page still runs the earlier run's scripts. Its console
+  lines and errors are dropped (`staleTabs`) until the run's first
+  navigation there commits, or kept if the run opens no page there.
+  - Not navigated away first: a run that fails before loading anything
+    leaves the page as it was.
 
 ### Followed tabs (`FollowedTabs` in `run.ts`)
 
@@ -785,6 +790,13 @@ The run commands that drive and read a tab's page (`click`, `type`,
     which would take the quotes out of their JSON.
 - Every console line and page error is kept per page (the newest
   thousand) for `logs`, beside the filtered stream (`page-output.ts`).
+- A console line that logs a DOM node is described from the page
+  (`consoleText`: its opening tag), not Playwright's `JSHandle@node`.
+  That takes a round trip, so the page's later console lines queue
+  behind it to keep their order. A lookup that takes over a second (a
+  dialog open, a paused page) prints Playwright's text instead.
+- Our own `sourcemonkey://` stack refs in stream lines are decoded once
+  for display (`decodeOwnRefs`, sharing the viewer's `displayRefText`).
 - Keys sent over CDP go to the renderer, so Chrome's own shortcuts
   never fire. The one that matters for scripts is Escape leaving
   fullscreen: after an Escape, `key` checks `fullscreenElement` and
@@ -898,6 +910,11 @@ where each comes from.
 - Starts from where the previous command began (`previousStart`, kept
   by `commandRunner`, and not moved by a command that only looks or
   waits).
+- Page console lines and errors the stream filters out
+  (`page-output.ts`) go in too, through `Remote.hear`, in the form the
+  stream would print them. So `wait log` sees what `logs` shows, except
+  the prelude's `[SourceMonkey]` lines and page errors that repeat a
+  host report.
 - Only what the page and scripts printed goes in it. A command runs
   inside `inCommand` (an `AsyncLocalStorage`, Node's per-call context),
   and its own replies are kept out; page and script lines arrive

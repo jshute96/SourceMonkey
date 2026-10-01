@@ -195,7 +195,7 @@ details live in the topic-specific docs linked below.
   short-lived `declarativeNetRequest` session rule around the fetch.
   See [xhr-header-surgery.md](xhr-header-surgery.md).
 - **@connect URL gating** (`src/gm-connect.ts`) — parses `@connect`
-  lines into rules (`*`, `self`, exact, subdomain), resolves `self`
+  lines into rules (`*`, `self`, host-and-subdomains), resolves `self`
   against the script's `@match`/`@include` hosts, and gates
   `GM_xmlhttpRequest` URLs before fetch.
 - **GM_openInTab dispatcher** (`src/gm-tab.ts`) — opens new tabs via

@@ -104,10 +104,23 @@ fails.
     [Rejected registrations](#rejected-registrations).
   - Not every write is reported — see
     [What an incremental sync must not disturb](#what-an-incremental-sync-must-not-disturb).
-- **One-time world config** — `chrome.userScripts.configureWorld({
-  messaging: true })` is called before the first `register()`. This is
-  what lets the injected wrapper call `chrome.runtime.sendMessage`
-  back to the SW.
+- **One-time world config** — `chrome.userScripts.configureWorld()`
+  is called before the first `register()`.
+  - `messaging: true` lets the injected wrapper call
+    `chrome.runtime.sendMessage` back to the SW.
+  - `csp: "script-src 'self' 'unsafe-eval' 'unsafe-inline' *"` is the
+    USER_SCRIPT world's own CSP. `'unsafe-eval'` lets the reload
+    fast-path eval the script body.
+  - Chrome also checks `<script>` elements inserted from this world
+    against it, instead of the page's CSP. `'unsafe-inline'` and `*`
+    let userscripts inject page code (inline, or by `src`), which is
+    otherwise refused on every page.
+  - The new capability this grants: userscript-inserted `<script>`
+    elements run in the page realm even under a strict page
+    `script-src`. Tampermonkey 5.5 sets the same world CSP, so it
+    allows this too.
+  - Inline event handlers and `javascript:` URLs a userscript adds
+    stay under the page CSP.
 
 ### The sync is incremental
 
@@ -531,12 +544,50 @@ We register every userscript at Chrome's `document_start` and the
 wrapper itself awaits the matching lifecycle event before invoking
 the user body. This is the TM/VM pattern.
 
-- `document-start` — wrapper runs the body immediately.
+- `document-start` — the gate opens immediately, once
+  `document.documentElement` (`<html>`) exists.
+  - In the extension it always does by then.
+  - sm-dev injects earlier, before the parser makes `<html>`, so there
+    the wrapper waits for it with a `MutationObserver` on `document`.
+  - Mutation records are delivered before the first page `<script>`
+    runs, so the gate opens ahead of page scripts. The body still
+    waits for the async [check-pending decision](#reload-fast-path),
+    so early page scripts can run first (in sm-dev, usually).
+  - If `<html>` is still missing at `DOMContentLoaded`, the body runs
+    anyway.
 - `document-body` — wrapper waits for `document.body` (via a
-  `MutationObserver` on `documentElement` if body isn't there yet).
+  `MutationObserver` on `document`, with `subtree` so it also sees a
+  `<body>` added under an `<html>` that didn't exist yet).
+  - Observing `document` rather than `<html>` also keeps the wait
+    alive across a `document.open()` rewrite, which replaces `<html>`.
+  - A document with no `<body>` by `DOMContentLoaded` (XML, SVG)
+    never runs the script, as in Tampermonkey ("injected if the body
+    element exists"). The observer is dropped then, so it doesn't wake
+    on every later DOM change.
 - `document-end` — wrapper waits for `DOMContentLoaded`.
 - `document-idle` (default / unknown values) — wrapper waits for
   `window`'s `load` event.
+  - A page that calls `window.stop()` never fires `load`, but its
+    `readyState` still reaches `complete`. That change arms a
+    zero-delay fallback, so the body runs there too.
+  - On a normal page `load` comes in the same task as that change, so
+    the body still runs after `load`, and only once.
+  - An unknown value (a typo) gets a parse-time warning
+    (`unsupportedRunAtWarning`): Log tab, `sm-dev validate`, and
+    sm-dev's `Injected` line.
+
+**Gap: `@run-at context-menu` is not supported.** In Tampermonkey
+(Chrome only) it means "don't run on load; add a right-click menu item
+that runs the script once on the current page", like a bookmarklet.
+
+- We have no such menu item, so the script is refused: `validateHeader`
+  stores it `invalid` (`CONTEXT_MENU_UNSUPPORTED`) and it never runs.
+- Not a `document-idle` fallback like other unknown values: that would
+  run an on-request action unprompted on every matching page load, and
+  these scripts usually `@match` all pages (TM ignores
+  `@include`/`@exclude` for them).
+- `backfillHeaderProblems` applies this to already-installed scripts
+  on extension update.
 
 Why not just pass `runAt` through to `chrome.userScripts.register`:
 
@@ -813,7 +864,8 @@ whole `GM_*` surface works there too.
 ##### Costs of running in MAIN
 
 - **Page CSP applies to DOM injection.** `GM_addStyle` /
-  `GM_addElement` are CSP-exempt in USER_SCRIPT world but not in MAIN.
+  `GM_addElement` escape the page's CSP in USER_SCRIPT world but not
+  in MAIN.
   A page whose `style-src` omits `'unsafe-inline'` will drop an
   injected `<style>`'s rules on the floor. The runtime detects that
   (a connected `<style>` with no `.sheet`) and files one warning per
@@ -1591,8 +1643,8 @@ Why it matters:
   decision callback running at all.
 
 `document-start` gets no free wait — `waitForRunAt` calls back
-synchronously — so the decision is its only gate, and the 2s safety
-timeout remains the hard ceiling for every `@run-at`.
+synchronously once `<html>` exists — so the decision is its only gate,
+and the 2s safety timeout remains the hard ceiling for every `@run-at`.
 
 ### Caveats
 
