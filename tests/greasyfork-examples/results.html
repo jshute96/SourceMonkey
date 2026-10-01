@@ -184,7 +184,7 @@ const HELP = {
     'connect-undeclared': 'Uses GM_xmlhttpRequest with no @connect, so SourceMonkey blocks every request. Tampermonkey asks the user and Violentmonkey allows them.',
     'needs-onreadystatechange': 'Waits for GM_xmlhttpRequest\'s onreadystatechange, which SourceMonkey never fires',
     'mutation-events': 'Relies on mutation events like DOMNodeInserted, which Chrome removed in 2024',
-    'run-at-context-menu': 'Uses @run-at context-menu, which SourceMonkey doesn\'t support, so it runs on every page load instead of from the right-click menu',
+    'run-at-context-menu': 'Uses @run-at context-menu (run from the right-click menu), which SourceMonkey doesn\'t support, so it refuses the script',
     'xhr-response-readystate': 'Checks readyState on GM_xmlhttpRequest\'s response, which SourceMonkey leaves unset',
     'needs-xhr-onprogress': 'Relies on GM_xmlhttpRequest\'s onprogress, which SourceMonkey never fires',
     'tld-include': 'Uses Tampermonkey\'s .tld host form in @include (any top-level domain), which SourceMonkey doesn\'t support',

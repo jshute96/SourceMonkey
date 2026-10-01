@@ -32,6 +32,9 @@ import {
 import { comparableUrl, openingSavedLine, routeSavedPage, savedPageServe, type SavedPageStart } from './saved-pages.js';
 import { browserSentence, checkRunsDir, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentCommand, type SentLineHandler } from './runs.js';
 import { cspBlocksPageScripts, sandboxedPageWarning } from '../missing-scripts.js';
+import { unsupportedRunAt } from '../userscript-header.js';
+import { remapStackText } from '../stack-link.js';
+import type { StackLayout } from '../composed-source.js';
 import { waitForStuckTabs } from './stuck-tabs.js';
 import { NO_TABS } from './tab-refs.js';
 import { settleTabs } from './wait.js';
@@ -796,7 +799,7 @@ async function runInHarness(
   wireHostOutput(host, opts.out, (record) => tabs.prefixOf(record));
   // T1, unless `--notab`; then the first tab `newtab` opens is T1.
   if (page) {
-    wirePageOutput(page, opts, true);
+    wirePageOutput(page, opts, true, (text) => host.remapStack(text));
     wireSandboxCheck(page, () => tabs.firstTabScripts, opts.out);
     const dialogs = await DialogTracker.attach(page, opts.out, { visible: browserVisible(opts), commandsComing });
     // Attached before preparing, so a reused tab already on a secure
@@ -835,7 +838,7 @@ async function runInHarness(
     return done;
   };
   const injected = (script: PreparedScript): void =>
-    opts.out(`[sm-dev] Injected ${preparedScriptPath(script)} in world ${script.world}, run-at ${script.runAt}`);
+    opts.out(`[sm-dev] Injected ${preparedScriptPath(script)} in world ${script.world}, run-at ${runAtLabel(script)}`);
   // Put `next` in place everywhere, and reload the tabs `changed` affects.
   const apply = async (next: PreparedScript[], changed: ScriptChange[], none: string): Promise<void> => {
     for (const c of changed) injected(c.next);
@@ -1259,7 +1262,7 @@ class FollowedTabs {
       this.opts.out(`[sm-dev] Tab T${n} closed`);
       this.onTabsChanged();
     });
-    wirePageOutput(page, { ...this.opts, out, hear }, true);
+    wirePageOutput(page, { ...this.opts, out, hear }, true, (text) => this.host.remapStack(text));
     // Not for a tab with no scripts, which gets none either way. Read
     // from the tab once it exists, since `open --script` switches it.
     let tabNow: ControlledTab | null = null;
@@ -1398,6 +1401,10 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
   // than a count: the log rotates at a cap, and a count would go quiet
   // once it did.
   const lastPrinted = new Map<string, LogEntry | null>();
+  // Each pushed script's line layout, for stack lines in its Log
+  // entries and the page's console lines.
+  const layouts = new Map<string, StackLayout>();
+  const remapStack = (text: string): string => remapStackText(text, layouts.values());
   let errors = 0;
   const pushAll = async (scripts: PreparedScript[]): Promise<boolean> => {
     for (const script of scripts) {
@@ -1408,6 +1415,9 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
         return false;
       }
       pushed.set(result.scriptId, preparedScriptPath(script));
+      const layout = await backend.stackLayout(result.scriptId).catch(() => null);
+      if (layout) layouts.set(result.scriptId, layout);
+      else layouts.delete(result.scriptId);
       held.injected = true;
       const entries = await backend.log(result.scriptId).catch(() => [] as LogEntry[]);
       lastPrinted.set(result.scriptId, entries[entries.length - 1] ?? null);
@@ -1436,7 +1446,7 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
         }
         for (const entry of entries.slice(at + 1)) {
           if (entry.level === 'error') errors++;
-          opts.out(`[sm-dev] ${name} ${entry.level}: ${decodeOwnRefs(entry.message)}`);
+          opts.out(`[sm-dev] ${name} ${entry.level}: ${decodeOwnRefs(remapStack(entry.message))}`);
         }
         if (entries.length > 0) lastPrinted.set(scriptId, entries[entries.length - 1]);
       }
@@ -1466,7 +1476,7 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
       const { out, hear } = tabOutput(opts, n);
       // Not once the run is ending: a launched browser closes its tabs then.
       tabPage.on('close', () => { if (!ended) opts.out(`[sm-dev] Tab T${n} closed`); });
-      wirePageOutput(tabPage, { ...opts, out, hear }, false);
+      wirePageOutput(tabPage, { ...opts, out, hear }, false, remapStack);
       wireSandboxCheck(tabPage, () => prepared, out);
       await DialogTracker.attach(tabPage, out, { visible: browserVisible(opts) });
       return { n, url, page: tabPage, targetId: await targetIdOf(tabPage), saved: start.saved[i] };
@@ -1573,8 +1583,16 @@ async function filesStamp(script: PreparedScript): Promise<string> {
   return paths.map((p, i) => `${p}:${times[i]}`).join('|');
 }
 
+// The `Injected` line's run-at, naming a declared value we don't
+// honor (a typo) so a run shows why the script ran at load.
+function runAtLabel(script: PreparedScript): string {
+  const declared = unsupportedRunAt(script.script.header);
+  return declared === undefined ? script.runAt : `${script.runAt} (@run-at ${declared} is not supported)`;
+}
+
 // A script file as the person typed it, for an error to name it as
 // they did; else as paths are shown.
+
 function typedName(opts: RunOptions, file: string): string {
   return opts.typed?.get(file) ?? shownPath(file);
 }
@@ -1666,10 +1684,19 @@ function tabOutput(opts: Pick<RunOptions, 'out' | 'hear'>, n: number): Pick<RunO
 
 // `hostReports`: the harness host already prints a script's own throws,
 // so the page's copy of those is skipped. See page-output.ts.
-function wirePageOutput(page: Page, opts: Pick<RunOptions, 'out' | 'hear' | 'pageErrors'>, hostReports: boolean): void {
+// `remapStack` points stack frames in a logged line (`console.error(err)`
+// prints the stack) at the `@require` or script line they came from;
+// see `HarnessHost.remapStack`. It runs before `decodeOwnRefs`, since it
+// matches the scripts' URLs as the page wrote them (still encoded).
+function wirePageOutput(
+  page: Page,
+  opts: Pick<RunOptions, 'out' | 'hear' | 'pageErrors'>,
+  hostReports: boolean,
+  remapStack: (text: string) => string,
+): void {
   const pageErrors = opts.pageErrors ?? false;
   const show = (msg: ConsoleMessage, text: string): void => {
-    const line = { type: msg.type(), text: decodeOwnRefs(text), url: msg.location().url, argCount: msg.args().length };
+    const line = { type: msg.type(), text: decodeOwnRefs(remapStack(text)), url: msg.location().url, argCount: msg.args().length };
     // Every line, for `logs`; the stream shows the script's. `wait log`
     // sees them all but the prelude's repeats, in the stream's form.
     recordLog(page, `[${line.type}] ${line.text}`);
@@ -1706,6 +1733,11 @@ function wirePageOutput(page: Page, opts: Pick<RunOptions, 'out' | 'hear' | 'pag
     staleTabs.delete(page);
     recordLog(page, `--- ${frame.url()}`);
   });
+  // The uncaught error's stack is not mapped, and must not be:
+  // `showPageError` drops a script's throw the host already reported by
+  // finding the script's `.user.js` URL in it (`SCRIPT_BODY_FRAME`), and
+  // a throw inside a `@require` carries that URL only unmapped. Only the
+  // message is printed anyway.
   page.on('pageerror', (err) => {
     if (staleTabs.has(page)) return;
     const message = decodeOwnRefs(err.message);

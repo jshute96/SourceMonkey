@@ -122,6 +122,9 @@ It runs against real headless Chromium with `chrome.userScripts`,
     a fallback root so example pages are reachable at
     `${baseUrl}/<api>/page.html`. Some routes are not files:
     - `/__slow/<name>?ms=N` — delays a tiny JS/PNG response.
+    - `/__slowbody/<page>?ms=N` — sends a fixture page's headers at
+      once and its bytes N ms later, so the document exists before
+      `<html>` does.
     - `/__sandbox/<page>` — serves a fixture page with a
       `Content-Security-Policy: sandbox` header, which a `<meta>` CSP
       can't set.

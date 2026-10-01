@@ -42,6 +42,43 @@ test.describe('harness GM_xmlhttpRequest', () => {
     expect(host.reports.requests[0]).toMatchObject({ method: 'GET', outcome: 'load', status: 200 });
   });
 
+  test('onreadystatechange gets readyState 4 before every terminal callback', async ({ page, fixtureServer, host, loadScript }) => {
+    await loadScript({
+      ...requester(['127.0.0.1']),
+      body: `
+        const out = (text) => { document.getElementById('target').textContent = text; };
+        window.addEventListener('message', (ev) => {
+          if (!ev.data || ev.data.kind !== 'send') return;
+          const seen = [];
+          // The terminal object's readyState, status and responseText
+          // length: the empty-text fields must exist on every outcome.
+          const end = (kind) => (r) => out(seen.concat(
+            kind + r.readyState + ' ' + r.status + ' ' + r.responseText.length).join(','));
+          const control = GM_xmlhttpRequest({
+            ...ev.data.details,
+            onreadystatechange: (r) => seen.push('rsc' + r.readyState + ' ' + r.status),
+            onload: end('load'),
+            onerror: end('error'),
+            ontimeout: end('timeout'),
+            onabort: end('abort'),
+          });
+          if (ev.data.abortAfter != null) setTimeout(() => control.abort(), ev.data.abortAfter);
+        });
+      `,
+    });
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect.poll(() => host.reports.started.length).toBe(1);
+    await send(page, { url: `${fixtureServer.baseUrl}/other.html` });
+    await expect(page.locator('#target')).toHaveText(/^rsc4 200,load4 200 [1-9]/);
+    await send(page, { url: 'http://127.0.0.1:1/never' });
+    await expect(page.locator('#target')).toHaveText('rsc4 0,error4 0 0');
+    await send(page, { url: `${fixtureServer.baseUrl}/__slow/other.html?ms=3000`, timeout: 200 });
+    await expect(page.locator('#target')).toHaveText('rsc4 0,timeout4 0 0');
+    await page.evaluate((url) => window.postMessage({ kind: 'send', details: { url }, abortAfter: 50 }, '*'),
+      `${fixtureServer.baseUrl}/__slow/other.html?ms=3000`);
+    await expect(page.locator('#target')).toHaveText('rsc4 0,abort4 0 0');
+  });
+
   test('a 404 still fires onload', async ({ page, fixtureServer, host, loadScript }) => {
     await loadScript(requester(['127.0.0.1']));
     await page.goto(`${fixtureServer.baseUrl}/target.html`);

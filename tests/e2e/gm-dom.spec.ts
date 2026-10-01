@@ -1,9 +1,9 @@
 // End-to-end tests for the DOM-injection GM_* APIs (Phase 4).
 //
-// USER_SCRIPT-world DOM mutations are CSP-exempt (same dispensation
-// content scripts get), so a script using these APIs on a strict-
-// CSP page can still inject styles and elements that the page
-// itself couldn't.
+// The page's CSP doesn't apply to USER_SCRIPT-world DOM mutations, so
+// a script using these APIs on a strict-CSP page can still inject
+// styles and elements that the page itself couldn't. Inserted scripts
+// are covered in user-script-world-csp.spec.ts.
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';

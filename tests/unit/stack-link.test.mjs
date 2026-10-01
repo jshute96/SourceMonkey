@@ -14,7 +14,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { displayRefText, parseStackRefs } from '../../dist/stack-link.js';
+import { displayRefText, parseStackRefs, remapStackText } from '../../dist/stack-link.js';
 
 test('parseStackRefs: empty input yields no runs', () => {
   assert.deepEqual(parseStackRefs(''), []);
@@ -197,4 +197,79 @@ test('displayRefText: the root prefix must be followed by a slash', () => {
   // starts with our name.
   const url = 'sourcemonkey://SourceMonkeyEvil/a%232/x.js';
   assert.equal(displayRefText(`${url}:1:1`, url), `${url}:1:1`);
+});
+
+// ---------- remapStackText ----------
+//
+// A script's entry with one `@require` (generated lines 2-3) ahead of
+// the body (generated lines 5-7). Line 1 is the wrap head and line 4
+// the `;` seam: ours, so unmappable.
+const ENTRY = 'sourcemonkey://SourceMonkey/foo/foo.user.js';
+const LIB = 'sourcemonkey://SourceMonkey/foo/cdn.example.com/lib.js';
+const LAYOUT = {
+  entryUrl: ENTRY,
+  segments: [
+    { url: LIB, content: '', generatedLine: 1, lineCount: 2 },
+    { url: ENTRY, content: '', generatedLine: 4, lineCount: 3 },
+  ],
+};
+
+test('remapStackText: frames in a require and in the body each get their own file and line', () => {
+  const stack = `Error: x\n    at lib (${ENTRY}:3:9)\n    at ${ENTRY}:6:2`;
+  assert.equal(
+    remapStackText(stack, [LAYOUT]),
+    `Error: x\n    at lib (${LIB}:2:9)\n    at ${ENTRY}:2:2`,
+  );
+});
+
+test('remapStackText: other files and other scripts stay as they are', () => {
+  const other = { entryUrl: 'sourcemonkey://SourceMonkey/bar/bar.user.js', segments: [] };
+  const stack = [
+    '    at https://example.com/app.js:3:1',
+    `    at ${other.entryUrl}:3:1`,
+    '    at sourcemonkey://SourceMonkey/__prelude.js:1:9',
+  ].join('\n');
+  assert.equal(remapStackText(stack, [LAYOUT, other]), stack);
+});
+
+test('remapStackText: a frame on our own wrap is named as the wrapper, not the script', () => {
+  // Line 1 (the head, with the GM bindings) and line 4 (a seam) belong
+  // to no file; left alone they would read as lines of foo.user.js.
+  assert.equal(
+    remapStackText(`    at ${ENTRY}:1:400\n    at ${ENTRY}:4:1`, [LAYOUT]),
+    '    at sourcemonkey://SourceMonkey/foo/__wrapper.js:1:400\n    at sourcemonkey://SourceMonkey/foo/__wrapper.js:4:1',
+  );
+});
+
+test('remapStackText: an entry URL two different scripts share is left unmapped', () => {
+  // Two foo.user.js files in different folders: same URL, different
+  // layouts. Either answer could be the wrong file.
+  const otherFoo = {
+    entryUrl: ENTRY,
+    segments: [{ url: ENTRY, content: '', generatedLine: 1, lineCount: 9 }],
+  };
+  const stack = `    at ${ENTRY}:3:9`;
+  assert.equal(remapStackText(stack, [LAYOUT, otherFoo]), stack);
+  // One of them without requires makes it just as ambiguous.
+  assert.equal(remapStackText(stack, [LAYOUT, { entryUrl: ENTRY, segments: [] }]), stack);
+  // Two copies of the same script agree, so they still map.
+  const copy = { entryUrl: ENTRY, segments: LAYOUT.segments.map((s) => ({ ...s })) };
+  assert.equal(remapStackText(stack, [LAYOUT, copy]), `    at ${LIB}:2:9`);
+});
+
+test('remapStackText: a script without requires leaves the text alone', () => {
+  const stack = `Error\n    at ${ENTRY}:3:9`;
+  assert.equal(remapStackText(stack, [{ entryUrl: ENTRY, segments: [] }]), stack);
+  assert.equal(remapStackText(stack, []), stack);
+});
+
+test('remapStackText: picks the layout whose entry the frame names', () => {
+  const second = {
+    entryUrl: 'sourcemonkey://SourceMonkey/bar/bar.user.js',
+    segments: [{ url: 'sourcemonkey://SourceMonkey/bar/bar.user.js', content: '', generatedLine: 10, lineCount: 5 }],
+  };
+  assert.equal(
+    remapStackText(`at ${second.entryUrl}:12:1 and ${ENTRY}:5:1`, [LAYOUT, second]),
+    `at ${second.entryUrl}:2:1 and ${ENTRY}:1:1`,
+  );
 });
