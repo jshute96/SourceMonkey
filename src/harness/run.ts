@@ -12,7 +12,7 @@ import { createServer, type AddressInfo } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { Browser, BrowserContext, Page } from '@playwright/test';
+import type { Browser, BrowserContext, ConsoleMessage, Page } from '@playwright/test';
 
 import { shellWord } from './command-lines.js';
 import {
@@ -25,7 +25,7 @@ import { launchExtensionBrowser } from './extension-launch.js';
 import { HarnessHost, type ErrorReport, type SkipReport, type StartReport } from './host.js';
 import { attachPage, targetIdOf, type PageAttachment } from './inject.js';
 import { pageSays, recordLog } from './page-commands.js';
-import { showConsoleLine, showPageError } from './page-output.js';
+import { consoleText, decodeOwnRefs, hostReportedError, isPreludeLine, showConsoleLine, showPageError } from './page-output.js';
 import {
   defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, preparedScriptPath, prepareScript, shownPath, warningLines, type PreparedScript,
 } from './prepare.js';
@@ -84,6 +84,8 @@ export interface RunOptions extends ConnectOptions {
   localRoots: string[];
   /** Where the stream goes. */
   out: (line: string) => void;
+  /** Where a line goes that `wait log` can match but the stream leaves out. */
+  hear?: (line: string) => void;
   /** Resolves when the run should end (stop, a signal, --seconds). Omit to return after the first load. */
   until?: Promise<void>;
   /** Called when a client's `stop` asks for the run to end. */
@@ -368,7 +370,10 @@ async function openRunTab(
       }
     }
   }
-  if (page) out('[sm-dev] Reusing the selected tab, which an earlier run opened');
+  if (page) {
+    out('[sm-dev] Reusing the selected tab, which an earlier run opened');
+    staleTabs.add(page);
+  }
   page ??= await context.newPage();
   const id = await targetIdOf(page);
   if (!id) return page;
@@ -385,6 +390,14 @@ async function openRunTab(
   await writeRunTabs(kept).catch(() => undefined);
   return page;
 }
+
+// Reused tabs whose page is still the earlier run's, with its scripts
+// running. Their console lines and errors would show as this run's, so
+// they are dropped until the run's first navigation commits there. A
+// run with nothing to open there (no scripts, no URL) keeps the page as
+// it is, lines and all. The page is left alone otherwise, so a run that
+// fails before loading anything hasn't erased it.
+const staleTabs = new WeakSet<Page>();
 
 // Written whole and renamed into place, so a run reading it meanwhile
 // never sees half a file, which it would take for an empty one and
@@ -484,7 +497,7 @@ function printSkipped(opts: RunOptions, start: StartPages): void {
 export async function run(opts: RunOptions): Promise<number> {
   const remote = new Remote(opts.out, opts.onStop, opts.onActivity, opts.primaryPid);
   // Every line also goes to whoever sent the command running now.
-  opts = { ...opts, out: remote.out, typed: new Map(opts.files.map((file, i) => [file, opts.given?.[i] ?? file])) };
+  opts = { ...opts, out: remote.out, hear: remote.hear, typed: new Map(opts.files.map((file, i) => [file, opts.given?.[i] ?? file])) };
   const session = await openBrowser(opts, opts.out, { reuseTab: true, openTab: !opts.noTab });
   if (!session) return 1;
   // Which browser, for the stream and the log.
@@ -611,6 +624,14 @@ class Remote {
     }
     this.print(line);
     for (const listener of this.listeners) listener(line);
+    this.hear(line);
+  };
+
+  /**
+   * Keeps a line for `wait log` without printing it: a page console
+   * line the stream leaves out, which `logs` still shows.
+   */
+  readonly hear = (line: string): void => {
     // Only what the page and scripts printed on their own: not a
     // command's own reply (see inCommand).
     if (inCommand.getStore()) return;
@@ -791,6 +812,7 @@ async function runInHarness(
   const start = startPages(opts, prepared);
   if (!start) return 2;
   const { urls } = start;
+  if (page && urls.length === 0) staleTabs.delete(page);
 
   // The loaded scripts, and the files they came from, in step: `load`
   // adds to both, `update` and `--watch` replace scripts in place.
@@ -1227,7 +1249,7 @@ class FollowedTabs {
   private async setUp(page: Page, n: number, opener?: number, announce = true, noScript = false): Promise<void> {
     // T1 goes unprefixed, as the run's own does, when `--notab` makes
     // the first tab opened T1.
-    const out = n === 1 ? this.opts.out : (line: string): void => this.opts.out(`[T${n}] ${line}`);
+    const { out, hear } = tabOutput(this.opts, n);
     // First, so a tab that closes during the awaits below is still
     // noticed.
     let announced = false;
@@ -1237,7 +1259,7 @@ class FollowedTabs {
       this.opts.out(`[sm-dev] Tab T${n} closed`);
       this.onTabsChanged();
     });
-    wirePageOutput(page, { ...this.opts, out }, true);
+    wirePageOutput(page, { ...this.opts, out, hear }, true);
     // Not for a tab with no scripts, which gets none either way. Read
     // from the tab once it exists, since `open --script` switches it.
     let tabNow: ControlledTab | null = null;
@@ -1368,6 +1390,7 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
   const start = startPages(opts, prepared);
   if (!start) return 2;
   const { urls } = start;
+  if (page && urls.length === 0) staleTabs.delete(page);
   const pushed = new Map<string, string>();
   // The extension's per-script log is the report stream here; it is
   // polled, since nothing pushes it to Node. Only what this run adds is
@@ -1413,7 +1436,7 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
         }
         for (const entry of entries.slice(at + 1)) {
           if (entry.level === 'error') errors++;
-          opts.out(`[sm-dev] ${name} ${entry.level}: ${entry.message}`);
+          opts.out(`[sm-dev] ${name} ${entry.level}: ${decodeOwnRefs(entry.message)}`);
         }
         if (entries.length > 0) lastPrinted.set(scriptId, entries[entries.length - 1]);
       }
@@ -1440,10 +1463,10 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
         tabFailed(opts, start, prepared, url, err as Error);
         return null;
       }
-      const out = i === 0 ? opts.out : (line: string): void => opts.out(`[T${n}] ${line}`);
+      const { out, hear } = tabOutput(opts, n);
       // Not once the run is ending: a launched browser closes its tabs then.
       tabPage.on('close', () => { if (!ended) opts.out(`[sm-dev] Tab T${n} closed`); });
-      wirePageOutput(tabPage, { ...opts, out }, false);
+      wirePageOutput(tabPage, { ...opts, out, hear }, false);
       wireSandboxCheck(tabPage, () => prepared, out);
       await DialogTracker.attach(tabPage, out, { visible: browserVisible(opts) });
       return { n, url, page: tabPage, targetId: await targetIdOf(tabPage), saved: start.saved[i] };
@@ -1576,8 +1599,8 @@ function wireHostOutput(host: HarnessHost, print: (line: string) => void, prefix
   host.on('start', (r: StartReport) => out(r, `[sm-dev] ${r.name} started on ${r.url}`));
   host.on('skip', (r: SkipReport) => out(r, `[sm-dev] ${r.name} skipped on ${r.url}: ${r.reason}`));
   host.on('script-error', (r: ErrorReport) => {
-    out(r, `[sm-dev] ${r.name} threw: ${r.message}`);
-    if (r.stack) for (const line of r.stack.split('\n').slice(1, 4)) out(r, `    ${line.trim()}`);
+    out(r, `[sm-dev] ${r.name} threw: ${decodeOwnRefs(r.message)}`);
+    if (r.stack) for (const line of r.stack.split('\n').slice(1, 4)) out(r, `    ${decodeOwnRefs(line.trim())}`);
   });
   host.on('log', (r) => out(r, `[sm-dev] ${r.name} GM_log: ${r.message}`));
   host.on('request', (r) => out(r, `[sm-dev] GM_xmlhttpRequest ${r.method} ${r.url}: ${r.outcome}${r.status ? ' ' + r.status : ''}${r.error ? ' ' + r.error : ''}`));
@@ -1632,23 +1655,64 @@ function wireSandboxCheck(page: Page, scripts: () => readonly PreparedScript[], 
   });
 }
 
+// A tab's lines are tagged `[T<n>]`, except T1's, as the run's own are.
+function tabOutput(opts: Pick<RunOptions, 'out' | 'hear'>, n: number): Pick<RunOptions, 'out' | 'hear'> {
+  if (n === 1) return { out: opts.out, hear: opts.hear };
+  return {
+    out: (line) => opts.out(`[T${n}] ${line}`),
+    hear: opts.hear && ((line) => opts.hear!(`[T${n}] ${line}`)),
+  };
+}
+
 // `hostReports`: the harness host already prints a script's own throws,
 // so the page's copy of those is skipped. See page-output.ts.
-function wirePageOutput(page: Page, opts: Pick<RunOptions, 'out' | 'pageErrors'>, hostReports: boolean): void {
+function wirePageOutput(page: Page, opts: Pick<RunOptions, 'out' | 'hear' | 'pageErrors'>, hostReports: boolean): void {
   const pageErrors = opts.pageErrors ?? false;
-  page.on('console', (msg) => {
-    const line = { type: msg.type(), text: msg.text(), url: msg.location().url, argCount: msg.args().length };
-    // Every line, for `logs`; the stream shows the script's.
+  const show = (msg: ConsoleMessage, text: string): void => {
+    const line = { type: msg.type(), text: decodeOwnRefs(text), url: msg.location().url, argCount: msg.args().length };
+    // Every line, for `logs`; the stream shows the script's. `wait log`
+    // sees them all but the prelude's repeats, in the stream's form.
     recordLog(page, `[${line.type}] ${line.text}`);
-    if (showConsoleLine(line, pageErrors)) opts.out(`[page ${line.type}] ${line.text}`);
+    const shown = `[page ${line.type}] ${line.text}`;
+    if (showConsoleLine(line, pageErrors)) opts.out(shown);
+    else if (!isPreludeLine(line.text)) opts.hear?.(shown);
+  };
+  // Never throws, as the queue below has no one to report to.
+  const showSafely = (msg: ConsoleMessage, text: string): void => {
+    try {
+      show(msg, text);
+    } catch {
+      // Nothing to do: the line is lost.
+    }
+  };
+  // A line that logs a DOM node is described from the page, which
+  // takes a round trip; the lines after it wait, to stay in order.
+  let pending: Promise<void> | null = null;
+  page.on('console', (msg) => {
+    if (staleTabs.has(page)) return;
+    if (!pending && !msg.args().some((arg) => arg.asElement())) {
+      show(msg, msg.text());
+      return;
+    }
+    const next: Promise<void> = (pending ?? Promise.resolve())
+      .then(() => consoleText(msg))
+      .then((text) => showSafely(msg, text), () => showSafely(msg, msg.text()))
+      .finally(() => { if (pending === next) pending = null; });
+    pending = next;
   });
   // Which page load each line came from.
   page.on('framenavigated', (frame) => {
-    if (frame === page.mainFrame()) recordLog(page, `--- ${frame.url()}`);
+    if (frame !== page.mainFrame()) return;
+    staleTabs.delete(page);
+    recordLog(page, `--- ${frame.url()}`);
   });
   page.on('pageerror', (err) => {
-    recordLog(page, `[error] ${err.message}`);
-    if (showPageError(err.stack ?? err.message, { pageErrors, hostReports })) opts.out(`[page error] ${err.message}`);
+    if (staleTabs.has(page)) return;
+    const message = decodeOwnRefs(err.message);
+    const stack = err.stack ?? err.message;
+    recordLog(page, `[error] ${message}`);
+    if (showPageError(stack, { pageErrors, hostReports })) opts.out(`[page error] ${message}`);
+    else if (!hostReportedError(stack, hostReports)) opts.hear?.(`[page error] ${message}`);
   });
 }
 

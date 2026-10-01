@@ -2,8 +2,12 @@
 // streams. A busy site logs plenty of its own errors (blocked
 // trackers, failed ads) that would bury the script's lines, so by
 // default only what can be tied to a script is shown.
+// Also how a console line reads when it logs a DOM node.
+
+import type { ConsoleMessage } from '@playwright/test';
 
 import { ROOT } from '../script-source-url.js';
+import { displayRefText, parseStackRefs } from '../stack-link.js';
 
 // Every URL SourceMonkey injects code under: the scripts, and its own
 // prelude, bridge and GM runtime, whose failures are ours to show too.
@@ -27,9 +31,16 @@ export interface ConsoleLine {
   argCount: number;
 }
 
+/**
+ * A line the prelude logs, which repeats a report the host already
+ * printed. Never shown, nor matched by `wait log`.
+ */
+export function isPreludeLine(text: string): boolean {
+  return text.startsWith('[SourceMonkey]');
+}
+
 export function showConsoleLine(line: ConsoleLine, pageErrors: boolean): boolean {
-  // The prelude's own lines duplicate the host's reports.
-  if (line.text.startsWith('[SourceMonkey]')) return false;
+  if (isPreludeLine(line.text)) return false;
   if (line.url.startsWith(OURS)) return true;
   if (pageErrors && line.type === 'error') return true;
   // A `[name]`-prefixed console call passes too, for a script that
@@ -49,12 +60,70 @@ export interface PageErrorOptions {
 }
 
 /** `stack` is Playwright's for the error: the message, then its frames. */
+/** An error a script body threw, which the host printed already. */
+export function hostReportedError(stack: string, hostReports: boolean): boolean {
+  return hostReports && SCRIPT_BODY_FRAME.test(stack);
+}
+
 export function showPageError(stack: string, opts: PageErrorOptions): boolean {
-  if (opts.hostReports && SCRIPT_BODY_FRAME.test(stack)) return false;
+  if (hostReportedError(stack, opts.hostReports)) return false;
   if (opts.pageErrors) return true;
   // A thrown or rejected non-Error value (`Promise.reject('nope')`)
   // has no frames, so there's no telling whose it was. Rare enough
   // that showing it beats losing a script's.
   if (!/\n\s+at /.test(stack)) return true;
   return stack.includes(OURS);
+}
+
+// How a node logged to the console reads: its opening tag, as in
+// `<div id="x" class="a b">`, rather than Playwright's `JSHandle@node`.
+// Cut at this length, attribute values first.
+const NODE_TEXT_CHARS = 120;
+const NODE_LOOKUP_MS = 1000;
+
+/**
+ * A console call's text, as `msg.text()` gives it but with each DOM
+ * node described (see NODE_TEXT_CHARS). Every level goes through this,
+ * so `debug` and `error` lines read alike. A node that can't be read
+ * now keeps Playwright's text: its page gone, or not answering within
+ * NODE_LOOKUP_MS (a dialog open, paused in the debugger), since the
+ * page's later lines wait for this one.
+ */
+export async function consoleText(msg: ConsoleMessage): Promise<string> {
+  const parts = await Promise.all(msg.args().map(async (arg) => {
+    const node = arg.asElement();
+    if (!node) return arg.toString();
+    let timer: NodeJS.Timeout | undefined;
+    const late = new Promise<string>((resolve) => { timer = setTimeout(() => resolve(arg.toString()), NODE_LOOKUP_MS); });
+    try {
+      return await Promise.race([node.evaluate(describeNode, NODE_TEXT_CHARS), late]);
+    } catch {
+      return arg.toString();
+    } finally {
+      clearTimeout(timer);
+    }
+  }));
+  return parts.join(' ');
+}
+
+// Runs in the page.
+function describeNode(node: Node, limit: number): string {
+  const cut = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n)}...` : s);
+  if (node.nodeType === Node.TEXT_NODE) return `#text ${JSON.stringify(cut(node.textContent ?? '', 40))}`;
+  if (!(node instanceof Element)) return node.nodeName;
+  const attrs = Array.from(node.attributes, (a) => (a.value === '' ? a.name : `${a.name}="${cut(a.value, 40)}"`));
+  const tag = node.tagName.toLowerCase();
+  const open = `<${[tag, ...attrs].join(' ')}>`;
+  return open.length > limit ? `${open.slice(0, limit - 4)}...>` : open;
+}
+
+/**
+ * `text` with each stack ref to SourceMonkey's own `sourcemonkey://`
+ * URLs decoded once, as the viewer's Log tab shows them: a file named
+ * `Video%20Speed%20Buttons.user.js` is in the URL as
+ * `Video%2520Speed%2520Buttons.user.js`. Other refs stay as they are.
+ */
+export function decodeOwnRefs(text: string): string {
+  if (!text.includes(`${ROOT}/`)) return text;
+  return parseStackRefs(text).map((run) => (run.kind === 'ref' ? displayRefText(run.text, run.url) : run.text)).join('');
 }

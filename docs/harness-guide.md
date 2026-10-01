@@ -194,6 +194,11 @@ What a run prints as it goes:
   would, and nothing is injected.
 - A long stored value is cut after 100 characters in its `GM_setValue`
   line; `get` and `values` show it whole.
+- A DOM node logged to the console, at any level, prints as its opening
+  tag (`<main id="target">`), cut at 120 characters.
+- Stack refs to a script's own `sourcemonkey://SourceMonkey/...` URLs
+  print decoded once, as the viewer's Log tab shows them, so a file
+  named `a%20b.user.js` reads as that, not `a%2520b.user.js`.
 
 Once the script works, capture it in a spec (see
 [Writing specs](#writing-specs-the-playwright-fixture)):
@@ -501,6 +506,10 @@ it takes that tab over, so re-running with the old tab still selected
 reuses it rather than piling up tabs.
 
 - A tab whose run is still going is never taken.
+- The earlier run's scripts still run in a reused tab's page. Its
+  console lines and errors are dropped until the new run's first page
+  load there, so they don't show as the new run's. A run that opens no
+  page there (no scripts, no URL) keeps them.
 - With several windows open, each window's showing tab counts, and the
   first free one found is taken.
 - The tabs runs opened are recorded in `run-tabs.json` in
@@ -1294,8 +1303,9 @@ Limits of the heuristic:
   command began (not counting a `wait` or a command that only looks),
   so one a click set off while it settled counts. Then at new ones.
 - sm-dev's own replies aren't looked at.
-- It sees the lines the run's stream shows. The site's own console
-  lines, which `logs` shows, aren't among them.
+- It sees the lines the run's stream shows, and the page's other
+  console lines and errors that `logs` shows, matched in the form the
+  stream would print them (`[page log] KEYUP 143`).
 - A near miss of `--timeout-seconds` ending unquoted text (`--timeout
   40`) is refused, rather than looked for as text. Other `--words` in
   the text are text.
