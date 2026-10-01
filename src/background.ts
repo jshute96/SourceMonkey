@@ -157,6 +157,8 @@ import {
   type CollectionOptions,
   type InstallTarget,
   type NewCollectionSpec,
+  backfillHeaderProblems,
+  backfillStartupLogs,
   backfillUsesUnsafeWindow,
   type StoredScript,
   type StoredCollection,
@@ -792,14 +794,26 @@ chrome.runtime.onInstalled.addListener((details) => {
   // row said, so without this the ungranted-`unsafeWindow` handling
   // would never reach the scripts already installed. Re-syncs only when
   // something actually changed, since the flag decides a script's world.
+  //
+  // Then re-derive the rows' parse-time warnings (`startupLogs`), for
+  // the same reason: a check added in an update would otherwise never
+  // reach an unchanged script. They ride in the registration's config,
+  // hence the re-sync.
+  //
+  // Last, re-run the header checks, so a script a newer check refuses
+  // (e.g. `@run-at context-menu`) stops running instead of keeping its
+  // old `ok` row.
   void (async () => {
     try {
-      const changed = await backfillUsesUnsafeWindow();
-      if (changed === 0) return;
-      console.log(`[SourceMonkey] backfilled usesUnsafeWindow on ${changed} script row(s)`);
-      await syncRegistrations();
+      const flagged = await backfillUsesUnsafeWindow();
+      if (flagged > 0) console.log(`[SourceMonkey] backfilled usesUnsafeWindow on ${flagged} script row(s)`);
+      const relogged = await backfillStartupLogs();
+      if (relogged > 0) console.log(`[SourceMonkey] re-derived startup logs on ${relogged} script row(s)`);
+      const refused = await backfillHeaderProblems();
+      if (refused > 0) console.log(`[SourceMonkey] marked ${refused} script row(s) invalid by a newer header check`);
+      if (flagged + relogged + refused > 0) await syncRegistrations();
     } catch (err) {
-      console.info('[SourceMonkey] usesUnsafeWindow backfill failed:', err);
+      console.info('[SourceMonkey] script row backfill failed:', err);
     }
   })();
   if (details.reason !== 'install') return;

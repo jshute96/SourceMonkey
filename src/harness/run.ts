@@ -32,6 +32,7 @@ import {
 import { comparableUrl, openingSavedLine, routeSavedPage, savedPageServe, type SavedPageStart } from './saved-pages.js';
 import { browserSentence, checkRunsDir, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentCommand, type SentLineHandler } from './runs.js';
 import { cspBlocksPageScripts, sandboxedPageWarning } from '../missing-scripts.js';
+import { unsupportedRunAt } from '../userscript-header.js';
 import { remapStackText } from '../stack-link.js';
 import type { StackLayout } from '../composed-source.js';
 import { waitForStuckTabs } from './stuck-tabs.js';
@@ -815,7 +816,7 @@ async function runInHarness(
     return done;
   };
   const injected = (script: PreparedScript): void =>
-    opts.out(`[sm-dev] Injected ${preparedScriptPath(script)} in world ${script.world}, run-at ${script.runAt}`);
+    opts.out(`[sm-dev] Injected ${preparedScriptPath(script)} in world ${script.world}, run-at ${runAtLabel(script)}`);
   // Put `next` in place everywhere, and reload the tabs `changed` affects.
   const apply = async (next: PreparedScript[], changed: ScriptChange[], none: string): Promise<void> => {
     for (const c of changed) injected(c.next);
@@ -1559,8 +1560,16 @@ async function filesStamp(script: PreparedScript): Promise<string> {
   return paths.map((p, i) => `${p}:${times[i]}`).join('|');
 }
 
+// The `Injected` line's run-at, naming a declared value we don't
+// honor (a typo) so a run shows why the script ran at load.
+function runAtLabel(script: PreparedScript): string {
+  const declared = unsupportedRunAt(script.script.header);
+  return declared === undefined ? script.runAt : `${script.runAt} (@run-at ${declared} is not supported)`;
+}
+
 // A script file as the person typed it, for an error to name it as
 // they did; else as paths are shown.
+
 function typedName(opts: RunOptions, file: string): string {
   return opts.typed?.get(file) ?? shownPath(file);
 }

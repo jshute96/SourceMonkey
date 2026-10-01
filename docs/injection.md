@@ -550,6 +550,22 @@ the user body. This is the TM/VM pattern.
 - `document-end` — wrapper waits for `DOMContentLoaded`.
 - `document-idle` (default / unknown values) — wrapper waits for
   `window`'s `load` event.
+  - An unknown value (a typo) gets a parse-time warning
+    (`unsupportedRunAtWarning`): Log tab, `sm-dev validate`, and
+    sm-dev's `Injected` line.
+
+**Gap: `@run-at context-menu` is not supported.** In Tampermonkey
+(Chrome only) it means "don't run on load; add a right-click menu item
+that runs the script once on the current page", like a bookmarklet.
+
+- We have no such menu item, so the script is refused: `validateHeader`
+  stores it `invalid` (`CONTEXT_MENU_UNSUPPORTED`) and it never runs.
+- Not a `document-idle` fallback like other unknown values: that would
+  run an on-request action unprompted on every matching page load, and
+  these scripts usually `@match` all pages (TM ignores
+  `@include`/`@exclude` for them).
+- `backfillHeaderProblems` applies this to already-installed scripts
+  on extension update.
 
 Why not just pass `runAt` through to `chrome.userScripts.register`:
 

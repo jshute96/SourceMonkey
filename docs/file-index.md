@@ -382,8 +382,8 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/gm-xhr-credentials.spec.ts` | E2E tests for `GM_xmlhttpRequest` cookies — credentialed by default, withheld by a truthy `anonymous` |
 | `tests/e2e/gm-xhr-headers.spec.ts` | E2E tests for `GM_xmlhttpRequest` header surgery — overrides reach the wire, URL tag stays inside the browser, rule torn down after |
 | `tests/e2e/gm-xhr-binary.spec.ts` | E2E tests for `GM_xmlhttpRequest` binary path — arraybuffer/blob/document via base64 wire reconstruction |
-| `tests/e2e/gm-connect.spec.ts` | E2E tests for `@connect` gating — no-connect blocked, matching exact allowed, `*` wildcard, subdomain match, mismatched host blocked |
-| `tests/unit/gm-connect.test.mjs` | Unit tests for `@connect` parsing/matching — wildcard, self, exact, subdomain, scheme-prefixed normalization, malformed entries |
+| `tests/e2e/gm-connect.spec.ts` | E2E tests for `@connect` gating — no-connect blocked, matching host allowed, `*` wildcard, subdomain match, mismatched host blocked |
+| `tests/unit/gm-connect.test.mjs` | Unit tests for `@connect` parsing/matching — wildcard, self, bare host, subdomain, scheme-prefixed normalization, malformed entries |
 | `tests/unit/gm-download.test.mjs` | Unit tests for the `GM_download` SW dispatcher (URL/name validation, terminal events, timeout, abort, progress polling) |
 | `tests/unit/gm-xhr-headers.test.mjs` | Unit tests for XHR header classification, DNR rule building, and per-request URL tagging |
 | `tests/unit/gm-tab.test.mjs` | Unit tests for the `GM_openInTab` SW dispatcher (mapping, close routing, originator cleanup) |

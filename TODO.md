@@ -266,6 +266,16 @@ gates, or the emitted wrap — the rate is the regression signal.
   (`data:application/javascript,%3Bwindow.Vue%3DVue%3B…`). Cheap to
   support for the `application/javascript` form, since the bytes are
   in the ref and no fetch is involved.
+- **`@run-at context-menu` scripts are refused** (2 in the corpus).
+  - Real support would be a `chrome.contextMenus` item that injects the
+    script once into the current tab.
+  - Until then, one rough edge: a script installed from a URL whose
+    upstream copy *adds* `@run-at context-menu` keeps its last good
+    copy running on page load, flagged REFRESH FAILED with "Fetched
+    copy is not a valid userscript". That rule exists for login or
+    error pages served in place of a script, and its wording is wrong
+    for a valid Tampermonkey script. Accepted for now: it's the last
+    good copy, and the case is rare.
 
 ## Cross-manager coverage
 
@@ -716,11 +726,11 @@ Adding any of these is a catalog entry + a body — nothing structural.
 
 - **`self` subdomain handling.** TM/VM treat `self` as "the
   script's own origins OR their subdomains"; SourceMonkey matches
-  exact host only. See `src/gm-connect.ts#hostMatchesRule`. Fix:
+  `self` hosts exactly. See `src/gm-connect.ts#hostMatchesRule`. Fix:
   fall through to the subdomain check against `selfHosts` as a set
   of bases. Documented limitation pending a real compat report.
 - **Port handling is asymmetric.** A user-supplied port in
-  `@connect example.com:8443` (no scheme) lands in the `exact`
+  `@connect example.com:8443` (no scheme) lands in the `host`
   branch as `host = "example.com:8443"`, but request matching
   goes through `URL.hostname` which strips the port — so the rule
   never matches. Either strip ports consistently when parsing rules
