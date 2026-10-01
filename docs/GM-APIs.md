@@ -1253,10 +1253,18 @@ too.
 ## DOM injection (`GM_addStyle` / `GM_addElement`)
 
 Both run entirely in USER_SCRIPT world — no SW round-trip, no per-
-script state. USER_SCRIPT-world DOM mutations are CSP-exempt (the
-same dispensation content scripts get), so userscripts can inject
-into pages that ship strict `Content-Security-Policy: script-src
-'self'` without `unsafe-inline`.
+script state. The page's CSP (Content Security Policy) doesn't apply
+to what they insert from that world:
+
+- `<style>` rules apply even where the page's `style-src` omits
+  `'unsafe-inline'`.
+- `<script>` elements are checked against the USER_SCRIPT world's
+  own CSP instead, which allows inline code and any `src` (as in
+  Tampermonkey). So they run even under a strict page `script-src`.
+  See [injection.md](injection.md#lifecycle) for the
+  world config.
+- The same holds for elements a script inserts itself
+  (`document.createElement('script')`), not just via the GM API.
 
 - `GM_addStyle(css)` — creates a `<style>`, sets `textContent`,
   appends to `document.head || document.documentElement`. Returns

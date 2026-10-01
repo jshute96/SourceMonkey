@@ -259,9 +259,14 @@ VM](GM-APIs-storage.md#compared-with-violentmonkey).
 
 ## DOM injection
 
-USER_SCRIPT world's DOM mutations are CSP-exempt (the same
-dispensation content scripts get), so these work even on pages with
-strict `Content-Security-Policy: script-src 'self'`.
+In USER_SCRIPT world the page's CSP doesn't apply to inserted
+elements, so these work even on pages with strict
+`Content-Security-Policy: script-src 'self'`.
+
+- Styles are exempt from the page's `style-src`.
+- Scripts (inline or `src`) are checked against SourceMonkey's
+  USER_SCRIPT world CSP instead, which allows both, as Tampermonkey's
+  does.
 
 **Not so in MAIN world.** A script that granted `unsafeWindow` (or
 declared `@inject-into page`) runs in the page's realm, where its
