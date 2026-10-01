@@ -1713,11 +1713,25 @@ async function ensureWorldConfigured(): Promise<void> {
   //     'unsafe-eval') so the reload-fast-path swap can eval the
   //     SW-supplied body. The CSP only applies to scripts running in
   //     this world; it does NOT change the page's own CSP.
+  //   - 'unsafe-inline' and * — Chrome checks <script> elements
+  //     inserted from this world against this CSP rather than the
+  //     page's. Without these, a userscript's page-code injection
+  //     (createElement('script'), GM_addElement) is refused on every
+  //     page, CSP or not: inline code, and any `src` not on the
+  //     extension's own origin.
+  //   - The new capability: <script> elements a userscript inserts
+  //     run in the page realm even under a strict page script-src.
+  //     Tampermonkey 5.5 sets the same world CSP, so it allows this
+  //     too. (A userscript could already run any code in its own
+  //     world and change the whole DOM.)
+  //   - Only <script> elements: inline event handlers and javascript:
+  //     URLs a userscript adds stay under the page CSP (see
+  //     user-script-world-csp.spec.ts).
   // Idempotent — Chrome accepts repeated calls but we still guard so
   // we don't issue them on every sync.
   await chrome.userScripts.configureWorld({
     messaging: true,
-    csp: "script-src 'self' 'unsafe-eval'",
+    csp: "script-src 'self' 'unsafe-eval' 'unsafe-inline' *",
   });
   worldConfigured = true;
 }

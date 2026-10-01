@@ -607,8 +607,9 @@ test('adds the button', async ({ page, loadUserscript, gm, reports }) => {
 - **It works in sm-dev but not in the extension, or the reverse**: see
   [Known differences](https://github.com/jshute96/SourceMonkey/blob/main/docs/harness-guide.md#known-differences-under-the-push-backend):
   `document-start` code before `<html>` exists, Trusted Types in the
-  isolated world, a `GM_setValue` lost to an unload. Check in the
-  extension (above).
+  isolated world, an inserted inline `<script>` blocked by a strict
+  page CSP, a `GM_setValue` lost to an unload. Check in the extension
+  (above).
 - **A command is `Unknown`, or behaves unlike these docs**: sm-dev may
   be older than the SourceMonkey source (it warns, and says what to
   run). Ask the person before building, since it changes the code

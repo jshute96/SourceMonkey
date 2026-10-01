@@ -335,6 +335,7 @@ buys most of it back:
   viewer's Log tab parses those strings, so it applies the layout
   itself and re-renders each ref at its original file and line; see
   [script-log.md](script-log.md#stack-refs-are-source-mapped-first).
+  sm-dev rewrites the stacks it prints the same way.
   A script that reads its own `err.stack` still sees generated
   coordinates — we rewrite the string on the way into our views, not
   at the collection.

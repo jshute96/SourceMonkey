@@ -15,6 +15,7 @@ import crypto from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
 import type { BrowserContext, Worker } from '@playwright/test';
+import type { StackLayout } from '../composed-source.js';
 
 export interface PushResult {
   scriptId: string;
@@ -221,6 +222,14 @@ export class ExtensionBackend {
     return this.worker.evaluate(
       (flag) => (self as unknown as { SourceMonkey: { soloMode(o: boolean): Promise<void> } }).SourceMonkey.soloMode(flag),
       on,
+    );
+  }
+
+  /** How the script's injected entry maps back to its files; see `remapStackText`. */
+  stackLayout(scriptId: string): Promise<StackLayout | null> {
+    return this.worker.evaluate(
+      (id) => (self as unknown as { SourceMonkey: { getStackLayout(i: string): Promise<StackLayout | null> } }).SourceMonkey.getStackLayout(id),
+      scriptId,
     );
   }
 
