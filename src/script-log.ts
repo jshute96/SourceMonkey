@@ -163,6 +163,14 @@ export interface AppendLogInput {
   timestamp?: number;
 }
 
+// Told of each entry the worker writes, for the events sm-dev runs
+// hear (sm-dev-link.ts). Set by the worker only.
+let entryListener: ((scriptId: string, entry: LogEntry) => void) | null = null;
+
+export function onScriptLogEntry(listener: (scriptId: string, entry: LogEntry) => void): void {
+  entryListener = listener;
+}
+
 // Append an entry. Every caller that reaches here observed something,
 // and the Log tab is a transcript of observations, so the entry is
 // always written. A caller that fires on its own schedule rather than
@@ -257,6 +265,11 @@ async function writeEntry(
   const counts = entry.state === undefined && !entry.resetsLogLevel;
   if (counts && isHigher(input.level, priorLevel)) toSet[mk] = input.level;
   await chrome.storage.session.set(toSet);
+  try {
+    entryListener?.(scriptId, entry);
+  } catch {
+    // A listener's failure is no reason to lose the entry's other effects.
+  }
   // The reset rides on the same queued write as the entry, so it lands
   // exactly between the rows before it and the rows after it: parse
   // diagnostics replayed for the new version come next and bump the

@@ -1676,8 +1676,16 @@ For a browser that keeps the extension (and your logins):
   - The next push of the same file name replaces it in place, keeping
     its stored values.
   - Nothing on disk is scanned.
-- What it prints are the entries the script adds to its own Log tab,
-  plus the page's console lines.
+- The run commands work as in a harness run: `status`, `get`/`set`,
+  `menu`, the page commands, `reload`. Values and menu clicks go
+  through the extension.
+- What it prints: the script's starts, errors, menu commands and value
+  writes, the entries it adds to its Log tab, and the page's console
+  lines.
+- The run's tabs run only the scripts it pushed: the extension keeps
+  its other scripts out of them, across reloads and in the tabs they
+  open, until the run ends. Tabs you open yourself run everything. See
+  [sm-dev-extension.md](sm-dev-extension.md#tab-claims).
 - `--solo` disables all other collections for the run and restores them
   after, so the scratch script runs without noise from the rest.
 - `sm-dev clear --extension` drops all scratch scripts and their stored

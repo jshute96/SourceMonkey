@@ -203,7 +203,7 @@ export interface HostEventMap {
 // value the script stored rather than its wire envelope.
 let codec: { encodeValue(v: unknown): unknown; decodeValue(v: unknown): unknown } | null = null;
 
-function loadCodec(): NonNullable<typeof codec> {
+export function valueCodec(): NonNullable<typeof codec> {
   if (codec) return codec;
   const window = Object.create(globalThis) as Record<string, unknown>;
   window.addEventListener = () => {};
@@ -431,7 +431,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
   /** Seed a script's storage before it runs. Plain JSON values only. */
   seedValues(scriptId: string, values: Record<string, unknown>): void {
     const store = this.storeFor(scriptId);
-    const { encodeValue } = loadCodec();
+    const { encodeValue } = valueCodec();
     for (const [k, v] of Object.entries(values)) store.set(k, encodeValue(v));
   }
 
@@ -441,7 +441,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
    * sees them and its value-change listeners fire with `remote` set.
    */
   async setValues(scriptId: string, values: Record<string, unknown>): Promise<void> {
-    const { encodeValue } = loadCodec();
+    const { encodeValue } = valueCodec();
     const writes: WireWrite[] = Object.entries(values).map(([key, v]) =>
       v === undefined ? { key, deleted: true } : { key, value: encodeValue(v) });
     const store = this.storeFor(scriptId);
@@ -454,15 +454,23 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
 
   /** Every value a script has stored, decoded. */
   getValues(scriptId: string): Record<string, unknown> {
-    const { decodeValue } = loadCodec();
+    const { decodeValue } = valueCodec();
     const out: Record<string, unknown> = {};
     for (const [k, v] of this.storeFor(scriptId)) out[k] = decodeValue(v);
     return out;
   }
 
+  /**
+   * Every value a script has stored, for the run's commands: here the
+   * host's own store; an extension run's host asks the extension.
+   */
+  async valuesOf(scriptId: string): Promise<Record<string, unknown>> {
+    return this.getValues(scriptId);
+  }
+
   getValue(scriptId: string, key: string): unknown {
     const store = this.storeFor(scriptId);
-    return store.has(key) ? loadCodec().decodeValue(store.get(key)) : undefined;
+    return store.has(key) ? valueCodec().decodeValue(store.get(key)) : undefined;
   }
 
   /** Drop a script's values, as removing it from the extension would. */
@@ -1072,7 +1080,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
     return report;
   }
 
-  private nameOf(scriptId: string): string {
+  protected nameOf(scriptId: string): string {
     const script = this.scripts.get(scriptId);
     return script ? preparedScriptName(script) : scriptId;
   }

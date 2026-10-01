@@ -171,10 +171,24 @@ import {
   type ScriptLogWriteRequest,
   logScriptEvent,
   _flushScriptLogQueueForTests,
+  onScriptLogEntry,
   type AppendLogInput,
   type LogLevel,
   type LogEntry,
 } from './script-log.js';
+import {
+  activeClaim,
+  claimAllows,
+  claimsReady,
+  claimTab,
+  dropClaim,
+  emitSmDevEvent,
+  inheritClaim,
+  releaseRun,
+  renewRun,
+  setTabScriptsOff,
+  SKIP_REASON_SM_DEV,
+} from './sm-dev-link.js';
 import {
   applyBatchValues,
   DELETED_SENTINEL,
@@ -278,6 +292,14 @@ interface SourceMonkeyApi {
   writeScratchScript: (args: { text: string; name?: string }) => Promise<WriteScratchScriptResult>;
   clearScratchScripts: () => Promise<number>;
   soloMode: (on: boolean) => Promise<void>;
+  // sm-dev's tab claims and event stream (sm-dev-link.ts,
+  // docs/sm-dev-extension.md). `allow`: the script ids that may run in
+  // the run's tabs, null for none. `renewRun` extends the run's claims
+  // and its event subscription, and changes `allow` when given.
+  claimTab: (tabId: number, runId: string, allow: string[] | null, ttlMs: number) => Promise<void>;
+  renewRun: (runId: string, ttlMs: number, allow?: string[] | null) => Promise<void>;
+  releaseRun: (runId: string) => Promise<void>;
+  setTabScriptsOff: (tabId: number, off: boolean) => Promise<void>;
   moveScript: (scriptId: string, target: InstallTarget) => Promise<StoredScript | null>;
   // Remove one installed script row (a container copy), as the viewer's
   // trash can does.
@@ -383,6 +405,10 @@ interface SourceMonkeyApi {
   // rather than pausing — the batch fires 150ms after the last write and
   // its timing moves with machine load.
   getGmValues: (scriptId: string) => Promise<Record<string, unknown>>;
+  // Write GM values (wire form, as a page sends them) as another tab of
+  // the script would: stored, and pushed to every tab running it, so
+  // its value-change listeners fire. sm-dev's `set`.
+  writeGmValues: (scriptId: string, writes: { key: string; value?: unknown; deleted?: boolean }[]) => Promise<void>;
   // Dedup-aware log label (`foo.user.js`, `foo.user.js#2`). Which
   // script in a dupe group gets which `#N` is decided by UUID sort, so
   // a test that needs the label cannot predict it — it has to ask.
@@ -551,6 +577,10 @@ const api: SourceMonkeyApi = {
   },
   clearScriptLog,
   getGmValues: loadAllValues,
+  writeGmValues: async (scriptId, writes) => {
+    // No sender tab, so every tab running the script hears it.
+    await handleBatchWrite({ scriptId, writes }, {});
+  },
   // `scriptLogLabel`, not `getScriptLogLabel` — the awaited form, so a
   // test never races the id table and gets a UUID prefix back.
   getScriptLogLabel: scriptLogLabel,
@@ -629,6 +659,10 @@ const api: SourceMonkeyApi = {
     for (const id of await setSoloMode(on)) pendingCollectionIds.add(id);
     await syncNowForTests();
   },
+  claimTab,
+  renewRun,
+  releaseRun,
+  setTabScriptsOff,
   syncNow: () => syncNowForTests(),
   replayScriptLogsAtBoot,
   clearUpdateRateLimit: () => { _resetUpdaterStateForTests(); },
@@ -724,6 +758,11 @@ const api: SourceMonkeyApi = {
 };
 
 (self as unknown as { SourceMonkey: SourceMonkeyApi }).SourceMonkey = api;
+
+// sm-dev runs hear each Log entry as it is written (sm-dev-link.ts).
+onScriptLogEntry((scriptId, entry) => emitSmDevEvent({ kind: 'log', scriptId, entry }));
+// Loaded early, so the first check-pending after a restart waits less.
+void claimsReady();
 
 // Clicking the toolbar icon opens the collections page (the extension's
 // declared `options_ui.page`). We have no popup configured, so
@@ -1071,6 +1110,14 @@ async function updateTabMatches(
   // A fresh one asks the in-memory marker the commit listener set.
   if (restored ? prev.scriptsSkipped : isSkippingScripts(tabId, docId)) {
     state.scriptsSkipped = true;
+  }
+  // Likewise what an sm-dev run's claim on the tab let run.
+  if (restored) {
+    if (prev.smDevAllow !== undefined) state.smDevAllow = prev.smDevAllow;
+  } else {
+    await claimsReady();
+    const claim = activeClaim(tabId);
+    if (claim) state.smDevAllow = claim.allow;
   }
   // What the document's reports said about it, and whether its
   // never-started check already ran, belong to the document too.
@@ -1494,6 +1541,14 @@ function installNavigationListeners(): void {
     });
     return;
   }
+  // A tab a claimed tab opens gets its claim (sm-dev-link.ts). This
+  // comes before the new tab's first commit.
+  wn.onCreatedNavigationTarget.addListener((d) => {
+    void (async () => {
+      await inheritClaim(d.sourceTabId, d.tabId);
+      if (activeClaim(d.tabId)) emitSmDevEvent({ kind: 'tab-opened', sourceTabId: d.sourceTabId, tabId: d.tabId, url: d.url });
+    })();
+  });
   wn.onCommitted.addListener((d) => {
     if (d.frameId !== 0) return;
     // ONE batch for this commit, shared by both fan-outs it starts. The
@@ -1564,6 +1619,7 @@ async function logMissingScripts(tabId: number, documentId: string): Promise<voi
 chrome.tabs.onRemoved.addListener((tabId) => {
   enqueueTabWork(tabId, () => clearTabState(tabId));
   clearSkipScripts(tabId);
+  dropClaim(tabId);
   // GM_registerMenuCommand: the page-side callbacks are gone with the
   // document, so the SW-side mapping is dead weight after close. Drop
   // before the menu rebuild below so a stale list can't reappear.
@@ -2167,6 +2223,13 @@ async function handleCheckPending(
 ): Promise<CheckPendingReply> {
   const tabId = sender.tab?.id;
   if (tabId == null) return { action: 'run' };
+  // A tab an sm-dev run controls runs only the scripts its claim
+  // allows (sm-dev-link.ts). First, and for every frame, like the skip
+  // reload below. Waits for the claims to load, so a worker that just
+  // started can't let a script through.
+  await claimsReady();
+  const claim = activeClaim(tabId);
+  if (claim && !claimAllows(claim, payload.id)) return { action: 'skip', reason: SKIP_REASON_SM_DEV };
   // "Reload page with no userscripts" — decided per tab, ahead of the
   // fast path, and for every frame: a subframe's documentId is its
   // own, so the tab-level marker is the only thing that covers it.
@@ -2690,7 +2753,13 @@ async function handleTabOpen(
   if (originatorTabId == null) {
     return { ok: false, error: NO_ORIGINATOR_TAB };
   }
-  return openGmTab(payload, originatorTabId);
+  // From a tab an sm-dev run controls, the new tab is the run's too.
+  await claimsReady();
+  const claimed = activeClaim(originatorTabId) !== null;
+  return openGmTab(payload, originatorTabId, claimed ? async (tabId) => {
+    await inheritClaim(originatorTabId, tabId);
+    emitSmDevEvent({ kind: 'tab-opened', sourceTabId: originatorTabId, tabId, url: payload.url });
+  } : undefined);
 }
 
 // GM_openInTab close-event routing happens inside the main
@@ -3161,6 +3230,7 @@ async function handleBatchWrite(
   // page-side cache (it issued the writes); broadcasting back would
   // be redundant and could feed back through value-change listeners.
   const senderTabId = sender.tab?.id;
+  emitSmDevEvent({ kind: 'values', scriptId: payload.scriptId, tabId: senderTabId, writes: payload.writes });
   await broadcastValueUpdate(payload.scriptId, payload.writes, senderTabId);
   return { ok: true };
 }
@@ -3673,6 +3743,12 @@ function installScriptMessageListener(): void {
         ) {
           const changed = registerMenuCommand(tabId, menuDocId, payload.scriptId, payload.commandId, payload.name);
           if (changed && tabId === activeTabId) void refreshActiveTabMenu();
+          if (changed) {
+            emitSmDevEvent({
+              kind: 'menu', op: 'add', tabId, documentId: menuDocId,
+              scriptId: payload.scriptId, commandId: payload.commandId, name: payload.name,
+            });
+          }
         }
       }, sendResponse);
     }
@@ -3685,6 +3761,12 @@ function installScriptMessageListener(): void {
           // state; skip the rebuild so a noisy unregister loop doesn't
           // churn chrome.contextMenus.
           if (changed && tabId === activeTabId) void refreshActiveTabMenu();
+          if (changed) {
+            emitSmDevEvent({
+              kind: 'menu', op: 'remove', tabId, documentId: menuDocId,
+              scriptId: payload.scriptId, commandId: payload.commandId,
+            });
+          }
         }
       }, sendResponse);
     }
@@ -3871,6 +3953,18 @@ async function recordScriptReport(
 
   const tabPart = ` tab=${tabId}`;
   const label = getScriptLogLabel(id);
+  emitSmDevEvent({
+    kind: 'report',
+    type,
+    tabId,
+    documentId: senderDocId,
+    scriptId: id,
+    name,
+    url: senderUrl,
+    ...(payload.message !== undefined ? { message: payload.message } : {}),
+    ...(payload.stack !== undefined ? { stack: payload.stack } : {}),
+    ...(payload.reason !== undefined ? { reason: payload.reason } : {}),
+  });
   // GM_* cross-tab broadcast openers table: register the
   // (scriptId, tabId) pair on EITHER sm:start or sm:swapped. The
   // swap path is a wrapper that just took control of a document
@@ -3908,7 +4002,9 @@ async function recordScriptReport(
     console.log(
       `[SourceMonkey] abandoned ${label}${tabPart} ${senderUrl} (reason=${payload.reason ?? '?'})`,
     );
-    logScriptEvent(id, {
+    // Not in the script's Log for a tab sm-dev controls: it happens on
+    // every load there, to scripts the person didn't ask anything of.
+    if (payload.reason !== SKIP_REASON_SM_DEV) logScriptEvent(id, {
       // A skip the user asked for is information, not a warning.
       level: payload.reason === SKIP_REASON_RELOAD_WITHOUT_SCRIPTS ? 'info' : 'warning',
       source: 'script-wrapper',

@@ -233,6 +233,21 @@ interface ContextInfo {
   frameId: string;
   name: string;
   isDefault: boolean;
+  origin: string;
+}
+
+export interface AttachOptions {
+  /**
+   * Watch the page without running scripts in it, for a run whose
+   * scripts the real extension runs (`--extension`). Adds nothing the
+   * page or the extension's scripts can see: no bindings, no bridge,
+   * no runtime. Only the activity tracker, in a world of its own that
+   * CDP creates, which `wait` reads. `inject` then only records the
+   * script, for the waits and the reports to know what to expect, and
+   * `eval --script` runs in the extension's user-script world.
+   * `extensionOrigin` names that world: `chrome-extension://<id>`.
+   */
+  watchOnly?: { extensionOrigin: string };
 }
 
 export interface InjectOptions {
@@ -351,9 +366,15 @@ export class PageAttachment implements PageLink {
     readonly page: Page,
     readonly host: HarnessHost,
     private readonly cdp: CDPSession,
+    private readonly options: AttachOptions,
   ) {}
 
-  static async create(page: Page, host: HarnessHost): Promise<PageAttachment> {
+  /** Watching only, with the extension running the scripts (see `AttachOptions`). */
+  get watchOnly(): boolean {
+    return this.options.watchOnly !== undefined;
+  }
+
+  static async create(page: Page, host: HarnessHost, options: AttachOptions = {}): Promise<PageAttachment> {
     if (attached.has(page)) throw new Error('This page already has a harness attachment');
     // Claimed before the first await, so two concurrent attaches can't
     // both pass the check; released if setup fails, so the page can be
@@ -362,7 +383,7 @@ export class PageAttachment implements PageLink {
     let cdp: CDPSession | null = null;
     try {
       cdp = await page.context().newCDPSession(page);
-      const attachment = new PageAttachment(page, host, cdp);
+      const attachment = new PageAttachment(page, host, cdp, options);
       await attachment.install();
       return attachment;
     } catch (err) {
@@ -376,34 +397,13 @@ export class PageAttachment implements PageLink {
     // Before `Runtime.enable`, which reports the contexts that already exist.
     this.cdp.on('Runtime.executionContextCreated', ({ context }) => {
       const aux = (context.auxData ?? {}) as { frameId?: string; isDefault?: boolean };
-      this.contexts.set(context.id, { frameId: aux.frameId ?? '', name: context.name, isDefault: aux.isDefault === true });
+      this.contexts.set(context.id, { frameId: aux.frameId ?? '', name: context.name, isDefault: aux.isDefault === true, origin: context.origin });
     });
     this.cdp.on('Runtime.executionContextDestroyed', (ev) => { this.contexts.delete(ev.executionContextId); });
     this.cdp.on('Runtime.executionContextsCleared', () => { this.contexts.clear(); });
     await this.cdp.send('Page.enable');
     await this.cdp.send('Runtime.enable');
-    this.cdp.on('Runtime.bindingCalled', (ev) => {
-      if (ev.name === BADGE_BINDING) {
-        const context = this.contexts.get(ev.executionContextId);
-        if (context?.frameId === this.mainFrameId && context.name === ISOLATED_WORLD) this.badgeCall?.(ev.payload);
-        return;
-      }
-      const origin = ev.name === RUNTIME_BINDING ? 'isolated' : ev.name === BINDING ? 'page' : null;
-      if (origin) void this.onBridgeEvent(ev.payload, ev.executionContextId, origin);
-    });
-    await this.cdp.send('Runtime.addBinding', { name: BINDING });
-    // Only in the isolated world, so the page can't call it.
-    await this.cdp.send('Runtime.addBinding', { name: RUNTIME_BINDING, executionContextName: ISOLATED_WORLD });
-    await this.cdp.send('Runtime.addBinding', { name: BADGE_BINDING, executionContextName: ISOLATED_WORLD });
-    await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', {
-      source: BRIDGE_LISTENER,
-      runImmediately: true,
-    });
-    await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', {
-      source: ISOLATED_RUNTIME,
-      runImmediately: true,
-      worldName: ISOLATED_WORLD,
-    });
+    if (!this.watchOnly) await this.installBridge();
     await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', {
       source: ACTIVITY_TRACKER,
       runImmediately: true,
@@ -441,13 +441,41 @@ export class PageAttachment implements PageLink {
     if (this.page.isClosed()) this.onClose();
   }
 
+  // The harness's side of the scripts' messages: the bindings they call,
+  // and the bridge and runtime they call them through.
+  private async installBridge(): Promise<void> {
+    this.cdp.on('Runtime.bindingCalled', (ev) => {
+      if (ev.name === BADGE_BINDING) {
+        const context = this.contexts.get(ev.executionContextId);
+        if (context?.frameId === this.mainFrameId && context.name === ISOLATED_WORLD) this.badgeCall?.(ev.payload);
+        return;
+      }
+      const origin = ev.name === RUNTIME_BINDING ? 'isolated' : ev.name === BINDING ? 'page' : null;
+      if (origin) void this.onBridgeEvent(ev.payload, ev.executionContextId, origin);
+    });
+    await this.cdp.send('Runtime.addBinding', { name: BINDING });
+    // Only in the isolated world, so the page can't call it.
+    await this.cdp.send('Runtime.addBinding', { name: RUNTIME_BINDING, executionContextName: ISOLATED_WORLD });
+    await this.cdp.send('Runtime.addBinding', { name: BADGE_BINDING, executionContextName: ISOLATED_WORLD });
+    await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', {
+      source: BRIDGE_LISTENER,
+      runImmediately: true,
+    });
+    await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', {
+      source: ISOLATED_RUNTIME,
+      runImmediately: true,
+      worldName: ISOLATED_WORLD,
+    });
+  }
+
   /**
    * Badge the tab's icon with its script count and status, as the
    * extension's toolbar badge does, until the attachment is disposed.
    * See tab-badge.ts.
    */
   async showBadge(options?: BadgeOptions): Promise<void> {
-    if (this.badge || this.disposing) return;
+    // The extension's toolbar badge covers a watched tab.
+    if (this.badge || this.disposing || this.watchOnly) return;
     const badge = new TabBadge({
       page: this.page,
       link: this,
@@ -592,7 +620,8 @@ export class PageAttachment implements PageLink {
   // with `smWorld`, so an isolated script's values and responses stay
   // out of the page.
   async push(message: object): Promise<void> {
-    if (this.closed) return;
+    // No scripts of the harness's here to hear it.
+    if (this.closed || this.watchOnly) return;
     const { type, smWorld } = message as { type?: unknown; smWorld?: unknown };
     const isolated = this.contextFor(ISOLATED_WORLD);
     const sends: Promise<unknown>[] = [];
@@ -609,6 +638,19 @@ export class PageAttachment implements PageLink {
       ));
     }
     await Promise.all(sends);
+  }
+
+  // The top frame's context the scripts without `@grant none` run in:
+  // the harness's isolated world, or the extension's user-script world
+  // when watching.
+  private scriptsContext(): number | null {
+    const origin = this.options.watchOnly?.extensionOrigin;
+    if (!origin) return this.contextFor(ISOLATED_WORLD);
+    let found: number | null = null;
+    for (const [id, info] of this.contexts) {
+      if (info.frameId === this.mainFrameId && !info.isDefault && info.origin === origin) found = id;
+    }
+    return found;
   }
 
   // The top frame's context for a world: '' is the page's own (MAIN).
@@ -631,7 +673,7 @@ export class PageAttachment implements PageLink {
    * error of the evaluation's own (the page gone, say).
    */
   async evaluate(expression: string, world: 'page' | 'scripts'): Promise<string> {
-    const contextId = this.contextFor(world === 'page' ? '' : ISOLATED_WORLD);
+    const contextId = world === 'page' ? this.contextFor('') : this.scriptsContext();
     if (contextId === null) throw new Error(world === 'page' ? 'The page has no document to evaluate in' : 'The scripts\' world isn\'t set up in this document');
     let { result, exceptionDetails } = await this.cdp.send('Runtime.evaluate', {
       expression, contextId, awaitPromise: true, replMode: true, userGesture: true,
@@ -821,6 +863,11 @@ export class PageAttachment implements PageLink {
     const id = prepared.spec.id;
     if (this.injected.has(id)) await this.remove(id);
     this.host.addScript(prepared, this);
+    if (this.watchOnly) {
+      // Recorded only; the extension runs it.
+      this.injected.set(id, { script: prepared, identifiers: [], at: Date.now() });
+      return;
+    }
     const world = prepared.world;
     const identifiers: string[] = [];
     if (prepared.needsGmRuntime && !this.runtimeWorlds.has(world)) {
@@ -960,9 +1007,9 @@ export async function targetIdOf(page: Page): Promise<string | null> {
   }
 }
 
-export async function attachPage(page: Page, host: HarnessHost): Promise<PageAttachment> {
+export async function attachPage(page: Page, host: HarnessHost, options: AttachOptions = {}): Promise<PageAttachment> {
   await readUserAgentData(page);
-  return PageAttachment.create(page, host);
+  return PageAttachment.create(page, host, options);
 }
 
 let userAgentDataRead = false;

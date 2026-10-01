@@ -410,7 +410,7 @@ export async function runConsoleCommand(
       // the scripts on the current one, which is marked there. With no
       // tab, still the scripts and what they have stored.
       printTabs(ctx);
-      for (const l of statusLines(ctx, tab)) ctx.out(l);
+      for (const l of await statusLines(ctx, tab)) ctx.out(l);
       return;
     }
     case 'values': {
@@ -436,7 +436,7 @@ export async function runConsoleCommand(
       }
       await settleWrites();
       ctx.out('Stored values:');
-      for (const l of valueLines(ctx, scripts)) ctx.out(l);
+      for (const l of await valueLines(ctx, scripts)) ctx.out(l);
       return;
     }
     case 'get': {
@@ -449,7 +449,7 @@ export async function runConsoleCommand(
         return false;
       }
       await settleWrites();
-      ctx.out(`  ${text} = ${JSON.stringify(ctx.host.getValue(scriptId, text))}`);
+      ctx.out(`  ${text} = ${JSON.stringify((await ctx.host.valuesOf(scriptId))[text])}`);
       return;
     }
     case 'set': {
@@ -1433,7 +1433,7 @@ function fire(tab: ControlledTab, fired: Promise<boolean>): Promise<boolean> {
 // where it is active, its counts, and its last error. With no `tab`,
 // only what doesn't depend on one: stored values and errors.
 // The lines under a script are indented to start under its name.
-function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined): string[] {
+async function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined): Promise<string[]> {
   const { scripts } = ctx;
   const { reports } = ctx.host;
   const lines: string[] = [];
@@ -1444,7 +1444,7 @@ function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined): strin
     lines.push(scriptRow(ctx, script));
     if (!tab) {
       // Errors are the script's, from tabs since closed, so still told.
-      const values = id ? Object.keys(ctx.host.getValues(id)).length : 0;
+      const values = id ? Object.keys(await ctx.host.valuesOf(id)).length : 0;
       const errors = reports.errors.filter((r) => r.scriptId === id);
       const counts = [count(values, 'stored value'), count(errors.length, 'error')].filter((c) => !c.startsWith('0 '));
       if (counts.length > 0) lines.push(`${DETAIL}${counts.join(', ')}`);
@@ -1456,7 +1456,7 @@ function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined): strin
     const errors = fromTab(ctx, tab, reports.errors).filter((r) => r.scriptId === id);
     const menus = fromTab(ctx, tab, reports.menuCommands).filter((r) => r.scriptId === id).length;
     // Stored values are the script's, shared by every tab.
-    const values = id ? Object.keys(ctx.host.getValues(id)).length : 0;
+    const values = id ? Object.keys(await ctx.host.valuesOf(id)).length : 0;
     // Only the counts that aren't zero, and no line when none is.
     const counts = [count(menus, 'menu command'), count(values, 'stored value'), count(errors.length, 'error')]
       .filter((c) => !c.startsWith('0 '));
@@ -1487,12 +1487,12 @@ function activityLine(ctx: ConsoleContext, tab: ControlledTab, id: string | unde
   return `${DETAIL}${here} (${active ? 'Also active' : 'Active'} on ${elsewhere.join(',')}.)`;
 }
 
-function valueLines(ctx: ConsoleContext, scripts: PreparedScript[]): string[] {
+async function valueLines(ctx: ConsoleContext, scripts: PreparedScript[]): Promise<string[]> {
   const lines: string[] = [];
   for (const script of scripts) {
     lines.push(scriptRow(ctx, script));
     const id = script.spec?.id;
-    const values = id ? ctx.host.getValues(id) : {};
+    const values = id ? await ctx.host.valuesOf(id) : {};
     const keys = Object.keys(values);
     if (keys.length === 0) lines.push('    Nothing stored');
     for (const key of keys) lines.push(`    ${key} = ${JSON.stringify(values[key])}`);

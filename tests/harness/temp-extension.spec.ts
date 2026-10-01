@@ -37,7 +37,7 @@ test('a temp browser with --extension runs the script in the real extension', as
   const lines: string[] = [];
   let stop!: () => void;
   const until = new Promise<void>((resolve) => { stop = resolve; });
-  const wanted = ['[ext] handler SourceMonkey', 'Started at'];
+  const wanted = ['[ext] handler SourceMonkey', 'Ext started on'];
   const done = run({
     files: [file],
     urls: [`${fixtureServer.baseUrl}/target.html`],
@@ -64,4 +64,59 @@ test('a temp browser with --extension runs the script in the real extension', as
   // no tab closing as it went.
   expect(text).not.toContain('Scratch collection');
   expect(text).not.toContain('Tab T1 closed');
+});
+
+test('an extension run takes the run commands: status, values, set, menu, eval, reload', async ({ fixtureServer, scriptsDir }) => {
+  // Two browser launches, then each command in turn.
+  test.setTimeout(90_000);
+  const file = scriptsDir.write({
+    relativePath: 'cmds.user.js',
+    meta: { name: 'Cmds', match: ['*://*/target.html'], grant: ['GM_setValue', 'GM_getValue', 'GM_registerMenuCommand'] },
+    body: `
+      console.log('[cmds] count ' + GM_getValue('count', 0));
+      GM_setValue('count', GM_getValue('count', 0) + 1);
+      GM_registerMenuCommand('Mark', () => { document.title = 'marked'; });
+    `,
+  });
+  const { spawn } = await import('node:child_process');
+  const cli = new URL('../../lib/harness/cli.js', import.meta.url).pathname;
+  const child = spawn(process.execPath, [cli, '--stdin', '--temp-browser', 'start', '--extension', file, `${fixtureServer.baseUrl}/target.html`, '--seconds', '70'],
+    { stdio: ['pipe', 'pipe', 'pipe'] });
+  // Each command once the line before it shows up.
+  const steps: [string, string][] = [
+    ['GM_setValue count = 1', 'status'],
+    ['1 menu command, 1 stored value', 'menu Mark'],
+    ['Fired "Mark"', 'eval document.title'],
+    ['"marked"', 'set count 10'],
+    ['Set count', 'reload'],
+    ['[cmds] count 10', 'get count'],
+    ['count = 11', 'stop'],
+  ];
+  const lines: string[] = [];
+  let buffer = '';
+  const onData = (chunk: Buffer): void => {
+    buffer += chunk.toString();
+    const parts = buffer.split('\n');
+    buffer = parts.pop() ?? '';
+    for (const line of parts) {
+      lines.push(line);
+      if (steps[0] && line.includes(steps[0][0])) {
+        const command = steps.shift()![1];
+        child.stdin.write(`${command}\n`);
+        // The client reads stdin until it ends.
+        if (command === 'stop') child.stdin.end();
+      }
+    }
+  };
+  child.stdout.on('data', onData);
+  child.stderr.on('data', onData);
+  const exited = new Promise((resolve) => child.on('exit', resolve));
+  // Stopped if it outlasts the test, so a stuck step can't leave it running.
+  const timer = setTimeout(() => child.kill(), 75_000);
+  await exited;
+  clearTimeout(timer);
+  const text = lines.join('\n');
+  expect(steps, text).toEqual([]);
+  expect(text).toContain('/cmds.user.js');
+  expect(text).toMatch(/\* 1: Cmds \(.*cmds\.user\.js\)/);
 });

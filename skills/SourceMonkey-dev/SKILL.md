@@ -566,7 +566,12 @@ $R clear --extension     # drop scratch scripts; restores other collections
     [Setting it up](https://github.com/jshute96/SourceMonkey/blob/main/docs/harness-guide.md#setting-it-up).
 - The script is pushed as a scratch script; relative `@require`s are
   refused, and remote ones are fetched live, not from local copies.
-- Output is the script's Log tab entries plus page console lines.
+- The run commands work as in a harness run (`status`, `get`/`set`,
+  `menu`, `snapshot`, `click`, `eval`, `reload`, ...). Output is the
+  script's starts, errors, menus and value writes, its Log tab entries,
+  and page console lines.
+- The run's tabs run only its own scripts: the extension's other
+  scripts are kept out of them. Tabs you open yourself run everything.
 - **Before building on a new request path, send one real request
   from it here.**
   - A request that works from the page can still be refused from the
