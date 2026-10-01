@@ -44,6 +44,12 @@ node tests/greasyfork-examples/validate-corpus.mjs \
   --offline-root tests/greasyfork-examples/files tests/greasyfork-examples/files
 ```
 
+These numbers predate the user program moving into its own nested
+scope (see [GM binding collisions](#gm-binding-collisions)), and some
+later header-check changes. A rerun after that change found no parse
+failures at all; the other groups have drifted too and are not redone
+here.
+
 | | Scripts | |
 |---|---|---|
 | Checked | 1996 | every `*.user.js` in the downloaded tree |
@@ -114,10 +120,10 @@ MathJax's `tex-mml-chtml.js`, `video.js`, `babel-standalone`.
 
 #### GM binding collisions
 
-All three parse failures are the same class, and it is the one
-`parse-check.md` calls out as deliberate: our `GM_*` bindings are
-`const` declarations in the same scope as the user program, so a script
-that declares the same name is a genuine duplicate declaration.
+All three parse failures were the same class. When this was measured,
+our `GM_*` bindings were `const` declarations in the same scope as the
+user program, so a script that declared the same name was a genuine
+duplicate declaration.
 
 | Script | Line |
 |--------|------|
@@ -130,8 +136,13 @@ a script shipping its own `GM_addStyle` while also granting it. None of
 the three is broken under Tampermonkey, where `GM_*` are sandbox
 globals the script's own declaration simply shadows.
 
-So the verdict is *correct* — that program really doesn't compile — but
-the program is ours, not theirs. Rate: 3 in 2000 (0.15%).
+So the verdict was *correct* — that program really didn't compile — but
+the program was ours, not theirs. Rate: 3 in 2000 (0.15%).
+
+- Fixed since: the user program now runs in a scope nested inside our
+  bindings, so all three shadow them as under Tampermonkey, and a
+  rerun reports no parse failures. See
+  [injection.md](injection.md#the-user-program-scope).
 
 ### Real, and arguably ours to be stricter about
 

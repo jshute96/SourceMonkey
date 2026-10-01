@@ -99,17 +99,14 @@ What is still unmapped:
   a library still lands in the isolated world with no binding. The
   requires arrive on a later pipeline step (`attachFiles`) than the flag
   is derived on, and a require refresh would have to re-derive it.
-  - The related half is already handled: a `@require` that *declares*
-    the name suppresses our binding at emission time, so the library's
-    own `const unsafeWindow = …` isn't a duplicate declaration.
   - The scan also has no regex-literal state, so a `/['"]/` opens a
     string, and a literal ending in `\/\/` reads as a line comment;
     either can swallow a later reference. Normally that just leaves the
     script behaving as it did before the feature. The one bad case is a
-    swallowed *declaration* with a visible use after it: the binding is
-    then emitted beside the script's own and the install-time parse check
-    fails the row. No corpus script hits it; a real tokenizer (or the one
-    the parse check already has in its sandbox) would close it.
+    swallowed *declaration* with a visible use after it: the script then
+    moves to MAIN world for a binding it shadows anyway. No corpus script
+    hits it; a real tokenizer (or the one the parse check already has in
+    its sandbox) would close it.
 
 - **Find the real `chrome.userScripts.register()` size limit.** One
   script with four 90 KB requires measures ~1 MB of `js[]` (the source
@@ -121,22 +118,6 @@ What is still unmapped:
   progressively larger scripts until it rejects, so the ceiling is a
   measured fact — and a check that the failure really is as visible as
   the fallback path suggests.
-- **Wrap identifiers a `@require` can collide with.** The wrap
-  declares `GM`, `GM_info`, every granted `GM_*`, `unsafeWindow` and
-  `__sm*` in the same scope as the user program, so a library doing
-  `const unsafeWindow = window.wrappedJSObject || window;` — a real
-  idiom — is a parse failure. The install-time parse check now catches
-  it and names the script (see [docs/parse-check.md](docs/parse-check.md)),
-  so it fails visibly rather than silently — but the script still can't
-  run. Renaming our internals (or moving the preamble reads onto
-  `__smE`, which would also fix the `self` / `window` TDZ case) would
-  make it work instead.
-  - Measured over the GreasyFork top 2000: this is the *only* thing
-    that made a real-world script fail to compile — 3 scripts, all of
-    them fine under Tampermonkey (`var …, GM;`, the
-    `if (typeof GM_setValue === 'undefined') { var GM_setValue = … }`
-    polyfill, and a script shipping its own `function GM_addStyle`).
-    See [docs/corpus-validation-results.md](docs/corpus-validation-results.md).
 
 ## Reload fast-path — remaining cost
 
@@ -166,13 +147,6 @@ of a 500 ms budget, the decision lands at ~243 ms. What remains:
 The compile-only check is in (see
 [docs/parse-check.md](docs/parse-check.md)). What it doesn't do yet:
 
-- **Compile with the wrap's own declarations.** The check omits the
-  wrap head's `var` preamble, the `__smE` parameter and the GM
-  prelude, so a script declaring `const __smE`, `let __smDecision` or
-  `const __smGmSnap` passes and then fails at injection. Every such
-  name is `__sm`-prefixed so the risk is small, and it errs toward
-  false-accept. Compiling with `new Function('__smE', preamble + src)`
-  would close it.
 - **Place a brace imbalance at its cause, not its symptom.** A stray or
   missing `}` is reported by the raw probe at the brace itself, which
   is right — but only when the raw probe is the one chosen, via a

@@ -11,7 +11,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { sourceUsesUnsafeWindow, sourceDeclaresUnsafeWindow } from '../../dist/unsafe-window-use.js';
+import { sourceUsesUnsafeWindow } from '../../dist/unsafe-window-use.js';
 
 test('a plain reference counts', () => {
   assert.equal(sourceUsesUnsafeWindow('unsafeWindow.jQuery.ajax();'), true);
@@ -63,9 +63,8 @@ test('the identifier has to stand alone', () => {
 
 test('a declarator list or destructuring pattern also counts as declaring it', () => {
   // These bind the name just as plainly as `const unsafeWindow =`, and
-  // missing them is the one way this scan can BREAK a working script:
-  // the emitted binding lands beside the script's own and the
-  // install-time parse check fails the row.
+  // missing them would move a script that reads only its own binding
+  // out of isolation for nothing.
   for (const src of [
     'const { unsafeWindow } = window;\nunsafeWindow.x = 1;',
     'const { win: unsafeWindow } = o;\nunsafeWindow.x = 1;',
@@ -75,7 +74,6 @@ test('a declarator list or destructuring pattern also counts as declaring it', (
     'for (const unsafeWindow of xs) { unsafeWindow.x = 1; }',
   ]) {
     assert.equal(sourceUsesUnsafeWindow(src), false, src);
-    assert.equal(sourceDeclaresUnsafeWindow(src), true, src);
   }
 });
 
@@ -106,25 +104,16 @@ test('a member the source happens to have named unsafeWindow is not a use', () =
 
 test('a source that declares the name gets no binding from us', () => {
   // `const unsafeWindow = window.wrappedJSObject || window;` is a real
-  // cross-browser idiom. Our binding is a `const` in the same scope, so
-  // emitting one beside it is a duplicate-declaration SyntaxError that
-  // takes the whole registered entry down.
+  // cross-browser idiom. The script reads its own binding, never ours,
+  // so nothing needs to move worlds for it.
   const idiom = 'const unsafeWindow = window.wrappedJSObject || window;\nunsafeWindow.x = 1;';
   assert.equal(sourceUsesUnsafeWindow(idiom), false);
-  assert.equal(sourceDeclaresUnsafeWindow(idiom), true);
   assert.equal(sourceUsesUnsafeWindow('var unsafeWindow = window; unsafeWindow.x;'), false);
   assert.equal(sourceUsesUnsafeWindow('let unsafeWindow;'), false);
   assert.equal(sourceUsesUnsafeWindow('function unsafeWindow() {}'), false);
   // A declaration of something else that merely contains the name isn't
   // one of ours.
   assert.equal(sourceUsesUnsafeWindow('const unsafeWindowRef = unsafeWindow;'), true);
-});
-
-test('sourceDeclaresUnsafeWindow ignores declarations in comments and strings', () => {
-  assert.equal(sourceDeclaresUnsafeWindow('// const unsafeWindow = window;'), false);
-  assert.equal(sourceDeclaresUnsafeWindow('log("var unsafeWindow = w");'), false);
-  assert.equal(sourceDeclaresUnsafeWindow('unsafeWindow.x = 1;'), false);
-  assert.equal(sourceDeclaresUnsafeWindow(''), false);
 });
 
 test('a regex literal holding a quote can hide a later reference', () => {

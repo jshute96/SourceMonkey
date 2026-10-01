@@ -518,6 +518,11 @@ let currentLogId = '';
 // `@require`s, or we're in preview mode with nothing injected at all.
 let stackSegments: readonly MappedSegment[] = [];
 let stackEntryUrl = '';
+// Lines in the user program. With no `@require`s that is the whole
+// entry except its last line, which holds our closer (`})();});`) and
+// shows up in every synchronous throw's stack as the arrow's call site.
+// A ref past this line is ours, not the user's.
+let stackBodyLineCount = 0;
 // Identity of the script state `stackSegments` was computed from, so a
 // re-render for an unrelated reason doesn't redo the concatenation.
 let stackLayoutKey = '';
@@ -1185,6 +1190,7 @@ async function showSelectedScript(): Promise<void> {
   currentRejection = undefined;
   stackSegments = [];
   stackEntryUrl = '';
+  stackBodyLineCount = 0;
   stackLayoutKey = '';
   // A log read still in flight belongs to the copy being left.
   logPaintEpoch++;
@@ -1921,11 +1927,13 @@ function storedTabs(script: StoredScript): CodeTab[] {
   const layoutKey = `${script.id}@${script.loadedAt}:${label}`;
   if (layoutKey !== stackLayoutKey) {
     stackLayoutKey = layoutKey;
-    stackSegments = composeSource(script, {
+    const composed = composeSource(script, {
       requireUrls: requireSourceUrls,
       mainUrl: mainSourceUrl,
       startLine: USER_SOURCE_START_LINE,
-    }).segments;
+    });
+    stackSegments = composed.segments;
+    stackBodyLineCount = composed.lineCount;
   }
   stackEntryUrl = mainSourceUrl;
   const tabs: CodeTab[] = [{
@@ -3660,8 +3668,8 @@ function paintLog(entries: LogEntry[]): void {
 // right because devtools applies the entry's source map to the
 // display; this is us doing the same thing for our own view.
 type ResolvedRef =
-  // Use it as it stands: a frame from another file, or from a script
-  // with no `@require`s where nothing moved in the first place.
+  // Use it as it stands: a frame from another file, or a body line of a
+  // script with no `@require`s, where nothing moved in the first place.
   | { kind: 'asIs' }
   // Rewritten to the original file and line. `stale` when the entry
   // predates the body whose layout did the rewriting.
@@ -3680,7 +3688,12 @@ const STALE_REF_NOTE =
   'Recorded before the current version of this script — the file and line may not match.';
 
 function resolveLogRef(ref: StackRef, timestamp: number): ResolvedRef {
-  if (stackSegments.length === 0 || ref.url !== stackEntryUrl) return { kind: 'asIs' };
+  if (ref.url !== stackEntryUrl) return { kind: 'asIs' };
+  if (stackSegments.length === 0) {
+    // No requires: generated line N is original line N, except the
+    // wrap's closing line just past the body (see `stackBodyLineCount`).
+    return ref.line > stackBodyLineCount ? { kind: 'unmappable' } : { kind: 'asIs' };
+  }
   const mapped = remapStackRef(ref, stackEntryUrl, stackSegments);
   if (!mapped) return { kind: 'unmappable' };
   // The layout is recomputed from the CURRENT stored script, but the

@@ -62,32 +62,25 @@ That is the whole job of the offscreen document.
 
 ## What is checked
 
-The exact text `wrapCombinedEntry` compiles as a function body, built
-by `buildParseCheckSource` in `injector.ts`:
+The user program exactly as `wrapCombinedEntry` compiles it, as one
+function body, built by `buildParseCheckSource` in `injector.ts`:
 
 - every `@require` body, in declaration order;
-- the script's own full source;
-- the emitted `GM_*` bindings.
+- then the script's own full source.
 
-The bindings are included on purpose. They are `const` declarations in
-the same scope as the user program, so a library doing
-`const unsafeWindow = window.wrappedJSObject || window;` — a real idiom
-— is a duplicate declaration and a genuine parse failure.
+Our own declarations are not included, and need not be:
 
-- The one binding that steps aside is the *implicit* `unsafeWindow`
-  one: a script that merely uses the name gets no binding when a
-  `@require` declares it, so that idiom keeps compiling.
-
-Not included: the wrap head, its `var` preamble, the `__smE` parameter,
-and the GM prelude. The head is ours and always valid, and on its own
-it leaves an unbalanced brace.
-
-That leaves a gap, in the safe direction. `var x` beside `var x` is
-legal, but `var x` beside `let`/`const`/`class x` is a `SyntaxError`,
-and so is redeclaring a parameter. A script writing `const __smE`,
-`let __smDecision` or `const __smGmSnap` therefore passes and fails at
-injection. All such names are `__sm`-prefixed, and the run-time seal
-entry still reports it. Tracked in `TODO.md`.
+- The wrap head, its `var` preamble, the `GM_*` bindings and the GM
+  prelude live in an outer scope. The user program runs in a function
+  nested inside it (see
+  [injection.md](injection.md#the-user-program-scope)), so nothing it
+  declares can clash with them.
+  - So `const unsafeWindow = window.wrappedJSObject || window;` in a
+    library, a real idiom, compiles and runs.
+- That nested scope is a function body, as `new Function`'s is, so a
+  top-level `return` is judged as it will run.
+- The checked text starts with the same `void 0;` the nested scope
+  does, so a leading `"use strict"` stays inert in both.
 
 ## Why the composed program, not each file
 
@@ -219,10 +212,9 @@ whose content didn't move reuses the prior verdict.
 
 - The body's hash covers the whole file including the header, so
   `@grant` / `@require` / `@inject-into` edits all move the key.
-- The **version** leg matters because the checked text contains code
-  *we* emit. Add a `GM_*` binding in a future release and a script that
-  already declares that name becomes a parse failure, with nothing
-  about the script having changed.
+- The **version** leg matters because how *we* compose and wrap the
+  program decides what parses. That can change in a release with
+  nothing about the script having changed.
 - An `invalid` or `unknown` row deliberately records nothing, so a
   later refresh re-derives the verdict rather than inheriting a stale
   pass.
@@ -340,8 +332,8 @@ register:
 - A row with a matching `parseCheckedHash` is left alone — the normal
   case, and no round trip.
 - After a SourceMonkey update every row mismatches at once, because
-  `parseCheckKey` carries the extension version (the checked text
-  contains our own `GM_*` bindings). That pass is capped —
+  `parseCheckKey` carries the extension version (see
+  [Caching](#caching)). That pass is capped —
   `PARSE_RECHECK_CONCURRENCY` — and registration waits for it, so the
   bound is on memory, not on politeness.
 - Anything else is compiled now. A `syntax-error` verdict writes the
@@ -477,7 +469,7 @@ file anyone can open. `buildParseCheckSource` returns the same
 — the machinery the Log tab's stack refs already use.
 
 - Columns pass through unchanged: composition only moves whole lines.
-- A line no segment covers is ours (the GM-bindings preamble, a seam),
+- A line no segment covers is ours (our first line, a seam),
   so the position is dropped rather than blamed on the user's file.
 - A position outside the checked text is the sentinel — the source ends
   mid-construct — so it is reported as the message alone.

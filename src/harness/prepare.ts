@@ -221,7 +221,7 @@ function installNodeSeams(): void {
   setParseChecker(async (script) => {
     let checked;
     try {
-      checked = await buildParseCheckSource(script, await packageVersion());
+      checked = buildParseCheckSource(script);
     } catch (err) {
       parseCheckNote = { kind: 'errored', message: String((err as Error)?.message ?? err) };
       throw err;

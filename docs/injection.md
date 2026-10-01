@@ -702,10 +702,11 @@ sandboxed page and returns a verdict, see
   unsafeWindow` does.
 - A source that **declares** the name — `const unsafeWindow =
   window.wrappedJSObject || window;`, a real cross-browser idiom — is
-  left alone. Our binding is a `const` in the same scope, so adding one
-  beside it would turn a working script into a SyntaxError. The same
-  check runs over `@require` bodies at emission time, where a library
-  declaring the name is what the main body is usually referencing.
+  left alone. It reads its own binding, never ours, so there is nothing
+  to move worlds for.
+  - Our binding would be harmless beside it: the script's declaration
+    shadows it (see [The user program scope](#the-user-program-scope)).
+    So a `@require` declaring the name needs no special case either.
 - Two limits, both erring towards today's behavior: regex literals are
   not recognized (a `/['"]/` opens a string state, and a literal ending
   in `\/\/` reads as a line comment, either of which can swallow a
@@ -1052,6 +1053,9 @@ The combined user-program entry is wrapped (in `wrapCombinedEntry`) to:
   requires are concatenated into the same function, to library
   top-level code too. One copy serves both; see
   [GM-APIs.md](GM-APIs.md#bindings-layout-in-the-wrapper).
+- Run the user program (requires + body) in a scope nested inside the
+  one holding those bindings — see
+  [The user program scope](#the-user-program-scope).
 - Carry a `//# sourceURL=sourcemonkey://SourceMonkey/<folder>/<name>.user.js`
   directive so devtools labels the script and the prelude's
   async-error listeners can attribute errors by stack inspection.
@@ -1073,6 +1077,57 @@ When the body fires (inside the prelude's `runMain`), the prelude:
   is undefined) it falls back to a `sourcemonkey-bridge-sync` DOM
   event the bridge picks up — see [MAIN-world traffic — the
   bridge](#main-world-traffic--the-bridge).
+
+### The user program scope
+
+The entry has two scopes, one inside the other:
+
+```
+self.__smRun(id,function(__smE){<__sm* vars><GM bindings><GM prelude>return(()=>{void 0;
+<requires, then the script's own source>
+})();});
+```
+
+- **Outer** (the wrap function): our own declarations — the `__sm*`
+  preamble, `const GM_info`, granted `GM_*`, `const unsafeWindow =
+  window;`.
+- **Inner** (an arrow function): the user program. Its top-level
+  declarations shadow ours, as they do under Tampermonkey (TM) and
+  Violentmonkey (VM). Before this, both shared one scope, so:
+  - `const window = unsafeWindow;` put our `const unsafeWindow =
+    window;` in the temporal dead zone (TDZ) of the script's `window`,
+    a ReferenceError that killed the script.
+  - `const unsafeWindow = …`, `let GM_info`, a `var GM_setValue`
+    polyfill or an own `function GM_addStyle` were duplicate-declaration
+    SyntaxErrors.
+
+Why an arrow function rather than a block:
+
+- A block scopes only `let`/`const`/`class`; a `var` or a sloppy-mode
+  function declaration would still clash in the outer scope.
+- An arrow keeps the wrap function's `this`, so top-level `this` is
+  unchanged, with no page-overridable `.call(this)`.
+- Top-level `return` still works. Top-level `await` stays a
+  SyntaxError.
+
+The arrow body starts with `void 0;`, so a leading `"use strict"` (the
+script's, or a first `@require`'s) is not a directive:
+
+- It never was one here: it always followed our own statements, so
+  scripts ran in sloppy mode.
+- Honoring it would make scripts that assign undeclared variables under
+  a top-level `'use strict'` start throwing, and what other managers do
+  is unverified. So behavior is kept as it was.
+
+The opener and closer sit on lines that already exist, so no line
+moves: the source map and the Log tab's stack mapping are unaffected.
+
+- A synchronous throw's stack gains one frame on the closer line, where
+  the arrow is called. That line is ours, so the Log tab shows it as
+  plain text rather than a link (see
+  [script-log.md](script-log.md#what-is-left-unmapped-deliberately)).
+The reload swap eval and the install-time parse check use the same
+arrangement (see [parse-check.md](parse-check.md#what-is-checked)).
 
 ### Async-error attribution
 

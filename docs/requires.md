@@ -281,24 +281,16 @@ Consequences of the shared scope, all matching TM/VM:
   body — are a `SyntaxError` and the script does not run. Wrap the
   body in an IIFE (as nearly every real userscript does) and the
   shadowing is ordinary.
+  - Being a parse failure, it stops the script before any of it runs.
+    A trailing sentinel entry detects that and reports it to the Log
+    tab and the badge, so it fails loudly rather than silently.
 - A require that throws at top level aborts the whole script,
   including the body.
-- A require declaring any identifier the wrap itself declares — `GM`,
-  `GM_info` (both emitted even under `@grant none`), any granted
-  `GM_*`, `unsafeWindow`, `__sm*` — is a redeclaration `SyntaxError`.
-  `const unsafeWindow = window.wrappedJSObject || window;` is a real
-  userscript-library idiom that this now rejects.
-  - That one case is handled for the *implicit* `unsafeWindow` binding:
-    when a require declares the name, the binding an ungranted
-    reference would have added is suppressed
-    (`sourceDeclaresUnsafeWindow`). A declared `@grant unsafeWindow`
-    still collides — the author asked for the binding by name.
-- A require declaring top-level `self` or `window` also breaks the
-  wrap, whose own preamble dereferences both. See
-  [injection-modes.md](injection-modes.md#cons--caveats).
-- Any of the above is a parse failure, which means the script does not
-  run at all. A trailing sentinel entry detects that and reports it to
-  the Log tab and the badge, so it fails loudly rather than silently.
+- A require (or the body) declaring a name the wrap provides (`GM`,
+  `GM_info`, any granted `GM_*`, `unsafeWindow`) or reads (`self`,
+  `window`) shadows it rather than breaking the wrap. The user program
+  runs in a scope nested inside the wrap's; see
+  [injection.md](injection.md#the-user-program-scope).
 
 ### Timing
 

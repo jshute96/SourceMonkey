@@ -1090,19 +1090,13 @@ export function setParseChecker(fn: ParseChecker | null): void {
 // The body's `contentHash` covers the WHOLE file including the header,
 // so `@grant` / `@require` / `@inject-into` edits all move the key.
 //
-// The version leg is there because the checked text also contains code
-// WE emit — the `GM_*` bindings, whose set of `const` names comes from
-// `gm-api-catalog.ts`. Add a binding in a future release and a script
-// that already declares that name becomes a parse failure, with
-// nothing about the script itself having changed. Without the version
-// in the key, the cached pass would survive the upgrade.
-//
-// Future hazard: `buildGmBindingsForScript` is async against the day it
-// bakes persisted `GM_*` values into the bindings. If that lands, those
-// values become part of the checked text and belong in this key — and
-// the install preview, which checks a synthetic row with a placeholder
-// id (`runPreviewParseCheck` in userscript.ts), would start reading
-// some other script's values.
+// The version leg is there because how WE compose and wrap the user
+// program decides what parses, and that can change between releases
+// with nothing about the script itself changing. (Moving the user
+// program into its own nested scope, for one, turned scripts that
+// redeclare a `GM_*` name from failures into passes; see
+// `wrapCombinedEntry` in injector.ts.) Without the version in the key,
+// a cached verdict would survive the upgrade.
 function parseCheckKey(script: StoredScript): string {
   const reqs = (script.requires ?? []).map((r) => r.contentHash).join(',');
   return `${extensionVersion()}|${script.contentHash ?? ''}|${reqs}`;
