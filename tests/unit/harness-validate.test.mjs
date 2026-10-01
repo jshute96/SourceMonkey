@@ -19,6 +19,7 @@ import {
   badScriptFilesOnDisk,
   locationPattern,
 } from '../fixtures/bad-script-cases.mjs';
+import { CONTEXT_MENU_UNSUPPORTED } from '../../dist/script-store.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const CLI = path.join(REPO_ROOT, 'lib', 'harness', 'cli.js');
@@ -94,7 +95,7 @@ test('validate warns about GM_xmlhttpRequest with no @connect and an unsupported
     '// @name  Warns',
     '// @match https://example.com/*',
     '// @grant GM_xmlhttpRequest',
-    '// @run-at context-menu',
+    '// @run-at document-ready',
     '// ==/UserScript==',
     'GM_xmlhttpRequest({ url: "https://example.com/" });',
   ].join('\n'));
@@ -104,7 +105,25 @@ test('validate warns about GM_xmlhttpRequest with no @connect and an unsupported
   assert.equal(s?.status, 'ok');
   assert.equal(s.lines.length, 2);
   assert.match(s.lines[0], /^warn: This script has no @connect lines, so all its GM_xmlhttpRequest requests are blocked\. .*, line 4\)$/);
-  assert.match(s.lines[1], /^warn: @run-at context-menu is not supported\. The script runs at document-idle instead\. .*, line 5\)$/);
+  assert.match(s.lines[1], /^warn: @run-at document-ready is not supported\. The script runs at document-idle instead\. .*, line 5\)$/);
+});
+
+test('validate calls @run-at context-menu invalid', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sm-validate-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'menu.user.js');
+  fs.writeFileSync(file, [
+    '// ==UserScript==',
+    '// @name  Menu',
+    '// @match https://example.com/*',
+    '// @run-at context-menu',
+    '// ==/UserScript==',
+  ].join('\n'));
+  const { code, scripts } = validate(file);
+  assert.equal(code, 1);
+  const s = scripts.get('menu.user.js');
+  assert.equal(s?.status, 'invalid');
+  assert.deepEqual(s.lines, [`${CONTEXT_MENU_UNSUPPORTED} (in menu.user.js, line 4)`]);
 });
 
 test('validate calls a script unchecked when the syntax check could not decide', (t) => {

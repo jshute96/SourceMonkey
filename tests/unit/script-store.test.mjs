@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 
 import {
   IMPLICIT_UNSAFE_WINDOW_INFO,
+  backfillHeaderProblems,
   backfillStartupLogs,
   backfillUsesUnsafeWindow,
   distillMatching,
@@ -22,6 +23,7 @@ import {
   loadStateLogEntry,
   rebuildCollection,
   sameStoredValue,
+  CONTEXT_MENU_UNSUPPORTED,
   NO_MATCH_OR_INCLUDE,
   NO_NAME,
 } from '../../dist/script-store.js';
@@ -102,6 +104,18 @@ test('validateHeader complains about a missing @name', async () => {
     message: NO_NAME,
     line: 1,
   });
+});
+
+test('validateHeader refuses @run-at context-menu rather than running it on load', () => {
+  const header = parseHeader(`// ==UserScript==
+// @name X
+// @match https://e/*
+// @run-at  Context-Menu
+// ==/UserScript==
+`);
+  assert.deepEqual(validateHeader(header), { message: CONTEXT_MENU_UNSUPPORTED, line: 4 });
+  // An error, so not also a run-at warning.
+  assert.deepEqual(extractStartupLogs(header, 'x.user.js'), []);
 });
 
 test('validateHeader complains about no matching patterns', async () => {
@@ -302,15 +316,15 @@ test('extractStartupLogs warns about an unsupported @run-at', () => {
   const header = parseHeader(`// ==UserScript==
 // @name X
 // @match https://e/*
-// @run-at context-menu
+// @run-at document-ready
 // ==/UserScript==
 `);
   assert.deepEqual(extractStartupLogs(header, 'x.user.js'), [
-    { level: 'warn', message: unsupportedRunAtWarning('context-menu'), location: { file: 'x.user.js', line: 4 } },
+    { level: 'warn', message: unsupportedRunAtWarning('document-ready'), location: { file: 'x.user.js', line: 4 } },
   ]);
   assert.equal(
-    unsupportedRunAtWarning('context-menu'),
-    '@run-at context-menu is not supported. The script runs at document-idle instead.',
+    unsupportedRunAtWarning('document-ready'),
+    '@run-at document-ready is not supported. The script runs at document-idle instead.',
   );
   for (const runAt of ['document-start', 'document-body', 'document-end', 'Document-Idle']) {
     const ok = parseHeader(`// ==UserScript==\n// @name X\n// @match https://e/*\n// @run-at ${runAt}\n// ==/UserScript==\n`);
@@ -1260,13 +1274,20 @@ function legacyRow(over = {}) {
   return { ...row, ...over };
 }
 
+// `store.session` holds what the Log writes (`log:<id>` and friends).
 function stubStorage(rows) {
   const store = Object.fromEntries(rows.map((r) => [`script:${r.id}`, r]));
+  const session = {};
+  Object.defineProperty(store, 'session', { value: session });
   globalThis.chrome = {
     storage: {
       local: {
         get: async (key) => (key === null ? { ...store } : {}),
         set: async (obj) => { Object.assign(store, obj); },
+      },
+      session: {
+        get: async (keys) => Object.fromEntries(keys.filter((k) => k in session).map((k) => [k, session[k]])),
+        set: async (obj) => { Object.assign(session, obj); },
       },
     },
   };
@@ -1303,6 +1324,49 @@ test('backfillUsesUnsafeWindow is idempotent', async () => {
   assert.equal(await backfillUsesUnsafeWindow(), 1);
   assert.equal(await backfillUsesUnsafeWindow(), 0);
   assert.equal(store['script:script-1'].usesUnsafeWindow, true);
+});
+
+test('backfillHeaderProblems marks an installed row invalid when a newer check refuses it', async () => {
+  const text = `// ==UserScript==
+// @name        On demand
+// @match       https://example.com/*
+// @run-at      context-menu
+// ==/UserScript==
+`;
+  const store = stubStorage([
+    legacyRow({
+      id: 'menu',
+      text,
+      enabled: false,
+      startupLogs: [{ level: 'warn', message: 'old warning' }],
+      parseCheckedHash: 'h',
+      usesUnsafeWindow: true,
+      refreshError: 'old refresh failure',
+    }),
+    legacyRow({ id: 'plain', text: VALID_SCRIPT }),
+    // Already invalid: left as it is.
+    legacyRow({ id: 'broken', text, status: 'invalid', errorMessage: 'The file is empty' }),
+  ]);
+  assert.equal(await backfillHeaderProblems(), 1);
+  const menu = store['script:menu'];
+  assert.equal(menu.status, 'invalid');
+  assert.equal(menu.errorMessage, CONTEXT_MENU_UNSUPPORTED);
+  assert.equal(menu.errorLocation.line, 4);
+  // A disabled script is still marked, and stays disabled.
+  assert.equal(menu.enabled, false);
+  // Same shape as a freshly built invalid row.
+  for (const field of ['startupLogs', 'parseCheckedHash', 'usesUnsafeWindow', 'refreshError']) {
+    assert.equal(menu[field], undefined, field);
+  }
+  // The error reaches the Log, so the INVALID badge isn't over a Log
+  // that says nothing (or still holds the old warnings).
+  assert.deepEqual(store.session['log:menu'].map((e) => [e.level, e.state, e.message]), [
+    ['error', 'invalid', CONTEXT_MENU_UNSUPPORTED],
+  ]);
+  assert.equal(store['script:plain'].status, 'ok');
+  assert.equal(store['script:broken'].errorMessage, 'The file is empty');
+  assert.equal(store.session['log:broken'], undefined);
+  assert.equal(await backfillHeaderProblems(), 0);
 });
 
 test('backfillStartupLogs gives an installed row the warnings a newer check adds', async () => {

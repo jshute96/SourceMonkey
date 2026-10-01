@@ -239,9 +239,10 @@ export function hasTag(header: ParsedHeader, tag: string): boolean {
   return header.tags.some((e) => e.tag === t);
 }
 
-// The `@run-at` values we honor. Anything else (Tampermonkey's
-// `context-menu`, a typo) runs at `document-idle`: see
-// `normalizeDeclaredRunAt` in injector.ts.
+// The `@run-at` values we honor. Anything else (a typo) runs at
+// `document-idle`: see `normalizeDeclaredRunAt` in injector.ts. The
+// exception is `context-menu`, which `validateHeader` rejects instead
+// (see `CONTEXT_MENU_RUN_AT`).
 export const SUPPORTED_RUN_AT: readonly string[] = [
   'document-start',
   'document-body',
@@ -251,10 +252,22 @@ export const SUPPORTED_RUN_AT: readonly string[] = [
 
 // The script's declared `@run-at` when it is one we don't honor, so
 // the caller can say it runs at `document-idle` instead. Undefined when
-// the tag is absent, blank, or supported.
+// the tag is absent, blank, supported, or `context-menu` (an error,
+// not a fallback).
 export function unsupportedRunAt(header: ParsedHeader | null | undefined): string | undefined {
   if (!header) return undefined;
   const value = (getValue(header, 'run-at') ?? '').trim();
   if (value === '' || SUPPORTED_RUN_AT.includes(value.toLowerCase())) return undefined;
+  if (value.toLowerCase() === CONTEXT_MENU_RUN_AT) return undefined;
   return value;
+}
+
+// Tampermonkey's `@run-at context-menu`: don't run on page load, run
+// once from a right-click menu item instead. We have no such menu, and
+// running it on load would do an on-request action unprompted on every
+// matching page (often all pages), so the script is refused instead.
+export const CONTEXT_MENU_RUN_AT = 'context-menu';
+
+export function isContextMenuRunAt(header: ParsedHeader): boolean {
+  return (getValue(header, 'run-at') ?? '').trim().toLowerCase() === CONTEXT_MENU_RUN_AT;
 }

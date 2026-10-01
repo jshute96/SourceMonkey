@@ -76,6 +76,7 @@ import {
 import {
   getValue,
   getValues,
+  isContextMenuRunAt,
   parseHeader,
   splitHeaderBody,
   unsupportedRunAt,
@@ -410,7 +411,8 @@ export function noConnectWarning(grant: string): string {
     + 'Add @connect for each host it contacts, or @connect * to allow any host.';
 }
 
-// Said for a `@run-at` value we don't honor (`context-menu`, a typo).
+// Said for a `@run-at` value we don't honor (a typo). `context-menu`
+// is refused instead: see `CONTEXT_MENU_UNSUPPORTED`.
 export function unsupportedRunAtWarning(value: string): string {
   return `@run-at ${value} is not supported. The script runs at document-idle instead.`;
 }
@@ -579,6 +581,8 @@ export interface HeaderProblem {
 export const NO_NAME = 'No @name in the metadata block';
 export const NO_MATCH_OR_INCLUDE =
   'No @match or @include in the metadata block, so this script would never run on any page';
+export const CONTEXT_MENU_UNSUPPORTED =
+  '@run-at context-menu (run from the right-click menu) is not supported, so this script can\'t run';
 
 // Opens every parse-check verdict (`Syntax error: <what V8 said>`).
 // Exported for the same reason as the constants above: the corpus
@@ -608,6 +612,13 @@ export function validateHeader(header: ParsedHeader | null): HeaderProblem | nul
   const includes = getValues(header, 'include');
   if (matches.length === 0 && includes.length === 0) {
     return { message: NO_MATCH_OR_INCLUDE, line };
+  }
+  // Refused rather than run at load: see `CONTEXT_MENU_RUN_AT`.
+  if (isContextMenuRunAt(header)) {
+    return {
+      message: CONTEXT_MENU_UNSUPPORTED,
+      line: headerTagLine(header, 'run-at', (getValue(header, 'run-at') ?? '').trim()) ?? line,
+    };
   }
   // Patterns Chrome's grammar refuses are dropped rather than run (see
   // `matchPatternProblem`), so a script whose every `@match` is one of
@@ -2790,6 +2801,42 @@ export async function backfillStartupLogs(): Promise<number> {
   const changed = Object.keys(toSet).length;
   if (changed > 0) await writeLocal(toSet);
   return changed;
+}
+
+// Re-run all of `validateHeader` on stored `ok` rows, so a header check
+// added in an update (e.g. refusing `@run-at context-menu`) stops
+// scripts already installed rather than only new or changed ones. Same
+// reason as the backfills above: an unchanged script's row is never
+// rebuilt. Writes only rows that now fail; returns how many.
+//
+// Each flipped row gets its error in the Log here: the boot replay
+// runs on the same wake and may have read the row while it was still
+// `ok`, which would leave an INVALID badge over a Log that says nothing.
+export async function backfillHeaderProblems(): Promise<number> {
+  const scripts = await getAllScripts();
+  const toSet: Record<string, unknown> = {};
+  for (const script of scripts) {
+    if (script.status !== 'ok') continue;
+    const problem = validateHeader(script.header);
+    if (!problem) continue;
+    const next: StoredScript = { ...script, status: 'invalid' };
+    setScriptError(next, problem.message, locationIn(script.relativePath, problem.line));
+    // Same shape as a freshly built invalid row (see
+    // `buildScriptFromText`): no startup logs, parse verdict or world
+    // flag, and no stale refresh failure competing with the error.
+    delete next.startupLogs;
+    delete next.parseCheckedHash;
+    delete next.usesUnsafeWindow;
+    delete next.refreshError;
+    toSet[scriptKey(script.id)] = next;
+  }
+  const flipped = Object.values(toSet) as StoredScript[];
+  if (flipped.length > 0) await writeLocal(toSet);
+  for (const row of flipped) {
+    const entry = loadStateLogEntry(row);
+    if (entry) await appendScriptLog(row.id, { ...entry, source: 'extension-update' });
+  }
+  return flipped.length;
 }
 
 // Reorder the collections index by moving the given collection one

@@ -266,6 +266,16 @@ gates, or the emitted wrap — the rate is the regression signal.
   (`data:application/javascript,%3Bwindow.Vue%3DVue%3B…`). Cheap to
   support for the `application/javascript` form, since the bytes are
   in the ref and no fetch is involved.
+- **`@run-at context-menu` scripts are refused** (2 in the corpus).
+  - Real support would be a `chrome.contextMenus` item that injects the
+    script once into the current tab.
+  - Until then, one rough edge: a script installed from a URL whose
+    upstream copy *adds* `@run-at context-menu` keeps its last good
+    copy running on page load, flagged REFRESH FAILED with "Fetched
+    copy is not a valid userscript". That rule exists for login or
+    error pages served in place of a script, and its wording is wrong
+    for a valid Tampermonkey script. Accepted for now: it's the last
+    good copy, and the case is rare.
 
 ## Cross-manager coverage
 

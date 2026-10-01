@@ -138,6 +138,10 @@ keys would look like a wiped profile.
     was parsed. A reworded message therefore reaches an existing row
     only on its next content change; nothing compares these strings,
     so the staleness is cosmetic.
+  - Header checks themselves are re-applied, though:
+    `backfillHeaderProblems` re-runs all of `validateHeader` on `ok`
+    rows on each `onInstalled`, so a script a newer check refuses (e.g.
+    `@run-at context-menu`) stops running, with its error in the Log.
   - `startupLogs` (the parse-time warnings, which the boot replay
     re-emits verbatim) are different: `backfillStartupLogs` re-derives
     them for all `ok` rows on each `onInstalled`, so a new or reworded
@@ -467,7 +471,8 @@ Every load path goes through the same pipeline:
 3. For each fetched file run, in order:
    - `splitHeaderBody` (see [script-viewer.md](script-viewer.md))
    - `parseHeader`
-   - `validateHeader` (`@name` + match/include present)
+   - `validateHeader` (`@name` + match/include present, no
+     `@run-at context-menu`)
    - `distillMatching` (extract `@match`/`@exclude`/`@include`)
    - `buildScriptFromText` (assemble the `StoredScript`). If the
      freshly fetched bytes hash to the prior row's `contentHash`,

@@ -201,8 +201,9 @@ export interface ActiveSpecs {
 // document_end into the post-load injection burst. See `waitForRunAt`
 // in `userscript-prelude.js`.
 //
-// Anything else (`context-menu`, a typo) runs at `document-idle`;
-// `extractStartupLogs` warns about it.
+// Anything else (a typo) runs at `document-idle`; `extractStartupLogs`
+// warns about it. `@run-at context-menu` never gets here:
+// `validateHeader` refuses the script.
 export function normalizeDeclaredRunAt(value: string | undefined): string {
   const v = (value ?? '').trim().toLowerCase();
   return SUPPORTED_RUN_AT.includes(v) ? v : 'document-idle';

@@ -1552,7 +1552,7 @@ async function filesStamp(script: PreparedScript): Promise<string> {
 }
 
 // The `Injected` line's run-at, naming a declared value we don't
-// honor (`context-menu`) so a run shows why the script ran at load.
+// honor (a typo) so a run shows why the script ran at load.
 function runAtLabel(script: PreparedScript): string {
   const declared = unsupportedRunAt(script.script.header);
   return declared === undefined ? script.runAt : `${script.runAt} (@run-at ${declared} is not supported)`;
