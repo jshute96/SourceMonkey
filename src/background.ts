@@ -301,7 +301,7 @@ interface SourceMonkeyApi {
   // the run's tabs, null for none. `renewRun` extends the run's claims
   // and its event subscription, and changes `allow` when given.
   claimTab: (tabId: number, runId: string, allow: string[] | null, ttlMs: number) => Promise<void>;
-  renewRun: (runId: string, ttlMs: number, allow: string[] | null, tabs?: { tabId: number; scriptsOff?: boolean }[]) => Promise<number>;
+  renewRun: (runId: string, ttlMs: number, allow: string[] | null, tabs?: { tabId: number; scriptsOff?: boolean }[], subscribe?: boolean) => Promise<number>;
   releaseRun: (runId: string) => Promise<void>;
   setTabScriptsOff: (tabId: number, off: boolean) => Promise<void>;
   // The scripts the toolbar badge lists for a tab's current document,
@@ -2321,7 +2321,12 @@ async function handleCheckPending(
   // started can't let a script through.
   await claimsReady();
   const claim = activeClaim(tabId);
-  if (claim && !claimAllows(claim, payload.id)) return { action: 'skip', reason: SKIP_REASON_SM_DEV };
+  // Only for the extension's own scripts: a harness run's MAIN-world
+  // script asks through this bridge too, and must hear `run`, as it
+  // always did for an id the extension doesn't know.
+  if (claim && !claimAllows(claim, payload.id) && await getScript(payload.id)) {
+    return { action: 'skip', reason: SKIP_REASON_SM_DEV };
+  }
   // "Reload page with no userscripts" — decided per tab, ahead of the
   // fast path, and for every frame: a subframe's documentId is its
   // own, so the tab-level marker is the only thing that covers it.

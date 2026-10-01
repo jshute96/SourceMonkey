@@ -104,6 +104,9 @@ or use --temp-browser`.
   [Testing in the real extension](#testing-in-the-real-extension)).
 - If the person already has a browser on the port, use it: their tabs
   are left alone, and only the run's own tabs are touched.
+  - If it has SourceMonkey installed, the run keeps SourceMonkey's own
+    scripts out of the run's tabs, so only the scripts you started run
+    there.
 
 The headless `--temp-browser` is often blocked by large sites (Reddit,
 Google, Amazon, Vimeo, IMDb, parts of YouTube).

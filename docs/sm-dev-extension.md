@@ -160,9 +160,17 @@ sm-dev knows a tab by its CDP target id; the extension knows it by its
   blank, claims them as above, then loads the URL
   (`AttachOptions.claimOpenedTab` in inject.ts).
 - A harness run claims only when the browser has SourceMonkey installed
-  and enabled. Its bridge also ignores page-world messages about
-  scripts it didn't inject: those are SourceMonkey's own, and answering
-  `run` would beat the extension's `skip`.
+  and enabled, and the run has scripts. It doesn't subscribe to the
+  extension's events.
+- Both bridges hear a page-world script's messages, so each leaves the
+  other's scripts alone:
+  - the harness's ignores messages about scripts it never injected
+    (SourceMonkey's own), whose `run` would beat the extension's
+    `skip`;
+  - the extension applies a claim only to its own scripts, so a harness
+    page-world script still hears `run` from it.
+- A harness run's failed claim is said, and the run goes on: the tab
+  may then also run SourceMonkey's scripts.
 - Tabs the person opens: never claimed, in any browser, a
   `--temp-browser` included (another sm-dev can connect to its port
   too). They run whatever the extension has, as in normal browsing.

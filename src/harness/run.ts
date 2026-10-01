@@ -20,7 +20,7 @@ import {
   type CommandRunner, type ConsoleContext, type ControlledTab, type OutputHistory,
 } from './console-commands.js';
 import { DevToolsLink } from './devtools.js';
-import { extensionLabel, sourceMonkeyState } from './extension-backend.js';
+import { extensionLabel, sourceMonkeyState, type ExtensionState } from './extension-backend.js';
 import { ExtensionHost } from './extension-host.js';
 import { launchExtensionBrowser } from './extension-launch.js';
 import { EXTENSION_TOO_OLD, ExtensionLink, type ExtensionEvent } from './extension-link.js';
@@ -489,7 +489,8 @@ export async function run(opts: RunOptions): Promise<number> {
   if (!session) return 1;
   // Which browser, for the stream and the log.
   const browserIs = { browser: session.endpoint, owned: session.launched, headless: session.headless };
-  const extension = extensionLabel(await sourceMonkeyState(session.endpoint));
+  const extensionState = await sourceMonkeyState(session.endpoint);
+  const extension = extensionLabel(extensionState);
   opts.out(`[sm-dev] ${capitalized(browserSentence(browserIs, session.launched ? 'launched' : 'connected to'))} (Chrome ${session.browser.version()}${extension ? `, ${extension}` : ''})`);
   opts.onConnected?.();
   // Only a run that waits for commands can be sent any.
@@ -516,7 +517,7 @@ export async function run(opts: RunOptions): Promise<number> {
   });
   const held: Held = {};
   try {
-    return await runInHarness(opts, session, held, remote);
+    return await runInHarness(opts, session, held, remote, extensionState);
   } finally {
     ending = true;
     // No sent command runs against tabs being let go.
@@ -753,6 +754,8 @@ async function runInHarness(
   session: RunSession,
   held: Held,
   remote: Remote,
+  // Whether the browser has SourceMonkey, as the run's first line says.
+  extensionState: ExtensionState | null,
 ): Promise<number> {
   const { page } = session;
   // With `--extension`, the real extension runs the scripts: the run
@@ -784,7 +787,9 @@ async function runInHarness(
   let claims: ExtensionLink | null = null;
   if (link) {
     if (opts.files.length > 0) claims = link;
-  } else {
+  } else if (opts.files.length > 0 && extensionState === 'installed') {
+    // A run with no scripts leaves the tabs to SourceMonkey, as an
+    // extension run does.
     claims = await harnessClaims(session, remote.id, opts.out);
     if (claims) held.extension = claims;
   }
@@ -810,7 +815,7 @@ async function runInHarness(
   // T1, unless `--notab`; then the first tab `newtab` opens is T1.
   if (page) {
     // Claimed first, before it loads the run's page.
-    const tabId = claims ? await claimTab(claims, page, opts.out) : undefined;
+    const tabId = claims ? await claimTab(claims, page, link === null, opts.out) : undefined;
     // An extension run can't do without it; a harness run goes on.
     if (link && claims && tabId === undefined) return 1;
     wirePageOutput(page, opts, true);
@@ -998,8 +1003,6 @@ async function runInHarness(
     for (const { tab, url } of opened) tabs.announce(tab, url);
     await Promise.all([
       ...(t1 && urls[0] ? [tabs.navigate(t1, urls[0])] : []),
-      // A claimed T1 with nowhere to go leaves the extension's page.
-      ...(t1 && !urls[0] && claims ? [t1.page.goto('about:blank').then(() => undefined, () => undefined)] : []),
       ...opened.map(({ tab, url }) => tabs.navigate(tab, url)),
     ]);
     printSkipped(opts, start);
@@ -1081,24 +1084,28 @@ async function runInHarness(
   return host.reports.errors.length === 0 ? 0 : 1;
 }
 
-// Claims `page`'s tab for an extension run (see `ExtensionLink.claimPage`).
-// Undefined, having said why, when it can't be.
-async function claimTab(link: ExtensionLink, page: Page, out: (line: string) => void): Promise<number | undefined> {
+// Claims `page`'s tab for the run (see `ExtensionLink.claimPage`).
+// Undefined, having said why, when it can't be. `harness`: a harness
+// run's claim, which the run goes on without.
+async function claimTab(link: ExtensionLink, page: Page, harness: boolean, out: (line: string) => void): Promise<number | undefined> {
   try {
     return await link.claimPage(page);
   } catch (err) {
-    out(`[sm-dev] The tab could not be set up for the run: ${(err as Error).message}`);
+    const message = (err as Error).message;
+    out(harness
+      ? `[sm-dev] SourceMonkey's own scripts may also run in the tab, since it couldn't be claimed for the run: ${message}`
+      : `[sm-dev] The tab could not be set up for the run: ${message}`);
     return undefined;
   }
 }
 
-// A harness run's claims, when the browser has SourceMonkey, so its
-// scripts stay out of the run's tabs. Null when there is none, or it
-// can't be reached (said once, since its scripts may then also run).
+// A harness run's claims, in a browser with SourceMonkey, so its
+// scripts stay out of the run's tabs. Null when it can't be reached
+// (said once, since its scripts may then also run). It hears no events:
+// the harness reports on its own scripts itself.
 async function harnessClaims(session: RunSession, runId: string | undefined, out: (line: string) => void): Promise<ExtensionLink | null> {
-  if (await sourceMonkeyState(session.endpoint) !== 'installed') return null;
   try {
-    return await ExtensionLink.open(session.context, runId ?? randomBytes(4).toString('hex'), null);
+    return await ExtensionLink.open(session.context, runId ?? randomBytes(4).toString('hex'), null, { events: false });
   } catch (err) {
     const message = (err as Error).message;
     out(message === EXTENSION_TOO_OLD
@@ -1330,8 +1337,6 @@ class FollowedTabs {
     if (saved) await serveSavedPage(tab, saved, this.opts.out, noScript || this.scripts.length === 0);
     this.announce(tab, url);
     if (url) await this.navigate(tab, url);
-    // A claimed tab with nowhere to go leaves the extension's page.
-    else if (this.claims) await tab.page.goto('about:blank').catch(() => undefined);
     return tab;
   }
 
@@ -1346,7 +1351,7 @@ class FollowedTabs {
       const page = await this.context.newPage();
       this.notOpenedByScripts.add(page);
       try {
-        const tabId = this.claims ? await this.claims.claimPage(page, noScript && this.link !== null) : undefined;
+        const tabId = this.claims ? await this.claimNew(page, n, noScript) : undefined;
         await this.setUp(page, n, undefined, false, noScript, tabId);
       } catch (err) {
         // Nothing controls it, so it would only be in the way.
@@ -1489,6 +1494,18 @@ class FollowedTabs {
     // Once done, so a failed switch leaves the tab as it was for `load`
     // and `update`.
     tab.noScript = noScript;
+  }
+
+  // Claims a new tab for the run. An extension run can't do without
+  // it, so its failure fails the tab; a harness run's says so and goes on.
+  private async claimNew(page: Page, n: number, noScript: boolean): Promise<number | undefined> {
+    if (this.link) return this.claims!.claimPage(page, noScript);
+    try {
+      return await this.claims!.claimPage(page);
+    } catch (err) {
+      this.opts.out(`[sm-dev] SourceMonkey's own scripts may also run in T${n}, since it couldn't be claimed for the run: ${(err as Error).message}`);
+      return undefined;
+    }
   }
 
   /**

@@ -20,6 +20,7 @@ import type { BrowserContext, Dialog, Page } from '@playwright/test';
 
 import { CommandAssembler } from './command-lines.js';
 import { extensionLabel, type ExtensionState } from './extension-backend.js';
+import { firstLine } from './extension-link.js';
 import type { HarnessHost, MenuCommandRecord } from './host.js';
 import type { PageAttachment } from './inject.js';
 import { parseCommandArgs, splitWords, unquoteWhole, type ParsedArgs } from './command-args.js';
@@ -1587,7 +1588,14 @@ async function pickOther(ctx: ConsoleContext, label: string, tab: ControlledTab 
     ctx.out(`[sm-dev] ERROR: ${name} names one of SourceMonkey's own scripts, and only an --extension run has those`);
     return null;
   }
-  if (!ctx.others.byLabel(name) && tab) await ctx.others.onTab(tab).catch(() => undefined);
+  if (!ctx.others.byLabel(name) && tab) {
+    try {
+      await ctx.others.onTab(tab);
+    } catch (err) {
+      ctx.out(`[sm-dev] SourceMonkey's own scripts on ${tabName(tab)} could not be listed: ${firstLine(err)}`);
+      return null;
+    }
+  }
   const found = ctx.others.byLabel(name);
   if (!found) ctx.out(`[sm-dev] There is no script ${name}. Use scripts to list them.`);
   return found ?? null;
@@ -1620,7 +1628,7 @@ async function otherLines(ctx: ConsoleContext, tab: ControlledTab | undefined): 
   try {
     others = await ctx.others.onTab(tab);
   } catch (err) {
-    return [`[sm-dev] SourceMonkey's own scripts on ${tabName(tab)} could not be listed: ${(err as Error).message}`];
+    return [`[sm-dev] SourceMonkey's own scripts on ${tabName(tab)} could not be listed: ${firstLine(err)}`];
   }
   if (others.length === 0) return [];
   return [

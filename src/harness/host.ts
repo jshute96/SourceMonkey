@@ -251,6 +251,8 @@ export type RequestInterceptor = (
 
 export class HarnessHost extends EventEmitter<HostEventMap> {
   private readonly scripts = new Map<string, PreparedScript>();
+  // Every script id `addScript` has had; never shrinks (see `hasHosted`).
+  private readonly everHosted = new Set<string>();
   /**
    * Answers a `GM_xmlhttpRequest` from the test instead of the network
    * when it returns an event: a synthetic failure to force a script down
@@ -311,6 +313,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
     if (!prepared.spec) throw new Error(`Cannot host an invalid script: ${prepared.diagnostic}`);
     const id = prepared.spec.id;
     this.scripts.set(id, prepared);
+    this.everHosted.add(id);
     let set = this.owners.get(id);
     if (!set) {
       set = new Set();
@@ -328,6 +331,15 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
     if (set.size > 0) return;
     this.owners.delete(scriptId);
     this.scripts.delete(scriptId);
+  }
+
+  /**
+   * Whether the script was ever injected through this host: one removed
+   * since may still be running in a page it was injected into, until
+   * that page loads again.
+   */
+  hasHosted(scriptId: string): boolean {
+    return this.everHosted.has(scriptId);
   }
 
   hasScript(scriptId: string): boolean {

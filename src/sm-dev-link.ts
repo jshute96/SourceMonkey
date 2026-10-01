@@ -125,9 +125,9 @@ export interface RunTab {
  * `tabs` are the tabs the run holds. One whose claim is gone (it ran
  * out while the worker was stopped, or an extension reload cleared the
  * session storage) is claimed again, if the tab is still open. Returns
- * how many were.
+ * how many were. `subscribe`: the run hears the extension's events.
  */
-export async function renewRun(runId: string, ttlMs: number, allow: string[] | null, tabs: RunTab[] = []): Promise<number> {
+export async function renewRun(runId: string, ttlMs: number, allow: string[] | null, tabs: RunTab[] = [], subscribe = true): Promise<number> {
   await claimsReady();
   const expires = Date.now() + ttlMs;
   for (const claim of claims.values()) {
@@ -143,7 +143,8 @@ export async function renewRun(runId: string, ttlMs: number, allow: string[] | n
     claims.set(tab.tabId, { runId, allow, expires, ...(tab.scriptsOff ? { scriptsOff: true } : {}) });
     restored++;
   }
-  subscribers.set(runId, expires);
+  // A run that only claims (a harness run) hears no events.
+  if (subscribe) subscribers.set(runId, expires);
   persist();
   return restored;
 }

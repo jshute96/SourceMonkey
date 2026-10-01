@@ -795,10 +795,10 @@ export class PageAttachment implements PageLink {
         throw err;
       }
       if (opened && claim) {
-        // Not waited for: the script gets its tab back now, as it would
-        // with no claim, and the scripts are injected as it loads.
+        // Until it commits, so the run sets it up at its own page; the
+        // scripts are injected into it as it loads.
         await claim(opened).catch(() => undefined);
-        void opened.goto(url).catch(() => undefined);
+        await opened.goto(url, { waitUntil: 'commit' }).catch(() => undefined);
       }
       if (opened && active) await opened.bringToFront().catch(() => undefined);
       return opened;
@@ -855,7 +855,7 @@ export class PageAttachment implements PageLink {
     const fields = payload as Record<string, unknown>;
     const about = typeof fields.scriptId === 'string' ? fields.scriptId
       : WRAPPER_REPORTS.has(String(fields.type)) && typeof fields.id === 'string' ? fields.id : '';
-    if (origin === 'page' && about && !this.host.hasScript(about)) return;
+    if (origin === 'page' && about && !this.host.hasHosted(about)) return;
     // A listener on the host that throws must not become an unhandled
     // rejection here, and the page still gets an answer: the extension's
     // bridge always replies, and `{action: 'run'}` is its fallback too.

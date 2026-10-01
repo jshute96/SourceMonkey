@@ -65,6 +65,9 @@ export class ExtensionLink {
     readonly runId: string,
     allow: string[] | null,
     private readonly workerUrl: string,
+    // Subscribed to the extension's events. A harness run, which only
+    // claims, isn't.
+    private readonly events: boolean,
   ) {
     this.allow = allow;
   }
@@ -76,9 +79,9 @@ export class ExtensionLink {
    * push), null for none. Throws `EXTENSION_TOO_OLD` for an extension
    * without the calls this needs.
    */
-  static async open(context: BrowserContext, runId: string, allow: string[] | null): Promise<ExtensionLink> {
+  static async open(context: BrowserContext, runId: string, allow: string[] | null, { events = true } = {}): Promise<ExtensionLink> {
     const workerUrl = `chrome-extension://${await sourceMonkeyExtensionId()}/background.js`;
-    const link = new ExtensionLink(context, runId, allow, workerUrl);
+    const link = new ExtensionLink(context, runId, allow, workerUrl, events);
     const worker = await findExtensionWorker(context);
     const missing = await worker.evaluate((names) => {
       const api = (self as unknown as { SourceMonkey?: Record<string, unknown> }).SourceMonkey ?? {};
@@ -174,9 +177,9 @@ export class ExtensionLink {
   /**
    * Claims `page`'s tab for the run before it loads the run's page: it
    * visits a page of the extension, which can read its own tab id, and
-   * the claim is recorded before this returns. Leaves the tab on that
-   * page. Returns the tab's id. Throws an error naming the step that
-   * failed.
+   * the claim is recorded before this returns. Leaves the tab blank
+   * (`about:blank`), for the run to load its page in. Returns the tab's
+   * id. Throws an error naming the step that failed.
    */
   async claimPage(page: Page, scriptsOff = false): Promise<number> {
     try {
@@ -191,6 +194,7 @@ export class ExtensionLink {
     { id: tabId, runId: this.runId, allow: this.allow, ttl: LEASE_MS });
     if (scriptsOff) await this.setTabScriptsOff(tabId, true);
     this.tabs.set(tabId, { scriptsOff });
+    await page.goto('about:blank').catch(() => undefined);
     return tabId;
   }
 
@@ -231,9 +235,9 @@ export class ExtensionLink {
   // claims had to be made again.
   private renewIn(worker: Worker): Promise<number> {
     const tabs = [...this.tabs].map(([tabId, t]) => ({ tabId, scriptsOff: t.scriptsOff }));
-    return worker.evaluate(({ runId, ttl, allow, held }) =>
-      (self as unknown as { SourceMonkey: Api }).SourceMonkey.renewRun(runId, ttl, allow, held),
-    { runId: this.runId, ttl: LEASE_MS, allow: this.allow, held: tabs });
+    return worker.evaluate(({ runId, ttl, allow, held, events }) =>
+      (self as unknown as { SourceMonkey: Api }).SourceMonkey.renewRun(runId, ttl, allow, held, events),
+    { runId: this.runId, ttl: LEASE_MS, allow: this.allow, held: tabs, events: this.events });
   }
 
   async push(text: string, name: string): Promise<PushResult> {
@@ -281,8 +285,8 @@ export class ExtensionLink {
   }
 }
 
-// An error's first line, without the call Playwright names at its start.
-function firstLine(err: unknown): string {
+/** An error's first line, without the call Playwright names at its start. */
+export function firstLine(err: unknown): string {
   const line = (err as Error).message.split('\n')[0].replace(/^[\w.]+: /, '');
   return line.charAt(0).toUpperCase() + line.slice(1);
 }
@@ -290,7 +294,7 @@ function firstLine(err: unknown): string {
 // The part of the worker's `self.SourceMonkey` this file calls.
 interface Api {
   claimTab(tabId: number, runId: string, allow: string[] | null, ttlMs: number): Promise<void>;
-  renewRun(runId: string, ttlMs: number, allow: string[] | null, tabs: { tabId: number; scriptsOff?: boolean }[]): Promise<number>;
+  renewRun(runId: string, ttlMs: number, allow: string[] | null, tabs: { tabId: number; scriptsOff?: boolean }[], subscribe: boolean): Promise<number>;
   releaseRun(runId: string): Promise<void>;
   setTabScriptsOff(tabId: number, off: boolean): Promise<void>;
   writeScratchScript(args: { text: string; name?: string }): Promise<PushResult>;

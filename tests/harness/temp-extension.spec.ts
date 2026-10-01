@@ -176,12 +176,21 @@ test('a harness run in a browser with SourceMonkey keeps its scripts out of the 
         if (location.pathname.endsWith('target.html')) GM_openInTab(location.href.replace('target.html', 'other.html'));
       `,
     });
-    const { lines, left } = await driveCli(['--cdp', launched.endpoint, 'start', file, `${fixtureServer.baseUrl}/target.html`], [
+    // A page-world one too: SourceMonkey's bridge hears its messages, and
+    // must still let it run.
+    const main = scriptsDir.write({
+      relativePath: 'main.user.js',
+      meta: { name: 'Main', match: ['*://*/target.html'], grant: ['none'] },
+      body: `console.log('[main] ran');`,
+    });
+    const { lines, left } = await driveCli(['--cdp', launched.endpoint, 'start', file, main, `${fixtureServer.baseUrl}/target.html`], [
       ['[mine] other is out on /other.html', 'stop'],
     ]);
     const text = lines.join('\n');
     expect(left, text).toEqual([]);
     expect(text).toContain('[mine] other is out on /target.html');
+    expect(text).toContain('[main] ran');
+    expect(text).not.toMatch(/Main skipped on \S+target\.html/);
   } finally {
     await launched.close();
   }

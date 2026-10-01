@@ -332,7 +332,8 @@ Any Chromium started with
 
 - The run keeps SourceMonkey's own scripts out of the tabs it opens
   (and the tabs those open), so only the run's scripts run there. They
-  run there again once the run ends.
+  run there again from the tab's next load after the run ends.
+- A run with no scripts leaves its tabs to SourceMonkey.
 - Your other tabs are left alone.
 - In those tabs, SourceMonkey's toolbar icon has a cyan **T** in its
   corner, its badge counts none of its scripts, and its right-click
