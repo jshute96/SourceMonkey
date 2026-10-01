@@ -454,7 +454,7 @@ extension, driven by the Node host in `src/harness/`.
 | `tests/harness/browser-launch.spec.ts` | `sm-dev --open-browser`: a browser that outlives sm-dev, started once, and its profile's lock |
 | `tests/harness/run-remote.spec.ts` | `sm-dev start` driven from other shells: `--detach`, `--run`, `--` lines, sent commands, logs, `--devtools`, stuck tabs |
 | `tests/harness/tab-badge.spec.ts` | The favicon badge: count and colors, the site's icon under it, grey when released or unpinged, a tab taken over |
-| `tests/harness/temp-extension.spec.ts` | `sm-dev --temp-browser start --extension`: the loaded extension runs the script, and the run's commands work |
+| `tests/harness/temp-extension.spec.ts` | sm-dev with the real extension: `--extension` runs and their commands, its own scripts (E1), and a harness run keeping them out |
 | `tests/harness/extension-state.spec.ts` | Whether sm-dev sees SourceMonkey in a browser: loaded unpacked, absent, or no browser to ask |
 | `tests/harness/fixture.spec.ts` | The consumer fixture from `lib/`: a script against a served page, `gm` and `reports`, the up-front URL check, the explained miss |
 

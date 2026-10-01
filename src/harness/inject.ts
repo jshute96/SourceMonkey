@@ -31,7 +31,9 @@
 import type { CDPSession, Page, Request } from '@playwright/test';
 
 import { WRAPPER_GM_RUNTIME } from '../generated-wrappers.js';
-import { setUserAgentDataSnapshot } from '../injector.js';
+import {
+  setUserAgentDataSnapshot, SM_ABANDONED_MSG, SM_CHECK_PENDING_MSG, SM_ERROR_MSG, SM_START_MSG, SM_SWAPPED_MSG,
+} from '../injector.js';
 import { GM_RUNTIME_SOURCE_URL } from '../script-source-url.js';
 import type { BrowserActions, HarnessHost, OpenedTab, PageLink } from './host.js';
 import type { InjectionWorld, PreparedScript } from './prepare.js';
@@ -248,6 +250,12 @@ export interface AttachOptions {
    * `extensionOrigin` names that world: `chrome-extension://<id>`.
    */
   watchOnly?: { extensionOrigin: string };
+  /**
+   * Run on each tab the page's scripts open (`GM_openInTab`) before it
+   * loads: it opens blank, this runs, then the URL loads. A harness
+   * run claims it here, so SourceMonkey's own scripts stay out of it.
+   */
+  claimOpenedTab?: (page: Page) => Promise<void>;
 }
 
 export interface InjectOptions {
@@ -266,6 +274,10 @@ interface Injected {
   /** The document it was also run in at once (`immediately`), if any. */
   into?: BadgeDocument;
 }
+
+// The wrapper's messages that name their script by `id`; the rest name
+// it by `scriptId`, and an `id` of theirs is a request's.
+const WRAPPER_REPORTS = new Set([SM_CHECK_PENDING_MSG, SM_START_MSG, SM_ERROR_MSG, SM_ABANDONED_MSG, SM_SWAPPED_MSG]);
 
 // Pages that already have an attachment. A second attachment on the
 // same page would replace the binding and skip the listener (the live
@@ -768,8 +780,9 @@ export class PageAttachment implements PageLink {
       // never attached to just to ask their id: under `sm-dev start` they
       // are the developer's own tabs.
       const before = new Set(this.page.context().pages());
+      const claim = this.options.claimOpenedTab;
       const { targetId } = await browserSession.send('Target.createTarget', {
-        url,
+        url: claim ? 'about:blank' : url,
         browserContextId: targetInfo.browserContextId,
         background: !active,
       });
@@ -780,6 +793,12 @@ export class PageAttachment implements PageLink {
         // Never found, so nothing else would close it.
         await browserSession.send('Target.closeTarget', { targetId }).catch(() => undefined);
         throw err;
+      }
+      if (opened && claim) {
+        // Not waited for: the script gets its tab back now, as it would
+        // with no claim, and the scripts are injected as it loads.
+        await claim(opened).catch(() => undefined);
+        void opened.goto(url).catch(() => undefined);
       }
       if (opened && active) await opened.bringToFront().catch(() => undefined);
       return opened;
@@ -829,6 +848,14 @@ export class PageAttachment implements PageLink {
     }
     const payload = envelope?.payload;
     if (!payload || typeof payload !== 'object') return;
+    // A page-world message about a script the harness didn't inject is
+    // SourceMonkey's own, in the same browser: its bridge answers it.
+    // Answering too would race it, and a `run` here would beat the
+    // extension's `skip` for a tab the run claimed.
+    const fields = payload as Record<string, unknown>;
+    const about = typeof fields.scriptId === 'string' ? fields.scriptId
+      : WRAPPER_REPORTS.has(String(fields.type)) && typeof fields.id === 'string' ? fields.id : '';
+    if (origin === 'page' && about && !this.host.hasScript(about)) return;
     // A listener on the host that throws must not become an unhandled
     // rejection here, and the page still gets an answer: the extension's
     // bridge always replies, and `{action: 'run'}` is its fallback too.

@@ -328,6 +328,16 @@ sm-dev --open-browser --cdp 9300                # another one, on port 9300
 Any Chromium started with
 `--remote-debugging-port`. Point sm-dev at it with `--cdp`.
 
+### A browser with SourceMonkey installed
+
+- The run keeps SourceMonkey's own scripts out of the tabs it opens
+  (and the tabs those open), so only the run's scripts run there. They
+  run there again once the run ends.
+- Your other tabs are left alone.
+- With an older SourceMonkey, the run says once that its scripts may
+  also run in the run's tabs.
+- How it works: [sm-dev-extension.md](sm-dev-extension.md#tab-claims).
+
 ### Choosing the browser: `--cdp`
 
 - `--cdp` takes a URL, a `host:port` (`http://` is added), or just a

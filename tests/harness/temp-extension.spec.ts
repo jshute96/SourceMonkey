@@ -134,7 +134,8 @@ test('the extension\'s own scripts on the tab are E1, ..., kept out, and their v
       ['Mine started on', 'scripts'],
       ['E1: Other', 'values E1'],
       ['seen = 1', 'scripts E1'],
-      ['Using E1: Other', 'set seen --force 2'],
+      ['Using E1: Other', 'scripts'],
+      ['* E1: Other', 'set seen --force 2'],
       ['Set seen', 'get seen'],
       // Not a throwaway browser, so without --force it refuses (which
       // ends a --stdin run).
@@ -142,10 +143,45 @@ test('the extension\'s own scripts on the tab are E1, ..., kept out, and their v
     ]);
     const text = lines.join('\n');
     expect(left, text).toEqual([]);
-    expect(text).toContain('Add --force to do it');
+    expect(text).toContain('add --force after the key: set seen --force <json>');
+    // The picked one is marked, and the run's own script isn't.
+    expect(text).toMatch(/\* E1: Other \(Scratch\)/);
     // Kept out of the run's tab: only the run's own script ran there.
     expect(text).toContain('Kept out of the run\'s tabs');
     expect(text).not.toContain('other ran');
+  } finally {
+    await launched.close();
+  }
+});
+
+test('a harness run in a browser with SourceMonkey keeps its scripts out of the run\'s tabs', async ({ fixtureServer, scriptsDir }) => {
+  test.setTimeout(90_000);
+  const launched = await launchExtensionBrowser(false);
+  try {
+    const browser = await chromium.connectOverCDP(launched.endpoint);
+    const backend = await ExtensionBackend.connect(browser.contexts()[0]);
+    // An installed script that marks every fixture page it runs on.
+    await backend.push(renderUserscript({
+      relativePath: 'other.user.js',
+      meta: { name: 'Other', match: ['*://*/target.html', '*://*/other.html'], runAt: 'document-start' },
+      body: `document.documentElement.dataset.other = 'ran';`,
+    }), 'other.user.js');
+    await browser.close();
+
+    const file = scriptsDir.write({
+      relativePath: 'mine.user.js',
+      meta: { name: 'Mine', match: ['*://*/target.html', '*://*/other.html'], grant: ['GM_openInTab'] },
+      body: `
+        console.log('[mine] other is ' + (document.documentElement.dataset.other ?? 'out') + ' on ' + location.pathname);
+        if (location.pathname.endsWith('target.html')) GM_openInTab(location.href.replace('target.html', 'other.html'));
+      `,
+    });
+    const { lines, left } = await driveCli(['--cdp', launched.endpoint, 'start', file, `${fixtureServer.baseUrl}/target.html`], [
+      ['[mine] other is out on /other.html', 'stop'],
+    ]);
+    const text = lines.join('\n');
+    expect(left, text).toEqual([]);
+    expect(text).toContain('[mine] other is out on /target.html');
   } finally {
     await launched.close();
   }

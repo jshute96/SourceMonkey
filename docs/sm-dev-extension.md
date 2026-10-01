@@ -8,10 +8,9 @@ two backends:
 - **Extension** (`--extension`): the scripts are pushed into the real
   SourceMonkey as scratch scripts, and the extension runs them.
 
-Status: being built. Done: the shared commands, tab claims for
-extension runs, the event stream, and the extension's other scripts
-(E1, ...). Not yet: claims in harness runs, retiring `--solo`, and the
-icon marker. User-facing behavior is in
+Status: being built. Done: the shared commands, tab claims (in both
+kinds of run), the event stream, and the extension's other scripts
+(E1, ...). Not yet: retiring `--solo`, and the icon marker. User-facing behavior is in
 [harness-guide.md](harness-guide.md#the-extension-backend).
 
 ## Goals
@@ -100,9 +99,9 @@ icon marker. User-facing behavior is in
   self.SourceMonkey.x`) as it starts. An older extension is refused
   with a message saying to update it, or to use `--temp-browser`, which
   loads sm-dev's own copy (`EXTENSION_TOO_OLD`).
-- A harness run's claims (not built yet) only keep the extension's
-  scripts out, so an older extension can be passed by: the run says
-  once that its scripts may also run in the run's tabs.
+- A harness run's claims only keep the extension's scripts out, so an
+  older extension can be passed by: the run says once that its scripts
+  may also run in the run's tabs.
 
 ## Tab claims
 
@@ -157,8 +156,13 @@ sm-dev knows a tab by its CDP target id; the extension knows it by its
 - Tabs a script in a claimed tab opens with `GM_openInTab`, in an
   extension run: the extension opens the tab blank, claims it, and only
   then loads the URL.
-- Tabs the harness's own `GM_openInTab` opens: the harness opens them,
-  so it claims them as above before loading the URL.
+- Tabs the harness's own `GM_openInTab` opens: the harness opens them
+  blank, claims them as above, then loads the URL
+  (`AttachOptions.claimOpenedTab` in inject.ts).
+- A harness run claims only when the browser has SourceMonkey installed
+  and enabled. Its bridge also ignores page-world messages about
+  scripts it didn't inject: those are SourceMonkey's own, and answering
+  `run` would beat the extension's `skip`.
 - Tabs the person opens: never claimed, in any browser, a
   `--temp-browser` included (another sm-dev can connect to its port
   too). They run whatever the extension has, as in normal browsing.
@@ -328,19 +332,20 @@ or a second run pointed at a `--temp-browser`'s port.
   the default, show none.
 - The run's scripts keep their numbers (1, 2, ...), in push order, the
   same ones `get`, `set` and `menu` use.
-  - Each row is read live from the extension. A script deleted or
-    turned off in the browser keeps its number, and its row says
-    `Removed from the extension` or `Disabled in the extension`.
-- **Scripts installed in the extension**: a separate list, shown only
-  when there are any.
+  - Not yet: a script deleted or turned off in the browser keeps its
+    number, and its row says `Removed from the extension` or `Disabled
+    in the extension`, read live from the extension.
+- **SourceMonkey's own scripts on the tab**: a separate list, shown
+  only when there are any.
   - The extension's other scripts that match the current tab, as its
     toolbar badge lists them, named E1, E2, ... in the order sm-dev
     first sees them, kept for the run.
   - The run's claim keeps them out of its tabs, so their status there
     is "Kept out of the run's tabs".
   - `values E1` shows one's values; `scripts E1` picks it for `get`
-    and `set`. `set` on one needs `--force` outside a `--temp-browser`,
-    since it changes the person's real data.
+    and `set`, and it's marked `*` in the list. `set` on one needs
+    `--force` after the key outside a `--temp-browser`, since it changes
+    the person's real data: `set key --force <json>`.
   - `menu` and `logs` don't take them: they never run in the run's
     tabs. `load`, `update` and `--watch` don't apply either: the run
     didn't push them.

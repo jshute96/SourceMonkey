@@ -414,7 +414,7 @@ export async function runConsoleCommand(
         return;
       }
       if (OTHER_LABEL.test(text)) {
-        const found = pickOther(ctx, text);
+        const found = await pickOther(ctx, text, picked);
         if (!found) return false;
         ctx.currentOther = found;
         ctx.out(`[sm-dev] Using ${found.label}: ${found.name} for get and set`);
@@ -458,10 +458,10 @@ export async function runConsoleCommand(
     }
     case 'values': {
       if (OTHER_LABEL.test(text)) {
-        const found = pickOther(ctx, text);
+        const found = await pickOther(ctx, text, picked);
         if (!found) return false;
         ctx.out('Stored values:');
-        ctx.out(`  ${found.label}: ${found.name} (${found.collection})`);
+        ctx.out(`  ${otherLabel(found)}`);
         for (const l of valueEntries(await found.values())) ctx.out(l);
         return;
       }
@@ -544,13 +544,19 @@ export async function runConsoleCommand(
           return;
         }
       }
-      if (blockedByDialog(ctx.tabs())) return;
+      if (flags['--force'] === true && !other) {
+        ctx.out('[sm-dev] ERROR: The --force flag is for one of SourceMonkey\'s own scripts (E1, ...), picked with scripts E1');
+        return false;
+      }
+      // One of SourceMonkey's own never runs in the run's tabs, so a
+      // dialog there doesn't hold up its write.
+      if (!other && blockedByDialog(ctx.tabs())) return;
       // Through the host, so a running script sees it on its next read
       // and its value-change listeners fire, as another tab's write
       // would.
       if (other) {
         if (ctx.others?.guarded && flags['--force'] !== true) {
-          ctx.out(`[sm-dev] ERROR: ${other.label} is one of SourceMonkey's own scripts, so this would change its real stored data. Add --force to do it.`);
+          ctx.out(`[sm-dev] ERROR: ${other.label} is one of SourceMonkey's own scripts, so this would change its real stored data. To do it, add --force after the key: set ${key} --force <json>.`);
           return false;
         }
         await other.setValues({ [key]: value });
@@ -754,8 +760,13 @@ function scriptLabel(script: PreparedScript): string {
 // One script's row in any list of them: its number in the `scripts` list,
 // with `*` on the one `get` and `set` act on.
 function scriptRow(ctx: ConsoleContext, script: PreparedScript): string {
-  const current = ctx.current ?? ctx.scripts[0];
-  return `${script === current ? '* ' : '  '}${ctx.scripts.indexOf(script) + 1}: ${scriptLabel(script)}`;
+  return `${script === selectedScript(ctx) ? '* ' : '  '}${ctx.scripts.indexOf(script) + 1}: ${scriptLabel(script)}`;
+}
+
+// The run's script `get` and `set` act on, marked `*` in the lists:
+// none while one of SourceMonkey's own (`E1`) is picked instead.
+function selectedScript(ctx: ConsoleContext): PreparedScript | undefined {
+  return ctx.currentOther ? undefined : ctx.current ?? ctx.scripts[0];
 }
 
 /**
@@ -1157,7 +1168,7 @@ function printTabs(ctx: ConsoleContext): void {
     const running = runningOn(ctx, tab);
     // By @name alone, the file being in `scripts`. The selected script is one
     // for the whole run, so its `*` goes only under the current tab.
-    const selected = tab === current ? ctx.current ?? ctx.scripts[0] : undefined;
+    const selected = tab === current ? selectedScript(ctx) : undefined;
     for (const script of running) {
       ctx.out(`   ${script === selected ? '* ' : '  '}${ctx.scripts.indexOf(script) + 1}: ${preparedScriptName(script)}`);
     }
@@ -1567,18 +1578,24 @@ function valueEntries(values: Record<string, unknown>): string[] {
 // `E1`: one of the extension's own scripts (see `OtherScript`).
 const OTHER_LABEL = /^E\d+$/i;
 
-// The other script `label` names, or null having said why.
-function pickOther(ctx: ConsoleContext, label: string): OtherScript | null {
+// The script of SourceMonkey's own `label` names, or null having said
+// why. Lists the current tab's first if it isn't known yet, so it can
+// be named before anything listed it.
+async function pickOther(ctx: ConsoleContext, label: string, tab: ControlledTab | undefined): Promise<OtherScript | null> {
+  const name = label.toUpperCase();
   if (!ctx.others) {
-    ctx.out(`[sm-dev] ERROR: ${label.toUpperCase()} names one of the extension's own scripts, and only an --extension run has those`);
+    ctx.out(`[sm-dev] ERROR: ${name} names one of SourceMonkey's own scripts, and only an --extension run has those`);
     return null;
   }
-  const found = ctx.others.byLabel(label.toUpperCase());
-  if (!found) ctx.out(`[sm-dev] There is no script ${label.toUpperCase()}. Use scripts to list them.`);
+  if (!ctx.others.byLabel(name) && tab) await ctx.others.onTab(tab).catch(() => undefined);
+  const found = ctx.others.byLabel(name);
+  if (!found) ctx.out(`[sm-dev] There is no script ${name}. Use scripts to list them.`);
   return found ?? null;
 }
 
 // How `scripts` and `status` show an extension script's badge status.
+// In the run's tabs, which the run claims, NOT_LOADED is the claim
+// keeping it out.
 const OTHER_STATUS: Record<string, string> = {
   OK: 'Running',
   ERROR: 'Threw an error',
@@ -1589,15 +1606,27 @@ const OTHER_STATUS: Record<string, string> = {
   NOT_LOADED: 'Kept out of the run\'s tabs',
 };
 
-// The extension's own scripts on `tab`, for `scripts` and `status`. None
+// `E1: Name (Collection)`, without the parentheses for a script whose
+// collection isn't known (one deleted since the page loaded).
+function otherLabel(o: OtherScript): string {
+  return `${o.label}: ${o.name}${o.collection ? ` (${o.collection})` : ''}`;
+}
+
+// SourceMonkey's own scripts on `tab`, for `scripts` and `status`. None
 // outside an `--extension` run, or when there are none.
 async function otherLines(ctx: ConsoleContext, tab: ControlledTab | undefined): Promise<string[]> {
   if (!ctx.others || !tab) return [];
-  const others = await ctx.others.onTab(tab).catch(() => [] as OtherScript[]);
+  let others: OtherScript[];
+  try {
+    others = await ctx.others.onTab(tab);
+  } catch (err) {
+    return [`[sm-dev] SourceMonkey's own scripts on ${tabName(tab)} could not be listed: ${(err as Error).message}`];
+  }
   if (others.length === 0) return [];
   return [
-    `Scripts installed in the extension, on ${tabName(tab)}:`,
-    ...others.map((o) => `${o === ctx.currentOther ? '* ' : '  '}${o.label}: ${o.name} (${o.collection}): ${OTHER_STATUS[o.status] ?? o.status}`),
+    `SourceMonkey's own scripts on ${tabName(tab)}:`,
+    // By label: each listing gets the scripts afresh.
+    ...others.map((o) => `${o.label === ctx.currentOther?.label ? '* ' : '  '}${otherLabel(o)}: ${OTHER_STATUS[o.status] ?? o.status}`),
   ];
 }
 

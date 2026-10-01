@@ -19,6 +19,7 @@
 //   and a menu command recorded then would be cleared by the
 //   navigation that follows.
 
+import { SM_ABANDONED_MSG, SM_ERROR_MSG, SM_START_MSG, SM_SWAPPED_MSG } from '../injector.js';
 import { SKIP_REASON_SM_DEV } from '../sm-dev-link.js';
 import { HarnessHost, valueCodec, type MenuCommandRecord, type PageLink } from './host.js';
 import type { ConsoleContext, OtherScript } from './console-commands.js';
@@ -165,11 +166,14 @@ export class ExtensionHost extends HarnessHost {
             label = `E${this.otherLabels.size + 1}`;
             this.otherLabels.set(row.id, label);
           }
-          const other: OtherScript = {
-            label, name: row.name, collection: row.collection, status: row.status,
+          // One object per script, brought up to date, so one picked
+          // earlier (`scripts E1`) shows what the latest listing says.
+          const other = this.others.get(label) ?? {
+            label, name: '', collection: '', status: '',
             values: () => this.extensionValues(row.id),
-            setValues: (values) => this.writeExtensionValues(row.id, values),
+            setValues: (values: Record<string, unknown>) => this.writeExtensionValues(row.id, values),
           };
+          Object.assign(other, { name: row.name, collection: row.collection, status: row.status });
           this.others.set(label, other);
           return other;
         });
@@ -240,8 +244,8 @@ export class ExtensionHost extends HarnessHost {
     }
     // A tab with its scripts turned off (`--noscript`) skips them on
     // each load, as asked: nothing to say.
-    if (event.type === 'sm:abandoned' && event.reason === SKIP_REASON_SM_DEV) return;
-    const type = { 'sm:start': 'sm:start', 'sm:swapped': 'sm:start', 'sm:error': 'sm:error', 'sm:abandoned': 'sm:abandoned' }[event.type];
+    if (event.type === SM_ABANDONED_MSG && event.reason === SKIP_REASON_SM_DEV) return;
+    const type = { [SM_START_MSG]: SM_START_MSG, [SM_SWAPPED_MSG]: SM_START_MSG, [SM_ERROR_MSG]: SM_ERROR_MSG, [SM_ABANDONED_MSG]: SM_ABANDONED_MSG }[event.type];
     if (!type) return;
     await this.handle({
       type, id: runId, name: event.name, url: event.url,
