@@ -19,6 +19,8 @@ import {
   urlMatchesScript,
   explainUrlMatch,
   hostEndsInTld,
+  tldCoarseGlob,
+  isPublicSuffix,
 } from '../../dist/url-match.js';
 
 // ---------- matchPattern ----------
@@ -519,7 +521,7 @@ test('.tld: never reaches a host someone else could register', () => {
     'https://www.google.evil.com/', // two arbitrary labels
     'https://www.google.com.evil.io/',
     'https://www.google.com.de/', // com.de is a name someone owns
-    'https://www.google.co.io/',
+    'https://www.google.co.de/', // nor is co.de a registry's
     'https://www.google.local/', // a LAN name, not a registry's
     'https://www.google.lan/',
     'https://www.google.internal/',
@@ -596,4 +598,60 @@ test('hostEndsInTld: which patterns Chrome cannot match for us', () => {
   assert.equal(hostEndsInTld('https://example.com/a.tld'), false);
   assert.equal(hostEndsInTld('/google\\.tld/'), false);
   assert.equal(hostEndsInTld('<all_urls>'), false);
+});
+
+test('tldCoarseGlob: the glob Chrome registers for a .tld rule', () => {
+  assert.equal(tldCoarseGlob('*://www.google.tld/*', true), '*://www.google.*/*');
+  assert.equal(tldCoarseGlob('*://*.imdb.tld/*', true), '*://*imdb.*/*');
+  assert.equal(tldCoarseGlob('https://*.imdb.tld:8080/x', true), 'https://*imdb.*:8080/x');
+  assert.equal(tldCoarseGlob('*://*.imdb.tld/*', false), '*://*.imdb.*/*');
+  assert.equal(tldCoarseGlob('http://www.google.tld*', false), 'http://www.google.**');
+  assert.equal(tldCoarseGlob('*.google.tld/*', false), '*.google.*/*');
+});
+
+test('tldCoarseGlob: covers every URL the exact rule matches', () => {
+  // Chrome injects only where the coarse glob reaches, so it must never
+  // miss a page the `.tld` rule itself matches.
+  const urls = [
+    'https://www.google.com/', 'https://www.google.co.uk/search?q=1', 'http://www.google.de:8080/x',
+    'https://imdb.com/title/1', 'https://www.imdb.de/', 'https://m.imdb.com.au/',
+  ];
+  for (const rule of ['*://www.google.tld/*', '*://*.imdb.tld/*', 'http://www.google.tld/*']) {
+    const coarse = tldCoarseGlob(rule, true);
+    for (const url of urls) {
+      if (matchPattern(rule, url)) assert.equal(includePattern(coarse, url), true, `${rule} ${url}`);
+    }
+  }
+  for (const rule of ['*://www.google.tld/*', '*://*.imdb.tld/*', 'http://www.google.tld*']) {
+    const coarse = tldCoarseGlob(rule, false);
+    for (const url of urls) {
+      if (includePattern(rule, url)) assert.equal(includePattern(coarse, url), true, `${rule} ${url}`);
+    }
+  }
+});
+
+test('isPublicSuffix: the ICANN section of the Public Suffix List', () => {
+  for (const name of ['com', 'de', 'co.uk', 'com.au', 'co.io', 'xn--p1ai']) assert.equal(isPublicSuffix(name), true, name);
+  // Private-section suffixes, and names nobody's registry hands out.
+  for (const name of ['blogspot.com', 'github.io', 'com.de', 'local', 'lan', 'evil.com']) {
+    assert.equal(isPublicSuffix(name), false, name);
+  }
+  // A wildcard rule (`*.ck`) and its exception (`!www.ck`).
+  assert.equal(isPublicSuffix('anything.ck'), true);
+  assert.equal(isPublicSuffix('www.ck'), false);
+  assert.equal(isPublicSuffix('ck'), false);
+});
+
+test('.tld: any ICANN public suffix, multi-level ones included, never a private one', () => {
+  for (const url of ['https://www.google.co.uk/', 'https://www.google.com.au/', 'https://www.google.xn--p1ai/']) {
+    assert.equal(includePattern('*://www.google.tld/*', url), true, url);
+    assert.equal(matchPattern('*://www.google.tld/*', url), true, url);
+  }
+  for (const url of ['https://www.google.blogspot.com/', 'https://www.google.github.io/']) {
+    assert.equal(includePattern('*://www.google.tld/*', url), false, url);
+    assert.equal(matchPattern('*://www.google.tld/*', url), false, url);
+  }
+  // Under a wildcard rule, the name sits one label further out.
+  assert.equal(includePattern('*://shop.tld/*', 'https://shop.anything.ck/'), true);
+  assert.equal(includePattern('*://shop.tld/*', 'https://shop.www.ck/'), false);
 });

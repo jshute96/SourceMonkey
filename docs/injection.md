@@ -949,25 +949,34 @@ The User Scripts API has no equivalent for `/regex/` `@include` /
 `@exclude` patterns, so we work around it with a two-layer approach:
 
 - **Registration layer.** Glob `@include` / `@exclude` patterns go to
-  `includeGlobs` / `excludeGlobs`. `@match` goes to `matches`. If a
-  script has no `@match` at all — only `@include`, in either form — we
-  register with `matches: ['<all_urls>']` so Chrome hands us every
-  page, and let the wrapper narrow it. Chrome refuses a registration
-  with no `matches` (*"must specify 'matches'"*), so there is nothing
-  else to give it.
-  - A script with a regex `@include` gets `<all_urls>` even beside
-    `@match` lines: the regex can cover pages no `@match` does, and
-    Chrome would never inject there.
-  - A pattern whose host ends in `.tld` ("any top-level domain", see
-    [matching.md](matching.md#tld-hosts)) is treated like a regex, in
-    `@match`, `@include` and `@exclude` alike: Chrome would read it as
-    a literal host no page has, so it is kept out of the spec and left
-    to the wrapper.
-  - Cost: such a script (a `.tld` `@exclude` alone aside) is injected
-    and parsed on every page and frame, and only its body is skipped
-    off-target. Chrome offers nothing narrower, since `matches` is
-    required and `includeGlobs` ORs with it.
-- **Wrapper layer.** When a script has any regex (or `.tld`) pattern,
+  `includeGlobs` / `excludeGlobs`. `@match` goes to `matches`.
+  - Any script with `includeGlobs` also gets a stand-in in `matches`,
+    `NO_PAGE_MATCH` (`*://*/__sourcemonkey_no_page__/*`): any host,
+    a path no real page uses. Chrome ORs the globs with `matches`
+    (see below), so the globs say where it injects. Two reasons:
+    - Chrome refuses a registration with no `matches` (*"must specify
+      'matches'"*), so a script with only `@include`s needs one.
+    - Chrome kills the renderer ("Page crashed") when the service
+      worker messages a USER_SCRIPT-world listener (the bridge, the GM
+      runtime) in a page covered only by `includeGlobs`, on a host no
+      `matches` entry names. The `*` host avoids that.
+    - The wrapper's matcher runs for these scripts, so the stand-in's
+      own path never runs one.
+  - A script with a regex `@include` gets `<all_urls>`, even beside
+    `@match` lines: the regex can cover pages nothing Chrome reads
+    does, and Chrome would never inject there.
+  - A pattern whose host ends in `.tld` ("any public suffix", see
+    [matching.md](matching.md#tld-hosts)) would be read by Chrome as a
+    literal host no page has. A `.tld` `@match` or `@include`
+    registers a coarse glob instead, `.tld` replaced by `.*`
+    (`*://www.google.*/*`), and the wrapper narrows it. A `.tld`
+    `@exclude` is enforced only in the wrapper: widened, it would
+    exclude pages it shouldn't.
+  - Cost: a regex `@include` script is injected and parsed on every
+    page and frame, and only its body is skipped off-target. A `.tld`
+    script pays that only on pages its coarse glob reaches.
+- **Wrapper layer.** When a script has any regex, `.tld` or glob
+  pattern,
   the wrapper embeds the full `{matches, includes, excludes}` object
   and a small self-contained matcher equivalent to
   `urlMatchesScript()`. Before the body runs, the wrapper re-checks
@@ -994,14 +1003,20 @@ Chrome the suite runs:
   divergence to fix.
 - `excludeGlobs` subtracts under either reading, so it needs no care.
 
-Consequences for the `<all_urls>` fallback:
+Consequences:
 
-- It cannot be narrowed by handing Chrome the globs alongside it —
-  `<all_urls>` OR anything is still every page.
-- So every no-`@match` script carries the wrapper-side matcher, glob
-  includes included.
-- The globs go to Chrome anyway, so the registration stays correct if
-  Chrome ever moves to the documented AND.
+- `<all_urls>` can't be narrowed by handing Chrome globs alongside it:
+  `<all_urls>` OR anything is still every page. So it is kept for
+  regex `@include`s, which no glob can stand for.
+- A script with globs instead registers `NO_PAGE_MATCH` beside them,
+  so Chrome injects only where its `@match`es and globs reach.
+  - Under the documented AND, a glob-only script would inject
+    nowhere. The probe above would fail first.
+  - A second probe in the same spec pins the renderer crash the
+    stand-in's `*` host avoids.
+- Every script with globs carries the wrapper-side matcher: Chrome's
+  glob reading isn't exactly ours (case, `?`), and the stand-in's path
+  is a real one.
 
 ## The activation / error wrapper
 
@@ -1239,9 +1254,17 @@ it just gets the default `run` reply — the optimization is best-effort.
 When a wrapper sends `sm:check-pending` with its own `id`, `loadedAt`
 (the value baked in at registration), and `url`, the SW:
 
-Before any of this, a tab marked for "Reload page with no userscripts"
-gets `skip`, for every frame — see
-[matching.md](matching.md#reload-with-no-userscripts). Otherwise the SW:
+Before any of this:
+
+- A tab marked for "Reload page with no userscripts" gets `skip`, for
+  every frame — see
+  [matching.md](matching.md#reload-with-no-userscripts).
+- A request with `tld: true` (a script with a `.tld` rule) is checked
+  against the script's exact patterns, with the frame's URL, and gets
+  `skip` with reason `no-match` if they don't cover it. See
+  [matching.md](matching.md#tld-hosts).
+
+Otherwise the SW:
 
 1. Looks up `fastPathByDoc[tabId:docId]`. **No entry → reply `run`.**
    This is the common case for ordinary navigations and costs ~1–5ms

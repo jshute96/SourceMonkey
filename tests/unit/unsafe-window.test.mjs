@@ -46,6 +46,7 @@ globalThis.chrome = globalThis.chrome ?? {
 import {
   GM_RUNTIME_MAIN_SCRIPT_ID,
   GM_RUNTIME_SCRIPT_ID,
+  NO_PAGE_MATCH,
   buildGmBindingsForScript,
   buildGmRuntimeSpecs,
   buildRegistrationSpec,
@@ -302,7 +303,9 @@ test('collectActiveSpecs: both worlds can need the runtime at once, each with it
   );
   assert.deepEqual([...gmRuntimeScope.keys()].sort(), ['MAIN', 'USER_SCRIPT']);
   assert.deepEqual([...gmRuntimeScope.get('MAIN').matches], ['https://main.example/*']);
-  assert.deepEqual([...gmRuntimeScope.get('USER_SCRIPT').matches], ['https://iso.example/*']);
+  // A spec with globs carries NO_PAGE_MATCH, so the runtime's scope
+  // does too: it registers on the same globs.
+  assert.deepEqual([...gmRuntimeScope.get('USER_SCRIPT').matches], ['https://iso.example/*', NO_PAGE_MATCH]);
   assert.deepEqual([...gmRuntimeScope.get('USER_SCRIPT').includeGlobs], ['*://glob/*']);
 });
 

@@ -45,6 +45,28 @@ test.describe('harness injection', () => {
     await expect(page.locator('#target')).toHaveText('other page');
   });
 
+  test('a .tld rule runs under a public suffix and not on a look-alike host', async ({ page, host, loadScript }) => {
+    // The prelude reads `.tld` loosely; the host's check-pending reply
+    // applies the exact reading, as the extension's worker does.
+    await page.route(/^https:\/\/[^/]*smtest[^/]*\//, (route) => route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      body: '<!doctype html><div id="target">untouched</div>',
+    }));
+    await loadScript({
+      relativePath: 'tld.user.js',
+      meta: { name: 'Tld', include: ['https://www.smtest.tld/*'], grant: ['none'] },
+      body: `document.getElementById('target').textContent = 'injected';`,
+    });
+    await page.goto('https://www.smtest.co.uk/');
+    await expect(page.locator('#target')).toHaveText('injected');
+    await page.goto('https://www.smtest.evil.com/');
+    await page.waitForTimeout(300);
+    await expect(page.locator('#target')).toHaveText('untouched');
+    expect(host.reports.started).toHaveLength(1);
+    expect(host.reports.errors).toEqual([]);
+  });
+
   test('a sync throw and a later async throw are both attributed', async ({ page, fixtureServer, host, attachment, loadScript }) => {
     await loadScript({
       relativePath: 'thrower.user.js',

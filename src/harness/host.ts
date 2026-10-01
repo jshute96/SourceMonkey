@@ -527,7 +527,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
     }
     switch (type) {
       case 'sm:check-pending':
-        return this.checkPending(payload, payload.needsValues === true
+        return this.checkPending(payload, from, payload.needsValues === true
           && (origin === 'isolated' || this.pageMayActAs(str(payload.id), from, STORAGE_SUBSYSTEMS)));
       case 'sm:start': {
         const report = this.baseReport(payload, from);
@@ -697,8 +697,14 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
     return subsystems.some((s) => script.grantedSubsystems.has(s));
   }
 
-  private checkPending(payload: Record<string, unknown>, valuesAllowed: boolean): unknown {
+  private checkPending(payload: Record<string, unknown>, from: PageLink, valuesAllowed: boolean): unknown {
     const id = str(payload.id);
+    // A `.tld` rule, which the wrapper read loosely: the exact reading,
+    // as the extension's worker gives it (`handleCheckPending`).
+    if (payload.tld === true) {
+      const script = this.scripts.get(id);
+      if (!script || !explainMatch(script.matching, from.url()).matches) return { action: 'skip', reason: 'no-match' };
+    }
     // The extension replies `run-new` with a fresher body when the
     // file changed since registration; the harness re-injects instead,
     // so the answer is always to run the body that was injected.

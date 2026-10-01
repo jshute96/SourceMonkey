@@ -1404,9 +1404,9 @@ itself once a sync places it. What's missing:
     - **A `*` in the middle of a host** (62: `*://*brainly.com/*`,
       `https://video.sina.*/*`). Chrome's host wildcard is only the
       whole host or its first label, so a TLD glob or a bare prefix
-      has no Chrome spelling at all. Registering `<all_urls>` and
-      deciding in the prelude is the only route, and it means giving
-      the script every page in exchange.
+      has no Chrome spelling as a match pattern. It can register as an
+      `includeGlobs` entry instead and be decided in the prelude, as
+      `.tld` hosts now are (see `tldCoarseGlob`).
   `pnpm run test:e2e:tm` drives a real TM, which is where "what does TM
   run for this" gets answered.
 - **The install preview doesn't show parse-time warnings.**
