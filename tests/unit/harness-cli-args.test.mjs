@@ -287,13 +287,22 @@ test('stdin from a file is checked in full; lines a pipe sends later run as read
   closeSync(fd);
   assert.equal(r.status, 2);
   assert.equal(r.stderr, 'stdin > evel 1\nERROR: evel is not a command a run takes. Type sm-dev help to list them.\nNone of the commands were run.\n');
-  // A pipe: a comment first, then after a pause a mistake, said as it
-  // comes, which stops the rest, as a failed command does.
+  // A pipe: a command first, then later a mistake, said as it comes,
+  // which stops the rest, as a failed command does. The mistake is
+  // sent only once `list` has answered: a fixed pause raced a slow
+  // start, and both writes then arrived as one batch, checked in full.
   const child = spawn(process.execPath, [CLI], { env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
+  let stdout = '';
   let stderr = '';
+  const listed = new Promise((resolve) => {
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+      if (stdout.includes('No sm-dev runs are active')) resolve();
+    });
+  });
   child.stderr.on('data', (chunk) => { stderr += chunk; });
-  child.stdin.write('# first\n');
-  await new Promise((r) => setTimeout(r, 300));
+  child.stdin.write('list\n');
+  await listed;
   child.stdin.write('evel 1\ntabs {{\n}}\n');
   child.stdin.end();
   const code = await new Promise((r) => child.on('exit', r));

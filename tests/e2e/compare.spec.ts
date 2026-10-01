@@ -393,7 +393,7 @@ test.describe('compare page', () => {
     // 19.5px tall, so half the offsets are fractional, and the box
     // lands on a whole pixel.)
     const rowTop = (i: number) => starts.nth(i).evaluate((tr) => {
-      let row = tr;
+      let row: Element = tr;
       for (let n = 0; n < 5; n++) row = row.previousElementSibling ?? row;
       return (row as HTMLElement).offsetTop;
     });
