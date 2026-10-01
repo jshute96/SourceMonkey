@@ -405,6 +405,10 @@ Strict-by-default: a script with no `@connect` lines in its header
 is **blocked** from every `GM_xmlhttpRequest`. Scripts must declare
 the hosts they intend to reach.
 
+- A script that grants `GM_xmlhttpRequest` with no `@connect` gets a
+  parse-time warning (`extractStartupLogs` in `script-store.ts`), so
+  the block isn't silent.
+
 Stricter than either reference manager:
 
 - TM prompts the user when a script reaches an undeclared host.
@@ -418,8 +422,15 @@ Grammar (lower-case before matching):
 - `*` — wildcard, allow any host.
 - `self` — allow the script's own `@match`/`@include` hosts (and
   `*.host` subdomains in those globs contribute `host`).
-- `example.com` — exact host match.
-- `*.example.com` — `example.com` itself **and** any subdomain.
+- `example.com` — that host **and** any subdomain, as TM documents
+  (`@connect example.com` covers `api.example.com`). Matched on whole
+  labels, so `evilexample.com` doesn't match.
+  - An IP address or single-label name (`127.0.0.1`, `localhost`,
+    `com`) matches only exactly, so a bare rule can't cover a TLD or
+    an IP range.
+  - Multi-label public suffixes aren't special-cased: `@connect co.uk`
+    covers all of `.co.uk`.
+- `*.example.com` — the same: `example.com` itself **and** any subdomain.
 - A scheme-prefixed URL like `https://example.com` is accepted and
   normalized to its host.
 

@@ -135,10 +135,13 @@ keys would look like a wiped profile.
   [Vanished entries](#vanished-entries)).
 - `errorMessage?` — set when `status === 'invalid'`.
   - Message *text* is a snapshot of what the wording was when the row
-    was parsed. Same for `startupLogs`, which the boot replay re-emits
-    verbatim. A reworded message therefore reaches an existing row only
-    on its next content change; nothing compares these strings, so the
-    staleness is cosmetic.
+    was parsed. A reworded message therefore reaches an existing row
+    only on its next content change; nothing compares these strings,
+    so the staleness is cosmetic.
+  - `startupLogs` (the parse-time warnings, which the boot replay
+    re-emits verbatim) are different: `backfillStartupLogs` re-derives
+    them for all `ok` rows on each `onInstalled`, so a new or reworded
+    check reaches installed scripts after an extension update.
 - `errorLocation?` — where in the script's own files `errorMessage` is
   about, when it was derived from their content. Absent when the script
   itself couldn't be fetched; a `@require` that wouldn't load still gets

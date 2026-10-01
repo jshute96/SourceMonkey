@@ -195,6 +195,10 @@ ok       sites/x/y.user.js
 - `warn:` lines don't make it invalid, but read them. An unsupported
   or misspelled `@grant` is ignored, so that `GM_*` name won't exist
   at runtime.
+  - `GM_xmlhttpRequest` granted with no `@connect` warns too: all its
+    requests are blocked until you add `@connect` lines.
+  - So does an unsupported `@run-at` (`context-menu`): the script runs
+    at `document-idle`, and the `Injected` line says so.
 - `UNCHECKED` means the syntax check couldn't finish (e.g. very deep
   nesting). The script still loads and the exit code is 0, but its
   syntax wasn't verified.

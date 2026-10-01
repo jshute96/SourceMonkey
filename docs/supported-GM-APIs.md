@@ -332,14 +332,19 @@ the page-side runtime decodes and rebuilds.
 ### `@connect` gating
 
 Strict-by-default. A script with **no** `@connect` lines is blocked
-from every `GM_xmlhttpRequest` call. Grammar:
+from every `GM_xmlhttpRequest` call.
+
+- Granting `GM_xmlhttpRequest` with no `@connect` is warned about at
+  install time (viewer Log tab, page console, `sm-dev validate`).
+
+Grammar:
 
 | Form | Meaning |
 |------|---------|
 | `@connect *` | Allow any host. |
 | `@connect self` | Allow the script's own `@match` / `@include` hosts. |
-| `@connect example.com` | Allow this exact host. |
-| `@connect *.example.com` | Allow `example.com` itself AND any subdomain. |
+| `@connect example.com` | Allow `example.com` AND any subdomain (`api.example.com`), as TM documents. Whole labels only: `evilexample.com` doesn't match. An IP or single-label name (`127.0.0.1`, `localhost`) matches only exactly. Multi-label public suffixes aren't special-cased, so `@connect co.uk` covers all of `.co.uk`. |
+| `@connect *.example.com` | The same: `example.com` itself AND any subdomain. |
 | `@connect https://example.com` | Same as `@connect example.com` (scheme stripped). |
 
 A denied request fires `onerror` with

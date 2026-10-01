@@ -716,11 +716,11 @@ Adding any of these is a catalog entry + a body — nothing structural.
 
 - **`self` subdomain handling.** TM/VM treat `self` as "the
   script's own origins OR their subdomains"; SourceMonkey matches
-  exact host only. See `src/gm-connect.ts#hostMatchesRule`. Fix:
+  `self` hosts exactly. See `src/gm-connect.ts#hostMatchesRule`. Fix:
   fall through to the subdomain check against `selfHosts` as a set
   of bases. Documented limitation pending a real compat report.
 - **Port handling is asymmetric.** A user-supplied port in
-  `@connect example.com:8443` (no scheme) lands in the `exact`
+  `@connect example.com:8443` (no scheme) lands in the `host`
   branch as `host = "example.com:8443"`, but request matching
   goes through `URL.hostname` which strips the port — so the rule
   never matches. Either strip ports consistently when parsing rules

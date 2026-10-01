@@ -238,3 +238,23 @@ export function hasTag(header: ParsedHeader, tag: string): boolean {
   const t = tag.toLowerCase();
   return header.tags.some((e) => e.tag === t);
 }
+
+// The `@run-at` values we honor. Anything else (Tampermonkey's
+// `context-menu`, a typo) runs at `document-idle`: see
+// `normalizeDeclaredRunAt` in injector.ts.
+export const SUPPORTED_RUN_AT: readonly string[] = [
+  'document-start',
+  'document-body',
+  'document-end',
+  'document-idle',
+];
+
+// The script's declared `@run-at` when it is one we don't honor, so
+// the caller can say it runs at `document-idle` instead. Undefined when
+// the tag is absent, blank, or supported.
+export function unsupportedRunAt(header: ParsedHeader | null | undefined): string | undefined {
+  if (!header) return undefined;
+  const value = (getValue(header, 'run-at') ?? '').trim();
+  if (value === '' || SUPPORTED_RUN_AT.includes(value.toLowerCase())) return undefined;
+  return value;
+}

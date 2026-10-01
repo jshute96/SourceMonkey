@@ -74,7 +74,7 @@ import {
   type StoredScript,
   type StoredCollection,
 } from './script-store.js';
-import { getValue, getValues, hasTag, type ParsedHeader } from './userscript-header.js';
+import { SUPPORTED_RUN_AT, getValue, getValues, hasTag, type ParsedHeader } from './userscript-header.js';
 import {
   WRAPPER_BRIDGE,
   WRAPPER_GM_RUNTIME,
@@ -200,17 +200,12 @@ export interface ActiveSpecs {
 // lifecycle event because Chrome's userScripts scheduler batches
 // document_end into the post-load injection burst. See `waitForRunAt`
 // in `userscript-prelude.js`.
+//
+// Anything else (`context-menu`, a typo) runs at `document-idle`;
+// `extractStartupLogs` warns about it.
 export function normalizeDeclaredRunAt(value: string | undefined): string {
-  switch ((value ?? '').toLowerCase()) {
-    case 'document-start':
-      return 'document-start';
-    case 'document-body':
-      return 'document-body';
-    case 'document-end':
-      return 'document-end';
-    default:
-      return 'document-idle';
-  }
+  const v = (value ?? '').trim().toLowerCase();
+  return SUPPORTED_RUN_AT.includes(v) ? v : 'document-idle';
 }
 
 // True iff the script's `@grant` lines ask for `unsafeWindow`.

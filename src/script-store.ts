@@ -78,6 +78,7 @@ import {
   getValues,
   parseHeader,
   splitHeaderBody,
+  unsupportedRunAt,
   NO_METADATA_BLOCK,
   type ParsedHeader,
 } from './userscript-header.js';
@@ -93,7 +94,8 @@ import {
 import { localSearchRoots, localRootsReady, type LocalFileScope } from './local-file-overrides.js';
 import { scanAllStorage } from './storage-scan.js';
 import { wipeScriptValues } from './gm-values.js';
-import { canonicalizeGrant, resolveGrants } from './gm-api-catalog.js';
+import { canonicalizeGrant, findApi, resolveGrants } from './gm-api-catalog.js';
+import { hasNoConnectRules } from './gm-connect.js';
 import { sourceUsesUnsafeWindow } from './unsafe-window-use.js';
 import {
   ignoredMatchMessage,
@@ -147,9 +149,7 @@ export interface ScriptMatching {
 //      load (see buildStartupLogsSnippet in injector.ts), and
 //   2. emitted as a Log-tab entry once per content version (see
 //      emitScriptOutcomeLog in script-updater.ts).
-// Today's only producer is the unknown-`@grant` check; future
-// detectors (header validation warnings, deprecated-tag notices, etc.)
-// can append in extractStartupLogs.
+// The producers are the header checks in extractStartupLogs.
 export interface StartupLog {
   level: 'log' | 'info' | 'warn' | 'error';
   message: string;
@@ -378,8 +378,9 @@ export function distillMatching(header: ParsedHeader | null): ScriptMatching {
 // Derive parse-time diagnostics from the metadata block (plus one fact
 // about the body: whether it names `unsafeWindow` ungranted). Producers
 // so far: unknown `@grant` names, `unsafeWindow` combined with
-// `@inject-into content`, and an ungranted `unsafeWindow` reference
-// moving the script into the page. Add others here as they come up (e.g.
+// `@inject-into content`, an ungranted `unsafeWindow` reference
+// moving the script into the page, `GM_xmlhttpRequest` with no
+// `@connect`, an unsupported `@run-at`, and bad `@match` patterns. Add others here as they come up (e.g.
 // deprecated header tags, soft `@resource` failures,
 // `@grant`-but-never-called dead grants). Anything that blocks
 // `validateHeader` belongs in there instead — error rows skip the
@@ -399,6 +400,20 @@ export const ISOLATED_UNSAFE_WINDOW_WARNING =
 export const IMPLICIT_UNSAFE_WINDOW_INFO =
   'This script uses unsafeWindow without declaring @grant unsafeWindow. '
   + 'The script runs directly in the page, without isolation.';
+
+// Said when a script grants an API that `@connect` gates (today only
+// `GM_xmlhttpRequest`) but declares no `@connect` line: our strict
+// default blocks all its requests (see gm-connect.ts). `grant` is the
+// name as the script wrote it (`GM.xmlHttpRequest` or the legacy form).
+export function noConnectWarning(grant: string): string {
+  return `This script has no @connect lines, so all its ${grant} requests are blocked. `
+    + 'Add @connect for each host it contacts, or @connect * to allow any host.';
+}
+
+// Said for a `@run-at` value we don't honor (`context-menu`, a typo).
+export function unsupportedRunAtWarning(value: string): string {
+  return `@run-at ${value} is not supported. The script runs at document-idle instead.`;
+}
 
 export function extractStartupLogs(
   header: ParsedHeader | null,
@@ -480,6 +495,30 @@ export function extractStartupLogs(
     && !resolved.hasNone;
   if (movedByReference) {
     logs.push({ level: 'info', message: IMPLICIT_UNSAFE_WINDOW_INFO });
+  }
+  // A granted API that needs `@connect`, with none declared. One row
+  // even when both spellings are granted: they are one API.
+  if (hasNoConnectRules(header)) {
+    const needsConnect = grants
+      .map((g) => g.trim())
+      .find((g) => {
+        const name = canonicalizeGrant(g);
+        return name !== null && resolved.granted.has(name)
+          && (findApi(name)?.requires ?? []).includes('connect');
+      });
+    if (needsConnect) {
+      const log: StartupLog = { level: 'warn', message: noConnectWarning(needsConnect) };
+      const line = headerTagLine(header, 'grant', needsConnect);
+      if (line !== undefined) log.location = { file: relativePath, line };
+      logs.push(log);
+    }
+  }
+  const runAt = unsupportedRunAt(header);
+  if (runAt !== undefined) {
+    const log: StartupLog = { level: 'warn', message: unsupportedRunAtWarning(runAt) };
+    const line = headerTagLine(header, 'run-at', runAt);
+    if (line !== undefined) log.location = { file: relativePath, line };
+    logs.push(log);
   }
   // A `@match` Chrome's grammar refuses. One of these would take the
   // whole registration down (Chrome refuses the spec, not the pattern),
@@ -2722,6 +2761,28 @@ export async function backfillUsesUnsafeWindow(): Promise<number> {
     if (!sourceUsesUnsafeWindow(script.bodyText)) continue;
     const next: StoredScript = { ...script, usesUnsafeWindow: true };
     const logs = extractStartupLogs(script.header, script.relativePath, true);
+    if (logs.length > 0) next.startupLogs = logs;
+    else delete next.startupLogs;
+    toSet[scriptKey(script.id)] = next;
+  }
+  const changed = Object.keys(toSet).length;
+  if (changed > 0) await writeLocal(toSet);
+  return changed;
+}
+
+// Re-derive `startupLogs` on stored rows, so a new parse-time check
+// (e.g. the no-`@connect` warning) reaches scripts already installed.
+// Same reason as `backfillUsesUnsafeWindow`: an unchanged script's row
+// is never rebuilt. Runs after that backfill, so `usesUnsafeWindow` is
+// current. Writes only rows whose logs changed; returns how many.
+export async function backfillStartupLogs(): Promise<number> {
+  const scripts = await getAllScripts();
+  const toSet: Record<string, unknown> = {};
+  for (const script of scripts) {
+    if (script.status !== 'ok') continue;
+    const logs = extractStartupLogs(script.header, script.relativePath, script.usesUnsafeWindow === true);
+    if (JSON.stringify(logs) === JSON.stringify(script.startupLogs ?? [])) continue;
+    const next: StoredScript = { ...script };
     if (logs.length > 0) next.startupLogs = logs;
     else delete next.startupLogs;
     toSet[scriptKey(script.id)] = next;

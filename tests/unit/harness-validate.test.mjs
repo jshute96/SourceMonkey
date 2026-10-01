@@ -85,6 +85,28 @@ test('validate shows every warning, with the line it is about', () => {
   ]);
 });
 
+test('validate warns about GM_xmlhttpRequest with no @connect and an unsupported @run-at, and still passes', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sm-validate-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'warns.user.js');
+  fs.writeFileSync(file, [
+    '// ==UserScript==',
+    '// @name  Warns',
+    '// @match https://example.com/*',
+    '// @grant GM_xmlhttpRequest',
+    '// @run-at context-menu',
+    '// ==/UserScript==',
+    'GM_xmlhttpRequest({ url: "https://example.com/" });',
+  ].join('\n'));
+  const { code, scripts } = validate(file);
+  assert.equal(code, 0);
+  const s = scripts.get('warns.user.js');
+  assert.equal(s?.status, 'ok');
+  assert.equal(s.lines.length, 2);
+  assert.match(s.lines[0], /^warn: This script has no @connect lines, so all its GM_xmlhttpRequest requests are blocked\. .*, line 4\)$/);
+  assert.match(s.lines[1], /^warn: @run-at context-menu is not supported\. The script runs at document-idle instead\. .*, line 5\)$/);
+});
+
 test('validate calls a script unchecked when the syntax check could not decide', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sm-validate-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
