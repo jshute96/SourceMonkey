@@ -8,7 +8,8 @@
     corpus.json from beside itself.
   - Opened as a file:// page, Chrome won't let it fetch, so it asks you to pick
     corpus.json once and remembers the choice (see pickCorpus below).
-  - Every link opens in a new tab.
+  - Every link opens in a new tab, except the links between the table and
+    the summary (?summary), which switch views in place (see route below).
   - Each script's "Code" button opens this page as a viewer (?view=<id>), which
     reads the downloaded copy (corpus.json's `file`) and shows it as text. A
     link straight to a .user.js file would be taken by a userscript manager as
@@ -40,7 +41,7 @@ h1 { font-size:1.4rem; margin:0 0 .25rem; }
 input, select, button { font:inherit; color:inherit; background:var(--bg); border:1px solid var(--line); border-radius:4px; padding:.25rem .4rem; }
 button { cursor:pointer; background:var(--head); }
 button:hover { border-color:var(--muted); }
-button:active { filter:brightness(.9); transform:translateY(1px); }
+button:active, a.button:active { filter:brightness(.9); transform:translateY(1px); }
 button:disabled { opacity:.6; cursor:default; transform:none; }
 #count, #reload-status { color:var(--muted); }
 #loader { border:1px solid var(--line); border-radius:6px; padding:1rem; max-width:44rem; }
@@ -49,13 +50,22 @@ button:disabled { opacity:.6; cursor:default; transform:none; }
 .error { color:var(--bad); }
 table { border-collapse:collapse; width:100%; }
 th, td { border-bottom:1px solid var(--line); padding:.35rem .5rem; text-align:left; vertical-align:top; }
-th { background:var(--head); cursor:pointer; user-select:none; white-space:nowrap; position:sticky; top:2.9rem; z-index:1; }
+th { background:var(--head); cursor:pointer; user-select:none; white-space:nowrap; position:sticky; top:var(--controls-height, 2.9rem); z-index:1; }
 th[data-dir=asc]::after { content:" \25B2"; font-size:.7em; }
 th[data-dir=desc]::after { content:" \25BC"; font-size:.7em; }
 td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
 td.nowrap { white-space:nowrap; }
 a { color:var(--accent); }
 .name { min-width:10rem; max-width:18rem; }
+a.button { display:inline-block; color:inherit; text-decoration:none; background:var(--head); border:1px solid var(--line);
+           border-radius:4px; padding:.25rem .4rem; }
+a.button:hover { border-color:var(--muted); }
+/* Summary view: one block per filter, each state with its count. */
+.summary-grid { display:flex; flex-wrap:wrap; gap:1.5rem 3rem; align-items:flex-start; margin-top:1rem; }
+.summary-grid h2 { font-size:1.05rem; margin:0 0 .4rem; }
+.summary-grid table { width:auto; }
+.summary-grid td { padding:.2rem .6rem; }
+.summary-grid td.num { min-width:3.5rem; }
 .code-links { display:flex; gap:.3rem; margin-top:.15rem; }
 h1 { overflow-wrap:anywhere; }
 #viewer .sub { display:flex; gap:.5rem; align-items:baseline; }
@@ -114,16 +124,22 @@ code { font-size:.9em; background:var(--head); padding:0 .25rem; border-radius:3
   <pre id="source" hidden></pre>
 </div>
 
+<div id="summary-view" hidden>
+  <div class="controls"><a class="button" href="?" target="_self" data-nav title="All scripts, unfiltered">Full results</a></div>
+  <div class="summary-grid" id="summary-grid"></div>
+</div>
+
 <div id="view" hidden>
 <div class="controls">
   <input id="q" type="search" autocomplete="off" placeholder="Search name, id, site, tag, notes">
-  <label>Valid <select id="valid" data-kind="valid" autocomplete="off"><option value="">all</option><option>ok</option><option value="(messages)">warnings or errors</option><option value="invalid">errors (invalid)</option><option>tool error</option></select></label>
-  <label>Test <select id="test" data-kind="test" autocomplete="off"></select></label>
+  <label>Validation <select id="valid" data-kind="valid" autocomplete="off"><option value="">all</option><option>ok</option><option value="(messages)">warnings or errors</option><option value="invalid">errors (invalid)</option><option>tool error</option></select></label>
+  <label>Testing <select id="test" data-kind="test" autocomplete="off"></select></label>
   <label>Tag <select id="tag" data-kind="tag" autocomplete="off"></select></label>
   <label title="How every row's notes show. Full lets the browser's find (Ctrl+F) see all of them.">Notes
     <select id="notes-mode" autocomplete="off"><option value="hidden">hidden</option><option value="short" selected>short</option><option value="full">full</option></select></label>
   <button id="reload" title="Read corpus.json again">Reload</button>
   <button id="reset" title="Clear the filters and sorting, and show notes short">Reset</button>
+  <a class="button" href="?summary" target="_self" data-nav title="How many scripts are in each state">Summary</a>
   <span id="reload-status"></span>
   <span id="count"></span>
 </div>
@@ -131,8 +147,8 @@ code { font-size:.9em; background:var(--head); padding:0 .25rem; border-radius:3
 <thead><tr>
   <th data-key="rank">#</th><th data-key="id">ID</th><th data-key="name">Name</th>
   <th data-key="installs" data-desc="1">Installs</th><th data-key="updated" data-desc="1">Updated</th>
-  <th data-key="version">Version</th><th data-key="sites">Sites</th><th data-key="valid">Valid</th>
-  <th data-key="tags">Tags</th><th data-key="test">Test</th><th data-key="tested" data-desc="1">Tested</th>
+  <th data-key="version">Version</th><th data-key="sites">Sites</th><th data-key="valid">Validation</th>
+  <th data-key="tags">Tags</th><th data-key="test">Testing</th><th data-key="tested" data-desc="1">Tested</th>
   <th data-key="noteText">Notes</th>
 </tr></thead>
 <tbody id="rows"></tbody>
@@ -385,11 +401,59 @@ function show(corpus, source) {
     [...new Set(data.filter((d) => d.detail).map((d) => d.test + ':' + d.detail))].sort());
   setOptions($('tag'), 'tag', [['', 'all'], ['(any)', '(any tag)']], [...new Set(data.flatMap((d) => d.tags))].sort());
 
-  if (!restoredFromUrl) restoreFromUrl();
   $('loader').hidden = true;
-  $('view').hidden = false;
-  apply();
+  route();
 }
+
+// ---------- Views: the table, or the summary (?summary) ----------
+// Both are this page. Links between them are real links (so middle-click
+// opens a tab), but a plain click switches in place with pushState, so the
+// corpus isn't read again (from disk, that would need another file pick),
+// and Back and Forward move between them.
+
+/** Show whichever view the URL names. */
+function route() {
+  const summary = new URLSearchParams(location.search).has('summary');
+  $('summary-view').hidden = !summary;
+  $('view').hidden = summary;
+  if (summary) {
+    renderSummary();
+    return;
+  }
+  restoreFromUrl();
+  apply();
+  setStickyOffset();
+}
+
+/** One block per filter: each choice it offers, with how many scripts it matches, linked to the table filtered that way. */
+function renderSummary() {
+  const blocks = [['valid', 'Validation'], ['test', 'Testing'], ['tag', 'Tag']].map(([kind, title]) => {
+    let choices = [...$(kind).options].map((o) => ({ value: o.value, label: o.textContent,
+      count: rows.filter(({ d }) => matches(kind, o.value, d)).length }));
+    // Tags have no natural order: most common first, after "all" and "(any tag)".
+    if (kind === 'tag') choices = [...choices.slice(0, 2), ...choices.slice(2).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))];
+    const line = (c) => '<tr><td><a href="?' + esc(c.value ? new URLSearchParams({ [kind]: c.value }) : '') + '" target="_self" data-nav'
+      + titleAttr(kind, c.value) + '>' + esc(c.label) + '</a></td><td class="num">' + c.count.toLocaleString('en-US') + '</td></tr>';
+    return '<section><h2>' + title + '</h2><table>' + choices.map(line).join('') + '</table></section>';
+  });
+  $('summary-grid').innerHTML = blocks.join('');
+}
+
+document.addEventListener('click', (event) => {
+  const link = event.target.closest('a[data-nav]');
+  // Let the browser have middle-clicks and modified clicks (new tab, new window).
+  if (!link || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  try {
+    history.pushState(null, '', link.href);
+  } catch {
+    location.href = link.href;   // Some file:// setups refuse it; load the page instead.
+    return;
+  }
+  scrollTo(0, 0);
+  route();
+});
+window.addEventListener('popstate', () => { if (rows.length) route(); });
 
 // ---------- Settings in the URL ----------
 // The filters, Notes setting and sort live in the query string, so a reload
@@ -397,7 +461,6 @@ function show(corpus, source) {
 
 const URL_FIELDS = { q: 'q', valid: 'valid', test: 'test', tag: 'tag', notes: 'notes-mode' };
 const DEFAULTS = { q: '', valid: '', test: '', tag: '', notes: 'short' };
-let restoredFromUrl = false;
 
 // Looked up by comparison, not a selector: the key can come from the URL.
 const sortHeader = (key) => [...document.querySelectorAll('th[data-key]')].find((th) => th.dataset.key === key);
@@ -411,9 +474,8 @@ function setSort(key, dir, clicked = false) {
   if (th && (clicked || !(key === 'rank' && dir === 1))) th.dataset.dir = dir > 0 ? 'asc' : 'desc';
 }
 
-/** Apply the URL's settings once the Test and Tag choices exist (they come from the data). */
+/** Apply the URL's settings, once the Testing and Tag choices exist (they come from the data). */
 function restoreFromUrl() {
-  restoredFromUrl = true;
   const params = new URLSearchParams(location.search);
   for (const [param, id] of Object.entries(URL_FIELDS)) {
     const el = $(id);
@@ -424,7 +486,10 @@ function restoreFromUrl() {
   }
   const sort = params.get('sort');
   const key = sort?.replace(/^-/, '');
+  // No sort in the URL means the default, not whatever the table had last
+  // (Back to a plain URL must not keep a sort, and then write it back).
   if (key && sortHeader(key)) setSort(key, sort.startsWith('-') ? -1 : 1);
+  else setSort('rank', 1);
 }
 
 function saveToUrl() {
@@ -449,14 +514,18 @@ $('reset').addEventListener('click', () => {
   apply();
 });
 
+/** Whether a script matches one filter's choice (`kind` is valid, test or tag; '' matches all). */
+function matches(kind, value, d) {
+  if (!value) return true;
+  if (kind === 'valid') return value === '(messages)' ? d.validMessages : d.valid === value;
+  if (kind === 'test') return testMatches(value, d);
+  return value === '(any)' ? d.tags.length > 0 : d.tags.includes(value);
+}
+
 function apply() {
   const q = $('q').value.trim().toLowerCase();
-  const valid = $('valid').value, test = $('test').value, tag = $('tag').value;
   shown = rows.filter(({ d }) =>
-    (!q || d.search.includes(q)) &&
-    (!valid || (valid === '(messages)' ? d.validMessages : d.valid === valid)) &&
-    (!test || testMatches(test, d)) &&
-    (!tag || (tag === '(any)' ? d.tags.length > 0 : d.tags.includes(tag))));
+    (!q || d.search.includes(q)) && ['valid', 'test', 'tag'].every((kind) => matches(kind, $(kind).value, d)));
   shown.sort((a, b) => {
     let x = a.d[sortKey], y = b.d[sortKey];
     if (Array.isArray(x)) { x = x.join(','); y = y.join(','); }
@@ -546,7 +615,16 @@ $('rows').addEventListener('click', (event) => {
 $('notes-mode').addEventListener('input', () => { noteView.clear(); render(); saveToUrl(); });
 // A narrower window can clip notes that fit before, and a wider one the reverse.
 let resizeTimer;
-window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(updateMoreButtons, 150); });
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { updateMoreButtons(); setStickyOffset(); }, 150);
+});
+
+/** The table's sticky header sits under the sticky controls, which wrap onto more lines in a narrow window. */
+function setStickyOffset() {
+  const controls = document.querySelector('#view .controls');
+  if (controls.offsetHeight) document.documentElement.style.setProperty('--controls-height', controls.offsetHeight + 'px');
+}
 
 document.querySelectorAll('th[data-key]').forEach((th) => th.addEventListener('click', () => {
   const key = th.dataset.key;
@@ -555,7 +633,7 @@ document.querySelectorAll('th[data-key]').forEach((th) => th.addEventListener('c
 }));
 for (const id of ['q', 'valid', 'test', 'tag']) $(id).addEventListener('input', apply);
 for (const id of ['valid', 'test', 'tag']) $(id).addEventListener('input', () => selectTitle($(id)));
-// The Valid choices are fixed in the HTML; give them their tooltips here.
+// The Validation choices are fixed in the HTML; give them their tooltips here.
 for (const o of $('valid').options) o.title = helpFor('valid', o.value);
 
 // ---------- Loading corpus.json ----------

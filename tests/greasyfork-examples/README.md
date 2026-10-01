@@ -355,7 +355,13 @@ node tests/greasyfork-examples/serve-results.mjs   # then open http://localhost:
 - Opened straight from disk, Chrome won't let the page fetch another file, so
   it asks you to choose `corpus.json`. You navigate to it once; after that the
   page offers to reopen the same file with one click.
-- Every link opens in a new tab.
+- Every link opens in a new tab, except the Summary ones below.
+- Summary shows each filter's choices (Validation, Testing, Tag) with how many
+  scripts are in each; tags are listed most common first.
+  - Each line links to the table filtered that way, and Full results goes
+    back to the whole table.
+  - These switch views in the same tab, so Back and Forward move between
+    them; middle-click opens a new tab as usual.
 - Under each name:
   - "Code" opens the downloaded copy in a viewer tab (this page with
     `?view=<id>`). A link straight to the `.user.js` file would make a
