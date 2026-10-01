@@ -1563,17 +1563,52 @@
     if (event.kind === "load" && entry.responseType) {
       rebuildBinary(event.response, entry.responseType);
     }
+    /* Every terminal event leaves the request DONE, so the object each
+       callback sees carries `readyState: 4` (scripts gate on it, e.g.
+       `if (r.readyState === 4)`). Non-load events have no response, so
+       they get the empty fields of a failed XMLHttpRequest (`status: 0`,
+       empty text) as TM/VM do: a shared handler that reads
+       `r.responseText` after checking readyState must not crash. A load
+       with no response object (never sent today) falls back to the
+       same empty shape rather than throwing before any callback. */
+    var payload;
+    if (event.kind === "load" && event.response && typeof event.response === "object") {
+      payload = event.response;
+      payload.readyState = 4;
+    } else {
+      payload = emptyXhrResponse(entry);
+      if (event.kind === "error") payload.error = event.message;
+    }
     var cb;
     if (event.kind === "load") cb = entry.onload;
     else if (event.kind === "error") cb = entry.onerror;
     else if (event.kind === "timeout") cb = entry.ontimeout;
     else if (event.kind === "abort") cb = entry.onabort;
+    /* `onreadystatechange` fires before the terminal callback, the
+       order XMLHttpRequest (and so Tampermonkey/Violentmonkey) uses:
+       readystatechange(4), then load/error/timeout/abort. Only the
+       final state is reported; the worker sends one event per request,
+       so states 1-3 never reach the page. */
+    callXhrCallback(entry.onreadystatechange, payload);
+    callXhrCallback(cb, payload);
+  }
+
+  function emptyXhrResponse(entry) {
+    return {
+      readyState: 4,
+      status: 0,
+      statusText: "",
+      responseText: "",
+      response: null,
+      responseHeaders: "",
+      finalUrl: entry.url,
+    };
+  }
+
+  function callXhrCallback(cb, payload) {
     if (typeof cb !== "function") return;
     try {
-      if (event.kind === "load") cb(event.response);
-      else if (event.kind === "error") cb({ error: event.message });
-      else if (event.kind === "timeout") cb({});
-      else if (event.kind === "abort") cb({});
+      cb(payload);
     } catch (e) {
       try { console.info("[SourceMonkey] XHR callback threw:", e); } catch (_e) {}
     }
@@ -1595,8 +1630,9 @@
   var xhr = {
     /* GM_xmlhttpRequest(details) — kicks off the request, returns
        `{abort}` immediately. The user's onload/onerror/ontimeout/
-       onabort callbacks come from `details` and are stored locally
-       (callbacks aren't serializable across the bridge). */
+       onabort/onreadystatechange callbacks come from `details` and
+       are stored locally (callbacks aren't serializable across the
+       bridge). */
     start: function (scriptId, details) {
       if (!details || typeof details !== "object") {
         throw new _Error("[SourceMonkey] GM_xmlhttpRequest: details object required");
@@ -1610,6 +1646,8 @@
         onerror: details.onerror,
         ontimeout: details.ontimeout,
         onabort: details.onabort,
+        onreadystatechange: details.onreadystatechange,
+        url: details.url,
         responseType: typeof details.responseType === "string" ? details.responseType : "",
         ttlTimer: null,
       };

@@ -291,10 +291,10 @@ Architecture:
 
 - Page-side `GM_xmlhttpRequest(details)` returns `{abort}`
   synchronously. The runtime stores the callbacks
-  (`onload`/`onerror`/`ontimeout`/`onabort`) keyed by a generated
-  request id (callbacks aren't serializable across the bridge), and
-  ships a `sm:gm-xhr-start` envelope to the SW with the serializable
-  request fields.
+  (`onload`/`onerror`/`ontimeout`/`onabort`/`onreadystatechange`)
+  keyed by a generated request id (callbacks aren't serializable
+  across the bridge), and ships a `sm:gm-xhr-start` envelope to the
+  SW with the serializable request fields.
 - SW (`src/gm-xhr.ts`) runs `fetch(url, init)` against an
   `AbortController`. On settle it ships a single `sm:gm-xhr-event`
   back to the originating tab via `chrome.tabs.sendMessage`. The
@@ -374,6 +374,7 @@ Response shape on `onload`:
 | `response`       | `responseText` for `text`; parsed object for `json`. |
 | `responseHeaders`| Multi-line `Name: value\r\n…` (TM/VM convention).  |
 | `finalUrl`       | Same as `responseURL`.                             |
+| `readyState`     | `4`, set page-side on every terminal event; `onreadystatechange` gets it just before the terminal callback. |
 
 Binary responseTypes (Phase 9): `blob`, `arraybuffer`, `document`.
 The SW reads `await res.arrayBuffer()` and ships the bytes back as
