@@ -104,10 +104,23 @@ fails.
     [Rejected registrations](#rejected-registrations).
   - Not every write is reported — see
     [What an incremental sync must not disturb](#what-an-incremental-sync-must-not-disturb).
-- **One-time world config** — `chrome.userScripts.configureWorld({
-  messaging: true })` is called before the first `register()`. This is
-  what lets the injected wrapper call `chrome.runtime.sendMessage`
-  back to the SW.
+- **One-time world config** — `chrome.userScripts.configureWorld()`
+  is called before the first `register()`.
+  - `messaging: true` lets the injected wrapper call
+    `chrome.runtime.sendMessage` back to the SW.
+  - `csp: "script-src 'self' 'unsafe-eval' 'unsafe-inline' *"` is the
+    USER_SCRIPT world's own CSP. `'unsafe-eval'` lets the reload
+    fast-path eval the script body.
+  - Chrome also checks `<script>` elements inserted from this world
+    against it, instead of the page's CSP. `'unsafe-inline'` and `*`
+    let userscripts inject page code (inline, or by `src`), which is
+    otherwise refused on every page.
+  - The new capability this grants: userscript-inserted `<script>`
+    elements run in the page realm even under a strict page
+    `script-src`. Tampermonkey 5.5 sets the same world CSP, so it
+    allows this too.
+  - Inline event handlers and `javascript:` URLs a userscript adds
+    stay under the page CSP.
 
 ### The sync is incremental
 
@@ -813,7 +826,8 @@ whole `GM_*` surface works there too.
 ##### Costs of running in MAIN
 
 - **Page CSP applies to DOM injection.** `GM_addStyle` /
-  `GM_addElement` are CSP-exempt in USER_SCRIPT world but not in MAIN.
+  `GM_addElement` escape the page's CSP in USER_SCRIPT world but not
+  in MAIN.
   A page whose `style-src` omits `'unsafe-inline'` will drop an
   injected `<style>`'s rules on the floor. The runtime detects that
   (a connected `<style>` with no `.sheet`) and files one warning per

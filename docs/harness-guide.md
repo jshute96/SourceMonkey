@@ -1758,6 +1758,9 @@ These apply to `sm-dev start` and to specs alike.
 - The isolated world enforces the page's Trusted Types policy, so a
   granted script setting `innerHTML` fails on sites like YouTube. The
   extension's `USER_SCRIPT` world is exempt.
+- An inline `<script>` a granted script inserts (`createElement`,
+  `GM_addElement`) is blocked by a strict page `script-src`. The
+  extension runs it, as Tampermonkey does.
 - A `GM_setValue` made just before the page unloads (a "save and
   reload" button, a `beforeunload` handler) can be lost.
 

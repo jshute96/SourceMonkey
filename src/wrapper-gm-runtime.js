@@ -1235,10 +1235,12 @@
 
   /* ---------- DOM injection (GM_addStyle / GM_addElement) ----------
 
-     USER_SCRIPT-world DOM mutations are exempt from page CSP (the
-     same dispensation content scripts get), so a script on a strict-
-     CSP page like github.com / google.com can still inject styles
-     and elements that the page itself couldn't.
+     In USER_SCRIPT world the page CSP doesn't govern what a script
+     inserts: styles apply regardless, and <script> elements are
+     checked against the world CSP instead (see ensureWorldConfigured
+     in injector.ts). So a script on a strict-CSP page like
+     github.com / google.com can still inject styles and scripts that
+     the page itself couldn't.
 
      In MAIN world there is no exemption: the page's CSP applies to
      what the script inserts, so a strict `style-src` accepts the
