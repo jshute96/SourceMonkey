@@ -79,8 +79,10 @@ Our own declarations are not included, and need not be:
     library, a real idiom, compiles and runs.
 - That nested scope is a function body, as `new Function`'s is, so a
   top-level `return` is judged as it will run.
-- The checked text starts with the same `void 0;` the nested scope
-  does, so a leading `"use strict"` stays inert in both.
+- The checked text starts with a blank line (so a `#!` line is never
+  first), not a statement, so a leading `"use strict"` applies there
+  as in the nested scope: strict-only errors like `with` are caught at
+  install.
 
 ## Why the composed program, not each file
 

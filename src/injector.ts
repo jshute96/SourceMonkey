@@ -30,7 +30,7 @@
 //   js[2]  — the whole user program: every `@require` concatenated
 //            ahead of the script's own body, wrapped in
 //            `self.__smRun(id,function(__smE){<gm bindings>…
-//            return(()=>{void 0;<source>\n})();})` (the source in a
+//            return(()=>{<source>\n})();})` (the source in a
 //            nested scope; see USER_SCOPE_OPEN), so it runs only after
 //            the prelude's matcher +
 //            check-pending + @run-at gates resolve. Trailing
@@ -447,15 +447,14 @@ export function wrapPreludeEntry(): string {
 //   - Top-level `return` still works (it returns from the arrow), and
 //     top-level `await` stays a SyntaxError, as it was.
 //
-// The `void 0;` keeps a leading `"use strict"` (the script's, or a
-// first `@require`'s) inert, as it always was here: after our own
-// statements it was never in a directive prologue, so scripts ran
-// sloppy. As the arrow's first statement it would become a real
-// directive and switch the whole program to strict mode, and corpus
-// scripts that assign undeclared variables under a top-level
-// `'use strict'` would start throwing. Whether to honor it (what other
-// managers do is unverified) is an open question; this keeps behavior
-// unchanged.
+// The user program is the arrow's first statement, so a leading
+// `"use strict"` is a real directive and applies to the whole program,
+// as in Tampermonkey and Violentmonkey (tests/examples/use-strict).
+// Like theirs, it's the first file's: a first `@require` that starts
+// with one makes the script strict too, and the script's own after a
+// `@require` does nothing, even when that `@require` is empty (our `;`
+// between files is then the first statement). (Before the nested scope it never applied:
+// our own statements came first.)
 //
 // The opener goes on the head's line and the closer on the line that
 // already holds the wrap's `});`, so no line moves: generated line
@@ -468,13 +467,13 @@ export function wrapPreludeEntry(): string {
 // prelude ignores it; unit tests read it). The swap eval is global
 // code, where `return` is illegal; its completion value is the arrow's
 // result anyway.
-const USER_SCOPE_OPEN = '(()=>{void 0;';
+const USER_SCOPE_OPEN = '(()=>{';
 const USER_SCOPE_CLOSE = '\n})();';
 
 // Wrap the whole user program — every `@require` plus the script's own
 // body — as ONE js[] entry. Output shape:
 //
-//   self.__smRun("<id>",function(__smE){<DECL PREAMBLE><GM BINDINGS><GM PRELUDE>return(()=>{void 0;
+//   self.__smRun("<id>",function(__smE){<DECL PREAMBLE><GM BINDINGS><GM PRELUDE>return(()=>{
 //   // @require <url 1>
 //   <require 1 line 1>
 //   ...
@@ -811,9 +810,8 @@ export async function buildGmBindingsForScript(
 // program runs in a nested scope of its own (`USER_SCOPE_OPEN`), so
 // nothing it declares can clash with them. That nested scope is a
 // function body, as `new Function`'s is, so a top-level `return` is
-// judged as it will run. The preamble line starts with the same
-// `void 0;` as the nested scope, so a leading `"use strict"` stays
-// inert here too (see USER_SCOPE_OPEN).
+// judged as it will run, and a leading `"use strict"` applies to the
+// whole program, as there (see USER_SCOPE_OPEN).
 //
 // Returns provenance alongside the text. A syntax error is reported as
 // a line in the COMPOSED program, which is not a line of any file the
@@ -833,17 +831,17 @@ export interface ParseCheckSource {
 }
 
 export function buildParseCheckSource(script: StoredScript): ParseCheckSource {
-  // A first line of our own, for two reasons. A leading `"use strict"`
-  // is then not a directive, as in the injected entry (see
-  // USER_SCOPE_OPEN). And the user's first line is never at offset 0:
-  // a `#!` hashbang is legal only there, so it stays the syntax error
-  // it also is in the real injected entry (which wraps the source), and
-  // the location probes can't be handed a source that parses as a
-  // shebang script. The offset below is derived from it rather than
+  // A blank first line of our own, so the user's first line is never at
+  // offset 0: a `#!` hashbang is legal only there, so it stays the
+  // syntax error it also is in the real injected entry (which wraps the
+  // source), and the location probes can't be handed a source that
+  // parses as a shebang script. Blank, not a statement, so a leading
+  // `"use strict"` still applies, as in the injected entry (see
+  // USER_SCOPE_OPEN). The offset below is derived from it rather than
   // assumed to be 1 — the same discipline `composeSource` applies
   // internally, and for the same reason: assumed line counts drift
   // from emitted ones.
-  const preamble = 'void 0;\n';
+  const preamble = '\n';
   const startLine = countLines(preamble) - 1;
   const requires = script.requires ?? [];
   const composed = composeSource(script, {

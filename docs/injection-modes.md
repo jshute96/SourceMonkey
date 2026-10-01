@@ -47,7 +47,7 @@ js: [
 The combined entry:
 
 ```
-self.__smRun("<id>",function(__smE){<preamble><GM bindings><GM prelude>return(()=>{void 0;
+self.__smRun("<id>",function(__smE){<preamble><GM bindings><GM prelude>return(()=>{
 // @require https://cdn.example.com/lib.js
 <lib.js line 1>
 ...

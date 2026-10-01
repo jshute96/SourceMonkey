@@ -308,13 +308,13 @@ test('wrapCombinedEntry: the user program shadows our bindings instead of clashi
   assert.equal(got, 'page,mine,2,3,own,lib-self');
 });
 
-test('wrapCombinedEntry: a leading "use strict" stays inert, as before', () => {
-  // The nested scope starts with our own `void 0;`, so the script's
-  // directive isn't in a directive prologue and the program stays
-  // sloppy: a plain call still gets the global object as `this`.
+test('wrapCombinedEntry: a leading "use strict" applies, as in TM and VM', () => {
+  // The script is the nested scope's first statement, so its directive
+  // is a real one and the program is strict: a plain call gets
+  // undefined as `this`, not the global object.
   const wrapped = wrapCombinedEntry({
     ...COMBINED_ARGS,
-    script: scriptWith({ bodyText: '"use strict";\nreturn (function () { return this; })() === globalThis;' }),
+    script: scriptWith({ bodyText: '"use strict";\nreturn (function () { return this; })() === undefined;' }),
   });
   let got = 'unset';
   const stub = {
@@ -751,7 +751,7 @@ test('buildSwapEvalBody: passes through plain body when no header (defensive)', 
   // scope — same shape the registered path emits after its wrap head.
   const script = { ...makeScript(), header: null };
   const { body } = await buildSwapEvalBody(script, '0.0.0');
-  assert.equal(body, '(()=>{void 0;console.log("hi");\n})();');
+  assert.equal(body, '(()=>{console.log("hi");\n})();');
 });
 
 // ---------- buildRegistrationSpec ----------

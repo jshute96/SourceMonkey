@@ -399,8 +399,8 @@ fetch via the SW). Highlights:
 - `tests/e2e/wrapper-scope.spec.ts` — the user program's nested scope:
   `const window = unsafeWindow`, redeclared `GM_*` / `unsafeWindow` /
   `__sm*` names and a library's own `unsafeWindow` all run; a leading
-  `"use strict"` stays inert (sloppy mode, as before); the reload swap
-  gets the same scope.
+  `"use strict"` applies, at run time and in the install-time syntax
+  check; the reload swap gets the same scope.
 - `tests/e2e/gm-main-world-surface.spec.ts` — the rest of the GM_*
   surface from MAIN world, which every other spec exercises only in
   USER_SCRIPT world. Two reasons a surface is in here:

@@ -9,11 +9,17 @@
 // See wrapCombinedEntry in src/injector.ts and
 // docs/injection.md#the-user-program-scope.
 
+import fs from 'node:fs';
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 import { waitForTabState, activeTabId, hasBadgeColor } from '../fixtures/sw-api';
 
 const PAGE = 'page-globals.html';
+
+// The 1-based line of a file that starts with `prefix`.
+function lineOf(file: string, prefix: string): number {
+  return fs.readFileSync(file, 'utf8').split('\n').findIndex((l) => l.startsWith(prefix)) + 1;
+}
 const GREEN = '#2e7d32';
 
 test.describe('user program scope', () => {
@@ -144,13 +150,12 @@ test.describe('user program scope', () => {
     await page.close();
   });
 
-  test('a leading "use strict" stays inert; top-level this and return still work', async ({
+  test('a leading "use strict" applies; top-level this and return still work', async ({
     extensionContext, fixtureServer, sm,
   }) => {
-    // The nested scope starts with our own `void 0;`, so a directive at
-    // the top of the script is not a directive, as before the nested
-    // scope existed: the program runs sloppy, so an undeclared
-    // assignment still works.
+    // The script is the nested scope's first statement, so its
+    // directive applies to the whole program, as in Tampermonkey and
+    // Violentmonkey (tests/examples/use-strict).
     scriptsDir.write({
       relativePath: 'a.user.js',
       meta: {
@@ -161,11 +166,8 @@ test.describe('user program scope', () => {
       },
       body: `'use strict';
         const b = document.body.dataset;
-        smUndeclared = 'sloppy';
-        b.smUndeclared = smUndeclared;
-        // Sloppy-only syntax: the install-time parse check must agree.
-        with (Math) { b.smWith = String(PI > 3); }
-        b.smInnerThis = String((function () { return this === window; })());
+        try { smUndeclared = 'sloppy'; b.smUndeclared = 'assigned'; } catch (e) { b.smUndeclared = e.name; }
+        b.smInnerThis = String((function () { return this === undefined; })());
         b.smThis = String(this === window);
         if (this === window) return;
         b.smAfterReturn = 'reached';
@@ -178,12 +180,41 @@ test.describe('user program scope', () => {
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/${PAGE}`);
-    await expect(page.locator('body')).toHaveAttribute('data-sm-undeclared', 'sloppy');
-    await expect(page.locator('body')).toHaveAttribute('data-sm-with', 'true');
+    await expect(page.locator('body')).toHaveAttribute('data-sm-undeclared', 'ReferenceError');
     await expect(page.locator('body')).toHaveAttribute('data-sm-inner-this', 'true');
     await expect(page.locator('body')).toHaveAttribute('data-sm-this', 'true');
     expect(await page.locator('body').getAttribute('data-sm-after-return')).toBeNull();
     await page.close();
+  });
+
+  test('the install-time syntax check applies a leading "use strict" too', async ({ sm }) => {
+    // `with` is legal sloppy code and a SyntaxError in strict mode, so
+    // the check has to judge the program in the mode it will run in, and
+    // still point at the right line past its own blank first line.
+    const file = scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: { name: 'Strict with', match: ['https://e.com/*'], grant: ['none'] },
+      body: `'use strict';\nwith (Math) { void PI; }\n`,
+    });
+    const added = await sm.addCollection(scriptsDir.path);
+    const [script] = (await sm.getCollectionWithScripts(added!.id))!.scripts;
+    expect(script.status).toBe('invalid');
+    expect(script.errorMessage).toMatch(/^Syntax error: .*with statement/i);
+    expect(script.errorLocation).toEqual({ file: 'a.user.js', line: lineOf(file, 'with'), column: 1 });
+  });
+
+  test('a first @require\'s "use strict" applies to the body in the syntax check', async ({ sm }) => {
+    scriptsDir.writeRaw('strict-lib.js', `'use strict';\nvar lib = 1;\n`);
+    const file = scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: { name: 'Strict lib', match: ['https://e.com/*'], grant: ['none'], extra: ['// @require     strict-lib.js'] },
+      body: `with (Math) { void PI; }\n`,
+    });
+    const added = await sm.addCollection(scriptsDir.path);
+    const [script] = (await sm.getCollectionWithScripts(added!.id))!.scripts;
+    expect(script.status).toBe('invalid');
+    expect(script.errorMessage).toMatch(/^Syntax error: .*with statement/i);
+    expect(script.errorLocation).toEqual({ file: 'a.user.js', line: lineOf(file, 'with'), column: 1 });
   });
 
   test('a reload swap gives the swapped body the same nested scope', async ({
@@ -213,13 +244,15 @@ test.describe('user program scope', () => {
     const tabId = await activeTabId(getServiceWorker);
     await waitForTabState(sm, tabId, (s) => s.badgeText === '1' && hasBadgeColor(s, GREEN), 'initial v1 green');
 
-    scriptsDir.rewriteBody('live.user.js', `
+    // Its 'use strict' applies in the swap too.
+    scriptsDir.rewriteBody('live.user.js', `'use strict';
       const GM_info = 'mine';
       var GM_setValue = 0;
-      document.title = 'v2:' + GM_info + ':' + GM_setValue;
+      const strict = (function () { return this === undefined; })();
+      document.title = 'v2:' + GM_info + ':' + GM_setValue + ':' + strict;
     `);
     await page.reload();
-    await expect(page).toHaveTitle('v2:mine:0');
+    await expect(page).toHaveTitle('v2:mine:0:true');
     await page.close();
   });
 });

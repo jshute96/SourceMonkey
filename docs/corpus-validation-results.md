@@ -47,8 +47,9 @@ node tests/greasyfork-examples/validate-corpus.mjs \
 These numbers predate the user program moving into its own nested
 scope (see [GM binding collisions](#gm-binding-collisions)), and some
 later header-check changes. A rerun after that change found no parse
-failures at all; the other groups have drifted too and are not redone
-here.
+failures, with a leading `'use strict'` honored (so strict-only errors
+like `with` count); the other groups have
+drifted too and are not redone here.
 
 | | Scripts | |
 |---|---|---|

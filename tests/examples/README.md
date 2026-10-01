@@ -63,6 +63,9 @@ of the layout above:
 - Variant files are named by what they vary (`start.user.js`,
   `end.user.js`, `no-connect.user.js`, …), not by the directory
   stem.
+- Variants a manager can't install go in a subdirectory the spec
+  installs separately, so it can skip them there: `use-strict/with-require/`
+  holds the relative-`@require` pair TM can't take.
 
 The aim is double-purpose:
 
@@ -139,6 +142,7 @@ events.
 | `headers-match-hash/`      | `#hash` in `@match` / `@include` / `@exclude`, per manager        | multi-script  |
 | `headers-include-regex/`   | Regex `@include` / `@exclude`: slashes, flags, case, per manager   | multi-script  |
 | `require-scope/`           | `@require` scope in both worlds (SM-only: relative ref)            | multi-script  |
+| `use-strict/`              | Top-level `'use strict'`, in both worlds and with a `@require`     | multi-script  |
 | `xmlhttp-denied/`          | `GM_xmlhttpRequest` + `@connect` denial vs allow                  | multi-script  |
 
 ## Page conventions

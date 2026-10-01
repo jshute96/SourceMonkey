@@ -1135,7 +1135,7 @@ When the body fires (inside the prelude's `runMain`), the prelude:
 The entry has two scopes, one inside the other:
 
 ```
-self.__smRun(id,function(__smE){<__sm* vars><GM bindings><GM prelude>return(()=>{void 0;
+self.__smRun(id,function(__smE){<__sm* vars><GM bindings><GM prelude>return(()=>{
 <requires, then the script's own source>
 })();});
 ```
@@ -1162,14 +1162,24 @@ Why an arrow function rather than a block:
 - Top-level `return` still works. Top-level `await` stays a
   SyntaxError.
 
-The arrow body starts with `void 0;`, so a leading `"use strict"` (the
-script's, or a first `@require`'s) is not a directive:
+The user program is the arrow body's first statement, so a leading
+`"use strict"` is a real directive and the whole program runs in strict
+mode, as in Tampermonkey and Violentmonkey:
 
-- It never was one here: it always followed our own statements, so
-  scripts ran in sloppy mode.
-- Honoring it would make scripts that assign undeclared variables under
-  a top-level `'use strict'` start throwing, and what other managers do
-  is unverified. So behavior is kept as it was.
+- It's the first file's directive that counts, as if the files were
+  concatenated: a first `@require` that starts with one makes the
+  script strict, and the script's own after a `@require` does nothing.
+  - Tampermonkey and Violentmonkey do the same: VM in
+    `tests/examples/use-strict`, TM checked once by hand (it can't take
+    that example's relative `@require`).
+  - That includes a first `@require` that is empty or only comments:
+    the `;` we put between files is then the first statement, so the
+    script's own directive still does nothing. What TM and VM do there
+    is untested.
+- Before the nested scope it never applied, since our own statements
+  came first. Scripts that relied on that (assigning undeclared
+  variables under a top-level `'use strict'`) now throw, as they do in
+  Tampermonkey and Violentmonkey.
 
 The opener and closer sit on lines that already exist, so no line
 moves: the source map and the Log tab's stack mapping are unaffected.
