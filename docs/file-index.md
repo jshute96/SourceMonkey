@@ -26,6 +26,8 @@ One-line descriptions of every source file, grouped by directory.
 | `.claude/commands/codereview.md` | `/codereview` slash command — launches a background review subagent |
 | `.claude/skills/SourceMonkey-dev` | Symlink to `skills/SourceMonkey-dev/`, so agents here load the harness skill too |
 | `.claude/skills/SourceMonkey-friction` | Symlink to `skills/SourceMonkey-friction/`, so agents here log tool friction too |
+| `.claude/skills/corpus-testing/SKILL.md` | Repo-only skill: testing GreasyFork corpus scripts live, running batches with agents, re-testing after fixes |
+| `.claude/skills/corpus-testing/references/testing-a-script.md` | How to test and record one corpus script; the brief handed to each agent in a batch |
 | `.claude/commands/pushreview.md` | `/pushreview` slash command — `/codereview` then commit + push if clean |
 
 ## Build Scripts (`scripts/`)

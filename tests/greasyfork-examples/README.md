@@ -4,6 +4,10 @@ Tools and data for testing SourceMonkey against real-world userscripts: the
 2000 most-installed scripts on [GreasyFork](https://greasyfork.org), downloaded
 with their dependencies, plus a record of what testing each one found.
 
+This README covers the tools and data. For how to test scripts on their
+live sites and record results (also for agents), see the `corpus-testing`
+skill in [`.claude/skills/corpus-testing/`](../../.claude/skills/corpus-testing/SKILL.md).
+
 ## Overview
 
 ### State files
@@ -268,6 +272,10 @@ sqlite3 tests/greasyfork-examples/corpus.db < tests/greasyfork-examples/analysis
 `corpus.json` also records what we learn about each script: whether it passes
 SourceMonkey's install checks, and whether it works when run on its target
 site. `record-results.mjs` is the only tool that writes these findings.
+
+How to test scripts (the method, blame rules, tags, running batches with
+agents, and re-testing after a fix) is in the `corpus-testing` skill,
+[`.claude/skills/corpus-testing/`](../../.claude/skills/corpus-testing/SKILL.md).
 
 **`record-results.mjs` records individual facts into the corpus**: one
 script's test result, tag or note, as you (or an agent) learn it. It doesn't
