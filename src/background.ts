@@ -96,6 +96,7 @@ import {
   applyScriptReport,
   BADGE_PURPLE,
   BADGE_RED,
+  SM_DEV_MARKER_CYAN,
   clearScriptStale,
   computeBadge,
   formatRowLabel,
@@ -255,6 +256,7 @@ import {
 import {
   ACTION_MENU_MORE_LABEL,
   ACTION_MENU_RELOAD_LABEL,
+  ACTION_MENU_SM_DEV_LABEL,
   planActionMenu,
   type ActionMenuPlan,
   type ActionMenuScript,
@@ -1198,12 +1200,74 @@ async function renderBadge(tabId: number, state: TabMatchState | null): Promise<
   } catch {
     /* tab probably closed; nothing useful to do */
   }
+  await markSmDevTab(tabId, state?.smDevAllow !== undefined);
   // Action context-menu items are a global property of the action, not
   // per-tab — so we only rebuild them when this tab is the one the user
   // is currently looking at. Out-of-band updates (background tabs
   // reporting sm:start, refresh fan-outs) skip the rebuild.
   if (tabId === activeTabId) {
     rebuildActionContextMenu(state);
+  }
+}
+
+// ---------- The sm-dev marker on the icon ----------
+//
+// A tab whose page loaded under an sm-dev run's claim (sm-dev-link.ts)
+// gets the toolbar icon with a cyan "T" in its top-left corner, clear of
+// the badge at the bottom right. Chrome gives a tab one badge, so the
+// marker is drawn into a per-tab icon instead.
+
+// Tabs given the marked icon, so only they are set back.
+const markedTabs = new Set<number>();
+// Tabs rendered since this worker started: a worker that restarted
+// doesn't know which tabs an earlier one marked, so each tab's first
+// render sets its icon back if it isn't marked.
+const markCheckedTabs = new Set<number>();
+let markedIcon: Promise<Record<string, ImageData>> | null = null;
+
+// The default icon with the marker, at the sizes the toolbar uses.
+function drawMarkedIcon(): Promise<Record<string, ImageData>> {
+  markedIcon ??= (async () => {
+    const out: Record<string, ImageData> = {};
+    for (const [size, file] of [[16, 'icons/icon-16.png'], [32, 'icons/icon-48.png']] as const) {
+      const blob = await (await fetch(chrome.runtime.getURL(file))).blob();
+      const bitmap = await createImageBitmap(blob);
+      const canvas = new OffscreenCanvas(size, size);
+      const g = canvas.getContext('2d')!;
+      g.drawImage(bitmap, 0, 0, size, size);
+      const box = Math.round(size * 0.5);
+      g.fillStyle = SM_DEV_MARKER_CYAN;
+      g.beginPath();
+      g.roundRect(0, 0, box, box, Math.max(1, size / 16));
+      g.fill();
+      g.fillStyle = '#ffffff';
+      g.font = `bold ${Math.round(box * 0.85)}px sans-serif`;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText('T', box / 2, box / 2 + size / 32);
+      out[String(size)] = g.getImageData(0, 0, size, size);
+    }
+    return out;
+  })();
+  markedIcon.catch(() => { markedIcon = null; });
+  return markedIcon;
+}
+
+async function markSmDevTab(tabId: number, on: boolean): Promise<void> {
+  const firstCheck = !markCheckedTabs.has(tabId);
+  markCheckedTabs.add(tabId);
+  try {
+    if (on) {
+      await chrome.action.setIcon({ tabId, imageData: await drawMarkedIcon() });
+      markedTabs.add(tabId);
+    } else if (markedTabs.has(tabId) || firstCheck) {
+      markedTabs.delete(tabId);
+      const icons = chrome.runtime.getManifest().action?.default_icon;
+      if (icons) await chrome.action.setIcon({ tabId, path: icons as Record<string, string> });
+    }
+  } catch (err) {
+    // The tab closed meanwhile, or the icon couldn't be drawn.
+    console.info('[SourceMonkey] could not set the sm-dev marker:', describeError(err));
   }
 }
 
@@ -1229,6 +1293,8 @@ const ACTION_MENU_MORE_ID = 'sm-more';
 // chrome.contextMenus.create id for the fixed "Reload page with no
 // userscripts" row. See `reloadTabWithoutScripts`.
 const ACTION_MENU_RELOAD_ID = 'sm-reload-without-scripts';
+// The "Page under sm-dev control" row: a note, not clickable.
+const ACTION_MENU_SM_DEV_ID = 'sm-dev-control';
 // Indent + glyph for nested menu-command rows. Chrome preserves the
 // leading whitespace in context-menu titles; four spaces + ↳ reads as
 // "indented under the row above" at typical zoom rather than as a
@@ -1319,7 +1385,7 @@ function buildActionMenuPlan(
       title: cmd.name,
     })),
   }));
-  const plan = planActionMenu(groups);
+  const plan = planActionMenu(groups, state?.smDevAllow !== undefined);
   // The skip marker is driven by main-frame commits, which only
   // `chrome.webNavigation` reports; without it the row would be a
   // plain reload. (The slot it reserved stays reserved — not worth a
@@ -1337,6 +1403,14 @@ async function doRebuildActionContextMenu(
   await new Promise<void>((resolve) => chrome.contextMenus.removeAll(() => resolve()));
   menuItemToCommand.clear();
   erroredScriptRows.clear();
+  if (plan.smDevControl) {
+    chrome.contextMenus.create({
+      id: ACTION_MENU_SM_DEV_ID,
+      title: ACTION_MENU_SM_DEV_LABEL,
+      contexts: ['action'],
+      enabled: false,
+    });
+  }
   // Top-level script groups. Each script row is followed by its
   // indented menu-command rows in registration order.
   for (const group of plan.top) {
@@ -1633,6 +1707,8 @@ async function logMissingScripts(tabId: number, documentId: string): Promise<voi
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  markedTabs.delete(tabId);
+  markCheckedTabs.delete(tabId);
   enqueueTabWork(tabId, () => clearTabState(tabId));
   clearSkipScripts(tabId);
   dropClaim(tabId);

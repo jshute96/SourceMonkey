@@ -12,10 +12,13 @@
 // A fixed "Reload page with no userscripts" row closes the menu
 // whenever at least one script row is shown. It counts against the
 // same cap, so script groups get one slot fewer when it's present.
+// So does the "Page under sm-dev control" row that opens the menu in a
+// tab an sm-dev run controls.
 
 export const ACTION_MENU_LIMIT = 6;
 export const ACTION_MENU_MORE_LABEL = 'More';
 export const ACTION_MENU_RELOAD_LABEL = 'Reload page with no userscripts';
+export const ACTION_MENU_SM_DEV_LABEL = 'Page under sm-dev control';
 
 export interface ActionMenuCommand {
   commandId: string;
@@ -46,6 +49,9 @@ export interface ActionMenuPlan {
   // row — i.e. whenever there is at least one script row. Rendered
   // after everything else, at the top level, never inside More.
   reloadWithoutScripts: boolean;
+  // True when the menu opens with the "Page under sm-dev control" row:
+  // the page loaded in a tab an sm-dev run controls.
+  smDevControl: boolean;
 }
 
 // Cost of a group in menu rows: one for the script + one per command.
@@ -58,15 +64,15 @@ function groupCost(g: ActionMenuScript): number {
 // any group spills we send every subsequent group to More — otherwise
 // the visible order would scramble (e.g. a small later group jumping
 // ahead of a big earlier one).
-export function planActionMenu(scripts: ActionMenuScript[]): ActionMenuPlan {
+export function planActionMenu(scripts: ActionMenuScript[], smDevControl = false): ActionMenuPlan {
   const reloadWithoutScripts = scripts.length > 0;
-  // The reload row is fixed at the top level, so it takes one of the
-  // slots before any script group is placed.
-  const limit = ACTION_MENU_LIMIT - (reloadWithoutScripts ? 1 : 0);
+  // The reload and sm-dev rows are fixed at the top level, so they take
+  // their slots before any script group is placed.
+  const limit = ACTION_MENU_LIMIT - (reloadWithoutScripts ? 1 : 0) - (smDevControl ? 1 : 0);
   let total = 0;
   for (const g of scripts) total += groupCost(g);
   if (total <= limit) {
-    return { top: scripts.slice(), more: [], reloadWithoutScripts };
+    return { top: scripts.slice(), more: [], reloadWithoutScripts, smDevControl };
   }
   // Reserve one more top slot for the "More" parent itself.
   const budget = limit - 1;
@@ -84,5 +90,5 @@ export function planActionMenu(scripts: ActionMenuScript[]): ActionMenuPlan {
       more.push(g);
     }
   }
-  return { top, more, reloadWithoutScripts };
+  return { top, more, reloadWithoutScripts, smDevControl };
 }

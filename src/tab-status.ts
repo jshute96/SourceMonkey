@@ -111,6 +111,10 @@ export const BADGE_PURPLE = '#d500f9';
 // ran on purpose. Loses to every other color: an UNEXPECTED report on a
 // skipped document is still a disagreement worth orange.
 export const BADGE_GREY = '#757575';
+// Material cyan-600: the corner marker drawn on the icon in a tab an
+// sm-dev run controls. Used for nothing else, so it can't be read as a
+// status.
+export const SM_DEV_MARKER_CYAN = '#00acc1';
 
 // Tooltip status string for RELOAD rows. Kept verbose because the
 // tooltip is the only place the user is told *what to do*.
@@ -227,7 +231,12 @@ export function computeBadge(
 
   const title = ['SourceMonkey', ...rows.map((r) => formatRowLabel(r))].join('\n');
 
-  return { count: allIds.size, color, title, rows };
+  // In a tab an sm-dev run controls, the count is of the scripts its
+  // claim let run: the rest were kept out, not left out by a problem.
+  const count = state.smDevAllow === undefined || state.scriptsSkipped
+    ? allIds.size
+    : [...allIds].filter((id) => !skippedOnDocument(state, id) || state.actual[id]).length;
+  return { count, color, title, rows };
 }
 
 /**

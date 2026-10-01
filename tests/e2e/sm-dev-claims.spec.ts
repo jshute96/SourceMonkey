@@ -111,6 +111,15 @@ test.describe('sm-dev tab claims', () => {
     await sm.claimTab(tabId, 'R1', [allowed], 60_000);
     await page.reload();
     await waitForTabState(sm, tabId, (s) => s.title.includes('Kept | NOT LOADED') && hasBadgeColor(s, GREEN), 'green with Kept not loaded');
+    // Counted: only the script the claim let run. And the menu says
+    // whose tab it is.
+    expect((await sm.getTabState(tabId)).badgeText).toBe('1');
+    expect((await sm.getActionContextMenuPlan(tabId)).smDevControl).toBe(true);
+    // Released and reloaded, it's an ordinary tab again.
+    await sm.releaseRun('R1');
+    await page.reload();
+    await waitForTabState(sm, tabId, (s) => s.badgeText === '2', 'both counted');
+    expect((await sm.getActionContextMenuPlan(tabId)).smDevControl).toBe(false);
   });
 
   test('a claimed tab with its scripts off runs none, its own included, and calls none missing', async ({

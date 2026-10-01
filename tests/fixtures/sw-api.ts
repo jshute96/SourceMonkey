@@ -213,6 +213,7 @@ export interface ActionMenuPlanLike {
   top: ActionMenuScriptLike[];
   more: ActionMenuScriptLike[];
   reloadWithoutScripts: boolean;
+  smDevControl: boolean;
 }
 
 export interface ActionMenuScriptLike {

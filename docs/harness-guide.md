@@ -334,6 +334,9 @@ Any Chromium started with
   (and the tabs those open), so only the run's scripts run there. They
   run there again once the run ends.
 - Your other tabs are left alone.
+- In those tabs, SourceMonkey's toolbar icon has a cyan **T** in its
+  corner, its badge counts none of its scripts, and its right-click
+  menu opens with "Page under sm-dev control".
 - With an older SourceMonkey, the run says once that its scripts may
   also run in the run's tabs.
 - How it works: [sm-dev-extension.md](sm-dev-extension.md#tab-claims).

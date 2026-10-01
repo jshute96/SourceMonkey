@@ -10,7 +10,7 @@ two backends:
 
 Status: being built. Done: the shared commands, tab claims (in both
 kinds of run), the event stream, and the extension's other scripts
-(E1, ...), and retiring `--solo`. Not yet: the icon marker. User-facing behavior is in
+(E1, ...), retiring `--solo`, and the toolbar marker. User-facing behavior is in
 [harness-guide.md](harness-guide.md#the-extension-backend).
 
 ## Goals
@@ -358,13 +358,20 @@ or a second run pointed at a `--temp-browser`'s port.
 - In a tab an extension run claims, the scripts the claim keeps out
   show as not loaded. The badge stays green when the run's scripts ran
   (grey only when nothing did).
-  - Not yet: counting only the scripts the claim allows.
-- The action menu's first row says `Page under sm-dev control`.
+- The count is of the scripts the claim let run (`computeBadge` in
+  tab-status.ts): `0` in a harness run's tab.
+- The action menu's first row says `Page under sm-dev control`
+  (disabled, a note).
 - A cyan **T** drawn in a corner of the icon marks a claimed tab (see
   below). Cyan is used nowhere else in the badge colors.
+- All three follow the document: a page loaded under a claim keeps
+  them until the tab's next load, the one after the run ends
+  included.
 - Chrome's action API gives one badge (text and color) per tab, so the
   marker can't be a second badge.
   - `chrome.action.setIcon({ tabId, imageData })` sets a per-tab icon.
     The SW draws it with `OffscreenCanvas`: the normal icon with the
     marker in the top-left corner, clear of the badge at bottom-right.
-  - It's reset when the claim ends.
+  - It's set back on the tab's first page load with no claim. A worker
+    that restarted doesn't know which tabs an earlier one marked, so
+    it sets each tab's icon back on its first render.
