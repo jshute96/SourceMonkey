@@ -726,6 +726,10 @@ Adding any of these is a catalog entry + a body — nothing structural.
   `self` hosts exactly. See `src/gm-connect.ts#hostMatchesRule`. Fix:
   fall through to the subdomain check against `selfHosts` as a set
   of bases. Documented limitation pending a real compat report.
+- **`self` with a `.tld` host.** `extractSelfHosts` takes
+  `www.google.tld` literally, so `self` never covers the real
+  www.google.com. Matching `selfHosts` with the `.tld` reading from
+  `url-match.ts` would fix it.
 - **Port handling is asymmetric.** A user-supplied port in
   `@connect example.com:8443` (no scheme) lands in the `host`
   branch as `host = "example.com:8443"`, but request matching
@@ -1437,9 +1441,9 @@ itself once a sync places it. What's missing:
     - **A `*` in the middle of a host** (62: `*://*brainly.com/*`,
       `https://video.sina.*/*`). Chrome's host wildcard is only the
       whole host or its first label, so a TLD glob or a bare prefix
-      has no Chrome spelling at all. Registering `<all_urls>` and
-      deciding in the prelude is the only route, and it means giving
-      the script every page in exchange.
+      has no Chrome spelling as a match pattern. It can register as an
+      `includeGlobs` entry instead and be decided in the prelude, as
+      `.tld` hosts now are (see `tldCoarseGlob`).
   `pnpm run test:e2e:tm` drives a real TM, which is where "what does TM
   run for this" gets answered.
 - **The install preview doesn't show parse-time warnings.**
