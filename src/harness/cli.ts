@@ -29,6 +29,7 @@ import { CommandAssembler, NONE_RUN, echoCommand, parseCommandList, shellWord, u
 import {
   commandWords, onlyInspects, readPromptCommands, runCommandHelp, runCommandMistake, writeOutputLine,
 } from './console-commands.js';
+import { parseLang } from './browser-lang.js';
 import { parseCommandArgs } from './command-args.js';
 import { OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, commandNamed, commandSyntax, commandsHelp, fullHelp } from './command-list.js';
 import { devtoolsWanted } from './devtools.js';
@@ -86,6 +87,8 @@ interface Opts {
   url?: string;
   /** `--offline`: with `fromSaved`, the saved pages' network requests are blocked. */
   offline: boolean;
+  /** `--lang`: the languages the run's tabs prefer. */
+  lang?: string[];
 }
 
 // The longest a Node timer waits: past it, it fires at once instead.
@@ -173,6 +176,13 @@ function parseArgs(argv: string[]): Opts {
       case '--from-saved': opts.fromSaved = true; break;
       case '--url': opts.url = text; break;
       case '--offline': opts.offline = true; break;
+      case '--lang':
+        try {
+          opts.lang = parseLang(text);
+        } catch (err) {
+          throw new UsageError((err as Error).message);
+        }
+        break;
       case '--idle-seconds': {
         const v = Number(text);
         if (!text || !Number.isFinite(v) || v < 0) throw new UsageError('The --idle-seconds flag needs a number of seconds');
@@ -398,6 +408,7 @@ async function runHere(
       cdp: opts.cdp ?? lineCdp,
       tempBrowser: lineTempBrowser,
       headed: lineHeaded,
+      lang: opts.lang,
       watch: opts.watch,
       values: opts.values,
       extension: opts.extension,

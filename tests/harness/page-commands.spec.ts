@@ -409,3 +409,41 @@ test('snapshot refs name elements for the other commands, and it can show only t
   await page.reload();
   expect(await run(`click ${save}`)).toEqual(['[sm-dev] The page reloaded since the last snapshot. Take a new snapshot.']);
 });
+
+test('snapshot shows a panel added after <body>, and refs from a snapshot of it work', async ({ page, fixtureServer, host, attachment, loadScript }) => {
+  const script = await loadScript({ relativePath: 'idle.user.js', meta: { name: 'Idle', match: ['*://*/target.html'] }, body: '' });
+  await page.goto(`${fixtureServer.baseUrl}/target.html`);
+  // As scripts often add a panel: on <html>, in an open shadow root.
+  await page.evaluate(() => {
+    document.body.insertAdjacentHTML('beforeend', '<button onclick="this.textContent=\'Body hit\'">In body</button>');
+    const panel = document.createElement('div');
+    panel.id = 'panel';
+    panel.attachShadow({ mode: 'open' }).innerHTML = '<div><button onclick="this.textContent=\'Hit\'">Panel button</button></div>';
+    document.documentElement.append(panel);
+  });
+  const lines: string[] = [];
+  const tabs = [{ n: 1, page, link: attachment }];
+  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(l), stop: () => undefined };
+  const run = async (line: string) => {
+    lines.length = 0;
+    await runConsoleCommand(line, ctx);
+    return [...lines];
+  };
+  const refIn = (tree: string[], text: string): string => /\[ref=(\w+)\]/.exec(tree.find((l) => l.includes(text))!)![1];
+
+  // The whole page: <body> unindented as before, and the panel after it.
+  const tree = await run('snapshot');
+  expect(tree[0]).toMatch(/^- generic \[active\] \[ref=\w+\]:$/);
+  expect(tree.some((l) => /^- button "Panel button" \[ref=\w+\]$/.test(l))).toBe(true);
+  // Named, it is the same.
+  expect(await run('snapshot html')).toEqual(tree);
+
+  // A ref from a snapshot of the panel alone works, and so does one
+  // from the whole page's.
+  const panel = refIn(await run('snapshot #panel'), 'Panel button');
+  expect(await run(`click ${panel}`)).toEqual([`[sm-dev] Clicked ${panel} (button "Panel button")`]);
+  await expect(page.locator('#panel button')).toHaveText('Hit');
+  const body = refIn(tree, 'In body');
+  expect(await run(`click ${body}`)).toEqual([`[sm-dev] Clicked ${body} (button "In body")`]);
+  await expect(page.locator('body > button')).toHaveText('Body hit');
+});

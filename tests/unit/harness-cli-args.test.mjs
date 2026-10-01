@@ -416,6 +416,23 @@ test('--idle-seconds and --new need --detach', () => {
   assert.deepEqual(run(SCRIPT, '--detach', '--idle-seconds', 'soon'), { code: 2, out: 'ERROR: The --idle-seconds flag needs a number of seconds' });
 });
 
+test('--lang takes language tags, alone or in a list, and refuses anything else', () => {
+  for (const [given, message] of [
+    ['zh_CN', 'ERROR: The --lang flag got zh_CN, which is not a language tag. It needs one like zh-CN, or a list like zh-CN,en.'],
+    ['zh-CN,,en', 'ERROR: The --lang flag needs a language tag like zh-CN, or a list like zh-CN,en'],
+    ['x-private', 'ERROR: The --lang flag got x-private, which is not a language tag. It needs one like zh-CN, or a list like zh-CN,en.'],
+  ]) assert.deepEqual(run(SCRIPT, '--lang', given), { code: 2, out: message });
+});
+
+test('the Accept-Language a request sent from Node carries is built as Chrome builds it', async () => {
+  const { acceptLanguageHeader } = await import('../../lib/harness/browser-lang.js');
+  assert.equal(acceptLanguageHeader(['en-US']), 'en-US');
+  assert.equal(acceptLanguageHeader(['zh-CN', 'en', 'fr']), 'zh-CN,en;q=0.9,fr;q=0.8');
+  // Never below 0.1.
+  const many = Array.from({ length: 12 }, (_, i) => `l${i}`);
+  assert.match(acceptLanguageHeader(many), /l9;q=0\.1,l10;q=0\.1,l11;q=0\.1$/);
+});
+
 test('--devtools refuses the runs it can\'t serve', () => {
   assert.deepEqual(cliLine('--temp-browser', 'start', SCRIPT, '--devtools'), { code: 2, out: 'ERROR: The --devtools flag can\'t be used with --temp-browser' });
   assert.deepEqual(run(SCRIPT, '--devtools', '--extension'), { code: 2, out: 'ERROR: The --devtools flag can\'t be used with --extension' });

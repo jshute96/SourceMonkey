@@ -190,6 +190,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/input-file.ts` | Reads a file a command names for its contents (`eval`, `set`, `type` and `cdp`'s `--file`, `--values-file`) |
 | `src/harness/page-commands.ts` | The run commands that drive and read a tab's page, from `click` and `eval` to `snapshot`, `logs` and raw `cdp` calls |
 | `src/harness/snapshot.ts` | `snapshot`'s element refs, its on-screen filter, and `probe --css`'s suggested CSS selectors |
+| `src/harness/browser-lang.ts` | `sm-dev start --lang`: checks the tags and sets them on tabs; builds GM requests' `Accept-Language` |
 | `src/harness/browser-launch.ts` | `sm-dev --open-browser`: starts a browser that stays open, on a kept profile per port, unless one is up |
 | `src/harness/stale-build.ts` | Warns when sm-dev (in the checkout, or an installed copy) is older than the SourceMonkey source |
 | `src/harness/stuck-tabs.ts` | Before `sm-dev start` connects, names the tabs that don't answer (a dialog, say), and waits for them |
@@ -201,7 +202,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/devtools.ts` | `sm-dev start --devtools`: a Chrome DevTools server per run, and each tab's DevTools page id |
 | `src/harness/run-log.ts` | A run's log file: timestamped names in `/tmp/sm-dev-logs-<user>`, stamped lines, per-run links |
 | `src/harness/tab-refs.ts` | Naming and picking a run's tabs (`T2`, target or page ids), the current tab, the dialog message |
-| `src/harness/wait.ts` | The `wait` command, and when a tab has settled (loaded, scripts started, no requests or DOM changes) |
+| `src/harness/wait.ts` | The `wait` command, when a tab has settled (loaded, scripts started, quiet), and when a load is done |
 | `src/harness/runs.ts` | The runs on this machine: record files, control sockets, and the client connection (`RunClient`) to one |
 | `src/harness/cli.ts` | The `sm-dev` client: global options, `start`, `attach`, `stop`, `exit`, `validate`, `match`, `clear`, `list`, `--stdin`, `--interactive` |
 
@@ -234,6 +235,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/fixtures/pages/slow-dcl.html` | Fixture page held at readyState=loading for ~1s, so DOMContentLoaded lands well after the reload fast-path window |
 | `tests/fixtures/pages/page-globals.html` | Fixture page defining page-realm globals, so MAIN-vs-isolated world access can be asserted |
 | `tests/fixtures/pages/wide-icon.svg` | A red 2:1 SVG sized only by its viewBox, the site icon the favicon-badge tests draw under the badge |
+| `tests/fixtures/pages/stopped.html` | Fixture page that stops its own load with `window.stop()`, so it never fires `load` |
 | `tests/fixtures/pages/strict-csp.html` | Fixture page with `style-src 'none'`, for the MAIN-world CSP-blocked-style report |
 | `tests/fixtures/pages/strict-script-csp.html` | Fixture page with `script-src 'self'`, for which CSP governs userscript-inserted scripts |
 | `tests/fixtures/pages/set-page-global.js` | Script that sets a page global, loaded as an external `<script src>` by the CSP tests |
@@ -324,7 +326,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/harness-devtools.test.mjs` | Unit tests for `start --devtools`: when it is on, and the message when `chrome-devtools` is missing |
 | `tests/unit/harness-page-commands.test.mjs` | Unit tests for how the page commands name keys for `key`, read `click`'s flags and `cdp` calls, and word errors |
 | `tests/unit/harness-command-args.test.mjs` | Unit tests for the command parser: quotes, flags with `=` or not, tabs, text, forms, refused arguments |
-| `tests/unit/harness-snapshot.test.mjs` | Unit tests for `snapshot`: which words are refs, and which lines `--visible` keeps |
+| `tests/unit/harness-snapshot.test.mjs` | Unit tests for `snapshot`: which words are refs, which lines `--visible` keeps, the whole page's tree |
 | `tests/unit/harness-runs.test.mjs` | Unit tests for the run registry: a sent line's round trip, stale records, `stop`'s SIGTERM fallback |
 | `tests/unit/harness-command-lines.test.mjs` | Unit tests for `{{ ... }}` blocks, comments, and lists of commands |
 | `tests/unit/harness-page-output.test.mjs` | Unit tests for which page console lines and errors `sm-dev start` shows |
@@ -447,8 +449,8 @@ extension, driven by the Node host in `src/harness/`.
 | `tests/harness/xhr.spec.ts` | `GM_xmlhttpRequest` through the host: load and 404, JSON, `@connect` refusals and redirects, cookies, timeout, abort |
 | `tests/harness/browser-apis.spec.ts` | The harness's tabs, menu commands, notifications, downloads and window APIs |
 | `tests/harness/bridge-trust.spec.ts` | What the page can reach: forged requests refused, isolated traffic kept out of the page, subframes ignored |
-| `tests/harness/console-commands.spec.ts` | The commands typed into `sm-dev start`: `scripts`, `values`, `menu` by M number, dialogs, and several tabs |
-| `tests/harness/run-tabs.spec.ts` | `sm-dev start` end to end: followed tabs, `--all`, `--notab`, `load` / `update` / `--watch` reloads, `--from-saved`, sandboxed pages |
+| `tests/harness/console-commands.spec.ts` | The commands typed into `sm-dev start`: `scripts`, `values`, `menu` by M number, dialogs, several tabs, stopped loads |
+| `tests/harness/run-tabs.spec.ts` | `sm-dev start` end to end: followed tabs, `--all`, `--notab`, `load` / `update` / `--watch` reloads, `--from-saved`, sandboxed pages, `--lang` |
 | `tests/harness/cdp-proxy.spec.ts` | The `--devtools` CDP proxy with a plain CDP client: only allowed tabs, in the initial attach, late claims, own sessions |
 | `tests/harness/page-commands.spec.ts` | The run commands that drive and read a page, in both worlds, with dialogs, quoting, and files |
 | `tests/harness/stack-lines.spec.ts` | sm-dev's `threw` reports and console lines name the `@require` or script line a stack frame came from |
