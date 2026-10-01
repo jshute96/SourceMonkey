@@ -291,11 +291,12 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
   };
   if (opts.noTab) clash('--notab', [[opts.all, '--all'], [urls.length > 0, 'a URL']]);
   // With no scripts, just a browser to drive: the flags that act on
-  // scripts would do nothing.
+  // scripts would do nothing. (`--extension` alone is a browser whose
+  // SourceMonkey runs its own collections; `--solo` would silence them.)
   if (scripts.length === 0) {
     const used = ([
       [opts.all, '--all'], [Boolean(opts.values), opts.valuesFlag ?? '--values'],
-      [opts.watch, '--watch'], [opts.extension, '--extension'], [opts.solo, '--solo'],
+      [opts.watch, '--watch'], [opts.solo, '--solo'],
     ] as [boolean, string][]).filter(([on]) => on).map(([, name]) => name);
     if (used.length > 0) throw new UsageError(`The start command was given no scripts, so it can't take ${used.join(' or ')}`);
   }
@@ -543,7 +544,7 @@ async function detachRun(words: string[], runId: string | undefined): Promise<{ 
 
 function checkClear(opts: Opts): void {
   if (!opts.extension) throw new UsageError('The clear command needs --extension; the harness itself keeps nothing between runs');
-  if (lineTempBrowser) throw new UsageError('The clear command clears a browser\'s SourceMonkey, and a --temp-browser has none');
+  if (lineTempBrowser) throw new UsageError('The clear command has nothing to clear in a --temp-browser, whose scratch scripts go when its run ends');
 }
 
 async function clearCommand(opts: Opts): Promise<number> {

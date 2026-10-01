@@ -39,6 +39,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | --- | --- |
 | `sm-dev --open-browser` | Start a lasting, visible browser on port 9233 (kept profile, so logins persist). A no-op if one is up |
 | `sm-dev --temp-browser start ...` | A hidden throwaway browser for this run. Good for pages with no login |
+| `sm-dev --temp-browser start ... --extension` | The same, with SourceMonkey installed in it (Allow User Scripts on), so `--extension` needs no setup |
 | `sm-dev --cdp 9300 ...` | Use the browser on another port |
 
 ## Runs
@@ -53,7 +54,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `start ... --all` | Open each script's default page, a tab each |
 | `start [url]...` | No scripts: just a browser to drive (`load` adds them later) |
 | `start ... --notab` | No tab at first; `newtab` later |
-| `start ... --extension [--solo]` | Push into the real extension instead |
+| `start ... --extension [--solo]` | Push into the real extension instead. Needs SourceMonkey in the browser; a `--temp-browser` installs it for the run |
 | `clear --extension` | Drop the extension's scratch scripts; turn solo mode off |
 | `start ... --detach --new` | Start another detached run, keeping earlier ones |
 | `list` | The active runs |

@@ -147,14 +147,31 @@ export function extensionLabel(state: ExtensionState | null): string {
   return state === null ? '' : { installed: 'has SourceMonkey', disabled: 'SourceMonkey disabled', absent: 'no extension' }[state];
 }
 
-const NOT_INSTALLED = 'SourceMonkey is not installed in this browser. Load it there as an unpacked extension, with Allow User Scripts on '
-  + '(see https://github.com/jshute96/SourceMonkey/blob/main/docs/harness-guide.md#setting-it-up).';
+/** `findExtensionWorker` finding no SourceMonkey in the browser. */
+export class ExtensionMissingError extends Error {}
 
-// The extension's worker in this context. An idle worker is not
-// listed, so when it is missing an extension page is opened to wake
-// it: any page of the extension will do, and the collections page has
-// the least side effects.
+const NOT_INSTALLED = 'SourceMonkey is not installed in this browser. Load it there as an unpacked extension, with Allow User Scripts on '
+  + '(see https://github.com/jshute96/SourceMonkey/blob/main/docs/harness-guide.md#setting-it-up), or use --temp-browser, which loads it.';
+
+// The extension's worker in this context, once its `self.SourceMonkey`
+// surface is there. A worker can be listed before its module has run
+// that far, most likely just after the browser starts.
 export async function findExtensionWorker(ctx: BrowserContext, timeoutMs = 10000): Promise<Worker> {
+  const deadline = Date.now() + timeoutMs;
+  const worker = await listedWorker(ctx, timeoutMs);
+  const ready = (): Promise<boolean> => worker.evaluate(() => typeof (self as unknown as { SourceMonkey?: unknown }).SourceMonkey !== 'undefined');
+  while (!await ready()) {
+    if (Date.now() > deadline) throw new Error(`SourceMonkey did not respond within ${Math.round(timeoutMs / 1000)} seconds`);
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return worker;
+}
+
+// The extension's worker, as listed. An idle worker is not listed, so
+// when it is missing an extension page is opened to wake it: any page
+// of the extension will do, and the collections page has the least
+// side effects.
+async function listedWorker(ctx: BrowserContext, timeoutMs: number): Promise<Worker> {
   const workerUrl = `chrome-extension://${await sourceMonkeyExtensionId()}/background.js`;
   const listed = (): Worker | undefined => ctx.serviceWorkers().find((w) => w.url() === workerUrl);
   const found = listed();
@@ -167,7 +184,7 @@ export async function findExtensionWorker(ctx: BrowserContext, timeoutMs = 10000
     try {
       await page.goto(workerUrl.replace(/background\.js$/, 'collections.html'));
     } catch {
-      throw new Error(NOT_INSTALLED);
+      throw new ExtensionMissingError(NOT_INSTALLED);
     }
     while (Date.now() < deadline) {
       const w = listed();

@@ -430,9 +430,36 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
   `Browser.getVersion` says `HeadlessChrome`.
 - A launched Chromium (`--temp-browser`) gets a free debugging port
   too, so other tools can connect, and `list` shows where. (Playwright
-  itself talks to it over a pipe.)
+  itself talks to it over a pipe, except with `--extension`; see
+  below.)
 - A hidden one is started with `--mute-audio`, so pages (e.g. video sites)
   play no sound; a `--headed` one keeps its sound.
+
+### `--temp-browser` with `--extension` (`extension-launch.ts`)
+
+- Launches Playwright's Chromium with `--load-extension` pointing at the
+  package's `dist/` (Google Chrome ignores that flag).
+  - Hidden runs use `--headless=new`, the only headless mode that loads
+    extensions.
+- A persistent context on a temp profile, deleted when the run ends.
+  - Its Preferences grant "Allow User Scripts" and pin the extension to
+    the toolbar before launch.
+  - It has no Playwright `Browser`, so the run connects over CDP to its
+    port, as to any browser. That client leaves dialogs open, so only
+    the run answers them.
+  - The port is Chrome's pick (`--remote-debugging-port=0`, read from
+    the profile's `DevToolsActivePort`). One picked beforehand could be
+    taken first, and the run would connect to whatever took it.
+  - Playwright's own signal handlers are off, so on Ctrl-C or `stop` the
+    run closes the browser itself and ends quietly.
+- Two launches: a first one sets the extension's `firstRunComplete` and
+  removes any default collections it started adding, so the run's own
+  launch has none.
+- Before the run opens its tab, a placeholder script is pushed and
+  cleared. In a fresh profile, a tab opened before the first script
+  install can't message the extension (see TODO.md).
+  - The launch's first tab predates that, so it is replaced by a new
+    blank tab, which the run takes as T1.
 
 ### `--open-browser` (`browser-launch.ts`)
 

@@ -99,7 +99,9 @@ or use --temp-browser`.
   login; ask the person to sign in there. A no-op if one is already up.
 - `pnpm sm-dev --temp-browser start ...`: a hidden throwaway browser
   for that run, on a random port, closed when the run ends. Good for
-  pages with no login.
+  pages with no login. With `start --extension`, it installs
+  SourceMonkey in that browser (see
+  [Testing in the real extension](#testing-in-the-real-extension)).
 - If the person already has a browser on the port, use it: their tabs
   are left alone, and only the run's own tabs are touched.
 
@@ -547,17 +549,21 @@ $R stop
 $R clear --extension     # drop scratch scripts; restores other collections
 ```
 
-- Needs SourceMonkey loaded in that browser, with "Allow User Scripts"
-  on.
+- Needs SourceMonkey in the browser, with "Allow User Scripts" on.
+  - **`--temp-browser` with `--extension` installs the extension**
+    (Allow User Scripts on), so it needs no setup:
+    `$R --temp-browser start x.user.js https://x.com/ --extension`.
+    Its profile is empty (no logins), and the scratch scripts go with
+    it. For a site that needs a login, or blocks headless browsers,
+    use the `--open-browser` browser, once the extension is loaded
+    there.
   - The run's first line (`Connected to browser ... (Chrome ...,
     has SourceMonkey)`) and `status` say whether the extension is
     there: `has SourceMonkey`, `SourceMonkey disabled` or `no
     extension`. They can't see "Allow User Scripts".
-  - If the extension is missing or disabled, ask the person, or see
+  - If the extension is missing or disabled there, use `--temp-browser`
+    (when no login is needed), ask the person, or see
     [Setting it up](https://github.com/jshute96/SourceMonkey/blob/main/docs/harness-guide.md#setting-it-up).
-  - A `--temp-browser` starts with a fresh profile, so it never has
-    the extension. Use the `--open-browser` browser, once the
-    extension is loaded there.
 - The script is pushed as a scratch script; relative `@require`s are
   refused, and remote ones are fetched live, not from local copies.
 - Output is the script's Log tab entries plus page console lines.

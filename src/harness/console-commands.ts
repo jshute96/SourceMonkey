@@ -16,7 +16,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
-import type { Dialog, Page } from '@playwright/test';
+import type { BrowserContext, Dialog, Page } from '@playwright/test';
 
 import { CommandAssembler } from './command-lines.js';
 import { extensionLabel, type ExtensionState } from './extension-backend.js';
@@ -1617,6 +1617,22 @@ async function focusTab(page: Page): Promise<void> {
 
 // ---------- Dialogs ----------
 
+
+/**
+ * Keeps Playwright from dismissing dialogs in `context`'s pages.
+ *
+ * - Playwright dismisses a dialog nobody listens for, on the page or its
+ *   context, in every tab it's attached to: on a connected browser, the
+ *   person's own tabs too.
+ * - And when the dialog is gone before its dismiss lands, the error is
+ *   unhandled, and ends the process.
+ * - A listener that does nothing leaves each dialog to whoever does
+ *   answer it: the person, or the run's DialogTracker in its own tabs.
+ *   Also for a Playwright client that isn't the run's own.
+ */
+export function leaveDialogsOpen(context: BrowserContext): void {
+  context.on('dialog', () => undefined);
+}
 
 /**
  * The page's `alert`, `confirm`, `prompt` and `beforeunload` dialogs.

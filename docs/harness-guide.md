@@ -317,6 +317,9 @@ sm-dev --open-browser --cdp 9300                # another one, on port 9300
 - Launches a hidden Chromium for each run, with an empty profile,
   closed when the run ends. `--headed` shows it.
 - Useful for a quick run whose page needs no login.
+- With `start --extension`, it loads SourceMonkey's built extension
+  (its `dist/`), with "Allow User Scripts" on and pinned to the toolbar. See
+  [The extension backend](#the-extension-backend).
 - Needs a `start` on the line (or `--interactive` or `--stdin`, where
   one can come).
 
@@ -446,7 +449,10 @@ What to open:
 - With no scripts given, it starts as a browser to drive with the run
   commands, on a blank page or the URLs given. `load` adds scripts
   later. It can't be combined with `--all`, `--values`,
-  `--values-file`, `--watch`, `--extension` or `--solo`.
+  `--values-file`, `--watch` or `--solo`.
+  - With `--extension`, it's a browser whose SourceMonkey runs its own
+    collections. With `--temp-browser --headed`, that's a throwaway
+    browser with the extension, to try by hand.
 - `--from-saved` opens each `.html` file given as a saved page, at the
   URL it was saved from, with `--url` and `--offline` as for `newtab`.
   See [Saved pages](#saved-pages). Not with `--all` or `--notab`.
@@ -1610,6 +1616,21 @@ Chrome can answer:
   one real request per endpoint here before building on it.
 
 ### Setting it up
+
+The quickest way needs no setup: `--temp-browser` loads the extension
+into a throwaway browser for the run.
+
+```sh
+sm-dev --temp-browser start my-script.user.js https://example.com/ --extension
+```
+
+- It loads the extension from the `dist/` beside sm-dev: the checkout's
+  own build, or the copy `pnpm install` took in a repo of userscripts.
+- The profile is empty, so the site has no login, and the scripts
+  pushed are gone when the run ends (no `clear` needed).
+- Starting it takes a few seconds longer than a plain `--temp-browser`.
+
+For a browser that keeps the extension (and your logins):
 
 1. Build SourceMonkey (`pnpm run build`), which writes the unpacked
    extension to its `dist/`.

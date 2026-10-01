@@ -158,7 +158,7 @@ test('start with no scripts refuses the flags that act on scripts', () => {
   const none = 'ERROR: The start command was given no scripts, so it can\'t take';
   assert.deepEqual(run('--watch'), { code: 2, out: `${none} --watch` });
   assert.deepEqual(run('--all', '--values', '{}'), { code: 2, out: `${none} --all or --values` });
-  assert.deepEqual(run('--extension'), { code: 2, out: `${none} --extension` });
+  assert.deepEqual(run('--extension', '--solo'), { code: 2, out: `${none} --solo` });
   assert.deepEqual(run('--noscript'), { code: 2, out: 'ERROR: The start command no longer takes --noscript. Give it no scripts to start without any.' });
   // A script not named .user.js is refused, not opened as a page.
   assert.deepEqual(run('helper.js'), { code: 2, out: 'ERROR: helper.js is not a userscript: Its name doesn\'t end in .user.js' });
@@ -508,7 +508,7 @@ test('the browser options are global, and only one browser is chosen', () => {
   assert.deepEqual(cliLine('--open-browser', '--temp-browser', 'start', SCRIPT), { code: 2, out: 'ERROR: The --temp-browser flag can\'t be used with --open-browser' });
   // Given on a line with no start, they'd do nothing.
   assert.deepEqual(cliLine('--temp-browser', 'eval', '1'), { code: 2, out: 'ERROR: The --temp-browser flag is for the runs a start begins, and this line has no start' });
-  assert.deepEqual(cliLine('--temp-browser', 'clear', '--extension'), { code: 2, out: 'ERROR: The clear command clears a browser\'s SourceMonkey, and a --temp-browser has none' });
+  assert.deepEqual(cliLine('--temp-browser', 'clear', '--extension'), { code: 2, out: 'ERROR: The clear command has nothing to clear in a --temp-browser, whose scratch scripts go when its run ends' });
   // start's own --cdp would go elsewhere than the browser --open-browser starts.
   assert.deepEqual(cliLine('--open-browser', 'start', SCRIPT, '--cdp', '9300', '--detach'), { code: 2, out: 'ERROR: The start command connects to the browser --open-browser starts, so give --cdp once, first: sm-dev --open-browser --cdp ... start ...' });
   // A value in the same word, and not the next option taken for one.

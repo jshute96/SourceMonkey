@@ -104,8 +104,8 @@ load it.
    SourceMonkey shows a banner with a link to the toggle whenever one is
    missing.
 3. Click the SourceMonkey toolbar icon to open the **collections page**.
-   On first run it seeds a few default collections so the page isn't empty;
-   remove them like any other collection.
+   On first run it seeds a default collection of examples so the page isn't
+   empty; remove it like any other collection.
 
 ## Using SourceMonkey
 

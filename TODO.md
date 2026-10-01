@@ -837,6 +837,22 @@ See [docs/harness-design.md](docs/harness-design.md).
     stop signal is dropped, but sending SIGCONT still runs readline's
     resume path.
 
+## Tabs that predate the first script install
+
+- In a fresh profile (headless Chromium 153), a tab opened before
+  SourceMonkey's first script install can't message the extension.
+  - A script with a storage grant then logs `Failed reading this
+    script's stored GM values during setup`, and its `sm:error`
+    report never reaches the Log either. A reload doesn't help; a
+    cross-site navigation (a new renderer process) does.
+  - Once one script has been installed and removed, later tabs are
+    fine. Calling `configureWorld` (with or without a raw `register`)
+    before the tab opens did not help, nor did `syncNow()`.
+  - Real users mostly have scripts before any tab opens, but a new
+    install with tabs already open may hit it. Find the cause.
+  - sm-dev works around it (`warmUp` in
+    `src/harness/extension-launch.ts`).
+
 ## Test coverage gaps
 
 Negative-path / edge-case tests that would catch real bugs noticed

@@ -441,7 +441,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     ],
     optionsTitle: 'Options for start',
     options: [
-      { term: '--extension', about: 'Push the scripts into the extension\'s Scratch collection instead of injecting them.', commands: ['start'] },
+      { term: '--extension', about: 'Push the scripts into the extension\'s Scratch collection instead of injecting them. A --temp-browser installs the extension itself.', commands: ['start'] },
       { term: '--solo', about: 'With --extension: Disable all other collections, and run only the started scripts, until this run ends.', commands: ['start'] },
     ],
   },
@@ -470,7 +470,7 @@ export const HELP_SECTIONS: HelpSection[] = [
             ],
           },
           { term: '--profile DIR', about: ['With --open-browser: the browser profile, kept between launches.', '(Default: ~/.config/sm-dev/browser-profile-<port>)'] },
-          { term: '--temp-browser', about: 'Instead, launch a hidden, muted browser for each run, with an empty profile, and close it when the run ends.' },
+          { term: '--temp-browser', about: 'Instead, launch a hidden, muted browser for each run, with an empty profile, and close it when the run ends. With start --extension, it has SourceMonkey installed.' },
           { term: '--headed', about: 'With --temp-browser: make its window visible, with sound.' },
         ],
       },

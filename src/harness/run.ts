@@ -16,11 +16,12 @@ import type { Browser, BrowserContext, Page } from '@playwright/test';
 
 import { shellWord } from './command-lines.js';
 import {
-  commandOutput, commandRunner, DialogTracker, gotoInTab, inCommand, onlyInspects, reloadTab, reloadable, serveSavedPage, setCommandsListening, skippedScriptLine, targetIdSuffix,
+  commandOutput, commandRunner, DialogTracker, gotoInTab, inCommand, leaveDialogsOpen, onlyInspects, reloadTab, reloadable, serveSavedPage, setCommandsListening, skippedScriptLine, targetIdSuffix,
   warnSavedUserscripts, type CommandRunner, type ConsoleContext, type ControlledTab, type OutputHistory,
 } from './console-commands.js';
 import { DevToolsLink } from './devtools.js';
 import { ExtensionBackend, extensionLabel, sourceMonkeyState, type LogEntry } from './extension-backend.js';
+import { launchExtensionBrowser } from './extension-launch.js';
 import { HarnessHost, type ErrorReport, type SkipReport, type StartReport } from './host.js';
 import { attachPage, targetIdOf, type PageAttachment } from './inject.js';
 import { pageSays, recordLog } from './page-commands.js';
@@ -69,11 +70,6 @@ export interface RunOptions extends ConnectOptions {
   watch?: boolean;
   /** Seed `GM_*` storage for every script before it runs. */
   values?: Record<string, unknown>;
-  /**
-   * Use the real extension in the browser: the script is pushed into
-   * its Scratch collection as text rather than injected by the harness.
-   */
-  extension?: boolean;
   /** With `extension`: disable every other collection for the run. */
   solo?: boolean;
   /** Also stream the page's own errors, not just ones from the scripts. */
@@ -125,6 +121,12 @@ export interface ConnectOptions {
   cdp?: string;
   /** `--temp-browser`: launch a Chromium of the run's own instead. */
   tempBrowser?: boolean;
+  /**
+   * Use the real extension in the browser: the script is pushed into
+   * its Scratch collection as text rather than injected by the harness.
+   * A `tempBrowser` loads the package's own build of it.
+   */
+  extension?: boolean;
   headed?: boolean;
   /** Resolves to give up connecting (--seconds): ends a wait for tabs that don't answer. */
   until?: Promise<void>;
@@ -181,25 +183,11 @@ export async function connectBrowser(
   return openBrowser(opts, out, { reuseTab, openTab: true });
 }
 
-// Playwright dismisses any dialog nobody listens for, in every tab it's
-// attached to: on a connected browser, the person's own tabs too. (A
-// launched browser has only the run's.) And
-// when the dialog is gone before its dismiss lands, the error is
-// unhandled, and ends the process. A listener that does nothing leaves
-// each dialog to whoever does answer it: the person, or the run's
-// dialog tracker in its own tabs.
-function leaveDialogsOpen(browser: Browser): void {
-  const leaveOpen = (): void => undefined;
-  for (const context of browser.contexts()) {
-    for (const page of context.pages()) page.on('dialog', leaveOpen);
-    context.on('page', (page) => page.on('dialog', leaveOpen));
-  }
-}
-
 // A port free on this machine now, for a launched browser's CDP.
 // Something else could take it before the browser does; the browser
 // still starts (Playwright talks to it over a pipe), and only what
-// `list` shows would be wrong.
+// `list` shows would be wrong. (A launch with the extension, which the
+// run reaches through its port, has Chrome pick one instead.)
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = createServer();
@@ -244,7 +232,27 @@ async function openBrowser(
   // A launched one gets a port too, so other tools (a debugger, a
   // second Playwright) can connect to it, and `list` can say where.
   let launchedAt: string | null = null;
-  if (opts.tempBrowser) {
+  // Closes a browser launched with the extension, which the run reaches
+  // over a CDP connection of its own (see extension-launch.ts).
+  let closeLaunched: (() => Promise<void>) | undefined;
+  if (opts.tempBrowser && opts.extension) {
+    let launched;
+    try {
+      launched = await launchExtensionBrowser(opts.headed === true);
+    } catch (err) {
+      out(`Could not launch a browser with SourceMonkey: ${(err as Error).message}`);
+      return null;
+    }
+    closeLaunched = launched.close;
+    try {
+      browser = await chromium.connectOverCDP(launched.endpoint);
+    } catch (err) {
+      await launched.close();
+      out(`Could not connect to the browser launched with SourceMonkey: ${(err as Error).message}`);
+      return null;
+    }
+    launchedAt = launched.endpoint;
+  } else if (opts.tempBrowser) {
     const port = await freePort();
     // Muted when hidden: a page's sound (a video site's autoplay) has
     // no window to say where it comes from. A headed one keeps it.
@@ -278,8 +286,10 @@ async function openBrowser(
     }
   }
   const context = browser.contexts()[0] ?? await browser.newContext();
-  if (endpoint !== null) leaveDialogsOpen(browser);
+  if (endpoint !== null) browser.contexts().forEach(leaveDialogsOpen);
   const page = !openTab ? null
+    // The one blank tab a launch with the extension leaves for the run.
+    : closeLaunched ? context.pages()[0] ?? await context.newPage()
     : reuseTab && endpoint !== null
       ? await openRunTab(browser, context, endpoint, out).catch(() => context.newPage())
       : await context.newPage();
@@ -292,7 +302,13 @@ async function openBrowser(
     page,
     // On a connected browser `close()` only drops the connection; the
     // browser and its tabs stay as they are.
-    done: () => browser.close(),
+    done: async () => {
+      try {
+        await browser.close();
+      } finally {
+        await closeLaunched?.();
+      }
+    },
   };
 }
 
@@ -518,6 +534,8 @@ export async function run(opts: RunOptions): Promise<number> {
     // script code already running in an open page runs on.
     const run = remote.id ? `Run ${remote.id}` : 'The run';
     opts.out(!held.injected ? `[sm-dev] ${run} ended`
+      // A launched browser's extension goes with it.
+      : opts.extension && session.launched ? `[sm-dev] ${run} ended`
       : opts.extension ? `[sm-dev] ${run} ended. The scripts stay in the extension's Scratch collection; sm-dev clear --extension removes them.`
         : `[sm-dev] ${run} ended. Pages still have previously loaded scripts.`);
     await remote.close();
@@ -1329,6 +1347,8 @@ function ranLate(script: PreparedScript, readyState: string | null): boolean {
 // the same wording, before anything reaches the extension.
 async function runInExtension(opts: RunOptions, session: RunSession, remote: Remote, held: Held): Promise<number> {
   const { context, page } = session;
+  // Set as the run ends, when a launched browser's tabs close with it.
+  let ended = false;
   // Nothing to run a command against: the extension runs the scripts.
   remote.arm(async (_line, hooks) => {
     hooks?.start?.();
@@ -1421,7 +1441,8 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
         return null;
       }
       const out = i === 0 ? opts.out : (line: string): void => opts.out(`[T${n}] ${line}`);
-      tabPage.on('close', () => opts.out(`[sm-dev] Tab T${n} closed`));
+      // Not once the run is ending: a launched browser closes its tabs then.
+      tabPage.on('close', () => { if (!ended) opts.out(`[sm-dev] Tab T${n} closed`); });
       wirePageOutput(tabPage, { ...opts, out }, false);
       wireSandboxCheck(tabPage, () => prepared, out);
       await DialogTracker.attach(tabPage, out, { visible: browserVisible(opts) });
@@ -1475,6 +1496,7 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
     while (polling) await new Promise((r) => setTimeout(r, 50));
     await poll();
   } finally {
+    ended = true;
     if (opts.solo) await backend.solo(false).catch(() => undefined);
   }
   return errors === 0 ? 0 : 1;

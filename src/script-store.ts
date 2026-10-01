@@ -1806,7 +1806,6 @@ const FIRST_RUN_DONE_KEY = 'firstRunComplete';
 // collapses to one collection.
 export const DEFAULT_COLLECTIONS: readonly string[] = [
   'https://github.com/jshute96/SourceMonkey/tree/main/tests/examples',
-  'https://github.com/jshute96/SourceMonkey/tree/main/userscripts',
 ];
 
 // ---------- Legacy key migration (temporary — see TODO.md) ----------

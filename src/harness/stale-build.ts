@@ -40,6 +40,18 @@ export function staleBuildWarning(): string | null {
     + (built ? 'Run pnpm install here to copy its new build.' : `Run pnpm run build in ${info.source}, then pnpm install here.`);
 }
 
+/**
+ * How to rebuild what this sm-dev runs from, as a sentence: in the
+ * checkout itself, or in the checkout an installed copy came from and
+ * then here.
+ */
+export function rebuildAdvice(): string {
+  const info = buildInfo(LIB_DIR);
+  if (!info) return 'Run pnpm run build in SourceMonkey, and pnpm install again where it is installed.';
+  if (path.resolve(info.source, 'lib') === LIB_DIR) return 'Run pnpm run build.';
+  return `Run pnpm run build in ${info.source}, then pnpm install here.`;
+}
+
 // A lib/'s build-info.json, or null: built before the file existed, or
 // not by build.mjs, leaves nothing to go by.
 function buildInfo(libDir: string): BuildInfo | null {

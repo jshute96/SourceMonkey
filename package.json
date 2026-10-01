@@ -16,6 +16,7 @@
     "./*": "./lib/*.js"
   },
   "files": [
+    "dist",
     "lib",
     "skills"
   ],
