@@ -229,7 +229,8 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/fixtures/pages/blank.html` | Minimal fixture page served by the in-test HTTP server |
 | `tests/fixtures/pages/target.html` | Fixture page with a known `#target` element for injection assertions |
 | `tests/fixtures/pages/other.html` | Fixture page used to verify scripts skip non-matching URLs |
-| `tests/fixtures/pages/run-at.html` | Fixture page with a slow-blocker script + `#log` list used by the @run-at readyState-window test |
+| `tests/fixtures/pages/run-at.html` | Fixture page with a slow-blocker script + `#log` list used by the @run-at readyState-window and harness run-at timing tests |
+| `tests/fixtures/pages/window-stop.html` | Fixture page that calls `window.stop()` while an image is pending, so `load` never fires |
 | `tests/fixtures/pages/slow-dcl.html` | Fixture page held at readyState=loading for ~1s, so DOMContentLoaded lands well after the reload fast-path window |
 | `tests/fixtures/pages/page-globals.html` | Fixture page defining page-realm globals, so MAIN-vs-isolated world access can be asserted |
 | `tests/fixtures/pages/wide-icon.svg` | A red 2:1 SVG sized only by its viewBox, the site icon the favicon-badge tests draw under the badge |
@@ -442,6 +443,7 @@ extension, driven by the Node host in `src/harness/`.
 | File | Description |
 |------|-------------|
 | `tests/harness/inject.spec.ts` | Injection end to end: start and error reports, URL misses, world choice, storage seeding and writes, cross-page broadcast, remove and re-inject |
+| `tests/harness/run-at.spec.ts` | `@run-at` timing under the push backend: start sees `<html>`, body sees `<body>`, idle runs after `window.stop()` |
 | `tests/harness/xhr.spec.ts` | `GM_xmlhttpRequest` through the host: load and 404, JSON, `@connect` refusals and redirects, cookies, timeout, abort |
 | `tests/harness/browser-apis.spec.ts` | The harness's tabs, menu commands, notifications, downloads and window APIs |
 | `tests/harness/bridge-trust.spec.ts` | What the page can reach: forged requests refused, isolated traffic kept out of the page, subframes ignored |

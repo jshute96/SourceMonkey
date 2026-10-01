@@ -1709,8 +1709,10 @@ Under the push backend (the default):
 
 - Header validation, URL matching, `@require` scope and local
   overrides, `@grant` gating, world choice.
-- `@run-at` order, apart from the early-start cases under
-  [Known differences](#known-differences-under-the-push-backend).
+- `@run-at` order, including `document-start` code seeing `<html>`
+  and `document-body` code seeing `<body>`. But see
+  [Known differences](#known-differences-under-the-push-backend) for
+  `document-start` against early page scripts.
 - `GM_*` storage semantics, including the write batching and broadcast
   to other pages running the script.
 - `@connect` gating of `GM_xmlhttpRequest`.
@@ -1757,8 +1759,12 @@ These apply to `sm-dev start` and to specs alike.
 
 - Scripts run in the top frame only. A script meant for an iframe
   (`@match` of the frame's URL, no `@noframes`) never starts there.
-- `@run-at document-start` code (and its `@require`s) can run before
-  `<html>` exists, and `document-body` code before `<body>` does.
+- A `@run-at document-start` script usually runs after the page's
+  early `<head>` scripts, where the extension usually runs it first.
+  - Before it runs, it waits for a reply that goes through Node in
+    sm-dev, a much longer trip than the extension's.
+  - A script that must get in first (to capture or hook `fetch`,
+    `XMLHttpRequest`, `addEventListener`) may miss page code here.
 - The isolated world enforces the page's Trusted Types policy, so a
   granted script setting `innerHTML` fails on sites like YouTube. The
   extension's `USER_SCRIPT` world is exempt.

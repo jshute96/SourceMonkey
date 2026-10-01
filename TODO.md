@@ -48,6 +48,29 @@ A backlog of **candidates**, not a list of obligations.
     timeout, measured from when the wrapper asked. A window that
     outlives it gets a reply nobody is listening for, and the entry is
     already marked consumed. Leave real margin.
+- `@run-at document-start` isn't guaranteed to run before page scripts.
+  - The body waits for the async `sm:check-pending` reply, while the
+    parser can run the page's early `<head>` scripts. The extension
+    usually wins (~1-5ms reply); sm-dev, whose reply goes through Node,
+    usually loses (a documented known difference in harness-guide.md).
+  - Tampermonkey users expect it to run first: scripts that hook
+    `fetch`, `XMLHttpRequest` or `addEventListener` miss page code
+    otherwise.
+  - Plan: `document-start` scripts don't wait for the reply at all;
+    they run the registered body immediately.
+    - The fast-path swap is given up for them. The reload's own
+      `setupReloadFastPath` still refreshes in the background, and the
+      badge flips to RELOAD when an update lands, so an edit is picked
+      up on the second reload. (For local files the focus-triggered
+      refresh usually registers it before the first.)
+    - The other use of the reply, the "Reload with no userscripts"
+      `skip`, needs a synchronous channel instead: when arming the
+      marker, write a flag into the tab's `sessionStorage` before
+      reloading, and have the wrapper read and clear it at
+      `document-start`. Check subframes (other origins have their own
+      `sessionStorage`) and pages that block storage.
+    - Removes the sm-dev known difference too, so update
+      harness-guide.md and injection.md (Concurrent gates).
 - Make an icon that works
 
 ## Source maps for stack traces
