@@ -19,6 +19,7 @@ import {
   commandOutput, commandRunner, DialogTracker, gotoInTab, inCommand, leaveDialogsOpen, onlyInspects, reloadTab, reloadable, serveSavedPage, setCommandsListening, skippedScriptLine, targetIdSuffix,
   warnSavedUserscripts, type CommandRunner, type ConsoleContext, type ControlledTab, type OutputHistory,
 } from './console-commands.js';
+import { applyLang, langLaunchArgs } from './browser-lang.js';
 import { DevToolsLink } from './devtools.js';
 import { ExtensionBackend, extensionLabel, sourceMonkeyState, type LogEntry } from './extension-backend.js';
 import { launchExtensionBrowser } from './extension-launch.js';
@@ -34,7 +35,7 @@ import { browserSentence, checkRunsDir, ownRunsDir, processAlive, RunControl, ru
 import { cspBlocksPageScripts, sandboxedPageWarning } from '../missing-scripts.js';
 import { waitForStuckTabs } from './stuck-tabs.js';
 import { NO_TABS } from './tab-refs.js';
-import { settleTabs } from './wait.js';
+import { loadPage, settleTabs } from './wait.js';
 
 export interface RunOptions extends ConnectOptions {
   files: string[];
@@ -128,6 +129,11 @@ export interface ConnectOptions {
    */
   extension?: boolean;
   headed?: boolean;
+  /**
+   * `--lang`: the languages the run's tabs prefer (see browser-lang.ts).
+   * A `tempBrowser` is launched with them too.
+   */
+  lang?: string[];
   /** Resolves to give up connecting (--seconds): ends a wait for tabs that don't answer. */
   until?: Promise<void>;
 }
@@ -238,7 +244,7 @@ async function openBrowser(
   if (opts.tempBrowser && opts.extension) {
     let launched;
     try {
-      launched = await launchExtensionBrowser(opts.headed === true);
+      launched = await launchExtensionBrowser(opts.headed === true, langLaunchArgs(opts.lang));
     } catch (err) {
       out(`Could not launch a browser with SourceMonkey: ${(err as Error).message}`);
       return null;
@@ -256,7 +262,7 @@ async function openBrowser(
     const port = await freePort();
     // Muted when hidden: a page's sound (a video site's autoplay) has
     // no window to say where it comes from. A headed one keeps it.
-    const args = [`--remote-debugging-port=${port}`, ...(opts.headed ? [] : ['--mute-audio'])];
+    const args = [`--remote-debugging-port=${port}`, ...(opts.headed ? [] : ['--mute-audio']), ...langLaunchArgs(opts.lang)];
     browser = await chromium.launch({ headless: !opts.headed, args });
     launchedAt = cdpEndpoint(String(port));
   } else {
@@ -781,6 +787,7 @@ async function runInHarness(
     // Attached before preparing, so a reused tab already on a secure
     // page gives the scripts' GM_info the browser's userAgentData.
     // Otherwise it stays null (see TODO.md).
+    await applyLang(page, opts.lang, opts.out);
     const attachment = await attachPage(page, host);
     held.attachment = attachment;
     await attachment.showBadge();
@@ -1246,6 +1253,7 @@ class FollowedTabs {
       visible: browserVisible(this.opts),
       commandsComing: this.commandsComing,
     });
+    await applyLang(page, this.opts.lang, out);
     const attachment = await attachPage(page, this.host);
     this.numbers.set(attachment, n);
     // Its count would be of scripts that are kept out on purpose.
@@ -1286,7 +1294,7 @@ class FollowedTabs {
     while (this.scripts !== scripts) {
       scripts = this.scripts;
       await this.swapScripts(attachment, scripts);
-      await page.reload().catch(() => undefined);
+      await loadPage(page, (o) => page.reload(o)).catch(() => undefined);
     }
     entry.ready = true;
     if (scripts !== initial) return;
@@ -1446,6 +1454,7 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
       wirePageOutput(tabPage, { ...opts, out }, false);
       wireSandboxCheck(tabPage, () => prepared, out);
       await DialogTracker.attach(tabPage, out, { visible: browserVisible(opts) });
+      await applyLang(tabPage, opts.lang, out);
       return { n, url, page: tabPage, targetId: await targetIdOf(tabPage), saved: start.saved[i] };
     }));
     // The extension's own injection sees the URL, so serving the saved
@@ -1464,7 +1473,7 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
         ? `${openingSavedLine(o.saved.given, o.url, `T${o.n}`)}${targetIdSuffix(o.targetId)}`
         : `[sm-dev] Opening ${o.url} in T${o.n}${targetIdSuffix(o.targetId)}`);
     }
-    await Promise.all(opened.map((o) => o && o.page.goto(o.url)
+    await Promise.all(opened.map((o) => o && loadPage(o.page, (nav) => o.page.goto(o.url, nav))
       .catch((err) => opts.out(`[sm-dev] Navigation failed: ${(err as Error).message}`))));
     if (!page) opts.out('[sm-dev] No tab was opened. The scripts run in the pages you browse to.');
     printSkipped(opts, start);
@@ -1475,7 +1484,7 @@ async function runInExtension(opts: RunOptions, session: RunSession, remote: Rem
         const next = await prepareAll(opts);
         if (!next || !(await pushAll(next))) return;
         // All at once, so one slow page holds up no other.
-        await Promise.all(pages.map((p) => p.reload().catch(() => undefined)));
+        await Promise.all(pages.map((p) => loadPage(p, (o) => p.reload(o)).catch(() => undefined)));
         // With --notab the pages are the person's own, so theirs to reload.
         if (pages.length === 0) opts.out('[sm-dev] Reload your tabs to run the new version');
       });

@@ -54,6 +54,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `start ... --values '<json>'` | Seed GM storage first |
 | `start ... --values-file <path>` | Seed GM storage first, from a JSON file |
 | `start ... --page-errors` | Also stream the site's own errors |
+| `start ... --lang zh-CN,en` | Tabs prefer these languages: `navigator.language(s)`, `Accept-Language`, `Intl` |
 | `start ... --all` | Open each script's default page, a tab each |
 | `start [url]...` | No scripts: just a browser to drive (`load` adds them later) |
 | `start ... --notab` | No tab at first; `newtab` later |

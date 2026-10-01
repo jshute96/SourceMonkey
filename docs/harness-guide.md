@@ -376,6 +376,7 @@ running, --seconds N to watch it for a while, or commands after --.`
 | `--values '<json>'` | Seed `GM_*` storage first |
 | `--values-file <path>` | Seed `GM_*` storage first, from a JSON file |
 | `--page-errors` | Also stream the page's own errors |
+| `--lang zh-CN,en` | The languages the run's tabs prefer |
 | `--nowait` | Don't wait for the pages to settle |
 | `--seconds N` | Stop the run after N seconds |
 | `--idle-seconds N` | Stop after N idle seconds (default 30 minutes; `0` never) |
@@ -467,6 +468,26 @@ The scripts:
   object.
 - `--page-errors` also shows the page's own errors (see
   [What the stream shows](#what-the-stream-shows)).
+
+The browser's language:
+
+- `--lang zh-CN` (or a list, `--lang zh-CN,en`) sets the languages the
+  run's tabs prefer, for scripts that act on a site's language:
+  - `navigator.language` and `navigator.languages`;
+  - the `Accept-Language` header the tabs send;
+  - `Intl`'s default locale (dates, numbers), from the first language.
+- Each tab the run opens or follows gets it from its next load, over a
+  CDP (Chrome DevTools Protocol) session held for the run. Other tabs
+  in a shared browser keep theirs.
+- In a browser the run connects to (`--cdp`, `--open-browser`),
+  cross-site iframes and workers keep the browser's own languages, so a
+  script running in such an iframe sees those.
+- A headless `--temp-browser` is also launched with Chrome's `--lang`
+  and `--accept-lang`, which reach those iframes and workers too, and a
+  popup's first page. Use it when a script runs in frames.
+- `GM_xmlhttpRequest` doesn't go through the tab (sm-dev sends it from
+  Node, and the extension from its service worker), so its requests
+  don't carry the languages.
 
 The run's lifetime:
 
@@ -1102,6 +1123,10 @@ current one.
 - Only refs in the latest snapshot work, so take a new one after the
   page changes. A reload or navigation drops them all; a route change
   within the page (a single-page app's) doesn't.
+  - Refs from `snapshot <selector>` work beside the rest's: sm-dev
+    quietly snapshots the whole page after it.
+- The whole page includes what scripts add after `<body>` (to
+  `<html>`), and open shadow roots.
 - `[cursor=pointer]` marks an element the mouse shows a hand over: one
   that looks clickable though it isn't a link or button.
 - `--visible` goes by the viewport: content scrolled out of sight

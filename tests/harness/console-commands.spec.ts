@@ -362,6 +362,24 @@ test.describe('sm-dev typed commands', () => {
     expect(asker.isClosed()).toBe(true);
   });
 
+  test('open and reload count a page that stopped its own load as loaded', async ({ page, fixtureServer, host, attachment, loadScript }) => {
+    const stopped = `${fixtureServer.baseUrl}/stopped.html`;
+    // document-end: an idle script waits for the `load` that never comes.
+    const script = await loadScript({ relativePath: 'stop.user.js', meta: { name: 'Stop', match: [stopped], runAt: 'document-end' }, body: '' });
+    const lines: string[] = [];
+    const tabs = [{ n: 1, page, link: attachment }];
+    const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(l), stop: () => undefined };
+    for (const command of [`open ${stopped}`, 'reload --nowait']) {
+      lines.length = 0;
+      const started = Date.now();
+      await runConsoleCommand(command, ctx);
+      // It never fires `load`: a wait for that would last 30s, and fail.
+      expect(Date.now() - started).toBeLessThan(4000);
+      expect(lines.filter((l) => /failed|could not/i.test(l))).toEqual([]);
+      await expect(page.locator('#status')).toHaveText('Stopped');
+    }
+  });
+
   test('open and newtab take a script, meaning its default page', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {
     const target = `${fixtureServer.baseUrl}/target.html`;
     const pages = await loadScript({

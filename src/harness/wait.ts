@@ -19,6 +19,8 @@
 // short one that matters changes the DOM when it fires, which the
 // window catches, since it starts no earlier than the wait.
 
+import type { Page } from '@playwright/test';
+
 import type { ConsoleContext, ControlledTab } from './console-commands.js';
 import type { HarnessHost } from './host.js';
 import type { ParsedArgs } from './command-args.js';
@@ -147,6 +149,56 @@ export async function settleTabs(host: HarnessHost, tabs: ControlledTab[], out: 
     const outcome = await settleTab(t, host);
     if (!outcome.settled && 'busy' in outcome) out(`[sm-dev] ${notSettledMessage(t, SETTLE_TIMEOUT_MS, outcome.busy)}`);
   }));
+}
+
+/** How long a load (`open`, `reload`, the tabs `start` opens) may take. */
+export const LOAD_TIMEOUT_MS = 30_000;
+
+// How often a load looks for a page that stopped itself.
+const STOPPED_POLL_MS = 100;
+
+/**
+ * Runs a navigation (`page.goto`, `page.reload`) until the new page
+ * has loaded. A page that stops its own load with `window.stop()`
+ * counts as loaded: its readyState goes to complete, but it never
+ * fires `load`, which a plain `goto` waits for until it times out.
+ * Says which: `stopped` when it never fired `load`. Rejects with the
+ * navigation's own error, or when the page doesn't load in time.
+ */
+export async function loadPage(
+  page: Page, navigate: (opts: { waitUntil: 'commit'; timeout: number }) => Promise<unknown>, timeoutMs = LOAD_TIMEOUT_MS,
+): Promise<'loaded' | 'stopped'> {
+  const deadline = Date.now() + timeoutMs;
+  await navigate({ waitUntil: 'commit', timeout: timeoutMs });
+  let ended = false;
+  const load = page.waitForLoadState('load', { timeout: Math.max(1, deadline - Date.now()) }).then(
+    () => true,
+    (err: Error) => {
+      if (err.name === 'TimeoutError') return false;
+      throw err;
+    },
+  ).finally(() => { ended = true; });
+  // Reads readyState in a later task than the one that set it, so a
+  // load that did fire has run its listeners by then too.
+  const stopped = (async () => {
+    while (!ended && Date.now() < deadline) {
+      if (await page.evaluate(() => document.readyState).catch(() => null) === 'complete') return true;
+      await sleep(STOPPED_POLL_MS);
+    }
+    return false;
+  })();
+  try {
+    if (!await Promise.race([load, stopped])) throw new Error(`The page did not finish loading within ${seconds(timeoutMs)}`);
+    // A load that fired has its start in the navigation's timing.
+    const fired = await page.evaluate(() => {
+      const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
+      return !nav || nav.loadEventStart > 0;
+    }).catch(() => true);
+    return fired ? 'loaded' : 'stopped';
+  } finally {
+    ended = true;
+    load.catch(() => undefined);
+  }
 }
 
 /** The message when `tab` didn't settle in time, as every wait says it. */
