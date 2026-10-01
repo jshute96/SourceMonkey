@@ -17,8 +17,8 @@ test('parseConnectEntry: lowercases + classifies wildcards / self', () => {
   assert.deepEqual(parseConnectEntry('  *  '), { kind: 'wildcard' });
 });
 
-test('parseConnectEntry: exact host', () => {
-  assert.deepEqual(parseConnectEntry('Example.COM'), { kind: 'exact', host: 'example.com' });
+test('parseConnectEntry: bare host', () => {
+  assert.deepEqual(parseConnectEntry('Example.COM'), { kind: 'host', host: 'example.com' });
 });
 
 test('parseConnectEntry: *.domain subdomain', () => {
@@ -27,7 +27,7 @@ test('parseConnectEntry: *.domain subdomain', () => {
 
 test('parseConnectEntry: scheme-prefixed URL normalizes to host', () => {
   // TM accepts `https://example.com` in @connect; we strip to host.
-  assert.deepEqual(parseConnectEntry('https://example.com'), { kind: 'exact', host: 'example.com' });
+  assert.deepEqual(parseConnectEntry('https://example.com'), { kind: 'host', host: 'example.com' });
 });
 
 test('parseConnectEntry: empty / malformed → null', () => {
@@ -48,7 +48,7 @@ test('parseConnectRules: parses every @connect from header, drops empties', () =
   };
   const rules = parseConnectRules(header);
   assert.equal(rules.length, 3);
-  assert.equal(rules[0].kind, 'exact');
+  assert.equal(rules[0].kind, 'host');
   assert.equal(rules[1].kind, 'wildcard');
   assert.equal(rules[2].kind, 'subdomain');
 });
@@ -63,11 +63,37 @@ test('hostMatchesRule: self matches the script\'s own hosts only', () => {
   assert.equal(hostMatchesRule('other.com', { kind: 'self' }, selfHosts), false);
 });
 
-test('hostMatchesRule: exact only matches the named host', () => {
-  const rule = { kind: 'exact', host: 'example.com' };
+test('hostMatchesRule: a bare host matches the host AND its subdomains', () => {
+  // Tampermonkey documents `@connect example.com` as covering
+  // subdomains too.
+  const rule = { kind: 'host', host: 'example.com' };
   assert.equal(hostMatchesRule('example.com', rule, new Set()), true);
-  assert.equal(hostMatchesRule('api.example.com', rule, new Set()), false);
+  assert.equal(hostMatchesRule('api.example.com', rule, new Set()), true);
+  assert.equal(hostMatchesRule('a.b.example.com', rule, new Set()), true);
+  assert.equal(hostMatchesRule('API.Example.com', rule, new Set()), true);
   assert.equal(hostMatchesRule('other.com', rule, new Set()), false);
+  // Whole labels only.
+  assert.equal(hostMatchesRule('evilexample.com', rule, new Set()), false);
+  assert.equal(hostMatchesRule('example.com.evil.net', rule, new Set()), false);
+  // A subdomain rule doesn't cover its parent.
+  const sub = { kind: 'host', host: 'api.example.com' };
+  assert.equal(hostMatchesRule('example.com', sub, new Set()), false);
+  assert.equal(hostMatchesRule('v2.api.example.com', sub, new Set()), true);
+});
+
+test('hostMatchesRule: a bare IP or single-label host matches only exactly', () => {
+  const none = new Set();
+  const ip = { kind: 'host', host: '127.0.0.1' };
+  assert.equal(hostMatchesRule('127.0.0.1', ip, none), true);
+  assert.equal(hostMatchesRule('1.127.0.0.1', ip, none), false);
+  // A partial IP isn't a range.
+  assert.equal(hostMatchesRule('127.0.0.1', { kind: 'host', host: '0.0.1' }, none), false);
+  assert.equal(hostMatchesRule('[::1]', { kind: 'host', host: '[::1]' }, none), true);
+  const local = { kind: 'host', host: 'localhost' };
+  assert.equal(hostMatchesRule('localhost', local, none), true);
+  assert.equal(hostMatchesRule('a.localhost', local, none), false);
+  // A bare TLD isn't a wildcard.
+  assert.equal(hostMatchesRule('example.com', { kind: 'host', host: 'com' }, none), false);
 });
 
 test('hostMatchesRule: subdomain matches the host AND any subdomain', () => {
@@ -106,9 +132,11 @@ test('isUrlConnectAllowed: wildcard allows everything', () => {
   assert.equal(r.allowed, true);
 });
 
-test('isUrlConnectAllowed: exact host matches, others rejected', () => {
-  const rules = [{ kind: 'exact', host: 'example.com' }];
+test('isUrlConnectAllowed: bare host matches it and its subdomains, others rejected', () => {
+  const rules = [{ kind: 'host', host: 'example.com' }];
   assert.equal(isUrlConnectAllowed('https://example.com/x', rules, new Set()).allowed, true);
+  assert.equal(isUrlConnectAllowed('https://api.example.com/x', rules, new Set()).allowed, true);
+  assert.equal(isUrlConnectAllowed('https://evilexample.com/x', rules, new Set()).allowed, false);
   const r = isUrlConnectAllowed('https://other.com/x', rules, new Set());
   assert.equal(r.allowed, false);
   assert.match(r.reason, /not in @connect/);

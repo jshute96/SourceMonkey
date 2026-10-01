@@ -73,6 +73,47 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
     await page.close();
   });
 
+  test('onreadystatechange fires with readyState 4 before onload', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    dataServer.setRoute('/hello', 'hello from server', {
+      contentType: 'text/plain; charset=utf-8',
+    });
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'ReadyState',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ["GM_xmlhttpRequest"],
+        connect: ["127.0.0.1"],
+      },
+      body: `
+        const seen = [];
+        GM_xmlhttpRequest({
+          method: 'GET',
+          url: '${dataServer.baseUrl}/hello',
+          onreadystatechange: (res) => {
+            seen.push('rsc' + res.readyState + ':' + res.responseText);
+          },
+          onload: (res) => {
+            seen.push('load' + res.readyState);
+            document.body.dataset.smSeen = seen.join(',');
+          },
+        });
+      `,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-seen', 'rsc4:hello from server,load4');
+    await page.close();
+  });
+
   test('responseType: json parses the body', async ({
     extensionContext,
     fixtureServer,
@@ -251,12 +292,17 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
         connect: ["127.0.0.1"],
       },
       body: `
+        let rsc = '';
         const handle = GM_xmlhttpRequest({
           method: 'GET',
           url: 'http://127.0.0.1:1/never',
           onload: () => { document.body.dataset.smGotLoad = 'yes'; },
           onerror: () => { document.body.dataset.smGotError = 'yes'; },
-          onabort: () => { document.body.dataset.smGotAbort = 'yes'; },
+          onabort: (r) => {
+            document.body.dataset.smGotAbort = 'yes';
+            document.body.dataset.smAbortSeen = rsc + ',abort' + r.readyState;
+          },
+          onreadystatechange: (r) => { rsc = 'rsc' + r.readyState + ' ' + r.status; },
         });
         // Abort immediately. Page-side, this should fire onabort
         // synchronously (TM/VM behavior).
@@ -269,6 +315,7 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page.locator('body')).toHaveAttribute('data-sm-got-abort', 'yes');
+    await expect(page.locator('body')).toHaveAttribute('data-sm-abort-seen', 'rsc4 0,abort4');
     // Neither load nor error should fire.
     expect(await page.locator('body').getAttribute('data-sm-got-load')).toBeNull();
     expect(await page.locator('body').getAttribute('data-sm-got-error')).toBeNull();
