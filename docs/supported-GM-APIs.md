@@ -259,9 +259,14 @@ VM](GM-APIs-storage.md#compared-with-violentmonkey).
 
 ## DOM injection
 
-USER_SCRIPT world's DOM mutations are CSP-exempt (the same
-dispensation content scripts get), so these work even on pages with
-strict `Content-Security-Policy: script-src 'self'`.
+In USER_SCRIPT world the page's CSP doesn't apply to inserted
+elements, so these work even on pages with strict
+`Content-Security-Policy: script-src 'self'`.
+
+- Styles are exempt from the page's `style-src`.
+- Scripts (inline or `src`) are checked against SourceMonkey's
+  USER_SCRIPT world CSP instead, which allows both, as Tampermonkey's
+  does.
 
 **Not so in MAIN world.** A script that granted `unsafeWindow` (or
 declared `@inject-into page`) runs in the page's realm, where its
@@ -309,6 +314,7 @@ copy inserted over the bridge).
 | `responseType` | `text` (default) / `json` / `blob` / `arraybuffer` / `document`. |
 | `anonymous` | `true` sends the request without the user's cookies (and any cached HTTP-auth credentials). Default `false` — see [Credentials](#credentials). |
 | `onload`, `onerror`, `ontimeout`, `onabort` | Callbacks. Callbacks aren't serializable across the SW boundary so they stay on the page side keyed by request id. |
+| `onreadystatechange` | Called once, with `readyState: 4`, just before the terminal callback (`onload` / `onerror` / `ontimeout` / `onabort`), the order XMLHttpRequest uses. States 1-3 are not reported. |
 
 ### XHR response shape
 
@@ -322,12 +328,19 @@ For `responseType: 'text'` (default) and `'json'`:
 | `responseText` | Body as text. |
 | `response` | Same as `responseText` for `text`; parsed object for `json` (or `null` on parse failure). |
 | `responseHeaders` | Multi-line `Name: value\r\n…` (TM/VM convention; trailing CRLF). |
+| `readyState` | Always `4` (done): only the final state reaches the page. |
 
 For `responseType: 'blob'` / `'arraybuffer'` / `'document'`: same
 shape, except `responseText` is empty (`document` populates it) and
 `response` is the reconstructed native object (`Blob`,
 `ArrayBuffer`, or `Document`). The SW serializes bytes as base64;
 the page-side runtime decodes and rebuilds.
+
+`ontimeout` and `onabort` get the empty shape of a failed request:
+`readyState: 4`, `status: 0`, empty `statusText` / `responseText` /
+`responseHeaders`, `response: null`, and `finalUrl` set to the request
+URL. `onerror` gets the same plus `error`. `onreadystatechange`
+receives the same object as the terminal callback that follows it.
 
 ### `@connect` gating
 
@@ -422,7 +435,8 @@ How this is done, and what it can't cover:
 - HTTP error statuses (404, 500, …) fire `onload` with the
   non-2xx status — matches XHR semantics. Only network-level
   failures (DNS, ECONNREFUSED, etc.) fire `onerror`.
-- No `onprogress` events — only the final terminal event lands.
+- No `onprogress` events, and `onreadystatechange` fires only for
+  `readyState` 4: only the final terminal event lands.
 - Forbidden headers are per-request: overlapping requests to one URL,
   across scripts or within one, each carry only their own overrides.
   SourceMonkey makes none of them wait for another. (Chrome itself

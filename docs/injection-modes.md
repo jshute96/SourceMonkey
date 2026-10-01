@@ -342,7 +342,7 @@ the issue tracker links below.
 ### Cons
 
 - **`eval()` is gated by page CSP in MAIN world.** USER_SCRIPT
-  world has its own CSP that we set to `'unsafe-eval'` via
+  world has its own CSP that we set to allow `'unsafe-eval'` via
   `chrome.userScripts.configureWorld({ csp: ... })`, but MAIN world
   runs under whatever the host page's CSP says. Sites with
   `script-src` that omits `'unsafe-eval'` — and that's a lot of

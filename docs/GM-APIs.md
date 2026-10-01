@@ -291,10 +291,10 @@ Architecture:
 
 - Page-side `GM_xmlhttpRequest(details)` returns `{abort}`
   synchronously. The runtime stores the callbacks
-  (`onload`/`onerror`/`ontimeout`/`onabort`) keyed by a generated
-  request id (callbacks aren't serializable across the bridge), and
-  ships a `sm:gm-xhr-start` envelope to the SW with the serializable
-  request fields.
+  (`onload`/`onerror`/`ontimeout`/`onabort`/`onreadystatechange`)
+  keyed by a generated request id (callbacks aren't serializable
+  across the bridge), and ships a `sm:gm-xhr-start` envelope to the
+  SW with the serializable request fields.
 - SW (`src/gm-xhr.ts`) runs `fetch(url, init)` against an
   `AbortController`. On settle it ships a single `sm:gm-xhr-event`
   back to the originating tab via `chrome.tabs.sendMessage`. The
@@ -374,6 +374,7 @@ Response shape on `onload`:
 | `response`       | `responseText` for `text`; parsed object for `json`. |
 | `responseHeaders`| Multi-line `Name: value\r\n…` (TM/VM convention).  |
 | `finalUrl`       | Same as `responseURL`.                             |
+| `readyState`     | `4`, set page-side on every terminal event; `onreadystatechange` gets it just before the terminal callback. |
 
 Binary responseTypes (Phase 9): `blob`, `arraybuffer`, `document`.
 The SW reads `await res.arrayBuffer()` and ships the bytes back as
@@ -1252,10 +1253,18 @@ too.
 ## DOM injection (`GM_addStyle` / `GM_addElement`)
 
 Both run entirely in USER_SCRIPT world — no SW round-trip, no per-
-script state. USER_SCRIPT-world DOM mutations are CSP-exempt (the
-same dispensation content scripts get), so userscripts can inject
-into pages that ship strict `Content-Security-Policy: script-src
-'self'` without `unsafe-inline`.
+script state. The page's CSP (Content Security Policy) doesn't apply
+to what they insert from that world:
+
+- `<style>` rules apply even where the page's `style-src` omits
+  `'unsafe-inline'`.
+- `<script>` elements are checked against the USER_SCRIPT world's
+  own CSP instead, which allows inline code and any `src` (as in
+  Tampermonkey). So they run even under a strict page `script-src`.
+  See [injection.md](injection.md#lifecycle) for the
+  world config.
+- The same holds for elements a script inserts itself
+  (`document.createElement('script')`), not just via the GM API.
 
 - `GM_addStyle(css)` — creates a `<style>`, sets `textContent`,
   appends to `document.head || document.documentElement`. Returns
