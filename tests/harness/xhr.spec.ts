@@ -131,6 +131,65 @@ test.describe('harness GM_xmlhttpRequest', () => {
     expect(await echoedCookie()).toBeUndefined();
   });
 
+  test('a request asks for the page\'s languages, unless the script sets its own', async ({ page, fixtureServer, host, loadScript }) => {
+    await loadScript(requester(['127.0.0.1']));
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect.poll(() => host.reports.started.length).toBe(1);
+    const pageHeader = await page.evaluate(() => fetch('/__echo').then((r) => r.json()).then((j) => j.headers['accept-language']));
+    expect(pageHeader).toBeTruthy();
+    await send(page, { url: `${fixtureServer.baseUrl}/__echo`, responseType: 'json' });
+    await expect(page.locator('#target')).toContainText('load 200');
+    const text = (await page.locator('#target').textContent()) ?? '';
+    expect(JSON.parse(text.replace(/^load 200 /, '')).headers['accept-language']).toBe(pageHeader);
+    // A header the script sets wins.
+    await page.locator('#target').evaluate((el) => { el.textContent = ''; });
+    await send(page, { url: `${fixtureServer.baseUrl}/__echo`, responseType: 'json', headers: { 'Accept-Language': 'fr' } });
+    await expect(page.locator('#target')).toContainText('load 200');
+    const own = (await page.locator('#target').textContent()) ?? '';
+    expect(JSON.parse(own.replace(/^load 200 /, '')).headers['accept-language']).toBe('fr');
+  });
+
+  test('a request goes out while the page shows a dialog', async ({ page, fixtureServer, host, loadScript }) => {
+    // The languages for its header come from the page, which answers
+    // nothing while an alert is up: they must not hold the request.
+    let heard!: (language: string) => void;
+    const reached = new Promise<string>((resolve) => { heard = resolve; });
+    const server = http.createServer((req, res) => {
+      heard(String(req.headers['accept-language'] ?? ''));
+      res.end('ok');
+    });
+    await new Promise<void>((resolve) => server.listen(0, 'localhost', resolve));
+    const port = (server.address() as { port: number }).port;
+    try {
+      await loadScript({
+        ...requester(['localhost']),
+        body: `
+          window.addEventListener('message', (ev) => {
+            if (ev.data?.kind !== 'send') return;
+            GM_xmlhttpRequest({ url: ev.data.url });
+            alert('hold');
+          });
+        `,
+      });
+      await page.goto(`${fixtureServer.baseUrl}/target.html`);
+      await expect.poll(() => host.reports.started.length).toBe(1);
+      const pageHeader = await page.evaluate(() => fetch('/__echo').then((r) => r.json()).then((j) => j.headers['accept-language']));
+      let whileOpen: string | null = null;
+      const dismissed = new Promise<void>((resolve) => {
+        page.once('dialog', async (dialog) => {
+          whileOpen = await Promise.race([reached, new Promise<null>((r) => setTimeout(() => r(null), 3000))]);
+          await dialog.dismiss();
+          resolve();
+        });
+      });
+      await page.evaluate((url) => window.postMessage({ kind: 'send', url }, '*'), `http://localhost:${port}/`);
+      await dismissed;
+      expect(whileOpen).toBe(pageHeader);
+    } finally {
+      server.close();
+    }
+  });
+
   test('a timeout fires ontimeout', async ({ page, fixtureServer, host, loadScript }) => {
     await loadScript(requester(['127.0.0.1']));
     await page.goto(`${fixtureServer.baseUrl}/target.html`);

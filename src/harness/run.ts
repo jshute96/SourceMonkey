@@ -19,6 +19,7 @@ import {
   commandOutput, commandRunner, DialogTracker, gotoInTab, inCommand, leaveDialogsOpen, onlyInspects, reloadTab, reloadable, serveSavedPage, setCommandsListening, skippedScriptLine, targetIdSuffix,
   type CommandRunner, type ConsoleContext, type ControlledTab, type OutputHistory,
 } from './console-commands.js';
+import { applyLang, langLaunchArgs } from './browser-lang.js';
 import { DevToolsLink } from './devtools.js';
 import { extensionLabel, sourceMonkeyState, type ExtensionState } from './extension-backend.js';
 import { ExtensionHost } from './extension-host.js';
@@ -37,7 +38,7 @@ import { cspBlocksPageScripts, sandboxedPageWarning } from '../missing-scripts.j
 import { unsupportedRunAt } from '../userscript-header.js';
 import { waitForStuckTabs } from './stuck-tabs.js';
 import { NO_TABS } from './tab-refs.js';
-import { settleTabs } from './wait.js';
+import { loadPage, settleTabs } from './wait.js';
 
 export interface RunOptions extends ConnectOptions {
   files: string[];
@@ -131,6 +132,11 @@ export interface ConnectOptions {
    */
   extension?: boolean;
   headed?: boolean;
+  /**
+   * `--lang`: the languages the run's tabs prefer (see browser-lang.ts).
+   * A `tempBrowser` is launched with them too.
+   */
+  lang?: string[];
   /** Resolves to give up connecting (--seconds): ends a wait for tabs that don't answer. */
   until?: Promise<void>;
 }
@@ -241,7 +247,7 @@ async function openBrowser(
   if (opts.tempBrowser && opts.extension) {
     let launched;
     try {
-      launched = await launchExtensionBrowser(opts.headed === true);
+      launched = await launchExtensionBrowser(opts.headed === true, langLaunchArgs(opts.lang));
     } catch (err) {
       out(`Could not launch a browser with SourceMonkey: ${(err as Error).message}`);
       return null;
@@ -259,7 +265,7 @@ async function openBrowser(
     const port = await freePort();
     // Muted when hidden: a page's sound (a video site's autoplay) has
     // no window to say where it comes from. A headed one keeps it.
-    const args = [`--remote-debugging-port=${port}`, ...(opts.headed ? [] : ['--mute-audio'])];
+    const args = [`--remote-debugging-port=${port}`, ...(opts.headed ? [] : ['--mute-audio']), ...langLaunchArgs(opts.lang)];
     browser = await chromium.launch({ headless: !opts.headed, args });
     launchedAt = cdpEndpoint(String(port));
   } else {
@@ -846,6 +852,7 @@ async function runInHarness(
     // Attached before preparing, so a reused tab already on a secure
     // page gives the scripts' GM_info the browser's userAgentData.
     // Otherwise it stays null (see TODO.md).
+    await applyLang(page, opts.lang, opts.out);
     const attachment = await attachPage(page, host, tabs.attachOptions);
     if (link && tabId !== undefined) (host as ExtensionHost).addTab(attachment, tabId);
     held.attachment = attachment;
@@ -1435,6 +1442,7 @@ class FollowedTabs {
       visible: browserVisible(this.opts),
       commandsComing: this.commandsComing,
     });
+    await applyLang(page, this.opts.lang, out);
     // An opened tab may have loaded already, with its events from that
     // document waiting.
     const shown = page.url();
@@ -1482,7 +1490,7 @@ class FollowedTabs {
     while (this.scripts !== scripts) {
       scripts = this.scripts;
       await this.swapScripts(attachment, scripts);
-      await page.reload().catch(() => undefined);
+      await loadPage(page, (o) => page.reload(o)).catch(() => undefined);
     }
     entry.ready = true;
     if (scripts !== initial) return;

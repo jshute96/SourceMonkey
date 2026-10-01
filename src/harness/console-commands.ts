@@ -30,7 +30,7 @@ import { PAGE_COMMANDS, runPageCommand } from './page-commands.js';
 import { defaultPageUrl, NO_DEFAULT_PAGE, preparedScriptMatches, preparedScriptName, preparedScriptPath, shownPath, withDefaultScheme, type PreparedScript } from './prepare.js';
 import { currentTab, dialogKind, dialogWaitingMessage, NO_TABS, pickTab, TAB_ARG, tabName } from './tab-refs.js';
 import { runLogLabel } from './run-log.js';
-import { settleTabs, waitFor } from './wait.js';
+import { loadPage, settleTabs, waitFor } from './wait.js';
 import { userscriptLabel, type SavedPageHeader } from './save-html.js';
 import {
   comparableUrl, openingSavedLine, pagesToOpen, routeSavedPage, savedPageServe,
@@ -1075,12 +1075,12 @@ export function reloadable(tabs: ControlledTab[], out: (line: string) => void): 
  * scripts never reported (said already), so nothing waits on it more.
  */
 export function reloadTab(tab: ControlledTab, host: HarnessHost, out: (line: string) => void): Promise<boolean> {
-  return loadInTab(tab, host, () => tab.page.reload(), `[sm-dev] ${tabName(tab)} could not be reloaded`, out);
+  return loadInTab(tab, host, () => loadPage(tab.page, (o) => tab.page.reload(o)), `[sm-dev] ${tabName(tab)} could not be reloaded`, out);
 }
 
 /** Navigate one tab to `url`, as `reloadTab` reloads it. */
 export function gotoInTab(tab: ControlledTab, host: HarnessHost, url: string, out: (line: string) => void): Promise<boolean> {
-  return loadInTab(tab, host, () => tab.page.goto(url), '[sm-dev] Navigation failed', out);
+  return loadInTab(tab, host, () => loadPage(tab.page, (o) => tab.page.goto(url, o)), '[sm-dev] Navigation failed', out);
 }
 
 // A backstop for a script that never reports, not a guess at when the
@@ -1097,7 +1097,7 @@ const SCRIPTS_REPORT_MAX_MS = 10_000;
  * what to say, before the error, if the load fails.
  */
 async function loadInTab(
-  tab: ControlledTab, host: HarnessHost, load: () => Promise<unknown>, failed: string, out: (line: string) => void,
+  tab: ControlledTab, host: HarnessHost, load: () => Promise<void>, failed: string, out: (line: string) => void,
 ): Promise<boolean> {
   const scripts = tab.link.injectedScripts().filter((s) => s.spec);
   const ids = scripts.map((s) => s.spec!.id);
@@ -1143,7 +1143,9 @@ async function loadInTab(
     if (await (tab.dialogs ? tab.dialogs.untilDialog(outcome) : outcome)) return result(!loadFailed);
     const waiting = host.unreported(tab.link, ids, since);
     const names = scripts.filter((s) => waiting.includes(s.spec!.id)).map(preparedScriptName);
-    if (names.length > 0) out(`[sm-dev] ${names.join(', ')} had not started on ${tabName(tab)} after ${SCRIPTS_REPORT_MAX_MS / 1000} seconds`);
+    if (names.length > 0) {
+      out(`[sm-dev] ${names.join(', ')} had not started on ${tabName(tab)} after ${SCRIPTS_REPORT_MAX_MS / 1000} seconds`);
+    }
     return result(false);
   } finally {
     stopped.abort();
