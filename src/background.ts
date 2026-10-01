@@ -36,6 +36,7 @@ import {
   loadDebugLoggingFlag,
 } from './debug-log.js';
 import { startPhaseTimer, resetPhaseTotals, reportPhaseTotals } from './phase-timing.js';
+import { urlMatchesScript } from './url-match.js';
 import {
   installGithubAuthListener,
   ensureGithubAuthTokenLoaded,
@@ -878,6 +879,10 @@ chrome.runtime.onInstalled.addListener((details) => {
 // back verbatim on the wrapper's `sm:abandoned`, which is how the Log
 // entry tells this (expected) skip from any other.
 const SKIP_REASON_RELOAD_WITHOUT_SCRIPTS = 'reload with no userscripts';
+// The `skip` reason for a `.tld` script whose exact match failed. The
+// prelude treats it as its own matcher saying no and reports nothing,
+// so the literal there must stay the same.
+const SKIP_REASON_NO_MATCH = 'no-match';
 
 // How long an armed tab waits for its reload to commit. Well past a
 // live page's commit time, short enough that a cancelled reload can't
@@ -2136,6 +2141,10 @@ interface CheckPendingPayload {
   // read for scripts that don't use GM_setValue, keeping check-pending
   // fast on multi-script pages. See `needsGmValues` in injector.ts.
   needsValues?: boolean;
+  // True when the script has a `.tld` rule: the wrapper read it loosely
+  // and wants the exact reading, which needs the public suffix list
+  // only this side has (see `.tld` hosts in url-match.ts).
+  tld?: boolean;
   // Set by wrapper-bridge.js (USER_SCRIPT world) on every message it
   // relays for a MAIN-world wrapper's request event. A hostile page can
   // dispatch a forged sm:check-pending into the bridge, so a request
@@ -2198,6 +2207,14 @@ async function handleCheckPending(
   // own, so the tab-level marker is the only thing that covers it.
   if (skipScriptsDocByTab.has(tabId)) {
     return { action: 'skip', reason: SKIP_REASON_RELOAD_WITHOUT_SCRIPTS };
+  }
+  // The frame's own URL (sender.url), not the one in the payload.
+  if (payload.tld === true) {
+    const script = await getScript(payload.id);
+    const url = sender.url ?? payload.url ?? '';
+    if (!script || !urlMatchesScript(url, script.matching)) {
+      return { action: 'skip', reason: SKIP_REASON_NO_MATCH };
+    }
   }
   const documentId = (sender as { documentId?: string }).documentId ?? '';
   if (!documentId) return { action: 'run' };

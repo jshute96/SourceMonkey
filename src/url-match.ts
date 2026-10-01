@@ -18,8 +18,13 @@
 //             script does not match — excludes win over both @match and
 //             @include.
 //
+// All three also take Tampermonkey's `.tld` host suffix, meaning "any
+// public suffix" — see `.tld` hosts below.
+//
 // `urlMatchesScript(url, matching)` is the entry point used by the
 // background SW; the per-pattern helpers are exported for tests.
+
+import { ICANN_SUFFIX_RULES } from './public-suffixes.js';
 
 export interface UrlMatching {
   matches: string[];
@@ -40,6 +45,141 @@ function escapeForRegexExceptStar(s: string): string {
 function globToRegExp(glob: string): RegExp {
   const body = escapeForRegexExceptStar(glob).replace(/\*/g, '.*');
   return new RegExp('^' + body + '$');
+}
+
+// ---------- `.tld` hosts ----------
+//
+// Tampermonkey and Violentmonkey read a host ending in `.tld` as "this
+// name under any public suffix": `*://www.google.tld/*` runs on
+// www.google.com, www.google.de and www.google.co.uk. They take it in
+// `@match`, `@include` and `@exclude` alike.
+//
+// A public suffix is one under which anyone can register a name. We
+// take them from the ICANN section of the Public Suffix List (PSL,
+// publicsuffix.org), generated into public-suffixes.ts:
+//   - That covers multi-level ones (`co.uk`, `com.au`) where a
+//     registry keeps the second level, and not `com.de`, an ordinary
+//     name someone owns.
+//   - The PSL's private section (`blogspot.com`, `github.io`) is left
+//     out: `www.google.blogspot.com` belongs to whoever registered it
+//     there, not to Google. (Violentmonkey includes it.)
+//   - So are names no registry hands out (`.local`, `.lan`): the PSL's
+//     implicit "any unknown label" rule isn't applied.
+//
+// Matching tries each public suffix the URL's own host ends in, with
+// `.tld` replaced by it, as an ordinary pattern (see `tldSuffixesOf`).
+//
+// The list stays out of the page: the wrapper's in-page matcher reads
+// `.tld` loosely, and the service worker's start check (the reply to
+// `sm:check-pending`) applies this exact reading. See docs/matching.md.
+
+// PSL rules, parsed on first use: plain suffixes, `*.x` wildcards
+// (every label under x is a suffix), and `!y` exceptions to them.
+let suffixRules: { plain: Set<string>; wild: Set<string>; except: Set<string> } | null = null;
+
+function rules(): NonNullable<typeof suffixRules> {
+  if (suffixRules) return suffixRules;
+  const r = { plain: new Set<string>(), wild: new Set<string>(), except: new Set<string>() };
+  for (const line of ICANN_SUFFIX_RULES.split('\n')) {
+    if (!line) continue;
+    if (line.startsWith('!')) r.except.add(line.slice(1));
+    else if (line.startsWith('*.')) r.wild.add(line.slice(2));
+    else r.plain.add(line);
+  }
+  suffixRules = r;
+  return r;
+}
+
+// Is this (lowercase, punycode) name exactly an ICANN public suffix?
+export function isPublicSuffix(name: string): boolean {
+  const r = rules();
+  if (r.except.has(name)) return false;
+  if (r.plain.has(name)) return true;
+  const dot = name.indexOf('.');
+  return dot > 0 && r.wild.has(name.slice(dot + 1));
+}
+
+// The public suffixes a URL's host ends in, shortest first: for
+// `www.google.co.uk`, `uk` and `co.uk`. Never the whole host, since a
+// `.tld` pattern always names something in front of it.
+function tldSuffixesOf(url: string): string[] {
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname.toLowerCase();
+  } catch {
+    return [];
+  }
+  const labels = hostname.split('.');
+  const out: string[] = [];
+  for (let k = 1; k < labels.length; k++) {
+    const suffix = labels.slice(-k).join('.');
+    if (isPublicSuffix(suffix)) out.push(suffix);
+  }
+  return out;
+}
+
+// A `.tld` pattern tested as each of its readings for this URL, with
+// `.tld` replaced by one of the host's public suffixes. Null when the
+// pattern has no `.tld` host, for the caller to test it as it is.
+function testTld(pattern: string, url: string, globStar: boolean, test: (p: string) => boolean): boolean | null {
+  const at = tldIndex(pattern, globStar);
+  if (at < 0) return null;
+  return tldSuffixesOf(url).some((suffix) => test(pattern.slice(0, at) + '.' + suffix + pattern.slice(at + 4)));
+}
+
+// Where the `.tld` that ends a pattern's host starts, or -1 when its
+// host doesn't end in one. The host is what follows `://` (the start,
+// for a pattern naming no scheme) up to the next `/`, less a `:port`.
+// Only a host's LAST label counts: `.tld` elsewhere is literal text.
+//
+// `globStar`: an `@include` glob may run the host straight into a `*`
+// with no `/` (`http://www.google.tld*`), as older scripts do. The
+// `.tld` still ends the host, and the `*` stays a glob star. Not for a
+// `@match`, whose grammar has no `*` after the host.
+//
+// A `.tld` with no name in front (`*.tld`, a bare `.tld`) stays
+// literal: "any host under any TLD" is not what anybody means by it.
+function tldIndex(pattern: string, globStar = false): number {
+  const sep = pattern.indexOf('://');
+  const start = sep < 0 ? 0 : sep + 3;
+  const slash = pattern.indexOf('/', start);
+  let host = pattern.slice(start, slash < 0 ? pattern.length : slash).replace(/:(\d+|\*)$/, '');
+  if (globStar && host.endsWith('*')) host = host.slice(0, -1);
+  if (!host.toLowerCase().endsWith('.tld')) return -1;
+  const base = host.slice(0, -4);
+  if (base === '' || base === '*') return -1;
+  return start + host.length - 4;
+}
+
+// Does this glob or `@match` pattern have a `.tld` host — one Chrome
+// can't match for us? Regex patterns never do: `.tld` in a regex is
+// the author's own regex text.
+export function hostEndsInTld(pattern: string): boolean {
+  if (isRegexPattern(pattern)) return false;
+  if (pattern === '<all_urls>') return false;
+  return tldIndex(pattern, true) >= 0;
+}
+
+// A glob Chrome can register for a `.tld` `@match` or `@include`, as a
+// coarse first pass: the `.tld` becomes `.*`, so `*://www.google.tld/*`
+// registers as `*://www.google.*/*`. It reaches more than `.tld` means
+// (`www.google.evil.com`, and a glob `*` also crosses `/`), so the
+// wrapper's in-page matcher, which reads `.tld` exactly, must still
+// narrow it. A `@match` host's leading `*.` also covers the bare name
+// (`*.imdb.tld` runs on `imdb.com`), which as a glob needs `*imdb.*`.
+// Only for patterns where `hostEndsInTld` is true.
+export function tldCoarseGlob(pattern: string, isMatch: boolean): string {
+  const at = tldIndex(pattern, !isMatch);
+  let head = pattern.slice(0, at);
+  if (isMatch) {
+    const sep = head.indexOf('://');
+    if (sep >= 0 && head.startsWith('*.', sep + 3)) head = head.slice(0, sep + 3) + '*' + head.slice(sep + 5);
+  }
+  return head + '.*' + pattern.slice(at + 4);
+}
+
+function isRegexPattern(pattern: string): boolean {
+  return pattern.length >= 2 && pattern.startsWith('/') && pattern.endsWith('/');
 }
 
 // ---------- lenient readings ----------
@@ -134,6 +274,8 @@ function anyScheme(rest: string): string[] {
 // patterns and a typo in one shouldn't break the others.
 export function matchPattern(pattern: string, url: string): boolean {
   if (pattern === '<all_urls>') return HTTP_LIKE_SCHEMES.test(url);
+  const tld = testTld(pattern, url, false, (p) => matchPattern(p, url));
+  if (tld !== null) return tld;
   return canonicalMatchPatterns(pattern).some((p) => matchCanonical(p, url));
 }
 
@@ -411,13 +553,15 @@ export function unusableMatchGroupKey(message: string): string | null {
 // Violentmonkey's do. A glob doesn't: Chrome evaluates those itself,
 // case-sensitively, and this has to agree with it.
 export function includePattern(pattern: string, url: string): boolean {
-  if (pattern.length >= 2 && pattern.startsWith('/') && pattern.endsWith('/')) {
+  if (isRegexPattern(pattern)) {
     try {
       return new RegExp(pattern.slice(1, -1), 'i').test(url);
     } catch {
       return false;
     }
   }
+  const tld = testTld(pattern, url, true, (p) => includePattern(p, url));
+  if (tld !== null) return tld;
   try {
     return globToRegExp(pattern).test(url);
   } catch {

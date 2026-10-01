@@ -65,15 +65,35 @@ An empty **VM** cell is about VM's *documentation*, not its parser:
 
 ## URL matching
 
-See [matching.md](matching.md) for full semantics. All four patterns
-below can repeat; order doesn't matter.
+See [matching.md](matching.md) for full semantics. These tags can
+repeat, and order doesn't matter. A script needs at least one `@match`
+or `@include`.
 
 | Tag | SourceMonkey | TM | VM | GM | Notes |
 |-----|:----------:|:--:|:--:|:--:|-------|
-| `@match` | ✅ | ✓ | ✓ | ✓ | Chrome's match-pattern grammar (`<scheme>://<host><path>`), handed to `chrome.userScripts.register({ matches })`. A scheme-less (`*.example.com/*`) or globbed (`http*://…`) pattern is rewritten into the spelling Chrome takes — see [matching.md](matching.md#lenient-readings-canonicalmatchpatterns). |
-| `@include` | ✅ | ✓ | ✓ | ✓ | Glob form (`*://example.com/*`) goes to `includeGlobs`, which Chrome ORs with `matches` — userscript semantics. Regex form (`/^https:\/\/…$/`) goes to a wrapper-side filter — see [injection.md](injection.md#regex-pattern-forms). At least one `@match` or `@include` (either form) is required; a script with no `@match`, or with a regex `@include`, registers as `<all_urls>` and narrows at runtime in the wrapper. |
-| `@exclude` | ✅ | ✓ | ✓ | ✓ | Glob form → `excludeGlobs`. Regex form → wrapper-side filter. |
-| `@exclude-match` | ⚪ |   | ✓ |   | VM-specific: the match-pattern-grammar counterpart to `@exclude` (which in VM's model is the legacy glob/regex form). SourceMonkey treats every `@exclude` value as either a glob or a regex regardless of which tag introduced it, so a script written for VM that uses `@exclude-match` will currently be ignored. Easy to add when needed: route both tags into the same `excludes` list. |
+| `@match` | ✅ | ✓ | ✓ | ✓ | Chrome's match-pattern grammar (`<scheme>://<host><path>`). |
+| `@include` | ✅ | ✓ | ✓ | ✓ | A glob (`*://example.com/*`) or a regex (`/^https:\/\/…$/`). A page matching either an `@include` or a `@match` runs the script. |
+| `@exclude` | ✅ | ✓ | ✓ | ✓ | Same forms as `@include`. Wins over `@match` and `@include`. |
+| `@exclude-match` | ⚪ |   | ✓ |   | VM-specific: `@exclude` in `@match`'s grammar. Not read yet, so its patterns don't exclude anything. Easy to add: route it into the same excludes as `@exclude`. |
+
+Pattern forms beyond Chrome's own grammar:
+
+- **`.tld` hosts**: a host ending in `.tld` (`*://www.google.tld/*`)
+  means that name under any public suffix, such as `google.com`,
+  `google.de` or `google.co.uk`, as in Tampermonkey. Works in all
+  three tags.
+  - Public suffixes are the ones domain registries hand out names
+    under, from the ICANN section of the Public Suffix List. Hosting
+    suffixes like `github.io` and local names like `.lan` don't count.
+  - See [matching.md](matching.md#tld-hosts).
+- **Regex `@include` / `@exclude`**: Chrome can't match these, so the
+  script checks them as it starts on a page. A script with a regex
+  `@include` is registered for all pages and skips the ones that don't
+  match. See [injection.md](injection.md#regex-pattern-forms).
+- **Lenient `@match` spellings**: a pattern with no scheme
+  (`*.example.com/*`) or a globbed one (`http*://…`) is read as the
+  pattern Chrome takes, since real scripts use them. See
+  [matching.md](matching.md#lenient-readings-canonicalmatchpatterns).
 
 ---
 

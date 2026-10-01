@@ -84,7 +84,7 @@ import {
 } from './generated-wrappers.js';
 import { findApi, resolveGrants, type ApiSubsystem } from './gm-api-catalog.js';
 import { scanAllStorage } from './storage-scan.js';
-import { canonicalMatchPatterns, matchPatternProblem } from './url-match.js';
+import { canonicalMatchPatterns, hostEndsInTld, matchPatternProblem, tldCoarseGlob } from './url-match.js';
 import { dlog } from './debug-log.js';
 import { startPhaseTimer } from './phase-timing.js';
 import {
@@ -165,6 +165,20 @@ export const GM_RUNTIME_SCRIPT_ID = 'sourcemonkey-gm-runtime';
 // since either forces MAIN world. Its SW traffic rides
 // `wrapper-bridge.js`.
 export const GM_RUNTIME_MAIN_SCRIPT_ID = 'sourcemonkey-gm-runtime-main';
+
+// Added to `matches` whenever a spec has `includeGlobs`. Two jobs:
+//   - Chrome requires `matches`, and ORs it with `includeGlobs`, so a
+//     script whose patterns are all globs needs a stand-in that no
+//     real page's path has.
+//   - Its host is `*` on purpose. Chrome kills the renderer ("Page
+//     crashed") when `chrome.tabs.sendMessage` reaches a USER_SCRIPT-
+//     world listener (the bridge, the GM runtime) in a page the spec
+//     covers only through `includeGlobs`, on a host none of its
+//     `matches` names. A `*` host keeps every page's host covered.
+//     Measured; see tests/e2e/include-only.spec.ts.
+// The wrapper's in-page matcher still runs for such a script, so even a
+// page that did have this path wouldn't run it.
+export const NO_PAGE_MATCH = '*://*/__sourcemonkey_no_page__/*';
 
 export type RegistrationSpec = chrome.userScripts.RegisteredUserScript;
 export type InjectionWorld = 'MAIN' | 'USER_SCRIPT';
@@ -996,13 +1010,21 @@ export async function buildRegistrationSpec(
   // is already in the script's Log, on the header line that declared
   // it (see `extractStartupLogs`). A script left with no pattern at all
   // was already stored `invalid` by `validateHeader`.
-  const matches = [
+  const usableMatches = [
     ...new Set(
       script.matching.matches
         .flatMap((m) => canonicalMatchPatterns(m))
         .filter((m) => matchPatternProblem(m) === null),
     ),
   ];
+  // A `.tld` host (`*://www.google.tld/*`, "any public suffix") is
+  // one Chrome would take, but as a literal host named `…tld` that no
+  // page has, and a match pattern can't put `*` there instead. So a
+  // `.tld` rule registers as a coarse glob (`*://www.google.*/*`, see
+  // `tldCoarseGlob`), which Chrome ORs with `matches` (measured; see
+  // below), and the wrapper's matcher narrows it to the exact rule.
+  const matches = usableMatches.filter((m) => !hostEndsInTld(m));
+  const tldMatches = usableMatches.filter((m) => hostEndsInTld(m));
   // Deduplicated like `matches` above, and for a reason beyond tidiness:
   // `needsReplace` compares the glob lists we sent against the ones
   // `getScripts` reports back, and a header repeating an `@exclude`
@@ -1011,69 +1033,82 @@ export async function buildRegistrationSpec(
   // gap, on every sync.
   const includeGlobSet = new Set<string>();
   const excludeGlobSet = new Set<string>();
+  // A `.tld` `@include` registers its coarse glob, like a `.tld`
+  // `@match`. A `.tld` `@exclude` goes with the regexes, enforced only
+  // in-page: widened to `.*`, it would exclude pages it shouldn't.
   let hasRegexInclude = false;
   let hasRegexExclude = false;
+  let hasTldRule = tldMatches.length > 0;
+  for (const m of tldMatches) includeGlobSet.add(tldCoarseGlob(m, true));
   for (const inc of script.matching.includes) {
     if (isRegexLiteral(inc)) hasRegexInclude = true;
-    else includeGlobSet.add(inc);
+    else if (hostEndsInTld(inc)) {
+      includeGlobSet.add(tldCoarseGlob(inc, false));
+      hasTldRule = true;
+    } else includeGlobSet.add(inc);
   }
   for (const ex of script.matching.excludes) {
-    if (isRegexLiteral(ex)) hasRegexExclude = true;
+    if (isRegexLiteral(ex) || hostEndsInTld(ex)) hasRegexExclude = true;
     else excludeGlobSet.add(ex);
   }
   const includeGlobs = [...includeGlobSet];
   const excludeGlobs = [...excludeGlobSet];
 
   // Chrome refuses a registration without `matches` ("must specify
-  // 'matches'"), so a script whose header carries only `@include` needs
-  // a stand-in — `<all_urls>`, with the wrapper's in-page matcher doing
-  // the real narrowing (the arrangement regex `@include`s already use).
+  // 'matches'"), so a script whose header carries only `@include`s
+  // needs a stand-in (see `NO_PAGE_MATCH` below), with the wrapper's
+  // in-page matcher holding it to its header.
   //
-  // Handing Chrome the globs *as well* is deliberate, and the reason is
-  // that Chrome's own reading of `includeGlobs` is not what the docs for
+  // How the globs and `matches` combine matters, because Chrome's own
+  // reading of `includeGlobs` is not what the docs for
   // content scripts say. Measured rather than assumed — the probe in
   // tests/e2e/include-only.spec.ts re-checks it on whatever Chrome the
   // suite runs: `chrome.userScripts` ORs
   // `includeGlobs` with `matches` — userscript `@include` semantics —
   // rather than filtering within them. So:
-  //   - Under the OR we measured, `<all_urls>` alone already runs
-  //     everywhere and the wrapper filter is what makes the script
-  //     obey its header.
-  //   - Were it ever the documented AND instead, Chrome would narrow
-  //     `<all_urls>` to the glob set and the wrapper would agree.
-  // Emitting both keeps us correct either way. `excludeGlobs` is a true
-  // AND under both readings, so it needs no such care.
+  //   - `<all_urls>` as the stand-in would run a glob-only script on
+  //     every page. The stand-in is `NO_PAGE_MATCH` instead (added to
+  //     any spec with globs, for the reason given there), and the
+  //     globs say where Chrome injects.
+  //   - Were it ever the documented AND, that would inject nowhere.
+  //     The probe would fail first.
+  //   - A regex `@include` still needs `<all_urls>` (below): no glob
+  //     can stand for it.
+  // `excludeGlobs` is a true AND under both readings, so it needs no
+  // such care.
   //
   // A script with no match/include patterns whatsoever shouldn't reach
   // here — validateHeader stores it `invalid`.
   //
-  // One asymmetry to know about: a script can land here with `@match`
-  // patterns that Chrome's grammar refused (dropped above) alongside
-  // its includes. The wrapper matcher then evaluates the script's whole
-  // `matching`, refused patterns included, so it can run where a
-  // registered `@match` never would have. That is the lenient reading
-  // the badge already gives those patterns, so the two agree — the
-  // script just doesn't get the stricter answer a valid `@match` would.
+  // A script can land here with `@match` patterns that Chrome's
+  // grammar refused (dropped above) alongside its includes. Chrome then
+  // injects only where the globs reach, so the refused patterns run
+  // nowhere, as when a script has valid `@match`es beside them.
   let usedAllUrlsFallback = false;
-  if (matches.length === 0) {
-    if (includeGlobs.length === 0 && !hasRegexInclude) return null;
-    matches.push('<all_urls>');
-    usedAllUrlsFallback = true;
-  } else if (hasRegexInclude) {
-    // A regex `@include` can cover pages no `@match` does, and Chrome
-    // can't read a regex, so registering the `@match`es alone would
-    // never inject there. Every page instead, narrowed by the wrapper,
-    // which checks the whole rule set.
+  let usedNoPageStandIn = false;
+  if (hasRegexInclude) {
+    // A regex `@include` can cover pages no registered `@match` or
+    // glob does, and Chrome can't read it, so registering the rest
+    // alone would never inject there. Every page instead, narrowed by
+    // the wrapper, which checks the whole rule set.
     matches.splice(0, matches.length, '<all_urls>');
     usedAllUrlsFallback = true;
+  } else if (includeGlobs.length > 0) {
+    matches.push(NO_PAGE_MATCH);
+    usedNoPageStandIn = true;
+  } else if (matches.length === 0) {
+    return null;
   }
 
   const declaredRunAt = normalizeDeclaredRunAt(
     script.header ? getValue(script.header, 'run-at') : undefined,
   );
   const name = scriptDisplayName(script);
+  // A script with globs keeps the in-page check too: Chrome's glob
+  // reading isn't ours (case, `?`), a `.tld` glob is coarse, and
+  // `NO_PAGE_MATCH` is a real (if unlikely) path.
   const needsWrapperFilter = hasRegexInclude || hasRegexExclude || usedAllUrlsFallback
-    || options.inPageMatcher === true;
+    || usedNoPageStandIn || hasTldRule || options.inPageMatcher === true;
   const sourceUrl = buildSourceUrl(logLabel);
 
   const world = resolveScriptWorld(script);

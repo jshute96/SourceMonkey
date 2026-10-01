@@ -207,9 +207,16 @@
   }
 
   /* Round-trip sm:check-pending and hand the SW's decision (or a 2s
-     safety-timeout fallback) to cb. Same dual transport as `send`. */
+     safety-timeout fallback) to cb. Same dual transport as `send`.
+
+     A script with a `.tld` rule asks the SW to check it exactly (see the
+     `.tld` note in the matcher), and its fallback is `skip`, not `run`:
+     without the SW's answer this side only knows the loose reading,
+     which would also run it on hosts like www.google.evil.com. */
   function awaitDecision(entry, cb) {
     var cfg = entry.cfg;
+    var tld = !!(cfg.matching && hasTldRule(cfg.matching));
+    var fallback = tld ? { action: "skip", reason: "no-match" } : { action: "run" };
     var done = false;
     var finish = function (decision) {
       if (done) return;
@@ -217,7 +224,7 @@
       try { cb(decision); } catch (_e) {}
     };
     var cleanup = function () {};
-    var safetyTimer = setTimeout(function () { seal({ action: "run" }); }, 2000);
+    var safetyTimer = setTimeout(function () { seal(fallback); }, 2000);
     var seal = function (decision) {
       try { clearTimeout(safetyTimer); } catch (_e) {}
       try { cleanup(); } catch (_e2) {}
@@ -231,15 +238,16 @@
           name: cfg.name,
           loadedAt: cfg.loadedAt,
           url: location.href,
-          needsValues: !!cfg.needsGmValues
+          needsValues: !!cfg.needsGmValues,
+          tld: tld
         });
         if (p && typeof p.then === "function") {
           p.then(
-            function (reply) { seal(reply && typeof reply === "object" ? reply : { action: "run" }); },
-            function () { seal({ action: "run" }); }
+            function (reply) { seal(reply && typeof reply === "object" ? reply : fallback); },
+            function () { seal(fallback); }
           );
         } else {
-          seal({ action: "run" });
+          seal(fallback);
         }
         return;
       }
@@ -254,7 +262,7 @@
           var d = ev.data;
           if (!d || d.__sm !== "sourcemonkey-bridge-reply") return;
           if (d.requestId !== requestId) return;
-          seal(d.reply && typeof d.reply === "object" ? d.reply : { action: "run" });
+          seal(d.reply && typeof d.reply === "object" ? d.reply : fallback);
         } catch (_e) {}
       };
       window.addEventListener("message", listener, true);
@@ -265,12 +273,13 @@
         name: cfg.name,
         loadedAt: cfg.loadedAt,
         url: location.href,
-        needsValues: !!cfg.needsGmValues
+        needsValues: !!cfg.needsGmValues,
+        tld: tld
       }, requestId);
       /* Nothing left the page, so no reply is coming. Seal now rather
          than costing this script the full 2s safety timeout. */
-      if (!dispatched) seal({ action: "run" });
-    } catch (_e3) { seal({ action: "run" }); }
+      if (!dispatched) seal(fallback);
+    } catch (_e3) { seal(fallback); }
   }
 
   /* Async-error attribution. Every piece of a script's code — its
@@ -477,9 +486,10 @@
      script needing the recheck doesn't need a separate matcher entry;
      the prelude is on every script's js[] and the algorithm is tiny.
      The matcher block is only consulted when cfg.matching is present:
-     scripts with a regex @include/@exclude, and scripts with no
-     @match at all (registered <all_urls>). A script whose @match
-     patterns carry the whole registration skips it. */
+     scripts with a regex or `.tld` @include/@exclude/@match, and
+     scripts with any glob @include (registered with NO_PAGE_MATCH; see
+     injector.ts). A script whose @match patterns carry the whole
+     registration skips it. */
   function escRx(s) { return s.replace(/[.+?^${}()|[\]\\]/g, "\\$&"); }
   function globRx(g) { return new RegExp("^" + escRx(g).replace(/\*/g, ".*") + "$"); }
   function includeMatch(pat, url) {
@@ -487,7 +497,41 @@
       /* Ignoring case, as url-match.ts does. */
       try { return new RegExp(pat.slice(1, -1), "i").test(url); } catch (_e) { return false; }
     }
-    try { return globRx(pat).test(url); } catch (_e) { return false; }
+    try { return includeGlobRx(pat).test(url); } catch (_e) { return false; }
+  }
+  /* `.tld` hosts ("any public suffix"). Read LOOSELY here, as any one
+     or more labels: the exact reading needs the public suffix list,
+     which stays out of the page. The service worker applies it in its
+     sm:check-pending reply and answers `skip` (reason "no-match") where
+     this was too generous. So this side must only ever be wider:
+       - a `.tld` @match / @include matches any labels;
+       - a `.tld` @exclude is ignored here, since a loose one would
+         exclude pages the script should run on.
+     tldIndex() mirrors src/url-match.ts; keep the two in lockstep. */
+  var TLD_RX = "(?:\\.[a-z0-9-]+)+";
+  function tldIndex(pat, globStar) {
+    var sep = pat.indexOf("://");
+    var start = sep < 0 ? 0 : sep + 3;
+    var slash = pat.indexOf("/", start);
+    var host = pat.slice(start, slash < 0 ? pat.length : slash).replace(/:(\d+|\*)$/, "");
+    if (globStar && host.charAt(host.length - 1) === "*") host = host.slice(0, -1);
+    if (host.slice(-4).toLowerCase() !== ".tld") return -1;
+    var base = host.slice(0, -4);
+    if (base === "" || base === "*") return -1;
+    return start + host.length - 4;
+  }
+  function includeGlobRx(g) {
+    var at = tldIndex(g, true);
+    if (at < 0) return globRx(g);
+    var a = escRx(g.slice(0, at)).replace(/\*/g, ".*");
+    var b = escRx(g.slice(at + 4)).replace(/\*/g, ".*");
+    return new RegExp("^" + a + TLD_RX + b + "$");
+  }
+  function hostMatchesTld(patternHost, hostname) {
+    var base = patternHost.slice(0, -4).toLowerCase();
+    var anySub = base.indexOf("*.") === 0;
+    var name = (anySub ? base.slice(2) : base).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp("^" + (anySub ? "(?:.+\\.)?" : "") + name + TLD_RX + "$").test(hostname.toLowerCase());
   }
   /* Lenient readings of the two shapes Chrome's parser refuses — an
      omitted scheme and a scheme glob. Mirrors canonicalMatchPatterns()
@@ -554,6 +598,8 @@
     var patternPort = hasPort ? host.slice(colon + 1) : "";
     if (patternHost === "*") {
       /* any host */
+    } else if (tldIndex(patternHost) >= 0) {
+      if (!hostMatchesTld(patternHost, u.hostname)) return false;
     } else if (patternHost.indexOf("*.") === 0) {
       var suffix = patternHost.slice(2).toLowerCase();
       var h = u.hostname.toLowerCase();
@@ -566,8 +612,23 @@
     var tail = u.pathname + u.search;
     try { return globRx(path).test(tail); } catch (_e) { return false; }
   }
+  function hasTldRule(m) {
+    var all = m.matches.concat(m.includes, m.excludes);
+    for (var i = 0; i < all.length; i++) {
+      if (!isRegexPat(all[i]) && all[i] !== "<all_urls>" && tldIndex(all[i], true) >= 0) return true;
+    }
+    return false;
+  }
+  function isRegexPat(pat) {
+    return pat.length >= 2 && pat.charAt(0) === "/" && pat.charAt(pat.length - 1) === "/";
+  }
   function matchScript(url, m) {
-    for (var i = 0; i < m.excludes.length; i++) if (includeMatch(m.excludes[i], url)) return false;
+    for (var i = 0; i < m.excludes.length; i++) {
+      var ex = m.excludes[i];
+      /* See the `.tld` note above: the service worker decides these. */
+      if (!isRegexPat(ex) && tldIndex(ex, true) >= 0) continue;
+      if (includeMatch(ex, url)) return false;
+    }
     for (var j = 0; j < m.matches.length; j++) if (matchPattern(m.matches[j], url)) return true;
     for (var k = 0; k < m.includes.length; k++) if (includeMatch(m.includes[k], url)) return true;
     return false;
@@ -645,6 +706,14 @@
         /* The @run-at gate may already have fired; `flushPending`
            re-checks `skip` so a queued body can't slip through, and
            dropping `pendingRun` here releases the closure either way. */
+        if (entry.decision.reason === "no-match") {
+          /* The exact `.tld` check said this page isn't the script's:
+             the same as our own matcher saying no, so nothing is
+             reported. */
+          entry.matched = false;
+          entry.pendingRun = null;
+          return;
+        }
         send({
           type: "sm:abandoned",
           id: cfg.id,

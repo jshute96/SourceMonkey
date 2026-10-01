@@ -18,6 +18,9 @@ import {
   includePattern,
   urlMatchesScript,
   explainUrlMatch,
+  hostEndsInTld,
+  tldCoarseGlob,
+  isPublicSuffix,
 } from '../../dist/url-match.js';
 
 // ---------- matchPattern ----------
@@ -493,4 +496,162 @@ test('unusableMatchGroupKey: elides the pattern, and declines anything else', ()
     null,
   );
   assert.equal(unusableMatchGroupKey('Syntax error: Unexpected token'), null);
+});
+
+// ---------- `.tld` hosts ----------
+
+test('.tld: @include matches the name under any one-label TLD', () => {
+  for (const url of [
+    'https://www.google.com/search?q=1',
+    'https://www.google.de/',
+    'http://www.google.xn--p1ai/',
+  ]) {
+    assert.equal(includePattern('*://www.google.tld/*', url), true, url);
+  }
+});
+
+test('.tld: @include takes common country second-level suffixes', () => {
+  for (const url of ['https://www.google.co.uk/', 'https://www.google.com.au/', 'https://www.google.co.jp/x']) {
+    assert.equal(includePattern('*://www.google.tld/*', url), true, url);
+  }
+});
+
+test('.tld: never reaches a host someone else could register', () => {
+  for (const url of [
+    'https://www.google.evil.com/', // two arbitrary labels
+    'https://www.google.com.evil.io/',
+    'https://www.google.com.de/', // com.de is a name someone owns
+    'https://www.google.co.de/', // nor is co.de a registry's
+    'https://www.google.local/', // a LAN name, not a registry's
+    'https://www.google.lan/',
+    'https://www.google.internal/',
+    'https://www.google/', // no TLD at all
+    'https://www.googlex.com/',
+    'https://xwww.google.com/',
+  ]) {
+    assert.equal(includePattern('*://www.google.tld/*', url), false, url);
+    assert.equal(matchPattern('*://www.google.tld/*', url), false, url);
+  }
+});
+
+test('.tld: a `*.` host covers the base domain and subdomains, in @match and @include', () => {
+  for (const url of ['https://www.imdb.com/title/tt1/', 'https://m.imdb.de/title/tt1/', 'https://www.imdb.co.uk/title/tt1/']) {
+    assert.equal(includePattern('https://*.imdb.tld/title/tt*', url), true, url);
+    assert.equal(matchPattern('https://*.imdb.tld/title/tt*', url), true, url);
+  }
+  // The bare domain: a `@match` `*.` covers it, an `@include` glob's
+  // `*` still needs the dot after it, as for any other glob.
+  assert.equal(matchPattern('https://*.imdb.tld/*', 'https://imdb.co.uk/'), true);
+  assert.equal(includePattern('https://*.imdb.tld/*', 'https://imdb.co.uk/'), false);
+  assert.equal(matchPattern('https://*.imdb.tld/*', 'https://notimdb.com/'), false);
+  assert.equal(matchPattern('https://*.imdb.tld/*', 'https://imdb.com.evil.io/'), false);
+});
+
+test('.tld: @match reads it after the lenient rewrites, and with a port', () => {
+  assert.equal(matchPattern('*.google.tld/*', 'https://www.google.fr/'), true);
+  assert.equal(matchPattern('http*://www.google.tld/*', 'http://www.google.fr/'), true);
+  assert.equal(matchPattern('https://www.google.tld:8443/*', 'https://www.google.fr:8443/'), true);
+  assert.equal(matchPattern('https://www.google.tld:8443/*', 'https://www.google.fr/'), false);
+  assert.equal(matchPatternProblem('*://www.google.tld/*'), null);
+});
+
+test('.tld: only a host\'s last label is special', () => {
+  // Literal elsewhere: in a path, or a label in the middle of a host.
+  assert.equal(includePattern('https://example.com/a.tld/*', 'https://example.com/a.com/x'), false);
+  assert.equal(includePattern('https://example.com/a.tld/*', 'https://example.com/a.tld/x'), true);
+  assert.equal(includePattern('https://www.tld.example.com/*', 'https://www.com.example.com/'), false);
+  // A regex is the author's own regex.
+  assert.equal(includePattern('/www\\.google\\.tld/', 'https://www.google.com/'), false);
+  // A single-label name that merely starts like a LAN one is fine.
+  assert.equal(includePattern('*://www.google.tld/*', 'https://www.google.homes/'), true);
+});
+
+test('.tld: `*.tld` with no name in front stays literal, in @match and @include alike', () => {
+  for (const url of ['https://example.com/', 'https://foo.tld/']) {
+    assert.equal(matchPattern('*://*.tld/*', url), url === 'https://foo.tld/', url);
+    assert.equal(includePattern('*://*.tld/*', url), url === 'https://foo.tld/', url);
+  }
+  assert.equal(hostEndsInTld('*://*.tld/*'), false);
+});
+
+test('.tld: an @include glob may run the host straight into a `*`', () => {
+  assert.equal(includePattern('http://www.google.tld*', 'http://www.google.de/search?q=1'), true);
+  assert.equal(includePattern('*://*.google.tld*', 'https://news.google.co.uk/'), true);
+  assert.equal(includePattern('http://www.google.tld*', 'http://www.googlex.de/'), false);
+  assert.equal(hostEndsInTld('http://www.google.tld*'), true);
+});
+
+test('.tld: @exclude reads it too, and still wins', () => {
+  const matching = {
+    matches: ['*://*/*'],
+    includes: [],
+    excludes: ['https://www.google.tld/search*'],
+  };
+  assert.equal(urlMatchesScript('https://www.google.co.uk/search?q=x', matching), false);
+  assert.equal(urlMatchesScript('https://www.google.co.uk/maps', matching), true);
+});
+
+test('hostEndsInTld: which patterns Chrome cannot match for us', () => {
+  assert.equal(hostEndsInTld('*://www.google.tld/*'), true);
+  assert.equal(hostEndsInTld('https://*.imdb.tld:8080/x'), true);
+  assert.equal(hostEndsInTld('*.google.tld/*'), true);
+  assert.equal(hostEndsInTld('https://example.com/a.tld'), false);
+  assert.equal(hostEndsInTld('/google\\.tld/'), false);
+  assert.equal(hostEndsInTld('<all_urls>'), false);
+});
+
+test('tldCoarseGlob: the glob Chrome registers for a .tld rule', () => {
+  assert.equal(tldCoarseGlob('*://www.google.tld/*', true), '*://www.google.*/*');
+  assert.equal(tldCoarseGlob('*://*.imdb.tld/*', true), '*://*imdb.*/*');
+  assert.equal(tldCoarseGlob('https://*.imdb.tld:8080/x', true), 'https://*imdb.*:8080/x');
+  assert.equal(tldCoarseGlob('*://*.imdb.tld/*', false), '*://*.imdb.*/*');
+  assert.equal(tldCoarseGlob('http://www.google.tld*', false), 'http://www.google.**');
+  assert.equal(tldCoarseGlob('*.google.tld/*', false), '*.google.*/*');
+});
+
+test('tldCoarseGlob: covers every URL the exact rule matches', () => {
+  // Chrome injects only where the coarse glob reaches, so it must never
+  // miss a page the `.tld` rule itself matches.
+  const urls = [
+    'https://www.google.com/', 'https://www.google.co.uk/search?q=1', 'http://www.google.de:8080/x',
+    'https://imdb.com/title/1', 'https://www.imdb.de/', 'https://m.imdb.com.au/',
+  ];
+  for (const rule of ['*://www.google.tld/*', '*://*.imdb.tld/*', 'http://www.google.tld/*']) {
+    const coarse = tldCoarseGlob(rule, true);
+    for (const url of urls) {
+      if (matchPattern(rule, url)) assert.equal(includePattern(coarse, url), true, `${rule} ${url}`);
+    }
+  }
+  for (const rule of ['*://www.google.tld/*', '*://*.imdb.tld/*', 'http://www.google.tld*']) {
+    const coarse = tldCoarseGlob(rule, false);
+    for (const url of urls) {
+      if (includePattern(rule, url)) assert.equal(includePattern(coarse, url), true, `${rule} ${url}`);
+    }
+  }
+});
+
+test('isPublicSuffix: the ICANN section of the Public Suffix List', () => {
+  for (const name of ['com', 'de', 'co.uk', 'com.au', 'co.io', 'xn--p1ai']) assert.equal(isPublicSuffix(name), true, name);
+  // Private-section suffixes, and names nobody's registry hands out.
+  for (const name of ['blogspot.com', 'github.io', 'com.de', 'local', 'lan', 'evil.com']) {
+    assert.equal(isPublicSuffix(name), false, name);
+  }
+  // A wildcard rule (`*.ck`) and its exception (`!www.ck`).
+  assert.equal(isPublicSuffix('anything.ck'), true);
+  assert.equal(isPublicSuffix('www.ck'), false);
+  assert.equal(isPublicSuffix('ck'), false);
+});
+
+test('.tld: any ICANN public suffix, multi-level ones included, never a private one', () => {
+  for (const url of ['https://www.google.co.uk/', 'https://www.google.com.au/', 'https://www.google.xn--p1ai/']) {
+    assert.equal(includePattern('*://www.google.tld/*', url), true, url);
+    assert.equal(matchPattern('*://www.google.tld/*', url), true, url);
+  }
+  for (const url of ['https://www.google.blogspot.com/', 'https://www.google.github.io/']) {
+    assert.equal(includePattern('*://www.google.tld/*', url), false, url);
+    assert.equal(matchPattern('*://www.google.tld/*', url), false, url);
+  }
+  // Under a wildcard rule, the name sits one label further out.
+  assert.equal(includePattern('*://shop.tld/*', 'https://shop.anything.ck/'), true);
+  assert.equal(includePattern('*://shop.tld/*', 'https://shop.www.ck/'), false);
 });

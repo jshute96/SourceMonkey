@@ -81,6 +81,7 @@ import {
   buildBridgeSpec,
   buildConfigBlob,
   buildRegistrationSpec,
+  NO_PAGE_MATCH,
   buildSwapEvalBody,
   collectActiveSpecs,
   normalizeDeclaredRunAt,
@@ -850,26 +851,55 @@ test('buildRegistrationSpec: @include glob → includeGlobs; /regex/ form goes t
   assert.match(cfg.code, /"matching"/);
 });
 
+test('buildRegistrationSpec: .tld rules register as coarse globs, narrowed in-page', async () => {
+  // Chrome would register `www.google.tld` as a literal host no page
+  // has, so a `.tld` @match or @include registers as a glob with `.*`
+  // in its place, and the in-page matcher, which reads `.tld`, decides.
+  // A `.tld` @exclude is in-page only.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: {
+      matches: ['https://example.com/*', '*://*.imdb.tld/*'],
+      excludes: ['https://www.google.tld/search*', 'https://example.com/admin/*'],
+      includes: ['*://www.google.tld/*', '*://example.org/*'],
+    },
+  }));
+  assert.deepEqual(spec.matches, ['https://example.com/*', NO_PAGE_MATCH]);
+  assert.deepEqual(spec.includeGlobs, ['*://*imdb.*/*', '*://www.google.*/*', '*://example.org/*']);
+  assert.deepEqual(spec.excludeGlobs, ['https://example.com/admin/*']);
+  assert.match(spec.js[0].code, /"matching"/);
+});
+
+test('buildRegistrationSpec: a .tld @match alone still registers', async () => {
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: { matches: ['*://www.google.tld/*'], excludes: [], includes: [] },
+  }));
+  assert.deepEqual(spec.matches, [NO_PAGE_MATCH]);
+  assert.deepEqual(spec.includeGlobs, ['*://www.google.*/*']);
+  assert.match(spec.js[0].code, /"matching"/);
+});
+
 test('buildRegistrationSpec: glob-only @include still gets a matches pattern', async () => {
-  // Chrome refuses a registration without `matches`, so an
-  // `@include`-only script rides in on `<all_urls>`.
+  // Chrome refuses a registration without `matches`, and ORs it with
+  // includeGlobs, so an `@include`-only script gets a stand-in no page
+  // has, and the globs alone say where Chrome injects. The wrapper's
+  // matcher still checks the glob in-page; its block has to be in the
+  // config blob.
   const spec = await buildRegistrationSpec(makeScript({
     matching: { matches: [], excludes: [], includes: ['*://example.com/*'] },
   }));
-  assert.deepEqual(spec.matches, ['<all_urls>']);
+  assert.deepEqual(spec.matches, [NO_PAGE_MATCH]);
   assert.deepEqual(spec.includeGlobs, ['*://example.com/*']);
-  // Chrome ORs includeGlobs with matches, so `<all_urls>` runs the
-  // script everywhere — the wrapper's matcher is what holds it to the
-  // glob. Its block has to be in the config blob.
   const cfg = spec.js[0];
   assert.ok('code' in cfg);
   assert.match(cfg.code, /"matching"/);
 });
 
-test('buildRegistrationSpec: @match beside a glob @include leaves matching to Chrome', async () => {
+test('buildRegistrationSpec: @match beside a glob @include adds the any-host stand-in', async () => {
   // Chrome ORs includeGlobs with matches (measured — see
-  // tests/e2e/include-only.spec.ts), which is what the header means,
-  // so this shape needs no wrapper-side matcher.
+  // tests/e2e/include-only.spec.ts), which is what the header means.
+  // NO_PAGE_MATCH keeps every page's host covered by `matches`, which
+  // Chrome needs to deliver messages to the page without crashing it;
+  // the wrapper-side matcher then guards its (unlikely) path.
   const spec = await buildRegistrationSpec(makeScript({
     matching: {
       matches: ['https://example.com/*'],
@@ -877,17 +907,25 @@ test('buildRegistrationSpec: @match beside a glob @include leaves matching to Ch
       includes: ['*://other.example/*'],
     },
   }));
-  assert.deepEqual(spec.matches, ['https://example.com/*']);
+  assert.deepEqual(spec.matches, ['https://example.com/*', NO_PAGE_MATCH]);
   assert.deepEqual(spec.includeGlobs, ['*://other.example/*']);
   const cfg = spec.js[0];
   assert.ok('code' in cfg);
-  assert.doesNotMatch(cfg.code, /"matching"/);
+  assert.match(cfg.code, /"matching"/);
 });
 
-test('buildRegistrationSpec: all @match patterns refused + glob @include falls back to <all_urls>', async () => {
+test('buildRegistrationSpec: @match alone gets no stand-in', async () => {
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: { matches: ['https://example.com/*'], excludes: [], includes: [] },
+  }));
+  assert.deepEqual(spec.matches, ['https://example.com/*']);
+  assert.equal(spec.includeGlobs, undefined);
+});
+
+test('buildRegistrationSpec: all @match patterns refused + glob @include gets the stand-in', async () => {
   // `https://example.com` (no path) is a pattern Chrome's grammar
   // refuses, so it never reaches the spec — leaving the script with
-  // globs only, which is the fallback case.
+  // globs only, which is the stand-in case.
   const spec = await buildRegistrationSpec(makeScript({
     matching: {
       matches: ['https://example.com'],
@@ -895,7 +933,7 @@ test('buildRegistrationSpec: all @match patterns refused + glob @include falls b
       includes: ['*://example.com/*'],
     },
   }));
-  assert.deepEqual(spec.matches, ['<all_urls>']);
+  assert.deepEqual(spec.matches, [NO_PAGE_MATCH]);
   assert.deepEqual(spec.includeGlobs, ['*://example.com/*']);
   const cfg = spec.js[0];
   assert.ok('code' in cfg);
@@ -1553,6 +1591,33 @@ test('prelude matcher: @match ignores the #hash, @include and @exclude see it, a
   for (const [m, expected] of cases) {
     assert.equal(match(url, m), expected, JSON.stringify(m));
     assert.equal(urlMatchesScript(url, m), expected, JSON.stringify(m));
+  }
+});
+
+test('prelude matcher: reads .tld loosely, never narrower than url-match.ts', async () => {
+  // The exact reading needs the public suffix list, which stays out of
+  // the page: the worker's check-pending reply applies it. So the
+  // prelude may say yes where url-match.ts says no, never the reverse,
+  // and leaves a `.tld` @exclude to the worker entirely.
+  const match = await loadPreludeMatcher();
+  // [matching, url, prelude, exact]
+  const cases = [
+    [{ matches: [], excludes: [], includes: ['*://www.google.tld/*'] }, 'https://www.google.co.uk/', true, true],
+    [{ matches: [], excludes: [], includes: ['*://www.google.tld/*'] }, 'https://www.google.evil.com/', true, false],
+    [{ matches: [], excludes: [], includes: ['*://www.google.tld/*'] }, 'https://www.google.local/', true, false],
+    [{ matches: [], excludes: [], includes: ['*://www.google.tld/*'] }, 'https://www.googlex.com/', false, false],
+    [{ matches: ['https://*.imdb.tld/title/*'], excludes: [], includes: [] }, 'https://m.imdb.de/title/tt1', true, true],
+    [{ matches: ['https://*.imdb.tld/title/*'], excludes: [], includes: [] }, 'https://imdb.com.evil.io/title/tt1', true, false],
+    [{ matches: ['https://*.imdb.tld/title/*'], excludes: [], includes: [] }, 'https://imdb.com/name/nm1', false, false],
+    [{ matches: [], excludes: [], includes: ['http://www.google.tld*'] }, 'http://www.google.de/x', true, true],
+    [{ matches: ['*://*/*'], excludes: ['https://www.google.tld/search*'], includes: [] }, 'https://www.google.fr/search?q=1', true, false],
+    [{ matches: ['*://*/*'], excludes: ['https://www.google.tld/search*'], includes: [] }, 'https://www.google.fr/maps', true, true],
+    [{ matches: ['*://*.tld/*'], excludes: [], includes: [] }, 'https://example.com/', false, false],
+    [{ matches: [], excludes: [], includes: ['*://*.tld/*'] }, 'https://example.com/', false, false],
+  ];
+  for (const [m, url, prelude, exact] of cases) {
+    assert.equal(match(url, m), prelude, `prelude: ${JSON.stringify(m)} / ${url}`);
+    assert.equal(urlMatchesScript(url, m), exact, `url-match: ${JSON.stringify(m)} / ${url}`);
   }
 });
 
