@@ -58,6 +58,7 @@ import {
 } from './http-read.js';
 import { checkParses, resetParseCheckFailures } from './parse-check.js';
 import { buildParseCheckSource } from './injector.js';
+import { stackLayout, type StackLayout } from './composed-source.js';
 import { attachParseLocation } from './parse-location.js';
 import {
   isParseCheckDisabled,
@@ -387,6 +388,11 @@ interface SourceMonkeyApi {
   // script in a dupe group gets which `#N` is decided by UUID sort, so
   // a test that needs the label cannot predict it — it has to ask.
   getScriptLogLabel: (scriptId: string) => Promise<string>;
+  // How the script's injected entry maps back to its files, for
+  // `sm-dev --extension` to rewrite stack lines in the Log entries and
+  // console lines it prints. Segment contents are left out: only the
+  // line numbers are needed. Null for a script that isn't stored.
+  getStackLayout: (scriptId: string) => Promise<StackLayout | null>;
   // GM_registerMenuCommand test surface. Playwright can't click the
   // real Chrome action context menu, so tests need a way to (a) read
   // back what we would have rendered for a tab and (b) synthesize the
@@ -554,6 +560,12 @@ const api: SourceMonkeyApi = {
   // `scriptLogLabel`, not `getScriptLogLabel` — the awaited form, so a
   // test never races the id table and gets a UUID prefix back.
   getScriptLogLabel: scriptLogLabel,
+  getStackLayout: async (scriptId: string) => {
+    const script = await getScript(scriptId);
+    if (!script) return null;
+    const layout = stackLayout(script, await scriptLogLabel(scriptId));
+    return { ...layout, segments: layout.segments.map((seg) => ({ ...seg, content: '' })) };
+  },
   checkParses,
   setParseCheckEnabled: async (enabled: boolean) => {
     await setParseCheckDisabled(!enabled);
