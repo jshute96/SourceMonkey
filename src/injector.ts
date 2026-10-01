@@ -83,7 +83,7 @@ import {
 import { findApi, resolveGrants, type ApiSubsystem } from './gm-api-catalog.js';
 import { sourceDeclaresUnsafeWindow } from './unsafe-window-use.js';
 import { scanAllStorage } from './storage-scan.js';
-import { canonicalMatchPatterns, matchPatternProblem } from './url-match.js';
+import { canonicalMatchPatterns, hostEndsInTld, matchPatternProblem } from './url-match.js';
 import { dlog } from './debug-log.js';
 import { startPhaseTimer } from './phase-timing.js';
 import {
@@ -970,13 +970,19 @@ export async function buildRegistrationSpec(
   // is already in the script's Log, on the header line that declared
   // it (see `extractStartupLogs`). A script left with no pattern at all
   // was already stored `invalid` by `validateHeader`.
-  const matches = [
+  const usableMatches = [
     ...new Set(
       script.matching.matches
         .flatMap((m) => canonicalMatchPatterns(m))
         .filter((m) => matchPatternProblem(m) === null),
     ),
   ];
+  // A `.tld` host (`*://www.google.tld/*`, "any top-level domain") is
+  // one Chrome would take, but as a literal host named `…tld` that no
+  // page has. Only the wrapper's matcher can read it, so it is handled
+  // like a regex `@include` below: every page, narrowed in-page.
+  const matches = usableMatches.filter((m) => !hostEndsInTld(m));
+  const hasTldMatch = matches.length < usableMatches.length;
   // Deduplicated like `matches` above, and for a reason beyond tidiness:
   // `needsReplace` compares the glob lists we sent against the ones
   // `getScripts` reports back, and a header repeating an `@exclude`
@@ -985,14 +991,16 @@ export async function buildRegistrationSpec(
   // gap, on every sync.
   const includeGlobSet = new Set<string>();
   const excludeGlobSet = new Set<string>();
+  // A glob with a `.tld` host goes with the regexes: Chrome's globs
+  // can't say "any top-level domain" either (see `hostEndsInTld`).
   let hasRegexInclude = false;
   let hasRegexExclude = false;
   for (const inc of script.matching.includes) {
-    if (isRegexLiteral(inc)) hasRegexInclude = true;
+    if (isRegexLiteral(inc) || hostEndsInTld(inc)) hasRegexInclude = true;
     else includeGlobSet.add(inc);
   }
   for (const ex of script.matching.excludes) {
-    if (isRegexLiteral(ex)) hasRegexExclude = true;
+    if (isRegexLiteral(ex) || hostEndsInTld(ex)) hasRegexExclude = true;
     else excludeGlobSet.add(ex);
   }
   const includeGlobs = [...includeGlobSet];
@@ -1030,14 +1038,15 @@ export async function buildRegistrationSpec(
   // script just doesn't get the stricter answer a valid `@match` would.
   let usedAllUrlsFallback = false;
   if (matches.length === 0) {
-    if (includeGlobs.length === 0 && !hasRegexInclude) return null;
+    if (includeGlobs.length === 0 && !hasRegexInclude && !hasTldMatch) return null;
     matches.push('<all_urls>');
     usedAllUrlsFallback = true;
-  } else if (hasRegexInclude) {
-    // A regex `@include` can cover pages no `@match` does, and Chrome
-    // can't read a regex, so registering the `@match`es alone would
-    // never inject there. Every page instead, narrowed by the wrapper,
-    // which checks the whole rule set.
+  } else if (hasRegexInclude || hasTldMatch) {
+    // A regex `@include` (or a `.tld` rule) can cover pages no
+    // registered `@match` does, and Chrome can't read it, so
+    // registering the `@match`es alone would never inject there. Every
+    // page instead, narrowed by the wrapper, which checks the whole
+    // rule set.
     matches.splice(0, matches.length, '<all_urls>');
     usedAllUrlsFallback = true;
   }

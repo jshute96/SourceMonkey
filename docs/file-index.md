@@ -237,6 +237,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/smoke.spec.ts` | Smoke test: SW loads, collections page renders, fixture server responds |
 | `tests/e2e/exclude-globs.spec.ts` | E2E for `@exclude`: excluded pages stay untouched, a later-added `@exclude` takes effect, plus a Chrome `update`-vs-globs probe |
 | `tests/e2e/include-only.spec.ts` | E2E for `@match`-less scripts: a glob-only `@include` injects and stays in its glob, plus a Chrome `includeGlobs` semantics probe |
+| `tests/e2e/tld-hosts.spec.ts` | `.tld` hosts ("any top-level domain") in `@match` / `@include` / `@exclude` run where the header says, and only there |
 | `tests/e2e/include-regex.spec.ts` | A regex `@include` beside a `@match` registers `<all_urls>` and runs on the regex's pages too |
 | `tests/e2e/injection.spec.ts` | End-to-end userscript injection: matching, non-matching, lenient-`@match`, and multiple-script cases |
 | `tests/e2e/sync-window.spec.ts` | A navigation racing a registration sync still gets injected, and the set never empties mid-sync |

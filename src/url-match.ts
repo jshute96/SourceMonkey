@@ -18,6 +18,9 @@
 //             script does not match — excludes win over both @match and
 //             @include.
 //
+// All three also take Tampermonkey's `.tld` host suffix, meaning "any
+// top-level domain" — see `TLD_SUFFIX_SOURCE`.
+//
 // `urlMatchesScript(url, matching)` is the entry point used by the
 // background SW; the per-pattern helpers are exported for tests.
 
@@ -40,6 +43,114 @@ function escapeForRegexExceptStar(s: string): string {
 function globToRegExp(glob: string): RegExp {
   const body = escapeForRegexExceptStar(glob).replace(/\*/g, '.*');
   return new RegExp('^' + body + '$');
+}
+
+// ---------- `.tld` hosts ----------
+//
+// Tampermonkey (and Violentmonkey) read a host ending in `.tld` as
+// "this name under any top-level domain": `*://www.google.tld/*` runs
+// on www.google.com, www.google.de and www.google.co.uk. They take it
+// in `@match`, `@include` and `@exclude` alike, and work out what a TLD
+// is from the public suffix list (publicsuffix.org, the registry of
+// suffixes under which anyone can register a name).
+//
+// We don't ship that list (thousands of entries). What `.tld` stands
+// for here is instead:
+//   - any one label (`.com`, `.de`, `.xn--p1ai`), except names a local
+//     network answers for rather than a registry (`.local`, `.lan`,
+//     `.internal`, ...), or
+//   - one of the common country suffixes listed below (`.co.uk`,
+//     `.com.au`, `.co.jp`).
+// That covers the country sites real `.tld` scripts are written for.
+// What it deliberately does NOT do:
+//   - take any two labels: then `www.google.tld` would also match
+//     `www.google.evil.com`, a host whoever owns evil.com can create;
+//   - take a usual second-level label under ANY country code: `com.de`
+//     is an ordinary name someone owns, so `www.google.com.de` is
+//     theirs. Each pair below is one its country's registry keeps.
+//
+// Chrome's own grammars (match patterns, `includeGlobs`) have no
+// spelling for this, so the injector registers such a script for
+// every page and lets the wrapper's in-page matcher, which mirrors
+// this one, decide (see `hostEndsInTld`).
+const TLD_COUNTRY_SUFFIXES = [
+  'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'me.uk',
+  'com.au', 'net.au', 'org.au', 'edu.au', 'gov.au',
+  'co.jp', 'ne.jp', 'or.jp', 'ac.jp', 'go.jp',
+  'co.nz', 'org.nz', 'co.za', 'org.za', 'co.in', 'net.in', 'org.in', 'gov.in',
+  'co.kr', 'or.kr', 'co.il', 'org.il', 'co.id', 'co.th', 'co.ke',
+  'com.br', 'net.br', 'org.br', 'gov.br', 'com.mx', 'org.mx', 'com.ar',
+  'com.co', 'com.pe', 'com.ve', 'com.uy', 'com.ec',
+  'com.cn', 'net.cn', 'org.cn', 'edu.cn', 'com.tw', 'org.tw', 'edu.tw',
+  'com.hk', 'org.hk', 'com.sg', 'com.my', 'com.ph', 'com.vn',
+  'com.pk', 'com.bd', 'com.tr', 'org.tr', 'com.ua', 'com.eg', 'com.sa', 'com.ng',
+];
+// Single labels no registry hands out: reserved names (RFC 6761) and
+// the usual router / intranet ones.
+const TLD_NOT_PUBLIC = [
+  'local', 'localhost', 'lan', 'internal', 'intranet', 'corp', 'home', 'test', 'example', 'invalid',
+];
+// Regex source for what `.tld` matches, dot included. The prelude has
+// no imports, so it carries a literal copy; a unit test
+// (`tests/unit/injector.test.mjs`) fails if the two differ.
+export const TLD_SUFFIX_SOURCE = '\\.(?:'
+  + `(?:${TLD_COUNTRY_SUFFIXES.map((s) => s.replace('.', '\\.')).join('|')})`
+  + `|(?!(?:${TLD_NOT_PUBLIC.join('|')})(?![a-z0-9-]))[a-z][a-z0-9-]*)`;
+
+// Where the `.tld` that ends a pattern's host starts, or -1 when its
+// host doesn't end in one. The host is what follows `://` (the start,
+// for a pattern naming no scheme) up to the next `/`, less a `:port`.
+// Only a host's LAST label counts: `.tld` elsewhere is literal text.
+//
+// `globStar`: an `@include` glob may run the host straight into a `*`
+// with no `/` (`http://www.google.tld*`), as older scripts do. The
+// `.tld` still ends the host, and the `*` stays a glob star. Not for a
+// `@match`, whose grammar has no `*` after the host.
+//
+// A `.tld` with no name in front (`*.tld`, a bare `.tld`) stays
+// literal: "any host under any TLD" is not what anybody means by it.
+function tldIndex(pattern: string, globStar = false): number {
+  const sep = pattern.indexOf('://');
+  const start = sep < 0 ? 0 : sep + 3;
+  const slash = pattern.indexOf('/', start);
+  let host = pattern.slice(start, slash < 0 ? pattern.length : slash).replace(/:(\d+|\*)$/, '');
+  if (globStar && host.endsWith('*')) host = host.slice(0, -1);
+  if (!host.toLowerCase().endsWith('.tld')) return -1;
+  const base = host.slice(0, -4);
+  if (base === '' || base === '*') return -1;
+  return start + host.length - 4;
+}
+
+// Does this glob or `@match` pattern have a `.tld` host — one Chrome
+// can't match for us? Regex patterns never do: `.tld` in a regex is
+// the author's own regex text.
+export function hostEndsInTld(pattern: string): boolean {
+  if (isRegexPattern(pattern)) return false;
+  if (pattern === '<all_urls>') return false;
+  return tldIndex(pattern, true) >= 0;
+}
+
+function isRegexPattern(pattern: string): boolean {
+  return pattern.length >= 2 && pattern.startsWith('/') && pattern.endsWith('/');
+}
+
+// `globToRegExp` for an `@include` / `@exclude`, which also reads a
+// `.tld` host.
+function includeGlobToRegExp(glob: string): RegExp {
+  const at = tldIndex(glob, true);
+  if (at < 0) return globToRegExp(glob);
+  const part = (s: string) => escapeForRegexExceptStar(s).replace(/\*/g, '.*');
+  return new RegExp('^' + part(glob.slice(0, at)) + TLD_SUFFIX_SOURCE + part(glob.slice(at + 4)) + '$');
+}
+
+// A `@match` host ending in `.tld` (`www.google.tld`, `*.google.tld`)
+// against a URL's hostname.
+function hostMatchesTld(patternHost: string, hostname: string): boolean {
+  const base = patternHost.slice(0, -4).toLowerCase();
+  const anySub = base.startsWith('*.');
+  const name = (anySub ? base.slice(2) : base).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp('^' + (anySub ? '(?:.+\\.)?' : '') + name + TLD_SUFFIX_SOURCE + '$')
+    .test(hostname.toLowerCase());
 }
 
 // ---------- lenient readings ----------
@@ -175,6 +286,8 @@ function matchCanonical(pattern: string, url: string): boolean {
   const patternPort = hasPort ? host.slice(colon + 1) : '';
   if (patternHost === '*') {
     // any host (including empty)
+  } else if (tldIndex(patternHost) >= 0) {
+    if (!hostMatchesTld(patternHost, parsed.hostname)) return false;
   } else if (patternHost.startsWith('*.')) {
     const suffix = patternHost.slice(2).toLowerCase();
     const h = parsed.hostname.toLowerCase();
@@ -411,7 +524,7 @@ export function unusableMatchGroupKey(message: string): string | null {
 // Violentmonkey's do. A glob doesn't: Chrome evaluates those itself,
 // case-sensitively, and this has to agree with it.
 export function includePattern(pattern: string, url: string): boolean {
-  if (pattern.length >= 2 && pattern.startsWith('/') && pattern.endsWith('/')) {
+  if (isRegexPattern(pattern)) {
     try {
       return new RegExp(pattern.slice(1, -1), 'i').test(url);
     } catch {
@@ -419,7 +532,7 @@ export function includePattern(pattern: string, url: string): boolean {
     }
   }
   try {
-    return globToRegExp(pattern).test(url);
+    return includeGlobToRegExp(pattern).test(url);
   } catch {
     return false;
   }

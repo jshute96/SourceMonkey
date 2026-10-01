@@ -424,9 +424,9 @@
      script needing the recheck doesn't need a separate matcher entry;
      the prelude is on every script's js[] and the algorithm is tiny.
      The matcher block is only consulted when cfg.matching is present:
-     scripts with a regex @include/@exclude, and scripts with no
-     @match at all (registered <all_urls>). A script whose @match
-     patterns carry the whole registration skips it. */
+     scripts with a regex or `.tld` @include/@exclude/@match, and
+     scripts with no @match at all (registered <all_urls>). A script
+     whose @match patterns carry the whole registration skips it. */
   function escRx(s) { return s.replace(/[.+?^${}()|[\]\\]/g, "\\$&"); }
   function globRx(g) { return new RegExp("^" + escRx(g).replace(/\*/g, ".*") + "$"); }
   function includeMatch(pat, url) {
@@ -434,7 +434,44 @@
       /* Ignoring case, as url-match.ts does. */
       try { return new RegExp(pat.slice(1, -1), "i").test(url); } catch (_e) { return false; }
     }
-    try { return globRx(pat).test(url); } catch (_e) { return false; }
+    try { return includeGlobRx(pat).test(url); } catch (_e) { return false; }
+  }
+  /* `.tld` hosts ("any top-level domain"). Mirrors TLD_SUFFIX_SOURCE,
+     tldIndex() and hostMatchesTld() in src/url-match.ts, which explains
+     what `.tld` is read as. Keep the two in lockstep: the SW registers
+     a `.tld` script for every page and leaves this matcher to decide.
+     TLD_RX is a literal copy of TLD_SUFFIX_SOURCE; a unit test
+     (tests/unit/injector.test.mjs) fails if they differ. */
+  var TLD_RX = "\\.(?:(?:co\\.uk|org\\.uk|ac\\.uk|gov\\.uk|me\\.uk|com\\.au|net\\.au|org\\.au|edu\\.au|gov\\.au|"
+    + "co\\.jp|ne\\.jp|or\\.jp|ac\\.jp|go\\.jp|co\\.nz|org\\.nz|co\\.za|org\\.za|co\\.in|net\\.in|org\\.in|gov\\.in|"
+    + "co\\.kr|or\\.kr|co\\.il|org\\.il|co\\.id|co\\.th|co\\.ke|com\\.br|net\\.br|org\\.br|gov\\.br|com\\.mx|org\\.mx|"
+    + "com\\.ar|com\\.co|com\\.pe|com\\.ve|com\\.uy|com\\.ec|com\\.cn|net\\.cn|org\\.cn|edu\\.cn|com\\.tw|org\\.tw|"
+    + "edu\\.tw|com\\.hk|org\\.hk|com\\.sg|com\\.my|com\\.ph|com\\.vn|com\\.pk|com\\.bd|com\\.tr|org\\.tr|com\\.ua|"
+    + "com\\.eg|com\\.sa|com\\.ng)"
+    + "|(?!(?:local|localhost|lan|internal|intranet|corp|home|test|example|invalid)(?![a-z0-9-]))[a-z][a-z0-9-]*)";
+  function tldIndex(pat, globStar) {
+    var sep = pat.indexOf("://");
+    var start = sep < 0 ? 0 : sep + 3;
+    var slash = pat.indexOf("/", start);
+    var host = pat.slice(start, slash < 0 ? pat.length : slash).replace(/:(\d+|\*)$/, "");
+    if (globStar && host.charAt(host.length - 1) === "*") host = host.slice(0, -1);
+    if (host.slice(-4).toLowerCase() !== ".tld") return -1;
+    var base = host.slice(0, -4);
+    if (base === "" || base === "*") return -1;
+    return start + host.length - 4;
+  }
+  function includeGlobRx(g) {
+    var at = tldIndex(g, true);
+    if (at < 0) return globRx(g);
+    var a = escRx(g.slice(0, at)).replace(/\*/g, ".*");
+    var b = escRx(g.slice(at + 4)).replace(/\*/g, ".*");
+    return new RegExp("^" + a + TLD_RX + b + "$");
+  }
+  function hostMatchesTld(patternHost, hostname) {
+    var base = patternHost.slice(0, -4).toLowerCase();
+    var anySub = base.indexOf("*.") === 0;
+    var name = (anySub ? base.slice(2) : base).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp("^" + (anySub ? "(?:.+\\.)?" : "") + name + TLD_RX + "$").test(hostname.toLowerCase());
   }
   /* Lenient readings of the two shapes Chrome's parser refuses — an
      omitted scheme and a scheme glob. Mirrors canonicalMatchPatterns()
@@ -501,6 +538,8 @@
     var patternPort = hasPort ? host.slice(colon + 1) : "";
     if (patternHost === "*") {
       /* any host */
+    } else if (tldIndex(patternHost) >= 0) {
+      if (!hostMatchesTld(patternHost, u.hostname)) return false;
     } else if (patternHost.indexOf("*.") === 0) {
       var suffix = patternHost.slice(2).toLowerCase();
       var h = u.hostname.toLowerCase();

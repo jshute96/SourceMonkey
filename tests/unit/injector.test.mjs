@@ -96,7 +96,7 @@ import {
 import { remapStackRef } from '../../dist/source-map.js';
 import { buildRequireSourceUrl, buildSourceUrl } from '../../dist/script-source-url.js';
 import { WRAPPER_BRIDGE, WRAPPER_PRELUDE } from '../../dist/generated-wrappers.js';
-import { urlMatchesScript } from '../../dist/url-match.js';
+import { urlMatchesScript, TLD_SUFFIX_SOURCE } from '../../dist/url-match.js';
 
 // ---------- normalizeDeclaredRunAt ----------
 
@@ -772,6 +772,31 @@ test('buildRegistrationSpec: @include glob → includeGlobs; /regex/ form goes t
   const cfg = spec.js[0];
   assert.ok('code' in cfg);
   assert.match(cfg.code, /"matching"/);
+});
+
+test('buildRegistrationSpec: .tld rules go to the wrapper, not to Chrome', async () => {
+  // Chrome would register `www.google.tld` as a literal host no page
+  // has, so the script rides in on `<all_urls>` and the in-page matcher,
+  // which reads `.tld`, decides.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: {
+      matches: ['https://example.com/*', '*://*.imdb.tld/*'],
+      excludes: ['https://www.google.tld/search*', 'https://example.com/admin/*'],
+      includes: ['*://www.google.tld/*', '*://example.org/*'],
+    },
+  }));
+  assert.deepEqual(spec.matches, ['<all_urls>']);
+  assert.deepEqual(spec.includeGlobs, ['*://example.org/*']);
+  assert.deepEqual(spec.excludeGlobs, ['https://example.com/admin/*']);
+  assert.match(spec.js[0].code, /"matching"/);
+});
+
+test('buildRegistrationSpec: a .tld @match alone still registers', async () => {
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: { matches: ['*://www.google.tld/*'], excludes: [], includes: [] },
+  }));
+  assert.deepEqual(spec.matches, ['<all_urls>']);
+  assert.match(spec.js[0].code, /"matching"/);
 });
 
 test('buildRegistrationSpec: glob-only @include still gets a matches pattern', async () => {
@@ -1477,6 +1502,39 @@ test('prelude matcher: @match ignores the #hash, @include and @exclude see it, a
   for (const [m, expected] of cases) {
     assert.equal(match(url, m), expected, JSON.stringify(m));
     assert.equal(urlMatchesScript(url, m), expected, JSON.stringify(m));
+  }
+});
+
+test('prelude matcher: its TLD_RX is the same regex as url-match.ts TLD_SUFFIX_SOURCE', async () => {
+  // The prelude can't import, so it carries a literal copy; this is
+  // what keeps the copy honest.
+  const source = await readFile(new URL('../../src/userscript-prelude.js', import.meta.url), 'utf8');
+  const start = source.indexOf('var TLD_RX =');
+  const end = source.indexOf(';', start);
+  assert.ok(start >= 0 && end > start, 'TLD_RX moved in userscript-prelude.js');
+  // eslint-disable-next-line no-new-func
+  const preludeRx = new Function(`${source.slice(start, end)}; return TLD_RX;`)();
+  assert.equal(preludeRx, TLD_SUFFIX_SOURCE);
+});
+
+test('prelude matcher: agrees with url-match.ts on .tld hosts', async () => {
+  const match = await loadPreludeMatcher();
+  const cases = [
+    [{ matches: [], excludes: [], includes: ['*://www.google.tld/*'] }, 'https://www.google.co.uk/', true],
+    [{ matches: [], excludes: [], includes: ['*://www.google.tld/*'] }, 'https://www.google.evil.com/', false],
+    [{ matches: ['https://*.imdb.tld/title/*'], excludes: [], includes: [] }, 'https://m.imdb.de/title/tt1', true],
+    [{ matches: ['https://*.imdb.tld/title/*'], excludes: [], includes: [] }, 'https://imdb.com.evil.io/title/tt1', false],
+    [{ matches: ['*://*/*'], excludes: ['https://www.google.tld/search*'], includes: [] }, 'https://www.google.fr/search?q=1', false],
+    [{ matches: ['*://*/*'], excludes: ['https://www.google.tld/search*'], includes: [] }, 'https://www.google.fr/maps', true],
+    [{ matches: [], excludes: [], includes: ['http://www.google.tld*'] }, 'http://www.google.de/x', true],
+    [{ matches: [], excludes: [], includes: ['*://www.google.tld/*'] }, 'https://www.google.com.de/', false],
+    [{ matches: [], excludes: [], includes: ['*://www.google.tld/*'] }, 'https://www.google.local/', false],
+    [{ matches: ['*://*.tld/*'], excludes: [], includes: [] }, 'https://example.com/', false],
+    [{ matches: [], excludes: [], includes: ['*://*.tld/*'] }, 'https://example.com/', false],
+  ];
+  for (const [m, url, expected] of cases) {
+    assert.equal(match(url, m), expected, `${JSON.stringify(m)} / ${url}`);
+    assert.equal(urlMatchesScript(url, m), expected, `${JSON.stringify(m)} / ${url}`);
   }
 });
 

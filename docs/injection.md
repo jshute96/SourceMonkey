@@ -958,11 +958,20 @@ The User Scripts API has no equivalent for `/regex/` `@include` /
   - A script with a regex `@include` gets `<all_urls>` even beside
     `@match` lines: the regex can cover pages no `@match` does, and
     Chrome would never inject there.
-- **Wrapper layer.** When a script has any regex pattern, the wrapper
-  embeds the full `{matches, includes, excludes}` object and a small
-  self-contained matcher equivalent to `urlMatchesScript()`. Before
-  the body runs, the wrapper re-checks `location.href` and silently
-  returns if it doesn't match.
+  - A pattern whose host ends in `.tld` ("any top-level domain", see
+    [matching.md](matching.md#tld-hosts)) is treated like a regex, in
+    `@match`, `@include` and `@exclude` alike: Chrome would read it as
+    a literal host no page has, so it is kept out of the spec and left
+    to the wrapper.
+  - Cost: such a script (a `.tld` `@exclude` alone aside) is injected
+    and parsed on every page and frame, and only its body is skipped
+    off-target. Chrome offers nothing narrower, since `matches` is
+    required and `includeGlobs` ORs with it.
+- **Wrapper layer.** When a script has any regex (or `.tld`) pattern,
+  the wrapper embeds the full `{matches, includes, excludes}` object
+  and a small self-contained matcher equivalent to
+  `urlMatchesScript()`. Before the body runs, the wrapper re-checks
+  `location.href` and silently returns if it doesn't match.
   - A regex is tested ignoring case, as Tampermonkey and Violentmonkey
     test it. A glob stays case-sensitive, as Chrome tests it.
 

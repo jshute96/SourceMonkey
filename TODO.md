@@ -719,6 +719,10 @@ Adding any of these is a catalog entry + a body — nothing structural.
   exact host only. See `src/gm-connect.ts#hostMatchesRule`. Fix:
   fall through to the subdomain check against `selfHosts` as a set
   of bases. Documented limitation pending a real compat report.
+- **`self` with a `.tld` host.** `extractSelfHosts` takes
+  `www.google.tld` literally, so `self` never covers the real
+  www.google.com. Matching `selfHosts` with the `.tld` reading from
+  `url-match.ts` would fix it.
 - **Port handling is asymmetric.** A user-supplied port in
   `@connect example.com:8443` (no scheme) lands in the `exact`
   branch as `host = "example.com:8443"`, but request matching

@@ -203,6 +203,49 @@ Same grammar (`*`-glob or `/regex/`). **Excludes always win** — if any
 `@exclude` pattern matches the URL, the script does not match, even if
 a `@match` or `@include` would have hit.
 
+### `.tld` hosts
+
+Tampermonkey's suffix for "this name under any top-level domain":
+`*://www.google.tld/*` runs on www.google.com, www.google.de and
+www.google.co.uk. Read the same way in `@match`, `@include` and
+`@exclude`.
+
+- **Where it counts**: only as a host's last label (`www.google.tld`,
+  `*.imdb.tld`, with or without a `:port`). `.tld` anywhere else, or
+  inside a `/regex/`, is literal text.
+  - An `@include` glob may run the host straight into a `*` with no
+    `/` (`http://www.google.tld*`); the `.tld` still ends the host.
+    Like any glob `*`, that one can then reach past the host
+    (`www.google.com.evil.io/`).
+  - `*.tld` with no name in front stays literal in all three tags.
+- **What it matches**, since we don't ship the public suffix list
+  (publicsuffix.org, which Tampermonkey uses):
+  - any one label (`.com`, `.de`, `.xn--p1ai`), except names a local
+    network answers for rather than a registry (`.local`, `.lan`,
+    `.internal`, `.home`, `.test`, ...);
+  - a fixed list of common country suffixes a registry keeps for
+    itself: `.co.uk`, `.com.au`, `.co.jp`, `.com.br`, ... (the list is
+    `TLD_COUNTRY_SUFFIXES` in `src/url-match.ts`). Other public
+    suffixes (`.gv.at`, private ones like `blogspot.com`) don't match.
+- **Never two labels outside that list.**
+  - Any two labels would let `www.google.tld` match
+    `www.google.evil.com`, which whoever owns evil.com can create.
+  - A usual second-level label under any country code would too:
+    `com.de` is an ordinary registered name, so `www.google.com.de`
+    belongs to its owner.
+- **Registration**: neither of Chrome's grammars can say it, so a
+  `.tld` pattern is kept out of the spec and narrowed by the wrapper's
+  matcher, as for a regex (see
+  [injection.md](injection.md#regex-pattern-forms)).
+  - A `.tld` `@match` or `@include` makes the script register
+    `<all_urls>`: it is injected on every page and filtered in-page,
+    the same cost a regex `@include` has.
+  - The prelude's matcher carries a literal copy of the suffix regex;
+    `tests/unit/injector.test.mjs` fails if the two differ.
+- **Site icons and links** for a `.tld` `@match` use `.com`.
+- Pinned by `tests/unit/url-match.test.mjs` and, in a real browser,
+  `tests/e2e/tld-hosts.spec.ts`.
+
 ### Combined rule (`urlMatchesScript`)
 
 A script matches a URL iff:
