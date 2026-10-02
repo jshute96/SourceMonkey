@@ -1,5 +1,5 @@
 // A headless Chromium with a CDP debugging port, for tests that connect
-// to a browser the way `sm-dev start --cdp` does, rather than launch one
+// to a browser the way `sm-dev start --browser` does, rather than launch one
 // through Playwright. Its profile lives in a temp directory of its own.
 
 import { spawn } from 'node:child_process';

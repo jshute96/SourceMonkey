@@ -90,9 +90,9 @@ Where to look:
 
 ## Getting a browser
 
-sm-dev connects to a browser on port 9233 (or `--cdp PORT`). With none
-there, it says so: `Start one with sm-dev --open-browser, pass --cdp,
-or use --temp-browser`.
+sm-dev connects to a browser on port 9233 (or `--browser PORT`). With
+none there, it says so: `Start one with sm-dev --open-browser, pass
+--browser, or use --temp-browser`.
 
 - `pnpm sm-dev --open-browser`: a visible browser that stays open, with
   a kept profile, so sign-ins persist. Use it for sites that need a

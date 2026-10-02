@@ -142,7 +142,7 @@ export interface ConnectOptions {
 }
 
 /**
- * A `--cdp` value as a URL Playwright can connect to: a port alone
+ * A `--browser` value as a URL Playwright can connect to: a port alone
  * (`9222`, `:9222`) means this machine, and a host with no scheme gets
  * `http://`. Also the key runs record their tabs under, so the port
  * and no-scheme spellings match the URL they stand for; `localhost`
@@ -156,10 +156,19 @@ export function cdpEndpoint(value: string): string {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(v) ? v : `http://${v}`;
 }
 
-// `--cdp`, else $SM_DEV_CDP, else port 9233. Empty counts as unset, so
-// an exported-but-blank variable doesn't become `http://`.
+// `--browser`, else $SM_DEV_BROWSER, else port 9233. Empty counts as
+// unset, so an exported-but-blank variable doesn't become `http://`.
 function cdpSetting(opts: ConnectOptions): string {
-  return cdpEndpoint(opts.cdp?.trim() || process.env.SM_DEV_CDP?.trim() || '9233');
+  return cdpEndpoint(opts.cdp?.trim() || process.env.SM_DEV_BROWSER?.trim() || '9233');
+}
+
+/**
+ * Where the browser setting came from, for a message about it: the
+ * variable when `--browser` wasn't given. $SM_DEV_BROWSER used to name
+ * the Chrome binary, so a stale one shouldn't be blamed on the flag.
+ */
+export function browserSettingName(given: string | undefined): string {
+  return !given?.trim() && process.env.SM_DEV_BROWSER?.trim() ? '$SM_DEV_BROWSER' : '--browser';
 }
 
 export interface BrowserSession {
@@ -289,8 +298,9 @@ async function openBrowser(
         out(`Could not connect to the browser at ${endpoint}: Connecting timed out. A tab may have stopped responding (a dialog open, or a busy page), or the browser has very many tabs. Run again to check the tabs.`);
         return null;
       }
-      out(`Could not connect to a browser at ${endpoint}: ${message}`);
-      out('Start one with sm-dev --open-browser, pass --cdp, or use --temp-browser');
+      const from = browserSettingName(opts.cdp) === '$SM_DEV_BROWSER' ? ' (from $SM_DEV_BROWSER)' : '';
+      out(`Could not connect to a browser at ${endpoint}${from}: ${message}`);
+      out('Start one with sm-dev --open-browser, pass --browser, or use --temp-browser');
       return null;
     }
   }

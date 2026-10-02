@@ -223,8 +223,8 @@ test('adds the button', async ({ page, loadUserscript, reports }) => {
 sm-dev [global-options] <command> [args and options] [-- <command> ...]
 ```
 
-- Global options (`--run`, `--cdp`, `--interactive`, ...) go first, and
-  hold for the whole line (see [Global options](#global-options)).
+- Global options (`--run`, `--browser`, `--interactive`, ...) go
+  first, and hold for the whole line (see [Global options](#global-options)).
 - `--` separates commands, which run in order (see
   [Sending commands](#sending-commands)).
 
@@ -295,22 +295,22 @@ Best for sites that need a login.
 ```sh
 sm-dev --open-browser                           # just the browser
 sm-dev --open-browser start x.user.js --detach  # the browser, then a run in it
-sm-dev --open-browser --cdp 9300                # another one, on port 9300
+sm-dev --open-browser --browser 9300            # another one, on port 9300
 ```
 
-- It has a window, and listens on `--cdp`'s port (9233 by default),
+- It has a window, and listens on `--browser`'s port (9233 by default),
   which is where later commands connect.
 - It stays open after sm-dev ends. Close it as any browser: by closing
   its window.
 - Google Chrome when it's installed (it handles Google sign-in), else
-  Playwright's Chromium. `SM_DEV_BROWSER` names another binary.
+  Playwright's Chromium. `SM_DEV_BROWSER_BINARY` names another binary.
 - Its profile is kept, so sign-ins and extensions carry over:
   `~/.config/sm-dev/browser-profile-<port>`, or `--profile DIR`.
   - One per port, since only one browser at a time can use a profile.
     One already in use is refused, naming the port its browser is on.
 - A browser already answering on the port is used as it is, whatever
   its profile, so `--open-browser` can go on any command line.
-- It only starts one on this machine: `--cdp` has to be a port alone
+- It only starts one on this machine: `--browser` has to be a port alone
   (`9300`), or one on `127.0.0.1` or `localhost`.
 - A browser that can't start, or whose port doesn't open within 10
   seconds, is closed again, with the reason.
@@ -331,7 +331,7 @@ sm-dev --open-browser --cdp 9300                # another one, on port 9300
 ### Your own browser
 
 Any Chromium started with
-`--remote-debugging-port`. Point sm-dev at it with `--cdp`.
+`--remote-debugging-port`. Point sm-dev at it with `--browser`.
 
 ### A browser with SourceMonkey installed
 
@@ -348,21 +348,23 @@ Any Chromium started with
   also run in the run's tabs.
 - How it works: [sm-dev-extension.md](sm-dev-extension.md#tab-claims).
 
-### Choosing the browser: `--cdp`
+### Choosing the browser: `--browser`
 
-- `--cdp` takes a URL, a `host:port` (`http://` is added), or just a
+- `--browser` takes a URL, a `host:port` (`http://` is added), or just a
   port on this machine (`9222` or `:9222`). An IPv6 host needs brackets
   (`[::1]:9222`).
-- It defaults to the `SM_DEV_CDP` environment variable, which takes the
-  same forms, then port 9233.
+- It defaults to the `SM_DEV_BROWSER` environment variable, which
+  takes the same forms, then port 9233.
+- `SM_DEV_BROWSER_BINARY` (not `SM_DEV_BROWSER`) names the binary
+  `--open-browser` starts.
 - These are global options, so they go first:
   `sm-dev --temp-browser start x.user.js`.
-  - As a global option, `--cdp` holds for the whole line (and
+  - As a global option, `--browser` holds for the whole line (and
     `--open-browser`). After `start` or `clear`, it's for that command
     alone.
-- One browser choice per line: `--temp-browser` can't go with `--cdp`
-  or `--open-browser`, and after `--open-browser`, `start` takes no
-  `--cdp` of its own.
+- One browser choice per line: `--temp-browser` can't go with
+  `--browser` or `--open-browser`, and after `--open-browser`, `start`
+  takes no `--browser` of its own.
 
 ## Starting a run
 
@@ -499,7 +501,7 @@ The browser's language:
 - Each tab the run opens or follows gets it from its next load, over a
   CDP (Chrome DevTools Protocol) session held for the run. Other tabs
   in a shared browser keep theirs.
-- In a browser the run connects to (`--cdp`, `--open-browser`),
+- In a browser the run connects to (`--browser`, `--open-browser`),
   cross-site iframes and workers keep the browser's own languages, so a
   script running in such an iframe sees those.
 - A headless `--temp-browser` is also launched with Chrome's `--lang`
@@ -806,7 +808,7 @@ The options:
   - A run keeps the `--root` and `--local` it started with. A line that
     sends a command to a run it didn't start refuses them.
 - `--stdin` and `--interactive`, above.
-- The browser options, `--cdp`, `--open-browser`, `--profile`,
+- The browser options, `--browser`, `--open-browser`, `--profile`,
   `--temp-browser` and `--headed` (see
   [A browser to work in](#a-browser-to-work-in)).
 

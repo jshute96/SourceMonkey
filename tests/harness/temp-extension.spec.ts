@@ -130,7 +130,7 @@ test('SourceMonkey-managed scripts on the tab are E1, ..., kept out, and their v
       meta: { name: 'Mine', match: ['*://*/target.html'] },
       body: `console.log('[mine] title ' + document.title);`,
     });
-    const { lines, left } = await driveCli(['--cdp', launched.endpoint, 'start', '--extension', file, `${fixtureServer.baseUrl}/target.html`], [
+    const { lines, left } = await driveCli(['--browser', launched.endpoint, 'start', '--extension', file, `${fixtureServer.baseUrl}/target.html`], [
       ['Mine started on', 'scripts'],
       ['E1: Other', 'values E1'],
       ['seen = 1', 'scripts E1'],
@@ -182,7 +182,7 @@ test('a harness run in a browser with SourceMonkey keeps its scripts out of the 
       meta: { name: 'Main', match: ['*://*/target.html'], grant: ['none'] },
       body: `console.log('[main] ran');`,
     });
-    const { lines, left } = await driveCli(['--cdp', launched.endpoint, 'start', file, main, `${fixtureServer.baseUrl}/target.html`], [
+    const { lines, left } = await driveCli(['--browser', launched.endpoint, 'start', file, main, `${fixtureServer.baseUrl}/target.html`], [
       ['[mine] other is out on /other.html', 'stop'],
     ]);
     const text = lines.join('\n');
@@ -213,7 +213,7 @@ test('a run started with no scripts claims its tabs, so a script it loads runs a
       body: `console.log('[mine] other is ' + (document.documentElement.dataset.other ?? 'out'));`,
     });
     for (const extension of [false, true]) {
-      const { lines, left } = await driveCli(['--cdp', launched.endpoint, 'start', ...(extension ? ['--extension'] : []), `${fixtureServer.baseUrl}/target.html`], [
+      const { lines, left } = await driveCli(['--browser', launched.endpoint, 'start', ...(extension ? ['--extension'] : []), `${fixtureServer.baseUrl}/target.html`], [
         ['Opening', `load ${file}`],
         ['[mine] other is', 'stop'],
       ]);

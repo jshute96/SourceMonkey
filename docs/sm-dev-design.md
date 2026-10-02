@@ -262,10 +262,10 @@ Command marks:
   command named, and nothing run or checked.
 - The global options are taken off the front of the line first:
   `--run`, `--root`, `--local`, `--stdin`, `--interactive`, and the
-  browser's `--cdp`, `--open-browser`, `--profile`, `--temp-browser`,
-  `--headed`.
+  browser's `--browser`, `--open-browser`, `--profile`,
+  `--temp-browser`, `--headed`.
   - One later on the line is refused, and said to go first.
-  - `--cdp`, which `start` and `clear` also take, is excepted.
+  - `--browser`, which `start` and `clear` also take, is excepted.
 - The rest of the line holds one or more commands, split on `--`.
   Stdin and prompt lines are split the same way, except an `eval`
   block, which stays one command.
@@ -543,8 +543,8 @@ A browser that outlives sm-dev, started before the line's commands.
   - A lock whose process is alive is refused, naming that browser's
     port (from its command line, via `ps`).
 - Google Chrome's usual install paths first, then Playwright's
-  Chromium. `SM_DEV_BROWSER` and `SM_DEV_BROWSER_ARGS` override, which
-  the tests use for a headless Chromium.
+  Chromium. `SM_DEV_BROWSER_BINARY` and `SM_DEV_BROWSER_ARGS`
+  override, which the tests use for a headless Chromium.
 
 ### Tabs stuck at connect (`stuck-tabs.ts`)
 
