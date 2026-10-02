@@ -5,9 +5,7 @@
 // The service worker's test surface (`self.SourceMonkey` in
 // src/background.ts) does the work: `writeScratchScript` installs the
 // text into the Scratch collection and registers it before it answers,
-// a rewrite replaces it in place, `soloMode` silences the user's other
-// collections for the run, and `start` prints the per-script log as the
-// script's reports. Playwright exposes the worker on a
+// and a rewrite replaces it in place. Playwright exposes the worker on a
 // CDP-connected browser as well as a launched one, so the same
 // `worker.evaluate` reaches it either way.
 
@@ -218,25 +216,10 @@ export class ExtensionBackend {
       (self as unknown as { SourceMonkey: { clearScratchScripts(): Promise<number> } }).SourceMonkey.clearScratchScripts());
   }
 
-  solo(on: boolean): Promise<void> {
-    return this.worker.evaluate(
-      (flag) => (self as unknown as { SourceMonkey: { soloMode(o: boolean): Promise<void> } }).SourceMonkey.soloMode(flag),
-      on,
-    );
-  }
-
   /** How the script's injected entry maps back to its files; see `remapStackText`. */
   stackLayout(scriptId: string): Promise<StackLayout | null> {
     return this.worker.evaluate(
       (id) => (self as unknown as { SourceMonkey: { getStackLayout(i: string): Promise<StackLayout | null> } }).SourceMonkey.getStackLayout(id),
-      scriptId,
-    );
-  }
-
-  /** The script's Log tab entries. */
-  log(scriptId: string): Promise<LogEntry[]> {
-    return this.worker.evaluate(
-      (id) => (self as unknown as { SourceMonkey: { getScriptLog(i: string): Promise<LogEntry[]> } }).SourceMonkey.getScriptLog(id),
       scriptId,
     );
   }

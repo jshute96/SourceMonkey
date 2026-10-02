@@ -158,7 +158,6 @@ test('start with no scripts refuses the flags that act on scripts', () => {
   const none = 'ERROR: The start command was given no scripts, so it can\'t take';
   assert.deepEqual(run('--watch'), { code: 2, out: `${none} --watch` });
   assert.deepEqual(run('--all', '--values', '{}'), { code: 2, out: `${none} --all or --values` });
-  assert.deepEqual(run('--extension', '--solo'), { code: 2, out: `${none} --solo` });
   assert.deepEqual(run('--noscript'), { code: 2, out: 'ERROR: The start command no longer takes --noscript. Give it no scripts to start without any.' });
   // A script not named .user.js is refused, not opened as a page.
   assert.deepEqual(run('helper.js'), { code: 2, out: 'ERROR: helper.js is not a userscript: Its name doesn\'t end in .user.js' });
@@ -435,7 +434,6 @@ test('the Accept-Language a request sent from Node carries is built as Chrome bu
 
 test('--devtools refuses the runs it can\'t serve', () => {
   assert.deepEqual(cliLine('--temp-browser', 'start', SCRIPT, '--devtools'), { code: 2, out: 'ERROR: The --devtools flag can\'t be used with --temp-browser' });
-  assert.deepEqual(run(SCRIPT, '--devtools', '--extension'), { code: 2, out: 'ERROR: The --devtools flag can\'t be used with --extension' });
 });
 
 test('--help lists every command, in sections, and how to name things', () => {
@@ -472,7 +470,7 @@ test('help for one command shows its entry and only its flags', () => {
   // start's own groups, then the ones it shares.
   const start = help('help', 'start').out;
   assert.ok(start.indexOf('Lifetime:') < start.indexOf('Browser selection'));
-  assert.match(start, /^ {2}--solo /m);
+  assert.match(start, /^ {2}--extension /m);
   // --help before or after the command asks the same.
   assert.equal(help('match', '--help').out, match.out);
   assert.equal(help('--help', 'match').out, match.out);
@@ -504,7 +502,7 @@ test('each run command takes the flags its help lists, and no others', async () 
     closetab: ['--force'], cdp: ['--file'],
     click: ['--at', '--button', '--count', '--modifiers', '--nowait'], hover: ['--at', '--modifiers', '--nowait'], type: ['--nowait', '--file'], key: ['--nowait'],
     eval: ['--script', '--file'], snapshot: ['--visible', '--out'], screenshot: ['--full'], probe: ['--css', '--html'],
-    wait: ['--timeout-seconds'], status: [], values: [], set: ['--file'], menu: [], tabs: [], focus: [],
+    wait: ['--timeout-seconds'], status: [], values: [], set: ['--file', '--force'], menu: [], tabs: [], focus: [],
   };
   for (const [name, flags] of Object.entries(expected)) assert.deepEqual(commandFlags(name).sort(), [...flags].sort(), name);
 });

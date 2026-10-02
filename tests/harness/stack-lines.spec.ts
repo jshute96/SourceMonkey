@@ -6,6 +6,7 @@
 
 import { test, expect } from '../fixtures/harness.js';
 import { run } from '../../lib/harness/run.js';
+import { UserscriptServer } from '../fixtures/userscript-server.js';
 
 const ROOT = 'sourcemonkey://SourceMonkey/stacky';
 
@@ -65,4 +66,46 @@ test('frames in a @require and in the script name their own file and line', asyn
   // The host's `threw` report shows the same mapping.
   expect(text).toContain(`at thrown (${ROOT}/stacky.user.js:9:`);
   expect(text).toMatch(/at libCall \(sourcemonkey:\/\/SourceMonkey\/stacky\/file\/.*\/lib\.js:2:\d+\)/);
+});
+
+test('with --extension, the Log entries and threw lines map by the extension\'s layout', async ({ fixtureServer, scriptsDir }) => {
+  test.setTimeout(60_000);
+  // Served over http: a pushed scratch script has no folder for a
+  // relative @require to resolve against.
+  const server = await UserscriptServer.start();
+  server.setRoute('/lib.js', '// a library\nfunction libCall(fn) { return fn(); }\n', { contentType: 'text/javascript' });
+  const file = scriptsDir.write({
+    relativePath: 'stacky.user.js',
+    meta: { name: 'Stacky', match: ['*://*/target.html'], extra: [`// @require     ${server.baseUrl}/lib.js`] },
+    // As above: `throw` on line 9.
+    body: ['', '', 'libCall(function thrown() {', '  throw new Error("thrown");', '});', ''].join('\n'),
+  });
+
+  const lines: string[] = [];
+  let stop!: () => void;
+  const until = new Promise<void>((resolve) => { stop = resolve; });
+  const done = run({
+    files: [file],
+    urls: [`${fixtureServer.baseUrl}/target.html`],
+    tempBrowser: true,
+    extension: true,
+    collectionRoot: scriptsDir.path,
+    localRoots: [],
+    out: (line) => {
+      lines.push(line);
+      if (/at libCall .*lib\.js/.test(line)) stop();
+    },
+    until,
+  });
+  const timer = setTimeout(stop, 30000);
+  try {
+    await done;
+  } finally {
+    clearTimeout(timer);
+    await server.stop();
+  }
+  const text = lines.join('\n');
+  expect(text).toContain('Stacky threw: thrown');
+  expect(text).toMatch(/at thrown \(.*\/stacky\.user\.js:9:\d+\)/);
+  expect(text).toMatch(/at libCall \(.*\/lib\.js:2:\d+\)/);
 });

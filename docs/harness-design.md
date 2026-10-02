@@ -324,18 +324,17 @@ for the rows):
   - Names that differ only in punctuation collapse into one identity.
 - `clearScratchScripts()` drops that collection's rows and their
   `GM_*` values.
-- `soloMode(on)` disables all other collections while on, and restores
-  the previous enabled set when off. A scratch script runs alone
-  without touching the user's real collections.
-  - For a throwaway profile, `resetAllState()` wipes everything
-    instead.
+- For a throwaway profile, `resetAllState()` wipes everything.
 - The Scratch collection is a normal `scripts` collection at a fixed
   path, so the collections page and viewer show it like any other and
   the Log tab works unchanged.
+- A scratch script runs only in a tab whose sm-dev claim allows it, so
+  only in the tabs of the run that pushed it (see
+  [sm-dev-extension.md](sm-dev-extension.md#how-the-extension-honours-a-claim)).
 - No new message transport into the extension: Playwright's worker
   handle serves both a launched and a CDP-connected browser.
 
-### Driving it (`extension-backend.ts`)
+### Driving it (`extension-link.ts`, `extension-host.ts`)
 
 - `sm-dev start --extension` reaches the worker through Playwright,
   which lists an extension's service worker on a CDP-connected browser
@@ -343,9 +342,10 @@ for the rows):
 - The worker's URL is known up front, since the manifest's fixed `key`
   fixes the extension id. An idle worker is woken by opening the
   collections page.
-- Reports are the script's own Log tab entries, polled. Only those
-  added after the push are printed.
-- `--solo` turns solo mode on for the run and off after.
+- The run claims its tabs, so only its scratch scripts run there, and
+  hears the extension's events (starts, errors, Log entries, menus,
+  values) as they happen. Its commands work as in a harness run. See
+  [sm-dev-extension.md](sm-dev-extension.md).
 - `sm-dev clear --extension` drops the scratch scripts.
 
 ## Compliance check for the host

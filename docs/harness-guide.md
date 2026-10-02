@@ -333,6 +333,21 @@ sm-dev --open-browser --browser 9300            # another one, on port 9300
 Any Chromium started with
 `--remote-debugging-port`. Point sm-dev at it with `--browser`.
 
+### A browser with SourceMonkey installed
+
+- The run keeps SourceMonkey-managed scripts out of the tabs it opens
+  (and the tabs those open), so only the run's scripts run there. They
+  run there again from the tab's next load after the run ends.
+- That holds for a run started with no scripts too, so scripts it
+  `load`s later run alone.
+- Your other tabs are left alone.
+- In those tabs, SourceMonkey's toolbar icon has a cyan **T** in its
+  corner, its badge counts none of its scripts, and both its tooltip
+  and its right-click menu say "Page under sm-dev control".
+- With an older SourceMonkey, the run says once that its scripts may
+  also run in the run's tabs.
+- How it works: [sm-dev-extension.md](sm-dev-extension.md#tab-claims).
+
 ### Choosing the browser: `--browser`
 
 - `--browser` takes a URL, a `host:port` (`http://` is added), or just a
@@ -387,7 +402,7 @@ running, --seconds N to watch it for a while, or commands after --.`
 | `--nowait` | Don't wait for the pages to settle |
 | `--seconds N` | Stop the run after N seconds |
 | `--idle-seconds N` | Stop after N idle seconds (default 30 minutes; `0` never) |
-| `--extension`, `--solo` | Use the real extension; silence its other collections |
+| `--extension` | Use the real extension |
 | `--devtools` | Start a Chrome DevTools server for the run |
 
 Details on each are in [`start` options in detail](#start-options-in-detail).
@@ -444,23 +459,23 @@ What to open:
   - The extra tabs are T2, T3, and stay open when the run ends.
   - Scripts it opened no tab for are listed at the end, with the
     reason.
-  - Works with `--extension` too, where only page output carries the
-    tab's name (the extension's Log entries don't say which tab).
+  - Works with `--extension` too.
   - Can't be combined with a URL.
 - `--notab` opens no tab at startup. `newtab` opens one later, and the
   first it opens is T1.
   - That tab isn't one a later run takes over (see
     [Which tab `start` uses](#which-tab-start-uses)).
-  - With `--extension`, the scripts just run in whatever pages you
-    browse to, and after a `--watch` save you reload them yourself.
+  - With `--extension` too, the scripts run only in the tabs the run
+    opens (`newtab`), not in pages you browse to yourself.
   - Can't be combined with a URL or `--all`.
 - With no scripts given, it starts as a browser to drive with the run
   commands, on a blank page or the URLs given. `load` adds scripts
   later. It can't be combined with `--all`, `--values`,
-  `--values-file`, `--watch` or `--solo`.
-  - With `--extension`, it's a browser whose SourceMonkey runs its own
-    collections. With `--temp-browser --headed`, that's a throwaway
-    browser with the extension, to try by hand.
+  `--values-file` or `--watch`.
+  - With `--temp-browser --headed --extension`, that's a throwaway
+    browser with the extension, to try by hand. The scripts it `load`s
+    run only in the run's tabs (`newtab`, and the tabs those open), not
+    in tabs you open yourself.
 - `--from-saved` opens each `.html` file given as a saved page, at the
   URL it was saved from, with `--url` and `--offline` as for `newtab`.
   See [Saved pages](#saved-pages). Not with `--all` or `--notab`.
@@ -516,8 +531,7 @@ The run's lifetime:
 Other modes:
 
 - `--extension` uses the real extension in that browser instead of the
-  built-in stand-in; `--solo` silences the other collections for the
-  run. See [The extension backend](#the-extension-backend).
+  built-in stand-in. See [The extension backend](#the-extension-backend).
 - `--devtools` starts a Chrome DevTools server for the run. See
   [DevTools alongside a run](#devtools-alongside-a-run).
   `SM_DEV_DEVTOOLS=1` makes it the default, and `--nodevtools` turns it
@@ -561,8 +575,7 @@ them (blocked trackers, failed ad requests) to bury the script's lines.
   - errors whose stack runs through the script;
   - a thrown value that isn't an `Error` (it has no stack, so it is
     always shown).
-- A script's own throw prints once, as `<name> threw:` (with
-  `--extension`, also as the Log tab's entry).
+- A script's own throw prints once, as `<name> threw:`.
 - Stack lines name the file and line the code was written on, as the
   extension's Log tab does. A script's `@require`s run concatenated
   ahead of it, so the raw frames count from the top of the requires;
@@ -1701,7 +1714,7 @@ For a browser that keeps the extension (and your logins):
 3. On SourceMonkey's details page there, turn on "Allow User Scripts".
 4. Start runs with `--extension`:
    ```sh
-   sm-dev start my-script.user.js https://example.com/ --extension --solo
+   sm-dev start my-script.user.js https://example.com/ --extension
    ```
 5. When done, drop the scratch scripts with `sm-dev clear --extension`.
 
@@ -1719,14 +1732,26 @@ For a browser that keeps the extension (and your logins):
   - The next push of the same file name replaces it in place, keeping
     its stored values.
   - Nothing on disk is scanned.
-- What it prints are the entries the script adds to its own Log tab,
-  plus the page's console lines.
-- `--solo` disables all other collections for the run and restores them
-  after, so the scratch script runs without noise from the rest.
+- The run commands work as in a harness run: `status`, `get`/`set`,
+  `menu`, the page commands, `reload`. Values and menu clicks go
+  through the extension.
+- What it prints: the script's starts, errors, menu commands and value
+  writes, the entries it adds to its Log tab, and the page's console
+  lines.
+- The run's tabs run only the scripts it pushed: the extension keeps
+  its other scripts out of them, across reloads and in the tabs they
+  open, until the run ends.
+- The scripts it pushed run only in the run's tabs: not in tabs you
+  open yourself, another run's tabs, or anywhere once the run ends. See
+  [sm-dev-extension.md](sm-dev-extension.md#tab-claims).
+- `scripts` and `status` also list the SourceMonkey-managed scripts that
+  match the current tab, as E1, E2, ..., with their status.
+  - `values E1` shows one's stored values, and `scripts E1` picks it for
+    `get` and `set`.
+  - Outside a `--temp-browser`, `set` on one needs `--force`, since it
+    changes your real data: `set key --force <json>`.
 - `sm-dev clear --extension` drops all scratch scripts and their stored
-  values, and turns solo mode off. If a `--solo` run was killed rather
-  than stopped, this is how to get the other collections back; they are
-  restored to how they were.
+  values.
 
 ### Differences from the push backend
 
@@ -1838,5 +1863,3 @@ These apply to `sm-dev start` and to specs alike.
 - **`sm-dev start` hangs at connect**: a tab in the browser is showing
   a dialog. The run names it; answer the dialog or close the tab (see
   [Page dialogs](#page-dialogs)).
-- **The other collections stay disabled after `--solo`**: the run was
-  killed. `sm-dev clear --extension` restores them.

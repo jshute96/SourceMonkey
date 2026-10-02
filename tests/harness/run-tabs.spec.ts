@@ -321,7 +321,7 @@ test('load, update and reload all reload just the tabs they affect', async ({ fi
     ['The page commands now act on T2', `load ${b}`],
     // B matches only T2's page.
     ['[T2] [page log] [B] on /other.html', 'scripts 2'],
-    ['Using B', 'set k 1'],
+    ['Selected B', 'set k 1'],
     ['Set k', 'update 1'],
     // Untouched, so nothing to do; touched, only A's tab reloads.
     ["hasn't changed on disk", () => { touch(a); return 'update all'; }],

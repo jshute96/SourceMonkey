@@ -13,8 +13,10 @@ the commands themselves are in [harness-guide.md](harness-guide.md).
   back. Any number of clients can talk to one run.
 - The run connects with Playwright's `connectOverCDP`, or launches a
   Chromium itself with `--temp-browser`.
-- `--extension` switches a run to the extension backend
-  (`extension-backend.ts`); everything else here is the same for both.
+- `--extension` has the real extension run the scripts: the run pushes
+  them into it, claims its tabs, and fills its host from the extension's
+  events. The commands, tabs and waits are the same for both. See
+  [sm-dev-extension.md](sm-dev-extension.md).
 
 ### Processes and connections
 

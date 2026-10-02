@@ -4,6 +4,7 @@
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir, renderUserscript } from '../fixtures/scripts-dir';
+import { activeTabId, type SmApi } from '../fixtures/sw-api';
 import { ExtensionBackend } from '../../lib/harness/extension-backend.js';
 
 function script(body: string, name = 'Scratch one'): string {
@@ -14,23 +15,38 @@ function script(body: string, name = 'Scratch one'): string {
   });
 }
 
+// A scratch script runs only in a tab an sm-dev run's claim lets it run
+// in, so these open a tab and claim it for `scriptId`, as a run does.
+async function claimedPage(
+  context: import('@playwright/test').BrowserContext,
+  getServiceWorker: () => Promise<import('@playwright/test').Worker>,
+  sm: SmApi,
+  baseUrl: string,
+  scriptId: string,
+): Promise<import('@playwright/test').Page> {
+  const page = await context.newPage();
+  await page.goto(`${baseUrl}/blank.html`);
+  await sm.claimTab(await activeTabId(getServiceWorker), 'R1', [scriptId], 60_000);
+  return page;
+}
+
 test.describe('scratch scripts', () => {
-  test('a scratch script runs on the next navigation, in the Scratch collection', async ({ extensionContext, fixtureServer, sm }) => {
+  test('a scratch script runs on the next navigation, in the Scratch collection', async ({ extensionContext, fixtureServer, sm, getServiceWorker }) => {
     const result = await sm.writeScratchScript({ text: script(`document.getElementById('target').textContent = 'pushed';`) });
     expect(result.status).toBe('ok');
     expect(result.replaced).toBe(false);
     const collections = await sm.getCollections();
     expect(collections.map((c) => [c.path, c.displayName])).toEqual([['container:scratch', 'Scratch']]);
 
-    const page = await extensionContext.newPage();
+    const page = await claimedPage(extensionContext, getServiceWorker, sm, fixtureServer.baseUrl, result.scriptId);
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page.locator('#target')).toHaveText('pushed');
     await page.close();
   });
 
-  test('re-pushing the same name replaces the script in place and keeps its values', async ({ extensionContext, fixtureServer, sm }) => {
+  test('re-pushing the same name replaces the script in place and keeps its values', async ({ extensionContext, fixtureServer, sm, getServiceWorker }) => {
     const first = await sm.writeScratchScript({ text: script(`GM_setValue('v', 1); document.getElementById('target').textContent = 'one';`) });
-    const page = await extensionContext.newPage();
+    const page = await claimedPage(extensionContext, getServiceWorker, sm, fixtureServer.baseUrl, first.scriptId);
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page.locator('#target')).toHaveText('one');
     await expect.poll(() => sm.getGmValues(first.scriptId)).toEqual({ v: 1 });
@@ -49,9 +65,9 @@ test.describe('scratch scripts', () => {
     expect(result.errorMessage).toBeTruthy();
   });
 
-  test('clearScratchScripts removes them all with their values', async ({ extensionContext, fixtureServer, sm }) => {
+  test('clearScratchScripts removes them all with their values', async ({ extensionContext, fixtureServer, sm, getServiceWorker }) => {
     const written = await sm.writeScratchScript({ text: script(`GM_setValue('k', 'v'); document.getElementById('target').textContent = 'pushed';`) });
-    const page = await extensionContext.newPage();
+    const page = await claimedPage(extensionContext, getServiceWorker, sm, fixtureServer.baseUrl, written.scriptId);
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page.locator('#target')).toHaveText('pushed');
     await expect.poll(() => sm.getGmValues(written.scriptId)).toEqual({ k: 'v' });
@@ -97,47 +113,17 @@ test.describe('scratch scripts', () => {
 
   // The path `sm-dev start --extension` takes: find the worker from the
   // package's own copy of the manifest, push, and clear.
-  test('the harness\'s ExtensionBackend finds the extension and pushes through it', async ({ extensionContext, fixtureServer }) => {
+  test('the harness\'s ExtensionBackend finds the extension and pushes through it', async ({ extensionContext, fixtureServer, sm, getServiceWorker }) => {
     const backend = await ExtensionBackend.connect(extensionContext);
-    const page = await extensionContext.newPage();
+    const result = await backend.push(script(`document.getElementById('target').textContent = 'via backend';`));
+    expect(result.status).toBe('ok');
+    const page = await claimedPage(extensionContext, getServiceWorker, sm, fixtureServer.baseUrl, result.scriptId);
     try {
-      const result = await backend.push(script(`document.getElementById('target').textContent = 'via backend';`));
-      expect(result.status).toBe('ok');
       await page.goto(`${fixtureServer.baseUrl}/target.html`);
       await expect(page.locator('#target')).toHaveText('via backend');
       expect(await backend.clear()).toBe(1);
     } finally {
       await page.close();
-    }
-  });
-
-  test('solo mode disables the other collections and restores them', async ({ extensionContext, fixtureServer, sm }) => {
-    const dir = ScriptsDir.create();
-    try {
-      dir.write({
-        relativePath: 'other.user.js',
-        meta: { name: 'Other', match: ['*://*/target.html'], grant: ['none'] },
-        body: `document.getElementById('target').dataset.other = 'ran';`,
-      });
-      const other = await sm.addCollection(dir.path);
-      await sm.writeScratchScript({ text: script(`document.getElementById('target').dataset.pushed = 'ran';`) });
-      await sm.soloMode(true);
-      expect((await sm.getCollections()).map((c) => [c.id === other!.id, c.enabled])).toEqual(
-        expect.arrayContaining([[true, false], [false, true]]),
-      );
-      const page = await extensionContext.newPage();
-      await page.goto(`${fixtureServer.baseUrl}/target.html`);
-      await expect(page.locator('#target')).toHaveAttribute('data-pushed', 'ran');
-      await page.waitForTimeout(300);
-      await expect(page.locator('#target')).not.toHaveAttribute('data-other', 'ran');
-
-      await sm.soloMode(false);
-      expect((await sm.getCollections()).every((c) => c.enabled)).toBe(true);
-      await page.reload();
-      await expect(page.locator('#target')).toHaveAttribute('data-other', 'ran');
-      await page.close();
-    } finally {
-      dir.cleanup();
     }
   });
 });

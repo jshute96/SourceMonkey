@@ -2380,48 +2380,6 @@ export async function clearScratchScripts(): Promise<{ scriptIds: string[]; coll
   return { scriptIds: container.scriptIds, collectionId: container.id };
 }
 
-// Solo mode: every collection but Scratch disabled, so a scratch
-// script runs alone. Turning it off restores the enabled flags as they
-// were, from the note taken when it went on, so the user's own
-// collections come back exactly as they were. The note is in local
-// storage, beside the flags it restores: a run killed without turning
-// solo mode off leaves it on, even across a browser or extension
-// restart, and the next `setSoloMode(false)` (any `sm-dev clear
-// --extension`, or another solo run ending) restores from the note.
-// Returns the ids of the collections it toggled.
-const SOLO_MODE_KEY = 'sm:solo-mode';
-
-export async function setSoloMode(on: boolean): Promise<string[]> {
-  const noted = (await chrome.storage.local.get(SOLO_MODE_KEY))[SOLO_MODE_KEY] as
-    Record<string, boolean> | undefined;
-  const toggled: string[] = [];
-  if (on) {
-    // Already on: the note stands, and a second run must not overwrite
-    // it with "everything was disabled".
-    if (noted) return toggled;
-    const collections = await getCollections();
-    const previous: Record<string, boolean> = {};
-    for (const c of collections) {
-      if (c.path !== SCRATCH_CONTAINER_PATH) previous[c.id] = isCollectionEnabled(c);
-    }
-    // Noted before anything is disabled, so a worker killed partway
-    // through still leaves the note that restores what it did.
-    await chrome.storage.local.set({ [SOLO_MODE_KEY]: previous });
-    for (const [id, wasEnabled] of Object.entries(previous)) {
-      if (!wasEnabled) continue;
-      await setCollectionEnabled(id, false);
-      toggled.push(id);
-    }
-    return toggled;
-  }
-  if (!noted) return toggled;
-  for (const [id, wasEnabled] of Object.entries(noted)) {
-    if (wasEnabled && await setCollectionEnabled(id, true)) toggled.push(id);
-  }
-  await chrome.storage.local.remove(SOLO_MODE_KEY);
-  return toggled;
-}
-
 // Does this container already hold `canonicalPath`?
 //
 // A container holds one row per location, and both the install and the
