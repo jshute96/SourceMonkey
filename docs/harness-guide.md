@@ -263,7 +263,7 @@ up:
 ### Two kinds of command
 
 - **sm-dev's own**, which run in sm-dev itself: `start`, `attach`,
-  `stop`, `exit`, `list`, `clear`, `help`, and `match` / `validate`
+  `stop`, `exit`, `list`, `help`, and `match` / `validate`
   given files.
 - **Run commands**, which go to a run: everything else (`status`,
   `eval`, `click`, `menu`, ...). `sm-dev eval document.title` sends
@@ -360,8 +360,7 @@ Any Chromium started with
 - These are global options, so they go first:
   `sm-dev --temp-browser start x.user.js`.
   - As a global option, `--browser` holds for the whole line (and
-    `--open-browser`). After `start` or `clear`, it's for that command
-    alone.
+    `--open-browser`). After `start`, it's for that command alone.
 - One browser choice per line: `--temp-browser` can't go with
   `--browser` or `--open-browser`, and after `--open-browser`, `start`
   takes no `--browser` of its own.
@@ -1410,9 +1409,9 @@ sm-dev stop                               # or stop D1, or stop --all
   killed.
 - `exit` (or Ctrl-C) ends sm-dev. A run it started without `--detach`
   stops with it; a run it only attached to goes on.
-- At the prompt or on stdin, `start`, `attach`, `stop`, `exit`, `list`
-  and `clear --extension` work as on sm-dev's command line. `stop` there leaves
-  sm-dev with no run.
+- At the prompt or on stdin, `start`, `attach`, `stop`, `exit` and
+  `list` work as on sm-dev's command line. `stop` there leaves sm-dev
+  with no run.
 
 `list` prints a table of the runs active on this machine, with the
 first few scripts' files and a count of the rest:
@@ -1700,8 +1699,7 @@ sm-dev --temp-browser start my-script.user.js https://example.com/ --extension
 
 - It loads the extension from the `dist/` beside sm-dev: the checkout's
   own build, or the copy `pnpm install` took in a repo of userscripts.
-- The profile is empty, so the site has no login, and the scripts
-  pushed are gone when the run ends (no `clear` needed).
+- The profile is empty, so the site has no login.
 - Starting it takes a few seconds longer than a plain `--temp-browser`.
 - Hidden, it still sends a windowed Chrome's user agent, not
   `HeadlessChrome`, which some servers refuse a script's `@require`s
@@ -1719,7 +1717,6 @@ For a browser that keeps the extension (and your logins):
    ```sh
    sm-dev start my-script.user.js https://example.com/ --extension
    ```
-5. When done, drop the scratch scripts with `sm-dev clear --extension`.
 
 - Your ordinary browser with SourceMonkey installed works too, as long
   as it has a remote-debugging port.
@@ -1728,13 +1725,20 @@ For a browser that keeps the extension (and your logins):
 
 ### How it works
 
-- `sm-dev start --extension` pushes the script text into the extension
-  as a **scratch script**, stored only in the extension.
-  - It lands in the "Scratch" collection, and is registered before the
-    page opens.
-  - The next push of the same file name replaces it in place, keeping
-    its stored values.
+- `sm-dev start --extension` pushes the script text into the extension,
+  stored only there, in a **test collection** of the run's own.
+  - It shows on the collections page as `sm-dev test collection (run
+    D2-a3f9)`, the same id `status` shows on its `Backend:` line.
+  - The script is registered before the page opens.
+  - The next push of the same file in the run (`update`,
+    `--watch`) replaces it in place, keeping its stored values. Each
+    run starts with no stored values.
   - Nothing on disk is scanned.
+  - The test collection is removed when the run ends, with its stored
+    values. A run that crashed has its collection removed about 6
+    minutes later.
+  - Only the run changes it: the extension won't move scripts into or
+    out of it, or install scripts into it.
 - The run commands work as in a harness run: `status`, `get`/`set`,
   `menu`, the page commands, `reload`. Values and menu clicks go
   through the extension.
@@ -1753,8 +1757,6 @@ For a browser that keeps the extension (and your logins):
     `get` and `set`.
   - Outside a `--temp-browser`, `set` on one needs `--force`, since it
     changes your real data: `set key --force <json>`.
-- `sm-dev clear --extension` drops all scratch scripts and their stored
-  values.
 
 ### Differences from the push backend
 

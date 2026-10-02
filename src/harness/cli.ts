@@ -9,9 +9,8 @@
 //     browser command uses.
 //   - `list`, `stop`, and the commands sent to a run, reach running
 //     runs through runs.ts.
-//   - `clear --extension` goes through extension-backend.ts, which
-//     reaches the real SourceMonkey in the browser. `start --extension`
-//     runs go through run.ts like the rest (see extension-link.ts).
+//   - `start --extension` runs go through run.ts like the rest, and
+//     reach the real SourceMonkey through extension-link.ts.
 //
 // Each command loads only the modules it needs. `validate` and `match`
 // never import Playwright, so they run in a repo that has not
@@ -224,8 +223,16 @@ function scriptsAndUrls(words: string[]): { scripts: string[]; urls: string[]; p
     const url = withDefaultScheme(word);
     if (!pages.has(url)) pages.set(url, { word, url });
   }
+  // Each once too, by the file it names, so `x.user.js ./x.user.js` is
+  // one script (an extension run keeps its scripts by the path typed).
+  // The first spelling is kept.
+  const scripts = new Map<string, string>();
+  for (const word of args.filter((a) => SCRIPT_ARG.test(a))) {
+    const file = path.resolve(word);
+    if (!scripts.has(file)) scripts.set(file, word);
+  }
   return {
-    scripts: [...new Set(args.filter((a) => SCRIPT_ARG.test(a)))],
+    scripts: [...scripts.values()],
     urls: [...pages.keys()],
     pages: [...pages.values()],
   };
@@ -560,33 +567,6 @@ async function detachRun(words: string[], runId: string | undefined): Promise<{ 
   }
   child.unref();
   return { code: 0, id, log, exited, hold: () => child.ref() };
-}
-
-function checkClear(opts: Opts): void {
-  if (!opts.extension) throw new UsageError('The clear command needs --extension; the harness itself keeps nothing between runs');
-  if (lineTempBrowser) throw new UsageError('The clear command has nothing to clear in a --temp-browser, whose scratch scripts go when its run ends');
-}
-
-async function clearCommand(opts: Opts): Promise<number> {
-  checkClear(opts);
-  const { connectBrowser } = await import('./run.js');
-  const { ExtensionBackend } = await import('./extension-backend.js');
-  const out = (line: string): void => { process.stdout.write(line + '\n'); };
-  const session = await connectBrowser({ cdp: opts.cdp ?? lineCdp, tempBrowser: false, headed: false }, out);
-  if (!session) return 1;
-  try {
-    const backend = await ExtensionBackend.connect(session.context);
-    const count = await backend.clear();
-    out(count === 0 ? '[sm-dev] The extension\'s Scratch collection was already empty'
-      : `[sm-dev] Removed ${count === 1 ? 'the one script' : `all ${count} scripts`} in the extension's Scratch collection`);
-    return 0;
-  } catch (err) {
-    out(`[sm-dev] ${(err as Error).message}`);
-    return 1;
-  } finally {
-    await session.page.close().catch(() => undefined);
-    await session.done();
-  }
 }
 
 const NO_RUNS = 'No sm-dev runs are active';
@@ -1147,7 +1127,7 @@ function runsHere(words: string[]): boolean {
 }
 
 // Ones that need no run, or act on runs themselves.
-const HERE = new Set(['start', 'attach', 'stop', 'exit', 'list', 'clear', 'help']);
+const HERE = new Set(['start', 'attach', 'stop', 'exit', 'list', 'help']);
 
 /**
  * Whether a command only looks, so a line of only such commands needn't
@@ -1442,7 +1422,6 @@ async function checkCommand(words: string[]): Promise<void> {
     case 'match': return checkMatch(opts);
     case 'start': await checkStart(opts); return;
     case 'attach': checkAttach(opts); return;
-    case 'clear': return checkClear(opts);
     case 'stop': checkStop(opts); return;
   }
 }
@@ -1470,7 +1449,6 @@ async function runOne(words: string[], client: Client): Promise<number> {
       case 'match': return await match(opts);
       case 'start': return await startCommand(opts, parsed.words, client);
       case 'attach': return await attachCommand(opts, client);
-      case 'clear': return await clearCommand(opts);
       case 'list': return await listCommand();
       case 'exit':
         client.exiting = true;

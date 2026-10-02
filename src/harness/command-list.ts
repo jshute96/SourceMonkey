@@ -81,8 +81,6 @@ export interface HelpSection {
   subsections?: HelpSection[];
 }
 
-const BROWSER = ['start', 'clear'];
-
 // The common syntaxes.
 const NONE: ArgSyntax = { args: 'none' };
 const WORDS: ArgSyntax = { args: 'words' };
@@ -495,12 +493,9 @@ export const HELP_SECTIONS: HelpSection[] = [
   {
     title: 'Controlling the SourceMonkey extension',
     text: ['Instead of injecting the scripts itself, a run can push them into the SourceMonkey extension in the browser it connects to.', ''],
-    commands: [
-      { usage: 'clear --extension', syntax: NONE, about: 'Remove every script in the extension\'s Scratch collection, including other runs\' and your own. A run\'s scratch scripts run only in its own tabs, so leftovers are harmless.' },
-    ],
     optionsTitle: 'Options for start',
     options: [
-      { term: '--extension', about: 'Push the scripts into the extension\'s Scratch collection instead of injecting them. A --temp-browser installs the extension itself.', commands: ['start'] },
+      { term: '--extension', about: 'Push the scripts into the extension, in a test collection of the run\'s own, instead of injecting them. The extension removes it when the run ends. A --temp-browser installs the extension itself.', commands: ['start'] },
     ],
   },
   {
@@ -517,7 +512,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         title: 'Browser selection',
         options: [
-          { term: '--browser URL|PORT', about: ['The browser to connect to, and where --open-browser starts one: a URL, host:port, or port.', '(Default: $SM_DEV_BROWSER or 9233)'], commands: BROWSER },
+          { term: '--browser URL|PORT', about: ['The browser to connect to, and where --open-browser starts one: a URL, host:port, or port.', '(Default: $SM_DEV_BROWSER or 9233)'], commands: ['start'] },
           {
             term: '--open-browser',
             about: [
@@ -751,7 +746,7 @@ function formsOf(name: string): { command: HelpCommand; section: HelpSection }[]
 export const COMMAND_NAMES = [...new Set(allSections().flatMap((section) => (section.commands ?? []).map(nameOf)))];
 
 /** The commands sm-dev runs itself, never sent to a run. */
-export const CLIENT_COMMANDS = new Set(['start', 'attach', 'stop', 'list', 'exit', 'clear', 'help']);
+export const CLIENT_COMMANDS = new Set(['start', 'attach', 'stop', 'list', 'exit', 'help']);
 
 /**
  * The commands sm-dev runs itself when given only files and URLs, and

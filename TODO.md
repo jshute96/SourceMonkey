@@ -772,14 +772,14 @@ See [docs/harness-design.md](docs/harness-design.md).
   one way worth closing: a `file://` read in Node returns no
   `Content-Type`, matching Chrome, but an http(s) one goes out without
   the extension's identity. Nothing depends on it today.
-- Scratch scripts are keyed by a sanitized name, so different names can
-  share one `scratch:///` URL and replace each other: `Foo Bar`,
-  `Foo/Bar` and `Foo-Bar` all become `Foo-Bar.user.js`, and `sm-dev
-  start --extension` pushes `a/x.user.js` and `b/x.user.js` both as
-  `x.user.js`. At least report the replacement when the header
-  `@name` differs.
+- Scratch scripts are keyed by a sanitized name, so different names in
+  one run's test collection can share one `scratch:///` URL and replace
+  each other: `Foo Bar` and `Foo-Bar` both become `Foo-Bar.user.js`.
+  `sm-dev` pushes by the path it was given, so only paths that differ
+  in punctuation (`a b/x.user.js`, `a-b/x.user.js`) collide. At least
+  report the replacement when the header `@name` differs.
 - Removing a scratch script from the collections page while
-  `writeScratchScript` rewrites one of the same name can delete the
+  `writeRunScript` rewrites one of the same name can delete the
   fresh text: the write stores the text row before installing the row
   that reads it, and the remove, in another context, sees no reader in
   between. The install then fails with "The scratch script's text was
@@ -817,13 +817,14 @@ See [docs/harness-design.md](docs/harness-design.md).
 - Two `loadUserscript` / `inject` calls at once on one attachment can
   both add the GM runtime to a world (harmless: it installs once) and
   lose track of one of them. Serialize `inject` if it ever matters.
-- Two `writeScratchScript`s of the same new name at once (two `sm-dev start
-  --extension` on one file) both miss the lookup, and the second fails
-  with an `Internal error`. Look the row up inside the install's lock.
-- The collections page's default move target for a scratch script is
-  "Scripts from local disk", since `scratch:///` reads as a file path
-  there. A scratch script moved there is no longer removed by `sm-dev
-  clear`. Offer no default for scratch rows.
+- Two `writeRunScript`s of the same new name in one run at once both
+  miss the lookup, and the second fails with an `Internal error`.
+  sm-dev pushes one at a time, so only another caller of the worker's
+  API could. Look the row up inside the install's lock.
+- A run whose test collection the extension removed (stalled past its
+  lease and grace period while the browser ran on) isn't told: its
+  tabs then run nothing. `renewRun` could say the collection is gone,
+  so the run pushes its scripts again or says so.
 - Publishing: the package is installed from a checkout or a git tag.
   `package.json` keeps `"private": true` until then; drop it to
   publish.
@@ -868,19 +869,6 @@ See [docs/harness-design.md](docs/harness-design.md).
   slow to start) and runs an extension script anyway, the run doesn't
   say so. The extension's `started` event could tell it: a script the
   run didn't push starting in its tab.
-
-## Scratch scripts shared between sm-dev runs
-
-- Two extension runs in one browser share the Scratch collection, and a
-  push replaces the script of the same file name, so runs pushing the
-  same file overwrite each other's copy.
-  - Options: refuse the second push while another live run has that
-    name, or key scratch scripts by run as well (losing the stored
-    values a re-push keeps).
-- `clear --extension` removes every run's scratch scripts, a live
-  run's included. It should leave those alone, or say which runs use
-  them.
-- See [docs/sm-dev-extension.md](docs/sm-dev-extension.md#several-runs-in-one-browser).
 
 ## Tabs that predate the first script install
 

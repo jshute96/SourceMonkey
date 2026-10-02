@@ -142,6 +142,7 @@ import {
   canonicalCollectionInput,
   fetchSingleFileText,
   isContainerCollection,
+  isSmDevCollection,
   isSingleFileLocation,
   isFileUrl,
   isScratchUrl,
@@ -3005,7 +3006,7 @@ function makeMoveControl(
   script: StoredScript,
   collection: StoredCollection,
 ): HTMLButtonElement | undefined {
-  if (!isContainerCollection(collection.path)) return undefined;
+  if (!isContainerCollection(collection.path) || isSmDevCollection(collection.path)) return undefined;
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.id = 'move-collection-btn';

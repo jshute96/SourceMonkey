@@ -6,7 +6,8 @@ two backends:
 - **Harness** (the default): sm-dev injects the scripts itself, with a
   Node stand-in for the extension (`HarnessHost`).
 - **Extension** (`--extension`): the scripts are pushed into the real
-  SourceMonkey as scratch scripts, and the extension runs them.
+  SourceMonkey, into a test collection of the run's own, and the
+  extension runs them.
 
 Status: being built. Done: the shared commands, tab claims (in both
 kinds of run), the event stream, SourceMonkey-managed scripts (E1,
@@ -77,20 +78,20 @@ kinds of run), the event stream, SourceMonkey-managed scripts (E1,
   Playwright's `worker.evaluate` (`ExtensionLink` in
   `src/harness/extension-link.ts`).
 - What sm-dev uses:
-  - scratch scripts: `writeScratchScript`, `clearScratchScripts`,
-    `getScriptLog`;
+  - the run's scripts: `writeRunScript` (see
+    [Test collections](#test-collections)), `getScriptLog`;
   - values and menus: `getGmValues`, `writeGmValues`,
     `fireActionContextMenuItem`;
   - claims: `claimTab`, `renewRun`, `releaseRun`, `setTabScriptsOff`
-    (below).
+    (below). `releaseRun` also removes the run's test collection.
   - SourceMonkey-managed scripts: `scriptsOnTab(tabId)`, the rows the
     toolbar badge shows for a tab, with each one's collection;
   - tabs: `tabDocument(tabId)`, which document a tab shows, to tell
     which page an opened tab is.
 - Scripts are named by the extension's script id, a UUID kept stable
   across refreshes ([script-identity.md](script-identity.md)).
-  - A re-push of the same file name keeps the script's id and its
-    stored values.
+  - A re-push of the same file in a run keeps the script's id and
+    its stored values.
   - A script deleted in the browser and pushed again gets a new id.
 
 ### Version skew
@@ -111,13 +112,13 @@ A claim tells the extension what to run in a tab sm-dev controls:
 
 - **Harness runs** claim with *nothing*: the extension runs none of its
   scripts there.
-- **Extension runs** claim with *the run's scripts*: the extension runs
-  only those there.
-  - That is the right default: the usual case is a scratch copy of a
-    script also installed in a collection, and both would run in the
-    same tab otherwise.
-  - To test a script alongside installed ones, push those as scratch
-    scripts too.
+- **Extension runs** claim with *the run's scripts*, the ones in its
+  test collection: the extension runs only those there.
+  - That is the right default: the usual case is a copy of a script
+    also installed in a collection, and both would run in the same tab
+    otherwise.
+  - To test a script alongside installed ones, push those with the run
+    too.
 
 ### How the extension honours a claim
 
@@ -125,10 +126,11 @@ A claim tells the extension what to run in a tab sm-dev controls:
   before it runs its script's body, and honours a `skip` answer. That
   is how "Reload page with no userscripts" works (`background.ts`).
 - A claim is a per-tab rule the check-pending handler consults first:
-  `skip` unless the script is one the claim allows.
-- A scratch script (in the Scratch collection, which only sm-dev
-  pushes to) is skipped in every tab without a claim, so it runs only
-  in the tabs of a run whose claim allows it.
+  `skip` unless the script is one of the claiming run's own.
+- A run's script is skipped in every other tab, unclaimed or claimed
+  by another run, so it runs only in its own run's tabs.
+  - The handler tells by the script's location, which names its run
+    (`scratch:///<run>/<path>`).
   - The toolbar badge leaves it out of those other tabs entirely, so
     it shows as neither missing nor not loaded there.
 - Chrome still injects the wrappers; only their bodies are skipped. So
@@ -234,10 +236,10 @@ sm-dev knows a tab by its CDP target id; the extension knows it by its
   - It says how many, and the run prints that when a worker restart
     caused it.
 - **Several runs in one browser**: see below.
-- **A run with no scripts** claims its tabs too, allowing nothing
-  yet, so a later `load` runs only its own scripts there. Tabs the
-  person opens by hand aren't claimed, and run SourceMonkey-managed
-  scripts as usual.
+- **A run with no scripts** claims its tabs too, with nothing in its
+  test collection yet, so a later `load` runs only its own scripts
+  there. Tabs the person opens by hand aren't claimed, and run
+  SourceMonkey-managed scripts as usual.
 
 ### Several runs in one browser
 
@@ -251,13 +253,66 @@ or a second run pointed at a `--temp-browser`'s port.
   - Leases are per run: one run's renewals and release touch only its
     own claims.
   - Mixed backends work: a harness run's tabs skip every extension
-    script, the other run's scratch scripts included.
-- **Scratch scripts are shared**: two extension runs pushing the same
-  file name, and `clear --extension`, can step on each other. Left for
-  later; see TODO.md.
+    script, the other run's scripts included.
+- **Scripts**: each run has its own test collection, so two runs
+  pushing the same file each get their own copy.
 - **Event stream**: each run subscribes under its own id. The SW writes
   each event once, and every subscribed run hears it and keeps the ones
   about its tabs and scripts.
+
+## Test collections
+
+An extension run's scripts go into a collection of the run's own, its
+test collection, which holds exactly the scripts the run pushed.
+
+### Naming
+
+- The run's id in the extension is sm-dev's run id with a random tail,
+  such as `D2-a3f9` (`linkRunId` in extension-link.ts), since sm-dev
+  reuses run ids once a run ends. Its claims carry the same id.
+- The collection is `container:sm-dev:<id>`, shown on the collections
+  page as `sm-dev test collection (run D2-a3f9)`, with an `sm-dev` type
+  bubble in place of `scripts`.
+- Its scripts' locations are `scratch:///<id>/<path>`, where `<path>`
+  is the file's path as given to `start` or `load`, relative or
+  absolute (`scratch:///D2-a3f9/../sites/x.com/x.user.js`). Their text
+  is a storage row ([storage.md](storage.md#container-collections)).
+- `status` shows the id on its `Backend:` line, to find the collection
+  in the extension.
+
+### Contents
+
+- The first push creates it, so a run with no scripts has none.
+- One script per file path, so two files of the same name in
+  different folders are two scripts. A re-push replaces it in place,
+  keeping its id and stored values; a new push that doesn't parse is
+  reported and not kept.
+- Each run starts with empty stored values, since its collection is
+  new.
+
+### Removal
+
+- **The run ends**: `releaseRun` removes the collection, its scripts
+  and their stored values.
+- **The run crashed, or lost its browser connection**: each run has a
+  lease of its own, renewed with its claims. The worker removes a
+  collection 5 minutes after its run's lease ran out
+  (`RUN_GRACE_MS`), in case the run was only stalled.
+  - Checked as the worker starts, and every minute by a
+    `chrome.alarms` alarm while any test collection exists.
+  - A sweep more than 3 minutes after the last one means the computer
+    slept or the browser stalled, sm-dev with it. It removes nothing,
+    and every lease starts its 5 minutes again.
+  - A collection whose run has no lease on record (the browser
+    restarted since) gets its 5 minutes from when the worker finds
+    it.
+- Only its run changes a test collection. Otherwise it behaves like a
+  `scripts` collection.
+  - The extension's pages offer no move into or out of one, no install
+    into one, and no rename; the store refuses the moves and installs
+    (`SM_DEV_COLLECTION_LOCKED`).
+  - Removing its scripts, or the whole collection, by hand still
+    works.
 
 ## The event stream
 
@@ -331,7 +386,8 @@ or a second run pointed at a `--temp-browser`'s port.
 ## What runs where
 
 Without `--extension`, sm-dev injects its scripts itself; with
-`--extension`, it pushes them into SourceMonkey as scratch scripts.
+`--extension`, it pushes them into a test collection of the run's own
+in SourceMonkey.
 
 Terms used below:
 
@@ -355,7 +411,7 @@ Terms used below:
 - Your tabs run SourceMonkey-managed scripts if SourceMonkey is on,
   and nothing otherwise. sm-dev's scripts never run in your tabs,
   with or without `--extension`.
-- With `--extension`, a run's scratch scripts run only in that run's
+- With `--extension`, a run's scripts run only in that run's
   tabs: not in your tabs, and not in another sm-dev run's tabs.
 
 ### What shows for sm-dev's tabs, with SourceMonkey on
@@ -382,9 +438,8 @@ Terms used below:
   Without `--extension`, sm-dev's scripts aren't in the badge, though
   the reports of sm-dev's page-world scripts reach SourceMonkey's
   bridge.
-- Scratch scripts stay installed after an sm-dev run ends, until
-  `sm-dev clear --extension`, but run nowhere until a run pushes them
-  again.
+- With `--extension`, the run's test collection is removed as the run
+  ends, so its scripts run nowhere after.
 - After an sm-dev run ends, sm-dev's tabs keep the scripts and
   toolbar state described above until each tab's next load, which
   runs SourceMonkey-managed scripts again.
@@ -392,8 +447,11 @@ Terms used below:
 ## `status` and `scripts`
 
 - In extension runs only, a line says where the figures come from:
-  `Backend: SourceMonkey extension, as scratch scripts`. Harness runs,
-  the default, show none.
+  `Backend: SourceMonkey extension, test collection D2-a3f9`. Harness
+  runs, the default, show none.
+  - Before the first push, there is no test collection yet, and the
+    line says so: `Backend: SourceMonkey extension, run D2-a3f9, with
+    no test collection until a script is pushed`.
 - The run's scripts keep their numbers (1, 2, ...), in push order, the
   same ones `get`, `set` and `menu` use.
   - Not yet: a script deleted or turned off in the browser keeps its

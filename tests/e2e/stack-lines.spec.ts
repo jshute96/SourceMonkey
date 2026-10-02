@@ -9,7 +9,6 @@ import path from 'node:path';
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 import { waitFor } from '../fixtures/sw-api';
-import { ExtensionBackend } from '../../lib/harness/extension-backend.js';
 import { remapStackText } from '../../lib/stack-link.js';
 
 test.describe('stack lines with @require', () => {
@@ -46,8 +45,7 @@ test.describe('stack lines with @require', () => {
     );
     const raw = log.find((e) => e.level === 'error' && e.message.includes('thrown'))!.message;
 
-    const backend = new ExtensionBackend(await getServiceWorker());
-    const layout = await backend.stackLayout(scriptId);
+    const layout = await sm.getStackLayout(scriptId);
     expect(layout).not.toBeNull();
     const mapped = remapStackText(raw, [layout!]);
     const root = 'sourcemonkey://SourceMonkey/stacky';

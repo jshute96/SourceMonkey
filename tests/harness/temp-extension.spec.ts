@@ -36,12 +36,19 @@ test('a temp browser with --extension runs the script in the real extension', as
     meta: { name: 'Ext', match: ['*://*/target.html'], grant: ['GM_setValue'] },
     body: `console.log('[ext] handler ' + GM_info.scriptHandler); GM_setValue('k', 1);`,
   });
+  // Another of the same file name: the extension keeps the run's
+  // scripts by path, so both are pushed and both run.
+  const twin = scriptsDir.write({
+    relativePath: 'other/ext.user.js',
+    meta: { name: 'Twin', match: ['*://*/target.html'] },
+    body: `console.log('[twin] ran');`,
+  });
   const lines: string[] = [];
   let stop!: () => void;
   const until = new Promise<void>((resolve) => { stop = resolve; });
-  const wanted = ['[ext] handler SourceMonkey', 'Ext started on'];
+  const wanted = ['[ext] handler SourceMonkey', 'Ext started on', '[twin] ran', 'Twin started on'];
   const done = run({
-    files: [file],
+    files: [file, twin],
     urls: [`${fixtureServer.baseUrl}/target.html`],
     tempBrowser: true,
     extension: true,
@@ -62,9 +69,7 @@ test('a temp browser with --extension runs the script in the real extension', as
   const text = lines.join('\n');
   expect(text).toContain('has SourceMonkey');
   for (const w of wanted) expect(text).toContain(w);
-  // The browser and its extension are gone, so no Scratch hint, and
-  // no tab closing as it went.
-  expect(text).not.toContain('Scratch collection');
+  // No tab closing as the browser went.
   expect(text).not.toContain('Tab T1 closed');
 });
 
@@ -105,6 +110,8 @@ test('an extension run takes the run commands: status, values, set, menu, eval, 
   expect(left, text).toEqual([]);
   expect(text).toContain('/cmds.user.js');
   expect(text).toMatch(/\* 1: Cmds \(.*cmds\.user\.js\)/);
+  // The run's own test collection, by its unique id.
+  expect(text).toMatch(/Backend: SourceMonkey extension, test collection [\w.-]+-[0-9a-f]{4}\b/);
 });
 
 test('SourceMonkey-managed scripts on the tab are E1, ..., kept out, and their values reachable', async ({ fixtureServer, scriptsDir }) => {
@@ -149,6 +156,16 @@ test('SourceMonkey-managed scripts on the tab are E1, ..., kept out, and their v
     // Kept out of the run's tab: only the run's own script ran there.
     expect(text).toContain('Kept out of the run\'s tabs');
     expect(text).not.toContain('other ran');
+    // The run's test collection went with it; the person's stays.
+    const after = await chromium.connectOverCDP(launched.endpoint);
+    const worker = await findExtensionWorker(after.contexts()[0]);
+    const names = await worker.evaluate(async () => {
+      const api = (self as unknown as { SourceMonkey: { getCollections(): Promise<{ displayName?: string; path: string }[]> } }).SourceMonkey;
+      return (await api.getCollections()).map((c) => c.path);
+    });
+    expect(names.some((p) => p.startsWith('container:sm-dev:'))).toBe(false);
+    expect(names.length).toBeGreaterThan(0);
+    await after.close();
   } finally {
     await launched.close();
   }

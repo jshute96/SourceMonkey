@@ -159,7 +159,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/gm-xhr-headers.ts` | Forbidden-request-header surgery for `GM_xmlhttpRequest` — classify, tag the URL, compile to a DNR session rule, stale-rule sweep |
 | `src/gm-connect.ts` | `@connect` URL-gating helpers — parse rules, extract self hosts from `@match`/`@include`, check URL, phrase `GM_xmlhttpRequest`'s errors |
 | `src/gm-tab.ts` | SW-side `GM_openInTab` dispatcher (`chrome.tabs.create` + per-request mapping for close-event routing) |
-| `src/sm-dev-link.ts` | SW side of sm-dev: tab claims (which scripts a run's tabs let run, on a lease) and the event stream to runs |
+| `src/sm-dev-link.ts` | SW side of sm-dev: tab claims and run leases, when a test collection is stale, the event stream to runs |
 | `src/gm-download.ts` | SW-side `GM_download` dispatcher (`chrome.downloads` for http(s) + per-request mapping for progress/terminal routing) |
 | `src/gm-notification.ts` | SW-side `GM_notification` dispatcher (`chrome.notifications.create` + per-request mapping for click/close routing) |
 | `src/gm-url-scheme.ts` | Shared URL-scheme gate for the SW-side GM_* dispatchers (parse + allowlist check for tabs / notifications / downloads) |
@@ -203,9 +203,9 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/tab-badge.ts` | The count badge `sm-dev start` draws over controlled tabs' favicons, greyed once the run is gone |
 | `src/harness/run.ts` | The run process `sm-dev start` spawns: open a browser, inject or push the scripts, follow tabs, serve clients |
 | `src/harness/extension-launch.ts` | `--temp-browser` with `--extension`: launches Chromium with the built extension on a temp profile |
-| `src/harness/extension-link.ts` | A run's connection to the real extension: worker calls, tab claims and their lease, its events |
+| `src/harness/extension-link.ts` | A run's connection to the real extension: its unique id, worker calls, pushes, claims and lease, events |
 | `src/harness/extension-host.ts` | The host of an `--extension` run: fills the run's reports from the extension's events, values and menus from the extension |
-| `src/harness/extension-backend.ts` | Finds SourceMonkey in a browser (state, worker) and pushes or clears scratch scripts, for `clear --extension` and tests |
+| `src/harness/extension-backend.ts` | Finds SourceMonkey in a browser: its id, whether it's installed and on, and its service worker |
 | `src/harness/cdp-proxy.ts` | A CDP endpoint that shows a client only the run's tabs, for the `--devtools` server to connect to |
 | `src/harness/devtools.ts` | `sm-dev start --devtools`: a Chrome DevTools server per run, and each tab's DevTools page id |
 | `src/harness/run-log.ts` | A run's log file: timestamped names in `/tmp/sm-dev-logs-<user>`, stamped lines, per-run links |
@@ -353,8 +353,8 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/parse-check.spec.ts` | The parse-check mechanism: compiles without executing, judges as a function body, catches join-only conflicts |
 | `tests/e2e/parse-check-install.spec.ts` | Install/refresh-time parse failures surface as `invalid`, healthy scripts stay `ok`, and an unverified row is caught before it registers |
 | `tests/e2e/parse-check-pages.spec.ts` | The parse check holds on page-driven paths: the install preview's warning, Install, Refresh, Refresh All |
-| `tests/e2e/sm-dev-claims.spec.ts` | sm-dev's tab claims: only allowed scripts run, across reloads and opened tabs, until released or expired |
-| `tests/e2e/scratch-scripts.spec.ts` | Scratch scripts in the extension: write, rewrite, clear, removal, `ExtensionBackend` |
+| `tests/e2e/sm-dev-claims.spec.ts` | sm-dev's tab claims: only the run's scripts run, across reloads and opened tabs, until released or expired |
+| `tests/e2e/scratch-scripts.spec.ts` | sm-dev test collections: write, rewrite, per-run isolation, release, crashed-run sweep, locking, bubble |
 | `tests/e2e/preload-hints.spec.ts` | A fetched response's `Link: rel=preload` header reaches no extension page — both page-side readers hop to the service worker |
 | `tests/e2e/local-file-overrides.spec.ts` | End-to-end local stand-ins across `@require` / `@resource` / `@icon`: suffix matching, live re-read, fallback, opt-out, traversal, configured roots |
 | `tests/e2e/options-local-roots.spec.ts` | Options-page local-file-override roots box: hydration, saving, format complaints, missing-directory warnings |

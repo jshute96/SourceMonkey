@@ -27,6 +27,7 @@ import {
   isContainerCollection,
   isFileUrl,
   isHttpUrl,
+  isSmDevCollection,
   pathToFileUrl,
   isManifestCollection,
   type ContainerKind,
@@ -82,6 +83,9 @@ export const UNNAMED_COLLECTION = 'Unnamed collection';
 // Bubble label / CSS-key for a container: one word, since a container
 // may hold scripts from every scheme.
 export const SCRIPTS_BUBBLE_KEY = 'scripts';
+// An sm-dev run's test collection: a scripts collection only its run
+// changes.
+export const SM_DEV_BUBBLE_KEY = 'sm-dev';
 
 // The built-in default containers' names are reserved, whether or not
 // the row exists yet. Without this a user could name their own
@@ -141,11 +145,12 @@ export function collectionHasManifest(path: string): boolean {
   return isManifestCollection(path);
 }
 
-// Bubble label / CSS-key for a collection: `scripts` for a container,
-// `<scheme>-dir` for a scanned directory, `<scheme>-manifest` for a
-// manifest. Same string powers the CSS class (`bubble-<key>`) and the
-// visible text.
+// Bubble label / CSS-key for a collection: `scripts` for a container
+// (`sm-dev` for an sm-dev run's test collection), `<scheme>-dir` for a
+// scanned directory, `<scheme>-manifest` for a manifest. Same string
+// powers the CSS class (`bubble-<key>`) and the visible text.
 export function collectionBubbleKey(path: string): string {
+  if (isSmDevCollection(path)) return SM_DEV_BUBBLE_KEY;
   if (isContainerCollection(path)) return SCRIPTS_BUBBLE_KEY;
   const t = inferCollectionType(path);
   return collectionHasManifest(path) ? `${t}-manifest` : `${t}-dir`;
@@ -302,7 +307,9 @@ export function makeCollectionTypeBubble(path: string): HTMLElement {
     const span = document.createElement('span');
     span.className = `collection-type-bubble bubble-${key}`;
     span.textContent = key;
-    span.title = 'Collection of individual scripts (no common parent directory)';
+    span.title = key === SM_DEV_BUBBLE_KEY
+      ? 'Scripts an sm-dev run pushed, which only that run changes'
+      : 'Collection of individual scripts (no common parent directory)';
     return span;
   }
   const a = document.createElement('a');

@@ -60,6 +60,8 @@ export interface TabMatchState {
   // (sm-dev-link.ts): the script ids it let run, or null for none. The
   // rest were told to skip, so they show as NOT LOADED too.
   smDevAllow?: string[] | null;
+  // And the run that claimed it, whose own scripts the badge lists.
+  smDevRun?: string;
   // What our wrappers' own reports say about this document, for
   // explaining a script that never started (src/missing-scripts.ts):
   //   - `reportedWorlds`: the worlds a wrapper reported from. A world

@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 import type { BrowserContext } from '@playwright/test';
 
 import { leaveDialogsOpen } from './console-commands.js';
-import { ExtensionBackend, ExtensionMissingError, findExtensionWorker, sourceMonkeyExtensionId } from './extension-backend.js';
+import { ExtensionMissingError, findExtensionWorker, sourceMonkeyExtensionId } from './extension-backend.js';
 import { rebuildAdvice } from './stale-build.js';
 
 // dist/, beside lib/: in the checkout, and in an installed package,
@@ -148,9 +148,19 @@ async function launch(profile: string, headed: boolean, args: string[] = []): Pr
  *   opened after this. See TODO.md.
  */
 async function warmUp(context: BrowserContext): Promise<void> {
-  const backend = await ExtensionBackend.connect(context);
-  await backend.push('// ==UserScript==\n// @name sm-dev warm-up\n// @match https://sm-dev.invalid/*\n// ==/UserScript==\n');
-  await backend.clear();
+  const worker = await findExtensionWorker(context);
+  await worker.evaluate(async (text) => {
+    const api = (self as unknown as { SourceMonkey: WarmUpApi }).SourceMonkey;
+    const run = 'sm-dev-warm-up';
+    await api.writeRunScript({ run, text });
+    await api.releaseRun(run);
+  }, '// ==UserScript==\n// @name sm-dev warm-up\n// @match https://sm-dev.invalid/*\n// ==/UserScript==\n');
+}
+
+// The part of the worker's `self.SourceMonkey` `warmUp` calls.
+interface WarmUpApi {
+  writeRunScript(args: { run: string; text: string }): Promise<unknown>;
+  releaseRun(runId: string): Promise<void>;
 }
 
 // Grants the extension "Allow User Scripts" and pins it to the toolbar,

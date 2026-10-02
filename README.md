@@ -40,8 +40,8 @@ userscripts installs SourceMonkey as a package and gets two things:
 - **`sm-dev`, a command-line tool.** Run a script against a live page
   and watch what it does, re-injecting as you save. Check which
   selectors still resolve after a site changes. Save a page so a test
-  can replay it without logging in. Push a script straight into a
-  running SourceMonkey's Scratch collection.
+  can replay it without logging in. Run a script in a running
+  SourceMonkey, in a test collection of its own.
 
 See [docs/harness-guide.md](docs/harness-guide.md) to use it, and
 [docs/harness-design.md](docs/harness-design.md) for how it works.
@@ -206,12 +206,10 @@ location can be read before creating anything.
 Single scripts go into **scripts collections** — folders you create
 and name, or the defaults created on demand (`Scripts from local disk`,
 `Scripts from web`, `Scripts from GitHub`). One scripts collection can
-mix local, web, and GitHub scripts. A `Scratch` collection holds
-scripts whose only copy is in SourceMonkey itself, with no file or URL
-behind them. For now it appears when a development tool pushes a
-script straight into the extension (see
-[docs/harness-guide.md](docs/harness-guide.md)); it can be removed like
-any other.
+mix local, web, and GitHub scripts. An `sm-dev test collection`
+holds the scripts an `sm-dev --extension` run pushed, whose only copy
+is in SourceMonkey itself; it goes when the run ends (see
+[docs/harness-guide.md](docs/harness-guide.md)).
 
 Details: [docs/file-access.md](docs/file-access.md),
 [docs/http-collections.md](docs/http-collections.md).

@@ -154,9 +154,10 @@ export interface ConsoleContext {
   browser?: string;
   /**
    * Where the scripts run, for `status`, when it isn't sm-dev's own
-   * stand-in: `SourceMonkey extension, as scratch scripts`.
+   * stand-in: `SourceMonkey extension, test collection D2-a3f9`. Read
+   * as `status` runs.
    */
-  backend?: string;
+  backend?: () => string;
   /** Whether SourceMonkey is there now, for `status`; null when unknown. */
   extension?: () => Promise<ExtensionState | null>;
   /** The run's output so far, for `wait log`. */
@@ -445,7 +446,7 @@ export async function runConsoleCommand(
         const extension = ctx.browser ? extensionLabel(await ctx.extension?.() ?? null) : '';
         ctx.out(`Run: ${ctx.runId} (pid ${process.pid})${ctx.browser ? `, ${ctx.browser}${extension ? ` (${extension})` : ''}` : ''}`);
       }
-      if (ctx.backend) ctx.out(`Backend: ${ctx.backend}`);
+      if (ctx.backend) ctx.out(`Backend: ${ctx.backend()}`);
       if (ctx.log) ctx.out(`Log: ${runLogLabel(ctx.log, ctx.runId)}`);
       const devtools = ctx.devtools?.();
       if (devtools) ctx.out(`DevTools: ${devtools}`);

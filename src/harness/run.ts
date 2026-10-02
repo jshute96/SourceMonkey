@@ -24,7 +24,7 @@ import { DevToolsLink } from './devtools.js';
 import { extensionLabel, sourceMonkeyState, type ExtensionState } from './extension-backend.js';
 import { ExtensionHost } from './extension-host.js';
 import { launchExtensionBrowser } from './extension-launch.js';
-import { EXTENSION_TOO_OLD, ExtensionLink, type ExtensionEvent } from './extension-link.js';
+import { EXTENSION_TOO_OLD, ExtensionLink, linkRunId, type ExtensionEvent } from './extension-link.js';
 import { HarnessHost, type ErrorReport, type SkipReport, type StartReport } from './host.js';
 import { attachPage, targetIdOf, type AttachOptions, type PageAttachment } from './inject.js';
 import { pageSays, recordLog } from './page-commands.js';
@@ -131,8 +131,9 @@ export interface ConnectOptions {
   /** `--temp-browser`: launch a Chromium of the run's own instead. */
   tempBrowser?: boolean;
   /**
-   * Use the real extension in the browser: the script is pushed into
-   * its Scratch collection as text rather than injected by the harness.
+   * Use the real extension in the browser: the script is pushed into a
+   * test collection of the run's own as text rather than injected by
+   * the harness.
    * A `tempBrowser` loads the package's own build of it.
    */
   extension?: boolean;
@@ -602,8 +603,8 @@ export async function run(opts: RunOptions): Promise<number> {
     const run = remote.id ? `Run ${remote.id}` : 'The run';
     opts.out(!held.injected ? `[sm-dev] ${run} ended`
       // A launched browser's extension goes with it.
-      : opts.extension && session.launched ? `[sm-dev] ${run} ended`
-      : opts.extension ? `[sm-dev] ${run} ended. The scripts stay in the extension's Scratch collection; sm-dev clear --extension removes them.`
+      // The extension removes the run's test collection.
+      : opts.extension ? `[sm-dev] ${run} ended`
         : tabsLeft > 0 ? `[sm-dev] ${run} ended. Pages still have previously loaded scripts.`
         : `[sm-dev] ${run} ended`);
     await remote.close();
@@ -850,7 +851,7 @@ async function runInHarness(
       return 1;
     }
     try {
-      link = await ExtensionLink.open(session.context, remote.id ?? randomBytes(4).toString('hex'), []);
+      link = await ExtensionLink.open(session.context, linkRunId(remote.id));
     } catch (err) {
       opts.out(`[sm-dev] ${(err as Error).message}`);
       return 1;
@@ -942,42 +943,30 @@ async function runInHarness(
   const injected = (script: PreparedScript): void => {
     if (!link) opts.out(`[sm-dev] Injected ${preparedScriptPath(script)} in world ${script.world}, run-at ${runAtLabel(script)}`);
   };
-  // The run's scripts by the file name the extension keeps them by.
-  const pushedNames = new Map<string, PreparedScript>();
-  // With `--extension`: the scripts' text into the extension, as scratch
-  // scripts, and the run's tabs told to let them run. False, having said
-  // why, when the extension refused one.
+  // With `--extension`: the scripts' text into the run's test
+  // collection in the extension, which the run's tabs run. False,
+  // having said why, when the extension refused one; whatever was
+  // pushed before it stays.
+  let pushedAny = false;
   const push = async (list: PreparedScript[]): Promise<boolean> => {
     if (!link) return true;
     const extensionHost = host as ExtensionHost;
-    // Whatever was pushed before a refusal is let run all the same.
-    try {
-      return await pushEach(list, extensionHost);
-    } finally {
-      await link.setAllow(extensionHost.pushedIds());
-    }
-  };
-  const pushEach = async (list: PreparedScript[], extensionHost: ExtensionHost): Promise<boolean> => {
     for (const script of list) {
       const file = fileURLToPath(script.script.fileUrl);
-      const name = path.basename(script.script.relativePath);
-      // One scratch script per file name, so two of the run's would be one.
-      const other = pushedNames.get(name);
-      if (other && other.spec!.id !== script.spec!.id) {
-        opts.out(`[sm-dev] ${typedName(opts, file)} can't be pushed: ${typedName(opts, fileURLToPath(other.script.fileUrl))} has the same file name, and the extension keeps scratch scripts by file name. Rename one of them.`);
-        return false;
-      }
+      // The extension keeps the run's scripts by this: the path as
+      // typed to start or load, so files of the same name stay apart.
+      const name = typedName(opts, file);
       const text = await readFile(file, 'utf8');
-      const result = await link!.push(text, name);
+      const result = await link.push(text, name);
+      pushedAny = true;
       if (result.status !== 'ok') {
         opts.out(`INVALID  ${typedName(opts, file)}\n    ${result.errorMessage ?? ''}`);
         return false;
       }
-      pushedNames.set(name, script);
       extensionHost.setPushed(script.spec!.id, result.scriptId);
       // An extension without the call leaves its stack lines as they are.
-      extensionHost.setLayout(result.scriptId, await link!.stackLayout(result.scriptId).catch(() => null));
-      opts.out(`[sm-dev] Pushed to Scratch: ${preparedScriptPath(script)}${result.replaced ? ' (replaced)' : ''}`);
+      extensionHost.setLayout(result.scriptId, await link.stackLayout(result.scriptId).catch(() => null));
+      opts.out(`[sm-dev] Pushed to SourceMonkey: ${preparedScriptPath(script)}${result.replaced ? ' (replaced)' : ''}`);
     }
     return true;
   };
@@ -1139,7 +1128,10 @@ async function runInHarness(
         browser: browserSentence({ browser: session.endpoint, owned: session.launched, headless: session.headless }),
         extension: () => sourceMonkeyState(session.endpoint),
         ...(link ? {
-          backend: 'SourceMonkey extension, as scratch scripts',
+          // The first push makes the test collection.
+          backend: () => (pushedAny
+            ? `SourceMonkey extension, test collection ${link!.runId}`
+            : `SourceMonkey extension, run ${link!.runId}, with no test collection until a script is pushed`),
           // A throwaway browser's data is the run's own.
           others: (host as ExtensionHost).otherScripts(!session.launched),
         } : {}),
@@ -1191,7 +1183,7 @@ async function claimTab(link: ExtensionLink, page: Page, harness: boolean, out: 
 // the harness reports on its own scripts itself.
 async function harnessClaims(session: RunSession, runId: string | undefined, out: (line: string) => void): Promise<ExtensionLink | null> {
   try {
-    return await ExtensionLink.open(session.context, runId ?? randomBytes(4).toString('hex'), null, { events: false });
+    return await ExtensionLink.open(session.context, linkRunId(runId), { extensionRun: false });
   } catch (err) {
     const message = (err as Error).message;
     out(message === EXTENSION_TOO_OLD

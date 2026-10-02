@@ -145,8 +145,8 @@ Serves `sm-dev list`, `stop`, `attach` and the commands sent to a run.
   no known end (`--stdin`, `--interactive`).
 - The `--interactive` prompt and stdin reading both run in the client.
 - sm-dev's own commands run there: `start`, `attach`, `stop`, `exit`,
-  `list`, `clear`, `help`, and `match` / `validate` on files. The rest
-  go to the run.
+  `list`, `help`, and `match` / `validate` on files. The rest go to the
+  run.
 
 ### The protocol
 
@@ -265,7 +265,7 @@ Command marks:
   browser's `--browser`, `--open-browser`, `--profile`,
   `--temp-browser`, `--headed`.
   - One later on the line is refused, and said to go first.
-  - `--browser`, which `start` and `clear` also take, is excepted.
+  - `--browser`, which `start` also takes, is excepted.
 - The rest of the line holds one or more commands, split on `--`.
   Stdin and prompt lines are split the same way, except an `eval`
   block, which stays one command.

@@ -105,11 +105,6 @@ export class ExtensionHost extends HarnessHost {
     return remapStackText(text, this.layouts.values());
   }
 
-  /** The extension's ids for the run's scripts, which its tabs let run. */
-  pushedIds(): string[] {
-    return [...this.extensionIds.values()];
-  }
-
   /**
    * `page` is the run's tab `tabId`. `loaded`: the tab already shows the
    * document its first events are from (a tab adopted after it loaded),

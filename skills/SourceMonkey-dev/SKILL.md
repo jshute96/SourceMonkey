@@ -560,18 +560,16 @@ Use it when the question is about Chrome itself:
 ```sh
 $R start sites/x/y.user.js https://x.com/ --extension --detach
 # ... same commands ...
-$R stop
-$R clear --extension     # drop scratch scripts
+$R stop                  # also removes the run's test collection
 ```
 
 - Needs SourceMonkey in the browser, with "Allow User Scripts" on.
   - **`--temp-browser` with `--extension` installs the extension**
     (Allow User Scripts on), so it needs no setup:
     `$R --temp-browser start x.user.js https://x.com/ --extension`.
-    Its profile is empty (no logins), and the scratch scripts go with
-    it. For a site that needs a login, or blocks headless browsers,
-    use the `--open-browser` browser, once the extension is loaded
-    there.
+    Its profile is empty (no logins). For a site that needs a login,
+    or blocks headless browsers, use the `--open-browser` browser,
+    once the extension is loaded there.
   - The run's first line (`Connected to browser ... (Chrome ...,
     has SourceMonkey)`) and `status` say whether the extension is
     there: `has SourceMonkey`, `SourceMonkey disabled` or `no
@@ -579,8 +577,11 @@ $R clear --extension     # drop scratch scripts
   - If the extension is missing or disabled there, use `--temp-browser`
     (when no login is needed), ask the person, or see
     [Setting it up](https://github.com/jshute96/SourceMonkey/blob/main/docs/harness-guide.md#setting-it-up).
-- The script is pushed as a scratch script; relative `@require`s are
-  refused, and remote ones are fetched live, not from local copies.
+- The script is pushed into a test collection of the run's own
+  (`sm-dev test collection (run D2-a3f9)` in the extension, the id
+  `status` shows), removed when the run ends. Each run starts with no
+  stored values. Relative `@require`s are refused, and remote ones are
+  fetched live, not from local copies.
 - The run commands work as in a harness run (`status`, `get`/`set`,
   `menu`, `snapshot`, `click`, `eval`, `reload`, ...). Output is the
   script's starts, errors, menus and value writes, its Log tab entries,

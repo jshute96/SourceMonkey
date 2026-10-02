@@ -126,7 +126,7 @@ import {
 import type { ProbePolicy } from './version-probe.js';
 import {
   getDirectoryListingFetches,
-  isScratchUrl,
+  scratchRunOf,
   resetDirectoryListingFetches,
 } from './directories.js';
 import {
@@ -150,14 +150,15 @@ import {
   setCollectionOptions,
   createCollection,
   installScript,
-  writeScratchScript,
-  clearScratchScripts,
+  writeRunScript,
+  removeSmDevCollection,
+  smDevCollectionRuns,
   moveScript,
   removeScript,
   reconcileScriptMembership,
   describeError,
   type AddCollectionResult,
-  type WriteScratchScriptResult,
+  type WriteRunScriptResult,
   type CollectionOptions,
   type InstallTarget,
   type NewCollectionSpec,
@@ -194,6 +195,8 @@ import {
   inheritClaim,
   releaseRun,
   renewRun,
+  resetSmDevLinkForTests,
+  staleRuns,
   setTabScriptsOff,
   SKIP_REASON_SM_DEV,
 } from './sm-dev-link.js';
@@ -292,20 +295,22 @@ interface SourceMonkeyApi {
   addCollection: (path: string) => Promise<AddCollectionResult>;
   createCollection: (spec: NewCollectionSpec) => Promise<AddCollectionResult>;
   installScript: (location: string, target: InstallTarget) => Promise<AddCollectionResult>;
-  // Scratch scripts for the development harness (docs/harness-design.md,
-  // "Extension backend"): install text into the Scratch collection,
-  // registered before the promise settles; a rewrite of the same name
-  // replaces it in place. `clearScratchScripts` drops them all
-  // with their GM values.
-  writeScratchScript: (args: { text: string; name?: string }) => Promise<WriteScratchScriptResult>;
-  clearScratchScripts: () => Promise<number>;
-  // sm-dev's tab claims and event stream (sm-dev-link.ts,
-  // docs/sm-dev-extension.md). `allow`: the script ids that may run in
-  // the run's tabs, null for none. `renewRun` extends the run's claims
-  // and its event subscription, and changes `allow` when given.
-  claimTab: (tabId: number, runId: string, allow: string[] | null, ttlMs: number) => Promise<void>;
-  renewRun: (runId: string, ttlMs: number, allow: string[] | null, tabs?: { tabId: number; scriptsOff?: boolean }[], subscribe?: boolean) => Promise<number>;
+  // An sm-dev run's scripts (docs/sm-dev-extension.md): install text
+  // into the run's test collection, registered before the promise
+  // settles; a rewrite of the same name replaces it in place.
+  writeRunScript: (args: { run: string; text: string; name?: string }) => Promise<WriteRunScriptResult>;
+  // sm-dev's tab claims and event stream (sm-dev-link.ts). `ownScripts`:
+  // the run's tabs run its test collection's scripts; otherwise none of
+  // the extension's. `renewRun` extends the run's lease, claims and
+  // event subscription. `releaseRun` ends them and removes the run's
+  // test collection, with the scripts' GM values.
+  claimTab: (tabId: number, runId: string, ownScripts: boolean, ttlMs: number) => Promise<void>;
+  renewRun: (runId: string, ttlMs: number, ownScripts: boolean, tabs?: { tabId: number; scriptsOff?: boolean }[], subscribe?: boolean) => Promise<number>;
   releaseRun: (runId: string) => Promise<void>;
+  // Removes the test collections of runs gone longer than the grace
+  // period, as the worker does every minute, at `now`. Settles once the
+  // registrations are synced.
+  sweepRunCollections: (now: number) => Promise<void>;
   setTabScriptsOff: (tabId: number, off: boolean) => Promise<void>;
   // The scripts the toolbar badge lists for a tab's current document,
   // with their status and collection: sm-dev's list of the extension's
@@ -507,7 +512,7 @@ interface SourceMonkeyApi {
   resetCollectionRowReads: () => void;
 }
 
-// The `syncNow` of the test surface, shared by the scratch-script
+// The `syncNow` of the test surface, shared by the sm-dev run
 // methods so they too settle only once the registration is in place.
 async function syncNowForTests(): Promise<{ registered: { id: string }[]; kind: 'full' | 'incremental' | null }> {
   // Cancel any pending debounced sync first — otherwise its work
@@ -667,27 +672,29 @@ const api: SourceMonkeyApi = {
   resetDirectoryListingFetches,
   getCollectionRowReads,
   resetCollectionRowReads,
-  // The three scratch-script calls name the rows they changed to the
-  // sync themselves. `storage.onChanged` would add them to the pending
-  // scope too, but that event arrives on its own schedule, and the
-  // promise here must not settle before the registration is in place.
-  writeScratchScript: async (args) => {
-    const result = await writeScratchScript(args);
+  // The run-script calls name the rows they changed to the sync
+  // themselves. `storage.onChanged` would add them to the pending scope
+  // too, but that event arrives on its own schedule, and the promise
+  // here must not settle before the registration is in place.
+  writeRunScript: (args) => queueSmDevWork(async () => {
+    const result = await writeRunScript(args);
     pendingScriptIds.add(result.scriptId);
     pendingCollectionIds.add(result.collectionId);
     await syncNowForTests();
+    await startRunSweeps();
     return result;
-  },
-  clearScratchScripts: async () => {
-    const cleared = await clearScratchScripts();
-    for (const id of cleared.scriptIds) pendingScriptIds.add(id);
-    if (cleared.collectionId) pendingCollectionIds.add(cleared.collectionId);
-    await syncNowForTests();
-    return cleared.scriptIds.length;
-  },
+  }),
   claimTab,
   renewRun,
-  releaseRun,
+  releaseRun: (runId) => queueSmDevWork(async () => {
+    await releaseRun(runId);
+    if (await dropSmDevCollection(runId)) await syncNowForTests();
+  }),
+  sweepRunCollections: async (now) => {
+    realSweepsPaused = true;
+    await sweepRunCollections(now);
+    await syncNowForTests();
+  },
   setTabScriptsOff,
   scriptsOnTab: async (tabId) => {
     const state = getCurrentState(await getTabRecord(tabId));
@@ -759,6 +766,12 @@ const api: SourceMonkeyApi = {
     await resetGmOpenersState();
     await chrome.storage.local.clear();
     await chrome.storage.session.clear();
+    // sm-dev's claims and run leases live in memory too, and a lease
+    // left from a test minutes ago would have its run's collection swept
+    // from under a later test that reuses the run id.
+    resetSmDevLinkForTests();
+    realSweepsPaused = false;
+    await chrome.alarms.clear(RUN_SWEEP_ALARM);
     // The legacy-key migration memo describes the profile we just
     // wiped, so drop it — otherwise a test that seeds pre-rename rows
     // would find nothing willing to move them.
@@ -812,6 +825,80 @@ const api: SourceMonkeyApi = {
 onScriptLogEntry((scriptId, entry, fromReport) => emitSmDevEvent({ kind: 'log', scriptId, entry, ...(fromReport ? { fromReport } : {}) }));
 // Loaded early, so the first check-pending after a restart waits less.
 void claimsReady();
+
+// ---------- sm-dev test collections ----------
+//
+// A run's test collection goes when the run ends (`releaseRun`), and
+// otherwise once its lease has been out for a grace period: the run
+// crashed, or lost its browser. Checked at start-up and by an alarm,
+// which runs only while some run has a collection.
+
+const RUN_SWEEP_ALARM = 'sm-dev-run-sweep';
+
+// Removes run `runId`'s test collection, queueing its rows for the
+// next sync. Whether there was one.
+async function dropSmDevCollection(runId: string): Promise<boolean> {
+  const removed = await removeSmDevCollection(runId);
+  for (const id of removed.scriptIds) pendingScriptIds.add(id);
+  if (removed.collectionId) pendingCollectionIds.add(removed.collectionId);
+  return removed.collectionId !== null;
+}
+
+// Schedules the sweep alarm, unless it already is: making it again
+// would push its next run back a minute.
+async function startRunSweeps(): Promise<void> {
+  try {
+    if (!(await chrome.alarms.get(RUN_SWEEP_ALARM))) await chrome.alarms.create(RUN_SWEEP_ALARM, { periodInMinutes: 1 });
+  } catch (err) {
+    console.info('[SourceMonkey] could not schedule the sm-dev test collection cleanup:', err);
+  }
+}
+
+// Pushes, releases and sweeps, one at a time: a sweep that finds no
+// collection mustn't clear the alarm as a push makes one, nor a removal
+// race a push into the same collection. The alarm that wakes the worker
+// and its start-up sweep come together, too.
+let smDevQueue: Promise<unknown> = Promise.resolve();
+function queueSmDevWork<T>(work: () => Promise<T>): Promise<T> {
+  const done = smDevQueue.then(work);
+  smDevQueue = done.catch(() => undefined);
+  return done;
+}
+
+// Set by the tests' sweeps at a simulated time, so a real one (at the
+// real time) can't land between them. Cleared by `resetAllState`.
+let realSweepsPaused = false;
+
+// `now`: for tests, which can't wait out the grace period.
+function sweepRunCollections(now = Date.now()): Promise<void> {
+  return queueSmDevWork(() => sweepOnce(now));
+}
+
+function realSweep(): void {
+  if (!realSweepsPaused) void sweepRunCollections();
+}
+
+async function sweepOnce(now: number): Promise<void> {
+  try {
+    const withCollections = await smDevCollectionRuns();
+    // Also forgets long-gone runs without a collection.
+    const stale = await staleRuns(withCollections, now);
+    if (withCollections.length === stale.length) await chrome.alarms.clear(RUN_SWEEP_ALARM);
+    else await startRunSweeps();
+    let dropped = false;
+    for (const runId of stale) {
+      if (await dropSmDevCollection(runId)) dropped = true;
+    }
+    if (dropped) scheduleSync();
+  } catch (err) {
+    console.info('[SourceMonkey] could not clean up the sm-dev test collections:', err);
+  }
+}
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === RUN_SWEEP_ALARM) realSweep();
+});
+realSweep();
 
 // Clicking the toolbar icon opens the collections page (the extension's
 // declared `options_ui.page`). We have no popup configured, so
@@ -1080,20 +1167,23 @@ async function clearTabState(tabId: number): Promise<void> {
 // match index changes, and we don't want to ping the filesystem for
 // every script on every other tab just because one of them got
 // updated).
-// What an sm-dev run's claim on the tab lets run, for its badge: the
-// allowed ids, null for none, undefined when the tab isn't claimed.
-async function smDevAllowFor(tabId: number): Promise<string[] | null | undefined> {
+// What an sm-dev run's claim on the tab means for its badge, as the
+// state fields: the run, and the ids of `matches` it lets run (null for
+// none). Neither when the tab isn't claimed.
+async function smDevClaimFields(tabId: number, matches: MatchedScript[]): Promise<Pick<TabMatchState, 'smDevRun' | 'smDevAllow'>> {
   await claimsReady();
   const claim = activeClaim(tabId);
-  if (!claim) return undefined;
-  return claim.scriptsOff ? null : claim.allow;
+  if (!claim) return {};
+  const allowed = matches.filter((m) => claimAllows(claim, m.smDevRun ?? null)).map((m) => m.id);
+  return { smDevRun: claim.runId, smDevAllow: allowed.length > 0 ? allowed : null };
 }
 
-// The matches a tab's badge expects. A scratch script runs only where
-// a claim allows it (see handleCheckPending), so elsewhere it gets no
-// row at all.
-function expectedMatches(matches: MatchedScript[], allow: string[] | null | undefined): MatchedScript[] {
-  return matches.filter((m) => !m.scratch || (allow?.includes(m.id) ?? false));
+// The matches a tab's badge expects. A scratch script runs only in its
+// own run's tabs (see handleCheckPending), so elsewhere it gets no row
+// at all. In its run's tabs it does, and shows NOT LOADED when the tab
+// has its scripts off.
+function expectedMatches(matches: MatchedScript[], smDevRun: string | undefined): MatchedScript[] {
+  return matches.filter((m) => m.smDevRun === undefined || m.smDevRun === smDevRun);
 }
 
 async function updateTabMatches(
@@ -1195,11 +1285,11 @@ async function updateTabMatches(
   // Likewise what an sm-dev run's claim on the tab let run.
   if (restored) {
     if (prev.smDevAllow !== undefined) state.smDevAllow = prev.smDevAllow;
+    if (prev.smDevRun !== undefined) state.smDevRun = prev.smDevRun;
   } else {
-    const allow = await smDevAllowFor(tabId);
-    if (allow !== undefined) state.smDevAllow = allow;
+    Object.assign(state, await smDevClaimFields(tabId, state.matches));
   }
-  state.matches = expectedMatches(state.matches, state.smDevAllow);
+  state.matches = expectedMatches(state.matches, state.smDevRun);
   // What the document's reports said about it, and whether its
   // never-started check already ran, belong to the document too.
   if (restored) {
@@ -2402,18 +2492,15 @@ async function handleCheckPending(
   // started can't let a script through.
   await claimsReady();
   const claim = activeClaim(tabId);
-  // Only for the extension's own scripts: a harness run's MAIN-world
-  // script asks through this bridge too, and must hear `run`, as it
-  // always did for an id the extension doesn't know.
-  if (claim && !claimAllows(claim, payload.id) && await getScript(payload.id)) {
+  // - Only for the extension's own scripts: a harness run's MAIN-world
+  //   script asks through this bridge too, and must hear `run`, as it
+  //   always did for an id the extension doesn't know.
+  // - A scratch script is sm-dev's: it runs only in the tabs of the run
+  //   that pushed it. Nowhere else, a run's tabs or not.
+  const script = await getScript(payload.id);
+  const scriptRun = script ? scratchRunOf(script.fileUrl) : null;
+  if (script && (claim ? !claimAllows(claim, scriptRun) : scriptRun !== null)) {
     return { action: 'skip', reason: SKIP_REASON_SM_DEV };
-  }
-  // A scratch script is sm-dev's: it runs only in the tabs of the run
-  // that pushed it, which its claim allows. Nowhere else, a run's
-  // tabs or not, and not after the run ends.
-  if (!claim) {
-    const script = await getScript(payload.id);
-    if (script && isScratchUrl(script.fileUrl)) return { action: 'skip', reason: SKIP_REASON_SM_DEV };
   }
   // "Reload page with no userscripts" — decided per tab, ahead of the
   // fast path, and for every frame: a subframe's documentId is its
@@ -4293,15 +4380,16 @@ async function recordScriptReport(
     // matches / preserve actual.
     if (!senderUrl || !INJECTABLE_SCHEME.test(senderUrl)) return;
     await ensureLoaded();
-    const allow = await smDevAllowFor(tabId);
-    const matches = expectedMatches(findMatchesForUrl(senderUrl), allow);
+    const found = findMatchesForUrl(senderUrl);
+    const claimFields = await smDevClaimFields(tabId, found);
+    const matches = expectedMatches(found, claimFields.smDevRun);
     state = {
       documentId: senderDocId,
       url: senderUrl,
       matches,
       actual: {},
       loadMatchIds: matches.map((m) => m.id),
-      ...(allow !== undefined ? { smDevAllow: allow } : {}),
+      ...claimFields,
     };
   }
   const report: ActualStatus = type === SM_ERROR_MSG

@@ -94,6 +94,9 @@
 .bubble-github-dir      { background: #6f42c1; }
 .bubble-github-manifest { background: #4c2889; }
 .bubble-scripts         { background: #4b5563; }
+/* An sm-dev run's test collection: a darker shade of the cyan "T" on
+   the toolbar icon in sm-dev's tabs, dark enough for white text. */
+.bubble-sm-dev          { background: #00838f; }
 /* Form states, not collection kinds — only the collection dialog's Type
    row ever wears these: red for a location (or an empty form) that
    can't become a collection, grey while its verdict is being fetched. */

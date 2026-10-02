@@ -12,6 +12,11 @@
 // - The run's claims and its subscription are a lease, renewed here
 //   while the run lasts, and released at its end. A renewal also claims
 //   again any of the run's tabs whose claim the extension lost.
+// - An extension run's scripts go into a test collection of its own,
+//   which the extension removes when the run is released, or a while
+//   after its lease runs out.
+
+import { randomBytes } from 'node:crypto';
 
 import type { BrowserContext, Page, Worker } from '@playwright/test';
 
@@ -25,7 +30,7 @@ const LEASE_MS = 30_000;
 const RENEW_MS = 10_000;
 
 /** The calls an extension run needs, which an older SourceMonkey lacks. */
-const NEEDED_CALLS = ['claimTab', 'renewRun', 'releaseRun', 'setTabScriptsOff', 'writeGmValues', 'scriptsOnTab', 'tabDocument'];
+const NEEDED_CALLS = ['claimTab', 'renewRun', 'releaseRun', 'setTabScriptsOff', 'writeRunScript', 'writeGmValues', 'scriptsOnTab', 'tabDocument'];
 
 /** Said when the extension in the browser is older than these calls. */
 export const EXTENSION_TOO_OLD = 'SourceMonkey in this browser is older than this sm-dev, so it can\'t run --extension runs. '
@@ -45,6 +50,17 @@ export type ExtensionEvent =
   | { kind: 'values'; scriptId: string; tabId?: number; writes: { key: string; value?: unknown; deleted?: boolean }[]; at: number }
   | { kind: 'tab-opened'; sourceTabId: number; tabId: number; url: string; at: number };
 
+/**
+ * A run's id in the extension: sm-dev's run id (`D2`, or a named one)
+ * with a random tail, since run ids are reused once a run ends. Kept to
+ * the characters a URL path segment allows, since its scripts' URLs
+ * carry it.
+ */
+export function linkRunId(runId: string | undefined): string {
+  const head = (runId ?? 'run').replace(/[^A-Za-z0-9._-]+/g, '-');
+  return `${head}-${randomBytes(2).toString('hex')}`;
+}
+
 export class ExtensionLink {
   private worker: Worker | null = null;
   // Workers already listened to, so none gets a second listener.
@@ -54,11 +70,16 @@ export class ExtensionLink {
   private readonly listeners = new Set<(event: ExtensionEvent) => void>();
   private readonly restartListeners = new Set<(restoredClaims: number) => void>();
   private renewTimer: NodeJS.Timeout | null = null;
-  // The extension's script ids this run's tabs let run; null for none.
-  private allow: string[] | null;
   // The tabs the run holds, for a renewal to claim again if lost.
   private readonly tabs = new Map<number, { scriptsOff: boolean }>();
   private closed = false;
+  // Set as `close` begins, so no renewal starts after it; every caller
+  // of `close` waits on it.
+  private closing: Promise<void> | null = null;
+  // The renewals in flight (the timer's and a new worker's can overlap),
+  // which `close` lets finish before it releases, so one landing late
+  // can't claim the run's tabs again.
+  private readonly renewing = new Set<Promise<unknown>>();
   // A worker has been adopted before, so the next is a restart.
   private adopted = false;
   private readonly onWorker = (worker: Worker): void => {
@@ -67,27 +88,26 @@ export class ExtensionLink {
 
   private constructor(
     private readonly context: BrowserContext,
-    /** The run's id, which its claims carry. */
+    /**
+     * The run's unique id (`linkRunId`), which its claims and its test
+     * collection carry.
+     */
     readonly runId: string,
-    allow: string[] | null,
     private readonly workerUrl: string,
-    // Subscribed to the extension's events. A harness run, which only
-    // claims, isn't.
-    private readonly events: boolean,
-  ) {
-    this.allow = allow;
-  }
+    // An extension run: the run's tabs run its own scripts, and it hears
+    // the extension's events. A harness run's tabs run none of the
+    // extension's, and it only claims.
+    private readonly extensionRun: boolean,
+  ) {}
 
   /**
-   * Connects to the extension in `context`'s browser and subscribes to
-   * its events. `allow` is what the run's tabs let run: the run's
-   * scripts' ids for an extension run (none yet, before the first
-   * push), null for none. Throws `EXTENSION_TOO_OLD` for an extension
-   * without the calls this needs.
+   * Connects to the extension in `context`'s browser, for an extension
+   * run or a harness run (`extensionRun`). Throws `EXTENSION_TOO_OLD`
+   * for an extension without the calls this needs.
    */
-  static async open(context: BrowserContext, runId: string, allow: string[] | null, { events = true } = {}): Promise<ExtensionLink> {
+  static async open(context: BrowserContext, runId: string, { extensionRun = true } = {}): Promise<ExtensionLink> {
     const workerUrl = `chrome-extension://${await sourceMonkeyExtensionId()}/background.js`;
-    const link = new ExtensionLink(context, runId, allow, workerUrl, events);
+    const link = new ExtensionLink(context, runId, workerUrl, extensionRun);
     const worker = await findExtensionWorker(context);
     const missing = await worker.evaluate((names) => {
       const api = (self as unknown as { SourceMonkey?: Record<string, unknown> }).SourceMonkey ?? {};
@@ -196,9 +216,9 @@ export class ExtensionLink {
     }
     const tabId = await page.evaluate(() => chrome.tabs.getCurrent().then((tab) => tab?.id ?? null)).catch(() => null);
     if (typeof tabId !== 'number') throw new Error('Internal error: The tab could not read its own id');
-    await this.call(({ id, runId, allow, ttl }) =>
-      (self as unknown as { SourceMonkey: Api }).SourceMonkey.claimTab(id, runId, allow, ttl),
-    { id: tabId, runId: this.runId, allow: this.allow, ttl: LEASE_MS });
+    await this.call(({ id, runId, own, ttl }) =>
+      (self as unknown as { SourceMonkey: Api }).SourceMonkey.claimTab(id, runId, own, ttl),
+    { id: tabId, runId: this.runId, own: this.extensionRun, ttl: LEASE_MS });
     if (scriptsOff) await this.setTabScriptsOff(tabId, true);
     this.tabs.set(tabId, { scriptsOff });
     await page.goto('about:blank').catch(() => undefined);
@@ -225,14 +245,8 @@ export class ExtensionLink {
     if (held) held.scriptsOff = off;
   }
 
-  /** Changes which scripts the run's tabs let run, after a push. */
-  async setAllow(allow: string[] | null): Promise<void> {
-    this.allow = allow;
-    await this.renew();
-  }
-
   private async renew(): Promise<void> {
-    if (this.closed) return;
+    if (this.closing) return;
     const worker = await this.current();
     // A worker started meanwhile was renewed as it was adopted.
     if (worker === this.worker) await this.renewIn(worker);
@@ -241,14 +255,20 @@ export class ExtensionLink {
   // Renews the run's lease in `worker`. Returns how many of its tab
   // claims had to be made again.
   private renewIn(worker: Worker): Promise<number> {
+    if (this.closing) return Promise.resolve(0);
     const tabs = [...this.tabs].map(([tabId, t]) => ({ tabId, scriptsOff: t.scriptsOff }));
-    return worker.evaluate(({ runId, ttl, allow, held, events }) =>
-      (self as unknown as { SourceMonkey: Api }).SourceMonkey.renewRun(runId, ttl, allow, held, events),
-    { runId: this.runId, ttl: LEASE_MS, allow: this.allow, held: tabs, events: this.events });
+    const renewal = worker.evaluate(({ runId, ttl, own, held }) =>
+      (self as unknown as { SourceMonkey: Api }).SourceMonkey.renewRun(runId, ttl, own, held, own),
+    { runId: this.runId, ttl: LEASE_MS, own: this.extensionRun, held: tabs });
+    this.renewing.add(renewal);
+    void renewal.finally(() => this.renewing.delete(renewal)).catch(() => undefined);
+    return renewal;
   }
 
+  /** Installs or replaces one of the run's scripts in its test collection. */
   async push(text: string, name: string): Promise<PushResult> {
-    return this.call(([t, n]) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.writeScratchScript({ text: t, name: n }), [text, name] as const);
+    return this.call(({ run, t, n }) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.writeRunScript({ run, text: t, name: n }),
+      { run: this.runId, t: text, n: name });
   }
 
   /** Which document `tabId` shows (see the worker's `tabDocument`), or null if it can't be read. */
@@ -284,12 +304,21 @@ export class ExtensionLink {
     return result.ok;
   }
 
-  /** Releases the run's claims and subscription, and stops renewing. */
-  async close(): Promise<void> {
-    if (this.closed) return;
+  /**
+   * Releases the run's claims and subscription, which removes its test
+   * collection, and stops renewing.
+   */
+  close(): Promise<void> {
+    this.closing ??= this.release();
+    return this.closing;
+  }
+
+  private async release(): Promise<void> {
     if (this.renewTimer) clearInterval(this.renewTimer);
     this.context.off('serviceworker', this.onWorker);
-    // Best effort: an unreleased claim runs out with its lease.
+    await Promise.allSettled(this.renewing);
+    // Best effort: an unreleased claim runs out with its lease, and the
+    // collection goes a while later.
     await this.call((runId) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.releaseRun(runId), this.runId)
       .catch(() => undefined);
     this.closed = true;
@@ -306,11 +335,11 @@ export function firstLine(err: unknown): string {
 
 // The part of the worker's `self.SourceMonkey` this file calls.
 interface Api {
-  claimTab(tabId: number, runId: string, allow: string[] | null, ttlMs: number): Promise<void>;
-  renewRun(runId: string, ttlMs: number, allow: string[] | null, tabs: { tabId: number; scriptsOff?: boolean }[], subscribe: boolean): Promise<number>;
+  claimTab(tabId: number, runId: string, ownScripts: boolean, ttlMs: number): Promise<void>;
+  renewRun(runId: string, ttlMs: number, ownScripts: boolean, tabs: { tabId: number; scriptsOff?: boolean }[], subscribe: boolean): Promise<number>;
   releaseRun(runId: string): Promise<void>;
   setTabScriptsOff(tabId: number, off: boolean): Promise<void>;
-  writeScratchScript(args: { text: string; name?: string }): Promise<PushResult>;
+  writeRunScript(args: { run: string; text: string; name?: string }): Promise<PushResult>;
   tabDocument(tabId: number): Promise<{ url: string; timeOrigin: number } | null>;
   getStackLayout(scriptId: string): Promise<StackLayout | null>;
   getGmValues(scriptId: string): Promise<Record<string, unknown>>;

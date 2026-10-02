@@ -59,7 +59,6 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `start [url]...` | No scripts: just a browser to drive (`load` adds them later) |
 | `start ... --notab` | No tab at first; `newtab` later |
 | `start ... --extension` | Push into the real extension instead. Needs SourceMonkey in the browser; a `--temp-browser` installs it for the run |
-| `clear --extension` | Drop the extension's scratch scripts |
 | `start ... --detach --new` | Start another detached run, keeping earlier ones |
 | `list` | The active runs |
 | `status` | The run, its log file, tabs, and each script's state |

@@ -132,6 +132,7 @@ import {
   canonicalCollectionInput,
   collectionCanonicalUrl,
   isContainerCollection,
+  isSmDevCollection,
   isFileUrl,
   isManifestCollection,
   isValidLocationShape,
@@ -1350,13 +1351,16 @@ async function renderCollectionSection(collection: StoredCollection): Promise<HT
   removeBtn.addEventListener('click', () => void onRemoveCollection(collection.id, section, removeBtn));
   buttons.appendChild(removeBtn);
 
-  const editBtn = document.createElement('button');
-  editBtn.className = 'edit-collection';
-  // A gear, not a pencil: the dialog behind it is mostly options, and
-  // a pencil would promise editing the scripts themselves.
-  setGlyphButton(editBtn, '#sm-gear', 'Rename this collection or change its options');
-  editBtn.addEventListener('click', () => void onEditCollection(collection.id));
-  buttons.appendChild(editBtn);
+  // None for an sm-dev test collection, which its run names.
+  if (!isSmDevCollection(collection.path)) {
+    const editBtn = document.createElement('button');
+    editBtn.className = 'edit-collection';
+    // A gear, not a pencil: the dialog behind it is mostly options, and
+    // a pencil would promise editing the scripts themselves.
+    setGlyphButton(editBtn, '#sm-gear', 'Rename this collection or change its options');
+    editBtn.addEventListener('click', () => void onEditCollection(collection.id));
+    buttons.appendChild(editBtn);
+  }
 
   // Rightmost, matching Refresh All at the top of the page: the same
   // action in the same place, whichever row of the page you are on.

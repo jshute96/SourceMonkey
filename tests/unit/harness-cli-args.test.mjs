@@ -67,6 +67,9 @@ test('match takes several scripts and URLs in any order, a heading per script', 
   // A script or URL given twice is checked once.
   const twice = spawnSync(process.execPath, [CLI, 'match', path.join(dir, 'match-exact.user.js'), page, path.join(dir, 'match-exact.user.js'), page], { encoding: 'utf8' });
   assert.equal(twice.stdout, `match    ${page}\n    Matched by:  @match *://*/headers-match-hash/headers-match-hash.html\n`);
+  // Two spellings of one file are one script too.
+  const spelled = spawnSync(process.execPath, [CLI, 'match', path.join(dir, 'match-exact.user.js'), `${dir}./x/../match-exact.user.js`, page], { encoding: 'utf8' });
+  assert.equal(spelled.stdout, twice.stdout);
   // With no .user.js argument, and no run to take the script from.
   const none = spawnSync(process.execPath, [CLI, 'match', page], { encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
   assert.equal(none.status, 2);
@@ -537,7 +540,6 @@ test('the browser options are global, and only one browser is chosen', () => {
   assert.deepEqual(cliLine('--open-browser', '--temp-browser', 'start', SCRIPT), { code: 2, out: 'ERROR: The --temp-browser flag can\'t be used with --open-browser' });
   // Given on a line with no start, they'd do nothing.
   assert.deepEqual(cliLine('--temp-browser', 'eval', '1'), { code: 2, out: 'ERROR: The --temp-browser flag is for the runs a start begins, and this line has no start' });
-  assert.deepEqual(cliLine('--temp-browser', 'clear', '--extension'), { code: 2, out: 'ERROR: The clear command has nothing to clear in a --temp-browser, whose scratch scripts go when its run ends' });
   // start's own --browser would go elsewhere than the browser --open-browser starts.
   assert.deepEqual(cliLine('--open-browser', 'start', SCRIPT, '--browser', '9300', '--detach'), { code: 2, out: 'ERROR: The start command connects to the browser --open-browser starts, so give --browser once, first: sm-dev --open-browser --browser ... start ...' });
   // A value in the same word, and not the next option taken for one.
