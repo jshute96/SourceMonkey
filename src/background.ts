@@ -1316,17 +1316,31 @@ function drawMarkedIcon(): Promise<Record<string, ImageData>> {
   return markedIcon;
 }
 
+// `chrome.action.setIcon`, rejecting when it fails. Its promise form
+// resolves even for a tab that has closed, and Chrome then logs the
+// error to chrome://extensions as an unchecked runtime.lastError. The
+// callback form hands the error over, and reading it keeps it quiet.
+function setActionIcon(details: chrome.action.TabIconDetails): Promise<void> {
+  return new Promise((resolve, reject) => {
+    chrome.action.setIcon(details, () => {
+      const error = chrome.runtime.lastError;
+      if (error) reject(new Error(error.message ?? 'The icon could not be set'));
+      else resolve();
+    });
+  });
+}
+
 async function markSmDevTab(tabId: number, on: boolean): Promise<void> {
   const firstCheck = !markCheckedTabs.has(tabId);
   markCheckedTabs.add(tabId);
   try {
     if (on) {
-      await chrome.action.setIcon({ tabId, imageData: await drawMarkedIcon() });
+      await setActionIcon({ tabId, imageData: await drawMarkedIcon() });
       markedTabs.add(tabId);
     } else if (markedTabs.has(tabId) || firstCheck) {
       markedTabs.delete(tabId);
       const icons = chrome.runtime.getManifest().action?.default_icon;
-      if (icons) await chrome.action.setIcon({ tabId, path: icons as Record<string, string> });
+      if (icons) await setActionIcon({ tabId, path: icons as Record<string, string> });
     }
   } catch (err) {
     // The tab closed meanwhile, or the icon couldn't be drawn.
