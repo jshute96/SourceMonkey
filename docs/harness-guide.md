@@ -1766,6 +1766,11 @@ For a browser that keeps the extension (and your logins):
   relative `@require` is refused, and a local copy of a remote
   `@require` is not used: the extension fetches the URL.
 - No tab badges; the extension's toolbar badge covers the tabs.
+- A `document-start` script may run after the page's first inline
+  `<head>` scripts, where the extension alone would usually run it
+  first. While a run is live, every wrapper waits for the extension's
+  check before running (see
+  [sm-dev-extension.md](sm-dev-extension.md#making-every-wrapper-ask)).
 - Specs stay on the push backend. For a check that needs the real
   extension, drive it from a spec with SourceMonkey's own test
   fixtures, or by hand with `sm-dev start --extension`.
@@ -1781,7 +1786,7 @@ Under the push backend (the default):
 - `@run-at` order, including `document-start` code seeing `<html>`
   and `document-body` code seeing `<body>`. But see
   [Known differences](#known-differences-under-the-push-backend) for
-  `document-start` against early page scripts.
+  some `document-start` scripts against early page scripts.
 - `GM_*` storage semantics, including the write batching and broadcast
   to other pages running the script.
 - `@connect` gating of `GM_xmlhttpRequest`.
@@ -1828,12 +1833,16 @@ These apply to `sm-dev start` and to specs alike.
 
 - Scripts run in the top frame only. A script meant for an iframe
   (`@match` of the frame's URL, no `@noframes`) never starts there.
-- A `@run-at document-start` script usually runs after the page's
-  early `<head>` scripts, where the extension usually runs it first.
-  - Before it runs, it waits for a reply that goes through Node in
-    sm-dev, a much longer trip than the extension's.
-  - A script that must get in first (to capture or hook `fetch`,
-    `XMLHttpRequest`, `addEventListener`) may miss page code here.
+- A `@run-at document-start` script that grants storage, has a
+  `.tld` rule, or loads on a reload waits for a reply before it runs,
+  so it may run before or after the page's early `<head>` scripts.
+  - In sm-dev the reply goes through Node. Measured, it still often
+    came first, while in the extension the page's early scripts
+    usually ran first.
+  - A script whose early change a page script then overwrites (a
+    class on `<html>`) can work in one and not the other.
+  - Other `document-start` scripts skip that reply, and run ahead of
+    page scripts in both.
 - The isolated world enforces the page's Trusted Types policy, so a
   granted script setting `innerHTML` fails on sites like YouTube. The
   extension's `USER_SCRIPT` world is exempt.

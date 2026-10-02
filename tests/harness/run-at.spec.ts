@@ -34,6 +34,21 @@ test.describe('harness @run-at timing', () => {
     expect(host.reports.errors).toEqual([]);
   });
 
+  // The wrapper skips the check-pending round trip on a non-reload
+  // load (`canSkipDecision`), so the body beats the page's first
+  // inline script, as in the extension.
+  test('document-start runs before the page\'s first head script', async ({ page, fixtureServer, loadScript }) => {
+    await loadScript({
+      relativePath: 'early.user.js',
+      meta: { name: 'Early', match: ['*://*/early-inline.html*'], grant: ['none'], runAt: 'document-start' },
+      body: `document.documentElement.dataset.early = 'script';`,
+    });
+    for (let i = 0; i < LOADS; i++) {
+      await page.goto(`${fixtureServer.baseUrl}/early-inline.html?n=${i}`);
+      expect(await page.evaluate(() => document.documentElement.dataset.pageSaw), `load ${i + 1}`).toBe('script');
+    }
+  });
+
   test('document-start in the isolated world sees <html>', async ({ page, fixtureServer, host, loadScript }) => {
     await loadScript({
       relativePath: 'start-isolated.user.js',

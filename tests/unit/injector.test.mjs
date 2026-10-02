@@ -2195,6 +2195,7 @@ function seedStore(scriptId, { matches = ['https://e/*'], grants = [] } = {}) {
     id: scriptId,
     collectionId: 'src-1',
     relativePath: `bad-${scriptId}.user.js`,
+    fileUrl: `file:///bad-${scriptId}.user.js`,
     status: 'ok',
     enabled: true,
     size: 10,
@@ -2957,4 +2958,18 @@ test('registerWithFallback: a spec Chrome genuinely refuses is offered once', as
   await _flushScriptLogQueueForTests('a');
   assert.deepEqual(offered, ['a+b', 'a', 'b'], 'the batch, then one attempt per spec');
   assert.deepEqual(Object.keys(await readRejections()), ['a']);
+});
+
+// ---------- mustAsk (document-start skip of check-pending) ----------
+
+test('buildRegistrationSpec: a scratch script always tells its wrapper to ask', async () => {
+  const cfgOf = async (fileUrl) => (await buildRegistrationSpec(makeScript({ fileUrl }))).js[0].code;
+  assert.match(await cfgOf('scratch:///a.user.js'), /"mustAsk":true/);
+  assert.doesNotMatch(await cfgOf('file:///a.user.js'), /mustAsk/);
+});
+
+test('collectActiveSpecs: before the SW knows the sm-dev claims, every script asks', async () => {
+  const collections = new Map([['collection-1', { id: 'collection-1', enabled: true }]]);
+  const { specs } = await collectActiveSpecs([makeScript()], collections);
+  assert.match(specs[0].js[0].code, /"mustAsk":true/);
 });

@@ -582,6 +582,9 @@ $R stop                  # also removes the run's test collection
   `status` shows), removed when the run ends. Each run starts with no
   stored values. Relative `@require`s are refused, and remote ones are
   fetched live, not from local copies.
+- A `document-start` script may run after the page's first inline
+  scripts here, where the extension alone would run it first: during a
+  run, every script waits for the extension's check before running.
 - The run commands work as in a harness run (`status`, `get`/`set`,
   `menu`, `snapshot`, `click`, `eval`, `reload`, ...). Output is the
   script's starts, errors, menus and value writes, its Log tab entries,
@@ -632,7 +635,7 @@ test('adds the button', async ({ page, loadUserscript, gm, reports }) => {
   frame only.
 - **It works in sm-dev but not in the extension, or the reverse**: see
   [Known differences](https://github.com/jshute96/SourceMonkey/blob/main/docs/harness-guide.md#known-differences-under-the-push-backend):
-  `document-start` code running after early page scripts, Trusted
+  some `document-start` code running after early page scripts, Trusted
   Types in the isolated world, an inserted inline `<script>` blocked by
   a strict page CSP, a `GM_setValue` lost to an unload. Check in the
   extension (above).

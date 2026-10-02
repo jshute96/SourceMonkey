@@ -142,6 +142,31 @@ What is still unmapped:
   measured fact — and a check that the failure really is as visible as
   the fallback path suggests.
 
+## `document-start` that really runs first
+
+A `document-start` body runs ahead of the page's own scripts only when
+the wrapper can skip the async check-pending round trip (see
+[docs/injection.md](docs/injection.md#skipping-the-check-at-document-start)).
+Where it can't, an early inline `<head>` script can still win the race.
+
+- **Not consistent.** The same script runs first or not depending on:
+  - whether the load is a reload;
+  - whether it grants GM storage, or has a `.tld` rule;
+  - whether it is in a subframe;
+  - whether any sm-dev run is active, in any tab.
+- **Not robust.** The cases that still ask are a timing race, so a
+  script that must patch the page first (user-agent spoofing, API
+  hooks) works on some loads and not others.
+- **Worth finding something else** that makes a `document-start` body
+  really run at document start in every case. Ideas, none evaluated:
+  - Make the decisions available synchronously, e.g. the GM values
+    snapshot from an in-page cache, and per-tab state (skip reload,
+    sm-dev claim) from something the wrapper can read without asking.
+  - Run the body first and apply a late `skip` / `run-new` some other
+    way, accepting that a skipped body has already run.
+  - A per-script opt-in that always runs immediately, for scripts
+    that need it more than the reload swap or the skip reload.
+
 ## Reload fast-path — remaining cost
 
 The window is measured (see

@@ -89,16 +89,11 @@ scripts/sm-dev --run <prefix>1 stop
 - For a site that blocks headless, use the shared browser on port 9233
   instead (drop `--temp-browser`), if its first line says `has
   SourceMonkey`.
-  - Don't run `clear --extension` there: it removes every scratch
-    script in that browser, including other agents' and the person's.
-    A leftover one is harmless, since it runs only in its run's tabs.
-  - The run's tabs run only its own scripts, and its scripts run only in
-    its tabs, so parallel agents don't see each other's scripts.
-  - But two runs pushing files with the same name replace each other.
-    Push a copy with a name of your own (`<prefix>-<id>.user.js`) in
-    your scratchpad.
-- The script is pushed as a scratch script: its remote `@require`s are
-  fetched live, not from the copies in `files/`.
+  - Each run pushes its scripts into a test collection of its own,
+    which `stop` removes, so parallel agents don't see each other's
+    scripts. Always `stop` your runs.
+- The script's remote `@require`s are fetched live, not from the copies
+  in `files/`.
 - Say in the note that the real extension was used.
 
 ## Blame
@@ -170,7 +165,7 @@ report it with a one-sentence description, so it can be added to
 ## Finishing
 
 - Stop your runs and check with `scripts/sm-dev list`; close your tabs in
-  the shared browser. Report any scratch scripts you pushed there.
+  the shared browser.
 - Don't commit or change git staging. Change files in the repo only
   through `record-results.mjs`; copies go in your scratchpad.
 - Report: one line per script (ID, name, result, tags, summary), new tags

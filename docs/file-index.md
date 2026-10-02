@@ -241,6 +241,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/fixtures/pages/run-at.html` | Fixture page with a slow-blocker script + `#log` list used by the @run-at readyState-window and harness run-at timing tests |
 | `tests/fixtures/pages/window-stop.html` | Fixture page that calls `window.stop()` while an image is pending, so `load` never fires |
 | `tests/fixtures/pages/slow-dcl.html` | Fixture page held at readyState=loading for ~1s, so DOMContentLoaded lands well after the reload fast-path window |
+| `tests/fixtures/pages/early-inline.html` | Fixture page whose first head script records whether a document-start script already ran |
 | `tests/fixtures/pages/page-globals.html` | Fixture page defining page-realm globals, so MAIN-vs-isolated world access can be asserted |
 | `tests/fixtures/pages/wide-icon.svg` | A red 2:1 SVG sized only by its viewBox, the site icon the favicon-badge tests draw under the badge |
 | `tests/fixtures/pages/stopped.html` | Fixture page that stops its own load with `window.stop()`, so it never fires `load` |
@@ -258,6 +259,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/sandbox-csp.spec.ts` | Pages sent with a CSP `sandbox` header: MAIN-world scripts skipped, USER_SCRIPT-world ones run, the Log hint |
 | `tests/e2e/reload-without-scripts.spec.ts` | "Reload page with no userscripts": one-shot skip, grey NOT LOADED badge, info Log entry, row presence |
 | `tests/e2e/focus-refresh.spec.ts` | Focus-triggered refresh: a tab switch or a page's own focus report picks up a local edit; http scripts stay unfetched |
+| `tests/e2e/document-start-early.spec.ts` | A document-start script runs before the page's first inline script; a live sm-dev claim makes every script ask |
 | `tests/e2e/reload-fast-path.spec.ts` | Reload triggers sm:check-pending → swap to fresh body on this reload; non-reload navs, world changes, and a newly-needed runtime don't |
 | `tests/e2e/reload-fast-path-parse-check.spec.ts` | The reload swap doesn't wait for the parse verdict, and the verdict still lands on the row afterwards |
 | `tests/e2e/reload-fast-path-sharing.spec.ts` | Navigation-triggered checks share one folder listing across the page's scripts, and still catch a per-script edit |

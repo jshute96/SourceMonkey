@@ -81,6 +81,7 @@ import {
   isUserScriptsAvailable,
   lastSyncKindForTests,
   resetRejectionRetryGate,
+  setMustAskForDecision,
   syncRegistrations,
   unregisterAllRegistrations,
   SM_ABANDONED_MSG,
@@ -193,6 +194,7 @@ import {
   dropClaim,
   emitSmDevEvent,
   inheritClaim,
+  onClaimsLiveChange,
   releaseRun,
   renewRun,
   resetSmDevLinkForTests,
@@ -768,8 +770,11 @@ const api: SourceMonkeyApi = {
     await chrome.storage.session.clear();
     // sm-dev's claims and run leases live in memory too, and a lease
     // left from a test minutes ago would have its run's collection swept
-    // from under a later test that reuses the run id.
-    resetSmDevLinkForTests();
+    // from under a later test that reuses the run id. A live claim
+    // would also make every later test's wrappers ask first; awaited so
+    // that flag is off, and before the teardown below, which queues
+    // behind the sync turning it off.
+    await resetSmDevLinkForTests();
     realSweepsPaused = false;
     await chrome.alarms.clear(RUN_SWEEP_ALARM);
     // The legacy-key migration memo describes the profile we just
@@ -823,6 +828,9 @@ const api: SourceMonkeyApi = {
 
 // sm-dev runs hear each Log entry as it is written (sm-dev-link.ts).
 onScriptLogEntry((scriptId, entry, fromReport) => emitSmDevEvent({ kind: 'log', scriptId, entry, ...(fromReport ? { fromReport } : {}) }));
+// While any sm-dev claim is live, every wrapper waits for its
+// check-pending answer, so a claimed tab can still skip a script.
+onClaimsLiveChange(setMustAskForDecision);
 // Loaded early, so the first check-pending after a restart waits less.
 void claimsReady();
 
@@ -4479,7 +4487,11 @@ installActionContextMenu();
 // pay the read-everything cost on the critical path. The injector sync
 // runs in parallel so registrations are in place ASAP after SW startup.
 void ensureLoaded();
-void syncRegistrations();
+// No explicit sync here: loading the claims (started above) reports
+// whether any is live, and that first `setMustAskForDecision` runs the
+// full sync. Registrations then say whether the wrappers must ask.
+// A sync that lands before it builds them as asking (see
+// `mustAskForDecision`).
 void loadDebugLoggingFlag();
 // Kicked off here so the read is already in flight by the time the
 // first refresh awaits `localRootsReady()`.

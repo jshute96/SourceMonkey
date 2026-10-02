@@ -122,9 +122,9 @@ A claim tells the extension what to run in a tab sm-dev controls:
 
 ### How the extension honours a claim
 
-- Every SourceMonkey wrapper already asks the SW `sm:check-pending`
-  before it runs its script's body, and honours a `skip` answer. That
-  is how "Reload page with no userscripts" works (`background.ts`).
+- SourceMonkey wrappers ask the SW `sm:check-pending` before running
+  their script's body, and honour a `skip` answer. That is how "Reload
+  page with no userscripts" works (`background.ts`).
 - A claim is a per-tab rule the check-pending handler consults first:
   `skip` unless the script is one of the claiming run's own.
 - A run's script is skipped in every other tab, unclaimed or claimed
@@ -133,9 +133,32 @@ A claim tells the extension what to run in a tab sm-dev controls:
     (`scratch:///<run>/<path>`).
   - The toolbar badge leaves it out of those other tabs entirely, so
     it shows as neither missing nor not loaded there.
-- Chrome still injects the wrappers; only their bodies are skipped. So
-  nothing about the scripts' registrations changes, and the person's
-  other tabs are unaffected.
+- Chrome still injects the wrappers; only their bodies are skipped.
+
+#### Making every wrapper ask
+
+A `document-start` wrapper normally skips the check where the answer
+can only be `run` (see
+[injection.md](injection.md#skipping-the-check-at-document-start)).
+A claim can `skip` on any navigation, so the SW turns that off:
+
+- While any claim is live, the SW re-registers every script with a
+  `mustAsk` flag that makes its wrapper ask.
+- `claimTab` and `renewRun` resolve only once that is in place, so the
+  run's first page is covered.
+- A release, or a lapsed lease (on a timer), turns it back off.
+- Until the SW has loaded the claims after a restart, registrations
+  are built as asking.
+- Scratch scripts always carry `mustAsk`.
+
+What that costs:
+
+- Registrations are global, so the person's other tabs ask too while a
+  run is active. Their `document-start` scripts may run after the
+  page's first inline scripts there.
+- In an sm-dev `--extension` run, a `document-start` script may also
+  run after those page scripts, where the extension alone would run it
+  first.
 
 ### Naming the tab
 

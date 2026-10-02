@@ -445,8 +445,9 @@ skipped.
   running their scripts, and the tab's next navigation runs them again.
 - Needs `chrome.webNavigation`; the row is withheld without it.
 
-- **Mechanism** — every wrapper asks the SW `sm:check-pending` before
-  running its body, and `skip` is an answer it already honours (see
+- **Mechanism** — on a reload, every wrapper asks the SW
+  `sm:check-pending` before running its body, and `skip` is an answer
+  it already honours (see
   [injection.md](injection.md#sm-check-pending-handler)). A skip
   reload is a per-tab marker that handler consults first, ahead of
   the reload fast path (which isn't set up for a skip reload).
