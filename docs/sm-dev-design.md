@@ -55,6 +55,7 @@ flowchart LR
 | `command-lines.ts` | Input lines into commands: blocks, lists, stdin |
 | `checks.ts`, `path-args.ts` | `match` / `validate`, and file-argument globs |
 | `console-commands.ts` | A run's commands across its tabs, the dialog tracker, the `--interactive` prompt |
+| `prompt-history.ts` | The prompt's history file, kept across sessions |
 | `page-commands.ts`, `snapshot.ts` | Commands that drive and read a page |
 | `wait.ts` | `wait`, and when a tab has settled |
 | `tab-refs.ts` | Naming and picking tabs (`T2`, target and DevTools page ids), the current tab, the dialog message |
@@ -394,6 +395,19 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
 
 - `readPromptCommands` runs in the client, never in the run.
 - Output is drawn around it.
+- History (`prompt-history.ts`):
+  - Each typed command is appended to the file as a JSON string per
+    line, so a `{{` block is one entry with its line breaks.
+  - Loaded once at start, newest first. Sessions append, so parallel
+    ones keep each other's entries.
+  - Loading cuts the file back once it holds twice `HISTORY_SIZE`. That
+    rewrite can lose an entry another session appends at that moment.
+  - Every write keeps the file mode 0600, since commands can hold
+    passwords and tokens.
+  - readline adds each typed line itself; its `history` event takes
+    that back out, and the prompt adds whole entries instead.
+  - A recalled block arrives as one line holding newlines, split before
+    `CommandAssembler` sees it.
 - Each command says whether it was typed at a person's prompt
   (`interactive`). There, `menu <label>` answers at once, rather than
   waiting a moment for a script still registering, as it does for

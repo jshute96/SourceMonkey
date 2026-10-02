@@ -642,6 +642,15 @@ sm-dev --interactive      # no run yet: type start or attach
   be combined with `--stdin`.
 - Line editing and history work as in most shells (arrows, Ctrl-A /
   Ctrl-E, Ctrl-U), and Tab completes a command name.
+- At a terminal, history is kept across sessions in
+  `~/.sm-dev-history`, readable only by you.
+  - `SM_DEV_HISTORY` names another file, or set it empty for none.
+  - A `{{` block is one entry: Up brings back all its lines, and Enter
+    runs it again. Its lines can be edited, but Up and Down move
+    through the history, not between them.
+  - Sessions open at once each add their own commands, without
+    overwriting the others'. A session sees the others' only once it
+    is restarted, as in a shell.
 - Output streamed while you type is printed above the prompt, which is
   then redrawn with what you had typed so far.
 - `--` splits a typed line into several commands, as on the command

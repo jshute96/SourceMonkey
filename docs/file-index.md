@@ -192,6 +192,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/command-lines.ts` | Input lines into a run's commands: multi-line `{{ ... }}` blocks (`eval`, `set`, `type`, `cdp`), comments, sent lists |
 | `src/harness/command-list.ts` | Every sm-dev command in one list, in `--help`'s sections, with each command's arguments and options, and its renderer |
 | `src/harness/command-args.ts` | The one parser of every sm-dev command's words: quotes, flags, a leading tab, text, forms, blocks |
+| `src/harness/prompt-history.ts` | The `--interactive` prompt's history file (`~/.sm-dev-history`), shared by parallel sessions |
 | `src/harness/console-commands.ts` | A run's commands across its tabs, the page-dialog tracker, and the client's `--interactive` prompt |
 | `src/harness/input-file.ts` | Reads a file a command names for its contents (`eval`, `set`, `type` and `cdp`'s `--file`, `--values-file`) |
 | `src/harness/page-commands.ts` | The run commands that drive and read a tab's page, from `click` and `eval` to `snapshot`, `logs` and raw `cdp` calls |
@@ -339,6 +340,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/harness-command-args.test.mjs` | Unit tests for the command parser: quotes, flags with `=` or not, tabs, text, forms, refused arguments |
 | `tests/unit/harness-snapshot.test.mjs` | Unit tests for `snapshot`: which words are refs, which lines `--visible`, selectors and `--find` keep, the whole page's tree |
 | `tests/unit/harness-runs.test.mjs` | Unit tests for the run registry: a sent line's round trip, stale records, `stop`'s SIGTERM fallback |
+| `tests/unit/harness-prompt-history.test.mjs` | Unit tests for the prompt's history file: loading, appending, trimming |
 | `tests/unit/harness-command-lines.test.mjs` | Unit tests for `{{ ... }}` blocks, comments, and lists of commands |
 | `tests/unit/harness-page-output.test.mjs` | Unit tests for which page console lines and errors `sm-dev start` shows |
 | `tests/unit/harness-validate.test.mjs` | Runs `sm-dev validate` over the example suites: verdicts matching the browser's, and warnings |

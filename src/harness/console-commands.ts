@@ -25,8 +25,9 @@ import type { HarnessHost, MenuCommandRecord } from './host.js';
 import type { PageAttachment } from './inject.js';
 import { parseCommandArgs, splitWords, unquoteWhole, type ParsedArgs } from './command-args.js';
 import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, commandsHelp } from './command-list.js';
-import { readJsonFile } from './input-file.js';
+import { errorSentence, readJsonFile, writeProblem } from './input-file.js';
 import { PAGE_COMMANDS, runPageCommand } from './page-commands.js';
+import { appendHistory, HISTORY_SIZE, historyFile, loadHistory } from './prompt-history.js';
 import { defaultPageUrl, NO_DEFAULT_PAGE, preparedScriptMatches, preparedScriptName, preparedScriptPath, shownPath, withDefaultScheme, type PreparedScript } from './prepare.js';
 import { currentTab, dialogKind, dialogWaitingMessage, NO_TABS, pickTab, TAB_ARG, tabName } from './tab-refs.js';
 import { runLogLabel } from './run-log.js';
@@ -1942,9 +1943,10 @@ export interface PromptIO {
  * The `> ` prompt of `sm-dev --interactive`, reading the terminal: line
  * editing and history (readline's own keys: arrows, Ctrl-A/E, Ctrl-U
  * and so on), Tab completion of command names, and `... ` inside an
- * `{{` block (see command-lines.ts). Ctrl-C clears the typed
- * line; on an empty one it drops an open block, and otherwise it or
- * Ctrl-D leaves. Each command goes to `runLine` once typed, in order.
+ * `{{` block (see command-lines.ts). A block is one history entry, and
+ * history is kept across sessions (see prompt-history.ts). Ctrl-C
+ * clears the typed line; on an empty one it drops an open block, and
+ * otherwise it or Ctrl-D leaves. Each command goes to `runLine` once typed, in order.
  * Returns a function that closes the prompt.
  */
 export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?: { start?: () => void }) => Promise<unknown>): () => void {
@@ -1961,15 +1963,50 @@ export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?:
     void runLine('', { start: () => io.out(`[sm-dev] ERROR: ${message}`) });
   };
   const names = [...COMMAND_NAMES].sort();
+  // Kept across sessions (see prompt-history.ts). Newest first.
+  const file = terminal ? historyFile() : null;
+  const history = file ? loadHistory(file) : [];
   const lines = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
     terminal,
     prompt: PROMPT,
+    history,
+    // One over, so readline never drops an entry for the typed line
+    // it adds, which the 'history' handler below takes back out.
+    historySize: HISTORY_SIZE + 1,
     // Tab completes a command name, except inside a {{ block,
     // where the line is the block's (JavaScript or JSON).
     completer: (line: string) => (blocks.open ? [[], line] : completeFrom(names, line)),
   });
+  // readline adds each typed line to the history itself, but a {{
+  // block should be one entry of all its lines, so its additions are
+  // taken back out here and `remember` adds whole entries instead.
+  // This leans on how readline (checked on Node 22) adds a line:
+  // - It skips a blank line, and one equal to the newest entry, so the
+  //   newest entry changing (from `newest`, ours) means it added one.
+  // - It reads the line it hands to 'line' before this event, so
+  //   removing it here doesn't change what is run.
+  let newest: string | undefined = history[0];
+  lines.on('history', (entries: string[]) => {
+    if (entries.length > 0 && entries[0] !== newest) entries.shift();
+  });
+  let saveFailed = false;
+  const remember = (entry: string): void => {
+    if (!entry.trim() || entry === newest) return;
+    history.unshift(entry);
+    if (history.length > HISTORY_SIZE) history.pop();
+    newest = entry;
+    if (!file || saveFailed) return;
+    try {
+      appendHistory(file, entry);
+    } catch (err) {
+      saveFailed = true;
+      io.out(`[sm-dev] Command history isn't being saved: Could not write ${file}: ${writeProblem(err) ?? errorSentence(err)}`);
+    }
+  };
+  // The lines of the {{ block being typed, for its history entry.
+  let blockLines: string[] = [];
   // Typed commands not yet done. The `> ` prompt waits for them, as a
   // shell's does, so a command's output lands before the next prompt
   // rather than under it. Typing ahead still works, on a bare line.
@@ -1981,8 +2018,14 @@ export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?:
     lines.setPrompt(promptText());
     lines.prompt(preserveCursor);
   };
-  lines.on('line', (line) => {
+  const take = (line: string): void => {
+    const inBlock = blocks.open;
     const got = blocks.push(line);
+    if (inBlock || blocks.open) blockLines.push(line);
+    if (!blocks.open) {
+      remember(blockLines.length > 0 ? blockLines.join('\n') : line);
+      blockLines = [];
+    }
     if (got && 'error' in got) say(got.error);
     else if (got) {
       running++;
@@ -1992,6 +2035,10 @@ export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?:
         if (running === 0 && activePrompt === lines) showPrompt(true);
       });
     }
+  };
+  lines.on('line', (input) => {
+    // A block recalled from the history is one line holding its lines.
+    for (const line of input.split('\n')) take(line);
     showPrompt(false);
   });
   // Erases the prompt and stops drawing output around it. Before the
@@ -2011,6 +2058,9 @@ export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?:
   lines.on('SIGINT', () => {
     if (!lines.line && blocks.open) {
       blocks.drop();
+      // Kept, unfinished, to take up again.
+      remember(blockLines.join('\n'));
+      blockLines = [];
       // Before the output, which redraws the prompt.
       lines.setPrompt(promptText());
       io.out('[sm-dev] Dropped the {{ block');

@@ -18,7 +18,7 @@ import type { ParsedArgs } from './command-args.js';
 import { PART_LIMIT, PROBE_MAX } from './command-list.js';
 import type { ControlledTab } from './console-commands.js';
 import { ScriptThrew } from './inject.js';
-import { readInputFile } from './input-file.js';
+import { readInputFile, writeProblem } from './input-file.js';
 import { notSettledMessage, SETTLE_TIMEOUT_MS, settleTab } from './wait.js';
 import { savePageHtml } from './save-html.js';
 import { shownPath } from './prepare.js';
@@ -609,10 +609,8 @@ async function write(name: string, work: () => Promise<unknown>): Promise<void> 
   try {
     await work();
   } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code ?? /\b(ENOENT|EACCES|EISDIR)\b/.exec((err as Error).message)?.[1];
-    if (code === 'ENOENT') throw new Error(`Could not write ${name}: Its folder doesn't exist`);
-    if (code === 'EACCES') throw new Error(`Could not write ${name}: Permission was refused`);
-    if (code === 'EISDIR') throw new Error(`Could not write ${name}: It's a folder`);
+    const problem = writeProblem(err);
+    if (problem) throw new Error(`Could not write ${name}: ${problem}`);
     throw err;
   }
 }

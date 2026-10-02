@@ -35,6 +35,24 @@ function readProblem(err: NodeJS.ErrnoException): string {
   if (err.code === 'ENOENT') return 'The file does not exist';
   if (err.code === 'EISDIR') return 'It\'s a folder';
   if (err.code === 'EACCES') return 'Permission was refused';
-  const first = err.message.split('\n')[0].replace(/\.$/, '');
+  return errorSentence(err);
+}
+
+/**
+ * Why a file couldn't be written, or null for a failure with no
+ * common cause. Playwright's own writes (a screenshot) only name the
+ * code in their message, hence the match.
+ */
+export function writeProblem(err: unknown): string | null {
+  const code = (err as NodeJS.ErrnoException).code ?? /\b(ENOENT|EACCES|EISDIR)\b/.exec((err as Error).message)?.[1];
+  if (code === 'ENOENT') return 'Its folder doesn\'t exist';
+  if (code === 'EACCES') return 'Permission was refused';
+  if (code === 'EISDIR') return 'It\'s a folder';
+  return null;
+}
+
+/** An error's message as a sentence to follow a `: `. */
+export function errorSentence(err: unknown): string {
+  const first = (err as Error).message.split('\n')[0].replace(/\.$/, '');
   return first.charAt(0).toUpperCase() + first.slice(1);
 }
