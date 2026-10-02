@@ -27,7 +27,6 @@ Key spaces in `chrome.storage.local`:
 | `"firstRunComplete"`   | `boolean`           | Set once the SW has seeded the default collections; gates first-run seeding (see [First-run seeding](#first-run-seeding)). |
 | `"smLocalFileRoots"`   | `string[]`          | Canonical `file://` directory URLs searched for local stand-ins, in order (see [local-file-overrides.md](local-file-overrides.md)). |
 | `"scratch:<url>"`      | `string`            | The text of a scratch script, keyed by its `scratch:///…` location (see [Container collections](#container-collections)). |
-| `"sm:solo-mode"`       | `Record<string,boolean>` | Present only while solo mode is on: each collection's `enabled` as it was before, so turning solo mode off puts them back, even after a restart (see [Container collections](#container-collections)). |
 
 Key spaces in `chrome.storage.session` — everything here is dropped on
 browser shutdown, which is the point: each row describes the *current*

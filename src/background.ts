@@ -98,8 +98,10 @@ import {
   applyScriptReport,
   BADGE_PURPLE,
   BADGE_RED,
+  SM_DEV_MARKER_CYAN,
   clearScriptStale,
   computeBadge,
+  titleHead,
   formatRowLabel,
   getCurrentState,
   getDocState,
@@ -124,6 +126,7 @@ import {
 import type { ProbePolicy } from './version-probe.js';
 import {
   getDirectoryListingFetches,
+  isScratchUrl,
   resetDirectoryListingFetches,
 } from './directories.js';
 import {
@@ -133,6 +136,7 @@ import {
   resetCollectionRowReads,
   type RefreshBatch,
   getScript,
+  getCollection,
   getCollections,
   getCollectionWithScripts,
   isFirstRunComplete,
@@ -148,7 +152,6 @@ import {
   installScript,
   writeScratchScript,
   clearScratchScripts,
-  setSoloMode,
   moveScript,
   removeScript,
   reconcileScriptMembership,
@@ -175,10 +178,25 @@ import {
   type ScriptLogWriteRequest,
   logScriptEvent,
   _flushScriptLogQueueForTests,
+  onScriptLogEntry,
   type AppendLogInput,
   type LogLevel,
   type LogEntry,
 } from './script-log.js';
+import { effectiveDisplayName } from './collection-display.js';
+import {
+  activeClaim,
+  claimAllows,
+  claimsReady,
+  claimTab,
+  dropClaim,
+  emitSmDevEvent,
+  inheritClaim,
+  releaseRun,
+  renewRun,
+  setTabScriptsOff,
+  SKIP_REASON_SM_DEV,
+} from './sm-dev-link.js';
 import {
   applyBatchValues,
   DELETED_SENTINEL,
@@ -243,6 +261,7 @@ import {
 import {
   ACTION_MENU_MORE_LABEL,
   ACTION_MENU_RELOAD_LABEL,
+  ACTION_MENU_SM_DEV_LABEL,
   planActionMenu,
   type ActionMenuPlan,
   type ActionMenuScript,
@@ -277,11 +296,29 @@ interface SourceMonkeyApi {
   // "Extension backend"): install text into the Scratch collection,
   // registered before the promise settles; a rewrite of the same name
   // replaces it in place. `clearScratchScripts` drops them all
-  // with their GM values. `soloMode(true)` disables every other
-  // collection until `soloMode(false)` restores them.
+  // with their GM values.
   writeScratchScript: (args: { text: string; name?: string }) => Promise<WriteScratchScriptResult>;
   clearScratchScripts: () => Promise<number>;
-  soloMode: (on: boolean) => Promise<void>;
+  // sm-dev's tab claims and event stream (sm-dev-link.ts,
+  // docs/sm-dev-extension.md). `allow`: the script ids that may run in
+  // the run's tabs, null for none. `renewRun` extends the run's claims
+  // and its event subscription, and changes `allow` when given.
+  claimTab: (tabId: number, runId: string, allow: string[] | null, ttlMs: number) => Promise<void>;
+  renewRun: (runId: string, ttlMs: number, allow: string[] | null, tabs?: { tabId: number; scriptsOff?: boolean }[], subscribe?: boolean) => Promise<number>;
+  releaseRun: (runId: string) => Promise<void>;
+  setTabScriptsOff: (tabId: number, off: boolean) => Promise<void>;
+  // The scripts the toolbar badge lists for a tab's current document,
+  // with their status and collection: sm-dev's list of the extension's
+  // scripts on the page.
+  scriptsOnTab: (tabId: number) => Promise<{ id: string; name: string; status: string; collection: string }[]>;
+  // Which document a tab's top frame shows: its URL and
+  // `performance.timeOrigin`, which sm-dev reads from its own pages to
+  // tell which one a tab it heard of is. Null when the tab can't be
+  // read (not loaded yet, or a page extensions can't script).
+  tabDocument: (tabId: number) => Promise<{ url: string; timeOrigin: number } | null>;
+  // Whether the tab's toolbar icon has the sm-dev marker drawn on it.
+  // Chrome can't read an action's icon back, so tests ask this.
+  isSmDevMarked: (tabId: number) => boolean;
   moveScript: (scriptId: string, target: InstallTarget) => Promise<StoredScript | null>;
   // Remove one installed script row (a container copy), as the viewer's
   // trash can does.
@@ -387,6 +424,10 @@ interface SourceMonkeyApi {
   // rather than pausing — the batch fires 150ms after the last write and
   // its timing moves with machine load.
   getGmValues: (scriptId: string) => Promise<Record<string, unknown>>;
+  // Write GM values (wire form, as a page sends them) as another tab of
+  // the script would: stored, and pushed to every tab running it, so
+  // its value-change listeners fire. sm-dev's `set`.
+  writeGmValues: (scriptId: string, writes: { key: string; value?: unknown; deleted?: boolean }[]) => Promise<void>;
   // Dedup-aware log label (`foo.user.js`, `foo.user.js#2`). Which
   // script in a dupe group gets which `#N` is decided by UUID sort, so
   // a test that needs the label cannot predict it — it has to ask.
@@ -560,6 +601,10 @@ const api: SourceMonkeyApi = {
   },
   clearScriptLog,
   getGmValues: loadAllValues,
+  writeGmValues: async (scriptId, writes) => {
+    // No sender tab, so every tab running the script hears it.
+    await handleBatchWrite({ scriptId, writes }, {});
+  },
   // `scriptLogLabel`, not `getScriptLogLabel` — the awaited form, so a
   // test never races the id table and gets a UUID prefix back.
   getScriptLogLabel: scriptLogLabel,
@@ -640,9 +685,32 @@ const api: SourceMonkeyApi = {
     await syncNowForTests();
     return cleared.scriptIds.length;
   },
-  soloMode: async (on) => {
-    for (const id of await setSoloMode(on)) pendingCollectionIds.add(id);
-    await syncNowForTests();
+  claimTab,
+  renewRun,
+  releaseRun,
+  setTabScriptsOff,
+  scriptsOnTab: async (tabId) => {
+    const state = getCurrentState(await getTabRecord(tabId));
+    if (!state) return [];
+    const view = computeBadge(state, await rejectedScriptIds());
+    return Promise.all(view.rows.map(async (row) => {
+      const script = await getScript(row.id);
+      const collection = script ? await getCollection(script.collectionId) : undefined;
+      return { id: row.id, name: row.name, status: row.status, collection: collection ? effectiveDisplayName(collection) : '' };
+    }));
+  },
+  isSmDevMarked: (tabId) => markedTabs.has(tabId),
+  tabDocument: async (tabId) => {
+    try {
+      const [frame] = await chrome.scripting.executeScript({
+        target: { tabId, frameIds: [0] },
+        world: 'MAIN',
+        func: () => ({ url: location.href, timeOrigin: performance.timeOrigin }),
+      });
+      return (frame?.result as { url: string; timeOrigin: number } | undefined) ?? null;
+    } catch {
+      return null;
+    }
   },
   syncNow: () => syncNowForTests(),
   replayScriptLogsAtBoot,
@@ -739,6 +807,11 @@ const api: SourceMonkeyApi = {
 };
 
 (self as unknown as { SourceMonkey: SourceMonkeyApi }).SourceMonkey = api;
+
+// sm-dev runs hear each Log entry as it is written (sm-dev-link.ts).
+onScriptLogEntry((scriptId, entry, fromReport) => emitSmDevEvent({ kind: 'log', scriptId, entry, ...(fromReport ? { fromReport } : {}) }));
+// Loaded early, so the first check-pending after a restart waits less.
+void claimsReady();
 
 // Clicking the toolbar icon opens the collections page (the extension's
 // declared `options_ui.page`). We have no popup configured, so
@@ -1007,6 +1080,22 @@ async function clearTabState(tabId: number): Promise<void> {
 // match index changes, and we don't want to ping the filesystem for
 // every script on every other tab just because one of them got
 // updated).
+// What an sm-dev run's claim on the tab lets run, for its badge: the
+// allowed ids, null for none, undefined when the tab isn't claimed.
+async function smDevAllowFor(tabId: number): Promise<string[] | null | undefined> {
+  await claimsReady();
+  const claim = activeClaim(tabId);
+  if (!claim) return undefined;
+  return claim.scriptsOff ? null : claim.allow;
+}
+
+// The matches a tab's badge expects. A scratch script runs only where
+// a claim allows it (see handleCheckPending), so elsewhere it gets no
+// row at all.
+function expectedMatches(matches: MatchedScript[], allow: string[] | null | undefined): MatchedScript[] {
+  return matches.filter((m) => !m.scratch || (allow?.includes(m.id) ?? false));
+}
+
 async function updateTabMatches(
   tabId: number,
   url: string | undefined,
@@ -1103,6 +1192,14 @@ async function updateTabMatches(
   if (restored ? prev.scriptsSkipped : isSkippingScripts(tabId, docId)) {
     state.scriptsSkipped = true;
   }
+  // Likewise what an sm-dev run's claim on the tab let run.
+  if (restored) {
+    if (prev.smDevAllow !== undefined) state.smDevAllow = prev.smDevAllow;
+  } else {
+    const allow = await smDevAllowFor(tabId);
+    if (allow !== undefined) state.smDevAllow = allow;
+  }
+  state.matches = expectedMatches(state.matches, state.smDevAllow);
   // What the document's reports said about it, and whether its
   // never-started check already ran, belong to the document too.
   if (restored) {
@@ -1149,7 +1246,7 @@ async function renderBadge(tabId: number, state: TabMatchState | null): Promise<
   try {
     if (!state || (state.matches.length === 0 && Object.keys(state.actual).length === 0)) {
       await chrome.action.setBadgeText({ tabId, text: '' });
-      await chrome.action.setTitle({ tabId, title: 'SourceMonkey' });
+      await chrome.action.setTitle({ tabId, title: titleHead(state) });
     } else {
       const view = computeBadge(state, await rejectedScriptIds());
       // The reload flash is a paint-time override, not part of the
@@ -1166,12 +1263,74 @@ async function renderBadge(tabId: number, state: TabMatchState | null): Promise<
   } catch {
     /* tab probably closed; nothing useful to do */
   }
+  await markSmDevTab(tabId, state?.smDevAllow !== undefined);
   // Action context-menu items are a global property of the action, not
   // per-tab — so we only rebuild them when this tab is the one the user
   // is currently looking at. Out-of-band updates (background tabs
   // reporting sm:start, refresh fan-outs) skip the rebuild.
   if (tabId === activeTabId) {
     rebuildActionContextMenu(state);
+  }
+}
+
+// ---------- The sm-dev marker on the icon ----------
+//
+// A tab whose page loaded under an sm-dev run's claim (sm-dev-link.ts)
+// gets the toolbar icon with a cyan "T" in its top-left corner, clear of
+// the badge at the bottom right. Chrome gives a tab one badge, so the
+// marker is drawn into a per-tab icon instead.
+
+// Tabs given the marked icon, so only they are set back.
+const markedTabs = new Set<number>();
+// Tabs rendered since this worker started: a worker that restarted
+// doesn't know which tabs an earlier one marked, so each tab's first
+// render sets its icon back if it isn't marked.
+const markCheckedTabs = new Set<number>();
+let markedIcon: Promise<Record<string, ImageData>> | null = null;
+
+// The default icon with the marker, at the sizes the toolbar uses.
+function drawMarkedIcon(): Promise<Record<string, ImageData>> {
+  markedIcon ??= (async () => {
+    const out: Record<string, ImageData> = {};
+    for (const [size, file] of [[16, 'icons/icon-16.png'], [32, 'icons/icon-48.png']] as const) {
+      const blob = await (await fetch(chrome.runtime.getURL(file))).blob();
+      const bitmap = await createImageBitmap(blob);
+      const canvas = new OffscreenCanvas(size, size);
+      const g = canvas.getContext('2d')!;
+      g.drawImage(bitmap, 0, 0, size, size);
+      const box = Math.round(size * 0.5);
+      g.fillStyle = SM_DEV_MARKER_CYAN;
+      g.beginPath();
+      g.roundRect(0, 0, box, box, Math.max(1, size / 16));
+      g.fill();
+      g.fillStyle = '#ffffff';
+      g.font = `bold ${Math.round(box * 0.85)}px sans-serif`;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText('T', box / 2, box / 2 + size / 32);
+      out[String(size)] = g.getImageData(0, 0, size, size);
+    }
+    return out;
+  })();
+  markedIcon.catch(() => { markedIcon = null; });
+  return markedIcon;
+}
+
+async function markSmDevTab(tabId: number, on: boolean): Promise<void> {
+  const firstCheck = !markCheckedTabs.has(tabId);
+  markCheckedTabs.add(tabId);
+  try {
+    if (on) {
+      await chrome.action.setIcon({ tabId, imageData: await drawMarkedIcon() });
+      markedTabs.add(tabId);
+    } else if (markedTabs.has(tabId) || firstCheck) {
+      markedTabs.delete(tabId);
+      const icons = chrome.runtime.getManifest().action?.default_icon;
+      if (icons) await chrome.action.setIcon({ tabId, path: icons as Record<string, string> });
+    }
+  } catch (err) {
+    // The tab closed meanwhile, or the icon couldn't be drawn.
+    console.info('[SourceMonkey] could not set the sm-dev marker:', describeError(err));
   }
 }
 
@@ -1197,6 +1356,8 @@ const ACTION_MENU_MORE_ID = 'sm-more';
 // chrome.contextMenus.create id for the fixed "Reload page with no
 // userscripts" row. See `reloadTabWithoutScripts`.
 const ACTION_MENU_RELOAD_ID = 'sm-reload-without-scripts';
+// The "Page under sm-dev control" row: a note, not clickable.
+const ACTION_MENU_SM_DEV_ID = 'sm-dev-control';
 // Indent + glyph for nested menu-command rows. Chrome preserves the
 // leading whitespace in context-menu titles; four spaces + ↳ reads as
 // "indented under the row above" at typical zoom rather than as a
@@ -1287,7 +1448,7 @@ function buildActionMenuPlan(
       title: cmd.name,
     })),
   }));
-  const plan = planActionMenu(groups);
+  const plan = planActionMenu(groups, state?.smDevAllow !== undefined);
   // The skip marker is driven by main-frame commits, which only
   // `chrome.webNavigation` reports; without it the row would be a
   // plain reload. (The slot it reserved stays reserved — not worth a
@@ -1305,6 +1466,14 @@ async function doRebuildActionContextMenu(
   await new Promise<void>((resolve) => chrome.contextMenus.removeAll(() => resolve()));
   menuItemToCommand.clear();
   erroredScriptRows.clear();
+  if (plan.smDevControl) {
+    chrome.contextMenus.create({
+      id: ACTION_MENU_SM_DEV_ID,
+      title: ACTION_MENU_SM_DEV_LABEL,
+      contexts: ['action'],
+      enabled: false,
+    });
+  }
   // Top-level script groups. Each script row is followed by its
   // indented menu-command rows in registration order.
   for (const group of plan.top) {
@@ -1525,6 +1694,14 @@ function installNavigationListeners(): void {
     });
     return;
   }
+  // A tab a claimed tab opens gets its claim (sm-dev-link.ts). This
+  // comes before the new tab's first commit.
+  wn.onCreatedNavigationTarget.addListener((d) => {
+    void (async () => {
+      await inheritClaim(d.sourceTabId, d.tabId);
+      if (activeClaim(d.tabId)) emitSmDevEvent({ kind: 'tab-opened', sourceTabId: d.sourceTabId, tabId: d.tabId, url: d.url });
+    })();
+  });
   wn.onCommitted.addListener((d) => {
     if (d.frameId !== 0) return;
     // ONE batch for this commit, shared by both fan-outs it starts. The
@@ -1593,8 +1770,11 @@ async function logMissingScripts(tabId: number, documentId: string): Promise<voi
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  markedTabs.delete(tabId);
+  markCheckedTabs.delete(tabId);
   enqueueTabWork(tabId, () => clearTabState(tabId));
   clearSkipScripts(tabId);
+  dropClaim(tabId);
   // GM_registerMenuCommand: the page-side callbacks are gone with the
   // document, so the SW-side mapping is dead weight after close. Drop
   // before the menu rebuild below so a stale list can't reappear.
@@ -2202,6 +2382,25 @@ async function handleCheckPending(
 ): Promise<CheckPendingReply> {
   const tabId = sender.tab?.id;
   if (tabId == null) return { action: 'run' };
+  // A tab an sm-dev run controls runs only the scripts its claim
+  // allows (sm-dev-link.ts). First, and for every frame, like the skip
+  // reload below. Waits for the claims to load, so a worker that just
+  // started can't let a script through.
+  await claimsReady();
+  const claim = activeClaim(tabId);
+  // Only for the extension's own scripts: a harness run's MAIN-world
+  // script asks through this bridge too, and must hear `run`, as it
+  // always did for an id the extension doesn't know.
+  if (claim && !claimAllows(claim, payload.id) && await getScript(payload.id)) {
+    return { action: 'skip', reason: SKIP_REASON_SM_DEV };
+  }
+  // A scratch script is sm-dev's: it runs only in the tabs of the run
+  // that pushed it, which its claim allows. Nowhere else, a run's
+  // tabs or not, and not after the run ends.
+  if (!claim) {
+    const script = await getScript(payload.id);
+    if (script && isScratchUrl(script.fileUrl)) return { action: 'skip', reason: SKIP_REASON_SM_DEV };
+  }
   // "Reload page with no userscripts" — decided per tab, ahead of the
   // fast path, and for every frame: a subframe's documentId is its
   // own, so the tab-level marker is the only thing that covers it.
@@ -2733,7 +2932,15 @@ async function handleTabOpen(
   if (originatorTabId == null) {
     return { ok: false, error: NO_ORIGINATOR_TAB };
   }
-  return openGmTab(payload, originatorTabId);
+  // From a tab an sm-dev run controls, the new tab is the run's too.
+  await claimsReady();
+  const claimed = activeClaim(originatorTabId) !== null;
+  const result = await openGmTab(payload, originatorTabId, claimed ? (tabId) => inheritClaim(originatorTabId, tabId) : undefined);
+  // Once its URL is loading, so the run can tell its page by that.
+  if (claimed && result.ok && result.tabId != null) {
+    emitSmDevEvent({ kind: 'tab-opened', sourceTabId: originatorTabId, tabId: result.tabId, url: payload.url });
+  }
+  return result;
 }
 
 // GM_openInTab close-event routing happens inside the main
@@ -3204,6 +3411,7 @@ async function handleBatchWrite(
   // page-side cache (it issued the writes); broadcasting back would
   // be redundant and could feed back through value-change listeners.
   const senderTabId = sender.tab?.id;
+  emitSmDevEvent({ kind: 'values', scriptId: payload.scriptId, tabId: senderTabId, writes: payload.writes });
   await broadcastValueUpdate(payload.scriptId, payload.writes, senderTabId);
   return { ok: true };
 }
@@ -3716,6 +3924,12 @@ function installScriptMessageListener(): void {
         ) {
           const changed = registerMenuCommand(tabId, menuDocId, payload.scriptId, payload.commandId, payload.name);
           if (changed && tabId === activeTabId) void refreshActiveTabMenu();
+          if (changed) {
+            emitSmDevEvent({
+              kind: 'menu', op: 'add', tabId, documentId: menuDocId, topFrame: sender.frameId === 0,
+              scriptId: payload.scriptId, commandId: payload.commandId, name: payload.name,
+            });
+          }
         }
       }, sendResponse);
     }
@@ -3728,6 +3942,12 @@ function installScriptMessageListener(): void {
           // state; skip the rebuild so a noisy unregister loop doesn't
           // churn chrome.contextMenus.
           if (changed && tabId === activeTabId) void refreshActiveTabMenu();
+          if (changed) {
+            emitSmDevEvent({
+              kind: 'menu', op: 'remove', tabId, documentId: menuDocId, topFrame: sender.frameId === 0,
+              scriptId: payload.scriptId, commandId: payload.commandId,
+            });
+          }
         }
       }, sendResponse);
     }
@@ -3902,6 +4122,11 @@ async function recordScriptReport(
 ): Promise<void> {
   const id = payload.id;
   if (!id) return;
+  // The page-world bridge relays every script's reports, including
+  // ones the extension never registered: an sm-dev harness run's, in
+  // the same browser. Those aren't ours to show (they'd read as
+  // UNEXPECTED) or to log.
+  if (payload.__viaBridge && !(await getScript(id))) return;
   const name = String(payload.name ?? id);
   // sender.url is the document URL where the wrapper sent from; prefer
   // it over payload.url because Chrome sets it.
@@ -3914,6 +4139,19 @@ async function recordScriptReport(
 
   const tabPart = ` tab=${tabId}`;
   const label = getScriptLogLabel(id);
+  emitSmDevEvent({
+    kind: 'report',
+    type,
+    tabId,
+    documentId: senderDocId,
+    topFrame: sender.frameId === 0,
+    scriptId: id,
+    name,
+    url: senderUrl,
+    ...(payload.message !== undefined ? { message: payload.message } : {}),
+    ...(payload.stack !== undefined ? { stack: payload.stack } : {}),
+    ...(payload.reason !== undefined ? { reason: payload.reason } : {}),
+  });
   // GM_* cross-tab broadcast openers table: register the
   // (scriptId, tabId) pair on EITHER sm:start or sm:swapped. The
   // swap path is a wrapper that just took control of a document
@@ -3924,6 +4162,8 @@ async function recordScriptReport(
   if (type === SM_START_MSG) {
     console.log(`[SourceMonkey] start ${label}${tabPart} ${senderUrl}`);
     logScriptEvent(id, {
+      // The run hears this as a report, so not again as a Log entry.
+      fromReport: true,
       level: 'info',
       source: 'script-wrapper',
       tabId,
@@ -3937,6 +4177,8 @@ async function recordScriptReport(
       `(loadedAt ${payload.fromLoadedAt ?? '?'} -> ${payload.loadedAt ?? '?'})`,
     );
     logScriptEvent(id, {
+      // The run hears this as a report, so not again as a Log entry.
+      fromReport: true,
       level: 'info',
       source: 'script-wrapper',
       tabId,
@@ -3951,7 +4193,11 @@ async function recordScriptReport(
     console.log(
       `[SourceMonkey] abandoned ${label}${tabPart} ${senderUrl} (reason=${payload.reason ?? '?'})`,
     );
-    logScriptEvent(id, {
+    // Not in the script's Log for a tab sm-dev controls: it happens on
+    // every load there, to scripts the person didn't ask anything of.
+    if (payload.reason !== SKIP_REASON_SM_DEV) logScriptEvent(id, {
+      // The run hears this as a report, so not again as a Log entry.
+      fromReport: true,
       // A skip the user asked for is information, not a warning.
       level: payload.reason === SKIP_REASON_RELOAD_WITHOUT_SCRIPTS ? 'info' : 'warning',
       source: 'script-wrapper',
@@ -3979,6 +4225,8 @@ async function recordScriptReport(
     // didn't give us a stack — older browsers / errors thrown from
     // primitive values won't carry one.
     logScriptEvent(id, {
+      // The run hears this as a report, so not again as a Log entry.
+      fromReport: true,
       level: 'error',
       source: 'script-wrapper',
       tabId,
@@ -4031,13 +4279,15 @@ async function recordScriptReport(
     // matches / preserve actual.
     if (!senderUrl || !INJECTABLE_SCHEME.test(senderUrl)) return;
     await ensureLoaded();
-    const matches = findMatchesForUrl(senderUrl);
+    const allow = await smDevAllowFor(tabId);
+    const matches = expectedMatches(findMatchesForUrl(senderUrl), allow);
     state = {
       documentId: senderDocId,
       url: senderUrl,
       matches,
       actual: {},
       loadMatchIds: matches.map((m) => m.id),
+      ...(allow !== undefined ? { smDevAllow: allow } : {}),
     };
   }
   const report: ActualStatus = type === SM_ERROR_MSG

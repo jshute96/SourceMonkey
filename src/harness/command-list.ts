@@ -229,7 +229,7 @@ export const HELP_SECTIONS: HelpSection[] = [
   {
     title: 'Scripts',
     commands: [
-      { usage: 'scripts', syntax: TEXT, about: 'List the loaded scripts.' },
+      { usage: 'scripts', syntax: TEXT, about: 'List the loaded scripts, and with --extension, the SourceMonkey-managed scripts on the current tab.' },
       { usage: 'script <script>', about: 'Select the active script by ID. With T2.3, pick tab T2 too.' },
       { usage: 'load <script>...', syntax: WORDS, about: 'Load more scripts from disk: files, directories, or globs. See Files and file patterns.' },
       { usage: 'update [script]', syntax: TEXT, about: 'Re-read one (or all) scripts from disk, and reload all affected tabs.' },
@@ -476,7 +476,10 @@ export const HELP_SECTIONS: HelpSection[] = [
             usage: 'set <key> <json>',
             syntax: { args: 'text', before: 1, block: true, unquote: 'single' },
             about: ['Store a value for the selected script.', 'set <key> {{ starts a multi-line block of JSON, ended by }}.'],
-            options: [{ term: '--file <path>', about: 'Read the JSON from a file, in place of <json>.' }],
+            options: [
+              { term: '--file <path>', about: 'Read the JSON from a file, in place of <json>.' },
+              { term: '--force', about: 'Needed, after the key, to change the real stored data of a SourceMonkey-managed script (E1, ...) outside a --temp-browser.' },
+            ],
           },
         ],
       },
@@ -493,12 +496,11 @@ export const HELP_SECTIONS: HelpSection[] = [
     title: 'Controlling the SourceMonkey extension',
     text: ['Instead of injecting the scripts itself, a run can push them into the SourceMonkey extension in the browser it connects to.', ''],
     commands: [
-      { usage: 'clear --extension', syntax: NONE, about: 'Remove all scripts in the extension\'s Scratch collection, and turn solo mode off.' },
+      { usage: 'clear --extension', syntax: NONE, about: 'Remove all scripts in the extension\'s Scratch collection.' },
     ],
     optionsTitle: 'Options for start',
     options: [
       { term: '--extension', about: 'Push the scripts into the extension\'s Scratch collection instead of injecting them. A --temp-browser installs the extension itself.', commands: ['start'] },
-      { term: '--solo', about: 'With --extension: Disable all other collections, and run only the started scripts, until this run ends.', commands: ['start'] },
     ],
   },
   {
@@ -573,6 +575,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         items: [
           { term: '2', about: 'Script ID in the scripts list.' },
           { term: 'T2.3', about: 'Script 3, on tab T2.' },
+          { term: 'E1', about: 'A SourceMonkey-managed script. (With --extension)' },
           { term: '<name>', about: ['Its name, file name or path, or a unique substring.', '(Only in commands that expect script names.)'] },
           { term: '<file>', about: 'A script file. (Ending with .user.js)' },
           { term: '<url>', about: 'A script file loaded from a URL. (Ending with .user.js)' },

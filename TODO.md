@@ -848,6 +848,40 @@ See [docs/harness-design.md](docs/harness-design.md).
     stop signal is dropped, but sending SIGCONT still runs readline's
     resume path.
 
+## sm-dev extension runs: follow-ups
+
+- After SourceMonkey's worker restarts mid-run, the events from while it
+  was stopped are lost (the run says so). Catch up by reading each
+  pushed script's Log once after the restart. See
+  [docs/sm-dev-extension.md](docs/sm-dev-extension.md#when-the-sw-restarts).
+- A tab a run tab opens is set up after its scripts ran, so their
+  console lines from that first load don't reach the run (the reports
+  do).
+- A harness run's page-world script's `GM_*` requests also reach
+  SourceMonkey's bridge in a browser with SourceMonkey, whose worker
+  answers `BRIDGE_DENIED` for an id it doesn't know, racing the
+  harness's answer. Have the worker leave ids it doesn't know
+  unanswered, as the harness now does for SourceMonkey's.
+- A harness run doesn't hear which tabs its tabs open, so it can't
+  restore their claims after an extension reload (an extension run can).
+- When a claimed tab's wrapper times out asking the worker (a worker
+  slow to start) and runs an extension script anyway, the run doesn't
+  say so. The extension's `started` event could tell it: a script the
+  run didn't push starting in its tab.
+
+## Scratch scripts shared between sm-dev runs
+
+- Two extension runs in one browser share the Scratch collection, and a
+  push replaces the script of the same file name, so runs pushing the
+  same file overwrite each other's copy.
+  - Options: refuse the second push while another live run has that
+    name, or key scratch scripts by run as well (losing the stored
+    values a re-push keeps).
+- `clear --extension` removes every run's scratch scripts, a live
+  run's included. It should leave those alone, or say which runs use
+  them.
+- See [docs/sm-dev-extension.md](docs/sm-dev-extension.md#several-runs-in-one-browser).
+
 ## Tabs that predate the first script install
 
 - In a fresh profile (headless Chromium 153), a tab opened before

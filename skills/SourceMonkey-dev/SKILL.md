@@ -104,6 +104,9 @@ or use --temp-browser`.
   [Testing in the real extension](#testing-in-the-real-extension)).
 - If the person already has a browser on the port, use it: their tabs
   are left alone, and only the run's own tabs are touched.
+  - If it has SourceMonkey installed, the run keeps SourceMonkey-managed
+    scripts out of the run's tabs, so only the scripts you started run
+    there.
 
 The headless `--temp-browser` is often blocked by large sites (Reddit,
 Google, Amazon, Vimeo, IMDb, parts of YouTube).
@@ -555,10 +558,10 @@ Use it when the question is about Chrome itself:
   UI.
 
 ```sh
-$R start sites/x/y.user.js https://x.com/ --extension --solo --detach
+$R start sites/x/y.user.js https://x.com/ --extension --detach
 # ... same commands ...
 $R stop
-$R clear --extension     # drop scratch scripts; restores other collections
+$R clear --extension     # drop scratch scripts
 ```
 
 - Needs SourceMonkey in the browser, with "Allow User Scripts" on.
@@ -578,7 +581,17 @@ $R clear --extension     # drop scratch scripts; restores other collections
     [Setting it up](https://github.com/jshute96/SourceMonkey/blob/main/docs/harness-guide.md#setting-it-up).
 - The script is pushed as a scratch script; relative `@require`s are
   refused, and remote ones are fetched live, not from local copies.
-- Output is the script's Log tab entries plus page console lines.
+- The run commands work as in a harness run (`status`, `get`/`set`,
+  `menu`, `snapshot`, `click`, `eval`, `reload`, ...). Output is the
+  script's starts, errors, menus and value writes, its Log tab entries,
+  and page console lines.
+- The run's tabs run only its own scripts: SourceMonkey-managed
+  scripts are kept out of them. The run's scripts run only in the
+  run's tabs, not in tabs you open yourself.
+  - `scripts` lists those others on the tab as E1, E2, ...;
+    `values E1` reads one's stored values, and `scripts E1` picks it
+    for `get`/`set` (`set key --force <json>` outside a
+    `--temp-browser`, since that's the person's real data).
 - **Before building on a new request path, send one real request
   from it here.**
   - A request that works from the page can still be refused from the

@@ -38,7 +38,12 @@ export interface SmApi {
     replaced: boolean;
   }>;
   clearScratchScripts(): Promise<number>;
-  soloMode(on: boolean): Promise<void>;
+  // sm-dev's tab claims (src/sm-dev-link.ts).
+  claimTab(tabId: number, runId: string, allow: string[] | null, ttlMs: number): Promise<void>;
+  isSmDevMarked(tabId: number): Promise<boolean>;
+  renewRun(runId: string, ttlMs: number, allow: string[] | null, tabs?: { tabId: number; scriptsOff?: boolean }[]): Promise<number>;
+  releaseRun(runId: string): Promise<void>;
+  setTabScriptsOff(tabId: number, off: boolean): Promise<void>;
   // Move an installed script from one scripts collection to another.
   // Resolves to the moved row, or null when the destination already
   // has it. Not unwrapped — it returns a script row, not a collection.
@@ -208,6 +213,7 @@ export interface ActionMenuPlanLike {
   top: ActionMenuScriptLike[];
   more: ActionMenuScriptLike[];
   reloadWithoutScripts: boolean;
+  smDevControl: boolean;
 }
 
 export interface ActionMenuScriptLike {

@@ -9,8 +9,9 @@
 //     browser command uses.
 //   - `list`, `stop`, and the commands sent to a run, reach running
 //     runs through runs.ts.
-//   - `--extension` and `clear` go through extension-backend.ts, which
-//     drives a real SourceMonkey rather than the harness.
+//   - `clear --extension` goes through extension-backend.ts, which
+//     reaches the real SourceMonkey in the browser. `start --extension`
+//     runs go through run.ts like the rest (see extension-link.ts).
 //
 // Each command loads only the modules it needs. `validate` and `match`
 // never import Playwright, so they run in a repo that has not
@@ -69,7 +70,6 @@ interface Opts {
   /** Which flag gave `values`, to name in messages. */
   valuesFlag?: string;
   extension: boolean;
-  solo: boolean;
   pageErrors: boolean;
   /** `--devtools` / `--nodevtools`; unset leaves it to `SM_DEV_DEVTOOLS`. */
   devtools?: boolean;
@@ -103,7 +103,7 @@ const OWN_VALUE_FLAGS = new Set([...OWN_COMMANDS].flatMap((name) => Object.entri
 function parseArgs(argv: string[]): Opts {
   const opts: Opts = {
     command: null, args: [],
-    all: false, noTab: false, watch: false, extension: false, solo: false, pageErrors: false, detach: false, newRun: false, noWait: false, fromSaved: false, offline: false,
+    all: false, noTab: false, watch: false, extension: false, pageErrors: false, detach: false, newRun: false, noWait: false, fromSaved: false, offline: false,
   };
   // The command's name: the first word that is no flag, nor a flag's value.
   let at = 0;
@@ -166,7 +166,6 @@ function parseArgs(argv: string[]): Opts {
         break;
       }
       case '--extension': opts.extension = true; break;
-      case '--solo': opts.solo = true; break;
       case '--page-errors': opts.pageErrors = true; break;
       case '--devtools': opts.devtools = true; break;
       case '--nodevtools': opts.devtools = false; break;
@@ -313,24 +312,23 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
   };
   if (opts.noTab) clash('--notab', [[opts.all, '--all'], [urls.length > 0, 'a URL']]);
   // With no scripts, just a browser to drive: the flags that act on
-  // scripts would do nothing. (`--extension` alone is a browser whose
-  // SourceMonkey runs its own collections; `--solo` would silence them.)
+  // scripts would do nothing.
   if (scripts.length === 0) {
     const used = ([
       [opts.all, '--all'], [Boolean(opts.values), opts.valuesFlag ?? '--values'],
-      [opts.watch, '--watch'], [opts.solo, '--solo'],
+      [opts.watch, '--watch'],
     ] as [boolean, string][]).filter(([on]) => on).map(([, name]) => name);
     if (used.length > 0) throw new UsageError(`The start command was given no scripts, so it can't take ${used.join(' or ')}`);
   }
   // Asked for by name, it must be able to run; on by default from the
   // environment, it just sits out the runs it can't serve.
-  // The extension keeps its own storage, which a run can't seed.
+  // The extension keeps its own storage, which a run doesn't seed.
   if (opts.valuesFlag) clash(opts.valuesFlag, [[opts.extension, '--extension']]);
-  if (opts.devtools === true) clash('--devtools', [[lineTempBrowser, '--temp-browser'], [opts.extension, '--extension']]);
+  if (opts.devtools === true) clash('--devtools', [[lineTempBrowser, '--temp-browser']]);
   if (lineTempBrowser && opts.cdp !== undefined) throw new UsageError('The --temp-browser flag can\'t be used with --cdp');
   if (lineOpenBrowser && opts.cdp !== undefined) throw new UsageError('The start command connects to the browser --open-browser starts, so give --cdp once, first: sm-dev --open-browser --cdp ... start ...');
   if (!opts.detach && !detachedLog && opts.newRun) throw new UsageError('The --new flag only applies with --detach');
-  const devtools = devtoolsWanted(opts.devtools) && !lineTempBrowser && !opts.extension;
+  const devtools = devtoolsWanted(opts.devtools) && !lineTempBrowser;
   const files = await Promise.all(scripts.map((s) => scriptFile(s)));
   if (opts.fromSaved) clash('--from-saved', [[opts.all, '--all'], [opts.noTab, '--notab']]);
   // Read before the run starts, so a file that can't be opened is said now.
@@ -412,7 +410,6 @@ async function runHere(
       watch: opts.watch,
       values: opts.values,
       extension: opts.extension,
-      solo: opts.solo,
       pageErrors: opts.pageErrors,
       devtools,
       collectionRoot: lineRoots.collectionRoot,
@@ -580,10 +577,6 @@ async function clearCommand(opts: Opts): Promise<number> {
   try {
     const backend = await ExtensionBackend.connect(session.context);
     const count = await backend.clear();
-    // A run killed before it could turn solo mode off leaves the user's
-    // collections disabled. Put them back here, since clearing the
-    // scratch scripts is the other half of the same cleanup.
-    await backend.solo(false);
     out(`[sm-dev] Removed ${count} scratch script(s)`);
     return 0;
   } catch (err) {

@@ -13,7 +13,7 @@
 
 import type { InjectionWorld } from './injector.js';
 import type { MatchedScript } from './match-index.js';
-import type { TabMatchState } from './tab-status.js';
+import { skippedOnDocument, type TabMatchState } from './tab-status.js';
 
 // The fix, shared with sm-dev's warning for the same pages.
 export const INJECT_INTO_CONTENT_FIX =
@@ -34,7 +34,7 @@ export function findMissingScripts(
   if (state.scriptsSkipped) return [];
   const atLoad = state.loadMatchIds ? new Set(state.loadMatchIds) : null;
   return state.matches.filter((m) =>
-    (!atLoad || atLoad.has(m.id)) && !state.actual[m.id] && !rejected.has(m.id));
+    (!atLoad || atLoad.has(m.id)) && !state.actual[m.id] && !rejected.has(m.id) && !skippedOnDocument(state, m.id));
 }
 
 // Whether the document is sandboxed, going by the wrappers' reports.

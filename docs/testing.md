@@ -246,8 +246,7 @@ tests:
 - Scratch scripts: `writeScratchScript({ text, name? })` installs text
   into the Scratch collection and syncs before it resolves (a rewrite
   of the same name replaces in place); `clearScratchScripts()` drops them
-  all; `soloMode(on)` disables every other collection until turned
-  off. The development harness's extension backend drives these; see
+  all. The development harness's extension backend drives these; see
   [harness-design.md](harness-design.md).
 - GM values: `getGmValues(id)` returns every **persisted** value for a
   script, deliberately excluding the SW's in-flight overlay.
