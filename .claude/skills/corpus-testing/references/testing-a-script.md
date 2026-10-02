@@ -24,7 +24,8 @@ with its script IDs and a run name prefix.
    - Use `--temp-browser` (headless, muted) by default.
    - Many big sites block headless: Google (`/sorry`), Reddit, Amazon,
      IMDb (403), Codeforces and other Cloudflare sites, DuckDuckGo (empty
-     results), YouTube live chat and captions. Use the shared visible
+     results), Metacritic (its `GM_xmlhttpRequest` too, so use
+     `--extension`), YouTube live chat and captions. Use the shared visible
      browser on port 9233 for those.
    - Headless also has overlay scrollbars, no clipboard access, and
      background tabs that stay visible and focused.

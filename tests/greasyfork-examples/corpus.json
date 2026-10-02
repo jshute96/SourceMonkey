@@ -1432,7 +1432,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2025.02.08"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "2025.02.08"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2025.02.08",
+        "text": "On a Dynasty-Scans chapter (`dynasty-scans.com/chapters/my_heart_is_not_a_stone_ch14`) the script read the page's `pages` global through `unsafeWindow`, found 16 pages, and replaced the page with its viewer (`#MangaOnlineViewer`, toolbar, zoom, Download button): 16 of 16 images loaded.\n\n- Script: on the chapter list page (`/chapters/added`, which its `@include` also matches) it throws reading `unsafeWindow.pages.length`. Harmless."
+      }
+    ]
   },
   "1523": {
     "listing": {
@@ -1508,7 +1520,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2026.3"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "2026.3"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2026.3",
+        "text": "Opened `thepiratebay.org/search.php?q=ubuntu` (headless):\n- The script redirected to `/browse.php`, replaced the page with its Bootstrap dark GUI (\"The Pirate Bay Cleaner\" title, navbar, category menu) and listed Recent Torrents from apibay.org, and stored its default settings.\n- Typing \"ubuntu\" in its search box and pressing Enter listed matching torrents (first: \"Ubuntu 22.04 LTS\"). No errors in the logs."
+      }
+    ]
   },
   "1671": {
     "listing": {
@@ -1934,7 +1958,23 @@
       ],
       "date": "2026-10-01",
       "version": "7.1.5"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-02",
+      "version": "7.1.5"
+    },
+    "tags": [
+      "gm-reassign"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "7.1.5",
+        "text": "On a Mediaset Infinity video page (`/video/drittoerovescio/puntata-dell1-ottobre_F314705401000501`, headless):\n- SourceMonkey: the script threw at once, \"Assignment to constant variable\", at line 30, its Greasemonkey 4 shim `GM_xmlhttpRequest = GM.xmlHttpRequest;`. SourceMonkey declares granted `GM_*` names as `const`. Not checked in Tampermonkey or Violentmonkey.\n- Script: a copy with that line removed ran, found the GUID and fetched the theplatform.eu SMIL lists through `GM_xmlhttpRequest`. It never showed links: `displayURLs` waits for `#player-container`, which the current site doesn't have (40s, no `#video-links`)."
+      }
+    ]
   },
   "2130": {
     "listing": {
@@ -6701,7 +6741,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.6.1"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "0.6.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "0.6.1",
+        "text": "On a watch page (`watch?v=jNQXAC9IVRw`) a green \"Download\" link is added inside `#owner`, pointing at `https://www.addyoutube.com/watch?v=jNQXAC9IVRw`. After an in-app navigation to a related video, the link's href followed the new video id. The third-party download site itself wasn't checked."
+      }
+    ]
   },
   "8438": {
     "listing": {
@@ -6959,7 +7011,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.3.35"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "2.3.35"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2.3.35",
+        "text": "- On https://abpvn.com/script-setting.html the settings container gets the `installed` class and all 5 checkboxes read their stored values; clicking `remove_redirect` stored `false`.\n- On https://anonyviet.com/ (with `remove_redirect` back on) it logged \"Remove Redirect for 2 links\", and the two `tieptucdidentrangmoi/?url=` links became direct (x.com, youtube.com). The title gets \" - Fixed by ABPVN.COM\".\n- Menu commands register. Other per-site bypasses (short links, MediaFire) not tried."
+      }
+    ]
   },
   "9106": {
     "listing": {
@@ -7080,7 +7144,19 @@
       ],
       "date": "2026-10-01",
       "version": "2.15.3"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "2.15.3"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2.15.3",
+        "text": "On Bootstrap's embed docs (`getbootstrap.com/docs/4.0/utilities/embed/`, headless), the YouTube iframe was replaced by a placeholder with the 1280px `maxresdefault.jpg` thumbnail (a `--noscript` tab kept the iframe). Clicking it inserted an autoplaying `youtube.com/embed/zpOULjyy-n8?...autoplay=1` iframe, and the player reported playing (thumbnail hidden, iframe opacity 1).\n- Script: the title link stayed blank (\" \").\n- Script: after playback starts, `show()` throws `Cannot create property 'hidden' on number '0'` because the title was already removed. It is harmless."
+      }
+    ]
   },
   "9285": {
     "listing": {
@@ -7257,7 +7333,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "3.0.5"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-02",
+      "version": "3.0.5"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "3.0.5",
+        "text": "sm-dev (headless), logged out of both sites, on cache page `www.geocaching.com/geocache/GC12`. Most of what it adds needs a Project-GC account (its API answered `/user` with 401) and coordinates that geocaching.com shows only when signed in.\n- All six `@require`s loaded and the i18next translations came from project-gc.com through `GM.xmlHttpRequest`.\n- It replaced the GC code panel with its copy-friendly box (`#coordInfoUrl` input).\n- Script: it then threw \"Cannot read properties of undefined (reading 'replace')\" at line 844, reading map-link coordinates the logged-out page doesn't have, so the later additions never ran."
+      }
+    ]
   },
   "9812": {
     "listing": {
@@ -9534,7 +9623,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "112"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "112"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "112",
+        "text": "Tested in the real extension (`--extension`) in the shared visible browser, since metacritic.com answers headless Chrome and sm-dev's Node requests with a Cloudflare challenge (403).\n\n- On IMDb `title/tt1375666` (Inception), after accepting its privacy notice, the box `#mcdiv123` showed metacritic.com/movie/inception: Metascore 74 (42 critic reviews) and user score 8.8.\n- Script: on a Bandcamp album (Carrie & Lowell) it shows nothing: Metacritic's search API returns 0 results for music (`mcoTypeId=4`), while movies (`mcoTypeId=2`) still work."
+      }
+    ]
   },
   "13880": {
     "listing": {
@@ -9596,7 +9697,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "24.0"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "24.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "24.0",
+        "text": "On `en.wikipedia.org/wiki/Gangnam_Style`, pressing Escape checked its 22 YouTube watch links (GM_xmlhttpRequest, all 200): all 22 turned green (`data-link-validated-as=\"online\"`), with 22 marks in its scroll sidebar."
+      }
+    ]
   },
   "13882": {
     "listing": {
@@ -9621,7 +9734,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "10.20.5"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "10.20.5"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "10.20.5",
+        "text": "- Visiting `www.nopremium.pl` stored its hoster list (66 hosters, `nopremium.pl_status`, youtube included).\n- Then on `en.wikipedia.org/wiki/Gangnam_Style` 22 of the 27 YouTube watch links were highlighted green. Hovering one opened the 180px Multi-OCH Helper frame (`cvzi.github.io/Userscripts/index.html?link=...`), which needs the separate main script and a premium account to do more."
+      }
+    ]
   },
   "13884": {
     "listing": {
@@ -11050,7 +11175,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2024.07.10"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "2024.07.10"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2024.07.10",
+        "text": "- video.repubblica.it now redirects to `www.repubblica.it/video/`, outside the `@include`s, so that site's handler can't run.\n- On archive.org (`/details/his_girl_friday`, headless) the script replaced `#theatre-ia` with its own player: a format menu (Very Low / Standard Definition MP4) and Play, Save, Fullsize buttons. Clicking Play started a native `<video>` on `archive.org/download/his_girl_friday/his_girl_friday.mp4` (readyState 4, 6s in after 3s).\n- `/details/night_of_the_living_dead` is an \"item no longer available\" page now, which the script leaves alone."
+      }
+    ]
   },
   "16734": {
     "listing": {
@@ -11800,7 +11937,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.38"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "1.38"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.38",
+        "text": "On the ynet.co.il home page (headless), the runner `@require` loaded and logged its 11 removal loops:\n- About 8s after load: 0 iframes and 0 elements matching `[class*=facebook]`, `[class*=GeneralBanner]`, `[id^=\"ads.\"]`, `.OUTBRAIN`, against 32 iframes and 30 such elements in a `--noscript` tab.\n- The page's news content still rendered."
+      }
+    ]
   },
   "18671": {
     "listing": {
@@ -12167,7 +12316,24 @@
       ],
       "date": "2026-10-01",
       "version": "20240625.1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "sourcemonkey",
+      "date": "2026-10-02",
+      "version": "20240625.1"
+    },
+    "tags": [
+      "gm-frozen",
+      "needs-cloneinto"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "20240625.1",
+        "text": "On https://fishki.net/ it stops near the top with `cloneInto is not defined`, so none of its fixes run and no menu registers.\n\n- Script: it calls Firefox's `cloneInto` and `exportFunction` without checking. Violentmonkey provides identity versions of both in Chrome (`cloneInto: ke || (e=>e)` in its injected-web.js); SourceMonkey has neither.\n- SourceMonkey: next it adds a `GM.cookie` stub to `GM` (`GM.cookie` is unsupported here), which throws `Cannot add property cookie, object is not extensible`: SourceMonkey's `GM` is frozen. Neither Tampermonkey's nor Violentmonkey's injected code freezes it.\n- A copy with `cloneInto`/`exportFunction` shims and the stub skipped ran to the end on fishki.net: menu \"Настройки\" registered, no errors."
+      }
+    ]
   },
   "20021": {
     "listing": {
@@ -12648,7 +12814,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2026.07.22.1"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "2026.07.22.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2026.07.22.1",
+        "text": "On a Bandcamp album page (`sufjanstevens.bandcamp.com/album/carrie-lowell`), the menu command \"Search big size cover art\" swapped the 350px cover (`a2231815864_2.jpg`) for `a2231815864_0.jpg` at 2000x2000, with a red border, and upgraded the fan avatars too. It asks \"20 images requested. Continue?\" after 20 images; dismissed."
+      }
+    ]
   },
   "20798": {
     "listing": {
@@ -13236,7 +13414,19 @@
       ],
       "date": "2026-10-01",
       "version": "1.9.41"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "1.9.41"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.9.41",
+        "text": "- On https://releases.ubuntu.com/24.04/ it marks 11 of the .iso/.torrent links with its icon; hovering one opens its row of 13 cloud-download icons (put.io, Xunlei, Seedr, BaiduPan, ...).\n- The no-`@connect` warning only matters for custom \"p:\" (POST) site rules; the default icons are plain links."
+      }
+    ]
   },
   "22667": {
     "listing": {
@@ -14036,7 +14226,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.23.12"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "1.23.12"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.23.12",
+        "text": "Tested in the shared browser (headless Baidu search goes to a captcha). On `www.baidu.com/s?wd=贷款` the script registered its menu commands, rewrote result title links from `www.baidu.com/link?url=...` to the real URLs (baike.baidu.com, cmbchina.com), and removed the one baijiahao result a `--noscript` tab showed (10 results each).\n\n- No ads were served to either tab for this query, so ad removal itself wasn't exercised."
+      }
+    ]
   },
   "24204": {
     "listing": {
@@ -14383,7 +14585,28 @@
       ],
       "date": "2026-10-01",
       "version": "2.8.3.19"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "sourcemonkey",
+      "date": "2026-10-02",
+      "version": "2.8.3.19"
+    },
+    "tags": [
+      "connect-undeclared"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2.8.3.19",
+        "text": "On the zh.wikisource.org 紅樓夢 index (headless, 120 chapter links), the \"Download\" menu command fetched each chapter with `GM_xmlhttpRequest`, and SourceMonkey blocked all of them: `blocked by this script's @connect rules: @connect not declared`. No book was assembled.\n- A copy with `@connect zh.wikisource.org` added loaded all 121 requests (200) and finished.\n- SourceMonkey's strict `@connect` is deliberate and documented; Tampermonkey would ask the user and Violentmonkey would allow the requests."
+      },
+      {
+        "date": "2026-10-02",
+        "version": "2.8.3.19",
+        "text": "Blame changed to `sourcemonkey` when merging the batch: the missing `@connect` is the only cause (a copy with `@connect zh.wikisource.org` loaded all 121 chapters), and Tampermonkey asks the user while Violentmonkey allows the requests. This matches the skill's blame rule and 373252."
+      }
+    ]
   },
   "25169": {
     "listing": {
@@ -14434,7 +14657,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.3.45"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "2.3.45"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2.3.45",
+        "text": "On www.baidu.com (headless) the script fetched Bing's image of the day over `GM_xmlhttpRequest` (both 200), set it as the body background (`global.bing.com/th?id=OHR.ChattoogaRiver...`), stored it as base64 in `bingImgObj`, and added \"Bing图\" (linking the image, with its copyright as title) and \"2026-10-02 星期五\" calendar links to the top bar.\n\n- The calendar hover popup wasn't checked. Headless: its hidden `/s?wd=日历` iframe went to Baidu's cross-origin captcha, so the script's `iframe.onload` threw on a null `contentDocument`. In the shared browser the tab stayed hidden (other runs' tabs in front), and the iframe never finished loading (readyState `interactive`), so `onload` hadn't run."
+      }
+    ]
   },
   "25253": {
     "listing": {
@@ -14485,7 +14720,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.02"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "1.02"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.02",
+        "text": "On `google.com/search?q=test&hl=en` (shared browser) the script reloaded once to `...&hl=en&safe=off` and stopped there, with no loop."
+      }
+    ]
   },
   "25329": {
     "listing": {
@@ -17005,7 +17252,23 @@
       ],
       "date": "2026-10-01",
       "version": "3.8.7"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "sourcemonkey",
+      "date": "2026-10-02",
+      "version": "3.8.7"
+    },
+    "tags": [
+      "gm-frozen"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "3.8.7",
+        "text": "On `https://www.pixiv.net/tags/landscape` the script throws `this.getValue is not a function` (in the `@require`d `GM_config.js`, line 475) and never sets up: no `[illustId]` controls are tagged, and hovering a thumbnail shows nothing. Same in the real extension (`--extension`).\n- SourceMonkey: the script grants `GM.xmlHttpRequest` but no storage API, so GM_config polyfills storage by assigning `GM.getValue = ...` / `GM.setValue = ...`. SourceMonkey's `GM` is `Object.freeze`d (docs/GM-APIs.md), so the assignment is silently dropped and GM_config's `getValue` is undefined. Violentmonkey's `GM` is a plain writable object (`createNullObj()` in `gm-api-wrapper.js`), so the polyfill works there.\n- A copy that also grants `GM.getValue` and `GM.setValue` works: \"Preview enable succeed!\", 37 thumbnails tagged `pp-control`, and hovering one opened the `.pp-main` preview (405x719) with the `i.pximg.net` `..._p0_master1200.jpg` image."
+      }
+    ]
   },
   "30839": {
     "listing": {
@@ -17779,7 +18042,19 @@
       ],
       "date": "2026-10-01",
       "version": "3.1.0.250911"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "3.1.0.250911"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "3.1.0.250911",
+        "text": "On Baidu (shared browser), searching 新京报 (a blacklisted keyword) left 0 `.c-container` results; a `--noscript` tab had 11, all containing it. A neutral search (`python`) kept its 15 results.\n- Its `@grant note ...` lines are ignored, so it runs in the isolated world with its own `@require` jQuery."
+      }
+    ]
   },
   "32104": {
     "listing": {
@@ -18569,7 +18844,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.9.5"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "0.9.5"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "0.9.5",
+        "text": "Tested signed out, on `https://www.pixiv.net/artworks/150144442` and `/users/163523`. The script alerts on every page that it wants a login (its own check), then sets up.\n- On the artwork page: the UID, PID and author search boxes were added beside the site search, the favorites filter select appeared, and the artist link `UID: 163523` was added. Typing `163523` into the UID box and pressing Enter opened `/users/163523` in a new tab.\n- The menu command 控制面板 (control panel) opened its panel with the feature checkboxes.\n- Not judged: as a guest the artwork image isn't wrapped in an original-size link, and the user page has no `following` link, so the original-image swap, size label, download buttons and the artist background / UID row had nothing to attach to."
+      }
+    ]
   },
   "34163": {
     "listing": {
@@ -18692,7 +18979,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "13.2.x GA"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "13.2.x GA"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "13.2.x GA",
+        "text": "On a watch page (`watch?v=0e3GPea1Tyg`, which has SponsorBlock segments):\n- The floating button appears at the right; clicking it shows the menu with Download 1 to 6. Download 1 opened a tab at `https://y2mate.stream/convert/?videoId=0e3GPea1Tyg` (that site didn't load; third-party, not judged).\n- SponsorBlock: seeking to 862s, inside the sponsor segment 861.1-869.8, jumped to 869.86 within 2s.\n- The ad-hiding style elements were added. No ad played in the headless profile, so ad skipping wasn't seen. No script errors in `logs`."
+      }
+    ]
   },
   "34637": {
     "listing": {
@@ -19032,7 +19331,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.3.12"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "1.3.12"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.3.12",
+        "text": "On the Bing home page (headless) the script added a \"Download Today Bing Picture\" button. Hovering it set its `href` to the day's UHD image (`th?id=OHR.ChattoogaRiver_EN-US5042787453_UHD.jpg`, 200, image/jpeg, 3.7 MB) and `download` to `ChattoogaRiver_Chattooga River in the Appalachian Mountains, North Carolina_20261002.jpg`. Not clicked, to avoid a download."
+      }
+    ]
   },
   "35231": {
     "listing": {
@@ -19632,7 +19943,19 @@
       ],
       "date": "2026-10-01",
       "version": "27"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "27"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "27",
+        "text": "sm-dev (headless), logged out, on an album page (`open.spotify.com/album/0ETFjACtuP2ADo6LFhL6HN`, Abbey Road). Right-clicking the first track row added a \"Copy track info\" entry to Spotify's context menu; clicking it showed the toast \"Copied: The Beatles - Come Together - Remastered 2009\".\n- sm-dev: the clipboard write itself was refused (\"Write permission denied\"), as headless has no clipboard access, so the clipboard contents weren't checked."
+      }
+    ]
   },
   "36842": {
     "listing": {
@@ -23162,7 +23485,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.17"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "1.17"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.17",
+        "text": "On a live channel (twitch.tv/hjune, headless) the script found the player and the ad notice class and added the \"Ads Options\" button; it opens the options, and \"Hide/Show player during ads\" toggles and stores `disableDisplay`.\n- No real ad played in the fresh profile. Adding a child to the ad notice container (as Twitch does for an ad) logged \"Ad #1 detected. Player muted.\" with the video muted and `visibility: hidden`; removing it logged \"finished\" and restored the video (unmuted, visible)."
+      }
+    ]
   },
   "371261": {
     "listing": {
@@ -24656,7 +24991,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "3.1.9"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-02",
+      "version": "3.1.9"
+    },
+    "tags": [
+      "idle-after-load"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "3.1.9",
+        "text": "sm-dev (headless), logged out, on a live channel (twitch.tv/hjune).\n- Works: jQuery `@require` loads, the Enhance button is added to the top nav and opens its settings panel (14 toggles), its CSS rules (25) are added, and the chat observer attaches (`.enhanceAppended`).\n- Fails: \"Always source quality\" (on by default), plus hide-tags and hide-subscribe-text, are set up in `$(window).on(\"load\")` (line 181). The script runs at the default document-idle, after `load` has fired, so that handler never runs: `document.visibilityState` and `document.hidden` stay unpatched.\n- Firing a synthetic `load` from the page made the script lock `visibilityState` to `visible` and `hidden` to false.\n- Tampermonkey and Violentmonkey also run document-idle at `readyState=complete` (cross-manager `headers-run-at` test), so this is the script's bug, as for Pinterest Plus."
+      }
+    ]
   },
   "375568": {
     "listing": {
@@ -24744,7 +25095,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "10.3.2"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "10.3.2"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "10.3.2",
+        "text": "On `en.wikipedia.org/wiki/Earth` (headless), touch swipes sent over CDP (`Input.dispatchTouchEvent`) ran the script's gestures:\n- Up then down (↑↓, \"回到底部\") scrolled from 0 to the bottom (scrollY 45878 of 45878).\n- Down then up (↓↑, \"回到顶部\") scrolled back to 0.\n- No errors in the logs."
+      }
+    ]
   },
   "375817": {
     "listing": {
@@ -25011,7 +25374,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.8"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "0.8"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "0.8",
+        "text": "In the shared visible browser (IMDb blocks headless), on `imdb.com/title/tt1375666/` (Inception) three fixed buttons appeared at the left: TorrentGalaxy (`?search=tt1375666`), 1337x (`/search/Inception+2010/1/`) and RARBG Dump (`/search/Inception+2010`).\n\n- Script: torrentgalaxy.to no longer resolves; the other two sites answer. Links not followed."
+      }
+    ]
   },
   "376874": {
     "listing": {
@@ -25209,7 +25584,20 @@
       ],
       "date": "2026-10-01",
       "version": "23.6.21"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-02",
+      "version": "23.6.21"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "23.6.21",
+        "text": "sm-dev (headless), logged out, on an album page (`open.spotify.com/album/0ETFjACtuP2ADo6LFhL6HN`). Lyrics are found from the song playing in the now-playing bar, and logged out Spotify plays nothing, so the main feature couldn't be judged.\n- The `@require`s loaded, its three menu commands registered, and its cleanup hid the \"Install App\" link (`display: none`).\n- \"Show lyrics\" from the menu logged \"The song title element is not found.\" and showed no panel. The genius.com match (`/songs/new`, submitting lyrics) needs a Genius account too."
+      }
+    ]
   },
   "377457": {
     "listing": {
@@ -26011,7 +26399,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.0"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-02",
+      "version": "2.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2.0",
+        "text": "- Script: the content-warning page it targets, `https://www.blogger.com/post-interstitial.g?blogspotURL=...`, now redirects a signed-out browser to `accounts.google.com` sign-in (tried with https://googleblog.blogspot.com/), so the click-through part can't be reached without an account.\n- On https://blog.blogspot.com/ the script started and added its style (hides `iframe#injected-iframe[src*='blogin.g']`, forces `visibility: inherit`); no blog with a warning was found to see it hide one."
+      }
+    ]
   },
   "381769": {
     "listing": {
@@ -26185,7 +26586,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.6"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "sourcemonkey",
+      "date": "2026-10-02",
+      "version": "0.6"
+    },
+    "tags": [
+      "needs-page-globals"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "0.6",
+        "text": "On a Steam Workshop item (`/sharedfiles/filedetails/?id=1619685021`, Move It, Cities: Skylines; headless):\n- SourceMonkey: the script threw \"$ is not defined\" at line 40 and added no button. It reads the page's `$` and `publishedfileid` without `unsafeWindow`, and runs in the isolated world because of its grants.\n- A copy with `@inject-into page` worked: \"Single item page\", the floating button appeared, and its `GM_xmlhttpRequest` to `catalogue.smods.ru` loaded (200). The button then read \"Not Available (REQUEST)\".\n- Script: the SkyMods catalogue now finds nothing: that search returns \"0 SEARCH RESULTS\", and its category pages list no items. So the download half can't work in any manager."
+      }
+    ]
   },
   "382039": {
     "listing": {
@@ -26210,7 +26627,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.0.2"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "sourcemonkey",
+      "date": "2026-10-02",
+      "version": "1.0.2"
+    },
+    "tags": [
+      "needs-iframes"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.0.2",
+        "text": "On https://www.google.com/recaptcha/api2/demo (real extension, shared browser) it is skipped on the page, and the same-origin `api2/bframe` challenge iframe gets no `*{transition:none!important}` style.\n\n- SourceMonkey: its `@match` covers only the `recaptcha/api2/bframe` iframe, and SourceMonkey injects into the top frame only (docs/injection.md, \"No frame control\"). Tampermonkey and Violentmonkey run scripts in iframes."
+      }
+    ]
   },
   "382153": {
     "listing": {
@@ -26392,7 +26825,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.76"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "2.76"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2.76",
+        "text": "On a CNBC article (`/2026/10/01/nike-nke-q1-2027-earnings.html`), headless, no ad blocker so no blocker modal appeared:\n- The red \"doing its jobs\" banner showed, turned to \"Success\", and was removed after about 7s.\n- 10s after load the page had 0 `<script>` and 0 `<iframe>` elements, against 201 and 19 in a `--noscript` tab; the article body (4063 characters) was intact in both.\n- www.cnn.com answers headless with \"Unknown Error\", so CNN wasn't checked."
+      }
+    ]
   },
   "382612": {
     "listing": {
@@ -26493,7 +26938,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.2.8"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "1.2.8"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.2.8",
+        "text": "On a live channel (twitch.tv/hjune, headless): the page sees `document.visibilityState` locked to `visible` (non-writable own property), `document.hasFocus()` returns true, and a dispatched `visibilitychange` never reached a page listener. localStorage has `video-quality` `{\"default\":\"1440p60\"}` and `quality-bitrate` 9840720; the stream played at 1920x1080. Real tab-switch downscaling can't be shown headless (tabs never hide)."
+      }
+    ]
   },
   "383153": {
     "listing": {
@@ -27026,7 +27483,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.50.9"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-02",
+      "version": "1.50.9"
+    },
+    "tags": [
+      "trusted-types"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.50.9",
+        "text": "On a watch page (`watch?v=0e3GPea1Tyg`), 6s after load:\n- Script: no `@grant`, so it runs in the page world, where `createButton` sets `style.innerHTML` and YouTube's Trusted Types block it (\"This document requires 'TrustedHTML' assignment\"). The `try` swallows it, so the DOWNLOAD button never appears in `#owner`. Every manager runs it in the page world.\n- The 100ms ad-removal timer runs (started on DOMContentLoaded). No ad played in the headless profile, so ad skipping couldn't be judged; the video played normally."
+      }
+    ]
   },
   "386967": {
     "listing": {
@@ -29315,7 +29788,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.1.5"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "0.1.5"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "0.1.5",
+        "text": "On `https://soundcloud.com/forss/flickermood` the script caught a `client_id` from the page's own XHRs, resolved the track and added a \"Download\" button to the track toolbar (logs `got clientId`, `result {...}`, `attached`).\n- Clicking it (after closing the sign-in modal and cookie banner that covered it) fetched the progressive stream and piped it into StreamSaver: its service worker registered and the page got the download iframe `maple3142.github.io/StreamSaver.js/soundcloud.com/809302/Flickermood.mp3`."
+      }
+    ]
   },
   "394853": {
     "listing": {
@@ -29945,7 +30430,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.68"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "1.68"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.68",
+        "text": "- On https://www.theguardian.com/international, a full-screen fixed div added after load with \"We detected an adblock. Please disable your ad blocker\" was hidden (`display: none`) within 1s, and `body` overflow `hidden` went back to `visible`.\n- A simulated modal: no live anti-adblock wall shows without an ad blocker."
+      }
+    ]
   },
   "397256": {
     "listing": {
@@ -31105,7 +31602,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.6.0"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-02",
+      "version": "1.6.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.6.0",
+        "text": "On `google.com/search?q=mountain+lake&udm=2` (shared browser), no thumbnail got a dimensions label: 0 `.sid-dims` for 100 results, and still 0 after scrolling loaded 200.\n- Script: the first pass runs from `handleUrlChange()` before `const createSVG` is initialized, so every result throws `ReferenceError: Cannot access 'createSVG' before initialization` (a JavaScript TDZ error, the same in every manager).\n- Script: out of date against the current results page. The `W_jd` data walk still finds the image URL, but results no longer contain an `h3` to attach the label to, and results loaded by scrolling go into a second mosaic wrapper outside `#rso`, which neither the selector nor the observer covers."
+      }
+    ]
   },
   "401473": {
     "listing": {
@@ -31589,7 +32099,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.4.0.6"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "other",
+      "date": "2026-10-02",
+      "version": "1.4.0.6"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.4.0.6",
+        "text": "Not tested: the script only acts on FileCrypt `/Container/` and `/Link/` pages, and getting one means either creating a container (submitting content to the site) or finding someone else's, which are nearly all for pirated downloads. On the home page (sm-dev, headless) it started cleanly and did nothing, as expected.\n\n- Unverified, from reading: its local fallback (`getFinalLink`) reads the final URL in a `GM.xmlHttpRequest` `onreadystatechange` handler, which SourceMonkey never fires, and the file hosts it would reach are not in its `@connect` (only `dcrypt.it` and `self`)."
+      }
+    ]
   },
   "403294": {
     "listing": {
@@ -32240,7 +32763,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "3.1.0.35946"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "3.1.0.35946"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "3.1.0.35946",
+        "text": "On a watch page the header is unstuck by default (`#masthead-container` position `absolute`; `fixed` in a `--noscript` tab). Its settings page at `/fix-settings` renders with all its tabs; unticking \"Unstick header bar\" and saving showed \"Settings saved\", stored `unfix_header: false` and went back to the video, where the header was `fixed` again. No errors in `logs`."
+      }
+    ]
   },
   "405634": {
     "listing": {
@@ -33340,7 +33875,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.9.1"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "1.9.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.9.1",
+        "text": "sm-dev (headless) on `www.emuparadise.me/Sony_Playstation_2_ISOs/Tekken_5_(USA)/150843`.\n- The script hooked the page's \"Download Tekken 5 (USA)\" link and added its \"Direct download enabled\" hint.\n- With downloads denied and `mprd.se` blocked over CDP (so nothing was saved): clicking the link fetched the `-download` page, parsed its `get-download.php?gid=...&token=...` URL, and fetched it, which redirects to the `dl1.mprd.se/.../Tekken 5 (USA).7z` file.\n- With that fetch blocked, its hidden-iframe fallback loaded the same URL, and Chrome reported the download starting (`Tekken 5 (USA).7z`) while the page stayed put."
+      }
+    ]
   },
   "407977": {
     "listing": {
@@ -34271,7 +34818,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.3.25"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "1.3.25"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.3.25",
+        "text": "On `bing.com/search?q=hello+world` (headless) the script added its left-hand search panel (`#wish_search_wrapper`) with the default engine list. Clicking its Baidu entry went to `baidu.com/s?wd=hello%20world` (Baidu then showed its captcha to headless), so the current query was carried over."
+      }
+    ]
   },
   "411399": {
     "listing": {
@@ -34348,7 +34907,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.7.2"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "0.7.2"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "0.7.2",
+        "text": "On github.com/sharkdp/bat/tree/master/src a visible Download button (`#xiu-download-btn`, 100x32 at the top right) links to `downgit.evecalm.com/#/home?url=...bat/tree/master/src`. Clicking the `assets` folder icon in the file list opened a downgit tab for that sub-folder.\n\n- Script: at the repo root no button is added: none of the anchors it looks for (`#branch-picker-repos-header-ref-selector`, the tree overflow menu) exist there now. GitHub's own Code menu covers that case.\n- Script: it rewrites the button's class on every DOM change, so the page never settles in sm-dev."
+      }
+    ]
   },
   "412108": {
     "listing": {
@@ -34373,7 +34944,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.1.0-GitHub"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-02",
+      "version": "1.1.0-GitHub"
+    },
+    "tags": [
+      "service-dead"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.1.0-GitHub",
+        "text": "On `https://soundcloud.com/forss/flickermood` the script added its \"Download\" button to the toolbar, but clicking it only cycles \"Downloading .\" forever.\n- Script: the `fetch` to its download service `https://api.modlabs.cc/scr/forss/flickermood` fails with `net::ERR_SSL_PROTOCOL_ERROR`; `curl` gets an SSL \"wrong version number\" from that host too. The service is gone, so it fails in any manager."
+      }
+    ]
   },
   "412178": {
     "listing": {
@@ -34493,7 +35080,23 @@
       ],
       "date": "2026-10-01",
       "version": "2.6.39"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-02",
+      "version": "2.6.39"
+    },
+    "tags": [
+      "gm-on-window"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2.6.39",
+        "text": "Tested on github.com/sharkdp/bat (repo home, README blob, releases).\n\n- Works: the README page gets 7 Raw mirror buttons (`.XIU2-RF`, e.g. `wget.la/https://raw.githubusercontent.com/...`); the file list gets 30 hover download links (`a.fileDownLink`).\n- Script: Release mirrors throw on every release list: `_this.parentElement.nextElementSibling` is null at line 253, since GitHub now wraps each asset link in a `<span>` with no sibling. 0 `.XIU2-RS` added.\n- Script: Clone/SSH/ZIP mirrors in the Code dropdown never appear: the code gates them on `#repo-title-component`, which GitHub no longer has. The dropdown opened with the https clone input and the ZIP link, and 0 `.XIU2-GC` were added.\n- SourceMonkey: the Feedback menu command throws `window.GM_openInTab is not a function` (it reads the GM function off `window`). Minor; not the main failure."
+      }
+    ]
   },
   "412348": {
     "listing": {
@@ -34563,7 +35166,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "24.07.2"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "24.07.2"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "24.07.2",
+        "text": "Tested in sm-dev (headless) on Douban's page for 小王子 (book.douban.com/subject/1084336).\n\n- The script's six `GM_xmlhttpRequest`s to api.youdianzishu.com all loaded (200); three found the book.\n- Three rows with its vendor icons were added to the \"当前版本有售\" list: 微信读书 32.90元, 京东读书 3.92元, 多看阅读 12.00元.\n- Script: some of its metadata regexes no longer match (the rating came out empty) and log caught errors; that only affects the metadata it uploads.\n- The WeRead side (Douban rating on weread.qq.com) was not tried."
+      }
+    ]
   },
   "412498": {
     "listing": {
@@ -35550,7 +36165,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2025.12.31.1"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "2025.12.31.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2025.12.31.1",
+        "text": "sm-dev (headless) on a YouTube watch page and a Twitch channel. Launching mpv itself needs the local mpv-handler protocol handler, so the check is the link the button builds.\n- YouTube `/watch?v=jNQXAC9IVRw`: the play button shows bottom left with `href` `mpv-handler-debug://play/<base64url of the page URL>`; it fired its one-time `GM_notification` and stored `mpvHandlerVersion`.\n- Hovering the button reveals the settings button, which opens the GM_config panel (iframe with 5 fields). Setting quality to 1080p and saving stored it and changed the link to `.../?quality=1080p`. When YouTube autoplayed the next video, the link followed the new URL.\n- Twitch: on `twitch.tv/hjune` the button shows with that channel's URL; on `/directory` it is hidden, as the script's block list says."
+      }
+    ]
   },
   "416411": {
     "listing": {
@@ -36045,7 +36672,19 @@
       ],
       "date": "2026-10-01",
       "version": "2.3.31"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "2.3.31"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2.3.31",
+        "text": "Tested in the shared browser, signed out (headless Zhihu returns error 40362). On www.zhihu.com/question/19550225 the script registered its menu, no login modal showed (a `--noscript` tab of the same page, opened while testing 463539, had one), and it added the question's creation and edit times, the question author block, full answer timestamps (2), and collapsed 2 of the 3 loaded answers by default.\n\n- Script: its collapse observer throws `Cannot read properties of null (reading 'hasAttribute')` (line 204) when a mutation's target has no parent; harmless here.\n- Not checked: blocking a user, the one `GM_xmlhttpRequest` use, needs a login. The script has no `@connect`, so under SourceMonkey's strict `@connect` those requests to www.zhihu.com would be refused."
+      }
+    ]
   },
   "419215": {
     "listing": {
@@ -39240,7 +39879,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.3.2"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "1.3.2"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.3.2",
+        "text": "On www.baidu.com (headless) the AI tool row (`.chat-input-tool`) and `#bottom_layer` were `display: none`, and the search box text was centered (a `--noscript` tab: `start`). Its promise, removing the AI parts, holds.\n\n- Script: its poem placeholder (from `v1.jinrishici.com`) showed on a reload (\"春蚕到死丝方尽，蜡炬成灰泪始干。\"). On the first, slow load the poem arrived (1351 ms) before the search box was parsed (domInteractive 3365 ms), so it was dropped and the box's placeholder stayed hidden.\n- Script: Enter in the empty box searched the site's own hot word, not the poem: Baidu's handler ran first. The search hit Baidu's captcha in headless.\n- Script: its MutationObserver throws on every added element: `'.chat-input-tool, .panel-list_8jHmm, ' is not a valid selector` (trailing comma). The CSS does the hiding."
+      }
+    ]
   },
   "430634": {
     "listing": {
@@ -39641,7 +40292,23 @@
       ],
       "date": "2026-10-01",
       "version": "2.9"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-02",
+      "version": "2.9"
+    },
+    "tags": [
+      "connect-undeclared"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2.9",
+        "text": "Tested in sm-dev in the shared visible browser (TikTok's headless pages listed no videos), signed out, on a video page (`/@vyrmamusic/video/7684463830289861891`).\n\n- The script marked both videos `processed`, and hovering the player (a synthetic `mouseover`) added its 🎞️ button.\n- Script: out of date. The player's `src` is a `blob:` URL, so a click turned the button orange (⏳) and loaded the video page in a hidden iframe, then polls it for a `video source` element. That page also plays from `blob:` URLs with no `<source>`, so after 30 s the button was still ⏳ and nothing was requested.\n- Script: it has no `@connect`, so the download request it would make next would be blocked in SourceMonkey too (validation warns).\n- Slideshow (photo) posts were not tried: none were on the explore page."
+      }
+    ]
   },
   "431970": {
     "listing": {
@@ -39902,7 +40569,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "5.1.0"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "5.1.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "5.1.0",
+        "text": "Opened `bing.com/search?q=hello&form=QBLH&sp=-1&pq=hello&sc=8-5&cvid=ABC123&fbclid=xyz` (headless). The address became `search?q=hello&rdr=1&rdrig=...`, with every tracking parameter gone. A `--noscript` tab kept them all (`...&fbclid=xyz&rdr=1&rdrig=...`)."
+      }
+    ]
   },
   "432388": {
     "listing": {
@@ -40824,7 +41503,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.13.0"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "0.13.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "0.13.0",
+        "text": "Tested in sm-dev (headless) on a PLOS ONE article (`10.1371/journal.pone.0185809`).\n\n- The floating box appeared with RIS, RIS+, PDF (linked to PLOS's own PDF) and DOI buttons.\n- Clicking RIS (with the download prevented) set it to a `blob:` RIS file named after the article, holding the DOI, title, journal and authors from dx.doi.org (200).\n- Script: four of its Sci-Hub mirrors (`sci-hub.box`, `.ren`, `.shop`, `.mksa.top`) are missing from its `@connect` list, so SourceMonkey blocked those pings. Tampermonkey would ask the user instead. Other mirrors answered, so nothing visible was lost."
+      }
+    ]
   },
   "434325": {
     "listing": {
@@ -41313,7 +42004,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.6.2"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-02",
+      "version": "1.6.2"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.6.2",
+        "text": "The redirects themselves work at document-start, but their targets are dead:\n\n- StackOverflow, IMDb (`title/tt1375666`) and Medium went to `farside.link/anonymousoverflow/...`, `/libremdb/...` and `/scribe/...`, which now only says \"Farside has been shut down.\"\n- `en.wikipedia.org/wiki/Cat` went to `wikiless.tiekoetter.com/wiki/Cat?lang=en`, which showed an error page (\"Oh noes!\")."
+      }
+    ]
   },
   "436428": {
     "listing": {
@@ -43388,7 +44092,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.52"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "1.52"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.52",
+        "text": "On a watch page (`watch?v=0e3GPea1Tyg`) the script creates its Trusted Types policy and adds its settings button to the masthead (`#end`); hovering it opens the panel (473px tall).\n- In the panel, the speed slider set to 2x changed the video's `playbackRate` to 2 and the display to \"2x\". Choosing 480p in the resolution select switched the player to `large`. Both were saved in localStorage; after a reload the video came back at 2x.\n- Script: its menu timer reads `ytInitialPlayerResponse` before the page defines it and throws `ytInitialPlayerResponse is not defined` a few times per load; it carries on once the page defines it."
+      }
+    ]
   },
   "442329": {
     "listing": {
@@ -43596,7 +44312,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.116"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-02",
+      "version": "0.116"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "0.116",
+        "text": "Not testable now: the Pahe link chain is broken before any page the script handles.\n\n- pahe.plus is now a bare URL-shortener landing page; Pahe's posts (pahe.ink) link through `oii.la/...` instead.\n- `oii.la` answers with a 301 to `clksz.com/...`, which no `@match` covers, and `clksz.com` fails TLS (`ERR_SSL_PROTOCOL_ERROR` in both the headless and the shared browser; curl gets no response).\n- On pahe.plus itself the script started cleanly in sm-dev (headless) and had nothing to do."
+      }
+    ]
   },
   "443342": {
     "listing": {
@@ -45011,7 +45740,19 @@
       ],
       "date": "2026-10-01",
       "version": "4.2.9"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "4.2.9"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "4.2.9",
+        "text": "On the home page the script's flags are set in `yt.config_.EXPERIMENT_FLAGS` (`IS_TABLET` true, `web_cinematic_theater_mode` false) and its style is added: the one `ytd-rich-section-renderer` shelf is hidden. In a `--noscript` tab those flags are unset and the shelf is shown."
+      }
+    ]
   },
   "447864": {
     "listing": {
@@ -45090,7 +45831,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.5"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "1.5"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.5",
+        "text": "Tested in sm-dev (headless) on FileCR's Audacity page, clicking \"Direct Download\", beside a `--noscript` tab.\n\n- With the script, the download page's `#download-btn` became `done` with `href` set to the real file (`github.com/audacity/.../audacity-win-4.0.1-x86_64.msi`).\n- In the `--noscript` tab the same button ended `loading done` with `href=\"#\"`, and the page offered \"Add to Chrome\" for FileCR's extension.\n- Some files (7-Zip) get a direct link without the script."
+      }
+    ]
   },
   "448374": {
     "listing": {
@@ -45872,7 +46625,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "3.2.7"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "needs-interaction",
+      "date": "2026-10-02",
+      "version": "3.2.7"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "3.2.7",
+        "text": "- ScienceDirect article pages (`/science/article/pii/S0140673620301835`) answer headless with \"There was a problem providing the content you requested\", and the visible shared browser with an \"Are you a robot?\" captcha that didn't clear on its own after 10s; captchas weren't solved.\n- On both block pages the script started and threw at line 167 (`anchor doi` link missing), as expected without an article.\n- The other targets weren't tried: pdf.sciencedirectassets.com needs a PDF link from an article, and the sci-hub.ee path downloads a paper."
+      }
+    ]
   },
   "452099": {
     "listing": {
@@ -46012,7 +46778,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.8.7"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "2.8.7"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2.8.7",
+        "text": "- On https://news.sina.com.cn/ it fetched both rule lists (18491 rules, 10562 applied for the page), stored them, and registered its menu.\n- Against a `--noscript` tab: 297 vs 257 hidden elements in `body`, and 3 vs 23 visible iframes (ad frames hidden)."
+      }
+    ]
   },
   "452398": {
     "listing": {
@@ -46546,7 +47324,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "6.2.2"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "6.2.2"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "6.2.2",
+        "text": "On a watch page the rounded design is reverted, compared with a `--noscript` tab:\n- search box corners 2px (control 40px), player corners 0 (control 12px), page background `#f9f9f9` (control white);\n- `yt.config_` flags set (`web_rounded_thumbnails` and `web_watch_rounded_player_large` false).\nScript: its \"restore Explore tab\" part threw \"parameter 1 is not of type 'Node'\" twice: `waitForElm` observes `document.body` at document-start, before there is one, so it would fail in any manager. Its action-button fix threw \"reading 'contents'\" (`ytd-watch-flexy.data` has a different shape now)."
+      }
+    ]
   },
   "453804": {
     "listing": {
@@ -47074,7 +47864,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.12"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-02",
+      "version": "1.12"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.12",
+        "text": "- Script: fireship.io now redirects every page to fireship.dev (e.g. `/courses/js/` to `https://fireship.dev/js`), which the `@match https://fireship.io/*` doesn't cover, so the script never runs (sm-dev: \"skipped ... No @match or @include covers this URL\").\n- The new site has none of the `global-data` / `video-player` elements the script reads."
+      }
+    ]
   },
   "455362": {
     "listing": {
@@ -48719,7 +49522,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.5"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "2.5"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2.5",
+        "text": "- Page: https://www.youtube.com/watch?v=aqz-KE-bpKQ, headless temp browser (sm-dev).\n- Works: its tool row under the player (thumbnail, repeat, MP4/MP3, PiP, screenshot...) and its hidden settings panel are built, settings and watch-time counters are stored. \"Repeat video\" set `video.loop` to true.\n- Works: with `likeDislikeBar` on, it fetched Return YouTube Dislike data and showed the bar (\"Likes: 110,000 | Dislikes: 18,611\").\n- Script: the dislike count on the Dislike button never appears. `videoDislike` waits for `#below > ytd-watch-metadata > div`, which current YouTube no longer has (missing in a `--noscript` tab too).\n- Download buttons not judged (third-party service)."
+      }
+    ]
   },
   "460803": {
     "listing": {
@@ -48880,7 +49695,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.5"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "sourcemonkey",
+      "date": "2026-10-02",
+      "version": "1.5"
+    },
+    "tags": [
+      "needs-iframes"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.5",
+        "text": "On https://www.google.com/recaptcha/api2/demo (real extension, shared browser) the checkbox in the `api2/anchor` iframe stays `aria-checked=\"false\"`, after waiting 3s.\n\n- SourceMonkey: the script only acts inside the reCAPTCHA iframe, and SourceMonkey injects into the top frame only (docs/injection.md, \"No frame control\"). Its only start line is for the demo page itself. Tampermonkey and Violentmonkey run `@match` scripts in iframes by default."
+      }
+    ]
   },
   "461790": {
     "listing": {
@@ -49523,7 +50354,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2026.01.01.1"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "2026.01.01.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2026.01.01.1",
+        "text": "Tested in the shared browser, signed out (headless Zhihu returns error 40362, \"request abnormal\"). On www.zhihu.com/question/19550225 no login modal was showing with the script, while a `--noscript` tab had the `.Modal-content` login modal with its close button up. `link.zhihu.com/?target=https://example.com/` went straight to example.com."
+      }
+    ]
   },
   "463750": {
     "listing": {
@@ -49579,7 +50422,23 @@
       ],
       "date": "2026-10-01",
       "version": "1.0.11"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "sourcemonkey",
+      "date": "2026-10-02",
+      "version": "1.0.11"
+    },
+    "tags": [
+      "unsupported-grant:GM_cookie"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.0.11",
+        "text": "Tested in sm-dev in the shared visible browser (Reddit blocks headless), signed out, on r/MorbidReality, which shows Reddit's \"Mature Content / Yes, I'm Over 18\" interstitial.\n\n- Script: its first statement after the blur fix calls `GM_cookie.set` to write an `over18` cookie, and SourceMonkey has no `GM_cookie`, so it throws `GM_cookie is not defined` (line 24). The MutationObserver that removes the modals and blurs is never set up, and the interstitial stays.\n- A copy with `GM_cookie.set` replaced by a `document.cookie` write ran clean; after a reload the interstitial was gone and the subreddit's posts showed. Tampermonkey provides `GM_cookie.set`, so the script would work there.\n- The test `over18` cookie was removed afterwards."
+      }
+    ]
   },
   "464284": {
     "listing": {
@@ -50372,7 +51231,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "3.0.1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-02",
+      "version": "3.0.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "3.0.1",
+        "text": "m.bilibili.com redirects a desktop UA to www, so the tabs were given an iPhone UA, 390px mobile metrics and touch over raw CDP (an own CDP client holding `Emulation.*` overrides).\n\n- On the home page a card click went straight to `/video/BV...`, and the script's CSS hid the `.openapp-dialog` and `.caution-dialog` popups that a `--noscript` tab showed on the same video page.\n- Script: on the video page it threw `Cannot read properties of null (reading 'addEventListener')` in `preventAutoCallApp`: the site's player no longer has `.mplayer-*` elements (it is now `gsl-*`), so the click-to-app blocking, fullscreen ad removal and unmute button are gone.\n- Script: its autoplay didn't take: the video stayed paused at 0s (readyState 4), while a `video.play()` from `eval` played it."
+      }
+    ]
   },
   "468385": {
     "listing": {
@@ -50930,7 +51802,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.2.21"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "0.2.21"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "0.2.21",
+        "text": "On www.bilibili.com/video/BV1e2eS69ES3 (headless) the script registered its menu commands, set the custom background (`html` background-image `dyn-home/assets/bg.png`), appended the 🏷️ copy button to the title, and added a \"获取封面\" (get cover) toolbar link to the cover JPG. The ⚙️ menu command opened its shadow-DOM settings panel with 8 categories."
+      }
+    ]
   },
   "471071": {
     "listing": {
@@ -51560,7 +52444,19 @@
       ],
       "date": "2026-10-01",
       "version": "0.42.25"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "0.42.25"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "0.42.25",
+        "text": "On a watch page it loaded in the page world and logged its fixes being applied (ShadyDOM, key extraction, `web_emulated_idle_callback`, transcript segments, `FIX_doIdomRender` for several elements). Its hooks are in place: `window.getComputedStyle` is its wrapper and `originalAddJob` is set. The video played, an in-app navigation to another video worked, and `logs` had no errors from it. A performance gain was not measured."
+      }
+    ]
   },
   "473984": {
     "listing": {
@@ -53842,7 +54738,20 @@
       ],
       "date": "2026-10-01",
       "version": "2.6.5"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-02",
+      "version": "2.6.5"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2.6.5",
+        "text": "Searched \"albert einstein wikipedia\" on three supported engines; no result link was rewritten (Wikipedia links should go to wikiwand.com).\n- Google (shared browser): every result link is now an opaque `google.com/goto?url=CAES...` redirect, in a `--noscript` tab too, so no rule can see the target URL.\n- Bing (headless): result links are opaque `bing.com/ck/a?...` redirects, unchanged by the script.\n- Yahoo (shared browser): links point straight at `en.wikipedia.org/...` but stay unchanged, and the script logs `Update Link/Text Error: TypeError: Cannot read properties of null (reading 'href')` per result: its Yahoo selectors no longer match the page.\n- Script: out of date against all three result pages."
+      }
+    ]
   },
   "483732": {
     "listing": {
@@ -53926,7 +54835,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.7.3"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "1.7.3"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.7.3",
+        "text": "On a watch page (`jNQXAC9IVRw`) a \"Download\" pill appears right after the Share button, linking to `https://ytmp3.as/#jNQXAC9IVRw/mp3`. After an in-app navigation to another video there is still one button, and its link follows the new video ID. The ytmp3 auto-click half was not judged (third-party download service)."
+      }
+    ]
   },
   "484047": {
     "listing": {
@@ -54267,7 +55188,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "5.0.8"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "sourcemonkey",
+      "date": "2026-10-02",
+      "version": "5.0.8"
+    },
+    "tags": [
+      "needs-page-globals"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "5.0.8",
+        "text": "Tested in sm-dev in the shared visible browser (Reddit blocks headless), signed out, on r/MorbidReality, an NSFW subreddit.\n\n- Script: it patches Reddit's custom elements (`shreddit-blurred-container` and others) through `customElements.whenDefined`. It grants `GM_*`, so SourceMonkey runs it in the isolated USER_SCRIPT world, where `customElements` is `null`; every `waitDefined` call threw `Cannot read properties of null (reading 'whenDefined')`. Its `over18` cookie and CSS still applied, so the age interstitial went away after a reload, but all 3 posts stayed blurred (`blurred: true`) and the \"Unblur\" header button never appeared.\n- A copy with `@inject-into page` (MAIN world, the page's own registry, as Tampermonkey and Violentmonkey run it) ran with no errors: all 3 posts had `blurred: false` and the \"Unblur\" button was in the header.\n- The `over18` cookie the script set was removed afterwards."
+      }
+    ]
   },
   "485622": {
     "listing": {
@@ -54292,7 +55229,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.4.2.1"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "other",
+      "date": "2026-10-02",
+      "version": "2.4.2.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2.4.2.1",
+        "text": "StarTube is an add-on for V3, a separate YouTube layout extension that keeps its settings in localStorage (`v3_local_db`); it can't be judged without V3 installed.\n- On a watch page (`watch?v=0e3GPea1Tyg`) its four menu commands registered. It then threw `Cannot read properties of null (reading 'config')` at line 2110 (`JSON.parse(localStorage.getItem(\"v3_local_db\")).config`) and stopped, so no StarTube UI appeared.\n- Script: its \"V3 not installed\" banner option never gets a chance to run, since the crash comes first."
+      }
+    ]
   },
   "485668": {
     "listing": {
@@ -55116,7 +56066,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.0.3"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "1.0.3"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.0.3",
+        "text": "Signed out, on `greasyfork.org/en/scripts?q=nhentai` the script fetched `sleazyfork.org/en/scripts?q=nhentai` (GM_xmlhttpRequest, 200) and merged its results into the list: 106 `li[data-script-id]`, against 6 in a `--noscript` tab."
+      }
+    ]
   },
   "490891": {
     "listing": {
@@ -55243,7 +56205,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.02"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-02",
+      "version": "1.02"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.02",
+        "text": "Tested in sm-dev in the shared visible browser (Reddit blocks headless), signed out, on an NSFW post in r/MorbidReality, with and without an `over18` cookie, beside a `--noscript` tab.\n\n- Script: out of date. It waits for a post-header NSFW icon (`span.flex.gap-xs.items-center.pr-xs.truncate > span > faceplate-tracker > a > div` holding `icon-nsfw`) that Reddit no longer renders: the page has no `icon-nsfw` at all, and the script logged only `Waiting for post`, every 500 ms.\n- The prompt it removes (`div.prompt` in `xpromo-nsfw-blocking-container`) no longer exists either. Reddit now shows the post's media and text in `shreddit-blurred-container`s (`blurred: true`), the same with and without the script."
+      }
+    ]
   },
   "491956": {
     "listing": {
@@ -55383,7 +56358,22 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.01"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "1.01"
+    },
+    "tags": [
+      "needs-page-globals"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.01",
+        "text": "On a watch page (`watch?v=0e3GPea1Tyg`) the layout is the classic one the script promises (recommendations in the right sidebar, description and comments below the player), but YouTube's default already looks the same.\n- SourceMonkey: the script reads the page's `ytcfg` without `unsafeWindow`, so in the isolated world `typeof ytcfg` is `undefined` and its experiment-flag overrides never apply (`kevlar_watch_max_player_width` stays 1840).\n- A copy using `unsafeWindow.ytcfg` set the flags (1280, `kevlar_watch_grid` false), but screenshots of the two runs show the same layout, so nothing visible is lost.\n- The `load` handler's player-width tweak applied (`#primary` and `#player-container-outer` got its 830px styles).\n- Script: its 100ms timer throws `Cannot read properties of null (reading 'querySelector')` until `#primary` exists (on every page without one, forever). Harmless."
+      }
+    ]
   },
   "493702": {
     "listing": {
@@ -55987,7 +56977,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.3.0"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "1.3.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.3.0",
+        "text": "- On apnews.com (headless got a Cloudflare \"Just a moment...\" page, still matched) the fixed \"Bypass Paywall (12ft.io)\" button appeared bottom right with the 12 menu commands; clicking it opened the dropdown, and its Archive.org option went to `https://web.archive.org/web/.../https://apnews.com/`.\n- On www.theverge.com, menu \"Hide Floating Button\" showed its alert and reloaded; with the real extension, `showFloatingButton = false` was stored and the button was gone after the reload.\n- sm-dev: under the push backend the same toggle lost the value (the known GM_setValue-before-reload difference), so the button came back."
+      }
+    ]
   },
   "496117": {
     "listing": {
@@ -56295,7 +57297,19 @@
       ],
       "date": "2026-10-01",
       "version": "2026.01.14"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "2026.01.14"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2026.01.14",
+        "text": "On a watch page (`watch?v=0e3GPea1Tyg`, best quality 1080p) the script and its helper API `@require` load in the page world and log \"Attempting to set resolution: hd2160\"; the player plays at 1080p, the highest available (a `--noscript` tab also chose 1080p).\n- In the player's Quality menu the script adds its \"Quality 4K >\" header; it slides to its own list (8K to 144p). Choosing 480p saved `targetResolution: large`. After a reload the player was at 480p (`large`), so the preference applies.\n- Script: settings go to `localStorage` (`YTHD_settings`), not GM storage. The helper never sets `features.storage`, so it always uses its localStorage path in every manager.\n- The helper replaces the page's `window.GM` with a Proxy over the script's `GM`. Reading a property through it from the page throws a Proxy invariant TypeError, because SourceMonkey's `GM` properties are read-only and non-configurable. Neither the script nor the helper reads through it, so nothing breaks."
+      }
+    ]
   },
   "498156": {
     "listing": {
@@ -56354,7 +57368,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "7.3.0"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "7.3.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "7.3.0",
+        "text": "On a watch page (`watch?v=0e3GPea1Tyg`) the ad-hiding `<style>` was added and the 500ms skip timer ran in the page world, where `#ytd-player.getPlayer` is reachable.\n- No ad on first load, so `ad-showing` was added to `#movie_player` by hand. The script logged \"Ad skipped\" and reloaded the video at 4s with `loadVideoWithPlayerVars`.\n- That reload brought a real 15s ad (`duration 15.041`, `ad-showing`). The script skipped it within about 1s, and the main video (1541s) went on playing from about 4s."
+      }
+    ]
   },
   "498848": {
     "listing": {
@@ -56379,7 +57405,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.3.4"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "1.3.4"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.3.4",
+        "text": "- On a CSDN article (https://blog.csdn.net/heivy/article/details/100512264, shared browser since CSDN gives headless a 403), `pre code` has `user-select: none` in a `--noscript` tab and `auto` with the script. Its settings panel and \"Toggle Settings\" menu are added.\n- Script: its CSDN copy-button fix finds no `code>div` (the site's button is now `div.opt-box`), so the code's `onclick=\"mdcp.signin(event)\"` stays.\n- sm-dev: the first load in a background tab of the shared browser never reached `load`, so the idle script hadn't run; `focus` and `reload` fixed it."
+      }
+    ]
   },
   "498904": {
     "listing": {
@@ -56642,7 +57680,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.1.4"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "0.1.4"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "0.1.4",
+        "text": "On www.bilibili.com/video/BV1e2eS69ES3 (headless, en-US) the script logged `CDN=upos-sz-mirroraliov.bilivideo.com` and rewrote `__playinfo__`: dash video URLs and the media fetched came from `upos-sz-mirroraliov.bilivideo.com`, and the video played (readyState 4). A `--noscript` tab fetched from `upos-hz-mirrorakam.akamaized.net` / `upos-sz-mirrorcosov.bilivideo.com`. Its \"CDN Switcher\" checkbox was added to the player settings panel, and the menu command registered.\n\n- sm-dev: `__playinfo__` was already set at document-start, so it took its \"Directly modify\" branch rather than the property hook."
+      }
+    ]
   },
   "501249": {
     "listing": {
@@ -56670,7 +57720,19 @@
       ],
       "date": "2026-10-01",
       "version": "5.0.217"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "5.0.217"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "5.0.217",
+        "text": "On a watch page the right column becomes a tab box (Info, 5.1K comments, Videos; Playlist hidden). Clicking the comments tab made it active and showed the comments in the side panel (20 threads loaded, 342x591 at the right). No errors in `logs`. It runs in the page world, since it uses `unsafeWindow` without granting it."
+      }
+    ]
   },
   "501681": {
     "listing": {
@@ -56797,7 +57859,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.1"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "0.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "0.1",
+        "text": "- On https://en.wikipedia.org/wiki/Ad_blocking, a `div.fc-ab-root` (Google Funding Choices' \"ad blocker detected\" wall) added after load computed to `display: none`, and setting `body` overflow to `hidden` was cleared to `\"\"` by its observer.\n- A simulated wall: the real one shows only with an ad blocker."
+      }
+    ]
   },
   "503563": {
     "listing": {
@@ -57016,7 +58090,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2025.8.12.1"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "2025.8.12.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2025.8.12.1",
+        "text": "Tested in the shared browser, signed out (headless CSDN returns 403). On blog.csdn.net/eloudy/article/details/166794760 the script turned the 13 code-block buttons from \"登录复制\" (`signin` class, `onclick=\"mdcp.signin(event)\"`) into \"点击复制\" with no onclick. Clicking the first copied the block's text (`wget https://www.mellanox.com/...`, caught by an `eval` hook on `navigator.clipboard.writeText`) with no login popup. The same click in a `--noscript` tab copied nothing and opened CSDN's passport login popup.\n\n- Script: on pages without `.blog-content-box` (the blog.csdn.net home page) it throws `Cannot read properties of null (reading 'addEventListener')`."
+      }
+    ]
   },
   "505208": {
     "listing": {
@@ -57041,7 +58127,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.31.0.23"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "0.31.0.23"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "0.31.0.23",
+        "text": "- With `--lang zh-CN` on https://en.wikipedia.org/wiki/Tea, it loads Google's translate widget, adds the 恢复/翻译 buttons and translates the page (heading \"Tea\" became \"茶\"). Same in the real extension (`--extension`), so its inline `<script>` runs there.\n- Without a Chinese browser language the 翻译 button never appears: it finds the widget's iframe by its Chinese title \"语言翻译微件\".\n- Script: it throws `key is not defined` (`key.push('alt')`, an undeclared variable) after setting up the widget, so its no-translate marking of code blocks never runs. That is the same in every manager."
+      }
+    ]
   },
   "505670": {
     "listing": {
@@ -57171,7 +58269,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.8.2"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "2.8.2"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2.8.2",
+        "text": "- Page: https://www.youtube.com/watch?v=aqz-KE-bpKQ (Big Buck Bunny 4K), headless temp browser.\n- sm-dev: the player settings menu gets \"Preferred Premium\" and \"Preferred Quality < 1080p >\" items, and its page-world helper (an inline `<script>`) runs. Choosing 720p there switched the player to 720p60 and stored `preferred_quality = 720`; after a reload the player started at `hd720`. A `--noscript` tab also plays at `hd1080`, so the 1080 default alone proved nothing.\n- Real extension (`--extension`), since the helper is an inline script inserted from the user-script world: it ran (its `ythdp-elements` node exists). With the page's `setPlaybackQualityRange` wrapped to log, a `resize` event made the script call it with `hd1080` and the player switched from `large` to `hd1080`; choosing 720p in the menu called it with `hd720` and the player followed.\n- In the extension run the player sat at `large` until that `resize`: the video was already playing when the script attached its `playing` listener. That may be the run's late start under `--extension` rather than the extension itself."
+      }
+    ]
   },
   "511285": {
     "listing": {
@@ -57221,7 +58331,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.0"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "1.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.0",
+        "text": "On a live channel (twitch.tv/hjune, headless) no ad played, so the check was simulated.\n- Script: with no ad there is no `div.picture-by-picture-player`, so its 500ms timer throws \"Cannot read properties of null (reading 'className')\" twice a second. Harmless, and the same in any manager.\n- Adding an open `div.picture-by-picture-player` with a video (the mini player Twitch shows during an ad): within 1.5s the script moved that video next to the main one, muted the main video and unmuted the mini one. Collapsing it unmuted the main video again.\n- Whether Twitch still shows that mini player during ads couldn't be checked."
+      }
+    ]
   },
   "512700": {
     "listing": {
@@ -57333,7 +58455,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "3.0.4"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "3.0.4"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "3.0.4",
+        "text": "On `https://www.scribd.com/document/492141210/User-Manual-BA400` the script replaced the page with the `/embeds/492141210/content` iframe, which showed all 145 pages, under a bar with \"Download\" and \"Original Page\" buttons.\n- \"Download\" POSTed the URL to `scribd.vdownloaders.com/check/` in a new tab, which landed on `/vdoc/` with the document's \"Download PDF\" page.\n- The script ran there too: no `adexchangerapid` / `crcdn.org` ad nodes were left. `window.aclib` was still the site's own object, not the script's stub; sm-dev may have run the document-start code after the site's ad script (a known sm-dev difference), not checked in the extension."
+      }
+    ]
   },
   "513744": {
     "listing": {
@@ -57386,7 +58520,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.8"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "0.8"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "0.8",
+        "text": "On www.bilibili.com/video/BV1e2eS69ES3 (headless, signed out) the blue \"下载\" button appeared in the player's sending area. Clicking it logged the video info and a `upos-hz-mirrorakam.akamaized.net/...-192.mp4` download URL (from Bilibili's playurl API), then opened a new tab at `saveany.cn/get_video_info?...&downloadUrl=...`, the script's intended hand-off.\n\n- Script: its console summary says \"第三方接口\" (third-party API) even when the official API answered; `isOfficialApi` is never set."
+      }
+    ]
   },
   "514909": {
     "listing": {
@@ -57471,7 +58617,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.8.6"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-02",
+      "version": "0.8.6"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "0.8.6",
+        "text": "Script: out of date against the current gofile.io. On `/home` and on `/d/<id>` pages the script logs `[Gofile Enhanced] #index_main not found.` and stops, so its sidebar buttons never appear.\n- The current site shell has `#app`, `#sidebar`, `#fm-root` and no `#index_main` or `#index_sidebar`, and no `appdata` global (in the page or the script's world), which the script also reads for the folder contents.\n- No live public folder was found to test with (four `/d/` links from a GitHub README all say \"This content does not exist\"), but the missing anchor is in the page shell, not the folder view."
+      }
+    ]
   },
   "515557": {
     "listing": {
@@ -57718,7 +58877,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.5.9"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-02",
+      "version": "2.5.9"
+    },
+    "tags": [
+      "trusted-types"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2.5.9",
+        "text": "On an age-restricted watch page (`watch?v=Tq92D6wQ1mg`) the player still shows \"Sign in to confirm your age\" (`playabilityStatus` `LOGIN_REQUIRED`).\n- Script: it runs in the page world (`@grant none`) and at startup builds its toast container with `innerHTML`, which YouTube's Trusted Types block. The throw (`createElement`, line 866) ends the script's setup.\n- Script: its unlock path also needs its account proxy `youtube-proxy.zerody.one`, which no longer answers (connection failed from curl)."
+      }
+    ]
   },
   "519495": {
     "listing": {
@@ -57848,7 +59023,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.5"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "2.5"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2.5",
+        "text": "Tested in sm-dev in the shared visible browser (Reddit blocks headless), signed out, on r/MorbidReality, an NSFW subreddit, after confirming Reddit's \"Yes, I'm Over 18\" prompt (which only sets an `over18` cookie, removed afterwards).\n\n- With the script, all 3 loaded posts' `shreddit-blurred-container`s had `blurred: false` and the script's `clicked-container` class.\n- In a `--noscript` tab on the same page, all 25 were still `blurred: true`.\n- Script: it does not get past the server-side age interstitial by itself; with no `over18` cookie the subreddit page still shows it."
+      }
+    ]
   },
   "520948": {
     "listing": {
@@ -58037,7 +59224,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "3.0"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-02",
+      "version": "3.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "3.0",
+        "text": "sm-dev (headless), logged out, on `open.spotify.com/`.\n- Spotify shows no player or ads without an account, so the ad blocking (audio ads, ad slots, the now-playing bar hook) couldn't be judged. The script waits for `.now-playing-bar`, which never appears logged out, so it never logs \"Spotify AdBlocker Ultimate is active\".\n- Script: its `[class*=\"ad-\"]` selector also matches `masthead-footer-link`, so it deletes the home page's footer links: 3 `footer a` left vs 24 in a `--noscript` tab (21 matching elements removed). Same in any manager."
+      }
+    ]
   },
   "523244": {
     "listing": {
@@ -58087,7 +59287,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.0.1"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "1.0.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.0.1",
+        "text": "On `https://www.scribd.com/document/492141210/User-Manual-BA400` the script added its red fixed \"Download\" button at the top right (73x34 at 1197,10). Clicking it opened `https://scribd.downloader.tips/document/492141210/User-Manual-BA400` in a new tab, which loaded the third-party page for that document (\"User Manual BA400 - PDF free\", with a Download PDF link)."
+      }
+    ]
   },
   "523491": {
     "listing": {
@@ -58965,7 +60177,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.1.0"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "2.1.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2.1.0",
+        "text": "On `https://pixeldrain.com/u/abc123XY` (a made-up id) the script started at document-start and `GM_openInTab` opened a second tab at `https://cdn.pixeldrain.eu.cc/abc123XY?download`, which redirected to `cdn46.pixeldrain.eu.cc/api/file/abc123XY` and answered the proxy's own `not_found` JSON. The URL it builds is right; no real file was downloaded."
+      }
+    ]
   },
   "532579": {
     "listing": {
@@ -59041,7 +60265,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.3"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-02",
+      "version": "1.3"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.3",
+        "text": "On a model page (`/3d-models/battle-mech-robot-tripoai-vs-supavoxel-0612f6937475445baa03cce10b6b3867`) no \"Download this model\" button appeared after 8 s, and `window.allmodel` stayed empty; the viewer loaded its 34 `web/dist` scripts unpatched.\n- Script: everything (patching the viewer, then `tryInsertButton`) hangs off `window.onbeforescriptexecute`, a Firefox-only event Chrome never fires. Its own MutationObserver shim only calls listeners added through `addBeforeScriptExecuteListener`, and nothing adds one, so the handler never runs in any manager on Chrome."
+      }
+    ]
   },
   "535292": {
     "listing": {
@@ -59378,7 +60615,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.6"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "0.6"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "0.6",
+        "text": "On the home page the top-left logo shows \"YouTube Premium\" (`ytInitialData` logo `iconType` set to `YOUTUBE_PREMIUM_LOGO`), and both of its style elements are added. No errors in `logs`.\n- The ad stripping was not exercised: the watch page served no `adPlacements` even in a `--noscript` tab (signed out, headless)."
+      }
+    ]
   },
   "543471": {
     "listing": {
@@ -60738,7 +61987,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.3.2"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "2.3.2"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "2.3.2",
+        "text": "On `https://www.scribd.com/document/492141210/User-Manual-BA400` the \"Download PDF\" button appeared after its 1.5 s delay (160x40 at 1100,80).\n- Clicking it showed the popup, and after 1.5 s `GM_openInTab` opened `/embeds/492141210/content` in a background tab; the popup switched to \"Tab Opened!\".\n- On the embed tab, the script's own \"Download PDF\" button walked all 145 pages (\"Found 145 pages\" ... \"Finished scrolling\"), stripped the toolbars, added its print stylesheet and called `window.print()` (no dialog in headless), ending on \"Done! Print again?\".\n- The embed tab has no referrer from `GM_openInTab`, so the auto-start there didn't fire; the button was clicked by hand."
+      }
+    ]
   },
   "559574": {
     "listing": {
@@ -60792,7 +62053,19 @@
       ],
       "date": "2026-10-01",
       "version": "1.1.5"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-02",
+      "version": "1.1.5"
+    },
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "1.1.5",
+        "text": "On a watch page (`watch?v=0e3GPea1Tyg`); `@grant unsafeWindow` puts it in the MAIN world.\n- The tab view replaces the sidebar with Info / comments (659K) / Videos / Playlist tabs. Clicking the comments tab showed 20 comment threads in it.\n- The player's speed button (1x) opens its list; choosing 2.0x set `playbackRate` 2 and stored `yt/videoPlaySpeed = 2`. After a reload the video came back at 2x.\n- The \"Setting\" menu command opens its settings dialog with the five feature toggles.\n- A download button appears beside Subscribe; it goes to a third-party service, so it wasn't judged. The `@connect` warning doesn't matter: the code never calls `GM_xmlhttpRequest`.\n- No script errors in `logs`."
+      }
+    ]
   },
   "561041": {
     "listing": {
@@ -60871,7 +62144,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "5.1.0"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "sourcemonkey",
+      "date": "2026-10-02",
+      "version": "5.1.0"
+    },
+    "tags": [
+      "needs-page-globals"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-02",
+        "version": "5.1.0",
+        "text": "- Page: https://www.youtube.com/watch?v=aqz-KE-bpKQ (qualities up to hd2160), headless temp browser (sm-dev), with the ad, SponsorBlock and quality switches seeded on.\n- Works: the settings panel is built, and SponsorBlock fetches segments (`GM_xmlhttpRequest` to sponsor.ajay.app, 200) and caches them. With a seeded segment at 14-22 s, playback jumped from about 12 s to 22.4 s, the skip counter went to 1 and a \"SB: [sponsor]\" toast showed.\n- SourceMonkey: \"Force 4K\" does nothing. The script grants `GM_*` APIs, so it runs in the isolated world, where `#movie_player.getAvailableQualityLevels` is `undefined`; the player stayed at `large`. Its document-start `Object.prototype.adPlacements` and `ytInitialPlayerResponse` traps are also set in the isolated world, so the page never sees them. Tampermonkey runs such scripts in the page context by default.\n- Script: a copy with `// @inject-into page` switched the player to `hd2160` with a \"Quality: 4K 2160p\" toast."
+      }
+    ]
   },
   "561518": {
     "listing": {

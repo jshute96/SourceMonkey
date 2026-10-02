@@ -299,6 +299,53 @@ gates, or the emitted wrap — the rate is the regression signal.
     for a valid Tampermonkey script. Accepted for now: it's the last
     good copy, and the case is rare.
 
+## Corpus test findings — compatibility gaps
+
+Gaps that made corpus scripts fail on their live sites (see
+`tests/greasyfork-examples/`; `record-results.mjs list --tag T` finds
+the scripts). Comparisons are against Violentmonkey's source; Tampermonkey
+wasn't checked.
+
+- **`GM` is frozen** (`gm-frozen`: 30766, 19993).
+  - `src/gm-bindings.ts` emits `const GM = Object.freeze({...})`.
+  - GM_config's polyfill sets `GM.getValue` when only `GM_getValue` is
+    granted, and the assignment is silently dropped, so 30766 never
+    starts. 19993 adds a `GM.cookie` stub, which throws.
+  - VM builds `GM` as a plain writable object. Fix: drop the freeze,
+    or freeze only the API properties and leave the object extensible.
+- **Granted `GM_*` names are `const`** (`gm-reassign`: 2129).
+  - A shim like `GM_xmlhttpRequest = GM.xmlHttpRequest;` throws
+    "Assignment to constant variable" at startup.
+  - VM resolves names through `with(this)` over a wrapper, so the
+    assignment works. Fix: declare them with `let`.
+  - About 50 corpus files assign to a `GM_*` name; some are guarded.
+- **No `cloneInto` / `exportFunction` / `createObjectIn`**
+  (`needs-cloneinto`: 19993).
+  - Older scripts call these Firefox helpers unchecked and throw
+    `cloneInto is not defined`.
+  - VM defines pass-through stand-ins on Chrome (`makeComponentUtils`
+    in `src/injected/web/util.js`). Cheap to copy.
+- **Scripts never run in iframes** (`needs-iframes`: 461650, 382039).
+  - reCAPTCHA helpers must run inside Google's frames. See the
+    `allFrames` item under "Skeleton" for what blocks it.
+- **Granted scripts run in the isolated world** (`needs-page-globals`:
+  561432, 382030, 485608, and earlier ones).
+  - Scripts that read the page's globals without `unsafeWindow` (the
+    YouTube player API, the page's `$`, `customElements`, which is null
+    in the USER_SCRIPT world) fail. `@inject-into page` copies work.
+  - VM runs these in the page by default (TM reportedly too, through
+    its `@sandbox` default). Worth deciding whether to pick the page
+    world automatically, rather than only for `@inject-into page` and
+    `@grant unsafeWindow` (see docs/injection.md).
+- **Strict `@connect`** (`connect-undeclared`: 25068, 373252).
+  - With no `@connect`, every `GM_xmlhttpRequest` is refused. TM asks
+    the user at request time; VM allows the request.
+  - A per-host "allow this request" prompt (or a collections-page
+    toggle) would cover it without dropping the check. Pairs with the
+    `@connect *` warning under "`@connect` follow-ups".
+- **`GM_cookie`** (463802) is the whole failure for a Reddit script.
+  See "GM_* APIs not yet in the catalog".
+
 ## Cross-manager coverage
 
 - **No `tests/examples/` script exercises `@require` under
