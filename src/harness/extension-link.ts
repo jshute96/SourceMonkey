@@ -4,7 +4,7 @@
 // src/sm-dev-link.ts; the design is docs/sm-dev-extension.md.
 //
 // - Calls go through `self.SourceMonkey` in the worker, with Playwright's
-//   `worker.evaluate`, as ExtensionBackend's do.
+//   `worker.evaluate`.
 // - Chrome stops an idle worker and starts a new one later. A call made
 //   while the known one is stopped goes to the new one, which is
 //   listened to and subscribed to again; the run is told, since events
@@ -17,7 +17,7 @@ import type { BrowserContext, Page, Worker } from '@playwright/test';
 
 import { SM_DEV_EVENT } from '../sm-dev-link.js';
 import type { StackLayout } from '../composed-source.js';
-import { ExtensionBackend, findExtensionWorker, sourceMonkeyExtensionId, type LogEntry, type PushResult } from './extension-backend.js';
+import { findExtensionWorker, sourceMonkeyExtensionId, type LogEntry, type PushResult } from './extension-backend.js';
 
 // How long a claim lasts unrenewed, and how often it's renewed. A killed
 // run's tabs run the extension's scripts again within the lease.
@@ -25,7 +25,7 @@ const LEASE_MS = 30_000;
 const RENEW_MS = 10_000;
 
 /** The calls an extension run needs, which an older SourceMonkey lacks. */
-const NEEDED_CALLS = ['claimTab', 'renewRun', 'releaseRun', 'setTabScriptsOff', 'writeGmValues', 'scriptsOnTab'];
+const NEEDED_CALLS = ['claimTab', 'renewRun', 'releaseRun', 'setTabScriptsOff', 'writeGmValues', 'scriptsOnTab', 'tabDocument'];
 
 /** Said when the extension in the browser is older than these calls. */
 export const EXTENSION_TOO_OLD = 'SourceMonkey in this browser is older than this sm-dev, so it can\'t run --extension runs. '
@@ -34,11 +34,14 @@ export const EXTENSION_TOO_OLD = 'SourceMonkey in this browser is older than thi
 /** An event from the extension, as sm-dev-link.ts and background.ts send them. */
 export type ExtensionEvent =
   | {
-    kind: 'report'; type: string; tabId: number; documentId: string; scriptId: string; name: string; url: string;
+    kind: 'report'; type: string; tabId: number; documentId: string; topFrame?: boolean; scriptId: string; name: string; url: string;
     message?: string; stack?: string; reason?: string; at: number;
   }
   | { kind: 'log'; scriptId: string; entry: LogEntry; fromReport?: boolean; at: number }
-  | { kind: 'menu'; op: 'add' | 'remove'; tabId: number; documentId: string; scriptId: string; commandId: string; name?: string; at: number }
+  | {
+    kind: 'menu'; op: 'add' | 'remove'; tabId: number; documentId: string; topFrame?: boolean;
+    scriptId: string; commandId: string; name?: string; at: number;
+  }
   | { kind: 'values'; scriptId: string; tabId?: number; writes: { key: string; value?: unknown; deleted?: boolean }[]; at: number }
   | { kind: 'tab-opened'; sourceTabId: number; tabId: number; url: string; at: number };
 
@@ -56,6 +59,8 @@ export class ExtensionLink {
   // The tabs the run holds, for a renewal to claim again if lost.
   private readonly tabs = new Map<number, { scriptsOff: boolean }>();
   private closed = false;
+  // A worker has been adopted before, so the next is a restart.
+  private adopted = false;
   private readonly onWorker = (worker: Worker): void => {
     if (worker.url() === this.workerUrl) void this.adopt(worker).catch(() => undefined);
   };
@@ -105,7 +110,10 @@ export class ExtensionLink {
   // subscribed in it.
   private async adopt(worker: Worker): Promise<void> {
     if (this.closed || worker === this.worker) return;
-    const replaced = this.worker !== null;
+    // Not `this.worker !== null`: a stopped worker is cleared as it
+    // closes, before the new one starts.
+    const replaced = this.adopted;
+    this.adopted = true;
     this.worker = worker;
     if (!this.heard.has(worker)) {
       this.heard.add(worker);
@@ -165,14 +173,12 @@ export class ExtensionLink {
     try {
       return await evaluate(worker);
     } catch (err) {
-      if (this.closed || !this.stopped.has(worker)) throw err;
+      if (this.closed) throw err;
+      // The worker's `close` can come just after the call it failed.
+      for (let i = 0; i < 10 && !this.stopped.has(worker); i++) await new Promise((r) => setTimeout(r, 25));
+      if (!this.stopped.has(worker)) throw err;
       return evaluate(await this.current());
     }
-  }
-
-  /** The backend calls (push, clear, log, solo) through the current worker. */
-  async backend(): Promise<ExtensionBackend> {
-    return new ExtensionBackend(await this.current());
   }
 
   /**
@@ -203,8 +209,8 @@ export class ExtensionLink {
    * A tab the extension claimed for the run itself (one a run tab
    * opened), for renewals to keep.
    */
-  holdTab(tabId: number): void {
-    if (!this.tabs.has(tabId)) this.tabs.set(tabId, { scriptsOff: false });
+  holdTab(tabId: number, scriptsOff = false): void {
+    if (!this.tabs.has(tabId)) this.tabs.set(tabId, { scriptsOff });
   }
 
   /** The run no longer holds the tab (it closed). */
@@ -245,8 +251,9 @@ export class ExtensionLink {
     return this.call(([t, n]) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.writeScratchScript({ text: t, name: n }), [text, name] as const);
   }
 
-  async log(scriptId: string): Promise<LogEntry[]> {
-    return this.call((id) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.getScriptLog(id), scriptId);
+  /** Which document `tabId` shows (see the worker's `tabDocument`), or null if it can't be read. */
+  async tabDocument(tabId: number): Promise<{ url: string; timeOrigin: number } | null> {
+    return this.call((id) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.tabDocument(id), tabId);
   }
 
   /** How the script's injected entry maps back to its files; see `remapStackText`. */
@@ -304,7 +311,7 @@ interface Api {
   releaseRun(runId: string): Promise<void>;
   setTabScriptsOff(tabId: number, off: boolean): Promise<void>;
   writeScratchScript(args: { text: string; name?: string }): Promise<PushResult>;
-  getScriptLog(scriptId: string): Promise<LogEntry[]>;
+  tabDocument(tabId: number): Promise<{ url: string; timeOrigin: number } | null>;
   getStackLayout(scriptId: string): Promise<StackLayout | null>;
   getGmValues(scriptId: string): Promise<Record<string, unknown>>;
   writeGmValues(scriptId: string, writes: { key: string; value?: unknown; deleted?: boolean }[]): Promise<void>;

@@ -104,7 +104,7 @@ or use --temp-browser`.
   [Testing in the real extension](#testing-in-the-real-extension)).
 - If the person already has a browser on the port, use it: their tabs
   are left alone, and only the run's own tabs are touched.
-  - If it has SourceMonkey installed, the run keeps SourceMonkey's own
+  - If it has SourceMonkey installed, the run keeps SourceMonkey-managed
     scripts out of the run's tabs, so only the scripts you started run
     there.
 
@@ -585,8 +585,9 @@ $R clear --extension     # drop scratch scripts
   `menu`, `snapshot`, `click`, `eval`, `reload`, ...). Output is the
   script's starts, errors, menus and value writes, its Log tab entries,
   and page console lines.
-- The run's tabs run only its own scripts: the extension's other
-  scripts are kept out of them. Tabs you open yourself run everything.
+- The run's tabs run only its own scripts: SourceMonkey-managed
+  scripts are kept out of them. The run's scripts run only in the
+  run's tabs, not in tabs you open yourself.
   - `scripts` lists those others on the tab as E1, E2, ...;
     `values E1` reads one's stored values, and `scripts E1` picks it
     for `get`/`set` (`set key --force <json>` outside a

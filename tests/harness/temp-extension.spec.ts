@@ -4,13 +4,14 @@
 
 import { existsSync } from 'node:fs';
 
-import { chromium } from '@playwright/test';
+import { chromium, type BrowserContext } from '@playwright/test';
 
 import { test, expect } from '../fixtures/harness.js';
 import { renderUserscript } from '../fixtures/scripts-dir.js';
-import { ExtensionBackend, findExtensionWorker } from '../../lib/harness/extension-backend.js';
+import { findExtensionWorker } from '../../lib/harness/extension-backend.js';
 import { launchExtensionBrowser } from '../../lib/harness/extension-launch.js';
 import { run } from '../../lib/harness/run.js';
+import { UserscriptServer } from '../fixtures/userscript-server.js';
 
 test('the launch leaves no default collections and one blank tab, and close deletes its profile', async () => {
   const launched = await launchExtensionBrowser(false);
@@ -106,20 +107,19 @@ test('an extension run takes the run commands: status, values, set, menu, eval, 
   expect(text).toMatch(/\* 1: Cmds \(.*cmds\.user\.js\)/);
 });
 
-test('the extension\'s own scripts on the tab are E1, ..., kept out, and their values reachable', async ({ fixtureServer, scriptsDir }) => {
+test('SourceMonkey-managed scripts on the tab are E1, ..., kept out, and their values reachable', async ({ fixtureServer, scriptsDir }) => {
   test.setTimeout(90_000);
-  // A browser with another script already installed (as a scratch
-  // script the run didn't push), which has stored a value.
+  // A browser with another script already installed, which has stored
+  // a value.
   const launched = await launchExtensionBrowser(false);
   try {
     const browser = await chromium.connectOverCDP(launched.endpoint);
     const context = browser.contexts()[0];
-    const backend = await ExtensionBackend.connect(context);
-    await backend.push(renderUserscript({
+    await installScript(context, renderUserscript({
       relativePath: 'other.user.js',
       meta: { name: 'Other', match: ['*://*/target.html'], grant: ['GM_setValue'] },
       body: `GM_setValue('seen', 1); document.title = 'other ran';`,
-    }), 'other.user.js');
+    }));
     const page = await context.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page).toHaveTitle('other ran');
@@ -134,7 +134,7 @@ test('the extension\'s own scripts on the tab are E1, ..., kept out, and their v
       ['Mine started on', 'scripts'],
       ['E1: Other', 'values E1'],
       ['seen = 1', 'scripts E1'],
-      ['Using E1: Other', 'scripts'],
+      ['Selected E1: Other', 'scripts'],
       ['* E1: Other', 'set seen --force 2'],
       ['Set seen', 'get seen'],
       // Not a throwaway browser, so without --force it refuses (which
@@ -143,9 +143,9 @@ test('the extension\'s own scripts on the tab are E1, ..., kept out, and their v
     ]);
     const text = lines.join('\n');
     expect(left, text).toEqual([]);
-    expect(text).toContain('add --force after the key: set seen --force <json>');
+    expect(text).toContain('so this would change its real stored data. Use --force to continue.');
     // The picked one is marked, and the run's own script isn't.
-    expect(text).toMatch(/\* E1: Other \(Scratch\)/);
+    expect(text).toMatch(/\* E1: Other \(Scripts from web\)/);
     // Kept out of the run's tab: only the run's own script ran there.
     expect(text).toContain('Kept out of the run\'s tabs');
     expect(text).not.toContain('other ran');
@@ -159,13 +159,12 @@ test('a harness run in a browser with SourceMonkey keeps its scripts out of the 
   const launched = await launchExtensionBrowser(false);
   try {
     const browser = await chromium.connectOverCDP(launched.endpoint);
-    const backend = await ExtensionBackend.connect(browser.contexts()[0]);
     // An installed script that marks every fixture page it runs on.
-    await backend.push(renderUserscript({
+    await installScript(browser.contexts()[0], renderUserscript({
       relativePath: 'other.user.js',
       meta: { name: 'Other', match: ['*://*/target.html', '*://*/other.html'], runAt: 'document-start' },
       body: `document.documentElement.dataset.other = 'ran';`,
-    }), 'other.user.js');
+    }));
     await browser.close();
 
     const file = scriptsDir.write({
@@ -195,6 +194,129 @@ test('a harness run in a browser with SourceMonkey keeps its scripts out of the 
     await launched.close();
   }
 });
+
+test('a run started with no scripts claims its tabs, so a script it loads runs alone, in either backend', async ({ fixtureServer, scriptsDir }) => {
+  test.setTimeout(120_000);
+  const launched = await launchExtensionBrowser(false);
+  try {
+    let browser = await chromium.connectOverCDP(launched.endpoint);
+    await installScript(browser.contexts()[0], renderUserscript({
+      relativePath: 'other.user.js',
+      meta: { name: 'Other', match: ['*://*/target.html'], runAt: 'document-start' },
+      body: `document.documentElement.dataset.other = 'ran';`,
+    }));
+    await browser.close();
+    // Page-world, so its reports reach SourceMonkey's bridge too.
+    const file = scriptsDir.write({
+      relativePath: 'mine.user.js',
+      meta: { name: 'Mine', match: ['*://*/target.html'], grant: ['none'] },
+      body: `console.log('[mine] other is ' + (document.documentElement.dataset.other ?? 'out'));`,
+    });
+    for (const extension of [false, true]) {
+      const { lines, left } = await driveCli(['--cdp', launched.endpoint, 'start', ...(extension ? ['--extension'] : []), `${fixtureServer.baseUrl}/target.html`], [
+        ['Opening', `load ${file}`],
+        ['[mine] other is', 'stop'],
+      ]);
+      const text = lines.join('\n');
+      expect(left, text).toEqual([]);
+      expect(text).toContain('[mine] other is out');
+      // The extension shows the tab as sm-dev's, with its own script
+      // kept out and the run's not listed as a stranger.
+      browser = await chromium.connectOverCDP(launched.endpoint);
+      const worker = await findExtensionWorker(browser.contexts()[0]);
+      const titles = await worker.evaluate(async () => {
+        const api = (self as unknown as { SourceMonkey: { getTabState(id: number): Promise<{ title: string } | null> } }).SourceMonkey;
+        const tabs = await chrome.tabs.query({});
+        return Promise.all(tabs.filter((t) => t.url?.endsWith('/target.html')).map(async (t) => (await api.getTabState(t.id!))?.title ?? ''));
+      });
+      await browser.close();
+      const title = titles.join('\n');
+      expect(title, text).toContain('Page under sm-dev control');
+      expect(title).toContain('Other | NOT LOADED');
+      expect(title).not.toContain('UNEXPECTED');
+    }
+  } finally {
+    await launched.close();
+  }
+});
+
+test('an --extension run follows the tabs its scripts open, each by its own tab', async ({ scriptsDir }) => {
+  test.setTimeout(90_000);
+  const server = await UserscriptServer.start();
+  const html = { contentType: 'text/html; charset=utf-8' };
+  const base = server.baseUrl;
+  // The opener: two pop-ups at once, and a GM_openInTab that redirects.
+  server.setRoute('/opener.html', '<html><body>opener</body></html>', html);
+  server.setRoute('/a.html', '<html><body>a</body></html>', html);
+  server.setRoute('/b.html', '<html><body>b</body></html>', html);
+  server.setRoute('/landing.html', '<html><body>landing</body></html>', html);
+  server.setRedirect('/redirect', `${base}/landing.html`);
+  const file = scriptsDir.write({
+    relativePath: 'pop.user.js',
+    meta: { name: 'Pop', match: [`${base}/*`], grant: ['GM_openInTab'] },
+    body: `
+      console.log('[pop] on ' + location.pathname);
+      if (location.pathname === '/opener.html') {
+        window.open('/a.html');
+        window.open('/b.html');
+        GM_openInTab('${base}/redirect');
+      }
+    `,
+  });
+  const lines: string[] = [];
+  let stop!: () => void;
+  const until = new Promise<void>((resolve) => { stop = resolve; });
+  const done = run({
+    files: [file],
+    urls: [`${base}/opener.html`],
+    tempBrowser: true,
+    extension: true,
+    collectionRoot: scriptsDir.path,
+    localRoots: [],
+    out: (line) => {
+      lines.push(line);
+      const text = lines.join('\n');
+      if (['/a.html', '/b.html', '/landing.html'].every((p) => text.includes(`Pop started on ${base}${p}`))) stop();
+    },
+    until,
+  });
+  const timer = setTimeout(stop, 40_000);
+  try {
+    await done;
+  } finally {
+    clearTimeout(timer);
+    await server.stop();
+  }
+  const text = lines.join('\n');
+  // Each opened tab is announced with the page it shows, and that tab's
+  // own lines are tagged with its number.
+  for (const page of ['/a.html', '/b.html', '/landing.html']) {
+    const announced = text.match(new RegExp(`Tab (T\\d+) opened at \\S*${page.replace('.', '\\.')}`));
+    expect(announced, text).not.toBeNull();
+    // (Console lines from an opened tab's first load don't reach the
+    // run yet: see TODO.md.)
+    expect(text).toMatch(new RegExp(`\\[${announced![1]}\\] \\[sm-dev\\] Pop started on \\S*${page.replace('.', '\\.')}`));
+  }
+  expect(text).not.toContain('couldn\'t follow');
+});
+
+// Installs `text` into the browser's SourceMonkey as a person's own
+// script would be, in a collection of its own (not as a scratch
+// script, which only sm-dev's tabs run). Served over http to install.
+async function installScript(context: BrowserContext, text: string): Promise<void> {
+  const server = await UserscriptServer.start();
+  try {
+    server.setRoute('/other.user.js', text, { contentType: 'text/javascript' });
+    const worker = await findExtensionWorker(context);
+    await worker.evaluate(async (url) => {
+      const api = (self as unknown as { SourceMonkey: { addCollection(u: string): Promise<unknown>; syncNow(): Promise<void> } }).SourceMonkey;
+      await api.addCollection(url);
+      await api.syncNow();
+    }, `${server.baseUrl}/other.user.js`);
+  } finally {
+    await server.stop();
+  }
+}
 
 // Drives the real CLI through its input: each command is sent once a
 // line containing its trigger shows up. Returns the output, and the

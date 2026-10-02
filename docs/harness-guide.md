@@ -335,14 +335,15 @@ Any Chromium started with
 
 ### A browser with SourceMonkey installed
 
-- The run keeps SourceMonkey's own scripts out of the tabs it opens
+- The run keeps SourceMonkey-managed scripts out of the tabs it opens
   (and the tabs those open), so only the run's scripts run there. They
   run there again from the tab's next load after the run ends.
-- A run with no scripts leaves its tabs to SourceMonkey.
+- That holds for a run started with no scripts too, so scripts it
+  `load`s later run alone.
 - Your other tabs are left alone.
 - In those tabs, SourceMonkey's toolbar icon has a cyan **T** in its
-  corner, its badge counts none of its scripts, and its right-click
-  menu opens with "Page under sm-dev control".
+  corner, its badge counts none of its scripts, and both its tooltip
+  and its right-click menu say "Page under sm-dev control".
 - With an older SourceMonkey, the run says once that its scripts may
   also run in the run's tabs.
 - How it works: [sm-dev-extension.md](sm-dev-extension.md#tab-claims).
@@ -462,19 +463,17 @@ What to open:
   first it opens is T1.
   - That tab isn't one a later run takes over (see
     [Which tab `start` uses](#which-tab-start-uses)).
-  - With `--extension`, the scripts also run in pages you browse to
-    yourself, with the extension's other scripts, and after a `--watch`
-    save you reload them yourself. The run reports only on the tabs it
-    opens (`newtab`).
+  - With `--extension` too, the scripts run only in the tabs the run
+    opens (`newtab`), not in pages you browse to yourself.
   - Can't be combined with a URL or `--all`.
 - With no scripts given, it starts as a browser to drive with the run
   commands, on a blank page or the URLs given. `load` adds scripts
   later. It can't be combined with `--all`, `--values`,
   `--values-file` or `--watch`.
-  - With `--extension`, it's a browser whose SourceMonkey runs its own
-    collections. With `--temp-browser --headed`, that's a throwaway
-    browser with the extension, to try by hand. Its tabs aren't
-    claimed, so it can't `load` a script.
+  - With `--temp-browser --headed --extension`, that's a throwaway
+    browser with the extension, to try by hand. The scripts it `load`s
+    run only in the run's tabs (`newtab`, and the tabs those open), not
+    in tabs you open yourself.
 - `--from-saved` opens each `.html` file given as a saved page, at the
   URL it was saved from, with `--url` and `--offline` as for `newtab`.
   See [Saved pages](#saved-pages). Not with `--all` or `--notab`.
@@ -1739,9 +1738,11 @@ For a browser that keeps the extension (and your logins):
   lines.
 - The run's tabs run only the scripts it pushed: the extension keeps
   its other scripts out of them, across reloads and in the tabs they
-  open, until the run ends. Tabs you open yourself run everything. See
+  open, until the run ends.
+- The scripts it pushed run only in the run's tabs: not in tabs you
+  open yourself, another run's tabs, or anywhere once the run ends. See
   [sm-dev-extension.md](sm-dev-extension.md#tab-claims).
-- `scripts` and `status` also list the extension's own scripts that
+- `scripts` and `status` also list the SourceMonkey-managed scripts that
   match the current tab, as E1, E2, ..., with their status.
   - `values E1` shows one's stored values, and `scripts E1` picks it for
     `get` and `set`.
@@ -1749,11 +1750,6 @@ For a browser that keeps the extension (and your logins):
     changes your real data: `set key --force <json>`.
 - `sm-dev clear --extension` drops all scratch scripts and their stored
   values.
-  - It also turns off solo mode, which `--solo` turned on before runs
-    claimed their tabs, should an older sm-dev have left it on. The
-    other collections are restored to how they were.
-- `--solo` is no longer needed, and does nothing: the run's tabs keep
-  the extension's other scripts out on their own.
 
 ### Differences from the push backend
 
@@ -1865,5 +1861,3 @@ These apply to `sm-dev start` and to specs alike.
 - **`sm-dev start` hangs at connect**: a tab in the browser is showing
   a dialog. The run names it; answer the dialog or close the tab (see
   [Page dialogs](#page-dialogs)).
-- **The other collections stay disabled**: an older sm-dev's `--solo`
-  run was killed. `sm-dev clear --extension` restores them.

@@ -254,7 +254,7 @@ export interface AttachOptions {
   /**
    * Run on each tab the page's scripts open (`GM_openInTab`) before it
    * loads: it opens blank, this runs, then the URL loads. A harness
-   * run claims it here, so SourceMonkey's own scripts stay out of it.
+   * run claims it here, so SourceMonkey-managed scripts stay out of it.
    */
   claimOpenedTab?: (page: Page) => Promise<void>;
 }
@@ -880,7 +880,7 @@ export class PageAttachment implements PageLink {
     const payload = envelope?.payload;
     if (!payload || typeof payload !== 'object') return;
     // A page-world message about a script the harness didn't inject is
-    // SourceMonkey's own, in the same browser: its bridge answers it.
+    // SourceMonkey-managed, in the same browser: its bridge answers it.
     // Answering too would race it, and a `run` here would beat the
     // extension's `skip` for a tab the run claimed.
     const fields = payload as Record<string, unknown>;

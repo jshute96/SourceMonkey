@@ -864,6 +864,10 @@ See [docs/harness-design.md](docs/harness-design.md).
   unanswered, as the harness now does for SourceMonkey's.
 - A harness run doesn't hear which tabs its tabs open, so it can't
   restore their claims after an extension reload (an extension run can).
+- When a claimed tab's wrapper times out asking the worker (a worker
+  slow to start) and runs an extension script anyway, the run doesn't
+  say so. The extension's `started` event could tell it: a script the
+  run didn't push starting in its tab.
 
 ## Scratch scripts shared between sm-dev runs
 

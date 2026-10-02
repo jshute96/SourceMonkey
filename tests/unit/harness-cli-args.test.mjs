@@ -434,7 +434,6 @@ test('the Accept-Language a request sent from Node carries is built as Chrome bu
 
 test('--devtools refuses the runs it can\'t serve', () => {
   assert.deepEqual(cliLine('--temp-browser', 'start', SCRIPT, '--devtools'), { code: 2, out: 'ERROR: The --devtools flag can\'t be used with --temp-browser' });
-  assert.deepEqual(run(SCRIPT, '--devtools', '--extension'), { code: 2, out: 'ERROR: The --devtools flag can\'t be used with --extension' });
 });
 
 test('--help lists every command, in sections, and how to name things', () => {
@@ -471,7 +470,7 @@ test('help for one command shows its entry and only its flags', () => {
   // start's own groups, then the ones it shares.
   const start = help('help', 'start').out;
   assert.ok(start.indexOf('Lifetime:') < start.indexOf('Browser selection'));
-  assert.match(start, /^ {2}--solo /m);
+  assert.match(start, /^ {2}--extension /m);
   // --help before or after the command asks the same.
   assert.equal(help('match', '--help').out, match.out);
   assert.equal(help('--help', 'match').out, match.out);

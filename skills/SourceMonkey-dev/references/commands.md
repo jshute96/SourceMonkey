@@ -75,7 +75,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `validate <path>...` | Header, `@require` and syntax checks, plus warnings (files, dirs, globs) |
 | `match <script>... <url>...` | Would it run there; which rule decided |
 | `match`, `match all` | In a run: the selected script on the current tab; all scripts on all tabs |
-| `scripts`, `script <script>` | List; pick the one `get`/`set`/`match` use. With `--extension` it also lists SourceMonkey's own scripts on the tab as E1, ...; `scripts E1` picks one for `get`/`set` (`set key --force <json>` outside a `--temp-browser`) |
+| `scripts`, `script <script>` | List; pick the one `get`/`set`/`match` use. With `--extension` it also lists SourceMonkey-managed scripts on the tab as E1, ...; `scripts E1` picks one for `get`/`set` (`set key --force <json>` outside a `--temp-browser`) |
 | `load <script>...` | Add scripts to the run |
 | `update [script]` | Re-read changed scripts and reload affected tabs |
 
@@ -145,7 +145,7 @@ old) or DOM changes for 200ms. Timers aren't waited for.
 | --- | --- |
 | `menu`, `menu all` | List menu commands (`M1`...) |
 | `menu <label or M1>` | Fire one |
-| `values [script\|T2\|E1]` | Stored values (`E1`: one of SourceMonkey's own scripts, with `--extension`) |
+| `values [script\|T2\|E1]` | Stored values (`E1`: a SourceMonkey-managed script, with `--extension`) |
 | `get <key>`, `set <key> <json>` | One value; `set` fires change listeners |
 | `set <key> --file <path>` | The value from a JSON file (or a `{{` block, as `eval` takes) |
 

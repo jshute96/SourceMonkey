@@ -88,7 +88,7 @@ function tabIdsSuffix(tab: ControlledTab): string {
 }
 
 /**
- * One of the extension's own scripts, which an `--extension` run didn't
+ * A SourceMonkey-managed script, which an `--extension` run didn't
  * push: named E1, E2, ... for the run, in the order it first sees them.
  */
 export interface OtherScript {
@@ -120,7 +120,7 @@ export interface ConsoleContext {
   updateScripts?: (scripts?: PreparedScript[]) => Promise<void>;
   /** The scripts this run injected, in load order. */
   scripts: PreparedScript[];
-  /** With `--extension`: the extension's own scripts (see `OtherScript`). */
+  /** With `--extension`: SourceMonkey-managed scripts (see `OtherScript`). */
   others?: {
     /** Those on the tab's page, as its toolbar badge lists them. */
     onTab(tab: ControlledTab): Promise<OtherScript[]>;
@@ -418,7 +418,7 @@ export async function runConsoleCommand(
         const found = await pickOther(ctx, text, picked);
         if (!found) return false;
         ctx.currentOther = found;
-        ctx.out(`[sm-dev] Using ${found.label}: ${found.name} for get and set`);
+        ctx.out(`[sm-dev] Selected ${found.label}: ${found.name}`);
         return;
       }
       const ref = tabRef(ctx, text, tab);
@@ -432,11 +432,11 @@ export async function runConsoleCommand(
       ctx.current = found;
       ctx.currentOther = undefined;
       if (!ref.named) {
-        ctx.out(`[sm-dev] Using ${scriptLabel(found)} for get and set`);
+        ctx.out(`[sm-dev] Selected ${scriptLabel(found)}`);
         return;
       }
       ctx.tab = ref.tab;
-      ctx.out(`[sm-dev] Using ${scriptLabel(found)} for get and set, and ${tabName(ref.tab)} for the page commands`);
+      ctx.out(`[sm-dev] Selected ${scriptLabel(found)}, and ${tabName(ref.tab)} for the page commands`);
       return;
     }
     case 'status': {
@@ -546,10 +546,10 @@ export async function runConsoleCommand(
         }
       }
       if (flags['--force'] === true && !other) {
-        ctx.out('[sm-dev] ERROR: The --force flag is for one of SourceMonkey\'s own scripts (E1, ...), picked with scripts E1');
+        ctx.out('[sm-dev] ERROR: The --force flag is for SourceMonkey-managed scripts only (E1, ...)');
         return false;
       }
-      // One of SourceMonkey's own never runs in the run's tabs, so a
+      // A SourceMonkey-managed script never runs in the run's tabs, so a
       // dialog there doesn't hold up its write.
       if (!other && blockedByDialog(ctx.tabs())) return;
       // Through the host, so a running script sees it on its next read
@@ -557,7 +557,7 @@ export async function runConsoleCommand(
       // would.
       if (other) {
         if (ctx.others?.guarded && flags['--force'] !== true) {
-          ctx.out(`[sm-dev] ERROR: ${other.label} is one of SourceMonkey's own scripts, so this would change its real stored data. To do it, add --force after the key: set ${key} --force <json>.`);
+          ctx.out(`[sm-dev] ERROR: ${other.label} is a SourceMonkey-managed script, so this would change its real stored data. Use --force to continue.`);
           return false;
         }
         await other.setValues({ [key]: value });
@@ -765,7 +765,7 @@ function scriptRow(ctx: ConsoleContext, script: PreparedScript): string {
 }
 
 // The run's script `get` and `set` act on, marked `*` in the lists:
-// none while one of SourceMonkey's own (`E1`) is picked instead.
+// none while a SourceMonkey-managed script (`E1`) is picked instead.
 function selectedScript(ctx: ConsoleContext): PreparedScript | undefined {
   return ctx.currentOther ? undefined : ctx.current ?? ctx.scripts[0];
 }
@@ -1578,23 +1578,23 @@ function valueEntries(values: Record<string, unknown>): string[] {
   return keys.map((key) => `    ${key} = ${JSON.stringify(values[key])}`);
 }
 
-// `E1`: one of the extension's own scripts (see `OtherScript`).
+// `E1`: a SourceMonkey-managed script (see `OtherScript`).
 const OTHER_LABEL = /^E\d+$/i;
 
-// The script of SourceMonkey's own `label` names, or null having said
+// The SourceMonkey-managed script `label` names, or null having said
 // why. Lists the current tab's first if it isn't known yet, so it can
 // be named before anything listed it.
 async function pickOther(ctx: ConsoleContext, label: string, tab: ControlledTab | undefined): Promise<OtherScript | null> {
   const name = label.toUpperCase();
   if (!ctx.others) {
-    ctx.out(`[sm-dev] ERROR: ${name} names one of SourceMonkey's own scripts, and only an --extension run has those`);
+    ctx.out(`[sm-dev] ERROR: ${name} labels are only given in --extension runs`);
     return null;
   }
   if (!ctx.others.byLabel(name) && tab) {
     try {
       await ctx.others.onTab(tab);
     } catch (err) {
-      ctx.out(`[sm-dev] SourceMonkey's own scripts on ${tabName(tab)} could not be listed: ${firstLine(err)}`);
+      ctx.out(`[sm-dev] SourceMonkey-managed scripts on ${tabName(tab)} could not be listed: ${firstLine(err)}`);
       return null;
     }
   }
@@ -1622,7 +1622,7 @@ function otherLabel(o: OtherScript): string {
   return `${o.label}: ${o.name}${o.collection ? ` (${o.collection})` : ''}`;
 }
 
-// SourceMonkey's own scripts on `tab`, for `scripts` and `status`. None
+// SourceMonkey-managed scripts on `tab`, for `scripts` and `status`. None
 // outside an `--extension` run, or when there are none.
 async function otherLines(ctx: ConsoleContext, tab: ControlledTab | undefined): Promise<string[]> {
   if (!ctx.others || !tab) return [];
@@ -1630,11 +1630,11 @@ async function otherLines(ctx: ConsoleContext, tab: ControlledTab | undefined): 
   try {
     others = await ctx.others.onTab(tab);
   } catch (err) {
-    return [`[sm-dev] SourceMonkey's own scripts on ${tabName(tab)} could not be listed: ${firstLine(err)}`];
+    return [`[sm-dev] SourceMonkey-managed scripts on ${tabName(tab)} could not be listed: ${firstLine(err)}`];
   }
   if (others.length === 0) return [];
   return [
-    `SourceMonkey's own scripts on ${tabName(tab)}:`,
+    `SourceMonkey-managed scripts on ${tabName(tab)}:`,
     // By label: each listing gets the scripts afresh.
     ...others.map((o) => `${o.label === ctx.currentOther?.label ? '* ' : '  '}${otherLabel(o)}: ${OTHER_STATUS[o.status] ?? o.status}`),
   ];

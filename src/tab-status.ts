@@ -11,6 +11,7 @@
 // script's status. Keeping the computation here (pure) makes it easy
 // to unit test without the chrome.* surface.
 
+import { ACTION_MENU_SM_DEV_LABEL } from './action-menu.js';
 import type { MatchedScript } from './match-index.js';
 import type { InjectionWorld } from './injector.js';
 
@@ -229,7 +230,7 @@ export function computeBadge(
   // out (an sm-dev claim) and the rest ran.
   else if (anySkipped && !rows.some((r) => r.status === 'OK')) color = BADGE_GREY;
 
-  const title = ['SourceMonkey', ...rows.map((r) => formatRowLabel(r))].join('\n');
+  const title = [titleHead(state), ...rows.map((r) => formatRowLabel(r))].join('\n');
 
   // In a tab an sm-dev run controls, the count is of the scripts its
   // claim let run: the rest were kept out, not left out by a problem.
@@ -237,6 +238,14 @@ export function computeBadge(
     ? allIds.size
     : [...allIds].filter((id) => !skippedOnDocument(state, id) || state.actual[id]).length;
   return { count, color, title, rows };
+}
+
+/**
+ * The tooltip's first lines: the extension's name, and in a tab an
+ * sm-dev run controls, the same note the action menu opens with.
+ */
+export function titleHead(state: TabMatchState | null): string {
+  return state?.smDevAllow === undefined ? 'SourceMonkey' : `SourceMonkey\n${ACTION_MENU_SM_DEV_LABEL}`;
 }
 
 /**

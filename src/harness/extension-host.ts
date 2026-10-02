@@ -14,10 +14,15 @@
 //   are not the run's.
 // - A tab's events come over the worker's connection, its navigations
 //   over the page's, and nothing orders the two. So an event from a
-//   document the attachment hasn't seen arrive yet waits for it: a
-//   report stamped before its document began would not count for it,
-//   and a menu command recorded then would be cleared by the
-//   navigation that follows.
+//   top-frame document the attachment hasn't seen arrive yet waits for
+//   it: a report stamped before its document began would not count for
+//   it, and a menu command recorded then would be cleared by the
+//   navigation that follows. Only a top-frame event's document counts:
+//   SourceMonkey runs scripts in top frames only today, but an iframe's
+//   events would carry the iframe's document, which no navigation of
+//   the tab's would ever match.
+// - The run reports only on its own tabs: events from others, and Log
+//   entries made in them, are left out.
 
 import { SM_ABANDONED_MSG, SM_ERROR_MSG, SM_START_MSG, SM_SWAPPED_MSG } from '../injector.js';
 import { SKIP_REASON_SM_DEV } from '../sm-dev-link.js';
@@ -34,7 +39,7 @@ export interface WatchedPage extends PageLink {
   documentStart(): number;
 }
 
-type TabEvent = Extract<ExtensionEvent, { kind: 'report' | 'menu' }>;
+type TabEvent = Extract<ExtensionEvent, { kind: 'report' | 'menu' | 'values' }>;
 
 // How long a tab's event waits for its document, or for the tab to be
 // set up, before it's handled anyway or dropped.
@@ -63,7 +68,7 @@ export class ExtensionHost extends HarnessHost {
   private readonly tabsByPage = new Map<PageLink, number>();
   // Events from tabs the run is setting up, by tab id, with when they came.
   private readonly early = new Map<number, { at: number; events: TabEvent[] }>();
-  // The extension's own scripts the run has listed, by label (`E1`), and
+  // The SourceMonkey-managed scripts the run has listed, by label (`E1`), and
   // each one's label by its id, kept for the run.
   private readonly others = new Map<string, OtherScript>();
   private readonly otherLabels = new Map<string, string>();
@@ -100,11 +105,6 @@ export class ExtensionHost extends HarnessHost {
     return remapStackText(text, this.layouts.values());
   }
 
-  /** The run's script the extension knows as `extensionId`, if any. */
-  pushedAs(extensionId: string): string | undefined {
-    return this.runIds.get(extensionId);
-  }
-
   /** The extension's ids for the run's scripts, which its tabs let run. */
   pushedIds(): string[] {
     return [...this.extensionIds.values()];
@@ -113,13 +113,14 @@ export class ExtensionHost extends HarnessHost {
   /**
    * `page` is the run's tab `tabId`. `loaded`: the tab already shows the
    * document its first events are from (a tab adopted after it loaded),
-   * so they needn't wait for a navigation.
+   * so they needn't wait for a navigation. `scriptsOff`: its claim runs
+   * no scripts (opened from a `--noscript` tab), to keep if restored.
    */
-  addTab(page: WatchedPage, tabId: number, loaded = false): void {
+  addTab(page: WatchedPage, tabId: number, loaded = false, scriptsOff = false): void {
     const state: TabState = { page, seenStart: loaded ? -Infinity : page.documentStart(), queue: Promise.resolve() };
     this.tabs.set(tabId, state);
     this.tabsByPage.set(page, tabId);
-    this.link.holdTab(tabId);
+    this.link.holdTab(tabId, scriptsOff);
     const early = this.early.get(tabId);
     this.early.delete(tabId);
     for (const event of early?.events ?? []) this.enqueue(state, event);
@@ -169,7 +170,7 @@ export class ExtensionHost extends HarnessHost {
   }
 
   /**
-   * The extension's own scripts, for the commands (`ConsoleContext.others`).
+   * The SourceMonkey-managed scripts, for the commands (`ConsoleContext.others`).
    * `guarded`: `set` on one changes the person's real data.
    */
   otherScripts(guarded: boolean): NonNullable<ConsoleContext['others']> {
@@ -214,28 +215,28 @@ export class ExtensionHost extends HarnessHost {
       const runId = this.runIds.get(event.scriptId);
       // A report's own entry (started, threw, skipped) prints as the report.
       if (!runId || event.fromReport) return;
+      // One made in a tab only if it's the run's; one of the extension's
+      // own (a `@require` that failed to load) always.
+      const tabId = event.entry.tabId;
+      if (tabId !== undefined && !this.tabs.has(tabId) && !this.early.has(tabId)) return;
       this.printLog(this.nameOf(runId), event.entry.level, decodeOwnRefs(this.remapStack(event.entry.message)));
       return;
     }
-    if (event.kind === 'values') {
-      const runId = this.runIds.get(event.scriptId);
-      // A write with no tab is the run's own `set` (or another run's),
-      // which says so itself.
-      const page = event.tabId === undefined ? undefined : this.tabs.get(event.tabId)?.page;
-      if (runId && page) void this.handle({ type: 'sm:gm-batch-write', scriptId: runId, writes: event.writes }, page, 'isolated');
-      return;
-    }
     if (event.kind === 'tab-opened') return;
+    // A write with no tab is the run's own `set` (or another run's),
+    // which says so itself.
+    if (event.kind === 'values' && event.tabId === undefined) return;
+    const tabId = event.tabId!;
     if (!this.runIds.has(event.scriptId)) return;
-    const state = this.tabs.get(event.tabId);
+    const state = this.tabs.get(tabId);
     if (state) {
       this.enqueue(state, event);
       return;
     }
-    const early = this.early.get(event.tabId);
+    const early = this.early.get(tabId);
     if (!early) return;
     // A tab whose setup never finished doesn't hold events for good.
-    if (Date.now() - early.at > SETUP_WAIT_MS) this.early.delete(event.tabId);
+    if (Date.now() - early.at > SETUP_WAIT_MS) this.early.delete(tabId);
     else early.events.push(event);
   }
 
@@ -244,7 +245,7 @@ export class ExtensionHost extends HarnessHost {
   }
 
   private async handleTabEvent(state: TabState, event: TabEvent): Promise<void> {
-    if (event.documentId && event.documentId !== state.documentId) {
+    if (event.kind !== 'values' && event.topFrame !== false && event.documentId && event.documentId !== state.documentId) {
       // A new document: wait for the attachment to have entered one
       // after the last, so what this records counts for it.
       const deadline = Date.now() + DOCUMENT_WAIT_MS;
@@ -255,7 +256,11 @@ export class ExtensionHost extends HarnessHost {
       state.seenStart = state.page.documentStart();
     }
     const runId = this.runIds.get(event.scriptId);
-    if (!runId || !this.tabs.has(event.tabId)) return;
+    if (!runId || !this.tabs.has(event.tabId!)) return;
+    if (event.kind === 'values') {
+      await this.handle({ type: 'sm:gm-batch-write', scriptId: runId, writes: event.writes }, state.page, 'isolated');
+      return;
+    }
     if (event.kind === 'menu') {
       await this.handle(event.op === 'add'
         ? { type: 'sm:gm-menu-register', scriptId: runId, commandId: event.commandId, name: event.name ?? '' }

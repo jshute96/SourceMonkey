@@ -441,7 +441,7 @@ takes effect:
   one. User-facing side in [harness-guide.md](harness-guide.md).
 - [sm-dev-design.md](sm-dev-design.md) — internals of the harness's
   `sm-dev` command-line tool: runs and clients, tabs, page commands.
-- [sm-dev-extension.md](sm-dev-extension.md) — plan for sm-dev with the
+- [sm-dev-extension.md](sm-dev-extension.md) — sm-dev with the
   real extension: shared commands, tab claims, the event stream.
 - [logging.md](logging.md) — SW console-message catalog, log IDs
   (basename + `#N` dupes), and the debug-logging gate.

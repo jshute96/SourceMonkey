@@ -126,12 +126,13 @@ test('errored flag passes through unchanged for top and More groups', () => {
   assert.equal(all.find((g) => g.scriptId === 'c').errored, true);
 });
 
-test('in a tab an sm-dev run controls, its row takes a top-level slot too', () => {
+test('in a tab an sm-dev run controls, its row takes the reload row\'s place', () => {
   const groups = [mkGroup('a', 0), mkGroup('b', 0), mkGroup('c', 0), mkGroup('d', 0), mkGroup('e', 0)];
-  // Five rows plus the reload row fit in six; the sm-dev row pushes
-  // one group into More.
-  assert.equal(planActionMenu(groups).more.length, 0);
+  // Which scripts run there is the run's choice, so no reload row.
   const plan = planActionMenu(groups, true);
   assert.equal(plan.smDevControl, true);
-  assert.ok(plan.more.length > 0);
+  assert.equal(plan.reloadWithoutScripts, false);
+  // Five rows plus the sm-dev row fit in six; a sixth spills to More.
+  assert.equal(plan.more.length, 0);
+  assert.ok(planActionMenu([...groups, mkGroup('f', 0)], true).more.length > 0);
 });

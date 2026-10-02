@@ -9,8 +9,8 @@ two backends:
   SourceMonkey as scratch scripts, and the extension runs them.
 
 Status: being built. Done: the shared commands, tab claims (in both
-kinds of run), the event stream, and the extension's other scripts
-(E1, ...), retiring `--solo`, and the toolbar marker. User-facing behavior is in
+kinds of run), the event stream, SourceMonkey-managed scripts (E1,
+...), and the toolbar marker. User-facing behavior is in
 [harness-guide.md](harness-guide.md#the-extension-backend).
 
 ## Goals
@@ -78,13 +78,15 @@ kinds of run), the event stream, and the extension's other scripts
   `src/harness/extension-link.ts`).
 - What sm-dev uses:
   - scratch scripts: `writeScratchScript`, `clearScratchScripts`,
-    `soloMode`, `getScriptLog`;
+    `getScriptLog`;
   - values and menus: `getGmValues`, `writeGmValues`,
     `fireActionContextMenuItem`;
   - claims: `claimTab`, `renewRun`, `releaseRun`, `setTabScriptsOff`
     (below).
-  - the extension's other scripts: `scriptsOnTab(tabId)`, the rows the
-    toolbar badge shows for a tab, with each one's collection.
+  - SourceMonkey-managed scripts: `scriptsOnTab(tabId)`, the rows the
+    toolbar badge shows for a tab, with each one's collection;
+  - tabs: `tabDocument(tabId)`, which document a tab shows, to tell
+    which page an opened tab is.
 - Scripts are named by the extension's script id, a UUID kept stable
   across refreshes ([script-identity.md](script-identity.md)).
   - A re-push of the same file name keeps the script's id and its
@@ -110,8 +112,12 @@ A claim tells the extension what to run in a tab sm-dev controls:
 - **Harness runs** claim with *nothing*: the extension runs none of its
   scripts there.
 - **Extension runs** claim with *the run's scripts*: the extension runs
-  only those there. This replaces `--solo` (see
-  [Retiring `--solo`](#retiring---solo)).
+  only those there.
+  - That is the right default: the usual case is a scratch copy of a
+    script also installed in a collection, and both would run in the
+    same tab otherwise.
+  - To test a script alongside installed ones, push those as scratch
+    scripts too.
 
 ### How the extension honours a claim
 
@@ -120,6 +126,11 @@ A claim tells the extension what to run in a tab sm-dev controls:
   is how "Reload page with no userscripts" works (`background.ts`).
 - A claim is a per-tab rule the check-pending handler consults first:
   `skip` unless the script is one the claim allows.
+- A scratch script (in the Scratch collection, which only sm-dev
+  pushes to) is skipped in every tab without a claim, so it runs only
+  in the tabs of a run whose claim allows it.
+  - The toolbar badge leaves it out of those other tabs entirely, so
+    it shows as neither missing nor not loaded there.
 - Chrome still injects the wrappers; only their bodies are skipped. So
   nothing about the scripts' registrations changes, and the person's
   other tabs are unaffected.
@@ -160,12 +171,12 @@ sm-dev knows a tab by its CDP target id; the extension knows it by its
   blank, claims them as above, then loads the URL
   (`AttachOptions.claimOpenedTab` in inject.ts).
 - A harness run claims only when the browser has SourceMonkey installed
-  and enabled, and the run has scripts. It doesn't subscribe to the
+  and enabled, with or without scripts. It doesn't subscribe to the
   extension's events.
 - Both bridges hear a page-world script's messages, so each leaves the
   other's scripts alone:
   - the harness's ignores messages about scripts it never injected
-    (SourceMonkey's own), whose `run` would beat the extension's
+    (SourceMonkey-managed ones), whose `run` would beat the extension's
     `skip`;
   - the extension applies a claim only to its own scripts, so a harness
     page-world script still hears `run` from it.
@@ -177,27 +188,6 @@ sm-dev knows a tab by its CDP target id; the extension knows it by its
   - To bring one under the run, open it with `newtab` instead.
   - Possible later: an action-menu row, "Put this tab under sm-dev
     control".
-
-### Retiring `--solo`
-
-- `--solo` turns off every other collection for the run, and restores
-  them after. Its problems:
-  - In a shared browser, the person's other tabs lose their scripts too
-    while the run lasts.
-  - A killed run leaves the collections off until `clear --extension`.
-- Claims do its job per tab: an extension run's tabs run only the run's
-  scripts, always.
-  - That is the right default: the usual case is a scratch copy of a
-    script also installed in a collection, and both would run in the
-    same tab otherwise.
-  - To test a script alongside installed ones, push those as scratch
-    scripts too.
-- So `--solo` goes:
-  - For a while it is accepted, does nothing, and says that a run's
-    tabs now keep other scripts out on their own; then it is removed.
-  - `clear --extension` still turns solo mode off, for a browser left
-    in it by an older sm-dev.
-  - The extension's `soloMode` API stays only while e2e tests use it.
 
 ### Lifetime
 
@@ -231,10 +221,8 @@ sm-dev knows a tab by its CDP target id; the extension knows it by its
 - **The wrapper's 2-second timeout runs the script.** If the SW can't
   answer `sm:check-pending` in time, the prelude runs the body anyway
   (`userscript-prelude.js`). A claimed tab can then run an extension
-  script. This is rare (a SW starting takes well under a second), and
-  it can be made visible: the extension's "started" event (see the
-  event stream) lets the run say so when a script it didn't expect
-  starts in a claimed tab.
+  script. This is rare (a SW starting takes well under a second). The
+  run doesn't say when it happens yet (see TODO.md).
 - **A MAIN-world script** asks through the page bridge, which also ends
   at the SW, so the same rule covers it.
 - **An older SourceMonkey** without the claim calls: see
@@ -246,9 +234,10 @@ sm-dev knows a tab by its CDP target id; the extension knows it by its
   - It says how many, and the run prints that when a worker restart
     caused it.
 - **Several runs in one browser**: see below.
-- **A run with no scripts** claims nothing: its tabs run the
-  extension's own collections, as a browser with SourceMonkey to try
-  by hand. It can't `load` a script, since its tabs aren't claimed.
+- **A run with no scripts** claims its tabs too, allowing nothing
+  yet, so a later `load` runs only its own scripts there. Tabs the
+  person opens by hand aren't claimed, and run SourceMonkey-managed
+  scripts as usual.
 
 ### Several runs in one browser
 
@@ -319,19 +308,86 @@ or a second run pointed at a `--temp-browser`'s port.
 - The extension opens `GM_openInTab` tabs with `chrome.tabs.create`, so
   Playwright reports no popup for them. The event carries the new tab's
   `chrome.tabs` id and its opener's.
-- The opener is a claimed tab, so sm-dev knows it. The new tab's page
-  is one not otherwise accounted for (`adoptOpened` in run.ts):
-  - opened by the opener's page, when Playwright knows (`window.open`);
-  - else at the event's URL. A `GM_openInTab` event comes once the URL
-    is loading, so the page has it.
-  - Never a guess past that: a page the person opened mustn't be taken
-    for it.
+- The opener is a claimed tab, so sm-dev knows it. Which Playwright
+  page is the new tab is matched by document (`adoptOpened` in run.ts):
+  - the worker reads the tab's top-frame URL and
+    `performance.timeOrigin` (`tabDocument`, with
+    `chrome.scripting.executeScript` in the page's world);
+  - sm-dev reads the same from each page not yet accounted for, and
+    takes the one that agrees. The time origin is the document's start
+    to the microsecond, so two pages don't share it.
+  - Both are read again until they agree, since the tab may be
+    navigating (a redirect). Nothing is added to the page.
+  - A tab that can't be matched (a page extensions can't script, such
+    as `chrome://`) is said, not guessed: its claim still holds, but
+    its output isn't shown.
 - The new tab's events wait until it's set up (`expectTab`), and then
   print under it.
 - CDP's `TargetInfo.openerId` is not set for a tab `chrome.tabs.create`
   opens, so it can't settle this.
 - The same events adopt `window.open` and link tabs in extension runs,
   in place of Playwright's `popup` event, since they carry the tab id.
+
+## What runs where
+
+Without `--extension`, sm-dev injects its scripts itself; with
+`--extension`, it pushes them into SourceMonkey as scratch scripts.
+
+Terms used below:
+
+- **sm-dev's tabs**: the tabs an sm-dev run opened (T1, `newtab`), and
+  the tabs that sm-dev's tabs open.
+- **Your tabs**: every other tab in the browser.
+- **SourceMonkey-managed scripts**: the scripts installed in
+  SourceMonkey's collections, not via sm-dev.
+
+### Which scripts run in sm-dev's tabs
+
+| Browser | sm-dev without `--extension` | sm-dev with `--extension` |
+|---|---|---|
+| No SourceMonkey | sm-dev's scripts | refused: not installed |
+| SourceMonkey turned off | sm-dev's scripts | refused: turned off |
+| SourceMonkey on | sm-dev's scripts only | sm-dev's scripts only |
+
+- `--temp-browser` with `--extension` installs SourceMonkey in the
+  temporary browser, so sm-dev with both flags is in the "SourceMonkey
+  on" row.
+- Your tabs run SourceMonkey-managed scripts if SourceMonkey is on,
+  and nothing otherwise. sm-dev's scripts never run in your tabs,
+  with or without `--extension`.
+- With `--extension`, a run's scratch scripts run only in that run's
+  tabs: not in your tabs, and not in another sm-dev run's tabs.
+
+### What shows for sm-dev's tabs, with SourceMonkey on
+
+| | sm-dev without `--extension` | sm-dev with `--extension` |
+|---|---|---|
+| Toolbar icon | cyan **T** | cyan **T** |
+| Tooltip and menu | `Page under sm-dev control` | `Page under sm-dev control` |
+| Badge rows | managed scripts that match: `NOT LOADED` | sm-dev's scripts: their status<br>managed scripts that match: `NOT LOADED` |
+| Badge count and color | `0`, grey | sm-dev's scripts, colored by their status |
+| sm-dev `status` | sm-dev's scripts | `Backend:` line<br>sm-dev's scripts<br>managed scripts on the tab as E1, ... |
+
+- Without SourceMonkey, or with SourceMonkey off, there is no
+  SourceMonkey toolbar icon, and `status` lists sm-dev's scripts. The
+  first line of `status` names the browser's state: `no extension` or
+  `SourceMonkey disabled`.
+
+### Notes
+
+- The tables above also hold for an sm-dev run started with no
+  scripts: sm-dev's tabs are claimed all the same, so scripts added
+  later with `load` run alone in sm-dev's tabs.
+- SourceMonkey's badge lists only scripts installed in SourceMonkey.
+  Without `--extension`, sm-dev's scripts aren't in the badge, though
+  the reports of sm-dev's page-world scripts reach SourceMonkey's
+  bridge.
+- Scratch scripts stay installed after an sm-dev run ends, until
+  `sm-dev clear --extension`, but run nowhere until a run pushes them
+  again.
+- After an sm-dev run ends, sm-dev's tabs keep the scripts and
+  toolbar state described above until each tab's next load, which
+  runs SourceMonkey-managed scripts again.
 
 ## `status` and `scripts`
 
@@ -343,7 +399,7 @@ or a second run pointed at a `--temp-browser`'s port.
   - Not yet: a script deleted or turned off in the browser keeps its
     number, and its row says `Removed from the extension` or `Disabled
     in the extension`, read live from the extension.
-- **SourceMonkey's own scripts on the tab**: a separate list, shown
+- **SourceMonkey-managed scripts on the tab**: a separate list, shown
   only when there are any.
   - The extension's other scripts that match the current tab, as its
     toolbar badge lists them, named E1, E2, ... in the order sm-dev
@@ -369,10 +425,13 @@ or a second run pointed at a `--temp-browser`'s port.
 - The count is of the scripts the claim let run (`computeBadge` in
   tab-status.ts): `0` in a harness run's tab.
 - The action menu's first row says `Page under sm-dev control`
-  (disabled, a note).
+  (disabled, a note). The icon's tooltip says it too, under
+  `SourceMonkey` (`titleHead` in tab-status.ts).
+- The menu has no "Reload page with no userscripts" row there: which
+  scripts run in the tab is the run's choice (`reload --noscript`).
 - A cyan **T** drawn in a corner of the icon marks a claimed tab (see
   below). Cyan is used nowhere else in the badge colors.
-- All three follow the document: a page loaded under a claim keeps
+- All of these follow the document: a page loaded under a claim keeps
   them until the tab's next load, the one after the run ends
   included.
 - Chrome's action API gives one badge (text and color) per tab, so the
