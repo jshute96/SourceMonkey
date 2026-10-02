@@ -577,7 +577,8 @@ async function clearCommand(opts: Opts): Promise<number> {
   try {
     const backend = await ExtensionBackend.connect(session.context);
     const count = await backend.clear();
-    out(`[sm-dev] Removed ${count} scratch script(s)`);
+    out(count === 0 ? '[sm-dev] The extension\'s Scratch collection was already empty'
+      : `[sm-dev] Removed ${count === 1 ? 'the one script' : `all ${count} scripts`} in the extension's Scratch collection`);
     return 0;
   } catch (err) {
     out(`[sm-dev] ${(err as Error).message}`);

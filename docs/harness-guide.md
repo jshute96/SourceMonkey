@@ -1703,6 +1703,9 @@ sm-dev --temp-browser start my-script.user.js https://example.com/ --extension
 - The profile is empty, so the site has no login, and the scripts
   pushed are gone when the run ends (no `clear` needed).
 - Starting it takes a few seconds longer than a plain `--temp-browser`.
+- Hidden, it still sends a windowed Chrome's user agent, not
+  `HeadlessChrome`, which some servers refuse a script's `@require`s
+  and requests for.
 
 For a browser that keeps the extension (and your logins):
 

@@ -69,8 +69,8 @@ class ActiveTimer implements PhaseTimer {
     // Phases are a breakdown OF the total, so they read as a
     // parenthetical after it rather than as a separate list.
     const breakdown = this.phases.length > 0 ? ` (${this.phases.join(', ')})` : '';
-    const notes = this.notes.length > 0 ? ` — ${this.notes.join(', ')}` : '';
-    console.log(`[SourceMonkey] timing — ${this.label}: total ${total}ms${breakdown}${notes}`);
+    const notes = this.notes.length > 0 ? `; ${this.notes.join(', ')}` : '';
+    console.log(`[SourceMonkey] timing: ${this.label}: total ${total}ms${breakdown}${notes}`);
   }
 }
 
@@ -183,5 +183,5 @@ export function reportPhaseTotals(label: string): void {
   const parts = [...finished.entries()]
     .sort((a, b) => b[1].ms - a[1].ms)
     .map(([name, t]) => `${name} ${round(t.ms)}ms/${t.n}`);
-  console.log(`[SourceMonkey] timing — ${label} cumulative (concurrent, sums past wall clock): ${parts.join(', ')}`);
+  console.log(`[SourceMonkey] timing: ${label} cumulative (concurrent, sums past wall clock): ${parts.join(', ')}`);
 }

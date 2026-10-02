@@ -112,9 +112,9 @@ interpolates the same `message` the Log row uses.
 | `loaded new content: <logId> (<size>)` | no | log |
 | `update check failed: <logId>: <err>` | no | info |
 | `update check: <logId>: row vanished` | no | info |
-| `update check: <logId>: invalid — <msg>` | no | info |
+| `update check: <logId>: invalid: <msg>` | no | info |
 | `refresh failed: <logId>: <reason>` (transition / reason change only) | no | info |
-| `<logId>: Newer version <v> at <kind> URL (running <v>) — <url>` (version change only) | no | info |
+| `<logId>: Newer version <v> at <kind> URL (running <v>): <url>` (version change only) | no | info |
 | `collection refresh (mode): <path>` | no | log |
 | `collection refresh: <path>: <summary>` | no | log |
 | `collection refresh failed: <path>: <err>` | no | info |

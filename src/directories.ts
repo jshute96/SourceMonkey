@@ -543,8 +543,8 @@ async function fetchFileUrlTextFetch(url: string): Promise<string> {
   // path fell through.
   if (response.type === 'opaque') {
     throw new Error(
-      `Could not read ${url} in background refresh (file:// fetch is not permitted there) — ` +
-      `try Refresh from the script page`,
+      `Could not read ${url} in background refresh (file:// fetch is not permitted there). ` +
+      `Try Refresh from the script page.`,
     );
   }
   // An empty body here is a 0-byte file, not an error — keep it

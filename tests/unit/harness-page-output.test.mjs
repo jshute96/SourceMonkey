@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { decodeOwnRefs, hostReportedError, isPreludeLine, showConsoleLine, showPageError } from '../../lib/harness/page-output.js';
+import { decodeOwnRefs, formatConsoleArgs, hostReportedError, isPreludeLine, shortConsoleText, showConsoleLine, showPageError } from '../../lib/harness/page-output.js';
 
 const SCRIPT = 'sourcemonkey://SourceMonkey/my-script/my-script.user.js';
 const PRELUDE = 'sourcemonkey://SourceMonkey/__prelude.js';
@@ -72,4 +72,21 @@ test('the prelude\'s lines and host-reported throws are recognized as repeats', 
   assert.equal(hostReportedError(`Error: x\n    at f (${SCRIPT}:1:2)`, true), true);
   assert.equal(hostReportedError(`Error: x\n    at f (${SCRIPT}:1:2)`, false), false);
   assert.equal(hostReportedError(`Error: x\n    at f (${PRELUDE}:1:2)`, true), false);
+});
+
+test('a console call\'s % directives are applied as the console does', () => {
+  // %c takes its CSS and shows nothing.
+  assert.equal(formatConsoleArgs(['%cAuto Close YouTube Ads:', 'font-weight: bold;color: purple;', 'Started']), 'Auto Close YouTube Ads: Started');
+  assert.equal(formatConsoleArgs(['%c[a]%c b', 'color: red', '', 'c']), '[a] b c');
+  assert.equal(formatConsoleArgs(['%s has %d items, 100%%', 'list', '3.7']), 'list has 3 items, 100%');
+  // Nothing to take: as written.
+  assert.equal(formatConsoleArgs(['50% done']), '50% done');
+  assert.equal(formatConsoleArgs(['%s and %s', 'one']), 'one and %s');
+  assert.equal(formatConsoleArgs(['plain', 'words']), 'plain words');
+});
+
+test('the stream cuts a long console line, with its length', () => {
+  assert.equal(shortConsoleText('short'), 'short');
+  const long = 'x'.repeat(1500);
+  assert.equal(shortConsoleText(long), `${'x'.repeat(1000)}... (1500 chars; logs shows it all)`);
 });

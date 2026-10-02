@@ -28,7 +28,7 @@ import { EXTENSION_TOO_OLD, ExtensionLink, type ExtensionEvent } from './extensi
 import { HarnessHost, type ErrorReport, type SkipReport, type StartReport } from './host.js';
 import { attachPage, targetIdOf, type AttachOptions, type PageAttachment } from './inject.js';
 import { pageSays, recordLog } from './page-commands.js';
-import { consoleText, decodeOwnRefs, hostReportedError, isPreludeLine, showConsoleLine, showPageError } from './page-output.js';
+import { consoleText, decodeOwnRefs, formatConsoleArgs, hostReportedError, isPreludeLine, shortConsoleText, showConsoleLine, showPageError } from './page-output.js';
 import {
   defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, preparedScriptPath, prepareScript, shownPath, warningLines, type PreparedScript,
 } from './prepare.js';
@@ -88,6 +88,11 @@ export interface RunOptions extends ConnectOptions {
   out: (line: string) => void;
   /** Where a line goes that `wait log` can match but the stream leaves out. */
   hear?: (line: string) => void;
+  /**
+   * `out`, for a line the stream shows cut (a long console line), with
+   * the whole line for `wait log` to match. Without it, `out` the cut one.
+   */
+  outCut?: (shown: string, whole: string) => void;
   /** Resolves when the run should end (stop, a signal, --seconds). Omit to return after the first load. */
   until?: Promise<void>;
   /** Called when a client's `stop` asks for the run to end. */
@@ -182,6 +187,11 @@ export interface BrowserSession {
   context: BrowserContext;
   page: Page;
   /**
+   * Lines about the tab taken, for after the line naming the browser
+   * (`run`), or printed at once by `connectBrowser`.
+   */
+  notes: string[];
+  /**
    * End the session: a launched browser is closed; a connected one is
    * only disconnected, and its tabs, this page included, stay open.
    */
@@ -198,7 +208,9 @@ export async function connectBrowser(
   out: (line: string) => void,
   { reuseTab = false } = {},
 ): Promise<BrowserSession | null> {
-  return openBrowser(opts, out, { reuseTab, openTab: true });
+  const session = await openBrowser(opts, out, { reuseTab, openTab: true });
+  session?.notes.forEach(out);
+  return session;
 }
 
 // A port free on this machine now, for a launched browser's CDP.
@@ -306,11 +318,12 @@ async function openBrowser(
   }
   const context = browser.contexts()[0] ?? await browser.newContext();
   if (endpoint !== null) browser.contexts().forEach(leaveDialogsOpen);
+  const notes: string[] = [];
   const page = !openTab ? null
     // The one blank tab a launch with the extension leaves for the run.
     : closeLaunched ? context.pages()[0] ?? await context.newPage()
     : reuseTab && endpoint !== null
-      ? await openRunTab(browser, context, endpoint, out).catch(() => context.newPage())
+      ? await openRunTab(browser, context, endpoint, (line) => notes.push(line)).catch(() => context.newPage())
       : await context.newPage();
   return {
     browser,
@@ -319,6 +332,7 @@ async function openBrowser(
     headless: endpoint === null ? !opts.headed : await isHeadless(browser),
     context,
     page,
+    notes,
     // On a connected browser `close()` only drops the connection; the
     // browser and its tabs stay as they are.
     done: async () => {
@@ -352,6 +366,8 @@ interface RunTab {
   /** CDP's id for the tab, not the `chrome.tabs` id an extension sees. */
   tabTargetId: string;
   pid: number;
+  /** The run's name, once it has one (`nameRunTab`), for the next run's "Reusing" line. */
+  run?: string;
 }
 
 /**
@@ -388,7 +404,9 @@ async function openRunTab(
     }
   }
   if (page) {
-    out('[sm-dev] Reusing the selected tab, which an earlier run opened');
+    const id = await targetIdOf(page);
+    const opener = records.find((r) => r.endpoint === endpoint && r.tabTargetId === id)?.run;
+    out(`[sm-dev] Reusing the selected tab (${page.url()}), which ${opener ? `run ${opener}` : 'an earlier run'} opened. That run has ended.`);
     staleTabs.add(page);
   }
   page ??= await context.newPage();
@@ -406,6 +424,18 @@ async function openRunTab(
   kept.push({ endpoint, tabTargetId: id, pid: process.pid });
   await writeRunTabs(kept).catch(() => undefined);
   return page;
+}
+
+// The run's name on the tab `openRunTab` recorded for it, which it
+// gets only once the run is open, after the tab was taken.
+async function nameRunTab(endpoint: string, page: Page, run: string): Promise<void> {
+  const id = await targetIdOf(page);
+  if (!id) return;
+  const tabs = await readRunTabs();
+  const mine = tabs.find((r) => r.endpoint === endpoint && r.tabTargetId === id && r.pid === process.pid);
+  if (!mine) return;
+  mine.run = run;
+  await writeRunTabs(tabs).catch(() => undefined);
 }
 
 // Reused tabs whose page is still the earlier run's, with its scripts
@@ -514,7 +544,7 @@ function printSkipped(opts: RunOptions, start: StartPages): void {
 export async function run(opts: RunOptions): Promise<number> {
   const remote = new Remote(opts.out, opts.onStop, opts.onActivity, opts.primaryPid);
   // Every line also goes to whoever sent the command running now.
-  opts = { ...opts, out: remote.out, hear: remote.hear, typed: new Map(opts.files.map((file, i) => [file, opts.given?.[i] ?? file])) };
+  opts = { ...opts, out: remote.out, hear: remote.hear, outCut: remote.outCut, typed: new Map(opts.files.map((file, i) => [file, opts.given?.[i] ?? file])) };
   const session = await openBrowser(opts, opts.out, { reuseTab: true, openTab: !opts.noTab });
   if (!session) return 1;
   // Which browser, for the stream and the log.
@@ -522,6 +552,7 @@ export async function run(opts: RunOptions): Promise<number> {
   const extensionState = await sourceMonkeyState(session.endpoint);
   const extension = extensionLabel(extensionState);
   opts.out(`[sm-dev] ${capitalized(browserSentence(browserIs, session.launched ? 'launched' : 'connected to'))} (Chrome ${session.browser.version()}${extension ? `, ${extension}` : ''})`);
+  session.notes.forEach(opts.out);
   opts.onConnected?.();
   // Only a run that waits for commands can be sent any.
   if (opts.until) {
@@ -535,6 +566,7 @@ export async function run(opts: RunOptions): Promise<number> {
       ...(opts.detached ? { detached: true } : {}),
       ...(opts.log ? { log: opts.log } : {}),
     }, opts.runId);
+    if (remote.id && session.page && !session.launched) await nameRunTab(session.endpoint, session.page, remote.id).catch(() => undefined);
   }
   // The browser closing (or its connection dropping) ends the run: it
   // has nothing left to stream from. Without this the run would wait
@@ -552,6 +584,8 @@ export async function run(opts: RunOptions): Promise<number> {
     ending = true;
     // No sent command runs against tabs being let go.
     remote.disarm();
+    // Read before the tabs are let go: only open ones still run scripts.
+    const tabsLeft = held.tabs ? held.tabs.list().length : 1;
     // While the tabs are still attached, so a DevTools lookup in flight
     // can delete its markers from them.
     await held.devtools?.stop();
@@ -570,7 +604,8 @@ export async function run(opts: RunOptions): Promise<number> {
       // A launched browser's extension goes with it.
       : opts.extension && session.launched ? `[sm-dev] ${run} ended`
       : opts.extension ? `[sm-dev] ${run} ended. The scripts stay in the extension's Scratch collection; sm-dev clear --extension removes them.`
-        : `[sm-dev] ${run} ended. Pages still have previously loaded scripts.`);
+        : tabsLeft > 0 ? `[sm-dev] ${run} ended. Pages still have previously loaded scripts.`
+        : `[sm-dev] ${run} ended`);
     await remote.close();
   }
 }
@@ -637,6 +672,11 @@ class Remote {
    * inspecting sent command's own lines go to its sender alone.
    */
   readonly out = (line: string): void => {
+    this.outCut(line, line);
+  };
+
+  /** `out`, with `whole` kept for `wait log` in place of the printed line. */
+  readonly outCut = (line: string, whole: string): void => {
     const answer = commandOutput.getStore();
     if (answer?.live) {
       answer.line(line);
@@ -644,7 +684,7 @@ class Remote {
     }
     this.print(line);
     for (const listener of this.listeners) listener(line);
-    this.hear(line);
+    this.hear(whole);
   };
 
   /**
@@ -1445,7 +1485,7 @@ class FollowedTabs {
   private async setUp(page: Page, n: number, opener?: number, announce = true, noScript = false, tabId?: number): Promise<void> {
     // T1 goes unprefixed, as the run's own does, when `--notab` makes
     // the first tab opened T1.
-    const { out, hear } = tabOutput(this.opts, n);
+    const { out, hear, outCut } = tabOutput(this.opts, n);
     // First, so a tab that closes during the awaits below is still
     // noticed.
     let announced = false;
@@ -1455,7 +1495,7 @@ class FollowedTabs {
       this.opts.out(`[sm-dev] Tab T${n} closed`);
       this.onTabsChanged();
     });
-    wirePageOutput(page, { ...this.opts, out, hear }, true, (text) => this.host.remapStack(text));
+    wirePageOutput(page, { ...this.opts, out, hear, outCut }, true, (text) => this.host.remapStack(text));
     // Not for a tab with no scripts, which gets none either way. Read
     // from the tab once it exists, since `open --script` switches it.
     let tabNow: ControlledTab | null = null;
@@ -1760,11 +1800,12 @@ function wireSandboxCheck(page: Page, scripts: () => readonly PreparedScript[], 
 }
 
 // A tab's lines are tagged `[T<n>]`, except T1's, as the run's own are.
-function tabOutput(opts: Pick<RunOptions, 'out' | 'hear'>, n: number): Pick<RunOptions, 'out' | 'hear'> {
-  if (n === 1) return { out: opts.out, hear: opts.hear };
+function tabOutput(opts: Pick<RunOptions, 'out' | 'hear' | 'outCut'>, n: number): Pick<RunOptions, 'out' | 'hear' | 'outCut'> {
+  if (n === 1) return { out: opts.out, hear: opts.hear, outCut: opts.outCut };
   return {
     out: (line) => opts.out(`[T${n}] ${line}`),
     hear: opts.hear && ((line) => opts.hear!(`[T${n}] ${line}`)),
+    outCut: opts.outCut && ((line, whole) => opts.outCut!(`[T${n}] ${line}`, `[T${n}] ${whole}`)),
   };
 }
 
@@ -1776,7 +1817,7 @@ function tabOutput(opts: Pick<RunOptions, 'out' | 'hear'>, n: number): Pick<RunO
 // matches the scripts' URLs as the page wrote them (still encoded).
 function wirePageOutput(
   page: Page,
-  opts: Pick<RunOptions, 'out' | 'hear' | 'pageErrors'>,
+  opts: Pick<RunOptions, 'out' | 'hear' | 'outCut' | 'pageErrors'>,
   hostReports: boolean,
   remapStack: (text: string) => string,
 ): void {
@@ -1786,9 +1827,13 @@ function wirePageOutput(
     // Every line, for `logs`; the stream shows the script's. `wait log`
     // sees them all but the prelude's repeats, in the stream's form.
     recordLog(page, `[${line.type}] ${line.text}`);
-    const shown = `[page ${line.type}] ${line.text}`;
-    if (showConsoleLine(line, pageErrors)) opts.out(shown);
-    else if (!isPreludeLine(line.text)) opts.hear?.(shown);
+    // Cut when long, for the stream only: `wait log` matches it whole.
+    const whole = `[page ${line.type}] ${line.text}`;
+    const shown = `[page ${line.type}] ${shortConsoleText(line.text)}`;
+    if (showConsoleLine(line, pageErrors)) {
+      if (opts.outCut) opts.outCut(shown, whole);
+      else opts.out(shown);
+    } else if (!isPreludeLine(line.text)) opts.hear?.(whole);
   };
   // Never throws, as the queue below has no one to report to.
   const showSafely = (msg: ConsoleMessage, text: string): void => {
@@ -1804,7 +1849,8 @@ function wirePageOutput(
   page.on('console', (msg) => {
     if (staleTabs.has(page)) return;
     if (!pending && !msg.args().some((arg) => arg.asElement())) {
-      show(msg, msg.text());
+      // `%c` styling and the like applied; Playwright's text has them raw.
+      show(msg, msg.args().length > 1 ? formatConsoleArgs(msg.args().map((arg) => arg.toString())) : msg.text());
       return;
     }
     const next: Promise<void> = (pending ?? Promise.resolve())

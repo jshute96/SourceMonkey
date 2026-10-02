@@ -306,12 +306,12 @@ function probeTitleText(probe: VersionProbe, relation: VersionRelation): string 
   // The value is showing a version, so the tooltip carries the failure
   // — otherwise the row reads as freshly confirmed when it isn't.
   if (relation !== 'same') {
-    return `${probe.url} — last check failed: ${probe.error}`;
+    return `${probe.url} (last check failed: ${probe.error})`;
   }
   // The value is showing the error, so the tooltip carries the version
   // we last saw there, which is the part it displaced.
   return probe.version !== undefined
-    ? `${probe.url} — last known version ${probe.version}`
+    ? `${probe.url} (last known version ${probe.version})`
     : probe.url;
 }
 

@@ -496,7 +496,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     title: 'Controlling the SourceMonkey extension',
     text: ['Instead of injecting the scripts itself, a run can push them into the SourceMonkey extension in the browser it connects to.', ''],
     commands: [
-      { usage: 'clear --extension', syntax: NONE, about: 'Remove all scripts in the extension\'s Scratch collection.' },
+      { usage: 'clear --extension', syntax: NONE, about: 'Remove every script in the extension\'s Scratch collection, including other runs\' and your own. A run\'s scratch scripts run only in its own tabs, so leftovers are harmless.' },
     ],
     optionsTitle: 'Options for start',
     options: [

@@ -282,8 +282,8 @@ collection. They are always **info**, never warning/error:
 What gets fanned out:
 
 - **Scan failure** (`scanError`: unreadable listing / manifest / bad
-  URL) — `This collection did not load: <reason> — still running the
-  cached copy`. `refreshCollection` deliberately leaves every script row
+  URL) — `This collection did not load: <reason>. Still running the
+  cached copy.`. `refreshCollection` deliberately leaves every script row
   untouched in this case, so without this the per-script outcome pass
   would report no change for rows that were never actually checked.
 - **A refresh that read fine but couldn't be saved** — the shared
@@ -311,8 +311,8 @@ stops being one.
 
 One thing stays quiet, and it is about **whether anything happened**:
 
-- **A no-op refresh on a valid script.** `Checked for updates — no
-  change` is manual-only, so background polling doesn't announce that a
+- **A no-op refresh on a valid script.** `Checked for updates and
+  found no change` is manual-only, so background polling doesn't announce that a
   healthy script is still healthy.
 
 A **registration rejection is not** one of those, and used to be. Every
@@ -365,7 +365,7 @@ path goes through `emitScriptOutcomeLog`, which writes both.
 
 | Outcome | Rows |
 | --- | --- |
-| Nothing to report | `Checked for updates — no change` |
+| Nothing to report | `Checked for updates and found no change` |
 | Anything else | `Checking for updates`, then the outcome |
 
 - The uneventful case is **one self-describing line**, so a routine
@@ -392,7 +392,7 @@ naming what recovered:
 - `Loads cleanly again (was invalid)`
 - `Refresh succeeded again (collection is reachable)`
 - `This collection is readable again`
-- `Chrome accepted this script's registration — it runs again`
+- `Chrome accepted this script's registration, so it runs again`
   (`logRecoveries` in `src/injector.ts`, source `chrome-injector`)
 
 This matters most when the bytes didn't change — e.g. a `@require`
@@ -411,14 +411,14 @@ Both trigger modes log failures. A background check exists precisely to
 notice a failure the user hasn't gone looking for, so a badge that
 turns amber on its own must come with a matching Log line.
 
-Trigger mode still gates the **non**-events: `Checked for updates — no
-change` is manual-only.
+Trigger mode still gates the **non**-events: `Checked for updates and
+found no change` is manual-only.
 
 Caveat on what "manual" means: it is "not rate-limited as a refresh",
 not "the user clicked". The
 [reload fast-path](injection.md#reload-fast-path) runs in `manual`
 mode for every matched script on every tab reload, so a healthy script
-*does* accumulate `Checked for updates — no change` rows from ordinary
+*does* accumulate `Checked for updates and found no change` rows from ordinary
 browsing. That is the remaining source of poll noise in the cap —
 tracked in `TODO.md`.
 
@@ -430,7 +430,7 @@ tracked in `TODO.md`.
     [How a check frames itself](#how-a-check-frames-itself)).
   - `Loaded new content (<size>)` (info) — when the new build has a
     different `loadedAt` from the prior.
-  - `Checked for updates — no change` (info) — only on manual refresh,
+  - `Checked for updates and found no change` (info) — only on manual refresh,
     to mirror the SW console behaviour. Opportunistic background checks
     stay silent to keep the log from filling with poll noise.
   - Load failures (error) — the row's `errorMessage` when it lands
@@ -443,8 +443,8 @@ tracked in `TODO.md`.
     [storage.md](storage.md#refresh-failures-keep-the-good-copy-running)).
     Covers hard fetch failures, an http(s) 200 that parsed as a login
     page, and dependency fetch failures.
-  - `This collection did not load: <reason> — still running the cached
-    copy` (info), the `describeRefreshError` sentence (info), and
+  - `This collection did not load: <reason>. Still running the cached
+    copy.` (info), the `describeRefreshError` sentence (info), and
     `Could not refresh this collection: <reason>` (info) — collection-level
     failures, fanned out to every script under the collection. See
     [Collection-level failures](#collection-level-failures) for why info.
@@ -489,7 +489,7 @@ tracked in `TODO.md`.
   - The OUTDATED row too, for a row whose persisted probe is still
     ahead of it — same reasoning, same wording as the probe's own row.
 - **Update probes** (`src/script-updater.ts`, source `version-probe`):
-  - `Newer version <v> at <update|download> URL (running <v>) — <url>`
+  - `Newer version <v> at <update|download> URL (running <v>): <url>`
     (warning) — an `@updateURL` / `@downloadURL` declares a version
     ahead of the copy we run. Emitted only when the newer version
     *changes*, so an upstream that's been ahead for a month doesn't
@@ -506,7 +506,7 @@ tracked in `TODO.md`.
     the wrapper's [startup-log channel](logging.md#page-console-startup-logs)
     on every matching page load.
   - A **manual** refresh that finds no change restates them, after
-    its `Checked for updates — no change` line. They describe the
+    its `Checked for updates and found no change` line. They describe the
     installed content, not an event, so they stay true until it
     changes; logging them only when content lands left a permanently
     misconfigured script with no Log line at all once that row
@@ -529,7 +529,7 @@ tracked in `TODO.md`.
     and the Log tab is text-only.
 - **window.close / window.focus failures** (`handleWindowControl` in
   `src/background.ts`, source `gm-window`, `tabId` attached):
-  - `window.close — <reason>` / `window.focus — <reason>` (warning) —
+  - `window.close: <reason>` / `window.focus: <reason>` (warning) —
     the tab was already gone, or `chrome.windows` was unavailable. A
     window manager that declines to raise the window is NOT a failure
     Chrome reports, so it doesn't appear here either.
@@ -541,7 +541,7 @@ tracked in `TODO.md`.
     afterwards.
 - **GM_download failures** (`sendDownloadEvent` in
   `src/background.ts`, source `gm-download`, `tabId` attached):
-  - `GM_download <reason> — <url>` (warning) — a download that was
+  - `GM_download <reason> (<url>)` (warning) — a download that was
     refused (`not_permitted`), interrupted (`not_succeeded`, with
     Chrome's interrupt reason), or timed out. A file that silently
     never appears is otherwise invisible to the user, and the reason
@@ -572,7 +572,7 @@ tracked in `TODO.md`.
   patch global console in the injected world; the user can open
   DevTools on the host page if they want that.
 - Per-tab badge transitions. Those are noisy and already visible.
-- `Checked for updates — no change` on opportunistic checks
+- `Checked for updates and found no change` on opportunistic checks
   (manual-only, as above).
 - Update probes that fail, find nothing newer, or are skipped as
   still-fresh. A probe is an annotation; it can't change what runs.

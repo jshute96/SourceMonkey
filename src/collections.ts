@@ -2844,8 +2844,8 @@ async function buildStorageBanner(liveIds: ReadonlySet<string>): Promise<HTMLEle
   explain.textContent = full
     ? 'Collections below were read successfully, but Chrome refused to '
       + 'store them, so their scripts are still running the last version '
-      + 'that fit. Removing a collection you no longer need — or trimming '
-      + 'a very large one — frees the space to save them.'
+      + 'that fit. Removing a collection you no longer need (or trimming '
+      + 'a very large one) frees the space to save them.'
     // The non-full branch is genuinely unexplained, so it says so
     // rather than guessing a cause the reader would then chase.
     : 'Collections below were read successfully, but Chrome refused to '

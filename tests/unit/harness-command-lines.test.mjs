@@ -67,6 +67,21 @@ test('words after a }} are an error, but }}); and }}, are the block\'s', () => {
   assert.equal(a.open, false);
 });
 
+test('a refused one-line {{ skips its lines up to the }}, rather than refusing each', () => {
+  const a = new CommandAssembler();
+  assert.deepEqual(a.push('eval {{ const x = 1;'), { error: OPEN_NOT_LAST });
+  assert.equal(a.open, true);
+  assert.equal(a.push('return x;'), null);
+  assert.equal(a.push('}}'), null);
+  assert.equal(a.open, false);
+  assert.equal(a.push('status').command.text, 'status');
+  // With a }} on the line too, nothing is left open.
+  for (const line of ['eval {{ x }}', 'eval {{ foo}}', 'eval {{ f() }});']) {
+    assert.deepEqual(a.push(line), { error: OPEN_NOT_LAST });
+    assert.equal(a.open, false);
+  }
+});
+
 test('a cdp block is its calls, one per line', () => {
   assert.deepEqual(texts(parseCommandList('cdp T2 {{\nPage.enable\nPage.reload {"ignoreCache": true}\n}}')), ['cdp T2\nPage.enable\nPage.reload {"ignoreCache": true}']);
 });

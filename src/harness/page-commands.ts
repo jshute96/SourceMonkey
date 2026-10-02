@@ -12,7 +12,7 @@
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { Page, Request } from '@playwright/test';
+import type { Locator, Page, Request } from '@playwright/test';
 
 import type { ParsedArgs } from './command-args.js';
 import { PROBE_MAX } from './command-list.js';
@@ -191,9 +191,18 @@ export async function runPageCommand(
         const count = await matches(page, selector, say);
         if (count === null) return false;
         const target = locate(page, selector).first();
-        const action = command === 'click'
+        const action = (command === 'click'
           ? target.click({ ...options.click, timeout: ACTION_TIMEOUT_MS })
-          : target.hover({ modifiers: options.click.modifiers, position: options.click.position, timeout: ACTION_TIMEOUT_MS });
+          : target.hover({ modifiers: options.click.modifiers, position: options.click.position, timeout: ACTION_TIMEOUT_MS }))
+          // A point it can't reach says so, rather than that the element
+          // was covered (by whatever is at that point) or not ready.
+          .catch(async (err: Error) => {
+            if (!/Timeout \d+ms exceeded/.test(err.message)) throw err;
+            const why = plain(err);
+            // The call log's own reasons (hidden, disabled, moving) stand.
+            if (why !== notReadyGeneral(ACTION_TIMEOUT_MS / 1000) && !why.startsWith(COVERED)) throw err;
+            throw new Error(await placeProblem(page, target, options.click.position) ?? err.message);
+          });
         const how = options.how.length > 0 ? ` with ${options.how.join(', ')}` : '';
         await act(action, `${command === 'click' ? 'Clicked' : 'Hovered over'} ${named(page, selector)}${count > 1 ? ` (the first of ${count} matches)` : ''}${how}`);
         return;
@@ -710,14 +719,60 @@ function notReady(message: string, seconds: number): string {
     const covered = /^(.+) intercepts pointer events$/.exec(line);
     if (covered) {
       const html = covered[1].length > COVER_HTML_MAX ? `${covered[1].slice(0, COVER_HTML_MAX)}…` : covered[1];
-      return `The element stayed covered ${within}, by ${html}`;
+      return `${COVERED}${within}, by ${html}`;
     }
     if (line === 'element is not visible') return `The element stayed hidden (or zero-size) ${within}`;
     if (line === 'element is not enabled') return `The element stayed disabled ${within}`;
     if (line === 'element is not stable') return `The element kept moving ${within}`;
     if (line === 'element is outside of the viewport') return `The element stayed outside the viewport ${within}, where it can't be scrolled to`;
   }
+  return notReadyGeneral(seconds);
+}
+
+// How `notReady` starts when the element was covered.
+const COVERED = 'The element stayed covered ';
+
+// `notReady` when the call log names no reason.
+function notReadyGeneral(seconds: number): string {
   return `The element wasn't ready (visible, stable, and not covered) within ${seconds} seconds`;
+}
+
+/**
+ * Why the mouse can't reach the element, for a timeout Playwright gave
+ * no specific reason for, or called covered: the `--at` point is
+ * outside the element, or outside the window (where Playwright reports
+ * whatever is under the point as covering it), or with no `--at`, the
+ * whole element is off the window. (Playwright aims at the middle of
+ * the element's visible part itself.) Null when none of those, or the
+ * element can't be measured.
+ */
+async function placeProblem(page: Page, target: Locator, position: { x: number; y: number } | undefined): Promise<string | null> {
+  const box = await target.boundingBox({ timeout: 1000 }).catch(() => null);
+  if (!box) return null;
+  const view = page.viewportSize() ?? await withTimeout(page.evaluate(() => ({ width: innerWidth, height: innerHeight })), 1000).catch(() => null);
+  if (!view) return null;
+  const r = Math.round;
+  const size = `${r(box.width)}x${r(box.height)} pixels`;
+  if (position && (position.x > box.width || position.y > box.height)) {
+    return `The point ${position.x},${position.y} is outside the element, which is ${size} (--at counts from its top left corner)`;
+  }
+  // One sentence each: plain() drops a final period.
+  const win = `the ${view.width}x${view.height} window`;
+  if (position) {
+    const x = box.x + position.x;
+    const y = box.y + position.y;
+    if (x >= 0 && y >= 0 && x < view.width && y < view.height) return null;
+    return `The point ${position.x},${position.y} in the element is outside ${win}, at ${r(x)},${r(y)}, so pick a point in the element's visible part`;
+  }
+  const shows = box.x + box.width > 0 && box.y + box.height > 0 && box.x < view.width && box.y < view.height;
+  return shows ? null : `The element (${size} at ${r(box.x)},${r(box.y)}) is entirely outside ${win}, where it can't be scrolled to`;
+}
+
+// `promise`, or a rejection after `ms`: a page held by a dialog never answers.
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('timed out')), ms); });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
 }
 
 // How many elements a selector matches, or why it can't be counted.

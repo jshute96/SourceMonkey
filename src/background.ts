@@ -900,7 +900,7 @@ chrome.runtime.onInstalled.addListener((details) => {
       return;
     }
     console.log(
-      '[SourceMonkey] first run detected — opening collections.html?first_run=1 ' +
+      '[SourceMonkey] first run detected: opening collections.html?first_run=1 ' +
       'so the page can seed the default collections',
     );
     try {
@@ -2895,7 +2895,7 @@ async function loadConnectPolicy(scriptId: string): Promise<
     // race the user can act on, so it says what happened and how to
     // recover rather than hiding behind `internal error:`.
     if (!script) {
-      return { reason: 'this script is no longer installed — reload the page' };
+      return { reason: 'this script is no longer installed; reload the page' };
     }
     if (!script.header) {
       return { reason: 'internal error: this script\'s header is not available, so @connect could not be checked' };
@@ -3034,7 +3034,7 @@ async function handleWindowControl(
       level: 'warning',
       source: 'gm-window',
       tabId,
-      message: `window.${which} — ${result.error}`,
+      message: `window.${which}: ${result.error}`,
     });
   }
   return result;
@@ -3067,7 +3067,7 @@ function sendDownloadEvent(
       level: 'warning',
       source: 'gm-download',
       tabId,
-      message: `GM_download ${reason} — ${url}`,
+      message: `GM_download ${reason} (${url})`,
     });
   }
   void chrome.tabs.sendMessage(tabId, {
@@ -3456,8 +3456,8 @@ async function broadcastValueUpdate(
   // second one is a symptom.
   const openers = targets ? targets.size : 0;
   const why = sent > 0 ? '' : openers === 0
-    ? ' — no tabs registered for this script'
-    : ' — the only registered tab is the one that wrote';
+    ? ': no tabs registered for this script'
+    : ': the only registered tab is the one that wrote';
   dlog(
     `[SourceMonkey] gm-value broadcast for ${scriptId}: ${writes.length} write(s) ` +
     `to ${sent} of ${openers} registered tab(s)${why}`,
@@ -4185,7 +4185,7 @@ async function recordScriptReport(
       // The two `loadedAt` values stay on the console line above: they
       // are epoch milliseconds, which identify a content version when
       // reading a transcript but say nothing to someone reading the Log.
-      message: 'Page reloaded — swapped in the newer copy of this script',
+      message: 'Page reloaded and swapped in the newer copy of this script',
     });
   } else if (type === SM_ABANDONED_MSG) {
     // SW told the wrapper to skip. Warning, not error — a script that

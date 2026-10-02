@@ -448,7 +448,7 @@ export function extractStartupLogs(
       const log: StartupLog = {
         level: 'warn',
         message:
-          `@grant none overrides @grant ${overridden.join(', ')} — the script runs in the ` +
+          `@grant none overrides @grant ${overridden.join(', ')}, so the script runs in the ` +
           'page with no GM APIs. Remove the none line to use them.',
       };
       const line = headerTagLine(header, 'grant', 'none');

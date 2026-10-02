@@ -85,7 +85,7 @@ export const NO_METADATA_BLOCK =
 // `… — add a … line (in f.user.js, line 1)`, where the parenthetical
 // reads as *where to add it*. Line 1 is where the block opened.
 export const UNTERMINATED_METADATA_BLOCK =
-  'The // ==UserScript== metadata block is never closed — it needs a // ==/UserScript== line';
+  'The // ==UserScript== metadata block is never closed and needs a // ==/UserScript== line';
 
 export type SplitError = typeof NO_METADATA_BLOCK | typeof UNTERMINATED_METADATA_BLOCK;
 

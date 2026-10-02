@@ -275,18 +275,18 @@ function githubAuthHint(status: number): string {
   const hasToken = !!getGithubAuthToken();
   if (status === 404) {
     if (hasToken) {
-      return ' (repo / path not found, or your token can\'t see this repo — check the token\'s repo access on github.com)';
+      return ' (repo / path not found, or your token can\'t see this repo; check the token\'s repo access on github.com)';
     }
-    return ' (repo / path not found, or repo is private — set a GitHub token on the Options page to fetch private repos)';
+    return ' (repo / path not found, or repo is private; set a GitHub token on the Options page to fetch private repos)';
   }
   if (status === 403 || status === 429) {
     if (hasToken) {
-      return ' (rate limit hit, or your token lacks the required scope — authenticated requests get 5000/hour against api.github.com)';
+      return ' (rate limit hit, or your token lacks the required scope; authenticated requests get 5000/hour against api.github.com)';
     }
-    return ' (likely the unauthenticated 60/hr API rate limit — set a GitHub token on the Options page to raise it to 5000/hr)';
+    return ' (likely the unauthenticated 60/hr API rate limit; set a GitHub token on the Options page to raise it to 5000/hr)';
   }
   if (status === 401) {
-    return ' (token rejected — re-check the value on the Options page)';
+    return ' (token rejected; re-check the value on the Options page)';
   }
   return '';
 }

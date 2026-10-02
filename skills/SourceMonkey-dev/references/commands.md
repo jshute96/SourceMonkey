@@ -104,7 +104,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `cdp <Method> [json]` | A raw CDP call on the tab; the result as JSON. A `{{` block or `--file` holds several, one per line (see [cdp.md](cdp.md)) |
 | `screenshot [sel] [--full] <file>` | PNG of the view, the page, or an element |
 | `savehtml <file>` | Save the DOM for `--from-saved` / `serveHtml` |
-| `logs` | All console lines and errors so far |
+| `logs` | All console lines and errors so far, whole (the stream cuts a line past 1000 characters) |
 
 ## Driving the page
 

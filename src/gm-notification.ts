@@ -54,7 +54,7 @@ const byChromeId = new Map<string, NotificationEntry>();
 // ever calls in here. Names the browser permission the reader would go
 // looking for rather than the API object we happened to test.
 export const NOTIFICATIONS_UNAVAILABLE =
-  'this browser will not show notifications to SourceMonkey — check the extension\'s notification permission';
+  'this browser will not show notifications to SourceMonkey; check the extension\'s notification permission';
 
 // Page-supplied notification image. Chrome fetches `iconUrl` from the
 // privileged extension context, so we only honor http(s) / data: URLs.

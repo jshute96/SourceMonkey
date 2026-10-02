@@ -25809,7 +25809,7 @@
     "file": "update.greasyfork.org/scripts/380394/Google%20Drive%20Auto%20Download%20%28without%20preview%29.user.js",
     "valid": {
       "status": "invalid",
-      "error": "The // ==UserScript== metadata block is never closed — it needs a // ==/UserScript== line (in the script, line 1)",
+      "error": "The // ==UserScript== metadata block is never closed and needs a // ==/UserScript== line (in the script, line 1)",
       "date": "2026-10-01"
     }
   },
@@ -40639,7 +40639,7 @@
     "file": "update.greasyfork.org/scripts/434134/%5BPokeclicker%5D%20Simple%20Auto%20Farmer.user.js",
     "valid": {
       "status": "invalid",
-      "error": "The // ==UserScript== metadata block is never closed — it needs a // ==/UserScript== line (in the script, line 1)",
+      "error": "The // ==UserScript== metadata block is never closed and needs a // ==/UserScript== line (in the script, line 1)",
       "date": "2026-10-01"
     }
   },

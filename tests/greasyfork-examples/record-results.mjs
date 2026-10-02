@@ -34,7 +34,8 @@
 //                              --date D     default: today (YYYY-MM-DD)
 //   help                     print this (so does --help or -h, anywhere)
 //
-// Global: --corpus PATH (default corpus.json here), --root PATH (download root).
+// Global, before or after the command: --corpus PATH (default corpus.json here),
+// --root PATH (download root).
 // The record format is described in README.md ("Test results").
 
 import { spawn } from 'node:child_process';
@@ -388,7 +389,11 @@ async function list(opts) {
 async function main() {
   const argv = process.argv.slice(2);
   if (printHelp(argv[0] === 'help' ? ['--help'] : argv, import.meta.url)) return;
+  // The global options can come before the command too.
+  const lead = [];
+  while (['--corpus', '--root'].includes(argv[0])) lead.push(argv.shift(), argv.shift());
   const [command, ...rest] = argv;
+  rest.unshift(...lead);
   if (!Object.hasOwn(COMMAND_OPTIONS, command ?? '')) {
     throw new Error(`${command ? `Unknown command "${command}"` : 'No command given'}. ` +
       `Use one of: ${Object.keys(COMMAND_OPTIONS).join(', ')}. Run with --help for usage.`);

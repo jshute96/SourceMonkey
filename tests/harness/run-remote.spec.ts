@@ -444,7 +444,10 @@ test('a reused tab drops the last run\'s scripts; nodes print as tags; own refs 
       '--', 'eval', 'setTimeout(() => console.log("KEYUP", 143), 100)',
       '--', 'wait', 'log', 'KEYUP',
     );
-    expect(second).toContain('[sm-dev] Reusing the selected tab, which an earlier run opened');
+    // Named, and after the line naming the browser.
+    const reusing = second.findIndex((l) => l.startsWith('[sm-dev] Reusing the selected tab ('));
+    expect(second[reusing]).toMatch(/^\[sm-dev\] Reusing the selected tab \(http:.*target\.html\), which run D1 opened\. That run has ended\.$/);
+    expect(second.findIndex((l) => l.startsWith('[sm-dev] Connected to'))).toBeLessThan(reusing);
     expect(second.filter((l) => l.includes('[ticker]'))).toEqual([]);
     expect(second).toContain('[page debug] <main id="target">');
     expect(second).toContain('[page warning] [nodes] at <body> 2');

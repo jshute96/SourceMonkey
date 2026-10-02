@@ -242,8 +242,8 @@ $R click e14                        # refs work anywhere a selector does
 ```
 
 - `snapshot` is the accessibility tree: roles, names, and a ref like
-  `e14` (`f2e6` inside a frame). `snapshot <selector>` shows part of the
-  page; `--out file` saves a large one.
+  `e14`, or `f2e6` with a frame number. `snapshot <selector>` shows 
+  part of the page;`--out file` saves a large one.
 - Refs only last until the page changes: take a new snapshot after a
   reload or navigation. Refs from `snapshot <selector>` and from the
   whole page both work.

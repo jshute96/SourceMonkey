@@ -2614,7 +2614,7 @@
           p.then(function (reply) {
             if (reply && reply.ok) return;
             var why = (reply && reply.error) ? reply.error : "SourceMonkey sent no reply";
-            try { console.info("[SourceMonkey] window." + method + " —", why); } catch (_le) {}
+            try { console.info("[SourceMonkey] window." + method + ":", why); } catch (_le) {}
           }, function (err) {
             try { console.info("[SourceMonkey] window." + method + " send failed:", (err && err.message) || err); } catch (_le2) {}
           });

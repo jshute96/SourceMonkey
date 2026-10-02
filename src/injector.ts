@@ -1959,7 +1959,7 @@ async function runSync(scope: SyncScope | undefined): Promise<void> {
     // console line per write, forever, all saying the same thing.
     if (!loggedUserScriptsUnavailable) {
       loggedUserScriptsUnavailable = true;
-      console.info('[SourceMonkey] chrome.userScripts is unavailable — nothing was registered');
+      console.info('[SourceMonkey] chrome.userScripts is unavailable, so nothing was registered');
     }
     // Drop any rejections recorded while the API still worked. The map
     // describes the current registration set, and "nothing is
@@ -2831,7 +2831,7 @@ function logRecoveries(scriptIds: readonly string[]): void {
       level: 'info',
       state: 'ok',
       source: 'chrome-injector',
-      message: 'Chrome accepted this script\'s registration — it runs again',
+      message: 'Chrome accepted this script\'s registration, so it runs again',
     });
   }
 }

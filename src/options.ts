@@ -212,7 +212,7 @@ function initLocalRootControls(): void {
       // on save. Without it a newly-added root would
       // appear to do nothing until something else happened to touch a
       // collection.
-      setStatus('Saved — refreshing scripts', '');
+      setStatus('Saved, refreshing scripts', '');
       await refreshLocalCollections();
     } finally {
       saveBtn!.disabled = false;
@@ -313,7 +313,7 @@ function initLocalRootControls(): void {
     }
     if (entries.length === 0) {
       setStatus(
-        'No directories configured — only each script\'s own folder and its collection\'s',
+        'No directories configured, so only each script\'s own folder and its collection\'s are searched',
         '',
       );
       return;

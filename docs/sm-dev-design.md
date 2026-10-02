@@ -810,6 +810,11 @@ The run commands that drive and read a tab's page (`click`, `type`,
   That takes a round trip, so the page's later console lines queue
   behind it to keep their order. A lookup that takes over a second (a
   dialog open, a paused page) prints Playwright's text instead.
+- A console call's `%` directives are applied as the browser's console
+  does (`formatConsoleArgs`): `%c` and its CSS drop out, `%s` and the
+  like take the next value.
+- A stream line over a thousand characters is cut, with its length;
+  `logs` keeps it whole (`shortConsoleText`).
 - Our own `sourcemonkey://` stack refs in stream lines are decoded once
   for display (`decodeOwnRefs`, sharing the viewer's `displayRefText`).
 - Keys sent over CDP go to the renderer, so Chrome's own shortcuts

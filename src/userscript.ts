@@ -1434,7 +1434,7 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
       if (failures.length === 1) {
         relatedVersionsMessage = `Could not refresh ${failures[0]}`;
       } else if (failures.length > 1) {
-        relatedVersionsMessage = `Could not refresh ${failures.length} copies — ${failures.join('; ')}`;
+        relatedVersionsMessage = `Could not refresh ${failures.length} copies: ${failures.join('; ')}`;
       }
       // The page moved — a swap to the successor, the not-found state,
       // or a row the user picked mid-refresh: the paint it made on the
@@ -2099,7 +2099,7 @@ async function loadPreview(): Promise<void> {
       // A whole sentence, not a fragment: the catch renders it as-is
       // rather than under the `Could not fetch this script: ` prefix
       // the other failures there take.
-      throw new Error(`This is not a script location — it ${LOCATION_SHAPES}`);
+      throw new Error(`This is not a script location. It ${LOCATION_SHAPES}.`);
     }
     // Same canonicalization `addCollection` runs, so what the
     // already-installed check compares is exactly what installing
@@ -2121,7 +2121,7 @@ async function loadPreview(): Promise<void> {
     // answer instead.
     if (
       previewWasCaptured && err instanceof MarkupResponseError &&
-      continueToPage('This location is a web page, not a script — continuing to it')
+      continueToPage('This location is a web page, not a script. Continuing to it.')
     ) {
       return;
     }
@@ -3682,7 +3682,7 @@ type ResolvedRef =
 // Tooltip note for a ref mapped with a layout that isn't the one it
 // was recorded under. See `resolveLogRef`.
 const STALE_REF_NOTE =
-  'Recorded before the current version of this script — the file and line may not match.';
+  'Recorded before the current version of this script, so the file and line may not match.';
 
 function resolveLogRef(ref: StackRef, timestamp: number): ResolvedRef {
   if (ref.url !== stackEntryUrl) return { kind: 'asIs' };

@@ -447,3 +447,39 @@ test('snapshot shows a panel added after <body>, and refs from a snapshot of it 
   expect(await run(`click ${body}`)).toEqual([`[sm-dev] Clicked ${body} (button "In body")`]);
   await expect(page.locator('body > button')).toHaveText('Body hit');
 });
+
+test('click and hover say when the mouse can\'t reach the point', async ({ page, fixtureServer, host, attachment, loadScript }) => {
+  test.setTimeout(60_000);
+  const script = await loadScript({
+    relativePath: 'panel.user.js',
+    meta: { name: 'Panel', match: ['*://*/target.html'] },
+    // A slide-out panel showing 14 of its 164 pixels, and one entirely off the page.
+    body: `
+      const panel = document.createElement('div');
+      panel.id = 'panel';
+      panel.style.cssText = 'position:fixed;left:-150px;top:20px;width:164px;height:40px;background:#ccc';
+      const gone = document.createElement('div');
+      gone.id = 'gone';
+      gone.style.cssText = 'position:fixed;left:-500px;top:20px;width:100px;height:40px;background:#ccc';
+      document.body.append(panel, gone);
+    `,
+  });
+  const lines: string[] = [];
+  const dialogs = await DialogTracker.attach(page, (l) => lines.push(l), { visible: false, commandsComing: true });
+  await page.setViewportSize({ width: 800, height: 600 });
+  await page.goto(`${fixtureServer.baseUrl}/target.html`);
+  await expect(page.locator('#panel')).toHaveCount(1);
+  const tabs = [{ n: 1, page, link: attachment, dialogs, targetId: 'ABCDEF0123456789', pageId: 7 }];
+  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(l), stop: () => undefined };
+  const run = async (line: string) => {
+    lines.length = 0;
+    await runConsoleCommand(line, ctx);
+    return [...lines];
+  };
+
+  expect(await run('hover #panel --at 155,20')).toEqual(['[sm-dev] Hovered over #panel with the mouse at 155,20 in it']);
+  expect(await run('click #panel --at 300,20')).toEqual(['[sm-dev] The click command failed: The point 300,20 is outside the element, which is 164x40 pixels (--at counts from its top left corner)']);
+  expect(await run('click #panel --at 10,20')).toEqual(['[sm-dev] The click command failed: The point 10,20 in the element is outside the 800x600 window, at -140,40, so pick a point in the element\'s visible part']);
+  // Playwright's own reason stands when it gives one.
+  expect(await run('hover #gone')).toEqual(['[sm-dev] The hover command failed: The element stayed outside the viewport for 5 seconds, where it can\'t be scrolled to']);
+});

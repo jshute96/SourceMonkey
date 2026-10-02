@@ -223,7 +223,7 @@ function buildDialog(): DialogElements {
   localFiles.type = 'checkbox';
   localFiles.id = 'collection-dialog-local-files';
   const localText = el('span');
-  localText.appendChild(document.createTextNode('Allow local file overrides '));
+  localText.appendChild(document.createTextNode('Allow local file overrides'));
   const localFilesHint = el<HTMLElement>('span', 'dlg-hint');
   localText.appendChild(localFilesHint);
   localFilesLabel.append(localFiles, localText);
@@ -508,7 +508,7 @@ async function runDialog(
     const supportsLocal = !loc || collectionSupportsLocalFiles(loc);
     ui.localFiles.disabled = !supportsLocal;
     ui.localFilesLabel.classList.toggle('off', !supportsLocal);
-    ui.localFilesHint.textContent = supportsLocal ? `— ${LOCAL_FILES_HINT}` : `— ${localFilesUnavailableHint(loc)}`;
+    ui.localFilesHint.textContent = supportsLocal ? `: ${LOCAL_FILES_HINT}` : `: ${localFilesUnavailableHint(loc)}`;
     // The placeholder is the field's own explanation of what blank
     // means — required for a scripts collection, "use the inferred
     // name" once a location says what the collection is.

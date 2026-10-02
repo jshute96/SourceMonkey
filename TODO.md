@@ -1381,7 +1381,7 @@ Rough edges left:
     rows noted below.
 - **Poll noise still fills the cap.** The reload fast-path runs in
   `manual` mode for every matched script on every tab reload, so
-  ordinary browsing appends `Checked for updates — no change` per
+  ordinary browsing appends `Checked for updates and found no change` per
   script per reload — and two rows for a script that is still failing.
   Dropping the row for non-user-initiated checks would fix it; the
   blocker is that `manual` currently means "not rate-limited", not

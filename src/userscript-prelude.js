@@ -783,7 +783,7 @@
            (previous) body instead. */
         swapReady = false;
         try {
-          console.info("[SourceMonkey] " + cfg.name + ": The updated copy needs the GM runtime, which this page does not have yet, so the previous version ran — reload the page to pick it up");
+          console.info("[SourceMonkey] " + cfg.name + ": The updated copy needs the GM runtime, which this page does not have yet, so the previous version ran. Reload the page to pick it up.");
         } catch (_smNR) {}
       }
       if (swapReady && decision.seedValues) {
@@ -797,7 +797,7 @@
         }
         if (!swapReady) {
           try {
-            console.info("[SourceMonkey] " + cfg.name + ": Could not load this script's stored GM values for the updated copy, so the previous version ran — reload the page to retry");
+            console.info("[SourceMonkey] " + cfg.name + ": Could not load this script's stored GM values for the updated copy, so the previous version ran. Reload the page to retry.");
           } catch (_smSI2) {}
         }
       }
@@ -814,7 +814,7 @@
       }
       if (evalRefused || !swapReady) {
         if (evalRefused) {
-          try { console.info("[SourceMonkey] swap blocked by page CSP for", cfg.name, "— running prior version"); } catch (_e0) {}
+          try { console.info("[SourceMonkey] swap blocked by page CSP for " + cfg.name + ", running prior version"); } catch (_e0) {}
         }
         /* Fall through to the default baked-body path. `entry.decision`
            deliberately keeps the run-new object: the registered body's
