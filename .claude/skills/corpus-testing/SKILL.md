@@ -79,7 +79,7 @@ Keep notes as reports arrive (a scratchpad file), since there are many.
 When every agent has reported:
 
 1. **Check completeness.** Every ID has a `test`; `scripts/sm-dev list`
-   shows no leftover runs; no `tests/e2e/zz-tmp-*.spec.ts` is left.
+   shows no leftover runs; `git status` shows no stray files.
 2. **Merge duplicate tags.** Agents invent tags independently; two names for
    one problem (`idle-after-load` / `onload-after-idle`) become one with
    `set ID --untag old --tag new`.

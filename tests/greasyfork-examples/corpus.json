@@ -7046,6 +7046,11 @@
         "date": "2026-09-29",
         "version": "1.4.8",
         "text": "- Tested in the real extension (throwaway Playwright spec) on https://www.youtube.com/watch?v=dQw4w9WgXcQ: logs \"Started\" and \"Entered video, waiting for ads\", no errors.\n- No real ad was served in the test browser, so the skip path was checked with a fake `button.ytp-skip-ad-button` added to the page: the script logged \"found skip button\" / \"clicking skip button\" and clicked it 3.8 s later (its 3 s default delay).\n- sm-dev: fails at startup with `MutationObserver.observe: parameter 1 is not of type 'Node'` because sm-dev ran this `@run-at document-body` script while `document.body` was still null (its body gate falls through when `<html>` doesn't exist yet). Fidelity gap only; the extension waits for body correctly."
+      },
+      {
+        "date": "2026-10-01",
+        "version": "1.4.8",
+        "text": "sm-dev re-checked after d19602a (`document-body` waits for `<body>`): the sm-dev startup error is gone. Headless `--temp-browser`, 12 loads (6 watch pages, 6 reloads): each logged \"Started\" and \"Entered video, waiting for ads\", with no `MutationObserver` error. A fake `button.ytp-skip-ad-button` was found and clicked."
       }
     ]
   },
@@ -9173,9 +9178,8 @@
       "version": "2026.08.01.1"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-09-29",
+      "status": "pass",
+      "date": "2026-10-01",
       "version": "2026.08.01.1"
     },
     "tags": [
@@ -9186,6 +9190,11 @@
         "date": "2026-09-29",
         "version": "2026.08.01.1",
         "text": "- Bing (headless), 'python programming language': no engine-switch buttons (`gb-button`) appeared and result links stayed `bing.com/ck/a?...` redirects. No errors; script debug mode (`&whoami=F9y4ng`) shows it stops after 'Request and initialize remote icon data'.\n- Script: the icon request's onload starts with `if (response.readyState !== 4) return`, and initialization awaits that promise, so it never resolves.\n- SourceMonkey: GM_xmlhttpRequest's onload response object has no `readyState` (TM/VM set 4). Confirmed with a probe script in sm-dev: keys are status, statusText, responseURL, responseText, response, responseBase64, responseMimeType, responseHeaders, finalUrl; `readyState` undefined. Same runtime code (src/wrapper-gm-runtime.js, GmXhrResponse in src/gm-xhr.ts) as the extension; not run in the real extension.\n- SourceMonkey: script injected into MAIN world because it uses unsafeWindow without granting it (validate warning)."
+      },
+      {
+        "date": "2026-10-01",
+        "version": "2026.08.01.1",
+        "text": "Re-tested after #27 (GM_xmlhttpRequest responses have readyState 4): now passes.\n- Bing (headless), 'python programming language': the icon request loaded (`_remoteicons_` stored, 42K chars), and the Baidu / Google switch buttons (`gb-button`) appear beside the search box.\n- Result links are direct (python.org, wikipedia.org); a `--noscript` tab has `bing.com/ck/a?...` redirects.\n- No errors in `logs`.\n- Tag kept: the script's onload still checks `response.readyState !== 4`, so it passes only because of the fix."
       }
     ]
   },
@@ -16159,18 +16168,20 @@
     },
     "test": {
       "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-09-29",
+      "blame": "script",
+      "date": "2026-10-01",
       "version": "4.1.1"
     },
-    "tags": [
-      "tld-include"
-    ],
     "notes": [
       {
         "date": "2026-09-29",
         "version": "4.1.1",
         "text": "- SourceMonkey: the only includes are `https://www.google.tld/search?*tbm=isch*` and `...?*udm=2*`. SM doesn't support TM's `.tld` (any top-level domain) so the script never runs: `sm-dev match` says 'No @match or @include covers this URL' for google.com and google.co.uk image searches. `validate` reports ok with no warning.\n- With `.tld` changed to `.com` in a scratch copy, on Google Images 'red panda' (visible browser): the script ran, but only 1 of 100 results got `data-gd-status=done` and a direct image link (thumb.wikimedia.org..., target=_blank).\n- Script: Google now wraps each result in its own container, so `document.querySelector(RESULTS)` finds only the first result's parent (100 containers match, one per result). The script would be mostly broken even with `.tld` support."
+      },
+      {
+        "date": "2026-10-01",
+        "version": "4.1.1",
+        "text": "Re-tested after #29 (`.tld` hosts in @include match ICANN public suffixes): the original copy now runs, but still fails for its own reason.\n- `sm-dev match` now matches google.com and google.co.uk image searches by `@include https://www.google.tld/search?*udm=2*`.\n- Google Images 'red panda' (visible browser), original copy: the script started (MAIN world, document-start), but only 1 of 100 results got `data-gd-status=done` and a direct image link (thumb.wikimedia.org..., target=_blank), the same as the `.com` copy in the earlier test.\n- Script: blame now `script`. Google wraps each result in its own container (100 match `RESULTS`), and the script only handles the first. Untagged `tld-include`: it is no longer a cause."
       }
     ]
   },
@@ -17043,7 +17054,7 @@
     "test": {
       "status": "fail",
       "blame": "script",
-      "date": "2026-09-29",
+      "date": "2026-10-01",
       "version": "0.7.02"
     },
     "tags": [
@@ -17054,6 +17065,11 @@
         "date": "2026-09-29",
         "version": "0.7.02",
         "text": "Tested with sm-dev (headless temp browser), logged out, on `www.pinterest.com/pin/31806741114445347/`.\n- Script: started and logged its init and prefs, but never added its \"Full Size\" button (`#myBtn`). Everything after init runs from `window.onload = ...`, set by the body at the default `@run-at document-idle`.\n- SourceMonkey runs document-idle bodies after the `load` event (by design, see docs/injection.md), so the handler is assigned after `load` has fired and never runs. A probe script on the same page saw `readyState=complete` on 3 loads. The cross-manager `headers-run-at` test shows Tampermonkey and Violentmonkey also run document-idle at `readyState=complete`, so this is the script's bug.\n- Firing a synthetic `load` from the page made the button and `#pp_divFullSize` appear. The pin API response logged out has no `images` field, so the original-image URL stayed empty, and Pinterest's sign-up modal covers the button."
+      },
+      {
+        "date": "2026-10-01",
+        "version": "0.7.02",
+        "text": "Re-tested after #32 (document-idle runs after `window.stop()`; sm-dev start gates wait for `<html>`/`<body>`): still fails, nothing changed. sm-dev (headless), logged out, on `www.pinterest.com/pin/31806741114445347/`.\n- Script: it starts and logs its init and prefs, but `window.onload = ...` (line 486) is set after `load` has fired (`readyState` \"complete\"), so `#myBtn` and `#pp_divFullSize` never appear.\n- #32 only changes pages that call `window.stop()`, which this one doesn't. Kept `idle-after-load` and blame `script`."
       }
     ]
   },
@@ -19648,18 +19664,22 @@
     "test": {
       "status": "fail",
       "blame": "script",
-      "date": "2026-09-29",
+      "date": "2026-10-01",
       "version": "4.32"
     },
     "tags": [
-      "connect-undeclared",
-      "needs-onreadystatechange"
+      "connect-undeclared"
     ],
     "notes": [
       {
         "date": "2026-09-29",
         "version": "4.32",
         "text": "Selecting a word on Wikipedia shows the translate icon; hovering it (200ms, not a click) starts the translation, which never appears.\n\n- SourceMonkey: the script has no `@connect`, so its first `GM_xmlhttpRequest` is blocked (\"@connect not declared\"). Tampermonkey asks the user; Violentmonkey allows it.\n- SourceMonkey: `init_google_value_tk` waits for `onreadystatechange` with `readyState == 4`, which SourceMonkey never fires (only `onload` / `onerror` / `ontimeout` / `onabort`). A tiny test script confirmed it.\n- Script: the default (Chinese) UI uses `translate.google.cn`, which Google shut down (404). The English UI setting (`translatorSettingLanguage = \"1\"`) uses `translate.google.com`.\n- Script: its Google token is parsed from `c._ctkk='` in `translate_a/element.js`, which is no longer there, so it would alert \"Google token initialized failed\" in any manager."
+      },
+      {
+        "date": "2026-10-01",
+        "version": "4.32",
+        "text": "Re-tested after #27 (GM_xmlhttpRequest calls onreadystatechange with readyState 4): the readystate gap is gone, but the script still fails for its own reasons.\n- Wikipedia 'Red panda' (headless), English UI (`translatorSettingLanguage = \"1\"`), double-click a word, hover the icon.\n- SourceMonkey (as documented, strict `@connect`): the original copy's `translate.google.com/translate_a/element.js` request is still blocked (\"@connect not declared\"). Tag `connect-undeclared` kept.\n- With `@connect *` added in a scratch copy: the request loads 200, `onreadystatechange` sees `readyState == 4`, and the script alerts \"Google token initialized failed, use youdao translator instead\". No translation popup appears after accepting it.\n- Script: blame stays `script`. The token marker `c._ctkk='` is no longer in Google's element.js, so it fails at that alert in any manager. Untagged `needs-onreadystatechange`: it is no longer a cause."
       }
     ]
   },
@@ -20033,11 +20053,10 @@
     "test": {
       "status": "fail",
       "blame": "script",
-      "date": "2026-09-29",
+      "date": "2026-10-01",
       "version": "0.3.0a"
     },
     "tags": [
-      "inline-script-csp",
       "trusted-types"
     ],
     "notes": [
@@ -20045,6 +20064,11 @@
         "date": "2026-09-29",
         "version": "0.3.0a",
         "text": "- Script: runs its whole feature set as page code, by setting `textContent` on a `<script>` element and appending it.\n- SourceMonkey (real extension, Playwright spec): that inline script is blocked by SourceMonkey's own USER_SCRIPT world CSP (`script-src 'self' 'unsafe-eval'`, set in `configureWorld`), not by YouTube's. The console says \"Executing inline script violates ... 'script-src 'self' 'unsafe-eval''\". Nothing of Iridium appears on `/iridium-settings` (YouTube 404 page) or a watch page. The same block happens on example.com, which has no CSP.\n- sm-dev: the unmodified script instead throws on the `textContent` assignment (YouTube's Trusted Types, the known sm-dev isolated world gap).\n- Script: with a local copy patched to pass a Trusted Types policy (so the page code does run), `/iridium-settings` builds its settings page (sidebar, 4 inputs), but on a watch page the page code throws \"Failed to set the 'innerHTML' property ... requires 'TrustedHTML' assignment\" in the page's own world, and no `iri*` elements or settings button appear. So it would still fail on current YouTube once SourceMonkey allows the inline script."
+      },
+      {
+        "date": "2026-10-01",
+        "version": "0.3.0a",
+        "text": "Re-tested after #28 (inserted `<script>` elements run under the USER_SCRIPT world CSP): the CSP block is gone, but it still fails. Real extension (`--temp-browser --extension`), unmodified script.\n- SourceMonkey: the inline page script now runs. On `/iridium-settings` the settings page builds (title \"Iridium settings\", 4 inputs, 9 `iri` elements), with no CSP violation.\n- Script: on a watch page (`/watch?v=jNQXAC9IVRw`) the page code runs (`<html class=\"iri-square-avatars\">`) but throws \"Failed to set the 'innerHTML' property on 'Element': This document requires 'TrustedHTML' assignment\" in the page's own world (e.g. `iridium_settings_button.innerHTML`, line 3289). No `#iridium_settings_button` appears. A `--noscript` tab on the same video logged no TrustedHTML error.\n- Untagged `inline-script-csp`: it no longer causes the failure. Kept `trusted-types` and blame `script`: page-world code blocked by YouTube's Trusted Types fails in every manager."
       }
     ]
   },
@@ -27357,7 +27381,7 @@
     "test": {
       "status": "fail",
       "blame": "unknown",
-      "date": "2026-09-29",
+      "date": "2026-10-01",
       "version": "4.1"
     },
     "tags": [
@@ -27373,6 +27397,11 @@
         "date": "2026-09-29",
         "version": "4.1",
         "text": "Blame changed from sourcemonkey to unknown. SourceMonkey running document-idle after `load` may match Tampermonkey: the cross-manager run-at test (`tests/examples/headers-run-at`) finds idle scripts see `readyState=complete` there too. Whether this script's `load` listener ever fires in Tampermonkey or Violentmonkey is untested."
+      },
+      {
+        "date": "2026-10-01",
+        "version": "4.1",
+        "text": "Re-tested after #32 (document-idle runs after `window.stop()`; sm-dev start gates wait for `<html>`/`<body>`): still fails, nothing changed. sm-dev (headless) on https://en.wikipedia.org/wiki/Pop-up_ad.\n- The script starts in MAIN world at `readyState` \"complete\" and registers its menu, but `window.addEventListener('load', ...)` (line 434) never fires, so `window.open` stays native. A page-world `window.open(\"https://example.org/\")` opened a real tab (T2).\n- #32 only changes pages that call `window.stop()`. Kept `idle-after-load` and blame `unknown`: whether the `load` listener fires in Tampermonkey or Violentmonkey is still untested."
       }
     ]
   },
@@ -27615,9 +27644,8 @@
       "version": "0.5.3"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-09-29",
+      "status": "pass",
+      "date": "2026-10-01",
       "version": "0.5.3"
     },
     "notes": [
@@ -27630,6 +27658,11 @@
         "date": "2026-09-29",
         "version": "0.5.3",
         "text": "Checked in the real extension (a throwaway Playwright spec, a page whose `<body>` arrives 800ms after `<head>`): there `document.documentElement` exists at `document_start`, and `@run-at document-body` scripts in both worlds waited for the body on every load. So the early start happens only in sm-dev, not in the extension. The script would likely pass in the extension."
+      },
+      {
+        "date": "2026-10-01",
+        "version": "0.5.3",
+        "text": "Re-tested after d19602a (sm-dev run-at gates wait for `<body>`): now passes. sm-dev in the shared visible browser, logged out, `showStats` seeded on.\n- 20 loads of `/s?k=...` search pages (12 `open`s of new queries, 8 `reload`s): no `appendChild` error on any, the stats box was there every time, and no `sp-sponsored-result` items were left.\n- Removed counts on fresh queries were 17 to 28 per page. On repeated reloads of one query Amazon served fewer ads (\"Removed: 1\"); a `--noscript` tab on that page also had only 1 sponsored label."
       }
     ]
   },
@@ -33104,18 +33137,25 @@
     },
     "test": {
       "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-09-29",
+      "blame": "script",
+      "date": "2026-10-01",
       "version": "27.3.0"
     },
-    "tags": [
-      "tld-include"
-    ],
     "notes": [
       {
         "date": "2026-09-29",
         "version": "27.3.0",
         "text": "The script's pages are all `@include https://*.imdb.tld/...` globs; Tampermonkey reads `.tld` as any top-level domain.\n- SourceMonkey: treats `.tld` literally, so the script never runs on imdb.com. `sm-dev match` says \"No @match or @include covers this URL\" for https://www.imdb.com/title/tt0111161/, and `validate` gives no warning.\n- Confirmed in the real extension: the original script logged nothing on that page; a copy with `imdb.tld` changed to `imdb.com` logged \"script ... running\" and the script's own start lines (jQuery etc. loaded fine at document-start).\n- Script (unverified): features past startup not tested. Headless Chrome gets a 403 from IMDb, and in the visible browser sm-dev hit its own document-start gap (below).\n- sm-dev: with `@run-at document-start` and `@require`s, the requires run before `document.documentElement` exists, so jQuery 3.5.1's init throws \"Cannot read properties of undefined (reading 'createElement')\". The real extension had documentElement at that point."
+      },
+      {
+        "date": "2026-10-01",
+        "version": "27.3.0",
+        "text": "Re-tested after #29 (`.tld` hosts in @include match ICANN public suffixes): the script now runs on imdb.com, but this copy (27.3.0) skips itself on current IMDb pages. Real extension, visible browser, not signed in.\n- `sm-dev match` now matches https://www.imdb.com/title/tt0111161/ by `@include https://*.imdb.tld/title/tt*`.\n- On that page the script started, then logged \"Anti-bot JS challenge detected. Skipping execution.\" and added nothing.\n- Script: the check is `document.querySelector('script[src*=\"challenge.js\"]')`, and IMDb's normal, fully loaded title page (also in a `--noscript` tab) includes AWS WAF's `challenge.js`. The current 27.7.0 on GreasyFork no longer has this check.\n- With the check removed in a scratch copy: the script ran its main functions, added the rating table (Metacritic 82 / 92, Rotten Tomatoes 89 / 98, Letterboxd 92, fetched with GM_xmlhttpRequest) and 9 site icons. So SourceMonkey shows no other gap here.\n- Untagged `tld-include`: it is no longer a cause."
+      },
+      {
+        "date": "2026-10-01",
+        "version": "27.3.0",
+        "text": "sm-dev re-checked after d19602a (`document-start` code and its `@require`s wait for `<html>`): the sm-dev jQuery error is gone. Shared visible browser, not signed in.\n- 13 loads (8 title pages, 5 reloads): no `createElement` error; `jQuery.fn.jquery` was \"3.5.1\" in the script's world; the script logged its start and then the anti-bot skip on every load, as in the extension. Result unchanged."
       }
     ]
   },
@@ -34486,14 +34526,16 @@
       "date": "2026-09-29",
       "version": "0.6"
     },
-    "tags": [
-      "tld-include"
-    ],
     "notes": [
       {
         "date": "2026-09-29",
         "version": "0.6",
         "text": "- Google shows the cookie consent dialog only to EU visitors. From this (US) location there is none on www.google.com.\n- consent.google.com URLs with `gl=DE` returned Google's 400 or 404 error page. The script ran there (matched by `@include https://consent.google.*/*`) but had no buttons to click.\n- SourceMonkey: `@include https://www.google.tld/*` matches nothing (`match` says no rule covers www.google.com or www.google.de), so the www.google.* inline-dialog path would never run in SourceMonkey."
+      },
+      {
+        "date": "2026-10-01",
+        "version": "0.6",
+        "text": "Re-tested after #29 (`.tld` hosts in @include match ICANN public suffixes): matching is fixed, but the banner still can't be shown from here, so it stays n/a.\n- `sm-dev match` now matches www.google.com, www.google.de and www.google.co.uk by `@include https://www.google.tld/*`, and the script started on them in the visible browser.\n- With `--lang de-DE`: www.google.de/search hit Google's /sorry page, and www.google.de/ redirected to www.google.com with no consent dialog (US location).\n- Untagged `tld-include`: it no longer blocks the script."
       }
     ]
   },
@@ -36830,9 +36872,8 @@
       "version": "7.6.8"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-09-29",
+      "status": "pass",
+      "date": "2026-10-01",
       "version": "7.6.8"
     },
     "tags": [
@@ -36843,6 +36884,11 @@
         "date": "2026-09-29",
         "version": "7.6.8",
         "text": "Tested with sm-dev (headless) on https://en.wikipedia.org/wiki/Red_panda, menu \"Inject Userscript+\".\n- SourceMonkey: the list fetch fails. `GET https://greasyfork.org/scripts/by-site/wikipedia.org.json` redirects to `api.greasyfork.org`, and SM refuses it (\"blocked by this script's @connect rules: redirect to api.greasyfork.org not allowed\"). The script declares `@connect greasyfork.org`; Tampermonkey's docs say a bare domain in @connect also allows all its subdomains, but SM's `hostMatchesRule` (src/gm-connect.ts) treats it as exact host only. The badge stays at 0 and the script logs `Engine: \"greasyfork\" undefined`.\n- With a scratch copy adding only `@connect api.greasyfork.org`, the fetch returned 200, the badge showed 100 and clicking it opened the full list of wikipedia.org scripts (names, authors, installs, Install buttons).\n- Also: `Illegal invocation` from `_self.setTimeout(...)` (the script stores `window.setTimeout` on its own object and calls it as a method). Unhandled rejection on each frame timeout; did not block the list. It works in managers whose sandbox binds window functions; in SM's USER_SCRIPT world `window` is the real one."
+      },
+      {
+        "date": "2026-10-01",
+        "version": "7.6.8",
+        "text": "Re-tested after #31 (a bare `@connect` host covers its subdomains): now passes. sm-dev (headless) on https://en.wikipedia.org/wiki/Red_panda, menu \"Inject Userscript+\", unmodified copy.\n- SourceMonkey: the `greasyfork.org` list fetch, redirected to `api.greasyfork.org`, is no longer blocked. The badge shows 100, and clicking it opens the wikipedia.org list (names, authors, daily installs, Install buttons).\n- Kept `connect-subdomain`: the script still relies on the bare-host rule and passes only because of the fix.\n- Script: the `Illegal invocation` unhandled rejection from `_self.setTimeout(...)` still shows on startup and on fetch; it does not block the list."
       }
     ]
   },
@@ -51478,6 +51524,11 @@
         "date": "2026-09-29",
         "version": "3.3.9",
         "text": "Tested on greasyfork.org/en/scripts?q=bot, in the real extension (throwaway Playwright spec) after sm-dev failed.\n- Real extension: all 101 list items got the `blacklisted` class and are `display: none` (bot/cheat blacklist on by default), and 100 install buttons were added to the list.\n- sm-dev: the script threw `Cannot read properties of null (reading 'lang')` from `document.documentElement.lang` at startup, so nothing happened. sm-dev runs this `@run-at document-start` script body before `<html>` exists (a probe script saw `document.documentElement` null); in the extension a same-header probe saw it present. So this is the known document-start gap, and it applies to the script body too, not only to @requires.\n- The `@inject-into content` + unsafeWindow warning doesn't matter here: its only unsafeWindow use is commented out."
+      },
+      {
+        "date": "2026-10-01",
+        "version": "3.3.9",
+        "text": "sm-dev re-checked after d19602a (`document-start` waits for `<html>`): the sm-dev `documentElement.lang` error is gone. Headless `--temp-browser`, 12 loads of `/en/scripts?q=...` (4 fresh starts, 4 queries, 4 reloads): no errors; on `q=bot` 100 of 100 script items were blacklisted and hidden, and 100 install buttons were added."
       }
     ]
   },
@@ -56180,6 +56231,11 @@
         "date": "2026-09-29",
         "version": "6.5",
         "text": "- Page: https://en.wikipedia.org/wiki/Tunnel. Checks: a page-side `contextmenu` listener on `document` should be suppressed (restriction removal), and double-clicking the bold word \"tunnel\" should put it on the clipboard.\n- Tested in the real extension (Playwright spec with clipboard permission granted), 4 loads: every time the page listener was suppressed, `html.lf-unlocked` was set, the floating panel rendered, and the clipboard changed from \"before\" to \"tunnel\".\n- sm-dev: on some loads (about 1 in 3, fresh start or reload) the script's capture listeners and the `lf-unlocked` class were missing, so restrictions stayed; toggling off/on with Ctrl+Shift+X fixed it. `updateFunctionalState` returns early when `document.documentElement` is null, so sm-dev apparently sometimes runs document-start bodies before `<html>` exists. The clipboard can't be read in sm-dev's headless browser (permission denied), so the copy itself was only verified in the extension."
+      },
+      {
+        "date": "2026-10-01",
+        "version": "6.5",
+        "text": "sm-dev re-checked after d19602a (`document-start` waits for `<html>`): the capture listeners are now in place on every load, but `html.lf-unlocked` is still missing on some loads, for a new reason. Headless `--temp-browser`, https://en.wikipedia.org/wiki/Tunnel and other articles.\n- sm-dev, 24 loads: a page `contextmenu` listener on `document` was suppressed every time. The class was missing on 8, all first loads in a fresh browser (12 warm loads in one browser all had it).\n- sm-dev: on those loads the script ran before Wikipedia's first inline `<head>` script (`document.scripts.length` 1, html class `client-nojs`), and that script's `document.documentElement.className = ...` wiped the class. A copy logging class changes showed this on 5 of 6 fresh starts.\n- Real extension (`--extension`), 10 fresh starts: the script always ran after those inline scripts (3 scripts, class `client-js`) and the class stayed. So the result stays pass; the missing class is an sm-dev timing difference."
       }
     ]
   },
@@ -56360,6 +56416,11 @@
         "date": "2026-09-29",
         "version": "2025.5.22.1",
         "text": "- Page: https://en.wikipedia.org/wiki/Tunnel.\n- With the browser language en-US (sm-dev's default headless browser), the script throws at startup: `Cannot read properties of undefined (reading 'errorMessage')`, and no button appears.\n- Script: its translation table has keys like `'en,en-GB'`, and the fallback reads `translations['en']`, which doesn't exist. So any browser language not in the table (en-US included, the most common) crashes it in every manager.\n- In a browser started with `--accept-lang=en-GB`: the \"Scripts\" side button appeared; clicking it made a GM_xmlhttpRequest to `greasyfork.org/scripts/by-site/wikipedia.org` (200) and listed 100 scripts (first: \"wikipedia text reviver\"); typing \"dark\" in the search box filtered it to 11/100.\n- sm-dev: no option to set the browser language; used a hand-started headless shell with `--cdp`."
+      },
+      {
+        "date": "2026-10-01",
+        "version": "2025.5.22.1",
+        "text": "Re-tested after d31dc35 (`start --lang`): same result, now in sm-dev itself.\n- On en-US it still throws `Cannot read properties of undefined (reading 'errorMessage')`.\n- With `start --lang en-GB`, the \"Scripts\" button appeared; clicking it fetched greasyfork (200) and listed 100 scripts. No hand-started browser needed."
       }
     ]
   },
@@ -58824,9 +58885,8 @@
       "version": "1.3"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-09-29",
+      "status": "pass",
+      "date": "2026-10-01",
       "version": "1.3"
     },
     "tags": [
@@ -58837,6 +58897,11 @@
         "date": "2026-09-29",
         "version": "1.3",
         "text": "- Page: https://gocmod.com/?urls=https%3A%2F%2Fexample.org%2F (one of the script's simple param-based bypass rules; it should redirect to example.org).\n- Result: the script throws at startup, `Cannot access 'window' before initialization`, and does nothing (no redirect, no settings menu).\n- Cause: the script's first line is `const window = unsafeWindow;`. SourceMonkey emits its `const unsafeWindow = window;` binding inside the same function scope as the script body, so the script's `const window` shadows the global and the binding hits the TDZ (temporal dead zone: a `const` read before its declaration line runs). Tampermonkey/Violentmonkey provide `unsafeWindow` from an outer scope, where this common pattern works.\n- SourceMonkey: confirmed in the real extension with a minimal repro (`const window = unsafeWindow;` plus a DOM marker, @grant GM_setValue): the marker was never set.\n- Script: the name is misleading; it is a shortlink bypasser (hundreds of per-domain rules), not a scroll tool."
+      },
+      {
+        "date": "2026-10-01",
+        "version": "1.3",
+        "text": "Re-tested after #35 (@requires and the script body run in a nested scope so they can shadow wrapper names): now passes. sm-dev (headless), MAIN world, on https://gocmod.com/?urls=https%3A%2F%2Fexample.org%2F.\n- SourceMonkey: `const window = unsafeWindow;` no longer throws. The script starts, registers \"Open Bypass Settings\", and the tab lands on https://example.org/ within about a second. A `--noscript` control tab stayed on gocmod.com.\n- Kept `shadows-window`: the script still shadows `window` and passes only because of the fix.\n- Script: it also floods the console (\"Tab refreshed to stay active\", 88 \"Audio play blocked by browser\" lines) and rewrites the title to a live clock, its keep-tab-active feature."
       }
     ]
   },

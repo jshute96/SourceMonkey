@@ -49,8 +49,7 @@ Other runs live there: the person's (`D1`, `D2`) and other agents'.
   locally (a stored setting, a localStorage entry) when you can do it
   safely; otherwise leave it and report it.
 - Its background tabs are throttled. If a script's timers seem stalled or a
-  `click` says the element wasn't ready, send `cdp Page.bringToFront` (a
-  raw Chrome DevTools Protocol call).
+  `click` says the element wasn't ready, `focus` the run's tab.
 
 ### No side effects
 
@@ -60,68 +59,47 @@ account is `n/a` with `--reason requires-login`.
 
 ### sm-dev or SourceMonkey?
 
-sm-dev imitates the extension, but not perfectly. Known differences, where
-the real extension works and sm-dev doesn't:
+sm-dev imitates the extension, but not perfectly. The current list of
+differences is [Known differences under the push
+backend](../../../../docs/harness-guide.md#known-differences-under-the-push-backend).
+The ones that come up in the corpus:
 
-- `@run-at document-start` bodies and their `@require`s can run before
-  `<html>` exists; `document-body` scripts can run before `<body>`.
+- `@run-at document-start` code usually runs after the page's early
+  scripts, so a script that hooks `fetch` or `XMLHttpRequest` first may
+  miss page code.
+- The isolated world (a granted script's own JavaScript context, apart
+  from the page's) enforces the page's Trusted Types, a site policy that
+  blocks setting HTML from plain strings (`innerHTML`).
+- An inline `<script>` a granted script inserts is blocked by a strict
+  page CSP (Content Security Policy).
 - A `GM_setValue` just before a reload, or in `beforeunload`, is lost.
-- The isolated world (a granted script's own JavaScript context, apart from
-  the page's) enforces the page's Trusted Types, a site policy that blocks
-  setting HTML from plain strings (`innerHTML`).
 - Only the top frame gets scripts.
 
-When a failure might be one of these, confirm in the real extension. There
-are two ways.
-
-**`sm-dev --extension`**, in the `--open-browser` browser, when SourceMonkey
-is installed there (the run's first line says `has SourceMonkey`):
+When a failure might be one of these, confirm it in the real extension
+with `--extension`. Testing in sm-dev stays the default: it's faster.
 
 ```sh
-scripts/sm-dev --run <prefix>1 start <file> <url> --extension --solo --detach
+scripts/sm-dev --temp-browser --run <prefix>1 start <file> <url> --extension --detach
+# ... the same commands as any run: logs, wait log, eval, snapshot ...
 scripts/sm-dev --run <prefix>1 stop
-scripts/sm-dev clear --extension        # remove the scratch script
 ```
 
-- The run takes no commands but `stop` (not `logs` or `wait log`), so what
-  you learn is its output: the script's log lines and the page's console.
-  `start` prints what came before it returned; later lines go only to the
-  file on its `Output log:` line, so read that. Use a copy with a
-  `console.log` of the value in question when the script logs nothing.
-- `--solo` switches off the person's other scripts while it runs, and it
-  shares one extension with everyone, so only one agent at a time: not
-  in a parallel batch.
-- It leaves its tab open; close it by `targetId` (printed at start) with
-  `curl http://127.0.0.1:9233/json/close/<targetId>`.
-
-**A throwaway Playwright spec**, when you need to drive the page or check
-state, or when other agents are running: it loads the extension in its own
-headless browser, so sites that block headless block it too. Put it in
-`tests/e2e/zz-tmp-<prefix>-<name>.spec.ts`:
-
-```ts
-import fs from 'node:fs';
-import { test, expect } from '../fixtures/extension';
-import { ScriptsDir } from '../fixtures/scripts-dir';
-
-test('script runs', async ({ extensionContext, sm }) => {
-  const dir = ScriptsDir.create();
-  try {
-    // A copy you can edit (a probe log, a changed header) to test a theory.
-    dir.writeRaw('s.user.js', fs.readFileSync('tests/greasyfork-examples/files/<file>', 'utf8'));
-    await sm.addCollection(dir.path);
-    await sm.syncNow();
-    const page = await extensionContext.newPage();
-    await page.goto('https://example.com/');
-    // ... check what the script does, e.g. expect(page.locator(...))
-  } finally {
-    dir.cleanup();
-  }
-});
-```
-
-Run it with `pnpm exec playwright test <file> --retries=0`, and delete it
-afterwards.
+- `--temp-browser` installs SourceMonkey in a throwaway headless
+  browser, so it needs no setup and is safe beside other agents.
+- For a site that blocks headless, use the shared browser on port 9233
+  instead (drop `--temp-browser`), if its first line says `has
+  SourceMonkey`.
+  - Don't run `clear --extension` there: it removes every scratch
+    script in that browser, including other agents' and the person's.
+    A leftover one is harmless, since it runs only in its run's tabs.
+  - The run's tabs run only its own scripts, and its scripts run only in
+    its tabs, so parallel agents don't see each other's scripts.
+  - But two runs pushing files with the same name replace each other.
+    Push a copy with a name of your own (`<prefix>-<id>.user.js`) in
+    your scratchpad.
+- The script is pushed as a scratch script: its remote `@require`s are
+  fetched live, not from the copies in `files/`.
+- Say in the note that the real extension was used.
 
 ## Blame
 
@@ -141,7 +119,8 @@ A `fail` needs `--blame`:
 
 Check SourceMonkey's intended behavior in `docs/` before blaming it; some
 differences are deliberate and documented (strict `@connect`, the idle
-timing, `@run-at context-menu` unsupported).
+timing, `@run-at context-menu` unsupported). A bare `@connect example.com`
+does cover its subdomains, as in Tampermonkey.
 
 ## Recording
 
@@ -176,12 +155,13 @@ it fits; the list, with descriptions, is `HELP.tag` in
 
 - `needs-page-globals`: a granted script reading the page's own globals
   (its jQuery, a player API on an element) without `unsafeWindow`.
-- `connect-undeclared`, `connect-subdomain`: `@connect` rules that block
-  its requests.
-- `trusted-types`: blocked by the site's Trusted Types in the page world.
-- `tld-include`: `.tld` hosts in `@include`, which never match.
-- `needs-onreadystatechange`, `xhr-response-readystate`,
-  `needs-xhr-onprogress`: `GM_xmlhttpRequest` features SourceMonkey lacks.
+- `connect-undeclared`: no `@connect` rule for a host it requests.
+- `needs-xhr-onprogress`: a `GM_xmlhttpRequest` feature SourceMonkey
+  lacks.
+
+Some tags name gaps since fixed (`connect-subdomain`,
+`xhr-response-readystate`, `shadows-window`). They stay on scripts that
+pass only because of the fix; don't use them for new failures.
 
 A new tag is fine when nothing fits. Keep it short and kebab-case, and
 report it with a one-sentence description, so it can be added to
@@ -190,9 +170,9 @@ report it with a one-sentence description, so it can be added to
 ## Finishing
 
 - Stop your runs and check with `scripts/sm-dev list`; close your tabs in
-  the shared browser; delete your throwaway specs.
-- Don't commit or change git staging. Change files only through
-  `record-results.mjs` (and your deleted spec).
+  the shared browser. Report any scratch scripts you pushed there.
+- Don't commit or change git staging. Change files in the repo only
+  through `record-results.mjs`; copies go in your scratchpad.
 - Report: one line per script (ID, name, result, tags, summary), new tags
   with descriptions, SourceMonkey gaps with evidence, and friction with the
   tools, briefly, skipping the known differences above.
