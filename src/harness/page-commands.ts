@@ -15,14 +15,14 @@ import path from 'node:path';
 import type { Locator, Page, Request } from '@playwright/test';
 
 import type { ParsedArgs } from './command-args.js';
-import { PROBE_MAX } from './command-list.js';
+import { PART_LIMIT, PROBE_MAX } from './command-list.js';
 import type { ControlledTab } from './console-commands.js';
 import { ScriptThrew } from './inject.js';
 import { readInputFile } from './input-file.js';
 import { notSettledMessage, SETTLE_TIMEOUT_MS, settleTab } from './wait.js';
 import { savePageHtml } from './save-html.js';
 import { shownPath } from './prepare.js';
-import { documentOf, framesAround, locate, named, noteRefs, onScreen, probeMatches, refOf, refProblem, tidy, withoutDocument } from './snapshot.js';
+import { documentOf, locate, named, noteRefs, onScreen, probeMatches, refOf, refProblem, refsOf, tidy, treeParts, withoutDocument } from './snapshot.js';
 
 export const PAGE_COMMANDS = new Set(['click', 'hover', 'type', 'key', 'eval', 'snapshot', 'screenshot', 'savehtml', 'probe', 'logs', 'cdp']);
 
@@ -280,35 +280,63 @@ export async function runPageCommand(
         return;
       }
       case 'snapshot': {
-        // The whole page is `:root`, not `body`: scripts often add their
-        // panels to <html>, after <body>.
-        const selector = input.text || ':root';
-        if (await matches(page, selector, say) === null) return false;
+        const selector = input.text;
         const visible = input.flags['--visible'] === true;
+        const parts = partOptions(input.flags, !!selector);
+        if (typeof parts === 'string') {
+          say(`ERROR: ${parts}`);
+          return;
+        }
+        const count = selector ? await matches(page, selector, say) : 0;
+        if (count === null) return false;
         let tree = '';
         const taking = (async () => {
           const doc = await documentOf(page);
-          tree = await locate(page, selector).first().ariaSnapshot({ mode: 'ai', boxes: visible, timeout: ACTION_TIMEOUT_MS });
-          noteRefs(page, tree, doc, framesAround(page, selector));
+          // The whole page is `:root`, not `body`: scripts often add their
+          // panels to <html>, after <body>.
+          const whole = page.locator(':root');
+          tree = await whole.ariaSnapshot({ mode: 'ai', boxes: visible, timeout: ACTION_TIMEOUT_MS });
+          noteRefs(page, tree, doc);
           if (visible) {
             const [width, height] = await page.evaluate(() => [window.innerWidth, window.innerHeight]);
             tree = onScreen(tree, width, height);
           }
-          // Refs resolve against the latest snapshot only, so one of part
-          // of the page is followed by one of the whole, quietly, to keep
-          // the rest's refs working. An element keeps its ref across
-          // snapshots. The whole is all of `:root`, or a part's elements
-          // outside <body> would lose their refs to it. Failing, it costs
-          // only those refs.
-          if (input.text) {
-            const whole = await page.locator(':root').ariaSnapshot({ mode: 'ai', timeout: ACTION_TIMEOUT_MS }).catch(() => null);
-            if (whole !== null) noteRefs(page, whole, doc);
+          if (!parts) {
+            tree = tidy(withoutDocument(tree));
+            return;
           }
-          // The whole page's, however named (`:root`, `html`).
-          tree = tidy(withoutDocument(tree));
+          // Each match is found in the whole tree by its refs (an element
+          // keeps its ref across snapshots). Only enough for the limit:
+          // each costs a snapshot of the match.
+          const found = selector ? locate(page, selector) : null;
+          const tops: string[][] = [];
+          let rest: { total?: number; unsearched?: number } = {};
+          for (let i = 0; found && i < count; i++) {
+            tops.push(await refsOf(found.nth(i), ACTION_TIMEOUT_MS));
+            if (parts.limit > 0 && i + 1 < count && treeParts(tree, { ...parts, matches: tops }).length >= parts.limit) {
+              // The selector's count is the total, but --find's hits in
+              // the matches not looked at are unknown.
+              rest = parts.text === undefined ? { total: count } : { unsearched: count - i - 1 };
+              break;
+            }
+          }
+          // Refs resolve against the latest snapshot only, so the whole
+          // is taken again, after the matches'. Failing, it costs only the
+          // refs outside the last match.
+          if (found) await whole.ariaSnapshot({ mode: 'ai', timeout: ACTION_TIMEOUT_MS }).catch(() => null);
+          // A part can be the whole, however named (`:root`, `html`).
+          const shown = treeParts(tree, { ...parts, matches: found ? tops : undefined }).map((part) => tidy(withoutDocument(part)));
+          tree = shown.length === 0 ? '' : partsText(shown, parts.limit, rest);
         })();
         if (!await done(taking)) {
           say('The page opened a dialog during the snapshot, which is waiting for an answer.');
+          return;
+        }
+        if (parts && tree === '') {
+          // Not the selector itself, which can be long.
+          const where = selector ? ' in the selector\'s matches' : '';
+          if (parts.text !== undefined) say(`No element${where} contains "${parts.text}"${visible ? ' on screen' : ''}`);
+          else say(`No selector match is ${visible ? 'on screen' : 'in the accessibility tree, which leaves out hidden elements'}`);
           return;
         }
         const outFile = input.flags['--out'];
@@ -647,6 +675,52 @@ interface ClickFlags {
   modifiers?: (typeof MODIFIERS)[number][];
   clickCount?: number;
   position?: { x: number; y: number };
+}
+
+/**
+ * Which parts of the page `snapshot` shows, from its flags: the
+ * `--find` text, and how much around each match (see `treeParts`).
+ * Null for all of it (no selector or --find); what's wrong, if anything
+ * is.
+ */
+export function partOptions(flags: Record<string, string | true>, selector: boolean): { text?: string; up: number; context: boolean; limit: number } | null | string {
+  const count = (flag: string, fallback: number): number | string => {
+    const value = flags[flag];
+    if (value === undefined) return fallback;
+    const n = Number(value);
+    return typeof value === 'string' && Number.isInteger(n) && n >= 0 ? n : `The ${flag} flag takes a whole number, not ${value}`;
+  };
+  const find = flags['--find'];
+  if (typeof find === 'string' && find.trim() === '') return 'The --find flag needs some text';
+  const text = typeof find === 'string' ? find : undefined;
+  if (text === undefined && !selector) {
+    const other = ['--up', '--context', '--limit'].find((f) => flags[f] !== undefined);
+    return other ? `The ${other} flag goes with a selector or --find` : null;
+  }
+  const up = count('--up', 0);
+  if (typeof up === 'string') return up;
+  const limit = count('--limit', PART_LIMIT);
+  if (typeof limit === 'string') return limit;
+  return { text, up, context: flags['--context'] === true, limit };
+}
+
+/**
+ * `snapshot`'s parts as shown: one bare; more numbered, a blank line
+ * apart, the first `limit` of them (0: all), and what wasn't shown.
+ * When only some of a selector's matches were looked at: `total`, all
+ * the matches; or for --find, `unsearched`, how many weren't searched.
+ */
+export function partsText(parts: string[], limit: number, { total = parts.length, unsearched = 0 }: { total?: number; unsearched?: number } = {}): string {
+  if (total === 1 && unsearched === 0) return parts[0];
+  const shown = limit === 0 ? parts : parts.slice(0, limit);
+  let text = shown.map((part, i) => `# Match ${i + 1}\n${part}`).join('\n\n');
+  if (unsearched > 0) {
+    const more = unsearched === 1 ? '1 more selector match was' : `${unsearched} more selector matches were`;
+    text += `\n\n# Showed ${shown.length} matches. ${more} not searched for find matches. --limit 0 shows all.`;
+  } else if (shown.length < total) {
+    text += `\n\n# Showed ${shown.length} of ${total} matches. --limit 0 shows all.`;
+  }
+  return text;
 }
 
 /**

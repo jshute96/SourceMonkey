@@ -47,7 +47,7 @@ test('flags take a value after them or after =, and are checked', () => {
   assert.deepEqual(typed('snapshot', '--out='), { error: 'The --out flag needs a value: --out FILE', flag: '--out' });
   assert.deepEqual(typed('snapshot', '--out --visible'), { error: 'The --out flag needs a value: --out FILE', flag: '--out' });
   assert.deepEqual(typed('snapshot', '--visible --visible'), { error: 'The --visible flag can be given once', flag: '--visible' });
-  assert.deepEqual(typed('snapshot', '--deep'), { error: 'The snapshot command has no --deep flag. It takes --visible, --out.', flag: '--deep' });
+  assert.deepEqual(typed('snapshot', '--deep'), { error: 'The snapshot command has no --deep flag. It takes --visible, --out, --find, --up, --context, --limit.', flag: '--deep' });
   // A quoted word is never a flag.
   assert.deepEqual(typed('probe', `'--x' .y`).words, ['--x', '.y']);
   // Also on a command that takes nothing else.

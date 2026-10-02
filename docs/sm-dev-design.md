@@ -852,11 +852,20 @@ each element a ref, `(f<n>)?e<n>`.
 - The whole page is `:root`, not `body`: scripts often add their panels
   to `<html>`, after `<body>`. Its `- document` line is left out, and
   the rest shown a level less indented.
-- Playwright resolves refs against the latest snapshot only. So a
-  snapshot of part of the page is followed by a quiet one of the whole,
-  which keeps the rest's refs working.
-  - That doubles the cost of `snapshot <selector>` on a large page. A
-    failure only costs refs.
+- Playwright resolves refs against the latest snapshot only. So
+  `snapshot <selector>` shows parts of a snapshot of the whole, which
+  keeps the rest's refs working.
+  - Each match is found in it by its top refs, from a depth-1 snapshot
+    of the match. An element keeps its ref across snapshots, and the
+    whole is taken again after, to be the latest.
+  - A match that is only text (a span in a link) has no line of its
+    own, so it's found as the nearest element above it that has one.
+  - Each match's snapshot still walks its whole subtree, so thousands of
+    matches take seconds. Only enough matches for `--limit` are looked
+    at, in page order.
+    - Without `--find`, the total shown is the selector's count.
+    - With it, hits in the rest are unknown: the last line says how many
+      matches weren't searched.
   - When the whole was `body`, refs from a part outside it (such as a
     panel) stopped working at once.
 - Each page's latest snapshot is noted with its document's
@@ -873,6 +882,31 @@ each element a ref, `(f<n>)?e<n>`.
 - `--visible` takes the tree with boxes and keeps lines whose box meets
   the viewport, plus their parents. A frame's boxes are offset by the
   frame's, and clipped to it.
+
+#### Selectors, `--find` and parts
+
+Both pick parts of the finished tree (after `--visible`), so each
+comes with its refs.
+
+- A selector shows each of its matches; a match the tree leaves out
+  (hidden, or off screen) is skipped.
+- `--find` searches the whole tree, or within the selector's matches.
+- A line matches on its content (name, text, value, `/url`), ignoring
+  case and runs of spaces. Its role and `[...]` attributes don't count,
+  so `--find button` doesn't find every button.
+- A text or `/url` line stands for the element it's in.
+- For each match, `--up n` climbs n tree levels. `--context` then
+  climbs while the part grows by at most `CONTEXT_LINES` lines: wrapper
+  divs cost one line each, a big container stops it.
+- A part inside another's is left out, so nested matches show once.
+- `--limit` (`PART_LIMIT` by default) caps the parts shown, and a last
+  line counts them all.
+- It searches the tree, not the DOM, so results have refs and the
+  usual format. Each line is checked on its own:
+  - `<p>Hello <b>world</b></p>` is one line (`paragraph: Hello world`),
+    so `hello world` matches.
+  - `<p>Hello <a>world</a></p>` is two (`text: Hello`, `link "world"`),
+    so `hello world` doesn't; either word alone does.
 
 #### `probe --css` and `--html`
 

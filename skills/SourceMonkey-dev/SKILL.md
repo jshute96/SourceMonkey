@@ -235,6 +235,7 @@ $R status
 
 ```sh
 $R snapshot --visible               # what's on screen, one line per element, with refs
+$R snapshot --find 'Liked Songs' --context   # only elements containing that, with their wrapper divs
 $R probe --css e14                  # a short unique CSS selector for a ref
 $R probe --css --html '.titleline > a'   # selector + HTML for the first 10 matches
 $R probe '.title a' '[data-testid=post]' '#missing'   # which match, how many
@@ -242,8 +243,15 @@ $R click e14                        # refs work anywhere a selector does
 ```
 
 - `snapshot` is the accessibility tree: roles, names, and a ref like
-  `e14`, or `f2e6` with a frame number. `snapshot <selector>` shows 
-  part of the page;`--out file` saves a large one.
+  `e14`, or `f2e6` with a frame number. `snapshot <selector>` shows
+  each of its matches (the first 5; `--limit 0` for all); `--out file`
+  saves a large one.
+- When you know some text on the page (from a screenshot, the person,
+  or an earlier look), use `snapshot --find <text>` instead of a full
+  snapshot piped to `grep`. It shows the matching elements with refs.
+  - With a selector, it looks only within the selector's matches.
+  - `--context` adds the wrapper divs and small containers around each
+    match (of `--find` or a selector); `--up N` climbs N levels.
 - Refs only last until the page changes: take a new snapshot after a
   reload or navigation. Refs from `snapshot <selector>` and from the
   whole page both work.

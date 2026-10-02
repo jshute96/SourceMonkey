@@ -1092,7 +1092,7 @@ current one.
 | `eval <js>` | Evaluates in the page and prints the result |
 | `eval --script <js>` | Evaluates in the scripts' world |
 | `eval --file <path>` | Evaluates JavaScript from a file |
-| `snapshot [selector] [--visible] [--out file]` | The page (or an element) as its accessibility tree, one line per element, each with a ref. `--visible`: only what's on screen. `--out` writes it to a file |
+| `snapshot [selector] [--visible] [--out file]` | The page (or each element the selector matches) as its accessibility tree, one line per element, each with a ref. `--visible`: only what's on screen. `--out` writes it to a file. `--find <text>`: only elements containing that text (case insensitive). For each match, `--up n` / `--context` add its containers; `--limit n`: how many matches to show (5; 0 for all) |
 | `screenshot [selector] [--full] <file>` | A PNG of what's showing, of the whole page (`--full`), or of one element |
 | `savehtml <file>` | The page's HTML, to replay later (see [Saved pages](#saved-pages)) |
 | `probe <selector>... [--html] [--css]` | Which selectors match, and how many |
@@ -1152,8 +1152,8 @@ current one.
 - Only refs in the latest snapshot work, so take a new one after the
   page changes. A reload or navigation drops them all; a route change
   within the page (a single-page app's) doesn't.
-  - Refs from `snapshot <selector>` work beside the rest's: sm-dev
-    quietly snapshots the whole page after it.
+  - Refs from `snapshot <selector>` work beside the rest's: it shows
+    parts of a snapshot of the whole page.
 - The whole page includes what scripts add after `<body>` (to
   `<html>`), and open shadow roots.
 - `[cursor=pointer]` marks an element the mouse shows a hand over: one

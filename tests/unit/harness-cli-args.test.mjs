@@ -365,7 +365,7 @@ test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
   for (const name of ['open', 'reload', 'newtab']) assert.match(cli(name, '--bogus').out, new RegExp(`^ERROR: The ${name} command has no --bogus flag\\. It takes --noscript, --script, `));
   // The flags it does take, for a near miss.
   assert.deepEqual(cli('wait', '--timeout', '9'), { code: 2, out: 'ERROR: The wait command has no --timeout flag. It takes --timeout-seconds.' });
-  assert.deepEqual(cli('snapshot --out f --bad'), { code: 2, out: 'ERROR: The snapshot command has no --bad flag. It takes --visible, --out.' });
+  assert.deepEqual(cli('snapshot --out f --bad'), { code: 2, out: 'ERROR: The snapshot command has no --bad flag. It takes --visible, --out, --find, --up, --context, --limit.' });
   // In free text, -- is content: eval's JavaScript here.
   assert.deepEqual(cli('eval', 'T2', '--x'), { code: 2, out: 'ERROR: The eval command has no --x flag. It takes --script, --file.' });
   assert.deepEqual(cli('eval', 'x', '--y'), { code: 1, out: 'No sm-dev runs are active. Start one with sm-dev start.' });
@@ -504,7 +504,7 @@ test('each run command takes the flags its help lists, and no others', async () 
     newtab: saved, open: saved, reload: loads,
     closetab: ['--force'], cdp: ['--file'],
     click: ['--at', '--button', '--count', '--modifiers', '--nowait'], hover: ['--at', '--modifiers', '--nowait'], type: ['--nowait', '--file'], key: ['--nowait'],
-    eval: ['--script', '--file'], snapshot: ['--visible', '--out'], screenshot: ['--full'], probe: ['--css', '--html'],
+    eval: ['--script', '--file'], snapshot: ['--visible', '--out', '--find', '--up', '--context', '--limit'], screenshot: ['--full'], probe: ['--css', '--html'],
     wait: ['--timeout-seconds'], status: [], values: [], set: ['--file', '--force'], menu: [], tabs: [], focus: [],
   };
   for (const [name, flags] of Object.entries(expected)) assert.deepEqual(commandFlags(name).sort(), [...flags].sort(), name);

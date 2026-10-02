@@ -96,6 +96,8 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | Command | Does |
 | --- | --- |
 | `snapshot [sel] [--visible] [--out F]` | Accessibility tree with refs |
+| `snapshot [sel] --find <text>` | Only elements containing the text (case insensitive), within `sel`'s matches |
+| `snapshot ... [--up N] [--context] [--limit N]` | For each match of `sel` or `--find`: N levels up, or with wrapper divs and small containers; first 5 matches (0: all) |
 | `probe <sel>... [--css] [--html]` | Which match and how many; selector / HTML of the first 10 |
 | `eval <js>` | Evaluate in the page; prints JSON (promises awaited) |
 | `eval --script <js>` | Evaluate in the scripts' world |

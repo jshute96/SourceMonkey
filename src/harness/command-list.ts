@@ -8,6 +8,10 @@
 
 // How many of a selector's matches `probe --css` and `--html` show.
 export const PROBE_MAX = 10;
+// How many matches `snapshot` shows by default, of a selector or --find.
+export const PART_LIMIT = 5;
+// How many lines `snapshot --context` lets a match's shown part grow by.
+export const CONTEXT_LINES = 10;
 
 /**
  * A term and what it means: an argument, an option, a way to name
@@ -325,10 +329,14 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         usage: 'snapshot [tab] [selector]',
         syntax: { args: 'selector', tab: true },
-        about: ['Print the page, or an element, as its accessibility tree, with a ref for each element.'],
+        about: ['Print the page, or the selector\'s matches, as the accessibility tree, with a ref for each element.'],
         options: [
           { term: '--visible', about: 'Only what is on screen.' },
           { term: '--out FILE', about: 'Write it to a file instead.' },
+          { term: '--find <text>', about: 'Only elements containing this text (in a name, text, value or URL; case insensitive), within the selector\'s matches.' },
+          { term: '--up <n>', about: 'Start from the element n levels above each match.' },
+          { term: '--context', about: `Go further up from each match while that adds at most ${CONTEXT_LINES} lines: wrapper divs, small containers.` },
+          { term: '--limit <n>', about: `How many matches to show (${PART_LIMIT} by default, 0 for all).` },
         ],
       },
       {

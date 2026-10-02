@@ -177,7 +177,7 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('eval confirm("sure?")')).toContain('[sm-dev] The expression opened a dialog, which is waiting for an answer.');
   expect(await run('dismiss')).toEqual(['[sm-dev] Dismissed the dialog']);
   expect(await run('screenshot')).toEqual([expect.stringContaining('The screenshot command needs a file')]);
-  expect(await run('snapshot --deep')).toEqual(['[sm-dev] ERROR: The snapshot command has no --deep flag. It takes --visible, --out.']);
+  expect(await run('snapshot --deep')).toEqual(['[sm-dev] ERROR: The snapshot command has no --deep flag. It takes --visible, --out, --find, --up, --context, --limit.']);
   // Every command, not only the ones with flags of their own; a quoted
   // selector with -- in it is one word, not a flag.
   expect(await run('status --bad')).toEqual(['[sm-dev] ERROR: The status command has no --bad flag. It takes no flags.']);
@@ -375,7 +375,7 @@ test('snapshot refs name elements for the other commands, and it can show only t
   expect(await run(`probe --css ${save}`)).toEqual([`found    ${save}  (1)`, '    selector: button[data-testid="save"]']);
   expect(await selectorOf(refIn(scrolled, 'Far away'))).toBe('button.far');
   expect(await selectorOf('input[aria-label=Note]')).toBe('input');
-  expect(await run('snapshot --css')).toEqual(['[sm-dev] ERROR: The snapshot command has no --css flag. It takes --visible, --out.']);
+  expect(await run('snapshot --css')).toEqual(['[sm-dev] ERROR: The snapshot command has no --css flag. It takes --visible, --out, --find, --up, --context, --limit.']);
 
   // Refs reach into a frame and a shadow root, where selectors are
   // suggested for neither; and look-alike buttons get told apart.
@@ -408,6 +408,54 @@ test('snapshot refs name elements for the other commands, and it can show only t
   expect(await run(`probe ${save}`)).toEqual([`found    ${save}  (1)`]);
   await page.reload();
   expect(await run(`click ${save}`)).toEqual(['[sm-dev] The page reloaded since the last snapshot. Take a new snapshot.']);
+});
+
+test('snapshot shows each of a selector\'s matches, and --find the elements containing text', async ({ page, fixtureServer, host, attachment, loadScript }) => {
+  const script = await loadScript({ relativePath: 'idle.user.js', meta: { name: 'Idle', match: ['*://*/target.html'] }, body: '' });
+  await page.goto(`${fixtureServer.baseUrl}/target.html`);
+  await page.evaluate(() => {
+    document.body.innerHTML = `
+      <ul>${[1, 2, 3, 4, 5, 6, 7].map((n) => `<li class="item"><div><a href="/${n}">Item <span class="n">${n}</span></a></div></li>`).join('')}</ul>
+      <p>Total <b class="price">$5</b> [draft]</p>
+      <div style="display: none" class="gone">Hidden</div>`;
+  });
+  const lines: string[] = [];
+  const tabs = [{ n: 1, page, link: attachment }];
+  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(l), stop: () => undefined };
+  const run = async (line: string) => {
+    lines.length = 0;
+    await runConsoleCommand(line, ctx);
+    return [...lines];
+  };
+
+  // The first 5 matches, numbered, and a count of them all.
+  const items = await run('snapshot .item');
+  expect(items.filter((l) => l.startsWith('# Match'))).toHaveLength(5);
+  expect(items.at(-1)).toBe('# Showed 5 of 7 matches. --limit 0 shows all.');
+  expect((await run('snapshot .item --limit 0')).filter((l) => l.startsWith('# Match'))).toHaveLength(7);
+
+  // A match that is only text shows as the element the tree folds it into.
+  expect(await run('snapshot .price')).toEqual(['- paragraph [ref=' + /ref=(\w+)/.exec((await run('snapshot p'))[0])![1] + ']: Total $5 [draft]']);
+  expect(await run('snapshot .gone')).toEqual(['[sm-dev] No selector match is in the accessibility tree, which leaves out hidden elements']);
+
+  // --find: the link containing the text, any case, a [bracketed] name
+  // included; within a selector's matches; with its containers.
+  const link = await run('snapshot --find \'ITEM 3\'');
+  expect(link[0]).toMatch(/^- link "Item 3" \[ref=e\d+\]:$/);
+  expect(await run('snapshot --find draft')).toHaveLength(1);
+  expect(await run('snapshot .gone --find item')).toEqual(['[sm-dev] No element in the selector\'s matches contains "item"']);
+  expect((await run('snapshot .item --find item --limit 0')).filter((l) => l.startsWith('# Match'))).toHaveLength(7);
+  const some = await run('snapshot .item --find item --limit 2');
+  expect(some.filter((l) => l.startsWith('# Match'))).toHaveLength(2);
+  expect(some.at(-1)).toBe('# Showed 2 matches. 5 more selector matches were not searched for find matches. --limit 0 shows all.');
+  expect((await run('snapshot --find \'item 3\' --up 1'))[0]).toMatch(/^- listitem \[ref=/);
+  expect((await run('snapshot --find \'item 3\' --up 2'))[0]).toMatch(/^- list \[ref=/);
+  expect((await run('snapshot --find \'item 3\' --context'))[0]).toMatch(/^- listitem \[ref=/);
+
+  // Refs from a part work, beside the rest's.
+  const ref = /ref=(\w+)/.exec(link[0])![1];
+  expect(await run(`probe ${ref}`)).toEqual([`found    ${ref}  (1)`]);
+  expect(await run('snapshot --up 1')).toEqual(['[sm-dev] ERROR: The --up flag goes with a selector or --find']);
 });
 
 test('snapshot shows a panel added after <body>, and refs from a snapshot of it work', async ({ page, fixtureServer, host, attachment, loadScript }) => {
