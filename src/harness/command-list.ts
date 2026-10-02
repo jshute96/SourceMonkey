@@ -113,10 +113,10 @@ export const HELP_SECTIONS: HelpSection[] = [
       '  sm-dev --temp-browser start <script> [<url>] ...',
       '',
       '  # Launch a visible browser (if not already running).',
-      '  sm-dev --open-browser [--cdp <port>] [<commands...>]',
+      '  sm-dev --open-browser [--browser <port>] [<commands...>]',
       '',
       '  # Connect to an existing browser.',
-      '  sm-dev [--cdp <port>|<url>] <commands...>',
+      '  sm-dev [--browser <port>|<url>] <commands...>',
       '',
       'Start sm-dev with a tab, injecting a userscript:',
       '  # Start with an interactive prompt.',
@@ -515,11 +515,11 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         title: 'Browser selection',
         options: [
-          { term: '--cdp URL|PORT', about: ['The browser to connect to, and where --open-browser starts one: a URL, host:port, or port.', '(Default: $SM_DEV_CDP or 9233)'], commands: BROWSER },
+          { term: '--browser URL|PORT', about: ['The browser to connect to, and where --open-browser starts one: a URL, host:port, or port.', '(Default: $SM_DEV_BROWSER or 9233)'], commands: BROWSER },
           {
             term: '--open-browser',
             about: [
-              'Start a browser, if one isn\'t running on --cdp (which must be a port or on localhost target).',
+              'Start a browser, if none is running at the --browser address (which must be a local port).',
               'Starts it headed (with a visible window), and leaves it open after sm-dev ends.',
               'Uses Google Chrome if installed, else Chromium.',
               'Used alone (sm-dev --open-browser), just start the browser.',

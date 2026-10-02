@@ -1,5 +1,5 @@
 // Unit tests for `cdpEndpoint` in src/harness/run.ts (compiled to
-// lib/harness/run.js): the forms `sm-dev --cdp` accepts.
+// lib/harness/run.js): the forms `sm-dev --browser` accepts.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

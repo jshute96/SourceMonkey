@@ -123,8 +123,8 @@ test('wait: a tab, then the form, and flags ending wait log\'s text', () => {
 });
 
 test('sm-dev\'s own commands read the same way', () => {
-  assert.deepEqual(sent('start', 'a.user.js', '--watch', '--cdp=9300', 'https://x.com/'), {
-    flags: { '--watch': true, '--cdp': '9300' }, words: ['a.user.js', 'https://x.com/'],
+  assert.deepEqual(sent('start', 'a.user.js', '--watch', '--browser=9300', 'https://x.com/'), {
+    flags: { '--watch': true, '--browser': '9300' }, words: ['a.user.js', 'https://x.com/'],
   });
   assert.equal(sent('stop', '--watch').error, 'The stop command has no --watch flag. It takes --all.');
   assert.equal(sent('list', 'x').error, 'The list command takes no arguments');

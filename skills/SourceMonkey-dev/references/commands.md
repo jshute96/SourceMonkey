@@ -9,7 +9,7 @@ options; `pnpm sm-dev --help` lists everything.
 sm-dev [global options] <command> [args] [-- <command> ...]
 ```
 
-- Global options go first: `--run ID`, `--cdp PORT|URL`,
+- Global options go first: `--run ID`, `--browser URL|PORT`,
   `--open-browser`, `--temp-browser`, `--stdin`, `--interactive`,
   `--root DIR`, `--local DIR`.
 - `--` separates commands. They run in order and stop at the first
@@ -43,7 +43,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `sm-dev --open-browser` | Start a lasting, visible browser on port 9233 (kept profile, so logins persist). A no-op if one is up |
 | `sm-dev --temp-browser start ...` | A hidden throwaway browser for this run. Good for pages with no login |
 | `sm-dev --temp-browser start ... --extension` | The same, with SourceMonkey installed in it (Allow User Scripts on), so `--extension` needs no setup |
-| `sm-dev --cdp 9300 ...` | Use the browser on another port |
+| `sm-dev --browser 9300 ...` | Use the browser on another port |
 
 ## Runs
 

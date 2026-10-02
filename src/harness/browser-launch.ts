@@ -3,9 +3,9 @@
 // Unlike `--temp-browser` (Playwright's own launch, which ends
 // with the run), it is spawned on its own, as a person would start it.
 //
-// - The port is `--cdp`'s (default $SM_DEV_CDP or 9233), which is also
-//   where later commands connect, so `sm-dev --open-browser start x.user.js
-//   --detach` needs nothing else.
+// - The port is `--browser`'s (default $SM_DEV_BROWSER or 9233), which
+//   is also where later commands connect, so `sm-dev --open-browser
+//   start x.user.js --detach` needs nothing else.
 // - The profile is kept, so sign-ins and extensions carry over:
 //   `~/.config/sm-dev/browser-profile-<port>`, one for each port, since
 //   only one Chrome at a time can use a profile. `--profile` picks
@@ -13,9 +13,9 @@
 // - Idempotent: a browser already answering on the port is used as is,
 //   whatever its profile.
 // - Google Chrome when it's installed (better at Google sign-in than
-//   other builds), else Playwright's Chromium. $SM_DEV_BROWSER names
-//   another binary, and $SM_DEV_BROWSER_ARGS adds arguments (the tests
-//   add --headless=new).
+//   other builds), else Playwright's Chromium. $SM_DEV_BROWSER_BINARY
+//   names another binary, and $SM_DEV_BROWSER_ARGS adds arguments (the
+//   tests add --headless=new).
 
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, openSync, closeSync, readFileSync, readlinkSync } from 'node:fs';
@@ -42,7 +42,7 @@ function chromeCandidates(): string[] {
 
 /** The browser to start, and what to call it. */
 async function browserBinary(): Promise<{ file: string; name: string }> {
-  const chosen = process.env.SM_DEV_BROWSER?.trim();
+  const chosen = process.env.SM_DEV_BROWSER_BINARY?.trim();
   if (chosen) return { file: chosen, name: path.basename(chosen) };
   const chrome = chromeCandidates().find((f) => existsSync(f));
   if (chrome) return { file: chrome, name: 'Google Chrome' };
@@ -92,7 +92,7 @@ function profileInUse(dir: string): string | null {
   if (!match || match[1] !== os.hostname() || !processAlive(Number(match[2]))) return null;
   const port = debuggingPort(dir, Number(match[2]));
   return port
-    ? `The profile ${shown(dir)} is in use by the browser on port ${port}. Use --cdp ${port}, or another --profile`
+    ? `The profile ${shown(dir)} is in use by the browser on port ${port}. Use --browser ${port}, or another --profile`
     : `The profile ${shown(dir)} is in use by a browser without a debugging port (pid ${match[2]}). Close it, or use another --profile`;
 }
 
@@ -118,13 +118,13 @@ function debuggingPort(dir: string, pid: number): string | undefined {
  * Why `--open-browser` can't start a browser at `endpoint`, or null: it
  * starts one on this machine only.
  */
-export function launchEndpointMistake(endpoint: string): string | null {
+export function launchEndpointMistake(endpoint: string, setting = '--browser'): string | null {
   const url = new URL(endpoint);
   // Chrome's debugging port listens on 127.0.0.1 only, so not [::1];
   // and a port is all it takes, not a path.
   const local = ['127.0.0.1', 'localhost'].includes(url.hostname) && url.port && url.pathname === '/' && !url.search;
   if (local) return null;
-  return `The --open-browser flag starts a browser on this machine, so --cdp must be a local port, not ${endpoint.replace(/^https?:\/\//, '')}`;
+  return `The --open-browser flag starts a browser on this machine, so ${setting} must be a local port, not ${endpoint.replace(/^https?:\/\//, '')}`;
 }
 
 /**

@@ -139,7 +139,7 @@ function parseArgs(argv: string[]): Opts {
     switch (flag) {
       case '--all': opts.all = true; break;
       case '--notab': opts.noTab = true; break;
-      case '--cdp': opts.cdp = text; break;
+      case '--browser': opts.cdp = text; break;
       case '--watch': opts.watch = true; break;
       case '--values':
       case '--values-file': {
@@ -327,8 +327,8 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
   // The extension keeps its own storage, which a run can't seed.
   if (opts.valuesFlag) clash(opts.valuesFlag, [[opts.extension, '--extension']]);
   if (opts.devtools === true) clash('--devtools', [[lineTempBrowser, '--temp-browser'], [opts.extension, '--extension']]);
-  if (lineTempBrowser && opts.cdp !== undefined) throw new UsageError('The --temp-browser flag can\'t be used with --cdp');
-  if (lineOpenBrowser && opts.cdp !== undefined) throw new UsageError('The start command connects to the browser --open-browser starts, so give --cdp once, first: sm-dev --open-browser --cdp ... start ...');
+  if (lineTempBrowser && opts.cdp !== undefined) throw new UsageError('The --temp-browser flag can\'t be used with --browser');
+  if (lineOpenBrowser && opts.cdp !== undefined) throw new UsageError('The start command connects to the browser --open-browser starts, so give --browser once, first: sm-dev --open-browser --browser ... start ...');
   if (!opts.detach && !detachedLog && opts.newRun) throw new UsageError('The --new flag only applies with --detach');
   const devtools = devtoolsWanted(opts.devtools) && !lineTempBrowser && !opts.extension;
   const files = await Promise.all(scripts.map((s) => scriptFile(s)));
@@ -1270,8 +1270,8 @@ let lineRoots: ScriptRoots = { collectionRoot: process.cwd(), localRoots: [] };
 let rootsGiven = false;
 // `--run`: the run the line works with.
 let globalRun: string | undefined;
-// `--cdp`, for the commands that connect to a browser (their own
-// `--cdp` wins) and for `--open-browser`.
+// `--browser`, for the commands that connect to a browser (their own
+// `--browser` wins) and for `--open-browser`.
 let lineCdp: string | undefined;
 // `--open-browser` and `--profile`: a lasting browser to start first.
 let lineOpenBrowser = false;
@@ -1283,13 +1283,13 @@ let lineHeaded = false;
 
 
 // The flags for the whole line, which go before any command.
-const GLOBAL_FLAGS = ['--run', '--root', '--local', '--stdin', '--interactive', '--cdp', '--open-browser', '--profile', '--temp-browser', '--headed'];
+const GLOBAL_FLAGS = ['--run', '--root', '--local', '--stdin', '--interactive', '--browser', '--open-browser', '--profile', '--temp-browser', '--headed'];
 
 function globalFlagMistake(flag: string): string {
   return `The ${flag} flag is for the whole command line, so it goes first, before any command: sm-dev ${flag}${VALUE_GLOBALS.has(flag) ? ' ...' : ''} <command>`;
 }
 
-const VALUE_GLOBALS = new Set(['--run', '--root', '--local', '--cdp', '--profile']);
+const VALUE_GLOBALS = new Set(['--run', '--root', '--local', '--browser', '--profile']);
 
 interface GlobalFlags {
   stdin: boolean;
@@ -1301,7 +1301,7 @@ interface GlobalFlags {
 /**
  * Takes the global options off the front of the line: `--run ID`,
  * `--root DIR`, `--local DIR` (repeatable), `--stdin`, `--interactive`
- * and the browser's: `--cdp`, `--open-browser`, `--profile`,
+ * and the browser's: `--browser`, `--open-browser`, `--profile`,
  * `--temp-browser`, `--headed`. One later on the line, among a
  * command's words, is said to go first.
  */
@@ -1320,12 +1320,12 @@ function takeGlobalFlags(argv: string[]): GlobalFlags {
     else if (word === '--headed') lineHeaded = true;
     else {
       const value = inline ?? argv[++i];
-      // Not the next option taken for this one's value (`--cdp --open-browser`).
+      // Not the next option taken for this one's value (`--browser --open-browser`).
       if (value === undefined || value === '' || value === SEPARATOR || (inline === undefined && value.startsWith('--'))) {
         throw new UsageError(word === '--run' ? 'The --run flag needs a run ID, e.g. --run D2' : `The ${word} flag needs a value`);
       }
       if (word === '--run') globalRun = checkedRunId(value);
-      else if (word === '--cdp') lineCdp = value;
+      else if (word === '--browser') lineCdp = value;
       else if (word === '--profile') lineProfile = path.resolve(value);
       else if (word === '--root') collectionRoot = path.resolve(value);
       else localRoots.push(path.resolve(value));
@@ -1334,9 +1334,9 @@ function takeGlobalFlags(argv: string[]): GlobalFlags {
   }
   lineRoots = { collectionRoot, localRoots };
   flags.rest = argv.slice(i);
-  // The browser: one of --cdp, --open-browser and --temp-browser's own.
+  // The browser: one of --browser, --open-browser and --temp-browser's own.
   if (lineTempBrowser) {
-    const others = [[lineCdp !== undefined, '--cdp'], [lineOpenBrowser, '--open-browser']].filter(([on]) => on).map(([, name]) => name);
+    const others = [[lineCdp !== undefined, '--browser'], [lineOpenBrowser, '--open-browser']].filter(([on]) => on).map(([, name]) => name);
     if (others.length > 0) throw new UsageError(`The --temp-browser flag can't be used with ${others.join(' or ')}`);
   }
   if (lineHeaded && !lineTempBrowser) throw new UsageError('The --headed flag only applies with --temp-browser');
@@ -1344,7 +1344,7 @@ function takeGlobalFlags(argv: string[]): GlobalFlags {
   return flags;
 }
 
-// A global option with its value in the same word (`--cdp=9300`), as
+// A global option with its value in the same word (`--browser=9300`), as
 // the option and the value; else the word and no value.
 function splitInline(word: string): [string, string | undefined] {
   const eq = word.indexOf('=');
@@ -1368,7 +1368,7 @@ function globalWords(runId: string | undefined): string[] {
   return [
     ...(rootsGiven ? ['--root', lineRoots.collectionRoot, ...lineRoots.localRoots.flatMap((dir) => ['--local', dir])] : []),
     ...(runId ? ['--run', runId] : []),
-    ...(lineCdp !== undefined ? ['--cdp', lineCdp] : []),
+    ...(lineCdp !== undefined ? ['--browser', lineCdp] : []),
     ...(lineTempBrowser ? ['--temp-browser'] : []),
     ...(lineHeaded ? ['--headed'] : []),
   ];
@@ -1577,10 +1577,10 @@ async function main(): Promise<void> {
   // The lasting browser first, for the commands to connect to.
   if (lineOpenBrowser) {
     const { launchBrowser, launchEndpointMistake } = await import('./browser-launch.js');
-    const { cdpEndpoint } = await import('./run.js');
+    const { browserSettingName, cdpEndpoint } = await import('./run.js');
     try {
-      const endpoint = cdpEndpoint(lineCdp?.trim() || process.env.SM_DEV_CDP?.trim() || '9233');
-      const mistake = launchEndpointMistake(endpoint);
+      const endpoint = cdpEndpoint(lineCdp?.trim() || process.env.SM_DEV_BROWSER?.trim() || '9233');
+      const mistake = launchEndpointMistake(endpoint, browserSettingName(lineCdp));
       if (mistake) throw new UsageError(mistake);
       await launchBrowser(endpoint, lineProfile, print);
     } catch (err) {
