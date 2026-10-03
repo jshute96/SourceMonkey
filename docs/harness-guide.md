@@ -356,8 +356,8 @@ SourceMonkey installed works too, given that port.
   Scripts" on. A `--temp-browser` has it; an `--open-browser` or your
   own browser needs it loaded once (see
   [Setting it up](#setting-it-up)).
-  - Without it, or with it turned off, the run refuses to start and
-    says how to fix it.
+  - Without it, with it turned off, or with "Allow User Scripts" off,
+    the run refuses to start and says how to fix it.
   - `status` and the run's first line say which: `has SourceMonkey`,
     `SourceMonkey disabled` or `no extension` (see
     [Managing runs](#managing-runs)).
@@ -437,6 +437,8 @@ For a browser that keeps the extension (and your logins):
   the tabs they open, until the run ends.
 - The scripts it pushed run only in the run's tabs: not in tabs you
   open yourself, another run's tabs, or anywhere once the run ends.
+- The run's tabs show a cyan **T** at the top left of SourceMonkey's
+  toolbar icon, so you can tell them apart from your own tabs.
 - See [sm-dev-design.md](sm-dev-design.md#tab-claims) for how.
 
 ### What the run reports
@@ -446,7 +448,7 @@ For a browser that keeps the extension (and your logins):
 - The entries it adds to its Log tab, and the page's console lines.
 - Values and menu clicks sent from sm-dev go through the extension.
 
-### SourceMonkey's own scripts
+### SourceMonkey-managed scripts
 
 - `scripts` and `status` also list the SourceMonkey-managed scripts
   that match the current tab, as E1, E2, ..., with their status.
@@ -1117,7 +1119,7 @@ unmodified pages, or save one for a spec (`savehtml`).
   leaves it.
 - All pages the tab loads, and all tabs it opens, get no scripts.
 - `tabs` marks it `(no scripts)`, and `load` and `update` skip it.
-- SourceMonkey's own scripts stay out of it too, while the run lasts.
+- SourceMonkey-managed scripts stay out of it too, while the run lasts.
 
 ### Tab ids for other tools
 
@@ -1540,7 +1542,7 @@ D2   81502  1m      127.0.0.1:41234 (owned, headless)  1     a.user.js
   ends sm-dev.
 - Every run's last line says it has ended. Its test collection is
   removed, and its tabs are SourceMonkey's again: from their next load
-  they run SourceMonkey's own scripts, not the run's.
+  they run SourceMonkey-managed scripts, not the run's.
 - Pages already open keep what the run's scripts did until reloaded,
   but nothing from them streams anywhere.
 
@@ -1826,9 +1828,10 @@ that, since the answer is a function.
 
 ## Troubleshooting
 
-- **"SourceMonkey is not installed in this browser"**, or **"is turned
-  off"**: load it, or turn it on, as in
-  [Setting it up](#setting-it-up), or use `--temp-browser`.
+- **"SourceMonkey is not installed in this browser"**, **"is turned
+  off"**, or a message that "Allow User Scripts" is off: load it, or
+  turn it on, as in [Setting it up](#setting-it-up), or use
+  `--temp-browser`.
 - **"skipped on <url>: No @match or @include covers this URL"**, or
   another rule named there: the script would not run there outside
   sm-dev either. Broaden the pattern or change the URL; see

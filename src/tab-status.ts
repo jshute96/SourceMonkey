@@ -13,7 +13,7 @@
 
 import { ACTION_MENU_SM_DEV_LABEL } from './action-menu.js';
 import type { MatchedScript } from './match-index.js';
-import type { InjectionWorld } from './injector.js';
+import type { InjectionWorld } from './script-world.js';
 
 export type ScriptRunState = 'started' | 'error';
 

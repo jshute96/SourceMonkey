@@ -11,7 +11,7 @@
 //     there reports.
 // See docs/matching.md#scripts-that-never-start.
 
-import type { InjectionWorld } from './injector.js';
+import type { InjectionWorld } from './script-world.js';
 import type { MatchedScript } from './match-index.js';
 import { skippedOnDocument, type TabMatchState } from './tab-status.js';
 

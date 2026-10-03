@@ -85,10 +85,10 @@ import {
   buildSwapEvalBody,
   collectActiveSpecs,
   normalizeDeclaredRunAt,
-  resolveWorld,
   wrapCombinedEntry,
   wrapPreludeEntry,
 } from '../../dist/injector.js';
+import { resolveWorld } from '../../dist/script-world.js';
 import {
   composeRequiredBody,
   stackLayout,

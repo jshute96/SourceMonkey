@@ -51,12 +51,11 @@ import {
   buildGmRuntimeSpecs,
   buildRegistrationSpec,
   collectActiveSpecs,
-  grantedSubsystems,
   grantsUnsafeWindow,
   needsGmRuntime,
-  resolveScriptWorld,
-  resolveWorld,
 } from '../../dist/injector.js';
+import { resolveScriptWorld, resolveWorld } from '../../dist/script-world.js';
+import { grantedSubsystems } from '../../dist/gm-api-catalog.js';
 import { emitGmBindings } from '../../dist/gm-bindings.js';
 import {
   IMPLICIT_UNSAFE_WINDOW_INFO,

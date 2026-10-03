@@ -418,8 +418,8 @@ export class PageAttachment implements PageLink {
    * replaces it.
    */
   async inject(prepared: PreparedScript, options: InjectOptions = {}): Promise<void> {
-    if (!prepared.spec) throw new Error(`Cannot record an invalid script: ${prepared.diagnostic}`);
-    const id = prepared.spec.id;
+    if (!prepared.id) throw new Error(`Cannot record an invalid script: ${prepared.diagnostic}`);
+    const id = prepared.id;
     if (this.injected.has(id)) await this.remove(id);
     this.host.addScript(prepared, this);
     this.injected.set(id, { script: prepared, at: Date.now(), into: options.immediately ? this.currentDocument : undefined });

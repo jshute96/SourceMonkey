@@ -15,7 +15,6 @@ import { EventEmitter } from 'node:events';
 
 import { WRAPPER_GM_RUNTIME } from '../generated-wrappers.js';
 import type { GmXhrEvent, GmXhrRequestPayload } from '../gm-xhr.js';
-import { remapStackText } from '../stack-link.js';
 import type { PreparedScript } from './prepare.js';
 import { NO_RULE_COVERS_URL, explainMatch, preparedScriptName } from './prepare.js';
 
@@ -179,8 +178,8 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
 
   /** Register a prepared script as running in `owner`'s tab. */
   addScript(prepared: PreparedScript, owner: PageLink): void {
-    if (!prepared.spec) throw new Error(`Cannot host an invalid script: ${prepared.diagnostic}`);
-    const id = prepared.spec.id;
+    if (!prepared.id) throw new Error(`Cannot host an invalid script: ${prepared.diagnostic}`);
+    const id = prepared.id;
     this.scripts.set(id, prepared);
     let set = this.owners.get(id);
     if (!set) {
@@ -271,9 +270,7 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
    * itself. Without this, a script with `@require`s reports lines
    * counted from the top of the requires.
    */
-  remapStack(text: string): string {
-    return remapStackText(text, [...this.scripts.values()].map((s) => s.stackLayout));
-  }
+  abstract remapStack(text: string): string;
 
   /** A watched page went away. */
   detachPage(page: PageLink): void {
@@ -356,7 +353,7 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
     this.forgetDocumentState(page);
     const url = page.url();
     for (const script of scripts) {
-      const id = script.spec?.id ?? '';
+      const id = script.id ?? '';
       const verdict = explainMatch(script.matching, url);
       if (verdict.matches) continue;
       const report: SkipReport = {

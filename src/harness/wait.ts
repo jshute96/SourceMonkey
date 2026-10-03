@@ -116,10 +116,10 @@ async function busyWith(tab: ControlledTab, host: HarnessHost, lookMs: number, s
   // span count, so one the back/forward cache restored, where the
   // scripts don't run again, isn't waited on.
   const url = tab.page.url();
-  const scripts = link.scriptsInDocument().filter((s) => s.spec && explainMatch(s.matching, url).matches);
-  const waiting = host.unreported(link, scripts.map((s) => s.spec!.id), link.documentFirstStart());
+  const scripts = link.scriptsInDocument().filter((s) => s.id && explainMatch(s.matching, url).matches);
+  const waiting = host.unreported(link, scripts.map((s) => s.id!), link.documentFirstStart());
   if (waiting.length > 0) {
-    busy.push(`scripts not started yet: ${scripts.filter((s) => waiting.includes(s.spec!.id)).map(preparedScriptName).join(', ')}`);
+    busy.push(`scripts not started yet: ${scripts.filter((s) => waiting.includes(s.id!)).map(preparedScriptName).join(', ')}`);
   }
   const now = Date.now();
   const xhrs = host.reports.requests.filter((r) => !r.outcome && host.pageOf(r) === link

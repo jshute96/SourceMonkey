@@ -63,7 +63,7 @@ That is the whole job of the offscreen document.
 ## What is checked
 
 The user program exactly as `wrapCombinedEntry` compiles it, as one
-function body, built by `buildParseCheckSource` in `injector.ts`:
+function body, built by `buildParseCheckSource` in `composed-source.ts`:
 
 - every `@require` body, in declaration order;
 - then the script's own full source.
@@ -130,9 +130,8 @@ missed here is still reported exactly as it was before.
 
 ## Where the checker is installed
 
-`script-store.ts` does **not** import the injector — a real (not
-type-only) module cycle between them is something this codebase avoids.
-Instead the dependency is inverted: `setParseChecker` takes the
+`script-store.ts` doesn't pick the checker, because what compiles the
+text depends on the context. Instead `setParseChecker` takes the
 implementation, and each context installs one at startup.
 
 ### The service worker

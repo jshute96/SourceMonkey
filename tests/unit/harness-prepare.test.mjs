@@ -39,33 +39,28 @@ async function repo() {
   };
 }
 
-test('prepareScript: a valid script yields its registration entries and its world', async () => {
+test('prepareScript: a valid script yields its id, matching and world', async () => {
   const r = await repo();
   try {
     const file = await r.write('sites/example.com/a.user.js', HEADER + 'console.log("hi");\n');
     const p = await prepareScript({ file, collectionRoot: r.root });
     assert.equal(p.status, 'ok');
     assert.equal(p.errorMessage, undefined);
+    assert.equal(p.id, p.script.id);
     assert.equal(p.world, 'USER_SCRIPT');
-    assert.equal(p.runAt, 'document-idle');
-    assert.equal(p.needsGmRuntime, true);
-    assert.ok(p.grantedSubsystems.has('storage'));
-    assert.equal(p.spec.js.length, 4);
-    assert.deepEqual(p.spec.matches, ['https://example.com/items/*']);
-    assert.match(p.spec.js[2].code, /console\.log\("hi"\)/);
+    assert.deepEqual(p.matching.matches, ['https://example.com/items/*']);
   } finally {
     await r.cleanup();
   }
 });
 
-test('prepareScript: @grant none lands in MAIN world with no runtime', async () => {
+test('prepareScript: @grant none lands in MAIN world', async () => {
   const r = await repo();
   try {
     const file = await r.write('sites/example.com/a.user.js',
       HEADER.replace('@grant        GM_setValue', '@grant        none') + '1;\n');
     const p = await prepareScript({ file, collectionRoot: r.root });
     assert.equal(p.world, 'MAIN');
-    assert.equal(p.needsGmRuntime, false);
   } finally {
     await r.cleanup();
   }
@@ -79,7 +74,7 @@ test('prepareScript: an invalid header reports the extension\'s own message', as
     const p = await prepareScript({ file, collectionRoot: r.root });
     assert.equal(p.status, 'invalid');
     assert.equal(p.errorMessage, NO_NAME);
-    assert.equal(p.spec, null);
+    assert.equal(p.id, undefined);
   } finally {
     await r.cleanup();
   }
@@ -114,7 +109,7 @@ test('prepareScript: a GitHub @require reads the local lib/ copy under the repo 
     assert.equal(p.status, 'ok', p.diagnostic);
     assert.equal(p.requires.length, 1);
     assert.equal(p.requires[0].localUrl, pathToFileURL(path.join(r.root, 'lib/helper.js')).toString());
-    assert.match(p.spec.js[2].code, /function helper\(\)/);
+    assert.match(p.script.requires[0].source, /function helper\(\)/);
   } finally {
     await r.cleanup();
   }
@@ -129,7 +124,7 @@ test('prepareScript: a relative @require resolves beside the script', async () =
       + 'SHARED;\n');
     const p = await prepareScript({ file, collectionRoot: r.root });
     assert.equal(p.status, 'ok', p.diagnostic);
-    assert.match(p.spec.js[2].code, /const SHARED = 1/);
+    assert.match(p.script.requires[0].source, /const SHARED = 1/);
   } finally {
     await r.cleanup();
   }
@@ -159,7 +154,7 @@ test('prepareScript: two scripts sharing a basename get distinct ids', async () 
       prepareScript({ file: a, collectionRoot: r.root }),
       prepareScript({ file: b, collectionRoot: r.root }),
     ]);
-    assert.notEqual(pa.spec.id, pb.spec.id);
+    assert.notEqual(pa.id, pb.id);
     assert.equal(pa.script.relativePath, 'sites/example.com/a.user.js');
     assert.equal(pb.script.relativePath, 'sites/other.test/a.user.js');
   } finally {
@@ -170,7 +165,6 @@ test('prepareScript: two scripts sharing a basename get distinct ids', async () 
 test('prepareScript: text without a file works, with a placeholder location', async () => {
   const p = await prepareScript({ text: HEADER + '1;\n', collectionRoot: os.tmpdir() });
   assert.equal(p.status, 'ok');
-  assert.equal(p.noframes, false);
 });
 
 test('explainMatch: names the rule that decided, and every rule that covers the URL', () => {

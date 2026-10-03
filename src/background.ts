@@ -58,8 +58,7 @@ import {
   type HttpReadRequest,
 } from './http-read.js';
 import { checkParses, resetParseCheckFailures } from './parse-check.js';
-import { buildParseCheckSource } from './injector.js';
-import { stackLayout, type StackLayout } from './composed-source.js';
+import { buildParseCheckSource, stackLayout, type StackLayout } from './composed-source.js';
 import { attachParseLocation } from './parse-location.js';
 import {
   isParseCheckDisabled,
@@ -73,10 +72,10 @@ import {
   installScriptLogIdListener,
 } from './script-log-id.js';
 import { installSwTeardownHandler } from './sw-teardown.js';
+import { resolveScriptWorld, type InjectionWorld } from './script-world.js';
 import {
   buildSwapEvalBody,
   needsGmRuntime,
-  resolveScriptWorld,
   forgetRegistrationState,
   isUserScriptsAvailable,
   lastSyncKindForTests,
@@ -84,6 +83,9 @@ import {
   setMustAskForDecision,
   syncRegistrations,
   unregisterAllRegistrations,
+  type SyncScope,
+} from './injector.js';
+import {
   SM_ABANDONED_MSG,
   SM_CHECK_PENDING_MSG,
   SM_ERROR_MSG,
@@ -92,9 +94,7 @@ import {
   SM_GM_DOM_BLOCKED_MSG,
   SM_START_MSG,
   SM_SWAPPED_MSG,
-  type InjectionWorld,
-  type SyncScope,
-} from './injector.js';
+} from './runtime-messages.js';
 import {
   applyScriptReport,
   BADGE_PURPLE,

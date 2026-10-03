@@ -208,11 +208,11 @@ export function stackLayout(script: StoredScript, logLabel: string): StackLayout
 // `\r\n` must count as one, hence the alternation order.
 const LINE_TERMINATORS = /\r\n|[\n\r\u2028\u2029]/g;
 
-// Exported because `buildParseCheckSource` measures its own preamble
-// with it: a parse-check line offset that counted terminators
-// differently from the segment list it is compared against would
-// misattribute every error in the file.
-export function countLines(text: string): number {
+// `buildParseCheckSource` below measures its own preamble with it: a
+// parse-check line offset that counted terminators differently from the
+// segment list it is compared against would misattribute every error in
+// the file.
+function countLines(text: string): number {
   if (text === '') return 1;
   const matches = text.match(LINE_TERMINATORS);
   return matches ? matches.length + 1 : 1;
@@ -221,4 +221,74 @@ export function countLines(text: string): number {
 // Public entry point for the swap-eval path, which needs the text only.
 export function composeRequiredBody(script: StoredScript): string {
   return composeSource(script).text;
+}
+
+// The user program exactly as the registered entry compiles it: every
+// `@require` body then the script's own source, as one function body —
+// i.e. everything a syntax error in user-supplied code could come from,
+// in the kind of scope it actually lands in. This is what
+// `src/parse-check.ts` hands to `new Function`.
+//
+// Our own declarations (the wrap head, its `var` preamble, the GM
+// bindings and prelude) are NOT included, and need not be: the user
+// program runs in a nested scope of its own (`USER_SCOPE_OPEN` in
+// injector.ts), so nothing it declares can clash with them. That nested
+// scope is a function body, as `new Function`'s is, so a top-level
+// `return` is judged as it will run, and a leading `"use strict"`
+// applies to the whole program, as there.
+//
+// Returns provenance alongside the text. A syntax error is reported as
+// a line in the COMPOSED program, which is not a line of any file the
+// user has open — `segments` is what maps it back, using the same
+// machinery the source map and the Log tab's stack refs already share.
+// See src/parse-location.ts.
+export interface ParseCheckSource {
+  text: string;
+  // Which original file each generated line came from. `url` here is
+  // the require's real URL (or the script's path) rather than a
+  // synthetic `sourcemonkey://` one: this list is read by us, to name
+  // a file in a sentence, not by devtools.
+  segments: MappedSegment[];
+  // Lines in `text`. A reported position outside it isn't the user's
+  // code — see the sentinel note in parse-sandbox.ts.
+  lineCount: number;
+}
+
+export function buildParseCheckSource(script: StoredScript): ParseCheckSource {
+  // A blank first line of our own, so the user's first line is never at
+  // offset 0: a `#!` hashbang is legal only there, so it stays the
+  // syntax error it also is in the real injected entry (which wraps the
+  // source), and the location probes can't be handed a source that
+  // parses as a shebang script. Blank, not a statement, so a leading
+  // `"use strict"` still applies, as in the injected entry (see
+  // USER_SCOPE_OPEN in injector.ts). The offset below is derived from it rather than
+  // assumed to be 1 — the same discipline `composeSource` applies
+  // internally, and for the same reason: assumed line counts drift
+  // from emitted ones.
+  const preamble = '\n';
+  const startLine = countLines(preamble) - 1;
+  const requires = script.requires ?? [];
+  const composed = composeSource(script, {
+    requireUrls: requires.map((r) => r.url),
+    mainUrl: script.relativePath,
+    startLine,
+  });
+  return {
+    text: preamble + composed.text,
+    // `composeSource` emits no segments for a script with no
+    // `@require`s — the viewer keys "pass stack refs through unmapped"
+    // off exactly that, so it stays as it is. Here the opposite is
+    // wanted: one segment for the body means every reported line
+    // resolves through the same lookup, with no second code path for
+    // the majority of scripts.
+    segments: composed.segments.length > 0
+      ? composed.segments
+      : [{
+          url: script.relativePath,
+          content: composed.text,
+          generatedLine: startLine,
+          lineCount: composed.lineCount,
+        }],
+    lineCount: startLine + composed.lineCount,
+  };
 }

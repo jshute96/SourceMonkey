@@ -10,12 +10,9 @@ export {
   type PreparedScript,
   type MatchExplanation,
   type InjectionWorld,
-  type RunAt,
-  type RegistrationEntries,
 } from './prepare.js';
 export type { StoredScript, ScriptMatching, StartupLog } from '../script-store.js';
 export type { DiagnosticLocation } from '../diagnostic-location.js';
-export type { ApiSubsystem } from '../gm-api-catalog.js';
 export { checkParseNode } from './parse-check-node.js';
 export {
   HarnessHost,

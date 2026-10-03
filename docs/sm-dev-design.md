@@ -837,6 +837,10 @@ User-facing behavior is in [harness-guide.md](harness-guide.md).
     (`EXTENSION_TOO_OLD`).
   - The message says to update it, or to use `--temp-browser`, which
     loads sm-dev's own copy.
+- It then calls `chrome.userScripts.getScripts()` in the worker, which
+  fails until "Allow User Scripts" is on.
+  - CDP can't see that toggle, and without it the scripts would never
+    run, with nothing said. So the run is refused, naming the toggle.
 
 ### Tab claims
 
@@ -1155,6 +1159,7 @@ Terms used below:
 |---|---|
 | No SourceMonkey | nothing: the run is refused (not installed) |
 | SourceMonkey turned off | nothing: the run is refused (turned off) |
+| "Allow User Scripts" off | nothing: the run is refused (toggle off) |
 | SourceMonkey on | sm-dev's scripts only |
 
 - `--temp-browser` loads SourceMonkey in the temporary browser, so it

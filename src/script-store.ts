@@ -1096,16 +1096,14 @@ export async function applyFiles(
 
 // ---------- Parse check hook ----------
 //
-// The check needs the exact text the *injector* would compile, so the
-// natural call would be `injector.buildParseCheckSource`. But
-// `injector.ts` imports runtime helpers from this module, and a real
-// (not type-only) cycle between them is something this codebase
-// deliberately avoids — see the note on `collection-display.ts`.
+// The check composes the text the injector would compile
+// (`buildParseCheckSource`), but what compiles it depends on the
+// context: an offscreen sandbox for the service worker, an iframe for
+// an extension page, `new Function` under Node for the harness.
 //
-// So the dependency is inverted: whoever owns both modules installs
-// the checker. `background.ts` does it for the service worker,
-// `parse-check-client.ts` for extension pages — and both are needed,
-// because this pipeline runs in whichever context called it.
+// So whoever runs this pipeline installs the checker. `background.ts`
+// does it for the service worker, `parse-check-client.ts` for extension
+// pages, and `harness/prepare.ts` for the harness.
 //
 // A context with no checker skips the check. That is NOT a benign
 // degradation: the rebuild below resets `status` to `ok`, so a skipped

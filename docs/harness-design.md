@@ -74,7 +74,7 @@ up-front check before a push:
 | `@match` / `@include` / `@exclude` evaluator | `src/url-match.ts` | Yes |
 | `@grant` catalog and resolution | `src/gm-api-catalog.ts` | Yes |
 | `@require` / `@resource` resolution and fetch | `src/external-files.ts`, `src/file-loader.ts`, `src/local-file-overrides.ts` | Yes, given a `fetch` |
-| Wrapper builder: the ordered code entries Chrome registers | pure half of `src/injector.ts` (`buildRegistrationSpec` and friends) | Yes, as `src/harness/prepare.ts` calls it |
+| Injection world (`@grant none`, `@inject-into`) | `src/script-world.ts` | Yes |
 | Compile-only parse check | `src/harness/parse-check-node.ts` | Yes |
 | Stored-value codec | `src/gm-values.ts` | With a storage stub |
 
@@ -91,6 +91,8 @@ up-front check before a push:
   - `exports`: `./harness` for the harness entry, and `./*` mapping to
     `lib/*.js` so pure modules such as `url-match` and
     `userscript-header` are importable too.
+    - Only the modules the harness imports are in `lib/`, so only those
+      are importable.
   - `files` for the built outputs and `skills` (the agent skill ships
     beside the code), and `bin: { "sm-dev": ... }`.
   - A `prepare` script that runs the build, so a git install produces
@@ -132,10 +134,12 @@ Node.
   - Fetches with Node's `fetch`, plus SourceMonkey's local-override
     rules, so a `@require` pointing at a raw GitHub URL reads the local
     `lib/` copy, exactly as the extension would.
-- Emits bindings and calls `buildRegistrationSpec`.
-- Returns a `PreparedScript`: the stored row, the registration entries,
-  world, `@run-at`, matching rules, startup logs, and the diagnostic
-  when the script is invalid.
+- Runs the parse check, composing the program with
+  `buildParseCheckSource` (`src/composed-source.ts`).
+- Doesn't build the code the extension registers: the extension builds
+  that from the pushed text.
+- Returns a `PreparedScript`: the stored row, its id, world, matching
+  rules, startup logs, and the diagnostic when the script is invalid.
   - An `invalid` script is returned with its diagnostics, not thrown,
     so a tool can print the same message the viewer shows.
   - The files it read from disk are what a push sends with the text

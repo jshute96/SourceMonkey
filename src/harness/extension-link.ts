@@ -44,6 +44,12 @@ const NAMING_MS = 10_000;
 const EXTENSION_TOO_OLD = 'SourceMonkey in this browser is older than this sm-dev, so it can\'t run sm-dev\'s scripts. '
   + 'Update it: rebuild it and reload it in chrome://extensions, or use --temp-browser, which loads this sm-dev\'s copy.';
 
+/** Said when Chrome won't let the extension register user scripts. */
+function userScriptsOff(extensionId: string): string {
+  return 'SourceMonkey in this browser does not have "Allow User Scripts" on, so it can\'t run sm-dev\'s scripts. '
+    + `Turn it on in SourceMonkey's details page, chrome://extensions/?id=${extensionId}, or use --temp-browser, which has it on.`;
+}
+
 /** An event from the extension, as sm-dev-link.ts and background.ts send them. */
 export type ExtensionEvent =
   | {
@@ -128,7 +134,7 @@ export class ExtensionLink {
    * Connects to the extension in `context`'s browser, for a run. Its
    * tabs run its own scripts, and it hears the extension's events.
    * Throws `EXTENSION_TOO_OLD` for an extension without the calls this
-   * needs.
+   * needs, or `userScriptsOff` when Chrome won't let it run scripts.
    */
   static async open(context: BrowserContext, runId: string): Promise<ExtensionLink> {
     const workerUrl = `chrome-extension://${await sourceMonkeyExtensionId()}/background.js`;
@@ -139,6 +145,19 @@ export class ExtensionLink {
       return names.filter((name) => typeof api[name] !== 'function');
     }, NEEDED_CALLS);
     if (missing.length > 0) throw new Error(EXTENSION_TOO_OLD);
+    // Chrome lists `chrome.userScripts` once the manifest asks for it,
+    // but every call fails until the user turns on "Allow User
+    // Scripts", which would leave the run's scripts silently unrun.
+    // The collections page's banner probes the same way.
+    const userScriptsOn = await worker.evaluate(async () => {
+      try {
+        await chrome.userScripts.getScripts();
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    if (!userScriptsOn) throw new Error(userScriptsOff(await sourceMonkeyExtensionId()));
     await link.adopt(worker);
     context.on('serviceworker', link.onWorker);
     link.renewTimer = setInterval(() => { void link.renew().catch(() => undefined); }, RENEW_MS);

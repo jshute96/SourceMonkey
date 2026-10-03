@@ -82,7 +82,8 @@ import {
   WRAPPER_GM_RUNTIME,
   WRAPPER_PRELUDE,
 } from './generated-wrappers.js';
-import { findApi, resolveGrants, type ApiSubsystem } from './gm-api-catalog.js';
+import { grantedSubsystems, resolveGrants } from './gm-api-catalog.js';
+import { resolveScriptWorld, type InjectionWorld } from './script-world.js';
 import { scanAllStorage } from './storage-scan.js';
 import { isScratchUrl } from './directories.js';
 import { canonicalMatchPatterns, hostEndsInTld, matchPatternProblem, tldCoarseGlob } from './url-match.js';
@@ -96,13 +97,11 @@ import { iconRefFromHeader } from './site-icon.js';
 import {
   buildSourceMap,
   inlineSourceMapComment,
-  type MappedSegment,
 } from './source-map.js';
 import {
   USER_SOURCE_START_LINE,
   composeRequiredBody,
   composeSource,
-  countLines,
 } from './composed-source.js';
 import {
   BRIDGE_SOURCE_URL,
@@ -125,30 +124,6 @@ import {
 
 const SCRIPT_PREFIX = 'script:';
 const COLLECTION_PREFIX = 'collection:';
-
-// Match the runtime-message types we use between injected scripts and
-// the SW. Keep these in sync with the strings the prelude sends.
-export const SM_START_MSG = 'sm:start';
-export const SM_ERROR_MSG = 'sm:error';
-// Reload fast-path: the prelude asks the SW whether to run its baked-in
-// body, abandon, or swap in a fresher user-code body the SW will hand
-// back. sm:swapped / sm:abandoned are the follow-up reports for the
-// swap / skip branches. See docs/injection.md#reload-fast-path.
-export const SM_CHECK_PENDING_MSG = 'sm:check-pending';
-export const SM_SWAPPED_MSG = 'sm:swapped';
-export const SM_ABANDONED_MSG = 'sm:abandoned';
-// GM_log capture: the page-side runtime sends one of these for every
-// GM_log() call so the SW can append it to the script's Log tab.
-export const SM_GM_LOG_MSG = 'sm:gm-log';
-// The runtime saw the page's CSP refuse a style a script added
-// (MAIN world only — the isolated world is exempt). One warning per
-// script per document, in the script's Log.
-export const SM_GM_DOM_BLOCKED_MSG = 'sm:gm-dom-blocked';
-// The page reporting that it just came to the front, so the SW can
-// check this tab's local scripts for edits. Chrome's own focus events
-// miss the case that matters most — see
-// docs/updates.md#focus-triggered-refresh.
-export const SM_FOCUS_MSG = 'sm:focus';
 
 // Reserved registration ids. Chrome's userScripts API rejects ids
 // that start with `_`, so we use a `sourcemonkey-` prefix; stored
@@ -182,7 +157,6 @@ export const GM_RUNTIME_MAIN_SCRIPT_ID = 'sourcemonkey-gm-runtime-main';
 export const NO_PAGE_MATCH = '*://*/__sourcemonkey_no_page__/*';
 
 export type RegistrationSpec = chrome.userScripts.RegisteredUserScript;
-export type InjectionWorld = 'MAIN' | 'USER_SCRIPT';
 
 // The patterns one script is registered on, for the scripts whose world
 // needs the shared `__SM_GM__` runtime. The runtime's own registration
@@ -237,91 +211,6 @@ export function grantsUnsafeWindow(header: ParsedHeader | null | undefined): boo
   return granted.has('unsafeWindow');
 }
 
-// Decide which execution world a script should run in. Mirrors
-// Violentmonkey's `@inject-into` semantics (and Tampermonkey's default
-// for `@grant none`):
-//
-//   - `@inject-into page`        → MAIN  (page context — sees the page's
-//                                          window.X globals)
-//   - `@inject-into content`     → USER_SCRIPT (isolated)
-//   - default / `auto` / unset   → MAIN when there are no @grant entries
-//                                  or a `none` line is present, MAIN when
-//                                  `unsafeWindow` is granted, and MAIN
-//                                  when the body names `unsafeWindow`
-//                                  with no grant for it; otherwise
-//                                  USER_SCRIPT.
-//
-// Why `@grant none` defaults to MAIN: scripts that opt out of GM_* (the
-// `@grant none` convention) expect direct page access — `window.map`,
-// `window.jQuery`, page-defined functions. Putting them in USER_SCRIPT
-// silently breaks any script that touches a page global. Tampermonkey
-// runs `@grant none` scripts in page context for the same reason.
-//
-// `none` wins over other grants here for the same reason it does in
-// `resolveGrants`: one rule, applied in both places. A script mixing
-// `none` with `GM_setValue` gets no bindings AND runs in MAIN — a plain
-// `@grant none` script, which is how Tampermonkey reads it ("`@grant
-// none` disables the sandbox"). The old rule (MAIN only when every
-// line was `none`) left such a script isolated with nothing.
-// `extractStartupLogs` warns so the author sees why the grants are gone.
-//
-// Why `@grant unsafeWindow` also defaults to MAIN: same reason, one
-// level down. The whole point of the grant is reaching the page's
-// globals, and USER_SCRIPT world cannot do that at all. Running such a
-// script isolated hands it a `window` that merely *looks* right, so the
-// failure is silent. GM_* still works in MAIN — the runtime is
-// registered there too and routes SW traffic over `wrapper-bridge.js`.
-//
-// `@inject-into content` still wins, because it is an explicit request
-// for isolation. Such a script gets `unsafeWindow === window` (the
-// isolated realm's), matching Violentmonkey's content mode, plus a
-// startup-log warning so the mismatch is visible rather than silent —
-// see `extractStartupLogs` in script-store.ts.
-//
-// Why an UNGRANTED `unsafeWindow` does the same: TM and VM both expose
-// the name with no grant line, so a script written against either has
-// no reason to declare one — 112 of the GreasyFork top 2000 use it
-// ungranted. Honoring only the grant leaves those scripts with a
-// ReferenceError on a name their author saw working. The reference is
-// found by a text scan of the body at load time
-// (`sourceUsesUnsafeWindow`, persisted as `StoredScript
-// .usesUnsafeWindow`), not by parsing — see src/unsafe-window-use.ts
-// for what that can and can't see.
-//
-// `@inject-into content` and `@inject-into page` both still win, and a
-// script already headed for MAIN (`@grant none`, no grants) just gains
-// the binding.
-export function resolveWorld(
-  header: ParsedHeader | null | undefined,
-  // `StoredScript.usesUnsafeWindow` — the body names the name, grant or
-  // no grant, per the note above. Production callers go through
-  // `resolveScriptWorld` so they can't forget it.
-  usesUnsafeWindow = false,
-): InjectionWorld {
-  if (!header) return 'MAIN';
-  const injectInto = (getValue(header, 'inject-into') ?? '').trim().toLowerCase();
-  if (injectInto === 'page') return 'MAIN';
-  if (injectInto === 'content') return 'USER_SCRIPT';
-  const grants = getValues(header, 'grant');
-  if (grants.length === 0) return 'MAIN';
-  const { granted, hasNone } = resolveGrants(grants);
-  if (hasNone) return 'MAIN';
-  if (granted.has('unsafeWindow')) return 'MAIN';
-  if (usesUnsafeWindow) return 'MAIN';
-  return 'USER_SCRIPT';
-}
-
-// The world for a stored row — the form every production caller uses.
-// One function, one input: the spec build, the match index and the
-// reload-swap world check all have to agree, and a call site that read
-// the header alone would silently answer USER_SCRIPT for a script the
-// other two put in MAIN.
-export function resolveScriptWorld(
-  script: Pick<StoredScript, 'header' | 'usesUnsafeWindow'>,
-): InjectionWorld {
-  return resolveWorld(script.header, script.usesUnsafeWindow === true);
-}
-
 // True iff the script needs the shared `__SM_GM__` runtime registered in
 // its world. `GM_info` is a baked-in literal and `unsafeWindow` is a
 // plain `window` alias, so a script granting only those (or nothing at
@@ -332,22 +221,6 @@ export function needsGmRuntime(header: ParsedHeader | null | undefined): boolean
     if (subsystem !== 'info' && subsystem !== 'unsafe-window') return true;
   }
   return false;
-}
-
-// The catalog subsystems the script's `@grant` lines reach — the set the
-// SW's bridge gate (`bridgeMayActAs` in background.ts) checks a relayed
-// request against, so a page can only act for a script through APIs
-// that script actually has. `@grant none` and unknown names contribute
-// nothing.
-export function grantedSubsystems(header: ParsedHeader | null | undefined): Set<ApiSubsystem> {
-  const out = new Set<ApiSubsystem>();
-  if (!header) return out;
-  const { granted } = resolveGrants(getValues(header, 'grant'));
-  for (const name of granted) {
-    const spec = findApi(name);
-    if (spec) out.add(spec.subsystem);
-  }
-  return out;
 }
 
 function isRegexLiteral(s: string): boolean {
@@ -808,76 +681,6 @@ export async function buildGmBindingsForScript(
     ? [...grantedNames, 'unsafeWindow']
     : grantedNames;
   return emitGmBindings(emittedNames, buildGmInfoInput(script, scriptHandlerVersion, grantedNames));
-}
-
-// The user program exactly as the registered entry compiles it: every
-// `@require` body then the script's own source, as one function body —
-// i.e. everything a syntax error in user-supplied code could come from,
-// in the kind of scope it actually lands in. This is what
-// `src/parse-check.ts` hands to `new Function`.
-//
-// Our own declarations (the wrap head, its `var` preamble, the GM
-// bindings and prelude) are NOT included, and need not be: the user
-// program runs in a nested scope of its own (`USER_SCOPE_OPEN`), so
-// nothing it declares can clash with them. That nested scope is a
-// function body, as `new Function`'s is, so a top-level `return` is
-// judged as it will run, and a leading `"use strict"` applies to the
-// whole program, as there (see USER_SCOPE_OPEN).
-//
-// Returns provenance alongside the text. A syntax error is reported as
-// a line in the COMPOSED program, which is not a line of any file the
-// user has open — `segments` is what maps it back, using the same
-// machinery the source map and the Log tab's stack refs already share.
-// See src/parse-location.ts.
-export interface ParseCheckSource {
-  text: string;
-  // Which original file each generated line came from. `url` here is
-  // the require's real URL (or the script's path) rather than a
-  // synthetic `sourcemonkey://` one: this list is read by us, to name
-  // a file in a sentence, not by devtools.
-  segments: MappedSegment[];
-  // Lines in `text`. A reported position outside it isn't the user's
-  // code — see the sentinel note in parse-sandbox.ts.
-  lineCount: number;
-}
-
-export function buildParseCheckSource(script: StoredScript): ParseCheckSource {
-  // A blank first line of our own, so the user's first line is never at
-  // offset 0: a `#!` hashbang is legal only there, so it stays the
-  // syntax error it also is in the real injected entry (which wraps the
-  // source), and the location probes can't be handed a source that
-  // parses as a shebang script. Blank, not a statement, so a leading
-  // `"use strict"` still applies, as in the injected entry (see
-  // USER_SCOPE_OPEN). The offset below is derived from it rather than
-  // assumed to be 1 — the same discipline `composeSource` applies
-  // internally, and for the same reason: assumed line counts drift
-  // from emitted ones.
-  const preamble = '\n';
-  const startLine = countLines(preamble) - 1;
-  const requires = script.requires ?? [];
-  const composed = composeSource(script, {
-    requireUrls: requires.map((r) => r.url),
-    mainUrl: script.relativePath,
-    startLine,
-  });
-  return {
-    text: preamble + composed.text,
-    // `composeSource` emits no segments for a script with no
-    // `@require`s — the viewer keys "pass stack refs through unmapped"
-    // off exactly that, so it stays as it is. Here the opposite is
-    // wanted: one segment for the body means every reported line
-    // resolves through the same lookup, with no second code path for
-    // the majority of scripts.
-    segments: composed.segments.length > 0
-      ? composed.segments
-      : [{
-          url: script.relativePath,
-          content: composed.text,
-          generatedLine: startLine,
-          lineCount: composed.lineCount,
-        }],
-    lineCount: startLine + composed.lineCount,
-  };
 }
 
 // Build the body string for the reload-fast-path swap eval. Prepends

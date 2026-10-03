@@ -20,7 +20,7 @@
 // - The run reports only on its own tabs: events from others, and Log
 //   entries made in them, are left out.
 
-import { SM_ABANDONED_MSG, SM_ERROR_MSG, SM_START_MSG, SM_SWAPPED_MSG } from '../injector.js';
+import { SM_ABANDONED_MSG, SM_ERROR_MSG, SM_START_MSG, SM_SWAPPED_MSG } from '../runtime-messages.js';
 import { SKIP_REASON_SM_DEV } from '../sm-dev-link.js';
 import { remapStackText } from '../stack-link.js';
 import type { StackLayout } from '../composed-source.js';
@@ -101,7 +101,7 @@ export class ExtensionHost extends HarnessHost {
   }
 
   // The extension runs the scripts under its own entry URLs, so their
-  // stack lines map by the extension's layouts, not the prepared ones.
+  // stack lines map by the layouts it reports (`setLayout`).
   override remapStack(text: string): string {
     return remapStackText(text, this.layouts.values());
   }

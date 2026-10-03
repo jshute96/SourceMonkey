@@ -28,8 +28,8 @@ import {
   type StoredCollection,
 } from './script-store.js';
 import { urlMatchesScript } from './url-match.js';
-import { grantedSubsystems, resolveScriptWorld, type InjectionWorld } from './injector.js';
-import type { ApiSubsystem } from './gm-api-catalog.js';
+import { resolveScriptWorld, type InjectionWorld } from './script-world.js';
+import { grantedSubsystems, type ApiSubsystem } from './gm-api-catalog.js';
 
 export interface MatchedScript {
   id: string;

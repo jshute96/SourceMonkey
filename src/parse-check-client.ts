@@ -31,6 +31,7 @@
 // left unchecked carries no `parseCheckedHash`, so the next
 // service-worker refresh performs the check.
 
+import { buildParseCheckSource } from './composed-source.js';
 import { dlog } from './debug-log.js';
 import { attachParseLocation } from './parse-location.js';
 import { isParseCheckDisabled } from './parse-check-protocol.js';
@@ -51,12 +52,6 @@ export function installPageParseChecker(): void {
 export const checkScriptParses: ParseChecker = async (script) => {
   if (await isParseCheckDisabled()) return null;
   try {
-    // Imported on demand, not at module scope: `injector.ts` pulls in
-    // the GM binding emitter and its catalog, and every page that
-    // installs a checker would otherwise pay for that graph during
-    // startup — delaying its first render for a check most page loads
-    // never run.
-    const { buildParseCheckSource } = await import('./injector.js');
     const source = buildParseCheckSource(script);
     const verdicts = await ensureHost().compile([source.text]);
     // Resolved here rather than by the caller: `source` is what maps a

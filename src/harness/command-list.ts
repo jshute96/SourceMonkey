@@ -147,9 +147,9 @@ export const HELP_SECTIONS: HelpSection[] = [
   {
     title: 'Starting a run',
     text: [
-      'A run is an sm-dev server process connected to a browser, managing a list of tabs whose scripts the SourceMonkey extension there runs.',
-      'The run pushes its scripts into a test collection of its own in the extension, which removes it when the run ends, and only they run in the run\'s tabs.',
-      'The browser needs SourceMonkey installed, with Allow User Scripts on. A --temp-browser has it.',
+      'A run is an sm-dev server process connected to a browser, managing a list of tabs, and using the SourceMonkey extension to run scripts on them.',
+      'The run pushes its scripts into its own test collection in the extension, which gets removed when the run ends. Injected scripts run only in the run\'s managed tabs.',
+      'The browser needs SourceMonkey installed and enabled. A --temp-browser has it installed automatically.',
       '',
     ],
     commands: [

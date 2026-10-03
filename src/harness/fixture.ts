@@ -215,7 +215,7 @@ export const test = base.extend<HarnessFixtures & InternalFixtures>({
       const abs = path.isAbsolute(file) ? file : path.resolve(testInfo.config.rootDir, file);
       const collectionRoot = prepareOptions.collectionRoot ?? testInfo.config.rootDir;
       const prepared = await prepareScript({ ...prepareOptions, file: abs, collectionRoot });
-      if (prepared.status !== 'ok' || !prepared.spec) {
+      if (prepared.status !== 'ok' || !prepared.id) {
         throw new Error(`This file cannot be loaded: ${prepared.diagnostic}`);
       }
       if (url) {
@@ -233,11 +233,11 @@ export const test = base.extend<HarnessFixtures & InternalFixtures>({
       // request fakes are not for.
       const result = await _smRequests.paused(() => _smLink.push(text, name, pushedFiles(prepared)));
       if (result.status !== 'ok') throw new Error(`This file cannot be loaded: ${result.errorMessage ?? 'SourceMonkey refused it'}`);
-      host.setPushed(prepared.spec.id, result.scriptId);
+      host.setPushed(prepared.id, result.scriptId);
       host.setLayout(result.scriptId, await _smLink.stackLayout(result.scriptId).catch(() => null));
       await attachment.inject(prepared);
       _smLoaded.push(prepared);
-      if (values) await host.setValues(prepared.spec.id, values);
+      if (values) await host.setValues(prepared.id, values);
       return prepared;
     });
   },
@@ -247,11 +247,11 @@ export const test = base.extend<HarnessFixtures & InternalFixtures>({
       if (_smLoaded.length === 0) throw new Error('No userscript is loaded');
       if (script === undefined) {
         if (_smLoaded.length > 1) throw new Error('Several userscripts are loaded; name one');
-        return _smLoaded[0].spec!.id;
+        return _smLoaded[0].id!;
       }
       const found = _smLoaded.find((p) => preparedScriptMatches(p, script));
       if (!found) throw new Error(`No loaded userscript is named ${script}`);
-      return found.spec!.id;
+      return found.id!;
     };
     await use({
       get: (key, script) => host.getValue(idOf(script), key),
@@ -296,7 +296,7 @@ export const test = base.extend<HarnessFixtures & InternalFixtures>({
         // The same selection `gm` uses, via the loaded script's id.
         const wanted = script === undefined
           ? undefined
-          : _smLoaded.find((p) => preparedScriptMatches(p, script))?.spec!.id ?? script;
+          : _smLoaded.find((p) => preparedScriptMatches(p, script))?.id! ?? script;
         const matches = (r: StartReport): boolean => wanted === undefined || r.scriptId === wanted;
         const already = host.reports.started.find(matches);
         if (already) {
@@ -323,7 +323,7 @@ export const test = base.extend<HarnessFixtures & InternalFixtures>({
 
   saveHtml: async ({ page, attachment, host, _smLoaded }, use) => {
     await use(async (file) => {
-      const running = _smLoaded.filter((s) => s.spec && host.isRunning(attachment, s.spec.id));
+      const running = _smLoaded.filter((s) => s.id && host.isRunning(attachment, s.id));
       await savePageHtml(page, file, running.map(userscriptLabel));
     });
   },
@@ -511,7 +511,7 @@ class RequestFakes {
     };
     // The worker doesn't say which script asked; with one loaded, it did.
     const loaded = this.loaded();
-    const event = await fn(payload, loaded.length === 1 ? loaded[0].spec!.id : '');
+    const event = await fn(payload, loaded.length === 1 ? loaded[0].id! : '');
     if (!event) {
       await this.send('Fetch.continueRequest', { requestId });
       return;

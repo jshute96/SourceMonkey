@@ -3,7 +3,7 @@
 //
 // `@grant unsafeWindow` is how a script is *supposed* to ask for the
 // page's window, and it is what moves the script to MAIN world
-// (`resolveWorld` in injector.ts). Plenty of real scripts never declare
+// (`resolveWorld` in script-world.ts). Plenty of real scripts never declare
 // it: `unsafeWindow` is implicitly available under Tampermonkey and
 // Violentmonkey — neither keys it off a grant line, measured under TM
 // 5.5.0 and VM 2.49.0 by `tests/examples/unsafe-window/ungranted.user.js`

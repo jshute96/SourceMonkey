@@ -546,9 +546,11 @@ the user body. This is the TM/VM pattern.
 
 - `document-start` — the gate opens immediately, once
   `document.documentElement` (`<html>`) exists.
-  - In the extension it always does by then. Were it missing, the
-    wrapper would wait for it with a `MutationObserver` on `document`,
-    whose records are delivered before the first page `<script>` runs.
+  - Chrome injects `document_start` scripts after `<html>` exists, so
+    it always does by then.
+  - Were it missing, the wrapper would wait for it with a
+    `MutationObserver` on `document`, whose records are delivered
+    before the first page `<script>` runs.
   - Where the [check-pending decision](#reload-fast-path) could only
     be `run`, the body runs right away, ahead of the page's own
     scripts. Elsewhere it waits for that async answer, so early page
@@ -626,7 +628,7 @@ The `world` field decides whether the body runs in the page's own
 page-defined globals like `window.jQuery`, `window.map`, or any
 function declared by an inline `<script>` tag on the page.
 
-Resolution (`resolveWorld` in `src/injector.ts`) mirrors
+Resolution (`resolveWorld` in `src/script-world.ts`) mirrors
 Violentmonkey's `@inject-into` and Tampermonkey's `@grant none`
 default:
 

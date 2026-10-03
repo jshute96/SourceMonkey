@@ -905,10 +905,10 @@ async function runInBrowser(
         opts.out(`INVALID  ${typedName(opts, file)}\n    ${result.errorMessage ?? ''}`);
         return false;
       }
-      host.setPushed(script.spec!.id, result.scriptId);
+      host.setPushed(script.id!, result.scriptId);
       // An extension without the call leaves its stack lines as they are.
       host.setLayout(result.scriptId, await link.stackLayout(result.scriptId).catch(() => null));
-      if (seed && opts.values) await host.setValues(script.spec!.id, opts.values);
+      if (seed && opts.values) await host.setValues(script.id!, opts.values);
       opts.out(`[sm-dev] Pushed to SourceMonkey: ${preparedScriptPath(script)}${result.replaced ? ' (replaced)' : ''}`);
     }
     return true;
@@ -1221,7 +1221,7 @@ class FollowedTabs {
     this.scripts = next;
     const open = this.open();
     const affected = open.filter(({ tab }) => changed.some((c) =>
-      (c.old?.spec && this.host.isRunning(tab.link, c.old.spec.id))
+      (c.old?.id && this.host.isRunning(tab.link, c.old.id))
       || explainMatch(c.next.matching, tab.page.url()).matches));
     if (affected.length === 0) this.opts.out(`[sm-dev] ${none}`);
     const reload = reloadable(affected.map(({ tab }) => tab), this.opts.out);
@@ -1475,9 +1475,9 @@ class FollowedTabs {
 
   // `scripts` in place of what `attachment` has, from index `from` on.
   private async swapScripts(attachment: PageAttachment, scripts: PreparedScript[], from = 0): Promise<void> {
-    const keep = new Set(scripts.slice(0, from).map((s) => s.spec!.id));
+    const keep = new Set(scripts.slice(0, from).map((s) => s.id!));
     for (const old of attachment.injectedScripts()) {
-      if (!keep.has(old.spec!.id)) await attachment.remove(old.spec!.id);
+      if (!keep.has(old.id!)) await attachment.remove(old.id!);
     }
     for (const script of scripts.slice(from)) await attachment.inject(script);
   }
@@ -1495,7 +1495,7 @@ async function waitForReports(host: ExtensionHost, tabs: ControlledTab[], timeou
     await Promise.race([
       // Not one whose load already gave up, and said so.
       Promise.all(tabs.filter((tab) => !tab.stalled).map((tab) => {
-        const ids = tab.link.scriptsInDocument().filter((s) => s.spec).map((s) => s.spec!.id);
+        const ids = tab.link.scriptsInDocument().filter((s) => s.id).map((s) => s.id!);
         return host.untilReported(tab.link, ids, tab.link.documentFirstStart(), giveUp.signal);
       })),
       gaveUp,

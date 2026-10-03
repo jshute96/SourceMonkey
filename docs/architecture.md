@@ -499,10 +499,12 @@ One set of sources, compiled twice:
   it, `scripts/zip_extension.sh` packs all of it, and
   `tsconfig.json` builds it with `src/harness/**` excluded.
 - **`lib/`** is the `sourcemonkey` package's code (`package.json`'s
-  `exports` point there). The package ships `dist/` beside it, which
-  `sm-dev` and the fixture load into the browsers they launch. `tsconfig.lib.json` compiles every
-  module, the development harness included, and emits a `.d.ts` beside
-  each one for a TypeScript consumer.
+  `exports` point there).
+  - `tsconfig.lib.json` compiles the development harness and the
+    extension modules it imports, with a `.d.ts` beside each one for a
+    TypeScript consumer.
+  - The package ships `dist/` beside it, which `sm-dev` and the fixture
+    load into the browsers they launch.
 
 Why two builds of the same modules rather than one directory serving
 both:
