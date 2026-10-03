@@ -36,7 +36,6 @@ import { readJsonFile } from './input-file.js';
 // Node built-ins only, so as cheap to load as the rest here.
 import { runIdOf, type CommandSource, type RunClient, type RunRecord } from './runs.js';
 import { runLogLabel } from './run-log.js';
-import { staleBuildWarning } from './stale-build.js';
 import { withDefaultScheme } from './prepare.js';
 import { pagesToOpen, type PageWord, type SavedPageStart } from './saved-pages.js';
 import {
@@ -1461,11 +1460,6 @@ async function main(): Promise<void> {
     if (err.code !== 'EPIPE' && err.code !== 'ERR_STREAM_DESTROYED' && err.code !== 'EIO') throw err;
     onOutputClosed();
   });
-  // Not again from a detached run's own process, nor where tests turn it off.
-  if (!detachedLog && !process.env.SM_DEV_NO_STALE_WARNING) {
-    const stale = staleBuildWarning();
-    if (stale) process.stderr.write(`${stale}\n`);
-  }
   const argv = process.argv.slice(2);
   // Before anything else is checked, so a mistake doesn't stand in the
   // way of help.

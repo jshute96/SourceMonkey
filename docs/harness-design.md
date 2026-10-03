@@ -176,7 +176,9 @@ Node.
   the run lasts and released at its end.
 - Subscribes to the SW's event stream, and subscribes again when Chrome
   restarts an idle SW; the run says events in between may be missing.
-- Refuses an extension too old for the API it needs, naming the fix.
+- Compares its protocol version with the extension's, and refuses one
+  whose major differs, naming the fix
+  ([version skew](sm-dev-design.md#version-skew)).
 - The extension's side, and the claims, are in
   [sm-dev-design.md](sm-dev-design.md).
 

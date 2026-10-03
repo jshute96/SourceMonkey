@@ -296,22 +296,6 @@ Command marks:
 - A check that fails or takes over 3 seconds says nothing, and the
   socket is closed however it ends.
 
-### A stale build (`stale-build.ts`)
-
-- `scripts/build.mjs` writes `lib/build-info.json`: the checkout it
-  built from, and when the build started.
-- At startup, `cli.ts` warns on stderr when that checkout's `src/` has a
-  file modified since.
-  - Not in a detached run's own process.
-  - Not with `SM_DEV_NO_STALE_WARNING` set, as the test suites set it:
-    they compare sm-dev's output exactly.
-- The fix it names depends on where this sm-dev runs:
-  - In the checkout: `pnpm run build`.
-  - In an installed copy (a userscript repo): `pnpm install` there,
-    after `pnpm run build` in the checkout when its own `lib/` is
-    stale too. `pnpm install` copies `lib/` without building it.
-- No `build-info.json`, or no checkout at that path: no warning.
-
 ### Help and flags (`command-list.ts`)
 
 - The help is data: sections of commands, each with its arguments and
@@ -822,15 +806,40 @@ User-facing behavior is in [harness-guide.md](harness-guide.md).
 
 - The extension and sm-dev can come from different builds: sm-dev from
   a repo's install, the extension from the person's browser.
-- A run checks for the API calls it needs (`typeof
-  self.SourceMonkey.x`) as it starts.
-  - `namedTab` is the newest of them, and came with the claim calls'
-    present arguments, so an extension without it is refused as too old
-    (`EXTENSION_TOO_OLD`).
-  - The message says to update it, or to use `--temp-browser`, which
-    loads sm-dev's own copy.
-- It then calls `chrome.userScripts.getScripts()` in the worker, which
-  fails until "Allow User Scripts" is on.
+- Both sides carry a protocol version, `SM_DEV_PROTOCOL`
+  (`major.minor`, in `src/sm-dev-protocol.ts`), which the extension
+  shows as `self.SourceMonkey.smDevProtocol`. A run compares them as it
+  connects (`compareProtocol`).
+- **Major differs**: the two can't work together, so the run is
+  refused.
+  - Extension's major older, or it has no version (built before the
+    version existed): `SourceMonkey in this browser is older than this
+    sm-dev`, and how to update it.
+  - sm-dev's major older: `This sm-dev is older than SourceMonkey in
+    this browser`, and how to update sm-dev (see below).
+  - Either way it also offers `--temp-browser`, which loads sm-dev's
+    own copy of the extension.
+- **Minor differs**: compatible, so the run starts, with one line
+  saying which side is older and how to update it.
+  - Extension ahead: everything sm-dev uses is there. The note says
+    sm-dev lacks some newer features.
+  - sm-dev ahead: anything it uses that came in a later minor checks
+    first (`ExtensionLink.requireMinor`), and refuses with an error
+    naming the feature and saying to update the extension. The note
+    says some of sm-dev's newer features won't work.
+- **Same version**: nothing is said.
+- When to bump which is in `CLAUDE.md`.
+- How to update sm-dev (`rebuildAdvice` in `rebuild-advice.ts`), also
+  used when the built extension is missing:
+  - `scripts/build.mjs` writes `lib/build-info.json`, naming the
+    checkout it built from.
+  - In the checkout: `pnpm run build`.
+  - In an installed copy (a userscript repo): `pnpm run build` in the
+    checkout, then `pnpm install` there. `pnpm install` copies `lib/`
+    without building it.
+- After the version check, the run calls
+  `chrome.userScripts.getScripts()` in the worker, which fails until
+  "Allow User Scripts" is on.
   - CDP can't see that toggle, and without it the scripts would never
     run, with nothing said. So the run is refused, naming the toggle.
 

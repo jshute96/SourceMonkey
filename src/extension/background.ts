@@ -204,7 +204,7 @@ import {
   staleRuns,
   setTabScriptsOff,
 } from './sm-dev-link.js';
-import { SKIP_REASON_SM_DEV } from '../sm-dev-protocol.js';
+import { SKIP_REASON_SM_DEV, SM_DEV_PROTOCOL, type ProtocolVersion } from '../sm-dev-protocol.js';
 import {
   applyBatchValues,
   DELETED_SENTINEL,
@@ -277,6 +277,8 @@ import {
 
 interface SourceMonkeyApi {
   version: string;
+  // What sm-dev checks as a run connects (sm-dev-protocol.ts).
+  smDevProtocol: ProtocolVersion;
   // Round-trip echo used by the smoke test to confirm the SW is alive
   // and `self.SourceMonkey` is reachable from `serviceWorker.evaluate`.
   ping: (value?: string) => string;
@@ -555,6 +557,7 @@ async function syncNowForTests(): Promise<{ registered: { id: string }[]; kind: 
 
 const api: SourceMonkeyApi = {
   version: chrome.runtime.getManifest().version,
+  smDevProtocol: SM_DEV_PROTOCOL,
   ping: (value = 'pong') => value,
   matchesFor: async (url) => {
     await ensureLoaded();

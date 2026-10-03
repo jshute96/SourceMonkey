@@ -10,8 +10,7 @@
 #
 # Runs what lib/ has, and never builds it: a build swaps in a new lib/,
 # which would change the code under any sm-dev session already running.
-# Build with `pnpm run build`. It warns when src/ has changed since
-# (src/harness/stale-build.ts).
+# Build with `pnpm run build`.
 
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"

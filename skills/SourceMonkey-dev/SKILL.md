@@ -636,16 +636,16 @@ test('adds the button', async ({ page, loadUserscript, gm, reports }) => {
   [How a run uses the extension](#how-a-run-uses-the-extension)).
 - **The run refuses to start, or says `no extension` / `SourceMonkey
   disabled`**: see [Getting a browser](#getting-a-browser).
-- **A command is `Unknown`, or behaves unlike these docs**: sm-dev may
-  be older than the SourceMonkey source (it warns, and says what to
-  run). Ask the person before building, since it changes the code
-  under other running sessions.
+- **`start` says sm-dev or SourceMonkey is older than the other**:
+  ask the person whether to update it as the message says. Building
+  changes the code under other running sessions. If the run still
+  started, keep working meanwhile.
 - **The script seems stale**: check the reload lines after the save, or
   `update` (it skips files whose modification time hasn't changed; a
   `touch` forces it).
 - **After changing SourceMonkey itself**: `pnpm run build` there, then
   `pnpm install` in the userscript repo. The dependency is a copy of
-  the build, taken at install time, and sm-dev warns when it's behind.
+  the build, taken at install time.
 - **`start` hangs connecting**: a tab in that browser is showing a
   dialog. The run names it; answer it or close the tab.
 - **Commands refuse with a dialog open**: `accept` or `dismiss` first.

@@ -106,8 +106,6 @@ working on both), also add this to `package.json`:
   is taken at install time.
   - It copies SourceMonkey's `lib/` as it is, without building it, so
     build there first (`pnpm run build`).
-  - `sm-dev` warns when the SourceMonkey checkout has changes the copy
-    lacks, and says which of the two steps is needed.
 
 ### Running `sm-dev`
 
@@ -370,7 +368,10 @@ SourceMonkey installed works too, given that port.
 - In the run's tabs, SourceMonkey's toolbar icon has a cyan **T** in
   its corner, its badge counts the run's scripts, and both its tooltip
   and its right-click menu say "Page under sm-dev control".
-- An older SourceMonkey than sm-dev is refused, with how to update it.
+- When SourceMonkey and sm-dev come from incompatible builds, the run
+  is refused, saying which one to update and how. When one is older but
+  still compatible, the run starts with a note saying which, and how
+  to update it.
 - How it works: [sm-dev-design.md](sm-dev-design.md#tab-claims).
 
 ### Setting it up
