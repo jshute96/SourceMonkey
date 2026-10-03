@@ -826,7 +826,9 @@ async function runInBrowser(
     if (tabId === undefined) return 1;
     wirePageOutput(page, opts, true, (text) => host.remapStack(text));
     wireSandboxCheck(page, () => tabs.firstTabScripts, opts.out);
-    const dialogs = await DialogTracker.attach(page, opts.out, { visible: browserVisible(opts), commandsComing });
+    const dialogs = await DialogTracker.attach(page, opts.out, {
+      visible: browserVisible(opts), commandsComing, tabRef: () => (tabs.list().length > 1 ? 'T1' : undefined),
+    });
     // Attached before preparing, so a reused tab already on a secure
     // page gives the scripts' GM_info the browser's userAgentData.
     // Otherwise it stays null (see TODO.md).
@@ -1344,6 +1346,8 @@ class FollowedTabs {
     const dialogs = await DialogTracker.attach(page, out, {
       visible: browserVisible(this.opts),
       commandsComing: this.commandsComing,
+      // T2 on is named even while it is set up, before list() has it.
+      tabRef: () => (n > 1 || this.list().length > 1 ? `T${n}` : undefined),
     });
     await applyLang(page, this.opts.lang, out);
     // An opened tab may have loaded already, with its events from that

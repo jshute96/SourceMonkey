@@ -476,7 +476,7 @@ test.describe('sm-dev typed commands', () => {
     try {
       await attachment2.inject(script);
       const lines: string[] = [];
-      const dialogs2 = await DialogTracker.attach(page2, (l) => lines.push(l), { visible: false, commandsComing: true });
+      const dialogs2 = await DialogTracker.attach(page2, (l) => lines.push(l), { visible: false, commandsComing: true, tabRef: () => 'T2' });
       await page2.goto(`${fixtureServer.baseUrl}/other.html`);
       const tabs = [{ n: 1, page, link: attachment }, { n: 2, page: page2, link: attachment2, dialogs: dialogs2, openedBy: 1 }];
       const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(l), stop: () => undefined };
@@ -487,6 +487,8 @@ test.describe('sm-dev typed commands', () => {
       };
       void page2.evaluate(() => setTimeout(() => alert('Hi'), 0));
       await expect.poll(() => dialogs2.current !== null).toBe(true);
+      // With several tabs, the notice names the tab to answer it from.
+      expect(lines).toEqual(['[sm-dev] The page opened an alert dialog: "Hi". Use accept T2 or dismiss T2.']);
 
       // `set` reaches every tab, so T2's dialog would hold it up.
       expect(await run('set k 1')).toEqual(['[sm-dev] T2 is waiting on an alert dialog. Use accept T2 or dismiss T2 first.']);

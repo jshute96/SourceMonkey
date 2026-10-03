@@ -834,12 +834,6 @@ Adding any of these is a catalog entry + a body — nothing structural.
 
 See [docs/harness-design.md](docs/harness-design.md).
 
-- Scratch scripts are keyed by a sanitized name, so different names in
-  one run's test collection can share one `scratch:///` URL and replace
-  each other: `Foo Bar` and `Foo-Bar` both become `Foo-Bar.user.js`.
-  `sm-dev` pushes by the path it was given, so only paths that differ
-  in punctuation (`a b/x.user.js`, `a-b/x.user.js`) collide. At least
-  report the replacement when the header `@name` differs.
 - Removing a scratch script from the collections page while
   `writeRunScript` rewrites one of the same name can delete the
   fresh text: the write stores the text row before installing the row

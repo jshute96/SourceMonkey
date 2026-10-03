@@ -1049,8 +1049,11 @@ collection, which holds exactly the scripts the run pushed.
   bubble in place of `scripts`.
 - Its scripts' locations are `scratch:///<id>/<path>`, where `<path>`
   is the file's path as given to `start` or `load`, relative or
-  absolute (`scratch:///D2-a3f9/../sites/x.com/x.user.js`). Their text
-  is a storage row ([storage.md](storage.md#container-collections)).
+  absolute (`scratch:///D2-a3f9/../sites/x.com/x.user.js`).
+  - Each path segment is percent-encoded, as in a `file://` URL, so
+    names read back as written where they are shown decoded (the
+    viewer, stack lines).
+- Their text is a storage row ([storage.md](storage.md#container-collections)).
 - `status` shows the id on its `Backend:` line, to find the collection
   in the extension.
 

@@ -394,10 +394,10 @@ individually installed scripts. Two kinds of row, told apart by path:
   text in storage. Created by the run's first `writeRunScript` on the
   test surface, named `sm-dev test collection (run <run>)` (see
   [sm-dev-design.md](sm-dev-design.md#test-collections)).
-  - Each row's location is a `scratch:///<run>/<path>.user.js` URL
-    naming the storage row (`scratch:<url>`) that holds the text. The
-    file fetcher reads that row back, so every refresh path treats them
-    as ordinary scripts.
+  - Each row's location is a `scratch:///<run>/<path>.user.js` URL,
+    its path segments percent-encoded, naming the storage row
+    (`scratch:<url>`) that holds the text. The file fetcher reads that
+    row back, so every refresh path treats them as ordinary scripts.
   - A write of the same name replaces the text and re-reads the row in
     place.
   - `releaseRun`, or the worker's sweep after a crashed run, removes

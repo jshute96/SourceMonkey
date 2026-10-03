@@ -1174,6 +1174,8 @@ the stream, rather than being answered automatically.
 - Or use `accept` (a prompt's text after it) or `dismiss`, with a tab
   (`accept T2`) for a dialog on another tab. This works in a headless
   browser too.
+  - With several tabs, the report names the tab to give:
+    `Use accept T2 or dismiss T2`.
   - Prompt text that starts with a tab's name is taken as the tab
     unless quoted: `accept "T2"`.
 - In a headless run that can't take commands (it couldn't open its

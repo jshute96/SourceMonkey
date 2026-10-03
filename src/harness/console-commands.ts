@@ -1934,6 +1934,7 @@ export class DialogTracker {
     private readonly out: (line: string) => void,
     private readonly visible: boolean,
     commandsComing: boolean,
+    private readonly tabRef: () => string | undefined,
   ) {
     this.commandsListening = commandsComing;
   }
@@ -1941,13 +1942,15 @@ export class DialogTracker {
   /**
    * `visible`: whether the browser is on screen, for a person to
    * answer. `commandsComing`: whether typed commands will be read.
+   * `tabRef`: the tab's name for `accept` and `dismiss` to take, when
+   * the run has several tabs and a bare one could reach another.
    */
   static async attach(
     page: Page,
     out: (line: string) => void,
-    { visible, commandsComing = false }: { visible: boolean; commandsComing?: boolean },
+    { visible, commandsComing = false, tabRef = () => undefined }: { visible: boolean; commandsComing?: boolean; tabRef?: () => string | undefined },
   ): Promise<DialogTracker> {
-    const tracker = new DialogTracker(out, visible, commandsComing);
+    const tracker = new DialogTracker(out, visible, commandsComing, tabRef);
     page.on('dialog', (dialog) => tracker.opened(dialog));
     // Answered in the browser, a dialog closes without Playwright
     // saying so; the protocol's own event does.
@@ -2006,8 +2009,11 @@ export class DialogTracker {
     }
     this.current = dialog;
     this.currentOrdinal = ordinal;
-    const answer = dialog.type() === 'beforeunload' ? 'use accept to leave the page or dismiss to stay'
-      : `use ${dialog.type() === 'prompt' ? 'accept [text]' : 'accept'} or dismiss`;
+    const tab = this.tabRef();
+    const accept = tab ? `accept ${tab}` : 'accept';
+    const dismiss = tab ? `dismiss ${tab}` : 'dismiss';
+    const answer = dialog.type() === 'beforeunload' ? `use ${accept} to leave the page or ${dismiss} to stay`
+      : `use ${dialog.type() === 'prompt' ? `${accept} [text]` : accept} or ${dismiss}`;
     const how = !this.visible ? `${answer[0].toUpperCase()}${answer.slice(1)}`
       : this.commandsListening ? `Answer it in the browser, or ${answer}`
         : 'Answer it in the browser';

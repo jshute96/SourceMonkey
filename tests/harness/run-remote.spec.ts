@@ -446,9 +446,8 @@ test('a reused tab drops the last run\'s scripts; nodes print as tags; own refs 
     expect(second).toContain('[page debug] <main id="target">');
     expect(second).toContain('[page warning] [nodes] at <body> 2');
     expect(second).toContain('[sm-dev] Wait matched log line: [page log] KEYUP 143');
-    // Under the extension's name for it, which keeps a URL path's safe
-    // characters only.
-    expect(second.some((l) => l.includes('at boom (sourcemonkey://SourceMonkey/my-20nodes/my-20nodes.user.js:')), second.join('\n')).toBe(true);
+    // Named as the file is, decoded once (own refs decode).
+    expect(second.some((l) => l.includes('at boom (sourcemonkey://SourceMonkey/my%20nodes/my%20nodes.user.js:')), second.join('\n')).toBe(true);
   } finally {
     await setup.cli('stop', '--all');
     await setup.cleanup();
