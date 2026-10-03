@@ -17,8 +17,10 @@ test('adds the button', async ({ page, loadUserscript, gm, reports }) => {
 ```
 
 - Run it with `pnpm exec playwright test sites/x/y.spec.mjs`, using the
-  repo's own `playwright.config`. The fixture needs a browser Playwright
-  can launch, or the repo's fixture file connecting to one.
+  repo's own `playwright.config`. The script runs in the real
+  SourceMonkey: by default a hidden browser per worker with the
+  package's build loaded. A repo's fixture file may connect to its own
+  browser instead, which needs SourceMonkey loaded.
 - Call `loadUserscript` before the `page.goto` that should see it.
 - What you did by hand maps over: `menu` → `gm.fireMenu(label)`,
   `values` / `get` / `set` → `gm.list()` / `gm.get()` / `gm.set()`,
@@ -26,8 +28,8 @@ test('adds the button', async ({ page, loadUserscript, gm, reports }) => {
   `loadUserscript(path, { url })` (throws on a miss).
 - Specs are ES modules (`.mjs`, or `"type": "module"`).
 - A `GM_xmlhttpRequest` really goes out unless the spec answers it:
-  `gm.interceptRequests(fn)`, or `gm.failHosts('api.x.com')` for a
-  503 to exercise a fallback. Say at the top of a spec that depends on
+  `await gm.interceptRequests(fn)`, or `await gm.failHosts('api.x.com')`
+  for a 503 to exercise a fallback. Say at the top of a spec that depends on
   a live service.
 - `page.route` can serve made-up URLs (`https://x.test/big.png`) for
   tests with no site behind them. `loadUserscript(path, { url })` alone

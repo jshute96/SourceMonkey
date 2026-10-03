@@ -463,7 +463,7 @@ pnpm test              # unit + e2e + harness
 pnpm run test:unit     # node --test, fast
 pnpm run test:e2e      # Playwright with the extension loaded
 pnpm run test:headed   # e2e with a visible browser
-pnpm run test:harness  # the development harness, on a plain Chromium
+pnpm run test:harness  # sm-dev and the harness fixture's own specs
 ```
 
 To narrow a run to one file:

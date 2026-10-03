@@ -1612,16 +1612,37 @@ test('adds the button to the toolbar', async ({ page, loadUserscript, gm, report
 });
 ```
 
+### How it runs the scripts
+
+- In the real SourceMonkey, as `sm-dev`'s runs do. Each test's scripts
+  go into a test collection of its own, removed when the test ends.
+- The test's `page` is claimed for the test, so only its scripts run
+  there, and SourceMonkey-managed ones stay out.
+- The browser: by default each Playwright worker process launches one
+  hidden Chromium with the package's built extension (its `dist/`),
+  and its tests share it.
+  - Starting it takes a few seconds, once per worker.
+  - `--headed` shows it.
+- A worker's tests share the browser's own context: cookies and
+  storage carry over between them, and Playwright's context options
+  (`baseURL`, `viewport`, `locale`) don't apply. Each test's tabs are
+  closed at its end.
+- A repo that drives its own browser (a logged-in one, over CDP)
+  overrides `browser`, `context` and `page` in its fixture file, and
+  re-exports the harness `test` extended with them. That browser needs
+  SourceMonkey loaded with "Allow User Scripts" on (see
+  [Setting it up](#setting-it-up)).
+
 ### What the fixture provides
 
 | Name | Purpose |
 | --- | --- |
-| `loadUserscript(path, options?)` | Prepares the file with the real pipeline and attaches it to `page`, before the navigation that should see it |
+| `loadUserscript(path, options?)` | Checks the file with the real pipeline and pushes it into SourceMonkey, before the navigation that should see it |
 | `gm` | The scripts' storage, menu commands, and recorded `GM_*` side effects |
 | `reports` | `started()`, `skipped()` (with the rule that missed), `errors()` (message and stack, its lines mapped to the `@require` or script file as in the run's output) |
 | `serveHtml(file, url?, { block? })` | Routes a saved HTML file at its URL, so `@match` and relative URLs behave as on the live site |
 | `saveHtml(file)` | Writes the page's current DOM to `file`, for `serveHtml` to replay later |
-| `host`, `attachment` | The underlying objects, for anything the others don't cover |
+| `host`, `attachment` | The underlying objects, for anything the others don't cover: the reports' host, and the page's watcher |
 
 `loadUserscript`:
 
@@ -1634,7 +1655,8 @@ test('adds the button to the toolbar', async ({ page, loadUserscript, gm, report
   - `copy` loads the same file again as a second installed copy, with
     its own id and storage.
   - `collectionRoot` and `localRoots` set the `@require` lookups
-    (default: the config's root).
+    (default: the config's root). Files read from disk are pushed with
+    the script.
 
 `gm`:
 
@@ -1646,7 +1668,17 @@ test('adds the button to the toolbar', async ({ page, loadUserscript, gm, report
   `closeNotification(requestId)`.
 - Network control: `failHosts(...hosts)` gives a synthetic 503 for
   those hosts, to force a fallback path. `interceptRequests(fn)`
-  answers any request from the test.
+  answers any request from the test. Await either before the request
+  can go.
+  - A `load` answer's status, headers, `responseText` and `finalUrl`
+    are what the script sees; `finalUrl` by a redirect to it.
+  - An `error`, `timeout` or `abort` answer reaches the script as a
+    network failure, with the extension's own message.
+  - The interceptor gets a script id only when one script is loaded.
+  - In a browser of your own, other tabs' scripts' requests are
+    intercepted too while it is set.
+- `downloads()` lists the ones the extension handles: http(s) URLs.
+  A `data:` or `blob:` download happens in the page, and isn't listed.
 - Values and commands are per script. When several are loaded, name one
   by the path it was loaded from, its basename, or its `@name`.
 
@@ -1668,9 +1700,6 @@ test('adds the button to the toolbar', async ({ page, loadUserscript, gm, report
 
 Other notes:
 
-- The fixture leaves `browser` and `context` to you. A repo that
-  attaches to a manually launched browser keeps that logic in its own
-  fixture file, and re-exports the harness `test` extended with it.
 - `sourcemonkey/harness` loads Playwright when imported. A Node-only
   tool that wants just `prepareScript` can import
   `sourcemonkey/harness/prepare` instead.
@@ -1704,9 +1733,9 @@ that, since the answer is a function.
 
 ## The extension backend
 
-Everything above runs your script behind a stand-in for the extension.
-`--extension` runs it in the real SourceMonkey instead, for what only
-Chrome can answer:
+`sm-dev` runs your script behind a stand-in for the extension by
+default. `--extension` runs it in the real SourceMonkey instead, as the
+spec fixture always does, for what only Chrome can answer:
 
 - Content security policy, Chrome's own match gating, and cross-tab
   broadcast between real tabs.

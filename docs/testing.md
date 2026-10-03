@@ -12,13 +12,12 @@ real-browser end-to-end suite for everything that touches the
 - `tests/e2e/*.spec.ts` — Playwright specs. Launch headless Chromium
   with the unpacked extension loaded.
 - `tests/fixtures/` — shared harness code.
-- `tests/harness/*.spec.ts` — the development harness (`src/harness/`,
-  see [harness-design.md](harness-design.md)) on a plain Chromium with
-  no extension, under the `harness` Playwright project
-  (`pnpm run test:harness`), which also runs the examples suite through
-  it. Fixtures in `tests/fixtures/harness.ts`. The `--devtools` test in
-  `run-remote.spec.ts` needs the `chrome-devtools` command, and is
-  skipped without it.
+- `tests/harness/*.spec.ts` — sm-dev and the fixture consumers import
+  (`src/harness/`, see [harness-design.md](harness-design.md)), under
+  the `harness` Playwright project (`pnpm run test:harness`).
+  - Fixtures in `tests/fixtures/harness.ts`.
+  - The `--devtools` test in `run-remote.spec.ts` needs the
+    `chrome-devtools` command, and is skipped without it.
 - `tests/greasyfork-examples/` — not a test suite: tooling that builds a
   corpus of the top 2000 real-world GreasyFork scripts, analyses it, and
   records per-script validation and test results in `corpus.json` (see

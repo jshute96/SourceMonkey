@@ -18,8 +18,9 @@ description: Develop, debug and test userscripts with SourceMonkey's sm-dev tool
   are on disk, and streams what they log. You send the run commands to
   drive and read the page.
 - **The Playwright fixture** (`import { test, expect } from
-  'sourcemonkey/harness'`) runs the same injection in specs.
-- Both use the **push backend** by default: SourceMonkey's injected
+  'sourcemonkey/harness'`) runs scripts in specs, in the real
+  SourceMonkey extension.
+- `sm-dev` uses the **push backend** by default: SourceMonkey's injected
   code, with a Node stand-in for the extension.
   - Header rules, `@grant`, `@require`, `@run-at`, worlds and `GM_*`
     storage behave as in the extension.

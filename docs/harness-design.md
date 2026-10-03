@@ -294,8 +294,20 @@ page:
 
 ### `fixture.ts`: the Playwright fixture
 
-- The `@playwright/test` extension consumers import.
-- Wraps the three above into `loadUserscript`, `gm`, `reports`, and
+- The `@playwright/test` extension consumers import. Runs the scripts
+  in the real extension, as an `sm-dev --extension` run does:
+  - a browser per worker from `extension-launch.ts`, unless the repo
+    overrides `browser` / `context` / `page`;
+  - per test, an `ExtensionLink` claiming the page and an
+    `ExtensionHost` filled from the extension's events;
+  - `loadUserscript` prepares the file (validation, `url` check,
+    pushed files) and pushes it into the test's collection.
+- Request fakes (`interceptRequests`, `failHosts`) pause the worker's
+  own requests with CDP's Fetch domain in its target, attached over a
+  browser-level session. Playwright's `context.route` sees the worker's
+  requests too, but not the hop after a redirect, which a response with
+  another `finalUrl` needs.
+- Wraps these into `loadUserscript`, `gm`, `reports`, and
   `serveHtml` / `saveHtml`.
   - `serveHtml` routes a saved HTML file at its original URL so
     `@match` and relative URLs still hold (see
@@ -350,25 +362,13 @@ for the rows):
   [sm-dev-extension.md](sm-dev-extension.md).
 - Its test collection goes when the run ends.
 
-## Compliance check for the host
+## Tests
 
-- A `harness` project in `playwright.config.ts` runs `tests/harness/`
-  (the harness's own specs) and `tests/examples/` on a plain Chromium,
-  beside the `sourcemonkey`, `tampermonkey`, and `violentmonkey`
-  projects.
-- The manager fixture's `harness` backend (`tests/fixtures/manager.ts`)
-  prepares every script under the example directory, and injects them
-  into each page the spec opens.
-- Each example directory exercises one API through the public surface.
-  So the stand-in SW is measured against the real one by the same
-  specs, and a divergence fails a test instead of surprising a script
-  author.
-- Exceptions:
-  - Skipped: the wire-header report, which measures a browser's request
-    and says nothing about a request sent from Node.
-  - Run: the examples that check SourceMonkey-specific values
-    (`GM_info` fields, the `@connect` refusal message), since the
-    harness produces them with the extension's own code.
+- The `harness` project in `playwright.config.ts` runs `tests/harness/`,
+  sm-dev's and the fixture's own specs.
+- The examples suite (`tests/examples/`) runs under the real managers
+  only; the fixture runs scripts in the real extension, which the
+  `sourcemonkey` project already covers.
 
 ## Platform behavior the design relies on
 

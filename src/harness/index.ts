@@ -35,5 +35,6 @@ export {
   type OpenedTab,
   type RequestInterceptor,
 } from './host.js';
+export { ExtensionHost } from './extension-host.js';
 export { attachPage, PageAttachment, readUserAgentData, type InjectOptions } from './inject.js';
 export { test, expect, type GmApi, type ReportsApi, type LoadOptions, type HarnessFixtures } from './fixture.js';

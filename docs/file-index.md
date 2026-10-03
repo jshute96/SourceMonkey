@@ -184,7 +184,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/parse-check-node.ts` | Node counterpart of the sandboxed parse check: `new Function` verdict plus `vm.Script` location probes |
 | `src/harness/host.ts` | The stand-in service worker: answers every bridge message the injected code sends, under Node, and records what scripts do |
 | `src/harness/inject.ts` | Attaches prepared scripts to a Playwright page over CDP, in the right world, with a message channel per world to the host |
-| `src/harness/fixture.ts` | The Playwright fixture a consumer repo imports: `loadUserscript`, `gm`, `reports`, `serveHtml`, `saveHtml` per test |
+| `src/harness/fixture.ts` | The Playwright fixture a consumer repo imports: scripts pushed into the real extension, `gm`, `reports`, request fakes |
 | `src/harness/save-html.ts` | Saving a page's DOM with a header of its URL and running userscripts, and reading that header |
 | `src/harness/saved-pages.ts` | Serving a saved page at its URL for `--from-saved` and `serveHtml`, with its `_files` folder |
 | `src/harness/checks.ts` | `match` and `validate`'s shared half: finding the scripts named, and the lines each prints |
@@ -223,7 +223,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/fixtures/extension.ts` | Playwright fixture: launches Chromium with the extension, exposes SW handle, HTTP fixture server, and the `sm` SW-api proxy; `testWithBrowserDownloads` variant leaves downloads to Chrome |
 | `tests/fixtures/harness.ts` | Fixtures for the `harness` project: plain Chromium, fixture server, a host and page attachment per test, `loadScript` |
 | `tests/fixtures/debug-browser.ts` | A headless Chromium with a CDP debugging port and a temp profile, stopped with its helper processes |
-| `tests/fixtures/manager.ts` | Manager-agnostic Playwright fixture for the examples suite — picks SM (unpacked build), TM/VM (persistent CWS profile), or the harness per project metadata |
+| `tests/fixtures/manager.ts` | Manager-agnostic Playwright fixture for the examples suite: SM (unpacked build) or TM/VM (persistent CWS profile) per project metadata |
 | `tests/fixtures/managers.mjs` | Per-manager table (profile dir, CDP port, Web Store ID, env vars) shared by the fixture, preflight, and CLIs |
 | `tests/fixtures/userscript-files.mjs` | Finds `*.user.js` files on disk and reads their `@name`/`@version`, shared by both manager drivers and the sync CLI |
 | `tests/fixtures/sourcemonkey-launch.ts` | Launch (through sm-dev's launcher), SW-handle and HTTP-fixture-server helpers shared by `extension.ts` and `manager.ts` |

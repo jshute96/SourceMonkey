@@ -141,4 +141,84 @@ test.describe('consumer fixture', () => {
     // Never outside the folder: this one isn't served, so it's blocked.
     await expect(status('./My Page _ Site_files/..%2F..%2Fgreet.user.js')).rejects.toThrow(/Failed to fetch/);
   });
+
+  test('requests are recorded, and a test can answer them: failHosts, and a canned response that ends elsewhere', async ({ page, repo, loadUserscript, gm, serveHtml }) => {
+    await writeFile(path.join(repo, 'fetcher.user.js'), `// ==UserScript==
+// @name         Fetcher
+// @match        https://example.test/fetch
+// @grant        GM_xmlhttpRequest
+// @connect      example.test
+// @connect      down.test
+// ==/UserScript==
+const get = (url) => new Promise((resolve) => GM_xmlhttpRequest({
+  url, onload: (r) => resolve(r.status + ' ' + r.finalUrl + ' ' + r.responseText), onerror: () => resolve('error'),
+}));
+window.addEventListener('message', async (ev) => {
+  if (typeof ev.data !== 'string' || !ev.data.startsWith('get ')) return;
+  document.getElementById('target').textContent = await get(ev.data.slice(4));
+});
+document.getElementById('target').textContent = 'ready';
+`);
+    await serveHtml(path.join(repo, 'snapshot.html'), 'https://example.test/fetch', { block: true });
+    await loadUserscript(path.join(repo, 'fetcher.user.js'), { collectionRoot: repo });
+    await gm.failHosts('down.test');
+    await page.goto('https://example.test/fetch');
+    await expect(page.locator('#target')).toHaveText('ready');
+    const get = async (url: string): Promise<void> => {
+      await page.evaluate((u) => window.postMessage('get ' + u, '*'), url);
+    };
+    await get('https://down.test/x');
+    await expect(page.locator('#target')).toHaveText('503 https://down.test/x ');
+
+    await gm.interceptRequests((request) => (request.url.endsWith('/api') ? {
+      kind: 'load',
+      response: {
+        status: 200, statusText: 'OK', responseURL: 'https://example.test/signin', responseText: 'canned',
+        response: 'canned', responseHeaders: 'content-type: text/plain', finalUrl: 'https://example.test/signin',
+      },
+    } : request.url.endsWith('/broken') ? { kind: 'error', message: 'broken' } : null));
+    await get('https://example.test/api');
+    await expect(page.locator('#target')).toHaveText('200 https://example.test/signin canned');
+    await get('https://example.test/broken');
+    await expect(page.locator('#target')).toHaveText('error');
+    await expect.poll(() => gm.requests().map((r) => [r.url, r.outcome, r.status])).toEqual([
+      ['https://down.test/x', 'load', 503],
+      ['https://example.test/api', 'load', 200],
+      ['https://example.test/broken', 'error', undefined],
+    ]);
+  });
+
+  test('opened tabs, notifications, downloads and a second copy are reported', async ({ page, repo, loadUserscript, gm, serveHtml }) => {
+    await writeFile(path.join(repo, 'apis.user.js'), `// ==UserScript==
+// @name         Apis
+// @match        https://example.test/apis
+// @grant        GM_openInTab
+// @grant        GM_notification
+// @grant        GM_download
+// @grant        GM_setValue
+// ==/UserScript==
+GM_setValue('copy', document.title);
+window.addEventListener('message', (ev) => {
+  if (ev.data === 'open') GM_openInTab('https://example.test/opened');
+  if (ev.data === 'notify') GM_notification({ text: 'hi there', title: 'Note', onclick: () => { document.getElementById('target').textContent = 'clicked'; } });
+  if (ev.data === 'download') GM_download({ url: 'https://unreachable.invalid/hello.txt', name: 'hello.txt', onerror: (e) => { document.getElementById('target').textContent = 'download ' + e.error; } });
+});
+`);
+    await serveHtml(path.join(repo, 'snapshot.html'), 'https://example.test/apis', { block: true });
+    await loadUserscript(path.join(repo, 'apis.user.js'), { collectionRoot: repo });
+    await loadUserscript(path.join(repo, 'apis.user.js'), { collectionRoot: repo, copy: 'two', values: { copy: 'seeded' } });
+    await page.goto('https://example.test/apis');
+    await expect.poll(() => gm.list('apis.user.js')).toEqual({ copy: '' });
+    const post = (m: string) => page.evaluate((x) => window.postMessage(x, '*'), m);
+    await post('notify');
+    await expect.poll(() => gm.notifications().map((n) => n.text)).toEqual(['hi there', 'hi there']);
+    expect(await gm.clickNotification(gm.notifications()[0].requestId)).toBe(true);
+    await expect(page.locator('#target')).toHaveText('clicked');
+    // One that fails is reported as it ended.
+    await post('download');
+    await expect(page.locator('#target')).toHaveText(/^download /);
+    await expect.poll(() => gm.downloads().map((d) => d.outcome)).toEqual(['error', 'error']);
+    await post('open');
+    await expect.poll(() => gm.openedTabs().map((t) => t.url)).toEqual(['https://example.test/opened', 'https://example.test/opened']);
+  });
 });
