@@ -359,7 +359,7 @@ test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
   // Only line-wide flags: stdin is read for commands, and has none.
   assert.deepEqual(cli('--root', '.'), { code: 2, out: `ERROR: ${NO_COMMANDS}` });
   // A run's command with a flag it doesn't take, refused before any run is looked for.
-  assert.deepEqual(cli('status', '--bad'), { code: 2, out: 'ERROR: The status command has no --bad flag. It takes no flags.' });
+  assert.deepEqual(cli('status', '--bad'), { code: 2, out: 'ERROR: The status command has no --bad flag. It takes --json, --nojson.' });
   for (const name of ['open', 'reload', 'newtab']) assert.match(cli(name, '--bogus').out, new RegExp(`^ERROR: The ${name} command has no --bogus flag\\. It takes --noscript, --script, `));
   // The flags it does take, for a near miss.
   assert.deepEqual(cli('wait', '--timeout', '9'), { code: 2, out: 'ERROR: The wait command has no --timeout flag. It takes --timeout-seconds.' });
@@ -447,7 +447,7 @@ function help(...args) {
 test('help for one command shows its entry and only its flags', () => {
   const match = help('help', 'match');
   assert.equal(match.code, 0);
-  assert.match(match.out, /^Usage: sm-dev match \[script\]\.\.\. \[url\]\.\.\.$/m);
+  assert.match(match.out, /^Usage: sm-dev match \[script\]\.\.\. \[url\]\.\.\. \[options\]$/m);
   assert.match(match.out, /^Arguments:\n {2}all-scripts +In a run/m);
   // Its section's note comes along.
   assert.match(match.out, /^Without a run, these check script files and URLs\./m);
@@ -470,8 +470,8 @@ test('help for one command shows its entry and only its flags', () => {
 test('--help anywhere on a line shows each command\'s help once, and runs nothing', () => {
   const r = help('list', '--', 'status', '--bad', '--', 'eval', 'x', '--help', '--', 'status');
   assert.equal(r.code, 0);
-  assert.match(r.out, /^Usage: sm-dev list$/m);
-  assert.equal(r.out.match(/^Usage: sm-dev status$/gm).length, 1);
+  assert.match(r.out, /^Usage: sm-dev list \[options\]$/m);
+  assert.equal(r.out.match(/^Usage: sm-dev status \[options\]$/gm).length, 1);
   // Once each, in the full help's order.
   const all = help('stop', '--', 'eval', '1', '--', 'list', '--', 'status', '--', 'newtab', '--', 'status', '--help').out;
   assert.ok(all.indexOf('Usage: sm-dev list') < all.indexOf('Usage: sm-dev stop'));
@@ -486,12 +486,13 @@ test('each run command takes the flags its help lists, and no others', async () 
   const { commandFlags } = await import('../../../lib/harness/command-list.js');
   const loads = ['--noscript', '--script', '--nowait'];
   const saved = [...loads, '--from-saved', '--url', '--offline'];
+  const json = ['--json', '--nojson'];
   const expected = {
     newtab: saved, open: saved, reload: loads,
     closetab: ['--force'], cdp: ['--file'],
     click: ['--at', '--button', '--count', '--modifiers', '--nowait'], hover: ['--at', '--modifiers', '--nowait'], type: ['--nowait', '--file'], key: ['--nowait'],
-    eval: ['--script', '--file'], snapshot: ['--visible', '--out', '--find', '--up', '--context', '--limit'], screenshot: ['--full'], probe: ['--css', '--html'],
-    wait: ['--timeout-seconds'], status: [], values: [], set: ['--file', '--force'], menu: [], tabs: [], focus: [],
+    eval: ['--script', '--file'], snapshot: ['--visible', '--out', '--find', '--up', '--context', '--limit'], screenshot: ['--full'], probe: ['--css', '--html', ...json],
+    wait: ['--timeout-seconds'], status: json, values: json, set: ['--file', '--force'], menu: json, tabs: json, focus: [],
   };
   for (const [name, flags] of Object.entries(expected)) assert.deepEqual(commandFlags(name).sort(), [...flags].sort(), name);
 });
@@ -499,9 +500,9 @@ test('each run command takes the flags its help lists, and no others', async () 
 test('help covers a run\'s commands and aliases, and refuses unknown names', () => {
   const typed = help('help', 'status', 'script', 'get');
   assert.equal(typed.code, 0);
-  assert.match(typed.out, /^Usage: sm-dev status$/m);
+  assert.match(typed.out, /^Usage: sm-dev status \[options\]$/m);
   assert.match(typed.out, /^Usage: sm-dev script <script>$/m);
-  assert.match(typed.out, /^Usage: sm-dev get <key>$/m);
+  assert.match(typed.out, /^Usage: sm-dev get <key> \[options\]$/m);
   assert.doesNotMatch(typed.out, /menu \[what\]/);
   // Every form of a command of several.
   assert.equal(help('help', 'wait').out.match(/^ {2}wait /gm).length, 5);
@@ -539,4 +540,22 @@ test('the browser options are global, and only one browser is chosen', () => {
   // A setting from $SM_DEV_BROWSER (once the binary's variable) is named as such.
   const fromEnv = spawnSync(process.execPath, [CLI, '--open-browser'], { encoding: 'utf8', env: { ...process.env, SM_DEV_BROWSER: '/usr/bin/google-chrome' } });
   assert.equal(fromEnv.stderr.trim() || fromEnv.stdout.trim(), 'ERROR: The --open-browser flag starts a browser on this machine, so $SM_DEV_BROWSER must be a local port, not /usr/bin/google-chrome');
+});
+
+test('--json lays results out on one line when piped, or as --json=single or =multi says', () => {
+  const validate = (...flags) => spawnSync(process.execPath, [CLI, ...flags, 'validate', SCRIPT], { encoding: 'utf8' });
+  const piped = validate('--json');
+  assert.equal(piped.stdout.trim().split('\n').length, 1);
+  const result = JSON.parse(piped.stdout);
+  assert.deepEqual(validate('--json=single').stdout, piped.stdout);
+  assert.equal(validate('--json=multi').stdout, `${JSON.stringify(result, null, 2)}\n`);
+  assert.deepEqual(cliLine('--json=wide', 'list'), { code: 2, out: 'ERROR: The --json flag takes single or multi, e.g. --json=multi' });
+  // A command's own --json= wins over the line's, and takes its layout
+  // when it gives none.
+  const own = (...words) => spawnSync(process.execPath, [CLI, ...words], { encoding: 'utf8' }).stdout;
+  assert.equal(own('validate', SCRIPT, '--json=multi'), validate('--json=multi').stdout);
+  assert.equal(own('--json=multi', 'validate', SCRIPT, '--json=single'), piped.stdout);
+  assert.equal(own('--json=multi', 'validate', SCRIPT, '--json'), validate('--json=multi').stdout);
+  // A mistake is text, as without --json.
+  assert.deepEqual(cliLine('validate', SCRIPT, '--json=x'), { code: 2, out: 'ERROR: The --json flag takes single or multi, e.g. --json=multi' });
 });

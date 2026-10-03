@@ -920,6 +920,40 @@ The options:
 - The browser options, `--browser`, `--open-browser`, `--profile`,
   `--temp-browser` and `--headed` (see
   [A browser to work in](#a-browser-to-work-in)).
+- `--json` prints results as JSON (see [JSON output](#json-output)).
+
+### JSON output
+
+For a program reading sm-dev's answers rather than a person.
+
+- `--json`, first on the line, makes the commands that have a JSON form
+  print it: `list`, `status`, `scripts`, `tabs`, `values`, `get`,
+  `match`, `validate`, `menu`, `logs` and `probe`.
+  - The listing forms only: `tabs`, `scripts` and `menu T2`, not
+    `tab T2`, `script 2` or a menu command fired.
+  - The rest print text as usual.
+- `--json` or `--nojson` after one command turns it on or off for that
+  command alone (`sm-dev scripts --json`).
+- Each result is one JSON object: multi-line at a terminal, on one line
+  when piped. It starts with `"command"`, then that command's fields.
+  - `--json=single` or `--json=multi` picks one line or multi-line,
+    wherever the output goes. On one command it wins over the global
+    option's; a plain `--json` there keeps the global one's.
+- A failed command prints its usual text on stderr, in place of a
+  result, with the usual exit code.
+- Other log messages (`[sm-dev] ...` lines, `arg > ...` echoes) go to
+  stderr.
+  - So stdout holds only JSON when sm-dev isn't following a run's
+    stream: a run started with `--detach`, or one named with `--run`.
+  - A line that starts a run and sends it commands also shows the
+    page's console lines on stdout.
+
+```sh
+sm-dev --json status | jq '.scripts[] | {name, values}'
+```
+
+The shapes of every command's result, with examples:
+[sm-dev-json.md](sm-dev-json.md).
 
 ### Paths
 

@@ -43,6 +43,9 @@ interface Setup {
   piped: (input: string, ...args: string[]) => Promise<string[]>;
   /** `cli`, with its exit code. */
   cliExit: (...args: string[]) => Promise<{ code: number | null; lines: string[] }>;
+  /** `cli`, with stdout and stderr apart, and `input` piped to its stdin if given. */
+  cliStreams: (...args: string[]) => Promise<{ code: number | null; stdout: string[]; stderr: string[] }>;
+  pipedStreams: (input: string, ...args: string[]) => Promise<{ code: number | null; stdout: string[]; stderr: string[] }>;
   /**
    * `sm-dev start` in the background, its stdin closed, showing what the
    * run prints until it is stopped (`--seconds`, long). `cdp`: the
@@ -84,6 +87,13 @@ async function setUp(): Promise<Setup> {
       resolve({ code: child.exitCode, lines: (stdout + stderr).split('\n').filter(Boolean) });
     });
   });
+  const pipedStreams = (input: string | undefined, ...args: string[]): Promise<{ code: number | null; stdout: string[]; stderr: string[] }> => new Promise((resolve) => {
+    const child = execFile(process.execPath, [CLI, ...args], { env, timeout: 30_000 }, (_err, stdout, stderr) => {
+      resolve({ code: child.exitCode, stdout: stdout.split('\n').filter(Boolean), stderr: stderr.split('\n').filter(Boolean) });
+    });
+    if (input !== undefined) child.stdin?.end(input);
+  });
+  const cliStreams = (...args: string[]) => pipedStreams(undefined, ...args);
   const piped = (input: string, ...args: string[]): Promise<string[]> => new Promise((resolve) => {
     const child = execFile(process.execPath, [CLI, ...args], { env, timeout: 30_000 }, (_err, stdout, stderr) => {
       resolve((stdout + stderr).split('\n').filter(Boolean));
@@ -97,6 +107,8 @@ async function setUp(): Promise<Setup> {
     cliIn,
     piped,
     cliExit,
+    cliStreams,
+    pipedStreams: (input, ...args) => pipedStreams(input, ...args),
     startRun: (args, cdp = String(port)) => {
       const at = args.indexOf('--root');
       const root = at >= 0 ? args.splice(at, 2) : [];
@@ -570,6 +582,71 @@ test('several stuck tabs, a dialog and a busy page, are all named, over a ws:// 
     await run.waitFor(/^Every tab is responding now\. Connecting\.$/);
     await run.waitFor(/^\[sm-dev\] Wait started on /);
   } finally {
+    await setup.cleanup();
+  }
+});
+
+test('--json prints each result as one line of JSON on stdout, and other log messages on stderr', async ({ fixtureServer, scriptsDir }) => {
+  test.setTimeout(60_000);
+  const setup = await setUp();
+  try {
+    const file = scriptsDir.write({
+      relativePath: 'json.user.js',
+      meta: { name: 'Json', match: ['*://*/target.html'], grant: ['GM_setValue', 'GM_registerMenuCommand'] },
+      body: `GM_setValue('units', 'metric'); GM_registerMenuCommand('Say hi', () => {}); console.log('[json] ran');`,
+    });
+    const url = `${fixtureServer.baseUrl}/target.html`;
+    const started = await setup.cli('--root', scriptsDir.path, 'start', '--browser', String(setup.port), file, url, '--detach');
+    expect(started.at(-2)).toMatch(/now running detached/);
+
+    const { code, stdout, stderr } = await setup.cliStreams(
+      '--json', 'status', '--', 'tabs', '--', 'scripts', '--', 'values', '--', 'get', 'units', '--', 'menu',
+      '--', 'match', '--', 'probe', 'body', 'h1', '--', 'logs', '--', 'tabs', '--nojson',
+    );
+    expect(code).toBe(0);
+    // The last command's --nojson: text, after a JSON line per command.
+    const textAt = stdout.indexOf('Tabs:');
+    expect(textAt).toBeGreaterThan(0);
+    expect(stdout[textAt + 1]).toContain(`* T1: ${url}`);
+    const results = stdout.slice(0, textAt).map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(results.map((r) => r.command)).toEqual(['status', 'tabs', 'scripts', 'values', 'get', 'menu', 'match', 'probe', 'logs']);
+    expect(stderr).toContain('arg > status');
+    const [status, tabs, scripts, values, get, menu, match, probe, logs] = results;
+    expect(status).toMatchObject({
+      run: { id: 'D1', browser: { owned: false }, sourceMonkey: 'installed' },
+      tab: 'T1',
+      scripts: [{ id: '1', kind: 'run', name: 'Json', status: 'ok', values: 1, menuCommands: 1, errors: 0, tabs: [{ tab: 'T1', state: 'running' }] }],
+    });
+    expect(tabs).toEqual({ command: 'tabs', tabs: [expect.objectContaining({ id: 'T1', url, selected: true, scripts: ['1'] })] });
+    expect(scripts).toMatchObject({ tab: 'T1', scripts: [{ id: '1', selected: true }] });
+    expect(values).toEqual({ command: 'values', scripts: [{ script: '1', name: 'Json', values: { units: 'metric' } }] });
+    // A tab named: the scripts running there, and which tab that was.
+    expect(JSON.parse((await setup.cliStreams('values', 'T1', '--json')).stdout[0])).toEqual({ command: 'values', tab: 'T1', scripts: [{ script: '1', name: 'Json', values: { units: 'metric' } }] });
+    expect(get).toEqual({ command: 'get', script: '1', key: 'units', found: true, value: 'metric' });
+    expect(menu).toEqual({ command: 'menu', tabs: [{ tab: 'T1', url, commands: [{ id: 'M1', script: '1', name: 'Say hi' }] }] });
+    // An empty detail list is left out.
+    expect(match).toEqual({ command: 'match', results: [{ script: '1', name: 'Json', valid: true, pages: [{ url, matches: true, matchedBy: ['@match *://*/target.html'] }] }] });
+    expect(probe).toEqual({ command: 'probe', tab: 'T1', url, selectors: [{ selector: 'body', count: 1 }, { selector: 'h1', count: 0 }] });
+    expect(logs).toMatchObject({ tab: 'T1', pages: [{ url, lines: expect.arrayContaining(['[log] [json] ran']) }] });
+
+    // Commands from stdin are echoed to stderr, a block's lines too.
+    const piped = await setup.pipedStreams('tabs\nset note {{\n"x"\n}}\nget units --json=multi\n', '--json', '--stdin');
+    expect(piped.stderr).toEqual(expect.arrayContaining(['stdin > tabs', 'stdin > set note {{', '... "x"', '... }}']));
+    expect(piped.stdout[0]).toMatch(/^\{"command":"tabs",/);
+    // Its own layout wins over the pipe's one line.
+    expect(piped.stdout.slice(-7)).toEqual(['{', '  "command": "get",', '  "script": "1",', '  "key": "units",', '  "found": true,', '  "value": "metric"', '}']);
+
+    // A failure is its text on stderr, in place of a result.
+    const failed = await setup.cliStreams('values', '9', '--json');
+    expect(failed).toEqual({ code: 1, stdout: [], stderr: ['[sm-dev] There is no script 9. Use scripts to list them.'] });
+    // So is a mistake caught before anything runs.
+    const mistaken = await setup.cliStreams('--json', 'validate', 'nope.user.js');
+    expect(mistaken).toEqual({ code: 2, stdout: [], stderr: ['ERROR: No such file or directory: nope.user.js'] });
+
+    const list = await setup.cliStreams('list', '--json');
+    expect(JSON.parse(list.stdout[0])).toMatchObject({ command: 'list', runs: [{ id: 'D1', tabCount: 1, scriptFiles: [file] }] });
+  } finally {
+    await setup.cli('stop', '--all');
     await setup.cleanup();
   }
 });

@@ -170,6 +170,8 @@ export interface SentCommand {
   pid?: number;
   /** The connection gets the run's whole stream already (see `RunClient`). */
   follows?: boolean;
+  /** The sender's global --json: commands with a JSON form print it. */
+  json?: boolean;
 }
 
 /**
@@ -290,7 +292,7 @@ export class RunControl {
       const lines = buffered.split('\n');
       buffered = lines.pop()!;
       for (const text of lines) {
-        let message: { hello?: { follow?: unknown; pid?: unknown }; line?: unknown; cwd?: unknown; words?: unknown; source?: unknown };
+        let message: { hello?: { follow?: unknown; pid?: unknown }; line?: unknown; cwd?: unknown; words?: unknown; source?: unknown; json?: unknown };
         try {
           message = JSON.parse(text.replace(/\r$/, '')) as typeof message;
         } catch {
@@ -310,6 +312,7 @@ export class RunControl {
           source: SOURCES.includes(message.source as CommandSource) ? message.source as CommandSource : 'arg',
           pid,
           follows: unfollow !== null,
+          json: message.json === true,
         };
         queue = queue.then(async () => {
           if (held) return;
@@ -550,14 +553,14 @@ export class RunClient {
    * resolves to its exit code once it is done. `words`: the sender's own,
    * as its shell gave them.
    */
-  send(line: string, { words, source = 'arg' }: { words?: string[]; source?: CommandSource } = {}): Promise<number> {
+  send(line: string, { words, source = 'arg', json = false }: { words?: string[]; source?: CommandSource; json?: boolean } = {}): Promise<number> {
     if (!this.open) {
       this.out(`[sm-dev] Run ${this.id} has ended`);
       return Promise.resolve(1);
     }
     return new Promise((resolve) => {
       this.pending = { resolve, line };
-      this.socket.write(JSON.stringify({ line, cwd: process.cwd(), words, source }) + '\n');
+      this.socket.write(JSON.stringify({ line, cwd: process.cwd(), words, source, ...(json ? { json } : {}) }) + '\n');
     });
   }
 

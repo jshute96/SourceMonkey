@@ -221,6 +221,11 @@ function takeFlag(command: string, syntax: CommandSyntax, parsed: ParsedArgs, li
   const kind = Object.hasOwn(syntax.flags, name) ? syntax.flags[name] : undefined;
   if (!kind) return { error: noSuchFlag(command, name, Object.keys(syntax.flags)), flag: name };
   if (Object.hasOwn(parsed.flags, name)) return { error: `The ${name} flag can be given once`, flag: name };
+  // A value only after `=` (`--json=multi`), never the next word.
+  if (kind === 'optional') {
+    parsed.flags[name] = eq > 0 ? text.slice(eq + 1) : true;
+    return i;
+  }
   if (kind === 'bool') {
     if (eq > 0) return { error: `The ${name} flag takes no value`, flag: name };
     parsed.flags[name] = true;
@@ -259,7 +264,7 @@ function trailingFlags(command: string, syntax: CommandSyntax, parsed: ParsedArg
     // `--flag`, `--flag=value`, or `--flag value`, ending the text.
     let at: number;
     const kind = (flag: string | undefined): string | undefined => (flag !== undefined && Object.hasOwn(syntax.flags, flag) ? syntax.flags[flag] : undefined);
-    if (kind(last) === 'bool' || (kind(last) === 'value' && words[end - 1].text.includes('='))) at = end - 1;
+    if (kind(last) === 'bool' || kind(last) === 'optional' || (kind(last) === 'value' && words[end - 1].text.includes('='))) at = end - 1;
     else if (kind(before) === 'value' && !words[end - 2].text.includes('=')) at = end - 2;
     else {
       const miss = [last, before].find((flag) => flag !== undefined && nearMiss(flag));

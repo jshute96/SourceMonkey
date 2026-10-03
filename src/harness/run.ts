@@ -771,7 +771,7 @@ class Remote {
       reply('[sm-dev] The run is ending, so the command was not run');
       return 1;
     }
-    const hooks = { cwd: sent.cwd, words: sent.words, interactive: sent.source === 'prompt' };
+    const hooks = { cwd: sent.cwd, words: sent.words, interactive: sent.source === 'prompt', json: sent.json };
     // One that only looks answers its sender alone. One that changes
     // things prints to the stream, which a following sender gets
     // anyway; another gets it while the command runs.
@@ -1038,6 +1038,8 @@ async function runInBrowser(
         runId: remote.id,
         ...(opts.log ? { log: opts.log } : {}),
         browser: browserSentence({ browser: session.endpoint, owned: session.launched, headless: session.headless }),
+        browserInfo: { address: session.endpoint.replace(/^https?:\/\//, ''), owned: session.launched === true, headless: session.headless === true },
+        testCollection: () => (pushedAny ? link.runId : undefined),
         extension: () => sourceMonkeyState(session.endpoint),
         // The first push makes the test collection.
         backend: () => (pushedAny

@@ -204,6 +204,35 @@ instead wait out what they set off that has a known end:
   following it still gets what the page and scripts print during the
   command's turn.
 
+#### JSON output (`json-output.ts`)
+
+The format is in [sm-dev-json.md](sm-dev-json.md). How it gets there:
+
+- **Which commands:** `hasJsonForm` says, from `JSON_COMMANDS` and
+  `onlyInspects`. So every JSON result answers its sender alone.
+- **Turning it on:** the client's global `--json` rides on each sent
+  command (`"json": true`). The run sets `ctx.json` from it, then the
+  command's own `--json` / `--nojson` overrides that.
+- **Marked lines:** a command prints its result as one line,
+  `JSON_RESULT` then the JSON, through `ctx.out` like any other.
+  - The client's `writeOutputLine` takes the mark off and prints the
+    JSON multi-line at a terminal, or on one line into a pipe, unless
+    the global `--json=single` or `=multi` said which
+    (`setJsonOutput`).
+  - A command's own `--json=` is carried in the mark
+    (`JSON_RESULT` becomes `sm-dev:json:multi`, by `withLayout`), and
+    wins over the client's layout.
+- **Flags:** `--json` is the one flag of kind `optional`: a value only
+  after `=` (`--json=multi`), never the next word, which would be the
+  command's text.
+- **Other lines:** in JSON mode, `commandRunner` marks the command's
+  other lines `STDERR_LINE`, for the client's stderr: a note beside its
+  result, or its failure in place of one. A failure stays text.
+- **Log messages:** under the global `--json`, the client prints `[sm-dev] `
+  and `arg > ` lines to stderr.
+- **Without a run:** `list`, `match` and `validate` in `cli.ts` build the
+  same results. A mistake prints to stderr as text, as always.
+
 ### Idle timeout
 
 - A run with a follower doesn't go idle.

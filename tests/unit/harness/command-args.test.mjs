@@ -47,11 +47,14 @@ test('flags take a value after them or after =, and are checked', () => {
   assert.deepEqual(typed('snapshot', '--out='), { error: 'The --out flag needs a value: --out FILE', flag: '--out' });
   assert.deepEqual(typed('snapshot', '--out --visible'), { error: 'The --out flag needs a value: --out FILE', flag: '--out' });
   assert.deepEqual(typed('snapshot', '--visible --visible'), { error: 'The --visible flag can be given once', flag: '--visible' });
+  // A value only after =.
+  assert.deepEqual(typed('status', '--json=multi').flags, { '--json': 'multi' });
+  assert.deepEqual(typed('values', '2 --json').flags, { '--json': true });
   assert.deepEqual(typed('snapshot', '--deep'), { error: 'The snapshot command has no --deep flag. It takes --visible, --out, --find, --up, --context, --limit.', flag: '--deep' });
   // A quoted word is never a flag.
   assert.deepEqual(typed('probe', `'--x' .y`).words, ['--x', '.y']);
-  // Also on a command that takes nothing else.
-  assert.deepEqual(typed('status', '--bad'), { error: 'The status command has no --bad flag. It takes no flags.', flag: '--bad' });
+  // Also on a command that takes few.
+  assert.deepEqual(typed('status', '--bad'), { error: 'The status command has no --bad flag. It takes --json, --nojson.', flag: '--bad' });
 });
 
 test('arguments a command doesn\'t take are refused, with its usage', () => {

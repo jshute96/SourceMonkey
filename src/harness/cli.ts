@@ -27,20 +27,21 @@ import { fileURLToPath } from 'node:url';
 
 import { CommandAssembler, NONE_RUN, echoCommand, parseCommandList, shellWord, unclosedBlockMessage, type AssembledCommand } from './command-lines.js';
 import {
-  commandWords, onlyInspects, readPromptCommands, runCommandHelp, runCommandMistake, writeOutputLine,
+  commandWords, onlyInspects, readPromptCommands, runCommandHelp, runCommandMistake, setJsonOutput, writeOutputLine,
 } from './console-commands.js';
 import { parseLang } from './browser-lang.js';
 import { parseCommandArgs } from './command-args.js';
 import { OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, commandNamed, commandSyntax, commandsHelp, fullHelp } from './command-list.js';
 import { readJsonFile } from './input-file.js';
+import { isJsonLine, jsonLayoutMistake, jsonResult, STDERR_LINE, withLayout, type JsonLayout, type ListData, type MatchData } from './json-output.js';
 // Node built-ins only, so as cheap to load as the rest here.
 import { runIdOf, type CommandSource, type RunClient, type RunRecord } from './runs.js';
 import { runLogLabel } from './run-log.js';
 import { staleBuildWarning } from './stale-build.js';
-import { withDefaultScheme } from './prepare.js';
+import { preparedScriptName, withDefaultScheme } from './prepare.js';
 import { pagesToOpen, type PageWord, type SavedPageStart } from './saved-pages.js';
 import {
-  REMOTE_SCRIPT, SCRIPT_ARG, UsageError, expandPathArgs, matchLines, prepareSource, scriptFile, scriptSources, validateAll, validateSources,
+  REMOTE_SCRIPT, SCRIPT_ARG, UsageError, expandPathArgs, matchJson, matchLines, prepareSource, scriptFile, scriptSources, validateAll, validateSources,
   type ScriptRoots,
 } from './checks.js';
 
@@ -84,6 +85,10 @@ interface Opts {
   offline: boolean;
   /** `--lang`: the languages the run's tabs prefer. */
   lang?: string[];
+  /** `--json` (true) or `--nojson` (false), over the global `--json`. */
+  json?: boolean;
+  /** `--json=single` or `=multi`, over the global one. */
+  jsonLayout?: JsonLayout;
 }
 
 // The longest a Node timer waits: past it, it fires at once instead.
@@ -167,6 +172,15 @@ function parseArgs(argv: string[]): Opts {
       case '--from-saved': opts.fromSaved = true; break;
       case '--url': opts.url = text; break;
       case '--offline': opts.offline = true; break;
+      case '--json': {
+        opts.json = true;
+        if (!text) break;
+        const mistake = jsonLayoutMistake(text);
+        if (mistake) throw new UsageError(mistake);
+        opts.jsonLayout = text as JsonLayout;
+        break;
+      }
+      case '--nojson': opts.json = false; break;
       case '--lang':
         try {
           opts.lang = parseLang(text);
@@ -199,7 +213,7 @@ function checkValidate(opts: Opts): void {
 
 async function validate(opts: Opts): Promise<number> {
   checkValidate(opts);
-  return validateAll(await validateSources(opts.args), lineRoots, print);
+  return validateAll(await validateSources(opts.args), lineRoots, jsonPrint(opts), opts.json ?? lineJson);
 }
 
 // `start` and `match` arguments: scripts, and the URLs the rest are,
@@ -245,6 +259,15 @@ async function match(opts: Opts): Promise<number> {
   checkMatch(opts);
   const { scripts, urls } = scriptsAndUrls(opts.args);
   const sources = await scriptSources(scripts);
+  if (opts.json ?? lineJson) {
+    const results: MatchData['results'] = [];
+    for (const source of sources) {
+      const prepared = await prepareSource(source, lineRoots);
+      results.push({ script: source.label, name: preparedScriptName(prepared), ...matchJson(prepared, urls.map((url) => ({ url }))) });
+    }
+    jsonPrint(opts)(jsonResult('match', { results } satisfies MatchData));
+    return results.every((r) => r.valid && r.pages.every((p) => p.matches)) ? 0 : 1;
+  }
   let misses = 0;
   for (const [i, source] of sources.entries()) {
     // Headed only when there are several, so one script reads as before.
@@ -564,9 +587,33 @@ function print(line: string): void {
   writeOutputLine(line);
 }
 
-async function listCommand(): Promise<number> {
+// A command echoed before its output (`arg > status`, a block's `...`
+// lines): to stderr under --json, so stdout holds only the results.
+function echo(line: string): void {
+  print(lineJson ? STDERR_LINE + line : line);
+}
+
+// `print`, with a result laid out as the command's own `--json=` said.
+function jsonPrint(opts: Opts): (line: string) => void {
+  return (line) => print(opts.jsonLayout && isJsonLine(line) ? withLayout(line, opts.jsonLayout) : line);
+}
+
+async function listCommand(opts: Opts): Promise<number> {
   const { liveRuns, runTable } = await import('./runs.js');
   const runs = await liveRuns();
+  if (opts.json ?? lineJson) {
+    jsonPrint(opts)(jsonResult('list', {
+      runs: runs.map((r) => ({
+        id: r.id,
+        pid: r.pid,
+        started: new Date(r.started).toISOString(),
+        browser: { address: r.browser.replace(/^https?:\/\//, ''), owned: r.owned === true, headless: r.headless === true },
+        ...(r.tabs === undefined ? {} : { tabCount: r.tabs }),
+        scriptFiles: r.scripts,
+      })),
+    } satisfies ListData));
+    return 0;
+  }
   if (runs.length === 0) print(NO_RUNS);
   else for (const line of runTable(runs)) print(line);
   return 0;
@@ -628,7 +675,7 @@ class Client {
   async send(text: string, source: CommandSource, words?: string[]): Promise<number> {
     if (rootsGiven && !this.own) throw new UsageError(ROOTS_ARE_THE_RUNS);
     const connection = await this.connect();
-    return connection.send(text, { words, source });
+    return connection.send(text, { words, source, json: lineJson });
   }
 
   /** Drops the connection, leaving the run going. */
@@ -761,7 +808,7 @@ async function sendCommand(words: string[], client: Client): Promise<number> {
     // exit code is the last one's.
     let code = 0;
     for (const [i, command] of list.commands.entries()) {
-      for (const line of echoed('arg', command)) print(line);
+      for (const line of echoed('arg', command)) echo(line);
       code = await client.send(command.text, 'arg');
       if (stopsLine(code, commandWords(command.text))) {
         if (i < list.commands.length - 1) process.stderr.write(`${LINE_STOPPED}\n`);
@@ -975,7 +1022,7 @@ async function stdinCommands(client: Client): Promise<number | null> {
   const run = async (commands: { words: string[]; text: string }[], source: AssembledCommand, more: boolean): Promise<boolean> => {
     for (const [i, command] of commands.entries()) {
       const heading = commands.length > 1 ? [`stdin > ${command.text}`] : echoed('stdin', source);
-      code = await runTyped(command, client, 'stdin', () => { for (const l of heading) print(l); });
+      code = await runTyped(command, client, 'stdin', () => { for (const l of heading) echo(l); });
       ran++;
       if (client.exiting) return false;
       if (stopsLine(code, command.words)) {
@@ -1238,10 +1285,12 @@ let lineProfile: string | undefined;
 // with it.
 let lineTempBrowser = false;
 let lineHeaded = false;
+// `--json`: the commands with a JSON form print it (see json-output.ts).
+let lineJson = false;
 
 
 // The flags for the whole line, which go before any command.
-const GLOBAL_FLAGS = ['--run', '--root', '--local', '--stdin', '--interactive', '--browser', '--open-browser', '--profile', '--temp-browser', '--headed'];
+const GLOBAL_FLAGS = ['--run', '--root', '--local', '--stdin', '--interactive', '--browser', '--open-browser', '--profile', '--temp-browser', '--headed', '--json'];
 
 function globalFlagMistake(flag: string): string {
   return `The ${flag} flag is for the whole command line, so it goes first, before any command: sm-dev ${flag}${VALUE_GLOBALS.has(flag) ? ' ...' : ''} <command>`;
@@ -1276,6 +1325,12 @@ function takeGlobalFlags(argv: string[]): GlobalFlags {
     else if (word === '--open-browser') lineOpenBrowser = true;
     else if (word === '--temp-browser') lineTempBrowser = true;
     else if (word === '--headed') lineHeaded = true;
+    else if (word === '--json') {
+      const mistake = inline === undefined ? null : jsonLayoutMistake(inline);
+      if (mistake) throw new UsageError(mistake);
+      lineJson = true;
+      setJsonOutput(inline as JsonLayout | undefined);
+    }
     else {
       const value = inline ?? argv[++i];
       // Not the next option taken for this one's value (`--browser --open-browser`).
@@ -1302,11 +1357,12 @@ function takeGlobalFlags(argv: string[]): GlobalFlags {
   return flags;
 }
 
-// A global option with its value in the same word (`--browser=9300`), as
-// the option and the value; else the word and no value.
+// A global option with its value in the same word (`--browser=9300`,
+// `--json=multi`), as the option and the value; else the word and no
+// value.
 function splitInline(word: string): [string, string | undefined] {
   const eq = word.indexOf('=');
-  if (eq > 0 && VALUE_GLOBALS.has(word.slice(0, eq))) return [word.slice(0, eq), word.slice(eq + 1)];
+  if (eq > 0 && (VALUE_GLOBALS.has(word.slice(0, eq)) || word.slice(0, eq) === '--json')) return [word.slice(0, eq), word.slice(eq + 1)];
   return [word, undefined];
 }
 
@@ -1433,7 +1489,7 @@ async function runOne(words: string[], client: Client): Promise<number> {
       case 'match': return await match(opts);
       case 'start': return await startCommand(opts, parsed.words, client);
       case 'attach': return await attachCommand(opts, client);
-      case 'list': return await listCommand();
+      case 'list': return await listCommand(opts);
       case 'exit':
         client.exiting = true;
         return 0;
@@ -1590,7 +1646,7 @@ async function main(): Promise<void> {
   try {
     // In order, stopping at the first that fails, as a shell's && would.
     for (const [i, words] of commands.entries()) {
-      if (commands.length > 1) print(`arg > ${words.map(shellWord).join(' ')}`);
+      if (commands.length > 1) echo(`arg > ${words.map(shellWord).join(' ')}`);
       code = await runOne(words, client);
       if (client.exiting) break;
       // A miss from match or validate is an answer, not a failure: the

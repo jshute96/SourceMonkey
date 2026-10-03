@@ -220,6 +220,8 @@ ok       sites/x/y.user.js
   missing one shows up at runtime as `GM_x is not defined`.
 - In a run, `validate` re-reads the selected script from disk, and
   `validate all` checks all loaded scripts.
+- Over many scripts, list only the ones that need a look:
+  `$R --json validate sites/ | jq -c '.results[] | select(.verdict != "ok" or .warnings)'`.
 
 ### Does the script run on this page?
 
@@ -480,6 +482,7 @@ $R savehtml pages/some-page.html              # the DOM, with the URL recorded
   close others. A page that asks first ("Leave site?") shows its
   dialog, answered with `accept` or `dismiss`; `--force` skips it.
 - `tabs` lists them with their `targetId`s, for your own CDP clients.
+  In a script: `$R --json tabs | jq -r '.tabs[] | select(.id == "T2") | .targetId'`.
 - `reload all` reloads every tab; `wait all` waits for every tab to
   settle.
 
@@ -526,6 +529,31 @@ EOF
   `cdp --file calls.txt`.
 - The whole input is checked before anything runs, so an invalid
   command anywhere in it runs nothing.
+
+### Reading results in a script: `--json`
+
+Most commands that report state can print JSON instead of text, with
+`--json`.
+
+- **Use it when you'll process the answer** with `jq` or code:
+  - picking a few fields out of a long list (many scripts, tabs or
+    matches);
+  - checking a value in a script or a loop, rather than by reading;
+  - comparing state before and after an action.
+- **Don't use it when you're reading the answer yourself.** The text is
+  shorter, and says what an empty answer means and where to look next.
+- **Which commands:** `list`, `status`, `scripts`, `tabs`, `values`,
+  `get`, `match`, `validate`, `menu`, `logs` and `probe`. The rest
+  print text as usual.
+- **Output:** one JSON object per command on stdout. Other messages
+  and failures stay text, on stderr, with the usual exit code.
+- **The fields**, and what each script `state` means:
+  [references/commands.md](references/commands.md#shape-of-a-command-line).
+
+```sh
+$R --json values | jq '.scripts[] | {name, units: .values.units}'
+$R --json probe '.result' | jq '.selectors[0].count'
+```
 
 ### Beyond sm-dev: raw CDP
 

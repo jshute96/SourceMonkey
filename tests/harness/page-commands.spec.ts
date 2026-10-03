@@ -180,7 +180,7 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('snapshot --deep')).toEqual(['[sm-dev] ERROR: The snapshot command has no --deep flag. It takes --visible, --out, --find, --up, --context, --limit.']);
   // Every command, not only the ones with flags of their own; a quoted
   // selector with -- in it is one word, not a flag.
-  expect(await run('status --bad')).toEqual(['[sm-dev] ERROR: The status command has no --bad flag. It takes no flags.']);
+  expect(await run('status --bad')).toEqual(['[sm-dev] ERROR: The status command has no --bad flag. It takes --json, --nojson.']);
   expect(await run('eval T1 --script --x')).toEqual(['[sm-dev] ERROR: The eval command has no --x flag. It takes --script, --file.']);
   expect(await run(`probe '.a --b'`)).not.toContainEqual(expect.stringContaining('flag'));
 

@@ -11,7 +11,24 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 
 - Global options go first: `--run ID`, `--browser URL|PORT`,
   `--open-browser`, `--temp-browser`, `--stdin`, `--interactive`,
-  `--root DIR`, `--local DIR`.
+  `--root DIR`, `--local DIR`, `--json`.
+- Read the text output by default: it's shorter, and says what an
+  empty answer means and where to look next.
+- Add `--json` when you'll parse the output, with `jq` or a script:
+  `$R --json scripts | jq -r '.scripts[] | select(.status == "invalid") | .name'`.
+  - `--json` works for `list`, `status`, `scripts`, `tabs`, `values`,
+    `get`, `match`, `validate`, `menu`, `logs` and `probe`. Each prints
+    one JSON object; other commands print text as usual.
+  - Other messages and failures stay text, on stderr, with the usual
+    exit code.
+  - An empty list means nothing was found.
+  - A script's `state` on a tab: `running` or `not-running`; for a
+    SourceMonkey-managed script (E1, ...) also `kept-out` (the run
+    keeps it out of its tabs), `not-started`, `error` (it threw),
+    `refused` (Chrome refused it), `unexpected` (running though it
+    doesn't match) and `changed` (changed since it started).
+  - Every field:
+    https://github.com/jshute96/SourceMonkey/blob/main/docs/sm-dev-json.md
 - `--` separates commands. They run in order and stop at the first
   failure (a `match` or `validate` miss excepted).
 - Exit codes: 0 success, 1 a command failed (a check missed, no

@@ -4,7 +4,9 @@
 // options. `help <command>` picks a command out of it, the prompt
 // completes its names, and the run takes each command's flags from it.
 //
-// No imports, so cli.ts can load it for help without the run's code.
+// It imports only json-output.ts, which imports nothing, so cli.ts can
+// load it for help without the run's code.
+import { JSON_COMMANDS, jsonCommandList } from './json-output.js';
 
 // How many of a selector's matches `probe --css` and `--html` show.
 export const PROBE_MAX = 10;
@@ -89,6 +91,8 @@ export interface HelpSection {
 const NONE: ArgSyntax = { args: 'none' };
 const WORDS: ArgSyntax = { args: 'words' };
 const TEXT: ArgSyntax = { args: 'text' };
+// Text that `--json` or `--nojson` can end (`values 2 --json`).
+const JSON_TEXT: ArgSyntax = { args: 'text', trailingFlags: true };
 const TAB_LOADS = ['newtab', 'open', 'reload'];
 const SETTLING = ['start', ...TAB_LOADS, 'click', 'hover', 'type', 'key'];
 
@@ -225,7 +229,7 @@ export const HELP_SECTIONS: HelpSection[] = [
   {
     title: 'Scripts',
     commands: [
-      { usage: 'scripts', syntax: TEXT, about: 'List the loaded scripts, and the SourceMonkey-managed scripts on the current tab.' },
+      { usage: 'scripts', syntax: JSON_TEXT, about: 'List the loaded scripts, and the SourceMonkey-managed scripts on the current tab.' },
       { usage: 'script <script>', about: 'Select the active script by ID. With T2.3, pick tab T2 too.' },
       { usage: 'load <script>...', syntax: WORDS, about: 'Load more scripts from disk: files, directories, or globs. See Files and file patterns.' },
       { usage: 'update [script]', syntax: TEXT, about: 'Re-read one (or all) scripts from disk, and reload all affected tabs.' },
@@ -447,7 +451,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         commands: [
           {
             usage: 'menu [what]',
-            syntax: { args: 'text', unquote: 'none' },
+            syntax: { args: 'text', unquote: 'none', trailingFlags: true },
             about: 'List the tab\'s menu commands, or fire one.',
             args: [
               { term: 'T2', about: 'List a tab\'s.' },
@@ -463,7 +467,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         commands: [
           {
             usage: 'values [what]',
-            syntax: TEXT,
+            syntax: JSON_TEXT,
             about: 'Print values scripts have stored in GM Storage.',
             args: [
               { term: '<script>', about: 'One script.' },
@@ -471,7 +475,7 @@ export const HELP_SECTIONS: HelpSection[] = [
               { term: 'T2', about: 'Scripts running on a tab.' },
             ],
           },
-          { usage: 'get <key>', syntax: TEXT, about: 'Print one value for the selected script.', gap: true },
+          { usage: 'get <key>', syntax: JSON_TEXT, about: 'Print one value for the selected script.', gap: true },
           {
             usage: 'set <key> <json>',
             syntax: { args: 'text', before: 1, block: true, unquote: 'single' },
@@ -522,6 +526,20 @@ export const HELP_SECTIONS: HelpSection[] = [
         ],
       },
       {
+        title: 'Output',
+        options: [
+          {
+            term: '--json[=single|multi]',
+            about: [
+              `Print results as JSON, for the commands that can: ${jsonCommandList()}.`,
+              'Other log messages go to stderr.',
+              'Each result is on one line (single), or multi-line (multi).',
+              '(Default: multi at a terminal, single when piped)',
+            ],
+          },
+        ],
+      },
+      {
         title: 'Server selection',
         options: [
           {
@@ -552,6 +570,16 @@ export const HELP_SECTIONS: HelpSection[] = [
         term: '--nowait',
         about: ['Don\'t wait for the page to settle after the action.', 'By default, most page actions wait for the page to settle before continuing.'],
         commands: SETTLING,
+      },
+      {
+        term: '--json[=single|multi]',
+        about: ['Print the result as JSON: on one line (single), or multi-line (multi).', '(Default: the global --json\'s, else multi at a terminal and single when piped)'],
+        commands: JSON_COMMANDS,
+      },
+      {
+        term: '--nojson',
+        about: 'Print the result as text, despite the global --json.',
+        commands: JSON_COMMANDS,
       },
     ],
   },
@@ -796,7 +824,7 @@ export interface CommandSyntax {
   /** Each form's, by its keyword (`wait log`). */
   forms: Record<string, ArgSyntax>;
   /** Its flags: each takes a value, or none. */
-  flags: Record<string, 'bool' | 'value'>;
+  flags: Record<string, 'bool' | 'value' | 'optional'>;
   /** What a value flag's value is, as its help names it (`<path>`, `FILE`). */
   values: Record<string, string>;
   /** Its usage lines, without `sm-dev`, for messages. */
@@ -813,11 +841,18 @@ export function commandSyntax(name: string): CommandSyntax {
     if (keyword && command.syntax) syntax.forms[keyword] = command.syntax;
     else if (command.syntax) syntax.base = command.syntax;
   }
-  // `--out FILE`: a value; `--visible`: none.
+  // `--out FILE`: a value; `--visible`: none; `--json[=single|multi]`:
+  // a value after `=`, or none.
   for (const group of optionGroupsOf(name)) {
     for (const item of group.options) {
       const [flag, value] = item.term.split(/\s+/);
       if (!flag.startsWith('--')) continue;
+      const optional = /^(--[\w-]+)\[=([^\]]+)\]$/.exec(flag);
+      if (optional) {
+        syntax.flags[optional[1]] = 'optional';
+        syntax.values[optional[1]] = optional[2];
+        continue;
+      }
       const name = flag.split(',')[0];
       syntax.flags[name] = value ? 'value' : 'bool';
       if (value) syntax.values[name] = value;

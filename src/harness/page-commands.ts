@@ -18,6 +18,7 @@ import type { ParsedArgs } from './command-args.js';
 import { PART_LIMIT, PROBE_MAX } from './command-list.js';
 import type { ControlledTab } from './console-commands.js';
 import { ScriptThrew } from './page-watch.js';
+import { jsonResult, type LogsData, type ProbeData } from './json-output.js';
 import { readInputFile, writeProblem } from './input-file.js';
 import { notSettledMessage, SETTLE_TIMEOUT_MS, settleTab } from './wait.js';
 import { savePageHtml } from './save-html.js';
@@ -77,6 +78,8 @@ const MODIFIERS = ['Alt', 'Control', 'ControlOrMeta', 'Meta', 'Shift'] as const;
  */
 export interface PageInput extends ParsedArgs {
   userscripts: string[];
+  /** Print the result as JSON (`--json`), for the commands with a JSON form. */
+  json?: boolean;
 }
 
 // Image types `screenshot` can write, by the file's extension.
@@ -398,6 +401,37 @@ export async function runPageCommand(
         }
         const css = input.flags['--css'] === true;
         const html = input.flags['--html'] === true;
+        if (input.json) {
+          const selectors: ProbeData['selectors'] = [];
+          for (const selector of input.words) {
+            const entry: ProbeData['selectors'][number] = { selector };
+            const probing = (async () => {
+              const count = await refProblem(page, selector) ?? await countOf(page, selector);
+              if (typeof count === 'string') {
+                entry.error = count;
+                return;
+              }
+              entry.count = count;
+              if (count === 0 || (!css && !html)) return;
+              const found = await probeMatches(page, selector, PROBE_MAX, ACTION_TIMEOUT_MS).catch((err: Error) => plain(err));
+              if (typeof found === 'string') {
+                say(`The matches of ${selector} could not be read: ${found}`);
+                return;
+              }
+              entry.matches = found.matches.map((match) => ({
+                ...(css && !found.framed && !match.shadow && match.css ? { css: match.css } : {}),
+                ...(html ? { html: match.html } : {}),
+              }));
+            })();
+            if (!await done(probing)) {
+              say('The page opened a dialog during the probe, which is waiting for an answer.');
+              return false;
+            }
+            selectors.push(entry);
+          }
+          out(jsonResult('probe', { tab: `T${tab.n}`, url: page.url(), selectors } satisfies ProbeData));
+          return;
+        }
         for (const selector of input.words) {
           const lines: string[] = [];
           const probing = (async () => {
@@ -518,6 +552,20 @@ export async function runPageCommand(
       }
       case 'logs': {
         const lines = logs.get(page) ?? [];
+        if (input.json) {
+          // Each page load starts with a `--- <url>` line.
+          const pages: LogsData['pages'] = [];
+          for (const line of lines) {
+            const load = /^--- (.*)$/.exec(line);
+            if (load) pages.push({ url: load[1], lines: [] });
+            else {
+              if (pages.length === 0) pages.push({ lines: [] });
+              pages.at(-1)!.lines.push(line);
+            }
+          }
+          out(jsonResult('logs', { tab: `T${tab.n}`, pages } satisfies LogsData));
+          return;
+        }
         if (lines.length === 0) say('No console lines or errors yet');
         for (const line of lines) out(line);
         return;

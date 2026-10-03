@@ -19,6 +19,8 @@ import { fileURLToPath } from 'node:url';
 import type { BrowserContext, Dialog, Page } from '@playwright/test';
 
 import { CommandAssembler, endsOutsideBlock } from './command-lines.js';
+import { isJsonLine, jsonLayoutMistake, jsonResult, JSON_COMMANDS, markedLine, STDERR_LINE, withLayout, type JsonLayout } from './json-output.js';
+import type * as J from './json-output.js';
 import { extensionLabel, type ExtensionState } from './extension-backend.js';
 import { firstLine } from './extension-link.js';
 import type { HarnessHost, MenuCommandRecord } from './host.js';
@@ -39,7 +41,7 @@ import {
   type PageToOpen, type PageWord, type SavedPageFile, type SavedPageStart,
 } from './saved-pages.js';
 import {
-  SCRIPT_ARG, UsageError, expandPathArg, expandPathArgs, matchLines, prepareSource, scriptSources, validateAll, validateSources,
+  SCRIPT_ARG, UsageError, expandPathArg, expandPathArgs, matchJson, matchLines, prepareSource, scriptSources, validateAll, validateSources,
   type ScriptRoots, type ScriptSource,
 } from './checks.js';
 
@@ -133,6 +135,13 @@ export interface ConsoleContext {
    */
   interactive?: boolean;
   out: (line: string) => void;
+  /**
+   * The running command prints its result as JSON (`--json`), set
+   * while it runs. Only for a command with a JSON form.
+   */
+  json?: boolean;
+  /** The running command's own `--json=single` or `=multi`. */
+  jsonLayout?: JsonLayout;
   /** Ends the run, as Ctrl-C does. */
   stop: () => void;
   /** The id other shells know the run by (`--run`), for `status`. */
@@ -141,6 +150,10 @@ export interface ConsoleContext {
   log?: string;
   /** The run's browser, for `status`: `connected to browser 127.0.0.1:9233`. */
   browser?: string;
+  /** The same, for `status --json`. */
+  browserInfo?: { address: string; owned: boolean; headless: boolean };
+  /** The run's test collection's id, once a script was pushed, for `status --json`. */
+  testCollection?: () => string | undefined;
   /**
    * Where the scripts run, for `status`: `SourceMonkey extension, test
    * collection D2-a3f9`. Read as `status` runs.
@@ -242,12 +255,23 @@ const INSPECTING = new Set(['help', 'status', 'values', 'get', 'snapshot', 'scre
  * change things when they pick or fire.
  */
 export function onlyInspects(line: string): boolean {
-  const [typed = '', ...rest] = line.trim().split(/\s+/);
+  const [typed = '', ...words] = line.trim().split(/\s+/);
+  // `tabs --json` still lists.
+  const rest = words.filter((word) => !/^--(no)?json(=|$)/.test(word));
   const command = RUN_ALIASES[typed] ?? typed;
   if (INSPECTING.has(command)) return true;
   if (command === 'tabs' || command === 'scripts') return rest.length === 0;
   if (command === 'menu') return rest.length === 0 || (rest.length === 1 && (rest[0] === 'all' || /^[Tt]\d+$/.test(rest[0])));
   return false;
+}
+
+/**
+ * Whether a command line has a JSON form (`--json`): one of
+ * `JSON_COMMANDS`, in a form that only looks (`tabs`, not `tabs T2`).
+ */
+export function hasJsonForm(line: string): boolean {
+  const typed = line.trim().split(/\s+/)[0];
+  return JSON_COMMANDS.includes(RUN_ALIASES[typed] ?? typed) && onlyInspects(line);
 }
 
 /**
@@ -302,6 +326,18 @@ export async function runConsoleCommand(
     ctx.out(`[sm-dev] ERROR: ${parsed.error}`);
     return false;
   }
+  // The command's own --json or --nojson over the sender's global one,
+  // and its own layout over the client's. Its help is text either way.
+  const ownJson = parsed.flags['--json'];
+  if (typeof ownJson === 'string') {
+    const mistake = jsonLayoutMistake(ownJson);
+    if (mistake) {
+      ctx.out(`[sm-dev] ERROR: ${mistake}`);
+      return false;
+    }
+    if (ctx.json !== undefined) ctx.jsonLayout = ownJson as JsonLayout;
+  }
+  if (ctx.json !== undefined) ctx.json = !parsed.help && (parsed.flags['--nojson'] ? false : ownJson ? true : ctx.json);
   // `click --help`: its help, as `help click` gives it, rather than a click.
   if (parsed.help) {
     for (const l of commandsHelp([command]).text.trimEnd().split('\n')) ctx.out(l);
@@ -349,6 +385,12 @@ export async function runConsoleCommand(
         if (blockedByDialog([tab])) return false;
         return fireMenu(ctx, tab, label.text);
       }
+      if (ctx.json && (text === 'all' || !text || /^[Tt]\d+$/.test(text))) {
+        const which = text === 'all' ? ctx.tabs() : [text ? pickTab(ctx, text) : tab];
+        if (which.includes(null)) return false;
+        ctx.out(jsonResult('menu', { tabs: (which as ControlledTab[]).map((t) => menuJson(ctx, t)) } satisfies J.MenuData));
+        return;
+      }
       if (text === 'all') {
         ctx.out('Menu commands:');
         printPerTab(ctx, tab, (t) => menuLines(ctx, t), 'None registered');
@@ -378,7 +420,8 @@ export async function runConsoleCommand(
       const named = namedTab(ctx, 'tabs', parsed);
       if (named === null) return false;
       if (named === undefined) {
-        printTabs(ctx);
+        if (ctx.json) ctx.out(jsonResult('tabs', { tabs: ctx.tabs().map((t) => tabJson(ctx, t)) } satisfies J.TabsData));
+        else printTabs(ctx);
         return;
       }
       // `tabs new` was newtab's old name.
@@ -393,6 +436,15 @@ export async function runConsoleCommand(
       return;
     }
     case 'scripts': {
+      if (!text && ctx.json) {
+        const others = await otherScriptsJson(ctx, picked);
+        if (!others) return false;
+        ctx.out(jsonResult('scripts', {
+          ...(picked ? { tab: tabName(picked) } : {}),
+          scripts: [...ctx.scripts.map((script) => scriptJson(ctx, script)), ...others],
+        } satisfies J.ScriptsData));
+        return;
+      }
       if (!text) {
         ctx.out(`Loaded scripts${activityHeading(picked)}:`);
         if (ctx.scripts.length === 0) ctx.out(`  ${NO_SCRIPTS}`);
@@ -429,6 +481,10 @@ export async function runConsoleCommand(
       return;
     }
     case 'status': {
+      if (ctx.json) {
+        ctx.out(jsonResult('status', await statusJson(ctx, picked)));
+        return;
+      }
       if (ctx.runId) {
         // Asked each time, since the person may install it mid-run.
         const extension = ctx.browser ? extensionLabel(await ctx.extension?.() ?? null) : '';
@@ -448,13 +504,18 @@ export async function runConsoleCommand(
       if (OTHER_LABEL.test(text)) {
         const found = await pickOther(ctx, text, picked);
         if (!found) return false;
+        if (ctx.json) {
+          ctx.out(jsonResult('values', { scripts: [{ script: found.label, name: found.name, values: await found.values() }] } satisfies J.ValuesData));
+          return;
+        }
         ctx.out('Stored values:');
         ctx.out(`  ${otherLabel(found)}`);
         for (const l of valueEntries(await found.values())) ctx.out(l);
         return;
       }
       if (ctx.scripts.length === 0) {
-        ctx.out(`[sm-dev] ${NO_SCRIPTS}`);
+        if (ctx.json) ctx.out(jsonResult('values', { scripts: [] } satisfies J.ValuesData));
+        else ctx.out(`[sm-dev] ${NO_SCRIPTS}`);
         return;
       }
       // The values are each script's, the same on every tab, so all is
@@ -468,12 +529,22 @@ export async function runConsoleCommand(
         scripts = [found];
       } else if (ref.named) {
         scripts = runningOn(ctx, ref.tab);
-        if (scripts.length === 0) {
+        if (scripts.length === 0 && !ctx.json) {
           ctx.out(`[sm-dev] No script is running on ${tabName(ref.tab)}`);
           return;
         }
       }
       await settleWrites();
+      if (ctx.json) {
+        const entries = [];
+        for (const script of scripts) {
+          entries.push({ script: scriptNumber(ctx, script), name: preparedScriptName(script), values: script.id ? await ctx.host.valuesOf(script.id) : {} });
+        }
+        // Named a tab: only the scripts running there, which `tab` says.
+        const onTab = ref.named && !ref.rest ? { tab: tabName(ref.tab) } : {};
+        ctx.out(jsonResult('values', { ...onTab, scripts: entries } satisfies J.ValuesData));
+        return;
+      }
       ctx.out('Stored values:');
       for (const l of await valueLines(ctx, scripts)) ctx.out(l);
       return;
@@ -489,6 +560,13 @@ export async function runConsoleCommand(
       }
       await settleWrites();
       const values = other ? await other.values() : await ctx.host.valuesOf(scriptId!);
+      if (ctx.json) {
+        const found = Object.hasOwn(values, text);
+        ctx.out(jsonResult('get', {
+          script: other ? other.label : scriptNumber(ctx, current!), key: text, found, ...(found ? { value: values[text] } : {}),
+        } satisfies J.GetData));
+        return;
+      }
       ctx.out(`  ${text} = ${JSON.stringify(values[text])}`);
       return;
     }
@@ -717,7 +795,7 @@ export async function runConsoleCommand(
       // `logs` only reads what was recorded; the rest reach into a page
       // a dialog has stopped.
       if (command !== 'logs' && blockedByDialog([target])) return false;
-      return runPageCommand(command, { ...parsed, userscripts: runningOn(ctx, target).map(userscriptLabel) }, target, ctx.out, cwd);
+      return runPageCommand(command, { ...parsed, userscripts: runningOn(ctx, target).map(userscriptLabel), json: ctx.json === true }, target, ctx.out, cwd);
     }
   }
 }
@@ -866,7 +944,17 @@ async function matchCommand(ctx: ConsoleContext, words: string[], cwd: string): 
   const unique = pages.filter((p, i) => pages.findIndex((q) => q.url === p.url && q.name === p.name) === i);
   pages.splice(0, pages.length, ...unique);
   const scripts: { label: string; prepared: PreparedScript }[] = [...new Set(loaded)].map((script) => ({ label: numbered(ctx, script), prepared: script }));
+  const loadedCount = scripts.length;
   for (const source of await scriptSources(files, cwd)) scripts.push({ label: source.label, prepared: await prepareSource(source, rootsOf(ctx, cwd)) });
+  if (ctx.json) {
+    const results: J.MatchData['results'] = scripts.map(({ label, prepared }, i) => ({
+      script: i < loadedCount ? scriptNumber(ctx, prepared) : label,
+      name: preparedScriptName(prepared),
+      ...matchJson(prepared, pages),
+    }));
+    ctx.out(jsonResult('match', { results } satisfies J.MatchData));
+    return results.every((r) => r.valid && r.pages.every((p) => p.matches)) ? 0 : 1;
+  }
   let misses = 0;
   for (const [i, { label, prepared }] of scripts.entries()) {
     // Headed only when there are several, as on the command line.
@@ -926,7 +1014,7 @@ async function validateCommand(ctx: ConsoleContext, words: string[], cwd: string
   }
   // The loaded scripts first, in their order, then the paths.
   sources.unshift(...reread);
-  return validateAll(sources, rootsOf(ctx, cwd), (line) => ctx.out(line));
+  return validateAll(sources, rootsOf(ctx, cwd), (line) => ctx.out(line), ctx.json === true);
 }
 
 // ---------- Tabs ----------
@@ -1165,6 +1253,118 @@ function printTabs(ctx: ConsoleContext): void {
   }
 }
 
+// ---------- JSON forms (see json-output.ts) ----------
+
+// A loaded script's id: its number in the `scripts` list.
+function scriptNumber(ctx: ConsoleContext, script: PreparedScript): string {
+  return String(ctx.scripts.indexOf(script) + 1);
+}
+
+function tabJson(ctx: ConsoleContext, tab: ControlledTab): J.Tab {
+  const dialog = tab.dialogs?.current;
+  const saved = showingSaved(tab) ? tab.saved : undefined;
+  return {
+    id: tabName(tab),
+    url: tab.page.url(),
+    ...(tab.targetId ? { targetId: tab.targetId } : {}),
+    selected: tab === currentTab(ctx),
+    ...(tab.noScript ? { noScript: true } : {}),
+    ...(saved ? { savedFrom: saved.given, ...(saved.offline ? { offline: true } : {}) } : {}),
+    ...(tab.openedBy ? { openedBy: `T${tab.openedBy}` } : {}),
+    ...(dialog ? { dialog: { kind: dialogKind(dialog), message: dialog.message() } } : {}),
+    scripts: runningOn(ctx, tab).map((script) => scriptNumber(ctx, script)),
+  };
+}
+
+function scriptJson(ctx: ConsoleContext, script: PreparedScript): J.Script {
+  return {
+    id: scriptNumber(ctx, script),
+    kind: 'run',
+    name: preparedScriptName(script),
+    file: preparedScriptPath(script),
+    status: script.status,
+    ...(script.diagnostic ? { error: script.diagnostic } : {}),
+    ...(script === selectedScript(ctx) ? { selected: true } : {}),
+    tabs: ctx.tabs().map((tab) => ({ tab: tabName(tab), state: activeOn(ctx, tab, script.id) ? 'running' : 'not-running' })),
+  };
+}
+
+// The badge's word for an extension script's state, as JSON.
+const OTHER_STATE: Record<string, J.TabState> = {
+  OK: 'running',
+  ERROR: 'error',
+  REJECTED: 'refused',
+  MISSING: 'not-started',
+  UNEXPECTED: 'unexpected',
+  RELOAD: 'changed',
+  NOT_LOADED: 'kept-out',
+};
+
+// The SourceMonkey-managed scripts on `tab`, as JSON; null (said why)
+// when they couldn't be listed.
+async function otherScriptsJson(ctx: ConsoleContext, tab: ControlledTab | undefined): Promise<J.Script[] | null> {
+  if (!ctx.others || !tab) return [];
+  let others: OtherScript[];
+  try {
+    others = await ctx.others.onTab(tab);
+  } catch (err) {
+    ctx.out(`[sm-dev] SourceMonkey-managed scripts on ${tabName(tab)} could not be listed: ${firstLine(err)}`);
+    return null;
+  }
+  return others.map((o) => ({
+    id: o.label,
+    kind: 'installed',
+    name: o.name,
+    ...(o.collection ? { collection: { name: o.collection } } : {}),
+    ...(o.label === ctx.currentOther?.label ? { selected: true } : {}),
+    tabs: [{ tab: tabName(tab), state: OTHER_STATE[o.status] ?? 'running' }],
+  }));
+}
+
+async function statusJson(ctx: ConsoleContext, tab: ControlledTab | undefined): Promise<J.StatusData> {
+  const { reports } = ctx.host;
+  const scripts: J.StatusScript[] = [];
+  for (const script of ctx.scripts) {
+    const id = script.id;
+    const errors = (tab ? fromTab(ctx, tab, reports.errors) : reports.errors).filter((r) => r.scriptId === id);
+    scripts.push({
+      ...scriptJson(ctx, script),
+      ...(tab ? { menuCommands: fromTab(ctx, tab, reports.menuCommands).filter((r) => r.scriptId === id).length } : {}),
+      values: id ? Object.keys(await ctx.host.valuesOf(id)).length : 0,
+      errors: errors.length,
+      ...(errors.length > 0 ? { lastError: errors.at(-1)!.message } : {}),
+    });
+  }
+  const others = await otherScriptsJson(ctx, tab) ?? [];
+  let run: J.StatusData['run'];
+  if (ctx.runId && ctx.browserInfo) {
+    const extension = await ctx.extension?.() ?? null;
+    const collection = ctx.testCollection?.();
+    run = {
+      id: ctx.runId,
+      pid: process.pid,
+      browser: ctx.browserInfo,
+      ...(extension ? { sourceMonkey: extension } : {}),
+      ...(collection ? { testCollection: collection } : {}),
+      ...(ctx.log ? { log: ctx.log } : {}),
+    };
+  }
+  return {
+    ...(run ? { run } : {}),
+    tabs: ctx.tabs().map((t) => tabJson(ctx, t)),
+    ...(tab ? { tab: tabName(tab) } : {}),
+    scripts: [...scripts, ...others],
+  };
+}
+
+// A tab's menu commands, as JSON, numbered as `menu` numbers them.
+function menuJson(ctx: ConsoleContext, tab: ControlledTab): J.MenuData['tabs'][number] {
+  let n = 0;
+  const commands = menuGroups(ctx, tab).flatMap(({ script, commands: registered }) => registered
+    .map((c) => ({ id: `M${++n}`, script: scriptNumber(ctx, script), name: c.name })));
+  return { tab: tabName(tab), url: tab.page.url(), commands };
+}
+
 // How long `closetab` waits for a tab to close, or to ask first.
 const CLOSE_TIMEOUT_MS = 5000;
 
@@ -1401,10 +1601,11 @@ function runningOn(ctx: ConsoleContext, tab: ControlledTab): PreparedScript[] {
 // A tab's registered menu commands under the script that registered
 // each, in load order. The M numbers `menu` prints count through this,
 // so firing by number reads the same order.
-function menuGroups(ctx: ConsoleContext, tab: ControlledTab): { label: string; commands: MenuCommandRecord[] }[] {
+function menuGroups(ctx: ConsoleContext, tab: ControlledTab): { script: PreparedScript; label: string; commands: MenuCommandRecord[] }[] {
   const all = fromTab(ctx, tab, ctx.host.reports.menuCommands);
   return ctx.scripts
     .map((script) => ({
+      script,
       label: scriptRow(ctx, script),
       commands: all.filter((c) => c.scriptId === script.id),
     }))
@@ -1799,6 +2000,21 @@ function completeFrom(names: readonly string[], line: string): [string[], string
   return [names.filter((name) => name.startsWith(word)), word];
 }
 
+// Set by the global --json: other log messages print to stderr, and
+// `--json=single` or `=multi` picks how results are laid out.
+let jsonLogs = false;
+let jsonLayout: JsonLayout | undefined;
+
+/**
+ * For the global --json: sends other log messages to stderr from now
+ * on, and lays results out on one line or multi-line (`layout`),
+ * rather than by whether stdout is a terminal.
+ */
+export function setJsonOutput(layout?: JsonLayout): void {
+  jsonLogs = true;
+  jsonLayout = layout;
+}
+
 // The prompt readline is drawing while a person types at a terminal,
 // or null when there is none (a pipe, or before commands are armed).
 let activePrompt: readline.Interface | null = null;
@@ -1814,9 +2030,14 @@ const BLOCK_PROMPT = '... ';
  * lands in the middle of a command being edited.
  */
 export function writeOutputLine(line: string): void {
+  const marked = markedLine(line, jsonLayout ?? (process.stdout.isTTY ? 'multi' : 'single'));
+  // In JSON mode, other log messages go to stderr, keeping stdout for
+  // the results (see docs/sm-dev-json.md).
+  const out = marked?.stderr || (!marked && jsonLogs && line.startsWith('[sm-dev] ')) ? process.stderr : process.stdout;
+  if (marked) line = marked.text;
   const rl = activePrompt;
   if (!rl) {
-    process.stdout.write(line + '\n');
+    out.write(line + '\n');
     return;
   }
   // A long typed line can wrap onto several rows; erase from its top.
@@ -1830,7 +2051,8 @@ export function writeOutputLine(line: string): void {
   // text wraps without a redraw. `prevRows` is internal, hence
   // the fallback.
   const recorded = (rl as unknown as { prevRows?: number }).prevRows ?? rows;
-  process.stdout.write(line + '\n' + '\n'.repeat(recorded));
+  out.write(line + '\n');
+  process.stdout.write('\n'.repeat(recorded));
   rl.prompt(true);
 }
 
@@ -1846,7 +2068,7 @@ export function writeOutputLine(line: string): void {
  */
 export type CommandRunner = (
   line: string,
-  hooks?: { start?: () => void; end?: () => void; cwd?: string; words?: string[]; answer?: (line: string) => void; interactive?: boolean },
+  hooks?: { start?: () => void; end?: () => void; cwd?: string; words?: string[]; answer?: (line: string) => void; interactive?: boolean; json?: boolean },
 ) => Promise<number>;
 
 // `answer`: where the command's own output goes instead of `ctx.out`
@@ -1863,9 +2085,14 @@ export function commandRunner(ctx: ConsoleContext): CommandRunner {
     const run = async (): Promise<void> => {
       let mistaken = false;
       const out = ctx.out;
+      // In JSON mode, the command's other lines (a note beside its
+      // result, or its failure in place of one) go to stderr as text.
+      ctx.json = hasJsonForm(line) ? hooks?.json === true : undefined;
       ctx.out = (l) => {
         if (l.startsWith(MISTAKE_PREFIX)) mistaken = true;
-        out(l);
+        if (!ctx.json) out(l);
+        else if (isJsonLine(l)) out(ctx.jsonLayout ? withLayout(l, ctx.jsonLayout) : l);
+        else out(STDERR_LINE + l);
       };
       try {
         // Typed at a person's prompt, `menu` needn't wait for a command
@@ -1879,6 +2106,8 @@ export function commandRunner(ctx: ConsoleContext): CommandRunner {
         ctx.out(`${err instanceof UsageError ? MISTAKE_PREFIX : '[sm-dev] '}${(err as Error).message}`);
         code = err instanceof UsageError ? 2 : 1;
       } finally {
+        ctx.json = undefined;
+        ctx.jsonLayout = undefined;
         ctx.out = out;
       }
     };

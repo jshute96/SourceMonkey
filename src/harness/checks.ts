@@ -10,6 +10,7 @@ import path from 'node:path';
 import { isMarkupContentType, looksLikeMarkup, markupResponseMessage } from '../markup-response.js';
 import { unusableMatchGroupKey } from '../url-match.js';
 import { HAS_SCHEME, globFiles, globMistake, isDirectory, isGlob, walkScripts } from './path-args.js';
+import { jsonResult, type MatchPage, type ValidateData } from './json-output.js';
 import { NO_RULE_COVERS_URL, explainMatch, isDirectoryMessage, noSuchFileMessage, parseCheckWarning, prepareScript, shownPath, warningLines, type PreparedScript } from './prepare.js';
 
 // A mistake in how the command was typed, as opposed to a failure while
@@ -162,27 +163,39 @@ export type ValidateVerdict = 'ok' | 'invalid' | 'unchecked';
  * `validate`'s lines for one script, and its verdict: the verdict and
  * why, then every warning, each with the line it's about.
  */
-export function validateLines(label: string, prepared: PreparedScript): { lines: string[]; verdict: ValidateVerdict } {
-  const warnings = warningLines(prepared, { parseCheck: false }).map((line) => `    ${line}`);
+export function validateLines(label: string, prepared: PreparedScript): { lines: string[]; verdict: ValidateVerdict; error?: string; warnings: string[] } {
+  const warnings = warningLines(prepared, { parseCheck: false });
+  const indented = warnings.map((line) => `    ${line}`);
   if (prepared.status !== 'ok') {
-    return { lines: [`INVALID  ${label}`, `    ${prepared.diagnostic}`, ...warnings], verdict: 'invalid' };
+    const error = prepared.diagnostic ?? '';
+    return { lines: [`INVALID  ${label}`, `    ${error}`, ...indented], verdict: 'invalid', error, warnings };
   }
   if (prepared.parseCheckNote) {
-    return { lines: [`UNCHECKED ${label}`, `    ${parseCheckWarning(prepared.parseCheckNote)}`, ...warnings], verdict: 'unchecked' };
+    const error = parseCheckWarning(prepared.parseCheckNote);
+    return { lines: [`UNCHECKED ${label}`, `    ${error}`, ...indented], verdict: 'unchecked', error, warnings };
   }
-  return { lines: [`ok       ${label}`, ...warnings], verdict: 'ok' };
+  return { lines: [`ok       ${label}`, ...indented], verdict: 'ok', warnings };
 }
 
 /**
  * `validate` over `sources`: each script's lines, then the counts.
  * Exits 1 when any is invalid.
  */
-export async function validateAll(sources: ScriptSource[], roots: ScriptRoots, out: (line: string) => void): Promise<number> {
+export async function validateAll(sources: ScriptSource[], roots: ScriptRoots, out: (line: string) => void, json = false): Promise<number> {
   const counts: Record<ValidateVerdict, number> = { ok: 0, invalid: 0, unchecked: 0 };
+  const results: ValidateData['results'] = [];
   for (const source of sources) {
-    const { lines, verdict } = validateLines(source.label, await prepareSource(source, roots));
+    const { lines, verdict, error, warnings } = validateLines(source.label, await prepareSource(source, roots));
     counts[verdict]++;
-    for (const line of lines) out(line);
+    if (json) {
+      results.push({ script: source.label, verdict, ...(error ? { error } : {}), ...(warnings.length > 0 ? { warnings } : {}) });
+    } else {
+      for (const line of lines) out(line);
+    }
+  }
+  if (json) {
+    out(jsonResult('validate', { results } satisfies ValidateData));
+    return counts.invalid === 0 ? 0 : 1;
   }
   out('');
   out(validateSummary(counts));
@@ -192,6 +205,34 @@ export async function validateAll(sources: ScriptSource[], roots: ScriptRoots, o
 /** The line after `validate`'s scripts. */
 function validateSummary(counts: Record<ValidateVerdict, number>): string {
   return `${counts.ok} ok, ${counts.invalid} invalid${counts.unchecked ? `, ${counts.unchecked} unchecked` : ''}`;
+}
+
+// A script stored invalid because its @match rules can never match:
+// the answer per URL is still exact (no match). Anything else invalid
+// never runs at all, and `validate` says why.
+function unmatchableScript(prepared: PreparedScript): boolean {
+  return prepared.errorMessage !== undefined && unusableMatchGroupKey(prepared.errorMessage) !== null;
+}
+
+/**
+ * `match`'s verdict for one script against each page, as JSON: what
+ * `matchLines` prints.
+ */
+export function matchJson(prepared: PreparedScript, pages: { url: string; name?: string }[]): { valid: boolean; error?: string; pages: MatchPage[] } {
+  const error = prepared.status === 'ok' ? {} : { error: prepared.diagnostic ?? prepared.errorMessage ?? '' };
+  if (prepared.status !== 'ok' && !unmatchableScript(prepared)) return { valid: false, ...error, pages: [] };
+  return {
+    valid: prepared.status === 'ok',
+    ...error,
+    pages: pages.map(({ url, name }) => {
+      const verdict = explainMatch(prepared.matching, url);
+      return {
+        url, ...(name ? { tab: name } : {}), matches: verdict.matches, matchedBy: verdict.matchedBy,
+        // Rarely any, so left out when none, as warnings are.
+        ...(verdict.excludedBy.length > 0 ? { excludedBy: verdict.excludedBy } : {}),
+      };
+    }),
+  };
 }
 
 /**
@@ -205,11 +246,7 @@ export function matchLines(
   pages: { url: string; name?: string }[],
   label?: string,
 ): { lines: string[]; misses: number } {
-  // A script whose @match rules can never match is stored invalid,
-  // but the answer per URL is still exact: no match. Anything else
-  // invalid never runs at all; `validate` says why.
-  const unmatchable = prepared.errorMessage !== undefined && unusableMatchGroupKey(prepared.errorMessage) !== null;
-  if (prepared.status !== 'ok' && !unmatchable) {
+  if (prepared.status !== 'ok' && !unmatchableScript(prepared)) {
     return { lines: [label === undefined ? 'INVALID script' : `INVALID  ${label}`], misses: pages.length };
   }
   const lines: string[] = [];
