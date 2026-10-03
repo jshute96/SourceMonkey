@@ -77,8 +77,10 @@ itself. They target SourceMonkey first, and are shaped so Tampermonkey
   This widens them to every installed script, using the number
   SourceMonkey gives each one (see [Script numbers](#script-numbers)),
   so an E-id means the same script in every run and every command.
-- **`C1`, `C2`, ...**: collections, in the order `collections` lists
-  them.
+- **`C1`, `C2`, ...**: collections, by the number SourceMonkey gives
+  each one, the same way as scripts (see
+  [Collection numbers](#collection-numbers)). Run test collections have
+  none.
 - **By name**: a collection or script can also be named by its name, or
   a unique part of it, as loaded scripts are now.
 - **By the manager's own id** (`id=<uuid>`), for scripts that share a
@@ -102,7 +104,7 @@ and other scripts being added or removed.
     installs and reinstalls keeps its numbers small.
 - **Stored state:** one `scriptNumbers` row, with each script's number
   and the retired numbers with when each was last used (see
-  [storage.md](storage.md#script-numbers)).
+  [storage.md](storage.md#sticky-numbers)).
   - A number is free when no script has it and it isn't retired, or
     its 7 days have passed.
 - **Reconciling** (when the worker starts, and before each
@@ -138,6 +140,25 @@ and other scripts being added or removed.
   used the same way. Tampermonkey uses UUIDs, so under it E-ids follow
   the stored order instead, and can shift when scripts are added or
   removed.
+
+## Collection numbers
+
+SourceMonkey numbers collections the same way, and the C-id is that
+number (`C3`).
+
+- **Same rules** as script numbers: lowest free first, and a removed
+  collection's number held for 7 days.
+- **Stored** in its own `collectionNumbers` row (see
+  [storage.md](storage.md#sticky-numbers)).
+- **Order:** new numbers go to collections by path.
+- **Not numbered:** sm-dev's test collections.
+- **Not shown** anywhere in the extension.
+- **Assigned at a sync:** adding a collection with no scripts doesn't
+  start a registration sync, so it has no number until a later one.
+  The extension call behind `collection list` and `collection add`
+  should number first (`assignNumbers`), as the test API does.
+- **Other managers:** Tampermonkey and Violentmonkey show one virtual
+  collection, so it needs no number.
 
 ## Commands
 
@@ -296,14 +317,15 @@ What `script show` shows, where the manager has it:
 
 1. `--json` on the existing commands (done).
 2. Script numbers in SourceMonkey, and E-ids taken from them (done).
-3. SourceMonkey collections and installed scripts: the `collection`
+3. Collection numbers in SourceMonkey (done; nothing shows them yet).
+4. SourceMonkey collections and installed scripts: the `collection`
    and `script` verbs, with `--json`.
-4. `ManagerBackend` around those, with SourceMonkey as its first
+5. `ManagerBackend` around those, with SourceMonkey as its first
    implementation.
-5. `manager list`, `manager fetch`, `--manager` for `--temp-browser` and
+6. `manager list`, `manager fetch`, `--manager` for `--temp-browser` and
    `--open-browser`.
-6. VM, then TM, behind the same commands.
-7. Separate: move the cross-manager e2e projects onto fetched copies.
+7. VM, then TM, behind the same commands.
+8. Separate: move the cross-manager e2e projects onto fetched copies.
 
 ## Changing the person's real scripts
 
