@@ -115,11 +115,9 @@ it fits; the list, with descriptions, is `HELP.tag` in
 - `needs-page-globals`: a granted script reading the page's own globals
   (its jQuery, a player API on an element) without `unsafeWindow`.
 - `connect-undeclared`: no `@connect` rule for a host it requests.
-- `needs-xhr-onprogress`: a `GM_xmlhttpRequest` feature SourceMonkey
-  lacks.
 
 Some tags name gaps since fixed (`connect-subdomain`,
-`xhr-response-readystate`, `shadows-window`). They stay on scripts that
+`xhr-response-readystate`, `needs-xhr-onprogress`, `shadows-window`). They stay on scripts that
 pass only because of the fix; don't use them for new failures.
 
 A new tag is fine when nothing fits. Keep it short and kebab-case, and

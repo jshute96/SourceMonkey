@@ -45268,14 +45268,18 @@
       "version": "1.3.6"
     },
     "tags": [
-      "connect-undeclared",
-      "xhr-response-cap"
+      "connect-undeclared"
     ],
     "notes": [
       {
         "date": "2026-10-03",
         "version": "1.3.6",
         "text": "Temp browser, `--lang zh-CN`, logged out, on Douyin video pages (`/video/<id>`). The script adds its download icon to the player's control bar within a few seconds.\n\n- SourceMonkey: the script has no `@connect`, so clicking the icon on `/video/7692443271783664936` sent a HEAD to `v3-web.douyinvod.com` that was blocked (\"@connect not declared\"). Nothing was shown to the user; the script only logs the error.\n- A copy with `@connect *` worked on `/video/7690432599982194377` (12 s video): HEAD 200, GET 200 as a blob, then `GM_download` of the blob URL logged \"Blob 方式下载成功\" (blob download succeeded), with its \"download task submitted\" dialog.\n- SourceMonkey: on a 5:29 video (`/video/7686458088664206630`) the copy's GET failed with \"response exceeded 52428800-byte cap\", SourceMonkey's documented 50 MB `GM_xmlhttpRequest` limit. The script has no `onerror` there, so it fails silently after saying the download was submitted.\n- On the feed and the `jingxuan?modal_id=` view the icon's click path replaces the page's `fetch` and waits for a Douyin URL that never came; no request was made. Fresh profiles also got redirected from some `/video/` URLs to `jingxuan?previous_page=web_video_404_link`."
+      },
+      {
+        "date": "2026-10-03",
+        "version": "1.3.6",
+        "text": "Re-tested after the streaming `GM_xmlhttpRequest` change (the body now reaches the page in pieces, with no size cap): the 50 MB failure is gone.\n\n- Temp browser, `--lang zh-CN`, the `@connect *` copy, on `/video/7686458088664206630` (now a 47-minute video).\n- Clicking the icon: HEAD 200, then the blob GET loaded with 200 in about 4.5 minutes. The body was 521 MB (Content-Length 521341038).\n- `GM_download` of the blob URL logged \"Blob 方式下载成功\" (blob download succeeded), and the saved file was exactly 521341038 bytes.\n- Still a fail as downloaded: with no `@connect`, its requests are refused (`connect-undeclared`), as before. Untagged `xhr-response-cap`."
       }
     ]
   },

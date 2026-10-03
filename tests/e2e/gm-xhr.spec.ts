@@ -108,7 +108,7 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
     await page.close();
   });
 
-  test('onreadystatechange fires with readyState 4 before onload', async ({
+  test('onreadystatechange fires at 2, 3 and 4, before onload', async ({
     extensionContext,
     fixtureServer,
     sm,
@@ -145,7 +145,7 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
-    await expect(page.locator('body')).toHaveAttribute('data-sm-seen', 'rsc4:hello from server,load4');
+    await expect(page.locator('body')).toHaveAttribute('data-sm-seen', 'rsc2:,rsc3:hello from server,rsc4:hello from server,load4');
     await page.close();
   });
 

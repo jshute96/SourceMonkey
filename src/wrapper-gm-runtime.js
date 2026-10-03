@@ -58,6 +58,8 @@
   var _fromCharCode = String.fromCharCode;
   var _btoa = (typeof btoa === "function") ? btoa : null;
   var _atob = (typeof atob === "function") ? atob : null;
+  var _ReadableStream = (typeof ReadableStream === "function") ? ReadableStream : null;
+  var _DOMException = (typeof DOMException === "function") ? DOMException : _Error;
   var _ObjectGetPrototypeOf = Object.getPrototypeOf;
   /* Native accessors off the prototypes, used by the codec BOTH to
      read a value and to brand-check it: each one throws a TypeError
@@ -1504,14 +1506,20 @@
   /* ---------- GM_xmlhttpRequest ----------
 
      Per-script state: an `activeRequests` map keyed by request id,
-     holding the user's onload/onerror/etc. callbacks. The runtime
-     registers an `onPush` handler that routes `sm:gm-xhr-event`
-     messages back to the originating request. */
+     holding the user's callbacks and what has arrived so far. The
+     runtime registers an `onPush` handler that routes `sm:gm-xhr-event`
+     messages back to the originating request: the stream events (the
+     response headers, then the body in base64 pieces), then one
+     terminal event (load, error, timeout or abort).
+
+     Callbacks, in XMLHttpRequest's order: onloadstart once the worker
+     takes the request; onreadystatechange at 2 (headers) and 3 (the
+     first piece); onprogress per piece; then onreadystatechange at 4,
+     the terminal callback, and onloadend. */
   var activeRequests = _ObjectCreate(null);
   var _xhrNextId = 1;
 
-  /* Decode the SW's base64 binary payload into raw bytes (Uint8Array).
-     Used for blob/arraybuffer/document responseTypes. */
+  /* Decode one base64 piece of the body into raw bytes. */
   function decodeBase64(b64) {
     var binary = atob(b64);
     var len = binary.length;
@@ -1520,34 +1528,161 @@
     return bytes;
   }
 
-  /* Materialize the binary payload into the user-visible shape for the
-     requested responseType. Mutates `response` in place — adds a
-     real `response` field of the right type. */
-  function rebuildBinary(response, requestedType) {
-    if (typeof response.responseBase64 !== "string") return;
-    var bytes = decodeBase64(response.responseBase64);
+  /* Whether a responseType's body is kept as text (decoded piece by
+     piece, so `responseText` grows during onprogress) rather than as
+     bytes, or handed on through a stream ('stream'). */
+  function isTextResponseType(rt) {
+    return rt !== "blob" && rt !== "arraybuffer" && rt !== "stream";
+  }
+
+  /* For responseType 'stream' (TM's): a ReadableStream of the body's
+     bytes, there from onloadstart on, fed piece by piece. The runtime
+     keeps none of them; the stream's own queue holds what the script
+     hasn't read yet (there's no backpressure to the worker).
+
+     Cancelling the stream gives up on the request, as cancelling a
+     fetch body does: the worker stops, and the request ends as aborted. */
+  function xhrBodyStream(id, entry) {
+    return new _ReadableStream({
+      start: function (controller) { entry.streamController = controller; },
+      cancel: function () {
+        entry.streamController = null;
+        if (activeRequests[id] !== entry) return;
+        stopXhrInWorker(id);
+        dispatchXhrEvent(id, { kind: "abort" });
+      },
+    });
+  }
+
+  /* What a callback gets while the request is under way: the state so
+     far. `response` is the text so far for a plain text request, as
+     XMLHttpRequest gives it during loading, and null otherwise. */
+  function xhrState(entry) {
+    var head = entry.head;
+    return {
+      readyState: entry.readyState,
+      status: head ? head.status : 0,
+      statusText: head ? head.statusText : "",
+      finalUrl: head ? head.finalUrl : entry.url,
+      responseHeaders: head ? head.responseHeaders : "",
+      responseText: entry.text,
+      response: entry.stream ? entry.stream
+        : entry.text !== "" && (entry.responseType === "" || entry.responseType === "text") ? entry.text : null,
+    };
+  }
+
+  function setReadyState(entry, state) {
+    entry.readyState = state;
+    callXhrCallback(entry.onreadystatechange, xhrState(entry));
+  }
+
+  /* onloadstart, once: when the worker acks the request, or at its
+     first stream event if that comes first. */
+  function xhrStarted(entry) {
+    if (entry.readyState > 0) return;
+    entry.readyState = 1;
+    callXhrCallback(entry.onloadstart, xhrState(entry));
+  }
+
+  /* One stream event: the headers, or a piece of the body. */
+  function streamXhrEvent(id, event) {
+    var entry = activeRequests[id];
+    if (!entry) return;
+    /* The page gives up on silence, not on length: a long download
+       keeps hearing from the worker. */
+    armXhrTtl(id, entry);
+    /* Each callback can abort the request (or settle it some other
+       way); nothing more is said about it then. */
+    var live = function () { return activeRequests[id] === entry; };
+    xhrStarted(entry);
+    if (!live()) return;
+    if (event.kind === "headers") {
+      entry.head = event;
+      entry.total = typeof event.total === "number" ? event.total : null;
+      setReadyState(entry, 2);
+      return;
+    }
+    var bytes = decodeBase64(event.data);
+    try {
+      if (entry.decoder) entry.text += entry.decoder.decode(bytes, { stream: true });
+      else if (entry.stream) {
+        /* No controller: the script cancelled, which ended the request. */
+        if (entry.streamController) entry.streamController.enqueue(bytes);
+      } else entry.pieces.push(bytes);
+    } catch (e) {
+      /* Past what the page can hold (a string's length limit, say). */
+      failXhrBody(id, e);
+      return;
+    }
+    entry.loaded = event.loaded;
+    if (entry.readyState < 3) setReadyState(entry, 3);
+    if (!live()) return;
+    var progress = xhrState(entry);
+    progress.lengthComputable = entry.total !== null;
+    progress.loaded = entry.loaded;
+    progress.total = entry.total !== null ? entry.total : 0;
+    callXhrCallback(entry.onprogress, progress);
+  }
+
+  /* The page couldn't hold the body (too big for a string, or for one
+     ArrayBuffer): the request ends with an error saying so, and the
+     worker is told to stop. */
+  function failXhrBody(id, err) {
+    stopXhrInWorker(id);
+    dispatchXhrEvent(id, { kind: "error", message: tooLargeMessage(err) });
+  }
+  function tooLargeMessage(err) {
+    return "[SourceMonkey] GM_xmlhttpRequest: The response is too large for the page to hold ("
+      + String((err && err.message) || err) + "). For a large file, use responseType 'blob' or 'stream'";
+  }
+  function stopXhrInWorker(id) {
+    try { api.sendAsync({ type: "sm:gm-xhr-abort", id: id }).catch(function () {}); } catch (_ae) {}
+  }
+
+  /* The body the pieces make, in the requested responseType's shape:
+     fills `responseText` and `response` on the load's response. */
+  function finishXhrBody(entry, response) {
+    var rt = entry.responseType;
     var mime = response.responseMimeType || "";
-    if (requestedType === "arraybuffer") {
-      response.response = bytes.buffer;
-    } else if (requestedType === "blob") {
-      response.response = new Blob([bytes], { type: mime });
-    } else if (requestedType === "document") {
-      /* Parse as text, then DOMParser. Fallback MIME for parsing
-         when the server didn't send one. */
-      var text = "";
-      try {
-        text = new TextDecoder("utf-8").decode(bytes);
-      } catch (_de) {
-        text = String.fromCharCode.apply(null, bytes);
+    if (entry.stream) {
+      response.responseText = "";
+      response.response = entry.stream;
+      if (entry.streamController) {
+        try { entry.streamController.close(); } catch (_ce) {}
       }
+      return;
+    }
+    if (!entry.decoder) {
+      response.responseText = "";
+      if (rt === "blob") {
+        response.response = new Blob(entry.pieces, { type: mime });
+      } else {
+        var size = 0;
+        for (var i = 0; i < entry.pieces.length; i++) size += entry.pieces[i].byteLength;
+        var all = new Uint8Array(size);
+        var at = 0;
+        for (var j = 0; j < entry.pieces.length; j++) { all.set(entry.pieces[j], at); at += entry.pieces[j].byteLength; }
+        response.response = all.buffer;
+      }
+      entry.pieces = [];
+      return;
+    }
+    /* TextDecoder's default, like Response.text(): UTF-8 whatever the
+       charset says, a leading BOM dropped. */
+    var text = entry.text + entry.decoder.decode();
+    response.responseText = text;
+    if (rt === "json") {
+      /* A malformed body gives null; `responseText` still has it. */
+      try { response.response = JSON.parse(text); } catch (_je) { response.response = null; }
+    } else if (rt === "document") {
       var parseType = mime.indexOf("xml") !== -1 ? "application/xml" : "text/html";
       try {
         response.response = new DOMParser().parseFromString(text, parseType);
       } catch (_pe) {
         response.response = null;
       }
-      /* Surface the underlying text so userscripts can read it. */
-      response.responseText = text;
+    } else {
+      response.response = text;
     }
   }
 
@@ -1562,9 +1697,7 @@
     if (entry.ttlTimer) {
       try { clearTimeout(entry.ttlTimer); } catch (_te) {}
     }
-    if (event.kind === "load" && entry.responseType) {
-      rebuildBinary(event.response, entry.responseType);
-    }
+    entry.readyState = 4;
     /* Every terminal event leaves the request DONE, so the object each
        callback sees carries `readyState: 4` (scripts gate on it, e.g.
        `if (r.readyState === 4)`). Non-load events have no response, so
@@ -1574,25 +1707,49 @@
        with no response object (never sent today) falls back to the
        same empty shape rather than throwing before any callback. */
     var payload;
-    if (event.kind === "load" && event.response && typeof event.response === "object") {
-      payload = event.response;
-      payload.readyState = 4;
+    var kind = event.kind;
+    if (kind === "load" && event.response && typeof event.response === "object") {
+      try {
+        finishXhrBody(entry, event.response);
+        payload = event.response;
+        payload.readyState = 4;
+      } catch (e) {
+        /* Too big to build: an error instead, as nothing else will
+           settle the request now. */
+        kind = "error";
+        payload = emptyXhrResponse(entry);
+        payload.error = tooLargeMessage(e);
+      }
     } else {
       payload = emptyXhrResponse(entry);
-      if (event.kind === "error") payload.error = event.message;
+      if (kind === "error") payload.error = event.message;
+      if (entry.stream) {
+        /* A stream the script is reading fails with the request, as a
+           fetch body's does: the error's message, or an AbortError /
+           TimeoutError. It stays the response, errored. */
+        payload.response = entry.stream;
+        if (entry.streamController) {
+          var streamErr = kind === "error"
+            ? new _Error(event.message || "[SourceMonkey] GM_xmlhttpRequest: The request failed")
+            : new _DOMException(
+              kind === "timeout" ? "[SourceMonkey] GM_xmlhttpRequest: The request timed out" : "[SourceMonkey] GM_xmlhttpRequest: The request was aborted",
+              kind === "timeout" ? "TimeoutError" : "AbortError");
+          try { entry.streamController.error(streamErr); } catch (_se) {}
+          entry.streamController = null;
+        }
+      }
     }
     var cb;
-    if (event.kind === "load") cb = entry.onload;
-    else if (event.kind === "error") cb = entry.onerror;
-    else if (event.kind === "timeout") cb = entry.ontimeout;
-    else if (event.kind === "abort") cb = entry.onabort;
-    /* `onreadystatechange` fires before the terminal callback, the
-       order XMLHttpRequest (and so Tampermonkey/Violentmonkey) uses:
-       readystatechange(4), then load/error/timeout/abort. Only the
-       final state is reported; the worker sends one event per request,
-       so states 1-3 never reach the page. */
+    if (kind === "load") cb = entry.onload;
+    else if (kind === "error") cb = entry.onerror;
+    else if (kind === "timeout") cb = entry.ontimeout;
+    else if (kind === "abort") cb = entry.onabort;
+    /* `onreadystatechange` fires before the terminal callback, and
+       onloadend after it: the order XMLHttpRequest (and so
+       Tampermonkey/Violentmonkey) uses. */
     callXhrCallback(entry.onreadystatechange, payload);
     callXhrCallback(cb, payload);
+    callXhrCallback(entry.onloadend, payload);
   }
 
   function emptyXhrResponse(entry) {
@@ -1617,16 +1774,33 @@
   }
 
   /* Hard cap on how long we hold a per-request entry without hearing
-     back from the SW. Without this, an SW crash (or any non-response)
-     leaks the entry forever and the userscript never sees a terminal
-     event. We synthesize an `error` after the cap so the script's
-     onerror has a shot at handling it. Per-request, refreshed when
-     the entry is created. */
+     from the SW. Without this, an SW crash (or any non-response) leaks
+     the entry forever and the userscript never sees a terminal event.
+     We synthesize an `error` after the cap so the script's onerror has
+     a shot at handling it. Re-armed by every message about the request,
+     so it times silence, not the whole transfer. */
   var XHR_PAGE_SIDE_TTL_MS = 5 * 60 * 1000; /* 5 minutes */
+  function armXhrTtl(id, entry) {
+    if (entry.ttlTimer) {
+      try { clearTimeout(entry.ttlTimer); } catch (_te) {}
+    }
+    entry.ttlTimer = setTimeout(function () {
+      /* Minutes, not the raw millisecond count — a six-digit number
+         is not something a reader can weigh. The worker is told to
+         stop too, if it's still there: the body could be long. */
+      stopXhrInWorker(id);
+      dispatchXhrEvent(id, {
+        kind: "error",
+        message: "[SourceMonkey] GM_xmlhttpRequest: No message from SourceMonkey for "
+          + (XHR_PAGE_SIDE_TTL_MS / 60000) + " minutes, so the page stopped waiting for this request",
+      });
+    }, XHR_PAGE_SIDE_TTL_MS);
+  }
   onPush(function (msg) {
     if (msg.type !== "sm:gm-xhr-event") return;
     if (typeof msg.id !== "string" || !msg.event) return;
-    dispatchXhrEvent(msg.id, msg.event);
+    if (msg.event.kind === "headers" || msg.event.kind === "progress") streamXhrEvent(msg.id, msg.event);
+    else dispatchXhrEvent(msg.id, msg.event);
   });
 
   /* A URL argument as a string. Scripts pass `URL` objects too (and
@@ -1653,31 +1827,38 @@
         throw new _Error("[SourceMonkey] GM_xmlhttpRequest: url required");
       }
       var id = "xhr-" + (_xhrNextId++) + "-" + Math.random().toString(36).slice(2, 10);
+      var responseType = typeof details.responseType === "string" ? details.responseType : "";
       var entry = {
+        onloadstart: details.onloadstart,
+        onprogress: details.onprogress,
+        onreadystatechange: details.onreadystatechange,
         onload: details.onload,
         onerror: details.onerror,
         ontimeout: details.ontimeout,
         onabort: details.onabort,
-        onreadystatechange: details.onreadystatechange,
+        onloadend: details.onloadend,
         url: url,
-        responseType: typeof details.responseType === "string" ? details.responseType : "",
+        responseType: responseType,
         ttlTimer: null,
+        /* What has arrived: 0 until the worker takes the request. */
+        readyState: 0,
+        head: null,
+        total: null,
+        loaded: 0,
+        /* The body so far: text through a streaming decoder, or byte
+           pieces for blob/arraybuffer. */
+        decoder: isTextResponseType(responseType) ? new TextDecoder() : null,
+        text: "",
+        pieces: [],
+        stream: null,
+        streamController: null,
       };
+      /* Every Chrome with chrome.userScripts has ReadableStream; the
+         check only keeps a missing one from throwing (the body would
+         then come as an ArrayBuffer). */
+      if (responseType === "stream" && _ReadableStream) entry.stream = xhrBodyStream(id, entry);
       activeRequests[id] = entry;
-      entry.ttlTimer = setTimeout(function () {
-        /* TTL elapsed without a terminal event. Synthesize an error
-           so the userscript at least sees a settled state instead of
-           silently dangling. */
-        /* Minutes, not the raw millisecond count — a six-digit number
-           is not something a reader can weigh. "gave up on", not
-           "dropped": this only stops the page waiting, the SW-side
-           fetch is never aborted and may still complete. */
-        dispatchXhrEvent(id, {
-          kind: "error",
-          message: "[SourceMonkey] GM_xmlhttpRequest: no response from the extension after "
-            + (XHR_PAGE_SIDE_TTL_MS / 60000) + " minutes, so this request was given up on",
-        });
-      }, XHR_PAGE_SIDE_TTL_MS);
+      armXhrTtl(id, entry);
       /* Build the serializable request payload — strip callbacks
          and other non-cloneable fields. */
       var request = {
@@ -1703,12 +1884,21 @@
            gate replies `{ok:false, error}`, and the bridge's own
            fallback when the SW is unreachable carries no `ok` at all.
            Settle now rather than letting the TTL above do it. */
-        if (reply && reply.ok === true) return;
+        if (reply && reply.ok === true) {
+          var started = activeRequests[id];
+          if (started) xhrStarted(started);
+          return;
+        }
+        /* XMLHttpRequest's loadstart comes before any error. */
+        var refused = activeRequests[id];
+        if (refused) xhrStarted(refused);
         var why = (reply && reply.error) || "SourceMonkey did not accept the request";
         dispatchXhrEvent(id, { kind: "error", message: "[SourceMonkey] GM_xmlhttpRequest: " + why });
       }, function (err) {
         /* The send itself failed (chrome.runtime not available).
            Synthesize an error event for the caller. */
+        var unsent = activeRequests[id];
+        if (unsent) xhrStarted(unsent);
         dispatchXhrEvent(id, { kind: "error", message: String(err && err.message || err) });
       });
       return {

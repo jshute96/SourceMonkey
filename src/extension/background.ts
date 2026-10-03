@@ -220,7 +220,7 @@ import {
   abortXhrsForTab,
   runXhr,
 } from './gm-xhr.js';
-import type { GmXhrEvent, GmXhrRequestPayload } from '../gm-xhr-types.js';
+import type { GmXhrEvent, GmXhrRequestPayload, GmXhrStreamEvent } from '../gm-xhr-types.js';
 import { clearStaleHeaderRules } from './gm-xhr-headers.js';
 import {
   connectBlockedMessage,
@@ -2979,28 +2979,33 @@ async function handleXhrStart(
     await sendXhrError(sender, tabId, payload.scriptId, payload.id, message);
     return;
   }
-  // Run the fetch and ship the result back to the sender's tab. Other
+  // Run the fetch and ship its events back to the sender's tab. Other
   // tabs do not get a copy — XHR is per-call, not broadcast. The same
   // policy predicate re-checks the post-redirect URL inside runXhr.
+  //
+  // Frame-scoped: the response body is the sensitive part of the API,
+  // and `chrome.tabs.sendMessage` with no frameId hands it to every
+  // frame in the tab. Only the frame that asked needs it. (Moot while
+  // nothing registers with `allFrames`, but it stops being moot the
+  // day something does.)
+  const deliver = (event: GmXhrEvent | GmXhrStreamEvent): Promise<unknown> => chrome.tabs.sendMessage(tabId, {
+    type: 'sm:gm-xhr-event',
+    smWorld: pushWorld(payload.scriptId),
+    id: payload.id,
+    event,
+  }, senderFrameOptions(sender));
+  // A stream event that can't be delivered (the tab or its page is
+  // gone) throws, which ends the request: nobody is left to read it.
   const event = await runXhr(
     payload.id,
     payload.request,
+    async (streamEvent) => { await deliver(streamEvent); },
     (finalUrl) => policy.check(finalUrl).allowed,
     tabId,
   );
   requestEvent(event);
   try {
-    // Frame-scoped: the response body is the sensitive part of the API,
-    // and `chrome.tabs.sendMessage` with no frameId hands it to every
-    // frame in the tab. Only the frame that asked needs it. (Moot while
-    // nothing registers with `allFrames`, but it stops being moot the
-    // day something does.)
-    await chrome.tabs.sendMessage(tabId, {
-      type: 'sm:gm-xhr-event',
-      smWorld: pushWorld(payload.scriptId),
-      id: payload.id,
-      event,
-    }, senderFrameOptions(sender));
+    await deliver(event);
   } catch {
     // Sender tab closed or otherwise unreachable. Drop quietly —
     // there's nobody to deliver to.
@@ -3027,13 +3032,20 @@ async function sendXhrError(
   } catch { /* tab gone */ }
 }
 
-// Address a reply at the exact frame that sent the request, when Chrome
-// told us which one that was. Older senders (or a missing frameId) fall
-// back to the tab-wide send rather than dropping the message.
+// Address a reply at the exact document that sent the request, when
+// Chrome told us which one that was. The documentId matters: a frame
+// that has navigated since is another page, and a reply addressed by
+// frameId alone would reach it. Addressed by document, the send fails
+// instead, which ends a streaming request nobody is left to read.
+// Older senders (no ids) fall back to the tab-wide send rather than
+// dropping the message.
 function senderFrameOptions(
   sender: chrome.runtime.MessageSender,
-): { frameId?: number } {
-  return typeof sender.frameId === 'number' ? { frameId: sender.frameId } : {};
+): { frameId?: number; documentId?: string } {
+  return {
+    ...(typeof sender.frameId === 'number' ? { frameId: sender.frameId } : {}),
+    ...(typeof sender.documentId === 'string' ? { documentId: sender.documentId } : {}),
+  };
 }
 
 // Load a script's `@connect` policy once and return a reusable
