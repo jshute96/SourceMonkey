@@ -952,8 +952,11 @@ For a program reading sm-dev's answers rather than a person.
   - A line that starts a run and sends it commands also shows the
     page's console lines on stdout.
 
+- `status` without `--run` (or a `start` / `attach` before it) shows
+  every run, so its result holds them in a `runs` array.
+
 ```sh
-sm-dev --json status | jq '.scripts[] | {name, values}'
+sm-dev --run D1 --json status | jq '.scripts[] | {name, values}'
 ```
 
 The shapes of every command's result, with examples:
@@ -1176,6 +1179,8 @@ the stream, rather than being answered automatically.
 - Or use `accept` (a prompt's text after it) or `dismiss`, with a tab
   (`accept T2`) for a dialog on another tab. This works in a headless
   browser too.
+  - With several tabs, the report names the tab to give:
+    `Use accept T2 or dismiss T2`.
   - Prompt text that starts with a tab's name is taken as the tab
     unless quoted: `accept "T2"`.
 - In a headless run that can't take commands (it couldn't open its

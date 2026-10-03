@@ -799,8 +799,15 @@ test('scriptAbsolutePath returns the github.com blob URL for a github-dir entry'
 
 test('a run\'s scratch script URL names its run, and its basename is the script\'s name', () => {
   const url = scratchUrl('D2-a3f9', 'My Script.user.js');
-  assert.equal(url, 'scratch:///D2-a3f9/My-Script.user.js');
-  assert.equal(baseName(url), 'My-Script.user.js');
+  assert.equal(url, 'scratch:///D2-a3f9/My%20Script.user.js');
+  assert.equal(baseName(url), 'My%20Script.user.js');
+  // Encoded as a file:// URL would be, so a literal % survives decoding.
+  assert.equal(scratchUrl('R1', 'My%20Thrower.user.js'), 'scratch:///R1/My%2520Thrower.user.js');
+  // Never a fragment or query, and one URL per name.
+  assert.equal(scratchUrl('R1', 'a#b?c.user.js'), 'scratch:///R1/a%23b%3Fc.user.js');
+  assert.equal(scratchUrl('R1', 'café.user.js'), 'scratch:///R1/caf%C3%A9.user.js');
+  assert.notEqual(scratchUrl('R1', 'a b.user.js'), scratchUrl('R1', 'a-b.user.js'));
+  assert.equal(scratchUrl('R1', '\ud800.user.js'), 'scratch:///R1/%EF%BF%BD.user.js');
   assert.equal(scratchRunOf(url), 'D2-a3f9');
   // A path sm-dev was given stays whole, relative or absolute.
   assert.equal(scratchUrl('R1', '../sites/a.com/x.user.js'), 'scratch:///R1/../sites/a.com/x.user.js');

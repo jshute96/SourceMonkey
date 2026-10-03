@@ -280,9 +280,16 @@ export function isScratchUrl(input: string): boolean {
 // two files of the same name stay apart. Ends in `.user.js` so every
 // "is this a script" check reads it as one, and so its basename labels
 // it in the viewer and the logs.
+//
+// Its segments are percent-encoded, as a file:// URL's would be, so the
+// name reads back as written wherever it is shown decoded (the viewer,
+// stack lines): `My%20Script.user.js` stays that, not `My-20Script`.
 export function scratchUrl(run: string, name: string): string {
-  const segments = name.split('/').map((segment) => segment && safeSegment(segment));
-  const base = safeSegment((segments.pop() ?? '').replace(/\.user\.js$/i, '')) || 'script';
+  // A lone surrogate has no encoding (encodeURIComponent throws on it),
+  // so it becomes U+FFFD, as a decoder would show it.
+  const whole = name.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');
+  const segments = whole.split('/').map((segment) => encodeURIComponent(segment));
+  const base = (segments.pop() ?? '').replace(/\.user\.js$/i, '') || 'script';
   return `${SCRATCH_SCHEME}${safeSegment(run)}/${[...segments, `${base}.user.js`].join('/')}`;
 }
 
