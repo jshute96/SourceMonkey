@@ -20,8 +20,6 @@ real-browser end-to-end suite for everything that touches the
     fixture do for users.
   - Fixtures in `tests/fixtures/harness.ts`, which extends the
     package's own fixture.
-  - The `--devtools` test in `run-remote.spec.ts` needs the
-    `chrome-devtools` command, and is skipped without it.
 - `tests/greasyfork-examples/` — not a test suite: tooling that builds a
   corpus of the top 2000 real-world GreasyFork scripts, analyses it, and
   records per-script validation and test results in `corpus.json` (see

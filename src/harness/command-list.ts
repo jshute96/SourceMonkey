@@ -191,16 +191,6 @@ export const HELP_SECTIONS: HelpSection[] = [
               { term: '--lang LIST', about: 'Set the languages the run\'s tabs prefer, e.g. --lang zh-CN or --lang zh-CN,en.' },
             ],
           },
-          {
-            title: 'DevTools',
-            options: [
-              {
-                term: '--devtools',
-                about: ['Also start a Chrome DevTools server for the run, and print each tab\'s page id in it. Use with chrome-devtools.', 'On by default when $SM_DEV_DEVTOOLS is 1.'],
-              },
-              { term: '--nodevtools', about: 'Don\'t start it, even when $SM_DEV_DEVTOOLS is 1.' },
-            ],
-          },
         ],
       },
     ],
@@ -592,7 +582,6 @@ export const HELP_SECTIONS: HelpSection[] = [
         items: [
           { term: 'T2', about: 'Tab ID in the tabs list.' },
           { term: 'targetId=<id>', about: ['Its CDP (Chrome DevTools Protocol) target id.', 'Or its first 6 or more characters. targetId= is optional.'] },
-          { term: 'pageId=4', about: 'Its DevTools page id (with --devtools).' },
         ],
       },
       {

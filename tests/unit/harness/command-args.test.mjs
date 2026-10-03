@@ -74,8 +74,8 @@ test('--help asks for the command\'s help, where a flag can go', () => {
 test('a tab can lead a page command\'s arguments, among its flags', () => {
   assert.deepEqual(typed('eval', 'T2 --script document.title'), { flags: { '--script': true }, tab: 'T2', words: [], text: 'document.title' });
   assert.deepEqual(typed('eval', '--script T2 x').tab, 'T2');
-  assert.deepEqual(typed('probe', '[targetId=ABC123 pageId=4] .x'), { flags: {}, tab: '[targetId=ABC123 pageId=4]', words: ['.x'] });
-  assert.equal(typed('focus', '[targetId=ABC123 pageId=4]').tab, '[targetId=ABC123 pageId=4]');
+  assert.deepEqual(typed('probe', '[targetId=ABC123] .x'), { flags: {}, tab: '[targetId=ABC123]', words: ['.x'] });
+  assert.equal(typed('focus', '[targetId=ABC123]').tab, '[targetId=ABC123]');
   // Only first: a later T2 is an argument.
   assert.deepEqual(typed('key', 'j T2').words, ['j', 'T2']);
 });

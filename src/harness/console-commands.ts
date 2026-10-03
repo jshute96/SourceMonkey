@@ -66,8 +66,6 @@ export interface ControlledTab {
    * name the same tab. Unset if it closed before it could be read.
    */
   targetId?: string | null;
-  /** Its page id in the run's DevTools server (`--devtools`), once found. */
-  pageId?: number;
   /**
    * Its last load failed, or its scripts never reported (said already),
    * so the waits after it don't wait on it again.
@@ -78,15 +76,6 @@ export interface ControlledTab {
 /** ` [targetId=...]`, the tab's CDP id, for the end of a line. */
 export function targetIdSuffix(targetId: string | null | undefined): string {
   return targetId ? ` [targetId=${targetId}]` : '';
-}
-
-// ` [targetId=... pageId=4]`: both ids, where `tabs` lists the tab.
-function tabIdsSuffix(tab: ControlledTab): string {
-  const ids = [
-    ...(tab.targetId ? [`targetId=${tab.targetId}`] : []),
-    ...(tab.pageId !== undefined ? [`pageId=${tab.pageId}`] : []),
-  ];
-  return ids.length > 0 ? ` [${ids.join(' ')}]` : '';
 }
 
 /**
@@ -150,8 +139,6 @@ export interface ConsoleContext {
   runId?: string;
   /** The run's log file (see run-log.ts), for `status`. */
   log?: string;
-  /** How to reach the run's DevTools server, for `status`. */
-  devtools?: () => string | null;
   /** The run's browser, for `status`: `connected to browser 127.0.0.1:9233`. */
   browser?: string;
   /**
@@ -449,8 +436,6 @@ export async function runConsoleCommand(
       }
       if (ctx.backend) ctx.out(`Backend: ${ctx.backend()}`);
       if (ctx.log) ctx.out(`Log: ${runLogLabel(ctx.log, ctx.runId)}`);
-      const devtools = ctx.devtools?.();
-      if (devtools) ctx.out(`DevTools: ${devtools}`);
       // The tabs first, each with its URL, ids and any dialog; then
       // the scripts on the current one, which is marked there. With no
       // tab, still the scripts and what they have stored.
@@ -1167,7 +1152,7 @@ function printTabs(ctx: ConsoleContext): void {
   for (const tab of ctx.tabs()) {
     const opener = tab.openedBy ? ` (opened by T${tab.openedBy})` : '';
     const none = tab.noScript ? ' (no scripts)' : '';
-    ctx.out(`${tab === current ? '* ' : '  '}${tabName(tab)}: ${tab.page.url()}${savedSuffix(tab)}${none}${opener}${tabIdsSuffix(tab)}`);
+    ctx.out(`${tab === current ? '* ' : '  '}${tabName(tab)}: ${tab.page.url()}${savedSuffix(tab)}${none}${opener}${targetIdSuffix(tab.targetId)}`);
     const dialog = tab.dialogs?.current;
     if (dialog) ctx.out(`    Waiting on ${dialogKind(dialog)} dialog: ${JSON.stringify(dialog.message())}`);
     const running = runningOn(ctx, tab);
@@ -1200,13 +1185,11 @@ async function closeTabs(ctx: ConsoleContext, words: string[], force: boolean, c
   } else {
     tabs = [];
     for (let i = 0; i < words.length; i++) {
-      // The ids as `tabs` shows them, `[targetId=... pageId=4]`, are two words.
-      const pair = /^\[targetId=[^\]]+$/i.test(words[i]) && /^pageId=\d+\]$/i.test(words[i + 1] ?? '');
       if (words[i] === 'all') {
         ctx.out('[sm-dev] ERROR: The closetab command takes all by itself, to close all tabs');
         return false;
       }
-      const picked = pickTab(ctx, pair ? `${words[i]} ${words[++i]}` : words[i]);
+      const picked = pickTab(ctx, words[i]);
       if (!picked) return;
       if (!tabs.includes(picked)) tabs.push(picked);
     }

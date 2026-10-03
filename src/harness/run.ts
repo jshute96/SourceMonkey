@@ -5,7 +5,6 @@
 // Kept apart from cli.ts so the Node-only commands (`validate`,
 // `match`) never load Playwright, which is an optional peer dependency.
 
-import { randomBytes } from 'node:crypto';
 import { watch, type FSWatcher } from 'node:fs';
 import { readFile, rename, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -19,7 +18,6 @@ import {
   type CommandRunner, type ConsoleContext, type ControlledTab, type OutputHistory,
 } from './console-commands.js';
 import { applyLang, langLaunchArgs } from './browser-lang.js';
-import { DevToolsLink } from './devtools.js';
 import { extensionLabel, sourceMonkeyState, type ExtensionState } from './extension-backend.js';
 import { ExtensionHost } from './extension-host.js';
 import { launchExtensionBrowser } from './extension-launch.js';
@@ -73,12 +71,6 @@ export interface RunOptions extends ConnectOptions {
   values?: Record<string, unknown>;
   /** Also stream the page's own errors, not just ones from the scripts. */
   pageErrors?: boolean;
-  /**
-   * Start a DevTools background server for the run, and find each tab's
-   * page id in it. Needs a browser connected over CDP, and the harness
-   * backend.
-   */
-  devtools?: boolean;
   collectionRoot: string;
   localRoots: string[];
   /** Where the stream goes. */
@@ -555,9 +547,6 @@ export async function run(opts: RunOptions): Promise<number> {
     ending = true;
     // No sent command runs against tabs being let go.
     remote.disarm();
-    // While the tabs are still attached, so a DevTools lookup in flight
-    // can delete its markers from them.
-    await held.devtools?.stop();
     // Also on a throw partway through, so a failed run leaves no
     // attachment behind in a browser the developer keeps using.
     await held.tabs?.dispose().catch(() => undefined);
@@ -825,21 +814,8 @@ async function runInBrowser(
   // Commands are only read once the page has loaded, but a prompt
   // opened before then can still wait for a typed or sent accept.
   const commandsComing = opts.until !== undefined && remote.reachable;
-  let devtools: DevToolsLink | null = null;
-  const tabs = new FollowedTabs(host, opts, session.context, commandsComing, link, () => {
-    remote.setTabs(tabs.list().length);
-    devtools?.schedule();
-  });
+  const tabs = new FollowedTabs(host, opts, session.context, commandsComing, link, () => remote.setTabs(tabs.list().length));
   held.tabs = tabs;
-  // Named by the run's id, which `list` and `status` show, when it can
-  // be: DevTools takes only hex (`D1` happens to be). A run other
-  // shells can't reach has none, and a name start --run gave isn't hex,
-  // so a random one stands in.
-  if (opts.devtools && opts.until) {
-    const name = remote.id && /^[0-9a-f]+$/i.test(remote.id) ? remote.id : randomBytes(3).toString('hex');
-    devtools = new DevToolsLink(name, session.endpoint, () => tabs.list(), opts.out);
-    held.devtools = devtools;
-  }
   wireHostOutput(host, opts.out, (record) => tabs.prefixOf(record));
   // T1, unless `--notab`; then the first tab `newtab` opens is T1.
   if (page) {
@@ -1061,7 +1037,6 @@ async function runInBrowser(
         stop: () => opts.onStop?.(),
         runId: remote.id,
         ...(opts.log ? { log: opts.log } : {}),
-        devtools: () => (devtools?.isUp ? devtools.usage : null),
         browser: browserSentence({ browser: session.endpoint, owned: session.launched, headless: session.headless }),
         extension: () => sourceMonkeyState(session.endpoint),
         // The first push makes the test collection.
@@ -1111,7 +1086,6 @@ async function claimTab(link: ExtensionLink, page: Page, out: (line: string) => 
 interface Held {
   attachment?: PageAttachment;
   tabs?: FollowedTabs;
-  devtools?: DevToolsLink;
   /** The run's connection to SourceMonkey, released at its end. */
   extension?: ExtensionLink;
 }

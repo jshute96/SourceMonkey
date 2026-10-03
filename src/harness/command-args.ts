@@ -157,12 +157,8 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
       continue;
     }
     // A tab first, before any other argument.
-    // The pair as one word, when a shell quoted it.
-    const pairWord = /^\[targetId=\S+\s+pageId=\d+\]$/i.test(word.text);
-    if (shape.tab && args.length === 0 && parsed.tab === undefined && (pairWord || (!word.quoted && TAB_ARG.test(word.text)))) {
-      // The ids as `tabs` shows them, `[targetId=... pageId=4]`, are two words.
-      const pair = /^\[targetId=[^\]]+$/i.test(word.text) && /^pageId=\d+\]$/i.test(list[i + 1]?.text ?? '');
-      parsed.tab = pair ? `${word.text} ${list[++i].text}` : word.text;
+    if (shape.tab && args.length === 0 && parsed.tab === undefined && !word.quoted && TAB_ARG.test(word.text)) {
+      parsed.tab = word.text;
       args.push(word);
       continue;
     }

@@ -25,24 +25,16 @@ flowchart LR
     Clients["sm-dev clients<br/>(any shells)"]
     subgraph RunProc["Run process (run.ts)"]
         Host["Host + attachments<br/>(extension-host.ts, host.ts,<br/>page-watch.ts)"]
-        Proxy["CDP proxy<br/>(cdp-proxy.ts)"]
     end
     Browser["Browser<br/>(tabs, and SourceMonkey's SW)"]
-    DevServer["DevTools server<br/>(chrome-devtools-mcp)"]
-    DevCli["chrome-devtools<br/>command"]
 
     Clients -- "Unix socket, JSON lines" --> RunProc
     Host -- "CDP via Playwright<br/>(pages, worker.evaluate,<br/>the SW's console)" --> Browser
-    Proxy -- "own CDP connection" --> Browser
-    DevServer -- "WebSocket, run's tabs only" --> Proxy
-    DevCli -- "server socket" --> DevServer
-    RunProc -. "page ids (--devtools)" .-> DevServer
 ```
 
 - The host hears what the scripts do from the SW's event stream (see
   [The event stream](#the-event-stream)); pages add nothing of sm-dev's
   that they can see.
-- The DevTools pieces exist only with `--devtools`.
 
 ### Modules
 
@@ -60,12 +52,11 @@ flowchart LR
 | `prompt-editor.ts` | Multi-line editing of `{{` blocks at the prompt |
 | `page-commands.ts`, `snapshot.ts` | Commands that drive and read a page |
 | `wait.ts` | `wait`, and when a tab has settled |
-| `tab-refs.ts` | Naming and picking tabs (`T2`, target and DevTools page ids), the current tab, the dialog message |
+| `tab-refs.ts` | Naming and picking tabs (`T2`, target ids), the current tab, the dialog message |
 | `save-html.ts`, `saved-pages.ts` | Saving a page, and serving it back at its URL |
 | `browser-launch.ts` | `--open-browser` |
 | `browser-lang.ts` | `start --lang`: the languages the run's tabs prefer |
 | `stuck-tabs.ts` | Waiting out unresponsive tabs before connecting |
-| `cdp-proxy.ts`, `devtools.ts` | `--devtools` |
 | `page-output.ts` | Which page console lines and errors the run streams |
 | `host.ts` | The records host: the scripts' reports, a copy of their values, menus, and the waits on them |
 | `extension-host.ts` | `ExtensionHost`: fills the records host from the extension's events, and answers commands from it |
@@ -1501,114 +1492,3 @@ fixture's `serveHtml`.
   - The bypass makes later live pages skip their service workers too.
   - Accepted, since the guide already sends the live page to another
     tab.
-
-## DevTools
-
-`start --devtools` gives the `chrome-devtools` command access to the
-run's tabs. It is the command-line client of Chrome DevTools MCP, a
-DevTools server for agents (MCP: Model Context Protocol, the protocol
-agent tools speak).
-
-### The CDP proxy (`cdp-proxy.ts`)
-
-A CDP endpoint that shows a client only the run's tabs, for the
-DevTools server to connect to.
-
-- Why: DevTools' Puppeteer attaches to every tab in the browser, and
-  its connection isn't ready until each has reported the page inside
-  it. One of the person's tabs that never answers (seen with frozen
-  background tabs, and tabs on a dialog) stalls every DevTools call.
-- Each client gets its own connection to the browser. Traffic passes
-  through, except:
-  - events about other tabs, which are dropped;
-  - `Target.getTargets`, which is filtered;
-  - tabs the browser attaches to that connection anyway, which are let
-    run (if paused) and detached.
-- Workers, service workers (extensions' included) and the browser
-  target are hidden too. The client still reaches a page's own frames
-  and workers through the page's session.
-- Attaches the client asks for itself (Puppeteer's extra session per
-  page) pass through, with their sessions.
-
-Finding the run's tabs:
-
-- A tab is shown when the page inside it is one the run allowed.
-- Chrome lists a tab and its page under unrelated ids, and doesn't keep
-  a tab's own URL up to date as its page navigates. So the page is
-  found on a side connection: attach to the tab, let it report its
-  page, detach (3 seconds).
-  - Tabs are asked when a page is allowed whose tab isn't known yet, a
-    few at a time, each once.
-  - A tab that doesn't answer (a frozen one) is asked again only while
-    an allowed page's tab is unknown.
-  - Asking is done by the proxy alone; the client never sees those
-    tabs.
-- Knowing the run's tabs before the client connects keeps them in the
-  client's initial attach, which Puppeteer waits for, rather than
-  arriving after it.
-- A tab not allowed yet is held for 30 seconds, not dropped, since the
-  run only claims a tab its page opened once it's loading.
-  - One claimed after it was let go is attached again.
-  - Tabs the client opens itself (`new_page`) are allowed at once.
-  - A held tab runs meanwhile: a person's new tab can't sit paused
-    waiting for a claim. So a tab claimed later loses its
-    pause-on-start, and the client may miss the start of its first
-    load.
-
-Transport: the client side is a small WebSocket server of its own
-(handshake and text frames), since the harness has no WebSocket
-library. The browser side uses Node's WebSocket client.
-
-### The DevTools server (`devtools.ts`)
-
-- The server connects through `cdp-proxy.ts`, not to the browser.
-- Started with the `chrome-devtools` command, under the run's id as its
-  session, so an agent's own calls reach the same server.
-- Started with Google's usage statistics, CrUX lookups (Chrome's
-  field-performance API) and update checks turned off.
-- Off by default: DevTools emulates focus in the pages it sees (the
-  run's), and `evaluate_script` answers dialogs.
-- Not on Windows: the server's files and signals are only followed as
-  they are on Linux and macOS.
-
-Calling it:
-
-- Called over the server's socket directly: a JSON request and reply,
-  each ended by a NUL, as the command itself does.
-  - A command per call would cost a Node startup each time.
-  - The protocol is the package's own (followed as of 1.10), not a
-    documented one.
-  - Calling over the socket also never starts a new server, where the
-    command would start one with its own Chrome if the run's had died.
-- Each call gets 5 seconds, the first 15, since that is when the server
-  connects to the browser.
-- DevTools runs one call at a time, so one of the run's tabs not
-  answering holds up everything. The run says so once, naming both
-  causes, since a slow connect looks the same.
-
-Mapping tabs to page ids:
-
-- DevTools gives no id sm-dev can match to its tabs. Its page ids are a
-  counter in the server, in the order it first sees pages, and its
-  `list_pages` has only id, URL and title.
-- So each unmapped tab gets a marker in its page's main world (the only
-  world `evaluate_script` reads), the pages with a matching URL are
-  read for it, and the markers are deleted.
-- The marker is `<run>:<random token>:<tab number>`, so a leftover from
-  another run or pass never matches.
-- Mapping runs a moment after tabs open (batched), and again every two
-  seconds while tabs are left unmapped (loading, on a dialog, a stuck
-  call), a few times per tab.
-- A tab out of tries is named; its next page load gives it its tries
-  again.
-
-Shutting down:
-
-- On the way out it is stopped before the tabs are let go, so a lookup
-  in flight has its calls cut off and can still delete its markers.
-- The server is then killed (`SIGTERM`), not asked to stop, which would
-  mean waiting behind a stuck call. It cleans up its own socket and pid
-  file on `SIGTERM`.
-- The pid is the one the server reports over its socket (`status`), not
-  its pid file's: a server that died uncleanly leaves a file whose pid
-  may be another process's by now.

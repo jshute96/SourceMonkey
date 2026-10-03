@@ -32,7 +32,6 @@ import {
 import { parseLang } from './browser-lang.js';
 import { parseCommandArgs } from './command-args.js';
 import { OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, commandNamed, commandSyntax, commandsHelp, fullHelp } from './command-list.js';
-import { devtoolsWanted } from './devtools.js';
 import { readJsonFile } from './input-file.js';
 // Node built-ins only, so as cheap to load as the rest here.
 import { runIdOf, type CommandSource, type RunClient, type RunRecord } from './runs.js';
@@ -69,8 +68,6 @@ interface Opts {
   /** Which flag gave `values`, to name in messages. */
   valuesFlag?: string;
   pageErrors: boolean;
-  /** `--devtools` / `--nodevtools`; unset leaves it to `SM_DEV_DEVTOOLS`. */
-  devtools?: boolean;
   seconds?: number;
   detach: boolean;
   /** `start --nowait`: ready once the scripts start, without settling. */
@@ -164,8 +161,6 @@ function parseArgs(argv: string[]): Opts {
         break;
       }
       case '--page-errors': opts.pageErrors = true; break;
-      case '--devtools': opts.devtools = true; break;
-      case '--nodevtools': opts.devtools = false; break;
       case '--detach': opts.detach = true; break;
       case '--new': opts.newRun = true; break;
       case '--nowait': opts.noWait = true; break;
@@ -268,9 +263,9 @@ async function match(opts: Opts): Promise<number> {
  * `--new`. `words` are the command's own, for that process.
  */
 async function startCommand(opts: Opts, words: string[], client: Client): Promise<number> {
-  const { urls, files, scripts, devtools, saved } = await checkStart(opts);
+  const { urls, files, scripts, saved } = await checkStart(opts);
   // The background process: the run itself.
-  if (detachedLog) return runHere(opts, { files, given: scripts, urls, saved }, devtools, client.runId);
+  if (detachedLog) return runHere(opts, { files, given: scripts, urls, saved }, client.runId);
   const { liveRuns, stopRun } = await import('./runs.js');
   const live = await liveRuns();
   // Stopped first, which also frees a tab for this one to reuse. The
@@ -305,7 +300,7 @@ async function startCommand(opts: Opts, words: string[], client: Client): Promis
 // `start`'s arguments and flags, checked: its URLs, and its script
 // files, which must exist. Also done before a line of several commands
 // runs any.
-async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]; scripts: string[]; devtools: boolean; saved: (SavedPageStart | null)[] }> {
+async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]; scripts: string[]; saved: (SavedPageStart | null)[] }> {
   const { scripts, urls, pages } = scriptsAndUrls(opts.args);
   if (opts.all && urls.length > 0) throw new UsageError('The --all flag opens each script\'s own page, so it can\'t be used with a URL');
   const remote = scripts.find((s) => REMOTE_SCRIPT.test(s));
@@ -325,18 +320,14 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
     ] as [boolean, string][]).filter(([on]) => on).map(([, name]) => name);
     if (used.length > 0) throw new UsageError(`The start command was given no scripts, so it can't take ${used.join(' or ')}`);
   }
-  // Asked for by name, it must be able to run; on by default from the
-  // environment, it just sits out the runs it can't serve.
-  if (opts.devtools === true) clash('--devtools', [[lineTempBrowser, '--temp-browser']]);
   if (lineTempBrowser && opts.cdp !== undefined) throw new UsageError('The --temp-browser flag can\'t be used with --browser');
   if (lineOpenBrowser && opts.cdp !== undefined) throw new UsageError('The start command connects to the browser --open-browser starts, so give --browser once, first: sm-dev --open-browser --browser ... start ...');
   if (!opts.detach && !detachedLog && opts.newRun) throw new UsageError('The --new flag only applies with --detach');
-  const devtools = devtoolsWanted(opts.devtools) && !lineTempBrowser;
   const files = await Promise.all(scripts.map((s) => scriptFile(s)));
   if (opts.fromSaved) clash('--from-saved', [[opts.all, '--all'], [opts.noTab, '--notab']]);
   // Read before the run starts, so a file that can't be opened is said now.
   const opened = await pagesToOpen(pages, opts);
-  return { urls: opened.map((p) => p.url), files, scripts, devtools, saved: opened.map((p) => p.saved ?? null) };
+  return { urls: opened.map((p) => p.url), files, scripts, saved: opened.map((p) => p.saved ?? null) };
 }
 
 // The run, in the background process `start` began: until a client
@@ -346,7 +337,6 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
 async function runHere(
   opts: Opts,
   { files, given, urls, saved }: { files: string[]; given: string[]; urls: string[]; saved: (SavedPageStart | null)[] },
-  devtools: boolean,
   runId: string | undefined,
 ): Promise<number> {
   // The run has no input: commands come from its clients.
@@ -413,7 +403,6 @@ async function runHere(
       watch: opts.watch,
       values: opts.values,
       pageErrors: opts.pageErrors,
-      devtools,
       collectionRoot: lineRoots.collectionRoot,
       localRoots: lineRoots.localRoots,
       out: writeOutputLine,
