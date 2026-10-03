@@ -10,6 +10,7 @@ import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 import { waitFor } from '../fixtures/sw-api';
 import { remapStackText } from '../../lib/stack-link.js';
+import { buildSourceUrl } from '../../lib/script-source-url.js';
 
 test.describe('stack lines with @require', () => {
   let scriptsDir: ScriptsDir;
@@ -48,9 +49,11 @@ test.describe('stack lines with @require', () => {
     const layout = await sm.getStackLayout(scriptId);
     expect(layout).not.toBeNull();
     const mapped = remapStackText(raw, [layout!]);
-    const root = 'sourcemonkey://SourceMonkey/stacky';
+    // The script's folder: its log label, numbered (`stacky%23E1`).
+    const root = buildSourceUrl(await sm.getScriptLogLabel(scriptId)).replace(/\/[^/]+$/, '');
     expect(mapped, raw).toContain(`at thrown (${root}/stacky.user.js:9:`);
-    expect(mapped, raw).toMatch(/at libCall \(sourcemonkey:\/\/SourceMonkey\/stacky\/file\/.*\/lib\.js:2:\d+\)/);
+    expect(mapped, raw).toContain(`at libCall (${root}/file/`);
+    expect(mapped, raw).toMatch(/\/lib\.js:2:\d+\)/);
     // The raw frames really were off: that's what the mapping is for.
     expect(raw).not.toContain(`${root}/stacky.user.js:9:`);
     await page.close();

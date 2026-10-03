@@ -81,6 +81,7 @@ import { setGlyphButton, setGlyphButtonBusy } from './glyph.js';
 import type { DownloadsCopiesSetting } from './local-copy.js';
 import { deletableCopyPath, readCopiesSetting } from './local-delete.js';
 import { computeLogIds } from './script-log-id.js';
+import { numberMap, readScriptNumbers, SCRIPT_NUMBERS_KEY } from './script-numbers.js';
 import {
   attachFiles,
   distillRequires,
@@ -327,10 +328,10 @@ async function load(): Promise<void> {
 
 // ---------- Installed-script mode ----------
 
-// Keep the displayed Log ID in sync with the global dupe set: if
-// another tab (collections page, viewer of a sibling) adds or removes a
-// script that shares this basename, our `#N` would otherwise go
-// stale. Listen for any script:* mutation and re-derive.
+// Keep the displayed Log ID current: the service worker numbers a new
+// script just after it is added, and an unnumbered script's `#N` moves
+// when another sharing its basename comes or goes. Listen for any
+// script:* mutation and for the numbers row, and re-derive.
 chrome.storage.onChanged.addListener((changes, areaName) => {
   // Before the `scriptId` gate below: the panel's Status column speaks
   // for every copy it draws, and a PREVIEW draws copies too. Everything
@@ -341,8 +342,8 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   }
   if (!scriptId) return;
   if (areaName === 'local') {
-    // Repaint on any script:* mutation (this script, or a sibling whose
-    // add/remove shifts our dedup `#N`) AND on a change to THIS
+    // Repaint on any script:* or script-number mutation (this script,
+    // or a sibling whose add/remove shifts a `#N`) AND on a change to THIS
     // script's parent collection. A collection enable/disable or rename
     // done on the collections page or in another tab has to reach the
     // viewer's Enable toggle and Collection row, not just this script's
@@ -350,7 +351,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     const collectionKey = currentScript ? `collection:${currentScript.collectionId}` : null;
     let touched = false;
     for (const key of Object.keys(changes)) {
-      if (key.startsWith('script:')) {
+      if (key.startsWith('script:') || key === SCRIPT_NUMBERS_KEY) {
         touched = true;
         break;
       }
@@ -586,7 +587,7 @@ async function loadStored(): Promise<void> {
 // can move `scriptId` on underneath them.
 async function refreshLogId(id: string): Promise<void> {
   const all = await getAllScripts();
-  const map = computeLogIds(all);
+  const map = computeLogIds(all, numberMap(await readScriptNumbers()));
   currentLogId = map.get(id) ?? '';
 }
 
@@ -1905,7 +1906,7 @@ function paintScriptMessage(script: StoredScript): void {
 // the Log tab (always last so the file order stays stable as
 // `@require`s come and go).
 function storedTabs(script: StoredScript): CodeTab[] {
-  // currentLogId is the dedup-aware label the injector uses to build
+  // currentLogId is the log label the injector uses to build
   // sourceURLs (see script-source-url.ts). Falls back to the bare
   // basename if the log-id sweep hasn't run yet — same default the
   // injector uses, so the two stay in lockstep.

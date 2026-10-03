@@ -19,7 +19,8 @@ export const SKIP_REASON_SM_DEV = 'tab controlled by sm-dev';
  *     checks the extension's minor before using what came later
  *     (`ExtensionLink.requireMinor`).
  */
-export const SM_DEV_PROTOCOL = { major: 1, minor: 0 } as const;
+// 1.1: `scriptsOnTab` rows carry the script's number.
+export const SM_DEV_PROTOCOL = { major: 1, minor: 1 } as const;
 
 export interface ProtocolVersion {
   major: number;

@@ -69,6 +69,7 @@ import type { ParseChecker } from '../script-build.js';
 import {
   ensureLogIdsLoaded,
   getScriptLogLabel,
+  noteScriptNumbers,
   installScriptLogIdListener,
 } from './script-log-id.js';
 import { installSwTeardownHandler } from './sw-teardown.js';
@@ -81,10 +82,12 @@ import {
   lastSyncKindForTests,
   resetRejectionRetryGate,
   setMustAskForDecision,
+  setBeforeSync,
   syncRegistrations,
   unregisterAllRegistrations,
   type SyncScope,
 } from './injector.js';
+import { assignScriptNumbers, numberMap, readScriptNumbers } from './script-numbers.js';
 import {
   SM_ABANDONED_MSG,
   SM_CHECK_PENDING_MSG,
@@ -324,9 +327,13 @@ interface SourceMonkeyApi {
   sweepRunCollections: (now: number) => Promise<void>;
   setTabScriptsOff: (tabId: number, off: boolean) => Promise<void>;
   // The scripts the toolbar badge lists for a tab's current document,
-  // with their status and collection: sm-dev's list of the extension's
-  // scripts on the page.
-  scriptsOnTab: (tabId: number) => Promise<{ id: string; name: string; status: string; collection: string }[]>;
+  // with their status, collection and script number (absent for one
+  // not numbered yet): sm-dev's list of the extension's scripts on the
+  // page, which it names by number (`E12`).
+  scriptsOnTab: (tabId: number) => Promise<{ id: string; name: string; status: string; collection: string; number?: number }[]>;
+  // The stored script numbers, by script id, after numbering any new
+  // scripts. For tests.
+  scriptNumbers: () => Promise<Record<string, number>>;
   // Clicks a shown notification (by the id `GM_notification` got), as
   // the person would: the script's `onclick` runs. False when it isn't
   // showing. sm-dev's fixture clicks one this way.
@@ -448,9 +455,9 @@ interface SourceMonkeyApi {
   // the script would: stored, and pushed to every tab running it, so
   // its value-change listeners fire. sm-dev's `set`.
   writeGmValues: (scriptId: string, writes: { key: string; value?: unknown; deleted?: boolean }[]) => Promise<void>;
-  // Dedup-aware log label (`foo.user.js`, `foo.user.js#2`). Which
-  // script in a dupe group gets which `#N` is decided by UUID sort, so
-  // a test that needs the label cannot predict it — it has to ask.
+  // The script's log label (`foo.user.js#E4`). Its number is the
+  // service worker's to assign, so a test that needs the label cannot
+  // predict it: it has to ask.
   getScriptLogLabel: (scriptId: string) => Promise<string>;
   // How the script's injected entry maps back to its files, for
   // sm-dev to rewrite stack lines in the Log entries and
@@ -719,12 +726,19 @@ const api: SourceMonkeyApi = {
     const state = getCurrentState(await getTabRecord(tabId));
     if (!state) return [];
     const view = computeBadge(state, await rejectedScriptIds());
+    // Numbered first, so a script added a moment ago has its number.
+    const numbers = await numberScripts();
     return Promise.all(view.rows.map(async (row) => {
       const script = await getScript(row.id);
       const collection = script ? await getCollection(script.collectionId) : undefined;
-      return { id: row.id, name: row.name, status: row.status, collection: collection ? effectiveDisplayName(collection) : '' };
+      const number = numbers[row.id];
+      return {
+        id: row.id, name: row.name, status: row.status, collection: collection ? effectiveDisplayName(collection) : '',
+        ...(number !== undefined ? { number } : {}),
+      };
     }));
   },
+  scriptNumbers: () => numberScripts(),
   isSmDevMarked: (tabId) => markedTabs.has(tabId),
   tabDocument: async (tabId) => {
     try {
@@ -2662,7 +2676,7 @@ async function handleCheckPending(
   const swap = await buildSwapEvalBody(
     refreshed,
     handlerVersion,
-    // Same dedup-aware label the registration path uses, so the
+    // Same log label the registration path uses, so the
     // swapped body's source map names the same devtools files.
     // Awaited, not assumed: `getScriptLogLabel` falls back to a UUID
     // prefix before the id table has loaded, and a cold SW is woken BY
@@ -2749,7 +2763,7 @@ async function handleCheckPending(
   };
 }
 
-// Dedup-aware log label, waiting for the id table if it hasn't loaded
+// The script's log label, waiting for the id table if it hasn't loaded
 // yet. `getScriptLogLabel` is the sync accessor and answers with a
 // UUID prefix until `ensureLogIdsLoaded` resolves; callers that bake
 // the label into something durable (devtools URLs, source maps) need
@@ -4518,6 +4532,16 @@ const compileParseChecker: ParseChecker = async (script) => {
 setParseChecker(compileParseChecker);
 
 void ensureLogIdsLoaded();
+// Number new scripts before each registration sync registers them, and
+// reconcile the numbers at startup (see script-numbers.ts). The log
+// labels take the numbers at once, so they match what was registered.
+async function numberScripts(): Promise<Record<string, number>> {
+  const numbers = await assignScriptNumbers();
+  if (numbers) noteScriptNumbers(numberMap(numbers));
+  return numbers?.byScript ?? (await readScriptNumbers()).byScript;
+}
+setBeforeSync(async () => { await numberScripts(); });
+void numberScripts();
 installStorageListener();
 installStaleScriptListener();
 installFocusRefresh();

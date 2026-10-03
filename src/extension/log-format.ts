@@ -20,7 +20,7 @@
 // Pure (no DOM, no chrome.*) so unit tests can drive it directly.
 
 import { describeDiagnostic } from '../diagnostic-location.js';
-import { formatScriptStatusLabel, logIdDupeSuffix } from '../script-display.js';
+import { formatScriptStatusLabel, logIdSuffix } from '../script-display.js';
 import type { LogEntry } from './script-log.js';
 
 // Local wall-clock time, sortable spelling: `2026-08-05 14:03:22.017`.
@@ -141,19 +141,19 @@ export function formatLogCsv(
 }
 
 // Suggested filename for a saved log: the script's log ID with its
-// `.user.js` / `.js` extension swapped for `.log`, keeping any `#N`
-// dedup suffix so two scripts sharing a basename don't suggest the
-// same file. `bold-on-hover.user.js#2` → `bold-on-hover#2.log`.
+// `.user.js` / `.js` extension swapped for `.log`, keeping its `#E4`
+// (or `#N`) suffix so two scripts sharing a basename don't suggest the
+// same file. `bold-on-hover.user.js#E4` → `bold-on-hover#E4.log`.
 //
 // `.log` rather than `.csv` even though the contents are CSV: this is
 // a log first, and a double-click should open a text editor rather
 // than a spreadsheet.
 export function logFileName(logId: string): string {
-  // Dedup suffix first, extension second — `logIdDupeSuffix` explains
+  // Suffix first, extension second — `logIdSuffix` explains
   // why the `#N` match is anchored, and `script-source-url.ts` explains
   // why the order matters (`Chapter #2.user.js`).
   const trimmed = sanitizeFilename(logId).trim();
-  const dupe = logIdDupeSuffix(trimmed);
+  const dupe = logIdSuffix(trimmed);
   // One alternation rather than two `.replace`s: chaining them strips
   // twice for a name like `bar.js.user.js`, eating a `.js` that is part
   // of the name.

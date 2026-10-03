@@ -82,14 +82,6 @@
       .bulk-toggle:hover:not(:disabled) { background: #f0f0f0; }
       .bulk-toggle:disabled { cursor: not-allowed; opacity: 0.5; }
       .script-table th.toggle-cell { white-space: nowrap; width: 1%; padding-right: 3px; }
-      /* Dupe-basename suffix (e.g. " #2") shown after the script's
-         name link. Empty for unique basenames so the column stays
-         clean. */
-      /* `white-space: nowrap` keeps the suffix itself intact now that
-         the name cell wraps — it may land on its own continuation
-         line, but never splits into `#` + `2`. */
-      .log-id-suffix { color: #555; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; white-space: nowrap; }
-      .log-id-suffix:not(:empty)::before { content: ' '; }
       /* Column of site favicons to the left of the name link. One
          16px icon per distinct site the script targets (see
          `MAX_SITE_ICONS`), side by side with a 2px gap. Each icon is

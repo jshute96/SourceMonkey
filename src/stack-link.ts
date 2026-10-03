@@ -80,8 +80,8 @@ export function parseStackRefs(text: string): RefRun[] {
 //
 // `script-source-url.ts` percent-encodes the script's log label into
 // `//# sourceURL=` — a bare `#` would start a fragment and a space or
-// paren would end the run `parseStackRefs` matches — so a second
-// `foo.user.js` arrives as `foo%232`. Right on the wire, unreadable in
+// paren would end the run `parseStackRefs` matches — so script 4's
+// `foo.user.js` arrives as `foo%23E4`. Right on the wire, unreadable in
 // the log. Decoding here is the viewer's usual display-decodes /
 // functional-stays-encoded split (docs/names-and-paths.md).
 //

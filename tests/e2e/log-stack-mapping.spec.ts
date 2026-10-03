@@ -23,6 +23,7 @@ import type { BrowserContext } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 import { waitFor, type SmApi } from '../fixtures/sw-api';
+import { buildSourceUrl } from '../../lib/script-source-url.js';
 
 // The throw travels page -> service worker -> per-script log, so the
 // entry lands some time after the navigation settles. Waiting for the
@@ -252,8 +253,7 @@ test.describe('log stack mapping', () => {
     // where the click does nothing at all. They must render as plain
     // text instead.
     const scriptId = await installThrowingScript(sm, fixtureServer.baseUrl);
-    const label = 'main.user.js';
-    const entryUrl = `sourcemonkey://SourceMonkey/main/${label}`;
+    const entryUrl = buildSourceUrl(await sm.getScriptLogLabel(scriptId));
     await sm.appendScriptLog(scriptId, {
       level: 'error',
       source: 'script-wrapper',
@@ -263,7 +263,8 @@ test.describe('log stack mapping', () => {
 
     const page = await openLogTab(extensionContext, extensionId, scriptId);
     const row = page.locator('#log-pane td.log-msg', { hasText: 'synthetic' });
-    await expect(row).toContainText(`${entryUrl}:1:5`);
+    // Shown decoded: the label's `%23E1` reads as `#E1`.
+    await expect(row).toContainText(`${entryUrl.replace('%23', '#')}:1:5`);
     // Present as text, absent as a link.
     await expect(row.locator('.log-stack-link')).toHaveCount(0);
 
@@ -288,8 +289,7 @@ test.describe('log stack mapping', () => {
     const collections = await sm.getCollections();
     const withScripts = await sm.getCollectionWithScripts(collections[0].id);
     const loadedAt = withScripts!.scripts.find((s) => s.id === scriptId)!.loadedAt;
-    const label = 'main.user.js';
-    const entryUrl = `sourcemonkey://SourceMonkey/main/${label}`;
+    const entryUrl = buildSourceUrl(await sm.getScriptLogLabel(scriptId));
     // Same generated line the real throw maps to lib.js from, but
     // stamped before this body loaded.
     await sm.appendScriptLog(scriptId, {
@@ -318,7 +318,7 @@ test.describe('log stack mapping', () => {
     // tests cover the arithmetic). What matters here is that the ref
     // moved out of the entry URL and into a require file at all.
     await expect(link).toHaveText(/\/lib\.js:\d+:\d+$/);
-    await expect(row).not.toContainText(`${entryUrl}:5:9`);
+    await expect(row).not.toContainText(`${entryUrl.replace('%23', '#')}:5:9`);
 
     // The caveat rides along in the tooltip, so a wrong line reads as
     // expected rather than as a bug. Without this the mapping would be
@@ -390,10 +390,10 @@ test.describe('log stack mapping', () => {
       await sm.addCollection(second.path);
       await sm.syncNow();
 
-      // Which twin got `#1` is decided by UUID sort, so ask rather
-      // than assume — the assertions below only need "some `#N`".
+      // Its number is the service worker's to assign, so ask rather
+      // than assume — the assertions below only need "some `#E<n>`".
       const label = await sm.getScriptLogLabel(scriptId);
-      expect(label).toMatch(/^main\.user\.js#\d+$/);
+      expect(label).toMatch(/^main\.user\.js#E\d+$/);
 
       const target = await extensionContext.newPage();
       await target.goto(`${fixtureServer.baseUrl}/target.html`);
@@ -410,7 +410,7 @@ test.describe('log stack mapping', () => {
       // Seed the unmappable case before opening the pane, so one render
       // covers both arms. A generated line that belongs to our wrap
       // head has no original line to map to.
-      // `main.user.js#1` → folder `main%231` (strip `.user.js`, then
+      // `main.user.js#E1` → folder `main%23E1` (strip `.user.js`, then
       // percent-encode) — see folderForLabel in script-source-url.ts.
       const folder = label.replace(/\.user\.js(?=#|$)/, '').replace('#', '%23');
       const entryUrl = `sourcemonkey://SourceMonkey/${folder}/main.user.js`;
@@ -426,7 +426,7 @@ test.describe('log stack mapping', () => {
       // line, in a folder whose `#N` reads as a `#`.
       const link = page.locator('.log-stack-link', { hasText: 'lib.js' }).first();
       await expect(link).toBeVisible();
-      await expect(link).toHaveText(new RegExp(`/main#\\d+/.*/lib\\.js:${THROW_LINE}:\\d+$`));
+      await expect(link).toHaveText(new RegExp(`/main#E\\d+/.*/lib\\.js:${THROW_LINE}:\\d+$`));
       await expect(link).not.toContainText('%23');
 
       // Unmappable arm: plain text, decoded there too, still not a link.

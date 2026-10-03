@@ -662,8 +662,8 @@ Format:
 Behavior:
 
 - Suggested filename: the script's log ID with its `.user.js` / `.js`
-  extension swapped for `.log`, keeping any `#N` dedup suffix —
-  `bold-on-hover.user.js#2` → `bold-on-hover#2.log`.
+  extension swapped for `.log`, keeping its `#E4` suffix —
+  `bold-on-hover.user.js#E4` → `bold-on-hover#E4.log`.
 - Save opens a real save dialog (`showSaveFilePicker`) so the user
   picks the name and folder, rather than dropping a file into the
   downloads folder behind their back.

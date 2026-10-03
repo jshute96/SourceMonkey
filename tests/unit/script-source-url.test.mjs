@@ -46,6 +46,13 @@ test('buildSourceUrl: dedup `#N` suffix percent-encodes to %23N in the folder, d
   );
 });
 
+test('buildSourceUrl: a script number becomes %23E<n> on the folder only', () => {
+  assert.equal(
+    buildSourceUrl('shared.user.js#E4'),
+    'sourcemonkey://SourceMonkey/shared%23E4/shared.user.js',
+  );
+});
+
 test('label sanitization: a newline in the filename can\'t break out of the //# sourceURL= comment', () => {
   // The log label comes from the on-disk filename, which is
   // attacker-controlled for an untrusted bundle. A literal LF/CR (or

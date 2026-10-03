@@ -146,10 +146,9 @@ test.describe('userscript viewer details panel', () => {
     await page.close();
   });
 
-  // A unique log ID is the script's own basename, which the heading
-  // and the Location row both already say; the `#N` is the part
-  // written nowhere in the file, and it's what a stack trace names.
-  test('shows the Log ID row only for a script whose basename collides', async ({
+  // The log ID's `#E<n>` is written nowhere in the file; it's what a
+  // stack trace and sm-dev (`E<n>`) name the script by.
+  test('shows the Log ID row, with the script number, for every script', async ({
     extensionContext, extensionId, sm,
   }) => {
     const meta = { name: 'Dupe', match: ['https://example.com/*'] };
@@ -163,14 +162,15 @@ test.describe('userscript viewer details panel', () => {
 
     const page = await extensionContext.newPage();
 
+    const numbers = await sm.scriptNumbers();
     await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${solo.id}`);
-    await expect(page.locator('#header-summary dt', { hasText: 'Location' })).toHaveCount(1);
-    await expect(page.locator('#header-summary dt', { hasText: 'Log ID' })).toHaveCount(0);
+    await expect(page.locator('.log-id-cell')).toHaveText(`solo.user.js#E${numbers[solo.id]}`);
+    // The tooltip's last line names the number sm-dev uses.
+    await expect(page.locator('#header-summary dt', { hasText: 'Log ID' }))
+      .toHaveAttribute('title', new RegExp(`\\nE${numbers[solo.id]} is the script's ID in sm-dev\\.$`));
 
     await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${dupe.id}`);
-    // Which number it drew depends on UUID ordering, so assert the
-    // shape rather than a specific one.
-    await expect(page.locator('.log-id-cell')).toHaveText(/^dupe\.user\.js#[12]$/);
+    await expect(page.locator('.log-id-cell')).toHaveText(`dupe.user.js#E${numbers[dupe.id]}`);
     await page.close();
   });
 

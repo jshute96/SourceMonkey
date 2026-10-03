@@ -5,63 +5,56 @@ quiet the noisy lines.
 
 ## Log IDs
 
-Every script has a short, file-derived handle used everywhere a log
-or UI surface refers to it.
+Every script has a short handle used everywhere a log or UI surface
+refers to it: its basename and its script number.
 
-- Default: the basename of the script's `relativePath` (e.g.
-  `bold-on-hover.user.js`).
-- Scripts added by URL: the URL's filename, percent-decoded and
-  without the query string (`My Script.user.js`, not
-  `My%20Script.user.js?v=2`). See
-  [names-and-paths.md](names-and-paths.md).
-- Dupe basenames: each dupe gets a `#N` suffix
-  (`foo.user.js#1`, `foo.user.js#2`, ...).
-- Dupe ordering: sorted by stable UUID `id` lexicographically.
-  Arbitrary but deterministic — the SW and the collections page agree.
+- Format: `<basename>#E<number>` (e.g. `bold-on-hover.user.js#E4`).
+  - The basename is the script's `relativePath`'s, or for a script
+    added by URL, the URL's filename, percent-decoded and without the
+    query string (`My Script.user.js`, not `My%20Script.user.js?v=2`).
+    See [names-and-paths.md](names-and-paths.md).
+  - The number is the one sm-dev names the script by (`E4`), the same
+    in every run. See [storage.md](storage.md#script-numbers).
+  - It keeps scripts sharing a basename apart, and never shifts when
+    other scripts come and go.
+- A script with no number yet has its basename alone, or `#1`, `#2`,
+  ... among other unnumbered scripts sharing it, sorted by UUID:
+  - one just added, for the moment before the service worker numbers
+    it;
+  - one in an sm-dev test collection, which isn't numbered.
 
 ### Where you see them
 
-- SW console — every `[SourceMonkey] …` line that mentions a script
+- SW console: every `[SourceMonkey] ...` line that mentions a script
   uses its log ID. See [the message list below](#message-catalog).
-- Collections page — a faint `#N` is rendered after the name link
-  whenever a script is part of a dupe group. No suffix for unique
-  basenames.
-  - The column shows the script's `@name`, so the suffix can sit beside
-    a name that isn't the basename it was computed from. It is still
-    the marker that tells two rows apart in the SW console, which is
-    what it is there for.
-  - The converse: two scripts sharing an `@name` but not a basename
-    render as two identically labelled rows with no suffix.
-  - Either way the name link's tooltip leads with the location, so what
-    tells the rows apart is one hover away.
-- Userscript viewer — a `Log ID` row in the details panel, but only
-  for a script whose ID carries a `#N`. A unique log ID is just the
-  basename, which the `Location` row already says.
-  Absent in preview mode, which is showing a script that has never
-  run.
+- Stack traces: a script's code is named by a `sourcemonkey://` URL
+  with the log ID as its folder, encoded (`foo%23E4/foo.user.js`). See
+  `script-source-url.ts`.
+- Userscript viewer: a `Log ID` row in the details panel, always.
+  Its tooltip ends with the number sm-dev uses. Absent in preview
+  mode, which is showing a script that has never run.
+- Not the collections page: a suffix after the name there was more
+  confusing than useful. The name link's tooltip leads with the
+  location, which tells two same-named rows apart.
 
 ### Implementation
 
 `src/extension/script-log-id.ts`:
 
-- Pure: `computeLogIds(scripts)` (over `scriptBasename` from
-  `script-display.ts`) — used by the collections page + viewer at render
-  time and unit-tested directly.
-- SW runtime: a `Map<id, {id, relativePath}>` populated by one
-  `chrome.storage.local.get(null)` scan at SW startup
+- Pure: `computeLogIds(scripts, numbers)` (over `scriptBasename` from
+  `script-display.ts`), used by the injector and the viewer, and
+  unit-tested directly.
+- SW runtime: a `Map<id, {id, relativePath}>` and the script numbers,
+  populated by one `chrome.storage.local.get(null)` scan at SW startup
   (`ensureLogIdsLoaded`) and kept fresh by `storage.onChanged`
-  (`installScriptLogIdListener`).
+  (`installScriptLogIdListener`), including the `scriptNumbers` row.
 - Sync getter: `getScriptLogLabel(id)` returns the log ID, or the
   first 8 chars of the UUID as a fallback (only seen during the
   brief window before the initial load resolves, or for late sm:*
   reports from scripts already removed).
-
-### Dupe reshuffle behavior
-
-Adding/removing a script in a dupe group can renumber siblings. The
-collections page recomputes its `currentLogIds` after every
-add/remove/refresh and walks `applyLogIdSuffixesToDom()` over OTHER
-sections so their suffixes stay in sync after a partial re-render.
+- A script's label is baked into its registered `//# sourceURL=`, so
+  the registration sync rebuilds every script whose label moved,
+  including when it is first numbered (see `runIncrementalSync`).
 
 ## Debug-logging gate
 

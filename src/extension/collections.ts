@@ -87,7 +87,6 @@ import {
   formatBytes,
   formatScriptSize,
   formatScriptStatusLabel,
-  logIdDupeSuffix,
   previewUrl,
   scriptBasename,
   scriptDisplayName,
@@ -95,7 +94,6 @@ import {
   viewerUrl,
 } from '../script-display.js';
 import { probeLabel, type VersionProbe } from '../version-probe.js';
-import { computeLogIds } from './script-log-id.js';
 import {
   LOG_LEVEL_KEY_PREFIX,
   getAllMaxLogLevels,
@@ -307,11 +305,6 @@ if (chrome.storage?.local?.onChanged) {
   });
 }
 
-// Page-wide map of {scriptId → log ID}, refreshed whenever scripts are
-// added / removed / refreshed. Renders the `#N` dupe suffix in the
-// name cell. Empty until `refreshLogIds()` runs.
-let currentLogIds = new Map<string, string>();
-
 // Page-wide map of {scriptId → highest log level seen}. Drives the
 // Status-cell promotion to WARNING / ERROR; absent entries collapse
 // to OK (or whatever the stored status mandates). Kept in sync via
@@ -342,19 +335,9 @@ let currentRejections: RejectionMap = {};
 // `chrome.storage.session.onChanged` listener above.
 let currentRefreshErrors: RefreshErrorMap = {};
 
-// Returns the rows it read, so a full render can reuse them instead of
-// scanning the store twice — `getAllScripts` is a `get(null)`.
-async function refreshLogIds(): Promise<StoredScript[]> {
-  const all = await getAllScripts();
-  currentLogIds = computeLogIds(all);
-  applyLogIdSuffixesToDom();
-  return all;
-}
-
-// Mirror of `applyLogIdSuffixesToDom` for the Status column. After a
-// storage.session change for one or more `loglevel:` rows, walk every
-// rendered script row and rewrite its status cell content + class to
-// reflect the latest effective status. Pulls the StoredScript.status
+// For the Status column: after a storage.session change for one or
+// more `loglevel:` rows, walk every rendered script row and rewrite its
+// status cell content + class to reflect the latest effective status. Pulls the StoredScript.status
 // off the row's data-script-status attribute so we don't have to refetch.
 function applyStatusCellsToDom(): void {
   for (const row of document.querySelectorAll<HTMLTableRowElement>(
@@ -471,24 +454,6 @@ function paintStatusCell(
   cell.appendChild(link);
 }
 
-function applyLogIdSuffixesToDom(): void {
-  // The point of this walk is the sections we DIDN'T just re-render:
-  // after `onRefreshCollection` rebuilds a single section, sibling
-  // sections still display their pre-refresh suffixes. The just-
-  // rendered section's rows are already correct (renderScriptRow read
-  // the same currentLogIds), so writing the same string over them is
-  // a harmless no-op rather than the primary purpose.
-  for (const row of document.querySelectorAll<HTMLTableRowElement>(
-    '.script-table tr[data-script-id]',
-  )) {
-    const id = row.dataset.scriptId;
-    if (!id) continue;
-    const span = row.querySelector<HTMLSpanElement>('.log-id-suffix');
-    if (!span) continue;
-    span.textContent = logIdDupeSuffix(currentLogIds.get(id) ?? '');
-  }
-}
-
 // ---------- Live repaint from storage ----------
 
 // The page is repainted from storage whenever anything it displays may
@@ -546,7 +511,7 @@ async function repaintFromStorage(): Promise<void> {
   // read rather than first.
   await syncStorageBanner(new Set(collections.map((s) => s.id)));
   // Read each collection's scripts ONCE, up front, and paint from that.
-  // The obvious shape — `refreshLogIds()` then render each section —
+  // The obvious shape — `getAllScripts()` then render each section —
   // reads the whole store twice per pass: `getAllScripts` is a
   // `storage.local.get(null)`, which drags back every script body, every
   // prefetched `@require`, and the base64 favicon cache, and then each
@@ -558,10 +523,6 @@ async function repaintFromStorage(): Promise<void> {
   }
   const allScripts = [...scriptsByCollection.values()].flat();
 
-  // Dedup `#N` suffixes shift across the whole page when any script is
-  // added or removed, so recompute before anything draws.
-  currentLogIds = computeLogIds(allScripts);
-  applyLogIdSuffixesToDom();
   // Forget the per-script bookkeeping of everything no longer stored,
   // in one place rather than at each of the several points a row can go
   // away — and keyed off what storage says, so a script that moved
@@ -1257,9 +1218,9 @@ async function render(): Promise<void> {
   // that the repaint calls too.
   await syncStorageBanner(new Set(collections.map((s) => s.id)));
 
-  const allScripts = await refreshLogIds();
+  const allScripts = await getAllScripts();
   // Repair any collection whose `scriptIds` disagrees with the script
-  // rows themselves, off the scan `refreshLogIds` just made — this is
+  // rows themselves, off this scan — this is
   // the page where the damage shows (a script that runs but is listed
   // nowhere), and the only surface that already reads every row. The
   // sections below re-read each collection, so they paint the repaired
@@ -1609,8 +1570,8 @@ function fitIconColumns(table: HTMLTableElement, settling: readonly Promise<unkn
   void Promise.allSettled(settling).then(() => setIconColumns(table, widestIconSlot(table)));
 }
 
-// Build (or rebuild) the Name cell's contents: favicon slot, the
-// linked name, and the dedup `#N` suffix. Shared with the live in-place
+// Build (or rebuild) the Name cell's contents: favicon slot and the
+// linked name. Shared with the live in-place
 // row update, which re-runs it when a refresh changed something this
 // cell shows — otherwise a script whose `@match` or `@description` was
 // edited keeps the old site's favicon and the old hover text until the
@@ -1657,13 +1618,6 @@ function fillNameCell(
   const tag = scriptFileTag(script, collectionPath);
   if (tag) tagLocalFile(a, tag);
   nameCell.appendChild(a);
-  // Dupe-suffix span, populated from currentLogIds. Empty for unique
-  // basenames so the column stays clean; non-empty (e.g. " #2") only
-  // when another script shares this basename.
-  const suffix = document.createElement('span');
-  suffix.className = 'log-id-suffix';
-  suffix.textContent = logIdDupeSuffix(currentLogIds.get(script.id) ?? '');
-  nameCell.appendChild(suffix);
   // Record what this cell was drawn from, so the next repaint can skip
   // it unless one of those inputs moved.
   nameCellKeys.set(script.id, nameCellKey(script, localFiles));

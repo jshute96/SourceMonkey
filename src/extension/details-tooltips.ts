@@ -34,7 +34,7 @@ const FIXED: Readonly<Record<string, string>> = {
   Homepage: "The script's @homepage",
   'Log ID':
     'How SourceMonkey labels this script in the Chrome console and in stack traces.\n'
-    + '#N distinguishes it from other scripts with the same filename.',
+    + 'The #E number distinguishes it from other scripts with the same filename.',
 
   Match: "Pages the script runs on, from its @match rules",
   Include: "Pages the script runs on, from its @include rules",

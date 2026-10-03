@@ -153,9 +153,11 @@ export interface SmApi {
     matches: { id: string; name: string }[];
     cache: { entries: unknown[]; disabledCollections: string[] };
   }>;
-  // Dedup-aware log label (`foo.user.js`, `foo.user.js#2`). Which
-  // member of a dupe group gets which `#N` is decided by UUID sort, so
-  // a test that needs the label has to ask rather than predict it.
+  // The stored script numbers, by script id, after numbering new scripts.
+  scriptNumbers(): Promise<Record<string, number>>;
+  // The script's log label (`foo.user.js#E4`). Its number is the
+  // service worker's to assign, so a test that needs the label has to
+  // ask rather than predict it.
   getScriptLogLabel(scriptId: string): Promise<string>;
   // GM_registerMenuCommand test surface.
   getActionContextMenu(tabId: number): Promise<{

@@ -130,3 +130,16 @@ test('no log ID can produce a sourceURL the stack-ref parser would truncate', ()
     assert.match(buildSourceUrl(label), /^[^\s()#]+$/, `label ${JSON.stringify(label)}`);
   }
 });
+
+test('computeLogIds: a numbered script is <basename>#E<number>; the unnumbered keep #N among themselves', () => {
+  const m = computeLogIds([
+    { id: 'a', relativePath: 'sites/a/foo.user.js' },
+    { id: 'b', relativePath: 'sites/b/foo.user.js' },
+    { id: 'c', relativePath: 'sites/c/foo.user.js' },
+    { id: 'd', relativePath: 'sites/d/foo.user.js' },
+  ], new Map([['a', 4], ['b', 12]]));
+  assert.equal(m.get('a'), 'foo.user.js#E4');
+  assert.equal(m.get('b'), 'foo.user.js#E12');
+  assert.equal(m.get('c'), 'foo.user.js#1');
+  assert.equal(m.get('d'), 'foo.user.js#2');
+});

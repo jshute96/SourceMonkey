@@ -146,9 +146,10 @@ details live in the topic-specific docs linked below.
   diff per file (`src/extension/line-diff.ts`). Linked from the viewer's versions
   panel. See [compare.md](compare.md).
 - **Log IDs** (`src/extension/script-log-id.ts`) — assigns each script a short
-  file-derived label (basename, with `#N` suffix on dupes) used in
-  every SW log line and shown in the collections/viewer UI so users can
-  correlate console output with the rows on the collections page. See
+  label, its basename and script number (`foo.user.js#E4`), used in
+  every SW log line and stack trace and shown in the viewer, so users
+  can correlate console output with a script. The number is sm-dev's
+  `E4` (`src/extension/script-numbers.ts`). See
   [logging.md](logging.md).
 - **Display names** (`src/script-display.ts`) — one place decides how
   a stored URL or path is rendered for humans: percent-decoded for
@@ -448,7 +449,7 @@ takes effect:
   `sm-dev` command-line tool: runs and clients, tabs, page commands,
   tab claims, test collections, the extension's event stream.
 - [logging.md](logging.md) — SW console-message catalog, log IDs
-  (basename + `#N` dupes), and the debug-logging gate.
+  (basename + `#E<number>`), and the debug-logging gate.
 - [names-and-paths.md](names-and-paths.md) — the decode-for-display
   rule for names and URLs, and where it must not be applied.
 - [script-log.md](script-log.md) — per-script structured event log

@@ -43,7 +43,7 @@ import { renderPatternIconInto } from './site-icon.js';
 import type { StoredCollection } from './script-store.js';
 import type { StoredRequire, StoredResource } from '../external-files.js';
 import { isContainerCollection, locationFsPath } from '../file-locations.js';
-import { appendWithSlashBreaks, displayLocation, formatBytes, logIdDupeSuffix, stripSriFragment } from '../script-display.js';
+import { appendWithSlashBreaks, displayLocation, formatBytes, logIdScriptNumber, stripSriFragment } from '../script-display.js';
 import { sitePageRow } from './script-sites.js';
 import {
   effectiveDisplayName,
@@ -176,14 +176,15 @@ export function renderDetails(container: HTMLElement, model: DetailsModel): void
   // see `currentFilenamePath`) must not lose it too.
   if (h) addLink(dl, 'Homepage', declaredHomepage(h));
 
-  // Only when the log ID carries a `#N` disambiguator. Without one it
-  // is the script's own basename, which the page title and the
-  // Location row above already say. The `#N` is the part that isn't
-  // written anywhere in the file, and it's what a console stack trace
-  // or a `//# sourceURL=` line names — so a reader holding a
-  // `foo.user.js#2` needs a way to ask "is that this one?".
-  if (model.logId && logIdDupeSuffix(model.logId)) {
-    appendRow(dl, 'Log ID', logIdCell(model.logId));
+  // Always, for an installed script: its `#E4` is written nowhere in
+  // the file, and it is what a console line, a stack trace's
+  // `//# sourceURL=` and sm-dev (`E4`) name the script by.
+  if (model.logId) {
+    const dd = appendRow(dl, 'Log ID', logIdCell(model.logId));
+    // The tooltip's third line names this script's own number.
+    const number = logIdScriptNumber(model.logId);
+    const dt = dd.previousElementSibling as HTMLElement | null;
+    if (number !== null && dt) dt.title = `${dt.title ? `${dt.title}\n` : ''}E${number} is the script's ID in sm-dev.`;
   }
 
   if (h) {

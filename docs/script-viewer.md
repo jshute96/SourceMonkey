@@ -324,13 +324,13 @@ Both name the script the same way, pivoted for where they're read.
        so reading them together is what shows when they disagree. An
        anchor when the value parses as an absolute http(s) URL, plain
        text otherwise.
-   - `Log ID` — short file-derived handle used in every SW log line.
-     See [logging.md](logging.md). Installed mode only.
-     - **Only when it carries a `#N` dupe suffix.** Without one the log
-       ID is the script's own basename, which the `Location` row already
-       says. The `#N` is the part written nowhere in the file, and it's
-       what a stack trace or `//# sourceURL=` names — so a reader holding a `foo.user.js#2` can ask whether
-       that's this one.
+   - `Log ID` — short handle used in every SW log line: the basename
+     and the script's number (`foo.user.js#E4`). See
+     [logging.md](logging.md). Installed mode only, and always shown.
+     - The `#E4` is written nowhere in the file, and it's what a stack
+       trace, a `//# sourceURL=` and sm-dev (`E4`) name the script by.
+     - The row's tooltip ends with a line naming the number sm-dev uses
+       (`E4 is the script's ID in sm-dev.`).
      - A script added by URL shows its decoded filename — see
        [names-and-paths.md](names-and-paths.md).
    - Parsed-header fields, continued — one row per tag, each pattern
@@ -546,8 +546,9 @@ its own Refresh. A `chrome.storage.onChanged` listener re-hydrates and
 re-renders when:
 
 - a **`script:*`** row changes — this script (status, content, size,
-  enabled), or a sibling whose add/remove shifts this script's dedup
-  `#N` log ID;
+  enabled), or a sibling whose add/remove shifts an unnumbered `#N`;
+- the **`scriptNumbers`** row changes — a new script gets its number
+  just after it is added;
 - **this script's parent `collection:*`** row changes, but only in a field
   this page shows — `enabled` (greys the Enable toggle), `displayName`
   or `path` (the Collection row). The re-hydrate re-reads the collection

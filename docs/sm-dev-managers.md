@@ -73,15 +73,71 @@ itself. They target SourceMonkey first, and are shaped so Tampermonkey
 
 - **`1`, `2`, ...**: the run's scripts, as now.
 - **`E1`, `E2`, ...**: other installed scripts. Today E-ids name the
-  SourceMonkey-managed scripts on the current tab. This widens them to
-  every installed script, numbered once per browser connection, so a
-  script keeps its E-id whichever list showed it.
+  SourceMonkey-managed scripts on the current tab, numbered by the run.
+  This widens them to every installed script, using the number
+  SourceMonkey gives each one (see [Script numbers](#script-numbers)),
+  so an E-id means the same script in every run and every command.
 - **`C1`, `C2`, ...**: collections, in the order `collections` lists
   them.
 - **By name**: a collection or script can also be named by its name, or
   a unique part of it, as loaded scripts are now.
 - **By the manager's own id** (`id=<uuid>`), for scripts that share a
   name.
+
+## Script numbers
+
+SourceMonkey gives each installed script a short number, and the E-id
+is that number (`E12`). It stays the same across runs, sm-dev commands
+and other scripts being added or removed.
+
+- **Assigning:** each new script gets the lowest free number. The
+  service worker assigns numbers, one call at a time, before each
+  registration sync, so two installs can't get the same one.
+- **Retiring:** when a script is removed, its number is recorded with
+  the time it was last used, and is not given out again for 7 days.
+  - So an E-id seen a moment ago never names a different script: a
+    stale one finds nothing. (Later, sm-dev could say `E5 was removed
+    yesterday` rather than `no such script`.)
+  - After that, it can be reused, so a long-lived SourceMonkey with many
+    installs and reinstalls keeps its numbers small.
+- **Stored state:** one `scriptNumbers` row, with each script's number
+  and the retired numbers with when each was last used (see
+  [storage.md](storage.md#script-numbers)).
+  - A number is free when no script has it and it isn't retired, or
+    its 7 days have passed.
+- **Reconciling** (when the worker starts, and before each
+  registration sync):
+  - a number whose script is gone is retired from now, so it still
+    waits its 7 days;
+  - a retired number some script has is dropped from the list;
+  - a script without a number (one installed before numbers existed)
+    gets one;
+  - two scripts with the same number (a restored backup, say): one
+    keeps it and the other gets a new number.
+- **Not numbered:** scripts in sm-dev's test collections, which a run
+  names `1`, `2` itself. Runs push and remove them often, which would
+  otherwise churn the numbers.
+- **Shown in the extension:** as part of the log ID (see
+  [logging.md](logging.md#log-ids)).
+  - The log ID is `<basename>#E<number>` (`foo.user.js#E4`). It
+    replaced a `#N` that only marked scripts sharing a file name, and
+    renumbered when one was added or removed.
+  - The collections page no longer shows a suffix after the name: it
+    was confusing there.
+  - The viewer always shows its `Log ID` row, not only for a shared
+    file name. Its tooltip gets a third line: `E4 is the script's ID in
+    sm-dev.`
+  - The service worker's console lines use the same log ID, so it
+    matches what the viewer shows.
+  - Stack traces name a script's code by a `sourcemonkey://` URL with
+    the log ID as its folder (`script-source-url.ts`), so every
+    script's frames carry it too, encoded:
+    `sourcemonkey://SourceMonkey/foo.user.js%23E4/...`. That keeps the
+    stack trace, the console and the viewer naming a script alike.
+- **Other managers:** Violentmonkey has numeric script ids of its own,
+  used the same way. Tampermonkey uses UUIDs, so under it E-ids follow
+  the stored order instead, and can shift when scripts are added or
+  removed.
 
 ## Commands
 
@@ -100,9 +156,12 @@ itself. They target SourceMonkey first, and are shaped so Tampermonkey
 - `manager enable` / `disable`:
   - Lets one kept browser hold several managers and run a script under
     one at a time, rather than once in each.
-  - Done by calling `chrome.management.setEnabled` from a
-    `chrome://extensions` tab over CDP, the call behind that page's own
-    toggle. CDP has no call of its own for it.
+  - Done by calling `chrome.management.setEnabled` from a hidden
+    `chrome://extensions` target over CDP, the call behind that page's
+    own toggle. CDP has no call of its own for it.
+  - Tested in Playwright's Chromium (headless and headed, launched or
+    connected over its port) and Google Chrome: no user gesture is
+    needed, and the worker is back within a second of enabling.
   - A disabled manager has no service worker, so the other commands
     refuse until it is enabled. `managers` still lists it, as disabled.
   - Disabling SourceMonkey is refused while a run is using it.
@@ -113,7 +172,7 @@ itself. They target SourceMonkey first, and are shaped so Tampermonkey
 - Loading into a kept browser (`--open-browser`): Chrome only loads an
   unpacked extension at launch, so `--open-browser` would take
   `--manager` too and pass the cached copy. Adding one to a browser
-  already running is an open question.
+  already running isn't supported: relaunch it.
 
 ### Collections
 
@@ -167,13 +226,10 @@ added to or removed.
     built-in one for its scheme ("Scripts from local disk", "from
     web", "from GitHub"), as the Add dialog does.
   - `--disabled`: install it turned off.
-- **Install from text under SourceMonkey.** SourceMonkey installs
-  scripts by location, and has no user-visible "pasted text" script
-  outside sm-dev's test collections. Options:
-  - refuse, and ask for a file;
-  - write it to a file under `~/.cache/sm-dev/` and install that;
-  - allow `scratch:` scripts in user containers.
-  - This is an open question.
+- **Install from text under SourceMonkey: not supported.** SourceMonkey
+  installs scripts by location, and has no user-visible "pasted text"
+  script outside sm-dev's test collections, so it is refused, asking
+  for a file. TM and VM take text.
 - **`load` vs `script install`.** `load` adds a script to the run's
   test collection, for the run's tabs only, and it goes away with the
   run. `script install` puts it in the manager for every tab, and it
@@ -238,25 +294,27 @@ What `script show` shows, where the manager has it:
 
 ## Build order
 
-1. `--json` on existing commands (`status`, `list`, `scripts`, `tabs`).
-2. SourceMonkey collections and installed scripts: the `collection`
+1. `--json` on the existing commands (done).
+2. Script numbers in SourceMonkey, and E-ids taken from them (done).
+3. SourceMonkey collections and installed scripts: the `collection`
    and `script` verbs, with `--json`.
-3. `ManagerBackend` around those, with SourceMonkey as its first
+4. `ManagerBackend` around those, with SourceMonkey as its first
    implementation.
-4. `manager list`, `manager fetch`, `--manager` for `--temp-browser` and
+5. `manager list`, `manager fetch`, `--manager` for `--temp-browser` and
    `--open-browser`.
-5. VM, then TM, behind the same commands.
-6. Separate: move the cross-manager e2e projects onto fetched copies.
+6. VM, then TM, behind the same commands.
+7. Separate: move the cross-manager e2e projects onto fetched copies.
+
+## Changing the person's real scripts
+
+- Outside a `--temp-browser`, the scripts and collections are the
+  person's own. The commands that take something away need `--force`
+  there, as `set` on an E-script does now:
+  - `script uninstall`, `script disable`;
+  - `collection drop`, `collection disable`.
+- Adding things (`script install`, `collection add`) and refreshing
+  don't.
 
 ## Open questions
 
-- Check that `chrome://extensions` can be driven over CDP for
-  `manager enable` / `disable` (and whether Chrome refuses it in some
-  browsers).
-- Install from text under SourceMonkey (see above).
-- Whether E-ids should stay the same across sm-dev invocations without
-  a run, or `id=` is enough for scripts.
-- Adding a manager to a browser that is already running (CDP's
-  `Extensions.loadUnpacked` needs a launch flag and a pipe connection).
-- Whether changing commands against a kept browser (the user's real
-  scripts) need `--force`, as `set` on an E-script does now.
+- None now.
