@@ -48,7 +48,7 @@ export function pickTab(ctx: ConsoleContext, input: string): ControlledTab | nul
     const hits = ctx.tabs().filter((t) => t.targetId?.toUpperCase().startsWith(upper));
     if (hits.length === 1) return hits[0];
     if (hits.length > 1) {
-      ctx.out(`[sm-dev] Several tabs' target ids start with ${arg} (${hits.map(tabName).join(', ')}). Type more of it.`);
+      ctx.out(`[sm-dev] Several tabs' target ids start with ${arg} (${hits.map(tabName).join(', ')}). Give more of it.`);
       return null;
     }
     // Only a number could still be a tab slip (`2` for `T2`).
@@ -83,6 +83,6 @@ export function dialogKind(dialog: Dialog): string {
 export function dialogWaitingMessage(waiting: ControlledTab, current: ControlledTab | undefined): string {
   const kind = dialogKind(waiting.dialogs!.current!);
   return waiting === current
-    ? `The page is waiting on ${kind} dialog. Type accept or dismiss first.`
-    : `${tabName(waiting)} is waiting on ${kind} dialog. Type tabs ${tabName(waiting)}, then accept or dismiss.`;
+    ? `The page is waiting on ${kind} dialog. Use accept or dismiss first.`
+    : `${tabName(waiting)} is waiting on ${kind} dialog. Use accept ${tabName(waiting)} or dismiss ${tabName(waiting)} first.`;
 }

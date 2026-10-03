@@ -46,12 +46,12 @@ import {
 
 
 // After a mistake, in place of the whole help, which would bury it.
-const LIST_COMMANDS = 'Type sm-dev --help to list the commands.';
+const LIST_COMMANDS = 'Use sm-dev --help to list the commands.';
 
 // `sm-dev help <command>...`, or the mistake for a name that is no command.
 function commandHelp(names: string[]): string {
   const { text, unknown } = commandsHelp(names);
-  if (unknown.length > 0) throw new UsageError(`${unknown.join(', ')} ${unknown.length === 1 ? 'is' : 'are'} not ${unknown.length === 1 ? 'a command' : 'commands'}. Type sm-dev --help to list them.`);
+  if (unknown.length > 0) throw new UsageError(`${unknown.join(', ')} ${unknown.length === 1 ? 'is' : 'are'} not ${unknown.length === 1 ? 'a command' : 'commands'}. Use sm-dev --help to list them.`);
   return text;
 }
 
@@ -768,7 +768,7 @@ async function targetRun(wanted: string | undefined): Promise<RunRecord> {
   const runs = await liveRuns();
   if (wanted !== undefined) {
     const found = runs.find((r) => r.id === wanted);
-    if (!found) throw new Error(`There is no run ${wanted}. Type sm-dev list to see the runs.`);
+    if (!found) throw new Error(`There is no run ${wanted}. Use sm-dev list to see the runs.`);
     return found;
   }
   if (runs.length === 0) throw new Error(NO_RUN_TO_USE);
@@ -900,7 +900,7 @@ function checkedList(text: string): { commands: AssembledCommand[] } {
 }
 
 function unknownRunCommand(name: string): string {
-  return `${name} is not a command a run takes. Type sm-dev help to list them.`;
+  return `${name} is not a command a run takes. Use sm-dev help to list them.`;
 }
 
 /**

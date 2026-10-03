@@ -121,6 +121,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `eval <js>` | Evaluate in the page; prints JSON (promises awaited) |
 | `eval --script[=<script>] <js>` | Evaluate inside the selected (or named) script, where its `GM_*` APIs, `@require` libraries, top-level declarations and IIFE locals are visible |
 | `eval --file <path>` | Evaluate a JavaScript file |
+| `eval --out FILE <js>` | Write the result to a file; printed results are cut past 10,000 characters |
 | `cdp <Method> [json]` | A raw CDP call on the tab; the result as JSON. A `{{` block or `--file` holds several, one per line (see [cdp.md](cdp.md)) |
 | `screenshot [sel] [--full] <file>` | PNG of the view, the page, or an element |
 | `savehtml <file>` | Save the DOM for `--from-saved` / `serveHtml` |
@@ -138,7 +139,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `type <sel> {{` | Type several lines exactly (line breaks are Enter; the final one before `}}` isn't typed) |
 | `type <sel> --file <path>` | Type a file's text exactly, including a final line break |
 | `key <keys>...` | `key j Shift+ArrowRight ctrl+end esc` |
-| `accept [text]`, `dismiss` | Answer an open dialog |
+| `accept [tab] [text]`, `dismiss [tab]` | Answer an open dialog |
 | `--nowait` | On any of these: don't wait for the page to settle |
 
 ## Waiting

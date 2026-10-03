@@ -75,6 +75,14 @@ export interface ScriptScope {
 /** `evaluate` found no eval hook for the script: it hasn't run in this document. */
 export class NoEvalHook extends Error {}
 
+/** `evaluate` found no document to run in: the page stayed between documents. */
+export class NoDocument extends Error {}
+
+// How long `evaluate` waits for a page that is between documents (a
+// reload or navigation under way) to have one again.
+const DOCUMENT_WAIT_MS = 5000;
+const BETWEEN_DOCUMENTS = 'The page is between documents (reloading or navigating), so there is none to evaluate in';
+
 // What an expression threw: an Error's description, else the value
 // thrown (`throw 'boom'`).
 function threw(details: { text: string; exception?: unknown }): ScriptThrew {
@@ -374,9 +382,11 @@ export class PageAttachment implements PageLink {
    * here, or an error of the evaluation's own (the page gone, say).
    */
   async evaluate(expression: string, world: 'page' | 'scripts' | ScriptScope): Promise<string> {
+    await this.documentReady();
     if (typeof world === 'object') return this.evaluateInScript(expression, world);
     const contextId = world === 'page' ? this.contextFor('') : this.scriptsContext();
-    if (contextId === null) throw new Error(world === 'page' ? 'The page has no document to evaluate in' : 'The scripts\' world isn\'t set up in this document');
+    // The page context can go again between the wait and here.
+    if (contextId === null) throw world === 'page' ? new NoDocument(BETWEEN_DOCUMENTS) : new Error('The scripts\' world isn\'t set up in this document');
     let { result, exceptionDetails } = await this.cdp.send('Runtime.evaluate', {
       expression, contextId, awaitPromise: true, replMode: true, userGesture: true,
     });
@@ -390,6 +400,33 @@ export class PageAttachment implements PageLink {
       }));
     }
     return this.evaluated(result, exceptionDetails);
+  }
+
+  // A page that is reloading or navigating has no document for a moment,
+  // which a site that reloads itself often makes likely. Waits for the
+  // next one, and throws `NoDocument` if none comes. The new document's
+  // scripts may not have run yet; a world or hook they set up is looked
+  // for after this.
+  private async documentReady(): Promise<void> {
+    if (this.contextFor('') !== null) return;
+    const ready = await new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => finish(false), DOCUMENT_WAIT_MS);
+      const created = (): void => {
+        if (this.contextFor('') !== null) finish(true);
+      };
+      // The tab closing ends the wait; the caller says it closed.
+      const closed = (): void => finish(false);
+      const finish = (found: boolean): void => {
+        clearTimeout(timer);
+        this.cdp.off('Runtime.executionContextCreated', created);
+        this.page.off('close', closed);
+        resolve(found);
+      };
+      // After the listener install() added, which records the context.
+      this.cdp.on('Runtime.executionContextCreated', created);
+      this.page.once('close', closed);
+    });
+    if (!ready) throw new NoDocument(`${BETWEEN_DOCUMENTS}. No new one loaded within ${DOCUMENT_WAIT_MS / 1000} seconds.`);
   }
 
   // Through the script's eval hook, a direct `eval` in its scope. That

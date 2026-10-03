@@ -128,6 +128,11 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   const dir = scriptsDir.path;
   expect(await run('snapshot --out tree.txt T1', dir)).toEqual([expect.stringMatching(/^\[sm-dev\] Wrote tree\.txt \(\d+ lines\) from http/)]);
   expect(readFileSync(path.join(dir, 'tree.txt'), 'utf8')).toContain('button "Added 1"');
+  // A long eval result is cut when printed, and written whole with --out.
+  const long = await run('eval "x".repeat(12000)');
+  expect(long).toEqual([expect.stringMatching(/^"x{9999}\.\.\. \(12002 chars; eval --out FILE writes it all\)$/)]);
+  expect(await run('eval --out long.json "x".repeat(12000)', dir)).toEqual(['[sm-dev] Wrote long.json (12002 chars)']);
+  expect(readFileSync(path.join(dir, 'long.json'), 'utf8')).toBe(`"${'x'.repeat(12000)}"\n`);
   // Code written as a function body: its `return` is the value.
   expect(await run('eval const n = 2; return n * 3')).toEqual(['6']);
   expect(await run('eval await 0; return document.title')).toEqual(['"target"']);
@@ -183,7 +188,7 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   // answer it, and the page commands wait until it has.
   const clicked = await run('click \'#warn\'');
   expect(clicked).toContain('[sm-dev] Clicked #warn. It opened a dialog, which is waiting for an answer.');
-  expect(await run('eval 1')).toEqual(['[sm-dev] The page is waiting on an alert dialog. Type accept or dismiss first.']);
+  expect(await run('eval 1')).toEqual(['[sm-dev] The page is waiting on an alert dialog. Use accept or dismiss first.']);
   expect(await run('accept')).toEqual(['[sm-dev] Accepted the dialog']);
   expect(await run('eval 1')).toEqual(['1']);
   expect(await run('eval confirm("sure?")')).toContain('[sm-dev] The expression opened a dialog, which is waiting for an answer.');
@@ -193,7 +198,7 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   // Every command, not only the ones with flags of their own; a quoted
   // selector with -- in it is one word, not a flag.
   expect(await run('status --bad')).toEqual(['[sm-dev] ERROR: The status command has no --bad flag. It takes --json, --nojson.']);
-  expect(await run('eval T1 --script --x')).toEqual(['[sm-dev] ERROR: The eval command has no --x flag. It takes --script, --file.']);
+  expect(await run('eval T1 --script --x')).toEqual(['[sm-dev] ERROR: The eval command has no --x flag. It takes --script, --file, --out.']);
   expect(await run(`probe '.a --b'`)).not.toContainEqual(expect.stringContaining('flag'));
 
   // A navigation an expression doesn't live through is said as such,

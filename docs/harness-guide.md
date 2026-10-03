@@ -671,7 +671,8 @@ them (blocked trackers, failed ad requests) to bury the script's lines.
   - code it `eval`s, whose console lines lose the script's location;
   - a throw deep inside page code (a framework's event dispatch) that
     the script's frame has scrolled off the stack.
-- `logs` shows everything the page logged, filtered or not.
+- `logs` shows everything the page logged, filtered or not. Identical
+  lines in a row show once, marked `(N times)`.
 - A page whose `Content-Security-Policy` header sandboxes it without
   `allow-scripts` blocks scripts in the page's own context (`@grant
   none`, `@inject-into page`). On each load of such a page, the run
@@ -1067,7 +1068,7 @@ In a run, not given files, they act on the run's scripts and tabs:
 | `open [tab] [page]` | Navigates the current tab, or the one named, to a URL or file (a glob matching one), or to a script's default page |
 | `reload [tab\|all]` | Reloads the page, another tab's, or all tabs at once. `--noscript` / `--script` switch the tabs' scripts off or back on first |
 | `focus [tab]` | Brings the tab to the front, un-minimizing its window |
-| `accept [text]`, `dismiss` | Answers an open dialog (see [Page dialogs](#page-dialogs)) |
+| `accept [tab] [text]`, `dismiss [tab]` | Answers an open dialog (see [Page dialogs](#page-dialogs)) |
 
 - A `[page]` is a URL, a file, a glob, or a script's number for its
   default page (the first page its `@match` names). Only a number
@@ -1170,8 +1171,11 @@ A script's `alert`, `confirm` or `prompt` is left open and reported in
 the stream, rather than being answered automatically.
 
 - In a browser on screen, answer it there.
-- Or type `accept` (a prompt's text after it) or `dismiss`. This works
-  in a headless browser too.
+- Or use `accept` (a prompt's text after it) or `dismiss`, with a tab
+  (`accept T2`) for a dialog on another tab. This works in a headless
+  browser too.
+  - Prompt text that starts with a tab's name is taken as the tab
+    unless quoted: `accept "T2"`.
 - In a headless run that can't take commands (it couldn't open its
   socket for other shells), nothing could answer it, so it is dismissed
   and reported.
@@ -1214,6 +1218,7 @@ current one.
 | `eval <js>` | Evaluates in the page and prints the result |
 | `eval --script[=<script>] <js>` | Evaluates inside the selected script, or the one named |
 | `eval --file <path>` | Evaluates JavaScript from a file |
+| `eval --out FILE <js>` | Writes the result to a file, uncut |
 | `snapshot [selector] [--visible] [--out file]` | The page (or each element the selector matches) as its accessibility tree, one line per element, each with a ref. `--visible`: only what's on screen. `--out` writes it to a file. `--find <text>`: only elements containing that text (case insensitive). For each match, `--up n` / `--context` add its containers; `--limit n`: how many matches to show (5; 0 for all) |
 | `screenshot [selector] [--full] <file>` | A PNG of what's showing, of the whole page (`--full`), or of one element |
 | `savehtml <file>` | The page's HTML, to replay later (see [Saved pages](#saved-pages)) |
@@ -1256,6 +1261,11 @@ current one.
     code keeps them for later `eval`s.
 - Prints JSON, or an element's or function's description. A promise
   prints what it settles to.
+  - A result over 10,000 characters is cut, which leaves it no longer
+    valid JSON. `eval --out FILE` writes the whole of it to a file
+    instead.
+- On a page that is reloading or navigating, it waits up to 5 seconds
+  for the new document, and runs there.
 - `eval --script` runs inside the selected script (`scripts` shows
   it); `--script=<script>` names another, as `scripts` does.
   - It sees what the script's own code sees: its `GM_*` functions, its

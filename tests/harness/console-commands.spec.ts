@@ -138,14 +138,14 @@ test.describe('sm-dev typed commands', () => {
     };
 
     expect(await run('menu M1')).toEqual([
-      '[sm-dev] The page opened a prompt dialog: "Name?". Type accept [text] or dismiss.',
+      '[sm-dev] The page opened a prompt dialog: "Name?". Use accept [text] or dismiss.',
       '[sm-dev] Fired "Ask"',
     ]);
     // These would wait on the stopped page, and hold up the accept.
-    const blocked = ['[sm-dev] The page is waiting on a prompt dialog. Type accept or dismiss first.'];
+    const blocked = ['[sm-dev] The page is waiting on a prompt dialog. Use accept or dismiss first.'];
     expect(await run('menu M1')).toEqual(blocked);
     expect(await run('set name "x"')).toEqual(blocked);
-    expect(await run('dismiss now')).toEqual(['[sm-dev] ERROR: The dismiss command takes no arguments']);
+    expect(await run('dismiss now')).toEqual(['[sm-dev] ERROR: The dismiss command takes nothing besides a tab']);
     expect(await run('accept Alice')).toEqual(['[sm-dev] Accepted the dialog']);
     await expect.poll(() => host.getValue(script.id!, 'name')).toBe('Alice');
     expect(await run('accept')).toEqual(['[sm-dev] No dialog is open']);
@@ -209,7 +209,7 @@ test.describe('sm-dev typed commands', () => {
         `[sm-dev] The page commands now act on T1 (${target})`,
       ]);
       expect(await run('focus AB12CD')).toEqual([
-        '[sm-dev] Several tabs\' target ids start with AB12CD (T1, T2). Type more of it.',
+        '[sm-dev] Several tabs\' target ids start with AB12CD (T1, T2). Give more of it.',
       ]);
       expect(await run('reload ABCDEF')).toEqual(['[sm-dev] No open tab\'s target id starts with ABCDEF. Use tabs to list them.']);
       // Too short to be taken for an id, and a long number is still a slip.
@@ -231,7 +231,7 @@ test.describe('sm-dev typed commands', () => {
       expect(await run('menu T2.M1')).toEqual(['[sm-dev] Fired "Hit /other.html"']);
       await expect.poll(() => host.getValue(script.id!, 'hit')).toBe('/other.html');
       expect(await run('menu Hit /other.html')).toEqual([
-        '[sm-dev] "Hit /other.html" is registered on T2, not T1. Type menu T2.Hit /other.html to fire it there.',
+        '[sm-dev] "Hit /other.html" is registered on T2, not T1. Use menu T2.Hit /other.html to fire it there.',
       ]);
       expect(await run('menu T3.M1')).toEqual(['[sm-dev] There is no open tab T3. Use tabs to list them.']);
 
@@ -329,7 +329,7 @@ test.describe('sm-dev typed commands', () => {
     };
     await run('tabs T2');
 
-    const asks = ['[sm-dev] The page opened a beforeunload dialog. Type accept to leave the page or dismiss to stay.'];
+    const asks = ['[sm-dev] The page opened a beforeunload dialog. Use accept to leave the page or dismiss to stay.'];
     expect(await run('closetab')).toEqual(asks);
     // Waiting on it, it's left open; the others still close.
     const other = await page.context().newPage();
@@ -353,7 +353,7 @@ test.describe('sm-dev typed commands', () => {
     const tabs = [{ n: 1, page, link: attachment }, { n: 2, page: asker, link: attachment, dialogs }];
     const ctx: ConsoleContext = { host, tabs: () => tabs.filter((t) => !t.page.isClosed()), scripts: [], out: (l) => lines.push(l), stop: () => undefined };
     await runConsoleCommand('closetab T2', ctx);
-    expect(lines).toEqual(['[sm-dev] The page opened a beforeunload dialog. Type accept to leave the page or dismiss to stay.']);
+    expect(lines).toEqual(['[sm-dev] The page opened a beforeunload dialog. Use accept to leave the page or dismiss to stay.']);
     // Forced, even while its dialog waits.
     lines.length = 0;
     await runConsoleCommand('closetab T2 --force', ctx);
@@ -489,14 +489,14 @@ test.describe('sm-dev typed commands', () => {
       await expect.poll(() => dialogs2.current !== null).toBe(true);
 
       // `set` reaches every tab, so T2's dialog would hold it up.
-      expect(await run('set k 1')).toEqual(['[sm-dev] T2 is waiting on an alert dialog. Type tabs T2, then accept or dismiss.']);
-      expect(await run('accept')).toEqual(['[sm-dev] No dialog is open on T1. T2 has one; type tabs T2 first.']);
+      expect(await run('set k 1')).toEqual(['[sm-dev] T2 is waiting on an alert dialog. Use accept T2 or dismiss T2 first.']);
+      expect(await run('accept')).toEqual(['[sm-dev] No dialog is open on T1. T2 has one; use accept T2.']);
       expect(await run('tabs')).toEqual([
         'Tabs:', `* T1: ${fixtureServer.baseUrl}/target.html`, '   * 1: Store',
         `  T2: ${fixtureServer.baseUrl}/other.html (opened by T1)`, '    Waiting on an alert dialog: "Hi"', '     1: Store',
       ]);
-      await run('tabs T2');
-      expect(await run('accept')).toEqual(['[sm-dev] Accepted the dialog']);
+      // Answered from T1, naming the tab.
+      expect(await run('accept T2')).toEqual(['[sm-dev] Accepted the dialog']);
       expect(await run('set k 1')).toEqual(['[sm-dev] Set k']);
     } finally {
       await attachment2.dispose();

@@ -335,10 +335,10 @@ test('load, update and reload all reload just the tabs they affect', async ({ fi
   expect(lines).not.toContain('[sm-dev] Reloading T1, T2');
   expect(lines).toContain(`* 2: B (${scriptsDir.path}/b.user.js)`);
   expect(lines).toContain('  k = 1');
-  expect(lines).toContain(`[sm-dev] ${b} is already loaded, as script 2. Type update 2 to re-read it.`);
-  expect(lines).toContain(`[sm-dev] ${a} is already loaded, as script 1. Type update 1 to re-read it.`);
+  expect(lines).toContain(`[sm-dev] ${b} is already loaded, as script 2. Use update 2 to re-read it.`);
+  expect(lines).toContain(`[sm-dev] ${a} is already loaded, as script 1. Use update 1 to re-read it.`);
   // Once for `load ${b}`, once for the directory.
-  expect(lines.filter((l) => l === `[sm-dev] ${b} is already loaded, as script 2. Type update 2 to re-read it.`)).toHaveLength(2);
+  expect(lines.filter((l) => l === `[sm-dev] ${b} is already loaded, as script 2. Use update 2 to re-read it.`)).toHaveLength(2);
   expect(lines).toContain('[sm-dev] No such file or directory: nothing.user.js');
   // The failed update changed nothing, so reloaded nothing.
   const invalid = lines.findIndex((l) => l.startsWith('INVALID'));
@@ -494,7 +494,7 @@ test('a tab waiting on a dialog is left out of reload all, and blocks update', a
   ]);
   expect(lines).toContain('[sm-dev] T2 is waiting on a dialog, so it was not reloaded');
   // T2 is the current tab, having just been opened.
-  expect(lines).toContain('[sm-dev] The page is waiting on an alert dialog. Type accept or dismiss first.');
+  expect(lines).toContain('[sm-dev] The page is waiting on an alert dialog. Use accept or dismiss first.');
   expect(lines.filter((l) => l.startsWith('[sm-dev] Reloading'))).toEqual([]);
 });
 
@@ -526,7 +526,7 @@ test('with no tab, load says nothing was reloaded', async ({ scriptsDir }) => {
     ['Started as run', `load ${b}`],
     ['none was reloaded', 'exit'],
   ]);
-  expect(lines).toContain('[sm-dev] No open tab matches it, so none was reloaded. Type open 2 to open its page.');
+  expect(lines).toContain('[sm-dev] No open tab matches it, so none was reloaded. Use open 2 to open its page.');
 });
 
 test('--watch re-pushes on a save and reloads the tab it runs in', async ({ fixtureServer, scriptsDir }) => {

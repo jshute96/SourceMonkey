@@ -62,8 +62,8 @@ const CLOSE_WITH_TEXT = /^}}\s+\S/;
  */
 export const OPEN_NOT_LAST = 'A {{ block\'s content starts on the line after the {{, and its }} goes on a line of its own';
 
-// `a, b and c`.
-function listed(names: string[]): string {
+/** `a, b and c`. */
+export function listed(names: string[]): string {
   return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
 }
 

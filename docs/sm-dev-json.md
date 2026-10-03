@@ -741,6 +741,8 @@ JSON:
 
 - `snapshot`, `eval` and `cdp` already print their own formats, and
   keep them under `--json`. `eval` and `cdp` print JSON values already.
+  - An `eval` result over 10,000 characters is cut, so it no longer
+    parses. Use `eval --out FILE` for those.
 - `set`, the commands that pick (`tab T2`, `script 2`) and the ones that
   act on the page (`click`, `open`, `wait`, ...) print what they print
   now.

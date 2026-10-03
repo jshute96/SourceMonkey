@@ -245,6 +245,14 @@ export async function waitFor(ctx: ConsoleContext, parsed: ParsedArgs): Promise<
     await new Promise((resolve) => setTimeout(resolve, delay));
     return true;
   }
+  // `wait T2 10s`: a tab and a delay don't go together.
+  const tabDelay = parsed.tab !== undefined && word !== undefined ? parseDelay(word) : null;
+  if (tabDelay !== null) {
+    // The delay as a timeout only where it would be a valid one.
+    const seconds = tabDelay / 1000;
+    const timed = timeout === undefined && seconds > 0 && seconds <= MAX_WAIT_SECONDS ? ` --timeout-seconds ${seconds}` : '';
+    return mistake(`A delay takes no tab. Use wait ${word} to wait that long, or wait ${parsed.tab}${timed} to wait for ${parsed.tab} to settle.`);
+  }
 
   // The tab, or all of them.
   let tabs: ControlledTab[];

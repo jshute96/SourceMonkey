@@ -408,6 +408,7 @@ export const HELP_SECTIONS: HelpSection[] = [
             ],
           },
           { term: '--file <path>', about: 'Evaluate a JavaScript file, in place of <js>.' },
+          { term: '--out FILE', about: 'Write the result to a file instead. Printed results are cut past 10,000 characters.' },
         ],
         gap: true,
       },
@@ -497,8 +498,8 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         title: 'Dialog boxes',
         commands: [
-          { usage: 'accept [text]', syntax: TEXT, about: 'Answer an open dialog with OK, and a prompt with the text.' },
-          { usage: 'dismiss', syntax: NONE, about: 'Answer an open dialog with Cancel.' },
+          { usage: 'accept [tab] [text]', syntax: { args: 'text', tab: true }, about: 'Answer an open dialog with OK, and a prompt with the text.' },
+          { usage: 'dismiss [tab]', syntax: { args: 'none', tab: true }, about: 'Answer an open dialog with Cancel.' },
         ],
       },
     ],

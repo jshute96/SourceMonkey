@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 import type { BrowserContext, Dialog, Page } from '@playwright/test';
 
-import { CommandAssembler, endsOutsideBlock } from './command-lines.js';
+import { CommandAssembler, endsOutsideBlock, listed } from './command-lines.js';
 import { isJsonLine, jsonLayoutMistake, jsonResult, JSON_COMMANDS, markedLine, STDERR_LINE, withLayout, type JsonLayout } from './json-output.js';
 import type * as J from './json-output.js';
 import { extensionLabel, type ExtensionState } from './extension-backend.js';
@@ -217,8 +217,14 @@ export function runCommandHelp(input: { line: string } | { words: string[] }): s
   return 'help' in parsed && parsed.help ? own.command : null;
 }
 
+// The error for a word that names no command a run takes.
+function notACommand(word: string): string {
+  return `${word} is not a command. Use help to list them.`;
+}
+
 // A run command's name, aliases resolved, and its words after the name;
 // null for a name that is no run command.
+
 function ownWords(input: { line: string } | { words: string[] }): { command: string; rest: { line: string } | { words: string[] } } | null {
   let name: string;
   let rest: { line: string } | { words: string[] };
@@ -317,7 +323,7 @@ export async function runConsoleCommand(
   // command sent as one word is read like a typed one.
   const own = ownWords(words?.[0] === typedCommand ? { words } : { line: trimmed });
   if (!own) {
-    ctx.out(`[sm-dev] ERROR: ${typedCommand} is not a command. Use help to list them.`);
+    ctx.out(`[sm-dev] ERROR: ${notACommand(typedCommand)}`);
     return false;
   }
   const { command } = own;
@@ -756,17 +762,19 @@ export async function runConsoleCommand(
     }
     case 'accept':
     case 'dismiss': {
-      const dialog = tab.dialogs?.take();
+      const target = parsed.tab !== undefined ? pickTab(ctx, parsed.tab) : tab;
+      if (!target) return false;
+      const dialog = target.dialogs?.take();
       if (!dialog) {
         const elsewhere = ctx.tabs().find((t) => t.dialogs?.current);
         ctx.out(elsewhere
-          ? `[sm-dev] No dialog is open on ${tabName(tab)}. ${tabName(elsewhere)} has one; type tabs ${tabName(elsewhere)} first.`
+          ? `[sm-dev] No dialog is open on ${tabName(target)}. ${tabName(elsewhere)} has one; use ${[command, tabName(elsewhere), text].filter(Boolean).join(' ')}.`
           : '[sm-dev] No dialog is open');
         return;
       }
       if (text && dialog.type() !== 'prompt') {
         ctx.out(`[sm-dev] ERROR: Only a prompt dialog takes text. This one is ${dialogKind(dialog)}.`);
-        tab.dialogs!.putBack(dialog);
+        target.dialogs!.putBack(dialog);
         return;
       }
       // A bare accept keeps the prompt's own default, as pressing OK
@@ -782,7 +790,7 @@ export async function runConsoleCommand(
     }
     default: {
       if (!PAGE_COMMANDS.has(command)) {
-        ctx.out(`[sm-dev] ERROR: ${command} is not a command. Use help to list them.`);
+        ctx.out(`[sm-dev] ERROR: ${notACommand(command)}`);
         return false;
       }
       // The tab named first, or the current one.
@@ -1649,7 +1657,8 @@ function noMenusMessage(ctx: ConsoleContext, tab: ControlledTab): string {
   const others = ctx.tabs().filter((t) => t !== tab && menuGroups(ctx, t).length > 0);
   return others.length === 0
     ? '[sm-dev] No menu commands are registered on any tab'
-    : `[sm-dev] No menu commands are registered on ${tabName(tab)}. ${others.map(tabName).join(', ')} ${others.length === 1 ? 'has' : 'have'} some; type menu ${tabName(others[0])} to list them.`;
+    : `[sm-dev] No menu commands are registered on ${tabName(tab)}. ${listed(others.map(tabName))} ${others.length === 1 ? 'has' : 'have'} some; `
+      + `use menu all or menu ${tabName(others[0])} to list them.`;
 }
 
 // A script registers its commands as it starts, and commands are only
@@ -1684,21 +1693,24 @@ async function fireMenu(ctx: ConsoleContext, tab: ControlledTab, argument: strin
       return true;
     }
     // Registered on another tab is an answer too, not worth waiting past.
-    if (ctx.interactive || commands.length > 0 || Date.now() >= deadline || elsewhereFor(ctx, tab, argument)) break;
+    if (ctx.interactive || commands.length > 0 || Date.now() >= deadline || elsewhereFor(ctx, tab, argument).length > 0) break;
     await new Promise((r) => setTimeout(r, 100));
   }
-  const elsewhere = numbered ? undefined : elsewhereFor(ctx, tab, argument);
-  if (/^\d+$/.test(argument) && !elsewhere) ctx.out(`[sm-dev] ERROR: Menu commands are named M1, M2 and so on. Did you mean M${argument}?`);
-  else if (elsewhere) ctx.out(`[sm-dev] "${argument}" is registered on ${tabName(elsewhere)}, not ${tabName(tab)}. Type menu ${tabName(elsewhere)}.${argument} to fire it there.`);
+  const elsewhere = numbered ? [] : elsewhereFor(ctx, tab, argument);
+  if (/^\d+$/.test(argument) && elsewhere.length === 0) ctx.out(`[sm-dev] ERROR: Menu commands are named M1, M2 and so on. Did you mean M${argument}?`);
+  else if (elsewhere.length > 0) {
+    ctx.out(`[sm-dev] "${argument}" is registered on ${listed(elsewhere.map(tabName))}, not ${tabName(tab)}. `
+      + `Use menu ${tabName(elsewhere[0])}.${argument} to fire it ${elsewhere.length === 1 ? 'there' : 'on one of them'}.`);
+  }
   else if (all().length === 0) ctx.out(noMenusMessage(ctx, tab));
   else if (numbered) ctx.out(`[sm-dev] There is no menu command M${numbered[1]}${onTab(ctx, tab)}. Use menu to list them.`);
   else ctx.out(`[sm-dev] No menu command named "${argument}" is registered${onTab(ctx, tab)}. Use menu to list them.`);
   return false;
 }
 
-// Another tab with a menu command of that label.
-function elsewhereFor(ctx: ConsoleContext, tab: ControlledTab, label: string): ControlledTab | undefined {
-  return ctx.tabs().find((t) => t !== tab && fromTab(ctx, t, ctx.host.reports.menuCommands).some((c) => c.name === label));
+// The other tabs with a menu command of that label.
+function elsewhereFor(ctx: ConsoleContext, tab: ControlledTab, label: string): ControlledTab[] {
+  return ctx.tabs().filter((t) => t !== tab && fromTab(ctx, t, ctx.host.reports.menuCommands).some((c) => c.name === label));
 }
 
 // Counts as done once a dialog the command opens is up, so `accept`
@@ -1994,10 +2006,10 @@ export class DialogTracker {
     }
     this.current = dialog;
     this.currentOrdinal = ordinal;
-    const typed = dialog.type() === 'beforeunload' ? 'type accept to leave the page or dismiss to stay'
-      : `type ${dialog.type() === 'prompt' ? 'accept [text]' : 'accept'} or dismiss`;
-    const how = !this.visible ? `${typed[0].toUpperCase()}${typed.slice(1)}`
-      : this.commandsListening ? `Answer it in the browser, or ${typed}`
+    const answer = dialog.type() === 'beforeunload' ? 'use accept to leave the page or dismiss to stay'
+      : `use ${dialog.type() === 'prompt' ? 'accept [text]' : 'accept'} or dismiss`;
+    const how = !this.visible ? `${answer[0].toUpperCase()}${answer.slice(1)}`
+      : this.commandsListening ? `Answer it in the browser, or ${answer}`
         : 'Answer it in the browser';
     this.out(`[sm-dev] ${what}. ${how}.`);
   }

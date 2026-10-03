@@ -619,7 +619,7 @@ and waits for them.
   - Also, when that dialog is gone before the dismiss lands, the error
     is unhandled, and ends the run.
 - The run's own tabs get a `DialogTracker` (`console-commands.ts`),
-  which keeps dialogs open for the person or a typed `accept` /
+  which keeps dialogs open for the person or an `accept` /
   `dismiss`. Otherwise a script's `prompt()` would be answered with
   Cancel.
 - A page stopped on a dialog answers no CDP call until it is answered.
@@ -1311,6 +1311,12 @@ The run commands that drive and read a tab's page (`click`, `type`,
     `let` redeclarable). A top-level `return` is a syntax error there,
     so code that fails with that runs again wrapped in
     `(async () => { ... })()`. The syntax error means nothing ran.
+  - A page between documents (a reload or navigation under way) has no
+    default context for a moment. `evaluate` waits up to 5 seconds for
+    the next one (`documentReady`), then says the page stayed between
+    documents.
+  - Printed results are cut past 10,000 characters; `--out` writes
+    them whole.
 - `eval --script` runs inside one script: the selected one, or the one
   `--script=<script>` names (`evalScope` in console-commands.ts).
   - It calls the script's eval hook, a direct `eval` in its scope (see

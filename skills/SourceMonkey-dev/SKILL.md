@@ -310,9 +310,10 @@ $R screenshot shot.png               # then look at the PNG
 - Keys go to the page, not to Chrome: Chrome's shortcuts (back, reload,
   zoom, Escape leaving fullscreen) don't fire.
 - A command that opens a dialog (`alert`, `confirm`, `prompt`) returns
-  once it's up. Answer with `accept [text]` or `dismiss`; until then
-  the page is frozen, and most commands refuse.
-- `logs` prints everything the page logged, filtered or not.
+  once it's up. Answer with `accept [tab] [text]` or `dismiss [tab]`;
+  until then the page is frozen, and most commands refuse.
+- `logs` prints everything the page logged, filtered or not, with
+  repeated lines in a row shown once, as `(N times)`.
 - Quoting: quote selectors with spaces or `#` for the shell
   (`click '#submit'`).
 
@@ -664,6 +665,10 @@ test('adds the button', async ({ page, loadUserscript, gm, reports }) => {
   [How a run uses the extension](#how-a-run-uses-the-extension)).
 - **The run refuses to start, or says `no extension` / `SourceMonkey
   disabled`**: see [Getting a browser](#getting-a-browser).
+- **A command these docs name is unknown**: sm-dev is older than the
+  docs. Ask the person whether to update it: `pnpm run build` in the
+  SourceMonkey checkout, then `pnpm install` in a userscript repo. A
+  run keeps the code it started with, so start it again after.
 - **`start` says sm-dev or SourceMonkey is older than the other**:
   ask the person whether to update it as the message says. Building
   changes the code under other running sessions. If the run still

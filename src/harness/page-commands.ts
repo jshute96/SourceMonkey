@@ -17,7 +17,7 @@ import type { Locator, Page, Request } from '@playwright/test';
 import type { ParsedArgs } from './command-args.js';
 import { PART_LIMIT, PROBE_MAX } from './command-list.js';
 import type { ControlledTab } from './console-commands.js';
-import { NoEvalHook, ScriptThrew, type ScriptScope } from './page-watch.js';
+import { NoDocument, NoEvalHook, ScriptThrew, type ScriptScope } from './page-watch.js';
 import { jsonResult, type LogsData, type ProbeData } from './json-output.js';
 import { readInputFile, writeProblem } from './input-file.js';
 import { notSettledMessage, SETTLE_TIMEOUT_MS, settleTab } from './wait.js';
@@ -67,6 +67,21 @@ export function recordLog(page: Page, line: string): void {
   if (lines.length > LOG_LIMIT) lines.splice(0, lines.length - LOG_LIMIT);
 }
 
+/**
+ * Lines with each run of identical ones as one, marked `(N times)`, so a
+ * page logging the same line in a loop doesn't bury the rest.
+ */
+export function collapseRepeats(lines: readonly string[]): string[] {
+  const shown: string[] = [];
+  for (let i = 0; i < lines.length;) {
+    let end = i + 1;
+    while (end < lines.length && lines[end] === lines[i]) end++;
+    shown.push(end - i > 1 ? `${lines[i]} (${end - i} times)` : lines[i]);
+    i = end;
+  }
+  return shown;
+}
+
 // The keys `click --modifiers` can hold, as Playwright names them.
 const MODIFIERS = ['Alt', 'Control', 'ControlOrMeta', 'Meta', 'Shift'] as const;
 
@@ -94,6 +109,19 @@ export type EvalIn = { scope: ScriptScope | null; name: string; named: boolean }
 
 // Image types `screenshot` can write, by the file's extension.
 const IMAGE_FILE = /\.(png|jpe?g)$/i;
+
+// Longer eval results are cut, so one huge value (a `data:` URL, a
+// page's HTML) doesn't flood the output. `--out` writes it all.
+const EVAL_SHOWN_CHARS = 10_000;
+
+function shortEvalResult(text: string): string {
+  if (text.length <= EVAL_SHOWN_CHARS) return text;
+  // Not ending on the first half of a surrogate pair, so an emoji isn't
+  // cut in half. Sliced, not split into code points, since the text can
+  // be megabytes.
+  const end = /[\uD800-\uDBFF]/.test(text[EVAL_SHOWN_CHARS - 1]) ? EVAL_SHOWN_CHARS - 1 : EVAL_SHOWN_CHARS;
+  return `${text.slice(0, end)}... (${text.length} chars; eval --out FILE writes it all)`;
+}
 
 /**
  * Runs one of `PAGE_COMMANDS` on `tab`. Reports through `out`, and
@@ -201,14 +229,22 @@ export async function runPageCommand(
               say(evalIn.scope
                 ? `${noScope}, so its scope can't be reached. Load a page it matches, or reload this one.`
                 : `${noScope}, so its scope can't be reached`);
-            } else say(err instanceof ScriptThrew ? `The expression threw: ${err.message}` : `Internal error: ${(err as Error).message}`);
+            } else if (err instanceof ScriptThrew) say(`The expression threw: ${err.message}`);
+            else if (err instanceof NoDocument) say(err.message);
+            else say(`Internal error: ${(err as Error).message}`);
             return false;
           }
           return;
         }
         // Its console lines come through another session than its result.
         await done(tab.link.drain());
-        out(result);
+        const outFile = input.flags['--out'];
+        if (typeof outFile === 'string') {
+          await write(outFile, () => writeFile(file(outFile), result + '\n'));
+          say(`Wrote ${shown(outFile)} (${result.length} chars)`);
+          return;
+        }
+        out(shortEvalResult(result));
         return;
       }
       case 'click':
@@ -599,7 +635,7 @@ export async function runPageCommand(
           return;
         }
         if (lines.length === 0) say('No console lines or errors yet');
-        for (const line of lines) out(line);
+        for (const line of collapseRepeats(lines)) out(line);
         return;
       }
     }

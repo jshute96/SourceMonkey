@@ -254,7 +254,7 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
     const url = `${fixtureServer.baseUrl}/target.html`;
     await setup.cli('newtab', '--noscript', url);
     expect((await setup.cli('tabs')).some((l) => l.startsWith(`* T2: ${url} (no scripts)`))).toBe(true);
-    expect(await setup.cli('menu', 'T2')).toEqual(['[sm-dev] No menu commands are registered on T2. T1 has some; type menu T1 to list them.']);
+    expect(await setup.cli('menu', 'T2')).toEqual(['[sm-dev] No menu commands are registered on T2. T1 has some; use menu all or menu T1 to list them.']);
     // An expression with spaces and quotes arrives as the shell gave it,
     // and so does a whole command sent as one word.
     expect(await setup.cli('eval', 'T2', 'document.title + " " + location.pathname')).toEqual(['"target /target.html"']);

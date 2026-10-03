@@ -948,7 +948,7 @@ async function runInBrowser(
     }
     const already = files.indexOf(file);
     if (already >= 0) {
-      opts.out(`[sm-dev] ${input} is already loaded, as script ${already + 1}. Type update ${already + 1} to re-read it.`);
+      opts.out(`[sm-dev] ${input} is already loaded, as script ${already + 1}. Use update ${already + 1} to re-read it.`);
       return;
     }
     opts.typed?.set(file, input);
@@ -963,7 +963,7 @@ async function runInBrowser(
     remote.setScripts(files);
     stamps.set(script, await filesStamp(script));
     opts.out(`[sm-dev] Loaded ${input} as script ${n}`);
-    await apply([...scripts, script], [{ next: script }], `No open tab matches it, so none was reloaded. Type open ${n} to open its page.`, true);
+    await apply([...scripts, script], [{ next: script }], `No open tab matches it, so none was reloaded. Use open ${n} to open its page.`, true);
   });
   // Seeded once, as pushed. An update keeps the store, so values the
   // script wrote since survive it.

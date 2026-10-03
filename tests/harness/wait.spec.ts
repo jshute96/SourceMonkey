@@ -162,6 +162,7 @@ test('wait and the actions settle the page, and say what kept it busy', async ({
   expect(await run('wait sometime')).toEqual({ ok: false, lines: ['[sm-dev] ERROR: The wait command takes a tab, all, selector, selector-gone, log, or a delay such as 500ms or 2s, not sometime'] });
   expect((await run('wait selector')).lines).toEqual(['[sm-dev] ERROR: The wait selector command needs a selector, e.g. wait selector \'#results\'']);
   expect((await run('wait 2s --timeout-seconds 1')).lines).toEqual(['[sm-dev] ERROR: A delay takes no --timeout-seconds']);
+  expect((await run('wait T1 10s')).lines).toEqual(['[sm-dev] ERROR: A delay takes no tab. Use wait 10s to wait that long, or wait T1 --timeout-seconds 10 to wait for T1 to settle.']);
   expect((await run('wait --timeout-seconds 0')).lines).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The --timeout-seconds flag needs a number of seconds/)]);
   expect((await run('wait --soon')).lines).toEqual(['[sm-dev] ERROR: The wait command has no --soon flag. It takes --timeout-seconds.']);
   // A flag it doesn't take, after wait log's text, isn't taken as part of it.
