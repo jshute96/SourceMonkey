@@ -154,6 +154,16 @@ export class CommandAssembler {
   }
 }
 
+/**
+ * Whether the lines of `text` end outside a `{{` block, so are ready to
+ * run, rather than waiting for a `}}` line.
+ */
+export function endsOutsideBlock(text: string): boolean {
+  const assembler = new CommandAssembler();
+  for (const line of text.split('\n')) assembler.push(line);
+  return !assembler.open;
+}
+
 export const NONE_RUN = 'None of the commands were run.';
 
 /**

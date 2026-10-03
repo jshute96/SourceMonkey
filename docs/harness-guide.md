@@ -647,12 +647,24 @@ sm-dev --interactive      # no run yet: type start or attach
   `sm-dev --interactive`.
 - Line editing and history work as in most shells (arrows, Ctrl-A /
   Ctrl-E, Ctrl-U), and Tab completes a command name.
+- A `{{` block is typed and edited as one, over several lines:
+  - Enter starts a new line until the `}}` line closes the block, then
+    runs it, wherever the cursor is. Alt-Enter always starts a new
+    line, such as inside a block brought back from the history.
+  - Up and Down move between its lines, and go through the history
+    from the first and last line.
+  - Once Up or Down has brought back an entry, they step whole entries,
+    a block in one step, until you press another key. Ctrl-P / Ctrl-N
+    always step whole entries.
+  - Home / End, Ctrl-A / Ctrl-E, Ctrl-U and Ctrl-K act on the cursor's
+    line. Ctrl-K at a line's end joins the next line on, and Ctrl-Y
+    brings back what Ctrl-U or Ctrl-K deleted.
+  - A block taller than the terminal shows the rows around the cursor,
+    scrolling as it moves. Once run, it is shown whole.
 - At a terminal, history is kept across sessions in
   `~/.sm-dev-history`, readable only by you.
   - `SM_DEV_HISTORY` names another file, or set it empty for none.
-  - A `{{` block is one entry: Up brings back all its lines, and Enter
-    runs it again. Its lines can be edited, but Up and Down move
-    through the history, not between them.
+  - A `{{` block is one entry, brought back whole to edit or run again.
   - Sessions open at once each add their own commands, without
     overwriting the others'. A session sees the others' only once it
     is restarted, as in a shell.
@@ -664,8 +676,9 @@ sm-dev --interactive      # no run yet: type start or attach
 
 Keys:
 
-- Ctrl-C clears a half-typed line, and inside a `{{` block drops the
-  block.
+- Ctrl-C or Esc clears a half-typed command. One of several lines
+  cleared this way stays in the history, to bring back. A one-line
+  command doesn't.
 - On an empty line, Ctrl-C or Ctrl-D exits, as `exit` does: a run this
   sm-dev started without `--detach` stops, and one it only attached to
   goes on.

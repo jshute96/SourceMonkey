@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 import type { BrowserContext, Dialog, Page } from '@playwright/test';
 
-import { CommandAssembler } from './command-lines.js';
+import { CommandAssembler, endsOutsideBlock } from './command-lines.js';
 import { extensionLabel, type ExtensionState } from './extension-backend.js';
 import { firstLine } from './extension-link.js';
 import type { HarnessHost, MenuCommandRecord } from './host.js';
@@ -27,6 +27,7 @@ import { parseCommandArgs, splitWords, unquoteWhole, type ParsedArgs } from './c
 import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, commandsHelp } from './command-list.js';
 import { errorSentence, readJsonFile, writeProblem } from './input-file.js';
 import { PAGE_COMMANDS, runPageCommand } from './page-commands.js';
+import { editMultiLine } from './prompt-editor.js';
 import { appendHistory, HISTORY_SIZE, historyFile, loadHistory } from './prompt-history.js';
 import { defaultPageUrl, NO_DEFAULT_PAGE, preparedScriptMatches, preparedScriptName, preparedScriptPath, shownPath, withDefaultScheme, type PreparedScript } from './prepare.js';
 import { currentTab, dialogKind, dialogWaitingMessage, NO_TABS, pickTab, TAB_ARG, tabName } from './tab-refs.js';
@@ -1943,10 +1944,10 @@ export interface PromptIO {
  * The `> ` prompt of `sm-dev --interactive`, reading the terminal: line
  * editing and history (readline's own keys: arrows, Ctrl-A/E, Ctrl-U
  * and so on), Tab completion of command names, and `... ` inside an
- * `{{` block (see command-lines.ts). A block is one history entry, and
- * history is kept across sessions (see prompt-history.ts). Ctrl-C
- * clears the typed line; on an empty one it drops an open block, and
- * otherwise it or Ctrl-D leaves. Each command goes to `runLine` once typed, in order.
+ * `{{` block (see command-lines.ts), edited as one buffer at a terminal
+ * (see prompt-editor.ts). A block is one history entry, and history is
+ * kept across sessions (see prompt-history.ts). Ctrl-C clears the
+ * typed command, and on an empty line it or Ctrl-D leaves. Each command goes to `runLine` once typed, in order.
  * Returns a function that closes the prompt.
  */
 export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?: { start?: () => void }) => Promise<unknown>): () => void {
@@ -1972,13 +1973,27 @@ export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?:
     terminal,
     prompt: PROMPT,
     history,
+    // A lone Esc clears the command (see prompt-editor.ts). readline
+    // waits this long for more of an escape sequence before taking it
+    // as one: 500ms by default, which made Esc feel slow.
+    escapeCodeTimeout: 100,
     // One over, so readline never drops an entry for the typed line
     // it adds, which the 'history' handler below takes back out.
     historySize: HISTORY_SIZE + 1,
-    // Tab completes a command name, except inside a {{ block,
-    // where the line is the block's (JavaScript or JSON).
-    completer: (line: string) => (blocks.open ? [[], line] : completeFrom(names, line)),
+    // Tab completes a command name, except in a {{ block, where the
+    // text is the block's (JavaScript or JSON). Only at a terminal,
+    // where the editor holds a block as one buffer.
+    completer: (line: string) => (line.includes('\n') ? [[], line] : completeFrom(names, line)),
   });
+  // At a terminal a {{ block is typed and edited as one buffer, sent
+  // once its }} line ends it (see prompt-editor.ts). Without one, each
+  // line is sent as typed, and `blocks` collects them.
+  // A command of several lines (a {{ block, or lines joined with
+  // Alt-Enter) cleared by Ctrl-C or Esc is kept, unfinished, to take
+  // up again. Not one brought back from the history unchanged.
+  const editor = terminal ? editMultiLine(lines, BLOCK_PROMPT, endsOutsideBlock, (text) => {
+    if (text.includes('\n') && !history.includes(text)) remember(text);
+  }) : null;
   // readline adds each typed line to the history itself, but a {{
   // block should be one entry of all its lines, so its additions are
   // taken back out here and `remember` adds whole entries instead.
@@ -2013,6 +2028,8 @@ export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?:
   let running = 0;
   // Set by a Ctrl-C while a command runs, so a second one leaves.
   let exitArmed = false;
+  // `blocks` is only open without a terminal, where lines are sent one
+  // by one.
   const promptText = (): string => (blocks.open ? BLOCK_PROMPT : running > 0 ? '' : PROMPT);
   const showPrompt = (preserveCursor: boolean): void => {
     lines.setPrompt(promptText());
@@ -2037,7 +2054,7 @@ export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?:
     }
   };
   lines.on('line', (input) => {
-    // A block recalled from the history is one line holding its lines.
+    // At a terminal, a block arrives as one line holding its lines.
     for (const line of input.split('\n')) take(line);
     showPrompt(false);
   });
@@ -2055,17 +2072,9 @@ export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?:
   // readline puts the terminal in raw mode, so Ctrl-C arrives here
   // rather than as the process's SIGINT. As in a shell, it first
   // clears a half-typed line, and only leaves on an empty one.
+  // Only at a terminal, so with the editor, where a {{ block is the
+  // typed buffer rather than lines `blocks` holds.
   lines.on('SIGINT', () => {
-    if (!lines.line && blocks.open) {
-      blocks.drop();
-      // Kept, unfinished, to take up again.
-      remember(blockLines.join('\n'));
-      blockLines = [];
-      // Before the output, which redraws the prompt.
-      lines.setPrompt(promptText());
-      io.out('[sm-dev] Dropped the {{ block');
-      return;
-    }
     // With no prompt showing, Ctrl-C looks like it would cancel the
     // command. It can't, so the first one only says so.
     if (!lines.line && running > 0 && !exitArmed) {
@@ -2078,8 +2087,7 @@ export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?:
       io.exit(running > 0);
       return;
     }
-    lines.write(null, { ctrl: true, name: 'e' });
-    lines.write(null, { ctrl: true, name: 'u' });
+    editor?.clear();
   });
   // readline handles Ctrl-Z itself. On `fg` it pauses its input and
   // emits this event, but never resumes the input. Without this the

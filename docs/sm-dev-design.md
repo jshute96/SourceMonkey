@@ -56,6 +56,7 @@ flowchart LR
 | `checks.ts`, `path-args.ts` | `match` / `validate`, and file-argument globs |
 | `console-commands.ts` | A run's commands across its tabs, the dialog tracker, the `--interactive` prompt |
 | `prompt-history.ts` | The prompt's history file, kept across sessions |
+| `prompt-editor.ts` | Multi-line editing of `{{` blocks at the prompt |
 | `page-commands.ts`, `snapshot.ts` | Commands that drive and read a page |
 | `wait.ts` | `wait`, and when a tab has settled |
 | `tab-refs.ts` | Naming and picking tabs (`T2`, target and DevTools page ids), the current tab, the dialog message |
@@ -408,8 +409,31 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
     passwords and tokens.
   - readline adds each typed line itself; its `history` event takes
     that back out, and the prompt adds whole entries instead.
-  - A recalled block arrives as one line holding newlines, split before
-    `CommandAssembler` sees it.
+- Multi-line editing (`prompt-editor.ts`):
+  - A block is one readline buffer holding newlines, sent when Enter
+    finds it complete (`endsOutsideBlock`). The buffer is split into
+    lines before `CommandAssembler` sees it.
+  - readline has no hooks for this, so its per-instance methods are
+    replaced: `_ttyWrite` (keys), `_refreshLine` (drawing `... `
+    before later lines) and `getCursorPos`.
+  - The redraw lays out the screen rows itself, and draws only a window
+    of them around the cursor when the buffer is taller than the
+    terminal. `getCursorPos` counts rows from the window's top, as
+    readline and `writeOutputLine` expect.
+  - Its own edits (Ctrl-U, Ctrl-K, newlines, recalls) go through
+    readline's undo stack and kill ring, reached by symbol name.
+  - History browsing is its own. readline's replaces the buffer with
+    the text before the cursor when nothing older matches, and loses
+    what was being typed.
+  - Up / Down step whole entries while browsing (until another key), so
+    a recalled block isn't walked line by line.
+  - Esc clears the buffer. `escapeCodeTimeout` is cut to 100ms, from
+    readline's 500, so a lone Esc is taken promptly.
+  - Pasted text, and the newlines inside a pasted block, are put in the
+    buffer and drawn once. readline writes pasted text out without
+    redrawing, so a wrapped paste threw later redraws off.
+  - Without a terminal (stdout not a TTY, or `TERM=dumb`), lines are
+    sent one by one, and `CommandAssembler` collects a block.
 - Each command says whether it was typed at a person's prompt
   (`interactive`). There, `menu <label>` answers at once, rather than
   waiting a moment for a script still registering, as it does for
