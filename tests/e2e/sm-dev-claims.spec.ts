@@ -1,4 +1,4 @@
-// sm-dev's tab claims (src/sm-dev-link.ts): a tab an sm-dev run controls
+// sm-dev's tab claims (src/extension/sm-dev-link.ts): a tab an sm-dev run controls
 // runs only the run's own scripts, if any, across reloads, in
 // the tabs it opens, and until the claim is released or its lease runs
 // out. Drives the SW's `claimTab` / `renewRun` / `releaseRun` surface,

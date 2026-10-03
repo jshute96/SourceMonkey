@@ -547,7 +547,11 @@ scripts/zip_extension.sh   # writes /tmp/SourceMonkey.zip
 
 ### Code layout
 
-- `src/` — extension source (TypeScript + manifest + HTML).
+- `src/` — source (TypeScript + manifest + HTML). See
+  [Source layout](docs/architecture.md#source-layout).
+  - `src/extension/` — modules only the extension loads.
+  - `src/harness/` — the Node-only development harness (`sm-dev`).
+  - Directly in `src/` — modules both use, plus the pages and manifest.
 - `scripts/build.mjs` — bundler-free build script.
 - `scripts/zip_extension.sh` — builds and zips `dist/` for distribution.
 - `scripts/release-extension.sh` — cuts a tagged GitHub release with the

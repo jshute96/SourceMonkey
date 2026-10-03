@@ -1,9 +1,9 @@
-// Unit tests for src/sw-teardown.ts: the `No SW` recognizer and the
+// Unit tests for src/extension/sw-teardown.ts: the `No SW` recognizer and the
 // unhandledrejection handler that marks it handled.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isSwTeardownError, installSwTeardownHandler } from '../../dist/sw-teardown.js';
+import { isSwTeardownError, installSwTeardownHandler } from '../../dist/extension/sw-teardown.js';
 
 test('isSwTeardownError: matches Chrome\'s teardown rejection only', () => {
   assert.equal(isSwTeardownError(new Error('No SW')), true);

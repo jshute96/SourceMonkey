@@ -1,4 +1,4 @@
-// Tests for src/site-icon.ts (compiled to dist/site-icon.js).
+// Tests for src/extension/site-icon.ts (compiled to dist/extension/site-icon.js).
 //
 // Covers the icon-specific pure helpers: `@icon`-header URL
 // extraction, icon-link parsing + scoring, and cache-freshness rules.
@@ -22,7 +22,7 @@ import {
   sitesTooltip,
   maxDeclaredSize,
   usableCacheHit,
-} from '../../dist/site-icon.js';
+} from '../../dist/extension/site-icon.js';
 
 // ---------- iconRefFromHeader ----------
 //

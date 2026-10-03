@@ -19,7 +19,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { onlyProbesChanged } from '../../dist/match-index.js';
+import { onlyProbesChanged } from '../../dist/extension/match-index.js';
 
 const ROW = {
   id: 'a',

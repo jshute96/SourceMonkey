@@ -1,6 +1,6 @@
 // End-to-end coverage of the "Other versions" panel (`#other-versions`,
-// src/related-versions.ts) and the lookup
-// behind it (src/script-identity.ts).
+// src/extension/related-versions.ts) and the lookup
+// behind it (src/extension/script-identity.ts).
 //
 // The unit tests cover the matching rules against fabricated rows;
 // what only a real run can prove is that the absolute URLs the store

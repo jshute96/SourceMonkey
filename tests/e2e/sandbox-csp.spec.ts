@@ -4,7 +4,7 @@
 // userscript (`@grant none`) is silently never injected, while a
 // USER_SCRIPT-world one still runs. SourceMonkey's badge shows MISSING,
 // and after the load the script's Log gets a warning saying why
-// (src/missing-scripts.ts).
+// (src/extension/missing-scripts.ts).
 //
 // The header has to come from a real response (`sandbox` is ignored in
 // a <meta> CSP), so each page is served with `page.route`.

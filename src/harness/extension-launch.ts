@@ -242,7 +242,7 @@ async function primeFirstRun(profile: string): Promise<void> {
   const context = await launch(profile, false);
   try {
     const worker = await findExtensionWorker(context);
-    // Key mirrors FIRST_RUN_DONE_KEY in src/script-store.ts.
+    // Key mirrors FIRST_RUN_DONE_KEY in src/extension/script-store.ts.
     await worker.evaluate(() => chrome.storage.local.set({ firstRunComplete: true }));
     for (const page of context.pages()) {
       if (page.url().includes('/collections.html')) await page.close().catch(() => undefined);

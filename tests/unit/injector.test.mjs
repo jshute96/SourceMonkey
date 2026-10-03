@@ -1,4 +1,4 @@
-// Tests for src/injector.ts (compiled to dist/injector.js).
+// Tests for src/extension/injector.ts (compiled to dist/extension/injector.js).
 //
 // Only the pure helpers are exercised here — the chrome.userScripts
 // runtime sync (syncRegistrations) is glue I/O and is covered by the
@@ -87,7 +87,7 @@ import {
   normalizeDeclaredRunAt,
   wrapCombinedEntry,
   wrapPreludeEntry,
-} from '../../dist/injector.js';
+} from '../../dist/extension/injector.js';
 import { resolveWorld } from '../../dist/script-world.js';
 import {
   composeRequiredBody,
@@ -2035,7 +2035,7 @@ test('remapStackText: a stack from the registered entry names each file at its o
 // would make a live refusal indistinguishable from a stale one, and
 // would leave the row explaining nothing after a "Clear log".
 
-const { getScriptLog, _flushScriptLogQueueForTests } = await import('../../dist/script-log.js');
+const { getScriptLog, _flushScriptLogQueueForTests } = await import('../../dist/extension/script-log.js');
 
 const SPEC_A = { id: 'a', matches: ['https://e/*'], js: [{ code: '1' }] };
 
@@ -2081,7 +2081,7 @@ test('registerWithFallback: a cleared log refills on the next attempt', async ()
   await syncOnce([SPEC_A], new Set(['a']));
   assert.equal(await rejectionRows(), 1);
 
-  const { clearScriptLog } = await import('../../dist/script-log.js');
+  const { clearScriptLog } = await import('../../dist/extension/script-log.js');
   await clearScriptLog('a');
   assert.equal(await rejectionRows(), 0);
 
@@ -2118,7 +2118,7 @@ test('registerWithFallback: logging survives a service-worker restart', async ()
   assert.equal(await rejectionRows(), 1);
 
   // Re-import with the module state thrown away, as a fresh SW would.
-  const reloaded = await import(`../../dist/injector.js?sw=${Date.now()}`);
+  const reloaded = await import(`../../dist/extension/injector.js?sw=${Date.now()}`);
   userScripts.register = async (batch) => { throw new Error(`bad spec: ${batch[0].id}`); };
   await reloaded.registerWithFallback([SPEC_A]);
   await _flushScriptLogQueueForTests('a');
@@ -2131,7 +2131,7 @@ test('registerWithFallback: logging survives a service-worker restart', async ()
 // viewer read to show REJECTED. It has to describe the CURRENT
 // registration set, not the history of everything ever refused.
 
-const { readRejections } = await import('../../dist/script-rejection.js');
+const { readRejections } = await import('../../dist/extension/script-rejection.js');
 
 const SPEC_B = { id: 'b', matches: ['https://f/*'], js: [{ code: '1' }] };
 
@@ -2186,7 +2186,7 @@ const {
   retryRejectedRegistrations,
   _setRetryNowForTests,
   REJECTION_RETRY_MIN_INTERVAL_MS,
-} = await import('../../dist/injector.js');
+} = await import('../../dist/extension/injector.js');
 
 // The retry rebuilds specs from the store, so it needs a script row to
 // find. Only the fields collectActiveSpecs reads matter here.
@@ -2316,7 +2316,7 @@ const {
   syncRegistrations,
   forgetRegistrationState,
   _forgetRegistrationForTests,
-} = await import('../../dist/injector.js');
+} = await import('../../dist/extension/injector.js');
 
 // Restore the module-wide stubs to the state the rest of the file
 // expects — including `register`'s loud default, so a later test that

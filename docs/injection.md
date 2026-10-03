@@ -84,7 +84,7 @@ fails.
 
 ## Lifecycle
 
-`src/injector.ts` owns Chrome's registration set.
+`src/extension/injector.ts` owns Chrome's registration set.
 
 - **On SW startup** — `syncRegistrations()` runs with no scope, in
   parallel with the match-index load. See
@@ -167,7 +167,7 @@ change while the worker is dead — so a fresh worker has nothing to diff
 against and a pure diff would strand stale registrations.
 
 - A sync is incremental only when this JS context holds a record of
-  what it last registered. `src/injector.ts` keeps one — ids, worlds
+  what it last registered. `src/extension/injector.ts` keeps one — ids, worlds
   and pattern shapes, every script's basename, log label and
   collection, and the collection rows. No script bodies, so it stays
   small.
@@ -194,7 +194,7 @@ against and a pure diff would strand stale registrations.
 - **Probe-only writes.** `versionProbes` is a display annotation no
   spec reads, and a Refresh All writes one probe result per script — so
   counting those as cache changes cost a re-registration per probed
-  script. `onlyProbesChanged` in `src/match-index.ts` keeps them out of
+  script. `onlyProbesChanged` in `src/extension/match-index.ts` keeps them out of
   `onCacheChanged` entirely, and suppresses nothing wider: the check
   diffs the whole stored row, because a spec reads far more of it than
   matching does. See
@@ -362,7 +362,7 @@ a second placed the script, and the first then offered the id again.
 - **Serialized per context.** Every operation that touches
   `chrome.userScripts` — the sync, the targeted retry, the test
   surface's teardown — runs through one promise-chain lock in
-  `src/injector.ts`. Overlap used to be easy to hit: the SW-startup
+  `src/extension/injector.ts`. Overlap used to be easy to hit: the SW-startup
   sync against the one `onCacheChanged` schedules for boot-time
   storage writes, or a collection refresh's retry against the sync its own
   writes triggered.
@@ -395,7 +395,7 @@ failure and not an error the script produced. See
 [diagnostics.md](diagnostics.md#rejected-registrations) for the wording
 rules and why it carries no location.
 
-- **Where it lives.** `src/script-rejection.ts` keeps
+- **Where it lives.** `src/extension/script-rejection.ts` keeps
   `{script id → reason}` in `chrome.storage.session`, written only by
   the injector and read by the collections page, the viewer, and the tab
   badge in `background.ts`.
@@ -614,7 +614,7 @@ between scripts.
 The gating is implemented in `waitForRunAt` inside
 `src/userscript-prelude.js`. The declared `@run-at` is delivered
 via the per-script config blob (`buildConfigBlob` in
-`src/injector.ts`) and stored on the prelude's per-script entry.
+`src/extension/injector.ts`) and stored on the prelude's per-script entry.
 
 This wait runs alongside the `sm:check-pending` round-trip rather than
 after it — see [Concurrent gates](#concurrent-gates).
@@ -685,7 +685,7 @@ The isolated-world case that remains:
   matching VM's content mode.
 - Because every page global reads as `undefined` there, that
   combination is **not** left silent: `extractStartupLogs`
-  (`src/script-store.ts`) attaches a `warn` startup log, which surfaces
+  (`src/extension/script-store.ts`) attaches a `warn` startup log, which surfaces
   in the page console and the viewer's Log tab on every matching load.
 
 Scale of the change: of the top 2000 GreasyFork scripts, 224 grant
@@ -774,7 +774,7 @@ reload-swap world check all have to give the same answer.
 - A row stored before the field existed reads as false, and a row is
   only rebuilt when a fetch actually happens — the cheap-skip paths
   (unchanged size+mtime, a 304) leave it exactly as it was. So
-  `backfillUsesUnsafeWindow` (`src/script-store.ts`) fills those rows in
+  `backfillUsesUnsafeWindow` (`src/extension/script-store.ts`) fills those rows in
   on `onInstalled` and re-syncs when any changed; without it the feature
   would never reach an already-installed script that doesn't change.
 
@@ -816,7 +816,7 @@ whole `GM_*` surface works there too.
   MAIN-world source is readable once the page steals the wrap function
   (`self.__smRun` is a page-realm global too).
 - What we do bound is the **service worker** side.
-  `bridgeMayActAs` in `src/background.ts` honors a bridge-relayed,
+  `bridgeMayActAs` in `src/extension/background.ts` honors a bridge-relayed,
   script-scoped request only when the named script actually runs in
   MAIN world on the sending frame's URL **and** granted the API the
   request exercises (in catalog-subsystem terms: `tab` for
@@ -954,7 +954,7 @@ Mechanics:
   a frame can only reach the bridge instance injected into it, already
   scoped to that frame's URL. The MAIN-world receivers of our replies
   and pushes still check `event.source === window`.
-- `buildBridgeSpec` (in `src/injector.ts`) emits the bridge
+- `buildBridgeSpec` (in `src/extension/injector.ts`) emits the bridge
   registration when at least one active script resolves to MAIN. It
   runs at `document_start`, ahead of the wrapper specs, because the
   request path is synchronous now: an event dispatched before the
@@ -1542,7 +1542,7 @@ Two things it deliberately doesn't do:
 ### Shared work across the batch
 
 **The batch covers navigation-triggered checks generally, not just the
-reload fast path.** One `RefreshBatch` (`src/script-store.ts`) is
+reload fast path.** One `RefreshBatch` (`src/extension/script-store.ts`) is
 created per `onCommitted` and handed to *both* fan-outs that commit
 starts — the fast path and the opportunistic sweep in
 `updateTabMatches`. A sweep reached any other way
@@ -1850,7 +1850,7 @@ and the 2s safety timeout remains the hard ceiling for every `@run-at`.
   in the top frame. Adding `@noframes` parsing + a `allFrames` flip
   is straightforward.
   - **What it would break:** the menu-command registry
-    (`src/gm-menu.ts`) holds ONE `documentId` per tab, and a register
+    (`src/extension/gm-menu.ts`) holds ONE `documentId` per tab, and a register
     naming a different document replaces the state. That is safe only
     because every wrapper in a tab shares the top-level document
     today. With scripts in subframes, a subframe register and a

@@ -95,6 +95,22 @@ user before elaborating further. Default to action over planning.
 - When the user asks for a change, apply it consistently to ALL similar patterns.
 - Do NOT drop or overwrite existing content in files like README.md — preserve what's there and add to it.
 - When similar logic occurs on multiple parallel paths, use common helper methods when possible, to ensure the logic stays consistent.
+- **Where a module goes** (see [docs/architecture.md](docs/architecture.md#source-layout)):
+  - `src/extension/` if only the extension loads it, `src/harness/` if
+    only the harness does, directly in `src/` if both do.
+  - A shared module in `src/` must not import from `src/extension/`,
+    not even `import type`: tsc would then compile that module into
+    `lib/`.
+  - When the harness needs something from an extension-only module,
+    move that piece into a shared module in `src/` (splitting the file
+    if needed) rather than importing it.
+  - Pages, CSS, icons and the manifest stay directly in `src/`, so
+    their URLs have no folder in them. A page's `<script src>` points
+    into `extension/`.
+  - From the service worker, pass Chrome absolute URLs
+    (`chrome.runtime.getURL`): it runs from `extension/`, so a relative
+    path resolves there.
+  - `tests/unit/source-layout.test.mjs` checks this.
 
 ## Running tests
 - See `docs/testing.md` for the full layout and harness details.
@@ -114,7 +130,7 @@ user before elaborating further. Default to action over planning.
 
 ## Writing tests
 - **Unit vs e2e**: unit tests (`tests/unit/`) exercise pure logic against
-  the compiled `dist/*.js`. Use them for matcher/parser/store helpers.
+  the compiled `dist/**/*.js`. Use them for matcher/parser/store helpers.
   E2E tests (`tests/e2e/`) drive a real headless Chromium with the
   unpacked extension loaded; use them for anything that touches the
   chrome.* APIs or end-to-end injection.
@@ -122,7 +138,7 @@ user before elaborating further. Default to action over planning.
   - `tests/fixtures/extension.ts` exposes `extensionContext`,
     `fixtureServer`, `extensionId`, `getServiceWorker`, and `sm`. The
     `sm` fixture is a typed proxy over the SW's `self.SourceMonkey` test
-    surface (see `src/background.ts`).
+    surface (see `src/extension/background.ts`).
   - `tests/fixtures/scripts-dir.ts` builds a tmp directory of real
     `*.user.js` files on disk so `sm.addCollection(dir.path)` runs the
     production file:// scan + fetch pipeline.

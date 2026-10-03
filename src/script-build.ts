@@ -128,7 +128,7 @@ export interface StoredScript {
   // Absent only on never-loaded rows.
   contentHash?: string;
   // Fingerprint of the exact source last handed to the compile-only
-  // parse check (src/parse-check.ts): the body's `contentHash` plus
+  // parse check (src/extension/parse-check.ts): the body's `contentHash` plus
   // each `@require`'s. Lets a refresh skip a re-check when nothing
   // that could affect parsing changed, which is the common case on the
   // opportunistic path. Absent means "never checked" — including on

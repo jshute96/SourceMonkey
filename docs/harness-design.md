@@ -76,7 +76,7 @@ up-front check before a push:
 | `@require` / `@resource` resolution and fetch | `src/external-files.ts`, `src/file-loader.ts`, `src/local-file-overrides.ts` | Yes, given a `fetch` |
 | Injection world (`@grant none`, `@inject-into`) | `src/script-world.ts` | Yes |
 | Compile-only parse check | `src/harness/parse-check-node.ts` | Yes |
-| Stored-value codec | `src/gm-values.ts` | With a storage stub |
+| Stored-value codec | `src/extension/gm-values.ts` | With a storage stub |
 
 ## Package and distribution
 

@@ -32,10 +32,10 @@
 // Several callers need to agree on the layout, and they live in
 // different extension contexts:
 //
-//   - `src/injector.ts` (service worker) emits the registered entry
+//   - `src/extension/injector.ts` (service worker) emits the registered entry
 //     and its source map.
 //   - `background.ts`'s swap path emits the same text for `(0,eval)`.
-//   - `src/userscript.ts` (the viewer page) re-derives the SAME
+//   - `src/extension/userscript.ts` (the viewer page) re-derives the SAME
 //     segment list to map `Error.stack` line numbers in the Log tab
 //     back to the original file — V8 leaves `err.stack` in generated
 //     coordinates even when it has the map. See docs/script-log.md.
@@ -227,7 +227,7 @@ export function composeRequiredBody(script: StoredScript): string {
 // `@require` body then the script's own source, as one function body —
 // i.e. everything a syntax error in user-supplied code could come from,
 // in the kind of scope it actually lands in. This is what
-// `src/parse-check.ts` hands to `new Function`.
+// `src/extension/parse-check.ts` hands to `new Function`.
 //
 // Our own declarations (the wrap head, its `var` preamble, the GM
 // bindings and prelude) are NOT included, and need not be: the user

@@ -33,26 +33,26 @@ details live in the topic-specific docs linked below.
                             +-----------------------+
 ```
 
-- **Service worker** (`src/background.ts`) — central event handler.
+- **Service worker** (`src/extension/background.ts`) — central event handler.
   Opens the collections page on toolbar click, watches tab navigation,
   and surfaces per-tab match counts via the action badge. See
   [matching.md](matching.md).
-- **Collections page** (`src/collections.html` + `src/collections.ts`) — manage
+- **Collections page** (`src/collections.html` + `src/extension/collections.ts`) — manage
   collections (directory, manifest, github-dir, or a "scripts"
   collection holding individually installed scripts — user-created, or
   one of the built-in per-scheme defaults) and inspect per-script
   status. Collections are created and edited through the shared
-  **collection dialog** (`src/collection-dialog.ts`). See
+  **collection dialog** (`src/extension/collection-dialog.ts`). See
   [storage.md](storage.md).
-- **Options page** (`src/options.html` + `src/options.ts`) — small
+- **Options page** (`src/options.html` + `src/extension/options.ts`) — small
   settings page: `.user.js` link-capture toggle, debug-logging toggle,
   local-file-override search roots, and GitHub auth token entry.
   Reached via the Options link at the top of the collections page.
-- **Debug icons page** (`src/debug/icons.html` + `src/debug/icons.ts`) —
+- **Debug icons page** (`src/debug/icons.html` + `src/extension/debug/icons.ts`) —
   inspects the cached site icons in `chrome.storage.local`, with per-row
   refresh / delete. Not linked from the UI; open it by URL. See
   [site-icons.md](site-icons.md#debug-page).
-- **Install capture** (`src/install-capture.ts`) — turns a navigation
+- **Install capture** (`src/extension/install-capture.ts`) — turns a navigation
   to a `.user.js` URL (`http(s)://` or `file://`) into the userscript
   viewer's preview mode
   (`userscript.html?preview=<url>`), which fetches, describes,
@@ -60,13 +60,13 @@ details live in the topic-specific docs linked below.
   `installScript`s it. Its "View raw source" button navigates a new
   tab to the file itself. See
   [install-capture.md](install-capture.md).
-- **Script store** (`src/script-store.ts`) — persistence layer + the
+- **Script store** (`src/extension/script-store.ts`) — persistence layer + the
   load / refresh pipeline. Owns the chrome.storage.local schema. See
   [storage.md](storage.md).
   - Building one script row from its text (header, matching,
     `@require` loading, parse check) is in `src/script-build.ts`, which
     touches no storage, so the harness runs it under Node.
-- **Script updater** (`src/script-updater.ts`) — the single entry
+- **Script updater** (`src/extension/script-updater.ts`) — the single entry
   point every refresh path goes through. Manual Refresh buttons call
   it synchronously; the background SW calls it opportunistically when
   a tab uses some scripts. Also runs the post-refresh update probe.
@@ -76,7 +76,7 @@ details live in the topic-specific docs linked below.
   `@updateURL` / `@downloadURL` declares and compare it with the copy
   we run. Reporting only: the install source stays the update channel.
   See [updates.md](updates.md).
-- **Collection I/O** (`src/directories.ts` + `src/github-provider.ts`):
+- **Collection I/O** (`src/extension/directories.ts` + `src/extension/github-provider.ts`):
   - recursive `*.user.js` scanner, `http(s)://` fetcher, JSON manifest
     parser
   - the `file://` fetcher, directory-listing parser and location
@@ -85,7 +85,7 @@ details live in the topic-specific docs linked below.
     scanner), in its own module, dispatched to from `directories.ts`
   - See [file-access.md](file-access.md) and
     [http-collections.md](http-collections.md).
-- **File-access permission UI** (`src/file-access.ts`) — the
+- **File-access permission UI** (`src/extension/file-access.ts`) — the
   "Allow access to file URLs" probe plus the shared banner every page
   raises when the toggle is what blocked a local read. See
   [file-access.md](file-access.md).
@@ -124,28 +124,28 @@ details live in the topic-specific docs linked below.
 - **URL matcher** (`src/url-match.ts`) — pure
   `@match`/`@include`/`@exclude` evaluator. See
   [matching.md](matching.md).
-- **Match index** (`src/match-index.ts`) — in-memory cache of every
+- **Match index** (`src/extension/match-index.ts`) — in-memory cache of every
   `ok` script's matching info, kept in sync with storage; lets the SW
   find matches without per-navigation storage reads. See
   [matching.md](matching.md).
-- **Injector** (`src/injector.ts`) — keeps `chrome.userScripts`'s
+- **Injector** (`src/extension/injector.ts`) — keeps `chrome.userScripts`'s
   registration set in sync with the enabled-`ok` script set, and wraps
   every body with an activation/error shim. Specs Chrome refuses are
-  recorded in `src/script-rejection.ts`, which is what the UI renders
+  recorded in `src/extension/script-rejection.ts`, which is what the UI renders
   as REJECTED. See [injection.md](injection.md).
-- **Userscript viewer** (`src/userscript.html` + `src/userscript.ts`)
+- **Userscript viewer** (`src/userscript.html` + `src/extension/userscript.ts`)
   — per-script page with two modes: an installed script rendered from
   the store, and a preview of one that isn't installed yet (the landing
   spot for install capture and a single-script Add). Its details
-  panel (`src/script-details.ts`), tabbed code view
-  (`src/code-tabs.ts`), and code linkifier (`src/code-links.ts`) are
+  panel (`src/extension/script-details.ts`), tabbed code view
+  (`src/extension/code-tabs.ts`), and code linkifier (`src/extension/code-links.ts`) are
   separate modules so both modes render identically. See
   [script-viewer.md](script-viewer.md).
-- **Compare page** (`src/compare.html` + `src/compare.ts`) — two
+- **Compare page** (`src/compare.html` + `src/extension/compare.ts`) — two
   copies of one script side by side: header fields in one table, a
-  diff per file (`src/line-diff.ts`). Linked from the viewer's versions
+  diff per file (`src/extension/line-diff.ts`). Linked from the viewer's versions
   panel. See [compare.md](compare.md).
-- **Log IDs** (`src/script-log-id.ts`) — assigns each script a short
+- **Log IDs** (`src/extension/script-log-id.ts`) — assigns each script a short
   file-derived label (basename, with `#N` suffix on dupes) used in
   every SW log line and shown in the collections/viewer UI so users can
   correlate console output with the rows on the collections page. See
@@ -158,10 +158,10 @@ details live in the topic-specific docs linked below.
   navigation/refresh log lines behind a storage-backed flag
   (`smDebugLogging`), toggled via a checkbox on the Options page
   (linked from the top of the collections page).
-- **Per-script event log** (`src/script-log.ts`) — structured per-
+- **Per-script event log** (`src/extension/script-log.ts`) — structured per-
   script log of refresh outcomes and wrapper reports, stored in
   `chrome.storage.session` and surfaced through the viewer's Log
-  tab. `src/log-format.ts` renders it — the tab's cells and the CSV
+  tab. `src/extension/log-format.ts` renders it — the tab's cells and the CSV
   its Save / Copy buttons hand out. See
   [script-log.md](script-log.md).
 - **GM_* catalog** (`src/gm-api-catalog.ts`) — data-only inventory
@@ -169,7 +169,7 @@ details live in the topic-specific docs linked below.
   kind, subsystem, optional `requires` (e.g. `@connect`).
   `resolveGrants` canonicalizes a script's `@grant` lines into the
   set we'll emit bindings for. See [GM-APIs.md](GM-APIs.md).
-- **GM_* binding emitter** (`src/gm-bindings.ts`) — pure compiler.
+- **GM_* binding emitter** (`src/extension/gm-bindings.ts`) — pure compiler.
   Given a script's resolved grants + parsed header, returns the JS
   source spliced into the main-body wrap function at register time.
   Emits real bodies for every catalog entry; `unsafeWindow` is a
@@ -188,14 +188,14 @@ details live in the topic-specific docs linked below.
   calls. In MAIN world (where scripts that ask for `unsafeWindow` run) its
   service-worker traffic rides `src/wrapper-bridge.js` in both
   directions.
-- **GM_* SW storage** (`src/gm-values.ts`) — persistent
+- **GM_* SW storage** (`src/extension/gm-values.ts`) — persistent
   `gmval:<scriptId>:<key>` rows in `chrome.storage.local`, with
   batched apply (last-write-wins) and a per-script wipe helper.
-- **GM_* SW XHR runner** (`src/gm-xhr.ts`) — `fetch` driver with
+- **GM_* SW XHR runner** (`src/extension/gm-xhr.ts`) — `fetch` driver with
   `AbortController` + timeout, text / JSON / binary response shapes
   (binary serialized to base64 for the page-side wire). See the
   XHR section of [GM-APIs.md](GM-APIs.md).
-- **XHR header surgery** (`src/gm-xhr-headers.ts`) — lets a script set
+- **XHR header surgery** (`src/extension/gm-xhr-headers.ts`) — lets a script set
   request headers the browser forbids, by compiling them into a
   short-lived `declarativeNetRequest` session rule around the fetch.
   See [xhr-header-surgery.md](xhr-header-surgery.md).
@@ -203,27 +203,27 @@ details live in the topic-specific docs linked below.
   lines into rules (`*`, `self`, host-and-subdomains), resolves `self`
   against the script's `@match`/`@include` hosts, and gates
   `GM_xmlhttpRequest` URLs before fetch.
-- **GM_openInTab dispatcher** (`src/gm-tab.ts`) — opens new tabs via
+- **GM_openInTab dispatcher** (`src/extension/gm-tab.ts`) — opens new tabs via
   `chrome.tabs.create` on behalf of userscripts; tracks the per-request
   (page-generated id ↔ assigned chrome tab id ↔ originator tab) mapping
   so `chrome.tabs.onRemoved` can route close events back to the
   originating tab's `onclose` callback.
-- **GM_download dispatcher** (`src/gm-download.ts`) — drives
+- **GM_download dispatcher** (`src/extension/gm-download.ts`) — drives
   `chrome.downloads` on behalf of userscripts for `http(s)` URLs
   (`blob:` / `data:` downloads stay in the page); tracks the
   per-request mapping so completion, interrupt, timeout, and polled
   progress events route back to the originating tab.
-- **GM_notification dispatcher** (`src/gm-notification.ts`) — wraps
+- **GM_notification dispatcher** (`src/extension/gm-notification.ts`) — wraps
   `chrome.notifications.create` and maps the chrome-assigned
   notification id back to the originating tab + request id so
   `onClicked` / `onClosed` events route to the userscript's
   `onclick` / `ondone` callbacks.
-- **window.onurlchange driver** (`src/gm-url-change.ts`) — forwards
+- **window.onurlchange driver** (`src/extension/gm-url-change.ts`) — forwards
   `chrome.webNavigation`'s same-document navigation events to the
   frame that changed, which is the only way an isolated-world script
   can observe the page's own `pushState`. See the
   `window.onurlchange` section of [GM-APIs.md](GM-APIs.md).
-- **window.close / window.focus driver** (`src/gm-window-control.ts`)
+- **window.close / window.focus driver** (`src/extension/gm-window-control.ts`)
   — re-issues a granted `window.close()` / `window.focus()` as
   `chrome.tabs.remove` / `chrome.tabs.update` + `chrome.windows.update`
   on the calling tab,
@@ -251,7 +251,7 @@ details live in the topic-specific docs linked below.
 ## Cross-page navigation
 
 How one extension page opens another — the rules live in
-`src/page-links.ts`, which every surface below goes through.
+`src/extension/page-links.ts`, which every surface below goes through.
 
 - **Named tabs.** Collections and Options get at most one tab each. A
   link to either focuses the open one rather than opening a second.
@@ -331,7 +331,7 @@ takes effect:
   `headingPrefixEl(INSTALLED_HEADING)` builds, so nothing moves when the
   real heading replaces it.
 - **A module with no static imports paints the rest.**
-  `src/page-heading.ts` is loaded ahead of `userscript.js` and imports
+  `src/extension/page-heading.ts` is loaded ahead of `userscript.js` and imports
   nothing at all, because a module does not evaluate until everything it
   imports has been fetched — one small import would be enough to put its
   first line back after the first paint.
@@ -487,14 +487,44 @@ takes effect:
   manifest into `lib/` too (the harness reads the extension key from it).
 - Inlines `src/glyph-sprite.svg` into each page as it is copied, at the
   page's `#include glyph-sprite` marker comment (see below).
-- Invokes `tsc` to compile `src/**/*.ts` → `dist/**/*.js`. With
-  `--watch`, a `tsc --watch` then keeps rebuilding `dist/` in place.
+- Invokes `tsc` to compile `src/**/*.ts` → `dist/**/*.js`, keeping
+  the folders (see [Source layout](#source-layout)). With `--watch`, a
+  `tsc --watch` then keeps rebuilding `dist/` in place.
 - Unless watching, runs a second `tsc` pass for `lib/` (below), and
   copies `src/generated-wrappers.d.ts` into `lib/`, since that one is
   hand-written.
 
-No bundler. Each TypeScript module compiles to its own `dist/*.js`
+No bundler. Each TypeScript module compiles to its own `dist/**/*.js`
 and Chrome loads them directly as ES modules.
+
+### Source layout
+
+`src/` is split by who loads each module:
+
+- **`src/extension/`**: modules only the extension loads (the service
+  worker, the pages' scripts, storage, the injector). They build into
+  `dist/extension/`.
+- **`src/harness/`**: the Node-only development harness. Built into
+  `lib/harness/`, never into `dist/`.
+- **`src/` itself**: modules both use (header parsing, matching, the
+  script build pipeline, `@require` loading). They build into both.
+- The pages, CSS, icons and manifest stay directly in `src/`, so
+  `dist/` keeps them at its root and the extension's URLs
+  (`chrome-extension://<id>/collections.html`) don't name a folder.
+  - Each page's `<script src>` points into `extension/`, and so does
+    the manifest's service worker.
+  - The worker runs from `extension/`, so a relative path it hands
+    Chrome resolves there. It passes absolute URLs from
+    `chrome.runtime.getURL` instead.
+
+`tests/unit/source-layout.test.mjs` asks tsc which files each build
+compiles, type-only imports included, and fails when:
+
+- `lib/` reaches anything in `src/extension/` (a shared or harness
+  module imports an extension-only one);
+- `dist/` reaches anything in `src/harness/`;
+- a module directly in `src/` isn't one the harness uses, so it belongs
+  in `src/extension/`.
 
 ### Two outputs: `dist/` and `lib/`
 
@@ -506,7 +536,7 @@ One set of sources, compiled twice:
 - **`lib/`** is the `sourcemonkey` package's code (`package.json`'s
   `exports` point there).
   - `tsconfig.lib.json` compiles the development harness and the
-    extension modules it imports, with a `.d.ts` beside each one for a
+    shared modules it imports, with a `.d.ts` beside each one for a
     TypeScript consumer.
   - The package ships `dist/` beside it, which `sm-dev` and the fixture
     load into the browsers they launch.
@@ -515,8 +545,8 @@ Why two builds of the same modules rather than one directory serving
 both:
 
 - The harness is a library built on dozens of the extension's own
-  modules, so the two sets of files are not separable. Where they land
-  is.
+  modules (the shared ones directly in `src/`), so the two sets of
+  files overlap. Where they land doesn't have to.
 - Keeping `dist/` to exactly what Chrome loads means the unpacked
   directory, the zip, and the extension are the same thing.
 - The package can carry what it needs without that showing up in the
@@ -532,7 +562,7 @@ the extension, and `pnpm run build` is what produces the package.
   glyphs, refresh and the options gear, the copy button's pair) is
   defined once in `src/glyph-sprite.svg` and referenced by
   `<use href="#id">`.
-- `src/glyph.ts` paints them into buttons: glyph, optional label, and
+- `src/extension/glyph.ts` paints them into buttons: glyph, optional label, and
   the matching `title` / `aria-label`. An icon-only button has no text
   to fall back on, so neither is optional.
 - **The button box is set, not inferred.** Painting a glyph also puts
@@ -561,7 +591,7 @@ the extension, and `pnpm run build` is what produces the package.
 ## Testing
 
 - Unit tests use the Node `--test` runner against compiled
-  `dist/*.js`.
+  `dist/**/*.js`.
 - E2E tests use Playwright. The fixture in
   `tests/fixtures/extension.ts` launches headless Chromium with the
   unpacked extension loaded from `dist/` and exposes the MV3 service

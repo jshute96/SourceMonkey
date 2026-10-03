@@ -7,7 +7,7 @@ real-browser end-to-end suite for everything that touches the
 ## Layout
 
 - `tests/unit/*.test.mjs` — Node `--test` files. Import from
-  `dist/*.js`, so `pnpm run build` is a prerequisite (the
+  `dist/**/*.js`, so `pnpm run build` is a prerequisite (the
   `test:unit` script runs it first).
 - `tests/e2e/*.spec.ts` — Playwright specs. Launch headless Chromium
   with the unpacked extension loaded.
@@ -212,7 +212,7 @@ derivations still resolve correctly.
 
 ### SW test surface
 
-`src/background.ts` exposes `self.SourceMonkey` so Playwright can invoke
+`src/extension/background.ts` exposes `self.SourceMonkey` so Playwright can invoke
 SW functions via `serviceWorker.evaluate(...)`. Methods relevant to
 tests:
 

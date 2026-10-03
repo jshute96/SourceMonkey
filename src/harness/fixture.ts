@@ -186,7 +186,7 @@ export const test = base.extend<HarnessFixtures & InternalFixtures>({
   },
 
   _smRequests: async ({ context, _smLink, _smLoaded }, use) => {
-    const fakes = new RequestFakes(context, `${_smLink.origin}/background.js`, () => _smLoaded);
+    const fakes = new RequestFakes(context, _smLink.workerUrl, () => _smLoaded);
     await use(fakes);
     await fakes.stop();
   },

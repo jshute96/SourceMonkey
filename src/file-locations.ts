@@ -381,7 +381,7 @@ export type DirectoryListingCache = Map<string, Promise<readonly ListingEntry[]>
 //     test asserts on to show a batch shared one listing rather than
 //     doing N.
 //
-// Exposed through the SW test surface (see src/background.ts).
+// Exposed through the SW test surface (see src/extension/background.ts).
 let listingFetches = 0;
 export function getDirectoryListingFetches(): number {
   return listingFetches;

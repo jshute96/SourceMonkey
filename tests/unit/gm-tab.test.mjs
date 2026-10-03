@@ -29,7 +29,7 @@ globalThis.chrome = {
   },
 };
 
-const mod = await import('../../dist/gm-tab.js');
+const mod = await import('../../dist/extension/gm-tab.js');
 const { openGmTab, closeGmTab, takeRequestForClosedTab, dropOriginator } = mod;
 
 test('openGmTab: forwards url + active to chrome.tabs.create and returns the assigned id', async () => {

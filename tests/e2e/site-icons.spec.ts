@@ -741,8 +741,8 @@ test.describe('site-icon slot', () => {
         async ([u, exact]) => {
           // Specifier through a variable: the module is resolved in the
           // extension page, not from tests/ where TypeScript looks.
-          const spec = '/site-icon.js';
-          const mod = await import(spec) as typeof import('../../src/site-icon');
+          const spec = '/extension/site-icon.js';
+          const mod = await import(spec) as typeof import('../../src/extension/site-icon');
           return mod.fetchChromeFavicon(u as string, { exactPage: exact as boolean });
         },
         [pageUrl, exactPage],

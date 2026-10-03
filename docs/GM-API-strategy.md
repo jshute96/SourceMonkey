@@ -421,7 +421,7 @@ What it looks like:
   - `gm-notifications.ts`, `gm-tabs.ts` — thin `chrome.notifications`
     / `chrome.tabs` wrappers.
   - `gm-xhr.ts` — the hairy one; see below.
-- Offscreen document (new `src/offscreen.html` + `src/offscreen.ts`)
+- Offscreen document (new `src/offscreen.html` + `src/extension/offscreen.ts`)
   for the binary-response XHR path and blobs/object URLs. (Downloads
   were on this list; they turned out not to need it — `GM_download`
   drives `chrome.downloads`, which fetches the URL itself. See

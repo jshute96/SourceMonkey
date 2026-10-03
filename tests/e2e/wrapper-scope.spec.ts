@@ -6,7 +6,7 @@
 // declaration SyntaxError or putting our `const unsafeWindow = window;`
 // in the temporal dead zone (TDZ) of the script's `const window`.
 //
-// See wrapCombinedEntry in src/injector.ts and
+// See wrapCombinedEntry in src/extension/injector.ts and
 // docs/injection.md#the-user-program-scope.
 
 import fs from 'node:fs';

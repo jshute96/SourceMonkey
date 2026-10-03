@@ -13,7 +13,7 @@ SourceMonkey actually does today.
   `@connect` for XHR, `@resource` for `GM_getResource*`). Helpers
   canonicalize `@grant` lines and resolve the script's granted set,
   surfacing `unknown` names so the SW can warn.
-- **`src/gm-bindings.ts`** — per-script emitter. Given the granted set
+- **`src/extension/gm-bindings.ts`** — per-script emitter. Given the granted set
   + the script's parsed header, returns the JS source to splice into
   the wrapper. Always emits `GM_info` (matching TM/VM: implicit, no
   `@grant` required); emits a `const GM_x = function (...){...}` for
@@ -38,15 +38,15 @@ SourceMonkey actually does today.
     world; `sourcemonkey-bridge-push` postMessages in MAIN.
   - `notImplemented(name)` — Phase 2 placeholder; later phases
     replace per-subsystem methods.
-- **`src/injector.ts`** — wires the emitter and runtime into the
+- **`src/extension/injector.ts`** — wires the emitter and runtime into the
   registration pipeline. `buildGmBindingsForScript` produces the
   per-script collection; `buildGmRuntimeSpecs` returns one runtime
   registration per world that needs it, alongside `buildBridgeSpec`.
-- **`src/gm-url-change.ts`** — SW-side driver for
+- **`src/extension/gm-url-change.ts`** — SW-side driver for
   `@grant window.onurlchange`. Forwards
   `chrome.webNavigation.onHistoryStateUpdated` to the document that
   changed as an `sm:url-change` message.
-- **`src/gm-window-control.ts`** — SW-side driver for
+- **`src/extension/gm-window-control.ts`** — SW-side driver for
   `@grant window.close` / `@grant window.focus`. Re-issues the call as
   `chrome.tabs.remove` / `chrome.windows.update` on the sender's own
   tab.
@@ -55,7 +55,7 @@ SourceMonkey actually does today.
 
 `emitGmBindings` returns `{js, prelude}` — both strings are
 spliced into the combined user-program wrap function
-(`wrapCombinedEntry` in `src/injector.ts`), so they're locals of that
+(`wrapCombinedEntry` in `src/extension/injector.ts`), so they're locals of that
 function and visible to the user body via closure. The user program
 runs in a scope nested inside it, so a script declaring one of these
 names shadows ours (see
@@ -296,7 +296,7 @@ Architecture:
   keyed by a generated request id (callbacks aren't serializable
   across the bridge), and ships a `sm:gm-xhr-start` envelope to the
   SW with the serializable request fields.
-- SW (`src/gm-xhr.ts`) runs `fetch(url, init)` against an
+- SW (`src/extension/gm-xhr.ts`) runs `fetch(url, init)` against an
   `AbortController`. On settle it ships a single `sm:gm-xhr-event`
   back to the originating tab via `chrome.tabs.sendMessage`. The
   page-side listener dispatches by request id and invokes the
@@ -317,7 +317,7 @@ Architecture:
 
 Credentials:
 
-- `runXhr` (`src/gm-xhr.ts`) passes `credentials: 'include'` in the
+- `runXhr` (`src/extension/gm-xhr.ts`) passes `credentials: 'include'` in the
   options object it hands `fetch`, so requests carry the user's
   cookies for the target host. TM/VM do the same.
 - `anonymous: true` in the details object opts one request out
@@ -342,7 +342,7 @@ Forbidden request headers:
 - `fetch()` silently drops the headers the Fetch Standard (the web
   standard behind `fetch`) reserves for the browser to set
   (`Origin`, `Referer`, `Cookie`, `User-Agent`, `Sec-*`, …), in the
-  service worker exactly as on a page. `src/gm-xhr-headers.ts` puts
+  service worker exactly as on a page. `src/extension/gm-xhr-headers.ts` puts
   them back: they're compiled into a short-lived
   `declarativeNetRequest` session rule instead of being handed to
   `fetch`, because MV3 has no blocking `webRequest`.
@@ -682,7 +682,7 @@ Returns `undefined` (matches TM/VM signature).
 
 ### SW handler
 
-- `src/gm-tab.ts` calls `chrome.tabs.create`.
+- `src/extension/gm-tab.ts` calls `chrome.tabs.create`.
 - **Only `http(s)` URLs are honored.** The URL is page-supplied, so a
   scheme gate keeps a script from asking the privileged SW to open
   `file://` / `chrome://` / `chrome-extension://` tabs. A rejected URL
@@ -718,7 +718,7 @@ Returns `undefined` (matches TM/VM signature).
 
 ### SW handler
 
-- `src/gm-notification.ts` calls `chrome.notifications.create('',
+- `src/extension/gm-notification.ts` calls `chrome.notifications.create('',
   options)` (letting Chrome assign the id).
 - Stores `chromeNotificationId → (originator, requestId)`.
 - Replies with the chrome id; the page-side `GM_notification`
@@ -780,7 +780,7 @@ records the implementation and the choices behind it.
 The page-side runtime picks by URL scheme:
 
 - `http(s)` → `sm:gm-download-start` to the SW, which drives
-  `chrome.downloads` (`src/gm-download.ts`).
+  `chrome.downloads` (`src/extension/gm-download.ts`).
 - `blob:` / `data:` → an `<a download>` click in the page; the SW is
   never involved.
 
@@ -888,7 +888,7 @@ Why the split:
   the callback locally and sends `sm:gm-menu-register` with
   `{scriptId, commandId, name}`; `unregister` drops the local
   entry and sends `sm:gm-menu-unregister`.
-- **SW side (`src/gm-menu.ts`)** — mirrors the (tabId → scriptId →
+- **SW side (`src/extension/gm-menu.ts`)** — mirrors the (tabId → scriptId →
   commands[]) registry that the action menu renders from, tagged
   with the `documentId` those commands came from. No callbacks live
   here — only the name + id needed to render the row and route a
@@ -898,11 +898,11 @@ Why the split:
     can't reach into the current document's entries. That is
     reachable with an explicit `{id: '...'}`, where the same
     commandId legitimately exists in both documents.
-- **Action menu rebuild (`src/background.ts`,
+- **Action menu rebuild (`src/extension/background.ts`,
   `doRebuildActionContextMenu`)** — folds the per-tab mirror into
   the rebuild after the script rows: each script row gets its
   registered commands appended as `↳ <name>` entries.
-- **Overflow planner (`src/action-menu.ts`,
+- **Overflow planner (`src/extension/action-menu.ts`,
   `planActionMenu`)** — caps the top level at Chrome's 6-item limit
   by reserving one slot for the fixed "Reload page with no
   userscripts" row and one more for a "More" submenu when the (script

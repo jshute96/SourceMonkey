@@ -2,7 +2,7 @@
 // is module state, so it only orders the writes made in one JS context —
 // and both the worker and the extension pages write. Every mutation
 // from a page therefore hops to the worker, whose chain is then the only
-// one touching the key. See src/script-log.ts.
+// one touching the key. See src/extension/script-log.ts.
 //
 // What needs an end-to-end test is the wiring: the page's fallback
 // writes the same entry locally when the message goes unanswered, so the

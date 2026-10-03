@@ -77,7 +77,7 @@ export const BAD_CASES = [
   // Both require cases below fetch their `@require` fine — the failure
   // is in the code, not the load. They differ in WHEN we can see it:
   //
-  //   - unparsable: the install-time compile check (src/parse-check.ts)
+  //   - unparsable: the install-time compile check (src/extension/parse-check.ts)
   //     compiles the composed program without running it, so a syntax
   //     error is visible before the script is ever registered.
   //   - throwing: the library parses and only fails when it RUNS, and

@@ -1,7 +1,7 @@
 # File access
 
 How SourceMonkey reads userscripts off the local filesystem. Owned by
-`src/directories.ts` and `src/file-locations.ts`; consumed by the
+`src/extension/directories.ts` and `src/file-locations.ts`; consumed by the
 [script store](storage.md) and the [viewer](script-viewer.md). For
 the `http(s)://` story (single-file URLs + JSON manifests + ETag /
 Last-Modified conditional GETs) see
@@ -33,7 +33,7 @@ For any reading to work the user must:
 
 ## Telling the user the toggle is off
 
-[`src/file-access.ts`](../src/file-access.ts) owns both halves: the
+[`src/extension/file-access.ts`](../src/extension/file-access.ts) owns both halves: the
 `chrome.extension.isAllowedFileSchemeAccess()` probe, and the
 **"File access is disabled."** banner every page renders from it.
 
@@ -136,7 +136,7 @@ which the development harness runs under Node.
   `fetch` in the service worker).
 - `parseListing(html)` — Chrome listing → `{name, isDir}[]`.
 
-`src/directories.ts`: collections.
+`src/extension/directories.ts`: collections.
 
 - `scriptFileUrl(collectionPath, relativePath)` — composes the file URL
   for a found script, dispatching on collection kind (directory /

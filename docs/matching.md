@@ -277,7 +277,7 @@ the collection back on restores the prior state.
 
 ## In-memory match index
 
-`src/match-index.ts` keeps an in-memory `Map<scriptId, MatchedScript>`
+`src/extension/match-index.ts` keeps an in-memory `Map<scriptId, MatchedScript>`
 of every injectable script so the background SW never hits
 `chrome.storage.local` on the navigation hot path. Injectable means
 `status: 'ok'`.
@@ -305,7 +305,7 @@ each cached script. No I/O.
 
 ## Per-tab badge + tooltip
 
-`src/background.ts` reacts to navigation via `chrome.webNavigation`
+`src/extension/background.ts` reacts to navigation via `chrome.webNavigation`
 (main frame only):
 
 - **`webNavigation.onCommitted`** — fresh document load OR bfcache
@@ -339,7 +339,7 @@ For each tab we:
 
 ### Badge view (expected ∪ actual)
 
-`src/tab-status.ts` derives the badge from the combined state:
+`src/extension/tab-status.ts` derives the badge from the combined state:
 
 - **Count** — size of the union of expected and actual script IDs.
 - **Color**:
@@ -433,7 +433,7 @@ For each tab we:
       preserve visible order) into the submenu.
     - A script's row and its menu commands always travel as a unit —
       no group is split between the top level and "More".
-    - The layout decision lives in `src/action-menu.ts` and is
+    - The layout decision lives in `src/extension/action-menu.ts` and is
       reflected by the SW test surface `getActionContextMenuPlan(tabId)`.
 
 ### Reload with no userscripts
@@ -451,7 +451,7 @@ skipped.
   [injection.md](injection.md#sm-check-pending-handler)). A skip
   reload is a per-tab marker that handler consults first, ahead of
   the reload fast path (which isn't set up for a skip reload).
-- **Lifecycle**, keyed on main-frame commits, in `src/background.ts`:
+- **Lifecycle**, keyed on main-frame commits, in `src/extension/background.ts`:
   - click → the tab is *armed*, then `chrome.tabs.reload`.
   - reload commit → armed becomes *skipping* for that document. Every
     wrapper in the tab gets `skip` — subframes too, whose documentIds
@@ -490,7 +490,7 @@ for the wrapper-side payloads.
 
 A MISSING row says a script matched but never reported. Once the page
 has loaded, the script's Log says so too, with what we can tell about
-why (`src/missing-scripts.ts`):
+why (`src/extension/missing-scripts.ts`):
 
 - **When**: `webNavigation.onCompleted` for the top frame, plus a 3s
   grace period for document-idle scripts still waiting on their

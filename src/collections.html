@@ -253,7 +253,7 @@
           <button id="open-options" type="button" title="Open the options page">Options</button>
           <!-- The label ships in the markup so the button is never blank:
                collections.js is a deferred module, and `setGlyphButton`
-               (src/collections.ts) replaces this text with the same word
+               (src/extension/collections.ts) replaces this text with the same word
                beside a glyph once it runs. -->
           <button id="refresh-all" type="button">Refresh All</button>
         </div>
@@ -272,6 +272,6 @@
       <div id="collections"></div>
     </div>
 
-    <script src="collections.js" type="module"></script>
+    <script src="extension/collections.js" type="module"></script>
   </body>
 </html>

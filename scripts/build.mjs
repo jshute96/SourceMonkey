@@ -14,10 +14,11 @@
 //   4. Copies src/**/*.html -> dist/**/*.html (extension pages such as
 //      collections.html and debug/icons.html), inlining the shared glyph
 //      sprite where a page writes `<!--#include glyph-sprite-->`.
-//   5. Runs the TypeScript compiler (tsc) twice: src/*.ts -> dist/*.js
-//      for the extension, and src/**/*.ts -> lib/**/*.js (with .d.ts)
-//      for the `sourcemonkey` package, whose development harness is
-//      Node-only code Chrome never loads. See docs/architecture.md.
+//   5. Runs the TypeScript compiler (tsc) twice: src/ (all but
+//      src/harness/) -> dist/ for the extension, and src/harness/ plus
+//      the shared modules directly in src/ -> lib/ (with .d.ts) for the
+//      `sourcemonkey` package, whose development harness is Node-only
+//      code Chrome never loads. See docs/architecture.md#source-layout.
 //      With --watch, only the extension build runs, and after the
 //      swap, tsc keeps running and rebuilds dist/ in place on change.
 //

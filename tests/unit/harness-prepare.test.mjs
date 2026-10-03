@@ -14,7 +14,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { explainMatch, prepareScript, withDefaultScheme } from '../../lib/harness/prepare.js';
-import { NO_NAME } from '../../dist/script-store.js';
+import { NO_NAME } from '../../dist/extension/script-store.js';
 
 const HEADER = `// ==UserScript==
 // @name         Test script

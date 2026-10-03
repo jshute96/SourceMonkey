@@ -17,7 +17,7 @@ import {
   COPY_NAME_NOT_USERSCRIPT,
   COPY_NAME_REQUIRED,
   COPY_NAME_TOO_DEEP,
-} from '../../dist/local-copy.js';
+} from '../../dist/extension/local-copy.js';
 
 // A stored row with just the fields the copy logic reads.
 function script(overrides = {}) {

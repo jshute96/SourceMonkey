@@ -55,7 +55,7 @@ const {
   closeGmWindow,
   focusGmWindow,
   LAST_TAB_NOT_CLOSABLE,
-} = await import('../../dist/gm-window-control.js');
+} = await import('../../dist/extension/gm-window-control.js');
 
 function reset() {
   calls.length = 0;

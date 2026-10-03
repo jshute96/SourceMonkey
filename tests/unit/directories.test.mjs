@@ -1,5 +1,5 @@
 // Tests for the directory-listing parser and path/URL helpers in
-// src/directories.ts (compiled to dist/directories.js).
+// src/extension/directories.ts (compiled to dist/extension/directories.js).
 //
 // parseListing is the part most likely to silently rot: Chrome's
 // directory-listing HTML is an undocumented format, so the sample
@@ -38,7 +38,7 @@ import {
   scratchRunOf,
   smDevContainerPath,
   smDevRunOfContainer,
-} from '../../dist/directories.js';
+} from '../../dist/extension/directories.js';
 
 test('parseListing extracts files and directories, skipping ..', () => {
   const html = `

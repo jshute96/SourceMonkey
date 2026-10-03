@@ -1,4 +1,4 @@
-// Unit tests for the SW-side GM_* storage module (src/gm-values.ts).
+// Unit tests for the SW-side GM_* storage module (src/extension/gm-values.ts).
 
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
@@ -65,7 +65,7 @@ const {
   applyBatchValues,
   DELETED_SENTINEL,
   wipeScriptValues,
-} = await import('../../dist/gm-values.js');
+} = await import('../../dist/extension/gm-values.js');
 
 test('valueKey composes gmval:<scriptId>:<key>', () => {
   assert.equal(valueKey('abc', 'foo'), 'gmval:abc:foo');

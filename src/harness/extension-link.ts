@@ -1,7 +1,7 @@
 // A run's connection to the real SourceMonkey in its browser: the calls
 // it makes into the extension's service worker, the tabs it claims, and
 // the events the worker streams back. The extension's side is
-// src/sm-dev-link.ts; the design is docs/sm-dev-design.md.
+// src/extension/sm-dev-link.ts; the design is docs/sm-dev-design.md.
 //
 // - Calls go through `self.SourceMonkey` in the worker, with Playwright's
 //   `worker.evaluate`.
@@ -23,7 +23,9 @@ import type { BrowserContext, Page, Worker } from '@playwright/test';
 import { SM_DEV_EVENT } from '../sm-dev-protocol.js';
 import type { StackLayout } from '../composed-source.js';
 import type { PushedFile } from '../external-files.js';
-import { findExtensionWorker, sourceMonkeyExtensionId, type LogEntry, type PushResult } from './extension-backend.js';
+import {
+  findExtensionWorker, isSourceMonkeyWorker, sourceMonkeyExtensionId, sourceMonkeyOrigin, type LogEntry, type PushResult,
+} from './extension-backend.js';
 
 // How long a claim lasts unrenewed, and how often it's renewed. A killed
 // run's tabs run the extension's scripts again within the lease.
@@ -117,7 +119,7 @@ export class ExtensionLink {
   // A worker has been adopted before, so the next is a restart.
   private adopted = false;
   private readonly onWorker = (worker: Worker): void => {
-    if (worker.url() === this.workerUrl) void this.adopt(worker).catch(() => undefined);
+    if (isSourceMonkeyWorker(worker.url(), this.origin)) void this.adopt(worker).catch(() => undefined);
   };
 
   private constructor(
@@ -127,7 +129,10 @@ export class ExtensionLink {
      * collection carry.
      */
     readonly runId: string,
-    private readonly workerUrl: string,
+    /** The extension's service worker, whose console carries the events. */
+    readonly workerUrl: string,
+    /** The origin of the extension's pages and its scripts' world. */
+    readonly origin: string,
   ) {}
 
   /**
@@ -137,9 +142,8 @@ export class ExtensionLink {
    * needs, or `userScriptsOff` when Chrome won't let it run scripts.
    */
   static async open(context: BrowserContext, runId: string): Promise<ExtensionLink> {
-    const workerUrl = `chrome-extension://${await sourceMonkeyExtensionId()}/background.js`;
-    const link = new ExtensionLink(context, runId, workerUrl);
     const worker = await findExtensionWorker(context);
+    const link = new ExtensionLink(context, runId, worker.url(), await sourceMonkeyOrigin());
     const missing = await worker.evaluate((names) => {
       const api = (self as unknown as { SourceMonkey?: Record<string, unknown> }).SourceMonkey ?? {};
       return names.filter((name) => typeof api[name] !== 'function');
@@ -162,12 +166,6 @@ export class ExtensionLink {
     context.on('serviceworker', link.onWorker);
     link.renewTimer = setInterval(() => { void link.renew().catch(() => undefined); }, RENEW_MS);
     return link;
-  }
-
-  /** The origin of the extension's pages and its scripts' world. */
-  get origin(): string {
-    // Not `new URL(...).origin`, which is "null" for a scheme Node doesn't know.
-    return this.workerUrl.replace(/\/background\.js$/, '');
   }
 
   // Makes `worker` the one calls go to: listened to once, and the run

@@ -1,6 +1,6 @@
-// The install page's "Install into" dropdown (src/related-versions.ts
+// The install page's "Install into" dropdown (src/extension/related-versions.ts
 // `buildInstallSelect`, fed by `installOptionsFor` in
-// src/script-identity.ts): which collections it lists, in what order,
+// src/extension/script-identity.ts): which collections it lists, in what order,
 // what it pre-selects, and where a script lands when Install is clicked.
 //
 // Every test takes the `sm` fixture even when it never calls it: `sm`
@@ -254,7 +254,7 @@ test.describe('install target dropdown', () => {
   });
 
   // The click that opens the list must not also pick out of it. See
-  // src/select-open-guard.ts: Chrome sometimes draws the list over the
+  // src/extension/select-open-guard.ts: Chrome sometimes draws the list over the
   // control, putting an entry under the pointer that just pressed, and
   // the release of that same click commits it. The press is therefore
   // cancelled and the list opened from the release instead.

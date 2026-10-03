@@ -5,11 +5,11 @@ or a stand-in for a `@require` / `@resource` — is deleted or edited on
 disk, or a new script file appears in a directory collection, and how
 each surface says so before and after a refresh notices.
 
-- Paint-time probe and chip: [`src/file-changes.ts`](../src/file-changes.ts)
+- Paint-time probe and chip: [`src/extension/file-changes.ts`](../src/extension/file-changes.ts)
 - Listing-shape check: `isDirectoryListing` in
-  [`src/directories.ts`](../src/directories.ts)
+  [`src/extension/directories.ts`](../src/extension/directories.ts)
 - Dropping on refresh: `rebuildCollection` and `refreshScript` in
-  [`src/script-store.ts`](../src/script-store.ts)
+  [`src/extension/script-store.ts`](../src/extension/script-store.ts)
 - Tests: `tests/e2e/file-changes.spec.ts`, the vanished-entry tests in
   `tests/e2e/collections.spec.ts`, `tests/unit/script-store.test.mjs`
 

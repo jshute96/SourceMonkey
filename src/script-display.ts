@@ -286,7 +286,7 @@ export function viewerUrl(scriptId: string, tab?: 'log'): string {
   return `userscript.html?${params.toString()}${tab === 'log' ? '#Log' : ''}`;
 }
 
-// The compare page for two copies of a script (src/compare.ts). The
+// The compare page for two copies of a script (src/extension/compare.ts). The
 // right-hand side is the base: the copy on screen, or the download a
 // preview is showing; `other` is the copy to hold up against it.
 export function compareUrl(

@@ -120,7 +120,7 @@ what the row now says.
 
 ## Rendering it
 
-`appendDiagnostic` (`src/userscript.ts`) paints
+`appendDiagnostic` (`src/extension/userscript.ts`) paints
 `<message> (in <where>)` with the "where" a link.
 
 - It resolves `location.file` to a tab: `@require`s match a tab's
@@ -188,7 +188,7 @@ located warnings or an INVALID row before anything is registered (see
 parser, because a false positive would drop a pattern that works. What
 reaches REJECTED is the remainder: a malformed port, a host Chrome's
 canonicalizer rejects, or whatever it tightens next. See
-[file-index](file-index.md) for `src/script-rejection.ts`, which holds
+[file-index](file-index.md) for `src/extension/script-rejection.ts`, which holds
 the state, and [injection.md](injection.md#rejected-registrations) for
 the registration path that produces it.
 
@@ -211,7 +211,7 @@ verdict about a script's *fate* rather than its content.
   reader needs to know is that what they see on the page is not what is
   on disk, not that something is broken.
 - **One string, one place**: `describeRefreshError` in
-  `src/refresh-error.ts`, listed under
+  `src/extension/refresh-error.ts`, listed under
   [One string, one place](#one-string-one-place).
 - **The reason is ours, not Chrome's.** An out-of-quota write rejects
   with `Resource::kQuotaBytes quota exceeded` (the exact text varies by

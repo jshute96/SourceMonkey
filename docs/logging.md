@@ -42,7 +42,7 @@ or UI surface refers to it.
 
 ### Implementation
 
-`src/script-log-id.ts`:
+`src/extension/script-log-id.ts`:
 
 - Pure: `computeLogIds(scripts)` (over `scriptBasename` from
   `script-display.ts`) — used by the collections page + viewer at render
@@ -164,7 +164,7 @@ console call at all, and each has its own countermeasure:
   - SW startup fires many `void someStorageRead()` calls, so a reload
     mid-startup would list one entry per read. Nothing is broken: the
     next wake starts over and redoes them.
-  - `src/sw-teardown.ts` installs an `unhandledrejection` handler
+  - `src/extension/sw-teardown.ts` installs an `unhandledrejection` handler
     (first thing in `background.ts`) that marks exactly that rejection
     handled and notes it at `console.info`. Every other rejection
     still surfaces.
@@ -235,7 +235,7 @@ still drives the Log-tab mirror.
 ### Mirror to the Log tab
 
 When the refresh pipeline records a "Loaded new content" entry for a
-script (see `emitScriptOutcomeLog` in `src/script-updater.ts`), it
+script (see `emitScriptOutcomeLog` in `src/extension/script-updater.ts`), it
 also walks `script.startupLogs` and appends one Log-tab entry per
 diagnostic, with `source: 'parser'`. Result: every persisted version
 of a script lands one diagnostic row immediately after its load row,
@@ -247,7 +247,7 @@ regardless of how many times the SW restarts in between.
 Chrome shutdown, so a fresh Chrome session starts with an empty Log
 tab even though the state that explains it is still persisted in
 `chrome.storage.local`. To repopulate without forcing a manual
-refresh, `replayScriptLogsAtBoot()` (in `src/script-updater.ts`) runs
+refresh, `replayScriptLogsAtBoot()` (in `src/extension/script-updater.ts`) runs
 once at SW startup and walks every stored script, emitting:
 
 - one `parser` row per `startupLogs` diagnostic,

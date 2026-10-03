@@ -327,7 +327,7 @@ before this feature existed — or while the check was failing open —
 keeps `status: 'ok'` with no `parseCheckedHash`, and nothing revisits
 it.
 
-`runSync` (`src/injector.ts`) closes that. Before it builds specs it
+`runSync` (`src/extension/injector.ts`) closes that. Before it builds specs it
 calls `verifyParseChecks` with exactly the rows it is about to
 register:
 

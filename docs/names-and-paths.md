@@ -100,7 +100,7 @@ How a stored location becomes the text a user reads. Helpers live in
   the scheme: the scheme is unregistered, and a script can put
   `sourcemonkey://elsewhere/…` in its own log message.
 - `displayRefText` in `src/stack-link.ts`; `setRefText` / `refNode` in
-  `src/userscript.ts` paint it. The raw URL still does the tab lookup
+  `src/extension/userscript.ts` paint it. The raw URL still does the tab lookup
   and the click target; only the painted text changes.
 - Devtools' Sources tree indexes the file under the **encoded** folder
   name, so the tooltip carrying the raw form is how a user finds the

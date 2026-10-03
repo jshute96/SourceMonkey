@@ -78,7 +78,7 @@ test.describe('@exclude', () => {
   });
 
   // Ask Chrome directly, with no SourceMonkey code in the way. If any
-  // of this ever changes, `PlacedPatterns` in src/injector.ts can stop
+  // of this ever changes, `PlacedPatterns` in src/extension/injector.ts can stop
   // re-registering scripts whose globs changed.
   test('Chrome honours excludeGlobs at register, and ignores them on update', async ({
     extensionContext, fixtureServer, getServiceWorker,

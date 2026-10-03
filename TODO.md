@@ -18,7 +18,7 @@ A backlog of **candidates**, not a list of obligations.
   section of [docs/injection.md](docs/injection.md): `@noframes` /
   `allFrames`. (`@grant` / `GM_*`, `@require`, and `@resource` are
   all implemented; per-area follow-ups below.)
-  - `allFrames` is no longer a self-contained change: `src/gm-menu.ts`
+  - `allFrames` is no longer a self-contained change: `src/extension/gm-menu.ts`
     keys menu commands by one `documentId` per tab, which only works
     while every wrapper shares the top-level document. Re-key it by
     (tabId, documentId) first, or subframe and top-frame scripts will
@@ -308,7 +308,7 @@ the scripts). Comparisons are against Violentmonkey's source; Tampermonkey
 wasn't checked.
 
 - **`GM` is frozen** (`gm-frozen`: 30766, 19993).
-  - `src/gm-bindings.ts` emits `const GM = Object.freeze({...})`.
+  - `src/extension/gm-bindings.ts` emits `const GM = Object.freeze({...})`.
   - GM_config's polyfill sets `GM.getValue` when only `GM_getValue` is
     granted, and the assignment is silently dropped, so 30766 never
     starts. 19993 adds a `GM.cookie` stub, which throws.
@@ -395,7 +395,7 @@ for the current state of the per-API matrix and
 
 ### XHR header surgery — leftovers
 
-The surgery itself shipped (`src/gm-xhr-headers.ts`): forbidden
+The surgery itself shipped (`src/extension/gm-xhr-headers.ts`): forbidden
 request headers, `Sec-Fetch-*` included, travel as a per-request
 declarativeNetRequest session rule keyed on a URL-fragment tag, and our
 extension `Origin` is removed by default. What's still open:
@@ -439,7 +439,7 @@ Adding any of these is a catalog entry + a body — nothing structural.
 
 ### GM_* implementation follow-ups
 
-- **Menu commands vanish on a bfcache restore.** `src/gm-menu.ts`
+- **Menu commands vanish on a bfcache restore.** `src/extension/gm-menu.ts`
   holds ONE document's commands per tab, so leaving a page drops its
   registrations — and Chrome doesn't re-inject on back/forward, so
   nothing re-registers them. The restored page's callbacks are still
@@ -461,14 +461,14 @@ Adding any of these is a catalog entry + a body — nothing structural.
   writeText` may reject without focus / transient activation. TM/VM
   use an offscreen `execCommand('copy')` to avoid the requirement.
   The offscreen document already exists (`src/offscreen.html` +
-  `src/offscreen.ts`, built for the parse check) and the `offscreen`
+  `src/extension/offscreen.ts`, built for the parse check) and the `offscreen`
   permission is declared — MV3 allows only ONE per extension, so
   EXTEND that host rather than adding a second. Needs
   `clipboardWrite` in the manifest and `CLIPBOARD` added to the
   `reasons` array in `parse-check.ts`, which is fixed at creation
   time.
 - **Binary XHR encoding monopolizes the SW loop.** `runXhr` buffers
-  the whole body and calls `bytesToBase64` once (`src/gm-xhr.ts`),
+  the whole body and calls `bytesToBase64` once (`src/extension/gm-xhr.ts`),
   bounded only by the 50 MB `MAX_RESPONSE_BYTES` cap.
   `String.fromCharCode` is chunked at 32 KB but the closing `btoa` is
   a single call over the whole string, and the worker holds the bytes
@@ -967,7 +967,7 @@ here — they are decisions, not proposals.
 One thing does have a concrete fix we chose not to make:
 
 - **`setRefreshError` is a lost update waiting on a rare trigger.**
-  `src/refresh-error.ts` read-modify-writes one whole map, with nothing
+  `src/extension/refresh-error.ts` read-modify-writes one whole map, with nothing
   serializing it, and `refreshAllCollections` runs collections two at a
   time. Two collections failing in one pass can drop each other's entry;
   a healthy collection's clear can resurrect a sibling's error.
@@ -984,7 +984,7 @@ One thing does have a concrete fix we chose not to make:
 
 ## Storage-key migration — remove after 2026-09-01
 
-- **`ensureCollectionKeysMigrated` in `src/script-store.ts` is
+- **`ensureCollectionKeysMigrated` in `src/extension/script-store.ts` is
   temporary.** "Sources" were renamed to "collections" in August 2026,
   which moved the `"sources"` index to `"collections"`, every
   `source:<id>` row to `collection:<id>`, and each script's `sourceId`
@@ -1164,7 +1164,7 @@ with a trade-off worth recording:
   covers …" for a path that really is on disk. Refreshing just that row
   (`updateScript`) would avoid re-reading the manifest over the network,
   but the shape is rare enough that the extra branch hasn't earned its
-  keep yet. See `src/refresh-targets.ts`.
+  keep yet. See `src/extension/refresh-targets.ts`.
 
 - **`setToggleBusy` is not re-entrant.** Two quick clicks on the same
   toggle produce overlapping `onToggleScript` calls sharing one spinner
@@ -1469,7 +1469,7 @@ itself once a sync places it. What's missing:
   syntax errors, but drops `startupLogs` — so an unsupported `@grant`
   or a dropped `@match` is only visible after installing.
 - **Registration has no single owner across contexts.** The lock in
-  `src/injector.ts` serializes registration work within one JS context,
+  `src/extension/injector.ts` serializes registration work within one JS context,
   but the collections page and the viewer call
   `retryRejectedRegistrations` in theirs, so a page-side registration
   can still land in the middle of the SW's sync. `placeSpec` makes that
@@ -1627,14 +1627,14 @@ they follow are in
   be noise-free, but it needs a wording that reads as a capability
   rather than a tag dump.
 - large collections still blow past `chrome.storage.local` (and RAM). The
-  refresh fan-out is bounded now (`src/concurrency.ts`), but the whole
+  refresh fan-out is bounded now (`src/extension/concurrency.ts`), but the whole
   result set — every script body, plus prefetched `@require` /
   `@resource` payloads — is still held live and then written in one
   `set`. Open pieces:
   - No `unlimitedStorage` permission, so the whole extension shares a
     10 MB `storage.local` budget. Decide between taking the permission
     and moving bodies out of `storage.local`.
-  - Reporting the failure is done (`src/refresh-error.ts`) — what's
+  - Reporting the failure is done (`src/extension/refresh-error.ts`) — what's
     left is not hitting it. The user still has to work out for
     themselves that one enormous collection is what filled the budget;
     the banner names total usage, not the collection responsible. A
@@ -1646,8 +1646,8 @@ they follow are in
     thousands-of-scripts path, all of them storage writes rather than
     fetches (so lighter per item, but still one-per-script):
     `emitInitialLoadLog` over a freshly added collection
-    (`src/script-store.ts`), and the boot log replay in
-    `src/script-updater.ts`. Both want `mapWithConcurrency`.
+    (`src/extension/script-store.ts`), and the boot log replay in
+    `src/extension/script-updater.ts`. Both want `mapWithConcurrency`.
 - a collection whose refresh drops its LAST script says nothing about it.
   The tombstone rows the collections page leaves for dropped scripts
   (`docs/storage.md`, "Tombstones") hang off the script table, and a
