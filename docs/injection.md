@@ -1236,6 +1236,8 @@ Scripts sm-dev runs get one more statement in the inner scope, so
   - Registration and the reload swap both add it.
   - Never the person's own scripts. The hook reaches everything the
     script can, and a MAIN-world script's sits on the page's `window`.
+- The arrow is named `sm-dev eval`, so code run through it shows that
+  frame in stack traces rather than one named after the script id.
 - The map is a non-enumerable global under a key naming the run, out
   of a page's casual view. A page that looks for it can still find it.
 - It goes after the user program's directive prologue, so a leading

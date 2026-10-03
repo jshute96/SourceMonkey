@@ -421,7 +421,8 @@ export class PageAttachment implements PageLink {
       code = notExpression ? `(async () => {\n${expression}\n})()` : asExpression;
     }
     const { result, exceptionDetails } = await this.cdp.send('Runtime.evaluate', {
-      expression: `${hook}(${JSON.stringify(code)})`, contextId, awaitPromise: true, userGesture: true,
+      // Called detached, so its stack frame isn't named `[as <script id>]`.
+      expression: `(0, ${hook})(${JSON.stringify(code)})`, contextId, awaitPromise: true, userGesture: true,
     });
     return this.evaluated(result, exceptionDetails);
   }

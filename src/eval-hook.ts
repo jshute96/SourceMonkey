@@ -3,7 +3,8 @@
 // script's own scope and see what it sees: its `GM_*` bindings, its
 // `@require`s' top-level declarations, and its own.
 //
-//   ;(globalThis[<key>] || <new map>)[<script id>] = (code) => eval(code);
+//   ;(globalThis[<key>] || <new map>)[<script id>] =
+//     ({ 'sm-dev eval': (code) => eval(code) })['sm-dev eval'];
 //
 // - A direct `eval` runs in the scope it's written in, so the arrow is a
 //   handle on the user program's scope that outlives the script's run.
@@ -28,6 +29,10 @@
 // The arrow's parameter, which the evaluated code sees too: named so no
 // script's own would be shadowed by it.
 const CODE_PARAM = '__smDevEvalCode';
+// The arrow's name, which its stack frame shows. Assigned straight to
+// the map, it has none, and V8 names the frame after the map key, the
+// script's id. Made under an object literal key, it takes that key.
+const FRAME_NAME = JSON.stringify('sm-dev eval');
 
 /** The global key a run's eval hooks are kept under. */
 export function evalHookKey(run: string): string {
@@ -41,7 +46,7 @@ export function evalHookKey(run: string): string {
  */
 export function withEvalHook(program: string, key: string, scriptId: string, mainStart = 0): string {
   const k = JSON.stringify(key);
-  const hook = `;(globalThis[${k}]||Object.defineProperty(globalThis,${k},{value:{}})[${k}])[${JSON.stringify(scriptId)}]=(${CODE_PARAM})=>eval(${CODE_PARAM});`;
+  const hook = `;(globalThis[${k}]||Object.defineProperty(globalThis,${k},{value:{}})[${k}])[${JSON.stringify(scriptId)}]=({${FRAME_NAME}:(${CODE_PARAM})=>eval(${CODE_PARAM})})[${FRAME_NAME}];`;
   const outer = directivePrologueEnd(program);
   const body = leadingFunctionBody(program, directivePrologueEnd(program, mainStart));
   if (body < 0) return program.slice(0, outer) + hook + program.slice(outer);

@@ -33,6 +33,12 @@ test('withEvalHook: the program stays strict, and the hook reads its scope', () 
   const program = withEvalHook('"use strict";\nconst n = 7;\nreturn (function () { return this; })();', key, 's1');
   assert.equal(new Function(program)(), undefined);
   assert.equal(globalThis[key].s1('n * 6'), 42);
+  // Named for stack traces, not after the script id it's kept under.
+  // Called detached, as sm-dev calls it.
+  const hook = globalThis[key].s1;
+  assert.equal(hook.name, 'sm-dev eval');
+  assert.match(hook('new Error().stack'), /\n\s+at sm-dev eval \(/);
+  assert.doesNotMatch(hook('new Error().stack'), /\[as /);
   assert.equal(program.split('\n').length, 3);
 });
 
