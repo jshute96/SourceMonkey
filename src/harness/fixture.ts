@@ -32,7 +32,7 @@ import { ExtensionHost } from './extension-host.js';
 import { launchExtensionBrowser } from './extension-launch.js';
 import { ExtensionLink, linkRunId } from './extension-link.js';
 import type { HostReports, SkipReport, ErrorReport, StartReport, RequestInterceptor } from './host.js';
-import { attachPage, type PageAttachment } from './inject.js';
+import { attachPage, type PageAttachment } from './page-watch.js';
 import {
   prepareScript,
   pushedFiles,

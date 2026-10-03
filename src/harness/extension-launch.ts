@@ -29,7 +29,7 @@ import { rebuildAdvice } from './stale-build.js';
 
 // dist/, beside lib/: in the checkout, and in an installed package,
 // which ships both.
-const EXTENSION_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist');
+export const EXTENSION_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist');
 
 export interface ExtensionLaunchOptions {
   /** A visible window, with sound. Hidden and muted otherwise. */
@@ -78,8 +78,7 @@ export async function launchExtensionBrowser(options: ExtensionLaunchOptions = {
     try { rmSync(profile, { recursive: true, force: true }); } catch { /* Chrome may hold a file briefly */ }
   };
   try {
-    writePreferences(profile, await sourceMonkeyExtensionId(), options.downloadsDir);
-    await primeFirstRun(profile);
+    await prepareProfile(profile, options.downloadsDir);
     // Port 0 has Chrome pick a free port and write it to the profile.
     // A port picked here could be taken before Chrome binds it, and the
     // run would connect to whatever took it.
@@ -143,8 +142,7 @@ async function launch(profile: string, headed: boolean, args: string[] = []): Pr
       args: [
         ...(headed ? [] : ['--headless=new', '--mute-audio']),
         ...(userAgent ? [`--user-agent=${userAgent}`] : []),
-        `--disable-extensions-except=${EXTENSION_DIR}`,
-        `--load-extension=${EXTENSION_DIR}`,
+        ...extensionArgs(),
         ...args,
       ],
     });
@@ -166,7 +164,7 @@ async function launch(profile: string, headed: boolean, args: string[] = []): Pr
  * - The run pushes its scripts after its tab is open, so it needs a tab
  *   opened after this. See TODO.md.
  */
-async function warmUp(context: BrowserContext): Promise<void> {
+export async function warmUp(context: BrowserContext): Promise<void> {
   const worker = await findExtensionWorker(context);
   await worker.evaluate(async (text) => {
     const api = (self as unknown as { SourceMonkey: WarmUpApi }).SourceMonkey;
@@ -180,6 +178,21 @@ async function warmUp(context: BrowserContext): Promise<void> {
 interface WarmUpApi {
   writeRunScript(args: { run: string; text: string }): Promise<unknown>;
   releaseRun(runId: string): Promise<void>;
+}
+
+/**
+ * Readies a new profile for SourceMonkey (Preferences, first run done),
+ * for a browser started with `extensionArgs`. Also for a test's own
+ * browser, launched outside Playwright.
+ */
+export async function prepareProfile(profile: string, downloadsDir?: string): Promise<void> {
+  writePreferences(profile, await sourceMonkeyExtensionId(), downloadsDir);
+  await primeFirstRun(profile);
+}
+
+/** The Chrome flags that load the package's SourceMonkey, and only it. */
+export function extensionArgs(): string[] {
+  return [`--disable-extensions-except=${EXTENSION_DIR}`, `--load-extension=${EXTENSION_DIR}`];
 }
 
 // Grants the extension "Allow User Scripts" and pins it to the toolbar,

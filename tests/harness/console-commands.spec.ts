@@ -9,7 +9,6 @@ import path from 'node:path';
 
 import { test, expect } from '../fixtures/harness.js';
 import { DialogTracker, runConsoleCommand, type ConsoleContext } from '../../lib/harness/console-commands.js';
-import { attachPage } from '../../lib/harness/inject.js';
 
 test.describe('sm-dev typed commands', () => {
   test('scripts picks the script values, get and set act on', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {
@@ -158,7 +157,7 @@ test.describe('sm-dev typed commands', () => {
     await expect.poll(() => host.getValue(script.spec!.id, 'name')).toBe('Bob');
   });
 
-  test('with several tabs, commands act on the picked one, or on all', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {
+  test('with several tabs, commands act on the picked one, or on all', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir, watchPage }) => {
     const script = await loadScript({
       relativePath: 'menus.user.js',
       meta: { name: 'Menus', match: ['*://*/target.html', '*://*/other.html'], grant: ['GM_registerMenuCommand', 'GM_setValue'] },
@@ -168,7 +167,7 @@ test.describe('sm-dev typed commands', () => {
     const other = `${fixtureServer.baseUrl}/other.html`;
     await page.goto(target);
     const page2 = await page.context().newPage();
-    const attachment2 = await attachPage(page2, host);
+    const attachment2 = await watchPage(page2);
     try {
       await attachment2.inject(script);
       await page2.goto(other);
@@ -465,7 +464,7 @@ test.describe('sm-dev typed commands', () => {
     expect(opened).toEqual([target]);
   });
 
-  test('a dialog on another tab blocks set, and accept points to it', async ({ page, fixtureServer, host, attachment, loadScript }) => {
+  test('a dialog on another tab blocks set, and accept points to it', async ({ page, fixtureServer, host, attachment, loadScript, watchPage }) => {
     const script = await loadScript({
       relativePath: 'store.user.js',
       meta: { name: 'Store', match: ['*://*/target.html', '*://*/other.html'], grant: ['GM_setValue'] },
@@ -473,7 +472,7 @@ test.describe('sm-dev typed commands', () => {
     });
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const page2 = await page.context().newPage();
-    const attachment2 = await attachPage(page2, host);
+    const attachment2 = await watchPage(page2);
     try {
       await attachment2.inject(script);
       const lines: string[] = [];

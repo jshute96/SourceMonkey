@@ -125,7 +125,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       '  # Optionally start an initial run first.',
       '  sm-dev [start example.user.js http://example.com]',
       '',
-      'Start sm-dev with a tab, injecting a userscript:',
+      'Start sm-dev with a tab, running a userscript:',
       '  # Start, run commands (separated by --), then exit.',
       '  sm-dev start example.user.js http://example.com -- status -- snapshot',
       '',
@@ -147,7 +147,9 @@ export const HELP_SECTIONS: HelpSection[] = [
   {
     title: 'Starting a run',
     text: [
-      'A run is an sm-dev server process connected to a browser, managing a list of tabs and operating as a SourceMonkey userscript manager injecting scripts into those pages.',
+      'A run is an sm-dev server process connected to a browser, managing a list of tabs whose scripts the SourceMonkey extension there runs.',
+      'The run pushes its scripts into a test collection of its own in the extension, which removes it when the run ends, and only they run in the run\'s tabs.',
+      'The browser needs SourceMonkey installed, with Allow User Scripts on. A --temp-browser has it.',
       '',
     ],
     commands: [
@@ -182,7 +184,7 @@ export const HELP_SECTIONS: HelpSection[] = [
           {
             title: 'Options',
             options: [
-              { term: '--watch', about: 'Re-inject and reload when a script or its files change.' },
+              { term: '--watch', about: 'Re-push and reload when a script or its files change.' },
               { term: '--values JSON', about: ['Seed GM_* storage before the scripts run,', 'e.g. --values \'{"units":"metric"}\'.'] },
               { term: '--values-file <path>', about: 'Seed GM_* storage from a file holding a JSON object.' },
               { term: '--page-errors', about: 'Also show errors from the page (not just the script).' },
@@ -233,7 +235,7 @@ export const HELP_SECTIONS: HelpSection[] = [
   {
     title: 'Scripts',
     commands: [
-      { usage: 'scripts', syntax: TEXT, about: 'List the loaded scripts, and with --extension, the SourceMonkey-managed scripts on the current tab.' },
+      { usage: 'scripts', syntax: TEXT, about: 'List the loaded scripts, and the SourceMonkey-managed scripts on the current tab.' },
       { usage: 'script <script>', about: 'Select the active script by ID. With T2.3, pick tab T2 too.' },
       { usage: 'load <script>...', syntax: WORDS, about: 'Load more scripts from disk: files, directories, or globs. See Files and file patterns.' },
       { usage: 'update [script]', syntax: TEXT, about: 'Re-read one (or all) scripts from disk, and reload all affected tabs.' },
@@ -501,14 +503,6 @@ export const HELP_SECTIONS: HelpSection[] = [
     ],
   },
   {
-    title: 'Controlling the SourceMonkey extension',
-    text: ['Instead of injecting the scripts itself, a run can push them into the SourceMonkey extension in the browser it connects to.', ''],
-    optionsTitle: 'Options for start',
-    options: [
-      { term: '--extension', about: 'Push the scripts into the extension, in a test collection of the run\'s own, instead of injecting them. The extension removes it when the run ends. A --temp-browser installs the extension itself.', commands: ['start'] },
-    ],
-  },
-  {
     title: 'Global options',
     text: ['These go first, before any command, and apply for later commands.'],
     subsections: [
@@ -580,7 +574,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         items: [
           { term: '2', about: 'Script ID in the scripts list.' },
           { term: 'T2.3', about: 'Script 3, on tab T2.' },
-          { term: 'E1', about: 'A SourceMonkey-managed script. (With --extension)' },
+          { term: 'E1', about: 'A SourceMonkey-managed script.' },
           { term: '<name>', about: ['Its name, file name or path, or a unique substring.', '(Only in commands that expect script names.)'] },
           { term: '<file>', about: 'A script file. (Ending with .user.js)' },
           { term: '<url>', about: 'A script file loaded from a URL. (Ending with .user.js)' },
@@ -646,7 +640,7 @@ export const HELP_SECTIONS: HelpSection[] = [
 
 const INTRO = [
   'sm-dev: develop and test userscripts against a real browser,',
-  'with SourceMonkey\'s script injection and GM_* APIs behind them.',
+  'with the SourceMonkey extension running them.',
   '',
   'Usage: sm-dev [global options] <command> [options] [-- <command> ...]',
 ];

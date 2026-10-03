@@ -51,8 +51,9 @@ A backlog of **candidates**, not a list of obligations.
 - `@run-at document-start` isn't guaranteed to run before page scripts.
   - The body waits for the async `sm:check-pending` reply, while the
     parser can run the page's early `<head>` scripts. The extension
-    usually wins (~1-5ms reply); sm-dev, whose reply goes through Node,
-    usually loses (a documented known difference in harness-guide.md).
+    usually wins (~1-5ms reply). While an sm-dev run is live every
+    script asks, and often loses (a documented caveat in
+    harness-guide.md).
   - Tampermonkey users expect it to run first: scripts that hook
     `fetch`, `XMLHttpRequest` or `addEventListener` miss page code
     otherwise.
@@ -833,17 +834,6 @@ Adding any of these is a catalog entry + a body — nothing structural.
 
 See [docs/harness-design.md](docs/harness-design.md).
 
-- A tab `GM_openInTab` opens under the push backend gets no scripts;
-  the extension would inject whatever matches it. Attaching after the
-  tab exists would only reach its next document, so this needs the
-  attachment to be created with the tab.
-- `GM_download` under the push backend has no `onprogress`, and
-  `GM_notification` shows nothing. Both are recorded and reported;
-  a script that needs the real thing wants `--extension`.
-- The harness's own `@require` fetches and the extension's differ in
-  one way worth closing: a `file://` read in Node returns no
-  `Content-Type`, matching Chrome, but an http(s) one goes out without
-  the extension's identity. Nothing depends on it today.
 - Scratch scripts are keyed by a sanitized name, so different names in
   one run's test collection can share one `scratch:///` URL and replace
   each other: `Foo Bar` and `Foo-Bar` both become `Foo-Bar.user.js`.
@@ -855,34 +845,11 @@ See [docs/harness-design.md](docs/harness-design.md).
   fresh text: the write stores the text row before installing the row
   that reads it, and the remove, in another context, sees no reader in
   between. The install then fails with "The scratch script's text was
-  cleared". Narrow, and only with the harness pushing while someone
+  cleared". Narrow, and only with sm-dev pushing while someone
   edits the page.
-- `PUSHED_ANY_WORLD` in `src/harness/inject.ts` repeats the list of
-  world-free pushes in `wrapper-bridge.js`, which is plain injected JS
-  and can't import it. A pushed type added to one and not the other
-  reaches the wrong world under the harness. Generate one from the
-  other at build time, or check them against each other in a unit test.
 - A scratch-script error names sm-dev's push as the fix: "Push it
   again" when the text row is gone (`directories.ts`). Word it for the
   writer once anything but sm-dev writes scratch scripts.
-- Detaching a page from the harness host (the page closed, or its
-  attachment disposed) drops its menus, notifications and tab tracking
-  but not its in-flight `GM_download`s or `GM_xmlhttpRequest`s. They
-  run to completion or time out with nobody listening; a download can
-  still land in a test's output directory after teardown.
-- A page the harness attached to that closes (a granted `window.close`,
-  or the user closing it) leaves the tabs its scripts opened until the
-  attachment is disposed.
-- `sm-dev start` gives scripts `GM_info.userAgentData` of `null`: scripts
-  are prepared once at startup, while the run's tab is still on
-  `about:blank` (or, with `--notab`, before any tab exists), and the
-  browser only exposes `navigator.userAgentData` on secure origins. A
-  reused tab already on a secure page is the exception. Reading it
-  from a secure context the run doesn't show (or re-preparing once a
-  tab reaches one) would close it.
-- Two `loadUserscript` / `inject` calls at once on one attachment can
-  both add the GM runtime to a world (harmless: it installs once) and
-  lose track of one of them. Serialize `inject` if it ever matters.
 - Two `writeRunScript`s of the same new name in one run at once both
   miss the lookup, and the second fails with an `Internal error`.
   sm-dev pushes one at a time, so only another caller of the worker's
@@ -915,22 +882,15 @@ See [docs/harness-design.md](docs/harness-design.md).
     stop signal is dropped, but sending SIGCONT still runs readline's
     resume path.
 
-## sm-dev extension runs: follow-ups
+## sm-dev runs: follow-ups
 
 - After SourceMonkey's worker restarts mid-run, the events from while it
   was stopped are lost (the run says so). Catch up by reading each
   pushed script's Log once after the restart. See
-  [docs/sm-dev-extension.md](docs/sm-dev-extension.md#when-the-sw-restarts).
+  [docs/sm-dev-design.md](docs/sm-dev-design.md#when-the-sw-restarts).
 - A tab a run tab opens is set up after its scripts ran, so their
   console lines from that first load don't reach the run (the reports
   do).
-- A harness run's page-world script's `GM_*` requests also reach
-  SourceMonkey's bridge in a browser with SourceMonkey, whose worker
-  answers `BRIDGE_DENIED` for an id it doesn't know, racing the
-  harness's answer. Have the worker leave ids it doesn't know
-  unanswered, as the harness now does for SourceMonkey's.
-- A harness run doesn't hear which tabs its tabs open, so it can't
-  restore their claims after an extension reload (an extension run can).
 - When a claimed tab's wrapper times out asking the worker (a worker
   slow to start) and runs an extension script anyway, the run doesn't
   say so. The extension's `started` event could tell it: a script the

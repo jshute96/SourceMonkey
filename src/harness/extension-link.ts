@@ -1,7 +1,7 @@
 // A run's connection to the real SourceMonkey in its browser: the calls
 // it makes into the extension's service worker, the tabs it claims, and
 // the events the worker streams back. The extension's side is
-// src/sm-dev-link.ts; the design is docs/sm-dev-extension.md.
+// src/sm-dev-link.ts; the design is docs/sm-dev-design.md.
 //
 // - Calls go through `self.SourceMonkey` in the worker, with Playwright's
 //   `worker.evaluate`.
@@ -12,7 +12,7 @@
 // - The run's claims and its subscription are a lease, renewed here
 //   while the run lasts, and released at its end. A renewal also claims
 //   again any of the run's tabs whose claim the extension lost.
-// - An extension run's scripts go into a test collection of its own,
+// - A run's scripts go into a test collection of its own,
 //   which the extension removes when the run is released, or a while
 //   after its lease runs out.
 
@@ -30,11 +30,18 @@ import { findExtensionWorker, sourceMonkeyExtensionId, type LogEntry, type PushR
 const LEASE_MS = 30_000;
 const RENEW_MS = 10_000;
 
-/** The calls an extension run needs, which an older SourceMonkey lacks. */
-const NEEDED_CALLS = ['claimTab', 'renewRun', 'releaseRun', 'setTabScriptsOff', 'writeRunScript', 'writeGmValues', 'scriptsOnTab', 'tabDocument'];
+/** The calls a run needs, which an older SourceMonkey lacks. */
+// `namedTab` is the newest, and came with the claim calls' present
+// arguments, so an extension without it takes older ones.
+const NEEDED_CALLS = [
+  'claimTab', 'renewRun', 'releaseRun', 'setTabScriptsOff', 'writeRunScript', 'writeGmValues', 'scriptsOnTab', 'tabDocument',
+  'clickNotification', 'watchForNamingNavigation', 'namedTab',
+];
+// How long the extension watches for the navigation that names a tab.
+const NAMING_MS = 10_000;
 
 /** Said when the extension in the browser is older than these calls. */
-export const EXTENSION_TOO_OLD = 'SourceMonkey in this browser is older than this sm-dev, so it can\'t run --extension runs. '
+const EXTENSION_TOO_OLD = 'SourceMonkey in this browser is older than this sm-dev, so it can\'t run sm-dev\'s scripts. '
   + 'Update it: rebuild it and reload it in chrome://extensions, or use --temp-browser, which loads this sm-dev\'s copy.';
 
 /** An event from the extension, as sm-dev-link.ts and background.ts send them. */
@@ -115,20 +122,17 @@ export class ExtensionLink {
      */
     readonly runId: string,
     private readonly workerUrl: string,
-    // An extension run: the run's tabs run its own scripts, and it hears
-    // the extension's events. A harness run's tabs run none of the
-    // extension's, and it only claims.
-    private readonly extensionRun: boolean,
   ) {}
 
   /**
-   * Connects to the extension in `context`'s browser, for an extension
-   * run or a harness run (`extensionRun`). Throws `EXTENSION_TOO_OLD`
-   * for an extension without the calls this needs.
+   * Connects to the extension in `context`'s browser, for a run. Its
+   * tabs run its own scripts, and it hears the extension's events.
+   * Throws `EXTENSION_TOO_OLD` for an extension without the calls this
+   * needs.
    */
-  static async open(context: BrowserContext, runId: string, { extensionRun = true } = {}): Promise<ExtensionLink> {
+  static async open(context: BrowserContext, runId: string): Promise<ExtensionLink> {
     const workerUrl = `chrome-extension://${await sourceMonkeyExtensionId()}/background.js`;
-    const link = new ExtensionLink(context, runId, workerUrl, extensionRun);
+    const link = new ExtensionLink(context, runId, workerUrl);
     const worker = await findExtensionWorker(context);
     const missing = await worker.evaluate((names) => {
       const api = (self as unknown as { SourceMonkey?: Record<string, unknown> }).SourceMonkey ?? {};
@@ -223,33 +227,44 @@ export class ExtensionLink {
   }
 
   /**
-   * Claims `page`'s tab for the run before it loads the run's page: it
-   * visits a page of the extension, which can read its own tab id, and
-   * the claim is recorded before this returns. Leaves the tab blank
-   * (`about:blank`), for the run to load its page in. Returns the tab's
-   * id. Throws an error naming the step that failed.
+   * Claims `page`'s tab for the run before it loads the run's page. The
+   * tab is named to the extension by a navigation it watches for, to
+   * `about:blank#<fragment>`, and the claim is recorded before this
+   * returns. Leaves the tab on `about:blank`, for the run to load its
+   * page in. Returns the tab's id. Throws an error naming the step that
+   * failed.
    */
   async claimPage(page: Page, scriptsOff = false): Promise<number> {
-    try {
-      await page.goto(`${this.origin}/sm-dev.html`);
-    } catch (err) {
-      throw new Error(`The tab could not open SourceMonkey's sm-dev page: ${firstLine(err)}`);
-    }
-    const tabId = await page.evaluate(() => chrome.tabs.getCurrent().then((tab) => tab?.id ?? null)).catch(() => null);
-    if (typeof tabId !== 'number') throw new Error('Internal error: The tab could not read its own id');
-    await this.call(({ id, runId, own, ttl }) =>
-      (self as unknown as { SourceMonkey: Api }).SourceMonkey.claimTab(id, runId, own, ttl),
-    { id: tabId, runId: this.runId, own: this.extensionRun, ttl: LEASE_MS });
+    // Twice at most: the watch lives in the worker's memory, so a worker
+    // Chrome restarted in between has none, and the next one watches anew.
+    let tabId = await this.nameTab(page);
+    if (tabId === null) tabId = await this.nameTab(page);
+    if (tabId === null) throw new Error('SourceMonkey did not see the tab load about:blank, so it could not tell which tab it is');
+    await this.call(({ id, runId, ttl }) =>
+      (self as unknown as { SourceMonkey: Api }).SourceMonkey.claimTab(id, runId, ttl),
+    { id: tabId, runId: this.runId, ttl: LEASE_MS });
     if (scriptsOff) await this.setTabScriptsOff(tabId, true);
     this.tabs.set(tabId, { scriptsOff });
-    // Out of the extension's renderer process first: `about:blank`
-    // straight from its page would stay in it, beside every other tab
-    // claimed this way, and what a tab sets per process would clash.
-    // CDP's locale override (`--lang`) is one: a second tab's is
-    // refused while the first holds its own.
-    await page.goto('data:text/html,').catch(() => undefined);
-    await page.goto('about:blank').catch(() => undefined);
+    // The fragment off by history, not a navigation: one to `about:blank`
+    // would swap the tab's main frame, and Playwright would then prefix
+    // the page's snapshot refs (`f1e5`) as if it were an iframe.
+    await page.evaluate(() => history.replaceState(null, '', location.href.split('#')[0]))
+      .catch(() => page.goto('about:blank').catch(() => undefined));
     return tabId;
+  }
+
+  // The tab's `chrome.tabs` id, learned from a navigation the worker
+  // watches for (`watchForNamingNavigation`). Null when it heard none.
+  private async nameTab(page: Page): Promise<number | null> {
+    const fragment = `sm-dev-${randomBytes(8).toString('hex')}`;
+    await this.call(({ f, t }) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.watchForNamingNavigation(f, t), { f: fragment, t: NAMING_MS });
+    try {
+      await page.goto(`about:blank#${fragment}`);
+    } catch (err) {
+      // The watch ends on its own, as it times out.
+      throw new Error(`The tab could not load about:blank, to tell SourceMonkey which tab it is: ${firstLine(err)}`);
+    }
+    return this.call((f) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.namedTab(f), fragment);
   }
 
   /**
@@ -284,9 +299,9 @@ export class ExtensionLink {
   private renewIn(worker: Worker): Promise<number> {
     if (this.closing) return Promise.resolve(0);
     const tabs = [...this.tabs].map(([tabId, t]) => ({ tabId, scriptsOff: t.scriptsOff }));
-    const renewal = worker.evaluate(({ runId, ttl, own, held }) =>
-      (self as unknown as { SourceMonkey: Api }).SourceMonkey.renewRun(runId, ttl, own, held, own),
-    { runId: this.runId, ttl: LEASE_MS, own: this.extensionRun, held: tabs });
+    const renewal = worker.evaluate(({ runId, ttl, held }) =>
+      (self as unknown as { SourceMonkey: Api }).SourceMonkey.renewRun(runId, ttl, held),
+    { runId: this.runId, ttl: LEASE_MS, held: tabs });
     this.renewing.add(renewal);
     void renewal.finally(() => this.renewing.delete(renewal)).catch(() => undefined);
     return renewal;
@@ -375,8 +390,10 @@ export function firstLine(err: unknown): string {
 
 // The part of the worker's `self.SourceMonkey` this file calls.
 interface Api {
-  claimTab(tabId: number, runId: string, ownScripts: boolean, ttlMs: number): Promise<void>;
-  renewRun(runId: string, ttlMs: number, ownScripts: boolean, tabs: { tabId: number; scriptsOff?: boolean }[], subscribe: boolean): Promise<number>;
+  claimTab(tabId: number, runId: string, ttlMs: number): Promise<void>;
+  watchForNamingNavigation(fragment: string, timeoutMs: number): void;
+  namedTab(fragment: string): Promise<number | null>;
+  renewRun(runId: string, ttlMs: number, tabs: { tabId: number; scriptsOff?: boolean }[]): Promise<number>;
   releaseRun(runId: string): Promise<void>;
   setTabScriptsOff(tabId: number, off: boolean): Promise<void>;
   writeRunScript(args: { run: string; text: string; name?: string; files?: Record<string, PushedFile> }): Promise<PushResult>;

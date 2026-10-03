@@ -13,7 +13,7 @@ import { defineConfig } from '@playwright/test';
 //
 // Projects:
 //   - sourcemonkey (default) — runs every spec under both directories.
-//   - harness                — tests/harness/, sm-dev's own suite.
+//   - sm-dev                 — tests/harness/, sm-dev's own suite.
 //   - tampermonkey           — runs only the examples suite against the
 //                              user's TM-equipped browser opened via
 //                              `scripts/open-test-browser.sh tampermonkey`.
@@ -69,7 +69,7 @@ export default defineConfig({
     {
       // sm-dev and the `sourcemonkey/harness` fixture's own suite
       // (src/harness/). See docs/harness-design.md.
-      name: 'harness',
+      name: 'sm-dev',
       testMatch: ['harness/**/*.spec.ts'],
       retries: 1,
     },

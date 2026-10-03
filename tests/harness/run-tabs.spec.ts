@@ -5,12 +5,11 @@
 
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
-import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from '@playwright/test';
 
 import { test, expect } from '../fixtures/harness.js';
+import { launchDebugBrowser } from '../fixtures/debug-browser.js';
 import { run, type RunOptions } from '../../lib/harness/run.js';
 
 const CLI = fileURLToPath(new URL('../../lib/harness/cli.js', import.meta.url));
@@ -64,7 +63,6 @@ test('scripts run in the tabs the run tab opens', async ({ fixtureServer, script
     files: [file],
     urls: [`${fixtureServer.baseUrl}/target.html`],
     tempBrowser: true,
-    extension: true,
     collectionRoot: scriptsDir.path,
     localRoots: [],
     out: (line) => {
@@ -139,35 +137,26 @@ test('start with no scripts opens each URL given once, however often it is given
 test('closing a followed tab and T1 is noticed, and the run carries on', async ({ fixtureServer, scriptsDir }) => {
   const file = scriptsDir.write({
     relativePath: 'closer.user.js',
-    meta: { name: 'Closer', match: ['*://*/target.html', '*://*/other.html'], grant: ['window.close'] },
+    meta: { name: 'Closer', match: ['*://*/target.html', '*://*/other.html*'], grant: ['window.close'] },
+    // A third tab stays open: the extension won't close a window's last.
     body: `
       if (location.pathname.endsWith('target.html')) {
-        window.open('other.html');
+        window.open('other.html?close');
+        window.open('other.html?stay');
+        setTimeout(() => window.close(), 3000);
+      } else if (location.search === '?close') {
+        // Once the run has found it.
         setTimeout(() => window.close(), 1500);
-      } else {
-        setTimeout(() => window.close(), 300);
       }
     `,
   });
   const { code, lines } = await runUntil({
     files: [file], urls: [`${fixtureServer.baseUrl}/target.html`], collectionRoot: scriptsDir.path,
-  }, ['[sm-dev] Tab T2 closed', '[sm-dev] Tab T1 closed']);
-  expect(lines).toContain('[sm-dev] Tab T2 closed');
+  }, ['[sm-dev] Tab T1 closed']);
+  // T2 or T3, whichever opened first.
+  expect(lines.filter((l) => /^\[sm-dev\] Tab T[23] closed$/.test(l)), lines.join('\n')).toHaveLength(1);
   expect(lines).toContain('[sm-dev] Tab T1 closed');
   expect(code).toBe(0);
-});
-
-test('a document-start script in a followed tab gets a may-have-run-late note', async ({ fixtureServer, scriptsDir }) => {
-  const file = scriptsDir.write({
-    relativePath: 'early.user.js',
-    meta: { name: 'Early', match: ['*://*/target.html', '*://*/other.html'], runAt: 'document-start' },
-    body: `if (location.pathname.endsWith('target.html')) window.open('other.html');`,
-  });
-  const note = `Tab T2 had already started loading, so ${scriptsDir.path}/early.user.js (run-at document-start) may have run later there than it would in the extension`;
-  const { lines } = await runUntil({
-    files: [file], urls: [`${fixtureServer.baseUrl}/target.html`], collectionRoot: scriptsDir.path,
-  }, [note]);
-  expect(lines).toContain(`[sm-dev] ${note}`);
 });
 
 test('a page sandboxed by its CSP header gets a warning naming the page-context scripts', async ({ fixtureServer, scriptsDir }) => {
@@ -191,7 +180,7 @@ test('a page sandboxed by its CSP header gets a warning naming the page-context 
     `${scriptsDir.path}/page-world.user.js. Add @inject-into content to run a script in the isolated context ` +
     `instead, unless it needs the page's own variables.`,
   );
-  // sm-dev's own injection is blocked there too, as in the extension.
+  // The page-context one is blocked, the isolated one runs.
   expect(lines).toContain('[page log] [content-world] ran');
   expect(lines).not.toContain('[page log] [page-world] ran');
 });
@@ -376,9 +365,7 @@ test('a tab without scripts gets none, nor do its tabs, and load and savehtml le
     ['Tab T3 opened', `load ${b}`],
     // Only T1 runs scripts, so only it reloads.
     ['[page log] [B] on /target.html', `savehtml T2 ${saved}`],
-    ['Wrote', 'eval T2 !!document.querySelector("link[data-sm-badge]")'],
-    ['false', 'eval T1 !!document.querySelector("link[data-sm-badge]")'],
-    ['true', 'exit'],
+    ['Wrote', 'exit'],
   ]);
   expect(lines.some((l) => /^\[sm-dev\] Tab T3 opened at .*other\.html \(no scripts\), from T2 /.test(l))).toBe(true);
   expect(lines).toContain('[sm-dev] Reloading T1');
@@ -388,9 +375,6 @@ test('a tab without scripts gets none, nor do its tabs, and load and savehtml le
   expect(lines.filter((l) => /^\[T[23]\] .*\[(A|B)\] on/.test(l))).toEqual([]);
   expect(lines.some((l) => l.includes('It has the scripts\' changes'))).toBe(false);
   expect(existsSync(saved)).toBe(true);
-  // No badge in T2; T1 has one.
-  const badges = lines.slice(lines.findIndex((l) => l.includes('Wrote')));
-  expect(badges.filter((l) => l === 'false' || l === 'true')).toEqual(['false', 'true']);
 });
 
 test('open --noscript switches a tab to no scripts for good, and --script back', async ({ fixtureServer, scriptsDir }) => {
@@ -401,7 +385,7 @@ test('open --noscript switches a tab to no scripts for good, and --script back',
     meta: { name: 'A', match: [`${base}/target.html`] },
     body: `console.log('[A] on ' + location.pathname);`,
   });
-  const lines = await driveCli([a, `${base}/target.html`, '--extension'], [
+  const lines = await driveCli([a, `${base}/target.html`], [
     ['[page log] [A] on /target.html', 'open --noscript'],
     ['runs no scripts from now on', 'tabs'],
     // The script stays out: a reload loads without it. (Through eval,
@@ -529,7 +513,7 @@ test('--watch follows a loaded script, and a save reloads only its tabs', async 
     ['[T2] [page log] [B] one', () => { write('B', 'other.html', 'two'); return ''; }],
     ['[T2] [page log] [B] two', 'exit'],
   ]);
-  const saved = lines.indexOf('[sm-dev] Change detected, re-injecting');
+  const saved = lines.indexOf('[sm-dev] Change detected, re-pushing');
   expect(saved).toBeGreaterThan(-1);
   expect(lines.slice(saved)).toContain('[sm-dev] Reloading T2');
   expect(lines.slice(saved).some((l) => l.includes('Reloading T1'))).toBe(false);
@@ -545,7 +529,7 @@ test('with no tab, load says nothing was reloaded', async ({ scriptsDir }) => {
   expect(lines).toContain('[sm-dev] No open tab matches it, so none was reloaded. Type open 2 to open its page.');
 });
 
-test('--watch re-injects on a save and reloads the tab it runs in', async ({ fixtureServer, scriptsDir }) => {
+test('--watch re-pushes on a save and reloads the tab it runs in', async ({ fixtureServer, scriptsDir }) => {
   const spec = (word: string) => ({
     relativePath: 'saved.user.js',
     meta: { name: 'Saved', match: ['*://*/target.html'] },
@@ -567,7 +551,7 @@ test('--watch re-injects on a save and reloads the tab it runs in', async ({ fix
   });
   const timer = setTimeout(stop, 10000);
   await done.finally(() => clearTimeout(timer));
-  expect(lines).toContain('[sm-dev] Change detected, re-injecting');
+  expect(lines).toContain('[sm-dev] Change detected, re-pushing');
   expect(lines).toContain('[sm-dev] Reloading T1');
   expect(lines).toContain('[page log] [saved] after');
 });
@@ -651,8 +635,10 @@ test('--from-saved lasts for its URL only, --offline lets links out, and a missi
     // Back at its URL, the file again.
     ['"fetched"', `open ${url}`],
     ['[A] on /target.html titled saved', 'eval window.open("target.html"), "opened"'],
-    // A tab it opens gets the live page.
-    ['[T2] [page log] [A] on /target.html titled target', () => {
+    // A tab it opens gets the live page. (Its first load's console
+    // lines aren't shown, so its title is asked.)
+    ['[T2] [sm-dev] A started on', 'eval T2 document.title'],
+    ['"target"', () => {
       unlinkSync(file);
       return 'reload T1';
     }],
@@ -742,16 +728,16 @@ test('--lang sets the languages of each tab, in a launched browser and in one co
   const urls = [`${fixtureServer.baseUrl}/target.html?one`, `${fixtureServer.baseUrl}/target.html?two`];
   // Two tabs: T1, and T2 the run opens itself.
   const wanted = ['[lang] ?one ', '[lang] ?two '];
-  // `sameXhr`: the request asks as the tab does. The extension's asks
-  // as the browser does, which Chrome expands (`zh-CN,zh;q=0.9,en;q=0.8`).
-  const expectLangs = (lines: string[], where: string, sameXhr: boolean): void => {
+  // The extension's request asks as the browser does, not the tab:
+  // `xhr` is what it should carry.
+  const expectLangs = (lines: string[], where: string, xhr: unknown): void => {
     for (const w of wanted) {
       const line = lines.find((l) => l.includes(w));
       expect(line, `${w} in ${where}`).toBeDefined();
       const got = JSON.parse(line!.slice(line!.indexOf('{')));
       expect(got).toEqual({
         languages: ['zh-CN', 'en'], intl: 'zh-CN', header: expect.stringMatching(/^zh-CN,en/),
-        xhrHeader: sameXhr ? got.header : expect.stringMatching(/^zh-CN,/),
+        xhrHeader: xhr,
       });
     }
   };
@@ -759,19 +745,15 @@ test('--lang sets the languages of each tab, in a launched browser and in one co
   // A launched browser, from the command line: in this process,
   // Playwright's test runner would give the browser a locale of its own.
   const cli = await new Promise<string>((resolve) => {
-    execFile(process.execPath, [CLI, '--temp-browser', '--root', scriptsDir.path, 'start', '--extension', '--lang', 'zh-cn,en', file, ...urls, '--', 'wait', 'log', '[lang] ?two'],
+    execFile(process.execPath, [CLI, '--temp-browser', '--root', scriptsDir.path, 'start', '--lang', 'zh-cn,en', file, ...urls, '--', 'wait', 'log', '[lang] ?two'],
       (_err, stdout, stderr) => resolve(stdout + stderr));
   });
-  expectLangs(cli.split('\n'), 'a launched browser', false);
+  // A launched one's flags, which Chrome expands (`zh-CN,zh;q=0.9,en;q=0.8`).
+  expectLangs(cli.split('\n'), 'a launched browser', expect.stringMatching(/^zh-CN,/));
 
   // A browser the run connects to, as a shared one.
-  const port = await new Promise<number>((resolve) => {
-    const server = net.createServer().listen(0, '127.0.0.1', () => {
-      const { port: free } = server.address() as net.AddressInfo;
-      server.close(() => resolve(free));
-    });
-  });
-  const shared = await chromium.launch({ args: [`--remote-debugging-port=${port}`] });
+  const shared = await launchDebugBrowser();
+  const port = shared.port;
   try {
     const lines: string[] = [];
     let stop!: () => void;
@@ -795,7 +777,8 @@ test('--lang sets the languages of each tab, in a launched browser and in one co
     } finally {
       clearTimeout(timer);
     }
-    expectLangs(lines, 'a connected browser', true);
+    // A connected one's own languages.
+    expectLangs(lines, 'a connected browser', expect.any(String));
   } finally {
     await shared.close();
   }

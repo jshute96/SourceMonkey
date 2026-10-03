@@ -194,7 +194,7 @@ test('list prints a table', () => {
   assert.deepEqual(runTable([
     run({ id: 'D1', pid: 42, scripts: ['sites/x/y.user.js', 'z.user.js'], tabs: 1 }),
     run({ id: 'D2', pid: 4567, scripts: ['a.user.js', 'b.user.js', 'c.user.js', 'd.user.js', 'e.user.js'], tabs: 3 }),
-    // No tab count where the run keeps none (--extension).
+    // No tab count where the run keeps none.
     run({ id: 'D3', pid: 7, started: now - 3_725_000, browser: 'http://127.0.0.1:41234', owned: true, headless: true, scripts: [] }),
     run({ id: 'D4', pid: 8, headless: true, scripts: [] }),
   ], now), [

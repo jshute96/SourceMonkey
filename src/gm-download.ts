@@ -141,7 +141,7 @@ export function isAllowedDownloadUrl(url: string): boolean {
 }
 
 // The `details.message` a script sees for a URL `isAllowedDownloadUrl`
-// rejects. Shared with the development harness (src/harness/host.ts).
+// rejects.
 export function downloadUrlRefusedMessage(url: string): string {
   return `refusing to download non-http(s) URL: ${url}`;
 }

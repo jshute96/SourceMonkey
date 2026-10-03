@@ -193,6 +193,8 @@ import {
   claimsReady,
   claimTab,
   dropClaim,
+  namedTab,
+  watchForNamingNavigation,
   emitSmDevEvent,
   inheritClaim,
   onClaimsLiveChange,
@@ -299,17 +301,21 @@ interface SourceMonkeyApi {
   addCollection: (path: string) => Promise<AddCollectionResult>;
   createCollection: (spec: NewCollectionSpec) => Promise<AddCollectionResult>;
   installScript: (location: string, target: InstallTarget) => Promise<AddCollectionResult>;
-  // An sm-dev run's scripts (docs/sm-dev-extension.md): install text
+  // An sm-dev run's scripts (docs/sm-dev-design.md): install text
   // into the run's test collection, registered before the promise
   // settles; a rewrite of the same name replaces it in place.
   writeRunScript: (args: RunScriptArgs) => Promise<WriteRunScriptResult>;
-  // sm-dev's tab claims and event stream (sm-dev-link.ts). `ownScripts`:
-  // the run's tabs run its test collection's scripts; otherwise none of
-  // the extension's. `renewRun` extends the run's lease, claims and
-  // event subscription. `releaseRun` ends them and removes the run's
+  // sm-dev's tab claims and event stream (sm-dev-link.ts): a run's tabs
+  // run only its test collection's scripts. `renewRun` extends the run's
+  // lease, claims and event subscription. `releaseRun` ends them and removes the run's
   // test collection, with the scripts' GM values.
-  claimTab: (tabId: number, runId: string, ownScripts: boolean, ttlMs: number) => Promise<void>;
-  renewRun: (runId: string, ttlMs: number, ownScripts: boolean, tabs?: { tabId: number; scriptsOff?: boolean }[], subscribe?: boolean) => Promise<number>;
+  claimTab: (tabId: number, runId: string, ttlMs: number) => Promise<void>;
+  // How sm-dev learns a tab's id: watch for a navigation to
+  // `about:blank#<fragment>`, which it then makes, and ask which tab
+  // made it (null if none did in time).
+  watchForNamingNavigation: (fragment: string, timeoutMs: number) => void;
+  namedTab: (fragment: string) => Promise<number | null>;
+  renewRun: (runId: string, ttlMs: number, tabs?: { tabId: number; scriptsOff?: boolean }[]) => Promise<number>;
   releaseRun: (runId: string) => Promise<void>;
   // Removes the test collections of runs gone longer than the grace
   // period, as the worker does every minute, at `now`. Settles once the
@@ -446,7 +452,7 @@ interface SourceMonkeyApi {
   // a test that needs the label cannot predict it — it has to ask.
   getScriptLogLabel: (scriptId: string) => Promise<string>;
   // How the script's injected entry maps back to its files, for
-  // `sm-dev --extension` to rewrite stack lines in the Log entries and
+  // sm-dev to rewrite stack lines in the Log entries and
   // console lines it prints. Segment contents are left out: only the
   // line numbers are needed. Null for a script that isn't stored.
   getStackLayout: (scriptId: string) => Promise<StackLayout | null>;
@@ -693,6 +699,8 @@ const api: SourceMonkeyApi = {
     return result;
   }),
   claimTab,
+  watchForNamingNavigation,
+  namedTab,
   renewRun,
   releaseRun: (runId) => queueSmDevWork(async () => {
     await releaseRun(runId);
@@ -2508,9 +2516,8 @@ async function handleCheckPending(
   // started can't let a script through.
   await claimsReady();
   const claim = activeClaim(tabId);
-  // - Only for the extension's own scripts: a harness run's MAIN-world
-  //   script asks through this bridge too, and must hear `run`, as it
-  //   always did for an id the extension doesn't know.
+  // - Only for the extension's own scripts: an id it doesn't know
+  //   (a page's forgery over the bridge) runs nothing either way.
   // - A scratch script is sm-dev's: it runs only in the tabs of the run
   //   that pushed it. Nowhere else, a run's tabs or not.
   const script = await getScript(payload.id);
@@ -4271,10 +4278,9 @@ async function recordScriptReport(
 ): Promise<void> {
   const id = payload.id;
   if (!id) return;
-  // The page-world bridge relays every script's reports, including
-  // ones the extension never registered: an sm-dev harness run's, in
-  // the same browser. Those aren't ours to show (they'd read as
-  // UNEXPECTED) or to log.
+  // The page-world bridge relays any report the page sends, including
+  // one about a script the extension never registered (a forgery).
+  // Those aren't ours to show (they'd read as UNEXPECTED) or to log.
   if (payload.__viaBridge && !(await getScript(id))) return;
   const name = String(payload.name ?? id);
   // sender.url is the document URL where the wrapper sent from; prefer

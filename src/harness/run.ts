@@ -1,6 +1,6 @@
-// `sm-dev start`'s run: connect to a browser, inject one or more scripts
-// from disk, load the page, and log what happens, taking commands from
-// clients over its socket until stopped.
+// `sm-dev start`'s run: connect to a browser, push one or more scripts
+// from disk into SourceMonkey there, load the page, and log what
+// happens, taking commands from clients over its socket until stopped.
 //
 // Kept apart from cli.ts so the Node-only commands (`validate`,
 // `match`) never load Playwright, which is an optional peer dependency.
@@ -23,9 +23,9 @@ import { DevToolsLink } from './devtools.js';
 import { extensionLabel, sourceMonkeyState, type ExtensionState } from './extension-backend.js';
 import { ExtensionHost } from './extension-host.js';
 import { launchExtensionBrowser } from './extension-launch.js';
-import { EXTENSION_TOO_OLD, ExtensionLink, linkRunId, type ExtensionEvent } from './extension-link.js';
-import { HarnessHost, type ErrorReport, type SkipReport, type StartReport } from './host.js';
-import { attachPage, targetIdOf, type AttachOptions, type PageAttachment } from './inject.js';
+import { ExtensionLink, linkRunId, type ExtensionEvent } from './extension-link.js';
+import type { ErrorReport, SkipReport, StartReport } from './host.js';
+import { attachPage, targetIdOf, type AttachOptions, type PageAttachment } from './page-watch.js';
 import { pageSays, recordLog } from './page-commands.js';
 import { consoleText, decodeOwnRefs, formatConsoleArgs, hostReportedError, isPreludeLine, shortConsoleText, showConsoleLine, showPageError } from './page-output.js';
 import {
@@ -34,7 +34,6 @@ import {
 import { comparableUrl, openingSavedLine, type SavedPageStart } from './saved-pages.js';
 import { browserSentence, checkRunsDir, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentCommand, type SentLineHandler } from './runs.js';
 import { cspBlocksPageScripts, sandboxedPageWarning } from '../missing-scripts.js';
-import { unsupportedRunAt } from '../userscript-header.js';
 import { waitForStuckTabs } from './stuck-tabs.js';
 import { NO_TABS } from './tab-refs.js';
 import { loadPage, settleTabs } from './wait.js';
@@ -64,12 +63,11 @@ export interface RunOptions extends ConnectOptions {
    */
   all?: boolean;
   /**
-   * Open no tab at startup. The typed `newtab` opens one later, and
-   * with `--extension` the scripts run in whatever tabs the person
-   * browses to.
+   * Open no tab at startup. The typed `newtab` opens one later; tabs
+   * the person opens run none of the run's scripts.
    */
   noTab?: boolean;
-  /** Re-inject and reload whenever a script or one of its files changes. */
+  /** Re-push and reload whenever a script or one of its files changes. */
   watch?: boolean;
   /** Seed `GM_*` storage for every script before it runs. */
   values?: Record<string, unknown>;
@@ -132,12 +130,6 @@ export interface ConnectOptions {
    * the package's own build of SourceMonkey loaded.
    */
   tempBrowser?: boolean;
-  /**
-   * Use the real extension in the browser: the script is pushed into a
-   * test collection of the run's own as text rather than injected by
-   * the harness.
-   */
-  extension?: boolean;
   headed?: boolean;
   /**
    * `--lang`: the languages the run's tabs prefer (see browser-lang.ts).
@@ -558,13 +550,11 @@ export async function run(opts: RunOptions): Promise<number> {
   });
   const held: Held = {};
   try {
-    return await runInHarness(opts, session, held, remote, extensionState);
+    return await runInBrowser(opts, session, held, remote, extensionState);
   } finally {
     ending = true;
     // No sent command runs against tabs being let go.
     remote.disarm();
-    // Read before the tabs are let go: only open ones still run scripts.
-    const tabsLeft = held.tabs ? held.tabs.list().length : 1;
     // While the tabs are still attached, so a DevTools lookup in flight
     // can delete its markers from them.
     await held.devtools?.stop();
@@ -572,19 +562,15 @@ export async function run(opts: RunOptions): Promise<number> {
     // attachment behind in a browser the developer keeps using.
     await held.tabs?.dispose().catch(() => undefined);
     await held.attachment?.dispose().catch(() => undefined);
-    // Its tabs run the extension's scripts again from their next load.
+    // Its tabs run the extension's scripts again from their next load,
+    // and the extension removes its test collection.
     await held.extension?.close();
     await session.done().catch(() => undefined);
     // On every way out, so a page tested after this is never taken
     // for one the run still controls. Its registrations are gone, but
     // script code already running in an open page runs on.
     const run = remote.id ? `Run ${remote.id}` : 'The run';
-    opts.out(!held.injected ? `[sm-dev] ${run} ended`
-      // A launched browser's extension goes with it.
-      // The extension removes the run's test collection.
-      : opts.extension ? `[sm-dev] ${run} ended`
-        : tabsLeft > 0 ? `[sm-dev] ${run} ended. Pages still have previously loaded scripts.`
-        : `[sm-dev] ${run} ended`);
+    opts.out(`[sm-dev] ${run} ended`);
     await remote.close();
   }
 }
@@ -806,7 +792,7 @@ class Remote {
   };
 }
 
-async function runInHarness(
+async function runInBrowser(
   opts: RunOptions,
   session: RunSession,
   held: Held,
@@ -815,48 +801,32 @@ async function runInHarness(
   extensionState: ExtensionState | null,
 ): Promise<number> {
   const { page } = session;
-  // With `--extension`, the real extension runs the scripts: the run
-  // pushes them into it, claims its tabs so only they run there, and
-  // its host is filled from the extension's events (extension-host.ts).
-  // Everything else is the same. See docs/sm-dev-extension.md.
-  let link: ExtensionLink | null = null;
-  let host: HarnessHost;
-  if (opts.extension) {
-    // Told apart up front: its worker can't be found either, which
-    // would read as not installed.
-    if (extensionState === 'disabled') {
-      opts.out('[sm-dev] SourceMonkey is turned off in this browser. Turn it on in chrome://extensions, or use --temp-browser, which loads it.');
-      return 1;
-    }
-    try {
-      link = await ExtensionLink.open(session.context, linkRunId(remote.id));
-    } catch (err) {
-      opts.out(`[sm-dev] ${(err as Error).message}`);
-      return 1;
-    }
-    held.extension = link;
-    host = new ExtensionHost(link, (name, level, message) => opts.out(`[sm-dev] ${name} ${level}: ${message}`));
-    link.onRestart((restored) => opts.out('[sm-dev] SourceMonkey\'s background script restarted, so what the scripts did meanwhile may be missing here.'
-      + (restored > 0 ? ` It had lost its hold on ${restored === 1 ? 'one of the run\'s tabs' : `${restored} of the run's tabs`}, which it has again.` : '')));
-  } else {
-    host = new HarnessHost();
+  // The real extension runs the scripts: the run pushes them into it,
+  // claims its tabs so only they run there, and its host is filled from
+  // the extension's events (extension-host.ts). See
+  // docs/sm-dev-design.md.
+  // Told apart up front: its worker can't be found either, which would
+  // read as not installed.
+  if (extensionState === 'disabled') {
+    opts.out('[sm-dev] SourceMonkey is turned off in this browser. Turn it on in chrome://extensions, or use --temp-browser, which loads it.');
+    return 1;
   }
-  // The run's claims on its tabs (see docs/sm-dev-extension.md): an
-  // extension run's let only its scripts run; a harness run's, in a
-  // browser with SourceMonkey, keep SourceMonkey-managed scripts out.
-  // Also with no scripts yet, so the tabs are the run's for a `load`.
-  let claims: ExtensionLink | null = null;
-  if (link) {
-    claims = link;
-  } else if (extensionState === 'installed') {
-    claims = await harnessClaims(session, remote.id, opts.out);
-    if (claims) held.extension = claims;
+  let link: ExtensionLink;
+  try {
+    link = await ExtensionLink.open(session.context, linkRunId(remote.id));
+  } catch (err) {
+    opts.out(`[sm-dev] ${(err as Error).message}`);
+    return 1;
   }
+  held.extension = link;
+  const host = new ExtensionHost(link, (name, level, message) => opts.out(`[sm-dev] ${name} ${level}: ${message}`));
+  link.onRestart((restored) => opts.out('[sm-dev] SourceMonkey\'s background script restarted, so what the scripts did meanwhile may be missing here.'
+    + (restored > 0 ? ` It had lost its hold on ${restored === 1 ? 'one of the run\'s tabs' : `${restored} of the run's tabs`}, which it has again.` : '')));
   // Commands are only read once the page has loaded, but a prompt
   // opened before then can still wait for a typed or sent accept.
   const commandsComing = opts.until !== undefined && remote.reachable;
   let devtools: DevToolsLink | null = null;
-  const tabs = new FollowedTabs(host, opts, session.context, commandsComing, link, claims, () => {
+  const tabs = new FollowedTabs(host, opts, session.context, commandsComing, link, () => {
     remote.setTabs(tabs.list().length);
     devtools?.schedule();
   });
@@ -873,10 +843,10 @@ async function runInHarness(
   wireHostOutput(host, opts.out, (record) => tabs.prefixOf(record));
   // T1, unless `--notab`; then the first tab `newtab` opens is T1.
   if (page) {
-    // Claimed first, before it loads the run's page.
-    const tabId = claims ? await claimTab(claims, page, link === null, opts.out) : undefined;
-    // An extension run can't do without it; a harness run goes on.
-    if (link && claims && tabId === undefined) return 1;
+    // Claimed first, before it loads the run's page; the run can't do
+    // without it.
+    const tabId = await claimTab(link, page, opts.out);
+    if (tabId === undefined) return 1;
     wirePageOutput(page, opts, true, (text) => host.remapStack(text));
     wireSandboxCheck(page, () => tabs.firstTabScripts, opts.out);
     const dialogs = await DialogTracker.attach(page, opts.out, { visible: browserVisible(opts), commandsComing });
@@ -885,9 +855,8 @@ async function runInHarness(
     // Otherwise it stays null (see TODO.md).
     await applyLang(page, opts.lang, opts.out);
     const attachment = await attachPage(page, host, tabs.attachOptions);
-    if (link && tabId !== undefined) (host as ExtensionHost).addTab(attachment, tabId);
+    host.addTab(attachment, tabId);
     held.attachment = attachment;
-    await attachment.showBadge();
     await tabs.start(page, attachment, dialogs);
   }
   const prepared = await prepareAll(opts);
@@ -917,19 +886,13 @@ async function runInHarness(
     queue = done.catch(() => undefined);
     return done;
   };
-  // Said by `push` instead with `--extension`.
-  const injected = (script: PreparedScript): void => {
-    if (!link) opts.out(`[sm-dev] Injected ${preparedScriptPath(script)} in world ${script.world}, run-at ${runAtLabel(script)}`);
-  };
-  // With `--extension`: the scripts' text into the run's test
-  // collection in the extension, which the run's tabs run. False,
+  // The scripts' text into the run's test collection in the extension,
+  // which the run's tabs run. False,
   // having said why, when the extension refused one; whatever was
   // pushed before it stays. `seed`: newly loaded, so `--values` seeds
   // their storage, before any tab can run them.
   let pushedAny = false;
   const push = async (list: PreparedScript[], seed = false): Promise<boolean> => {
-    if (!link) return true;
-    const extensionHost = host as ExtensionHost;
     for (const script of list) {
       const file = fileURLToPath(script.script.fileUrl);
       // The extension keeps the run's scripts by this: the path as
@@ -942,10 +905,10 @@ async function runInHarness(
         opts.out(`INVALID  ${typedName(opts, file)}\n    ${result.errorMessage ?? ''}`);
         return false;
       }
-      extensionHost.setPushed(script.spec!.id, result.scriptId);
+      host.setPushed(script.spec!.id, result.scriptId);
       // An extension without the call leaves its stack lines as they are.
-      extensionHost.setLayout(result.scriptId, await link.stackLayout(result.scriptId).catch(() => null));
-      if (seed && opts.values) await extensionHost.setValues(script.spec!.id, opts.values);
+      host.setLayout(result.scriptId, await link.stackLayout(result.scriptId).catch(() => null));
+      if (seed && opts.values) await host.setValues(script.spec!.id, opts.values);
       opts.out(`[sm-dev] Pushed to SourceMonkey: ${preparedScriptPath(script)}${result.replaced ? ' (replaced)' : ''}`);
     }
     return true;
@@ -953,9 +916,7 @@ async function runInHarness(
   // Put `next` in place everywhere, and reload the tabs `changed` affects.
   const apply = async (next: PreparedScript[], changed: ScriptChange[], none: string, pushed = false): Promise<void> => {
     if (!pushed && !(await push(changed.map((c) => c.next)))) return;
-    for (const c of changed) injected(c.next);
     scripts = next;
-    if (next.length > 0) held.injected = true;
     // The typed commands' list too, keeping the selected script by its place.
     if (commands) {
       const i = commands.current ? commands.scripts.indexOf(commands.current) : -1;
@@ -1024,17 +985,13 @@ async function runInHarness(
     files.push(file);
     remote.setScripts(files);
     stamps.set(script, await filesStamp(script));
-    if (opts.values && !link) host.seedValues(script.spec!.id, opts.values);
     opts.out(`[sm-dev] Loaded ${input} as script ${n}`);
     await apply([...scripts, script], [{ next: script }], `No open tab matches it, so none was reloaded. Type open ${n} to open its page.`, true);
   });
-  // Seeded once. An update keeps the store, so values the script wrote
-  // since survive it.
-  if (opts.values && !link) for (const script of prepared) host.seedValues(script.spec!.id, opts.values);
+  // Seeded once, as pushed. An update keeps the store, so values the
+  // script wrote since survive it.
   if (!(await push(prepared, true))) return 1;
-  for (const script of prepared) injected(script);
   await tabs.setScripts(prepared);
-  if (prepared.length > 0) held.injected = true;
   if (page) {
     const t1 = tabs.list()[0];
     // The other URLs given, or with --all the other scripts' pages, each
@@ -1069,7 +1026,7 @@ async function runInHarness(
   try {
     if (opts.watch) {
       watcher = watchFiles(opts, prepared, async () => {
-        opts.out(`[sm-dev] Change detected, ${link ? 're-pushing' : 're-injecting'}`);
+        opts.out('[sm-dev] Change detected, re-pushing');
         await update();
       });
     }
@@ -1107,14 +1064,12 @@ async function runInHarness(
         devtools: () => (devtools?.isUp ? devtools.usage : null),
         browser: browserSentence({ browser: session.endpoint, owned: session.launched, headless: session.headless }),
         extension: () => sourceMonkeyState(session.endpoint),
-        ...(link ? {
-          // The first push makes the test collection.
-          backend: () => (pushedAny
-            ? `SourceMonkey extension, test collection ${link!.runId}`
-            : `SourceMonkey extension, run ${link!.runId}, with no test collection until a script is pushed`),
-          // A throwaway browser's data is the run's own.
-          others: (host as ExtensionHost).otherScripts(!session.launched),
-        } : {}),
+        // The first push makes the test collection.
+        backend: () => (pushedAny
+          ? `SourceMonkey extension, test collection ${link.runId}`
+          : `SourceMonkey extension, run ${link.runId}, with no test collection until a script is pushed`),
+        // A throwaway browser's data is the run's own.
+        others: host.otherScripts(!session.launched),
         output: remote.output,
         roots: { collectionRoot: opts.collectionRoot, localRoots: opts.localRoots },
       };
@@ -1143,33 +1098,13 @@ async function runInHarness(
 }
 
 // Claims `page`'s tab for the run (see `ExtensionLink.claimPage`).
-// Undefined, having said why, when it can't be. `harness`: a harness
-// run's claim, which the run goes on without.
-async function claimTab(link: ExtensionLink, page: Page, harness: boolean, out: (line: string) => void): Promise<number | undefined> {
+// Undefined, having said why, when it can't be.
+async function claimTab(link: ExtensionLink, page: Page, out: (line: string) => void): Promise<number | undefined> {
   try {
     return await link.claimPage(page);
   } catch (err) {
-    const message = (err as Error).message;
-    out(harness
-      ? `[sm-dev] SourceMonkey-managed scripts may also run in T1, since it couldn't be put under sm-dev's control: ${message}`
-      : `[sm-dev] The tab could not be set up for the run: ${message}`);
+    out(`[sm-dev] The tab could not be set up for the run: ${(err as Error).message}`);
     return undefined;
-  }
-}
-
-// A harness run's claims, in a browser with SourceMonkey, so its
-// scripts stay out of the run's tabs. Null when it can't be reached
-// (said once, since its scripts may then also run). It hears no events:
-// the harness reports on its own scripts itself.
-async function harnessClaims(session: RunSession, runId: string | undefined, out: (line: string) => void): Promise<ExtensionLink | null> {
-  try {
-    return await ExtensionLink.open(session.context, linkRunId(runId), { extensionRun: false });
-  } catch (err) {
-    const message = (err as Error).message;
-    out(message === EXTENSION_TOO_OLD
-      ? '[sm-dev] SourceMonkey in this browser is older than this sm-dev, so SourceMonkey-managed scripts may also run in the run\'s tabs. Update it to keep them out.'
-      : `[sm-dev] SourceMonkey-managed scripts may also run in the run's tabs, since it couldn't be reached: ${message}`);
-    return null;
   }
 }
 
@@ -1177,23 +1112,16 @@ interface Held {
   attachment?: PageAttachment;
   tabs?: FollowedTabs;
   devtools?: DevToolsLink;
-  /** With `--extension`: the run's connection to SourceMonkey, released at its end. */
+  /** The run's connection to SourceMonkey, released at its end. */
   extension?: ExtensionLink;
-  /** Set once any script was injected or pushed, for the run's last line. */
-  injected?: boolean;
 }
 
-// Tabs the run's tab opens, by a link, `window.open` or `GM_openInTab`,
-// and the tabs those open, get the loaded scripts too: the extension
-// would inject whatever matches them. Tabs the person opens themselves
-// have no opener, and are left alone.
-//
-// Playwright reports a new tab only once its document has committed,
-// so the scripts also run in that current document. `document-idle`
-// ones, most scripts, run as they would; an earlier one can run late,
-// and the run says so. Getting in first would take holding the tab
-// before it loads, which needs the browser's flat protocol sessions
-// that Playwright doesn't expose.
+// The run's tabs: T1, the tabs `newtab` and `--all` open, and the tabs
+// those open, by a link, `window.open` or `GM_openInTab`. The extension
+// claims an opened tab for the run itself and says so (`tab-opened`),
+// so its scripts run there from its first load; the run then finds its
+// page and watches it. Tabs the person opens themselves have no opener,
+// and are left alone.
 class FollowedTabs {
   // T1, the run's own tab; set by `start`, unless the run opened none.
   private first: ControlledTab | null = null;
@@ -1216,56 +1144,32 @@ class FollowedTabs {
   private nextNumber = 1;
   private disposed = false;
 
-  // With `--extension`: pages that were open before the run, or that it
-  // opened itself, which a tab-opened event can't be about.
+  // Pages that were open before the run, or that it opened itself,
+  // which a tab-opened event can't be about.
   private readonly notOpenedByScripts = new WeakSet<Page>();
 
   constructor(
-    private readonly host: HarnessHost,
+    private readonly host: ExtensionHost,
     private readonly opts: RunOptions,
     private readonly context: BrowserContext,
     // Whether typed commands will be read, so a new tab's dialog waits
     // for a typed answer rather than being dismissed.
     private readonly commandsComing: boolean,
-    // With `--extension`, the run's connection to it: tabs are only
-    // watched, and with claims, the tabs a page opens come from its
-    // events.
-    private readonly link: ExtensionLink | null,
-    // The connection the run's tabs are claimed through, if they are:
-    // `link` in an extension run, or one of a harness run's own.
-    private readonly claims: ExtensionLink | null,
+    // The run's connection to SourceMonkey, which claims its tabs and
+    // says which tabs they open.
+    private readonly link: ExtensionLink,
     // Called as tabs join the list or close.
     private readonly onTabsChanged: () => void = () => undefined,
   ) {
-    if (link && claims) {
-      for (const p of context.pages()) this.notOpenedByScripts.add(p);
-      link.onEvent((event) => {
-        if (event.kind === 'tab-opened') void this.adoptOpened(event);
-      });
-    }
+    for (const p of context.pages()) this.notOpenedByScripts.add(p);
+    link.onEvent((event) => {
+      if (event.kind === 'tab-opened') void this.adoptOpened(event);
+    });
   }
 
-  /**
-   * How the run's tabs are attached: only watched, with `--extension`;
-   * with a harness run's claims, the tabs its scripts open are claimed
-   * before they load.
-   */
+  /** How the run's tabs are attached: watched, with the extension running the scripts. */
   get attachOptions(): AttachOptions {
-    if (this.link) return { watchOnly: { extensionOrigin: this.link.origin } };
-    const claims = this.claims;
-    // A failed claim is said, and the tab goes on unclaimed, as T1's does.
-    return claims
-      ? {
-        claimOpenedTab: async (page) => {
-          await claims.claimPage(page).catch((err) => this.opts.out(
-            `[sm-dev] SourceMonkey-managed scripts may also run in a tab a script opened, since it couldn't be put under sm-dev's control: ${(err as Error).message}`));
-        },
-      }
-      : {};
-  }
-
-  private get extensionHost(): ExtensionHost {
-    return this.host as ExtensionHost;
+    return { watchOnly: { extensionOrigin: this.link.origin } };
   }
 
   /** Register the run's own tab as T1, and follow the tabs it opens. */
@@ -1275,7 +1179,6 @@ class FollowedTabs {
     this.firstAttachment = attachment;
     this.nextNumber = 2;
     this.numbers.set(attachment, 1);
-    this.follow(attachment, 1);
     page.on('close', () => {
       if (this.disposed) return;
       this.opts.out('[sm-dev] Tab T1 closed');
@@ -1360,22 +1263,13 @@ class FollowedTabs {
     // Settled, not all: one failed setup must not skip the others'
     // cleanup.
     await Promise.allSettled(this.adopting);
-    // Link and `window.open` tabs stay open, as under the extension;
-    // `GM_openInTab` ones close with their opener's attachment.
+    // The tabs stay open, only no longer watched.
     for (const { attachment } of this.tabs.values()) await attachment.dispose().catch(() => undefined);
     this.tabs.clear();
   }
 
-  // Adopt the tabs `attachment`'s page (tab `opener`) opens from now on.
-  // With `--extension` they come from its events instead (`adoptOpened`),
-  // which name the tab, as a claim needs.
-  private follow(attachment: PageAttachment, opener: number): void {
-    if (this.link && this.claims) return;
-    attachment.page.on('popup', (tab) => this.adopt(tab, opener));
-    attachment.onOpenedTab = (tab) => this.adopt(tab, opener);
-  }
-
-  private adopt(page: Page, opener: number, tabId?: number): void {
+  // Sets up `page`, a tab tab `opener` opened, as a run tab.
+  private adopt(page: Page, opener: number, tabId: number): void {
     if (this.disposed || this.tabs.has(page)) return;
     this.notOpenedByScripts.add(page);
     const n = this.nextNumber++;
@@ -1384,9 +1278,7 @@ class FollowedTabs {
     this.track(this.setUp(page, n, opener, true, noScript, tabId).catch((err) => {
       // Closed while being set up is the usual cause, and says nothing.
       if (page.isClosed()) return;
-      this.opts.out(noScript
-        ? `[sm-dev] T${n} could not be set up: ${(err as Error).message}`
-        : `[sm-dev] The scripts could not be injected into T${n}: ${(err as Error).message}`);
+      this.opts.out(`[sm-dev] T${n} could not be set up: ${(err as Error).message}`);
     }));
   }
 
@@ -1417,7 +1309,7 @@ class FollowedTabs {
       const page = await this.context.newPage();
       this.notOpenedByScripts.add(page);
       try {
-        const tabId = this.claims ? await this.claimNew(page, n, noScript) : undefined;
+        const tabId = await this.link.claimPage(page, noScript);
         await this.setUp(page, n, undefined, false, noScript, tabId);
       } catch (err) {
         // Nothing controls it, so it would only be in the way.
@@ -1452,9 +1344,9 @@ class FollowedTabs {
 
   // `opener` is the tab that opened this one; none for `newtab`.
   // `announce`: say it opened; the run's own tabs are announced by
-  // their caller instead, with where they are going. `noScript`: no
-  // scripts are injected, and none are later.
-  private async setUp(page: Page, n: number, opener?: number, announce = true, noScript = false, tabId?: number): Promise<void> {
+  // their caller instead, with where they are going. `noScript`: its
+  // claim runs no scripts, now or later.
+  private async setUp(page: Page, n: number, opener: number | undefined, announce: boolean, noScript: boolean, tabId: number): Promise<void> {
     // T1 goes unprefixed, as the run's own does, when `--notab` makes
     // the first tab opened T1.
     const { out, hear, outCut } = tabOutput(this.opts, n);
@@ -1482,8 +1374,6 @@ class FollowedTabs {
     const shown = page.url();
     const attachment = await attachPage(page, this.host, this.attachOptions);
     this.numbers.set(attachment, n);
-    // Its count would be of scripts that are kept out on purpose.
-    if (!noScript) await attachment.showBadge();
     // Read before the check below, so a tab closing meanwhile is caught
     // by it rather than listed after its close has passed.
     const targetId = await targetIdOf(page);
@@ -1500,24 +1390,15 @@ class FollowedTabs {
     announced = true;
     if (announce) this.opts.out(`[sm-dev] Tab T${n} opened${loaded ? ` at ${url}` : ''}${noScript ? ' (no scripts)' : ''}${opener ? `, from T${opener}` : ''}${targetIdSuffix(targetId)}`);
     // After it's announced, so the events it had waiting print under it.
-    if (this.link && tabId !== undefined) this.extensionHost.addTab(attachment, tabId, opener !== undefined && shown !== '' && shown !== 'about:blank', noScript);
+    this.host.addTab(attachment, tabId, opener !== undefined && shown !== '' && shown !== 'about:blank', noScript);
     if (noScript) {
-      this.follow(attachment, n);
       entry.ready = true;
       return;
     }
-    const readyState = await page.evaluate(() => document.readyState).catch(() => null);
-    const initial = this.scripts;
-    let scripts = initial;
-    // A document that committed before the attachment reports no
-    // navigation, so a miss on it is noted here. Before injecting, as
-    // it also clears the document's menu commands, which the scripts
-    // are about to register.
-    // Not with `--extension`, whose host already has the events of the
-    // document the tab is showing.
-    if (loaded && !this.link) this.host.noteNavigation(attachment, scripts);
+    let scripts = this.scripts;
+    // Recorded, for the waits and reports to know what to expect; the
+    // extension runs them.
     for (const script of scripts) await attachment.inject(script, { immediately: true });
-    this.follow(attachment, n);
     // A `load`, `update` or `--watch` save while this tab was being set
     // up passed it by. Brought up to date here, before it is ready for
     // the next one.
@@ -1527,21 +1408,14 @@ class FollowedTabs {
       await loadPage(page, (o) => page.reload(o)).catch(() => undefined);
     }
     entry.ready = true;
-    if (scripts !== initial) return;
-    if (!loaded) return;
-    for (const script of scripts) {
-      // The extension ran them on time.
-      if (this.link || !explainMatch(script.matching, url).matches || !ranLate(script, readyState)) continue;
-      this.opts.out(`[sm-dev] Tab T${n} had already started loading, so ${preparedScriptPath(script)} (run-at ${script.runAt}) may have run later there than it would in the extension`);
-    }
   }
 
   /**
    * Switches a tab to running no scripts, or back to running them, for
    * `open --noscript` / `--script`. It lasts: every page the tab loads
-   * from then on goes the new way, until switched again. Its scripts
-   * and badge come off or go back on here; the page it's showing keeps
-   * what it has until the next load.
+   * from then on goes the new way, until switched again. Its claim
+   * changes here; the page it's showing keeps what it has until the
+   * next load.
    */
   async setNoScript(tab: ControlledTab, noScript: boolean): Promise<void> {
     if ((tab.noScript === true) === noScript) return;
@@ -1549,34 +1423,16 @@ class FollowedTabs {
     if (tab !== this.first && [...this.tabs.values()].some((t) => t.tab === tab && !t.ready)) {
       throw new Error('It\'s still being set up. Try again in a moment.');
     }
-    const tabId = this.link && this.claims ? this.extensionHost.tabIdOf(tab.link) : undefined;
-    if (this.link && tabId !== undefined) await this.link.setTabScriptsOff(tabId, noScript);
-    if (noScript) {
-      await this.swapScripts(tab.link, []);
-      await tab.link.hideBadge();
-    } else {
-      await this.swapScripts(tab.link, this.scripts);
-      await tab.link.showBadge();
-    }
+    const tabId = this.host.tabIdOf(tab.link);
+    if (tabId !== undefined) await this.link.setTabScriptsOff(tabId, noScript);
+    await this.swapScripts(tab.link, noScript ? [] : this.scripts);
     // Once done, so a failed switch leaves the tab as it was for `load`
     // and `update`.
     tab.noScript = noScript;
   }
 
-  // Claims a new tab for the run. An extension run can't do without
-  // it, so its failure fails the tab; a harness run's says so and goes on.
-  private async claimNew(page: Page, n: number, noScript: boolean): Promise<number | undefined> {
-    if (this.link) return this.claims!.claimPage(page, noScript);
-    try {
-      return await this.claims!.claimPage(page);
-    } catch (err) {
-      this.opts.out(`[sm-dev] SourceMonkey-managed scripts may also run in T${n}, since it couldn't be put under sm-dev's control: ${(err as Error).message}`);
-      return undefined;
-    }
-  }
-
   /**
-   * With `--extension`: a tab one of the run's tabs opened, as the
+   * A tab one of the run's tabs opened, as the
    * extension says (a link, `window.open`, `GM_openInTab`), which it has
    * already claimed for the run. Its page is one not otherwise accounted
    * for, opened by the opener's page (`window.open`, as Playwright
@@ -1586,15 +1442,15 @@ class FollowedTabs {
    */
   private async adoptOpened(event: Extract<ExtensionEvent, { kind: 'tab-opened' }>): Promise<void> {
     // Its events wait for the setup.
-    this.extensionHost.expectTab(event.tabId);
+    this.host.expectTab(event.tabId);
     // Which page is that tab: the one showing the same document as the
     // extension reads in it, by URL and `performance.timeOrigin`. Read
     // again until both sides agree, since the tab may be navigating.
     const deadline = Date.now() + 10_000;
     let opener: ControlledTab | undefined;
     while (Date.now() < deadline && !this.disposed) {
-      opener = this.list().find((t) => this.extensionHost.tabIdOf(t.link) === event.sourceTabId);
-      const shown = opener ? await this.link!.tabDocument(event.tabId).catch(() => null) : null;
+      opener = this.list().find((t) => this.host.tabIdOf(t.link) === event.sourceTabId);
+      const shown = opener ? await this.link.tabDocument(event.tabId).catch(() => null) : null;
       if (opener && shown) {
         const candidates = this.context.pages().filter((p) => !this.notOpenedByScripts.has(p) && !this.tabs.has(p) && !p.isClosed());
         for (const p of candidates) {
@@ -1627,20 +1483,11 @@ class FollowedTabs {
   }
 }
 
-// Whether a script injected into a document already in `readyState`
-// missed the moment its run-at names. Idle waits for the load, so it is
-// never late; start is, once the page's own scripts may have run.
-function ranLate(script: PreparedScript, readyState: string | null): boolean {
-  if (script.runAt === 'document-idle') return false;
-  if (script.runAt === 'document-start') return true;
-  return readyState !== 'loading';
-}
-
 
 // Resolve once each script in each tab's page has had its word there:
 // started, skipped (a URL its rules don't cover) or thrown. Or after a
 // grace period, for one that never says (a page that never loads).
-async function waitForReports(host: HarnessHost, tabs: ControlledTab[], timeoutMs = 5000): Promise<void> {
+async function waitForReports(host: ExtensionHost, tabs: ControlledTab[], timeoutMs = 5000): Promise<void> {
   const giveUp = new AbortController();
   const timer = setTimeout(() => giveUp.abort(), timeoutMs);
   const gaveUp = new Promise<void>((resolve) => giveUp.signal.addEventListener('abort', () => resolve()));
@@ -1681,13 +1528,6 @@ async function filesStamp(script: PreparedScript): Promise<string> {
   return paths.map((p, i) => `${p}:${times[i]}`).join('|');
 }
 
-// The `Injected` line's run-at, naming a declared value we don't
-// honor (a typo) so a run shows why the script ran at load.
-function runAtLabel(script: PreparedScript): string {
-  const declared = unsupportedRunAt(script.script.header);
-  return declared === undefined ? script.runAt : `${script.runAt} (@run-at ${declared} is not supported)`;
-}
-
 // A script file as the person typed it, for an error to name it as
 // they did; else as paths are shown.
 
@@ -1710,7 +1550,7 @@ async function prepareAll(opts: RunOptions, files = opts.files): Promise<Prepare
 }
 
 // `prefix` tags each report with the tab it came from.
-function wireHostOutput(host: HarnessHost, print: (line: string) => void, prefix: (record: object) => string): void {
+function wireHostOutput(host: ExtensionHost, print: (line: string) => void, prefix: (record: object) => string): void {
   const out = (record: object, line: string): void => print(prefix(record) + line);
   host.on('start', (r: StartReport) => out(r, `[sm-dev] ${r.name} started on ${r.url}`));
   host.on('skip', (r: SkipReport) => out(r, `[sm-dev] ${r.name} skipped on ${r.url}: ${r.reason}`));
@@ -1718,7 +1558,6 @@ function wireHostOutput(host: HarnessHost, print: (line: string) => void, prefix
     out(r, `[sm-dev] ${r.name} threw: ${decodeOwnRefs(r.message)}`);
     if (r.stack) for (const line of r.stack.split('\n').slice(1, 4)) out(r, `    ${decodeOwnRefs(line.trim())}`);
   });
-  host.on('log', (r) => out(r, `[sm-dev] ${r.name} GM_log: ${r.message}`));
   host.on('request', (r) => out(r, `[sm-dev] GM_xmlhttpRequest ${r.method} ${r.url}: ${r.outcome}${r.status ? ' ' + r.status : ''}${r.error ? ' ' + r.error : ''}`));
   host.on('tab', (r) => out(r, `[sm-dev] GM_openInTab ${r.url}`));
   host.on('menu-command', (r) => out(r, `[sm-dev] GM_registerMenuCommand "${r.name}"`));
@@ -1781,11 +1620,11 @@ function tabOutput(opts: Pick<RunOptions, 'out' | 'hear' | 'outCut'>, n: number)
   };
 }
 
-// `hostReports`: the harness host already prints a script's own throws,
+// `hostReports`: the host already prints a script's own throws,
 // so the page's copy of those is skipped. See page-output.ts.
 // `remapStack` points stack frames in a logged line (`console.error(err)`
 // prints the stack) at the `@require` or script line they came from;
-// see `HarnessHost.remapStack`. It runs before `decodeOwnRefs`, since it
+// see `ExtensionHost.remapStack`. It runs before `decodeOwnRefs`, since it
 // matches the scripts' URLs as the page wrote them (still encoded).
 function wirePageOutput(
   page: Page,
@@ -1852,7 +1691,7 @@ function wirePageOutput(
   });
 }
 
-// Re-prepare and re-inject on any change to a script or a file it
+// Re-prepare and re-push on any change to a script or a file it
 // loads, then reload so the new version runs. Debounced: an editor
 // save is often two writes. The parent directories are watched rather
 // than the files, because an editor that saves by writing a temp file

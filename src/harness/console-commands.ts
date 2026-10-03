@@ -22,7 +22,7 @@ import { CommandAssembler, endsOutsideBlock } from './command-lines.js';
 import { extensionLabel, type ExtensionState } from './extension-backend.js';
 import { firstLine } from './extension-link.js';
 import type { HarnessHost, MenuCommandRecord } from './host.js';
-import type { PageAttachment } from './inject.js';
+import type { PageAttachment } from './page-watch.js';
 import { parseCommandArgs, splitWords, unquoteWhole, type ParsedArgs } from './command-args.js';
 import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, commandsHelp } from './command-list.js';
 import { errorSentence, readJsonFile, writeProblem } from './input-file.js';
@@ -90,7 +90,7 @@ function tabIdsSuffix(tab: ControlledTab): string {
 }
 
 /**
- * A SourceMonkey-managed script, which an `--extension` run didn't
+ * A SourceMonkey-managed script, which the run didn't
  * push: named E1, E2, ... for the run, in the order it first sees them.
  */
 export interface OtherScript {
@@ -120,9 +120,9 @@ export interface ConsoleContext {
   loadScript?: (file: string) => Promise<void>;
   /** Re-read scripts from disk (all, when none are named), for `update`. */
   updateScripts?: (scripts?: PreparedScript[]) => Promise<void>;
-  /** The scripts this run injected, in load order. */
+  /** The scripts this run pushed, in load order. */
   scripts: PreparedScript[];
-  /** With `--extension`: SourceMonkey-managed scripts (see `OtherScript`). */
+  /** SourceMonkey-managed scripts (see `OtherScript`). */
   others?: {
     /** Those on the tab's page, as its toolbar badge lists them. */
     onTab(tab: ControlledTab): Promise<OtherScript[]>;
@@ -155,9 +155,8 @@ export interface ConsoleContext {
   /** The run's browser, for `status`: `connected to browser 127.0.0.1:9233`. */
   browser?: string;
   /**
-   * Where the scripts run, for `status`, when it isn't sm-dev's own
-   * stand-in: `SourceMonkey extension, test collection D2-a3f9`. Read
-   * as `status` runs.
+   * Where the scripts run, for `status`: `SourceMonkey extension, test
+   * collection D2-a3f9`. Read as `status` runs.
    */
   backend?: () => string;
   /** Whether SourceMonkey is there now, for `status`; null when unknown. */
@@ -599,7 +598,7 @@ export async function runConsoleCommand(
         ctx.out('[sm-dev] This run cannot load scripts');
         return;
       }
-      // Its injection reaches every tab, so any tab's dialog blocks it.
+      // It reloads every tab it affects, so any tab's dialog blocks it.
       if (blockedByDialog(ctx.tabs())) return;
       // All expanded first, so a glob matching nothing loads none.
       for (const file of expandPathArgs(args, cwd, { scripts: true })) {
@@ -1590,7 +1589,7 @@ const OTHER_LABEL = /^E\d+$/i;
 async function pickOther(ctx: ConsoleContext, label: string, tab: ControlledTab | undefined): Promise<OtherScript | null> {
   const name = label.toUpperCase();
   if (!ctx.others) {
-    ctx.out(`[sm-dev] ERROR: ${name} labels are only given in --extension runs`);
+    ctx.out(`[sm-dev] ERROR: ${name} names a SourceMonkey-managed script, which only a run lists`);
     return null;
   }
   if (!ctx.others.byLabel(name) && tab) {
@@ -1625,8 +1624,8 @@ function otherLabel(o: OtherScript): string {
   return `${o.label}: ${o.name}${o.collection ? ` (${o.collection})` : ''}`;
 }
 
-// SourceMonkey-managed scripts on `tab`, for `scripts` and `status`. None
-// outside an `--extension` run, or when there are none.
+// SourceMonkey-managed scripts on `tab`, for `scripts` and `status`.
+// None when there are none.
 async function otherLines(ctx: ConsoleContext, tab: ControlledTab | undefined): Promise<string[]> {
   if (!ctx.others || !tab) return [];
   let others: OtherScript[];

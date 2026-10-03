@@ -15,11 +15,10 @@
 //      was written in — under Node's V8 rather than Chrome's, which is
 //      the one piece that differs (see parse-check-node.ts).
 //   4. `buildRegistrationSpec` produces the exact code entries the
-//      extension would register with `chrome.userScripts`: the config
-//      blob, the prelude, the combined `@require` + body entry, and the
-//      seal. The harness injects those entries as init scripts, so the
-//      prelude's `@run-at` gate, the in-page matcher, the `GM_*`
-//      bindings, and error attribution all run unchanged.
+//      extension would register with `chrome.userScripts`, which give
+//      the script its id and the line layout its stack frames map by.
+//      The extension itself runs the scripts (sm-dev pushes their text);
+//      this is for checking them up front and reading them back.
 //
 // Nothing here touches `chrome.*`. The two globals the pipeline reaches
 // for are replaced once per process: `fetch`, which Node doesn't
@@ -303,7 +302,7 @@ async function prepareScriptNow(opts: PrepareOptions): Promise<PreparedScript> {
   const handlerVersion = opts.handlerVersion ?? await packageVersion();
   const logLabel = opts.logLabel ?? scriptBasename(relativePath);
   const spec = script.status === 'ok'
-    ? asEntries(await buildRegistrationSpec(script, handlerVersion, logLabel, { inPageMatcher: true }))
+    ? asEntries(await buildRegistrationSpec(script, handlerVersion, logLabel))
     : null;
 
   const out: PreparedScript = {
@@ -332,7 +331,7 @@ async function prepareScriptNow(opts: PrepareOptions): Promise<PreparedScript> {
 // The path the extension would store for this script: relative to the
 // collection root when it sits under one, else just its name. The
 // diagnostics, the composed-source segments, and `GM_info` all carry
-// it, so a harness run reads the same as the extension's Log tab.
+// it, so sm-dev's output reads the same as the extension's Log tab.
 function relativePathFor(opts: PrepareOptions, sourceUrl: string): string {
   if (!opts.file) return scriptBasename(sourceUrl);
   const file = path.resolve(opts.file);

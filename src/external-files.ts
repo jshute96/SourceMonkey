@@ -358,7 +358,7 @@ export function distillResources(header: ParsedHeader | null): ResourceDecl[] {
 
 // A `@require` / `@resource` body pushed with a scratch script, by the
 // ref its header declares (sm-dev reads them from disk, see
-// docs/sm-dev-extension.md). It stands in for the declared file, and no
+// docs/sm-dev-design.md). It stands in for the declared file, and no
 // fetch is made:
 // - a relative ref, which a scratch script has no folder to resolve
 //   against: `url` is the `file://` URL it named on disk;

@@ -1,12 +1,8 @@
-// The host of a run whose scripts the real extension runs
-// (`--extension`). The run's commands, waits and output read a host's
-// reports, values and menus; this one fills them from the extension's
-// events (extension-link.ts) and answers from the extension, so they
-// work the same as in a harness run.
+// The host of a run, or of the spec fixture's test: the real extension
+// runs the scripts, and this fills the host's reports, values and menus
+// (host.ts) from its events (extension-link.ts), and answers the run's
+// commands from it.
 //
-// - Events are translated into the bridge messages a harness page
-//   sends (`sm:start`, `sm:gm-menu-register`, ...), and handled by the
-//   harness host's own code, so the records are the same.
 // - The run knows its scripts by their prepared ids; the extension by
 //   its own. `setPushed` maps one to the other.
 // - A tab is known by its `chrome.tabs` id once set up (`addTab`).
@@ -285,24 +281,25 @@ export class ExtensionHost extends HarnessHost {
       return;
     }
     if (event.kind === 'values') {
-      await this.handle({ type: 'sm:gm-batch-write', scriptId: runId, writes: event.writes }, state.page, 'isolated');
+      this.recordValueWrites(state.page, runId, event.writes);
       return;
     }
     if (event.kind === 'menu') {
-      await this.handle(event.op === 'add'
-        ? { type: 'sm:gm-menu-register', scriptId: runId, commandId: event.commandId, name: event.name ?? '' }
-        : { type: 'sm:gm-menu-unregister', scriptId: runId, commandId: event.commandId }, state.page, 'isolated');
+      if (event.op === 'add') this.registerMenu(state.page, runId, event.commandId, event.name ?? '');
+      else this.unregisterMenu(state.page, runId, event.commandId);
       return;
     }
-    // A tab with its scripts turned off (`--noscript`) skips them on
-    // each load, as asked: nothing to say.
-    if (event.type === SM_ABANDONED_MSG && event.reason === SKIP_REASON_SM_DEV) return;
-    const type = { [SM_START_MSG]: SM_START_MSG, [SM_SWAPPED_MSG]: SM_START_MSG, [SM_ERROR_MSG]: SM_ERROR_MSG, [SM_ABANDONED_MSG]: SM_ABANDONED_MSG }[event.type];
-    if (!type) return;
-    await this.handle({
-      type, id: runId, name: event.name, url: event.url,
-      message: event.message, stack: event.stack, reason: event.reason,
-    }, state.page, 'isolated');
+    const fields = { scriptId: runId, name: event.name, url: event.url };
+    if (event.type === SM_START_MSG || event.type === SM_SWAPPED_MSG) {
+      this.recordStart(state.page, fields);
+    } else if (event.type === SM_ERROR_MSG) {
+      this.recordError(state.page, { ...fields, message: event.message ?? '', stack: event.stack ?? '' });
+    } else if (event.type === SM_ABANDONED_MSG) {
+      // A tab with its scripts turned off (`--noscript`) skips them on
+      // each load, as asked: nothing to say.
+      if (event.reason === SKIP_REASON_SM_DEV) return;
+      this.recordSkip(state.page, { ...fields, reason: event.reason || 'skip' });
+    }
   }
 
   // A `GM_openInTab` of one of the run's scripts, from one of its tabs.

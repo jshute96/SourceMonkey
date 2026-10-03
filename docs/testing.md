@@ -14,8 +14,11 @@ real-browser end-to-end suite for everything that touches the
 - `tests/fixtures/` — shared harness code.
 - `tests/harness/*.spec.ts` — sm-dev and the fixture consumers import
   (`src/harness/`, see [harness-design.md](harness-design.md)), under
-  the `harness` Playwright project (`pnpm run test:harness`).
-  - Fixtures in `tests/fixtures/harness.ts`.
+  the `sm-dev` Playwright project (`pnpm run test:sm-dev`).
+  - They run in a browser with the extension loaded, as sm-dev and the
+    fixture do for users.
+  - Fixtures in `tests/fixtures/harness.ts`, which extends the
+    package's own fixture.
   - The `--devtools` test in `run-remote.spec.ts` needs the
     `chrome-devtools` command, and is skipped without it.
 - `tests/greasyfork-examples/` — not a test suite: tooling that builds a
@@ -36,7 +39,7 @@ with no browser. `tests/unit/harness-validate.test.mjs` spawns it over
 
 ## Running
 
-- All tests: `pnpm test` (unit, e2e, then the harness suite)
+- All tests: `pnpm test` (unit, e2e, then `test:sm-dev`)
 - Unit only: `pnpm run test:unit`
 - E2E only: `pnpm run test:e2e`
 - One unit file: `node --test tests/unit/<name>.test.mjs`
@@ -244,13 +247,13 @@ tests:
   sharing has no other observable signature. Both are per-JS-context and
   count *all* such reads in the worker, so reset around the window under
   test.
-- sm-dev runs: `writeRunScript({ run, text, name? })` installs text
+- sm-dev runs: `writeRunScript({ run, text, name?, files? })` installs text
   into run `run`'s test collection and syncs before it resolves (a
   rewrite of the same name replaces in place); `releaseRun(run)`
   removes the collection. `sweepRunCollections(now)` runs the
-  crashed-run cleanup as if at `now`, past the grace period. sm-dev's
-  extension backend drives these; see
-  [sm-dev-extension.md](sm-dev-extension.md#test-collections).
+  crashed-run cleanup as if at `now`, past the grace period. sm-dev
+  drives these; see
+  [sm-dev-design.md](sm-dev-design.md#test-collections).
 - GM values: `getGmValues(id)` returns every **persisted** value for a
   script, deliberately excluding the SW's in-flight overlay.
   `GM_setValue` batches its write 150ms after the last one, so a test

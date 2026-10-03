@@ -546,11 +546,9 @@ the user body. This is the TM/VM pattern.
 
 - `document-start` — the gate opens immediately, once
   `document.documentElement` (`<html>`) exists.
-  - In the extension it always does by then.
-  - sm-dev injects earlier, before the parser makes `<html>`, so there
-    the wrapper waits for it with a `MutationObserver` on `document`.
-  - Mutation records are delivered before the first page `<script>`
-    runs, so the gate opens ahead of page scripts.
+  - In the extension it always does by then. Were it missing, the
+    wrapper would wait for it with a `MutationObserver` on `document`,
+    whose records are delivered before the first page `<script>` runs.
   - Where the [check-pending decision](#reload-fast-path) could only
     be `run`, the body runs right away, ahead of the page's own
     scripts. Elsewhere it waits for that async answer, so early page
@@ -577,7 +575,7 @@ the user body. This is the TM/VM pattern.
     the body still runs after `load`, and only once.
   - An unknown value (a typo) gets a parse-time warning
     (`unsupportedRunAtWarning`): Log tab, `sm-dev validate`, and
-    sm-dev's `Injected` line.
+    sm-dev's warning lines when it loads the script.
 
 **Gap: `@run-at context-menu` is not supported.** In Tampermonkey
 (Chrome only) it means "don't run on load; add a right-click menu item
@@ -1392,7 +1390,7 @@ these holds:
 - No `mustAsk` in the script's config. It is set:
   - for every script while any sm-dev tab claim is live, since a
     claim can `skip` on any navigation (see
-    [sm-dev-extension.md](sm-dev-extension.md#making-every-wrapper-ask));
+    [sm-dev-design.md](sm-dev-design.md#making-every-wrapper-ask));
   - for every script built before the SW has loaded the claims, or
     built in an extension page (a retry of a rejected script), which
     can't know them;

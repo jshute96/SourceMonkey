@@ -1,7 +1,7 @@
 // Waiting: the `wait` command, and the settling that it and the waits
 // after `start`, loads and actions share.
 //
-// A tab has settled when nothing the harness can see is still
+// A tab has settled when nothing sm-dev can see is still
 // happening in it. A browser has no signal for "the scripts are done":
 // JavaScript runs on events, and a page can keep timers, intervals and
 // sockets going for good. So settled is a set of signals all quiet

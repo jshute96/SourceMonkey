@@ -1,21 +1,17 @@
-// Playwright fixtures for the harness suite (`tests/harness/`): a plain
-// Chromium with NO extension loaded, the fixture HTTP server, and a
-// host + attachment per test.
-//
-// This is the harness's own test bed, distinct from the `sourcemonkey`
-// project's fixtures in `extension.ts`: the point of these specs is
-// that the injected code runs without `chrome.*` at all, so loading the
-// extension here would defeat them.
+// Playwright fixtures for sm-dev's own suite (`tests/harness/`): the
+// `sourcemonkey/harness` fixture (a browser per worker with SourceMonkey
+// loaded, and a claimed page, host and attachment per test), plus the
+// fixture HTTP server, a scripts directory per test, and `loadScript`.
 
-import { test as base } from '@playwright/test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { HarnessHost } from '../../lib/harness/host.js';
-import { attachPage, type PageAttachment } from '../../lib/harness/inject.js';
-import { prepareScript, type PrepareOptions, type PreparedScript } from '../../lib/harness/prepare.js';
+import { test as base } from '../../lib/harness/fixture.js';
+import { attachPage, type PageAttachment } from '../../lib/harness/page-watch.js';
+import type { PrepareOptions, PreparedScript } from '../../lib/harness/prepare.js';
+import type { Page } from '@playwright/test';
 import { createFixtureServer, type FixtureServer } from './sourcemonkey-launch.js';
 import { ScriptsDir, type UserscriptSpec } from './scripts-dir.js';
 
@@ -34,10 +30,14 @@ export interface HarnessWorkerFixtures {
 
 export interface HarnessFixtures {
   scriptsDir: ScriptsDir;
-  host: HarnessHost;
-  attachment: PageAttachment;
-  /** Write a userscript into `scriptsDir`, prepare it, and inject it. */
-  loadScript: (spec: UserscriptSpec, options?: Omit<PrepareOptions, 'file'>) => Promise<PreparedScript>;
+  /** Write a userscript into `scriptsDir` and push it for the test's page. */
+  loadScript: (spec: UserscriptSpec, options?: Omit<PrepareOptions, 'file'> & { values?: Record<string, unknown> }) => Promise<PreparedScript>;
+  /**
+   * Another page of the test's, claimed and watched as `page` is, for a
+   * second tab. The test records the scripts it runs there itself
+   * (`inject`). Disposed with the test.
+   */
+  watchPage: (page: Page) => Promise<PageAttachment>;
 }
 
 export const test = base.extend<HarnessFixtures, HarnessWorkerFixtures>({
@@ -62,27 +62,22 @@ export const test = base.extend<HarnessFixtures, HarnessWorkerFixtures>({
     dir.cleanup();
   },
 
-  host: async ({ scriptsDir }, use) => {
-    const host = new HarnessHost();
-    // Per test, so parallel workers downloading the same name can't
-    // collide in the shared default directory.
-    host.downloadDir = path.join(scriptsDir.path, 'downloads');
-    await use(host);
+  watchPage: async ({ host, _smLink }, use) => {
+    const made: PageAttachment[] = [];
+    await use(async (page) => {
+      const tabId = await _smLink.claimPage(page);
+      const attachment = await attachPage(page, host, { watchOnly: { extensionOrigin: _smLink.origin } });
+      host.addTab(attachment, tabId);
+      made.push(attachment);
+      return attachment;
+    });
+    for (const attachment of made) await attachment.dispose().catch(() => undefined);
   },
 
-  attachment: async ({ page, host }, use) => {
-    const attachment = await attachPage(page, host);
-    await use(attachment);
-    await attachment.dispose();
-  },
-
-  loadScript: async ({ scriptsDir, attachment }, use) => {
+  loadScript: async ({ scriptsDir, loadUserscript }, use) => {
     await use(async (spec, options = {}) => {
       const file = scriptsDir.write(spec);
-      const prepared = await prepareScript({ file, collectionRoot: scriptsDir.path, ...options });
-      if (prepared.status !== 'ok') throw new Error(`Test script is invalid: ${prepared.diagnostic}`);
-      await attachment.inject(prepared);
-      return prepared;
+      return loadUserscript(file, { collectionRoot: scriptsDir.path, ...options });
     });
   },
 });

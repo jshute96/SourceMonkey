@@ -66,9 +66,7 @@ export function isAllowedTabUrl(url: string): boolean {
   return hasAllowedScheme(url, WEB_SCHEMES);
 }
 
-// The refusal a script sees for a URL `isAllowedTabUrl` rejects. Shared
-// with the development harness (src/harness/host.ts), which applies
-// the same gate.
+// The refusal a script sees for a URL `isAllowedTabUrl` rejects.
 export function tabUrlRefusedMessage(url: string): string {
   return `GM_openInTab: refusing non-http(s) URL ${url}`;
 }

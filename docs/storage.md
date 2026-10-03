@@ -39,8 +39,8 @@ browsing session, not the user's configuration.
 | `"loglevel:<scid>"`      | `LogLevel`              | Highest level a script-originated entry in that log has carried; drives WARNING / ERROR in the Status column. |
 | `"tab:<tabId>"`          | `TabRecord`             | Per-tab expected vs actual injection state behind the toolbar badge (see [matching.md](matching.md)). |
 | `"injector-rejections"`  | `Record<string,string>` | `{script id → Chrome's reason for refusing its registration}` — what the UI renders as REJECTED (see [injection.md](injection.md#rejected-registrations)). |
-| `"smDevClaims"`          | `Record<tabId, SmDevClaim>` | sm-dev's tab claims: the run that controls each tab, and its lease (see [sm-dev-extension.md](sm-dev-extension.md#tab-claims)). |
-| `"smDevRuns"`            | `Record<runId, number>` | When each sm-dev run's lease runs out, for removing a crashed run's test collection (see [sm-dev-extension.md](sm-dev-extension.md#test-collections)). |
+| `"smDevClaims"`          | `Record<tabId, SmDevClaim>` | sm-dev's tab claims: the run that controls each tab, and its lease (see [sm-dev-design.md](sm-dev-design.md#tab-claims)). |
+| `"smDevRuns"`            | `Record<runId, number>` | When each sm-dev run's lease runs out, for removing a crashed run's test collection (see [sm-dev-design.md](sm-dev-design.md#test-collections)). |
 | `"smDevLastSweep"`       | `number`                | When the test collections were last checked, to tell a gap (the computer slept) from runs gone. |
 
 ### Legacy key migration (temporary)
@@ -390,10 +390,10 @@ individually installed scripts. Two kinds of row, told apart by path:
 - **User-created** — `container:<uuid>`, made by the collection dialog
   with a name of the user's choosing.
 - **sm-dev test collections** — `container:sm-dev:<run>`, one per
-  `sm-dev --extension` run, holding scripts whose only copy is their
+  `sm-dev` run, holding scripts whose only copy is their
   text in storage. Created by the run's first `writeRunScript` on the
   test surface, named `sm-dev test collection (run <run>)` (see
-  [sm-dev-extension.md](sm-dev-extension.md#test-collections)).
+  [sm-dev-design.md](sm-dev-design.md#test-collections)).
   - Each row's location is a `scratch:///<run>/<path>.user.js` URL
     naming the storage row (`scratch:<url>`) that holds the text. The
     file fetcher reads that row back, so every refresh path treats them

@@ -28,7 +28,7 @@ export interface SmApi {
     target: { collectionId: string } | { schemeDefault: true },
   ): Promise<{ id: string; path: string } | null>;
   // An sm-dev run's scripts, in its test collection: text in,
-  // registered before the promise settles. See docs/sm-dev-extension.md.
+  // registered before the promise settles. See docs/sm-dev-design.md.
   writeRunScript(args: { run: string; text: string; name?: string; files?: Record<string, { url: string; localUrl?: string; bytesBase64: string; contentType: string }> }): Promise<{
     scriptId: string;
     collectionId: string;
@@ -38,9 +38,9 @@ export interface SmApi {
     replaced: boolean;
   }>;
   // sm-dev's tab claims (src/sm-dev-link.ts).
-  claimTab(tabId: number, runId: string, ownScripts: boolean, ttlMs: number): Promise<void>;
+  claimTab(tabId: number, runId: string, ttlMs: number): Promise<void>;
   isSmDevMarked(tabId: number): Promise<boolean>;
-  renewRun(runId: string, ttlMs: number, ownScripts: boolean, tabs?: { tabId: number; scriptsOff?: boolean }[]): Promise<number>;
+  renewRun(runId: string, ttlMs: number, tabs?: { tabId: number; scriptsOff?: boolean }[]): Promise<number>;
   releaseRun(runId: string): Promise<void>;
   sweepRunCollections(now: number): Promise<void>;
   setTabScriptsOff(tabId: number, off: boolean): Promise<void>;

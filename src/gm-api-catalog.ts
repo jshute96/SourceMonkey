@@ -50,7 +50,7 @@ export type ApiSubsystem =
 // What a request that reads or writes a script's stored values has to
 // have granted: any storage API, or a value-change listener (its
 // snapshot seeds the listener's remote-change detection). Used by the
-// bridge gate in background.ts and its harness twin in host.ts.
+// bridge gate in background.ts.
 export const STORAGE_SUBSYSTEMS: readonly ApiSubsystem[] = ['storage', 'storage-listener'];
 
 // The refusal a bridge-relayed request gets when the page may not act

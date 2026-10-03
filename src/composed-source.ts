@@ -172,7 +172,7 @@ export function composeSource(
 // its log label alone, so every reader of stacks derives the same
 // answer as the injector without seeing the injected code: the
 // viewer's Log tab, sm-dev's output, and the service worker's test
-// surface (which sm-dev's `--extension` runs read it through).
+// surface (which sm-dev's runs read it through).
 //
 // No segments when the script has no `@require`s: then nothing moved,
 // and frames already name the right line. See

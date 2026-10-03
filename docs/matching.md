@@ -252,8 +252,8 @@ www.google.co.uk. Read the same way in `@match`, `@include` and
     like `www.google.evil.com`.
 - **Site icons and links** for a `.tld` `@match` use `.com`.
 - Pinned by `tests/unit/url-match.test.mjs`, the prelude cases in
-  `tests/unit/injector.test.mjs`, and in a real browser
-  `tests/e2e/tld-hosts.spec.ts` and `tests/harness/inject.spec.ts`.
+  `tests/unit/injector.test.mjs`, and in a real browser by
+  `tests/e2e/tld-hosts.spec.ts`.
 
 ### Combined rule (`urlMatchesScript`)
 
@@ -356,7 +356,7 @@ For each tab we:
     NOT LOADED). Nothing is wrong; nothing ran.
     - Also in a tab an sm-dev run controls, for the scripts its claim
       kept out, when no script ran there. See
-      [sm-dev-extension.md](sm-dev-extension.md#the-toolbar-badge-in-a-claimed-tab)
+      [sm-dev-design.md](sm-dev-design.md#the-toolbar-badge-in-a-claimed-tab)
       for that tab's count, icon marker, tooltip and menu row.
   - **GREEN** (`#2e7d32`) — expected and actual line up exactly with
     no errors.

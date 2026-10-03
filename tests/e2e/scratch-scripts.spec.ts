@@ -1,5 +1,5 @@
 // Scratch scripts: text handed to the extension over the test surface,
-// into an sm-dev run's test collection. See docs/sm-dev-extension.md.
+// into an sm-dev run's test collection. See docs/sm-dev-design.md.
 
 import { test, expect } from '../fixtures/extension';
 import { pathToFileURL } from 'node:url';
@@ -37,7 +37,7 @@ async function claimedPage(
 ): Promise<import('@playwright/test').Page> {
   const page = await context.newPage();
   await page.goto(`${baseUrl}/blank.html`);
-  await sm.claimTab(await activeTabId(getServiceWorker), run, true, 60_000);
+  await sm.claimTab(await activeTabId(getServiceWorker), run, 60_000);
   return page;
 }
 
@@ -139,7 +139,7 @@ test.describe('scratch scripts', () => {
   test('a run\'s test collection outlives its lease by the grace period, then goes', async ({ sm }) => {
     await sm.writeRunScript({ run: RUN, text: script('') });
     const start = Date.now();
-    await sm.renewRun(RUN, 30_000, true);
+    await sm.renewRun(RUN, 30_000);
     await sweepEachMinute(sm, start, start + 30_000 + GRACE_MS - 10_000);
     expect(await sm.getCollections()).toHaveLength(1);
     await sweepEachMinute(sm, start + 30_000 + GRACE_MS - 10_000, start + 30_000 + GRACE_MS + 70_000);
@@ -159,7 +159,7 @@ test.describe('scratch scripts', () => {
   test('after a gap in the sweeps (the computer slept), a run\'s lease gets its grace period again', async ({ sm }) => {
     await sm.writeRunScript({ run: RUN, text: script('') });
     const start = Date.now();
-    await sm.renewRun(RUN, 30_000, true);
+    await sm.renewRun(RUN, 30_000);
     await sm.sweepRunCollections(start);
     // Woken long past the lease and grace period: nothing goes.
     const woke = start + 30 * 60_000;

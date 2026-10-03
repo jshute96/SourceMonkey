@@ -745,14 +745,6 @@ function firstValue(header: ParsedHeader, tags: readonly string[]): string | nul
 // value. `null` where the API is missing (unit tests under Node).
 let uaDataSnapshot: UserAgentDataSnapshot | null | undefined;
 
-// For a caller with no `navigator` of its own but a browser to ask:
-// the development harness (src/harness/) reads the snapshot from a
-// page it controls and sets it here before building specs, so the
-// `GM_info` it bakes describes that browser rather than Node.
-export function setUserAgentDataSnapshot(snapshot: UserAgentDataSnapshot | null): void {
-  uaDataSnapshot = snapshot;
-}
-
 function readUserAgentData(): UserAgentDataSnapshot | null {
   if (uaDataSnapshot !== undefined) return uaDataSnapshot;
   const nav = (globalThis as { navigator?: { userAgentData?: UserAgentDataSnapshot } }).navigator;
@@ -985,13 +977,6 @@ export async function buildSwapEvalBody(
 // from chrome.storage.local at register time (see
 // buildGmBindingsForScript).
 export interface RegistrationSpecOptions {
-  // Always carry the script's matching rules in the config blob so the
-  // prelude's in-page matcher gates every document. In the extension
-  // Chrome's own `matches` does that and the in-page matcher is only
-  // shipped where Chrome's grammar can't express the rule; the
-  // development harness (src/harness/) injects with CDP init scripts,
-  // which run on every document, so it asks for the matcher every time.
-  inPageMatcher?: boolean;
   // Tell the wrapper to wait for the SW's check-pending answer (see
   // `mustAskForDecision`). Scratch scripts always do.
   mustAsk?: boolean;
@@ -1116,7 +1101,7 @@ export async function buildRegistrationSpec(
   // reading isn't ours (case, `?`), a `.tld` glob is coarse, and
   // `NO_PAGE_MATCH` is a real (if unlikely) path.
   const needsWrapperFilter = hasRegexInclude || hasRegexExclude || usedAllUrlsFallback
-    || usedNoPageStandIn || hasTldRule || options.inPageMatcher === true;
+    || usedNoPageStandIn || hasTldRule;
   const sourceUrl = buildSourceUrl(logLabel);
 
   const world = resolveScriptWorld(script);

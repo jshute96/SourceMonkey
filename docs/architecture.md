@@ -436,14 +436,12 @@ takes effect:
   what the report groups. Findings over the GreasyFork corpus are in
   [corpus-validation-results.md](corpus-validation-results.md).
 - [harness-design.md](harness-design.md) — the development and testing
-  harness other repos install: the push backend that runs the injected
-  code without the extension, and scripts pushed into the real one.
+  harness other repos install: `sm-dev` and the Playwright fixture,
+  which push scripts into the real extension and record what they do.
   User-facing side in [harness-guide.md](harness-guide.md).
 - [sm-dev-design.md](sm-dev-design.md) — internals of the harness's
-  `sm-dev` command-line tool: runs and clients, tabs, page commands.
-- [sm-dev-extension.md](sm-dev-extension.md) — sm-dev with the
-  real extension: shared commands, tab claims, test collections, the
-  event stream.
+  `sm-dev` command-line tool: runs and clients, tabs, page commands,
+  tab claims, test collections, the extension's event stream.
 - [logging.md](logging.md) — SW console-message catalog, log IDs
   (basename + `#N` dupes), and the debug-logging gate.
 - [names-and-paths.md](names-and-paths.md) — the decode-for-display
@@ -500,8 +498,9 @@ One set of sources, compiled twice:
 - **`dist/`** is the unpacked extension and nothing else. Chrome loads
   it, `scripts/zip_extension.sh` packs all of it, and
   `tsconfig.json` builds it with `src/harness/**` excluded.
-- **`lib/`** is the `sourcemonkey` package (`package.json`'s `files`
-  and `exports` point there). `tsconfig.lib.json` compiles every
+- **`lib/`** is the `sourcemonkey` package's code (`package.json`'s
+  `exports` point there). The package ships `dist/` beside it, which
+  `sm-dev` and the fixture load into the browsers they launch. `tsconfig.lib.json` compiles every
   module, the development harness included, and emits a `.d.ts` beside
   each one for a TypeScript consumer.
 

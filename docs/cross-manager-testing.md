@@ -18,7 +18,7 @@ built from this repo.
 ## Running the suite
 
 - `pnpm run test:e2e` — SM project only (`pnpm test` runs it, then
-  sm-dev's own `harness` project).
+  the `sm-dev` project).
 - `pnpm run test:e2e:tm` / `pnpm run test:e2e:vm` — TM / VM project,
   **headless**.
   - Launches its own Chromium against that manager's persistent profile.

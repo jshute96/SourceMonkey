@@ -68,7 +68,7 @@ test('frames in a @require and in the script name their own file and line', asyn
   expect(text).toMatch(/at libCall \(sourcemonkey:\/\/SourceMonkey\/stacky\/file\/.*\/lib\.js:2:\d+\)/);
 });
 
-test('with --extension, the Log entries and threw lines map by the extension\'s layout', async ({ fixtureServer, scriptsDir }) => {
+test('the Log entries and threw lines map by the extension\'s layout', async ({ fixtureServer, scriptsDir }) => {
   test.setTimeout(60_000);
   // Served over http: a pushed scratch script has no folder for a
   // relative @require to resolve against.
@@ -88,7 +88,6 @@ test('with --extension, the Log entries and threw lines map by the extension\'s 
     files: [file],
     urls: [`${fixtureServer.baseUrl}/target.html`],
     tempBrowser: true,
-    extension: true,
     collectionRoot: scriptsDir.path,
     localRoots: [],
     out: (line) => {

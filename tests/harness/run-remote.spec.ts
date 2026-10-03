@@ -216,7 +216,7 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
     const pid = Number(list[1].split(/\s+/)[1]);
     expect(pid).not.toBe(run.proc.pid);
 
-    expect((await setup.cli('--run', 'D1', 'status'))[0]).toBe(`Run: D1 (pid ${pid}), connected to headless browser 127.0.0.1:${setup.port} (no extension)`);
+    expect((await setup.cli('--run', 'D1', 'status'))[0]).toBe(`Run: D1 (pid ${pid}), connected to headless browser 127.0.0.1:${setup.port} (has SourceMonkey)`);
     // The only run, so it needs no id. The command's own output, and
     // what it set off in the page, come back; the page's line can
     // arrive first.
@@ -235,7 +235,9 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
     // A load reloads the tab, and the new script's top-level throw comes
     // back with it.
     const thrower = scriptsDir.write({ relativePath: 'thrower.user.js', meta: { name: 'Thrower', match: ['*://*/target.html'] }, body: `throw new Error('boom');` });
-    expect(await setup.cli('load', thrower)).toContain('[sm-dev] Thrower threw: boom');
+    // The throw comes from the extension a moment after the load is done.
+    await setup.cli('load', thrower);
+    await run.waitFor(/^\[sm-dev\] Thrower threw: boom$/);
 
     // A hash change loads no new document, so nothing waits on scripts.
     const started = Date.now();
@@ -292,7 +294,7 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
 
     expect(await setup.cli('stop', 'D1')).toEqual([
       '[sm-dev] Stopping run D1',
-      '[sm-dev] Run D1 ended. Pages still have previously loaded scripts.',
+      '[sm-dev] Run D1 ended',
     ]);
     // Not 0: Thrower threw.
     expect(await exited(run.proc)).toBe(1);
@@ -323,7 +325,7 @@ test('start --detach returns once started, is replaced by the next unless --new,
     expect(path.basename(log)).toMatch(/^sm-dev-\d{8}-\d{6}-\d{3}\.log$/);
     // Stamped in the file, though not as printed.
     // First, the browser it's using.
-    expect(readFileSync(log, 'utf8')).toMatch(new RegExp(`^\\d{8}-\\d{6}-\\d{3} \\[sm-dev\\] Connected to headless browser 127\\.0\\.0\\.1:${setup.port} \\(Chrome [\\d.]+, no extension\\)\\n\\d{8}-\\d{6}-\\d{3} \\[sm-dev\\] Started as run D1\\. `));
+    expect(readFileSync(log, 'utf8')).toMatch(new RegExp(`^\\d{8}-\\d{6}-\\d{3} \\[sm-dev\\] Connected to headless browser 127\\.0\\.0\\.1:${setup.port} \\(Chrome [\\d.]+, has SourceMonkey\\)\\n\\d{8}-\\d{6}-\\d{3} \\[sm-dev\\] Started as run D1\\. `));
     expect(first[0]).toMatch(/^\[sm-dev\] Connected to headless browser /);
     expect(first[1]).toMatch(/^\[sm-dev\] Started as run D1\. /);
     // Found by the run's id too.
@@ -346,10 +348,10 @@ test('start --detach returns once started, is replaced by the next unless --new,
     expect(next.slice(0, 3)).toEqual([
       '[sm-dev] Stopping the earlier detached run D1',
       '[sm-dev] Stopping run D1',
-      '[sm-dev] Run D1 ended. Pages still have previously loaded scripts.',
+      '[sm-dev] Run D1 ended',
     ]);
     // Kept after the run ends.
-    expect(readFileSync(log, 'utf8')).toMatch(/ \[sm-dev\] Run D1 ended\. /);
+    expect(readFileSync(log, 'utf8')).toMatch(/ \[sm-dev\] Run D1 ended\n/);
     expect(next.at(-2)).toMatch(/^\[sm-dev\] Run D1 now running detached/);
     // The id's link moved on to the new run's log.
     const nextLog = next.at(-1)!.match(/^\[sm-dev\] Output log: (\S+\.log) \(D1\.log\)$/)![1];
@@ -382,13 +384,13 @@ test('one line starts a run, sends it commands, and stops it unless detached', a
     const logLine = out.find((l) => l.startsWith('Log: '));
     expect(logLine).toBeDefined();
     expect(out.at(-1)).toBe(`[sm-dev] Output log: ${logLine!.slice('Log: '.length)}`);
-    expect(out.slice(-3, -1)).toEqual(['[sm-dev] Stopping run D1', '[sm-dev] Run D1 ended. Pages still have previously loaded scripts.']);
+    expect(out.slice(-3, -1)).toEqual(['[sm-dev] Stopping run D1', '[sm-dev] Run D1 ended']);
     expect(out.at(-1)).toMatch(/^\[sm-dev\] Output log: \S+ \(D1\.log\)$/);
     expect(await setup.cli('list')).toEqual(['No sm-dev runs are active']);
     // The same with the commands from stdin.
     const piped = await setup.piped('eval document.title\n', '--stdin', ...start);
     expect(piped[piped.indexOf('stdin > eval document.title') + 1]).toBe('"target"');
-    expect(piped.slice(-3, -1)).toEqual(['[sm-dev] Stopping run D1', '[sm-dev] Run D1 ended. Pages still have previously loaded scripts.']);
+    expect(piped.slice(-3, -1)).toEqual(['[sm-dev] Stopping run D1', '[sm-dev] Run D1 ended']);
     expect(await setup.cli('list')).toEqual(['No sm-dev runs are active']);
 
     // A wait that gives up stops the line, and the run is still stopped.
@@ -406,7 +408,7 @@ test('one line starts a run, sends it commands, and stops it unless detached', a
     expect(await setup.piped('eval 1+1\n', '--run', 'Dmain')).toEqual(['stdin > eval 1+1', '2']);
     expect((await setup.cli('list'))[1]).toMatch(/^Dmain\s/);
     const again = await setup.cli('--run', 'Dmain', ...start, '--detach');
-    expect(again.slice(0, 2)).toEqual(['[sm-dev] Stopping run Dmain', '[sm-dev] Run Dmain ended. Pages still have previously loaded scripts.']);
+    expect(again.slice(0, 2)).toEqual(['[sm-dev] Stopping run Dmain', '[sm-dev] Run Dmain ended']);
     expect(again.at(-2)).toMatch(/^\[sm-dev\] Run Dmain now running detached/);
     // The old way of naming a run is pointed at the new one.
     expect(await setup.cli('Dmain', 'status')).toEqual(['ERROR: Name the run with --run, before the command: sm-dev --run Dmain status']);
@@ -428,10 +430,10 @@ test('a reused tab drops the last run\'s scripts; nodes print as tags; own refs 
     });
     const first = await setup.cli('--root', scriptsDir.path, 'start', '--browser', String(setup.port), ticker, url, '--', 'wait', 'log', 'tick');
     expect(first).toContain('[page log] [ticker] tick');
-    expect(first).toContain('[sm-dev] Run D1 ended. Pages still have previously loaded scripts.');
+    expect(first).toContain('[sm-dev] Run D1 ended');
 
     const nodes = scriptsDir.write({
-      // A `%20` in the file name itself, which its stack refs keep.
+      // A `%20` in the file name itself.
       relativePath: 'my%20nodes.user.js',
       meta: { name: 'Nodes', match: ['*://*/target.html'] },
       body: `console.debug(document.getElementById('target'));
@@ -452,7 +454,9 @@ test('a reused tab drops the last run\'s scripts; nodes print as tags; own refs 
     expect(second).toContain('[page debug] <main id="target">');
     expect(second).toContain('[page warning] [nodes] at <body> 2');
     expect(second).toContain('[sm-dev] Wait matched log line: [page log] KEYUP 143');
-    expect(second.some((l) => l.includes('at boom (sourcemonkey://SourceMonkey/my%20nodes/my%20nodes.user.js:'))).toBe(true);
+    // Under the extension's name for it, which keeps a URL path's safe
+    // characters only.
+    expect(second.some((l) => l.includes('at boom (sourcemonkey://SourceMonkey/my-20nodes/my-20nodes.user.js:')), second.join('\n')).toBe(true);
   } finally {
     await setup.cli('stop', '--all');
     await setup.cleanup();

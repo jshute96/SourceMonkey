@@ -11,6 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
 import { test, expect } from '../fixtures/harness.js';
+import { extensionArgs, prepareProfile } from '../../lib/harness/extension-launch.js';
 
 const CLI = fileURLToPath(new URL('../../lib/harness/cli.js', import.meta.url));
 
@@ -29,7 +30,8 @@ test('--open-browser starts a lasting browser once, on a profile of its port', a
   const runs = mkdtempSync(path.join(os.tmpdir(), 'sm-dev-launch-runs-'));
   const env = {
     ...process.env, XDG_CONFIG_HOME: config, SM_DEV_RUNS_DIR: runs, SM_DEV_LOGS_DIR: runs,
-    SM_DEV_BROWSER_BINARY: chromium.executablePath(), SM_DEV_BROWSER_ARGS: '--headless=new',
+    // With SourceMonkey, for the run below, which needs it.
+    SM_DEV_BROWSER_BINARY: chromium.executablePath(), SM_DEV_BROWSER_ARGS: ['--headless=new', ...extensionArgs()].join(' '),
   };
   const cli = (...args: string[]): { code: number | null; out: string } => {
     const r = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env });
@@ -37,6 +39,7 @@ test('--open-browser starts a lasting browser once, on a profile of its port', a
   };
   const port = await freePort();
   const profile = path.join(config, 'sm-dev', `browser-profile-${port}`);
+  await prepareProfile(profile);
   try {
     expect(cli('--open-browser', '--browser', String(port))).toEqual({ code: 0, out: `[sm-dev] Launched chrome at 127.0.0.1:${port} (profile ${profile})` });
     // Still up once sm-dev has ended, and asked again, used as it is,

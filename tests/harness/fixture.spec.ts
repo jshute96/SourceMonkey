@@ -55,6 +55,13 @@ test.describe('consumer fixture', () => {
     expect(await gm.fireMenu('Shout', 'greet.user.js')).toBe(true);
     await expect(page.locator('#target')).toHaveText('HI');
     await expect.poll(() => gm.get('greeting')).toBe('yo');
+    // A reload registers the command again, in place of the old
+    // document's, which fires there no more.
+    await page.reload();
+    await expect(page.locator('#target')).toHaveText('yo from Greeter');
+    await expect.poll(() => gm.menuCommands()).toEqual(['Shout']);
+    expect(await gm.fireMenu('Shout')).toBe(true);
+    await expect(page.locator('#target')).toHaveText('YO');
   });
 
   test('a second served page sits beside the first', async ({ page, repo, serveHtml }) => {

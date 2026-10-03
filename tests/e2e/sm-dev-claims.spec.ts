@@ -2,7 +2,7 @@
 // runs only the run's own scripts, if any, across reloads, in
 // the tabs it opens, and until the claim is released or its lease runs
 // out. Drives the SW's `claimTab` / `renewRun` / `releaseRun` surface,
-// as sm-dev does. Design: docs/sm-dev-extension.md.
+// as sm-dev does. Design: docs/sm-dev-design.md.
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir, renderUserscript } from '../fixtures/scripts-dir';
@@ -50,7 +50,7 @@ test.describe('sm-dev tab claims', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
-    await sm.claimTab(tabId, 'R1', true, 60_000);
+    await sm.claimTab(tabId, 'R1', 60_000);
 
     for (const load of [() => page.reload(), () => page.goto(`${fixtureServer.baseUrl}/other.html`)]) {
       await load();
@@ -70,26 +70,12 @@ test.describe('sm-dev tab claims', () => {
     expect(await ran(page, 'allowed')).toBeNull();
   });
 
-  test('a harness run\'s claim keeps every script out, and greys the badge', async ({
-    extensionContext, fixtureServer, sm, getServiceWorker,
-  }) => {
-    await twoScripts(sm, fixtureServer.baseUrl);
-    const page = await extensionContext.newPage();
-    await page.goto(`${fixtureServer.baseUrl}/target.html`);
-    const tabId = await activeTabId(getServiceWorker);
-    await sm.claimTab(tabId, 'R1', false, 60_000);
-    await page.reload();
-    await waitForTabState(sm, tabId, (s) => hasBadgeColor(s, GREY), 'grey badge');
-    expect(await ran(page, 'kept')).toBeNull();
-    expect(await ran(page, 'allowed')).toBeNull();
-  });
-
   test('a tab a claimed tab opens is claimed too', async ({ extensionContext, fixtureServer, sm, getServiceWorker }) => {
     await twoScripts(sm, fixtureServer.baseUrl);
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
-    await sm.claimTab(tabId, 'R1', true, 60_000);
+    await sm.claimTab(tabId, 'R1', 60_000);
     const [popup] = await Promise.all([
       extensionContext.waitForEvent('page'),
       page.evaluate((url) => { window.open(url); }, `${fixtureServer.baseUrl}/other.html`),
@@ -103,7 +89,7 @@ test.describe('sm-dev tab claims', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
-    await sm.claimTab(tabId, 'R1', false, 300);
+    await sm.claimTab(tabId, 'R1', 300);
     await new Promise((r) => setTimeout(r, 500));
     await page.reload();
     await expect.poll(() => ran(page, 'kept')).toBe('ran');
@@ -114,7 +100,7 @@ test.describe('sm-dev tab claims', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
-    await sm.claimTab(tabId, 'R1', true, 60_000);
+    await sm.claimTab(tabId, 'R1', 60_000);
     await page.reload();
     await waitForTabState(sm, tabId, (s) => s.title.includes('Kept | NOT LOADED') && hasBadgeColor(s, GREEN), 'green with Kept not loaded');
     // Counted: only the script the claim let run. And the menu and
@@ -141,7 +127,7 @@ test.describe('sm-dev tab claims', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
-    await sm.claimTab(tabId, 'R1', true, 60_000);
+    await sm.claimTab(tabId, 'R1', 60_000);
     await sm.setTabScriptsOff(tabId, true);
     await page.reload();
     await waitForTabState(sm, tabId, (s) => s.title.includes('Allowed | NOT LOADED') && hasBadgeColor(s, GREY), 'all not loaded');
@@ -154,9 +140,9 @@ test.describe('sm-dev tab claims', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
     // As if the extension reloaded, losing the claim.
-    await sm.claimTab(tabId, 'R1', false, 60_000);
+    await sm.claimTab(tabId, 'R1', 60_000);
     await sm.releaseRun('R1');
-    expect(await sm.renewRun('R1', 60_000, false, [{ tabId }, { tabId: 999_999 }])).toBe(1);
+    expect(await sm.renewRun('R1', 60_000, [{ tabId }, { tabId: 999_999 }])).toBe(1);
     await page.reload();
     await waitForTabState(sm, tabId, (s) => hasBadgeColor(s, GREY), 'grey again');
     expect(await ran(page, 'kept')).toBeNull();
@@ -185,7 +171,7 @@ test.describe('sm-dev tab claims', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/blank.html`);
     const tabId = await activeTabId(getServiceWorker);
-    await sm.claimTab(tabId, 'R1', true, 60_000);
+    await sm.claimTab(tabId, 'R1', 60_000);
     const [opened] = await Promise.all([
       extensionContext.waitForEvent('page'),
       page.goto(`${fixtureServer.baseUrl}/target.html`),
@@ -215,21 +201,19 @@ test.describe('sm-dev tab claims', () => {
     await page.waitForTimeout(300);
     expect(await ran(page, 'mine')).toBeNull();
     expect((await sm.getTabState(tabId)).title).not.toContain('Mine');
-    // Another extension run's tab, and a harness run's: not run either.
-    for (const ownScripts of [true, false]) {
-      await sm.claimTab(tabId, 'R2', ownScripts, 60_000);
-      await page.reload();
-      await page.waitForTimeout(300);
-      expect(await ran(page, 'mine')).toBeNull();
-      await sm.releaseRun('R2');
-    }
+    // Another run's tab: not run either.
+    await sm.claimTab(tabId, 'R2', 60_000);
+    await page.reload();
+    await page.waitForTimeout(300);
+    expect(await ran(page, 'mine')).toBeNull();
+    await sm.releaseRun('R2');
     // The run that pushed it: run, and listed.
-    await sm.claimTab(tabId, 'R1', true, 60_000);
+    await sm.claimTab(tabId, 'R1', 60_000);
     await page.reload();
     await expect.poll(() => ran(page, 'mine')).toBe('ran');
     await waitForTabState(sm, tabId, (s) => s.title.includes('Mine | OK'), 'Mine OK');
     // Its claim gone (the run still holding its test collection), nowhere again.
-    await sm.renewRun('R1', 0, true);
+    await sm.renewRun('R1', 0);
     await page.waitForTimeout(10);
     await page.reload();
     await page.waitForTimeout(300);
@@ -244,7 +228,7 @@ test.describe('sm-dev tab claims', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
     expect(await sm.isSmDevMarked(tabId)).toBe(false);
-    await sm.claimTab(tabId, 'R1', false, 60_000);
+    await sm.claimTab(tabId, 'R1', 60_000);
     await page.reload();
     await expect.poll(() => sm.isSmDevMarked(tabId)).toBe(true);
     await sm.releaseRun('R1');
@@ -267,7 +251,7 @@ test.describe('sm-dev tab claims', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
     await waitForTabState(sm, tabId, (s) => s.title.includes('Main | OK'), 'Main OK');
-    // As a harness run's page-world script reports through it.
+    // As the page could, forging a report for a script it made up.
     await page.evaluate(() => {
       document.dispatchEvent(new CustomEvent('sourcemonkey-bridge-sync', {
         detail: JSON.stringify({ payload: { type: 'sm:start', id: 'harness-stranger', name: 'Stranger' } }),

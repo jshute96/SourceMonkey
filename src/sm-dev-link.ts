@@ -1,12 +1,11 @@
 // The service worker's side of sm-dev, the development tool: which tabs
 // an sm-dev run controls (tab claims), and the events it streams to the
-// runs. Design: docs/sm-dev-extension.md.
+// runs. Design: docs/sm-dev-design.md.
 //
 // Claims:
-// - A claim names the run that controls a tab, and whether the run's
-//   own scripts run there: the ones in its test collection, for an
-//   extension run. A harness run's tabs run none of the extension's (it
-//   runs its scripts itself). `handleCheckPending` (background.ts)
+// - A claim names the run that controls a tab: only the run's own
+//   scripts run there, the ones in its test collection, or none when
+//   the tab has its scripts off. `handleCheckPending` (background.ts)
 //   answers `skip` for the rest.
 // - Per tab, not per document: it holds across reloads and navigations.
 // - A lease: the run renews it, and an expired claim counts as gone, so
@@ -45,8 +44,6 @@ export const SKIP_REASON_SM_DEV = 'tab controlled by sm-dev';
 
 export interface SmDevClaim {
   runId: string;
-  /** The run's own scripts (its test collection's) run in the tab; otherwise none do. */
-  ownScripts: boolean;
   /** The tab runs none, the run's own included: `newtab --noscript`. */
   scriptsOff?: boolean;
   /** When the lease runs out, in epoch ms. */
@@ -162,16 +159,58 @@ export function activeClaim(tabId: number): SmDevClaim | null {
  * run a scratch script belongs to (`scratchRunOf`), null for any other.
  */
 export function claimAllows(claim: SmDevClaim, scriptRun: string | null): boolean {
-  return !claim.scriptsOff && claim.ownScripts && scriptRun === claim.runId;
+  return !claim.scriptsOff && scriptRun === claim.runId;
 }
 
-export async function claimTab(tabId: number, runId: string, ownScripts: boolean, ttlMs: number): Promise<void> {
+export async function claimTab(tabId: number, runId: string, ttlMs: number): Promise<void> {
   await claimsReady();
   const expires = Date.now() + ttlMs;
-  claims.set(tabId, { runId, ownScripts, expires });
+  claims.set(tabId, { runId, expires });
   runs.set(runId, Math.max(runs.get(runId) ?? 0, expires));
   persist();
   await reportLive();
+}
+
+// The navigations sm-dev names a tab by, by their fragment: each a
+// promise of the tab's id, null once it timed out.
+const namingNavigations = new Map<string, Promise<number | null>>();
+
+/**
+ * Watches for a top frame navigating to a URL ending in `#<fragment>`,
+ * for `namedTab` to say which tab it was. sm-dev knows a tab by its CDP
+ * target and the extension by its `chrome.tabs` id; neither sees the
+ * other's, so sm-dev sends the tab to `about:blank#<fragment>` between
+ * the two calls. Stops watching after `timeoutMs`.
+ */
+export function watchForNamingNavigation(fragment: string, timeoutMs: number): void {
+  const wanted = `#${fragment}`;
+  namingNavigations.set(fragment, new Promise((resolve) => {
+    const heard = (details: { tabId: number; frameId: number; url: string }): void => {
+      if (details.frameId !== 0 || !details.url.endsWith(wanted)) return;
+      stop();
+      resolve(details.tabId);
+    };
+    const stop = (): void => {
+      clearTimeout(timer);
+      chrome.webNavigation.onCommitted.removeListener(heard);
+      chrome.webNavigation.onReferenceFragmentUpdated.removeListener(heard);
+    };
+    // Gone from the table too, should nobody ask for it.
+    const timer = setTimeout(() => {
+      stop();
+      namingNavigations.delete(fragment);
+      resolve(null);
+    }, timeoutMs);
+    chrome.webNavigation.onCommitted.addListener(heard);
+    chrome.webNavigation.onReferenceFragmentUpdated.addListener(heard);
+  }));
+}
+
+/** The tab that made the navigation `fragment` names, or null if none did in time. */
+export async function namedTab(fragment: string): Promise<number | null> {
+  const found = namingNavigations.get(fragment);
+  namingNavigations.delete(fragment);
+  return found ?? null;
 }
 
 /** Turns a claimed tab's scripts off, or back on (`open --noscript` / `--script`). */
@@ -196,9 +235,9 @@ export interface RunTab {
  * `tabs` are the tabs the run holds. One whose claim is gone (it ran
  * out while the worker was stopped, or an extension reload cleared the
  * session storage) is claimed again, if the tab is still open. Returns
- * how many were. `subscribe`: the run hears the extension's events.
+ * how many were.
  */
-export async function renewRun(runId: string, ttlMs: number, ownScripts: boolean, tabs: RunTab[] = [], subscribe = true): Promise<number> {
+export async function renewRun(runId: string, ttlMs: number, tabs: RunTab[] = []): Promise<number> {
   await claimsReady();
   const expires = Date.now() + ttlMs;
   runs.set(runId, expires);
@@ -210,11 +249,10 @@ export async function renewRun(runId: string, ttlMs: number, ownScripts: boolean
     if (claims.has(tab.tabId)) continue;
     const open = await chrome.tabs.get(tab.tabId).then(() => true, () => false);
     if (!open) continue;
-    claims.set(tab.tabId, { runId, ownScripts, expires, ...(tab.scriptsOff ? { scriptsOff: true } : {}) });
+    claims.set(tab.tabId, { runId, expires, ...(tab.scriptsOff ? { scriptsOff: true } : {}) });
     restored++;
   }
-  // A run that only claims (a harness run) hears no events.
-  if (subscribe) subscribers.set(runId, expires);
+  subscribers.set(runId, expires);
   persist();
   await reportLive();
   return restored;
@@ -259,7 +297,7 @@ export async function staleRuns(withCollections: string[], now = Date.now()): Pr
     return stale;
   }
   // Every long-gone run is forgotten, one without a collection too (a
-  // harness run that was killed).
+  // run killed before it pushed a script).
   for (const [runId, expires] of runs) {
     if (expires + RUN_GRACE_MS >= now) continue;
     runs.delete(runId);

@@ -715,15 +715,12 @@ Behavior:
 ### Other readers of stacks
 
 - sm-dev prints stacks as text: `threw` reports, console lines that
-  carry a stack (`console.error(err)`), and with `--extension` the Log
-  tab's entries.
+  carry a stack (`console.error(err)`), and the Log tab's entries.
 - It rewrites them with `remapStackText` (`src/stack-link.ts`), the
   same `remapStackRef` applied to every ref in a string.
 - The layout comes from `stackLayout` (`src/composed-source.ts`), the
-  helper the Log tab uses too:
-  - the harness computes it when it prepares the script;
-  - `--extension` runs ask the service worker for the stored script's
-    (`getStackLayout` on its test surface).
+  helper the Log tab uses too. sm-dev asks the service worker for the
+  pushed script's (`getStackLayout` on its test surface).
 - Refs from scripts it doesn't know stay as they were. So do refs to
   an entry URL that scripts with different layouts share (two
   `foo.user.js` files in one sm-dev run), rather than risk naming the

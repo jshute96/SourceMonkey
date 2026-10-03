@@ -453,7 +453,7 @@ export function baseName(absolutePath: string): string {
 //
 // A script whose only copy is its text in extension storage, with no
 // file or URL behind it. Only sm-dev, the development tool, writes
-// them, over the worker's test surface (docs/sm-dev-extension.md).
+// them, over the worker's test surface (docs/sm-dev-design.md).
 //
 // - Each sm-dev run has its own collection of them, its test
 //   collection, at `container:sm-dev:<run>`, where `<run>` is the run's

@@ -2307,7 +2307,7 @@ export async function installScript(
 // ---------- Scratch scripts ----------
 //
 // Scripts whose only copy is their text in storage (see directories.ts).
-// Only sm-dev writes them (docs/sm-dev-extension.md). Each sm-dev run
+// Only sm-dev writes them (docs/sm-dev-design.md). Each sm-dev run
 // gets its own collection of them, its test collection, shown on the
 // collections page like any other; their text is a storage row the
 // fetcher reads back, so every refresh path treats them as ordinary
