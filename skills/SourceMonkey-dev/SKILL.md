@@ -170,9 +170,9 @@ What the stream looks like:
   In a connected browser, cross-site iframes and workers keep the
   browser's languages; use `--temp-browser` for a script in frames.
 
-A person at a terminal can use `pnpm sm-dev --interactive start ...`
-for a `> ` prompt instead. An agent should use `--detach` and separate
-commands.
+A person at a terminal can use `pnpm sm-dev start ...` with no commands
+after `start` for an interactive prompt. An agent should use `--detach`
+and separate commands.
 
 ## Recipes
 

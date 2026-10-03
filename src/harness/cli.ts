@@ -1460,6 +1460,11 @@ async function runOne(words: string[], client: Client): Promise<number> {
   }
 }
 
+/** Whether stdin and stdout are both a terminal, for the prompt by default. */
+function atTerminal(): boolean {
+  return Boolean(process.stdin.isTTY && process.stdout.isTTY);
+}
+
 const START_ALONE = 'The start command with nothing after it would stop the run as soon as it started. Add --interactive for a prompt, --detach to leave it running, --seconds N to watch it for a while, or commands after --.';
 
 async function main(): Promise<void> {
@@ -1501,6 +1506,12 @@ async function main(): Promise<void> {
     return;
   }
   const commands = splitCommands(flags.rest);
+  // No commands, with stdin and stdout both a terminal: the prompt, as
+  // with --interactive. Not with --stdin, in a detached run, or after
+  // `--open-browser` alone, which is a whole line: start a browser.
+  if (commands.length === 0 && !flags.stdin && !lineOpenBrowser && !detachedLog && atTerminal()) {
+    flags.interactive = true;
+  }
   // The background process a `start` began: the run itself, which
   // handles its own signals.
   if (detachedLog) {
@@ -1532,12 +1543,17 @@ async function main(): Promise<void> {
     return;
   }
   // A `start` with nothing after it to keep it going: it would start the
-  // run and stop it again straight away. Its flags can come first.
+  // run and stop it again straight away. Its flags can come first. At a
+  // terminal, the prompt keeps it going, as with --interactive.
   const last = commands.at(-1);
   const ending = last && parseCommand(last).kind === 'cli' ? parseArgs(last) : null;
   if (ending?.command === 'start' && !ending.detach && ending.seconds === undefined && !stdin && !flags.interactive) {
-    process.exitCode = printMistake(new UsageError(START_ALONE));
-    return;
+    if (atTerminal()) {
+      flags.interactive = true;
+    } else {
+      process.exitCode = printMistake(new UsageError(START_ALONE));
+      return;
+    }
   }
   // --temp-browser and --headed shape the runs this line starts; with no
   // start to use them, they'd be silently ignored.

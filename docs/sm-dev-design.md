@@ -270,10 +270,12 @@ Command marks:
 - The rest of the line holds one or more commands, split on `--`.
   Stdin and prompt lines are split the same way, except an `eval`
   block, which stays one command.
+- With no commands, input comes from stdin when it's piped, and the
+  `--interactive` prompt when stdin and stdout are a terminal.
 - Every command is checked before any runs.
   - A lone `start` with no `--detach`, `--seconds`, `--stdin`,
-    `--interactive`, or commands after it is refused, since its run
-    would stop at once.
+    `--interactive`, or commands after it would stop its run at once.
+    At a terminal it opens the prompt instead; elsewhere it is refused.
 - A name that isn't an `sm-dev` command but is a run command goes to
   the run. So does one argument of several lines, as a list.
 

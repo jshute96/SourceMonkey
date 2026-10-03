@@ -104,7 +104,8 @@ export const HELP_SECTIONS: HelpSection[] = [
       '     - With --stdin, or with pipe input and no command-line commands.',
       '     - One command per line.',
       '  3. A prompt',
-      '     - With --interactive.',
+      '     - With --interactive, or at a terminal with no command-line commands',
+      '       or ending with a start command.',
     ],
   },
   {
@@ -120,10 +121,11 @@ export const HELP_SECTIONS: HelpSection[] = [
       '  # Connect to an existing browser.',
       '  sm-dev [--browser <port>|<url>] <commands...>',
       '',
-      'Start sm-dev with a tab, injecting a userscript:',
-      '  # Start with an interactive prompt.',
-      '  sm-dev --interactive start example.user.js http://example.com',
+      'Open an interactive prompt (the default at a terminal):',
+      '  # Optionally start an initial run first.',
+      '  sm-dev [start example.user.js http://example.com]',
       '',
+      'Start sm-dev with a tab, injecting a userscript:',
       '  # Start, run commands (separated by --), then exit.',
       '  sm-dev start example.user.js http://example.com -- status -- snapshot',
       '',
@@ -514,7 +516,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         title: 'Where to get input commands (after processing command-line arguments)',
         options: [
           { term: '--stdin', about: ['Read commands from stdin.', 'This is the default when command-line has no commands and stdin is piped input.'] },
-          { term: '--interactive', about: 'Read commands interactively from a prompt.' },
+          { term: '--interactive', about: ['Read commands interactively from a prompt.', 'This is the default when command-line has no commands and stdin and stdout are a terminal.'] },
         ],
       },
       {

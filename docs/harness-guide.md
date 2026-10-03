@@ -379,7 +379,9 @@ sm-dev start [script.user.js]... [url]... [options]
 - Several scripts go into the same page, for interaction tests.
 - Without `--detach`, the run stops when sm-dev ends.
 
-`start` with nothing after it to keep the run going is refused:
+`start` with nothing after it to keep the run going opens the `> `
+prompt at a terminal (stdin and stdout both), as `--interactive`
+would. Elsewhere it is refused:
 `The start command with nothing after it would stop the run as soon as
 it started. Add --interactive for a prompt, --detach to leave it
 running, --seconds N to watch it for a while, or commands after --.`
@@ -640,6 +642,9 @@ sm-dev --interactive      # no run yet: type start or attach
 
 - sm-dev reads the terminal only then. It needs a terminal, and can't
   be combined with `--stdin`.
+- With no commands on the line, at a terminal (stdin and stdout both),
+  the prompt is the default: plain `sm-dev` is the same as
+  `sm-dev --interactive`.
 - Line editing and history work as in most shells (arrows, Ctrl-A /
   Ctrl-E, Ctrl-U), and Tab completes a command name.
 - At a terminal, history is kept across sessions in
