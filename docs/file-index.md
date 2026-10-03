@@ -122,6 +122,7 @@ One-line descriptions of every source file, grouped by directory.
 | `src/script-source-url.ts` | Canonical `sourcemonkey://SourceMonkey/…` URL builders for every `{code}` entry — main, config, prelude, require, plus page-wide bridge / GM runtime |
 | `src/script-url-hash.ts` | Pure `parseHash` / `buildHash` for the viewer's `#<filename>[:<line>[:<col>]]` / `#Log` URL fragment |
 | `src/userscript-header.ts` | Parser for the `// ==UserScript== … // ==/UserScript==` metadata block + header/body splitter, with per-tag line numbers |
+| `src/regex-to-glob.ts` | Globs covering every URL a regex `@include` can match, so Chrome registers it narrower than `<all_urls>` |
 | `src/url-match.ts` | Pure URL-matching predicate for `@match` / `@include` / `@exclude` patterns (incl. `.tld` hosts), plus the `@match` grammar check and its lenient rewrites |
 | `src/public-suffixes.ts` | Generated: the ICANN public suffix rules that `.tld` host patterns match, one per line |
 | `src/match-index.ts` | In-memory cache of injectable scripts' matching info, execution world, and which load from disk, kept in sync with `chrome.storage.local`; reports which rows moved, skipping probe-only writes |
@@ -252,9 +253,10 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/fixtures/pages/set-page-global.js` | Script that sets a page global, loaded as an external `<script src>` by the CSP tests |
 | `tests/e2e/smoke.spec.ts` | Smoke test: SW loads, collections page renders, fixture server responds |
 | `tests/e2e/exclude-globs.spec.ts` | E2E for `@exclude`: excluded pages stay untouched, a later-added `@exclude` takes effect, plus a Chrome `update`-vs-globs probe |
+| `tests/e2e/regex-include-globs.spec.ts` | E2E for regex `@include` globs: registered in place of `<all_urls>`, and probes of how Chrome reads globs |
 | `tests/e2e/include-only.spec.ts` | E2E for glob `@include`s: glob-only scripts, globs on another host, and probes of how Chrome reads `includeGlobs` |
 | `tests/e2e/tld-hosts.spec.ts` | `.tld` hosts ("any public suffix") in `@match` / `@include` / `@exclude` run where the header says, and only there |
-| `tests/e2e/include-regex.spec.ts` | A regex `@include` beside a `@match` registers `<all_urls>` and runs on the regex's pages too |
+| `tests/e2e/include-regex.spec.ts` | A regex `@include` with no derivable globs, beside a `@match`: registers `<all_urls>` and runs on the regex's pages too |
 | `tests/e2e/injection.spec.ts` | End-to-end userscript injection: matching, non-matching, lenient-`@match`, and multiple-script cases |
 | `tests/e2e/sync-window.spec.ts` | A navigation racing a registration sync still gets injected, and the set never empties mid-sync |
 | `tests/e2e/badge.spec.ts` | Per-tab badge classifications: green/red/orange/purple plus MISSING and post-update RELOAD |
@@ -368,6 +370,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/log-stack-mapping.spec.ts` | Log tab maps `err.stack` lines back to the `@require`/body they came from; clicks and the CSV export follow that mapping |
 | `tests/e2e/stack-lines.spec.ts` | The service worker's stack layout, which `sm-dev --extension` maps with, sends a logged throw to the `@require` and script lines |
 | `tests/e2e/log-export.spec.ts` | Log tab's Save / Copy buttons: save dialog, cancel + write-failure reporting, download fallback, clipboard text, empty-log disable |
+| `tests/unit/regex-to-glob.test.mjs` | Unit tests for regex `@include` globs: examples, fallbacks, edge cases, and sampled URLs each regex matches |
 | `tests/unit/injector.test.mjs` | Unit tests for the injector: spec build, active-spec collection, refusal logging, retry limits, sync serialization and scoping |
 | `tests/unit/generated-wrappers.test.mjs` | Guard test: each minified wrapper (`WRAPPER_*`) is a single line of valid JS with load-bearing tokens intact |
 | `tests/unit/source-map.test.mjs` | Unit tests for VLQ encoding, line-level mappings, and inline-map encoding |

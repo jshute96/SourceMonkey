@@ -1,8 +1,10 @@
 // A userscript with a regex `@include` beside its `@match`. Chrome can't
-// read a regex, so `buildRegistrationSpec` registers `<all_urls>` and
-// the wrapper's in-page matcher holds the script to its rules. With
-// only the `@match` registered, Chrome never injected on a page just
-// the regex covers.
+// read a regex. This one names no `://`, so no globs can be derived
+// from it (see `regexIncludeGlobs`), and `buildRegistrationSpec`
+// registers `<all_urls>`; the wrapper's in-page matcher holds the
+// script to its rules. With only the `@match` registered, Chrome never
+// injected on a page just the regex covers. A regex that yields globs
+// is covered in regex-include-globs.spec.ts.
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';

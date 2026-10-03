@@ -85,7 +85,8 @@ import {
 import { findApi, resolveGrants, type ApiSubsystem } from './gm-api-catalog.js';
 import { scanAllStorage } from './storage-scan.js';
 import { isScratchUrl } from './directories.js';
-import { canonicalMatchPatterns, hostEndsInTld, matchPatternProblem, tldCoarseGlob } from './url-match.js';
+import { MATCH_SCHEMES, canonicalMatchPatterns, hostEndsInTld, matchPatternProblem, tldCoarseGlob } from './url-match.js';
+import { regexIncludeGlobs } from './regex-to-glob.js';
 import { dlog } from './debug-log.js';
 import { startPhaseTimer } from './phase-timing.js';
 import {
@@ -171,15 +172,22 @@ export const GM_RUNTIME_MAIN_SCRIPT_ID = 'sourcemonkey-gm-runtime-main';
 //   - Chrome requires `matches`, and ORs it with `includeGlobs`, so a
 //     script whose patterns are all globs needs a stand-in that no
 //     real page's path has.
-//   - Its host is `*` on purpose. Chrome kills the renderer ("Page
-//     crashed") when `chrome.tabs.sendMessage` reaches a USER_SCRIPT-
-//     world listener (the bridge, the GM runtime) in a page the spec
-//     covers only through `includeGlobs`, on a host none of its
-//     `matches` names. A `*` host keeps every page's host covered.
-//     Measured; see tests/e2e/include-only.spec.ts.
+//   - It covers every host, of every scheme a pattern can name, on
+//     purpose. Chrome kills the renderer ("Page crashed") when
+//     `chrome.tabs.sendMessage` reaches a USER_SCRIPT-world listener
+//     (the bridge, the GM runtime) in a page the spec covers only
+//     through `includeGlobs`, on a host (or for `file:`, a scheme) none
+//     of its `matches` names. Measured; see
+//     tests/e2e/include-only.spec.ts.
+//   - One per scheme in MATCH_SCHEMES, so a scheme added there is
+//     covered too: `*` (http and https) with a `*` host, and `file:`,
+//     which has no host.
 // The wrapper's in-page matcher still runs for such a script, so even a
 // page that did have this path wouldn't run it.
-export const NO_PAGE_MATCH = '*://*/__sourcemonkey_no_page__/*';
+const NO_PAGE_PATH = '/__sourcemonkey_no_page__/*';
+export const NO_PAGE_MATCHES: readonly string[] = MATCH_SCHEMES
+  .filter((s) => s !== 'http' && s !== 'https')
+  .map((s) => (s === 'file' ? `file://${NO_PAGE_PATH}` : `${s}://*${NO_PAGE_PATH}`));
 
 export type RegistrationSpec = chrome.userScripts.RegisteredUserScript;
 export type InjectionWorld = 'MAIN' | 'USER_SCRIPT';
@@ -1044,13 +1052,22 @@ export async function buildRegistrationSpec(
   // A `.tld` `@include` registers its coarse glob, like a `.tld`
   // `@match`. A `.tld` `@exclude` goes with the regexes, enforced only
   // in-page: widened to `.*`, it would exclude pages it shouldn't.
+  // A regex `@include` registers globs derived from it when it can
+  // (`regexIncludeGlobs`: a superset of what it matches, so Chrome skips
+  // pages it can't match), and `<all_urls>` when it can't. Either way
+  // the wrapper applies the regex itself.
   let hasRegexInclude = false;
+  let hasUnglobbedRegexInclude = false;
   let hasRegexExclude = false;
   let hasTldRule = tldMatches.length > 0;
   for (const m of tldMatches) includeGlobSet.add(tldCoarseGlob(m, true));
   for (const inc of script.matching.includes) {
-    if (isRegexLiteral(inc)) hasRegexInclude = true;
-    else if (hostEndsInTld(inc)) {
+    if (isRegexLiteral(inc)) {
+      hasRegexInclude = true;
+      const globs = regexIncludeGlobs(inc);
+      if (globs) for (const g of globs) includeGlobSet.add(g);
+      else hasUnglobbedRegexInclude = true;
+    } else if (hostEndsInTld(inc)) {
       includeGlobSet.add(tldCoarseGlob(inc, false));
       hasTldRule = true;
     } else includeGlobSet.add(inc);
@@ -1064,7 +1081,7 @@ export async function buildRegistrationSpec(
 
   // Chrome refuses a registration without `matches` ("must specify
   // 'matches'"), so a script whose header carries only `@include`s
-  // needs a stand-in (see `NO_PAGE_MATCH` below), with the wrapper's
+  // needs a stand-in (see `NO_PAGE_MATCHES` below), with the wrapper's
   // in-page matcher holding it to its header.
   //
   // How the globs and `matches` combine matters, because Chrome's own
@@ -1075,13 +1092,13 @@ export async function buildRegistrationSpec(
   // `includeGlobs` with `matches` — userscript `@include` semantics —
   // rather than filtering within them. So:
   //   - `<all_urls>` as the stand-in would run a glob-only script on
-  //     every page. The stand-in is `NO_PAGE_MATCH` instead (added to
+  //     every page. The stand-in is `NO_PAGE_MATCHES` instead (added to
   //     any spec with globs, for the reason given there), and the
   //     globs say where Chrome injects.
   //   - Were it ever the documented AND, that would inject nowhere.
   //     The probe would fail first.
-  //   - A regex `@include` still needs `<all_urls>` (below): no glob
-  //     can stand for it.
+  //   - A regex `@include` with no derived globs still needs
+  //     `<all_urls>` (below).
   // `excludeGlobs` is a true AND under both readings, so it needs no
   // such care.
   //
@@ -1094,15 +1111,15 @@ export async function buildRegistrationSpec(
   // nowhere, as when a script has valid `@match`es beside them.
   let usedAllUrlsFallback = false;
   let usedNoPageStandIn = false;
-  if (hasRegexInclude) {
-    // A regex `@include` can cover pages no registered `@match` or
-    // glob does, and Chrome can't read it, so registering the rest
-    // alone would never inject there. Every page instead, narrowed by
-    // the wrapper, which checks the whole rule set.
+  if (hasUnglobbedRegexInclude) {
+    // A regex `@include` with no derived globs can cover pages no
+    // registered `@match` or glob does, and Chrome can't read it, so
+    // registering the rest alone would never inject there. Every page
+    // instead, narrowed by the wrapper, which checks the whole rule set.
     matches.splice(0, matches.length, '<all_urls>');
     usedAllUrlsFallback = true;
   } else if (includeGlobs.length > 0) {
-    matches.push(NO_PAGE_MATCH);
+    matches.push(...NO_PAGE_MATCHES);
     usedNoPageStandIn = true;
   } else if (matches.length === 0) {
     return null;
@@ -1114,7 +1131,7 @@ export async function buildRegistrationSpec(
   const name = scriptDisplayName(script);
   // A script with globs keeps the in-page check too: Chrome's glob
   // reading isn't ours (case, `?`), a `.tld` glob is coarse, and
-  // `NO_PAGE_MATCH` is a real (if unlikely) path.
+  // `NO_PAGE_MATCHES` is a real (if unlikely) path.
   const needsWrapperFilter = hasRegexInclude || hasRegexExclude || usedAllUrlsFallback
     || usedNoPageStandIn || hasTldRule || options.inPageMatcher === true;
   const sourceUrl = buildSourceUrl(logLabel);
@@ -1257,7 +1274,8 @@ export async function collectActiveSpecs(
     if (!needsGmRuntime(eligible[i].header)) continue;
     // Take the patterns off the SPEC, not the header: that's what
     // Chrome will actually inject the script on, including the
-    // `<all_urls>` fallback a regex-only `@include` gets. So the
+    // globs a regex `@include` registers as, or its `<all_urls>`
+    // fallback when it yields none. So the
     // runtime is present wherever its scripts can run, by
     // construction.
     gmRuntime.set(eligible[i].id, {
@@ -1818,6 +1836,13 @@ function takeQueuedScope(): SyncScope | undefined {
   return full ? undefined : scope;
 }
 
+// Exported for the e2e probes that register with Chrome directly, so
+// they configure the world exactly as the extension does.
+export const USER_SCRIPT_WORLD_CONFIG = {
+  messaging: true,
+  csp: "script-src 'self' 'unsafe-eval' 'unsafe-inline' *",
+} as const;
+
 let worldConfigured = false;
 async function ensureWorldConfigured(): Promise<void> {
   if (worldConfigured) return;
@@ -1844,10 +1869,7 @@ async function ensureWorldConfigured(): Promise<void> {
   //     user-script-world-csp.spec.ts).
   // Idempotent — Chrome accepts repeated calls but we still guard so
   // we don't issue them on every sync.
-  await chrome.userScripts.configureWorld({
-    messaging: true,
-    csp: "script-src 'self' 'unsafe-eval' 'unsafe-inline' *",
-  });
+  await chrome.userScripts.configureWorld({ ...USER_SCRIPT_WORLD_CONFIG });
   worldConfigured = true;
 }
 

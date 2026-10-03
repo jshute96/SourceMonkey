@@ -1007,21 +1007,29 @@ The User Scripts API has no equivalent for `/regex/` `@include` /
 
 - **Registration layer.** Glob `@include` / `@exclude` patterns go to
   `includeGlobs` / `excludeGlobs`. `@match` goes to `matches`.
-  - Any script with `includeGlobs` also gets a stand-in in `matches`,
-    `NO_PAGE_MATCH` (`*://*/__sourcemonkey_no_page__/*`): any host,
-    a path no real page uses. Chrome ORs the globs with `matches`
-    (see below), so the globs say where it injects. Two reasons:
+  - Any script with `includeGlobs` also gets stand-ins in `matches`,
+    `NO_PAGE_MATCHES`: a path no real page uses
+    (`/__sourcemonkey_no_page__/*`), on any host, once per scheme a
+    pattern can name (`*://*/…` for http and https, `file:///…`,
+    `ftp://*/…`). Chrome ORs the globs with `matches` (see below), so
+    the globs say where it injects. Two reasons:
     - Chrome refuses a registration with no `matches` (*"must specify
       'matches'"*), so a script with only `@include`s needs one.
     - Chrome kills the renderer ("Page crashed") when the service
       worker messages a USER_SCRIPT-world listener (the bridge, the GM
       runtime) in a page covered only by `includeGlobs`, on a host no
-      `matches` entry names. The `*` host avoids that.
+      `matches` entry names. Covering every host of every scheme
+      avoids that; `*://` alone doesn't cover a `file://` page.
+    - The list is built from `MATCH_SCHEMES` (`url-match.ts`), so a
+      scheme added there gets its stand-in too.
     - The wrapper's matcher runs for these scripts, so the stand-in's
       own path never runs one.
-  - A script with a regex `@include` gets `<all_urls>`, even beside
-    `@match` lines: the regex can cover pages nothing Chrome reads
-    does, and Chrome would never inject there.
+  - A regex `@include` registers globs derived from it, which cover
+    every URL it can match (see
+    [Globs for a regex `@include`](#globs-for-a-regex-include)).
+    One that yields none gets `<all_urls>`, even beside `@match`
+    lines: the regex can cover pages nothing Chrome reads does, and
+    Chrome would never inject there.
   - A pattern whose host ends in `.tld` ("any public suffix", see
     [matching.md](matching.md#tld-hosts)) would be read by Chrome as a
     literal host no page has. A `.tld` `@match` or `@include`
@@ -1029,9 +1037,10 @@ The User Scripts API has no equivalent for `/regex/` `@include` /
     (`*://www.google.*/*`), and the wrapper narrows it. A `.tld`
     `@exclude` is enforced only in the wrapper: widened, it would
     exclude pages it shouldn't.
-  - Cost: a regex `@include` script is injected and parsed on every
-    page and frame, and only its body is skipped off-target. A `.tld`
-    script pays that only on pages its coarse glob reaches.
+  - Cost: a script is injected and parsed on every page its
+    registration reaches, and only its body is skipped off-target.
+    That's every page and frame only for a regex `@include` that
+    yields no globs.
 - **Wrapper layer.** When a script has any regex, `.tld` or glob
   pattern,
   the wrapper embeds the full `{matches, includes, excludes}` object
@@ -1044,6 +1053,165 @@ The User Scripts API has no equivalent for `/regex/` `@include` /
 Net effect: badge and injection stay in sync. The wrapper-side
 matcher must agree byte-for-byte with `src/url-match.ts`; a unit test
 eval's the embedded snippet to verify the regex-relevant cases.
+
+### Globs for a regex `@include`
+
+Chrome can't run a regex. So `regexIncludeGlobs` (`src/regex-to-glob.ts`)
+turns a regex `@include` into globs that match every URL the regex can
+match, and usually not much more. Chrome then starts the script only
+on those pages, and the wrapper still applies the regex itself.
+
+#### What Chrome's globs see
+
+Measured in `tests/e2e/regex-include-globs.spec.ts`:
+
+- The whole URL, query and fragment included: the same string the
+  wrapper tests the regex against.
+- With the scheme and host lowercased. A username before the host
+  (`user@`) keeps its case, per the URL standard.
+- `*` is any run of characters, `?` exactly one, and `\` makes the
+  next character literal.
+- Globs are case-sensitive, and a regex `@include` ignores case. So a
+  letter can only be kept where Chrome lowercased it: the scheme and
+  host.
+
+#### How the conversion works
+
+1. **Split on `|`.** Each side of a top-level `|` is converted on its
+   own, into its own globs.
+2. **Read left to right** into a sequence of literal characters and
+   variable pieces.
+   - An optional or alternative group (`(www\.)?`, `(eu|com)`) splits
+     the sequence into one copy per choice, and copies multiply (see
+     [Limits](#limits)).
+3. **Find the scheme**: everything before the sequence's first `://`.
+   - Chrome lowercases the scheme, so its letters stay, lowercased.
+   - An optional character right before `://` becomes one `*`:
+     `https?://` and `http(s)?://` give `http*://`. No scheme a script
+     runs on starts with `http` but `http` and `https`.
+   - Other choices multiply like any group: `(https|file)://` gives
+     two copies.
+   - With no `^`, the scheme gets a leading `*` (`*https://`), since
+     the match may start anywhere.
+   - No `://` at all: no globs (see the end of this section).
+4. **Find the host**: from after the `://` up to the first piece that
+   could match a `/` (`.`, `.*`, `[^?#]*`). Its letters stay,
+   lowercased. Pieces that can't match `/` (`[a-z]*`, `\w+`, `\d`)
+   don't end it.
+5. **The rest is the path** (and query and fragment). Its letters
+   become `?`.
+6. **Keep or give up.** A copy whose `^`-anchored start can't begin a
+   URL a script runs on (`http`, `https`, `file`) is dropped. If a copy
+   keeps no letter of the host and isn't `file://`, the whole regex
+   gives up, and the script starts on all pages.
+7. **Add the extra globs** for URL shapes where the host isn't
+   lowercased (why: [below](#extra-globs-for-two-rare-url-shapes)):
+   - **A username glob, when the host part could reach into a
+     username.** It matches any URL with the same scheme that has an
+     `@` after the `://`.
+     - Needed for `^https:\/\/[^\/]*xyz[^\/]*\/`: it matches
+       `https://XYZ@site.com/`, where `XYZ` is a username, which Chrome
+       doesn't lowercase, so the main glob `https://*xyz*/*` misses it.
+       The glob added is `https://*@*`.
+     - Not needed for `^https:\/\/x\.com\/`: a username would sit
+       where `x.com/` has to match, so the regex can't match such a URL
+       either.
+     - The rule: added unless the host part can't match an `@` and is
+       followed by a literal `/` (or the end, with `$`).
+   - **A second-link glob, only when the regex has no `^`.** It matches
+     any URL that contains a second `://`, followed by the regex's own
+     text from its `://` on, with every letter turned into `?`. That
+     covers the regex matching a link inside the URL. For
+     `https:\/\/x\.com\/` it is `*://*://?.???/*`. (It's also added
+     when the part before the regex's `://` could match a `/`, even with
+     a `^`.)
+
+#### Limits
+
+Groups expand as a cross product, so the counts are capped
+(`MAX_ALTERNATIVES`, 16, in `src/regex-to-glob.ts`):
+
+- **Cross product.** Groups in a row multiply:
+  `(www\.)?ebay(desc)?(\.[a-z]{2})?` is 2 × 2 × 2 = 8 copies.
+- **Growing past the cap.** Reading left to right, a group that would
+  take the count over 16 becomes a single variable piece (`*`) instead
+  of expanding. The groups before it keep their copies.
+- **A big group on its own.** A group with more than 16 choices (a
+  list of 60 site names) becomes a single variable piece too.
+- **Top-level `|`.** If the sides add up to more than 16 copies, the
+  regex gives up and the script starts on all pages.
+- **Fixed repeats** (`\d{4}`) are spelled out up to 16 copies; longer
+  ones become `*`.
+- **Globs per copy.** Each copy gives its main glob plus up to two
+  extra ones (below), so a regex gives at most 48 globs. Duplicates
+  are dropped; the extra globs are often the same across copies.
+
+Collapsing into `*` only makes a glob match more, so it is always
+safe; it just narrows less.
+
+#### Regex pieces and what they become
+
+| In the regex | In the glob | Example |
+|---|---|---|
+| A letter in the scheme or host | Itself, lowercased | `Example\.COM` → `example.com` |
+| A letter after the host | `?` (one character, either case) | `\/Video` → `/?????` |
+| A literal `*`, `?` or `\` | `?`, since a glob reads them specially | `\?` → `?` |
+| Any other literal character | Itself | `\.` → `.`, `\/` → `/` |
+| A piece matching one character: `.`, `\d`, `[a-z]` | `?` | `[0-9]` → `?` |
+| A repeat: `.*`, `\d+`, `[^/]*` | `*`, after any required copies | `\d+` → `?*` |
+| An optional or alternative group: `(www\.)?`, `(eu\|com)` | One glob for each choice | `(www\.)?x\.com` → `www.x.com`, `x.com` |
+| A top-level `\|` | One glob for each side | |
+| A lookahead or lookbehind: `(?!user\/)` | Nothing | |
+| No `^` at the start, no `$` at the end | A leading or trailing `*` | |
+
+- The host is the part right after the regex's `://`, up to the first
+  piece that could match a `/`. A `.` (any character) could, so in
+  `https?://encrypted.google.com` only `encrypted` counts as host.
+- A choice that can't start a URL a script runs on (those start with
+  `http` or `file`) is dropped. In `^(https?:\/\/)?(www\.)?x\.com`,
+  the choices without the scheme would start with `www` or `x`.
+
+Whole examples:
+
+| Regex | Globs |
+|---|---|
+| `^https:\/\/live\.bilibili\.com\/[0-9]+` | `https://live.bilibili.com/?*` |
+| `^https?:\/\/(www\.)?sketchfab\.com\/.*` | `http*://www.sketchfab.com/*`, `http*://sketchfab.com/*` |
+| `^https:\/\/[a-z]*\.(google\|youtube)\.[a-z]*` | `https://*.google.*`, `https://*.youtube.*`, `https://*@*` |
+
+The last one gets the username glob (step 7): its host part isn't
+followed by a `/`, so `https://a.GOOGLE.com@site.com/` matches it with
+`a.GOOGLE` in the username.
+
+#### Extra globs for two rare URL shapes
+
+Two kinds of URL put the regex's host text somewhere Chrome doesn't
+lowercase. Each gets one extra glob, which still leaves out most pages:
+
+- **A link inside the URL.** A regex with no `^` can match a link in
+  the query string, like `https://a.com/?next=https://Site.com/x`,
+  where `Site.com` isn't lowercased. The extra glob needs a second
+  `://` in the URL.
+- **A username before the host**, like `https://XYZ@site.com/`, when
+  the regex's host part could match into it (step 7). The extra glob
+  needs an `@` after the scheme (`https://*@*`).
+
+#### When the script still starts on all pages
+
+No globs, so `<all_urls>`, when the regex:
+
+- doesn't compile;
+- has no `://` to find the host by (`/flickr\.com/`);
+- or keeps no letter of the host and isn't `file://`
+  (`/^https?:\/\/.+/`). A `file://` regex keeps its glob without one,
+  since `file:///…` alone leaves out every web page.
+
+Most regex `@include`s in the GreasyFork corpus (the most-installed
+GreasyFork scripts, in `tests/greasyfork-examples/`) get globs.
+
+Tests: `tests/unit/regex-to-glob.test.mjs` checks examples, and that
+random URLs each corpus regex matches (after Chrome's normalization)
+all match its globs.
 
 ### How Chrome reads includeGlobs
 
@@ -1063,14 +1231,14 @@ Chrome the suite runs:
 Consequences:
 
 - `<all_urls>` can't be narrowed by handing Chrome globs alongside it:
-  `<all_urls>` OR anything is still every page. So it is kept for
-  regex `@include`s, which no glob can stand for.
-- A script with globs instead registers `NO_PAGE_MATCH` beside them,
-  so Chrome injects only where its `@match`es and globs reach.
+  `<all_urls>` OR anything is still every page. So it is kept only for
+  a regex `@include` that yields no globs.
+- A script with globs instead registers `NO_PAGE_MATCHES` beside
+  them, so Chrome injects only where its `@match`es and globs reach.
   - Under the documented AND, a glob-only script would inject
     nowhere. The probe above would fail first.
-  - A second probe in the same spec pins the renderer crash the
-    stand-in's `*` host avoids.
+  - More probes in the same spec pin the renderer crash the stand-ins
+    avoid, on an http page and a `file://` page.
 - Every script with globs carries the wrapper-side matcher: Chrome's
   glob reading isn't exactly ours (case, `?`), and the stand-in's path
   is a real one.

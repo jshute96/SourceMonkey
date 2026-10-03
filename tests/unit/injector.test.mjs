@@ -81,7 +81,7 @@ import {
   buildBridgeSpec,
   buildConfigBlob,
   buildRegistrationSpec,
-  NO_PAGE_MATCH,
+  NO_PAGE_MATCHES,
   buildSwapEvalBody,
   collectActiveSpecs,
   normalizeDeclaredRunAt,
@@ -811,16 +811,26 @@ test('buildRegistrationSpec: an expansion Chrome would refuse is dropped, its si
   assert.deepEqual(spec.matches, ['file:///*']);
 });
 
-test('buildRegistrationSpec: unusable @match with a regex @include still falls back to <all_urls>', async () => {
-  // Nothing left for Chrome to match on, but the wrapper-side matcher
-  // has a regex to apply — same path as a script that declared no
-  // `@match` at all.
+test('buildRegistrationSpec: unusable @match with a regex @include registers only the regex\'s globs', async () => {
+  // Nothing left for Chrome to match on from the @match; the regex's
+  // derived globs say where to inject, and the wrapper applies the
+  // regex itself.
   const spec = await buildRegistrationSpec(makeScript({
     matching: {
       matches: ['https://example.com'],
       excludes: [],
       includes: ['/^https:\\/\\/foo\\..*$/'],
     },
+  }));
+  assert.deepEqual(spec.matches, [...NO_PAGE_MATCHES]);
+  assert.deepEqual(spec.includeGlobs, ['https://foo.*', 'https://*@*']);
+});
+
+test('buildRegistrationSpec: a regex @include with no derivable glob falls back to <all_urls>', async () => {
+  // No scheme to place the host by, so no glob: every page, narrowed
+  // by the wrapper.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: { matches: ['https://example.com'], excludes: [], includes: ['/flickr\\.com/'] },
   }));
   assert.deepEqual(spec.matches, ['<all_urls>']);
 });
@@ -842,8 +852,8 @@ test('buildRegistrationSpec: @include glob → includeGlobs; /regex/ form goes t
       includes: ['*://example.com/*', '/^https:\\/\\/foo\\..*$/'],
     },
   }));
-  assert.deepEqual(spec.matches, ['<all_urls>']);
-  assert.deepEqual(spec.includeGlobs, ['*://example.com/*']);
+  assert.deepEqual(spec.matches, [...NO_PAGE_MATCHES]);
+  assert.deepEqual(spec.includeGlobs, ['*://example.com/*', 'https://foo.*', 'https://*@*']);
   // The regex pattern travels through the config blob into the
   // prelude's runtime matcher.
   const cfg = spec.js[0];
@@ -863,7 +873,7 @@ test('buildRegistrationSpec: .tld rules register as coarse globs, narrowed in-pa
       includes: ['*://www.google.tld/*', '*://example.org/*'],
     },
   }));
-  assert.deepEqual(spec.matches, ['https://example.com/*', NO_PAGE_MATCH]);
+  assert.deepEqual(spec.matches, ['https://example.com/*', ...NO_PAGE_MATCHES]);
   assert.deepEqual(spec.includeGlobs, ['*://*imdb.*/*', '*://www.google.*/*', '*://example.org/*']);
   assert.deepEqual(spec.excludeGlobs, ['https://example.com/admin/*']);
   assert.match(spec.js[0].code, /"matching"/);
@@ -873,7 +883,7 @@ test('buildRegistrationSpec: a .tld @match alone still registers', async () => {
   const spec = await buildRegistrationSpec(makeScript({
     matching: { matches: ['*://www.google.tld/*'], excludes: [], includes: [] },
   }));
-  assert.deepEqual(spec.matches, [NO_PAGE_MATCH]);
+  assert.deepEqual(spec.matches, [...NO_PAGE_MATCHES]);
   assert.deepEqual(spec.includeGlobs, ['*://www.google.*/*']);
   assert.match(spec.js[0].code, /"matching"/);
 });
@@ -887,7 +897,7 @@ test('buildRegistrationSpec: glob-only @include still gets a matches pattern', a
   const spec = await buildRegistrationSpec(makeScript({
     matching: { matches: [], excludes: [], includes: ['*://example.com/*'] },
   }));
-  assert.deepEqual(spec.matches, [NO_PAGE_MATCH]);
+  assert.deepEqual(spec.matches, [...NO_PAGE_MATCHES]);
   assert.deepEqual(spec.includeGlobs, ['*://example.com/*']);
   const cfg = spec.js[0];
   assert.ok('code' in cfg);
@@ -897,7 +907,7 @@ test('buildRegistrationSpec: glob-only @include still gets a matches pattern', a
 test('buildRegistrationSpec: @match beside a glob @include adds the any-host stand-in', async () => {
   // Chrome ORs includeGlobs with matches (measured — see
   // tests/e2e/include-only.spec.ts), which is what the header means.
-  // NO_PAGE_MATCH keeps every page's host covered by `matches`, which
+  // NO_PAGE_MATCHES keeps every page's host covered by `matches`, which
   // Chrome needs to deliver messages to the page without crashing it;
   // the wrapper-side matcher then guards its (unlikely) path.
   const spec = await buildRegistrationSpec(makeScript({
@@ -907,7 +917,7 @@ test('buildRegistrationSpec: @match beside a glob @include adds the any-host sta
       includes: ['*://other.example/*'],
     },
   }));
-  assert.deepEqual(spec.matches, ['https://example.com/*', NO_PAGE_MATCH]);
+  assert.deepEqual(spec.matches, ['https://example.com/*', ...NO_PAGE_MATCHES]);
   assert.deepEqual(spec.includeGlobs, ['*://other.example/*']);
   const cfg = spec.js[0];
   assert.ok('code' in cfg);
@@ -933,7 +943,7 @@ test('buildRegistrationSpec: all @match patterns refused + glob @include gets th
       includes: ['*://example.com/*'],
     },
   }));
-  assert.deepEqual(spec.matches, [NO_PAGE_MATCH]);
+  assert.deepEqual(spec.matches, [...NO_PAGE_MATCHES]);
   assert.deepEqual(spec.includeGlobs, ['*://example.com/*']);
   const cfg = spec.js[0];
   assert.ok('code' in cfg);
@@ -954,21 +964,49 @@ test('buildRegistrationSpec: @exclude glob → excludeGlobs; /regex/ form goes t
   assert.match(cfg.code, /"matching"/);
 });
 
-test('buildRegistrationSpec: regex-only @include registers <all_urls> and defers to the wrapper', async () => {
+test('NO_PAGE_MATCHES has a stand-in for every scheme a pattern can name', () => {
+  // `*` covers http and https; every other scheme needs its own, or a
+  // glob-only page of that scheme can crash (include-only.spec.ts).
+  assert.deepEqual([...NO_PAGE_MATCHES], [
+    '*://*/__sourcemonkey_no_page__/*',
+    'file:///__sourcemonkey_no_page__/*',
+    'ftp://*/__sourcemonkey_no_page__/*',
+  ]);
+});
+
+test('buildRegistrationSpec: regex-only @include registers its globs and defers to the wrapper', async () => {
   const spec = await buildRegistrationSpec(makeScript({
     matching: { matches: [], excludes: [], includes: ['/^https:\\/\\/foo\\..*$/'] },
+  }));
+  assert.deepEqual(spec.matches, [...NO_PAGE_MATCHES]);
+  assert.deepEqual(spec.includeGlobs, ['https://foo.*', 'https://*@*']);
+});
+
+test('buildRegistrationSpec: one regex @include with no derivable glob means <all_urls>, beside another\'s globs', async () => {
+  // Chrome ORs `<all_urls>` with the globs, so they change nothing; the
+  // fallback has to win for the second regex's pages.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: { matches: [], excludes: [], includes: ['/^https:\\/\\/foo\\..*$/', '/flickr\\.com/'] },
+  }));
+  assert.deepEqual(spec.matches, ['<all_urls>']);
+});
+
+test('buildRegistrationSpec: regex-only @include with no derivable glob registers <all_urls>', async () => {
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: { matches: [], excludes: [], includes: ['/flickr\\.com/'] },
   }));
   assert.deepEqual(spec.matches, ['<all_urls>']);
   assert.equal(spec.includeGlobs, undefined);
 });
 
-test('buildRegistrationSpec: a regex @include beside a @match still registers <all_urls>', async () => {
+test('buildRegistrationSpec: a regex @include beside a @match registers both', async () => {
   // Registering only the @match would never inject on a page just the
-  // regex covers.
+  // regex covers; its globs cover those.
   const spec = await buildRegistrationSpec(makeScript({
     matching: { matches: ['https://a.test/*'], excludes: [], includes: ['/^https:\\/\\/b\\.test\\//'] },
   }));
-  assert.deepEqual(spec.matches, ['<all_urls>']);
+  assert.deepEqual(spec.matches, ['https://a.test/*', ...NO_PAGE_MATCHES]);
+  assert.deepEqual(spec.includeGlobs, ['https://b.test/*']);
   const cfg = spec.js[0];
   assert.ok('code' in cfg);
   assert.match(cfg.code, /"matching"/);

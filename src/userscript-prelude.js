@@ -488,7 +488,7 @@
      the prelude is on every script's js[] and the algorithm is tiny.
      The matcher block is only consulted when cfg.matching is present:
      scripts with a regex or `.tld` @include/@exclude/@match, and
-     scripts with any glob @include (registered with NO_PAGE_MATCH; see
+     scripts with any glob @include (registered with NO_PAGE_MATCHES; see
      injector.ts). A script whose @match patterns carry the whole
      registration skips it. */
   function escRx(s) { return s.replace(/[.+?^${}()|[\]\\]/g, "\\$&"); }

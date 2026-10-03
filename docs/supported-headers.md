@@ -87,9 +87,11 @@ Pattern forms beyond Chrome's own grammar:
     suffixes like `github.io` and local names like `.lan` don't count.
   - See [matching.md](matching.md#tld-hosts).
 - **Regex `@include` / `@exclude`**: Chrome can't match these, so the
-  script checks them as it starts on a page. A script with a regex
-  `@include` is registered for all pages and skips the ones that don't
-  match. See [injection.md](injection.md#regex-pattern-forms).
+  script checks them as it starts on a page. A regex `@include` is
+  narrowed to pages it could match where its text allows (usually by
+  the site name in it), and otherwise the script starts on all pages
+  and skips the ones that don't match. See
+  [injection.md](injection.md#globs-for-a-regex-include).
 - **Lenient `@match` spellings**: a pattern with no scheme
   (`*.example.com/*`) or a globbed one (`http*://…`) is read as the
   pattern Chrome takes, since real scripts use them. See
