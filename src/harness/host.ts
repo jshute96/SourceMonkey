@@ -279,7 +279,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
   private readonly pages = new Set<PageLink>();
   // Which page each report came from, for telling tabs apart. Kept off
   // the records themselves, so they stay plain data a test can compare.
-  private readonly recordPages = new WeakMap<object, PageLink>();
+  protected readonly recordPages = new WeakMap<object, PageLink>();
   // `untilReported`'s waits, checked on each start, skip and error.
   // Not emitter listeners: `reload all` over many tabs would pass
   // Node's listener limit, which prints a warning.
@@ -1125,7 +1125,7 @@ export class HarnessHost extends EventEmitter<HostEventMap> {
   // Every event goes out through here. A test's listener that throws
   // is the test's own failure: it must not cost the script its reply or
   // event, or leave a request hanging.
-  private notify<K extends keyof HostEventMap>(event: K, ...args: HostEventMap[K]): void {
+  protected notify<K extends keyof HostEventMap>(event: K, ...args: HostEventMap[K]): void {
     try {
       (this.emit as (e: K, ...a: HostEventMap[K]) => boolean)(event, ...args);
     } catch {

@@ -116,7 +116,9 @@ It runs against real headless Chromium with `chrome.userScripts`,
 
 - `extension.ts` — Playwright `test` extended with:
   - `extensionContext` (worker-scoped) — persistent Chromium with the
-    extension loaded and Preferences pre-seeded.
+    extension loaded and Preferences pre-seeded, launched by sm-dev's
+    own launcher (`src/harness/extension-launch.ts`), so the suites and
+    `sm-dev --temp-browser` run the same browser.
   - `fixtureServer` (worker-scoped) — local HTTP server serving
     `tests/fixtures/pages/` first, with `tests/examples/` mounted as
     a fallback root so example pages are reachable at

@@ -22,6 +22,7 @@ import type { BrowserContext, Page, Worker } from '@playwright/test';
 
 import { SM_DEV_EVENT } from '../sm-dev-link.js';
 import type { StackLayout } from '../composed-source.js';
+import type { PushedFile } from '../external-files.js';
 import { findExtensionWorker, sourceMonkeyExtensionId, type LogEntry, type PushResult } from './extension-backend.js';
 
 // How long a claim lasts unrenewed, and how often it's renewed. A killed
@@ -48,7 +49,27 @@ export type ExtensionEvent =
     scriptId: string; commandId: string; name?: string; at: number;
   }
   | { kind: 'values'; scriptId: string; tabId?: number; writes: { key: string; value?: unknown; deleted?: boolean }[]; at: number }
-  | { kind: 'tab-opened'; sourceTabId: number; tabId: number; url: string; at: number };
+  | {
+    // `scriptId` and the rest are set for a `GM_openInTab`; a link or
+    // `window.open` has none.
+    kind: 'tab-opened'; sourceTabId: number; tabId: number; url: string;
+    scriptId?: string; requestId?: string; active?: boolean; at: number;
+  }
+  | { kind: 'tab-closed'; scriptId: string; requestId: string; at: number }
+  // A request, download or notification of a script, once as it starts
+  // (or shows) and again as it settles.
+  | {
+    kind: 'request'; scriptId: string; tabId: number; id: string; url: string; method: string;
+    outcome?: 'load' | 'error' | 'timeout' | 'abort'; status?: number; error?: string; at: number;
+  }
+  | {
+    kind: 'download'; scriptId: string; tabId: number; requestId: string; url: string; name: string;
+    outcome?: 'load' | 'error' | 'timeout' | 'abort'; filename?: string; error?: string; at: number;
+  }
+  | {
+    kind: 'notification'; op: 'shown' | 'clicked' | 'closed'; scriptId: string; tabId: number; requestId: string;
+    notificationId?: string; text?: string; title?: string; at: number;
+  };
 
 /**
  * A run's id in the extension: sm-dev's run id (`D2`, or a named one)
@@ -221,6 +242,12 @@ export class ExtensionLink {
     { id: tabId, runId: this.runId, own: this.extensionRun, ttl: LEASE_MS });
     if (scriptsOff) await this.setTabScriptsOff(tabId, true);
     this.tabs.set(tabId, { scriptsOff });
+    // Out of the extension's renderer process first: `about:blank`
+    // straight from its page would stay in it, beside every other tab
+    // claimed this way, and what a tab sets per process would clash.
+    // CDP's locale override (`--lang`) is one: a second tab's is
+    // refused while the first holds its own.
+    await page.goto('data:text/html,').catch(() => undefined);
     await page.goto('about:blank').catch(() => undefined);
     return tabId;
   }
@@ -265,10 +292,13 @@ export class ExtensionLink {
     return renewal;
   }
 
-  /** Installs or replaces one of the run's scripts in its test collection. */
-  async push(text: string, name: string): Promise<PushResult> {
-    return this.call(({ run, t, n }) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.writeRunScript({ run, text: t, name: n }),
-      { run: this.runId, t: text, n: name });
+  /**
+   * Installs or replaces one of the run's scripts in its test collection,
+   * with the dependency bodies read from disk (`pushedFiles`).
+   */
+  async push(text: string, name: string, files: Record<string, PushedFile> = {}): Promise<PushResult> {
+    return this.call(({ run, t, n, f }) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.writeRunScript({ run, text: t, name: n, files: f }),
+      { run: this.runId, t: text, n: name, f: files });
   }
 
   /** Which document `tabId` shows (see the worker's `tabDocument`), or null if it can't be read. */
@@ -302,6 +332,16 @@ export class ExtensionLink {
       (self as unknown as { SourceMonkey: Api }).SourceMonkey.fireActionContextMenuItem(t, s, c),
     { t: tabId, s: scriptId, c: commandId });
     return result.ok;
+  }
+
+  /** Clicks a shown notification, as the person would. False when it isn't showing. */
+  async clickNotification(notificationId: string): Promise<boolean> {
+    return this.call((id) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.clickNotification(id), notificationId);
+  }
+
+  /** Closes a shown notification, as the person would. */
+  async closeNotification(notificationId: string): Promise<boolean> {
+    return this.call((id) => new Promise<boolean>((resolve) => chrome.notifications.clear(id, resolve)), notificationId);
   }
 
   /**
@@ -339,11 +379,12 @@ interface Api {
   renewRun(runId: string, ttlMs: number, ownScripts: boolean, tabs: { tabId: number; scriptsOff?: boolean }[], subscribe: boolean): Promise<number>;
   releaseRun(runId: string): Promise<void>;
   setTabScriptsOff(tabId: number, off: boolean): Promise<void>;
-  writeRunScript(args: { run: string; text: string; name?: string }): Promise<PushResult>;
+  writeRunScript(args: { run: string; text: string; name?: string; files?: Record<string, PushedFile> }): Promise<PushResult>;
   tabDocument(tabId: number): Promise<{ url: string; timeOrigin: number } | null>;
   getStackLayout(scriptId: string): Promise<StackLayout | null>;
   getGmValues(scriptId: string): Promise<Record<string, unknown>>;
   writeGmValues(scriptId: string, writes: { key: string; value?: unknown; deleted?: boolean }[]): Promise<void>;
   fireActionContextMenuItem(tabId: number, scriptId: string, commandId: string): Promise<{ ok: boolean }>;
   scriptsOnTab(tabId: number): Promise<{ id: string; name: string; status: string; collection: string }[]>;
+  clickNotification(notificationId: string): boolean;
 }

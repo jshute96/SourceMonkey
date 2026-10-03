@@ -103,13 +103,10 @@ function makeTest(browserDownloads: boolean) {
   extensionContext: [
     async ({ downloadsDir }, use) => {
       const launched = await launchSourceMonkeyContext({
-        extensionPath: EXTENSION_PATH,
-        extensionId: EXTENSION_ID,
         downloads: downloadsDir ? { dir: downloadsDir } : undefined,
       });
       await use(launched.ctx);
-      await launched.ctx.close();
-      launched.cleanup();
+      await launched.close();
     },
     { scope: 'worker' },
   ],

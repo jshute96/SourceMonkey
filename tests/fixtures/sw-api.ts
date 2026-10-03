@@ -29,7 +29,7 @@ export interface SmApi {
   ): Promise<{ id: string; path: string } | null>;
   // An sm-dev run's scripts, in its test collection: text in,
   // registered before the promise settles. See docs/sm-dev-extension.md.
-  writeRunScript(args: { run: string; text: string; name?: string }): Promise<{
+  writeRunScript(args: { run: string; text: string; name?: string; files?: Record<string, { url: string; localUrl?: string; bytesBase64: string; contentType: string }> }): Promise<{
     scriptId: string;
     collectionId: string;
     status: 'ok' | 'invalid';

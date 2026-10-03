@@ -16,7 +16,7 @@ const DIST = fileURLToPath(new URL('../../dist', import.meta.url));
 async function withBrowser(extension: boolean, check: (endpoint: string) => Promise<void>): Promise<void> {
   const profile = mkdtempSync(path.join(os.tmpdir(), 'sm-ext-state-'));
   // Extensions need Chrome's new headless mode, which Playwright's own
-  // headless flag doesn't give (see tests/fixtures/sourcemonkey-launch.ts).
+  // headless flag doesn't give (see src/harness/extension-launch.ts).
   const context = await chromium.launchPersistentContext(profile, {
     headless: false,
     args: ['--headless=new', '--remote-debugging-port=0', ...(extension ? [`--disable-extensions-except=${DIST}`, `--load-extension=${DIST}`] : [])],

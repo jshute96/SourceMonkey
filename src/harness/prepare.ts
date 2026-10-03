@@ -55,7 +55,8 @@ import { getValue, hasTag } from '../userscript-header.js';
 import { explainUrlMatch, type UrlMatchExplanation } from '../url-match.js';
 import { scriptBasename } from '../script-display.js';
 import { representativeMatch } from '../match-targets.js';
-import { sha256Hex } from '../bytes.js';
+import { bytesToBase64, sha256Hex } from '../bytes.js';
+import type { PushedFile } from '../external-files.js';
 import { stackLayout, type StackLayout } from '../composed-source.js';
 import type { ApiSubsystem } from '../gm-api-catalog.js';
 import { checkParseNode } from './parse-check-node.js';
@@ -487,4 +488,21 @@ export function preparedScriptMatches(script: PreparedScript, name: string): boo
   return script.script.relativePath === name
     || path.basename(script.script.relativePath) === name
     || script.script.header?.tags.some((t) => t.tag === 'name' && !t.locale && t.value === name) === true;
+}
+
+/**
+ * The `@require` / `@resource` bodies a run pushes into SourceMonkey with
+ * the script's text, by the ref its header declares: those read from
+ * disk, a relative ref's file or a local stand-in for a remote URL,
+ * which the extension couldn't read itself. Remote ones it fetches.
+ */
+export function pushedFiles(prepared: PreparedScript): Record<string, PushedFile> {
+  const out: Record<string, PushedFile> = {};
+  const add = (ref: string, file: { url: string; localUrl?: string; contentType?: string }, bytesBase64: string): void => {
+    if (!file.localUrl && !file.url.startsWith('file:')) return;
+    out[ref] = { url: file.url, ...(file.localUrl ? { localUrl: file.localUrl } : {}), bytesBase64, contentType: file.contentType ?? '' };
+  };
+  for (const r of prepared.script.requires ?? []) add(r.ref, r, bytesToBase64(new TextEncoder().encode(r.source)));
+  for (const r of prepared.script.resources ?? []) add(r.ref, r, r.bytesBase64);
+  return out;
 }

@@ -42,7 +42,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | --- | --- |
 | `sm-dev --open-browser` | Start a lasting, visible browser on port 9233 (kept profile, so logins persist). A no-op if one is up |
 | `sm-dev --temp-browser start ...` | A hidden throwaway browser for this run. Good for pages with no login |
-| `sm-dev --temp-browser start ... --extension` | The same, with SourceMonkey installed in it (Allow User Scripts on), so `--extension` needs no setup |
+| `sm-dev --temp-browser start ... --extension` | A temp browser has SourceMonkey installed (Allow User Scripts on), so `--extension` needs no setup |
 | `sm-dev --browser 9300 ...` | Use the browser on another port |
 
 ## Runs

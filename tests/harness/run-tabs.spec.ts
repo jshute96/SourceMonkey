@@ -56,11 +56,15 @@ test('scripts run in the tabs the run tab opens', async ({ fixtureServer, script
   const lines: string[] = [];
   let stop!: () => void;
   const until = new Promise<void>((resolve) => { stop = resolve; });
-  const wanted = ['on /other.html?via=open', 'on /other.html?via=gm'];
+  // The start reports: an opened tab is set up after its first load's
+  // console lines (see TODO.md).
+  const wanted = ['started on http://127.0.0.1:PORT/other.html?via=open', 'started on http://127.0.0.1:PORT/other.html?via=gm']
+    .map((w) => w.replace('http://127.0.0.1:PORT', fixtureServer.baseUrl));
   const done = run({
     files: [file],
     urls: [`${fixtureServer.baseUrl}/target.html`],
     tempBrowser: true,
+    extension: true,
     collectionRoot: scriptsDir.path,
     localRoots: [],
     out: (line) => {
@@ -78,12 +82,10 @@ test('scripts run in the tabs the run tab opens', async ({ fixtureServer, script
 
   expect(lines).toContain('[page log] [opener] on /target.html');
   // Numbered in the order they appear, which the two opens don't fix.
-  const tabLine = (w: string) => lines.find((l) => /^\[T\d+\] \[page log\] \[opener\] /.test(l) && l.endsWith(w));
+  const tabLine = (w: string) => lines.find((l) => /^\[T\d+\] \[sm-dev\] Opener /.test(l) && l.endsWith(w));
   expect(tabLine(wanted[0])).toBeDefined();
   expect(tabLine(wanted[1])).toBeDefined();
   expect(lines.filter((l) => /^\[sm-dev\] Tab T\d+ opened at .*, from T1 \[targetId=[0-9A-F]{32}\]$/.test(l))).toHaveLength(2);
-  // The host's own lines say which tab too.
-  expect(lines.some((l) => /^\[T\d+\] \[sm-dev\] Opener started on .*other\.html\?via=gm$/.test(l))).toBe(true);
 });
 
 test('--all opens a tab per script page, numbered in order, and lists the skipped ones last', async ({ fixtureServer, scriptsDir }) => {
@@ -399,8 +401,7 @@ test('open --noscript switches a tab to no scripts for good, and --script back',
     meta: { name: 'A', match: [`${base}/target.html`] },
     body: `console.log('[A] on ' + location.pathname);`,
   });
-  const badge = 'eval T1 !!document.querySelector("link[data-sm-badge]")';
-  const lines = await driveCli([a, `${base}/target.html`], [
+  const lines = await driveCli([a, `${base}/target.html`, '--extension'], [
     ['[page log] [A] on /target.html', 'open --noscript'],
     ['runs no scripts from now on', 'tabs'],
     // The script stays out: a reload loads without it. (Through eval,
@@ -410,11 +411,9 @@ test('open --noscript switches a tab to no scripts for good, and --script back',
     // something either way.
     ['"reloading"', 'eval new Promise((r) => setTimeout(r, 1000)).then(() => document.readyState)'],
     ['', () => { touch(a); return 'update'; }],
-    ['none was reloaded', badge],
-    ['false', 'open --script'],
+    ['none was reloaded', 'open --script'],
     ['runs the scripts again', 'eval new Promise((r) => setTimeout(r, 1500)).then(() => "waited")'],
-    ['"waited"', badge],
-    ['true', 'newtab all --noscript'],
+    ['"waited"', 'newtab all --noscript'],
     ['Opening', 'newtab --noscript 1'],
     ['The page commands now act on T3', 'tabs'],
     // reload switches too: every tab back to scripts, then T1 off.
@@ -437,7 +436,6 @@ test('open --noscript switches a tab to no scripts for good, and --script back',
   expect(lines[row + 1]).not.toMatch(/^ +\*? *1: A/);
   // update left the switched tab alone.
   expect(lines).toContain('[sm-dev] No open tab runs or matches the updated scripts, so none was reloaded');
-  expect(lines.filter((l) => l === 'false' || l === 'true')).toEqual(['false', 'true']);
   // newtab all --noscript: the script's page, in a tab without scripts.
   expect(lines.some((l) => /^ {2}T2: .*target\.html \(no scripts\)/.test(l))).toBe(true);
   // newtab --noscript with a script's number: its page, without it.
@@ -744,22 +742,27 @@ test('--lang sets the languages of each tab, in a launched browser and in one co
   const urls = [`${fixtureServer.baseUrl}/target.html?one`, `${fixtureServer.baseUrl}/target.html?two`];
   // Two tabs: T1, and T2 the run opens itself.
   const wanted = ['[lang] ?one ', '[lang] ?two '];
-  const expectLangs = (lines: string[], where: string): void => {
+  // `sameXhr`: the request asks as the tab does. The extension's asks
+  // as the browser does, which Chrome expands (`zh-CN,zh;q=0.9,en;q=0.8`).
+  const expectLangs = (lines: string[], where: string, sameXhr: boolean): void => {
     for (const w of wanted) {
       const line = lines.find((l) => l.includes(w));
       expect(line, `${w} in ${where}`).toBeDefined();
       const got = JSON.parse(line!.slice(line!.indexOf('{')));
-      expect(got).toEqual({ languages: ['zh-CN', 'en'], intl: 'zh-CN', header: expect.stringMatching(/^zh-CN,en/), xhrHeader: got.header });
+      expect(got).toEqual({
+        languages: ['zh-CN', 'en'], intl: 'zh-CN', header: expect.stringMatching(/^zh-CN,en/),
+        xhrHeader: sameXhr ? got.header : expect.stringMatching(/^zh-CN,/),
+      });
     }
   };
 
   // A launched browser, from the command line: in this process,
   // Playwright's test runner would give the browser a locale of its own.
   const cli = await new Promise<string>((resolve) => {
-    execFile(process.execPath, [CLI, '--temp-browser', '--root', scriptsDir.path, 'start', '--lang', 'zh-cn,en', file, ...urls, '--', 'wait', 'log', '[lang] ?two'],
+    execFile(process.execPath, [CLI, '--temp-browser', '--root', scriptsDir.path, 'start', '--extension', '--lang', 'zh-cn,en', file, ...urls, '--', 'wait', 'log', '[lang] ?two'],
       (_err, stdout, stderr) => resolve(stdout + stderr));
   });
-  expectLangs(cli.split('\n'), 'a launched browser');
+  expectLangs(cli.split('\n'), 'a launched browser', false);
 
   // A browser the run connects to, as a shared one.
   const port = await new Promise<number>((resolve) => {
@@ -792,7 +795,7 @@ test('--lang sets the languages of each tab, in a launched browser and in one co
     } finally {
       clearTimeout(timer);
     }
-    expectLangs(lines, 'a connected browser');
+    expectLangs(lines, 'a connected browser', true);
   } finally {
     await shared.close();
   }

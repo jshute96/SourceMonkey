@@ -99,8 +99,8 @@ none there, it says so: `Start one with sm-dev --open-browser, pass
   login; ask the person to sign in there. A no-op if one is already up.
 - `pnpm sm-dev --temp-browser start ...`: a hidden throwaway browser
   for that run, on a random port, closed when the run ends. Good for
-  pages with no login. With `start --extension`, it installs
-  SourceMonkey in that browser (see
+  pages with no login. It has SourceMonkey installed, for `start
+  --extension` (see
   [Testing in the real extension](#testing-in-the-real-extension)).
 - If the person already has a browser on the port, use it: their tabs
   are left alone, and only the run's own tabs are touched.
@@ -407,8 +407,8 @@ $R start ... --values-file values.json         # seed from a JSON file
 - Reads wait for the script's write batching, so `menu X` then
   `values` shows what X stored.
 - Stored values belong to the script and survive `update` and reloads.
-  Under `--extension` they live in the extension, so `--values` and
-  `--values-file` can't be used with it.
+  Under `--extension` they live in the extension, which `--values`
+  seeds as the script is pushed.
 
 ### Working from a saved page
 
@@ -572,8 +572,8 @@ $R stop                  # also removes the run's test collection
 ```
 
 - Needs SourceMonkey in the browser, with "Allow User Scripts" on.
-  - **`--temp-browser` with `--extension` installs the extension**
-    (Allow User Scripts on), so it needs no setup:
+  - **`--temp-browser` installs the extension** (Allow User Scripts
+    on), so it needs no setup:
     `$R --temp-browser start x.user.js https://x.com/ --extension`.
     Its profile is empty (no logins). For a site that needs a login,
     or blocks headless browsers, use the `--open-browser` browser,
@@ -588,8 +588,10 @@ $R stop                  # also removes the run's test collection
 - The script is pushed into a test collection of the run's own
   (`sm-dev test collection (run D2-a3f9)` in the extension, the id
   `status` shows), removed when the run ends. Each run starts with no
-  stored values. Relative `@require`s are refused, and remote ones are
-  fetched live, not from local copies.
+  stored values but those `--values` seeds. `@require`s read from disk
+  (relative ones, and local copies under the collection root or
+  `--local` roots) are pushed
+  with it; remote ones are fetched live.
 - A `document-start` script may run after the page's first inline
   scripts here, where the extension alone would run it first: during a
   run, every script waits for the extension's check before running.

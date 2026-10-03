@@ -181,8 +181,6 @@ test('--values-file reads a JSON object, and says what is wrong with one', () =>
     assert.deepEqual(run(SCRIPT, '--values-file', missing), { code: 2, out: `ERROR: Couldn't read ${missing}: The file does not exist` });
     const good = file('good.json', '{"units":"metric"}');
     assert.deepEqual(run(SCRIPT, '--values', '{}', '--values-file', good), { code: 2, out: 'ERROR: The --values-file flag can\'t be used with --values' });
-    assert.deepEqual(run(SCRIPT, '--extension', '--values-file', good), { code: 2, out: 'ERROR: The --values-file flag can\'t be used with --extension' });
-    assert.deepEqual(run(SCRIPT, '--values', '{}', '--extension'), { code: 2, out: 'ERROR: The --values flag can\'t be used with --extension' });
     assert.deepEqual(run('--values-file', good), { code: 2, out: 'ERROR: The start command was given no scripts, so it can\'t take --values-file' });
   } finally {
     rmSync(dir, { recursive: true, force: true });

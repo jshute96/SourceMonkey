@@ -533,7 +533,7 @@ export const HELP_SECTIONS: HelpSection[] = [
             ],
           },
           { term: '--profile DIR', about: ['With --open-browser: the browser profile, kept between launches.', '(Default: ~/.config/sm-dev/browser-profile-<port>)'] },
-          { term: '--temp-browser', about: 'Instead, launch a hidden, muted browser for each run, with an empty profile, and close it when the run ends. With start --extension, it has SourceMonkey installed.' },
+          { term: '--temp-browser', about: 'Instead, launch a hidden, muted browser for each run, with an empty profile and SourceMonkey installed, and close it when the run ends.' },
           { term: '--headed', about: 'With --temp-browser: make its window visible, with sound.' },
         ],
       },

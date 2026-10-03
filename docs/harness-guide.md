@@ -322,8 +322,8 @@ sm-dev --open-browser --browser 9300            # another one, on port 9300
 - Launches a hidden Chromium for each run, with an empty profile,
   closed when the run ends. `--headed` shows it.
 - Useful for a quick run whose page needs no login.
-- With `start --extension`, it loads SourceMonkey's built extension
-  (its `dist/`), with "Allow User Scripts" on and pinned to the toolbar. See
+- It loads SourceMonkey's built extension (its `dist/`), with "Allow
+  User Scripts" on and pinned to the toolbar, for `start --extension`. See
   [The extension backend](#the-extension-backend).
 - Needs a `start` on the line (or `--interactive` or `--stdin`, where
   one can come).
@@ -1717,8 +1717,8 @@ Chrome can answer:
 
 ### Setting it up
 
-The quickest way needs no setup: `--temp-browser` loads the extension
-into a throwaway browser for the run.
+The quickest way needs no setup: `--temp-browser` always loads the
+extension into the throwaway browser it launches for the run.
 
 ```sh
 sm-dev --temp-browser start my-script.user.js https://example.com/ --extension
@@ -1727,7 +1727,8 @@ sm-dev --temp-browser start my-script.user.js https://example.com/ --extension
 - It loads the extension from the `dist/` beside sm-dev: the checkout's
   own build, or the copy `pnpm install` took in a repo of userscripts.
 - The profile is empty, so the site has no login.
-- Starting it takes a few seconds longer than a plain `--temp-browser`.
+- Starting it takes a few seconds, for the extension's first run in
+  the new profile.
 - Hidden, it still sends a windowed Chrome's user agent, not
   `HeadlessChrome`, which some servers refuse a script's `@require`s
   and requests for.
@@ -1759,7 +1760,11 @@ For a browser that keeps the extension (and your logins):
   - The script is registered before the page opens.
   - The next push of the same file in the run (`update`,
     `--watch`) replaces it in place, keeping its stored values. Each
-    run starts with no stored values.
+    run starts with no stored values, or those `--values` seeds.
+  - The `@require` and `@resource` files the script reads from disk are
+    pushed with it: relative paths, and local copies of remote URLs
+    under the collection root or a `--local` directory. Remote ones the
+    extension fetches.
   - Nothing on disk is scanned.
   - The test collection is removed when the run ends, with its stored
     values. A run that crashed has its collection removed about 6
@@ -1770,7 +1775,8 @@ For a browser that keeps the extension (and your logins):
   `menu`, the page commands, `reload`. Values and menu clicks go
   through the extension.
 - What it prints: the script's starts, errors, menu commands and value
-  writes, the entries it adds to its Log tab, and the page's console
+  writes, its `GM_xmlhttpRequest`s, downloads, notifications and opened
+  tabs, the entries it adds to its Log tab, and the page's console
   lines.
 - The run's tabs run only the scripts it pushed: the extension keeps
   its other scripts out of them, across reloads and in the tabs they
@@ -1787,11 +1793,6 @@ For a browser that keeps the extension (and your logins):
 
 ### Differences from the push backend
 
-- `--values` and `--values-file` can't be used: the extension keeps
-  its own storage, which the run can't seed.
-- Only the script's own text is pushed, not the files beside it. A
-  relative `@require` is refused, and a local copy of a remote
-  `@require` is not used: the extension fetches the URL.
 - No tab badges; the extension's toolbar badge covers the tabs.
 - A `document-start` script may run after the page's first inline
   `<head>` scripts, where the extension alone would usually run it

@@ -80,6 +80,8 @@ kinds of run), the event stream, SourceMonkey-managed scripts (E1,
 - What sm-dev uses:
   - the run's scripts: `writeRunScript` (see
     [Test collections](#test-collections)), `getScriptLog`;
+  - notifications: `clickNotification(id)`, which runs the script's
+    `onclick` as a click would;
   - values and menus: `getGmValues`, `writeGmValues`,
     `fireActionContextMenuItem`;
   - claims: `claimTab`, `renewRun`, `releaseRun`, `setTabScriptsOff`
@@ -311,7 +313,23 @@ test collection, which holds exactly the scripts the run pushed.
   keeping its id and stored values; a new push that doesn't parse is
   reported and not kept.
 - Each run starts with empty stored values, since its collection is
-  new.
+  new. `--values` writes its seed with `writeGmValues` after the push,
+  before any of the run's tabs loads a page.
+
+### Files read from disk
+
+- A scratch script has no folder, so the extension can't read the
+  files its header names on disk. sm-dev pushes them with the text:
+  `writeRunScript`'s `files`, by the ref the header declares.
+  - A relative `@require` / `@resource`: the file beside the script.
+  - A remote URL with a local copy under the collection root or a
+    `--local` directory: the copy, as the harness's own resolver finds
+    it (`pushedFiles` in prepare.ts).
+- The extension keeps them in a storage row beside the text
+  (`scratchFiles:<url>`), and its loaders use them in place of
+  resolving and fetching the ref (`PushedFile` in external-files.ts).
+  Remote refs with no local copy it fetches as usual.
+- A relative ref with no pushed file is refused, saying so.
 
 ### Removal
 
@@ -355,7 +373,11 @@ test collection, which holds exactly the scripts the run pushed.
   - a script started, errored, or was skipped on a tab;
   - a menu command registered or removed;
   - a value changed;
-  - a tab opened by a script (`GM_openInTab`), with its opener.
+  - a tab opened by a script (`GM_openInTab`), with its opener, and
+    one it opened closing;
+  - a `GM_xmlhttpRequest` or `GM_download` starting, and again as it
+    ends, with its outcome;
+  - a notification shown, clicked or closed.
 - Commands then work as in harness runs: output arrives as it happens,
   and `wait`, `open` and `reload` wait on "started" events.
 
@@ -428,7 +450,7 @@ Terms used below:
 | SourceMonkey turned off | sm-dev's scripts | refused: turned off |
 | SourceMonkey on | sm-dev's scripts only | sm-dev's scripts only |
 
-- `--temp-browser` with `--extension` installs SourceMonkey in the
+- `--temp-browser` installs SourceMonkey in the
   temporary browser, so sm-dev with both flags is in the "SourceMonkey
   on" row.
 - Your tabs run SourceMonkey-managed scripts if SourceMonkey is on,

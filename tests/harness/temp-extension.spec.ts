@@ -14,7 +14,7 @@ import { run } from '../../lib/harness/run.js';
 import { UserscriptServer } from '../fixtures/userscript-server.js';
 
 test('the launch leaves no default collections and one blank tab, and close deletes its profile', async () => {
-  const launched = await launchExtensionBrowser(false);
+  const launched = await launchExtensionBrowser({ connectedElsewhere: true });
   try {
     const browser = await chromium.connectOverCDP(launched.endpoint);
     const context = browser.contexts()[0];
@@ -73,6 +73,52 @@ test('a temp browser with --extension runs the script in the real extension', as
   expect(text).not.toContain('Tab T1 closed');
 });
 
+test('an extension run seeds --values, pushes local @require and @resource files, and reports requests', async ({ fixtureServer, scriptsDir }) => {
+  scriptsDir.writeRaw('lib/helper.js', 'window.helperValue = "from helper";\n');
+  scriptsDir.writeRaw('lib/data.txt', 'resource text');
+  // A stand-in under the collection root, for a URL that doesn't exist.
+  scriptsDir.writeRaw('lib/remote.js', 'window.remoteValue = "from stand-in";\n');
+  const file = scriptsDir.write({
+    relativePath: 'deps.user.js',
+    meta: {
+      name: 'Deps', match: ['*://*/target.html'], extra: ['// @require lib/helper.js', '// @require https://cdn.example.invalid/lib/remote.js', '// @resource data lib/data.txt'],
+      grant: ['GM_getValue', 'GM_getResourceText', 'GM_xmlhttpRequest'], connect: ['127.0.0.1'],
+    },
+    body: `
+      console.log('[deps] seeded ' + GM_getValue('k'));
+      console.log('[deps] ' + window.helperValue + ', ' + window.remoteValue + ', ' + GM_getResourceText('data'));
+      GM_xmlhttpRequest({ url: location.origin + '/other.html', onload: (r) => console.log('[deps] got ' + r.status) });
+    `,
+  });
+  const lines: string[] = [];
+  let stop!: () => void;
+  const until = new Promise<void>((resolve) => { stop = resolve; });
+  const wanted = ['[deps] seeded 5', '[deps] from helper, from stand-in, resource text', '[deps] got 200', 'GM_xmlhttpRequest GET'];
+  const done = run({
+    files: [file],
+    urls: [`${fixtureServer.baseUrl}/target.html`],
+    tempBrowser: true,
+    extension: true,
+    values: { k: 5 },
+    collectionRoot: scriptsDir.path,
+    localRoots: [],
+    out: (line) => {
+      lines.push(line);
+      if (wanted.every((w) => lines.some((l) => l.includes(w)))) stop();
+    },
+    until,
+  });
+  const timer = setTimeout(stop, 20000);
+  try {
+    await done;
+  } finally {
+    clearTimeout(timer);
+  }
+  const text = lines.join('\n');
+  for (const w of wanted) expect(text).toContain(w);
+  expect(text).toMatch(/GM_xmlhttpRequest GET http:\/\/[^ ]+\/other\.html: load 200/);
+});
+
 test('an extension run takes the run commands: status, values, set, menu, eval, reload', async ({ fixtureServer, scriptsDir }) => {
   // Two browser launches, then each command in turn.
   test.setTimeout(90_000);
@@ -118,7 +164,7 @@ test('SourceMonkey-managed scripts on the tab are E1, ..., kept out, and their v
   test.setTimeout(90_000);
   // A browser with another script already installed, which has stored
   // a value.
-  const launched = await launchExtensionBrowser(false);
+  const launched = await launchExtensionBrowser({ connectedElsewhere: true });
   try {
     const browser = await chromium.connectOverCDP(launched.endpoint);
     const context = browser.contexts()[0];
@@ -173,7 +219,7 @@ test('SourceMonkey-managed scripts on the tab are E1, ..., kept out, and their v
 
 test('a harness run in a browser with SourceMonkey keeps its scripts out of the run\'s tabs', async ({ fixtureServer, scriptsDir }) => {
   test.setTimeout(90_000);
-  const launched = await launchExtensionBrowser(false);
+  const launched = await launchExtensionBrowser({ connectedElsewhere: true });
   try {
     const browser = await chromium.connectOverCDP(launched.endpoint);
     // An installed script that marks every fixture page it runs on.
@@ -214,7 +260,7 @@ test('a harness run in a browser with SourceMonkey keeps its scripts out of the 
 
 test('a run started with no scripts claims its tabs, so a script it loads runs alone, in either backend', async ({ fixtureServer, scriptsDir }) => {
   test.setTimeout(120_000);
-  const launched = await launchExtensionBrowser(false);
+  const launched = await launchExtensionBrowser({ connectedElsewhere: true });
   try {
     let browser = await chromium.connectOverCDP(launched.endpoint);
     await installScript(browser.contexts()[0], renderUserscript({

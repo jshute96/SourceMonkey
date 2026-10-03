@@ -53,6 +53,7 @@ import {
   isLocalDirectoryCollection,
   isSingleFileInput,
   isScratchUrl,
+  scratchFilesKey,
   scratchTextKey,
   scratchUrl,
   isSmDevCollection,
@@ -91,6 +92,7 @@ import {
   distillRequires,
   distillResources,
   type FileFetchCache,
+  type PushedFile,
   type StoredRequire,
   type StoredResource,
 } from './external-files.js';
@@ -1005,6 +1007,9 @@ export async function applyFiles(
   // resolve as if none were set and persist that.
   if (localFiles.enabled) await localRootsReady();
   const localRoots = localSearchRoots(built.fileUrl, localFiles);
+  // A scratch script's pushed bodies (sm-dev's local files), read on
+  // every pass like a local stand-in, since a push may have changed them.
+  const pushedFiles = isScratchUrl(built.fileUrl) ? await scratchPushedFiles(built.fileUrl) : undefined;
   // `recheck: 'preserve'` short-circuits when both lists are identical
   // to the prior's: no resolve work, no fetch, just keep what we had.
   // This is the hot path on opportunistic refresh.
@@ -1014,7 +1019,7 @@ export async function applyFiles(
   // until the user clicked Refresh, which is the workflow the whole
   // feature exists for. The per-entry loaders still preserve cached
   // REMOTE entries in that case, so only local reads are paid for.
-  if (recheck === 'preserve' && prior && localRoots.length === 0) {
+  if (recheck === 'preserve' && prior && localRoots.length === 0 && !pushedFiles) {
     const newReqRefs = distillRequires(built.header);
     const sameReqs =
       newReqRefs.length === (prior.requires?.length ?? 0) &&
@@ -1049,6 +1054,7 @@ export async function applyFiles(
     fetchCache,
     now,
     localRoots,
+    ...(pushedFiles ? { pushedFiles } : {}),
   }));
   if (result.errorMessage) {
     // Preserve the last-known-good script state when we have one.
@@ -2307,6 +2313,12 @@ export async function installScript(
 // fetcher reads back, so every refresh path treats them as ordinary
 // scripts.
 
+// The bodies pushed with a scratch script, or undefined when none were.
+async function scratchPushedFiles(url: string): Promise<Record<string, PushedFile> | undefined> {
+  const files = await getRaw<Record<string, PushedFile>>(scratchFilesKey(url));
+  return files && Object.keys(files).length > 0 ? files : undefined;
+}
+
 // The name a run's test collection is shown under.
 export function smDevCollectionName(run: string): string {
   return `sm-dev test collection (run ${run})`;
@@ -2322,19 +2334,33 @@ export interface WriteRunScriptResult {
   replaced: boolean;
 }
 
+// What sm-dev pushes for one of a run's scripts.
+export interface RunScriptArgs {
+  run: string;
+  text: string;
+  name?: string;
+  // The `@require` / `@resource` bodies it read from disk, by ref.
+  files?: Record<string, PushedFile>;
+}
+
 // Install or replace one of run `run`'s scripts, in its test collection.
 // The name (the `@name`, or one the caller gives) is the identity:
 // writing it again replaces the earlier text in place, keeping the row's
 // id and its GM values, which is what lets a page reload hot-swap the
 // new version. A new script that doesn't parse is reported and not
 // kept, so the collection holds only scripts the run has.
-export async function writeRunScript(args: { run: string; text: string; name?: string }): Promise<WriteRunScriptResult> {
+export async function writeRunScript(args: RunScriptArgs): Promise<WriteRunScriptResult> {
   // Its scripts' URLs carry it as is, and '' would be no run's.
   if (!/^[A-Za-z0-9._-]+$/.test(args.run)) throw new Error(`Internal error: ${JSON.stringify(args.run)} is not an sm-dev run id`);
   const header = parseHeader(args.text);
   const name = args.name?.trim() || (header ? getValue(header, 'name')?.trim() : '') || 'script';
   const url = scratchUrl(args.run, name);
-  await writeLocal({ [scratchTextKey(url)]: args.text });
+  // The text and its files in one write, so no refresh reads one
+  // without the other. Replaced whole, so a body the script no longer
+  // reads from disk goes.
+  const hasFiles = args.files !== undefined && Object.keys(args.files).length > 0;
+  await writeLocal({ [scratchTextKey(url)]: args.text, ...(hasFiles ? { [scratchFilesKey(url)]: args.files } : {}) });
+  if (!hasFiles) await chrome.storage.local.remove(scratchFilesKey(url));
   const container = (await getCollections()).find((c) => c.path === smDevContainerPath(args.run));
   let scriptId: string | undefined;
   let collectionId: string | undefined;
@@ -2355,8 +2381,8 @@ export async function writeRunScript(args: { run: string; text: string; name?: s
     try {
       result = await installScript(url, { smDevRun: args.run });
     } catch (err) {
-      // The install took its seed back out; the text row goes with it.
-      await chrome.storage.local.remove(scratchTextKey(url));
+      // The install took its seed back out; the text rows go with it.
+      await chrome.storage.local.remove([scratchTextKey(url), scratchFilesKey(url)]);
       throw err;
     }
     if (!result) throw new Error('Internal error: the scratch script was neither installed nor found');
@@ -2848,7 +2874,7 @@ export async function removeCollection(id: string): Promise<void> {
     const removeKeys = [
       collectionKey(id),
       ...scriptIds.map(scriptKey),
-      ...await unreferencedScratchTextKeys(removed),
+      ...await unreferencedScratchKeys(removed),
     ];
     await writeLocal({ [COLLECTIONS_INDEX_KEY]: next });
     await chrome.storage.local.remove(removeKeys);
@@ -2880,7 +2906,7 @@ export async function removeScript(id: string): Promise<void> {
       }
     }
     if (Object.keys(toSet).length > 0) await writeLocal(toSet);
-    await chrome.storage.local.remove([scriptKey(id), ...await unreferencedScratchTextKeys([script])]);
+    await chrome.storage.local.remove([scriptKey(id), ...await unreferencedScratchKeys([script])]);
   });
   // After the write, not inside it: the local write is the one that has
   // to be atomic, and a failure here must not undo a removal that
@@ -2889,14 +2915,14 @@ export async function removeScript(id: string): Promise<void> {
   await forgetScriptLogs([id]);
 }
 
-// The text rows of the scratch scripts among `removed` that no other
-// script row still reads. A scratch script moved into another collection
+// The text rows (and pushed-file rows) of the scratch scripts among
+// `removed` that no other script row still reads. A scratch script moved into another collection
 // keeps reading its text row, so a URL some remaining row names keeps
 // its text. Reads nothing more when no scratch script is among those
 // removed, and otherwise only the container collections' rows: a
 // scratch script can only be moved into another container. Call
 // inside `mutate`, before the rows are deleted.
-async function unreferencedScratchTextKeys(removed: readonly StoredScript[]): Promise<string[]> {
+async function unreferencedScratchKeys(removed: readonly StoredScript[]): Promise<string[]> {
   const urls = new Set(removed.map((r) => r.relativePath).filter(isScratchUrl));
   if (urls.size === 0) return [];
   const removedIds = new Set(removed.map((r) => r.id));
@@ -2911,7 +2937,7 @@ async function unreferencedScratchTextKeys(removed: readonly StoredScript[]): Pr
   for (const value of Object.values(rows)) {
     urls.delete((value as StoredScript).relativePath);
   }
-  return [...urls].map(scratchTextKey);
+  return [...urls].flatMap((url) => [scratchTextKey(url), scratchFilesKey(url)]);
 }
 
 // ---------- Membership reconciliation ----------

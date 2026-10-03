@@ -329,8 +329,6 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
   }
   // Asked for by name, it must be able to run; on by default from the
   // environment, it just sits out the runs it can't serve.
-  // The extension keeps its own storage, which a run doesn't seed.
-  if (opts.valuesFlag) clash(opts.valuesFlag, [[opts.extension, '--extension']]);
   if (opts.devtools === true) clash('--devtools', [[lineTempBrowser, '--temp-browser']]);
   if (lineTempBrowser && opts.cdp !== undefined) throw new UsageError('The --temp-browser flag can\'t be used with --browser');
   if (lineOpenBrowser && opts.cdp !== undefined) throw new UsageError('The start command connects to the browser --open-browser starts, so give --browser once, first: sm-dev --open-browser --browser ... start ...');

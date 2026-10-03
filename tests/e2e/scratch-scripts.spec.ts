@@ -77,6 +77,37 @@ test.describe('scratch scripts', () => {
     expect((await sm.getCollections())[0]?.scriptIds ?? []).toEqual([]);
   });
 
+  test('a relative @require is read from the files pushed with the text, and refused without them', async ({ extensionContext, fixtureServer, sm, getServiceWorker }) => {
+    const text = renderUserscript({
+      relativePath: 'scratch.user.js',
+      meta: { name: 'With lib', match: ['*://*/target.html'], extra: ['// @require lib/helper.js'] },
+      body: `document.getElementById('target').textContent = helperText;`,
+    });
+    const refused = await sm.writeRunScript({ run: RUN, text });
+    expect(refused.status).toBe('invalid');
+    expect(refused.errorMessage).toContain('@require lib/helper.js: A scratch script can use a relative path only to a file pushed along with its text');
+
+    const files = {
+      'lib/helper.js': {
+        url: 'file:///home/me/scripts/lib/helper.js',
+        bytesBase64: Buffer.from('var helperText = "from the pushed file";').toString('base64'),
+        contentType: '',
+      },
+    };
+    const result = await sm.writeRunScript({ run: RUN, text, files });
+    expect(result.status).toBe('ok');
+    const page = await claimedPage(extensionContext, getServiceWorker, sm, fixtureServer.baseUrl);
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('#target')).toHaveText('from the pushed file');
+    await page.close();
+
+    // The run's end removes the pushed files with the text.
+    await sm.releaseRun(RUN);
+    const sw = await getServiceWorker();
+    const left = await sw.evaluate(async () => Object.keys(await chrome.storage.local.get(null)).filter((k) => k.startsWith('scratch')));
+    expect(left).toEqual([]);
+  });
+
   test('two runs pushing the same name get a script each, which runs only in its own run\'s tabs', async ({ extensionContext, fixtureServer, sm, getServiceWorker }) => {
     const one = await sm.writeRunScript({ run: 'R1-aaaa', text: script(`document.getElementById('target').textContent = 'one';`) });
     const two = await sm.writeRunScript({ run: 'R2-bbbb', text: script(`document.getElementById('target').textContent = 'two';`) });

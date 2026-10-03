@@ -44,7 +44,7 @@ One-line descriptions of every source file, grouped by directory.
 | `scripts/open-test-browser.sh` | Launch Chromium with a named manager's persistent profile (TM or VM, installed manually) + its CDP port for that Playwright project |
 | `scripts/sync-manager-scripts.mjs` | Standalone CLI that connects to the running TM or VM browser via CDP and installs/updates every `*.user.js` under `tests/examples/` |
 | `scripts/update-public-suffixes.mjs` | Regenerates `src/public-suffixes.ts` from the ICANN section of the Public Suffix List (run by hand, output committed) |
-| `scripts/clean-stale-test-profiles.mjs` | Sweep, run before the e2e suite, of `/tmp/sourcemonkey-test-*` profiles left by e2e runs that died before teardown |
+| `scripts/clean-stale-test-profiles.mjs` | Sweep, run before the e2e suite, of the `/tmp` browser profiles left by e2e runs and temp browsers that died before closing |
 | `scripts/e2e-manager-preflight.mjs` | Gate before `test:e2e:tm` / `:vm`: probes the manager's CDP port, pre-grants TM's `downloads`, opens or asks to close the browser |
 | `scripts/inspect-tm-dashboard.mjs` | Diagnostic: dumps every visible row on the TM dashboard with cell classes — use when listInstalled selectors stop working |
 | `scripts/inspect-tm-install.mjs` | Diagnostic: drives one TM install and dumps the confirmation-page buttons — use when the Install-button selector stops working |
@@ -204,7 +204,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/stuck-tabs.ts` | Before `sm-dev start` connects, names the tabs that don't answer (a dialog, say), and waits for them |
 | `src/harness/tab-badge.ts` | The count badge `sm-dev start` draws over controlled tabs' favicons, greyed once the run is gone |
 | `src/harness/run.ts` | The run process `sm-dev start` spawns: open a browser, inject or push the scripts, follow tabs, serve clients |
-| `src/harness/extension-launch.ts` | `--temp-browser` with `--extension`: launches Chromium with the built extension on a temp profile |
+| `src/harness/extension-launch.ts` | Launches Chromium with the built extension on a temp profile: `--temp-browser`, and the e2e suites' browser |
 | `src/harness/extension-link.ts` | A run's connection to the real extension: its unique id, worker calls, pushes, claims and lease, events |
 | `src/harness/extension-host.ts` | The host of an `--extension` run: fills the run's reports from the extension's events, values and menus from the extension |
 | `src/harness/extension-backend.ts` | Finds SourceMonkey in a browser: its id, whether it's installed and on, and its service worker |
@@ -226,7 +226,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/fixtures/manager.ts` | Manager-agnostic Playwright fixture for the examples suite — picks SM (unpacked build), TM/VM (persistent CWS profile), or the harness per project metadata |
 | `tests/fixtures/managers.mjs` | Per-manager table (profile dir, CDP port, Web Store ID, env vars) shared by the fixture, preflight, and CLIs |
 | `tests/fixtures/userscript-files.mjs` | Finds `*.user.js` files on disk and reads their `@name`/`@version`, shared by both manager drivers and the sync CLI |
-| `tests/fixtures/sourcemonkey-launch.ts` | Shared Chromium-launch / SW-handle / HTTP-fixture-server helpers used by both `extension.ts` and `manager.ts`; optional Chrome-managed downloads dir |
+| `tests/fixtures/sourcemonkey-launch.ts` | Launch (through sm-dev's launcher), SW-handle and HTTP-fixture-server helpers shared by `extension.ts` and `manager.ts` |
 | `tests/fixtures/slow-route.mjs` | `/__slow/?ms=N` delay route, static content-types, and the shared static-file server used by the fixture server and the example/sync CLIs |
 | `tests/fixtures/tampermonkey-driver.mjs` | TM dashboard driver: lists installed scripts, installs/updates via import-from-file, auto-OKs TM permission prompts |
 | `tests/fixtures/violentmonkey-driver.mjs` | VM driver: lists and installs scripts through VM's own background commands, installing from a fixture-server URL |

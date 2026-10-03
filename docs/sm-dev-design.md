@@ -495,10 +495,9 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
   - a forced light color scheme.
 - A connected browser is headless when the user agent from Chrome's
   `Browser.getVersion` says `HeadlessChrome`.
-- A launched Chromium (`--temp-browser`) gets a free debugging port
-  too, so other tools can connect, and `list` shows where. (Playwright
-  itself talks to it over a pipe, except with `--extension`; see
-  below.)
+- A launched Chromium (`--temp-browser`) gets a debugging port too,
+  which the run connects to, so other tools can as well, and `list`
+  shows where (see below).
 - A hidden one is started with `--mute-audio`, so pages (e.g. video sites)
   play no sound; a `--headed` one keeps its sound.
 
@@ -543,18 +542,23 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
   its own, which holds the override. So the spec checks a launched
   browser through the `sm-dev` command line.
 
-### `--temp-browser` with `--extension` (`extension-launch.ts`)
+### `--temp-browser` (`extension-launch.ts`)
 
-- Launches Playwright's Chromium with `--load-extension` pointing at the
-  package's `dist/` (Google Chrome ignores that flag).
+- Always loads SourceMonkey: launches Playwright's Chromium with
+  `--load-extension` pointing at the package's `dist/` (Google Chrome
+  ignores that flag).
+- The same launch serves the repo's own e2e suites, which drive its
+  persistent context directly (with Chrome's own downloads, when a
+  suite asks for them).
   - Hidden runs use `--headless=new`, the only headless mode that loads
     extensions.
-- A persistent context on a temp profile, deleted when the run ends.
+- A persistent context on a temp profile, deleted when the browser is
+  closed (for a run, as it ends).
   - Its Preferences grant "Allow User Scripts" and pin the extension to
     the toolbar before launch.
   - It has no Playwright `Browser`, so the run connects over CDP to its
-    port, as to any browser. That client leaves dialogs open, so only
-    the run answers them.
+    port, as to any browser. The launch's own client then leaves
+    dialogs open (`connectedElsewhere`), so only the run answers them.
   - The port is Chrome's pick (`--remote-debugging-port=0`, read from
     the profile's `DevToolsActivePort`). One picked beforehand could be
     taken first, and the run would connect to whatever took it.

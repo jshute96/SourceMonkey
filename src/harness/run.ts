@@ -8,7 +8,6 @@
 import { randomBytes } from 'node:crypto';
 import { watch, type FSWatcher } from 'node:fs';
 import { readFile, rename, stat, writeFile } from 'node:fs/promises';
-import { createServer, type AddressInfo } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -30,7 +29,7 @@ import { attachPage, targetIdOf, type AttachOptions, type PageAttachment } from 
 import { pageSays, recordLog } from './page-commands.js';
 import { consoleText, decodeOwnRefs, formatConsoleArgs, hostReportedError, isPreludeLine, shortConsoleText, showConsoleLine, showPageError } from './page-output.js';
 import {
-  defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, preparedScriptPath, prepareScript, shownPath, warningLines, type PreparedScript,
+  defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, preparedScriptPath, prepareScript, pushedFiles, shownPath, warningLines, type PreparedScript,
 } from './prepare.js';
 import { comparableUrl, openingSavedLine, type SavedPageStart } from './saved-pages.js';
 import { browserSentence, checkRunsDir, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentCommand, type SentLineHandler } from './runs.js';
@@ -128,13 +127,15 @@ export interface RunOptions extends ConnectOptions {
 // a fresh Chromium (`--temp-browser`).
 export interface ConnectOptions {
   cdp?: string;
-  /** `--temp-browser`: launch a Chromium of the run's own instead. */
+  /**
+   * `--temp-browser`: launch a Chromium of the run's own instead, with
+   * the package's own build of SourceMonkey loaded.
+   */
   tempBrowser?: boolean;
   /**
    * Use the real extension in the browser: the script is pushed into a
    * test collection of the run's own as text rather than injected by
    * the harness.
-   * A `tempBrowser` loads the package's own build of it.
    */
   extension?: boolean;
   headed?: boolean;
@@ -214,22 +215,6 @@ export async function connectBrowser(
   return session;
 }
 
-// A port free on this machine now, for a launched browser's CDP.
-// Something else could take it before the browser does; the browser
-// still starts (Playwright talks to it over a pipe), and only what
-// `list` shows would be wrong. (A launch with the extension, which the
-// run reaches through its port, has Chrome pick one instead.)
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.on('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address() as AddressInfo;
-      server.close(() => resolve(port));
-    });
-  });
-}
-
 // Whether a connected browser runs without a window: its user agent
 // then says HeadlessChrome. (The product name does only in the old
 // headless mode, not in --headless=new.) Unknown counts as not.
@@ -260,16 +245,16 @@ async function openBrowser(
   let browser: Browser;
   // Set for a connected browser only.
   let endpoint: string | null = null;
-  // A launched one gets a port too, so other tools (a debugger, a
-  // second Playwright) can connect to it, and `list` can say where.
+  // A launched one's port, which the run connects to, and other tools
+  // (a debugger, a second Playwright) can too; `list` says where.
   let launchedAt: string | null = null;
-  // Closes a browser launched with the extension, which the run reaches
-  // over a CDP connection of its own (see extension-launch.ts).
+  // Closes a launched browser, which the run reaches over a CDP
+  // connection of its own (see extension-launch.ts).
   let closeLaunched: (() => Promise<void>) | undefined;
-  if (opts.tempBrowser && opts.extension) {
+  if (opts.tempBrowser) {
     let launched;
     try {
-      launched = await launchExtensionBrowser(opts.headed === true, langLaunchArgs(opts.lang));
+      launched = await launchExtensionBrowser({ headed: opts.headed === true, args: langLaunchArgs(opts.lang), connectedElsewhere: true });
     } catch (err) {
       out(`Could not launch a browser with SourceMonkey: ${(err as Error).message}`);
       return null;
@@ -283,13 +268,6 @@ async function openBrowser(
       return null;
     }
     launchedAt = launched.endpoint;
-  } else if (opts.tempBrowser) {
-    const port = await freePort();
-    // Muted when hidden: a page's sound (a video site's autoplay) has
-    // no window to say where it comes from. A headed one keeps it.
-    const args = [`--remote-debugging-port=${port}`, ...(opts.headed ? [] : ['--mute-audio']), ...langLaunchArgs(opts.lang)];
-    browser = await chromium.launch({ headless: !opts.headed, args });
-    launchedAt = cdpEndpoint(String(port));
   } else {
     endpoint = cdpSetting(opts);
     try {
@@ -321,7 +299,7 @@ async function openBrowser(
   if (endpoint !== null) browser.contexts().forEach(leaveDialogsOpen);
   const notes: string[] = [];
   const page = !openTab ? null
-    // The one blank tab a launch with the extension leaves for the run.
+    // The one blank tab a launch leaves for the run.
     : closeLaunched ? context.pages()[0] ?? await context.newPage()
     : reuseTab && endpoint !== null
       ? await openRunTab(browser, context, endpoint, (line) => notes.push(line)).catch(() => context.newPage())
@@ -946,9 +924,10 @@ async function runInHarness(
   // With `--extension`: the scripts' text into the run's test
   // collection in the extension, which the run's tabs run. False,
   // having said why, when the extension refused one; whatever was
-  // pushed before it stays.
+  // pushed before it stays. `seed`: newly loaded, so `--values` seeds
+  // their storage, before any tab can run them.
   let pushedAny = false;
-  const push = async (list: PreparedScript[]): Promise<boolean> => {
+  const push = async (list: PreparedScript[], seed = false): Promise<boolean> => {
     if (!link) return true;
     const extensionHost = host as ExtensionHost;
     for (const script of list) {
@@ -957,7 +936,7 @@ async function runInHarness(
       // typed to start or load, so files of the same name stay apart.
       const name = typedName(opts, file);
       const text = await readFile(file, 'utf8');
-      const result = await link.push(text, name);
+      const result = await link.push(text, name, pushedFiles(script));
       pushedAny = true;
       if (result.status !== 'ok') {
         opts.out(`INVALID  ${typedName(opts, file)}\n    ${result.errorMessage ?? ''}`);
@@ -966,6 +945,7 @@ async function runInHarness(
       extensionHost.setPushed(script.spec!.id, result.scriptId);
       // An extension without the call leaves its stack lines as they are.
       extensionHost.setLayout(result.scriptId, await link.stackLayout(result.scriptId).catch(() => null));
+      if (seed && opts.values) await extensionHost.setValues(script.spec!.id, opts.values);
       opts.out(`[sm-dev] Pushed to SourceMonkey: ${preparedScriptPath(script)}${result.replaced ? ' (replaced)' : ''}`);
     }
     return true;
@@ -1040,18 +1020,18 @@ async function runInHarness(
     const n = scripts.length + 1;
     // Before it counts as loaded, so a push the extension refuses
     // leaves the run as it was.
-    if (!(await push([script])) || stopping) return;
+    if (!(await push([script], true)) || stopping) return;
     files.push(file);
     remote.setScripts(files);
     stamps.set(script, await filesStamp(script));
-    if (opts.values) host.seedValues(script.spec!.id, opts.values);
+    if (opts.values && !link) host.seedValues(script.spec!.id, opts.values);
     opts.out(`[sm-dev] Loaded ${input} as script ${n}`);
     await apply([...scripts, script], [{ next: script }], `No open tab matches it, so none was reloaded. Type open ${n} to open its page.`, true);
   });
   // Seeded once. An update keeps the store, so values the script wrote
   // since survive it.
-  if (opts.values) for (const script of prepared) host.seedValues(script.spec!.id, opts.values);
-  if (!(await push(prepared))) return 1;
+  if (opts.values && !link) for (const script of prepared) host.seedValues(script.spec!.id, opts.values);
+  if (!(await push(prepared, true))) return 1;
   for (const script of prepared) injected(script);
   await tabs.setScripts(prepared);
   if (prepared.length > 0) held.injected = true;

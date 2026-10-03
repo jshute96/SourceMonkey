@@ -159,6 +159,7 @@ import {
   reconcileScriptMembership,
   describeError,
   type AddCollectionResult,
+  type RunScriptArgs,
   type WriteRunScriptResult,
   type CollectionOptions,
   type InstallTarget,
@@ -213,6 +214,7 @@ import {
   abortXhr,
   abortXhrsForTab,
   runXhr,
+  type GmXhrEvent,
   type GmXhrRequestPayload,
 } from './gm-xhr.js';
 import { clearStaleHeaderRules } from './gm-xhr-headers.js';
@@ -300,7 +302,7 @@ interface SourceMonkeyApi {
   // An sm-dev run's scripts (docs/sm-dev-extension.md): install text
   // into the run's test collection, registered before the promise
   // settles; a rewrite of the same name replaces it in place.
-  writeRunScript: (args: { run: string; text: string; name?: string }) => Promise<WriteRunScriptResult>;
+  writeRunScript: (args: RunScriptArgs) => Promise<WriteRunScriptResult>;
   // sm-dev's tab claims and event stream (sm-dev-link.ts). `ownScripts`:
   // the run's tabs run its test collection's scripts; otherwise none of
   // the extension's. `renewRun` extends the run's lease, claims and
@@ -318,6 +320,10 @@ interface SourceMonkeyApi {
   // with their status and collection: sm-dev's list of the extension's
   // scripts on the page.
   scriptsOnTab: (tabId: number) => Promise<{ id: string; name: string; status: string; collection: string }[]>;
+  // Clicks a shown notification (by the id `GM_notification` got), as
+  // the person would: the script's `onclick` runs. False when it isn't
+  // showing. sm-dev's fixture clicks one this way.
+  clickNotification: (notificationId: string) => boolean;
   // Which document a tab's top frame shows: its URL and
   // `performance.timeOrigin`, which sm-dev reads from its own pages to
   // tell which one a tab it heard of is. Null when the tab can't be
@@ -698,6 +704,7 @@ const api: SourceMonkeyApi = {
     await syncNowForTests();
   },
   setTabScriptsOff,
+  clickNotification: (notificationId) => deliverNotificationEvent(notificationId, 'clicked'),
   scriptsOnTab: async (tabId) => {
     const state = getCurrentState(await getTabRecord(tabId));
     if (!state) return [];
@@ -1928,6 +1935,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   // don't depend on cross-listener dispatch order.
   const taken = takeRequestForClosedTab(tabId);
   if (taken) {
+    emitSmDevEvent({ kind: 'tab-closed', scriptId: taken.scriptId, requestId: taken.requestId });
     void chrome.tabs.sendMessage(taken.originatorTabId, {
       type: 'sm:gm-tab-closed',
       smWorld: pushWorld(taken.scriptId),
@@ -2910,26 +2918,32 @@ async function handleXhrStart(
   // matches VM policy. The error event we ship back is the
   // same shape as a network failure, so the userscript's onerror
   // catches it.
+  // For sm-dev (sm-dev-link.ts), which reports what a run's scripts
+  // requested: once as it starts, and again with how it ended.
+  const requestEvent = (event?: GmXhrEvent): void => emitSmDevEvent({
+    kind: 'request', scriptId: payload.scriptId, tabId, id: payload.id,
+    url: payload.request.url, method: (payload.request.method ?? 'GET').toUpperCase(),
+    ...(event ? { outcome: event.kind } : {}),
+    ...(event?.kind === 'load' ? { status: event.response.status } : {}),
+    ...(event?.kind === 'error' ? { error: event.message } : {}),
+  });
+  requestEvent();
   const policy = await loadConnectPolicy(payload.scriptId);
   if ('reason' in policy) {
     // Not `connectBlockedMessage`: we never got as far as reading the
     // script's rules, so blaming them would be wrong.
-    await sendXhrError(
-      sender, tabId, payload.scriptId, payload.id, gmXhrError(policy.reason),
-    );
+    const message = gmXhrError(policy.reason);
+    requestEvent({ kind: 'error', message });
+    await sendXhrError(sender, tabId, payload.scriptId, payload.id, message);
     return;
   }
   const initial = policy.check(payload.request.url);
   if (!initial.allowed) {
     // `denied` separates "the header forbids this host" from "that URL
     // never parsed" — only the first is the script's rules refusing.
-    await sendXhrError(
-      sender,
-      tabId,
-      payload.scriptId,
-      payload.id,
-      initial.denied ? connectBlockedMessage(initial.reason) : gmXhrError(initial.reason),
-    );
+    const message = initial.denied ? connectBlockedMessage(initial.reason) : gmXhrError(initial.reason);
+    requestEvent({ kind: 'error', message });
+    await sendXhrError(sender, tabId, payload.scriptId, payload.id, message);
     return;
   }
   // Run the fetch and ship the result back to the sender's tab. Other
@@ -2941,6 +2955,7 @@ async function handleXhrStart(
     (finalUrl) => policy.check(finalUrl).allowed,
     tabId,
   );
+  requestEvent(event);
   try {
     // Frame-scoped: the response body is the sensitive part of the API,
     // and `chrome.tabs.sendMessage` with no frameId hands it to every
@@ -3047,7 +3062,10 @@ async function handleTabOpen(
   const result = await openGmTab(payload, originatorTabId, claimed ? (tabId) => inheritClaim(originatorTabId, tabId) : undefined);
   // Once its URL is loading, so the run can tell its page by that.
   if (claimed && result.ok && result.tabId != null) {
-    emitSmDevEvent({ kind: 'tab-opened', sourceTabId: originatorTabId, tabId: result.tabId, url: payload.url });
+    emitSmDevEvent({
+      kind: 'tab-opened', sourceTabId: originatorTabId, tabId: result.tabId, url: payload.url,
+      scriptId: payload.scriptId, requestId: payload.requestId, active: payload.active,
+    });
   }
   return result;
 }
@@ -3069,7 +3087,29 @@ async function handleNotificationShow(
   if (!chrome.notifications) {
     return { ok: false, error: NOTIFICATIONS_UNAVAILABLE };
   }
-  return showGmNotification(payload, originatorTabId);
+  const result = await showGmNotification(payload, originatorTabId);
+  if (result.ok) {
+    emitSmDevEvent({
+      kind: 'notification', op: 'shown', scriptId: payload.scriptId, tabId: originatorTabId, requestId: payload.requestId,
+      notificationId: result.notificationId, text: payload.details.text, title: payload.details.title,
+    });
+  }
+  return result;
+}
+
+// A shown notification was clicked or closed: the script's `onclick`
+// or `ondone` hears it, and so does sm-dev.
+function deliverNotificationEvent(chromeId: string, event: 'clicked' | 'closed'): boolean {
+  const taken = event === 'clicked' ? takeNotificationForClicked(chromeId) : takeNotificationForClosed(chromeId);
+  if (!taken) return false;
+  emitSmDevEvent({ kind: 'notification', op: event, scriptId: taken.scriptId, tabId: taken.originatorTabId, requestId: taken.requestId });
+  void chrome.tabs.sendMessage(taken.originatorTabId, {
+    type: 'sm:gm-notification-event',
+    smWorld: pushWorld(taken.scriptId),
+    requestId: taken.requestId,
+    event,
+  }).catch(() => undefined);
+  return true;
 }
 
 function installNotificationListeners(): void {
@@ -3078,24 +3118,10 @@ function installNotificationListeners(): void {
     return;
   }
   chrome.notifications.onClicked.addListener((chromeId) => {
-    const taken = takeNotificationForClicked(chromeId);
-    if (!taken) return;
-    void chrome.tabs.sendMessage(taken.originatorTabId, {
-      type: 'sm:gm-notification-event',
-      smWorld: pushWorld(taken.scriptId),
-      requestId: taken.requestId,
-      event: 'clicked',
-    }).catch(() => undefined);
+    deliverNotificationEvent(chromeId, 'clicked');
   });
   chrome.notifications.onClosed.addListener((chromeId) => {
-    const taken = takeNotificationForClosed(chromeId);
-    if (!taken) return;
-    void chrome.tabs.sendMessage(taken.originatorTabId, {
-      type: 'sm:gm-notification-event',
-      smWorld: pushWorld(taken.scriptId),
-      requestId: taken.requestId,
-      event: 'closed',
-    }).catch(() => undefined);
+    deliverNotificationEvent(chromeId, 'closed');
   });
 }
 
@@ -3196,7 +3222,17 @@ async function handleDownloadStart(
     console.info('[SourceMonkey] gm-download-start without tab id; ignoring');
     return;
   }
+  // For sm-dev, as for requests: once as it starts, and again with how
+  // it ended.
+  const downloadEvent = (event?: GmDownloadEvent): void => emitSmDevEvent({
+    kind: 'download', scriptId: payload.scriptId, tabId, requestId: payload.requestId, url: payload.url, name: payload.name,
+    ...(event ? { outcome: event.kind } : {}),
+    ...(event?.kind === 'load' ? { filename: event.filename } : {}),
+    ...(event?.kind === 'error' ? { error: event.details.message ?? event.error } : {}),
+  });
+  downloadEvent();
   const emit = (event: GmDownloadEvent): void => {
+    if (event.kind !== 'progress') downloadEvent(event);
     sendDownloadEvent(tabId, payload.scriptId, payload.requestId, payload.url, event);
   };
   const result = await startGmDownload(payload, tabId, emit);
@@ -3204,8 +3240,12 @@ async function handleDownloadStart(
   // A download that never started still owes the script a terminal
   // event. `download_canceled` here means the page aborted before the
   // download manager had an id — the page already settled its own
-  // callbacks, so there's nothing to deliver.
-  if (result.error === 'download_canceled') return;
+  // callbacks, so there's nothing to deliver. sm-dev still hears how
+  // it ended.
+  if (result.error === 'download_canceled') {
+    emitSmDevEvent({ kind: 'download', scriptId: payload.scriptId, tabId, requestId: payload.requestId, url: payload.url, name: payload.name, outcome: 'abort' });
+    return;
+  }
   emit({
     kind: 'error',
     error: result.error ?? 'not_succeeded',

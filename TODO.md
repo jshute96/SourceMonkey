@@ -862,15 +862,9 @@ See [docs/harness-design.md](docs/harness-design.md).
   and can't import it. A pushed type added to one and not the other
   reaches the wrong world under the harness. Generate one from the
   other at build time, or check them against each other in a unit test.
-- Two scratch-script errors name the harness as the fix: "Push it
-  again" when the text row is gone (`directories.ts`), and "run it
-  without --extension" for a relative path (`external-files.ts`). Word
-  them for the writer once anything but the harness writes scratch
-  scripts.
-- Scratch scripts carry only their own text, so under `sm-dev start
-  --extension` a relative `@require` is refused (with a message saying
-  so) and a local copy of a remote `@require` is not used. Pushing the
-  resolved `@require` bodies along with the text would close both.
+- A scratch-script error names sm-dev's push as the fix: "Push it
+  again" when the text row is gone (`directories.ts`). Word it for the
+  writer once anything but sm-dev writes scratch scripts.
 - Detaching a page from the harness host (the page closed, or its
   attachment disposed) drops its menus, notifications and tab tracking
   but not its in-flight `GM_download`s or `GM_xmlhttpRequest`s. They

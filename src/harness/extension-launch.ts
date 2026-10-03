@@ -1,21 +1,19 @@
-// `sm-dev --temp-browser start --extension`: a throwaway Chromium with
-// the package's built SourceMonkey (dist/) loaded, for trying a script
-// in the real extension without setting up a browser by hand.
+// A throwaway Chromium with the package's built SourceMonkey (dist/)
+// loaded: `sm-dev --temp-browser`'s browser, the `sourcemonkey/harness`
+// fixture's, and the repo's own e2e suites'.
 //
 // - Playwright's Chromium, since Google Chrome (137+) ignores
 //   `--load-extension`. Hidden runs use Chrome's new headless mode
 //   (`--headless=new`), the only headless mode that loads extensions,
 //   with a windowed Chrome's user agent (see `windowedUserAgent`).
-// - A fresh profile in a temp directory, deleted when the run ends. Its
-//   Preferences grant "Allow User Scripts" before launch, which Chrome
-//   otherwise leaves to a click (chrome.userScripts is undefined
-//   without it), and pin the extension to the toolbar.
+// - A fresh profile in a temp directory, deleted when the browser is
+//   closed. Its Preferences grant "Allow User Scripts" before launch,
+//   which Chrome otherwise leaves to a click (chrome.userScripts is
+//   undefined without it), and pin the extension to the toolbar.
 // - Launched as a persistent context (a profile directory needs one),
-//   which has no Playwright `Browser`. The run connects over CDP to the
-//   launched browser's port for that, as it would to any browser.
-// - Mirrors tests/fixtures/sourcemonkey-launch.ts, which the e2e tests
-//   launch the extension with, except for the user agent, which only
-//   matters to real sites.
+//   which has no Playwright `Browser`. A caller that needs one (sm-dev's
+//   run, the fixture's `browser`) connects over CDP to the launched
+//   browser's port; the e2e suites use the context as it is.
 
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -33,9 +31,30 @@ import { rebuildAdvice } from './stale-build.js';
 // which ships both.
 const EXTENSION_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist');
 
+export interface ExtensionLaunchOptions {
+  /** A visible window, with sound. Hidden and muted otherwise. */
+  headed?: boolean;
+  /** More Chrome flags. */
+  args?: string[];
+  /**
+   * Chrome's own download manager saves downloads here, rather than
+   * Playwright's, which hides their real names and paths from
+   * `chrome.downloads`.
+   */
+  downloadsDir?: string;
+  /**
+   * Another Playwright client drives the browser, over `endpoint`. The
+   * launch's own client then leaves the pages' dialogs to it; otherwise
+   * it would dismiss them first.
+   */
+  connectedElsewhere?: boolean;
+}
+
 export interface LaunchedExtensionBrowser {
-  /** The launched browser's CDP endpoint, for the run to connect to. */
+  /** The launched browser's CDP endpoint, for a client to connect to. */
   endpoint: string;
+  /** The launch's own Playwright context: the browser's default one. */
+  context: BrowserContext;
   /** The temp profile, deleted by `close`. */
   profile: string;
   /** Closes the browser and deletes its profile. */
@@ -45,12 +64,13 @@ export interface LaunchedExtensionBrowser {
 /**
  * Launches Chromium with SourceMonkey loaded. Throws an error saying why
  * when it can't. It has one blank tab, opened after the warm-up (see
- * `warmUp`), for the run's first tab. `args`: more Chrome flags.
+ * `warmUp`), for a run's first tab.
  */
-export async function launchExtensionBrowser(headed: boolean, args: string[] = []): Promise<LaunchedExtensionBrowser> {
+export async function launchExtensionBrowser(options: ExtensionLaunchOptions = {}): Promise<LaunchedExtensionBrowser> {
   if (!existsSync(path.join(EXTENSION_DIR, 'manifest.json'))) {
     throw new Error(`The built extension is missing from ${EXTENSION_DIR}. ${rebuildAdvice()}`);
   }
+  const headed = options.headed === true;
   const profile = mkdtempSync(path.join(os.tmpdir(), 'sm-dev-extension-'));
   let context: BrowserContext | undefined;
   const close = async (): Promise<void> => {
@@ -58,16 +78,15 @@ export async function launchExtensionBrowser(headed: boolean, args: string[] = [
     try { rmSync(profile, { recursive: true, force: true }); } catch { /* Chrome may hold a file briefly */ }
   };
   try {
-    writePreferences(profile, await sourceMonkeyExtensionId());
+    writePreferences(profile, await sourceMonkeyExtensionId(), options.downloadsDir);
     await primeFirstRun(profile);
     // Port 0 has Chrome pick a free port and write it to the profile.
     // A port picked here could be taken before Chrome binds it, and the
     // run would connect to whatever took it.
-    context = await launch(profile, headed, ['--remote-debugging-port=0', ...args]);
+    context = await launch(profile, headed, ['--remote-debugging-port=0', ...(options.args ?? [])]);
     const port = readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0].trim();
-    // This Playwright client isn't the run's, so it leaves the run's
-    // dialogs to the run.
-    leaveDialogsOpen(context);
+    if (options.connectedElsewhere) leaveDialogsOpen(context);
+    if (options.downloadsDir) await chromeDownloads(context);
     await warmUp(context);
     // The launch's first tab predates the warm-up, so scripts fail in
     // it. A new one replaces it (opened first: a headed browser with
@@ -75,7 +94,7 @@ export async function launchExtensionBrowser(headed: boolean, args: string[] = [
     const stale = context.pages();
     await context.newPage();
     for (const page of stale) await page.close();
-    return { endpoint: `http://127.0.0.1:${port}`, profile, close };
+    return { endpoint: `http://127.0.0.1:${port}`, context, profile, close };
   } catch (err) {
     await close();
     if (err instanceof ExtensionMissingError) throw new Error(`Chromium did not load the extension from ${EXTENSION_DIR}`);
@@ -164,12 +183,33 @@ interface WarmUpApi {
 }
 
 // Grants the extension "Allow User Scripts" and pins it to the toolbar,
-// with the keys Chrome writes when those are clicked.
-function writePreferences(profile: string, extensionId: string): void {
+// with the keys Chrome writes when those are clicked. With
+// `downloadsDir`, also the keys Chrome writes when the download
+// location is changed in its settings: `directory_upgrade` marks it
+// user-chosen, so Chrome doesn't fall back to its platform default.
+function writePreferences(profile: string, extensionId: string, downloadsDir?: string): void {
   const dir = path.join(profile, 'Default');
   mkdirSync(dir, { recursive: true });
-  const prefs = { extensions: { settings: { [extensionId]: { user_scripts_enabled: true } }, pinned_extensions: [extensionId] } };
+  const prefs = {
+    extensions: { settings: { [extensionId]: { user_scripts_enabled: true } }, pinned_extensions: [extensionId] },
+    ...(downloadsDir ? { download: { default_directory: downloadsDir, directory_upgrade: true, prompt_for_download: false } } : {}),
+  };
   writeFileSync(path.join(dir, 'Preferences'), JSON.stringify(prefs));
+}
+
+// Hands downloads back to Chrome. Playwright has told it to save every
+// download under a GUID name in its own temp dir (CDP
+// `Browser.setDownloadBehavior: allowAndName`), with no option to opt
+// out. `default` undoes that, so the Preferences above apply.
+async function chromeDownloads(context: BrowserContext): Promise<void> {
+  const page = await context.newPage();
+  try {
+    const cdp = await context.newCDPSession(page);
+    await cdp.send('Browser.setDownloadBehavior', { behavior: 'default' });
+    await cdp.detach();
+  } finally {
+    await page.close();
+  }
 }
 
 /**
