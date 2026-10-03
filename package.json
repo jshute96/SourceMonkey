@@ -41,7 +41,7 @@
     "test:e2e:vm": "node scripts/build.mjs && node scripts/e2e-manager-preflight.mjs violentmonkey --need-closed && playwright test --project=violentmonkey --workers=1",
     "test:e2e:vm:headed": "node scripts/build.mjs && node scripts/e2e-manager-preflight.mjs violentmonkey --need-open && VM_HEADED=1 playwright test --project=violentmonkey --workers=1",
     "test:headed": "playwright test --project=sourcemonkey --headed --workers=1",
-    "test:unit": "node scripts/build.mjs && node --test 'tests/unit/*.test.mjs'",
+    "test:unit": "node scripts/build.mjs && node --test 'tests/unit/**/*.test.mjs'",
     "clean": "rm -rf dist lib .build-* test-results playwright-report"
   },
   "devDependencies": {

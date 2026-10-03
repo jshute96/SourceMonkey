@@ -16,7 +16,7 @@ const RUNS_DIR = mkdtempSync(path.join(os.tmpdir(), 'sm-dev-runs-test-'));
 process.env.SM_DEV_RUNS_DIR = RUNS_DIR;
 after(() => rmSync(RUNS_DIR, { recursive: true, force: true }));
 
-const { browserSentence, RunClient, RunControl, liveRuns, runIdOf, runTable, sendLine, stopRun } = await import('../../lib/harness/runs.js');
+const { browserSentence, RunClient, RunControl, liveRuns, runIdOf, runTable, sendLine, stopRun } = await import('../../../lib/harness/runs.js');
 
 // A run's handlers: `command` as given, and nothing to follow.
 function handlers(command, follow = () => () => undefined) {

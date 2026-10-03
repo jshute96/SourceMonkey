@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { DevToolsLink, devtoolsWanted } from '../../lib/harness/devtools.js';
+import { DevToolsLink, devtoolsWanted } from '../../../lib/harness/devtools.js';
 
 test('the flag wins over SM_DEV_DEVTOOLS, which is otherwise the default', () => {
   const saved = process.env.SM_DEV_DEVTOOLS;

@@ -523,7 +523,7 @@ See [harness-design.md](harness-design.md#preparets-script-in-injectable-script-
   construct). Add the directory as a collection to see the real messages.
   The expectations live in `tests/fixtures/bad-script-cases.mjs` and
   are pinned twice: by `bad-scripts.spec.ts` in Chromium and by
-  `tests/unit/harness-validate.test.mjs` under Node, which is what
+  `tests/unit/harness/validate.test.mjs` under Node, which is what
   keeps the two engines' answers verified against each other. The same
   directory covers the header diagnostics — see
   [diagnostics.md](diagnostics.md).

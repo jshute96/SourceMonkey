@@ -8,7 +8,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import os from 'node:os';
 import path from 'node:path';
 
-import { appendHistory, HISTORY_SIZE, historyFile, loadHistory } from '../../lib/harness/prompt-history.js';
+import { appendHistory, HISTORY_SIZE, historyFile, loadHistory } from '../../../lib/harness/prompt-history.js';
 
 const dir = mkdtempSync(path.join(os.tmpdir(), 'sm-prompt-history-'));
 after(() => rmSync(dir, { recursive: true, force: true }));

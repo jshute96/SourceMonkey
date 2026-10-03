@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { readSavedHeader, savedHeaderLines } from '../../lib/harness/save-html.js';
+import { readSavedHeader, savedHeaderLines } from '../../../lib/harness/save-html.js';
 
 test('reads the URL and each userscript line', () => {
   const html = [

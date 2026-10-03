@@ -5,8 +5,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseCommandArgs } from '../../lib/harness/command-args.js';
-import { cdpCallsTyped, clickOptions, keyName, plain } from '../../lib/harness/page-commands.js';
+import { parseCommandArgs } from '../../../lib/harness/command-args.js';
+import { cdpCallsTyped, clickOptions, keyName, plain } from '../../../lib/harness/page-commands.js';
 
 // click's or hover's options, from a line as the command's syntax reads it.
 const clickLine = (line, command = 'click') => {

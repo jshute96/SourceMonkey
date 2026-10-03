@@ -6,9 +6,10 @@ real-browser end-to-end suite for everything that touches the
 
 ## Layout
 
-- `tests/unit/*.test.mjs` — Node `--test` files. Import from
-  `dist/**/*.js`, so `pnpm run build` is a prerequisite (the
-  `test:unit` script runs it first).
+- `tests/unit/**/*.test.mjs` — Node `--test` files. Import from
+  `dist/**/*.js` (or `lib/` for the harness), so `pnpm run build` is a
+  prerequisite (the `test:unit` script runs it first).
+  - `tests/unit/harness/` holds the tests of `src/harness/` modules.
 - `tests/e2e/*.spec.ts` — Playwright specs. Launch headless Chromium
   with the unpacked extension loaded.
 - `tests/fixtures/` — shared harness code.
@@ -28,7 +29,7 @@ real-browser end-to-end suite for everything that touches the
   `e2e/**` and `examples/**`, so nothing here runs as a test.
 
 `sm-dev validate` runs the install-time pipeline over files on disk
-with no browser. `tests/unit/harness-validate.test.mjs` spawns it over
+with no browser. `tests/unit/harness/validate.test.mjs` spawns it over
 `tests/examples/` and `tests/bad-examples/`.
 
 - `validate`'s `tests/bad-examples/` expectations live in

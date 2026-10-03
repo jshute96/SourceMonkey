@@ -682,7 +682,7 @@ The lesson worth keeping:
   - The expected locations live in `tests/fixtures/bad-script-cases.mjs`
     and are pinned twice: by `bad-scripts.spec.ts` against the stored
     `errorLocation` in Chromium, and by
-    `tests/unit/harness-validate.test.mjs` against `sm-dev validate`'s
+    `tests/unit/harness/validate.test.mjs` against `sm-dev validate`'s
     output under Node. Both go through `locationPattern`, so the two
     engines' answers stay checked against each other.
   - Lines are read off each example's `>>> the error` marker rather than

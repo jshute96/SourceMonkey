@@ -9,8 +9,8 @@ import assert from 'node:assert/strict';
 import readline from 'node:readline';
 import { PassThrough } from 'node:stream';
 
-import { endsOutsideBlock } from '../../lib/harness/command-lines.js';
-import { editMultiLine } from '../../lib/harness/prompt-editor.js';
+import { endsOutsideBlock } from '../../../lib/harness/command-lines.js';
+import { editMultiLine } from '../../../lib/harness/prompt-editor.js';
 
 const UP = '\x1b[A';
 const DOWN = '\x1b[B';

@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseCommandArgs, splitWords, unquoteWhole } from '../../lib/harness/command-args.js';
+import { parseCommandArgs, splitWords, unquoteWhole } from '../../../lib/harness/command-args.js';
 
 const words = (line) => splitWords(line).map((w) => w.text);
 const typed = (command, line) => parseCommandArgs(command, { line });

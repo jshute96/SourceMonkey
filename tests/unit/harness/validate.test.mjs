@@ -18,10 +18,10 @@ import {
   BAD_CASES,
   badScriptFilesOnDisk,
   locationPattern,
-} from '../fixtures/bad-script-cases.mjs';
-import { CONTEXT_MENU_UNSUPPORTED } from '../../dist/extension/script-store.js';
+} from '../../fixtures/bad-script-cases.mjs';
+import { CONTEXT_MENU_UNSUPPORTED } from '../../../dist/extension/script-store.js';
 
-const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
+const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const CLI = path.join(REPO_ROOT, 'lib', 'harness', 'cli.js');
 
 /**

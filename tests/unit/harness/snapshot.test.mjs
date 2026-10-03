@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { framePaths, onScreen, refLabels, refOf, tidy, topRefs, treeParts, withoutDocument } from '../../lib/harness/snapshot.js';
+import { framePaths, onScreen, refLabels, refOf, tidy, topRefs, treeParts, withoutDocument } from '../../../lib/harness/snapshot.js';
 
 test('a whole page\'s tree goes without its document line, a level less indented', () => {
   const tree = [

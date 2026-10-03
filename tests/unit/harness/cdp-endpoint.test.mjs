@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { cdpEndpoint } from '../../lib/harness/run.js';
+import { cdpEndpoint } from '../../../lib/harness/run.js';
 
 test('a port alone means this machine', () => {
   assert.equal(cdpEndpoint('9222'), 'http://127.0.0.1:9222');

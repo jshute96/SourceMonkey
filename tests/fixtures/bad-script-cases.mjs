@@ -3,7 +3,7 @@
 //
 //   - `tests/e2e/bad-scripts.spec.ts` — adds the directory as a real
 //     collection in a real browser, and reads the stored rows back.
-//   - `tests/unit/harness-validate.test.mjs` — runs `sm-dev validate`
+//   - `tests/unit/harness/validate.test.mjs` — runs `sm-dev validate`
 //     over the same directory under Node.
 //
 // The table lives here rather than in either test because the point of

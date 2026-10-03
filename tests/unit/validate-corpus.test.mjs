@@ -10,7 +10,7 @@
 // corpus as clean.
 //
 // The checking itself is `sm-dev validate`'s, tested against the
-// browser's verdicts in harness-validate.test.mjs.
+// browser's verdicts in tests/unit/harness/validate.test.mjs.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';

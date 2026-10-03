@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { decodeOwnRefs, formatConsoleArgs, hostReportedError, isPreludeLine, shortConsoleText, showConsoleLine, showPageError } from '../../lib/harness/page-output.js';
+import { decodeOwnRefs, formatConsoleArgs, hostReportedError, isPreludeLine, shortConsoleText, showConsoleLine, showPageError } from '../../../lib/harness/page-output.js';
 
 const SCRIPT = 'sourcemonkey://SourceMonkey/my-script/my-script.user.js';
 const PRELUDE = 'sourcemonkey://SourceMonkey/__prelude.js';

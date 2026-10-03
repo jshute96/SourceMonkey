@@ -7,8 +7,8 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import os from 'node:os';
 import path from 'node:path';
 
-import { globFiles } from '../../lib/harness/path-args.js';
-import { UsageError, expandPathArg, expandPathArgs } from '../../lib/harness/checks.js';
+import { globFiles } from '../../../lib/harness/path-args.js';
+import { UsageError, expandPathArg, expandPathArgs } from '../../../lib/harness/checks.js';
 
 const root = mkdtempSync(path.join(os.tmpdir(), 'sm-path-args-'));
 after(() => rmSync(root, { recursive: true, force: true }));

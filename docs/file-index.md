@@ -368,23 +368,6 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/site-icon.test.mjs` | Unit tests for the icon-specific helpers: `@icon`-header extraction, `<link rel="icon">` parsing + scoring, cache-hit rules, `data:`→Blob decode |
 | `tests/unit/parse-sandbox-host.test.mjs` | Unit tests for `isParseVerdict` — only the three real statuses pass, so an odd reply can't read as `invalid` |
 | `tests/unit/parse-location.test.mjs` | Unit tests for probe selection and line mapping, driven by positions Chromium really reported |
-| `tests/unit/harness-cdp-endpoint.test.mjs` | Unit tests for `cdpEndpoint`: the forms `sm-dev --browser` accepts |
-| `tests/unit/harness-run-log.test.mjs` | Unit tests for a run's log files: the timestamp format and unique names |
-| `tests/unit/harness-wait.test.mjs` | Unit tests for `wait`'s delays and the message when a tab doesn't settle |
-| `tests/unit/harness-path-args.test.mjs` | Unit tests for sm-dev's glob matching and file argument expansion |
-| `tests/unit/harness-cli-args.test.mjs` | Unit tests for `sm-dev`'s command line: `start` flags, `match` output, scripts by URL, `--run`, `--` lines, misuse |
-| `tests/unit/harness-devtools.test.mjs` | Unit tests for `start --devtools`: when it is on, and the message when `chrome-devtools` is missing |
-| `tests/unit/harness-page-commands.test.mjs` | Unit tests for how the page commands name keys for `key`, read `click`'s flags and `cdp` calls, and word errors |
-| `tests/unit/harness-command-args.test.mjs` | Unit tests for the command parser: quotes, flags with `=` or not, tabs, text, forms, refused arguments |
-| `tests/unit/harness-snapshot.test.mjs` | Unit tests for `snapshot`: which words are refs, which lines `--visible`, selectors and `--find` keep, the whole page's tree |
-| `tests/unit/harness-runs.test.mjs` | Unit tests for the run registry: a sent line's round trip, stale records, `stop`'s SIGTERM fallback |
-| `tests/unit/harness-prompt-editor.test.mjs` | Unit tests for multi-line prompt editing: Enter in blocks, Up/Down, paste, line keys |
-| `tests/unit/harness-prompt-history.test.mjs` | Unit tests for the prompt's history file: loading, appending, trimming |
-| `tests/unit/harness-command-lines.test.mjs` | Unit tests for `{{ ... }}` blocks, comments, and lists of commands |
-| `tests/unit/harness-page-output.test.mjs` | Unit tests for which page console lines and errors `sm-dev start` shows |
-| `tests/unit/harness-validate.test.mjs` | Runs `sm-dev validate` over the example suites: verdicts matching the browser's, and warnings |
-| `tests/unit/harness-prepare.test.mjs` | Unit tests for `prepareScript` and `explainMatch` over real files on disk |
-| `tests/unit/harness-saved-header.test.mjs` | Unit tests for writing and reading a saved page's header: its URL and the userscripts that were running |
 | `tests/unit/parse-check-node.test.mjs` | Unit tests for the Node parse checker: verdict, both probes' positions, and the two probe-selection routes |
 | `tests/unit/validate-corpus.test.mjs` | Drives the corpus validator as a subprocess over a hand-built offline dependency tree |
 | `tests/unit/diagnostic-location.test.mjs` | Unit tests for the diagnostic label + validator, especially what they do with a partial location |
@@ -492,6 +475,31 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/bad-examples/` | Deliberately broken `*.user.js` files (plus the `@require` libraries some of them need, and the ones that merely warn) for the SM-only spec; outside `tests/examples/` so the TM loader doesn't see them |
 | `tests/e2e/bad-scripts.spec.ts` | SM-only e2e: each bad script gets the expected status, error location, and byte-for-byte viewer render |
 | `tests/e2e/diagnostic-links.spec.ts` | Clicking a diagnostic's location jumps to the file and line, in the installed viewer and the install preview |
+
+### Harness unit tests (`tests/unit/harness/`)
+
+Node `--test` files for the `src/harness/` modules, run with the other
+unit tests.
+
+| File | Description |
+|------|-------------|
+| `tests/unit/harness/cdp-endpoint.test.mjs` | Unit tests for `cdpEndpoint`: the forms `sm-dev --browser` accepts |
+| `tests/unit/harness/run-log.test.mjs` | Unit tests for a run's log files: the timestamp format and unique names |
+| `tests/unit/harness/wait.test.mjs` | Unit tests for `wait`'s delays and the message when a tab doesn't settle |
+| `tests/unit/harness/path-args.test.mjs` | Unit tests for sm-dev's glob matching and file argument expansion |
+| `tests/unit/harness/cli-args.test.mjs` | Unit tests for `sm-dev`'s command line: `start` flags, `match` output, scripts by URL, `--run`, `--` lines, misuse |
+| `tests/unit/harness/devtools.test.mjs` | Unit tests for `start --devtools`: when it is on, and the message when `chrome-devtools` is missing |
+| `tests/unit/harness/page-commands.test.mjs` | Unit tests for how the page commands name keys for `key`, read `click`'s flags and `cdp` calls, and word errors |
+| `tests/unit/harness/command-args.test.mjs` | Unit tests for the command parser: quotes, flags with `=` or not, tabs, text, forms, refused arguments |
+| `tests/unit/harness/snapshot.test.mjs` | Unit tests for `snapshot`: which words are refs, which lines `--visible`, selectors and `--find` keep, the whole page's tree |
+| `tests/unit/harness/runs.test.mjs` | Unit tests for the run registry: a sent line's round trip, stale records, `stop`'s SIGTERM fallback |
+| `tests/unit/harness/prompt-editor.test.mjs` | Unit tests for multi-line prompt editing: Enter in blocks, Up/Down, paste, line keys |
+| `tests/unit/harness/prompt-history.test.mjs` | Unit tests for the prompt's history file: loading, appending, trimming |
+| `tests/unit/harness/command-lines.test.mjs` | Unit tests for `{{ ... }}` blocks, comments, and lists of commands |
+| `tests/unit/harness/page-output.test.mjs` | Unit tests for which page console lines and errors `sm-dev start` shows |
+| `tests/unit/harness/validate.test.mjs` | Runs `sm-dev validate` over the example suites: verdicts matching the browser's, and warnings |
+| `tests/unit/harness/prepare.test.mjs` | Unit tests for `prepareScript` and `explainMatch` over real files on disk |
+| `tests/unit/harness/saved-header.test.mjs` | Unit tests for writing and reading a saved page's header: its URL and the userscripts that were running |
 
 ### Harness suite (`tests/harness/`)
 

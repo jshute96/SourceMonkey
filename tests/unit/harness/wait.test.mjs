@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { notSettledMessage, parseDelay } = await import('../../lib/harness/wait.js');
+const { notSettledMessage, parseDelay } = await import('../../../lib/harness/wait.js');
 
 test('parseDelay takes ms and s', () => {
   assert.equal(parseDelay('100ms'), 100);

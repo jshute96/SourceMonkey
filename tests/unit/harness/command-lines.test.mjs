@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 
 import {
   CommandAssembler, endsOutsideBlock, NOT_A_BLOCK_COMMAND, OPEN_NOT_LAST, TEXT_AFTER_CLOSE, echoCommand, parseCommandList, unclosedBlockMessage,
-} from '../../lib/harness/command-lines.js';
+} from '../../../lib/harness/command-lines.js';
 
 const texts = (result) => result.commands.map((c) => c.text);
 

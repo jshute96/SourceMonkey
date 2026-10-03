@@ -12,10 +12,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const CLI = fileURLToPath(new URL('../../lib/harness/cli.js', import.meta.url));
+const CLI = fileURLToPath(new URL('../../../lib/harness/cli.js', import.meta.url));
 // Outputs are compared exactly, so no warning that lib/ is older than src/.
 process.env.SM_DEV_NO_STALE_WARNING = '1';
-const SCRIPT = fileURLToPath(new URL('../examples/gm-menu/gm-menu.user.js', import.meta.url));
+const SCRIPT = fileURLToPath(new URL('../../examples/gm-menu/gm-menu.user.js', import.meta.url));
 
 function run(...args) {
   return cliLine('start', ...args);
@@ -28,7 +28,7 @@ function cliLine(...args) {
 }
 
 test('match lists every rule that excluded or matched each URL', () => {
-  const script = fileURLToPath(new URL('../examples/headers-match-hash/exclude-hash.user.js', import.meta.url));
+  const script = fileURLToPath(new URL('../../examples/headers-match-hash/exclude-hash.user.js', import.meta.url));
   const page = 'http://127.0.0.1/headers-match-hash/headers-match-hash.html';
   const r = spawnSync(process.execPath, [CLI, 'match', script, page, `${page}#part`, 'http://127.0.0.1/other.html'], { encoding: 'utf8' });
   assert.equal(r.status, 1);
@@ -45,7 +45,7 @@ test('match lists every rule that excluded or matched each URL', () => {
 });
 
 test('match takes several scripts and URLs in any order, a heading per script', () => {
-  const dir = fileURLToPath(new URL('../examples/headers-match-hash/', import.meta.url));
+  const dir = fileURLToPath(new URL('../../examples/headers-match-hash/', import.meta.url));
   const page = 'http://127.0.0.1/headers-match-hash/headers-match-hash.html';
   const rel = (name) => path.relative(process.cwd(), path.join(dir, name));
   const r = spawnSync(process.execPath, [CLI, 'match', `${page}#part`, path.join(dir, 'match-exact.user.js'), path.join(dir, 'include-hash.user.js'), page], { encoding: 'utf8' });
@@ -77,7 +77,7 @@ test('match takes several scripts and URLs in any order, a heading per script', 
 });
 
 test('match expands a glob in the examples directory into its script and pages; * in a URL needs its scheme', () => {
-  const cwd = fileURLToPath(new URL('../examples/', import.meta.url));
+  const cwd = fileURLToPath(new URL('../../examples/', import.meta.url));
   const r = spawnSync(process.execPath, [CLI, 'match', 'gm-menu/*', 'http://localhost/*'], { encoding: 'utf8', cwd });
   assert.match(r.stdout, /^match {4}file:\/\/.*\/gm-menu\/gm-menu\.html$/m);
   assert.match(r.stdout, /^no match http:\/\/localhost\/\*$/m);
@@ -92,7 +92,7 @@ test('match gives a script that can never match its per-URL answer, and a broken
   try {
     const broken = path.join(dir, 'broken.user.js');
     writeFileSync(broken, '// ==UserScript==\n// @name B\n// @match https://x/*\n// ==/UserScript==\nfunction (\n');
-    const hash = fileURLToPath(new URL('../examples/headers-match-hash/match-hash.user.js', import.meta.url));
+    const hash = fileURLToPath(new URL('../../examples/headers-match-hash/match-hash.user.js', import.meta.url));
     const page = 'http://127.0.0.1/headers-match-hash/headers-match-hash.html#part';
     const r = spawnSync(process.execPath, [CLI, 'match', hash, broken, page], { encoding: 'utf8' });
     assert.equal(r.status, 1);
@@ -116,7 +116,7 @@ test('validate and match fetch a script given as a URL, and run refuses one', as
   const { createServer } = await import('node:http');
   const { readFileSync } = await import('node:fs');
   const { execFile } = await import('node:child_process');
-  const script = fileURLToPath(new URL('../examples/headers-match-hash/match-exact.user.js', import.meta.url));
+  const script = fileURLToPath(new URL('../../examples/headers-match-hash/match-exact.user.js', import.meta.url));
   const withRequire = '// ==UserScript==\n// @name R\n// @match https://x.test/*\n// @require lib.js\n// ==/UserScript==\nhelper();\n';
   const server = createServer((req, res) => {
     if (req.url === '/match-exact.user.js') res.end(readFileSync(script));
@@ -487,7 +487,7 @@ test('--help anywhere on a line shows each command\'s help once, and runs nothin
 });
 
 test('each run command takes the flags its help lists, and no others', async () => {
-  const { commandFlags } = await import('../../lib/harness/command-list.js');
+  const { commandFlags } = await import('../../../lib/harness/command-list.js');
   const loads = ['--noscript', '--script', '--nowait'];
   const saved = [...loads, '--from-saved', '--url', '--offline'];
   const expected = {

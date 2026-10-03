@@ -32,7 +32,7 @@ scripts/sm-dev validate tests/examples tests/bad-examples
   and syntax errors in the body, in a `@require`, from a join-only
   collision, and from each brace-imbalance shape.
 - Both suites are asserted automatically by
-  `tests/unit/harness-validate.test.mjs`.
+  `tests/unit/harness/validate.test.mjs`.
 
 ## The GreasyFork corpus
 

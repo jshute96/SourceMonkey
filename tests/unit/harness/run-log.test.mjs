@@ -12,7 +12,7 @@ const DIR = mkdtempSync(path.join(os.tmpdir(), 'sm-dev-logs-test-'));
 process.env.SM_DEV_LOGS_DIR = DIR;
 after(() => rmSync(DIR, { recursive: true, force: true }));
 
-const { createRunLog, logTimestamp, LOG_LINE_PREFIX } = await import('../../lib/harness/run-log.js');
+const { createRunLog, logTimestamp, LOG_LINE_PREFIX } = await import('../../../lib/harness/run-log.js');
 
 test('logTimestamp is local time down to the millisecond', () => {
   assert.equal(logTimestamp(Date.UTC(2026, 3, 8, 20, 30, 12, 345)), '20260408-203012-345');
