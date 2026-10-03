@@ -161,6 +161,12 @@ interface StatusData {
   scripts: StatusScript[]; // the run's, then the installed ones on the tab
 }
 
+// With no run picked (no --run, and no start or attach earlier in the
+// line), every active run's, even when only one is going.
+interface StatusRunsData {
+  runs: StatusData[];
+}
+
 // The counts are for the run's scripts; installed ones have none.
 interface StatusScript extends Script {
   menuCommands?: number; // on the selected tab
@@ -170,7 +176,7 @@ interface StatusScript extends Script {
 }
 ```
 
-Text:
+Text (with several runs, each run's in turn, a blank line between):
 
 ```text
 Run: D1 (pid 4171043), connected to owned headless browser 127.0.0.1:38583 (has SourceMonkey)
@@ -187,7 +193,8 @@ Scripts (with status on active tab T1):
      Not active
 ```
 
-JSON:
+JSON, with `--run D1` (without it: `{"command": "status", "runs": [...]}`,
+each element this without `command`):
 
 ```json
 {

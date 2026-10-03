@@ -11,7 +11,7 @@
 // Each test gets its own runs directory, so its run (D1) never meets a
 // real run.
 
-import { execFile, spawn, type ChildProcess } from 'node:child_process';
+import { execFile, execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync, readlinkSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -324,15 +324,23 @@ test('start --detach returns once started, is replaced by the next unless --new,
     expect(readlinkSync(path.join(path.dirname(log), 'D1.log'))).toBe(path.basename(log));
     expect(await setup.cli('eval', 'document.title')).toEqual(['"target"']);
 
-    // With --new, another beside it. Three seconds with nothing sent,
+    // With --new, another beside it. Six seconds with nothing sent,
     // and that one ends.
-    const beside = await detach('--new', '--idle-seconds', '3');
-    expect(beside.at(-2)).toBe('[sm-dev] Run D2 now running detached, with idle timeout 3 seconds');
+    const beside = await detach('--new', '--idle-seconds', '6');
+    expect(beside.at(-2)).toBe('[sm-dev] Run D2 now running detached, with idle timeout 6 seconds');
     const ids = async (): Promise<string[]> => (await setup.cli('list')).map((l) => l.split(/\s+/)[0]);
     expect(await ids()).toEqual(['Run', 'D1', 'D2']);
     // Two going, so a command has to name one.
-    const several = await setup.cli('status');
+    const several = await setup.cli('eval', 'document.title');
     expect(several.slice(0, 2)).toEqual(['ERROR: Several runs are active. Pick one with --run, or attach to one:', expect.stringMatching(/^Run\s+PID/)]);
+    // Except status, which shows each, a blank line between.
+    const statuses = execFileSync(process.execPath, [CLI, 'status'], { env: setup.env, encoding: 'utf8' }).split('\n');
+    expect(statuses.filter((l) => l.startsWith('Run: '))).toEqual([expect.stringMatching(/^Run: D1 /), expect.stringMatching(/^Run: D2 /)]);
+    expect(statuses[statuses.findIndex((l) => l.startsWith('Run: D2 ')) - 1]).toBe('');
+    // Typed or piped too.
+    const typed = await setup.piped('status\n');
+    expect(typed[0]).toBe('stdin > status');
+    expect(typed.filter((l) => l.startsWith('Run: '))).toEqual([expect.stringMatching(/^Run: D1 /), expect.stringMatching(/^Run: D2 /)]);
     await expect.poll(ids, { timeout: 15_000 }).toEqual(['Run', 'D1']);
 
     // Without it, the next one stops the earlier one, and takes its id.
@@ -611,7 +619,14 @@ test('--json prints each result as one line of JSON on stdout, and other log mes
     expect(results.map((r) => r.command)).toEqual(['status', 'tabs', 'scripts', 'values', 'get', 'menu', 'match', 'probe', 'logs']);
     expect(stderr).toContain('arg > status');
     const [status, tabs, scripts, values, get, menu, match, probe, logs] = results;
-    expect(status).toMatchObject({
+    // No run picked: a layer holding each run's, even with one going.
+    expect(status).toMatchObject({ runs: [expect.anything()] });
+    expect((status.runs as unknown[]).length).toBe(1);
+    // Picked with --run: that run's alone.
+    const picked = JSON.parse((await setup.cliStreams('--run', 'D1', 'status', '--json=single')).stdout[0]) as Record<string, unknown>;
+    expect(picked).not.toHaveProperty('runs');
+    expect(picked).toEqual({ command: 'status', ...(status.runs as object[])[0] });
+    expect(picked).toMatchObject({
       run: { id: 'D1', browser: { owned: false }, sourceMonkey: 'installed' },
       tab: 'T1',
       scripts: [{ id: '1', kind: 'run', name: 'Json', status: 'ok', values: 1, menuCommands: 1, errors: 0, tabs: [{ tab: 'T1', state: 'running' }] }],

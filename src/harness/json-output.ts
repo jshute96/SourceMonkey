@@ -29,6 +29,17 @@ export function isJsonLine(line: string): boolean {
   return RESULT_LINE.test(line);
 }
 
+/**
+ * A result line's data (the fields after `command`) and its command's
+ * own layout, or null for another line.
+ */
+export function jsonResultData(line: string): { data: Record<string, unknown>; layout?: JsonLayout } | null {
+  const result = RESULT_LINE.exec(line);
+  if (!result) return null;
+  const { command: _command, ...data } = JSON.parse(line.slice(result[0].length)) as Record<string, unknown>;
+  return { data, ...(result[1] ? { layout: result[1] as JsonLayout } : {}) };
+}
+
 /** A result line marked with its command's own layout, which wins over the client's. */
 export function withLayout(line: string, layout: JsonLayout): string {
   return line.replace(RESULT_LINE, `\u0000sm-dev:json:${layout} `);
@@ -184,6 +195,11 @@ export interface StatusData {
   /** The selected tab, whose states `scripts` gives first. */
   tab?: string;
   scripts: StatusScript[];
+}
+
+/** `status` with no run picked (no --run, start or attach): every run's. */
+export interface StatusRunsData {
+  runs: StatusData[];
 }
 
 export interface TabsData {
