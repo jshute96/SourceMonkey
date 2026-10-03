@@ -33,7 +33,7 @@ import {
 } from './prepare.js';
 import { comparableUrl, openingSavedLine, type SavedPageStart } from './saved-pages.js';
 import { browserSentence, checkRunsDir, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentCommand, type SentLineHandler } from './runs.js';
-import { cspBlocksPageScripts, sandboxedPageWarning } from '../missing-scripts.js';
+import { cspBlocksPageScripts, sandboxedPageWarning } from '../sandboxed-page.js';
 import { waitForStuckTabs } from './stuck-tabs.js';
 import { NO_TABS } from './tab-refs.js';
 import { loadPage, settleTabs } from './wait.js';
@@ -1587,7 +1587,7 @@ function shortValue(value: unknown): string {
 // A page whose CSP sandboxes it without allow-scripts gets no MAIN-world
 // userscripts in a real manager, and Chrome says nothing about it. Said
 // on each load of one that the run's MAIN-world scripts match. See
-// src/missing-scripts.ts.
+// src/sandboxed-page.ts.
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 function wireSandboxCheck(page: Page, scripts: () => readonly PreparedScript[], out: (line: string) => void): void {

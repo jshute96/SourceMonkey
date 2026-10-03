@@ -21,7 +21,7 @@
 //   entries made in them, are left out.
 
 import { SM_ABANDONED_MSG, SM_ERROR_MSG, SM_START_MSG, SM_SWAPPED_MSG } from '../runtime-messages.js';
-import { SKIP_REASON_SM_DEV } from '../sm-dev-link.js';
+import { SKIP_REASON_SM_DEV } from '../sm-dev-protocol.js';
 import { remapStackText } from '../stack-link.js';
 import type { StackLayout } from '../composed-source.js';
 import { decodeOwnRefs } from './page-output.js';

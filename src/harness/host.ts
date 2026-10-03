@@ -14,7 +14,7 @@
 import { EventEmitter } from 'node:events';
 
 import { WRAPPER_GM_RUNTIME } from '../generated-wrappers.js';
-import type { GmXhrEvent, GmXhrRequestPayload } from '../gm-xhr.js';
+import type { GmXhrEvent, GmXhrRequestPayload } from '../gm-xhr-types.js';
 import type { PreparedScript } from './prepare.js';
 import { NO_RULE_COVERS_URL, explainMatch, preparedScriptName } from './prepare.js';
 

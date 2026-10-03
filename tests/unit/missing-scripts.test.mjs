@@ -1,12 +1,14 @@
 // Tests for src/missing-scripts.ts (compiled to dist/missing-scripts.js)
 // and the `notePageReport` helper in src/tab-status.ts that feeds it:
 // which expected scripts count as never started, and the Log warning
-// each gets from what the document's other reports said.
+// each gets from what the document's other reports said. Also the CSP
+// `sandbox` check in src/sandboxed-page.ts that sm-dev's warning uses.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { cspBlocksPageScripts, describeMissingScript, findMissingScripts } from '../../dist/missing-scripts.js';
+import { describeMissingScript, findMissingScripts } from '../../dist/missing-scripts.js';
+import { cspBlocksPageScripts } from '../../dist/sandboxed-page.js';
 import { notePageReport } from '../../dist/tab-status.js';
 
 const URL = 'https://example.com/a.png';

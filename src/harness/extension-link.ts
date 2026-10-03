@@ -20,7 +20,7 @@ import { randomBytes } from 'node:crypto';
 
 import type { BrowserContext, Page, Worker } from '@playwright/test';
 
-import { SM_DEV_EVENT } from '../sm-dev-link.js';
+import { SM_DEV_EVENT } from '../sm-dev-protocol.js';
 import type { StackLayout } from '../composed-source.js';
 import type { PushedFile } from '../external-files.js';
 import { findExtensionWorker, sourceMonkeyExtensionId, type LogEntry, type PushResult } from './extension-backend.js';

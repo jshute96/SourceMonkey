@@ -36,11 +36,7 @@
 //   each change, and `claimTab` / `renewRun` wait for it, so a tab's
 //   first navigation already runs under the flag.
 
-/** The first argument of every event's console line. */
-export const SM_DEV_EVENT = 'sm-dev-event';
-
-/** The reason a skipped wrapper reports for a tab an sm-dev run controls. */
-export const SKIP_REASON_SM_DEV = 'tab controlled by sm-dev';
+import { SM_DEV_EVENT } from './sm-dev-protocol.js';
 
 export interface SmDevClaim {
   runId: string;

@@ -27,7 +27,7 @@ import path from 'node:path';
 import { savePageHtml, userscriptLabel } from './save-html.js';
 import { companionFiles, loadSavedPage, routeSavedPage, savedPageUrl } from './saved-pages.js';
 
-import type { GmXhrEvent, GmXhrRequestPayload } from '../gm-xhr.js';
+import type { GmXhrEvent, GmXhrRequestPayload } from '../gm-xhr-types.js';
 import { ExtensionHost } from './extension-host.js';
 import { launchExtensionBrowser } from './extension-launch.js';
 import { ExtensionLink, linkRunId } from './extension-link.js';

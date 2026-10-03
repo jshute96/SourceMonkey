@@ -130,7 +130,8 @@ One-line descriptions of every source file, grouped by directory.
 | `src/script-world.ts` | Picks the injection world (page or isolated) from a script's `@grant` and `@inject-into` lines |
 | `src/composed-source.ts` | Concatenates `@require` bodies ahead of the script body; owns the injected entry's line layout and the parse check's source, for stack and error mapping |
 | `src/tab-status.ts` | Pure helpers for per-tab badge view (expected ∪ actual classification incl. NOT LOADED, color, row-label formatter) and per-tab document LRU |
-| `src/missing-scripts.ts` | Log warnings for scripts that matched a page but never started, and the CSP `sandbox` check sm-dev shares |
+| `src/missing-scripts.ts` | Log warnings for scripts that matched a page but never started |
+| `src/sandboxed-page.ts` | Detects a CSP `sandbox` that blocks page-world scripts; the wording the Log warning and sm-dev share |
 | `src/debug-log.ts` | Debug-logging gate for verbose lifecycle messages; off by default, toggled via `chrome.storage.local.smDebugLogging` |
 | `src/phase-timing.ts` | Debug-gated timers behind the refresh / registration paths: per-sequence phases plus cumulative fan-out totals |
 | `src/storage-scan.ts` | Wrapper for every full-namespace `storage.local.get(null)`, naming each scan and its cost under debug logging |
@@ -156,10 +157,12 @@ One-line descriptions of every source file, grouped by directory.
 | `src/source-map.ts` | Source Map v3 generator for the concatenated injection entry, plus the reverse lookup the Log tab maps stack refs with |
 | `src/wrapper-gm-runtime.js` | Shared per-world `GM_*` runtime — installs `window.__SM_GM__` (shim cache, dual transport, storage cache + stored-value codec + batched writes) |
 | `src/gm-values.ts` | SW-side persistent storage for `GM_*` values — `gmval:<scriptId>:<key>` rows in `chrome.storage.local`, batched writes |
+| `src/gm-xhr-types.ts` | The `GM_xmlhttpRequest` request and event types passed between page and service worker |
 | `src/gm-xhr.ts` | SW-side `GM_xmlhttpRequest` runner — fetch + AbortController, text/json/blob/arraybuffer/document, cookies, timeout |
 | `src/gm-xhr-headers.ts` | Forbidden-request-header surgery for `GM_xmlhttpRequest` — classify, tag the URL, compile to a DNR session rule, stale-rule sweep |
 | `src/gm-connect.ts` | `@connect` URL-gating helpers — parse rules, extract self hosts from `@match`/`@include`, check URL, phrase `GM_xmlhttpRequest`'s errors |
 | `src/gm-tab.ts` | SW-side `GM_openInTab` dispatcher (`chrome.tabs.create` + per-request mapping for close-event routing) |
+| `src/sm-dev-protocol.ts` | Strings the extension and sm-dev both use: the event line tag and the sm-dev skip reason |
 | `src/sm-dev-link.ts` | SW side of sm-dev: tab claims and run leases, when a test collection is stale, the event stream to runs |
 | `src/gm-download.ts` | SW-side `GM_download` dispatcher (`chrome.downloads` for http(s) + per-request mapping for progress/terminal routing) |
 | `src/gm-notification.ts` | SW-side `GM_notification` dispatcher (`chrome.notifications.create` + per-request mapping for click/close routing) |

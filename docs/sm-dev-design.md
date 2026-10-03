@@ -695,7 +695,7 @@ response, so it says so directly.
   redirects, whose headers don't apply to the page.
 - Warns on each load of such a page that the run's MAIN-world scripts
   match, naming them. The check and the wording live in
-  `src/missing-scripts.ts`, shared with the extension's Log hint.
+  `src/sandboxed-page.ts`, shared with the extension's Log hint.
 
 ### Applying script changes
 

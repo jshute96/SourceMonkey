@@ -203,8 +203,8 @@ import {
   resetSmDevLinkForTests,
   staleRuns,
   setTabScriptsOff,
-  SKIP_REASON_SM_DEV,
 } from './sm-dev-link.js';
+import { SKIP_REASON_SM_DEV } from './sm-dev-protocol.js';
 import {
   applyBatchValues,
   DELETED_SENTINEL,
@@ -216,9 +216,8 @@ import {
   abortXhr,
   abortXhrsForTab,
   runXhr,
-  type GmXhrEvent,
-  type GmXhrRequestPayload,
 } from './gm-xhr.js';
+import type { GmXhrEvent, GmXhrRequestPayload } from './gm-xhr-types.js';
 import { clearStaleHeaderRules } from './gm-xhr-headers.js';
 import {
   connectBlockedMessage,
