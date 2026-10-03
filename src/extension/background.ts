@@ -87,7 +87,7 @@ import {
   unregisterAllRegistrations,
   type SyncScope,
 } from './injector.js';
-import { assignScriptNumbers, numberMap, readScriptNumbers } from './script-numbers.js';
+import { type AllNumbers, assignNumbers, numberMap, readNumbers } from './sticky-numbers.js';
 import {
   SM_ABANDONED_MSG,
   SM_CHECK_PENDING_MSG,
@@ -334,6 +334,9 @@ interface SourceMonkeyApi {
   // The stored script numbers, by script id, after numbering any new
   // scripts. For tests.
   scriptNumbers: () => Promise<Record<string, number>>;
+  // The stored collection numbers, by collection id, after numbering any
+  // new collections. For tests.
+  collectionNumbers: () => Promise<Record<string, number>>;
   // Clicks a shown notification (by the id `GM_notification` got), as
   // the person would: the script's `onclick` runs. False when it isn't
   // showing. sm-dev's fixture clicks one this way.
@@ -727,7 +730,7 @@ const api: SourceMonkeyApi = {
     if (!state) return [];
     const view = computeBadge(state, await rejectedScriptIds());
     // Numbered first, so a script added a moment ago has its number.
-    const numbers = await numberScripts();
+    const numbers = (await assignAllNumbers()).scripts.byId;
     return Promise.all(view.rows.map(async (row) => {
       const script = await getScript(row.id);
       const collection = script ? await getCollection(script.collectionId) : undefined;
@@ -738,7 +741,8 @@ const api: SourceMonkeyApi = {
       };
     }));
   },
-  scriptNumbers: () => numberScripts(),
+  scriptNumbers: async () => (await assignAllNumbers()).scripts.byId,
+  collectionNumbers: async () => (await assignAllNumbers()).collections.byId,
   isSmDevMarked: (tabId) => markedTabs.has(tabId),
   tabDocument: async (tabId) => {
     try {
@@ -4532,16 +4536,17 @@ const compileParseChecker: ParseChecker = async (script) => {
 setParseChecker(compileParseChecker);
 
 void ensureLogIdsLoaded();
-// Number new scripts before each registration sync registers them, and
-// reconcile the numbers at startup (see script-numbers.ts). The log
-// labels take the numbers at once, so they match what was registered.
-async function numberScripts(): Promise<Record<string, number>> {
-  const numbers = await assignScriptNumbers();
-  if (numbers) noteScriptNumbers(numberMap(numbers));
-  return numbers?.byScript ?? (await readScriptNumbers()).byScript;
+// Number new scripts and collections before each registration sync
+// registers them, and reconcile the numbers at startup (see
+// sticky-numbers.ts). The log labels take the script numbers at once, so
+// they match what was registered.
+async function assignAllNumbers(): Promise<AllNumbers> {
+  const numbers = await assignNumbers();
+  if (numbers) noteScriptNumbers(numberMap(numbers.scripts));
+  return numbers ?? await readNumbers();
 }
-setBeforeSync(async () => { await numberScripts(); });
-void numberScripts();
+setBeforeSync(async () => { await assignAllNumbers(); });
+void assignAllNumbers();
 installStorageListener();
 installStaleScriptListener();
 installFocusRefresh();

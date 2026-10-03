@@ -3,7 +3,7 @@
 // Goal: every script that appears in a log line or UI label can be
 // referred to by a short, file-derived handle: its basename and its
 // script number (`bold-on-hover.user.js#E4`), the number sm-dev names
-// it by (see script-numbers.ts). The number keeps two scripts sharing a
+// it by (see sticky-numbers.ts). The number keeps two scripts sharing a
 // basename apart, and never shifts when other scripts come and go.
 //
 // A script with no number yet (one just added, before the service
@@ -21,7 +21,7 @@
 // script can reshuffle them.
 
 import { scriptBasename } from '../script-display.js';
-import { numberMap, SCRIPT_NUMBERS_KEY, scriptNumbersFrom } from './script-numbers.js';
+import { numberMap, numbersFrom, SCRIPT_NUMBERS_KEY } from './sticky-numbers.js';
 import { scanAllStorage } from './storage-scan.js';
 import type { StoredScript } from '../script-build.js';
 
@@ -92,7 +92,7 @@ async function loadAll(): Promise<void> {
     next.set(s.id, { id: s.id, relativePath: s.relativePath });
   }
   allInfo = next;
-  numbers = numberMap(scriptNumbersFrom(all[SCRIPT_NUMBERS_KEY]));
+  numbers = numberMap(numbersFrom(all[SCRIPT_NUMBERS_KEY]));
   recompute();
 }
 
@@ -108,7 +108,7 @@ export function installScriptLogIdListener(): void {
     if (areaName !== 'local') return;
     let touched = false;
     if (SCRIPT_NUMBERS_KEY in changes) {
-      numbers = numberMap(scriptNumbersFrom(changes[SCRIPT_NUMBERS_KEY].newValue));
+      numbers = numberMap(numbersFrom(changes[SCRIPT_NUMBERS_KEY].newValue));
       touched = true;
     }
     for (const [key, change] of Object.entries(changes)) {

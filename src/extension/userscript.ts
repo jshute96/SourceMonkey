@@ -81,7 +81,7 @@ import { setGlyphButton, setGlyphButtonBusy } from './glyph.js';
 import type { DownloadsCopiesSetting } from './local-copy.js';
 import { deletableCopyPath, readCopiesSetting } from './local-delete.js';
 import { computeLogIds } from './script-log-id.js';
-import { numberMap, readScriptNumbers, SCRIPT_NUMBERS_KEY } from './script-numbers.js';
+import { numberMap, readScriptNumbers, SCRIPT_NUMBERS_KEY } from './sticky-numbers.js';
 import {
   attachFiles,
   distillRequires,

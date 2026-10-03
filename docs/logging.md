@@ -14,7 +14,7 @@ refers to it: its basename and its script number.
     query string (`My Script.user.js`, not `My%20Script.user.js?v=2`).
     See [names-and-paths.md](names-and-paths.md).
   - The number is the one sm-dev names the script by (`E4`), the same
-    in every run. See [storage.md](storage.md#script-numbers).
+    in every run. See [storage.md](storage.md#sticky-numbers).
   - It keeps scripts sharing a basename apart, and never shifts when
     other scripts come and go.
 - A script with no number yet has its basename alone, or `#1`, `#2`,

@@ -114,7 +114,7 @@ import {
   buildSourceUrl,
 } from '../script-source-url.js';
 import { computeLogIds, type LogIdInput } from './script-log-id.js';
-import { numberMap, readScriptNumbers, SCRIPT_NUMBERS_KEY, scriptNumbersFrom } from './script-numbers.js';
+import { numberMap, numbersFrom, readScriptNumbers, SCRIPT_NUMBERS_KEY } from './sticky-numbers.js';
 import { scriptBasename, scriptDisplayName } from '../script-display.js';
 import { logScriptEvent } from './script-log.js';
 import {
@@ -1226,7 +1226,7 @@ async function readAll(): Promise<{ scripts: StoredScript[]; collections: Map<st
       collections.set(s.id, s);
     }
   }
-  return { scripts, collections, numbers: numberMap(scriptNumbersFrom(all[SCRIPT_NUMBERS_KEY])) };
+  return { scripts, collections, numbers: numberMap(numbersFrom(all[SCRIPT_NUMBERS_KEY])) };
 }
 
 // ---------- What the last sync left behind ----------
@@ -1801,7 +1801,7 @@ async function revalidateCandidates(
 // context, and collapsed with any sync that is queued but hasn't begun
 // — see the lock above for what the overlap used to cost.
 // Run at the start of each sync, before anything is read: the service
-// worker numbers new scripts here (`assignScriptNumbers`), so a script
+// worker numbers new scripts here (`assignNumbers`), so a script
 // is registered under its numbered label from the start. Unset in pages.
 let beforeSync: (() => Promise<void>) | null = null;
 

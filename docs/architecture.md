@@ -149,7 +149,7 @@ details live in the topic-specific docs linked below.
   label, its basename and script number (`foo.user.js#E4`), used in
   every SW log line and stack trace and shown in the viewer, so users
   can correlate console output with a script. The number is sm-dev's
-  `E4` (`src/extension/script-numbers.ts`). See
+  `E4` (`src/extension/sticky-numbers.ts`). See
   [logging.md](logging.md).
 - **Display names** (`src/script-display.ts`) — one place decides how
   a stored URL or path is rendered for humans: percent-decoded for

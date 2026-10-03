@@ -155,6 +155,8 @@ export interface SmApi {
   }>;
   // The stored script numbers, by script id, after numbering new scripts.
   scriptNumbers(): Promise<Record<string, number>>;
+  // The stored collection numbers, by collection id, after numbering new collections.
+  collectionNumbers(): Promise<Record<string, number>>;
   // The script's log label (`foo.user.js#E4`). Its number is the
   // service worker's to assign, so a test that needs the label has to
   // ask rather than predict it.

@@ -1254,7 +1254,7 @@ Terms used below:
   - The extension's other scripts that match the current tab, as its
     toolbar badge lists them, named by SourceMonkey's script numbers
     (`E12`): the same in every run, and the `#E12` the viewer's Log ID
-    shows (see [storage.md](storage.md#script-numbers)).
+    shows (see [storage.md](storage.md#sticky-numbers)).
     - An extension before protocol 1.1 numbers none; then they are
       `E1`, `E2`, ... in the order the run first sees them.
   - The run's claim keeps them out of its tabs, so their status there
