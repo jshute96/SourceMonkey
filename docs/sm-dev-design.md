@@ -1048,6 +1048,18 @@ collection, which holds exactly the scripts the run pushed.
   resolving and fetching the ref (`PushedFile` in external-files.ts).
   Remote refs with no local copy it fetches as usual.
 - A relative ref with no pushed file is refused, saying so.
+- A pushed file is a snapshot: a refresh reloads the stored bytes, not
+  the file on disk. Only the next push (`update`, `load`, a `--watch`
+  save) picks up an edit.
+  - The script's page says so, since the file's `file://` URL alone
+    reads as live:
+    - a `snapshot` chip on a `@require`'s code tab, with a tooltip
+      naming the file;
+    - for a local copy of a remote URL, a line on the Local overrides
+      row's tooltip, and a deleted chip that says the snapshot still
+      runs.
+  - A `@resource` by relative path has no tab or row, so nothing marks
+    it.
 
 #### Removal
 

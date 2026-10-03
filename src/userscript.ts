@@ -846,7 +846,7 @@ function render(script: StoredScript): void {
   const locationHref = isFileUrl(script.fileUrl) ? script.fileUrl : currentFilenamePath;
   renderDetails(summaryEl, {
     header: script.header,
-    files: { requires: script.requires, resources: script.resources },
+    files: { requires: script.requires, resources: script.resources, pushed: isScratchUrl(script.fileUrl) },
     scriptUrl: script.fileUrl,
     logId: currentLogId,
     collection: collectionRow,
@@ -1962,7 +1962,7 @@ function storedTabs(script: StoredScript): CodeTab[] {
       // is what lets the Log tab linkify to this tab.
       fileUrl: r.url,
       sourceUrl: requireSourceUrls[i],
-      ...codeTabProvenance(r),
+      ...codeTabProvenance(r, isScratchUrl(script.fileUrl)),
     });
   }
   tabs.push({ kind: 'log', label: 'Log' });
@@ -1980,8 +1980,13 @@ function storedTabs(script: StoredScript): CodeTab[] {
 // The visible chip is for `localUrl` only: that's the case where the
 // tab is showing something other than what the declaration names, and a
 // hover-only disclosure would be no disclosure at all.
+//
+// A file sm-dev pushed with a scratch script (`pushed`: one it read from
+// disk) is a copy taken at the push, which no refresh rereads. Its chip
+// and tooltip say so, since its `file://` URL alone reads as live.
 function codeTabProvenance(
   file: { url: string; localUrl?: string },
+  pushed = false,
 ): { title: string; mark?: string } {
   // Display form on both counts: an SRI hash tail is most of a
   // tooltip's width and nothing the reader can act on, and a URL
@@ -1989,6 +1994,13 @@ function codeTabProvenance(
   // `displayLocation` — the same decode every other URL the viewer
   // shows already gets.
   const url = displayLocation(stripSriFragment(file.url));
+  if (pushed && (file.localUrl || isFileUrl(file.url))) {
+    const from = file.localUrl ? displayLocation(file.localUrl) : url;
+    return {
+      title: `${file.localUrl ? `${url}\n\n` : ''}Snapshot of ${from}, pushed by sm-dev`,
+      mark: 'snapshot',
+    };
+  }
   if (!file.localUrl) return { title: url };
   // Blank line between the two: they are different facts — what the
   // script declares, and what we read — not a wrapped sentence.

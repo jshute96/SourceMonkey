@@ -57,9 +57,10 @@ export type TabBody = string | (() => Promise<string>);
 // declared and the file we read instead.
 //
 // `mark` is a short visible chip rendered after the label. Reserved for
-// facts a reader must not have to hover to discover; today the only one
-// is `local`, because running something other than what the `@require`
-// line names has to be visible on its face.
+// facts a reader must not have to hover to discover: `local`, because
+// running something other than what the `@require` line names has to be
+// visible on its face, and `snapshot`, for a file sm-dev pushed, which
+// no refresh rereads (it takes the place of `local` there).
 export type CodeTab =
   | {
       kind: 'code';

@@ -103,6 +103,9 @@ export interface DetailsModel {
   files?: {
     requires?: readonly StoredRequire[];
     resources?: readonly StoredResource[];
+    // The files are snapshots sm-dev pushed with a scratch script, not
+    // files a refresh rereads.
+    pushed?: boolean;
   };
   // Where the script itself was loaded from. Only the Match / Include /
   // Exclude rows read it: a pattern that names no site can still be
@@ -415,11 +418,12 @@ function addLocalFiles(dl: HTMLDListElement, files: DetailsModel['files']): void
     appendWithSlashBreaks(path, displayLocation(localPath));
     // Which declaration it stood in for rides along as the tooltip,
     // in the URL display form every other declared ref uses.
-    path.title = `Stands in for ${displayLocation(stripSriFragment(e.declared))}`;
+    path.title = `Stands in for ${displayLocation(stripSriFragment(e.declared))}`
+      + (files?.pushed ? '\n\nSnapshot of this file, pushed by sm-dev' : '');
     // A stand-in the user has since deleted or edited gets a chip
-    // saying so — until the next refresh, this row is still claiming
-    // to load the bytes it holds.
-    tagLocalFile(path, standInTag(localPath, e.file));
+    // saying so: this row still claims to load the bytes it holds,
+    // until the next refresh (or, for a pushed snapshot, the next push).
+    tagLocalFile(path, standInTag(localPath, e.file, files?.pushed));
     span.appendChild(path);
 
     // Copies the same path the row shows — for a local file that IS the

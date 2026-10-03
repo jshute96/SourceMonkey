@@ -383,6 +383,9 @@ be silent, so several surfaces say so:
   - Every code tab has the URL tooltip, the main script's included:
     labels are bare basenames, so "which file is this" is a fair
     question on any of them. Only the chip is override-specific.
+  - A file sm-dev pushed gets a `snapshot` chip instead, saying it's a
+    copy taken at the push (see
+    [sm-dev-design.md](sm-dev-design.md#files-read-from-disk)).
 - **Details panel `Local overrides` row** — one entry per overridden file,
   naming the kind (`@require` / `@resource`), the local path we read,
   and a copy button for it. The declaration it replaced is the entry's

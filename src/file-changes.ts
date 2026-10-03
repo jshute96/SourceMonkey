@@ -336,17 +336,24 @@ export const STAND_IN_MISSING_HINT =
 // The same words as for a script file: the outcome is the same.
 export const STAND_IN_MODIFIED_HINT = SCRIPT_FILE_MODIFIED_HINT;
 
+// A file sm-dev pushed with a scratch script: a snapshot no refresh
+// rereads. It has no stored mtime, so only a deletion can be told.
+export const PUSHED_FILE_MISSING_HINT =
+  'This file has been deleted since sm-dev pushed it. The script still runs the snapshot it pushed.';
+
 // The tag for a stand-in, given its path and the stored entry. The
 // entry's `size` is the bytes read, which is the file's size; with the
 // listing mtime recorded beside it, an edit can be told apart.
+// `pushed` is for a snapshot sm-dev pushed.
 export function standInTag(
   fsPath: string,
   entry: { size?: number; fsMtime?: number },
+  pushed = false,
 ): LocalFileTag {
   const tag: LocalFileTag = {
     fsPath,
-    missingHint: STAND_IN_MISSING_HINT,
-    modifiedHint: STAND_IN_MODIFIED_HINT,
+    missingHint: pushed ? PUSHED_FILE_MISSING_HINT : STAND_IN_MISSING_HINT,
+    ...(pushed ? {} : { modifiedHint: STAND_IN_MODIFIED_HINT }),
   };
   if (entry.size !== undefined && entry.fsMtime !== undefined) {
     tag.size = entry.size;

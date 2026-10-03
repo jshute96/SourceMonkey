@@ -77,7 +77,7 @@ test.describe('scratch scripts', () => {
     expect((await sm.getCollections())[0]?.scriptIds ?? []).toEqual([]);
   });
 
-  test('a relative @require is read from the files pushed with the text, and refused without them', async ({ extensionContext, fixtureServer, sm, getServiceWorker }) => {
+  test('a relative @require is read from the files pushed with the text, and refused without them', async ({ extensionContext, extensionId, fixtureServer, sm, getServiceWorker }) => {
     const text = renderUserscript({
       relativePath: 'scratch.user.js',
       meta: { name: 'With lib', match: ['*://*/target.html'], extra: ['// @require lib/helper.js'] },
@@ -100,6 +100,15 @@ test.describe('scratch scripts', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page.locator('#target')).toHaveText('from the pushed file');
     await page.close();
+
+    // The script's page marks the pushed file as a snapshot, not a
+    // file a refresh rereads.
+    const viewer = await extensionContext.newPage();
+    await viewer.goto(`chrome-extension://${extensionId}/userscript.html?script=${result.scriptId}`);
+    const requireTab = viewer.locator('.tab').nth(1);
+    await expect(requireTab.locator('.tab-mark')).toHaveText('snapshot');
+    await expect(requireTab).toHaveAttribute('title', 'Snapshot of file:///home/me/scripts/lib/helper.js, pushed by sm-dev');
+    await viewer.close();
 
     // The run's end removes the pushed files with the text.
     await sm.releaseRun(RUN);

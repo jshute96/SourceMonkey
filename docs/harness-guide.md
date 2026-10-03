@@ -424,6 +424,9 @@ For a browser that keeps the extension (and your logins):
     pushed with it: relative paths, and local copies of remote URLs
     under the collection root or a `--local` directory. Remote ones the
     extension fetches.
+    - They're snapshots: a refresh in SourceMonkey doesn't reread them,
+      and the script's page marks a `@require` tab `snapshot`. `update`
+      (or a `--watch` save) pushes new versions.
   - Nothing on disk is scanned.
 - The test collection is removed when the run ends, with its stored
   values. A run that crashed has its collection removed about 6 minutes
