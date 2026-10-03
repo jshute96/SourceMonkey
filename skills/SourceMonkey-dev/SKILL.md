@@ -68,7 +68,7 @@ Where to look:
   then `--run Dagent` on each command.
   - The person may have runs of their own. `start --detach` without
     `--run` stops earlier detached runs, and with several runs active,
-    commands without `--run` are refused.
+    commands without `--run` are refused (`status` and `list` show them all).
   - Find and end runs with `sm-dev list` and `sm-dev stop <ID>`, never
     `pkill`.
 - **Name tabs by `T<n>` or `targetId`, never by URL.** Two tabs on the

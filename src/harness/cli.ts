@@ -33,7 +33,7 @@ import { parseLang } from './browser-lang.js';
 import { parseCommandArgs } from './command-args.js';
 import { OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, commandNamed, commandSyntax, commandsHelp, fullHelp } from './command-list.js';
 import { readJsonFile } from './input-file.js';
-import { isJsonLine, jsonLayoutMistake, jsonResult, STDERR_LINE, withLayout, type JsonLayout, type ListData, type MatchData } from './json-output.js';
+import { isJsonLine, jsonLayoutMistake, jsonResult, jsonResultData, STDERR_LINE, withLayout, type JsonLayout, type ListData, type MatchData, type StatusData, type StatusRunsData } from './json-output.js';
 // Node built-ins only, so as cheap to load as the rest here.
 import { runIdOf, type CommandSource, type RunClient, type RunRecord } from './runs.js';
 import { runLogLabel } from './run-log.js';
@@ -673,8 +673,20 @@ class Client {
   /** Sends one of a run's commands, from `source`; its exit code. */
   async send(text: string, source: CommandSource, words?: string[]): Promise<number> {
     if (rootsGiven && !this.own) throw new UsageError(ROOTS_ARE_THE_RUNS);
+    if (this.toEveryRun(text)) {
+      const { liveRuns } = await import('./runs.js');
+      return statusOfRuns(await liveRuns(), words ?? commandWords(text), source);
+    }
     const connection = await this.connect();
     return connection.send(text, { words, source, json: lineJson });
+  }
+
+  /**
+   * Whether a command goes to every run rather than one: `status`, with
+   * no run picked yet.
+   */
+  toEveryRun(text: string): boolean {
+    return this.runId === undefined && commandWords(text)[0] === 'status';
   }
 
   /** Drops the connection, leaving the run going. */
@@ -821,6 +833,45 @@ async function sendCommand(words: string[], client: Client): Promise<number> {
   return client.send(words.join(' '), 'arg', words);
 }
 
+/**
+ * `status` with no run picked: every run's, in turn, a blank line
+ * between. Under --json, one result holding each run's, even when
+ * there is only one, so its shape depends only on whether a run was
+ * picked. 1 when one couldn't be read.
+ */
+async function statusOfRuns(runs: RunRecord[], words: string[], source: CommandSource): Promise<number> {
+  if (runs.length === 0) throw new Error(NO_RUN_TO_USE);
+  const { RunClient } = await import('./runs.js');
+  const statuses: StatusData[] = [];
+  let layout: JsonLayout | undefined;
+  let code = 0;
+  // The command's own --json too, which the runs read.
+  const json = lineJson || words.some((w) => /^--json(=|$)/.test(w));
+  for (const [i, run] of runs.entries()) {
+    if (i > 0 && !json) print('');
+    const out = (line: string): void => {
+      const result = json ? jsonResultData(line) : null;
+      if (!result) return print(line);
+      statuses.push(result.data as unknown as StatusData);
+      layout ??= result.layout;
+    };
+    try {
+      const connection = await RunClient.open(run.id, out);
+      code = Math.max(code, await connection.send(words.join(' '), { words, source, json: lineJson }));
+      await connection.close();
+    } catch (err) {
+      // Ended since it was listed, say.
+      print(`[sm-dev] ${(err as Error).message}`);
+      code = 1;
+    }
+  }
+  if (json) {
+    const line = jsonResult('status', { runs: statuses } satisfies StatusRunsData);
+    print(layout ? withLayout(line, layout) : line);
+  }
+  return code;
+}
+
 const MATCH_NEEDS = 'The match command needs a script (a .user.js file) and at least one URL, or a run to take them from';
 const VALIDATE_NEEDS = 'The validate command needs at least one path, or a run to take the script from';
 const NEEDS_A_RUN: Record<string, string> = {
@@ -956,7 +1007,8 @@ async function runTyped(command: { words: string[]; text: string }, client: Clie
     return runOne(command.words, client);
   }
   try {
-    await client.connect();
+    if (!client.toEveryRun(command.text)) await client.connect();
+    else if ((await import('./runs.js').then((m) => m.liveRuns())).length === 0) throw new Error(NO_RUN_TO_USE);
     echo();
     // As typed, for the run to split as its prompt would.
     return await client.send(command.text, source);

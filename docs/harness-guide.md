@@ -950,8 +950,11 @@ For a program reading sm-dev's answers rather than a person.
   - A line that starts a run and sends it commands also shows the
     page's console lines on stdout.
 
+- `status` without `--run` (or a `start` / `attach` before it) shows
+  every run, so its result holds them in a `runs` array.
+
 ```sh
-sm-dev --json status | jq '.scripts[] | {name, values}'
+sm-dev --run D1 --json status | jq '.scripts[] | {name, values}'
 ```
 
 The shapes of every command's result, with examples:

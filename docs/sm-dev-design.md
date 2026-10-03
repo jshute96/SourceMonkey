@@ -136,6 +136,9 @@ Serves `sm-dev list`, `stop`, `attach` and the commands sent to a run.
   command first needs it.
 - `start` and `attach` switch it to another run; `stop` leaves it with
   none.
+- `status` with no run shows all runs.
+  - Under `--json`, a `runs` layer holds each run's status, even with only
+    one going. The JSON shape depends only on whether a run was picked.
 - Remembers the runs it started without `--detach`. `finish()` stops
   them: on `exit`, at the end of the line or input, or on a signal. A
   second signal exits at once.
