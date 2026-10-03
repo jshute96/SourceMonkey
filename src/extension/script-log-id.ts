@@ -1,27 +1,27 @@
 // Per-script "log ID" assignment.
 //
 // Goal: every script that appears in a log line or UI label can be
-// referred to by a short, file-derived handle. If the basename of the
-// script's relativePath is unique across all stored scripts, the log
-// ID is just that basename (e.g. `bold-on-hover.user.js`). If two or
-// more scripts share a basename, each gets a `#N` suffix
-// (`bold-on-hover.user.js#1`, `bold-on-hover.user.js#2`, …) so they
-// stay distinguishable.
+// referred to by a short, file-derived handle: its basename and its
+// script number (`bold-on-hover.user.js#E4`), the number sm-dev names
+// it by (see script-numbers.ts). The number keeps two scripts sharing a
+// basename apart, and never shifts when other scripts come and go.
+//
+// A script with no number yet (one just added, before the service
+// worker numbers it, or one in an sm-dev test collection) is labelled
+// by its basename alone, or `#1`, `#2`, ... among other unnumbered
+// scripts sharing it.
 //
 // The basename comes from `scriptBasename`, so a script added by URL
 // contributes its decoded filename (`My Script.user.js`), not the
 // percent-encoded URL tail. `script-source-url.ts` re-encodes the
 // label on its way into a `//# sourceURL=` directive.
 //
-// Dupe ordering: scripts sharing a basename are sorted by their stable
-// UUID `id`. UUIDs are random, so the assignment isn't time-ordered,
-// but it IS deterministic and stable for the lifetime of each script
-// — adding/removing other scripts in the same dupe group can reshuffle
-// numbers, which is acceptable for a logging convenience. The options
-// page renders the same `#N` next to each filename so the user can
-// correlate.
+// Unnumbered dupe ordering: sorted by their stable UUID `id`, so the
+// assignment is deterministic, though adding or removing another such
+// script can reshuffle them.
 
 import { scriptBasename } from '../script-display.js';
+import { numberMap, SCRIPT_NUMBERS_KEY, scriptNumbersFrom } from './script-numbers.js';
 import { scanAllStorage } from './storage-scan.js';
 import type { StoredScript } from '../script-build.js';
 
@@ -34,15 +34,24 @@ const SCRIPT_PREFIX = 'script:';
 
 // ---------- Pure helpers ----------
 
-export function computeLogIds(scripts: LogIdInput[]): Map<string, string> {
+/**
+ * Each script's log ID, by id. `numbers`: the script numbers (from the
+ * `scriptNumbers` row); a script with one is `<basename>#E<number>`.
+ */
+export function computeLogIds(scripts: LogIdInput[], numbers: ReadonlyMap<string, number> = new Map()): Map<string, string> {
   const groups = new Map<string, LogIdInput[]>();
+  const out = new Map<string, string>();
   for (const s of scripts) {
     const base = scriptBasename(s.relativePath);
+    const n = numbers.get(s.id);
+    if (n !== undefined) {
+      out.set(s.id, `${base}#E${n}`);
+      continue;
+    }
     const arr = groups.get(base);
     if (arr) arr.push(s);
     else groups.set(base, [s]);
   }
-  const out = new Map<string, string>();
   for (const [base, arr] of groups) {
     if (arr.length === 1) {
       out.set(arr[0].id, base);
@@ -65,6 +74,7 @@ export function computeLogIds(scripts: LogIdInput[]): Map<string, string> {
 // then kept fresh via chrome.storage.onChanged.
 
 let allInfo = new Map<string, LogIdInput>();
+let numbers = new Map<string, number>();
 let logIds = new Map<string, string>();
 let loaded: Promise<void> | null = null;
 
@@ -82,11 +92,12 @@ async function loadAll(): Promise<void> {
     next.set(s.id, { id: s.id, relativePath: s.relativePath });
   }
   allInfo = next;
+  numbers = numberMap(scriptNumbersFrom(all[SCRIPT_NUMBERS_KEY]));
   recompute();
 }
 
 function recompute(): void {
-  logIds = computeLogIds([...allInfo.values()]);
+  logIds = computeLogIds([...allInfo.values()], numbers);
 }
 
 let listenerInstalled = false;
@@ -96,6 +107,10 @@ export function installScriptLogIdListener(): void {
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== 'local') return;
     let touched = false;
+    if (SCRIPT_NUMBERS_KEY in changes) {
+      numbers = numberMap(scriptNumbersFrom(changes[SCRIPT_NUMBERS_KEY].newValue));
+      touched = true;
+    }
     for (const [key, change] of Object.entries(changes)) {
       if (!key.startsWith(SCRIPT_PREFIX)) continue;
       const id = key.slice(SCRIPT_PREFIX.length);
@@ -114,6 +129,16 @@ export function installScriptLogIdListener(): void {
   });
 }
 
+/**
+ * The script numbers, straight from the service worker's numbering, so
+ * a label asked for right after a sync already has its `#E<n>`, rather
+ * than waiting for the storage change event to bring it.
+ */
+export function noteScriptNumbers(next: Map<string, number>): void {
+  numbers = next;
+  recompute();
+}
+
 // Short human-readable label for SW log messages. Falls back to the
 // first 8 chars of the UUID when the script isn't tracked — happens
 // only for a brief window before ensureLogIdsLoaded() resolves, or
@@ -128,6 +153,7 @@ export function getScriptLogLabel(id: string): string {
 // duplicate callbacks.
 export function _resetScriptLogIdsForTests(): void {
   allInfo = new Map();
+  numbers = new Map();
   logIds = new Map();
   loaded = null;
 }

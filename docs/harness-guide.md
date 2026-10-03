@@ -454,7 +454,9 @@ For a browser that keeps the extension (and your logins):
 ### SourceMonkey-managed scripts
 
 - `scripts` and `status` also list the SourceMonkey-managed scripts
-  that match the current tab, as E1, E2, ..., with their status.
+  that match the current tab, with their status. Each is named by its
+  script number in SourceMonkey (`E12`), the same in every run, and
+  the `#E12` its Log ID shows in the script viewer.
 - `values E1` shows one's stored values, and `scripts E1` picks it for
   `get` and `set`.
 - Outside a `--temp-browser`, `set` on one needs `--force`, since it

@@ -391,7 +391,7 @@ export class ExtensionLink {
   }
 
   /** The scripts the toolbar badge lists for a tab, with their status and collection. */
-  async scriptsOnTab(tabId: number): Promise<{ id: string; name: string; status: string; collection: string }[]> {
+  async scriptsOnTab(tabId: number): Promise<{ id: string; name: string; status: string; collection: string; number?: number }[]> {
     return this.call((id) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.scriptsOnTab(id), tabId);
   }
 
@@ -456,6 +456,6 @@ interface Api {
   getGmValues(scriptId: string): Promise<Record<string, unknown>>;
   writeGmValues(scriptId: string, writes: { key: string; value?: unknown; deleted?: boolean }[]): Promise<void>;
   fireActionContextMenuItem(tabId: number, scriptId: string, commandId: string): Promise<{ ok: boolean }>;
-  scriptsOnTab(tabId: number): Promise<{ id: string; name: string; status: string; collection: string }[]>;
+  scriptsOnTab(tabId: number): Promise<{ id: string; name: string; status: string; collection: string; number?: number }[]>;
   clickNotification(notificationId: string): boolean;
 }

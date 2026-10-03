@@ -1247,8 +1247,11 @@ Terms used below:
 - **SourceMonkey-managed scripts on the tab**: a separate list, shown
   only when there are any.
   - The extension's other scripts that match the current tab, as its
-    toolbar badge lists them, named E1, E2, ... in the order sm-dev
-    first sees them, kept for the run.
+    toolbar badge lists them, named by SourceMonkey's script numbers
+    (`E12`): the same in every run, and the `#E12` the viewer's Log ID
+    shows (see [storage.md](storage.md#script-numbers)).
+    - An extension before protocol 1.1 numbers none; then they are
+      `E1`, `E2`, ... in the order the run first sees them.
   - The run's claim keeps them out of its tabs, so their status there
     is "Kept out of the run's tabs".
   - `values E1` shows one's values; `scripts E1` picks it for `get`

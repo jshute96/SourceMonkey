@@ -102,7 +102,7 @@ test.describe('log export', () => {
     }).__picked);
     // `main.user.js` → `main.log`: the script's log ID with the
     // userscript extension swapped out.
-    expect(picked.name).toBe('main.log');
+    expect(picked.name).toMatch(/^main#E\d+\.log$/);
     expect(picked.written).toEqual([EXPECTED_CSV]);
 
     await page.close();
@@ -181,7 +181,7 @@ test.describe('log export', () => {
       page.waitForEvent('download'),
       page.locator('.log-toolbar button', { hasText: 'Save' }).click(),
     ]);
-    expect(download.suggestedFilename()).toBe('main.log');
+    expect(download.suggestedFilename()).toMatch(/^main#E\d+\.log$/);
 
     const stream = await download.createReadStream();
     const chunks: Buffer[] = [];

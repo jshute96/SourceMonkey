@@ -96,11 +96,12 @@ function encodeSegment(segment: string): string {
 // Folder name for a script's artifacts. Strips the conventional
 // `.user.js` extension from the log label (the folder sits ABOVE the
 // main-body file, so the `.js` looks misleading on a folder), then
-// encodes what's left — which is where the `#N` dedup suffix becomes
-// `%23N`.
+// encodes what's left — which is where the `#E4` script-number suffix
+// (or an unnumbered script's `#N`) becomes `%23E4`.
 //
 // Examples:
 //   `foo.user.js`       → `foo`
+//   `foo.user.js#E4`    → `foo%23E4`
 //   `foo.user.js#2`     → `foo%232`
 //   `My foo.user.js`    → `My%20foo`
 //   `foo`               → `foo`      (no .user.js to strip)
@@ -109,19 +110,20 @@ function folderForLabel(label: string): string {
 }
 
 // Main-body file basename for a script. Same as the folder but with
-// the dedup suffix dropped and `.user.js` restored — so the file's
-// name reflects the script's natural filename without the
-// disambiguator (each script lives in a different folder anyway).
+// the suffix dropped and `.user.js` restored — so the file's name
+// reflects the script's natural filename without the disambiguator
+// (each script lives in a different folder anyway).
 //
 // Examples:
 //   `foo.user.js`       → `foo.user.js`
+//   `foo.user.js#E4`    → `foo.user.js`
 //   `foo.user.js#2`     → `foo.user.js`
 //   `foo`               → `foo.user.js`
 function mainBaseForLabel(label: string): string {
-  // Dedup suffix first, extension second. The other order would eat a
-  // `#2` that's part of the name itself (`Chapter #2.user.js`) — which
-  // a decoded `%23` now makes reachable.
-  const base = sanitizeLabel(label).replace(/#\d+$/, '').replace(/\.user\.js$/, '');
+  // Suffix first, extension second. The other order would eat a `#2`
+  // that's part of the name itself (`Chapter #2.user.js`) — which a
+  // decoded `%23` now makes reachable.
+  const base = sanitizeLabel(label).replace(/#E?\d+$/, '').replace(/\.user\.js$/, '');
   return encodeSegment(base) + '.user.js';
 }
 

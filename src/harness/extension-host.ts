@@ -190,11 +190,12 @@ export class ExtensionHost extends HarnessHost {
         if (tabId === undefined) return [];
         const rows = await this.link.scriptsOnTab(tabId);
         return rows.filter((row) => !this.runIds.has(row.id)).map((row) => {
-          let label = this.otherLabels.get(row.id);
-          if (!label) {
-            label = `E${this.otherLabels.size + 1}`;
-            this.otherLabels.set(row.id, label);
-          }
+          // SourceMonkey's own number for the script (`E12`), the same
+          // in every run. An extension before protocol 1.1 numbers none,
+          // and gets the run's own numbering, in the order first seen.
+          let label = row.number !== undefined ? `E${row.number}` : this.otherLabels.get(row.id);
+          if (!label) label = `E${this.otherLabels.size + 1}`;
+          this.otherLabels.set(row.id, label);
           // One object per script, brought up to date, so one picked
           // earlier (`scripts E1`) shows what the latest listing says.
           const other = this.others.get(label) ?? {

@@ -616,7 +616,8 @@ $R stop                  # also removes the run's test collection
 - The run's tabs run only its own scripts: SourceMonkey-managed
   scripts are kept out of them. The run's scripts run only in the
   run's tabs, not in tabs you open yourself.
-  - `scripts` lists those others on the tab as E1, E2, ...;
+  - `scripts` lists those others on the tab by their SourceMonkey
+    script numbers (`E12`, the same in every run);
     `values E1` reads one's stored values, and `scripts E1` picks it
     for `get`/`set` (`set key --force <json>` outside a
     `--temp-browser`, since that's the person's real data).

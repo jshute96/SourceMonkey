@@ -114,6 +114,7 @@ import {
   buildSourceUrl,
 } from '../script-source-url.js';
 import { computeLogIds, type LogIdInput } from './script-log-id.js';
+import { numberMap, readScriptNumbers, SCRIPT_NUMBERS_KEY, scriptNumbersFrom } from './script-numbers.js';
 import { scriptBasename, scriptDisplayName } from '../script-display.js';
 import { logScriptEvent } from './script-log.js';
 import {
@@ -244,7 +245,7 @@ function jsLit(value: unknown): string {
 
 interface ScriptCfgLiteral {
   id: string;
-  // Dedup-aware label used by the URL builders — derives the
+  // Log label used by the URL builders — derives the
   // script's folder name in devtools. Not consumed by the prelude
   // itself (only the URL builders here read it).
   logLabel: string;
@@ -516,7 +517,7 @@ export function wrapCombinedEntry(args: {
 //     __bridge.js                         (one page-wide registration, USER_SCRIPT world)
 //     __gm-runtime.js                     (one page-wide registration, USER_SCRIPT world)
 //     __prelude.js                        (one tree entry — bytes ship per script, devtools dedups by URL)
-//     <folder-1>/                         (per-script — dedup-aware log label)
+//     <folder-1>/                         (per-script — log label)
 //       __config.js                       (per-script config blob)
 //       <name>.user.js                    (per-script main body)
 //       <host>/<path>                     (one subtree per @require)
@@ -526,10 +527,10 @@ export function wrapCombinedEntry(args: {
 // Why `SourceMonkey` as the authority: devtools strips the URL
 // scheme and uses the host as the first visible folder; without it
 // our scripts would scatter at the top level of the Sources tree.
-// Why the per-script folder is the dedup-aware log label rather than
-// the script's UUID: the UUID is a debug-grade hash that's useless
+// Why the per-script folder is the log label (`foo.user.js#E4`) rather
+// than the script's UUID: the UUID is a debug-grade hash that's useless
 // when scanning the tree. See script-source-url.ts for the URL
-// builders and the `#` → `%23` encoding for dedup suffixes.
+// builders and the `#` → `%23` encoding for the suffix.
 //
 // `@require` entries also get synthetic `sourcemonkey://` URLs so
 // they (a) cluster with their owning script and (b) tell the truth
@@ -796,7 +797,7 @@ export async function buildSwapEvalBody(
 // `scriptHandlerVersion` default is for unit tests; production
 // callers pass `chrome.runtime.getManifest().version`.
 // `logLabel` defaults to the script's bare basename (no `#N` dedup);
-// production callers pass the dedup-aware label from
+// production callers pass the log label from
 // `computeLogIds` (via `collectActiveSpecs`) so two scripts sharing
 // a basename get distinct devtools folders.
 //
@@ -1020,12 +1021,12 @@ export function isRegistrationCandidate(
 // pre-load). We parallelize the per-script builds with Promise.all
 // rather than awaiting sequentially.
 //
-// `logIds` is the dedup-aware {script id → label} map. It defaults to
-// one computed from `scripts`, which is right only when `scripts` is
-// every stored row. An incremental sync passes a subset, so it supplies
-// the map itself — computed from the whole library, because a `#N`
-// suffix that depends on which rows this sync happened to read would
-// disagree with every other surface that shows the label.
+// `logIds` is the {script id → label} map. Every sync passes one built
+// with the script numbers; the default, from `scripts` alone and with
+// no numbers, is for tests. An incremental sync passes a subset of rows,
+// so its map comes from the whole library, because an unnumbered
+// script's `#N` that depends on which rows this sync happened to read
+// would disagree with every other surface that shows the label.
 //
 // `gmRuntime` names the scripts that need the shared `__SM_GM__`
 // runtime registered in their world, each carrying the patterns Chrome
@@ -1211,7 +1212,7 @@ export function isUserScriptsAvailable(): boolean {
   return typeof chrome !== 'undefined' && (chrome as { userScripts?: unknown }).userScripts != null;
 }
 
-async function readAll(): Promise<{ scripts: StoredScript[]; collections: Map<string, StoredCollection> }> {
+async function readAll(): Promise<{ scripts: StoredScript[]; collections: Map<string, StoredCollection>; numbers: Map<string, number> }> {
   // See match-index's loadAll: the pre-rename key spelling has to be
   // moved before anything reads the structural rows directly.
   await ensureCollectionKeysMigrated();
@@ -1225,7 +1226,7 @@ async function readAll(): Promise<{ scripts: StoredScript[]; collections: Map<st
       collections.set(s.id, s);
     }
   }
-  return { scripts, collections };
+  return { scripts, collections, numbers: numberMap(scriptNumbersFrom(all[SCRIPT_NUMBERS_KEY])) };
 }
 
 // ---------- What the last sync left behind ----------
@@ -1238,9 +1239,9 @@ async function readAll(): Promise<{ scripts: StoredScript[]; collections: Map<st
 //     a first registration, to spot what has to be dropped, and to know
 //     whether the bridge / GM-runtime registrations are still wanted.
 //   - **What is every script's basename, and what label did it get?**
-//     Log labels are dedup-aware across the whole library, so a subset
-//     can't compute them — and a script arriving can renumber a dupe
-//     group it isn't in, which re-registers scripts whose rows never
+//     An unnumbered script's `#N` depends on the whole library, so a
+//     subset can't compute labels — and a script being numbered, or an
+//     unnumbered one arriving, re-registers scripts whose rows never
 //     moved.
 //   - **Which collection is each script in, and is it enabled?** A
 //     collection toggle moves every script under it, and eligibility
@@ -1281,7 +1282,7 @@ interface RegistrationState {
   // Every stored script — regardless of status, because log labels are
   // assigned across all of them.
   scriptIndex: Map<string, { relativePath: string; collectionId: string }>;
-  // The dedup-aware log label each script was last registered with. A
+  // The log label each script was last registered with. A
   // script ARRIVING can change another script's label (a lone
   // `main.user.js` becomes `main.user.js#1` once a second one shows
   // up), and the label is baked into the registered `//# sourceURL=`
@@ -1799,6 +1800,15 @@ async function revalidateCandidates(
 // Serialized against every other registration operation in this
 // context, and collapsed with any sync that is queued but hasn't begun
 // — see the lock above for what the overlap used to cost.
+// Run at the start of each sync, before anything is read: the service
+// worker numbers new scripts here (`assignScriptNumbers`), so a script
+// is registered under its numbered label from the start. Unset in pages.
+let beforeSync: (() => Promise<void>) | null = null;
+
+export function setBeforeSync(hook: () => Promise<void>): void {
+  beforeSync = hook;
+}
+
 export function syncRegistrations(scope?: SyncScope): Promise<void> {
   queueScope(scope);
   if (pendingSync) return pendingSync;
@@ -1843,6 +1853,7 @@ async function runSync(scope: SyncScope | undefined): Promise<void> {
   const state = fullSyncNeeded ? null : syncState;
   fullSyncNeeded = false;
   try {
+    await beforeSync?.();
     await ensureWorldConfigured();
     // A scope is only actionable against a record of what we last left
     // registered. Without one — a fresh service worker, or a sync that
@@ -1879,13 +1890,13 @@ async function runSync(scope: SyncScope | undefined): Promise<void> {
 // that storage no longer wants.
 async function runFullSync(): Promise<RegistrationState> {
   const timer = startPhaseTimer('registration sync');
-  const { scripts, collections } = await readAll();
+  const { scripts, collections, numbers } = await readAll();
   timer.mark('read');
   const handlerVersion = chrome.runtime.getManifest().version;
   const effective = await revalidateCandidates(scripts, collections);
   const logIds = computeLogIds(scripts.map((s): LogIdInput => ({
     id: s.id, relativePath: s.relativePath,
-  })));
+  })), numbers);
   const active = await collectActiveSpecs(effective, collections, handlerVersion, logIds);
   const userSpecs = active.specs;
   // Covers the revalidation too — it is per-script work on the same
@@ -1987,15 +1998,15 @@ async function runIncrementalSync(scope: SyncScope, state: RegistrationState): P
       if (row) state.collections.set(id, row);
     }
   }
-  // Labels are dedup-aware across the whole library, so they come from
-  // the index rather than from the handful of rows this sync read —
-  // otherwise a script's devtools folder would gain or lose its `#N`
-  // depending on which sync last rebuilt it.
+  // Labels come from the whole index rather than from the handful of
+  // rows this sync read, and from the script numbers, read fresh:
+  // `beforeSync` may have just numbered a script this sync didn't read.
   const logIds = computeLogIds([...state.scriptIndex].map(([id, info]): LogIdInput => ({
     id, relativePath: info.relativePath,
-  })));
-  // A script arriving or leaving can renumber a dupe group it isn't
-  // in — and the label is baked into the registered `//# sourceURL=`
+  })), numberMap(await readScriptNumbers()));
+  // A script being numbered, or an unnumbered one arriving or leaving
+  // (which can renumber its basename's `#N` group), changes labels —
+  // and the label is baked into the registered `//# sourceURL=`
   // directives, so every script whose label just moved has to be
   // rebuilt too, however untouched its own row is.
   const renamed = [...state.registered.keys()].filter(
@@ -2627,17 +2638,18 @@ async function reregisterScripts(ids: readonly string[]): Promise<void> {
   // without ever running a sync — so the retry can't assume someone
   // else did it.
   await ensureWorldConfigured();
-  const { scripts, collections } = await readAll();
+  const { scripts, collections, numbers } = await readAll();
   const handlerVersion = chrome.runtime.getManifest().version;
   const wanted = new Set(ids);
   // Built through collectActiveSpecs rather than buildRegistrationSpec
   // directly so the retry can't drift from the sync on eligibility or
-  // on dedup-aware log labels.
+  // on log labels.
   // Only the user specs: the shared GM runtime and bridge registrations
   // belong to the last full sync, which built them for this same script
   // set — a targeted retry re-offers the refused script, not the
   // scaffolding already installed around it.
-  const active = await collectActiveSpecs(scripts, collections, handlerVersion);
+  const logIds = computeLogIds(scripts.map((s): LogIdInput => ({ id: s.id, relativePath: s.relativePath })), numbers);
+  const active = await collectActiveSpecs(scripts, collections, handlerVersion, logIds);
   const specs = active.specs.filter((s) => wanted.has(s.id));
   // `owned: wanted` is what makes this targeted: the rejection map is
   // re-read inside `applyPlan` and only these ids are touched, so a full

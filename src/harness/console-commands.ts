@@ -81,8 +81,8 @@ export function targetIdSuffix(targetId: string | null | undefined): string {
 }
 
 /**
- * A SourceMonkey-managed script, which the run didn't
- * push: named E1, E2, ... for the run, in the order it first sees them.
+ * A SourceMonkey-managed script, which the run didn't push: named by
+ * its script number in SourceMonkey (`E12`), the same in every run.
  */
 export interface OtherScript {
   label: string;

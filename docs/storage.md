@@ -28,6 +28,7 @@ Key spaces in `chrome.storage.local`:
 | `"smLocalFileRoots"`   | `string[]`          | Canonical `file://` directory URLs searched for local stand-ins, in order (see [local-file-overrides.md](local-file-overrides.md)). |
 | `"scratch:<url>"`      | `string`            | The text of a scratch script, keyed by its `scratch:///…` location (see [Container collections](#container-collections)). |
 | `"scratchFiles:<url>"` | `Record<ref, PushedFile>` | The `@require` / `@resource` bodies sm-dev pushed with a scratch script, by ref; absent when none were. |
+| `"scriptNumbers"`      | `ScriptNumbers`     | Each script's number, and the removed scripts' numbers held back from reuse (see [Script numbers](#script-numbers)). |
 
 Key spaces in `chrome.storage.session` — everything here is dropped on
 browser shutdown, which is the point: each row describes the *current*
@@ -377,6 +378,34 @@ appropriate-for-scheme cheap check couldn't prove it.
 - HTTP validators (`httpEtag`, `httpLastModified`) on a successful
   fetch are still recorded — they let the next refresh take the cheap
   pre-fetch path even though this one didn't.
+
+## Script numbers
+
+Each installed script has a short number: sm-dev names it `E12`, and
+its log ID ends `#E12` (see [logging.md](logging.md#log-ids)). The
+numbers live in `src/extension/script-numbers.ts`.
+
+- **One row,** `scriptNumbers`: `byScript` (script id → number) and
+  `retired` (number → when it was last used).
+  - Not a field on each script row: those are rewritten from many
+    places, and a number one rewrite dropped would be handed out
+    again as a new one.
+- **One writer:** the service worker, in `assignScriptNumbers`. It runs
+  at startup and at the start of each registration sync, so a new
+  script is numbered before it is registered. Serialized, so two
+  installs can't take the same number. Pages only read the row.
+- **Reconciling** (`reconcileScriptNumbers`, pure):
+  - a script keeps its number; if two share one, the first keeps it;
+  - a removed script's number is retired from now, unless it already
+    was, and is held for 7 days;
+  - a new script gets the lowest number neither in use nor held.
+- **Holding back** a removed script's number means an E-id someone saw
+  a moment ago never names a different script, while reuse keeps the
+  numbers small over a long-lived profile.
+- **Order:** new numbers go to collections by path, then each
+  collection's own script order.
+- **Not numbered:** scripts in sm-dev test collections. A run names
+  those `1`, `2` itself, and pushes and removes them too often.
 
 ## Container collections
 
@@ -1448,7 +1477,7 @@ have to be.
   a link the user had tabbed to; the Name cell would also re-run the
   favicon fetch and flash the globe placeholder.
 - **Reads are proportionate.** One pass reads the collection index and each
-  collection's scripts once, and derives the dedup `#N` map from those rows.
+  collection's scripts once, and paints from those rows.
   Going through `getAllScripts()` instead would mean a
   `storage.local.get(null)` per pass — every script body, every
   prefetched `@require`, and the base64 favicon cache — on top of the
