@@ -8,7 +8,7 @@
 // pure half of the probe module; its fetching half lives in
 // `version-probe-fetch.js` and is deliberately not reachable here.)
 
-import type { StoredScript } from './script-store.js';
+import type { StoredScript } from './script-build.js';
 import { getValue, joinFullSource, type ParsedHeader } from './userscript-header.js';
 import { outdatedProbe, probeLabel, type VersionProbe } from './version-probe.js';
 import { describeDiagnostic } from './diagnostic-location.js';

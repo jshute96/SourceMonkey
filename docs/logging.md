@@ -201,7 +201,7 @@ still drives the Log-tab mirror.
 ### Where startup logs come from
 
 - Detection happens at **parse time**, in
-  `extractStartupLogs(header)` (`src/script-store.ts`). The resulting
+  `extractStartupLogs(header)` (`src/script-build.ts`). The resulting
   list is stored on `StoredScript.startupLogs` and persisted to
   `chrome.storage.local` alongside the rest of the script row.
 - The injector reads `script.startupLogs` straight off the stored row

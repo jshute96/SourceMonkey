@@ -35,7 +35,7 @@ import {
   type StoredScript,
   type ScriptMatching,
   type StartupLog,
-} from '../script-store.js';
+} from '../script-build.js';
 import { attachParseLocation } from '../parse-location.js';
 import { describeDiagnostic, type DiagnosticLocation } from '../diagnostic-location.js';
 import { setConfiguredLocalRoots } from '../local-file-overrides.js';

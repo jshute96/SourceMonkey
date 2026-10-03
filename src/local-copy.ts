@@ -20,7 +20,7 @@ import {
   pathToFileUrl,
   statFromListing,
   type DirectoryListingCache,
-} from './directories.js';
+} from './file-locations.js';
 import { localFileCandidates } from './local-file-overrides.js';
 import { scriptBasename } from './script-display.js';
 import { locationKey } from './script-identity.js';

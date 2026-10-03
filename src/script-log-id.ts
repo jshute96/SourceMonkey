@@ -23,7 +23,7 @@
 
 import { scriptBasename } from './script-display.js';
 import { scanAllStorage } from './storage-scan.js';
-import type { StoredScript } from './script-store.js';
+import type { StoredScript } from './script-build.js';
 
 export interface LogIdInput {
   id: string;

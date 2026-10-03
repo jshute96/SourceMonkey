@@ -70,7 +70,7 @@ up-front check before a push:
 | Piece | Where | Chrome-free? |
 | --- | --- | --- |
 | Header split + parse | `src/userscript-header.ts` | Yes |
-| Header validation, status, diagnostics | `validateHeader`, `buildScriptFromText` in `src/script-store.ts` | The functions are; the module also imports storage code |
+| Header validation, status, diagnostics, `@require` loading | `validateHeader`, `buildScriptFromText`, `applyFiles` in `src/script-build.ts` | Yes, given a `fetch` |
 | `@match` / `@include` / `@exclude` evaluator | `src/url-match.ts` | Yes |
 | `@grant` catalog and resolution | `src/gm-api-catalog.ts` | Yes |
 | `@require` / `@resource` resolution and fetch | `src/external-files.ts`, `src/file-loader.ts`, `src/local-file-overrides.ts` | Yes, given a `fetch` |

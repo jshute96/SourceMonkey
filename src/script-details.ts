@@ -42,7 +42,7 @@ import { matchTargetInfo, sameDirLinkUrl } from './match-targets.js';
 import { renderPatternIconInto } from './site-icon.js';
 import type { StoredCollection } from './script-store.js';
 import type { StoredRequire, StoredResource } from './external-files.js';
-import { isContainerCollection, locationFsPath } from './directories.js';
+import { isContainerCollection, locationFsPath } from './file-locations.js';
 import { appendWithSlashBreaks, displayLocation, formatBytes, logIdDupeSuffix, stripSriFragment } from './script-display.js';
 import { sitePageRow } from './script-sites.js';
 import {

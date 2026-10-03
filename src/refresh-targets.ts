@@ -30,7 +30,7 @@ import {
   isNonPosixFileUrl,
   locationFsPath,
   parentDir,
-} from './directories.js';
+} from './file-locations.js';
 import { inferCollectionType } from './collection-display.js';
 import type { StoredCollection, StoredScript } from './script-store.js';
 

@@ -1,7 +1,7 @@
 # File access
 
 How SourceMonkey reads userscripts off the local filesystem. Owned by
-`src/directories.ts`; consumed by the
+`src/directories.ts` and `src/file-locations.ts`; consumed by the
 [script store](storage.md) and the [viewer](script-viewer.md). For
 the `http(s)://` story (single-file URLs + JSON manifests + ETag /
 Last-Modified conditional GETs) see
@@ -120,7 +120,11 @@ Chrome's directory-listing HTML is an **undocumented format**:
 
 ## Module surface
 
-`src/directories.ts` exports only I/O helpers — no persistence:
+Both export only I/O helpers, no persistence. `directories.ts`
+re-exports `file-locations.ts`, so callers can import either.
+
+`src/file-locations.ts`: the part loading a script's local files needs,
+which the development harness runs under Node.
 
 - `pathToFileUrl(absolutePath)` — percent-encode + add `file://`.
 - `joinPath(base, child)` — POSIX path join.
@@ -128,11 +132,17 @@ Chrome's directory-listing HTML is an **undocumented format**:
 - `isSingleFileInput(path)` — true iff the path ends in `.user.js`.
   Used at add-collection time to route the input into the matching
   container collection rather than minting a single-file collection row.
+- `readFileUrlText(url)` — a `file://` URL → text (XHR in a page,
+  `fetch` in the service worker).
+- `parseListing(html)` — Chrome listing → `{name, isDir}[]`.
+
+`src/directories.ts`: collections.
+
 - `scriptFileUrl(collectionPath, relativePath)` — composes the file URL
   for a found script, dispatching on collection kind (directory /
   manifest / github-dir / container).
-- `fetchFileUrlText(url)` — XHR a `file://` URL → text.
-- `parseListing(html)` — Chrome listing → `{name, isDir}[]`.
+- `fetchFileUrlText(url)` — `readFileUrlText`, plus a scratch script's
+  text from storage.
 - `scanForUserScripts(absolutePath, depth?, prefix?)` — recursive
   `*.user.js` walk for directory / manifest / github-dir collections.
   Container collections are never scanned through this entry point —

@@ -19,7 +19,7 @@ import { canonicalMatchPatterns } from './url-match.js';
 // Pure regex rewrite, no fetching — imported so the same-directory
 // fallback below points a github-hosted script's neighbour at the
 // github.com page instead of its raw bytes.
-import { githubRawToBlobUrl } from './github-provider.js';
+import { githubRawToBlobUrl } from './github-urls.js';
 
 export interface MatchTarget {
   // `scheme://host[:port]` — no path. Cache key for the origin-scoped

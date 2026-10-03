@@ -52,7 +52,7 @@
 // record — works uniformly for file://, http(s)://, and entries
 // reached via a manifest.
 
-import { isFileUrl, isHttpUrl } from './directories.js';
+import { isFileUrl, isHttpUrl } from './file-locations.js';
 import { githubAuthHeaders } from './github-auth.js';
 import { mustHopToWorker, readHttpViaWorker, replyBytes } from './http-read.js';
 

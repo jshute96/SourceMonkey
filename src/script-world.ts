@@ -3,7 +3,7 @@
 
 import { getValue, getValues, type ParsedHeader } from './userscript-header.js';
 import { resolveGrants } from './gm-api-catalog.js';
-import type { StoredScript } from './script-store.js';
+import type { StoredScript } from './script-build.js';
 
 export type InjectionWorld = 'MAIN' | 'USER_SCRIPT';
 

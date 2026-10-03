@@ -11,7 +11,7 @@ export {
   type MatchExplanation,
   type InjectionWorld,
 } from './prepare.js';
-export type { StoredScript, ScriptMatching, StartupLog } from '../script-store.js';
+export type { StoredScript, ScriptMatching, StartupLog } from '../script-build.js';
 export type { DiagnosticLocation } from '../diagnostic-location.js';
 export { checkParseNode } from './parse-check-node.js';
 export {

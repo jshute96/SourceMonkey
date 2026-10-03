@@ -24,9 +24,9 @@ import {
   locationFsPath,
   parentDir,
   type DirectoryListingCache,
-} from './directories.js';
+} from './file-locations.js';
 import { dlog } from './debug-log.js';
-import type { StoredScript } from './script-store.js';
+import type { StoredScript } from './script-build.js';
 
 // What the disk says about a file the page names, against what the
 // stored row was read from.

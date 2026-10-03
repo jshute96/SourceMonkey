@@ -48,7 +48,7 @@ import {
   parentDir,
   statFromListing,
   type DirectoryListingCache,
-} from './directories.js';
+} from './file-locations.js';
 import { splitResourceValue } from './script-links.js';
 import { sha256Hex, bytesToBase64, base64ToBytes } from './bytes.js';
 import { timePhase } from './phase-timing.js';

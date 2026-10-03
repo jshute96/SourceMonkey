@@ -91,7 +91,7 @@ import {
   listDirectory,
   type DirectoryListingCache,
   type ListingEntry,
-} from './directories.js';
+} from './file-locations.js';
 
 // An encoded path separator. The URL parser resolves `..` and `%2e%2e`
 // but deliberately leaves these alone inside a segment, while Chrome's

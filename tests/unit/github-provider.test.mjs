@@ -12,8 +12,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { githubRawToBlobUrl } from '../../dist/github-urls.js';
 import {
-  githubRawToBlobUrl,
   isGithubDirCollection,
   normalizeGithubInput,
   parseGithubUrl,

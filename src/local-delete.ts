@@ -9,7 +9,7 @@
 //
 // See docs/local-delete.md.
 
-import { locationFsPath } from './directories.js';
+import { locationFsPath } from './file-locations.js';
 import {
   describeError,
   type StoredCollection,

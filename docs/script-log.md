@@ -496,7 +496,7 @@ tracked in `TODO.md`.
     add a row every check. Nothing is logged for a probe that fails,
     finds nothing newer, or is skipped as still-fresh. See
     [updates.md](updates.md).
-- **Parser** (`extractStartupLogs` in `src/script-store.ts`, replayed
+- **Parser** (`extractStartupLogs` in `src/script-build.ts`, replayed
   by `emitScriptOutcomeLog` in `src/script-updater.ts`):
   - `Ignoring unsupported @grant <names>` (warning) — emitted
     once per loaded content version, immediately after the

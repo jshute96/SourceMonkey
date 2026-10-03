@@ -130,9 +130,10 @@ missed here is still reported exactly as it was before.
 
 ## Where the checker is installed
 
-`script-store.ts` doesn't pick the checker, because what compiles the
-text depends on the context. Instead `setParseChecker` takes the
-implementation, and each context installs one at startup.
+The load pipeline (`script-build.ts`) doesn't pick the checker, because
+what compiles the text depends on the context. Instead
+`setParseChecker` takes the implementation, and each context installs
+one at startup.
 
 ### The service worker
 

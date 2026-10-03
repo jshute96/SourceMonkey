@@ -36,7 +36,7 @@
 // cursor, which reads as a flash over the whole popup on every click.
 
 import { dlog } from './debug-log.js';
-import { describeError } from './script-store.js';
+import { describeError } from './script-build.js';
 
 // Open `select`'s list on release instead of on press.
 export function guardSelectOpeningClick(select: HTMLSelectElement): void {

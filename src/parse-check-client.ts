@@ -36,7 +36,7 @@ import { dlog } from './debug-log.js';
 import { attachParseLocation } from './parse-location.js';
 import { isParseCheckDisabled } from './parse-check-protocol.js';
 import { createParseSandboxHost, type ParseSandboxHost } from './parse-sandbox-host.js';
-import { setParseChecker, type ParseChecker } from './script-store.js';
+import { setParseChecker, type ParseChecker } from './script-build.js';
 
 // Call once at page startup, before anything can touch the store.
 // Every extension page that mutates the store needs this — see the

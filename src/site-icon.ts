@@ -1,6 +1,6 @@
 import { fetchResourceBytes, isNotModified, resolveScriptResource } from './file-loader.js';
 import { presentLocalFileCandidates } from './local-file-overrides.js';
-import type { DirectoryListingCache } from './directories.js';
+import type { DirectoryListingCache } from './file-locations.js';
 import { MAX_SITE_ICONS, representativeMatches, type MatchTarget } from './match-targets.js';
 import { renderGlyph } from './glyph.js';
 import { getValue } from './userscript-header.js';

@@ -63,6 +63,9 @@ details live in the topic-specific docs linked below.
 - **Script store** (`src/script-store.ts`) — persistence layer + the
   load / refresh pipeline. Owns the chrome.storage.local schema. See
   [storage.md](storage.md).
+  - Building one script row from its text (header, matching,
+    `@require` loading, parse check) is in `src/script-build.ts`, which
+    touches no storage, so the harness runs it under Node.
 - **Script updater** (`src/script-updater.ts`) — the single entry
   point every refresh path goes through. Manual Refresh buttons call
   it synchronously; the background SW calls it opportunistically when
@@ -73,13 +76,15 @@ details live in the topic-specific docs linked below.
   `@updateURL` / `@downloadURL` declares and compare it with the copy
   we run. Reporting only: the install source stays the update channel.
   See [updates.md](updates.md).
-- **Collection I/O** (`src/directories.ts` + `src/github-provider.ts`) —
-  `file://` fetcher, directory-listing parser, recursive `*.user.js`
-  scanner, `http(s)://` fetcher, JSON manifest parser, and the GitHub
-  provider (URL parsing, blob→raw rewrite, Contents-API scanner) which
-  lives in its own module and is dispatched to from `directories.ts`.
-  See [file-access.md](file-access.md) and
-  [http-collections.md](http-collections.md).
+- **Collection I/O** (`src/directories.ts` + `src/github-provider.ts`):
+  - recursive `*.user.js` scanner, `http(s)://` fetcher, JSON manifest
+    parser
+  - the `file://` fetcher, directory-listing parser and location
+    helpers, in `src/file-locations.ts`
+  - the GitHub provider (URL parsing, blob→raw rewrite, Contents-API
+    scanner), in its own module, dispatched to from `directories.ts`
+  - See [file-access.md](file-access.md) and
+    [http-collections.md](http-collections.md).
 - **File-access permission UI** (`src/file-access.ts`) — the
   "Allow access to file URLs" probe plus the shared banner every page
   raises when the toggle is what blocked a local read. See

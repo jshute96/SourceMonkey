@@ -65,7 +65,7 @@ import {
   setParseCheckDisabled,
   type ParseVerdict,
 } from './parse-check-protocol.js';
-import type { ParseChecker } from './script-store.js';
+import type { ParseChecker } from './script-build.js';
 import {
   ensureLogIdsLoaded,
   getScriptLogLabel,

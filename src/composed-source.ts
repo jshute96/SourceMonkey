@@ -47,7 +47,7 @@
 // instead of two that can drift.
 
 import { joinFullSource } from './userscript-header.js';
-import type { StoredScript } from './script-store.js';
+import type { StoredScript } from './script-build.js';
 import type { MappedSegment } from './source-map.js';
 import { buildRequireSourceUrl, buildSourceUrl } from './script-source-url.js';
 

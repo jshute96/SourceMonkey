@@ -408,7 +408,7 @@ is **blocked** from every `GM_xmlhttpRequest`. Scripts must declare
 the hosts they intend to reach.
 
 - A script that grants `GM_xmlhttpRequest` with no `@connect` gets a
-  parse-time warning (`extractStartupLogs` in `script-store.ts`), so
+  parse-time warning (`extractStartupLogs` in `script-build.ts`), so
   the block isn't silent.
 
 Stricter than either reference manager:

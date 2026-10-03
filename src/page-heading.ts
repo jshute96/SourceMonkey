@@ -21,7 +21,7 @@
 //
 // `import type` is fine here — it is erased, so it costs no fetch.
 
-import type { StoredScript } from './script-store.js';
+import type { StoredScript } from './script-build.js';
 
 // What every heading's leading terms are joined by — the same `|` the
 // tab titles use (architecture.md, "Page names").
