@@ -1,20 +1,20 @@
 # Corpus validation results
 
-A snapshot of what `scripts/validate-userscripts.mjs` finds when it
-runs SourceMonkey's install-time checks over the scripts we have — the
-repo's own example suites, then the top-2000 GreasyFork scripts.
+A snapshot of what SourceMonkey's install-time checks find over the
+scripts we have: the repo's own example suites, then the top-2000
+GreasyFork scripts.
 
-See [offline-validation.md](offline-validation.md) for the tool, and
+See [corpus-validation.md](corpus-validation.md) for the tool, and
 [tests/greasyfork-examples/README.md](../tests/greasyfork-examples/README.md)
 for how the corpus is built.
 
 ## The example suites
 
 Run these first — they're fast, they need no downloaded corpus, and
-they're the check that the CLI still agrees with the browser:
+they're the check that Node still agrees with the browser:
 
 ```sh
-pnpm run validate tests/examples tests/bad-examples
+scripts/sm-dev validate tests/examples tests/bad-examples
 ```
 
 | Suite | Result |
@@ -31,8 +31,8 @@ pnpm run validate tests/examples tests/bad-examples
   missing `@name`, missing `@match`), a `@require` that isn't there,
   and syntax errors in the body, in a `@require`, from a join-only
   collision, and from each brace-imbalance shape.
-- Both suites are asserted automatically — see "Testing" in
-  [offline-validation.md](offline-validation.md).
+- Both suites are asserted automatically by
+  `tests/unit/harness/validate.test.mjs`.
 
 ## The GreasyFork corpus
 
@@ -40,9 +40,16 @@ Command, Node 22.22 (V8's verdict is the tool's verdict, so the version
 is part of the result):
 
 ```sh
-pnpm run validate --offline-root tests/greasyfork-examples/files \
-                  tests/greasyfork-examples/files
+node tests/greasyfork-examples/validate-corpus.mjs \
+  --offline-root tests/greasyfork-examples/files tests/greasyfork-examples/files
 ```
+
+These numbers predate the user program moving into its own nested
+scope (see [GM binding collisions](#gm-binding-collisions)), and some
+later header-check changes. A rerun after that change found no parse
+failures, with a leading `'use strict'` honored (so strict-only errors
+like `with` count); the other groups have
+drifted too and are not redone here.
 
 | | Scripts | |
 |---|---|---|
@@ -114,10 +121,10 @@ MathJax's `tex-mml-chtml.js`, `video.js`, `babel-standalone`.
 
 #### GM binding collisions
 
-All three parse failures are the same class, and it is the one
-`parse-check.md` calls out as deliberate: our `GM_*` bindings are
-`const` declarations in the same scope as the user program, so a script
-that declares the same name is a genuine duplicate declaration.
+All three parse failures were the same class. When this was measured,
+our `GM_*` bindings were `const` declarations in the same scope as the
+user program, so a script that declared the same name was a genuine
+duplicate declaration.
 
 | Script | Line |
 |--------|------|
@@ -130,8 +137,13 @@ a script shipping its own `GM_addStyle` while also granting it. None of
 the three is broken under Tampermonkey, where `GM_*` are sandbox
 globals the script's own declaration simply shadows.
 
-So the verdict is *correct* — that program really doesn't compile — but
-the program is ours, not theirs. Rate: 3 in 2000 (0.15%).
+So the verdict was *correct* — that program really didn't compile — but
+the program was ours, not theirs. Rate: 3 in 2000 (0.15%).
+
+- Fixed since: the user program now runs in a scope nested inside our
+  bindings, so all three shadow them as under Tampermonkey, and a
+  rerun reports no parse failures. See
+  [injection.md](injection.md#the-user-program-scope).
 
 ### Real, and arguably ours to be stricter about
 
@@ -139,7 +151,7 @@ the program is ours, not theirs. Rate: 3 in 2000 (0.15%).
 |------|--------|
 | 2 × unterminated metadata block | `// ==/UserScript==////` and `// ==/UserScript==vvvvar thisUrl = …` — the closing marker has trailing junk on its own line, which our end-of-line-anchored regex won't match |
 | 1 × no metadata block | the file opens `/// ==UserScript==` — three slashes |
-| 3 × `@require` served HTML | two `http://cdn.staticfile.org/jquery/…` URLs and one `gitcdn.link` URL now answer with an HTML page; the content-type gate catches exactly the soft failure it exists for |
+| 3 × `@require` served HTML | two `http://cdn.staticfile.org/jquery/…` URLs and one `gitcdn.link` URL now answer with an HTML page; the markup check catches exactly the soft failure it exists for |
 | 1 × `data:` URL `@require` | `data:application/javascript,%3Bwindow.Vue%3DVue%3B…` — an inline shim, rejected outright; the bytes are in the ref, so no fetch is involved |
 
 The header cases are parser strictness: Tampermonkey's markers are

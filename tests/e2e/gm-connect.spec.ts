@@ -208,7 +208,7 @@ test.describe('GM_xmlhttpRequest @connect gating (Phase 10)', () => {
     await page.close();
   });
 
-  test('@connect exact host that does NOT match the URL is blocked', async ({
+  test('@connect host that does NOT match the URL is blocked', async ({
     extensionContext,
     fixtureServer,
     sm,

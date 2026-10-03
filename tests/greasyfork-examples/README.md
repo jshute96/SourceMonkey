@@ -1,33 +1,58 @@
-# GreasyFork top-scripts extraction
+# GreasyFork corpus
 
-Builds a CSV of the most-installed userscripts on
-[GreasyFork](https://greasyfork.org) — raw material for picking real-world
-scripts to test SourceMonkey against.
+Tools and data for testing SourceMonkey against real-world userscripts: the
+2000 most-installed scripts on [GreasyFork](https://greasyfork.org), downloaded
+with their dependencies, plus a record of what testing each one found.
 
-## What's checked in
+This README covers the tools and data. For how to test scripts on their
+live sites and record results (also for agents), see the `corpus-testing`
+skill in [`.claude/skills/corpus-testing/`](../../.claude/skills/corpus-testing/SKILL.md).
 
-| In git | Local only (gitignored) |
-|--------|-------------------------|
-| the tools, `analysis.sql`, this README | `greasyfork-dump/` — the saved listing pages (6 MB) |
-| `top-scripts.csv` — the extracted top 2000 | `files/` — downloaded scripts and dependencies (~270 MB) |
-| `analysis.html` — the rendered report | `corpus.db` — rebuilt from the CSV + `files/` |
-| | `download-report.json` — per-run counts, machine-specific |
+## Overview
 
-`top-scripts.csv` is the artifact everything else reproduces from. The saved
-listing pages stay out of git because the CSV already distills them, and because
-re-saving them is a manual browser step either way (see below).
+### State files
 
-Rebuilding from a fresh checkout:
+| File | In git | Contents | Written by | Read by |
+|------|:------:|----------|------------|---------|
+| `greasyfork-dump/` | no | GreasyFork listing pages, saved by hand from a browser | you ([how](#why-the-pages-are-saved-by-hand)) | `fetch-top-scripts.mjs` |
+| `corpus.json` | yes | One record per script: its GreasyFork `listing` stats, plus test findings | `fetch-top-scripts.mjs` (listings), `record-results.mjs` (findings) | every tool |
+| `files/` | no | Downloaded scripts and their `@require` / `@resource` files (~270 MB) | `download-scripts.mjs` | `build-db.mjs`, `record-results.mjs` |
+| `download-report.json` | no | Last download run's counts and failures | `download-scripts.mjs` | you |
+| `corpus.db` | no | SQLite database of listings, parsed headers, dependencies and findings; rebuilt from scratch each run | `build-db.mjs` | `render-analysis.mjs`, ad hoc SQL |
+| `analysis.sql` | yes | The queries behind `analysis.html` | you | `render-analysis.mjs` |
+| `analysis.html` | yes | Corpus statistics report | `render-analysis.mjs` | you |
+| `results.html` | yes | Static page that reads `corpus.json` and shows a sortable, filterable table of every script's validity, test status, tags and notes | you (hand-written) | you, in a browser |
+
+`corpus.json` is the source of truth. Everything not in git can be rebuilt
+from it, except `greasyfork-dump/`, which is only needed to refresh the
+listing.
+
+### Scripts
+
+| Script | Reads | Writes | Does |
+|--------|-------|--------|------|
+| `fetch-top-scripts.mjs` | `greasyfork-dump/` | `corpus.json` listings | [Extracts](#extracting) the top scripts from the saved pages |
+| `download-scripts.mjs` | `corpus.json` | `files/`, `download-report.json` | [Downloads](#downloading-the-scripts-themselves) each script, then its dependencies |
+| `record-results.mjs` | `corpus.json`, `files/` | `corpus.json` findings | **Records individual facts about one script at a time** (a test result, tag or note) as you learn them. [More](#test-results). Its `validate` subcommand is the one bulk step |
+| `build-db.mjs` | `corpus.json`, `files/` | `corpus.db` | [Loads everything into SQLite](#analysis-database) |
+| `validate-corpus.mjs` | `files/` | stdout, `--json` file | [Validates](#validating-the-corpus) every downloaded script offline; `record-results.mjs validate` runs it |
+| `render-analysis.mjs` | `corpus.db`, `analysis.sql` | `analysis.html` | Renders the statistics report |
+| `serve-results.mjs` | `results.html`, `corpus.json` | | [Serves the results page](#viewing-results) on localhost |
+| `corpus.mjs` | | | Shared helpers: locked `corpus.json` updates, URL to `files/` path mapping |
+
+Each script takes `--help`, which prints its usage.
+
+The tools that parse headers import the extension's compiled code from
+`dist/` (or `lib/`), so run `pnpm run build` first.
+
+### Rebuilding from a fresh checkout
 
 ```sh
-pnpm run build                                       # tools import dist/userscript-header.js
-node tests/greasyfork-examples/download-scripts.mjs  # CSV → files/ (~20 min, 270 MB)
+pnpm run build
+node tests/greasyfork-examples/download-scripts.mjs  # corpus.json → files/ (~20 min)
 node tests/greasyfork-examples/build-db.mjs          # → corpus.db
-node tests/greasyfork-examples/report.mjs            # → analysis.html
+node tests/greasyfork-examples/render-analysis.mjs   # → analysis.html
 ```
-
-Only re-running `fetch-top-scripts.mjs` needs the saved pages, and only if you
-want a newer top-2000 than the checked-in CSV.
 
 ## Why the pages are saved by hand
 
@@ -48,21 +73,31 @@ from a normal browser session instead:
 node tests/greasyfork-examples/fetch-top-scripts.mjs
 ```
 
-Defaults to every `greasyfork-dump/gfpage<N>.html`, in page order, writing
-`tests/greasyfork-examples/top-scripts.csv`.
+Defaults to every `greasyfork-dump/gfpage<N>.html`, in page order, updating
+the `listing` block of each record in `corpus.json`.
+
+- Findings (everything outside `listing`) are left alone.
+- After a full run, a script missing from the listing keeps its record and
+  findings, with `listing.rank` set to `null`. The other tools still include
+  it, after the ranked ones.
+- A partial run (`--count`, or pages named on the command line) updates only
+  the scripts it saw, and leaves every other rank alone.
 
 Options:
 
 - `--dir PATH` — where to look for the `gfpage*.html` set (default `greasyfork-dump/`)
 - `--count N` — stop after N scripts
-- `--out PATH` — CSV destination
+- `--corpus PATH` — corpus file to update
 - positional file paths — parse exactly these files instead of the default set
 
-## CSV columns
+## Listing fields
 
-| Column | Source in the listing markup |
-|--------|------------------------------|
-| `id` | `data-script-id` — GreasyFork's integer script ID |
+Each record is keyed by GreasyFork's integer script ID (`data-script-id`). Its
+`listing` block holds:
+
+| Field | Source in the listing markup |
+|-------|------------------------------|
+| `rank` | position in the saved pages, from 1; `null` once a script drops out |
 | `name` | `data-script-name` |
 | `info_page` | the `a.script-link` href, made absolute |
 | `script_url` | `data-code-url` (the `update.greasyfork.org` `.user.js` URL) |
@@ -74,7 +109,8 @@ Options:
 
 Notes:
 
-- Install counts are plain integers (the visible page renders them with commas).
+- Counts are JSON numbers (the visible page renders them with commas), or
+  `null` when the page showed none.
 - Rows keep the page's sort order. Expect a handful of off-by-one inversions in
   `total_installs` across page boundaries — counts tick up while you're saving
   pages, not a parse error.
@@ -90,10 +126,10 @@ The raw `.user.js` URLs are *not* behind the bot check, so these fetch normally:
 node tests/greasyfork-examples/download-scripts.mjs [--count N]
 ```
 
-Three phases: every `script_url` from the CSV, then every unique `@require` URL
+Three phases: every `script_url` from `corpus.json`, then every unique `@require` URL
 and `@resource` URL found in the metadata blocks of what it just downloaded.
 
-Options: `--csv`, `--root`, `--count`, `--delay MS` (default 200),
+Options: `--corpus`, `--root`, `--count`, `--delay MS` (default 200),
 `--concurrency N` (default 1), `--force`, `--scripts-only`, `--requires-only`,
 `--resources-only`, `--max-broken-hosts N` (default 5).
 
@@ -119,9 +155,10 @@ https://update.greasyfork.org/scripts/25253/ZOOM%20HACK%20for%20Blobleio%21.user
   differ only there.
 - **Over-long names** get truncated with `~<hash>` spliced in before the
   extension (`AC-baidu-%E9%87%8D…%E5%BA%94~efdc1ce2.user.js`). Percent-encoded
-  CJK costs 9 bytes per character, which overruns the filesystem's per-name
-  limit — 255 bytes normally, but only 143 on an eCryptfs-encrypted home, so
-  the tool probes for the real ceiling at startup.
+  CJK costs 9 bytes per character, which can overrun the filesystem's
+  per-name limit: 255 bytes normally, but only 143 on an eCryptfs-encrypted
+  home. Names are cut at 143 bytes on every machine, so a script's path
+  depends only on its URL, and corpus.json can store it.
 
 ### The greasyfork.org mirror
 
@@ -165,21 +202,23 @@ Once the scripts are downloaded, SourceMonkey's install-time checks
 run over all of them without a browser:
 
 ```sh
-pnpm run validate --offline-root tests/greasyfork-examples/files \
-                  tests/greasyfork-examples/files
+node tests/greasyfork-examples/validate-corpus.mjs \
+  --offline-root tests/greasyfork-examples/files tests/greasyfork-examples/files
 ```
 
 `--offline-root` serves every dependency URL out of `files/` instead of
-the network, so the run is reproducible and makes no requests. See
-[docs/offline-validation.md](../../docs/offline-validation.md) for the
+the network, so the run is reproducible and makes no requests.
+`record-results.mjs validate` runs the same check and records each verdict in
+`corpus.json` (see [Test results](#test-results)). See
+[docs/corpus-validation.md](../../docs/corpus-validation.md) for the
 tool and [docs/corpus-validation-results.md](../../docs/corpus-validation-results.md)
 for the last run's findings.
 
 ## Analysis database
 
 ```sh
-node tests/greasyfork-examples/build-db.mjs   # CSV + downloaded files → corpus.db
-node tests/greasyfork-examples/report.mjs     # analysis.sql → analysis.html
+node tests/greasyfork-examples/build-db.mjs          # corpus.json + downloaded files → corpus.db
+node tests/greasyfork-examples/render-analysis.mjs   # analysis.sql → analysis.html
 ```
 
 `build-db.mjs` rebuilds `corpus.db` from scratch each run — it is derived data,
@@ -191,13 +230,16 @@ way SourceMonkey does (`pnpm run build` first).
 
 | Table | Contents |
 |-------|----------|
-| `Scripts` | One row per CSV row, plus `size` and `local_filename` of the downloaded body |
+| `Scripts` | One row per corpus record's `listing` (including `rank`), plus `size` and `local_filename` of the downloaded body |
 | `RequiresFiles` | One row per distinct `@require` URL, with `size` / `local_filename` |
 | `ResourceFiles` | Same, for `@resource` URLs |
 | `ScriptRequiresFiles` | script_id → require URL |
 | `ScriptResourcesFiles` | script_id → resource URL, plus the `@resource` name it binds to |
 | `ScriptHeaders` | Every metadata line: `header_field`, `header_field_full`, `header_field_suffix`, `argument` |
 | `ScriptMatches` | Every `@match` / `@include` line, decomposed into `shape`, `scheme`, `host_pattern`, `site`, and per-component wildcard flags |
+| `ScriptResults` | Validation status and error, and test status, reason, blame, date and version, for each record with findings (warnings and sites stay in `corpus.json`) |
+| `ScriptTags` | Every tag, with `source` `validation` (derived) or `manual` |
+| `ScriptNotes` | Every dated note |
 
 Notes:
 
@@ -217,10 +259,158 @@ Notes:
 ### Reports
 
 `analysis.sql` holds one statement per report, introduced by
-`-- @report <title>` with optional `-- @note` prose. `report.mjs` runs them in
+`-- @report <title>` with optional `-- @note` prose. `render-analysis.mjs` runs them in
 order and renders each result as a table in `analysis.html`, so adding a report
 means adding a query — nothing else. The file is also plain SQL:
 
 ```sh
 sqlite3 tests/greasyfork-examples/corpus.db < tests/greasyfork-examples/analysis.sql
 ```
+
+## Test results
+
+`corpus.json` also records what we learn about each script: whether it passes
+SourceMonkey's install checks, and whether it works when run on its target
+site. `record-results.mjs` is the only tool that writes these findings.
+
+How to test scripts (the method, blame rules, tags, running batches with
+agents, and re-testing after a fix) is in the `corpus-testing` skill,
+[`.claude/skills/corpus-testing/`](../../.claude/skills/corpus-testing/SKILL.md).
+
+**`record-results.mjs` records individual facts into the corpus**: one
+script's test result, tag or note, as you (or an agent) learn it. It doesn't
+compute anything over the corpus. The exception is `validate`, which checks
+every downloaded script and records each verdict.
+
+```sh
+R=tests/greasyfork-examples/record-results.mjs
+node $R validate                       # offline-validate every downloaded script, import verdicts
+node $R list --untested --valid ok --limit 20
+node $R show 14178                     # one record, plus its path under files/
+node $R set 14178 --test pass --note "Redirect links rewritten on a bing.com search"
+node $R set 14178 --test fail --blame sourcemonkey --note-file /tmp/why.md
+node $R set 14178 --test n/a --reason requires-login --note "Every matched page needs an account"
+node $R set 14178 --tag needs-GM_cookie
+node $R set 14178 --replace-note 1 --note "Better wording"   # notes number from 1, in the order show lists them
+node $R set 14178 --remove-note 2
+```
+
+`validate` needs a build (`pnpm run build`), like the other tools.
+
+To try a script on its site, run it with `sm-dev`, pointing it at the
+downloaded `@require`s so a dead or flaky host doesn't stop the run.
+Give the run an ID of your own, since other agents may be testing too:
+
+```sh
+scripts/sm-dev --run D<yours> --local tests/greasyfork-examples/files start "<file from show>" <url> --detach
+```
+
+- It records a verdict for every downloaded script, `tool error` included.
+- A listed script that isn't downloaded has its `valid`, `sites`,
+  `version` and `file` cleared, so an old verdict can't pass for a current one.
+- Each command refuses options it doesn't take, so a misspelled one fails loudly.
+
+### Record format
+
+Beside `listing`, a record can hold:
+
+| Field | Written by | Contents |
+|-------|------------|----------|
+| `version` | `validate` | `@version` of the downloaded copy |
+| `file` | `validate` | Where the downloaded copy is, relative to `files/` |
+| `sites` | `validate` | What its `@match` / `@include` lines target, for the results page: a site, a host pattern, a regex, or `*` |
+| `valid` | `validate` | The latest offline verdict: `status` (`ok` / `invalid` / `tool error`), `error`, `warnings`, derived `tags`, `date`, `version` |
+| `test` | `set --test` | The latest run on the target site: `status`, `reason` or `blame`, `date`, `version` |
+| `tags` | `set --tag` / `--untag` | Hand-added labels |
+| `notes` | `set --note` | `{ date, version, text }` list, oldest first; `text` is markdown. `--replace-note` / `--remove-note` fix one |
+
+- **Test statuses:**
+  - `pass`: the script does what it promises.
+  - `fail`: it doesn't. `--blame` says whose fault: `sourcemonkey`, `script`
+    (broken or out of date against the site), or `unknown`.
+  - `n/a`: we couldn't meaningfully try it. `--reason` is one of
+    `requires-login`, `paid`, `geo-blocked`, `site-gone`,
+    `needs-interaction`, `not-web`, `other-browser`, `other`.
+  - `other-browser` is for a script that relies on another browser's
+    features. It's `n/a`, not a failure, since no Chrome extension could run
+    it. Say in the note what it relies on.
+  - No `test` at all means nobody has tried it yet.
+- `fail` and `n/a` require a note saying what happened.
+- `date` defaults to today, and `version` to the `@version` of the copy in
+  `files/` now (which can be newer than the one `validate` last recorded).
+  `results.html` flags a test whose `version` is older than the current copy.
+- A `sourcemonkey` failure should also get an entry in `TODO.md` (or a fix).
+
+### Viewing results
+
+`results.html` reads `corpus.json` when it loads, so it's always current and
+never needs regenerating.
+
+```sh
+node tests/greasyfork-examples/serve-results.mjs   # then open http://localhost:8765/
+```
+
+- Served, the page fetches `corpus.json` itself. Its Reload button re-reads it
+  and keeps your filters.
+- Opened straight from disk, Chrome won't let the page fetch another file, so
+  it asks you to choose `corpus.json`. You navigate to it once; after that the
+  page offers to reopen the same file with one click.
+- Every link opens in a new tab, except the Summary ones below.
+- Summary shows each filter's choices (Validation, Testing, Tag) with how many
+  scripts are in each; tags are listed most common first.
+  - Each line links to the table filtered that way, and Full results goes
+    back to the whole table.
+  - These switch views in the same tab, so Back and Forward move between
+    them; middle-click opens a new tab as usual.
+- Under each name:
+  - "Code" opens the downloaded copy in a viewer tab (this page with
+    `?view=<id>`). A link straight to the `.user.js` file would make a
+    userscript manager offer to install it.
+  - "Copy filename" copies the file's full path, for opening it in an editor. Served,
+    the page reads where `files/` is from `files/_location.json`, which every
+    tool that uses `files/` writes.
+- Any static server that serves this folder works for the page and viewer,
+  not just `serve-results.mjs`.
+- Opened from disk, the viewer asks once for access to the `files/` folder,
+  since Chrome won't let the page read it otherwise.
+- The filters, Notes setting and sort are kept in the URL, so a browser
+  reload keeps them and the link reproduces the view. Reset clears them.
+- Notes show in a full-width row under each script. The Notes selector sets
+  them all to hidden, short or full.
+  - Short shows the first entry, cut at three lines, with a Show full button
+    when anything is hidden.
+  - Full lets the browser's find (Ctrl+F) search them.
+  - Each row's Show / Hide button overrides the setting for that row.
+
+### Derived tags
+
+`validate` replaces `valid.tags` each run with features the script uses that
+SourceMonkey doesn't support but that don't make it invalid:
+
+- `unsupported-grant:<name>`: an API-shaped `@grant` not in the catalog
+  ([supported-GM-APIs.md](../../docs/supported-GM-APIs.md)).
+- `malformed-grant`: a `@grant` line that isn't an API name at all (some
+  scripts use them as comments).
+- `ignored-match`: a `@match` Chrome would refuse, which SourceMonkey drops.
+- `ignored-header:@<tag>`: a header another manager acts on and SourceMonkey
+  ignores ([supported-headers.md](../../docs/supported-headers.md)).
+
+Hand-added `tags` are for what only running the script shows, such as an
+unsupported feature the checks can't see. Give a new one a description in
+`HELP.tag` in `results.html`, which shows it as the tag's tooltip.
+
+### Parallel writers
+
+Several agents can record results at once:
+
+- Every write re-reads `corpus.json` under a lock (`corpus.json.lock`),
+  changes only the named record, and replaces the file by rename.
+- Readers never see a half-written file, and concurrent writes don't lose each
+  other's changes.
+- A lock left by a crashed writer is broken after 30 seconds.
+
+### What isn't stored
+
+The script's path under `files/` is looked up from `listing.script_url` rather
+than stored: over-long names are truncated to fit the filesystem, so the path
+differs between machines. `show` prints it.

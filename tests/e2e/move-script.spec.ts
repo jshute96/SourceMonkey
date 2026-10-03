@@ -1,6 +1,6 @@
 // Moving an installed script from one "individual scripts" collection
-// to another, from the viewer's Collection row (src/userscript.ts
-// `makeMoveControl`, `moveScript` in src/script-store.ts).
+// to another, from the viewer's Collection row (src/extension/userscript.ts
+// `makeMoveControl`, `moveScript` in src/extension/script-store.ts).
 //
 // What the move must preserve is what the tests below check: the
 // script keeps its stored id, and with it everything else keyed by
@@ -76,7 +76,7 @@ test.describe('move a script between collections', () => {
 
   // The dialog's dropdown comes from the same builder as the install
   // page's, so it inherits the open-on-release guard
-  // (src/select-open-guard.ts). Asserted here because "same builder"
+  // (src/extension/select-open-guard.ts). Asserted here because "same builder"
   // is the only reason it does.
   test('the dialog\'s dropdown refuses the press that would open it', async ({
     extensionContext, extensionId, sm,

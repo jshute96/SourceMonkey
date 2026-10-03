@@ -46,22 +46,22 @@ globalThis.chrome = globalThis.chrome ?? {
 import {
   GM_RUNTIME_MAIN_SCRIPT_ID,
   GM_RUNTIME_SCRIPT_ID,
+  NO_PAGE_MATCH,
   buildGmBindingsForScript,
   buildGmRuntimeSpecs,
   buildRegistrationSpec,
   collectActiveSpecs,
-  grantedSubsystems,
   grantsUnsafeWindow,
   needsGmRuntime,
-  resolveScriptWorld,
-  resolveWorld,
-} from '../../dist/injector.js';
-import { emitGmBindings } from '../../dist/gm-bindings.js';
+} from '../../dist/extension/injector.js';
+import { resolveScriptWorld, resolveWorld } from '../../dist/script-world.js';
+import { grantedSubsystems } from '../../dist/gm-api-catalog.js';
+import { emitGmBindings } from '../../dist/extension/gm-bindings.js';
 import {
   IMPLICIT_UNSAFE_WINDOW_INFO,
   ISOLATED_UNSAFE_WINDOW_WARNING,
   extractStartupLogs,
-} from '../../dist/script-store.js';
+} from '../../dist/extension/script-store.js';
 import { WRAPPER_BRIDGE, WRAPPER_GM_RUNTIME } from '../../dist/generated-wrappers.js';
 
 function makeHeader(tags) {
@@ -302,7 +302,9 @@ test('collectActiveSpecs: both worlds can need the runtime at once, each with it
   );
   assert.deepEqual([...gmRuntimeScope.keys()].sort(), ['MAIN', 'USER_SCRIPT']);
   assert.deepEqual([...gmRuntimeScope.get('MAIN').matches], ['https://main.example/*']);
-  assert.deepEqual([...gmRuntimeScope.get('USER_SCRIPT').matches], ['https://iso.example/*']);
+  // A spec with globs carries NO_PAGE_MATCH, so the runtime's scope
+  // does too: it registers on the same globs.
+  assert.deepEqual([...gmRuntimeScope.get('USER_SCRIPT').matches], ['https://iso.example/*', NO_PAGE_MATCH]);
   assert.deepEqual([...gmRuntimeScope.get('USER_SCRIPT').includeGlobs], ['*://glob/*']);
 });
 
@@ -461,19 +463,17 @@ test('buildGmBindingsForScript: @grant none plus a reference gets the alias and 
   assert.doesNotMatch(js, /const GM_setValue/);
 });
 
-test('buildGmBindingsForScript: a @require that declares the name suppresses ours', async () => {
-  // The requires and the body are one program, so two `const
-  // unsafeWindow` declarations in it is a SyntaxError that takes the
-  // whole registered entry down — including the parse check at install.
+test('buildGmBindingsForScript: a @require that declares the name keeps our binding', async () => {
+  // The user program runs in a scope nested inside our bindings, so the
+  // library's own `const unsafeWindow` shadows ours instead of being a
+  // duplicate declaration. Nothing needs to step aside.
   const script = makeScript({
     header: grantHeader('GM_setValue'),
     usesUnsafeWindow: true,
     requires: [{ url: 'https://lib/x.js', source: 'const unsafeWindow = window.wrappedJSObject || window;' }],
   });
   const { js } = await buildGmBindingsForScript(script, '0.0.0');
-  assert.doesNotMatch(js, /const unsafeWindow = window;/);
-  // The script still runs in MAIN, which is where that library's own
-  // `window` needs to be.
+  assert.match(js, /const unsafeWindow = window;/);
   assert.equal(resolveScriptWorld(script), 'MAIN');
 });
 
@@ -520,8 +520,8 @@ test('extractStartupLogs: a grant-free script pinned isolated is warned too', ()
 });
 
 test('buildGmBindingsForScript: a @require that only READS the name keeps our binding', async () => {
-  // The suppression is for a require that declares the name. A library
-  // that merely uses it needs the binding as much as the body does.
+  // A library that merely uses the name needs the binding as much as
+  // the body does.
   const { js } = await buildGmBindingsForScript(makeScript({
     header: grantHeader('GM_setValue'),
     usesUnsafeWindow: true,

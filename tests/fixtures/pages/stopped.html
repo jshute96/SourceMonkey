@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>stopped</title>
+  </head>
+  <body>
+    <p id="status">Loaded</p>
+    <!-- Held 5s by the `/__slow/` route (tests/fixtures/slow-route.mjs),
+         so the page stops its own load first. A stopped load never
+         fires `load`, which sm-dev's open must not wait for. -->
+    <img src="/__slow/held.png?ms=5000" alt="" />
+    <script>
+      setTimeout(() => {
+        window.stop();
+        document.getElementById('status').textContent = 'Stopped';
+      }, 100);
+    </script>
+  </body>
+</html>

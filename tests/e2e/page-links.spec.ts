@@ -1,4 +1,4 @@
-// Cross-page links between the extension's own pages (src/page-links.ts).
+// Cross-page links between the extension's own pages (src/extension/page-links.ts).
 //
 // Two things are under test:
 //   - A link to the Collections or Options page opens a NEW tab, so the

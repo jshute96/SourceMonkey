@@ -2,9 +2,9 @@
 // column.
 //
 // The sandbox (`parse-sandbox.ts`) can only report a position in the
-// text it was handed, which is the whole composed program — GM
-// bindings, then every `@require` body in order, then the script's own
-// source. This module is the other half: pick which of the sandbox's
+// text it was handed, which is the whole composed program — our own
+// first line, then every `@require` body in order, then the script's
+// own source. This module is the other half: pick which of the sandbox's
 // two probes to believe, then map its line back through the same
 // segment list the source map is built from, so the answer names the
 // file the line was actually written in.
@@ -171,7 +171,7 @@ export function attachParseLocation(
   if (!hit) return { status: verdict.status, message: verdict.message };
   const origin = lookupGeneratedLine(source.segments, hit.line);
   // No segment covers the line, so it belongs to code WE emitted — the
-  // GM-bindings preamble, or a seam between concatenated files.
+  // first line we add, or a seam between concatenated files.
   // Reporting a raw generated line there would point the user at a
   // line of their file that has nothing to do with the error, so drop
   // the position — and with it the probe's message, which only earned

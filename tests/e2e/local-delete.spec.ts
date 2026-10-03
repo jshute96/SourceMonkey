@@ -1,5 +1,5 @@
-// Deleting a local copy from disk (src/delete-dialog.ts,
-// src/local-delete.ts): the trash can beside Local copy… removes the
+// Deleting a local copy from disk (src/extension/delete-dialog.ts,
+// src/extension/local-delete.ts): the trash can beside Local copy… removes the
 // file the copy was written to, takes the dependency files only that
 // copy uses with it if asked, and leaves the ones another script in the
 // collection is loading.
@@ -33,7 +33,7 @@ function viewerUrl(extensionId: string, scriptId: string): string {
   return `chrome-extension://${extensionId}/userscript.html?script=${scriptId}`;
 }
 
-// Which of the two trash cans a button is wearing (src/delete-icon.ts).
+// Which of the two trash cans a button is wearing (src/extension/delete-icon.ts).
 // The pair is the only thing telling a record removal apart from a file
 // deletion before the user hovers, and five call sites paint it, so it
 // is asserted rather than left to the tooltip.

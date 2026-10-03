@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Extract the top GreasyFork userscripts into a CSV.
+// Extract the top GreasyFork userscripts into corpus.json's `listing` blocks.
 //
 // GreasyFork sits behind a Cloudflare bot check that rejects scripted fetches
 // (curl and headless/headed Playwright alike), so this tool does NOT download
@@ -19,36 +19,40 @@
 //   --dir PATH   where to look for the default gfpage*.html set
 //                (default tests/greasyfork-examples/greasyfork-dump)
 //   --count N    keep only the first N scripts (default: all of them)
-//   --out PATH   CSV output path (default tests/greasyfork-examples/top-scripts.csv)
+//   --corpus PATH  corpus file to update (default tests/greasyfork-examples/corpus.json)
+//
+// Only each record's `listing` block is rewritten; test findings are kept. After
+// a full run (no --count, default page set), a script missing from the listing
+// keeps its record with `rank: null`.
 
-import { readFile, readdir, mkdir, writeFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CORPUS_JSON, printHelp, updateCorpus } from './corpus.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const ORIGIN = 'https://greasyfork.org';
 
-// Order matters: this is the CSV column order.
-const COLUMNS = [
-  'id',
-  'name',
-  'info_page',
-  'script_url',
-  'total_installs',
-  'daily_installs',
-  'ratings_good',
-  'ratings_ok',
-  'ratings_bad',
-  'created_date',
-  'updated_date',
-];
+// The listing fields that are counts; stored as numbers, or null when the
+// page didn't show one (a real zero and "not shown" differ).
+const NUMERIC = new Set(['total_installs', 'daily_installs', 'ratings_good', 'ratings_ok', 'ratings_bad']);
+
+/** A parsed listing row as a corpus `listing` block, with its 1-based rank. */
+function listingBlock(row, rank) {
+  const block = { rank };
+  for (const [key, value] of Object.entries(row)) {
+    if (key === 'id') continue;
+    block[key] = NUMERIC.has(key) ? (value === '' ? null : Number(value)) : value;
+  }
+  return block;
+}
 
 function parseArgs(argv) {
   const opts = {
     files: [],
     dir: path.join(REPO_ROOT, 'tests/greasyfork-examples/greasyfork-dump'),
     count: Infinity,
-    out: path.join(REPO_ROOT, 'tests/greasyfork-examples/top-scripts.csv'),
+    corpus: CORPUS_JSON,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -60,7 +64,7 @@ function parseArgs(argv) {
     switch (arg) {
       case '--dir': opts.dir = path.resolve(next()); break;
       case '--count': opts.count = Number(next()); break;
-      case '--out': opts.out = path.resolve(next()); break;
+      case '--corpus': opts.corpus = path.resolve(next()); break;
       default:
         if (arg.startsWith('--')) throw new Error(`Unknown argument: ${arg}`);
         opts.files.push(path.resolve(arg));
@@ -136,17 +140,8 @@ function parseListingPage(html) {
   });
 }
 
-function toCsv(rows) {
-  const escape = (value) => {
-    const str = String(value ?? '');
-    return /[",\n\r]/.test(str) ? `"${str.replaceAll('"', '""')}"` : str;
-  };
-  const lines = [COLUMNS.join(',')];
-  for (const row of rows) lines.push(COLUMNS.map((column) => escape(row[column])).join(','));
-  return lines.join('\n') + '\n';
-}
-
 async function main() {
+  if (printHelp(process.argv.slice(2), import.meta.url)) return;
   const opts = parseArgs(process.argv.slice(2));
   const files = opts.files.length > 0 ? opts.files : await defaultFiles(opts.dir);
   if (files.length === 0) throw new Error(`No gfpage*.html files found in ${opts.dir}`);
@@ -168,9 +163,19 @@ async function main() {
     if (rows.length >= opts.count) break;
   }
 
-  await mkdir(path.dirname(opts.out), { recursive: true });
-  await writeFile(opts.out, toCsv(rows), 'utf8');
-  console.info(`Wrote ${rows.length} scripts to ${opts.out}`);
+  const full = opts.files.length === 0 && opts.count === Infinity;
+  const added = await updateCorpus(opts.corpus, (corpus) => {
+    // Only a full run says what dropped out. A --count or hand-picked pages
+    // run covers part of the listing, so it leaves other ranks alone.
+    if (full) for (const record of Object.values(corpus)) if (record.listing) record.listing.rank = null;
+    let fresh = 0;
+    rows.forEach((row, i) => {
+      if (!corpus[row.id]) { corpus[row.id] = {}; fresh++; }
+      corpus[row.id].listing = listingBlock(row, i + 1);
+    });
+    return fresh;
+  });
+  console.info(`Updated ${rows.length} listings in ${opts.corpus} (${added} new scripts)`);
 }
 
 await main();

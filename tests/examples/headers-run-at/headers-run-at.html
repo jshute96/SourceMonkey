@@ -160,7 +160,8 @@
         SourceMonkey registers every userscript at Chrome&rsquo;s
         <code>document_start</code> and the wrapper itself awaits
         <code>DOMContentLoaded</code> (for <em>document-end</em>) or
-        <code>load</code> (for <em>document-idle</em>) before
+        <code>load</code> (for <em>document-idle</em>, or 200ms after
+        <code>DOMContentLoaded</code> if <code>load</code> is later) before
         invoking the body &mdash; same pattern Tampermonkey uses.
         Without that gating Chrome&rsquo;s <code>chrome.userScripts</code>
         scheduler batches <em>document_end</em> and

@@ -67,11 +67,43 @@ test.describe('glob-only @include', () => {
     await page.close();
   });
 
+  // A granted script (USER_SCRIPT world, so the GM runtime listens for
+  // messages from the service worker) with a @match on one host and a
+  // glob @include on another. Without NO_PAGE_MATCH's `*` host, Chrome
+  // crashed the @include page when the worker messaged it.
+  test('a glob @include on a host no @match names runs, and the page survives', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'mixed.user.js',
+      meta: {
+        name: 'Mixed',
+        match: ['https://example.com/*'],
+        include: [`${fixtureServer.baseUrl}/target*`],
+        grant: ['GM_setValue'],
+        runAt: 'document-end',
+      },
+      body: `
+        GM_setValue('ran', true);
+        document.getElementById('target').textContent = 'injected by SourceMonkey';
+      `,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+    const page = await extensionContext.newPage();
+    let crashed = false;
+    page.on('crash', () => { crashed = true; });
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('#target')).toHaveText('injected by SourceMonkey');
+    await page.waitForTimeout(500);
+    expect(crashed).toBe(false);
+    await page.close();
+  });
+
   // Ask Chrome directly what `includeGlobs` means, with no SourceMonkey
-  // code in the way. If this ever flips to the documented AND, the
-  // fallback above still holds (the wrapper filter is doing the work) —
-  // but `docs/injection.md` and the injector comment would be wrong,
-  // and the @match + @include story would change with it.
+  // code in the way. If this ever flips to the documented AND, a
+  // glob-only script (registered on NO_PAGE_MATCH) would run nowhere,
+  // and `docs/injection.md` and the injector comment would be wrong.
   test('Chrome ORs includeGlobs with matches, it does not filter within them', async ({
     extensionContext, fixtureServer, getServiceWorker,
   }) => {
@@ -103,6 +135,51 @@ test.describe('glob-only @include', () => {
       // performs between tests doesn't cover this registration.
       const cleanupSw = await getServiceWorker();
       await cleanupSw.evaluate(() => chrome.userScripts.unregister({ ids: ['include-globs-probe'] }));
+    }
+  });
+
+  // The Chrome behavior NO_PAGE_MATCH's `*` host works around: a page
+  // covered only by `includeGlobs`, on a host `matches` doesn't name,
+  // is killed when the worker messages a USER_SCRIPT-world listener in
+  // it. If the first half stops crashing, Chrome fixed it and the `*`
+  // host is no longer needed for this.
+  test('Chrome crashes a glob-only page on a message unless matches covers its host', async ({
+    extensionContext, fixtureServer, getServiceWorker,
+  }) => {
+    const sw = await getServiceWorker();
+    await sw.evaluate(() => {
+      chrome.runtime.onUserScriptMessage.addListener((msg: { type?: string }, sender) => {
+        if (msg?.type === 'crash-probe' && sender.tab?.id !== undefined) {
+          void chrome.tabs.sendMessage(sender.tab.id, { type: 'crash-probe-back' }).catch(() => {});
+        }
+      });
+    });
+    const crashes = async (match: string): Promise<boolean> => {
+      await sw.evaluate(async ([base, match]) => {
+        await chrome.userScripts.unregister({ ids: ['crash-probe'] }).catch(() => {});
+        await chrome.userScripts.register([{
+          id: 'crash-probe',
+          world: 'USER_SCRIPT',
+          runAt: 'document_start',
+          matches: [match],
+          includeGlobs: [`${base}/target*`],
+          js: [{ code: `chrome.runtime.onMessage.addListener(() => {}); chrome.runtime.sendMessage({ type: 'crash-probe' }).catch(() => {});` }],
+        }]);
+      }, [fixtureServer.baseUrl, match] as const);
+      const page = await extensionContext.newPage();
+      let crashed = false;
+      page.on('crash', () => { crashed = true; });
+      await page.goto(`${fixtureServer.baseUrl}/target.html`).catch(() => {});
+      await page.waitForTimeout(800).catch(() => {});
+      await page.close().catch(() => {});
+      return crashed;
+    };
+    try {
+      expect(await crashes('*://sourcemonkey.invalid/*')).toBe(true);
+      expect(await crashes('*://*/__sourcemonkey_no_page__/*')).toBe(false);
+    } finally {
+      const cleanupSw = await getServiceWorker();
+      await cleanupSw.evaluate(() => chrome.userScripts.unregister({ ids: ['crash-probe'] }));
     }
   });
 });

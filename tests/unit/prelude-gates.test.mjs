@@ -43,6 +43,7 @@ function makeEnv({ readyState = 'loading' } = {}) {
       body: null,
       documentElement: {},
       addEventListener: add(docListeners),
+      removeEventListener() {},
     },
     chrome: {
       runtime: {
@@ -81,9 +82,18 @@ function makeEnv({ readyState = 'loading' } = {}) {
       sandbox.document.readyState = 'interactive';
       fire(docListeners, 'DOMContentLoaded');
     },
+    // As in a browser: readyState turns 'complete', then `load` fires
+    // in the same task.
     load() {
       sandbox.document.readyState = 'complete';
+      fire(docListeners, 'readystatechange');
       fire(winListeners, 'load');
+    },
+    // A page that called `window.stop()`: readyState still turns
+    // 'complete', but `load` never fires.
+    stoppedComplete() {
+      sandbox.document.readyState = 'complete';
+      fire(docListeners, 'readystatechange');
     },
     sentTypes() { return sent.map((m) => m.type); },
   };
@@ -182,6 +192,30 @@ test('document-idle waits for the load event, not just readyState', async () => 
   assert.equal(ran.count, 0, 'load has not fired yet');
 
   env.load();
+  await settle();
+  assert.equal(ran.count, 1);
+});
+
+// `window.stop()` cancels `load`; the 'complete' readystatechange is
+// then the only sign of idle, and the body must still run, once.
+test('document-idle runs on a stopped page, where load never fires', async () => {
+  const env = makeEnv();
+  const ran = install(env, 'document-idle');
+  env.decide({ action: 'run' });
+  env.domContentLoaded();
+  env.stoppedComplete();
+  await settle();
+  await settle();
+  assert.equal(ran.count, 1);
+});
+
+test('document-idle runs once when both readystatechange and load fire', async () => {
+  const env = makeEnv();
+  const ran = install(env, 'document-idle');
+  env.decide({ action: 'run' });
+  env.domContentLoaded();
+  env.load();
+  await settle();
   await settle();
   assert.equal(ran.count, 1);
 });

@@ -14,12 +14,12 @@
 
        #sm-globe      favicon placeholder until a site icon loads, and
                       the permanent icon for a script with no resolvable
-                      origin (src/site-icon.ts; styling on
+                      origin (src/extension/site-icon.ts; styling on
                       `.site-icon-globe`).
        #sm-trash      remove SourceMonkey's record of a script.
        #sm-trash-file delete the script FILE from disk — the same can,
                       badged with a disk. Both painted by
-                      src/delete-icon.ts, which explains the pair.
+                      src/extension/delete-icon.ts, which explains the pair.
                       The can is drawn ~19% smaller than #sm-trash — its
                       own inner scale(.9) inside the normalizing
                       wrapper's scale(.9) — so the badge has a corner to
@@ -28,7 +28,7 @@
                       badged one has to stay a can at 15px.
        #sm-copy       the viewer's "copy this to the clipboard" button,
        #sm-check      and the checkmark it flashes on success
-                      (src/copy-button.ts).
+                      (src/extension/copy-button.ts).
        #sm-refresh    refetch a collection, a script, or one row of the
                       "Other versions" table. Its busy state is this
                       same arc spinning (`.btn-glyph.spinning`), so the

@@ -3,7 +3,7 @@
 SourceMonkey accepts userscripts from `http(s)://` URLs in addition to
 local `file://` paths, and supports a JSON **manifest** format that
 works for both local and remote collections. Implemented in
-`src/directories.ts` (URL detection, fetchers, scanners) and consumed
+`src/extension/directories.ts` (URL detection, fetchers, scanners) and consumed
 by the [script store](storage.md). Companion to
 [file-access.md](file-access.md) for the local-filesystem story.
 
@@ -363,7 +363,7 @@ needed for I/O — used everywhere instead of branching on scheme):
   pass through. See
   [install-capture.md](install-capture.md#one-file-one-installed-row).
 
-GitHub helpers (live in `src/github-provider.ts`):
+GitHub helpers (live in `src/extension/github-provider.ts`):
 
 - `parseGithubUrl(s)` — splits a `(blob|tree)/<ref>/<path>` URL into
   `{owner, repo, kind, ref, path}` (null on no match).

@@ -22,6 +22,42 @@ SourceMonkey is generally compatible with
 [Tampermonkey](https://www.tampermonkey.net/) and other common
 userscript managers.
 
+### Testing your userscripts
+
+Userscripts are hard to test. The hard part is not the script, it is
+the manager around it: `@match`, `@grant`, `@require` loading, and the
+`GM_*` APIs. A test harness normally fakes all of that, and a fake is
+the one thing that cannot tell you your script works.
+
+SourceMonkey ships a harness that uses its own code instead. A repo of
+userscripts installs SourceMonkey as a package and gets two things:
+
+- **A Playwright fixture.** A script under test is checked by the
+  extension's own install pipeline and run in the real SourceMonkey
+  extension, in a browser the fixture launches. A test drives what the
+  script did through the manager: read what it stored, fire a menu
+  command, answer a network request.
+- **`sm-dev`, a command-line tool.** Run a script in SourceMonkey
+  against a live page and watch what it does, re-pushing as you save.
+  Check which selectors still resolve after a site changes. Save a page
+  so a test can replay it without logging in.
+
+See [docs/harness-guide.md](docs/harness-guide.md) to use it, and
+[docs/harness-design.md](docs/harness-design.md) for how it works.
+
+For coding agents, [skills/SourceMonkey-dev](skills/SourceMonkey-dev/SKILL.md)
+is a skill with recipes for developing and testing with these tools.
+[skills/SourceMonkey-friction](skills/SourceMonkey-friction/SKILL.md)
+is optional: it has agents record a friction log of problems hit using
+these tools, as feedback for improving them later. Both ship in the
+package, so a userscript repo can link them in:
+
+```sh
+mkdir -p .claude/skills
+ln -s ../../node_modules/sourcemonkey/skills/SourceMonkey-dev .claude/skills/
+ln -s ../../node_modules/sourcemonkey/skills/SourceMonkey-friction .claude/skills/
+```
+
 ### Example userscripts
 
 [`tests/examples`](tests/examples/README.md) includes example scripts
@@ -67,8 +103,8 @@ load it.
    SourceMonkey shows a banner with a link to the toggle whenever one is
    missing.
 3. Click the SourceMonkey toolbar icon to open the **collections page**.
-   On first run it seeds a few default collections so the page isn't empty;
-   remove them like any other collection.
+   On first run it seeds a default collection of examples so the page isn't
+   empty; remove it like any other collection.
 
 ## Using SourceMonkey
 
@@ -169,7 +205,10 @@ location can be read before creating anything.
 Single scripts go into **scripts collections** — folders you create
 and name, or the defaults created on demand (`Scripts from local disk`,
 `Scripts from web`, `Scripts from GitHub`). One scripts collection can
-mix local, web, and GitHub scripts.
+mix local, web, and GitHub scripts. An `sm-dev test collection`
+holds the scripts an `sm-dev` run pushed, whose only copy
+is in SourceMonkey itself; it goes when the run ends (see
+[docs/harness-guide.md](docs/harness-guide.md)).
 
 Details: [docs/file-access.md](docs/file-access.md),
 [docs/http-collections.md](docs/http-collections.md).
@@ -395,13 +434,35 @@ The built extension is written to `dist/`. Load it into Chrome via
 directory, then enable the toggles listed under [Getting
 started](#getting-started).
 
+`pnpm install` runs the same build (the package's `prepare` script), so
+a fresh checkout has a `dist/` as soon as its dependencies are in.
+
+The build writes two directories. `dist/` is the unpacked extension,
+and nothing else: you load it in Chrome, and
+`scripts/zip_extension.sh` packs it. `lib/` is the `sourcemonkey`
+package, which adds the development harness and the type declarations
+a consumer needs. See
+[docs/architecture.md](docs/architecture.md#two-outputs-dist-and-lib).
+
+`scripts/sm-dev` runs the harness's command line from this checkout
+(a repo that installs the package gets `sm-dev` on its path instead):
+
+```sh
+scripts/sm-dev --help
+scripts/sm-dev validate tests/examples
+```
+
+It runs what `lib/` has and never builds it, so run `pnpm run build`
+first, and again after changing the harness.
+
 ### Test
 
 ```sh
-pnpm test            # unit + e2e
-pnpm run test:unit   # node --test, fast
-pnpm run test:e2e    # Playwright with the extension loaded
-pnpm run test:headed # e2e with a visible browser
+pnpm test              # unit + e2e + sm-dev
+pnpm run test:unit     # node --test, fast
+pnpm run test:e2e      # Playwright with the extension loaded
+pnpm run test:headed   # e2e with a visible browser
+pnpm run test:sm-dev   # sm-dev and the harness fixture's own specs
 ```
 
 To narrow a run to one file:
@@ -443,22 +504,21 @@ for known per-manager divergences.
 
 ### Validate userscripts from the command line
 
-The install-time checks — header validation, `@require` / `@resource`
-loading, and the compile-only syntax check — also run as a CLI, over
-files on disk and with no browser involved:
+`sm-dev validate` runs the install-time checks (header validation,
+`@require` / `@resource` loading, and the compile-only syntax check)
+over files on disk, with no browser involved:
 
 ```sh
-pnpm run validate path/to/scripts/          # a directory, or single files
-pnpm run validate --offline-root DIR PATH   # dependencies from a local tree
-pnpm run validate --json out.json PATH      # per-script results
+scripts/sm-dev validate path/to/scripts/    # a directory, or single files
 ```
 
 It reports each script as `ok` or `invalid` with the same message the
-extension would show, grouped by failure type. `--offline-root` serves
-every `@require` / `@resource` URL out of a downloaded tree instead of
-the network, which is how the GreasyFork corpus
-(`tests/greasyfork-examples/`) gets checked in bulk. See
-[docs/offline-validation.md](docs/offline-validation.md).
+extension would show, plus any warnings. The GreasyFork corpus
+(`tests/greasyfork-examples/`) has its own bulk validator that serves
+dependencies from a downloaded tree; see
+[docs/corpus-validation.md](docs/corpus-validation.md). That corpus
+also tracks per-script test results; see its
+[README](tests/greasyfork-examples/README.md#test-results).
 
 ### Releasing
 
@@ -487,9 +547,12 @@ scripts/zip_extension.sh   # writes /tmp/SourceMonkey.zip
 
 ### Code layout
 
-- `src/` — extension source (TypeScript + manifest + HTML).
+- `src/` — source (TypeScript + manifest + HTML). See
+  [Source layout](docs/architecture.md#source-layout).
+  - `src/extension/` — modules only the extension loads.
+  - `src/harness/` — the Node-only development harness (`sm-dev`).
+  - Directly in `src/` — modules both use, plus the pages and manifest.
 - `scripts/build.mjs` — bundler-free build script.
-- `scripts/validate-userscripts.mjs` — offline validator CLI (above).
 - `scripts/zip_extension.sh` — builds and zips `dist/` for distribution.
 - `scripts/release-extension.sh` — cuts a tagged GitHub release with the
   zip attached.

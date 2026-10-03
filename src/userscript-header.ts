@@ -70,7 +70,7 @@ function stripLeadingBom(source: string): string {
 //
 // Named constants rather than inline literals because these strings are
 // both the message and the value something compares against — today the
-// offline validator, which groups failures by message. A reworded
+// corpus validator, which groups failures by message. A reworded
 // literal would silently stop matching.
 //
 // Phrased to read correctly in all three places they appear: alone in
@@ -85,7 +85,7 @@ export const NO_METADATA_BLOCK =
 // `… — add a … line (in f.user.js, line 1)`, where the parenthetical
 // reads as *where to add it*. Line 1 is where the block opened.
 export const UNTERMINATED_METADATA_BLOCK =
-  'The // ==UserScript== metadata block is never closed — it needs a // ==/UserScript== line';
+  'The // ==UserScript== metadata block is never closed and needs a // ==/UserScript== line';
 
 export type SplitError = typeof NO_METADATA_BLOCK | typeof UNTERMINATED_METADATA_BLOCK;
 
@@ -237,4 +237,37 @@ export function getLocalized(header: ParsedHeader, tag: string): Record<string, 
 export function hasTag(header: ParsedHeader, tag: string): boolean {
   const t = tag.toLowerCase();
   return header.tags.some((e) => e.tag === t);
+}
+
+// The `@run-at` values we honor. Anything else (a typo) runs at
+// `document-idle`: see `normalizeDeclaredRunAt` in injector.ts. The
+// exception is `context-menu`, which `validateHeader` rejects instead
+// (see `CONTEXT_MENU_RUN_AT`).
+export const SUPPORTED_RUN_AT: readonly string[] = [
+  'document-start',
+  'document-body',
+  'document-end',
+  'document-idle',
+];
+
+// The script's declared `@run-at` when it is one we don't honor, so
+// the caller can say it runs at `document-idle` instead. Undefined when
+// the tag is absent, blank, supported, or `context-menu` (an error,
+// not a fallback).
+export function unsupportedRunAt(header: ParsedHeader | null | undefined): string | undefined {
+  if (!header) return undefined;
+  const value = (getValue(header, 'run-at') ?? '').trim();
+  if (value === '' || SUPPORTED_RUN_AT.includes(value.toLowerCase())) return undefined;
+  if (value.toLowerCase() === CONTEXT_MENU_RUN_AT) return undefined;
+  return value;
+}
+
+// Tampermonkey's `@run-at context-menu`: don't run on page load, run
+// once from a right-click menu item instead. We have no such menu, and
+// running it on load would do an on-request action unprompted on every
+// matching page (often all pages), so the script is refused instead.
+export const CONTEXT_MENU_RUN_AT = 'context-menu';
+
+export function isContextMenuRunAt(header: ParsedHeader): boolean {
+  return (getValue(header, 'run-at') ?? '').trim().toLowerCase() === CONTEXT_MENU_RUN_AT;
 }

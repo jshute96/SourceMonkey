@@ -3,8 +3,8 @@
 How SourceMonkey decides that two installed rows are *the same script*,
 and what the UI does with that.
 
-- Lookup: [`src/script-identity.ts`](../src/script-identity.ts)
-- Panel: [`src/related-versions.ts`](../src/related-versions.ts)
+- Lookup: [`src/extension/script-identity.ts`](../src/extension/script-identity.ts)
+- Panel: [`src/extension/related-versions.ts`](../src/extension/related-versions.ts)
 
 ## Three separate notions, deliberately
 
@@ -29,7 +29,7 @@ A script can be all three at once, or only one.
   collection copy against a single-file copy.
 - `fileUrl` is the absolute form the load pipeline already builds for
   every collection kind — `scriptFileUrl` in
-  [`src/directories.ts`](../src/directories.ts) resolves manifest
+  [`src/extension/directories.ts`](../src/extension/directories.ts) resolves manifest
   entries against the manifest URL, joins directory entries onto the
   collection root, and maps GitHub dirs to raw URLs.
 - `canonicalCollectionInput` collapses a `file://` URL to its bare path, so
@@ -236,7 +236,7 @@ the *other* rows.
   the collections page uses (with *Collection is disabled* when the
   parent is off). Both are single constants — `ENABLE_TITLE` in
   `src/script-display.ts` and `COLLECTION_OFF_TITLE` in
-  `src/collection-display.ts` — so no surface can drift. It does not
+  `src/extension/collection-display.ts` — so no surface can drift. It does not
   name the copy — the Collection and Location cells are an inch to the
   right — and it does not swap to "Disable" when checked, which would
   make one control read two ways for no gain.
@@ -310,7 +310,7 @@ the *other* rows.
   - **Two glyphs, not one**: a plain can for a row that only drops
     SourceMonkey's record, and a can badged with a disk (in red) for a
     local copy, whose button deletes the file too. Both come from
-    `src/delete-icon.ts`; see [local-delete.md](local-delete.md).
+    `src/extension/delete-icon.ts`; see [local-delete.md](local-delete.md).
   - **Live only for scripts in a container collection** (a scripts
     collection — the built-in *Scripts from …* defaults or one the user
     made), which the user installed one at a time.
@@ -648,7 +648,7 @@ installed yet) and the panel's offer section (some copy exists). The
 two carry different ids — `install-target` and `install-target-offer` —
 because the callout is hidden rather than emptied when the section
 takes over. Built by
-`buildInstallSelect` in `src/related-versions.ts` from `installOptions`.
+`buildInstallSelect` in `src/extension/related-versions.ts` from `installOptions`.
 
 - **Three groups**, separated by rules:
   1. the **built-in default** for the script's scheme — `Scripts from
@@ -692,7 +692,7 @@ takes over. Built by
 ### The opening click never picks
 
 Both dropdowns (and the move dialog's) run through
-`guardSelectOpeningClick` in `src/select-open-guard.ts`, which opens the
+`guardSelectOpeningClick` in `src/extension/select-open-guard.ts`, which opens the
 list on the mouse *release* instead of the press.
 
 - **The hazard**: the popup is drawn by Chrome, and when the list

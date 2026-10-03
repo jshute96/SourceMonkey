@@ -1,0 +1,369 @@
+// The host of a run, or of the spec fixture's test: the real extension
+// runs the scripts, and this fills the host's reports, values and menus
+// (host.ts) from its events (extension-link.ts), and answers the run's
+// commands from it.
+//
+// - The run knows its scripts by their prepared ids; the extension by
+//   its own. `setPushed` maps one to the other.
+// - A tab is known by its `chrome.tabs` id once set up (`addTab`).
+//   Events from a tab the run is still setting up wait for it; others
+//   are not the run's.
+// - A tab's events come over the worker's connection, its navigations
+//   over the page's, and nothing orders the two. So an event from a
+//   top-frame document the attachment hasn't seen arrive yet waits for
+//   it: a report stamped before its document began would not count for
+//   it, and a menu command recorded then would be cleared by the
+//   navigation that follows. Only a top-frame event's document counts:
+//   SourceMonkey runs scripts in top frames only today, but an iframe's
+//   events would carry the iframe's document, which no navigation of
+//   the tab's would ever match.
+// - The run reports only on its own tabs: events from others, and Log
+//   entries made in them, are left out.
+
+import { SM_ABANDONED_MSG, SM_ERROR_MSG, SM_START_MSG, SM_SWAPPED_MSG } from '../runtime-messages.js';
+import { evalHookKey } from '../eval-hook.js';
+import { SKIP_REASON_SM_DEV } from '../sm-dev-protocol.js';
+import { remapStackText } from '../stack-link.js';
+import type { StackLayout } from '../composed-source.js';
+import { decodeOwnRefs } from './page-output.js';
+import {
+  HarnessHost, valueCodec, type DownloadRecord, type MenuCommandRecord, type NotificationRecord, type PageLink, type TabRecord, type XhrRecord,
+} from './host.js';
+import type { ConsoleContext, OtherScript } from './console-commands.js';
+import type { ExtensionEvent, ExtensionLink } from './extension-link.js';
+
+/** What the host needs of a tab's attachment, to order its events. */
+export interface WatchedPage extends PageLink {
+  /** When the page's current document began (see `PageAttachment.documentStart`). */
+  documentStart(): number;
+}
+
+type TabEvent = Extract<ExtensionEvent, { kind: 'report' | 'menu' | 'values' | 'request' | 'download' | 'notification' }>;
+
+// How long a tab's event waits for its document, or for the tab to be
+// set up, before it's handled anyway or dropped.
+const DOCUMENT_WAIT_MS = 3000;
+const SETUP_WAIT_MS = 10_000;
+
+interface TabState {
+  page: WatchedPage;
+  // The extension's id for the document the tab's events are from now,
+  // and when the attachment entered it. Undefined until the first event.
+  documentId?: string;
+  // The attachment's document when the last new document id came: the
+  // next one waits for a later document.
+  seenStart: number;
+  // Events handled in order, each after the one before.
+  queue: Promise<void>;
+}
+
+export class ExtensionHost extends HarnessHost {
+  // The extension's script id by the run's, and back.
+  private readonly extensionIds = new Map<string, string>();
+  private readonly runIds = new Map<string, string>();
+  // Each pushed script's line layout, by the extension's id.
+  private readonly layouts = new Map<string, StackLayout>();
+  private readonly tabs = new Map<number, TabState>();
+  private readonly tabsByPage = new Map<PageLink, number>();
+  // Events from tabs the run is setting up, by tab id, with when they came.
+  private readonly early = new Map<number, { at: number; events: TabEvent[] }>();
+  // The SourceMonkey-managed scripts the run has listed, by label (`E1`), and
+  // each one's label by its id, kept for the run.
+  private readonly others = new Map<string, OtherScript>();
+  private readonly otherLabels = new Map<string, string>();
+  // The extension's notification id for each shown one, by request id,
+  // to click or close it.
+  private readonly notificationIds = new Map<string, string>();
+
+  constructor(
+    private readonly link: ExtensionLink,
+    /** Prints a Log entry of one of the run's scripts. */
+    private readonly printLog: (name: string, level: string, message: string) => void,
+  ) {
+    super();
+    link.onEvent((event) => this.ingest(event));
+  }
+
+  /** The run's script `runId` is the extension's `extensionId`. */
+  setPushed(runId: string, extensionId: string): void {
+    const before = this.extensionIds.get(runId);
+    if (before) {
+      this.runIds.delete(before);
+      this.layouts.delete(before);
+    }
+    this.extensionIds.set(runId, extensionId);
+    this.runIds.set(extensionId, runId);
+  }
+
+  /** How the extension's script `extensionId` maps back to its files, if known. */
+  setLayout(extensionId: string, layout: StackLayout | null): void {
+    if (layout) this.layouts.set(extensionId, layout);
+    else this.layouts.delete(extensionId);
+  }
+
+  // The extension runs the scripts under its own entry URLs, so their
+  // stack lines map by the layouts it reports (`setLayout`).
+  override remapStack(text: string): string {
+    return remapStackText(text, this.layouts.values());
+  }
+
+  /**
+   * `page` is the run's tab `tabId`. `loaded`: the tab already shows the
+   * document its first events are from (a tab adopted after it loaded),
+   * so they needn't wait for a navigation. `scriptsOff`: its claim runs
+   * no scripts (opened from a `--noscript` tab), to keep if restored.
+   */
+  addTab(page: WatchedPage, tabId: number, loaded = false, scriptsOff = false): void {
+    const state: TabState = { page, seenStart: loaded ? -Infinity : page.documentStart(), queue: Promise.resolve() };
+    this.tabs.set(tabId, state);
+    this.tabsByPage.set(page, tabId);
+    this.link.holdTab(tabId, scriptsOff);
+    const early = this.early.get(tabId);
+    this.early.delete(tabId);
+    for (const event of early?.events ?? []) this.enqueue(state, event);
+  }
+
+  /** A tab the run will set up: its events wait for `addTab`. */
+  expectTab(tabId: number): void {
+    if (!this.tabs.has(tabId) && !this.early.has(tabId)) this.early.set(tabId, { at: Date.now(), events: [] });
+  }
+
+  tabIdOf(page: PageLink): number | undefined {
+    return this.tabsByPage.get(page);
+  }
+
+  override detachPage(page: PageLink): void {
+    const tabId = this.tabsByPage.get(page);
+    if (tabId !== undefined) {
+      this.tabs.delete(tabId);
+      this.link.forgetTab(tabId);
+    }
+    this.tabsByPage.delete(page);
+    super.detachPage(page);
+  }
+
+  // The extension gives a test collection's scripts their run's hook,
+  // under the script's id there.
+  override evalHook(scriptId: string): { key: string; id: string } | null {
+    const id = this.extensionIds.get(scriptId);
+    return id ? { key: evalHookKey(this.link.runId), id } : null;
+  }
+
+  override async valuesOf(scriptId: string): Promise<Record<string, unknown>> {
+    const id = this.extensionIds.get(scriptId);
+    return id ? this.extensionValues(id) : {};
+  }
+
+  // Into the extension, and the host's own copy, which `getValue` reads
+  // without a round trip (the fixture's `gm.get`). The tabs' own writes
+  // reach that copy as events.
+  override async setValues(scriptId: string, values: Record<string, unknown>): Promise<void> {
+    const id = this.extensionIds.get(scriptId);
+    if (!id) throw new Error('Internal error: The script was never pushed into the extension');
+    await this.writeExtensionValues(id, values);
+    await super.setValues(scriptId, values);
+  }
+
+  // A script's values by the extension's id, decoded.
+  private async extensionValues(id: string): Promise<Record<string, unknown>> {
+    const { decodeValue } = valueCodec();
+    const wire = await this.link.values(id);
+    return Object.fromEntries(Object.entries(wire).map(([k, v]) => [k, decodeValue(v)]));
+  }
+
+  private async writeExtensionValues(id: string, values: Record<string, unknown>): Promise<void> {
+    const { encodeValue } = valueCodec();
+    await this.link.writeValues(id, Object.entries(values).map(([key, v]) =>
+      (v === undefined ? { key, deleted: true } : { key, value: encodeValue(v) })));
+  }
+
+  /**
+   * The SourceMonkey-managed scripts, for the commands (`ConsoleContext.others`).
+   * `guarded`: `set` on one changes the person's real data.
+   */
+  otherScripts(guarded: boolean): NonNullable<ConsoleContext['others']> {
+    return {
+      guarded,
+      byLabel: (label) => this.others.get(label),
+      onTab: async (tab) => {
+        const tabId = this.tabsByPage.get(tab.link);
+        if (tabId === undefined) return [];
+        const rows = await this.link.scriptsOnTab(tabId);
+        return rows.filter((row) => !this.runIds.has(row.id)).map((row) => {
+          // SourceMonkey's own number for the script (`E12`), the same
+          // in every run. An extension before protocol 1.1 numbers none,
+          // and gets the run's own numbering, in the order first seen.
+          let label = row.number !== undefined ? `E${row.number}` : this.otherLabels.get(row.id);
+          if (!label) label = `E${this.otherLabels.size + 1}`;
+          this.otherLabels.set(row.id, label);
+          // One object per script, brought up to date, so one picked
+          // earlier (`scripts E1`) shows what the latest listing says.
+          const other = this.others.get(label) ?? {
+            label, name: '', collection: '', status: '',
+            values: () => this.extensionValues(row.id),
+            setValues: (values: Record<string, unknown>) => this.writeExtensionValues(row.id, values),
+          };
+          Object.assign(other, { name: row.name, collection: row.collection, status: row.status });
+          this.others.set(label, other);
+          return other;
+        });
+      },
+    };
+  }
+
+  override async clickNotification(requestId: string): Promise<boolean> {
+    const id = this.notificationIds.get(requestId);
+    return id ? this.link.clickNotification(id) : false;
+  }
+
+  override async closeNotification(requestId: string): Promise<boolean> {
+    const id = this.notificationIds.get(requestId);
+    return id ? this.link.closeNotification(id) : false;
+  }
+
+  override async fireMenuEntry(entry: MenuCommandRecord): Promise<boolean> {
+    const page = this.pageOf(entry);
+    const tabId = page && this.tabsByPage.get(page);
+    const id = this.extensionIds.get(entry.scriptId);
+    if (tabId === undefined || !id) return false;
+    return this.link.fireMenu(tabId, id, entry.commandId);
+  }
+
+  private ingest(event: ExtensionEvent): void {
+    if (event.kind === 'log') {
+      const runId = this.runIds.get(event.scriptId);
+      // A report's own entry (started, threw, skipped) prints as the report.
+      if (!runId || event.fromReport) return;
+      // One made in a tab only if it's the run's; one of the extension's
+      // own (a `@require` that failed to load) always.
+      const tabId = event.entry.tabId;
+      if (tabId !== undefined && !this.tabs.has(tabId) && !this.early.has(tabId)) return;
+      this.printLog(this.nameOf(runId), event.entry.level, decodeOwnRefs(this.remapStack(event.entry.message)));
+      return;
+    }
+    if (event.kind === 'tab-opened') {
+      this.recordOpenedTab(event);
+      return;
+    }
+    if (event.kind === 'tab-closed') {
+      const runId = this.runIds.get(event.scriptId);
+      const record = runId ? this.reports.tabs.find((t) => t.scriptId === runId && t.requestId === event.requestId) : undefined;
+      if (record) record.closed = true;
+      return;
+    }
+    // A write with no tab is the run's own `set` (or another run's),
+    // which says so itself.
+    if (event.kind === 'values' && event.tabId === undefined) return;
+    const tabId = event.tabId!;
+    if (!this.runIds.has(event.scriptId)) return;
+    const state = this.tabs.get(tabId);
+    if (state) {
+      this.enqueue(state, event);
+      return;
+    }
+    const early = this.early.get(tabId);
+    if (!early) return;
+    // A tab whose setup never finished doesn't hold events for good.
+    if (Date.now() - early.at > SETUP_WAIT_MS) this.early.delete(tabId);
+    else early.events.push(event);
+  }
+
+  private enqueue(state: TabState, event: TabEvent): void {
+    state.queue = state.queue.then(() => this.handleTabEvent(state, event)).catch(() => undefined);
+  }
+
+  private async handleTabEvent(state: TabState, event: TabEvent): Promise<void> {
+    if ((event.kind === 'report' || event.kind === 'menu') && event.topFrame !== false && event.documentId && event.documentId !== state.documentId) {
+      // A new document: wait for the attachment to have entered one
+      // after the last, so what this records counts for it.
+      const deadline = Date.now() + DOCUMENT_WAIT_MS;
+      while (state.page.documentStart() <= state.seenStart && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      state.documentId = event.documentId;
+      state.seenStart = state.page.documentStart();
+    }
+    const runId = this.runIds.get(event.scriptId);
+    if (!runId || !this.tabs.has(event.tabId!)) return;
+    if (event.kind === 'request' || event.kind === 'download' || event.kind === 'notification') {
+      this.recordActivity(runId, state.page, event);
+      return;
+    }
+    if (event.kind === 'values') {
+      this.recordValueWrites(state.page, runId, event.writes);
+      return;
+    }
+    if (event.kind === 'menu') {
+      if (event.op === 'add') this.registerMenu(state.page, runId, event.commandId, event.name ?? '');
+      else this.unregisterMenu(state.page, runId, event.commandId);
+      return;
+    }
+    const fields = { scriptId: runId, name: event.name, url: event.url };
+    if (event.type === SM_START_MSG || event.type === SM_SWAPPED_MSG) {
+      this.recordStart(state.page, fields);
+    } else if (event.type === SM_ERROR_MSG) {
+      this.recordError(state.page, { ...fields, message: event.message ?? '', stack: event.stack ?? '' });
+    } else if (event.type === SM_ABANDONED_MSG) {
+      // A tab with its scripts turned off (`--noscript`) skips them on
+      // each load, as asked: nothing to say.
+      if (event.reason === SKIP_REASON_SM_DEV) return;
+      this.recordSkip(state.page, { ...fields, reason: event.reason || 'skip' });
+    }
+  }
+
+  // A `GM_openInTab` of one of the run's scripts, from one of its tabs.
+  private recordOpenedTab(event: Extract<ExtensionEvent, { kind: 'tab-opened' }>): void {
+    const runId = event.scriptId === undefined ? undefined : this.runIds.get(event.scriptId);
+    const from = this.tabs.get(event.sourceTabId)?.page;
+    if (!runId || !from) return;
+    const record: TabRecord = {
+      scriptId: runId, requestId: event.requestId ?? '', url: event.url, active: event.active === true, at: event.at, closed: false,
+    };
+    this.reports.tabs.push(record);
+    this.recordPages.set(record, from);
+    this.notify('tab', record);
+  }
+
+  // A request, download or notification, recorded as the harness host
+  // records its own: one record each, filled in as it settles, and
+  // announced once it has (a notification as it shows).
+  private recordActivity(runId: string, page: WatchedPage, event: Extract<TabEvent, { kind: 'request' | 'download' | 'notification' }>): void {
+    if (event.kind === 'request') {
+      let record = this.reports.requests.find((r) => r.id === event.id && r.scriptId === runId);
+      if (!record) {
+        record = { scriptId: runId, id: event.id, url: event.url, method: event.method, at: event.at } satisfies XhrRecord;
+        this.reports.requests.push(record);
+        this.recordPages.set(record, page);
+      }
+      if (!event.outcome) return;
+      Object.assign(record, { outcome: event.outcome }, event.status !== undefined ? { status: event.status } : {}, event.error ? { error: event.error } : {});
+      this.notify('request', record);
+      return;
+    }
+    if (event.kind === 'download') {
+      let record = this.reports.downloads.find((r) => r.requestId === event.requestId && r.scriptId === runId);
+      if (!record) {
+        record = { scriptId: runId, requestId: event.requestId, url: event.url, name: event.name, at: event.at } satisfies DownloadRecord;
+        this.reports.downloads.push(record);
+        this.recordPages.set(record, page);
+      }
+      if (!event.outcome) return;
+      Object.assign(record, { outcome: event.outcome }, event.filename ? { filename: event.filename } : {}, event.error ? { error: event.error } : {});
+      this.notify('download', record);
+      return;
+    }
+    if (event.op === 'shown') {
+      const record: NotificationRecord = {
+        scriptId: runId, requestId: event.requestId, text: event.text ?? '', title: event.title ?? '', at: event.at,
+      };
+      if (event.notificationId) this.notificationIds.set(event.requestId, event.notificationId);
+      this.reports.notifications.push(record);
+      this.recordPages.set(record, page);
+      this.notify('notification', record);
+      return;
+    }
+    const record = this.reports.notifications.find((n) => n.requestId === event.requestId && n.scriptId === runId);
+    if (record) record.event = event.op;
+    if (event.op === 'closed') this.notificationIds.delete(event.requestId);
+  }
+}

@@ -1,7 +1,7 @@
 -- Analysis queries over corpus.db (built by build-db.mjs).
 --
 -- Each report is one statement introduced by `-- @report <title>`, optionally
--- followed by `-- @note <text>`. report.mjs runs them in order and renders each
+-- followed by `-- @note <text>`. render-analysis.mjs runs them in order and renders each
 -- result as an HTML table, so the two files stay in sync by construction.
 -- Run them ad hoc with:  sqlite3 tests/greasyfork-examples/corpus.db < analysis.sql
 

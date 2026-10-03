@@ -25,7 +25,7 @@ import {
   textFromRoots,
 } from '../../dist/local-file-overrides.js';
 import { attachFiles } from '../../dist/external-files.js';
-import { localFileLogMessages, collectionUsesLocalFiles } from '../../dist/script-store.js';
+import { localFileLogMessages, collectionUsesLocalFiles } from '../../dist/extension/script-store.js';
 
 const SCRIPT_URL = 'file:///home/me/scripts/foo.user.js';
 const SCRIPT_DIR = 'file:///home/me/scripts/';

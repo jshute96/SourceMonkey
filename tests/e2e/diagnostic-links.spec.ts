@@ -15,7 +15,7 @@
 //
 // The URL hash is the assertion of record for "which tab, which line":
 // it is the viewer's own single source of truth for view state (see
-// src/script-url-hash.ts), so checking it can't pass while the pane
+// src/extension/script-url-hash.ts), so checking it can't pass while the pane
 // shows something else.
 
 import { test, expect } from '../fixtures/extension';
@@ -183,7 +183,7 @@ test.describe('diagnostic location links', () => {
     await sm.replayScriptLogsAtBoot();
 
     const logged = await sm.getScriptLog(scriptId);
-    const warning = logged.find((e) => /Ignoring @grant/.test(e.message));
+    const warning = logged.find((e) => /Ignoring unsupported @grant/.test(e.message));
     expect(warning, 'the unknown grant should be logged').toBeTruthy();
     // The line the offending grant is written on, read off the file the
     // fixture rendered rather than assumed from the metadata order.
@@ -197,7 +197,7 @@ test.describe('diagnostic location links', () => {
     );
     await page.waitForFunction(() => document.title.endsWith('| SourceMonkey'));
 
-    const row = page.locator('#log-pane tr', { hasText: 'Ignoring @grant' });
+    const row = page.locator('#log-pane tr', { hasText: 'Ignoring unsupported @grant' });
     await expect(row).toBeVisible();
     await expect(row.locator(LINK)).toHaveText(`main.user.js, line ${grantLine}`);
 

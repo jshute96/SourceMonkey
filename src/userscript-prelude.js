@@ -23,11 +23,12 @@
  *            onto the queue, because the queue lives on globalThis.
  *   js[2]  — the whole user program: every @require concatenated ahead
  *                of the script's own body, all wrapped in
- *                `__smRun("id",function(){<gm bindings on same line>
- *                 <user source>\n})`, so it runs only after the
+ *                `__smRun("id",function(__smE){<gm bindings>return(()=>{
+ *                 <user source>\n})();})`, so it runs only after the
  *                matcher + check-pending + @run-at gates resolve.
  *                Concatenation is what gives requires and the body one
- *                shared scope. Trailing
+ *                shared scope, nested inside the bindings' scope so
+ *                its declarations shadow ours. Trailing
  *                `//# sourceURL=sourcemonkey://<id>/<name>.user.js`,
  *                plus an inline source map when requires are present so
  *                devtools still splits them into separate files.
@@ -94,7 +95,8 @@
    *                  passed in by the per-script config blob.
    *   matched      : did the in-page matcher accept this URL? Sync;
    *                  set during initScript.
-   *   decision     : null|run|run-new|skip — settled by check-pending.
+   *   decision     : null|run|run-new|skip — settled by check-pending,
+   *                  or set to run at init by canSkipDecision.
    *   runAtFired   : true once the @run-at lifecycle event happened.
    *   pendingRun   : the main-body fn passed to __smRun, queued until
    *                  (matched && decision !== 'skip' && runAtFired).
@@ -171,7 +173,15 @@
       return true;
     } catch (_e) { return false; }
   }
+  /* Whether this document has an opaque origin, carried on every report
+     so the SW can explain a script that never started here: on an
+     http(s) page it means a CSP `sandbox` header, which keeps Chrome
+     from injecting MAIN-world scripts at all. See
+     src/extension/missing-scripts.ts. */
+  var OPAQUE_ORIGIN = false;
+  try { OPAQUE_ORIGIN = self.origin === "null"; } catch (_oE) {}
   function send(payload) {
+    try { payload.opaqueOrigin = OPAQUE_ORIGIN; } catch (_pE) {}
     try {
       if (hasOwnRuntimeChannel()) {
         var p = chrome.runtime.sendMessage(payload);
@@ -198,9 +208,16 @@
   }
 
   /* Round-trip sm:check-pending and hand the SW's decision (or a 2s
-     safety-timeout fallback) to cb. Same dual transport as `send`. */
+     safety-timeout fallback) to cb. Same dual transport as `send`.
+
+     A script with a `.tld` rule asks the SW to check it exactly (see the
+     `.tld` note in the matcher), and its fallback is `skip`, not `run`:
+     without the SW's answer this side only knows the loose reading,
+     which would also run it on hosts like www.google.evil.com. */
   function awaitDecision(entry, cb) {
     var cfg = entry.cfg;
+    var tld = !!(cfg.matching && hasTldRule(cfg.matching));
+    var fallback = tld ? { action: "skip", reason: "no-match" } : { action: "run" };
     var done = false;
     var finish = function (decision) {
       if (done) return;
@@ -208,7 +225,7 @@
       try { cb(decision); } catch (_e) {}
     };
     var cleanup = function () {};
-    var safetyTimer = setTimeout(function () { seal({ action: "run" }); }, 2000);
+    var safetyTimer = setTimeout(function () { seal(fallback); }, 2000);
     var seal = function (decision) {
       try { clearTimeout(safetyTimer); } catch (_e) {}
       try { cleanup(); } catch (_e2) {}
@@ -222,15 +239,16 @@
           name: cfg.name,
           loadedAt: cfg.loadedAt,
           url: location.href,
-          needsValues: !!cfg.needsGmValues
+          needsValues: !!cfg.needsGmValues,
+          tld: tld
         });
         if (p && typeof p.then === "function") {
           p.then(
-            function (reply) { seal(reply && typeof reply === "object" ? reply : { action: "run" }); },
-            function () { seal({ action: "run" }); }
+            function (reply) { seal(reply && typeof reply === "object" ? reply : fallback); },
+            function () { seal(fallback); }
           );
         } else {
-          seal({ action: "run" });
+          seal(fallback);
         }
         return;
       }
@@ -245,7 +263,7 @@
           var d = ev.data;
           if (!d || d.__sm !== "sourcemonkey-bridge-reply") return;
           if (d.requestId !== requestId) return;
-          seal(d.reply && typeof d.reply === "object" ? d.reply : { action: "run" });
+          seal(d.reply && typeof d.reply === "object" ? d.reply : fallback);
         } catch (_e) {}
       };
       window.addEventListener("message", listener, true);
@@ -256,12 +274,13 @@
         name: cfg.name,
         loadedAt: cfg.loadedAt,
         url: location.href,
-        needsValues: !!cfg.needsGmValues
+        needsValues: !!cfg.needsGmValues,
+        tld: tld
       }, requestId);
       /* Nothing left the page, so no reply is coming. Seal now rather
          than costing this script the full 2s safety timeout. */
-      if (!dispatched) seal({ action: "run" });
-    } catch (_e3) { seal({ action: "run" }); }
+      if (!dispatched) seal(fallback);
+    } catch (_e3) { seal(fallback); }
   }
 
   /* Async-error attribution. Every piece of a script's code — its
@@ -382,22 +401,35 @@
     } catch (_e) {}
   }
 
+  /* How long after DOMContentLoaded a document-idle script runs when
+     `load` hasn't fired by then. Chrome's own document_idle runs at
+     most about 200ms after it. */
+  var IDLE_AFTER_DCL_MS = 200;
+
   /* @run-at gating. Each script's entry drives its own deferral; the
      prelude calls back into runMain when the lifecycle event fires. */
   function waitForRunAt(declared, cb) {
-    if (declared === "document-start") { cb(); return; }
+    /* `document-start` waits for <html> to exist; `document-body` for
+       <body>. In the extension Chrome injects document_start scripts
+       after the root element is created, so the start check passes at
+       once. sm-dev injects with CDP's `addScriptToEvaluateOnNewDocument`
+       (CDP: the Chrome DevTools Protocol), which runs before the parser
+       has made <html>, so both gates may have to wait.
+       - The observer is on `document` itself, the only node that
+         exists that early. `subtree` lets the body wait see <body>
+         land under an <html> that didn't exist when we started.
+       - Mutation records are delivered at the microtask checkpoint the
+         parser runs before each page <script>, so the start gate opens
+         before any page script. Unless `canSkipDecision` lets it run
+         straight away, the body also waits for the async
+         `sm:check-pending` decision (`flushPending`), so early page
+         scripts can run first. */
+    if (declared === "document-start") {
+      waitForNode(function () { return document.documentElement; }, false, true, cb);
+      return;
+    }
     if (declared === "document-body") {
-      if (document.body) { cb(); return; }
-      var obs;
-      try {
-        obs = new MutationObserver(function () {
-          if (document.body) {
-            try { obs.disconnect(); } catch (_eo) {}
-            cb();
-          }
-        });
-        obs.observe(document.documentElement, { childList: true });
-      } catch (_e) { cb(); }
+      waitForNode(function () { return document.body; }, true, false, cb);
       return;
     }
     if (declared === "document-end") {
@@ -405,9 +437,67 @@
       document.addEventListener("DOMContentLoaded", function () { cb(); }, { once: true });
       return;
     }
-    /* document-idle (default). */
+    /* document-idle (default). `load` alone isn't enough: a page that
+       calls `window.stop()` never fires it, though readyState still
+       reaches "complete". On a normal page `load` follows the
+       "complete" readystatechange in the same task, so that change only
+       arms a zero-delay fallback: the body still runs after `load`
+       where there is one, and once either way.
+       A subresource that never finishes (a stalled third-party script)
+       holds `load` back forever, so the body also runs IDLE_AFTER_DCL_MS
+       after DOMContentLoaded, as Chrome's own document_idle does. */
     if (document.readyState === "complete") { cb(); return; }
-    window.addEventListener("load", function () { cb(); }, { once: true });
+    var idleDone = false;
+    var idleTimer = null;
+    var runIdle = function () {
+      if (idleDone) return;
+      idleDone = true;
+      if (idleTimer !== null) clearTimeout(idleTimer);
+      window.removeEventListener("load", runIdle);
+      document.removeEventListener("readystatechange", onReadyState);
+      document.removeEventListener("DOMContentLoaded", onContentLoaded);
+      cb();
+    };
+    var onReadyState = function () {
+      if (document.readyState === "complete") setTimeout(runIdle, 0);
+    };
+    var onContentLoaded = function () {
+      if (idleTimer === null) idleTimer = setTimeout(runIdle, IDLE_AFTER_DCL_MS);
+    };
+    window.addEventListener("load", runIdle);
+    document.addEventListener("readystatechange", onReadyState);
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", onContentLoaded);
+    } else {
+      onContentLoaded();
+    }
+  }
+
+  /* Calls `cb` (at most once) when `get()` returns a node. The wait
+     ends at DOMContentLoaded: a document that has no such node by then
+     (XML, SVG) never will, and a `subtree` observer left on it would
+     wake on every later DOM change. At that point `runAnyway` decides:
+     - document-start runs anyway, as it did before it waited at all.
+     - document-body quietly gives up, matching Tampermonkey's "runs if
+       the body element exists". */
+  function waitForNode(get, subtree, runAnyway, cb) {
+    if (get()) { cb(); return; }
+    var done = false;
+    var obs = null;
+    var finish = function (run) {
+      if (done) return;
+      done = true;
+      try { if (obs) obs.disconnect(); } catch (_eo) {}
+      try { document.removeEventListener("DOMContentLoaded", onEnd, true); } catch (_er) {}
+      if (run) cb();
+    };
+    var onEnd = function () { finish(!!get() || runAnyway); };
+    if (document.readyState !== "loading") { onEnd(); return; }
+    try {
+      obs = new MutationObserver(function () { if (get()) finish(true); });
+      obs.observe(document, { childList: true, subtree: subtree });
+      document.addEventListener("DOMContentLoaded", onEnd, true);
+    } catch (_e) { finish(true); }
   }
 
   /* ---------- matcher (regex-aware URL recheck) ---------- */
@@ -416,16 +506,52 @@
      script needing the recheck doesn't need a separate matcher entry;
      the prelude is on every script's js[] and the algorithm is tiny.
      The matcher block is only consulted when cfg.matching is present:
-     scripts with a regex @include/@exclude, and scripts with no
-     @match at all (registered <all_urls>). A script whose @match
-     patterns carry the whole registration skips it. */
+     scripts with a regex or `.tld` @include/@exclude/@match, and
+     scripts with any glob @include (registered with NO_PAGE_MATCH; see
+     injector.ts). A script whose @match patterns carry the whole
+     registration skips it. */
   function escRx(s) { return s.replace(/[.+?^${}()|[\]\\]/g, "\\$&"); }
   function globRx(g) { return new RegExp("^" + escRx(g).replace(/\*/g, ".*") + "$"); }
   function includeMatch(pat, url) {
     if (pat.length >= 2 && pat.charAt(0) === "/" && pat.charAt(pat.length - 1) === "/") {
-      try { return new RegExp(pat.slice(1, -1)).test(url); } catch (_e) { return false; }
+      /* Ignoring case, as url-match.ts does. */
+      try { return new RegExp(pat.slice(1, -1), "i").test(url); } catch (_e) { return false; }
     }
-    try { return globRx(pat).test(url); } catch (_e) { return false; }
+    try { return includeGlobRx(pat).test(url); } catch (_e) { return false; }
+  }
+  /* `.tld` hosts ("any public suffix"). Read LOOSELY here, as any one
+     or more labels: the exact reading needs the public suffix list,
+     which stays out of the page. The service worker applies it in its
+     sm:check-pending reply and answers `skip` (reason "no-match") where
+     this was too generous. So this side must only ever be wider:
+       - a `.tld` @match / @include matches any labels;
+       - a `.tld` @exclude is ignored here, since a loose one would
+         exclude pages the script should run on.
+     tldIndex() mirrors src/url-match.ts; keep the two in lockstep. */
+  var TLD_RX = "(?:\\.[a-z0-9-]+)+";
+  function tldIndex(pat, globStar) {
+    var sep = pat.indexOf("://");
+    var start = sep < 0 ? 0 : sep + 3;
+    var slash = pat.indexOf("/", start);
+    var host = pat.slice(start, slash < 0 ? pat.length : slash).replace(/:(\d+|\*)$/, "");
+    if (globStar && host.charAt(host.length - 1) === "*") host = host.slice(0, -1);
+    if (host.slice(-4).toLowerCase() !== ".tld") return -1;
+    var base = host.slice(0, -4);
+    if (base === "" || base === "*") return -1;
+    return start + host.length - 4;
+  }
+  function includeGlobRx(g) {
+    var at = tldIndex(g, true);
+    if (at < 0) return globRx(g);
+    var a = escRx(g.slice(0, at)).replace(/\*/g, ".*");
+    var b = escRx(g.slice(at + 4)).replace(/\*/g, ".*");
+    return new RegExp("^" + a + TLD_RX + b + "$");
+  }
+  function hostMatchesTld(patternHost, hostname) {
+    var base = patternHost.slice(0, -4).toLowerCase();
+    var anySub = base.indexOf("*.") === 0;
+    var name = (anySub ? base.slice(2) : base).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp("^" + (anySub ? "(?:.+\\.)?" : "") + name + TLD_RX + "$").test(hostname.toLowerCase());
   }
   /* Lenient readings of the two shapes Chrome's parser refuses — an
      omitted scheme and a scheme glob. Mirrors canonicalMatchPatterns()
@@ -492,6 +618,8 @@
     var patternPort = hasPort ? host.slice(colon + 1) : "";
     if (patternHost === "*") {
       /* any host */
+    } else if (tldIndex(patternHost) >= 0) {
+      if (!hostMatchesTld(patternHost, u.hostname)) return false;
     } else if (patternHost.indexOf("*.") === 0) {
       var suffix = patternHost.slice(2).toLowerCase();
       var h = u.hostname.toLowerCase();
@@ -500,11 +628,27 @@
       if (u.hostname !== "") return false;
     } else if (u.hostname.toLowerCase() !== patternHost.toLowerCase()) return false;
     if (patternPort !== "" && u.port !== patternPort) return false;
-    var tail = u.pathname + u.search + u.hash;
+    /* Not the fragment, as in Chrome's matcher and url-match.ts. */
+    var tail = u.pathname + u.search;
     try { return globRx(path).test(tail); } catch (_e) { return false; }
   }
+  function hasTldRule(m) {
+    var all = m.matches.concat(m.includes, m.excludes);
+    for (var i = 0; i < all.length; i++) {
+      if (!isRegexPat(all[i]) && all[i] !== "<all_urls>" && tldIndex(all[i], true) >= 0) return true;
+    }
+    return false;
+  }
+  function isRegexPat(pat) {
+    return pat.length >= 2 && pat.charAt(0) === "/" && pat.charAt(pat.length - 1) === "/";
+  }
   function matchScript(url, m) {
-    for (var i = 0; i < m.excludes.length; i++) if (includeMatch(m.excludes[i], url)) return false;
+    for (var i = 0; i < m.excludes.length; i++) {
+      var ex = m.excludes[i];
+      /* See the `.tld` note above: the service worker decides these. */
+      if (!isRegexPat(ex) && tldIndex(ex, true) >= 0) continue;
+      if (includeMatch(ex, url)) return false;
+    }
     for (var j = 0; j < m.matches.length; j++) if (matchPattern(m.matches[j], url)) return true;
     for (var k = 0; k < m.includes.length; k++) if (includeMatch(m.includes[k], url)) return true;
     return false;
@@ -542,9 +686,9 @@
       entry.matched = matchScript(location.href, cfg.matching);
       if (!entry.matched) return entry;
     }
-    /* Async listeners up early so a synchronous throw inside a require
-       entry (which runs BEFORE the main body's deferred callback) is
-       still attributed correctly through the window error listener. */
+    /* Async listeners up early, before any of the script's code (its
+       @requires and body, which run together in the deferred `__smRun`
+       callback) can schedule work whose errors they attribute. */
     installAsyncListeners(entry);
     /* Past the matcher, so only a document we actually run on reports
        its focus. Not per-script — the flag inside is module-scoped. */
@@ -568,19 +712,34 @@
          answers is bounded by `awaitDecision`'s own 2s safety timeout,
          not by the lifecycle listener never getting installed.
 
-       `document-start` is unchanged either way: `waitForRunAt` calls
-       back synchronously for it, so the decision is the only gate left
-       and the body still runs as early as it safely can. */
+       For `document-start`, once <html> exists (always, in the
+       extension) `waitForRunAt` calls back synchronously, so the
+       decision is the only gate left. `canSkipDecision` settles it
+       here, synchronously, where the answer can only be `run`. */
     waitForRunAt(cfg.runAt, function () {
       entry.runAtFired = true;
       flushPending(entry);
     });
+    if (canSkipDecision(cfg)) {
+      /* Nothing the SW could answer here is anything but `run`, so
+         don't wait for it: see canSkipDecision. */
+      entry.decision = { action: "run" };
+      return entry;
+    }
     awaitDecision(entry, function (decision) {
       entry.decision = decision || { action: "run" };
       if (entry.decision.action === "skip") {
         /* The @run-at gate may already have fired; `flushPending`
            re-checks `skip` so a queued body can't slip through, and
            dropping `pendingRun` here releases the closure either way. */
+        if (entry.decision.reason === "no-match") {
+          /* The exact `.tld` check said this page isn't the script's:
+             the same as our own matcher saying no, so nothing is
+             reported. */
+          entry.matched = false;
+          entry.pendingRun = null;
+          return;
+        }
         send({
           type: "sm:abandoned",
           id: cfg.id,
@@ -595,6 +754,37 @@
       flushPending(entry);
     });
     return entry;
+  }
+
+  /* Whether a `document-start` body can run without the check-pending
+     round trip. The round trip is async, so an inline page <script>
+     early in <head> can run while the wrapper waits, which defeats a
+     script that must patch the page before its own code runs.
+
+     Skipping it is safe only where the SW's answer is known to be
+     `run`. Every other answer needs something this skips:
+     - `run-new` (reload fast path) and the "Reload page with no
+       userscripts" `skip` happen only on a reload. That `skip` covers
+       the tab's subframes too, and a subframe can't see the top
+       page's navigation type, so subframes always ask.
+     - an sm-dev tab claim, or a scratch script, can `skip` on any
+       navigation. The SW sets `mustAsk` in the config of every script
+       while a claim is live, and always for scratch scripts.
+     - the reply carries a GM storage snapshot (`needsGmValues`).
+     - a `.tld` rule needs the SW's exact match check.
+     Other `@run-at` values wait for a later lifecycle event anyway, so
+     the round trip costs them nothing. */
+  function canSkipDecision(cfg) {
+    if (cfg.runAt !== "document-start") return false;
+    if (cfg.mustAsk || cfg.needsGmValues) return false;
+    if (cfg.matching && hasTldRule(cfg.matching)) return false;
+    try {
+      if (window.top !== window) return false;
+      var nav = performance.getEntriesByType("navigation")[0];
+      return !!nav && nav.type !== "reload";
+    } catch (_e) {
+      return false;
+    }
   }
 
   function flushPending(entry) {
@@ -615,7 +805,7 @@
          to the baked-in body on a CSP refusal. The eval runs at
          function-scope of runMain, NOT inside `fn`'s closure — so the
          GM bindings the injector spliced into `fn` are NOT visible
-         here. To compensate, `buildSwapEvalBody` (in src/injector.ts)
+         here. To compensate, `buildSwapEvalBody` (in src/extension/injector.ts)
          prepends the script's GM bindings to `decision.body`, and the
          single (0,eval) call runs the bindings + body in one
          environment so the body's GM_* references resolve. See
@@ -650,7 +840,7 @@
            (previous) body instead. */
         swapReady = false;
         try {
-          console.info("[SourceMonkey] " + cfg.name + ": The updated copy needs the GM runtime, which this page does not have yet, so the previous version ran — reload the page to pick it up");
+          console.info("[SourceMonkey] " + cfg.name + ": The updated copy needs the GM runtime, which this page does not have yet, so the previous version ran. Reload the page to pick it up.");
         } catch (_smNR) {}
       }
       if (swapReady && decision.seedValues) {
@@ -664,7 +854,7 @@
         }
         if (!swapReady) {
           try {
-            console.info("[SourceMonkey] " + cfg.name + ": Could not load this script's stored GM values for the updated copy, so the previous version ran — reload the page to retry");
+            console.info("[SourceMonkey] " + cfg.name + ": Could not load this script's stored GM values for the updated copy, so the previous version ran. Reload the page to retry.");
           } catch (_smSI2) {}
         }
       }
@@ -681,7 +871,7 @@
       }
       if (evalRefused || !swapReady) {
         if (evalRefused) {
-          try { console.info("[SourceMonkey] swap blocked by page CSP for", cfg.name, "— running prior version"); } catch (_e0) {}
+          try { console.info("[SourceMonkey] swap blocked by page CSP for " + cfg.name + ", running prior version"); } catch (_e0) {}
         }
         /* Fall through to the default baked-body path. `entry.decision`
            deliberately keeps the run-new object: the registered body's

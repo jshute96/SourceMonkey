@@ -103,8 +103,8 @@ export function markupResponseMessage(
   const evidence = opts.contentType ? ` (Content-Type "${opts.contentType}")` : '';
   const expected = opts.expected ?? 'JavaScript';
   return opts.localUrl
-    ? `The local file ${opts.localUrl} is an HTML page, not ${expected}${evidence} — a folder with that name would look like this`
-    : `The server returned an HTML page, not ${expected}${evidence} — the link may be dead or behind a login`;
+    ? `The local file ${opts.localUrl} is an HTML page, not ${expected}${evidence}; a folder with that name would look like this`
+    : `The server returned an HTML page, not ${expected}${evidence}; the link may be dead or behind a login`;
 }
 
 // Thrown by the script-text fetchers so a caller can tell this apart

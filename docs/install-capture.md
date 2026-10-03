@@ -7,7 +7,7 @@ own, so the extension intercepts the navigation.
 
 Implementation:
 
-- [`src/install-capture.ts`](../src/install-capture.ts) (service
+- [`src/extension/install-capture.ts`](../src/extension/install-capture.ts) (service
   worker) hands the URL to the userscript viewer's **preview mode** —
   the prompt is not a separate page.
 - See [script-viewer.md → Preview mode](script-viewer.md#preview-mode)

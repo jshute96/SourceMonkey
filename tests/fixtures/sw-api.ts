@@ -27,6 +27,24 @@ export interface SmApi {
     location: string,
     target: { collectionId: string } | { schemeDefault: true },
   ): Promise<{ id: string; path: string } | null>;
+  // An sm-dev run's scripts, in its test collection: text in,
+  // registered before the promise settles. See docs/sm-dev-design.md.
+  writeRunScript(args: { run: string; text: string; name?: string; files?: Record<string, { url: string; localUrl?: string; bytesBase64: string; contentType: string }> }): Promise<{
+    scriptId: string;
+    collectionId: string;
+    status: 'ok' | 'invalid';
+    errorMessage?: string;
+    errorLocation?: { file: string; line?: number; column?: number };
+    replaced: boolean;
+  }>;
+  // sm-dev's tab claims (src/extension/sm-dev-link.ts).
+  claimTab(tabId: number, runId: string, ttlMs: number): Promise<void>;
+  isSmDevMarked(tabId: number): Promise<boolean>;
+  renewRun(runId: string, ttlMs: number, tabs?: { tabId: number; scriptsOff?: boolean }[]): Promise<number>;
+  releaseRun(runId: string): Promise<void>;
+  sweepRunCollections(now: number): Promise<void>;
+  setTabScriptsOff(tabId: number, off: boolean): Promise<void>;
+  getStackLayout(scriptId: string): Promise<import('../../src/composed-source.js').StackLayout | null>;
   // Move an installed script from one scripts collection to another.
   // Resolves to the moved row, or null when the destination already
   // has it. Not unwrapped — it returns a script row, not a collection.
@@ -46,7 +64,7 @@ export interface SmApi {
   removeCollection(id: string): Promise<void>;
   getCollections(): Promise<{
     id: string; path: string; enabled: boolean; scriptIds: string[];
-    manifestSize?: number; manifestMtime?: number;
+    displayName?: string; manifestSize?: number; manifestMtime?: number;
   }[]>;
   getCollectionWithScripts(id: string): Promise<{
     collection: { id: string; path: string; enabled: boolean; scriptIds: string[]; scanError?: string };
@@ -135,9 +153,13 @@ export interface SmApi {
     matches: { id: string; name: string }[];
     cache: { entries: unknown[]; disabledCollections: string[] };
   }>;
-  // Dedup-aware log label (`foo.user.js`, `foo.user.js#2`). Which
-  // member of a dupe group gets which `#N` is decided by UUID sort, so
-  // a test that needs the label has to ask rather than predict it.
+  // The stored script numbers, by script id, after numbering new scripts.
+  scriptNumbers(): Promise<Record<string, number>>;
+  // The stored collection numbers, by collection id, after numbering new collections.
+  collectionNumbers(): Promise<Record<string, number>>;
+  // The script's log label (`foo.user.js#E4`). Its number is the
+  // service worker's to assign, so a test that needs the label has to
+  // ask rather than predict it.
   getScriptLogLabel(scriptId: string): Promise<string>;
   // GM_registerMenuCommand test surface.
   getActionContextMenu(tabId: number): Promise<{
@@ -178,7 +200,7 @@ export interface SmApi {
   // fetched successfully since the last reset — cache hits excluded,
   // and listings done in an extension page not counted at all. A
   // navigation's checks share one listing across the page's scripts
-  // (see `RefreshBatch` in src/script-store.ts), and this is what makes
+  // (see `RefreshBatch` in src/extension/script-store.ts), and this is what makes
   // that visible.
   //
   // Counts collection scans too, so reset around the window under test
@@ -196,6 +218,7 @@ export interface ActionMenuPlanLike {
   top: ActionMenuScriptLike[];
   more: ActionMenuScriptLike[];
   reloadWithoutScripts: boolean;
+  smDevControl: boolean;
 }
 
 export interface ActionMenuScriptLike {
@@ -204,7 +227,7 @@ export interface ActionMenuScriptLike {
   commands: { commandId: string; title: string }[];
 }
 
-// Mirrors the fields of `StoredScript` (src/script-store.ts) that specs
+// Mirrors the fields of `StoredScript` (src/extension/script-store.ts) that specs
 // read back. Deliberately a subset — it only has to be accurate about
 // what it declares, and it crosses `evaluate()` as plain JSON.
 export interface StoredScriptLike {

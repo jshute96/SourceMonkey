@@ -1,4 +1,4 @@
-// The create / edit collection dialog (src/collection-dialog.ts) as
+// The create / edit collection dialog (src/extension/collection-dialog.ts) as
 // driven from the collections page: how the Add field routes into it,
 // what it makes of a location (the Type row is the dialog's own
 // verdict, never a choice), what it refuses and why, and what Edit can

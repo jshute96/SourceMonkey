@@ -1,0 +1,873 @@
+<!doctype html>
+<!--
+  Viewer for corpus.json: one sortable, filterable row per script, with its
+  validation verdict, test status, tags and notes. Static; it reads corpus.json
+  when it loads, so it never needs regenerating.
+
+  - Served (node tests/greasyfork-examples/serve-results.mjs), it fetches
+    corpus.json from beside itself.
+  - Opened as a file:// page, Chrome won't let it fetch, so it asks you to pick
+    corpus.json once and remembers the choice (see pickCorpus below).
+  - Every link opens in a new tab, except the links between the table and
+    the summary (?summary), which switch views in place (see route below).
+  - Each script's "Code" button opens this page as a viewer (?view=<id>), which
+    reads the downloaded copy (corpus.json's `file`) and shows it as text. A
+    link straight to a .user.js file would be taken by a userscript manager as
+    an install; a fetch isn't. Served (by any server), it fetches the file;
+    from disk, it asks once for access to files/ (see viewFile below).
+  - The "Copy filename" button copies the downloaded copy's full path, for an editor.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GreasyFork corpus results</title>
+<base target="_blank">
+<style>
+:root { color-scheme: light dark; --fg:#1a1a1a; --bg:#fff; --muted:#5c5c5c; --line:#e0e0e0; --head:#f5f5f5; --accent:#0b5fff;
+        --ok:#1a7f37; --bad:#c62828; --na:#8a6d00; --warn-bg:#fff6d6; }
+@media (prefers-color-scheme: dark) {
+  :root { --fg:#e8e8e8; --bg:#16181c; --muted:#9aa0a6; --line:#2c3038; --head:#1e2128; --accent:#7aa2ff;
+          --ok:#56c26a; --bad:#ff7b72; --na:#e3b341; --warn-bg:#3a3216; }
+}
+* { box-sizing: border-box; }
+body { margin:0; padding:1.5rem 1rem 4rem; background:var(--bg); color:var(--fg);
+       font:14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+h1 { font-size:1.4rem; margin:0 0 .25rem; }
+.sub { color:var(--muted); margin:0 0 1rem; }
+.controls { display:flex; flex-wrap:wrap; gap:.5rem 1rem; align-items:center; margin-bottom:.75rem; position:sticky; top:0;
+            background:var(--bg); padding:.5rem 0; z-index:2; }
+.controls input[type=search] { min-width:16rem; }
+input, select, button { font:inherit; color:inherit; background:var(--bg); border:1px solid var(--line); border-radius:4px; padding:.25rem .4rem; }
+button { cursor:pointer; background:var(--head); }
+button:hover { border-color:var(--muted); }
+button:active, a.button:active { filter:brightness(.9); transform:translateY(1px); }
+button:disabled { opacity:.6; cursor:default; transform:none; }
+#count, #reload-status { color:var(--muted); }
+#loader { border:1px solid var(--line); border-radius:6px; padding:1rem; max-width:44rem; }
+#loader p { margin:0 0 .75rem; }
+#loader button { margin-right:.5rem; }
+.error { color:var(--bad); }
+table { border-collapse:collapse; width:100%; }
+th, td { border-bottom:1px solid var(--line); padding:.35rem .5rem; text-align:left; vertical-align:top; }
+th { background:var(--head); cursor:pointer; user-select:none; white-space:nowrap; position:sticky; top:var(--controls-height, 2.9rem); z-index:1; }
+th[data-dir=asc]::after { content:" \25B2"; font-size:.7em; }
+th[data-dir=desc]::after { content:" \25BC"; font-size:.7em; }
+td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+td.nowrap { white-space:nowrap; }
+a { color:var(--accent); }
+.name { min-width:10rem; max-width:18rem; }
+a.button { display:inline-block; color:inherit; text-decoration:none; background:var(--head); border:1px solid var(--line);
+           border-radius:4px; padding:.25rem .4rem; }
+a.button:hover { border-color:var(--muted); }
+/* Summary view: one block per filter, each state with its count. */
+.summary-grid { display:flex; flex-wrap:wrap; gap:1.5rem 3rem; align-items:flex-start; margin-top:1rem; }
+.summary-grid h2 { font-size:1.05rem; margin:0 0 .4rem; }
+.summary-grid table { width:auto; }
+.summary-grid td { padding:.2rem .6rem; }
+.summary-grid td.num { min-width:3.5rem; }
+.code-links { display:flex; gap:.3rem; margin-top:.15rem; }
+h1 { overflow-wrap:anywhere; }
+#viewer .sub { display:flex; gap:.5rem; align-items:baseline; }
+#viewer .sub button { flex:none; }
+/* Break anywhere, not at the path's hyphens, so it fills each line the same way. */
+#viewer-path { min-width:0; word-break:break-all; }
+#source { margin:0; padding:.75rem; background:var(--head); border:1px solid var(--line); border-radius:6px;
+          font:12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space:pre-wrap; overflow-wrap:anywhere; tab-size:4; }
+.version { max-width:6rem; overflow-wrap:anywhere; }
+.sites { min-width:9rem; max-width:13rem; color:var(--muted); font-size:.9em; overflow-wrap:break-word; }
+.tags { max-width:12rem; }
+.tags span { display:inline-block; background:var(--head); border:1px solid var(--line); border-radius:3px; padding:0 .3rem;
+             margin:0 .2rem .2rem 0; font-size:.85em; white-space:nowrap; }
+.s-ok, .s-pass { color:var(--ok); font-weight:600; }
+.s-invalid, .s-fail, .s-toolerror { color:var(--bad); font-weight:600; }
+.s-na { color:var(--na); font-weight:600; }
+.detail, .stamp { color:var(--muted); font-size:.85em; }
+.stale { color:var(--na); font-size:.85em; }
+/* Notes show in a full-width row under the script's row; the Notes column only toggles it. */
+/* .toggle is the Notes column's Show/Hide; .small shares its look. */
+.toggle, .small { padding:0 .4rem; font-size:.85em; white-space:nowrap; }
+tr.has-notes > td { border-bottom:none; }
+tr.notes-row > td { padding:.1rem .5rem .6rem 2.5rem; }
+.notes-body { max-width:60rem; }
+/* Short: the first entry only, cut at three lines with an ellipsis; a Show full button follows when anything is cut. */
+.notes-body.short .note-entry:not(:first-child) { display:none; }
+.notes-body.short .note-entry:first-child { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3;
+                                            overflow:hidden; margin-bottom:0; }
+.more { margin-top:.3rem; padding:0 .4rem; font-size:.85em; }
+.note-entry { margin-bottom:.6rem; overflow-wrap:anywhere; }
+.note-entry p { margin:.2rem 0; }
+.note-entry ul { margin:.2rem 0 .2rem 1.2rem; padding:0; }
+.note-entry.warn { background:var(--warn-bg); border-radius:3px; padding:.1rem .35rem; }
+code { font-size:.9em; background:var(--head); padding:0 .25rem; border-radius:3px; }
+[hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<h1>GreasyFork corpus results</h1>
+<p class="sub" id="summary">Findings from <code>corpus.json</code>, recorded with <code>record-results.mjs</code>.</p>
+
+<div id="loader" hidden>
+  <p>This page was opened as a local file, so it can't read <code>corpus.json</code> by itself.
+     Either serve it (<code>node tests/greasyfork-examples/serve-results.mjs</code>), or choose the file:</p>
+  <button id="reopen" hidden></button>
+  <button id="pick">Choose corpus.json…</button>
+  <input id="file-input" type="file" accept=".json,application/json" hidden>
+  <p class="error" id="load-error" hidden></p>
+</div>
+
+<div id="viewer" hidden>
+  <p class="sub"><button class="copy-path" id="viewer-copy" title="Copy full path">Copy filename</button><code id="viewer-path"></code></p>
+  <p id="viewer-access" hidden>This page was opened as a local file, so it needs permission to read the downloaded scripts.
+     <button id="viewer-allow">Allow reading files/…</button></p>
+  <p class="error" id="viewer-error" hidden></p>
+  <pre id="source" hidden></pre>
+</div>
+
+<div id="summary-view" hidden>
+  <div class="controls"><a class="button" href="?" target="_self" data-nav title="All scripts, unfiltered">Full results</a></div>
+  <div class="summary-grid" id="summary-grid"></div>
+</div>
+
+<div id="view" hidden>
+<div class="controls">
+  <input id="q" type="search" autocomplete="off" placeholder="Search name, id, site, tag, notes">
+  <label>Validation <select id="valid" data-kind="valid" autocomplete="off"><option value="">all</option><option>ok</option><option value="(messages)">warnings or errors</option><option value="invalid">errors (invalid)</option><option>tool error</option></select></label>
+  <label>Testing <select id="test" data-kind="test" autocomplete="off"></select></label>
+  <label>Tag <select id="tag" data-kind="tag" autocomplete="off"></select></label>
+  <label title="How every row's notes show. Full lets the browser's find (Ctrl+F) see all of them.">Notes
+    <select id="notes-mode" autocomplete="off"><option value="hidden">hidden</option><option value="short" selected>short</option><option value="full">full</option></select></label>
+  <button id="reload" title="Read corpus.json again">Reload</button>
+  <button id="reset" title="Clear the filters and sorting, and show notes short">Reset</button>
+  <a class="button" href="?summary" target="_self" data-nav title="How many scripts are in each state">Summary</a>
+  <span id="reload-status"></span>
+  <span id="count"></span>
+</div>
+<table>
+<thead><tr>
+  <th data-key="rank">#</th><th data-key="id">ID</th><th data-key="name">Name</th>
+  <th data-key="installs" data-desc="1">Installs</th><th data-key="updated" data-desc="1">Updated</th>
+  <th data-key="version">Version</th><th data-key="sites">Sites</th><th data-key="valid">Validation</th>
+  <th data-key="tags">Tags</th><th data-key="test">Testing</th><th data-key="tested" data-desc="1">Tested</th>
+  <th data-key="noteText">Notes</th>
+</tr></thead>
+<tbody id="rows"></tbody>
+</table>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const cls = (s) => 's-' + s.replace(/[^a-z]/g, '');
+
+// ---------- Tooltips ----------
+
+// What each status, detail and tag means. Reasons and blames mirror REASONS and
+// BLAMES in record-results.mjs; hand-added tags need an entry here to get one.
+const HELP = {
+  valid: {
+    'ok': 'Valid: SourceMonkey would install it. It may still have validation warnings.',
+    '(messages)': 'Validation reported something: an error, or warnings on a valid script',
+    'invalid': 'Invalid: SourceMonkey would refuse to install it. The Notes say why.',
+    'tool error': 'The validator itself failed on this script, so there is no verdict',
+  },
+  test: {
+    'tested': 'Any recorded test result',
+    'untested': 'Not tried on its target site yet',
+    'pass': 'Tried on its target site, and it did what it says',
+    'fail': 'Tried on its target site, and it did not work. The detail says whose fault.',
+    'n/a': 'Could not be tried meaningfully. The detail says why.',
+  },
+  detail: {
+    'requires-login': 'Needs an account on the target site',
+    'paid': 'Needs a paid subscription or purchase',
+    'geo-blocked': 'The site refuses our region',
+    'site-gone': 'The target site no longer exists or answers',
+    'needs-interaction': 'Only does something after a manual flow we can\'t script',
+    'not-web': 'Targets local files, browser pages, or no real site',
+    'other-browser': 'Relies on another browser\'s features (Firefox-only APIs, old Opera)',
+    'other': 'Another reason. The Notes explain.',
+    'sourcemonkey': 'SourceMonkey\'s fault: a missing feature or a bug',
+    'script': 'The script\'s fault: broken, or out of date against the current site',
+    'unknown': 'Not yet known whose fault it is',
+  },
+  tag: {
+    '(any)': 'Scripts with any tag',
+    'malformed-grant': 'A @grant line that isn\'t an API name (some scripts use them as comments). Found by validation.',
+    'ignored-match': 'A @match Chrome would refuse, which SourceMonkey drops. Found by validation.',
+    'trusted-types': 'Fails where the site enforces Trusted Types, e.g. by assigning innerHTML in the page world',
+    'needs-page-globals': 'Reads the page\'s own globals (like its jQuery) without unsafeWindow, which works in Tampermonkey but not in SourceMonkey\'s isolated world',
+    'connect-undeclared': 'Uses GM_xmlhttpRequest with no @connect, so SourceMonkey blocks every request. Tampermonkey asks the user and Violentmonkey allows them.',
+    'needs-onreadystatechange': 'Waits for GM_xmlhttpRequest\'s onreadystatechange, which SourceMonkey never fires',
+    'mutation-events': 'Relies on mutation events like DOMNodeInserted, which Chrome removed in 2024',
+    'run-at-context-menu': 'Uses @run-at context-menu (run from the right-click menu), which SourceMonkey doesn\'t support, so it refuses the script',
+    'xhr-response-readystate': 'Checks readyState on GM_xmlhttpRequest\'s response, which SourceMonkey leaves unset',
+    'needs-xhr-onprogress': 'Relies on GM_xmlhttpRequest\'s onprogress, which SourceMonkey never fires',
+    'tld-include': 'Uses Tampermonkey\'s .tld host form in @include (any top-level domain), which SourceMonkey doesn\'t support',
+    'inline-script-csp': 'Inserts an inline <script> element, which SourceMonkey\'s USER_SCRIPT world CSP blocks in the extension',
+    'connect-subdomain': 'Declares a bare @connect domain and needs its subdomains, which Tampermonkey allows but SourceMonkey doesn\'t',
+    'shadows-window': 'Declares a top-level const window, which breaks SourceMonkey\'s own unsafeWindow binding in the same scope',
+    'gm-on-window': 'Reads GM_* functions as window properties (window.GM_xmlhttpRequest), which Violentmonkey provides and SourceMonkey doesn\'t',
+    'idle-after-load': 'Sets itself up in a window load handler, which never runs when the script starts after load, as SourceMonkey\'s document-idle does',
+    'contextmenu-on-mousedown': 'Expects the contextmenu event after mouseup, as on Windows. On Linux and macOS Chrome it comes on mousedown.',
+    'gm-frozen': 'Adds properties to the GM object (like a GM_config polyfill setting GM.getValue) or wraps it in a Proxy whose get returns new values, which breaks on SourceMonkey\'s frozen GM but not Violentmonkey\'s writable one',
+    'gm-reassign': 'Assigns to a granted GM_* name (GM_xmlhttpRequest = GM.xmlHttpRequest), which throws because SourceMonkey declares those names const',
+    'needs-cloneinto': 'Calls Firefox\'s cloneInto or exportFunction unchecked, which Violentmonkey stands in for on Chrome and SourceMonkey doesn\'t',
+    'needs-iframes': 'Must run inside an iframe (like the reCAPTCHA frames), and SourceMonkey only runs scripts in the top frame',
+    'service-dead': 'Depends on a third-party download or proxy service that no longer responds',
+    'xhr-url-object': 'Passes a URL object as GM_xmlhttpRequest\'s url, which Violentmonkey converts to a string and SourceMonkey rejects',
+    'xhr-response-cap': 'Downloads files over 50 MB with GM_xmlhttpRequest, past SourceMonkey\'s response size cap',
+    'needs-custom-elements': 'Uses customElements, which is null in Chrome\'s isolated world and works only in the page',
+    'needs-gm-webrequest': 'Uses Tampermonkey\'s GM_webRequest (@webRequest), which SourceMonkey doesn\'t support',
+  },
+};
+
+/** The tooltip for a value, or '' when there is none. */
+function helpFor(kind, value) {
+  if (kind === 'test' && value.includes(':')) {
+    const [status, detail] = value.split(':');
+    const why = HELP.detail[detail];
+    return (status === 'fail' ? 'Failed' : 'Not testable') + (why ? '. ' + why + '.' : '');
+  }
+  if (kind === 'tag') {
+    let m;
+    if ((m = /^unsupported-grant:(.+)$/.exec(value))) return 'Grants ' + m[1] + ', which SourceMonkey doesn\'t provide, so it is undefined at runtime. Found by validation.';
+    if ((m = /^ignored-header:(.+)$/.exec(value))) return 'Uses ' + m[1] + ', which another manager acts on and SourceMonkey ignores. Found by validation.';
+  }
+  return HELP[kind]?.[value] ?? '';
+}
+const titleAttr = (kind, value) => { const t = helpFor(kind, value); return t ? ' title="' + esc(t) + '"' : ''; };
+
+// ---------- Building rows from corpus.json ----------
+
+/**
+ * Just enough markdown for notes: paragraphs, `- ` bullets, `code`, **bold**,
+ * *italic*, [links](url) and bare URLs. Everything is escaped first, so a note
+ * can't inject markup.
+ */
+function markdown(text) {
+  const inline = (line) => esc(line)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<em>$2</em>')
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2">$1</a>')
+    .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2">$2</a>');
+  const out = [];
+  let list = null;
+  let para = [];
+  const flushPara = () => { if (para.length) out.push('<p>' + para.map(inline).join(' ') + '</p>'); para = []; };
+  const flushList = () => { if (list) out.push('<ul>' + list.map((i) => '<li>' + inline(i) + '</li>').join('') + '</ul>'); list = null; };
+  for (const line of text.split('\n')) {
+    const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
+    if (bullet) { flushPara(); (list ??= []).push(bullet[1]); }
+    else if (line.trim() === '') { flushPara(); flushList(); }
+    else if (list && /^\s+/.test(line)) list[list.length - 1] += ' ' + line.trim();
+    else { flushList(); para.push(line.trim()); }
+  }
+  flushPara();
+  flushList();
+  return out.join('');
+}
+
+/**
+ * The notes, in display order: validation first (it describes the current
+ * copy), then notes newest first. Each is {stamp, label, text, markdown, warn}.
+ */
+function noteEntries(record) {
+  const valid = record.valid;
+  const entries = [];
+  if (valid?.error) entries.push({ stamp: valid, label: 'Invalid', text: valid.error });
+  for (const w of valid?.warnings ?? []) entries.push({ stamp: valid, label: 'Validation warning', text: w, warn: true });
+  for (const note of [...(record.notes ?? [])].reverse()) entries.push({ stamp: note, text: note.text, markdown: true });
+  return entries;
+}
+
+/** The full notes, shown in the row that opens below a script's row. */
+function notesHtml(entries) {
+  const stamp = (e) => '<span class="stamp">' + esc(e.date) + (e.version ? ' · v' + esc(e.version) : '') + '</span>';
+  return entries.map((e) => {
+    const head = stamp(e.stamp) + (e.label ? ' <b>' + e.label + ':</b> ' : ' ');
+    let body = e.markdown ? markdown(e.text) : esc(e.text);
+    // Start a note's first paragraph on the stamp's line, so the stamp doesn't
+    // use up one of the lines short mode shows.
+    body = body.startsWith('<p>') ? '<p>' + head + body.slice(3) : head + body;
+    return '<div class="note-entry' + (e.warn ? ' warn' : '') + '">' + body + '</div>';
+  }).join('');
+}
+
+function rowData(id, record) {
+  const listing = record.listing;
+  const tags = [...(record.valid?.tags ?? []), ...(record.tags ?? [])];
+  const sites = record.sites ?? [];
+  const test = record.test;
+  // A result recorded against a different copy than the one downloaded now.
+  const stale = test?.version && record.version && test.version !== record.version ? test.version : '';
+  const entries = noteEntries(record);
+  const noteText = entries.map((e) => (e.label ? e.label + ': ' : '') + e.text).join(' ');
+  return {
+    rank: listing.rank, id: Number(id), name: listing.name, url: listing.info_page, file: record.file,
+    installs: listing.total_installs, updated: listing.updated_date, version: record.version ?? '',
+    sites, valid: record.valid?.status ?? '', tags,
+    // Validation said something: an error, or warnings on a valid script.
+    validMessages: Boolean(record.valid?.error || record.valid?.warnings?.length),
+    test: test?.status ?? '', detail: test?.reason ?? test?.blame ?? '', tested: test?.date ?? '', stale,
+    noteText, notesHtml: notesHtml(entries),
+    search: (id + ' ' + listing.name + ' ' + sites.join(' ') + ' ' + tags.join(' ') + ' ' + noteText).toLowerCase(),
+  };
+}
+
+// Where the downloaded files are on disk, for copying a file's full path. From
+// disk, it's beside this page. Served, it's in files/_location.json, which the
+// corpus tools write (checkRoot in corpus.mjs); until one has run, paths are
+// copied from the repo root.
+const REPO_FILES_DIR = 'tests/greasyfork-examples/files';
+let filesDir = location.protocol === 'file:'
+  ? decodeURIComponent(location.pathname.replace(/\/[^/]*$/, '')) + '/files'
+  : REPO_FILES_DIR;
+
+const fullPath = (file) => filesDir + '/' + file;
+
+/** The "Code" button, to this page's viewer, and the "Copy filename" button. */
+function codeLinks(d) {
+  if (!d.file) return '';
+  // `name` last: a URL ending in .user.js, even in its query, may look like an
+  // install to a userscript manager.
+  const view = '?' + new URLSearchParams({ view: d.id, file: d.file, name: d.name });
+  return '<div class="code-links"><button class="small view-code" data-view="' + esc(view) + '" title="View the downloaded copy">Code</button>' +
+    '<button class="small copy-path" data-file="' + esc(d.file) + '" title="Copy full path">Copy filename</button></div>';
+}
+
+function rowElement(d) {
+  const tr = document.createElement('tr');
+  tr.dataset.id = d.id;
+  const sites = d.sites.length > 4 ? d.sites.slice(0, 4).join(', ') + ' +' + (d.sites.length - 4) : d.sites.join(', ');
+  tr.innerHTML =
+    '<td class="num">' + (d.rank ?? '') + '</td>' +
+    '<td class="num"><a href="' + esc(d.url) + '">' + d.id + '</a></td>' +
+    '<td class="name">' + esc(d.name) + codeLinks(d) + '</td>' +
+    '<td class="num">' + (d.installs ?? '').toLocaleString('en-US') + '</td>' +
+    '<td class="nowrap">' + esc(d.updated) + '</td>' +
+    '<td class="version">' + esc(d.version) + '</td>' +
+    '<td class="sites" title="' + esc(d.sites.join(', ')) + '">' + esc(sites) + '</td>' +
+    '<td class="' + cls(d.valid) + '"' + titleAttr('valid', d.valid) + '>' + esc(d.valid) + '</td>' +
+    '<td class="tags">' + d.tags.map((t) => '<span' + titleAttr('tag', t) + '>' + esc(t) + '</span>').join('') + '</td>' +
+    '<td><span class="' + cls(d.test) + '"' + titleAttr('test', d.test) + '>' + esc(d.test) + '</span>' +
+      (d.detail ? ' <span class="detail"' + titleAttr('detail', d.detail) + '>' + esc(d.detail) + '</span>' : '') +
+      (d.stale ? '<div class="stale" title="Tested against a different version than the one downloaded now">tested v' + esc(d.stale) + '</div>' : '') + '</td>' +
+    '<td class="nowrap">' + esc(d.tested) + '</td>' +
+    '<td>' + (d.notesHtml ? '<button class="toggle" data-id="' + d.id + '"></button>' : '') + '</td>';
+  return tr;
+}
+
+/** The full-width row under a script's row that holds its whole notes. */
+function notesRowElement(d) {
+  const tr = document.createElement('tr');
+  tr.className = 'notes-row';
+  tr.innerHTML = '<td colspan="' + document.querySelectorAll('thead th').length + '"><div class="notes-body">' + d.notesHtml + '</div>' +
+    '<button class="more" data-id="' + d.id + '" hidden></button></td>';
+  return tr;
+}
+
+// ---------- Filtering and sorting ----------
+
+let rows = [];
+let shown = [];
+let sortKey = 'rank', sortDir = 1;
+// How each row's notes show: the Notes mode, unless the row was set on its own
+// (its Show/Hide button, or Show full under short notes). Changing the mode resets rows.
+const noteView = new Map();
+const viewOf = (id) => noteView.get(id) ?? $('notes-mode').value;
+const blank = (v) => v === '' || v === null || v === undefined;
+
+/** Replace a select's options, keeping the current choice when it still exists. */
+function setOptions(select, kind, fixed, values) {
+  const current = select.value;
+  const option = (v, label) => '<option value="' + esc(v) + '"' + titleAttr(kind, v) + '>' + esc(label) + '</option>';
+  select.innerHTML = fixed.map(([v, label]) => option(v, label)).join('') + values.map((v) => option(v, v)).join('');
+  if ([...select.options].some((o) => o.value === current)) select.value = current;
+  selectTitle(select);
+}
+
+/** A select's own tooltip describes its current choice (the options carry theirs too). */
+function selectTitle(select) {
+  select.title = helpFor(select.dataset.kind, select.value);
+}
+
+function show(corpus, source) {
+  const data = Object.entries(corpus).filter(([, r]) => r.listing).map(([id, r]) => rowData(id, r));
+  rows = data.map((d) => ({ d, tr: rowElement(d), notesTr: null }));
+
+  const count = (pred) => data.filter(pred).length;
+  $('summary').innerHTML = data.length.toLocaleString('en-US') + ' scripts · ' + [
+    count((d) => d.valid === 'ok') + ' valid',
+    count((d) => d.valid === 'invalid') + ' invalid',
+    count((d) => d.test === 'pass') + ' passed',
+    count((d) => d.test === 'fail') + ' failed',
+    count((d) => d.test === 'n/a') + ' not testable',
+    count((d) => d.test === '') + ' untested',
+  ].join(' · ') + '. From <code>' + esc(source) + '</code>, recorded with <code>record-results.mjs</code>.';
+  setOptions($('test'), 'test', [['', 'all'], ['tested', 'tested'], ['untested', 'untested'], ['pass', 'pass'], ['fail', 'fail'], ['n/a', 'n/a']],
+    [...new Set(data.filter((d) => d.detail).map((d) => d.test + ':' + d.detail))].sort());
+  setOptions($('tag'), 'tag', [['', 'all'], ['(any)', '(any tag)']], [...new Set(data.flatMap((d) => d.tags))].sort());
+
+  $('loader').hidden = true;
+  route();
+}
+
+// ---------- Views: the table, or the summary (?summary) ----------
+// Both are this page. Links between them are real links (so middle-click
+// opens a tab), but a plain click switches in place with pushState, so the
+// corpus isn't read again (from disk, that would need another file pick),
+// and Back and Forward move between them.
+
+/** Show whichever view the URL names. */
+function route() {
+  const summary = new URLSearchParams(location.search).has('summary');
+  $('summary-view').hidden = !summary;
+  $('view').hidden = summary;
+  if (summary) {
+    renderSummary();
+    return;
+  }
+  restoreFromUrl();
+  apply();
+  setStickyOffset();
+}
+
+/** One block per filter: each choice it offers, with how many scripts it matches, linked to the table filtered that way. */
+function renderSummary() {
+  const blocks = [['valid', 'Validation'], ['test', 'Testing'], ['tag', 'Tag']].map(([kind, title]) => {
+    let choices = [...$(kind).options].map((o) => ({ value: o.value, label: o.textContent,
+      count: rows.filter(({ d }) => matches(kind, o.value, d)).length }));
+    // Tags have no natural order: most common first, after "all" and "(any tag)".
+    if (kind === 'tag') choices = [...choices.slice(0, 2), ...choices.slice(2).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))];
+    const line = (c) => '<tr><td><a href="?' + esc(c.value ? new URLSearchParams({ [kind]: c.value }) : '') + '" target="_self" data-nav'
+      + titleAttr(kind, c.value) + '>' + esc(c.label) + '</a></td><td class="num">' + c.count.toLocaleString('en-US') + '</td></tr>';
+    return '<section><h2>' + title + '</h2><table>' + choices.map(line).join('') + '</table></section>';
+  });
+  $('summary-grid').innerHTML = blocks.join('');
+}
+
+document.addEventListener('click', (event) => {
+  const link = event.target.closest('a[data-nav]');
+  // Let the browser have middle-clicks and modified clicks (new tab, new window).
+  if (!link || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  try {
+    history.pushState(null, '', link.href);
+  } catch {
+    location.href = link.href;   // Some file:// setups refuse it; load the page instead.
+    return;
+  }
+  scrollTo(0, 0);
+  route();
+});
+window.addEventListener('popstate', () => { if (rows.length) route(); });
+
+// ---------- Settings in the URL ----------
+// The filters, Notes setting and sort live in the query string, so a reload
+// keeps them and a link reproduces the view. Only non-default values appear.
+
+const URL_FIELDS = { q: 'q', valid: 'valid', test: 'test', tag: 'tag', notes: 'notes-mode' };
+const DEFAULTS = { q: '', valid: '', test: '', tag: '', notes: 'short' };
+
+// Looked up by comparison, not a selector: the key can come from the URL.
+const sortHeader = (key) => [...document.querySelectorAll('th[data-key]')].find((th) => th.dataset.key === key);
+
+function setSort(key, dir, clicked = false) {
+  sortKey = key;
+  sortDir = dir;
+  document.querySelectorAll('th').forEach((h) => h.removeAttribute('data-dir'));
+  const th = sortHeader(key);
+  // The default order (by rank) shows no arrow unless its header was clicked, as on a fresh page.
+  if (th && (clicked || !(key === 'rank' && dir === 1))) th.dataset.dir = dir > 0 ? 'asc' : 'desc';
+}
+
+/** Apply the URL's settings, once the Testing and Tag choices exist (they come from the data). */
+function restoreFromUrl() {
+  const params = new URLSearchParams(location.search);
+  for (const [param, id] of Object.entries(URL_FIELDS)) {
+    const el = $(id);
+    el.value = params.get(param) ?? DEFAULTS[param];
+    // A value the select doesn't offer (a tag no script has any more) leaves it blank; fall back.
+    if (el.value !== (params.get(param) ?? DEFAULTS[param])) el.value = DEFAULTS[param];
+    if (el.dataset.kind) selectTitle(el);
+  }
+  const sort = params.get('sort');
+  const key = sort?.replace(/^-/, '');
+  // No sort in the URL means the default, not whatever the table had last
+  // (Back to a plain URL must not keep a sort, and then write it back).
+  if (key && sortHeader(key)) setSort(key, sort.startsWith('-') ? -1 : 1);
+  else setSort('rank', 1);
+}
+
+function saveToUrl() {
+  const params = new URLSearchParams();
+  for (const [param, id] of Object.entries(URL_FIELDS)) {
+    if ($(id).value !== DEFAULTS[param]) params.set(param, $(id).value);
+  }
+  if (!(sortKey === 'rank' && sortDir === 1)) params.set('sort', (sortDir < 0 ? '-' : '') + sortKey);
+  const query = params.toString();
+  try {
+    history.replaceState(null, '', location.pathname + (query ? '?' + query : '') + location.hash);
+  } catch {
+    // Some file:// setups refuse it; the page works the same, just without the URL.
+  }
+}
+
+$('reset').addEventListener('click', () => {
+  for (const [param, id] of Object.entries(URL_FIELDS)) $(id).value = DEFAULTS[param];
+  for (const id of ['valid', 'test', 'tag']) selectTitle($(id));
+  noteView.clear();
+  setSort('rank', 1);
+  apply();
+});
+
+/** Whether a script matches one filter's choice (`kind` is valid, test or tag; '' matches all). */
+function matches(kind, value, d) {
+  if (!value) return true;
+  if (kind === 'valid') return value === '(messages)' ? d.validMessages : d.valid === value;
+  if (kind === 'test') return testMatches(value, d);
+  return value === '(any)' ? d.tags.length > 0 : d.tags.includes(value);
+}
+
+function apply() {
+  const q = $('q').value.trim().toLowerCase();
+  shown = rows.filter(({ d }) =>
+    (!q || d.search.includes(q)) && ['valid', 'test', 'tag'].every((kind) => matches(kind, $(kind).value, d)));
+  shown.sort((a, b) => {
+    let x = a.d[sortKey], y = b.d[sortKey];
+    if (Array.isArray(x)) { x = x.join(','); y = y.join(','); }
+    if (blank(x) !== blank(y)) return blank(x) ? 1 : -1;
+    if (typeof x === 'number' && typeof y === 'number') return (x - y) * sortDir;
+    return String(x).localeCompare(String(y)) * sortDir || (a.d.rank ?? Infinity) - (b.d.rank ?? Infinity);
+  });
+  render();
+  $('count').textContent = shown.length + ' of ' + rows.length + ' scripts';
+  saveToUrl();
+}
+
+function testMatches(choice, d) {
+  if (choice === 'tested') return d.test !== '';
+  if (choice === 'untested') return d.test === '';
+  if (choice.includes(':')) return choice === d.test + ':' + d.detail;
+  return d.test === choice;
+}
+
+/** Put the shown rows in the table, each followed by its notes row unless hidden. */
+/** Set a row's Show/Hide state, and return its <tr>s: the row, then its notes row if shown. */
+function rowView(r) {
+  const view = r.d.notesHtml ? viewOf(r.d.id) : 'hidden';
+  r.tr.classList.toggle('has-notes', view !== 'hidden');
+  const button = r.tr.querySelector('.toggle');
+  if (button) button.textContent = view === 'hidden' ? 'Show' : 'Hide';
+  if (view === 'hidden') return [r.tr];
+  r.notesTr ??= notesRowElement(r.d);
+  r.notesTr.querySelector('.notes-body').classList.toggle('short', view === 'short');
+  return [r.tr, r.notesTr];
+}
+
+function render() {
+  $('rows').replaceChildren(...shown.flatMap(rowView));
+  updateMoreButtons();
+}
+
+/**
+ * Re-render one row in place, for its Show/Hide or Show full button. A full
+ * render() would detach the button that was just clicked, and removing the
+ * focused element makes Chrome scroll a filtered table back to the top.
+ */
+function renderRow(id) {
+  const r = rows.find((row) => row.d.id === id);
+  if (r.notesTr?.isConnected) r.notesTr.remove();
+  r.tr.after(...rowView(r).slice(1));
+  updateMoreButtons();
+}
+
+/** Show "Show full" under short notes that hide something: later entries, or lines past the cut. */
+function updateMoreButtons() {
+  // Read every size before changing any button: interleaving the two makes the
+  // browser redo the table's layout once per row, which is slow at this size.
+  const updates = [...$('rows').querySelectorAll('.more')].map((button) => {
+    const body = button.previousElementSibling;
+    const entries = body.querySelectorAll('.note-entry');
+    const short = body.classList.contains('short');
+    return { button, short, hiddenEntries: entries.length - 1,
+             clipped: short && entries[0].scrollHeight > entries[0].clientHeight + 1 };
+  });
+  for (const { button, short, hiddenEntries, clipped } of updates) {
+    button.hidden = !short || (!hiddenEntries && !clipped);
+    button.textContent = 'Show full' + (hiddenEntries ? ' (' + hiddenEntries + ' more ' + (hiddenEntries > 1 ? 'entries' : 'entry') + ')' : '');
+  }
+}
+
+$('rows').addEventListener('click', (ev) => {
+  const button = ev.target.closest('.toggle');
+  const more = ev.target.closest('.more');
+  let id;
+  if (button) {
+    id = Number(button.dataset.id);
+    // Showing a row on its own while the mode hides everything shows it in full.
+    noteView.set(id, viewOf(id) !== 'hidden' ? 'hidden' : $('notes-mode').value === 'hidden' ? 'full' : $('notes-mode').value);
+  } else if (more) {
+    id = Number(more.dataset.id);
+    noteView.set(id, 'full');
+  } else return;
+  renderRow(id);
+});
+$('rows').addEventListener('click', (event) => {
+  const button = event.target.closest('.copy-path');
+  if (button) copyPath(button, button.dataset.file);
+  const code = event.target.closest('.view-code');
+  if (code) window.open(code.dataset.view, '_blank');
+});
+$('notes-mode').addEventListener('input', () => { noteView.clear(); render(); saveToUrl(); });
+// A narrower window can clip notes that fit before, and a wider one the reverse.
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { updateMoreButtons(); setStickyOffset(); }, 150);
+});
+
+/** The table's sticky header sits under the sticky controls, which wrap onto more lines in a narrow window. */
+function setStickyOffset() {
+  const controls = document.querySelector('#view .controls');
+  if (controls.offsetHeight) document.documentElement.style.setProperty('--controls-height', controls.offsetHeight + 'px');
+}
+
+document.querySelectorAll('th[data-key]').forEach((th) => th.addEventListener('click', () => {
+  const key = th.dataset.key;
+  setSort(key, sortKey === key ? -sortDir : (th.dataset.desc ? -1 : 1), true);
+  apply();
+}));
+for (const id of ['q', 'valid', 'test', 'tag']) $(id).addEventListener('input', apply);
+for (const id of ['valid', 'test', 'tag']) $(id).addEventListener('input', () => selectTitle($(id)));
+// The Validation choices are fixed in the HTML; give them their tooltips here.
+for (const o of $('valid').options) o.title = helpFor('valid', o.value);
+
+// ---------- Loading corpus.json ----------
+
+function loadError(message) {
+  $('load-error').textContent = message;
+  $('load-error').hidden = false;
+  $('loader').hidden = false;
+}
+
+// Served over http: corpus.json sits beside this page.
+async function fetchCorpus() {
+  const response = await fetch('corpus.json', { cache: 'no-store' });
+  if (!response.ok) throw new Error('Could not load corpus.json: The server returned HTTP ' + response.status);
+  show(await response.json(), 'corpus.json');
+}
+
+async function fetchFilesDir() {
+  try {
+    const response = await fetch('files/_location.json', { cache: 'no-store' });
+    if (response.ok) filesDir = (await response.json()).dir ?? filesDir;
+  } catch {
+    // Keep the repo-relative default: it's only for copying paths.
+  }
+}
+
+// Opened from disk: Chrome won't let a file:// page fetch its neighbours, so
+// the user picks the file. With the File System Access API the handle is kept
+// in IndexedDB, so later visits (and Reload) re-read it after one permission
+// click, and the picker's `id` makes Chrome reopen in the same directory.
+// Without that API, a plain file input works but asks every time.
+const DB_NAME = 'sm-corpus-results';
+function idb(mode, fn) {
+  return new Promise((resolve, reject) => {
+    const open = indexedDB.open(DB_NAME, 1);
+    open.onupgradeneeded = () => open.result.createObjectStore('handles');
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const tx = open.result.transaction('handles', mode);
+      const req = fn(tx.objectStore('handles'));
+      tx.oncomplete = () => resolve(req.result);
+      tx.onerror = () => reject(tx.error);
+    };
+  });
+}
+// Keys: 'corpus' for corpus.json, 'files' for the files/ folder the viewer reads.
+const savedHandle = (key = 'corpus') => idb('readonly', (s) => s.get(key)).catch(() => undefined);
+const saveHandle = (h, key = 'corpus') => idb('readwrite', (s) => s.put(h, key)).catch(() => undefined);
+
+let handle = null;
+
+async function readHandle(h) {
+  if ((await h.queryPermission({ mode: 'read' })) !== 'granted'
+      && (await h.requestPermission({ mode: 'read' })) !== 'granted') {
+    throw new Error('Permission to read ' + h.name + ' was not granted');
+  }
+  show(JSON.parse(await (await h.getFile()).text()), h.name);
+}
+
+/** Returns true once the chosen file is shown, or false when a plain file dialog was opened (its change event loads it). */
+async function pickCorpus() {
+  if (!window.showOpenFilePicker) { $('file-input').click(); return false; }
+  const [picked] = await showOpenFilePicker({
+    id: 'sm-corpus-json',
+    startIn: handle ?? 'documents',
+    types: [{ description: 'corpus.json', accept: { 'application/json': ['.json'] } }],
+  });
+  handle = picked;
+  await saveHandle(handle);
+  await readHandle(handle);
+  return true;
+}
+
+async function reload() {
+  const button = $('reload'), status = $('reload-status');
+  button.disabled = true;
+  status.textContent = 'Reloading…';
+  try {
+    if (location.protocol !== 'file:') await fetchCorpus();
+    else if (handle) await readHandle(handle);
+    else if (!(await pickCorpus())) { status.textContent = ''; return; }
+    status.textContent = 'Reloaded at ' + new Date().toLocaleTimeString();
+  } catch (err) {
+    status.textContent = '';
+    if (err.name !== 'AbortError') loadError(err.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+$('pick').addEventListener('click', () => pickCorpus().catch((err) => {
+  if (err.name !== 'AbortError') loadError(err.message);
+}));
+$('reopen').addEventListener('click', () => readHandle(handle).catch((err) => loadError(err.message)));
+$('file-input').addEventListener('change', async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  // Cleared so choosing the same file again still fires a change event.
+  event.target.value = '';
+  try { show(JSON.parse(await file.text()), file.name); } catch (err) { loadError(err.message); }
+});
+$('reload').addEventListener('click', reload);
+
+// ---------- Copying paths ----------
+
+async function copyPath(button, file) {
+  const label = button.textContent;
+  try {
+    await navigator.clipboard.writeText(fullPath(file));
+    button.textContent = 'Copied';
+  } catch {
+    button.textContent = 'Copy failed';
+  }
+  setTimeout(() => { button.textContent = label; }, 1500);
+}
+
+// ---------- Viewer (?view=<id>&name=…&file=…) ----------
+
+// The code links open this page in a new tab as a viewer for one downloaded
+// script. The file comes in the URL (its corpus.json `file`), so the viewer
+// needn't load the corpus. Served, it fetches the file from the server; from
+// disk, Chrome won't let the page read a neighbour, so it asks for the files/
+// folder once and keeps the handle, as for corpus.json.
+
+function viewerError(message) {
+  $('viewer-error').textContent = message;
+  $('viewer-error').hidden = false;
+}
+
+function showSource(text) {
+  $('viewer-access').hidden = true;
+  $('source').textContent = text;
+  $('source').hidden = false;
+}
+
+/** Read `file` (a path under files/) through a directory handle for files/. */
+async function readUnder(dir, file) {
+  const parts = file.split('/');
+  for (const part of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(part);
+  return (await (await dir.getFileHandle(parts.at(-1))).getFile()).text();
+}
+
+async function readFromDisk(dir, file) {
+  try {
+    showSource(await readUnder(dir, file));
+  } catch (err) {
+    if (err.name !== 'NotFoundError') throw err;
+    throw new Error('The chosen folder has no ' + file + '. Choose tests/greasyfork-examples/files.');
+  }
+}
+
+async function viewFile(params) {
+  const file = params.get('file');
+  $('summary').hidden = true;
+  $('viewer').hidden = false;
+  if (!file) throw new Error('This viewer link names no file');
+  document.title = params.get('name') || file.split('/').pop();
+  document.querySelector('h1').textContent = document.title;
+  $('viewer-path').textContent = REPO_FILES_DIR + '/' + file;
+  $('viewer-copy').addEventListener('click', () => copyPath($('viewer-copy'), file));
+
+  if (location.protocol !== 'file:') {
+    // Any server that serves this folder works (serve-results.mjs, or another
+    // static server). The names on disk keep their percent-encoding, so each
+    // part is encoded again for the URL.
+    const url = 'files/' + file.split('/').map(encodeURIComponent).join('/');
+    const response = await fetch(url, { cache: 'no-store' });
+    if (!response.ok) throw new Error('Could not load files/' + file + ': The server returned HTTP ' + response.status);
+    showSource(await response.text());
+    return;
+  }
+  if (!window.showDirectoryPicker) {
+    throw new Error('This browser can\'t read local folders. Serve the page instead (node tests/greasyfork-examples/serve-results.mjs).');
+  }
+  let dir = await savedHandle('files');
+  // After a failure, the button picks a folder afresh: the saved one may be
+  // the wrong folder, or gone.
+  const offerChoice = (err) => {
+    viewerError(err.message);
+    dir = null;
+    $('viewer-allow').textContent = 'Choose the files/ folder…';
+    $('viewer-access').hidden = false;
+  };
+  $('viewer-allow').addEventListener('click', async () => {
+    $('viewer-error').hidden = true;
+    try {
+      if (dir && (await dir.requestPermission({ mode: 'read' })) !== 'granted') throw new Error('Permission to read ' + dir.name + ' was not granted');
+      const picked = dir ?? await showDirectoryPicker({ id: 'sm-corpus-files', mode: 'read' });
+      await readFromDisk(picked, file);
+      // Kept only once it has worked, so a wrong pick isn't offered again.
+      if (!dir) await saveHandle(picked, 'files');
+      dir = picked;
+    } catch (err) {
+      if (err.name !== 'AbortError') offerChoice(err);
+    }
+  });
+  if (dir && (await dir.queryPermission({ mode: 'read' })) === 'granted') {
+    try { await readFromDisk(dir, file); } catch (err) { offerChoice(err); }
+    return;
+  }
+  // Granting access needs a click.
+  $('viewer-allow').textContent = dir ? 'Allow reading ' + dir.name + '/' : 'Choose the files/ folder…';
+  $('viewer-access').hidden = false;
+}
+
+(async () => {
+  const params = new URLSearchParams(location.search);
+  if (params.has('view')) {
+    if (location.protocol !== 'file:') await fetchFilesDir();
+    try { await viewFile(params); } catch (err) { viewerError(err.message); }
+    return;
+  }
+  if (location.protocol !== 'file:') {
+    await fetchFilesDir();
+    try { await fetchCorpus(); } catch (err) { loadError(err.message); }
+    return;
+  }
+  $('loader').hidden = false;
+  handle = window.showOpenFilePicker ? await savedHandle() : null;
+  if (handle) {
+    // Reading needs a click: Chrome only re-grants file access on a user gesture.
+    $('reopen').textContent = 'Open ' + handle.name + ' again';
+    $('reopen').hidden = false;
+  }
+})();
+</script>
+</body>
+</html>

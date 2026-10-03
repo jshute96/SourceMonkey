@@ -25,6 +25,7 @@ repository. See `README.md` for setup instructions and available commands.
     - README should be concise and easy to read, without excessive details. It shouldn't list every feature or behavior, or implementation details of how things work.
     - Use other `docs/*.md` files for more details.
   - Always update `docs/file-index.md` when the file set changes or file descriptions become stale.
+  - When changing `sm-dev` or the harness (commands, flags, output, behavior), update the `skills/SourceMonkey-dev/` instructions (`SKILL.md`, `references/*.md`) to match, where they cover it.
   - Include all significant changes in the commit message.
 
 ## Development Conventions
@@ -62,6 +63,24 @@ entries, banners). Full rules in [docs/diagnostics.md](docs/diagnostics.md#wordi
   file the plumbing in TODO.md.
 - **`Internal error:` prefix** when the user can't act on it.
 
+### sm-dev protocol version
+`SM_DEV_PROTOCOL` in `src/sm-dev-protocol.ts` versions what sm-dev and
+the extension exchange (the calls and events `ExtensionLink` uses),
+since each side can come from a different build. The e2e-only parts of
+`self.SourceMonkey` are always the same build, so they don't count.
+When changing that surface:
+- **Bump the major** when a change needs both sides updated: a run
+  refuses an extension whose major differs.
+- **Bump the minor** for anything else new, including a new sm-dev
+  feature that needs a newer extension.
+  - An extension ahead by a minor must keep working with the older
+    sm-dev.
+  - An sm-dev feature that needs the new minor calls
+    `ExtensionLink.requireMinor` before using it. With an older
+    extension, the person then gets an error saying to update it,
+    rather than a failed call.
+- Reset the minor to 0 on a major bump.
+
 ## Planning vs Implementation
 When the user asks you to implement something, start coding quickly. Do NOT
 spend the entire session planning unless explicitly asked for a plan. If a plan
@@ -80,12 +99,36 @@ user before elaborating further. Default to action over planning.
   `~/.claude/plugins/cache/wookstar-claude-plugins/tampermonkey/<ver>/skills/tampermonkey/references/`)
   when implementing anything that touches userscript semantics.
 
+## Working on userscripts with our tools
+- When developing, debugging or testing userscripts with `sm-dev` or the
+  harness (not when changing the tools themselves), use the
+  `SourceMonkey-dev` skill for how to work with them.
+- Apply the `SourceMonkey-friction` skill too: when that work is
+  finished (committed or abandoned) and ran into friction with the
+  tools or the skill, log it as the skill describes.
+
 ## Code Changes
 - Use the file index to help find relevant files.
 - When changing behavior, read existing design docs to understand previous designs and intentions. Ask questions if unsure if we should change those requirements.
 - When the user asks for a change, apply it consistently to ALL similar patterns.
 - Do NOT drop or overwrite existing content in files like README.md — preserve what's there and add to it.
 - When similar logic occurs on multiple parallel paths, use common helper methods when possible, to ensure the logic stays consistent.
+- **Where a module goes** (see [docs/architecture.md](docs/architecture.md#source-layout)):
+  - `src/extension/` if only the extension loads it, `src/harness/` if
+    only the harness does, directly in `src/` if both do.
+  - A shared module in `src/` must not import from `src/extension/`,
+    not even `import type`: tsc would then compile that module into
+    `lib/`.
+  - When the harness needs something from an extension-only module,
+    move that piece into a shared module in `src/` (splitting the file
+    if needed) rather than importing it.
+  - Pages, CSS, icons and the manifest stay directly in `src/`, so
+    their URLs have no folder in them. A page's `<script src>` points
+    into `extension/`.
+  - From the service worker, pass Chrome absolute URLs
+    (`chrome.runtime.getURL`): it runs from `extension/`, so a relative
+    path resolves there.
+  - `tests/unit/source-layout.test.mjs` checks this.
 
 ## Running tests
 - See `docs/testing.md` for the full layout and harness details.
@@ -105,7 +148,7 @@ user before elaborating further. Default to action over planning.
 
 ## Writing tests
 - **Unit vs e2e**: unit tests (`tests/unit/`) exercise pure logic against
-  the compiled `dist/*.js`. Use them for matcher/parser/store helpers.
+  the compiled `dist/**/*.js`. Use them for matcher/parser/store helpers.
   E2E tests (`tests/e2e/`) drive a real headless Chromium with the
   unpacked extension loaded; use them for anything that touches the
   chrome.* APIs or end-to-end injection.
@@ -113,7 +156,7 @@ user before elaborating further. Default to action over planning.
   - `tests/fixtures/extension.ts` exposes `extensionContext`,
     `fixtureServer`, `extensionId`, `getServiceWorker`, and `sm`. The
     `sm` fixture is a typed proxy over the SW's `self.SourceMonkey` test
-    surface (see `src/background.ts`).
+    surface (see `src/extension/background.ts`).
   - `tests/fixtures/scripts-dir.ts` builds a tmp directory of real
     `*.user.js` files on disk so `sm.addCollection(dir.path)` runs the
     production file:// scan + fetch pipeline.

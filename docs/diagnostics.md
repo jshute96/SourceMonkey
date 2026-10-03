@@ -46,13 +46,13 @@ so a rewording can't quietly stop matching what compares against them:
 | Constant | Module |
 |----------|--------|
 | `UNTERMINATED_METADATA_BLOCK`, `NO_METADATA_BLOCK` | `userscript-header.ts` |
-| `NO_NAME`, `NO_MATCH_OR_INCLUDE`, `SYNTAX_ERROR_PREFIX` | `script-store.ts` |
+| `NO_NAME`, `NO_MATCH_OR_INCLUDE`, `SYNTAX_ERROR_PREFIX` | `script-build.ts` |
 | `ignoredMatchMessage`, `unusableMatchMessage` | `url-match.ts` |
 
 The same rule covers anything that *recognizes* a message rather than
-prints it. `scripts/validate-userscripts.mjs` groups its survey by
-message, and used to do it with regexes over the wording — which went
-stale silently the first time these were recased, mislabelling whole
+prints it. The corpus validator (`validate-corpus.mjs`) groups its
+survey by message, and used to do it with regexes over the wording —
+which went stale silently the first time these were recased, mislabelling whole
 buckets without failing. It now imports `SYNTAX_ERROR_PREFIX`, and calls
 `isFetchFailureMessage` (`external-files.ts`) and
 `unusableMatchGroupKey` (`url-match.ts`) — each derived from the
@@ -120,7 +120,7 @@ what the row now says.
 
 ## Rendering it
 
-`appendDiagnostic` (`src/userscript.ts`) paints
+`appendDiagnostic` (`src/extension/userscript.ts`) paints
 `<message> (in <where>)` with the "where" a link.
 
 - It resolves `location.file` to a tab: `@require`s match a tab's
@@ -188,7 +188,7 @@ located warnings or an INVALID row before anything is registered (see
 parser, because a false positive would drop a pattern that works. What
 reaches REJECTED is the remainder: a malformed port, a host Chrome's
 canonicalizer rejects, or whatever it tightens next. See
-[file-index](file-index.md) for `src/script-rejection.ts`, which holds
+[file-index](file-index.md) for `src/extension/script-rejection.ts`, which holds
 the state, and [injection.md](injection.md#rejected-registrations) for
 the registration path that produces it.
 
@@ -211,7 +211,7 @@ verdict about a script's *fate* rather than its content.
   reader needs to know is that what they see on the page is not what is
   on disk, not that something is broken.
 - **One string, one place**: `describeRefreshError` in
-  `src/refresh-error.ts`, listed under
+  `src/extension/refresh-error.ts`, listed under
   [One string, one place](#one-string-one-place).
 - **The reason is ours, not Chrome's.** An out-of-quota write rejects
   with `Resource::kQuotaBytes quota exceeded` (the exact text varies by
@@ -328,18 +328,20 @@ One capitalization convention, with carve-outs:
 - **Every message a user reads starts with a capital and ends without
   a period** — diagnostics, Log rows, banners, and the viewer's
   `setMessage` copy alike (`Install failed: …`, `This script is already
-  installed`, `Checked for updates — no change`).
+  installed`, `Checked for updates and found no change`).
   - "No period" is about a *single-sentence* message. Copy that is
     genuinely two sentences punctuates all of them, last one included —
     `Syntax error: … (in a.user.js, line 12). Installing it will store
     it as INVALID.`
-  - **A statement plus a fix is two sentences**, not one joined by an
-    em-dash: `This location is a manifest. Choose Manifest as the type.`
-    The dash reads as an aside, where the fix is the half the user acts
-    on. (An em-dash still fits a genuine aside, and the
-    subject-plus-shapes messages — `Location must be a URL or absolute
-    file path` — stay one sentence with no period.) Same for `Script not found in storage.
-    Open it from the collections page.`
+  - **A statement plus a fix is two sentences**, not one joined by a
+    dash: `This location is a manifest. Choose Manifest as the type.`
+    Same for `Script not found in storage. Open it from the
+    collections page.`
+  - The subject-plus-shapes messages (`Location must be a URL or
+    absolute file path`) stay one sentence with no period.
+  - **No em-dashes in any user-visible text** (messages, Log rows,
+    tooltips, UI copy, console diagnostics). Use a colon, comma,
+    parentheses, or two sentences instead.
   - Wrapping doesn't change that. `This file cannot be installed: No
     @name in the metadata block` is the intended reading: the prefix is
     its own clause, and the message keeps its capital wherever it lands.
@@ -372,7 +374,7 @@ constant, so the copies can't drift:
 | `connectDenialClause` (`gm-connect.ts`) | the pre-flight and post-redirect `@connect` denials, on the page (via `connectBlockedMessage`) and in the Log row |
 | `NO_ORIGINATOR_TAB` (`background.ts`) | the GM handlers that reply when the calling tab can't be identified |
 | `NOTIFICATIONS_UNAVAILABLE` (`gm-notification.ts`) | both guards on `chrome.notifications` |
-| `LOCATION_SHAPES` (`directories.ts`) | the Add-field and preview validators' description of a valid location |
+| `LOCATION_SHAPES` (`file-locations.ts`) | the Add-field and preview validators' description of a valid location |
 | `gmValuesFailure` (`gm-bindings.ts`) | the injected console line and the `sm:error` payload |
 | `describeRejection` (`script-rejection.ts`) | the refused-registration sentence, in the Log row and the viewer's message bar |
 | `describeRefreshError` (`refresh-error.ts`) | the could-not-be-saved sentence, in the collection's section message |
@@ -431,8 +433,8 @@ lines land in two consoles, and you need both:
 ### Reading it
 
 ```
-timing — collection refresh: total 34ms (read 3.9, scan 8.7, fetch 0.4,
-  rebuild 0.7, write 21) — /path/to/scripts, 5 scripts, 5 unchanged,
+timing: collection refresh: total 34ms (read 3.9, scan 8.7, fetch 0.4,
+  rebuild 0.7, write 21); /path/to/scripts, 5 scripts, 5 unchanged,
   rows written: 0
 ```
 
@@ -533,10 +535,10 @@ large *waited* is the per-script check below.
 | `reload fast-path cumulative` | one for the batch, breaking `rebuild` into its concurrent stages |
 
 ```
-timing — script check: total 731ms (read-script 38, read-collection 169,
+timing: script check: total 731ms (read-script 38, read-collection 169,
   stat 17, fetch 23, rebuild 450, write 34)
   — garmin/upload.user.js, 46 KB row, refetched
-timing — reload fast-path cumulative: parse-check 448ms/3, build 2.8ms/1, deps 0.3ms/3
+timing: reload fast-path cumulative: parse-check 448ms/3, build 2.8ms/1, deps 0.3ms/3
 ```
 
 - **read-script / read-collection** — two point reads, in series because
@@ -589,7 +591,7 @@ numbers anyway, both because the worker is single-threaded:
 ### Storage scans
 
 ```
-timing — storage scan (registration sync): 183ms, 266 row(s)
+timing: storage scan (registration sync): 183ms, 266 row(s)
 ```
 
 - A `chrome.storage.local.get(null)` returns **every row the extension
@@ -683,8 +685,8 @@ The lesson worth keeping:
   - The expected locations live in `tests/fixtures/bad-script-cases.mjs`
     and are pinned twice: by `bad-scripts.spec.ts` against the stored
     `errorLocation` in Chromium, and by
-    `tests/unit/validate-userscripts.test.mjs` against the offline CLI's
-    report under Node. Both go through `locationPattern`, so the two
+    `tests/unit/harness/validate.test.mjs` against `sm-dev validate`'s
+    output under Node. Both go through `locationPattern`, so the two
     engines' answers stay checked against each other.
   - Lines are read off each example's `>>> the error` marker rather than
     written down, except for the header failures — those are about a tag

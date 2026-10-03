@@ -137,6 +137,48 @@ test.describe('GM_download', () => {
     await page.close();
   });
 
+  test('a URL object works as the url, alone or in details', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'DownloadUrlObject',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_download'],
+      },
+      body: `${REPORTER}
+        GM_download({
+          url: new URL('/target.html', location.href),
+          name: 'sm-url-object.html',
+          onload: () => {
+            // The positional form, which would throw "url required"
+            // if it didn't take the URL object.
+            try {
+              GM_download(new URL('/target.html', location.href), 'sm-url-object-2.html');
+              report('load');
+            } catch (e) {
+              report('threw:' + e.message);
+            }
+          },
+          onerror: (e) => report('error:' + (e && e.error)),
+        });
+      `,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-download', 'load', {
+      timeout: 15000,
+    });
+    await page.close();
+  });
+
   test('a successful download leaves the script Log clean', async ({
     extensionContext,
     fixtureServer,

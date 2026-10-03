@@ -48,7 +48,7 @@ import {
   parentDir,
   statFromListing,
   type DirectoryListingCache,
-} from './directories.js';
+} from './file-locations.js';
 import { splitResourceValue } from './script-links.js';
 import { sha256Hex, bytesToBase64, base64ToBytes } from './bytes.js';
 import { timePhase } from './phase-timing.js';
@@ -66,8 +66,7 @@ import {
 export const MAX_FILE_BYTES = 1024 * 1024;
 
 // Rendered in whole MB when the cap divides evenly, so messages say
-// "1 MB" rather than "1024 KB". Exported because the offline validator
-// reports the cap too, and two renderings of one number could disagree.
+// "1 MB" rather than "1024 KB".
 export const CAP_TEXT = MAX_FILE_BYTES % (1024 * 1024) === 0
   ? `${MAX_FILE_BYTES / (1024 * 1024)} MB`
   : `${Math.round(MAX_FILE_BYTES / 1024)} KB`;
@@ -91,7 +90,7 @@ const HTTP_STATUS_PREFIX = 'The server returned HTTP ';
 // These read as facts rather than as a list of possibilities because
 // the fetcher now reports which case it hit. It used to return a bare
 // `null`, so a single message had to cover "no response", "an HTTP
-// error", and "over the limit" at once — and the offline validator
+// error", and "over the limit" at once — and the corpus validator
 // reconstructed the real cause from a fetch log to make its report
 // useful.
 export function describeFetchFailure(failure: FetchFailure): string {
@@ -148,8 +147,9 @@ const FETCH_FAILURE_REASONS: Record<FetchFailure['reason'], true> = {
 
 // Did this text come out of `describeFetchFailure`?
 //
-// Exists for `scripts/validate-userscripts.mjs`, which substitutes its
-// own wording when the offline mirror's 404 is an artifact of the
+// Exists for the corpus validator
+// (`tests/greasyfork-examples/validate-corpus.mjs`), which substitutes
+// its own wording when the offline mirror's 404 is an artifact of the
 // mirror rather than a real server answer — it has to recognize a
 // fetch-layer failure to know when that substitution applies.
 //
@@ -184,15 +184,19 @@ export function describeResolveFailure(failure: ResolveFailure): string {
       // local script (see file-loader.ts's module header). The scheme
       // is parenthesized rather than leading, so the sentence can open
       // with a capital of ours instead of a verbatim value.
-      return `That URL scheme (${failure.scheme}) is not supported — ` +
+      return `That URL scheme (${failure.scheme}) is not supported; ` +
         'use an http(s) URL, or a relative path resolved against the script\'s own location';
     case 'outside-script-folder':
       // Only reachable for a script loaded from `file://`: a relative
       // ref in a script served over http(s) may climb, the way it does
       // in Violentmonkey. So the message names the case it applies to
       // rather than stating a rule that isn't universal.
-      return 'That path points outside the script\'s own folder — ' +
+      return 'That path points outside the script\'s own folder; ' +
         'a relative path in a local script has to stay inside it';
+    case 'relative-in-scratch':
+      // A scratch script is text alone, without the files beside it.
+      return 'A scratch script can use a relative path only to a file pushed along with its text. ' +
+        'Use an http(s) URL, or push the file with the script.';
   }
 }
 
@@ -352,6 +356,21 @@ export function distillResources(header: ParsedHeader | null): ResourceDecl[] {
 
 // ---------- attachFiles orchestrator ----------
 
+// A `@require` / `@resource` body pushed with a scratch script, by the
+// ref its header declares (sm-dev reads them from disk, see
+// docs/sm-dev-design.md). It stands in for the declared file, and no
+// fetch is made:
+// - a relative ref, which a scratch script has no folder to resolve
+//   against: `url` is the `file://` URL it named on disk;
+// - a remote URL with a local stand-in under one of sm-dev's search
+//   roots: `url` is the declared URL, `localUrl` the file read.
+export interface PushedFile {
+  url: string;
+  localUrl?: string;
+  bytesBase64: string;
+  contentType: string;
+}
+
 export interface AttachFilesArgs {
   // The script's own canonical URL. Resolution base for relative refs.
   scriptFileUrl: string;
@@ -375,6 +394,8 @@ export interface AttachFilesArgs {
   // default) restores the pre-feature behavior exactly: no candidate
   // generation, no probe reads.
   localRoots?: readonly string[];
+  // A scratch script's pushed bodies, by ref; see `PushedFile`.
+  pushedFiles?: Readonly<Record<string, PushedFile>>;
 }
 
 export interface AttachFilesResult {
@@ -436,6 +457,7 @@ export async function attachFiles(args: AttachFilesArgs): Promise<AttachFilesRes
       now: args.now,
       seenUrls: seenRequireUrls,
       localRoots: args.localRoots ?? [],
+      pushed: args.pushedFiles?.[ref],
     });
     if (res.errorMessage) {
       return {
@@ -457,6 +479,7 @@ export async function attachFiles(args: AttachFilesArgs): Promise<AttachFilesRes
       fetchCache: args.fetchCache,
       now: args.now,
       localRoots: args.localRoots ?? [],
+      pushed: args.pushedFiles?.[decl.ref],
     });
     if (res.errorMessage) {
       return {
@@ -546,6 +569,16 @@ function standInFields(loaded: LoadedBytes): Pick<SharedFileFields, 'localUrl' |
   };
 }
 
+// A pushed body as what was read for its ref. A relative ref's body is
+// the declared file itself, so only a stand-in for a remote URL counts
+// as one.
+function pushedBytes(pushed: PushedFile): LoadedBytes {
+  return {
+    ...(pushed.localUrl ? { localUrl: pushed.localUrl } : {}),
+    got: { bytes: base64ToBytes(pushed.bytesBase64), contentType: pushed.contentType },
+  };
+}
+
 // Read a declared file, preferring a local stand-in when one exists.
 //
 // Candidates are tried in order and the first that READS wins — the
@@ -629,15 +662,24 @@ interface LoadRequireArgs {
   now: number;
   seenUrls: Set<string>;
   localRoots: readonly string[];
+  pushed?: PushedFile;
+}
+
+// Where a ref resolves: the pushed body's URL when there is one, which
+// the pusher already resolved and checked, else the ref resolved
+// against the script.
+function resolveRef(ref: string, scriptFileUrl: string, pushed: PushedFile | undefined): { url: string } | { failure: string } {
+  if (pushed) return { url: pushed.url };
+  const resolved = resolveScriptResourceDetailed(ref, scriptFileUrl);
+  if ('failed' in resolved) return { failure: describeResolveFailure(resolved) };
+  if (resolved.kind === 'data') return { failure: 'URLs with the data: scheme are not supported' };
+  return { url: resolved.url };
 }
 
 async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequire>> {
-  const resolved = resolveScriptResourceDetailed(args.ref, args.scriptFileUrl);
-  if ('failed' in resolved) {
-    return { errorMessage: `@require ${args.ref}: ${describeResolveFailure(resolved)}` };
-  }
-  if (resolved.kind === 'data') {
-    return { errorMessage: `@require ${args.ref}: URLs with the data: scheme are not supported` };
+  const resolved = resolveRef(args.ref, args.scriptFileUrl, args.pushed);
+  if ('failure' in resolved) {
+    return { errorMessage: `@require ${args.ref}: ${resolved.failure}` };
   }
   if (!isJsResourceUrl(resolved.url)) {
     return { errorMessage: `@require ${args.ref}: The filename must end in .js` };
@@ -649,9 +691,10 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
 
   // Local stand-in first, and before the preserve shortcut — see
   // `readLocalStandIn` for why an overridden file is never cached past
-  // a refresh.
-  const local = await timePhase('local-standin', () => readLocalStandIn(resolved.url, args.localRoots, args.fetchCache));
-  if (!local && args.recheck === 'preserve' && prior && !prior.localUrl) {
+  // a refresh. A pushed body is read every time for the same reason.
+  const local = args.pushed ? pushedBytes(args.pushed)
+    : await timePhase('local-standin', () => readLocalStandIn(resolved.url, args.localRoots, args.fetchCache));
+  if (!local && !args.pushed && args.recheck === 'preserve' && prior && !prior.localUrl) {
     return { entry: prior };
   }
 
@@ -819,6 +862,7 @@ interface LoadResourceArgs {
   fetchCache: FileFetchCache;
   now: number;
   localRoots: readonly string[];
+  pushed?: PushedFile;
 }
 
 async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredResource>> {
@@ -826,12 +870,9 @@ async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredRe
   // doesn't say what failed to load. `@require` names its ref because
   // that is all it has; this names both.
   const subject = `@resource ${args.decl.name} (${args.decl.ref})`;
-  const resolved = resolveScriptResourceDetailed(args.decl.ref, args.scriptFileUrl);
-  if ('failed' in resolved) {
-    return { errorMessage: `${subject}: ${describeResolveFailure(resolved)}` };
-  }
-  if (resolved.kind === 'data') {
-    return { errorMessage: `${subject}: URLs with the data: scheme are not supported` };
+  const resolved = resolveRef(args.decl.ref, args.scriptFileUrl, args.pushed);
+  if ('failure' in resolved) {
+    return { errorMessage: `${subject}: ${resolved.failure}` };
   }
   // No suffix gate — resources can be any media type.
   // No URL-level dedup either: two `@resource` lines with different
@@ -845,7 +886,8 @@ async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredRe
 
   // Local stand-in first, and before the preserve shortcut — same rule
   // and same reasoning as `@require`; see `readLocalStandIn`.
-  const local = await timePhase('local-standin', () => readLocalStandIn(resolved.url, args.localRoots, args.fetchCache));
+  const local = args.pushed ? pushedBytes(args.pushed)
+    : await timePhase('local-standin', () => readLocalStandIn(resolved.url, args.localRoots, args.fetchCache));
   if (
     !local && args.recheck === 'preserve' &&
     prior && prior.name === args.decl.name && !prior.localUrl
@@ -975,7 +1017,7 @@ async function fetchFileBytes(
       // our own code broke its contract — which is what the reader is
       // being told, and why `isFetchFailureMessage` correctly declines
       // it. Phrasing it as one of the fetch failures would both invite
-      // the offline validator to substitute mirror wording for a bug of
+      // the corpus validator to substitute mirror wording for a bug of
       // ours, and put a second `could not be fetched: ` colon into a
       // string that already lands after `@require <ref>: `.
       errorMessage: `Internal error: the file fetcher failed unexpectedly (${

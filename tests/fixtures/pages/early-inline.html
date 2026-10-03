@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script>
+      // The page's first script: records whether a document-start
+      // userscript had already set its marker by now. On the DOM, which
+      // a USER_SCRIPT-world script shares with the page.
+      document.documentElement.dataset.pageSaw = document.documentElement.dataset.early || 'nothing';
+    </script>
+    <meta charset="utf-8" />
+    <title>early inline</title>
+  </head>
+  <body></body>
+</html>

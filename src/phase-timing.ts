@@ -69,8 +69,8 @@ class ActiveTimer implements PhaseTimer {
     // Phases are a breakdown OF the total, so they read as a
     // parenthetical after it rather than as a separate list.
     const breakdown = this.phases.length > 0 ? ` (${this.phases.join(', ')})` : '';
-    const notes = this.notes.length > 0 ? ` — ${this.notes.join(', ')}` : '';
-    console.log(`[SourceMonkey] timing — ${this.label}: total ${total}ms${breakdown}${notes}`);
+    const notes = this.notes.length > 0 ? `; ${this.notes.join(', ')}` : '';
+    console.log(`[SourceMonkey] timing: ${this.label}: total ${total}ms${breakdown}${notes}`);
   }
 }
 
@@ -123,7 +123,7 @@ export function startPhaseTimer(label: string): PhaseTimer {
 //
 // Global to the JS context rather than threaded through: reaching the
 // leaf call sites otherwise means a parameter through `applyFiles`,
-// `attachFiles` and both per-kind loaders, plus the offline validator
+// `attachFiles` and both per-kind loaders, plus the corpus validator
 // that shares them. For a debug-only diagnostic that is a bad trade.
 // The cost is that two concurrently refreshing collections land in one
 // bucket — which is why the report is emitted per REFRESH PASS, where
@@ -183,5 +183,5 @@ export function reportPhaseTotals(label: string): void {
   const parts = [...finished.entries()]
     .sort((a, b) => b[1].ms - a[1].ms)
     .map(([name, t]) => `${name} ${round(t.ms)}ms/${t.n}`);
-  console.log(`[SourceMonkey] timing — ${label} cumulative (concurrent, sums past wall clock): ${parts.join(', ')}`);
+  console.log(`[SourceMonkey] timing: ${label} cumulative (concurrent, sums past wall clock): ${parts.join(', ')}`);
 }

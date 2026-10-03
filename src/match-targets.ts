@@ -19,7 +19,7 @@ import { canonicalMatchPatterns } from './url-match.js';
 // Pure regex rewrite, no fetching — imported so the same-directory
 // fallback below points a github-hosted script's neighbour at the
 // github.com page instead of its raw bytes.
-import { githubRawToBlobUrl } from './github-provider.js';
+import { githubRawToBlobUrl } from './github-urls.js';
 
 export interface MatchTarget {
   // `scheme://host[:port]` — no path. Cache key for the origin-scoped
@@ -82,6 +82,9 @@ function parseMatchPattern(pattern: string): ParsedMatch | null {
   if (host === '*' || host === '') return null;
   if (host.startsWith('*.')) host = host.slice(2);
   if (!host || host.includes('*')) return null;
+  // `.tld` means "any public suffix" (see url-match.ts); `.com` is
+  // the one most such sites answer on, so the icon and link use it.
+  if (host.endsWith('.tld')) host = host.slice(0, -4) + '.com';
 
   // The host slot has to hold a host we could actually navigate to.
   // Worth checking since the scheme-less reading above will supply a

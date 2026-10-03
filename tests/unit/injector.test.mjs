@@ -1,4 +1,4 @@
-// Tests for src/injector.ts (compiled to dist/injector.js).
+// Tests for src/extension/injector.ts (compiled to dist/extension/injector.js).
 //
 // Only the pure helpers are exercised here — the chrome.userScripts
 // runtime sync (syncRegistrations) is glue I/O and is covered by the
@@ -81,19 +81,21 @@ import {
   buildBridgeSpec,
   buildConfigBlob,
   buildRegistrationSpec,
+  scratchEvalHookKey,
+  NO_PAGE_MATCH,
   buildSwapEvalBody,
   collectActiveSpecs,
   normalizeDeclaredRunAt,
-  resolveWorld,
   wrapCombinedEntry,
   wrapPreludeEntry,
-} from '../../dist/injector.js';
+} from '../../dist/extension/injector.js';
+import { resolveWorld } from '../../dist/script-world.js';
 import {
-  USER_SOURCE_START_LINE,
   composeRequiredBody,
-  composeSource,
+  stackLayout,
 } from '../../dist/composed-source.js';
 import { remapStackRef } from '../../dist/source-map.js';
+import { remapStackText } from '../../dist/stack-link.js';
 import { buildRequireSourceUrl, buildSourceUrl } from '../../dist/script-source-url.js';
 import { WRAPPER_BRIDGE, WRAPPER_PRELUDE } from '../../dist/generated-wrappers.js';
 import { urlMatchesScript } from '../../dist/url-match.js';
@@ -110,6 +112,7 @@ test('normalizeDeclaredRunAt: recognized values pass through (lowercased)', () =
 test('normalizeDeclaredRunAt: missing / unknown values default to document-idle', () => {
   assert.equal(normalizeDeclaredRunAt(undefined), 'document-idle');
   assert.equal(normalizeDeclaredRunAt(''), 'document-idle');
+  // Defensive only: validateHeader refuses context-menu scripts first.
   assert.equal(normalizeDeclaredRunAt('context-menu'), 'document-idle');
   assert.equal(normalizeDeclaredRunAt('whatever'), 'document-idle');
 });
@@ -186,11 +189,11 @@ test('buildConfigBlob: a startup log\'s location never reaches the page', () => 
     matching: null,
     startupLogs: [{
       level: 'warn',
-      message: 'Ignoring @grant GM_nope — unsupported APIs',
+      message: 'Ignoring unsupported @grant GM_nope',
       location: { file: '/home/someone/private/x.user.js', line: 4 },
     }],
   });
-  assert.match(blob, /"message":"Ignoring @grant GM_nope — unsupported APIs"/);
+  assert.match(blob, /"message":"Ignoring unsupported @grant GM_nope"/);
   assert.doesNotMatch(blob, /"location"/);
   assert.doesNotMatch(blob, /home\/someone/);
 });
@@ -275,6 +278,156 @@ test('wrapCombinedEntry: requires and body land in ONE shared scope', () => {
   };
   new Function('self', wrapped)(stub);
   assert.equal(got, 'from-require:ok');
+});
+
+test('wrapCombinedEntry: the user program shadows our bindings instead of clashing', () => {
+  // Our `const`s sit in the wrap function; the user program runs in a
+  // scope nested inside it. So `const window = unsafeWindow` no longer
+  // puts our `const unsafeWindow = window;` in its TDZ, and the
+  // redeclarations real scripts make are ordinary shadowing.
+  const wrapped = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    requireUrls: ['sourcemonkey://SourceMonkey/x/cdn/lib.js'],
+    gmBindings: 'const unsafeWindow = window; const GM_info = "ours"; const GM_setValue = 1; ',
+    script: scriptWith({
+      bodyText: [
+        'const window = unsafeWindow;',
+        'let GM_info = "mine";',
+        'var GM_setValue = 2;',
+        'var __smE = 3;',
+        'function GM_addStyle() { return "own"; }',
+        'return [window.app, GM_info, GM_setValue, __smE, GM_addStyle(), lib].join(",");',
+      ].join('\n'),
+      requires: [req('const self = "lib-self"; const lib = self;')],
+    }),
+  });
+  let got;
+  const stub = {
+    __smPrelude: { send: () => {} },
+    __smRun: (_id, fn) => { got = fn({ decision: {}, cfg: { name: 'n', id: 'abc', loadedAt: 0 } }); },
+  };
+  new Function('self', 'window', wrapped)(stub, { app: 'page' });
+  assert.equal(got, 'page,mine,2,3,own,lib-self');
+});
+
+test('wrapCombinedEntry: a leading "use strict" applies, as in TM and VM', () => {
+  // The script is the nested scope's first statement, so its directive
+  // is a real one and the program is strict: a plain call gets
+  // undefined as `this`, not the global object.
+  const wrapped = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    script: scriptWith({ bodyText: '"use strict";\nreturn (function () { return this; })() === undefined;' }),
+  });
+  let got = 'unset';
+  const stub = {
+    __smPrelude: { send: () => {} },
+    __smRun: (_id, fn) => { got = fn({ decision: {}, cfg: { name: 'n', id: 'abc', loadedAt: 0 } }); },
+  };
+  new Function('self', wrapped)(stub);
+  assert.equal(got, true);
+});
+
+test('wrapCombinedEntry: the eval hook sees the program\'s scope, keeps "use strict", and adds no lines', () => {
+  // sm-dev's eval hook: a direct eval in the user program's scope, kept
+  // under the key. It goes after the directive, so the program stays
+  // strict, on the same line, so nothing moves.
+  const key = '__smDevEval:unit-test';
+  const wrapped = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    requireUrls: ['sourcemonkey://SourceMonkey/x/cdn/lib.js'],
+    gmBindings: 'const GM_info = "ours"; ',
+    evalHookKey: key,
+    script: scriptWith({
+      bodyText: '"use strict";\nconst secret = 42;\nreturn (function () { return this; })() === undefined;',
+      requires: [req('"use strict"; // the first file\'s directive counts\nconst lib = "L";')],
+    }),
+  });
+  let got = 'unset';
+  const stub = {
+    __smPrelude: { send: () => {} },
+    __smRun: (_id, fn) => { got = fn({ decision: {}, cfg: { name: 'n', id: 'abc', loadedAt: 0 } }); },
+  };
+  new Function('self', wrapped)(stub);
+  assert.equal(got, true);
+  const hook = globalThis[key][COMBINED_ARGS.scriptId];
+  assert.equal(hook('[GM_info, lib, secret].join()'), 'ours,L,42');
+  assert.equal(Object.keys(globalThis).includes(key), false);
+  const plain = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    requireUrls: ['sourcemonkey://SourceMonkey/x/cdn/lib.js'],
+    script: scriptWith({ bodyText: 'L1\nL2', requires: [req('lib')] }),
+  });
+  const hooked = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    requireUrls: ['sourcemonkey://SourceMonkey/x/cdn/lib.js'],
+    evalHookKey: key,
+    script: scriptWith({ bodyText: 'L1\nL2', requires: [req('lib')] }),
+  });
+  assert.equal(hooked.split('\n').length, plain.split('\n').length);
+  assert.notEqual(hooked, plain);
+});
+
+test('wrapCombinedEntry: the eval hook goes into the script\'s own IIFE, not a library\'s', () => {
+  const key = '__smDevEval:unit-iife-req';
+  const wrapped = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    requireUrls: ['sourcemonkey://SourceMonkey/x/cdn/lib.js'],
+    evalHookKey: key,
+    script: scriptWith({
+      bodyText: '(function () {\n  const mine = "script";\n})();',
+      requires: [req('(function () { var libLocal = "lib"; globalThis.unitLib = 1; })();')],
+    }),
+  });
+  const stub = {
+    __smPrelude: { send: () => {} },
+    __smRun: (_id, fn) => { fn({ decision: {}, cfg: { name: 'n', id: 'abc', loadedAt: 0 } }); },
+  };
+  new Function('self', wrapped)(stub);
+  const hook = globalThis[key][COMBINED_ARGS.scriptId];
+  assert.equal(hook('mine'), 'script');
+  assert.equal(hook('typeof libLocal'), 'undefined');
+});
+
+test('buildRegistrationSpec: only sm-dev\'s scripts get an eval hook', async () => {
+  const mine = await buildRegistrationSpec(scriptWith({ bodyText: 'x' }));
+  assert.doesNotMatch(mine.js[2].code, /__smDevEval/);
+  const scratch = await buildRegistrationSpec(scriptWith({ bodyText: 'x', fileUrl: 'scratch:///run-1a2b/t.user.js' }));
+  assert.match(scratch.js[2].code, /__smDevEval:run-1a2b/);
+  const asked = await buildRegistrationSpec(scriptWith({ bodyText: 'x' }), undefined, undefined, { evalHookKey: '__smDevEval:h' });
+  assert.match(asked.js[2].code, /__smDevEval:h/);
+});
+
+test('scratchEvalHookKey: a test collection\'s scripts only', () => {
+  assert.equal(scratchEvalHookKey('scratch:///run-ab12/a.user.js'), '__smDevEval:run-ab12');
+  assert.equal(scratchEvalHookKey('file:///a.user.js'), undefined);
+});
+
+test('wrapCombinedEntry: the nested scope adds no lines', () => {
+  // Line N of the body must stay generated line N (no requires), and the
+  // entry keeps the same number of lines, so the source map and the
+  // viewer's stack mapping need no adjustment.
+  const wrapped = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    script: scriptWith({ bodyText: 'L1\nL2' }),
+  });
+  const lines = wrapped.split('\n');
+  assert.match(lines[0], /L1$/);
+  assert.equal(lines[1], 'L2');
+  assert.equal(lines[2], '})();});');
+  assert.match(lines[3], /^\/\/# sourceURL=/);
+});
+
+test('buildSwapEvalBody: the swapped body shadows our bindings too', async () => {
+  // The swap evals the bindings and the body in one call, so it needs
+  // the same nested scope as the registered entry.
+  const script = makeScript({
+    header: { tags: [{ tag: 'name', value: 'X' }, { tag: 'grant', value: 'GM_setValue' }] },
+    bodyText: 'const GM_info = "mine"; var GM_setValue = 2; return [GM_info, GM_setValue].join(",");',
+  });
+  const { body } = await buildSwapEvalBody(script, '0.0.0', 'a.user.js');
+  assert.match(body, /const GM_info = /);
+  assert.match(body, /const GM_setValue = /);
+  assert.equal((0, eval)(body), 'mine,2');
 });
 
 test('wrapCombinedEntry: a `;` separator defeats ASI hazards at the seam', () => {
@@ -605,9 +758,9 @@ test('buildSwapEvalBody: a swapped body with @requires shares their scope', asyn
     }],
   });
   const { body } = await buildSwapEvalBody(script, '0.0.0', 'a.user.js');
-  // The swap eval is a single (0,eval) of this string, so evaluating
-  // it in one scope is exactly what the prelude does.
-  assert.equal(new Function(`${body}`)(), 'from-require:ok');
+  // The swap eval is a single (0,eval) of this string, exactly what the
+  // prelude does. Its completion value is the nested scope's result.
+  assert.equal((0, eval)(body), 'from-require:ok');
   // It carries the same inline source map a fresh registration emits,
   // so devtools splits a hot-swapped script back into its original
   // files instead of showing concatenated line numbers.
@@ -671,11 +824,11 @@ test('buildSwapEvalBody: passes through plain body when no header (defensive)', 
   // Headerless scripts aren't a production case (validateHeader
   // rejects them), but the helper should still return something
   // eval-able rather than throwing. No preamble and no requires means
-  // the body passes through untouched — same shape the registered
-  // path emits after its wrap head.
+  // the body passes through untouched inside the nested user-program
+  // scope — same shape the registered path emits after its wrap head.
   const script = { ...makeScript(), header: null };
   const { body } = await buildSwapEvalBody(script, '0.0.0');
-  assert.equal(body, 'console.log("hi");');
+  assert.equal(body, '(()=>{console.log("hi");\n})();');
 });
 
 // ---------- buildRegistrationSpec ----------
@@ -774,26 +927,55 @@ test('buildRegistrationSpec: @include glob → includeGlobs; /regex/ form goes t
   assert.match(cfg.code, /"matching"/);
 });
 
+test('buildRegistrationSpec: .tld rules register as coarse globs, narrowed in-page', async () => {
+  // Chrome would register `www.google.tld` as a literal host no page
+  // has, so a `.tld` @match or @include registers as a glob with `.*`
+  // in its place, and the in-page matcher, which reads `.tld`, decides.
+  // A `.tld` @exclude is in-page only.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: {
+      matches: ['https://example.com/*', '*://*.imdb.tld/*'],
+      excludes: ['https://www.google.tld/search*', 'https://example.com/admin/*'],
+      includes: ['*://www.google.tld/*', '*://example.org/*'],
+    },
+  }));
+  assert.deepEqual(spec.matches, ['https://example.com/*', NO_PAGE_MATCH]);
+  assert.deepEqual(spec.includeGlobs, ['*://*imdb.*/*', '*://www.google.*/*', '*://example.org/*']);
+  assert.deepEqual(spec.excludeGlobs, ['https://example.com/admin/*']);
+  assert.match(spec.js[0].code, /"matching"/);
+});
+
+test('buildRegistrationSpec: a .tld @match alone still registers', async () => {
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: { matches: ['*://www.google.tld/*'], excludes: [], includes: [] },
+  }));
+  assert.deepEqual(spec.matches, [NO_PAGE_MATCH]);
+  assert.deepEqual(spec.includeGlobs, ['*://www.google.*/*']);
+  assert.match(spec.js[0].code, /"matching"/);
+});
+
 test('buildRegistrationSpec: glob-only @include still gets a matches pattern', async () => {
-  // Chrome refuses a registration without `matches`, so an
-  // `@include`-only script rides in on `<all_urls>`.
+  // Chrome refuses a registration without `matches`, and ORs it with
+  // includeGlobs, so an `@include`-only script gets a stand-in no page
+  // has, and the globs alone say where Chrome injects. The wrapper's
+  // matcher still checks the glob in-page; its block has to be in the
+  // config blob.
   const spec = await buildRegistrationSpec(makeScript({
     matching: { matches: [], excludes: [], includes: ['*://example.com/*'] },
   }));
-  assert.deepEqual(spec.matches, ['<all_urls>']);
+  assert.deepEqual(spec.matches, [NO_PAGE_MATCH]);
   assert.deepEqual(spec.includeGlobs, ['*://example.com/*']);
-  // Chrome ORs includeGlobs with matches, so `<all_urls>` runs the
-  // script everywhere — the wrapper's matcher is what holds it to the
-  // glob. Its block has to be in the config blob.
   const cfg = spec.js[0];
   assert.ok('code' in cfg);
   assert.match(cfg.code, /"matching"/);
 });
 
-test('buildRegistrationSpec: @match beside a glob @include leaves matching to Chrome', async () => {
+test('buildRegistrationSpec: @match beside a glob @include adds the any-host stand-in', async () => {
   // Chrome ORs includeGlobs with matches (measured — see
-  // tests/e2e/include-only.spec.ts), which is what the header means,
-  // so this shape needs no wrapper-side matcher.
+  // tests/e2e/include-only.spec.ts), which is what the header means.
+  // NO_PAGE_MATCH keeps every page's host covered by `matches`, which
+  // Chrome needs to deliver messages to the page without crashing it;
+  // the wrapper-side matcher then guards its (unlikely) path.
   const spec = await buildRegistrationSpec(makeScript({
     matching: {
       matches: ['https://example.com/*'],
@@ -801,17 +983,25 @@ test('buildRegistrationSpec: @match beside a glob @include leaves matching to Ch
       includes: ['*://other.example/*'],
     },
   }));
-  assert.deepEqual(spec.matches, ['https://example.com/*']);
+  assert.deepEqual(spec.matches, ['https://example.com/*', NO_PAGE_MATCH]);
   assert.deepEqual(spec.includeGlobs, ['*://other.example/*']);
   const cfg = spec.js[0];
   assert.ok('code' in cfg);
-  assert.doesNotMatch(cfg.code, /"matching"/);
+  assert.match(cfg.code, /"matching"/);
 });
 
-test('buildRegistrationSpec: all @match patterns refused + glob @include falls back to <all_urls>', async () => {
+test('buildRegistrationSpec: @match alone gets no stand-in', async () => {
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: { matches: ['https://example.com/*'], excludes: [], includes: [] },
+  }));
+  assert.deepEqual(spec.matches, ['https://example.com/*']);
+  assert.equal(spec.includeGlobs, undefined);
+});
+
+test('buildRegistrationSpec: all @match patterns refused + glob @include gets the stand-in', async () => {
   // `https://example.com` (no path) is a pattern Chrome's grammar
   // refuses, so it never reaches the spec — leaving the script with
-  // globs only, which is the fallback case.
+  // globs only, which is the stand-in case.
   const spec = await buildRegistrationSpec(makeScript({
     matching: {
       matches: ['https://example.com'],
@@ -819,7 +1009,7 @@ test('buildRegistrationSpec: all @match patterns refused + glob @include falls b
       includes: ['*://example.com/*'],
     },
   }));
-  assert.deepEqual(spec.matches, ['<all_urls>']);
+  assert.deepEqual(spec.matches, [NO_PAGE_MATCH]);
   assert.deepEqual(spec.includeGlobs, ['*://example.com/*']);
   const cfg = spec.js[0];
   assert.ok('code' in cfg);
@@ -846,6 +1036,18 @@ test('buildRegistrationSpec: regex-only @include registers <all_urls> and defers
   }));
   assert.deepEqual(spec.matches, ['<all_urls>']);
   assert.equal(spec.includeGlobs, undefined);
+});
+
+test('buildRegistrationSpec: a regex @include beside a @match still registers <all_urls>', async () => {
+  // Registering only the @match would never inject on a page just the
+  // regex covers.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: { matches: ['https://a.test/*'], excludes: [], includes: ['/^https:\\/\\/b\\.test\\//'] },
+  }));
+  assert.deepEqual(spec.matches, ['<all_urls>']);
+  const cfg = spec.js[0];
+  assert.ok('code' in cfg);
+  assert.match(cfg.code, /"matching"/);
 });
 
 test('buildRegistrationSpec: pure @match script omits the wrapper-side matcher block', async () => {
@@ -1265,13 +1467,13 @@ test('buildRegistrationSpec: MAIN-world script gets GM_info only (no other bindi
 test('buildRegistrationSpec: passes script.startupLogs through to the config blob', async () => {
   const script = makeScript({
     id: 'forwarded',
-    startupLogs: [{ level: 'warn', message: 'Ignoring @grant GM_audio — unsupported APIs' }],
+    startupLogs: [{ level: 'warn', message: 'Ignoring unsupported @grant GM_audio' }],
   });
   const spec = await buildRegistrationSpec(script);
   const cfg = spec.js[0];
   assert.ok('code' in cfg);
   assert.match(cfg.code, /"startupLogs":\[/);
-  assert.match(cfg.code, /Ignoring @grant GM_audio — unsupported APIs/);
+  assert.match(cfg.code, /Ignoring unsupported @grant GM_audio/);
 });
 
 // ---------- resolveWorld ----------
@@ -1390,6 +1592,19 @@ test('prelude matcher: @match passes', async () => {
   assert.equal(match('https://example.com/x', { matches: ['https://example.com/*'], excludes: [], includes: [] }), true);
 });
 
+test('prelude matcher: a regex ignores case, as urlMatchesScript does', async () => {
+  const match = await loadPreludeMatcher();
+  const url = 'https://example.com/page';
+  for (const [m, expected] of [
+    [{ matches: [], excludes: [], includes: ['/EXAMPLE\\.COM\\/PAGE/'] }, true],
+    [{ matches: ['https://example.com/*'], excludes: ['/PAGE/'], includes: [] }, false],
+    [{ matches: [], excludes: [], includes: ['*EXAMPLE.COM*'] }, false],
+  ]) {
+    assert.equal(match(url, m), expected, JSON.stringify(m));
+    assert.equal(urlMatchesScript(url, m), expected, JSON.stringify(m));
+  }
+});
+
 test('prelude matcher: /regex/ @include matches when glob would not', async () => {
   const match = await loadPreludeMatcher();
   const m = { matches: [], excludes: [], includes: ['/^https:\\/\\/foo\\.example\\.com\\/.*$/'] };
@@ -1433,6 +1648,52 @@ test('prelude matcher: agrees with url-match.ts on the lenient shapes', async ()
     const m = { matches: [pattern], excludes: [], includes: [] };
     assert.equal(match(url, m), false, `${pattern} should not match ${url}`);
     assert.equal(urlMatchesScript(url, m), false);
+  }
+});
+
+test('prelude matcher: @match ignores the #hash, @include and @exclude see it, as urlMatchesScript does', async () => {
+  // The bug this pins: Chrome injected a script with an exact @match on
+  // a URL with a hash, and the regex @include (which ships the matcher
+  // in-page) made the recheck here reject it.
+  const match = await loadPreludeMatcher();
+  const url = 'https://example.com/foo#part';
+  const cases = [
+    [{ matches: ['https://example.com/foo'], excludes: [], includes: ['/nomatch/'] }, true],
+    [{ matches: ['https://example.com/foo#part'], excludes: [], includes: [] }, false],
+    [{ matches: [], excludes: [], includes: ['*#part'] }, true],
+    [{ matches: [], excludes: [], includes: ['https://example.com/foo'] }, false],
+    [{ matches: ['https://example.com/*'], excludes: ['*#part'], includes: [] }, false],
+  ];
+  for (const [m, expected] of cases) {
+    assert.equal(match(url, m), expected, JSON.stringify(m));
+    assert.equal(urlMatchesScript(url, m), expected, JSON.stringify(m));
+  }
+});
+
+test('prelude matcher: reads .tld loosely, never narrower than url-match.ts', async () => {
+  // The exact reading needs the public suffix list, which stays out of
+  // the page: the worker's check-pending reply applies it. So the
+  // prelude may say yes where url-match.ts says no, never the reverse,
+  // and leaves a `.tld` @exclude to the worker entirely.
+  const match = await loadPreludeMatcher();
+  // [matching, url, prelude, exact]
+  const cases = [
+    [{ matches: [], excludes: [], includes: ['*://www.google.tld/*'] }, 'https://www.google.co.uk/', true, true],
+    [{ matches: [], excludes: [], includes: ['*://www.google.tld/*'] }, 'https://www.google.evil.com/', true, false],
+    [{ matches: [], excludes: [], includes: ['*://www.google.tld/*'] }, 'https://www.google.local/', true, false],
+    [{ matches: [], excludes: [], includes: ['*://www.google.tld/*'] }, 'https://www.googlex.com/', false, false],
+    [{ matches: ['https://*.imdb.tld/title/*'], excludes: [], includes: [] }, 'https://m.imdb.de/title/tt1', true, true],
+    [{ matches: ['https://*.imdb.tld/title/*'], excludes: [], includes: [] }, 'https://imdb.com.evil.io/title/tt1', true, false],
+    [{ matches: ['https://*.imdb.tld/title/*'], excludes: [], includes: [] }, 'https://imdb.com/name/nm1', false, false],
+    [{ matches: [], excludes: [], includes: ['http://www.google.tld*'] }, 'http://www.google.de/x', true, true],
+    [{ matches: ['*://*/*'], excludes: ['https://www.google.tld/search*'], includes: [] }, 'https://www.google.fr/search?q=1', true, false],
+    [{ matches: ['*://*/*'], excludes: ['https://www.google.tld/search*'], includes: [] }, 'https://www.google.fr/maps', true, true],
+    [{ matches: ['*://*.tld/*'], excludes: [], includes: [] }, 'https://example.com/', false, false],
+    [{ matches: [], excludes: [], includes: ['*://*.tld/*'] }, 'https://example.com/', false, false],
+  ];
+  for (const [m, url, prelude, exact] of cases) {
+    assert.equal(match(url, m), prelude, `prelude: ${JSON.stringify(m)} / ${url}`);
+    assert.equal(urlMatchesScript(url, m), exact, `url-match: ${JSON.stringify(m)} / ${url}`);
   }
 });
 
@@ -1760,13 +2021,11 @@ function markerScript() {
   });
 }
 
-// What the viewer computes, from the stored script alone.
+// What the viewer (and sm-dev) computes, from the stored script alone.
 function viewerSegments(script, label) {
-  return composeSource(script, {
-    requireUrls: (script.requires ?? []).map((r) => buildRequireSourceUrl(label, r.url)),
-    mainUrl: buildSourceUrl(label),
-    startLine: USER_SOURCE_START_LINE,
-  }).segments;
+  const layout = stackLayout(script, label);
+  assert.equal(layout.entryUrl, buildSourceUrl(label));
+  return layout.segments;
 }
 
 function assertRoundTrip(code, script, label) {
@@ -1821,6 +2080,30 @@ test('registered entry: the body marker maps to its real line in the stored file
   assert.equal(storedBody.split('\n')[got.line - 1], 'BODY_MARKER;');
 });
 
+test('remapStackText: a stack from the registered entry names each file at its own line', async () => {
+  // The plain-text form sm-dev prints, end to end: real generated
+  // lines in, the require's URL and line (and the body's) out.
+  const script = markerScript();
+  const label = 'a.user.js';
+  const spec = await buildRegistrationSpec(script, '0.0.0', label);
+  const entryUrl = buildSourceUrl(label);
+  const code = spec.js[2].code;
+  const stack = [
+    'Error: boom',
+    `    at f (${entryUrl}:${generatedLineOf(code, 'A_MARKER;')}:3)`,
+    `    at ${entryUrl}:${generatedLineOf(code, 'BODY_MARKER;')}:1`,
+    '    at https://example.com/app.js:10:2',
+  ].join('\n');
+  const storedBody = composeRequiredBody({ ...script, requires: [] });
+  const bodyLine = storedBody.split('\n').indexOf('BODY_MARKER;') + 1;
+  assert.equal(remapStackText(stack, [stackLayout(script, label)]), [
+    'Error: boom',
+    `    at f (${buildRequireSourceUrl(label, 'https://cdn/a.js')}:2:3)`,
+    `    at ${entryUrl}:${bodyLine}:1`,
+    '    at https://example.com/app.js:10:2',
+  ].join('\n'));
+});
+
 // ---------- registerWithFallback: every refused attempt is logged ----------
 //
 // The Log is a transcript of what happened, and "we offered the spec
@@ -1828,7 +2111,7 @@ test('registered entry: the body marker maps to its real line in the stored file
 // would make a live refusal indistinguishable from a stale one, and
 // would leave the row explaining nothing after a "Clear log".
 
-const { getScriptLog, _flushScriptLogQueueForTests } = await import('../../dist/script-log.js');
+const { getScriptLog, _flushScriptLogQueueForTests } = await import('../../dist/extension/script-log.js');
 
 const SPEC_A = { id: 'a', matches: ['https://e/*'], js: [{ code: '1' }] };
 
@@ -1874,7 +2157,7 @@ test('registerWithFallback: a cleared log refills on the next attempt', async ()
   await syncOnce([SPEC_A], new Set(['a']));
   assert.equal(await rejectionRows(), 1);
 
-  const { clearScriptLog } = await import('../../dist/script-log.js');
+  const { clearScriptLog } = await import('../../dist/extension/script-log.js');
   await clearScriptLog('a');
   assert.equal(await rejectionRows(), 0);
 
@@ -1911,7 +2194,7 @@ test('registerWithFallback: logging survives a service-worker restart', async ()
   assert.equal(await rejectionRows(), 1);
 
   // Re-import with the module state thrown away, as a fresh SW would.
-  const reloaded = await import(`../../dist/injector.js?sw=${Date.now()}`);
+  const reloaded = await import(`../../dist/extension/injector.js?sw=${Date.now()}`);
   userScripts.register = async (batch) => { throw new Error(`bad spec: ${batch[0].id}`); };
   await reloaded.registerWithFallback([SPEC_A]);
   await _flushScriptLogQueueForTests('a');
@@ -1924,7 +2207,7 @@ test('registerWithFallback: logging survives a service-worker restart', async ()
 // viewer read to show REJECTED. It has to describe the CURRENT
 // registration set, not the history of everything ever refused.
 
-const { readRejections } = await import('../../dist/script-rejection.js');
+const { readRejections } = await import('../../dist/extension/script-rejection.js');
 
 const SPEC_B = { id: 'b', matches: ['https://f/*'], js: [{ code: '1' }] };
 
@@ -1979,7 +2262,7 @@ const {
   retryRejectedRegistrations,
   _setRetryNowForTests,
   REJECTION_RETRY_MIN_INTERVAL_MS,
-} = await import('../../dist/injector.js');
+} = await import('../../dist/extension/injector.js');
 
 // The retry rebuilds specs from the store, so it needs a script row to
 // find. Only the fields collectActiveSpecs reads matter here.
@@ -1988,6 +2271,7 @@ function seedStore(scriptId, { matches = ['https://e/*'], grants = [] } = {}) {
     id: scriptId,
     collectionId: 'src-1',
     relativePath: `bad-${scriptId}.user.js`,
+    fileUrl: `file:///bad-${scriptId}.user.js`,
     status: 'ok',
     enabled: true,
     size: 10,
@@ -2108,7 +2392,7 @@ const {
   syncRegistrations,
   forgetRegistrationState,
   _forgetRegistrationForTests,
-} = await import('../../dist/injector.js');
+} = await import('../../dist/extension/injector.js');
 
 // Restore the module-wide stubs to the state the rest of the file
 // expects — including `register`'s loud default, so a later test that
@@ -2750,4 +3034,18 @@ test('registerWithFallback: a spec Chrome genuinely refuses is offered once', as
   await _flushScriptLogQueueForTests('a');
   assert.deepEqual(offered, ['a+b', 'a', 'b'], 'the batch, then one attempt per spec');
   assert.deepEqual(Object.keys(await readRejections()), ['a']);
+});
+
+// ---------- mustAsk (document-start skip of check-pending) ----------
+
+test('buildRegistrationSpec: a scratch script always tells its wrapper to ask', async () => {
+  const cfgOf = async (fileUrl) => (await buildRegistrationSpec(makeScript({ fileUrl }))).js[0].code;
+  assert.match(await cfgOf('scratch:///a.user.js'), /"mustAsk":true/);
+  assert.doesNotMatch(await cfgOf('file:///a.user.js'), /mustAsk/);
+});
+
+test('collectActiveSpecs: before the SW knows the sm-dev claims, every script asks', async () => {
+  const collections = new Map([['collection-1', { id: 'collection-1', enabled: true }]]);
+  const { specs } = await collectActiveSpecs([makeScript()], collections);
+  assert.match(specs[0].js[0].code, /"mustAsk":true/);
 });

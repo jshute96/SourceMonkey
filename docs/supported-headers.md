@@ -65,15 +65,35 @@ An empty **VM** cell is about VM's *documentation*, not its parser:
 
 ## URL matching
 
-See [matching.md](matching.md) for full semantics. All four patterns
-below can repeat; order doesn't matter.
+See [matching.md](matching.md) for full semantics. These tags can
+repeat, and order doesn't matter. A script needs at least one `@match`
+or `@include`.
 
 | Tag | SourceMonkey | TM | VM | GM | Notes |
 |-----|:----------:|:--:|:--:|:--:|-------|
-| `@match` | ✅ | ✓ | ✓ | ✓ | Chrome's match-pattern grammar (`<scheme>://<host><path>`), handed to `chrome.userScripts.register({ matches })`. A scheme-less (`*.example.com/*`) or globbed (`http*://…`) pattern is rewritten into the spelling Chrome takes — see [matching.md](matching.md#lenient-readings-canonicalmatchpatterns). |
-| `@include` | ✅ | ✓ | ✓ | ✓ | Glob form (`*://example.com/*`) goes to `includeGlobs`, which Chrome ORs with `matches` — userscript semantics. Regex form (`/^https:\/\/…$/`) goes to a wrapper-side filter — see [injection.md](injection.md#regex-pattern-forms). At least one `@match` or `@include` (either form) is required; a script with no `@match` registers as `<all_urls>` and narrows at runtime in the wrapper. |
-| `@exclude` | ✅ | ✓ | ✓ | ✓ | Glob form → `excludeGlobs`. Regex form → wrapper-side filter. |
-| `@exclude-match` | ⚪ |   | ✓ |   | VM-specific: the match-pattern-grammar counterpart to `@exclude` (which in VM's model is the legacy glob/regex form). SourceMonkey treats every `@exclude` value as either a glob or a regex regardless of which tag introduced it, so a script written for VM that uses `@exclude-match` will currently be ignored. Easy to add when needed: route both tags into the same `excludes` list. |
+| `@match` | ✅ | ✓ | ✓ | ✓ | Chrome's match-pattern grammar (`<scheme>://<host><path>`). |
+| `@include` | ✅ | ✓ | ✓ | ✓ | A glob (`*://example.com/*`) or a regex (`/^https:\/\/…$/`). A page matching either an `@include` or a `@match` runs the script. |
+| `@exclude` | ✅ | ✓ | ✓ | ✓ | Same forms as `@include`. Wins over `@match` and `@include`. |
+| `@exclude-match` | ⚪ |   | ✓ |   | VM-specific: `@exclude` in `@match`'s grammar. Not read yet, so its patterns don't exclude anything. Easy to add: route it into the same excludes as `@exclude`. |
+
+Pattern forms beyond Chrome's own grammar:
+
+- **`.tld` hosts**: a host ending in `.tld` (`*://www.google.tld/*`)
+  means that name under any public suffix, such as `google.com`,
+  `google.de` or `google.co.uk`, as in Tampermonkey. Works in all
+  three tags.
+  - Public suffixes are the ones domain registries hand out names
+    under, from the ICANN section of the Public Suffix List. Hosting
+    suffixes like `github.io` and local names like `.lan` don't count.
+  - See [matching.md](matching.md#tld-hosts).
+- **Regex `@include` / `@exclude`**: Chrome can't match these, so the
+  script checks them as it starts on a page. A script with a regex
+  `@include` is registered for all pages and skips the ones that don't
+  match. See [injection.md](injection.md#regex-pattern-forms).
+- **Lenient `@match` spellings**: a pattern with no scheme
+  (`*.example.com/*`) or a globbed one (`http*://…`) is read as the
+  pattern Chrome takes, since real scripts use them. See
+  [matching.md](matching.md#lenient-readings-canonicalmatchpatterns).
 
 ---
 
@@ -81,7 +101,7 @@ below can repeat; order doesn't matter.
 
 | Tag | SourceMonkey | TM | VM | GM | Notes |
 |-----|:----------:|:--:|:--:|:--:|-------|
-| `@run-at` | ✅ | ✓ | ✓ | ✓ (partial) | Every userscript registers with Chrome at `document_start`; the wrapper itself awaits the matching lifecycle event before running the body (`document-end` → `DOMContentLoaded`, `document-idle` → `load`, `document-body` → `document.body` exists). This sidesteps Chrome's `chrome.userScripts` scheduler batching `document_end` and `document_idle` into a single post-`load` burst. See [docs/injection.md](injection.md#run-at-gating). **Not supported:** `context-menu` — falls through to `document-idle`. GM4 docs warn only `document-end` is reliable there. |
+| `@run-at` | ✅ | ✓ | ✓ | ✓ (partial) | Every userscript registers with Chrome at `document_start`; the wrapper itself awaits the matching lifecycle event before running the body (`document-end` → `DOMContentLoaded`, `document-idle` → `load`, or 200ms after `DOMContentLoaded` if `load` is late, `document-body` → `document.body` exists). This sidesteps Chrome's `chrome.userScripts` scheduler batching `document_end` and `document_idle` into a single post-`load` burst. See [docs/injection.md](injection.md#run-at-gating). **Not supported:** `context-menu` is an error, so the script doesn't run (running it on every page load instead of from the right-click menu would be worse; see [injection.md](injection.md#run-at-gating)). Any other value falls through to `document-idle`, with a parse-time warning (Log tab, `sm-dev validate`, and sm-dev's `Injected` line). GM4 docs warn only `document-end` is reliable there. |
 | `@inject-into` | ✅ |   | ✓ |   | VM-specific. `page` → MAIN world. `content` → USER_SCRIPT (isolated) world, and it beats a request for `unsafeWindow`, granted or merely used (which then warns — see below). `auto` / unset falls through to `@grant` (see [injection.md → Execution world](injection.md#execution-world)). TM uses `@sandbox` for the same purpose. |
 | `@noframes` | ⚪ | ✓ | ✓ | ✓ | Should map to Chrome's `allFrames: false`. Currently every script runs in the top frame only because we don't set `allFrames` at all, so this happens to be the right behavior *by accident* — but a script that wants the opposite (also run in frames) can't get it. Running in frames also needs the menu-command registry re-keyed first — see the frame-control note in [injection.md](injection.md#limitations--future-work). |
 | `@run-in` | ⚪ | ✓ (5.3+) |   |   | Normal vs incognito vs Firefox containers. TM-only. |
@@ -97,7 +117,7 @@ below can repeat; order doesn't matter.
 |-----|:----------:|:--:|:--:|:--:|-------|
 | `@grant none` | ✅ | ✓ | ✓ | ✓ | Drives `resolveWorld` → MAIN and drops every other `@grant` line on the script (with a startup-log warning naming them). Multiple `@grant none` lines are accepted. |
 | `@grant <api>` | ✅ | ✓ | ✓ | ✓ | Drives `resolveWorld` → USER_SCRIPT (except `unsafeWindow`, which drives it → MAIN, taking the script's other grants with it — as does merely *using* `unsafeWindow` with no grant for it; see [supported-GM-APIs.md](supported-GM-APIs.md#unsafewindow-and-the-execution-world)) and emits a compile-in binding for the named API. Both legacy `GM_x` and GM4 `GM.x` forms are accepted on the same line; both map to the same canonical name and both bindings are exposed in scope. Unknown / typoed names log a `console.info` and are silently dropped (the script gets a natural `ReferenceError` at call time). The non-`GM_*` grants (`unsafeWindow`, `window.onurlchange`, …) don't all emit a binding — see [supported-GM-APIs.md](supported-GM-APIs.md#non-gm-grants). For the inventory of which API names are implemented vs stubbed see [supported-GM-APIs.md](supported-GM-APIs.md). |
-| `@connect` | ✅ | ✓ | ✓ |   | Allowlist for `GM_xmlhttpRequest` URLs **only** — it does not gate `GM_download` (see [supported-GM-APIs.md](supported-GM-APIs.md#connect-does-not-gate-downloads); TM doesn't gate downloads on it either). Requests to the **page's own origin** always pass, declared or not (as in TM ≥ 4). Everything else needs a rule: `*` (wildcard), `self` (the page's host + the script's `@match`/`@include` hosts), `example.com` (exact host), `*.example.com` (host + any subdomain); scheme-prefixed URLs (`https://example.com`) normalize to host. A script with **no** `@connect` is blocked cross-origin — TM instead prompts per host, and VM doesn't enforce `@connect` at all — it only shows the declared hosts on its install-confirm page, so a VM script that never bothered with `@connect` needs the tag added to work here. Every denial reaches `onerror` and the script's Log tab. See [GM-APIs.md](GM-APIs.md#connect-url-gating-phase-10). |
+| `@connect` | ✅ | ✓ | ✓ |   | Allowlist for `GM_xmlhttpRequest` URLs **only** — it does not gate `GM_download` (see [supported-GM-APIs.md](supported-GM-APIs.md#connect-does-not-gate-downloads); TM doesn't gate downloads on it either). Requests to the **page's own origin** always pass, declared or not (as in TM ≥ 4). Everything else needs a rule: `*` (wildcard), `self` (the page's host + the script's `@match`/`@include` hosts), `example.com` (host + any subdomain, as TM documents; whole labels only, so not `evilexample.com`; an IP or single-label name like `localhost` matches only exactly; multi-label public suffixes like `co.uk` aren't special-cased), `*.example.com` (the same). Scheme-prefixed URLs (`https://example.com`) normalize to host. A script with **no** `@connect` is blocked cross-origin, and granting `GM_xmlhttpRequest` without one is warned about at install time. TM instead prompts per host, and VM doesn't enforce `@connect` at all — it only shows the declared hosts on its install-confirm page, so a VM script that never bothered with `@connect` needs the tag added to work here. Every denial reaches `onerror` and the script's Log tab. See [GM-APIs.md](GM-APIs.md#connect-url-gating-phase-10). |
 | `@webRequest` | ⚪ | ✓ |   |   | TM-only, experimental, MV2 only. |
 
 ---

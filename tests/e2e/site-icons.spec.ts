@@ -739,7 +739,10 @@ test.describe('site-icon slot', () => {
       // real DB hit.
       const chromeFavicon = (pageUrl: string, exactPage: boolean) => extProbe.evaluate(
         async ([u, exact]) => {
-          const mod = await import('/site-icon.js') as typeof import('../../src/site-icon');
+          // Specifier through a variable: the module is resolved in the
+          // extension page, not from tests/ where TypeScript looks.
+          const spec = '/extension/site-icon.js';
+          const mod = await import(spec) as typeof import('../../src/extension/site-icon');
           return mod.fetchChromeFavicon(u as string, { exactPage: exact as boolean });
         },
         [pageUrl, exactPage],

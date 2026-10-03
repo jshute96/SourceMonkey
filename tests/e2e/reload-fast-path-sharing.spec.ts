@@ -3,7 +3,7 @@
 // navigation starts share their reads instead of each doing the same
 // ones. Both the reload fast path and the opportunistic sweep are
 // covered. See docs/injection.md#shared-work-across-the-batch and
-// `RefreshBatch` in src/script-store.ts.
+// `RefreshBatch` in src/extension/script-store.ts.
 //
 // The sharing has no behavioural signature by design — same rows, same
 // verdicts, same writes — so what these tests assert on is the SW's own

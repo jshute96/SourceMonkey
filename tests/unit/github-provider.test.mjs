@@ -1,4 +1,4 @@
-// Tests for src/github-provider.ts (compiled to dist/github-provider.js):
+// Tests for src/extension/github-provider.ts (compiled to dist/extension/github-provider.js):
 // GitHub URL parsing, default-branch resolution, raw-URL normalization,
 // and the Contents-API recursive directory scanner. The directories.ts
 // dispatch (scriptFileUrl / scriptAbsolutePath / scanForUserScripts
@@ -12,13 +12,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { githubRawToBlobUrl } from '../../dist/github-urls.js';
 import {
-  githubRawToBlobUrl,
   isGithubDirCollection,
   normalizeGithubInput,
   parseGithubUrl,
   scanGithubDir,
-} from '../../dist/github-provider.js';
+} from '../../dist/extension/github-provider.js';
 import { _setGithubAuthTokenForTests } from '../../dist/github-auth.js';
 
 async function withFetch(impl, fn) {

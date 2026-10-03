@@ -6,26 +6,31 @@ real-browser end-to-end suite for everything that touches the
 
 ## Layout
 
-- `tests/unit/*.test.mjs` — Node `--test` files. Import from
-  `dist/*.js`, so `pnpm run build` is a prerequisite (the
-  `test:unit` script runs it first).
+- `tests/unit/**/*.test.mjs` — Node `--test` files. Import from
+  `dist/**/*.js` (or `lib/` for the harness), so `pnpm run build` is a
+  prerequisite (the `test:unit` script runs it first).
+  - `tests/unit/harness/` holds the tests of `src/harness/` modules.
 - `tests/e2e/*.spec.ts` — Playwright specs. Launch headless Chromium
   with the unpacked extension loaded.
 - `tests/fixtures/` — shared harness code.
+- `tests/harness/*.spec.ts` — sm-dev and the fixture consumers import
+  (`src/harness/`, see [harness-design.md](harness-design.md)), under
+  the `sm-dev` Playwright project (`pnpm run test:sm-dev`).
+  - They run in a browser with the extension loaded, as sm-dev and the
+    fixture do for users.
+  - Fixtures in `tests/fixtures/harness.ts`, which extends the
+    package's own fixture.
 - `tests/greasyfork-examples/` — not a test suite: tooling that builds a
-  corpus of the top 2000 real-world GreasyFork scripts and analyses it
-  (see its own `README.md`). Playwright's `testMatch` covers only
+  corpus of the top 2000 real-world GreasyFork scripts, analyses it, and
+  records per-script validation and test results in `corpus.json` (see
+  its own `README.md`). Playwright's `testMatch` covers only
   `e2e/**` and `examples/**`, so nothing here runs as a test.
 
-`pnpm run validate` is a fourth thing again — not a test runner, but it
-does check scripts. It runs the install-time pipeline over files on
-disk with no browser, across `tests/examples/`, `tests/bad-examples/`,
-or the GreasyFork corpus. See
-[offline-validation.md](offline-validation.md).
+`sm-dev validate` runs the install-time pipeline over files on disk
+with no browser. `tests/unit/harness/validate.test.mjs` spawns it over
+`tests/examples/` and `tests/bad-examples/`.
 
-- The CLI itself is tested by `tests/unit/validate-userscripts.test.mjs`,
-  which spawns it over both example suites.
-- Its `tests/bad-examples/` expectations live in
+- `validate`'s `tests/bad-examples/` expectations live in
   `tests/fixtures/bad-script-cases.mjs` and are shared with
   `tests/e2e/bad-scripts.spec.ts`, which asserts the same table against
   the real extension in Chromium. One table, two runners: they can't
@@ -33,7 +38,7 @@ or the GreasyFork corpus. See
 
 ## Running
 
-- All tests: `pnpm test`
+- All tests: `pnpm test` (unit, e2e, then `test:sm-dev`)
 - Unit only: `pnpm run test:unit`
 - E2E only: `pnpm run test:e2e`
 - One unit file: `node --test tests/unit/<name>.test.mjs`
@@ -112,12 +117,20 @@ It runs against real headless Chromium with `chrome.userScripts`,
 
 - `extension.ts` — Playwright `test` extended with:
   - `extensionContext` (worker-scoped) — persistent Chromium with the
-    extension loaded and Preferences pre-seeded.
+    extension loaded and Preferences pre-seeded, launched by sm-dev's
+    own launcher (`src/harness/extension-launch.ts`), so the suites and
+    `sm-dev --temp-browser` run the same browser.
   - `fixtureServer` (worker-scoped) — local HTTP server serving
     `tests/fixtures/pages/` first, with `tests/examples/` mounted as
     a fallback root so example pages are reachable at
-    `${baseUrl}/<api>/page.html`. Two routes are not files:
+    `${baseUrl}/<api>/page.html`. Some routes are not files:
     - `/__slow/<name>?ms=N` — delays a tiny JS/PNG response.
+    - `/__slowbody/<page>?ms=N` — sends a fixture page's headers at
+      once and its bytes N ms later, so the document exists before
+      `<html>` does.
+    - `/__sandbox/<page>` — serves a fixture page with a
+      `Content-Security-Policy: sandbox` header, which a `<meta>` CSP
+      can't set.
     - `/__echo?delay=N` — reflects the request's method, target and
       headers back as JSON, so a test can see what actually went on the
       wire (forbidden headers are invisible from the page that asked
@@ -198,7 +211,7 @@ derivations still resolve correctly.
 
 ### SW test surface
 
-`src/background.ts` exposes `self.SourceMonkey` so Playwright can invoke
+`src/extension/background.ts` exposes `self.SourceMonkey` so Playwright can invoke
 SW functions via `serviceWorker.evaluate(...)`. Methods relevant to
 tests:
 
@@ -233,6 +246,13 @@ tests:
   sharing has no other observable signature. Both are per-JS-context and
   count *all* such reads in the worker, so reset around the window under
   test.
+- sm-dev runs: `writeRunScript({ run, text, name?, files? })` installs text
+  into run `run`'s test collection and syncs before it resolves (a
+  rewrite of the same name replaces in place); `releaseRun(run)`
+  removes the collection. `sweepRunCollections(now)` runs the
+  crashed-run cleanup as if at `now`, past the grace period. sm-dev
+  drives these; see
+  [sm-dev-design.md](sm-dev-design.md#test-collections).
 - GM values: `getGmValues(id)` returns every **persisted** value for a
   script, deliberately excluding the SW's in-flight overlay.
   `GM_setValue` batches its write 150ms after the last one, so a test
@@ -381,8 +401,13 @@ fetch via the SW). Highlights:
   globals and keeps its storage, a grant-free script gets the binding
   without pulling `__SM_GM__` onto the page, a mention in a comment or
   a string leaves the script isolated, a script that declares the name
-  itself still installs `ok` (our binding would be a duplicate `const`),
-  and `@inject-into content` still wins and warns.
+  itself installs `ok` and stays where its grants put it, and
+  `@inject-into content` still wins and warns.
+- `tests/e2e/wrapper-scope.spec.ts` — the user program's nested scope:
+  `const window = unsafeWindow`, redeclared `GM_*` / `unsafeWindow` /
+  `__sm*` names and a library's own `unsafeWindow` all run; a leading
+  `"use strict"` applies, at run time and in the install-time syntax
+  check; the reload swap gets the same scope.
 - `tests/e2e/gm-main-world-surface.spec.ts` — the rest of the GM_*
   surface from MAIN world, which every other spec exercises only in
   USER_SCRIPT world. Two reasons a surface is in here:

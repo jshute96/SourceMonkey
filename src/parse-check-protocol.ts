@@ -76,8 +76,8 @@ export interface ParseVerdict {
   // the verdict and the segment list the line has to be mapped
   // through. Absent when the probes couldn't place the error — V8
   // landing on our own sentinel (the source ends mid-construct), or on
-  // the GM-bindings preamble, neither of which is a line the user
-  // wrote.
+  // the first line or a seam we add, none of which is a line the
+  // user wrote.
   location?: ParseLocation;
 }
 

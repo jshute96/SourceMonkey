@@ -73,7 +73,7 @@ test('a page embedding the script it displays is still markup', () => {
 
 test('the message names the server or the local file, never both', () => {
   const server = markupResponseMessage();
-  assert.match(server, /^The server returned an HTML page, not JavaScript —/);
+  assert.match(server, /^The server returned an HTML page, not JavaScript; the link may be dead/);
 
   const local = markupResponseMessage({ localUrl: 'file:///home/me/lib.js' });
   assert.match(local, /^The local file file:\/\/\/home\/me\/lib\.js is an HTML page/);

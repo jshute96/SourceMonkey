@@ -6,12 +6,12 @@ Two related pieces:
   `// ==UserScript== … // ==/UserScript==` block into a structured
   form. Used by the [script store](storage.md) for validation and by
   the viewer below for the summary.
-- **Viewer page** (`src/userscript.html` + `src/userscript.ts`) —
+- **Viewer page** (`src/userscript.html` + `src/extension/userscript.ts`) —
   renders one script, installed or not. Its two reusable pieces live
   next door: the details `<dl>` in
-  [`src/script-details.ts`](../src/script-details.ts), the tabbed code
-  view in [`src/code-tabs.ts`](../src/code-tabs.ts) (with the
-  linkifier in [`src/code-links.ts`](../src/code-links.ts)).
+  [`src/extension/script-details.ts`](../src/extension/script-details.ts), the tabbed code
+  view in [`src/extension/code-tabs.ts`](../src/extension/code-tabs.ts) (with the
+  linkifier in [`src/extension/code-links.ts`](../src/extension/code-links.ts)).
 
 ## Header parser
 
@@ -143,8 +143,8 @@ Both name the script the same way, pivoted for where they're read.
 2. **Other versions panel** (`#other-versions`) — every installed copy
    of this script, when there is more than one to talk about. Built by
    `renderRelatedVersions` in
-   [`src/related-versions.ts`](../src/related-versions.ts) over the
-   lookup in [`src/script-identity.ts`](../src/script-identity.ts).
+   [`src/extension/related-versions.ts`](../src/extension/related-versions.ts) over the
+   lookup in [`src/extension/script-identity.ts`](../src/extension/script-identity.ts).
    - Two sections: **This URL** (same absolute `fileUrl`) and **Same
      script from a different URL** (same `@namespace` + `@name`).
    - Per row: enable toggle, type bubble + collection name linking to
@@ -217,11 +217,11 @@ Both name the script the same way, pivoted for where they're read.
    - `refreshError` never gets one — the fetch failed, so there is no
      new content to point into.
 5. **Details panel** (`#header-summary` → `<dl>`) — built by
-   `renderDetails` in [`src/script-details.ts`](../src/script-details.ts).
+   `renderDetails` in [`src/extension/script-details.ts`](../src/extension/script-details.ts).
    Row order is fixed and a row is omitted when its value is absent, so
    the panel doesn't reshuffle between modes.
    - **Every label carries a tooltip**, from the one table in
-     [`src/details-tooltips.ts`](../src/details-tooltips.ts). Several
+     [`src/extension/details-tooltips.ts`](../src/extension/details-tooltips.ts). Several
      rows report something the label can't convey — what we checked but
      deliberately didn't act on, what a value is *not*, where a name
      shows up outside this page — so the tooltip corrects the likely
@@ -286,7 +286,7 @@ Both name the script the same way, pivoted for where they're read.
        see [architecture.md](architecture.md#cross-page-navigation)).
        Same bubble/name combo the collections page renders. Installed mode only; row omitted if the parent
        collection row has vanished. See
-       [`src/collection-display.ts`](../src/collection-display.ts).
+       [`src/extension/collection-display.ts`](../src/extension/collection-display.ts).
      - `Location` — anchor wrapping the resolved location. Display form
        depends on collection kind:
        - `file://` → bare fs path
@@ -299,7 +299,7 @@ Both name the script the same way, pivoted for where they're read.
          bare fs path isn't navigable). The href always keeps the
          *encoded* form, and the tooltip shows it.
        - **Copy button** (`makeCopyButton` in
-         [`src/copy-button.ts`](../src/copy-button.ts), shared with the
+         [`src/extension/copy-button.ts`](../src/extension/copy-button.ts), shared with the
          `Local overrides` entries). Copies the raw location, not the
          decoded display text; the icon swaps to a checkmark for ~1.2 s
          on success.
@@ -324,13 +324,13 @@ Both name the script the same way, pivoted for where they're read.
        so reading them together is what shows when they disagree. An
        anchor when the value parses as an absolute http(s) URL, plain
        text otherwise.
-   - `Log ID` — short file-derived handle used in every SW log line.
-     See [logging.md](logging.md). Installed mode only.
-     - **Only when it carries a `#N` dupe suffix.** Without one the log
-       ID is the script's own basename, which the `Location` row already
-       says. The `#N` is the part written nowhere in the file, and it's
-       what a stack trace or `//# sourceURL=` names — so a reader holding a `foo.user.js#2` can ask whether
-       that's this one.
+   - `Log ID` — short handle used in every SW log line: the basename
+     and the script's number (`foo.user.js#E4`). See
+     [logging.md](logging.md). Installed mode only, and always shown.
+     - The `#E4` is written nowhere in the file, and it's what a stack
+       trace, a `//# sourceURL=` and sm-dev (`E4`) name the script by.
+     - The row's tooltip ends with a line naming the number sm-dev uses
+       (`E4 is the script's ID in sm-dev.`).
      - A script added by URL shows its decoded filename — see
        [names-and-paths.md](names-and-paths.md).
    - Parsed-header fields, continued — one row per tag, each pattern
@@ -388,7 +388,7 @@ Both name the script the same way, pivoted for where they're read.
        the message bar) when the injector's `injector-rejections` map
        changes.
 6. **Tab strip** (`#tabs`) — one tab per source file, plus the Log tab.
-   Owned by `CodeTabsView` in [`src/code-tabs.ts`](../src/code-tabs.ts):
+   Owned by `CodeTabsView` in [`src/extension/code-tabs.ts`](../src/extension/code-tabs.ts):
    - Main script first, labeled with the basename of `relativePath`
      (decoded when that path is a URL).
    - Then one tab per `@require` in declaration order, labeled with
@@ -446,7 +446,7 @@ Both name the script the same way, pivoted for where they're read.
 Clicking Refresh:
 
 1. Disables the button and spins its glyph in place
-   (`setGlyphButtonBusy`, src/glyph.ts). The tooltip becomes
+   (`setGlyphButtonBusy`, src/extension/glyph.ts). The tooltip becomes
    "Refreshing…"; the button itself neither changes size nor moves
    what sits beside it.
    - Under `prefers-reduced-motion` the glyph doesn't spin — it dims,
@@ -483,7 +483,7 @@ what keeps a wrapping name from dragging it onto the last wrapped line.
   `relativePath` is relative to its collection root, so there is
   nothing to move.
 
-Clicking it opens the **move dialog** (`src/move-dialog.ts`), which
+Clicking it opens the **move dialog** (`src/extension/move-dialog.ts`), which
 owns the whole action the way the collection dialog owns Create: the
 destination dropdown, the refusals, the `moveScript` call, and any
 failure in its own error slot.
@@ -522,7 +522,7 @@ failure in its own error slot.
 
 **Local copy…** sits in the controls row under the heading, between the
 **Enabled** box and **Refresh**, and appears for every installed
-script. It opens the copy dialog (`src/copy-dialog.ts`), which writes an
+script. It opens the copy dialog (`src/extension/copy-dialog.ts`), which writes an
 editable copy into the *Scripts copied in Downloads* collection under
 the browser's Downloads folder.
 
@@ -546,8 +546,9 @@ its own Refresh. A `chrome.storage.onChanged` listener re-hydrates and
 re-renders when:
 
 - a **`script:*`** row changes — this script (status, content, size,
-  enabled), or a sibling whose add/remove shifts this script's dedup
-  `#N` log ID;
+  enabled), or a sibling whose add/remove shifts an unnumbered `#N`;
+- the **`scriptNumbers`** row changes — a new script gets its number
+  just after it is added;
 - **this script's parent `collection:*`** row changes, but only in a field
   this page shows — `enabled` (greys the Enable toggle), `displayName`
   or `path` (the Collection row). The re-hydrate re-reads the collection
@@ -737,7 +738,7 @@ every row underneath the click that selected it.
 
 The viewer keeps `location.hash` in sync with the selected tab +
 highlight so a URL can be copied or bookmarked and reopened in the
-same place. Pure parser / builder live in `src/script-url-hash.ts`.
+same place. Pure parser / builder live in `src/extension/script-url-hash.ts`.
 
 Fragment grammar:
 
@@ -849,7 +850,7 @@ Banner (`#banner-slot`) states what this file is; the action row
   `chrome.extension.isAllowedFileSchemeAccess()`. If the toggle really
   is off, `#banner-slot` gets the **"File access is disabled."**
   banner — the same one the collections page shows, from
-  [`src/file-access.ts`](../src/file-access.ts) — with a click-through
+  [`src/extension/file-access.ts`](../src/extension/file-access.ts) — with a click-through
   to `chrome://extensions/?id=<our id>`.
 - Both modes raise it, because both can hit the toggle:
   - **Preview** — the fetch behind `Could not fetch this script: …`.
@@ -1051,7 +1052,7 @@ The viewer uses **Prism.js**, vendored from `node_modules/prismjs` by
 
 ### Userscript-header syntax highlighting extension
 
-[`src/prism-userscript.ts`](../src/prism-userscript.ts) extends
+[`src/extension/prism-userscript.ts`](../src/extension/prism-userscript.ts) extends
 Prism's JavaScript grammar (via
 `Prism.languages.insertBefore('javascript', 'comment', …)`) with a
 `userscript-header` token that wraps the entire
@@ -1201,7 +1202,7 @@ Notes:
 - Site-icon discovery does *not* use it — a page beside the script
   isn't a site, and probing it for a favicon would be noise.
 
-### Hosting-site pages (`src/script-sites.ts`)
+### Hosting-site pages (`src/extension/script-sites.ts`)
 
 What we fetch from a userscript-hosting site is its *raw code* URL,
 which is not a page a person wants to open. Each supported site
@@ -1236,7 +1237,7 @@ pure rewrite — no network call, no stored field.
 
 ### Code box (post-Prism walk)
 
-`linkifyCodeBlock` in `src/userscript.ts` runs after
+`linkifyCodeBlock` in `src/extension/userscript.ts` runs after
 `Prism.highlightElement` in two passes:
 
 1. **Header pass** — finds each `.userscript-header` span left by

@@ -5,7 +5,7 @@ developed against a copy on your own disk.
 
 Owned by [`src/local-file-overrides.ts`](../src/local-file-overrides.ts).
 Applied in two places — [`src/external-files.ts`](../src/external-files.ts)
-for `@require` / `@resource`, and [`src/site-icon.ts`](../src/site-icon.ts)
+for `@require` / `@resource`, and [`src/extension/site-icon.ts`](../src/extension/site-icon.ts)
 for `@icon` (see [below](#every-file-a-script-declares-is-treated-alike)
 for why they aren't one). See [requires.md](requires.md),
 [resources.md](resources.md), and [site-icons.md](site-icons.md) for the
@@ -254,7 +254,7 @@ They do NOT share one call site, though:
 
 - `@require` / `@resource` resolve in
   [`src/external-files.ts`](../src/external-files.ts).
-- `@icon` resolves in [`src/site-icon.ts`](../src/site-icon.ts), which
+- `@icon` resolves in [`src/extension/site-icon.ts`](../src/extension/site-icon.ts), which
   has its own bounded fetch, `image/*` gate, and caches.
 
 Both call `localFileCandidates` and take the first candidate that reads.
@@ -383,6 +383,9 @@ be silent, so several surfaces say so:
   - Every code tab has the URL tooltip, the main script's included:
     labels are bare basenames, so "which file is this" is a fair
     question on any of them. Only the chip is override-specific.
+  - A file sm-dev pushed gets a `snapshot` chip instead, saying it's a
+    copy taken at the push (see
+    [sm-dev-design.md](sm-dev-design.md#files-read-from-disk)).
 - **Details panel `Local overrides` row** — one entry per overridden file,
   naming the kind (`@require` / `@resource`), the local path we read,
   and a copy button for it. The declaration it replaced is the entry's

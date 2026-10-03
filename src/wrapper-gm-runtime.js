@@ -2,7 +2,7 @@
    execution world at document_start, ahead of every userscript — in
    USER_SCRIPT world, in MAIN world, or both, depending on which worlds
    have a script granting a runtime-backed API (see buildGmRuntimeSpecs
-   in src/injector.ts). One source, two transports; see the transport
+   in src/extension/injector.ts). One source, two transports; see the transport
    section below.
 
    Per-script wrappers compile in `const GM_X = function(...) { ... }`
@@ -180,7 +180,7 @@
   /* ---------- transport ----------
 
      This one runtime source is registered in BOTH execution worlds
-     (see buildGmRuntimeSpecs in src/injector.ts). Everything above and
+     (see buildGmRuntimeSpecs in src/extension/injector.ts). Everything above and
      below this block is world-agnostic; only the two primitives here
      differ:
 
@@ -1235,10 +1235,12 @@
 
   /* ---------- DOM injection (GM_addStyle / GM_addElement) ----------
 
-     USER_SCRIPT-world DOM mutations are exempt from page CSP (the
-     same dispensation content scripts get), so a script on a strict-
-     CSP page like github.com / google.com can still inject styles
-     and elements that the page itself couldn't.
+     In USER_SCRIPT world the page CSP doesn't govern what a script
+     inserts: styles apply regardless, and <script> elements are
+     checked against the world CSP instead (see ensureWorldConfigured
+     in injector.ts). So a script on a strict-CSP page like
+     github.com / google.com can still inject styles and scripts that
+     the page itself couldn't.
 
      In MAIN world there is no exemption: the page's CSP applies to
      what the script inserts, so a strict `style-src` accepts the
@@ -1563,17 +1565,52 @@
     if (event.kind === "load" && entry.responseType) {
       rebuildBinary(event.response, entry.responseType);
     }
+    /* Every terminal event leaves the request DONE, so the object each
+       callback sees carries `readyState: 4` (scripts gate on it, e.g.
+       `if (r.readyState === 4)`). Non-load events have no response, so
+       they get the empty fields of a failed XMLHttpRequest (`status: 0`,
+       empty text) as TM/VM do: a shared handler that reads
+       `r.responseText` after checking readyState must not crash. A load
+       with no response object (never sent today) falls back to the
+       same empty shape rather than throwing before any callback. */
+    var payload;
+    if (event.kind === "load" && event.response && typeof event.response === "object") {
+      payload = event.response;
+      payload.readyState = 4;
+    } else {
+      payload = emptyXhrResponse(entry);
+      if (event.kind === "error") payload.error = event.message;
+    }
     var cb;
     if (event.kind === "load") cb = entry.onload;
     else if (event.kind === "error") cb = entry.onerror;
     else if (event.kind === "timeout") cb = entry.ontimeout;
     else if (event.kind === "abort") cb = entry.onabort;
+    /* `onreadystatechange` fires before the terminal callback, the
+       order XMLHttpRequest (and so Tampermonkey/Violentmonkey) uses:
+       readystatechange(4), then load/error/timeout/abort. Only the
+       final state is reported; the worker sends one event per request,
+       so states 1-3 never reach the page. */
+    callXhrCallback(entry.onreadystatechange, payload);
+    callXhrCallback(cb, payload);
+  }
+
+  function emptyXhrResponse(entry) {
+    return {
+      readyState: 4,
+      status: 0,
+      statusText: "",
+      responseText: "",
+      response: null,
+      responseHeaders: "",
+      finalUrl: entry.url,
+    };
+  }
+
+  function callXhrCallback(cb, payload) {
     if (typeof cb !== "function") return;
     try {
-      if (event.kind === "load") cb(event.response);
-      else if (event.kind === "error") cb({ error: event.message });
-      else if (event.kind === "timeout") cb({});
-      else if (event.kind === "abort") cb({});
+      cb(payload);
     } catch (e) {
       try { console.info("[SourceMonkey] XHR callback threw:", e); } catch (_e) {}
     }
@@ -1592,16 +1629,27 @@
     dispatchXhrEvent(msg.id, msg.event);
   });
 
+  /* A URL argument as a string. Scripts pass `URL` objects too (and
+     VM converts any non-string `url` with String()), so an object with
+     a string `href` is taken as its href. Not one with a `url` of its
+     own: that's GM_download's details object. Anything else is left
+     as it is, for the caller's "url required" check. */
+  function urlArg(v) {
+    return v !== null && typeof v === "object" && typeof v.href === "string" && !("url" in v) ? v.href : v;
+  }
+
   var xhr = {
     /* GM_xmlhttpRequest(details) — kicks off the request, returns
        `{abort}` immediately. The user's onload/onerror/ontimeout/
-       onabort callbacks come from `details` and are stored locally
-       (callbacks aren't serializable across the bridge). */
+       onabort/onreadystatechange callbacks come from `details` and
+       are stored locally (callbacks aren't serializable across the
+       bridge). */
     start: function (scriptId, details) {
       if (!details || typeof details !== "object") {
         throw new _Error("[SourceMonkey] GM_xmlhttpRequest: details object required");
       }
-      if (typeof details.url !== "string" || !details.url) {
+      var url = urlArg(details.url);
+      if (typeof url !== "string" || !url) {
         throw new _Error("[SourceMonkey] GM_xmlhttpRequest: url required");
       }
       var id = "xhr-" + (_xhrNextId++) + "-" + Math.random().toString(36).slice(2, 10);
@@ -1610,6 +1658,8 @@
         onerror: details.onerror,
         ontimeout: details.ontimeout,
         onabort: details.onabort,
+        onreadystatechange: details.onreadystatechange,
+        url: url,
         responseType: typeof details.responseType === "string" ? details.responseType : "",
         ttlTimer: null,
       };
@@ -1632,7 +1682,7 @@
          and other non-cloneable fields. */
       var request = {
         method: typeof details.method === "string" ? details.method : "GET",
-        url: details.url,
+        url: url,
         headers: (details.headers && typeof details.headers === "object") ? details.headers : undefined,
         data: details.data,
         timeout: typeof details.timeout === "number" ? details.timeout : undefined,
@@ -1765,6 +1815,7 @@
   var _tabNextId = 1;
   var tab = {
     open: function (scriptId, url, options) {
+      url = urlArg(url);
       if (typeof url !== "string" || !url) {
         throw new _Error("[SourceMonkey] GM_openInTab: url required");
       }
@@ -1974,6 +2025,7 @@
      there's no URL to download. */
   function normalizeDownloadArgs(detailsOrUrl, name) {
     var d = null;
+    detailsOrUrl = urlArg(detailsOrUrl);
     if (typeof detailsOrUrl === "string") {
       d = { url: detailsOrUrl, name: name };
     } else if (detailsOrUrl && typeof detailsOrUrl === "object") {
@@ -1981,7 +2033,8 @@
     } else {
       throw new _Error("[SourceMonkey] GM_download: details object or url required");
     }
-    if (typeof d.url !== "string" || !d.url) {
+    var url = urlArg(d.url);
+    if (typeof url !== "string" || !url) {
       throw new _Error("[SourceMonkey] GM_download: url required");
     }
     return {
@@ -1990,7 +2043,7 @@
          normalizes the scheme's case and strips stray whitespace, which
          is what the transport check below keys off. An unparseable URL
          falls through unchanged and is refused SW-side. */
-      url: resolveDownloadUrl(d.url),
+      url: resolveDownloadUrl(url),
       name: d.name != null ? String(d.name) : "",
       headers: plainHeaders(d.headers),
       saveAs: !!d.saveAs,
@@ -2574,7 +2627,7 @@
           p.then(function (reply) {
             if (reply && reply.ok) return;
             var why = (reply && reply.error) ? reply.error : "SourceMonkey sent no reply";
-            try { console.info("[SourceMonkey] window." + method + " —", why); } catch (_le) {}
+            try { console.info("[SourceMonkey] window." + method + ":", why); } catch (_le) {}
           }, function (err) {
             try { console.info("[SourceMonkey] window." + method + " send failed:", (err && err.message) || err); } catch (_le2) {}
           });

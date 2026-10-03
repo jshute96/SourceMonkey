@@ -379,7 +379,7 @@ test.describe('collections', () => {
 // Collections were called "sources" before the August 2026 rename, which
 // moved the index row, the per-collection rows, and each script's parent
 // pointer. A profile written before it has to survive the upgrade — see
-// `ensureCollectionKeysMigrated` in src/script-store.ts and the
+// `ensureCollectionKeysMigrated` in src/extension/script-store.ts and the
 // removal note in TODO.md.
 test.describe('legacy source:* key migration', () => {
   test('a pre-rename profile is rewritten on the first read', async ({

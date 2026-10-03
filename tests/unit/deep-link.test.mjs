@@ -1,4 +1,4 @@
-// Tests for src/deep-link.ts (compiled to dist/deep-link.js).
+// Tests for src/extension/deep-link.ts (compiled to dist/extension/deep-link.js).
 //
 // Covers the pure buildDeepLinkTarget mapping: which URLs become
 // chrome-extension:// rewrites, how passthrough params are
@@ -15,7 +15,7 @@ globalThis.chrome = {
   },
 };
 
-const { buildDeepLinkTarget } = await import('../../dist/deep-link.js');
+const { buildDeepLinkTarget } = await import('../../dist/extension/deep-link.js');
 
 const PREFIX = 'https://github.com/jshute96/SourceMonkey/blob/main/docs/redirect-page.md';
 const EXT = `chrome-extension://${EXT_ID}`;

@@ -5,7 +5,7 @@ import {
   REFRESH_ERRORS_KEY,
   coerceRefreshErrorMap,
   describeRefreshError,
-} from '../../dist/refresh-error.js';
+} from '../../dist/extension/refresh-error.js';
 
 test('the storage key is the documented one', () => {
   // Named in docs/storage.md and read by the collections page's

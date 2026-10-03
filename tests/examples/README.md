@@ -45,7 +45,7 @@ buttons in an inline `<script>` and the userscript only observes.
   cannot cause or intercept on its own.
 - Its `@match` patterns carry a trailing `*`
   (`.../window-onurlchange.html*`) because the demo changes the query
-  string and fragment; without it a reload at the pushed URL would no
+  string; without it a reload at the pushed URL would no
   longer match.
 
 ### Multi-script directories
@@ -63,6 +63,9 @@ and the `@connect`-policy pages (`xmlhttp-denied/`,
 - Variant files are named by what they vary (`start.user.js`,
   `end.user.js`, `no-connect.user.js`, …), not by the directory
   stem.
+- Variants a manager can't install go in a subdirectory the spec
+  installs separately, so it can skip them there: `use-strict/with-require/`
+  holds the relative-`@require` pair TM can't take.
 
 The aim is double-purpose:
 
@@ -136,7 +139,10 @@ events.
 | `window-close-focus/`      | `@grant window.close` / `@grant window.focus`                     | button-driven |
 | `headers-run-at/`          | `@run-at` (`document-start` / `-end` / `-idle` variants)           | multi-script  |
 | `headers-inject-into/`     | `@inject-into` (`page` MAIN-world vs `content` USER_SCRIPT-world)  | multi-script  |
+| `headers-match-hash/`      | `#hash` in `@match` / `@include` / `@exclude`, per manager        | multi-script  |
+| `headers-include-regex/`   | Regex `@include` / `@exclude`: slashes, flags, case, per manager   | multi-script  |
 | `require-scope/`           | `@require` scope in both worlds (SM-only: relative ref)            | multi-script  |
+| `use-strict/`              | Top-level `'use strict'`, in both worlds and with a `@require`     | multi-script  |
 | `xmlhttp-denied/`          | `GM_xmlhttpRequest` + `@connect` denial vs allow                  | multi-script  |
 | `xmlhttp-same-origin/`     | `GM_xmlhttpRequest` back to the page's own origin, `@connect` or not | multi-script  |
 

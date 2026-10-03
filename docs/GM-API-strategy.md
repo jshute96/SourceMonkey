@@ -421,7 +421,7 @@ What it looks like:
   - `gm-notifications.ts`, `gm-tabs.ts` — thin `chrome.notifications`
     / `chrome.tabs` wrappers.
   - `gm-xhr.ts` — the hairy one; see below.
-- Offscreen document (new `src/offscreen.html` + `src/offscreen.ts`)
+- Offscreen document (new `src/offscreen.html` + `src/extension/offscreen.ts`)
   for the binary-response XHR path and blobs/object URLs. (Downloads
   were on this list; they turned out not to need it — `GM_download`
   drives `chrome.downloads`, which fetches the URL itself. See
@@ -638,8 +638,9 @@ Not a commitment, just shape. Driven by the design decisions above.
    page-side cache + batched writes. Backed by
    `chrome.storage.local` with a `gmval:<scriptId>:<key>` namespace.
 4. **`GM_addStyle` / `GM_addElement`.** Direct `document.createElement`
-   from USER_SCRIPT world. (USER_SCRIPT-world DOM mutations are
-   exempt from page CSP, same as content scripts.)
+   from USER_SCRIPT world. (Styles inserted there escape the page
+   CSP; scripts answer to the world CSP instead. See
+   [injection.md](injection.md#lifecycle).)
 5. **`GM_setClipboard`.** Offscreen doc + `execCommand('copy')`.
 6. **Cross-tab value broadcast.** Wrapper ping at `sm:start` to
    register `(tabId, frameId, scriptId)` with an SW openers table;

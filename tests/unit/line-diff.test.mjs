@@ -1,10 +1,10 @@
-// Unit tests for the compare page's line diff (src/line-diff.ts): the
+// Unit tests for the compare page's line diff (src/extension/line-diff.ts): the
 // edit script it finds, the hunks it folds that into, and the counts.
 
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 
-const { countChanges, diffLines, splitLines, toHunks } = await import('../../dist/line-diff.js');
+const { countChanges, diffLines, splitLines, toHunks } = await import('../../dist/extension/line-diff.js');
 
 // The diff as a compact script, one op per line: ` same`, `-del`, `+add`.
 function script(ops) {

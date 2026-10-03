@@ -292,4 +292,44 @@ test.describe('injection', () => {
 
     await page.close();
   });
+
+  test('document-idle runs on a page that calls window.stop(), where load never fires', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'idle.user.js',
+      meta: { name: 'Idle After Stop', match: [`${fixtureServer.baseUrl}/window-stop.html`] },
+      body: `document.getElementById('target').textContent = 'idle ran';`,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/window-stop.html`, { waitUntil: 'commit' });
+    await expect(page.locator('#target')).toHaveText('idle ran');
+    await page.close();
+  });
+
+  test('document-idle runs shortly after DOMContentLoaded when load is held back', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'idle.user.js',
+      meta: { name: 'Idle Stalled Load', match: [`${fixtureServer.baseUrl}/stalled-load.html`] },
+      body: `document.getElementById('target').textContent = 'idle ran: ' + document.readyState;`,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/stalled-load.html`, { waitUntil: 'commit' });
+    // The image holds `load` for 5s; the fallback runs the body well
+    // before that, while the page is still `interactive`.
+    await expect(page.locator('#target')).toHaveText('idle ran: interactive', { timeout: 3000 });
+    await page.close();
+  });
 });

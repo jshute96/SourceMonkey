@@ -84,7 +84,7 @@ fails.
 
 ## Lifecycle
 
-`src/injector.ts` owns Chrome's registration set.
+`src/extension/injector.ts` owns Chrome's registration set.
 
 - **On SW startup** — `syncRegistrations()` runs with no scope, in
   parallel with the match-index load. See
@@ -104,10 +104,23 @@ fails.
     [Rejected registrations](#rejected-registrations).
   - Not every write is reported — see
     [What an incremental sync must not disturb](#what-an-incremental-sync-must-not-disturb).
-- **One-time world config** — `chrome.userScripts.configureWorld({
-  messaging: true })` is called before the first `register()`. This is
-  what lets the injected wrapper call `chrome.runtime.sendMessage`
-  back to the SW.
+- **One-time world config** — `chrome.userScripts.configureWorld()`
+  is called before the first `register()`.
+  - `messaging: true` lets the injected wrapper call
+    `chrome.runtime.sendMessage` back to the SW.
+  - `csp: "script-src 'self' 'unsafe-eval' 'unsafe-inline' *"` is the
+    USER_SCRIPT world's own CSP. `'unsafe-eval'` lets the reload
+    fast-path eval the script body.
+  - Chrome also checks `<script>` elements inserted from this world
+    against it, instead of the page's CSP. `'unsafe-inline'` and `*`
+    let userscripts inject page code (inline, or by `src`), which is
+    otherwise refused on every page.
+  - The new capability this grants: userscript-inserted `<script>`
+    elements run in the page realm even under a strict page
+    `script-src`. Tampermonkey 5.5 sets the same world CSP, so it
+    allows this too.
+  - Inline event handlers and `javascript:` URLs a userscript adds
+    stay under the page CSP.
 
 ### The sync is incremental
 
@@ -154,7 +167,7 @@ change while the worker is dead — so a fresh worker has nothing to diff
 against and a pure diff would strand stale registrations.
 
 - A sync is incremental only when this JS context holds a record of
-  what it last registered. `src/injector.ts` keeps one — ids, worlds
+  what it last registered. `src/extension/injector.ts` keeps one — ids, worlds
   and pattern shapes, every script's basename, log label and
   collection, and the collection rows. No script bodies, so it stays
   small.
@@ -181,7 +194,7 @@ against and a pure diff would strand stale registrations.
 - **Probe-only writes.** `versionProbes` is a display annotation no
   spec reads, and a Refresh All writes one probe result per script — so
   counting those as cache changes cost a re-registration per probed
-  script. `onlyProbesChanged` in `src/match-index.ts` keeps them out of
+  script. `onlyProbesChanged` in `src/extension/match-index.ts` keeps them out of
   `onCacheChanged` entirely, and suppresses nothing wider: the check
   diffs the whole stored row, because a spec reads far more of it than
   matching does. See
@@ -349,7 +362,7 @@ a second placed the script, and the first then offered the id again.
 - **Serialized per context.** Every operation that touches
   `chrome.userScripts` — the sync, the targeted retry, the test
   surface's teardown — runs through one promise-chain lock in
-  `src/injector.ts`. Overlap used to be easy to hit: the SW-startup
+  `src/extension/injector.ts`. Overlap used to be easy to hit: the SW-startup
   sync against the one `onCacheChanged` schedules for boot-time
   storage writes, or a collection refresh's retry against the sync its own
   writes triggered.
@@ -382,7 +395,7 @@ failure and not an error the script produced. See
 [diagnostics.md](diagnostics.md#rejected-registrations) for the wording
 rules and why it carries no location.
 
-- **Where it lives.** `src/script-rejection.ts` keeps
+- **Where it lives.** `src/extension/script-rejection.ts` keeps
   `{script id → reason}` in `chrome.storage.session`, written only by
   the injector and read by the collections page, the viewer, and the tab
   badge in `background.ts`.
@@ -531,12 +544,59 @@ We register every userscript at Chrome's `document_start` and the
 wrapper itself awaits the matching lifecycle event before invoking
 the user body. This is the TM/VM pattern.
 
-- `document-start` — wrapper runs the body immediately.
+- `document-start` — the gate opens immediately, once
+  `document.documentElement` (`<html>`) exists.
+  - Chrome injects `document_start` scripts after `<html>` exists, so
+    it always does by then.
+  - Were it missing, the wrapper would wait for it with a
+    `MutationObserver` on `document`, whose records are delivered
+    before the first page `<script>` runs.
+  - Where the [check-pending decision](#reload-fast-path) could only
+    be `run`, the body runs right away, ahead of the page's own
+    scripts. Elsewhere it waits for that async answer, so early page
+    scripts can run first. See
+    [Skipping the check at document-start](#skipping-the-check-at-document-start).
+  - If `<html>` is still missing at `DOMContentLoaded`, the body runs
+    anyway.
 - `document-body` — wrapper waits for `document.body` (via a
-  `MutationObserver` on `documentElement` if body isn't there yet).
+  `MutationObserver` on `document`, with `subtree` so it also sees a
+  `<body>` added under an `<html>` that didn't exist yet).
+  - Observing `document` rather than `<html>` also keeps the wait
+    alive across a `document.open()` rewrite, which replaces `<html>`.
+  - A document with no `<body>` by `DOMContentLoaded` (XML, SVG)
+    never runs the script, as in Tampermonkey ("injected if the body
+    element exists"). The observer is dropped then, so it doesn't wake
+    on every later DOM change.
 - `document-end` — wrapper waits for `DOMContentLoaded`.
 - `document-idle` (default / unknown values) — wrapper waits for
   `window`'s `load` event.
+  - A page that calls `window.stop()` never fires `load`, but its
+    `readyState` still reaches `complete`. That change arms a
+    zero-delay fallback, so the body runs there too.
+  - On a normal page `load` comes in the same task as that change, so
+    the body still runs after `load`, and only once.
+  - A subresource that never finishes (a stalled third-party script)
+    holds `load` back forever. So the body runs at `load` or 200ms
+    after `DOMContentLoaded` (`IDLE_AFTER_DCL_MS`), whichever comes
+    first, about when Chrome's own `document_idle` would.
+  - A page with slow images or ads thus runs it before `load`, while
+    `readyState` is still `interactive`.
+  - An unknown value (a typo) gets a parse-time warning
+    (`unsupportedRunAtWarning`): Log tab, `sm-dev validate`, and
+    sm-dev's warning lines when it loads the script.
+
+**Gap: `@run-at context-menu` is not supported.** In Tampermonkey
+(Chrome only) it means "don't run on load; add a right-click menu item
+that runs the script once on the current page", like a bookmarklet.
+
+- We have no such menu item, so the script is refused: `validateHeader`
+  stores it `invalid` (`CONTEXT_MENU_UNSUPPORTED`) and it never runs.
+- Not a `document-idle` fallback like other unknown values: that would
+  run an on-request action unprompted on every matching page load, and
+  these scripts usually `@match` all pages (TM ignores
+  `@include`/`@exclude` for them).
+- `backfillHeaderProblems` applies this to already-installed scripts
+  on extension update.
 
 Why not just pass `runAt` through to `chrome.userScripts.register`:
 
@@ -560,7 +620,7 @@ between scripts.
 The gating is implemented in `waitForRunAt` inside
 `src/userscript-prelude.js`. The declared `@run-at` is delivered
 via the per-script config blob (`buildConfigBlob` in
-`src/injector.ts`) and stored on the prelude's per-script entry.
+`src/extension/injector.ts`) and stored on the prelude's per-script entry.
 
 This wait runs alongside the `sm:check-pending` round-trip rather than
 after it — see [Concurrent gates](#concurrent-gates).
@@ -574,7 +634,7 @@ The `world` field decides whether the body runs in the page's own
 page-defined globals like `window.jQuery`, `window.map`, or any
 function declared by an inline `<script>` tag on the page.
 
-Resolution (`resolveWorld` in `src/injector.ts`) mirrors
+Resolution (`resolveWorld` in `src/script-world.ts`) mirrors
 Violentmonkey's `@inject-into` and Tampermonkey's `@grant none`
 default:
 
@@ -631,7 +691,7 @@ The isolated-world case that remains:
   matching VM's content mode.
 - Because every page global reads as `undefined` there, that
   combination is **not** left silent: `extractStartupLogs`
-  (`src/script-store.ts`) attaches a `warn` startup log, which surfaces
+  (`src/extension/script-store.ts`) attaches a `warn` startup log, which surfaces
   in the page console and the viewer's Log tab on every matching load.
 
 Scale of the change: of the top 2000 GreasyFork scripts, 224 grant
@@ -702,10 +762,11 @@ sandboxed page and returns a verdict, see
   unsafeWindow` does.
 - A source that **declares** the name — `const unsafeWindow =
   window.wrappedJSObject || window;`, a real cross-browser idiom — is
-  left alone. Our binding is a `const` in the same scope, so adding one
-  beside it would turn a working script into a SyntaxError. The same
-  check runs over `@require` bodies at emission time, where a library
-  declaring the name is what the main body is usually referencing.
+  left alone. It reads its own binding, never ours, so there is nothing
+  to move worlds for.
+  - Our binding would be harmless beside it: the script's declaration
+    shadows it (see [The user program scope](#the-user-program-scope)).
+    So a `@require` declaring the name needs no special case either.
 - Two limits, both erring towards today's behavior: regex literals are
   not recognized (a `/['"]/` opens a string state, and a literal ending
   in `\/\/` reads as a line comment, either of which can swallow a
@@ -719,7 +780,7 @@ reload-swap world check all have to give the same answer.
 - A row stored before the field existed reads as false, and a row is
   only rebuilt when a fetch actually happens — the cheap-skip paths
   (unchanged size+mtime, a 304) leave it exactly as it was. So
-  `backfillUsesUnsafeWindow` (`src/script-store.ts`) fills those rows in
+  `backfillUsesUnsafeWindow` (`src/extension/script-store.ts`) fills those rows in
   on `onInstalled` and re-syncs when any changed; without it the feature
   would never reach an already-installed script that doesn't change.
 
@@ -761,7 +822,7 @@ whole `GM_*` surface works there too.
   MAIN-world source is readable once the page steals the wrap function
   (`self.__smRun` is a page-realm global too).
 - What we do bound is the **service worker** side.
-  `bridgeMayActAs` in `src/background.ts` honors a bridge-relayed,
+  `bridgeMayActAs` in `src/extension/background.ts` honors a bridge-relayed,
   script-scoped request only when the named script actually runs in
   MAIN world on the sending frame's URL **and** granted the API the
   request exercises (in catalog-subsystem terms: `tab` for
@@ -813,7 +874,8 @@ whole `GM_*` surface works there too.
 ##### Costs of running in MAIN
 
 - **Page CSP applies to DOM injection.** `GM_addStyle` /
-  `GM_addElement` are CSP-exempt in USER_SCRIPT world but not in MAIN.
+  `GM_addElement` escape the page's CSP in USER_SCRIPT world but not
+  in MAIN.
   A page whose `style-src` omits `'unsafe-inline'` will drop an
   injected `<style>`'s rules on the floor. The runtime detects that
   (a connected `<style>` with no `.sheet`) and files one warning per
@@ -872,8 +934,9 @@ Mechanics:
     the caller returns. A postMessage is delivered on a later task, and
     a document in `pagehide` never gets one — `GM_setValue()` before
     `location.href = …` or a tab close lost the write every time.
-  - It also saves a task hop on `sm:check-pending`, which every
-    MAIN-world script waits on at `document_start`. The hop is small at
+  - It also saves a task hop on `sm:check-pending`, which a
+    MAIN-world script waits on at `document_start` unless it can
+    [skip it](#skipping-the-check-at-document-start). The hop is small at
     rest — a `postMessage` to one's own window round-trips in well under
     a millisecond on an idle page, against roughly a millisecond for the
     whole SW round-trip — but it is a *queued task*, so it grows with
@@ -897,7 +960,7 @@ Mechanics:
   a frame can only reach the bridge instance injected into it, already
   scoped to that frame's URL. The MAIN-world receivers of our replies
   and pushes still check `event.source === window`.
-- `buildBridgeSpec` (in `src/injector.ts`) emits the bridge
+- `buildBridgeSpec` (in `src/extension/injector.ts`) emits the bridge
   registration when at least one active script resolves to MAIN. It
   runs at `document_start`, ahead of the wrapper specs, because the
   request path is synchronous now: an event dispatched before the
@@ -949,17 +1012,40 @@ The User Scripts API has no equivalent for `/regex/` `@include` /
 `@exclude` patterns, so we work around it with a two-layer approach:
 
 - **Registration layer.** Glob `@include` / `@exclude` patterns go to
-  `includeGlobs` / `excludeGlobs`. `@match` goes to `matches`. If a
-  script has no `@match` at all — only `@include`, in either form — we
-  register with `matches: ['<all_urls>']` so Chrome hands us every
-  page, and let the wrapper narrow it. Chrome refuses a registration
-  with no `matches` (*"must specify 'matches'"*), so there is nothing
-  else to give it.
-- **Wrapper layer.** When a script has any regex pattern, the wrapper
-  embeds the full `{matches, includes, excludes}` object and a small
-  self-contained matcher equivalent to `urlMatchesScript()`. Before
-  the body runs, the wrapper re-checks `location.href` and silently
-  returns if it doesn't match.
+  `includeGlobs` / `excludeGlobs`. `@match` goes to `matches`.
+  - Any script with `includeGlobs` also gets a stand-in in `matches`,
+    `NO_PAGE_MATCH` (`*://*/__sourcemonkey_no_page__/*`): any host,
+    a path no real page uses. Chrome ORs the globs with `matches`
+    (see below), so the globs say where it injects. Two reasons:
+    - Chrome refuses a registration with no `matches` (*"must specify
+      'matches'"*), so a script with only `@include`s needs one.
+    - Chrome kills the renderer ("Page crashed") when the service
+      worker messages a USER_SCRIPT-world listener (the bridge, the GM
+      runtime) in a page covered only by `includeGlobs`, on a host no
+      `matches` entry names. The `*` host avoids that.
+    - The wrapper's matcher runs for these scripts, so the stand-in's
+      own path never runs one.
+  - A script with a regex `@include` gets `<all_urls>`, even beside
+    `@match` lines: the regex can cover pages nothing Chrome reads
+    does, and Chrome would never inject there.
+  - A pattern whose host ends in `.tld` ("any public suffix", see
+    [matching.md](matching.md#tld-hosts)) would be read by Chrome as a
+    literal host no page has. A `.tld` `@match` or `@include`
+    registers a coarse glob instead, `.tld` replaced by `.*`
+    (`*://www.google.*/*`), and the wrapper narrows it. A `.tld`
+    `@exclude` is enforced only in the wrapper: widened, it would
+    exclude pages it shouldn't.
+  - Cost: a regex `@include` script is injected and parsed on every
+    page and frame, and only its body is skipped off-target. A `.tld`
+    script pays that only on pages its coarse glob reaches.
+- **Wrapper layer.** When a script has any regex, `.tld` or glob
+  pattern,
+  the wrapper embeds the full `{matches, includes, excludes}` object
+  and a small self-contained matcher equivalent to
+  `urlMatchesScript()`. Before the body runs, the wrapper re-checks
+  `location.href` and silently returns if it doesn't match.
+  - A regex is tested ignoring case, as Tampermonkey and Violentmonkey
+    test it. A glob stays case-sensitive, as Chrome tests it.
 
 Net effect: badge and injection stay in sync. The wrapper-side
 matcher must agree byte-for-byte with `src/url-match.ts`; a unit test
@@ -980,14 +1066,20 @@ Chrome the suite runs:
   divergence to fix.
 - `excludeGlobs` subtracts under either reading, so it needs no care.
 
-Consequences for the `<all_urls>` fallback:
+Consequences:
 
-- It cannot be narrowed by handing Chrome the globs alongside it —
-  `<all_urls>` OR anything is still every page.
-- So every no-`@match` script carries the wrapper-side matcher, glob
-  includes included.
-- The globs go to Chrome anyway, so the registration stays correct if
-  Chrome ever moves to the documented AND.
+- `<all_urls>` can't be narrowed by handing Chrome globs alongside it:
+  `<all_urls>` OR anything is still every page. So it is kept for
+  regex `@include`s, which no glob can stand for.
+- A script with globs instead registers `NO_PAGE_MATCH` beside them,
+  so Chrome injects only where its `@match`es and globs reach.
+  - Under the documented AND, a glob-only script would inject
+    nowhere. The probe above would fail first.
+  - A second probe in the same spec pins the renderer crash the
+    stand-in's `*` host avoids.
+- Every script with globs carries the wrapper-side matcher: Chrome's
+  glob reading isn't exactly ours (case, `?`), and the stand-in's path
+  is a real one.
 
 ## The activation / error wrapper
 
@@ -1047,6 +1139,9 @@ The combined user-program entry is wrapped (in `wrapCombinedEntry`) to:
   requires are concatenated into the same function, to library
   top-level code too. One copy serves both; see
   [GM-APIs.md](GM-APIs.md#bindings-layout-in-the-wrapper).
+- Run the user program (requires + body) in a scope nested inside the
+  one holding those bindings — see
+  [The user program scope](#the-user-program-scope).
 - Carry a `//# sourceURL=sourcemonkey://SourceMonkey/<folder>/<name>.user.js`
   directive so devtools labels the script and the prelude's
   async-error listeners can attribute errors by stack inspection.
@@ -1068,6 +1163,103 @@ When the body fires (inside the prelude's `runMain`), the prelude:
   is undefined) it falls back to a `sourcemonkey-bridge-sync` DOM
   event the bridge picks up — see [MAIN-world traffic — the
   bridge](#main-world-traffic--the-bridge).
+
+### The user program scope
+
+The entry has two scopes, one inside the other:
+
+```
+self.__smRun(id,function(__smE){<__sm* vars><GM bindings><GM prelude>return(()=>{
+<requires, then the script's own source>
+})();});
+```
+
+- **Outer** (the wrap function): our own declarations — the `__sm*`
+  preamble, `const GM_info`, granted `GM_*`, `const unsafeWindow =
+  window;`.
+- **Inner** (an arrow function): the user program. Its top-level
+  declarations shadow ours, as they do under Tampermonkey (TM) and
+  Violentmonkey (VM). Before this, both shared one scope, so:
+  - `const window = unsafeWindow;` put our `const unsafeWindow =
+    window;` in the temporal dead zone (TDZ) of the script's `window`,
+    a ReferenceError that killed the script.
+  - `const unsafeWindow = …`, `let GM_info`, a `var GM_setValue`
+    polyfill or an own `function GM_addStyle` were duplicate-declaration
+    SyntaxErrors.
+
+Why an arrow function rather than a block:
+
+- A block scopes only `let`/`const`/`class`; a `var` or a sloppy-mode
+  function declaration would still clash in the outer scope.
+- An arrow keeps the wrap function's `this`, so top-level `this` is
+  unchanged, with no page-overridable `.call(this)`.
+- Top-level `return` still works. Top-level `await` stays a
+  SyntaxError.
+
+The user program is the arrow body's first statement, so a leading
+`"use strict"` is a real directive and the whole program runs in strict
+mode, as in Tampermonkey and Violentmonkey:
+
+- It's the first file's directive that counts, as if the files were
+  concatenated: a first `@require` that starts with one makes the
+  script strict, and the script's own after a `@require` does nothing.
+  - Tampermonkey and Violentmonkey do the same: VM in
+    `tests/examples/use-strict`, TM checked once by hand (it can't take
+    that example's relative `@require`).
+  - That includes a first `@require` that is empty or only comments:
+    the `;` we put between files is then the first statement, so the
+    script's own directive still does nothing. What TM and VM do there
+    is untested.
+- Before the nested scope it never applied, since our own statements
+  came first. Scripts that relied on that (assigning undeclared
+  variables under a top-level `'use strict'`) now throw, as they do in
+  Tampermonkey and Violentmonkey.
+
+The opener and closer sit on lines that already exist, so no line
+moves: the source map and the Log tab's stack mapping are unaffected.
+
+- A synchronous throw's stack gains one frame on the closer line, where
+  the arrow is called. That line is ours, so the Log tab shows it as
+  plain text rather than a link (see
+  [script-log.md](script-log.md#what-is-left-unmapped-deliberately)).
+The reload swap eval and the install-time parse check use the same
+arrangement (see [parse-check.md](parse-check.md#what-is-checked)).
+
+### sm-dev's eval hook
+
+Scripts sm-dev runs get one more statement in the inner scope, so
+`sm-dev eval` can run code inside it (`src/eval-hook.ts`):
+
+```
+;(globalThis[<key>] || <a new map>)[<script id>] = (code) => eval(code);
+```
+
+- A direct `eval` runs in the scope it's written in, so the arrow sees
+  the script's `GM_*` bindings, its `@require`s' top-level declarations
+  and its own, after the script has finished.
+- Only the scripts in an sm-dev run's test collection get it
+  (`scratch:///<run>/...` locations), under a key naming the run.
+  - Registration and the reload swap both add it.
+  - Never the person's own scripts. The hook reaches everything the
+    script can, and a MAIN-world script's sits on the page's `window`.
+- The arrow is named `sm-dev eval`, so code run through it shows that
+  frame in stack traces rather than one named after the script id.
+- The map is a non-enumerable global under a key naming the run, out
+  of a page's casual view. A page that looks for it can still find it.
+- It goes after the user program's directive prologue, so a leading
+  `"use strict"` still applies, and on that line, so no line moves.
+  - The rest of that line moves right by the hook's length, which only
+    matters to a script written on one line: its stack columns are off.
+- A script whose own source opens with an IIFE (immediately invoked
+  function expression), the usual `(function () { ... })()` wrapper,
+  gets a second copy just inside it (`leadingFunctionBody`).
+  - It replaces the first in the map as the IIFE starts. The inner scope
+    sees everything the outer one does, plus the IIFE's locals.
+  - Looked for in the script's own source, after its `@require`s: a
+    library's wrapper isn't the script's scope.
+  - Arrows and `async`, `!function` and `void function` forms count.
+    Anything else gets only the outer copy.
+- Locals inside any other function stay out of reach.
 
 ### Async-error attribution
 
@@ -1220,14 +1412,59 @@ Setup is fire-and-forget. The listener does not block on it. If a
 wrapper's `sm:check-pending` arrives before setup populates the entry,
 it just gets the default `run` reply — the optimization is best-effort.
 
+### Skipping the check at document-start
+
+The check-pending round trip is async. For a `document-start` script
+that is the only gate, so an inline `<script>` early in `<head>` can
+run before the body, which defeats a script that must patch the page
+first (user-agent spoofing, API shims).
+
+So the wrapper skips the round trip and runs `run` straight away
+(`canSkipDecision` in `userscript-prelude.js`) when every one of
+these holds:
+
+- `@run-at document-start`. Later gates wait for a lifecycle event
+  anyway, so the round trip costs them nothing.
+- The top frame, on a navigation that isn't a reload (the
+  Navigation Timing entry's `type`).
+  - `run-new` and the "Reload page with no userscripts" `skip` only
+    happen on a reload.
+  - That `skip` covers subframes too, and a subframe can't see the
+    top page's navigation type, so subframes always ask.
+- No `mustAsk` in the script's config. It is set:
+  - for every script while any sm-dev tab claim is live, since a
+    claim can `skip` on any navigation (see
+    [sm-dev-design.md](sm-dev-design.md#making-every-wrapper-ask));
+  - for every script built before the SW has loaded the claims, or
+    built in an extension page (a retry of a rejected script), which
+    can't know them;
+  - always for scratch scripts, which run only in claimed tabs.
+- No GM storage grant: the reply carries the values snapshot.
+- No `.tld` rule: the reply carries the SW's exact match check.
+
+Gaps:
+
+- On a reload, `document-start` scripts still wait, so a page's
+  first inline scripts can win there.
+- A rejected script re-offered from an extension page asks until the
+  SW next re-registers it.
+
 ### sm:check-pending handler
 
 When a wrapper sends `sm:check-pending` with its own `id`, `loadedAt`
 (the value baked in at registration), and `url`, the SW:
 
-Before any of this, a tab marked for "Reload page with no userscripts"
-gets `skip`, for every frame — see
-[matching.md](matching.md#reload-with-no-userscripts). Otherwise the SW:
+Before any of this:
+
+- A tab marked for "Reload page with no userscripts" gets `skip`, for
+  every frame — see
+  [matching.md](matching.md#reload-with-no-userscripts).
+- A request with `tld: true` (a script with a `.tld` rule) is checked
+  against the script's exact patterns, with the frame's URL, and gets
+  `skip` with reason `no-match` if they don't cover it. See
+  [matching.md](matching.md#tld-hosts).
+
+Otherwise the SW:
 
 1. Looks up `fastPathByDoc[tabId:docId]`. **No entry → reply `run`.**
    This is the common case for ordinary navigations and costs ~1–5ms
@@ -1347,7 +1584,7 @@ Two things it deliberately doesn't do:
 ### Shared work across the batch
 
 **The batch covers navigation-triggered checks generally, not just the
-reload fast path.** One `RefreshBatch` (`src/script-store.ts`) is
+reload fast path.** One `RefreshBatch` (`src/extension/script-store.ts`) is
 created per `onCommitted` and handed to *both* fan-outs that commit
 starts — the fast path and the opportunistic sweep in
 `updateTabMatches`. A sweep reached any other way
@@ -1429,7 +1666,7 @@ out while the check is still to come.
   the same `onCommitted`, and `gate()` coalesces the two calls
   regardless of which arrives first, so a split rule would let the
   opportunistic call decide for the fast path. Install, the Refresh
-  buttons, Refresh All and the offline CLI all wait for the verdict.
+  buttons, Refresh All and `sm-dev validate` all wait for the verdict.
 - Content that didn't move still costs nothing either way — the
   `parseCheckedHash` short-circuit is applied before the mode is
   consulted.
@@ -1586,8 +1823,8 @@ Why it matters:
   decision callback running at all.
 
 `document-start` gets no free wait — `waitForRunAt` calls back
-synchronously — so the decision is its only gate, and the 2s safety
-timeout remains the hard ceiling for every `@run-at`.
+synchronously once `<html>` exists — so the decision is its only gate,
+and the 2s safety timeout remains the hard ceiling for every `@run-at`.
 
 ### Caveats
 
@@ -1655,7 +1892,7 @@ timeout remains the hard ceiling for every `@run-at`.
   in the top frame. Adding `@noframes` parsing + a `allFrames` flip
   is straightforward.
   - **What it would break:** the menu-command registry
-    (`src/gm-menu.ts`) holds ONE `documentId` per tab, and a register
+    (`src/extension/gm-menu.ts`) holds ONE `documentId` per tab, and a register
     naming a different document replaces the state. That is safe only
     because every wrapper in a tab shares the top-level document
     today. With scripts in subframes, a subframe register and a

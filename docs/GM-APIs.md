@@ -13,7 +13,7 @@ SourceMonkey actually does today.
   `@connect` for XHR, `@resource` for `GM_getResource*`). Helpers
   canonicalize `@grant` lines and resolve the script's granted set,
   surfacing `unknown` names so the SW can warn.
-- **`src/gm-bindings.ts`** — per-script emitter. Given the granted set
+- **`src/extension/gm-bindings.ts`** — per-script emitter. Given the granted set
   + the script's parsed header, returns the JS source to splice into
   the wrapper. Always emits `GM_info` (matching TM/VM: implicit, no
   `@grant` required); emits a `const GM_x = function (...){...}` for
@@ -38,15 +38,15 @@ SourceMonkey actually does today.
     world; `sourcemonkey-bridge-push` postMessages in MAIN.
   - `notImplemented(name)` — Phase 2 placeholder; later phases
     replace per-subsystem methods.
-- **`src/injector.ts`** — wires the emitter and runtime into the
+- **`src/extension/injector.ts`** — wires the emitter and runtime into the
   registration pipeline. `buildGmBindingsForScript` produces the
   per-script collection; `buildGmRuntimeSpecs` returns one runtime
   registration per world that needs it, alongside `buildBridgeSpec`.
-- **`src/gm-url-change.ts`** — SW-side driver for
+- **`src/extension/gm-url-change.ts`** — SW-side driver for
   `@grant window.onurlchange`. Forwards
   `chrome.webNavigation.onHistoryStateUpdated` to the document that
   changed as an `sm:url-change` message.
-- **`src/gm-window-control.ts`** — SW-side driver for
+- **`src/extension/gm-window-control.ts`** — SW-side driver for
   `@grant window.close` / `@grant window.focus`. Re-issues the call as
   `chrome.tabs.remove` / `chrome.windows.update` on the sender's own
   tab.
@@ -55,8 +55,11 @@ SourceMonkey actually does today.
 
 `emitGmBindings` returns `{js, prelude}` — both strings are
 spliced into the combined user-program wrap function
-(`wrapCombinedEntry` in `src/injector.ts`), so they're locals of that
-function and visible to the user body via closure:
+(`wrapCombinedEntry` in `src/extension/injector.ts`), so they're locals of that
+function and visible to the user body via closure. The user program
+runs in a scope nested inside it, so a script declaring one of these
+names shadows ours (see
+[injection.md](injection.md#the-user-program-scope)):
 
 - `js` — lazy `const GM_X = ...` declarations plus the GM4 alias
   object. Each declaration only dereferences `window.__SM_GM__`
@@ -125,9 +128,7 @@ output ships whether the script lands in USER_SCRIPT or MAIN.
   worlds. What makes it correct is the world, not the binding — see
   [injection.md](injection.md#unsafewindow-forces-main-world).
   - Emitted for a script that only *uses* the name too, with no
-    `@grant` line for it (`StoredScript.usesUnsafeWindow`). Suppressed
-    when a `@require` declares the name itself, since ours would be a
-    duplicate `const` in the same scope.
+    `@grant` line for it (`StoredScript.usesUnsafeWindow`).
 - Everything else — including the `window.onurlchange` event surface
   and the `window.close` / `window.focus` overrides — delegates to
   `window.__SM_GM__`, which is registered in whichever worlds have a
@@ -204,7 +205,8 @@ output ships whether the script lands in USER_SCRIPT or MAIN.
   `waitForRunAt` gate resolves,
   `ready` flips later than it used to (after the declared `@run-at`
   lifecycle event). For `@run-at document-idle` the gap can stretch
-  to `window.load`. A sibling tab's `GM_setValue` that broadcasts
+  to `window.load`, or 200ms after `DOMContentLoaded` when `load` is
+  later. A sibling tab's `GM_setValue` that broadcasts
   during that window gets dropped on the floor by this document. In
   the common case the same write is already reflected in the
   check-pending snapshot the SW sent us (the SW persisted it before
@@ -291,17 +293,19 @@ Architecture:
 
 - Page-side `GM_xmlhttpRequest(details)` returns `{abort}`
   synchronously. The runtime stores the callbacks
-  (`onload`/`onerror`/`ontimeout`/`onabort`) keyed by a generated
-  request id (callbacks aren't serializable across the bridge), and
-  ships a `sm:gm-xhr-start` envelope to the SW with the serializable
-  request fields.
+  (`onload`/`onerror`/`ontimeout`/`onabort`/`onreadystatechange`)
+  keyed by a generated request id (callbacks aren't serializable
+  across the bridge), and ships a `sm:gm-xhr-start` envelope to the
+  SW with the serializable request fields.
+  - A `URL` object as `url` is taken as its `href`, as in VM.
+    `GM_download` and `GM_openInTab` accept one too (`urlArg`).
 - A **relative `url`** (`/api/x`, `./data.json`) is resolved against
   the sender's document URL (`resolveXhrUrl`) before anything else
   looks at it. The SW has no page to be relative to, so without this
   `new URL(url)` throws and the request dies as "invalid URL" — a
   call shape that works in TM/VM. The `<base href>` of the document is
   not consulted; the SW can't see it (`TODO.md`).
-- SW (`src/gm-xhr.ts`) runs `fetch(url, init)` against an
+- SW (`src/extension/gm-xhr.ts`) runs `fetch(url, init)` against an
   `AbortController`. On settle it ships a single `sm:gm-xhr-event`
   back to the originating tab via `chrome.tabs.sendMessage`. The
   page-side listener dispatches by request id and invokes the
@@ -322,7 +326,7 @@ Architecture:
 
 Credentials:
 
-- `runXhr` (`src/gm-xhr.ts`) passes `credentials: 'include'` in the
+- `runXhr` (`src/extension/gm-xhr.ts`) passes `credentials: 'include'` in the
   options object it hands `fetch`, so requests carry the user's
   cookies for the target host. TM/VM do the same.
 - `anonymous: true` in the details object opts one request out
@@ -347,7 +351,7 @@ Forbidden request headers:
 - `fetch()` silently drops the headers the Fetch Standard (the web
   standard behind `fetch`) reserves for the browser to set
   (`Origin`, `Referer`, `Cookie`, `User-Agent`, `Sec-*`, …), in the
-  service worker exactly as on a page. `src/gm-xhr-headers.ts` puts
+  service worker exactly as on a page. `src/extension/gm-xhr-headers.ts` puts
   them back: they're compiled into a short-lived
   `declarativeNetRequest` session rule instead of being handed to
   `fetch`, because MV3 has no blocking `webRequest`.
@@ -380,6 +384,7 @@ Response shape on `onload`:
 | `response`       | `responseText` for `text`; parsed object for `json`. |
 | `responseHeaders`| Multi-line `Name: value\r\n…` (TM/VM convention).  |
 | `finalUrl`       | Same as `responseURL`.                             |
+| `readyState`     | `4`, set page-side on every terminal event; `onreadystatechange` gets it just before the terminal callback. |
 
 Binary responseTypes (Phase 9): `blob`, `arraybuffer`, `document`.
 The SW reads `await res.arrayBuffer()` and ships the bytes back as
@@ -419,8 +424,13 @@ Decided by `decideConnect` in `src/gm-connect.ts`:
 | No `@connect` declared at all | **deny** |
 
 Cross-origin is strict-by-default: a script with no `@connect` lines
-is blocked from every cross-origin `GM_xmlhttpRequest`. Stricter than
-either reference manager:
+is blocked from every cross-origin `GM_xmlhttpRequest`.
+
+- A script that grants `GM_xmlhttpRequest` with no `@connect` gets a
+  parse-time warning (`extractStartupLogs` in `script-build.ts`), so
+  the block isn't silent.
+
+Stricter than either reference manager:
 
 - TM prompts the user when a script reaches an undeclared host.
 - VM doesn't enforce `@connect` at all — its install-confirm page
@@ -434,9 +444,15 @@ Grammar (lower-case before matching):
 - `self` — the script's own hosts: the requesting page's host, plus
   the hosts its `@match`/`@include` globs name (`*.host` contributes
   `host`).
-- `example.com` — exact host match. TM counts subdomains under a bare
-  domain too; we don't yet (`TODO.md`).
-- `*.example.com` — `example.com` itself **and** any subdomain.
+- `example.com` — that host **and** any subdomain, as TM documents
+  (`@connect example.com` covers `api.example.com`). Matched on whole
+  labels, so `evilexample.com` doesn't match.
+  - An IP address or single-label name (`127.0.0.1`, `localhost`,
+    `com`) matches only exactly, so a bare rule can't cover a TLD or
+    an IP range.
+  - Multi-label public suffixes aren't special-cased: `@connect co.uk`
+    covers all of `.co.uk`.
+- `*.example.com` — the same: `example.com` itself **and** any subdomain.
 - A scheme-prefixed URL like `https://example.com` is accepted and
   normalized to its host.
 
@@ -773,7 +789,7 @@ Returns `undefined` (matches TM/VM signature).
 
 ### SW handler
 
-- `src/gm-tab.ts` calls `chrome.tabs.create`.
+- `src/extension/gm-tab.ts` calls `chrome.tabs.create`.
 - **Only `http(s)` URLs are honored.** The URL is page-supplied, so a
   scheme gate keeps a script from asking the privileged SW to open
   `file://` / `chrome://` / `chrome-extension://` tabs. A rejected URL
@@ -809,7 +825,7 @@ Returns `undefined` (matches TM/VM signature).
 
 ### SW handler
 
-- `src/gm-notification.ts` calls `chrome.notifications.create('',
+- `src/extension/gm-notification.ts` calls `chrome.notifications.create('',
   options)` (letting Chrome assign the id).
 - Stores `chromeNotificationId → (originator, requestId)`.
 - Replies with the chrome id; the page-side `GM_notification`
@@ -871,7 +887,7 @@ records the implementation and the choices behind it.
 The page-side runtime picks by URL scheme:
 
 - `http(s)` → `sm:gm-download-start` to the SW, which drives
-  `chrome.downloads` (`src/gm-download.ts`).
+  `chrome.downloads` (`src/extension/gm-download.ts`).
 - `blob:` / `data:` → an `<a download>` click in the page; the SW is
   never involved.
 
@@ -979,7 +995,7 @@ Why the split:
   the callback locally and sends `sm:gm-menu-register` with
   `{scriptId, commandId, name}`; `unregister` drops the local
   entry and sends `sm:gm-menu-unregister`.
-- **SW side (`src/gm-menu.ts`)** — mirrors the (tabId → scriptId →
+- **SW side (`src/extension/gm-menu.ts`)** — mirrors the (tabId → scriptId →
   commands[]) registry that the action menu renders from, tagged
   with the `documentId` those commands came from. No callbacks live
   here — only the name + id needed to render the row and route a
@@ -989,11 +1005,11 @@ Why the split:
     can't reach into the current document's entries. That is
     reachable with an explicit `{id: '...'}`, where the same
     commandId legitimately exists in both documents.
-- **Action menu rebuild (`src/background.ts`,
+- **Action menu rebuild (`src/extension/background.ts`,
   `doRebuildActionContextMenu`)** — folds the per-tab mirror into
   the rebuild after the script rows: each script row gets its
   registered commands appended as `↳ <name>` entries.
-- **Overflow planner (`src/action-menu.ts`,
+- **Overflow planner (`src/extension/action-menu.ts`,
   `planActionMenu`)** — caps the top level at Chrome's 6-item limit
   by reserving one slot for the fixed "Reload page with no
   userscripts" row and one more for a "More" submenu when the (script
@@ -1356,10 +1372,18 @@ too.
 ## DOM injection (`GM_addStyle` / `GM_addElement`)
 
 Both run entirely in USER_SCRIPT world — no SW round-trip, no per-
-script state. USER_SCRIPT-world DOM mutations are CSP-exempt (the
-same dispensation content scripts get), so userscripts can inject
-into pages that ship strict `Content-Security-Policy: script-src
-'self'` without `unsafe-inline`.
+script state. The page's CSP (Content Security Policy) doesn't apply
+to what they insert from that world:
+
+- `<style>` rules apply even where the page's `style-src` omits
+  `'unsafe-inline'`.
+- `<script>` elements are checked against the USER_SCRIPT world's
+  own CSP instead, which allows inline code and any `src` (as in
+  Tampermonkey). So they run even under a strict page `script-src`.
+  See [injection.md](injection.md#lifecycle) for the
+  world config.
+- The same holds for elements a script inserts itself
+  (`document.createElement('script')`), not just via the GM API.
 
 - `GM_addStyle(css)` — creates a `<style>`, sets `textContent`,
   appends to `document.head || document.documentElement`. Returns

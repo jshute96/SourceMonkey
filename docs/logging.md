@@ -5,63 +5,56 @@ quiet the noisy lines.
 
 ## Log IDs
 
-Every script has a short, file-derived handle used everywhere a log
-or UI surface refers to it.
+Every script has a short handle used everywhere a log or UI surface
+refers to it: its basename and its script number.
 
-- Default: the basename of the script's `relativePath` (e.g.
-  `bold-on-hover.user.js`).
-- Scripts added by URL: the URL's filename, percent-decoded and
-  without the query string (`My Script.user.js`, not
-  `My%20Script.user.js?v=2`). See
-  [names-and-paths.md](names-and-paths.md).
-- Dupe basenames: each dupe gets a `#N` suffix
-  (`foo.user.js#1`, `foo.user.js#2`, ...).
-- Dupe ordering: sorted by stable UUID `id` lexicographically.
-  Arbitrary but deterministic — the SW and the collections page agree.
+- Format: `<basename>#E<number>` (e.g. `bold-on-hover.user.js#E4`).
+  - The basename is the script's `relativePath`'s, or for a script
+    added by URL, the URL's filename, percent-decoded and without the
+    query string (`My Script.user.js`, not `My%20Script.user.js?v=2`).
+    See [names-and-paths.md](names-and-paths.md).
+  - The number is the one sm-dev names the script by (`E4`), the same
+    in every run. See [storage.md](storage.md#sticky-numbers).
+  - It keeps scripts sharing a basename apart, and never shifts when
+    other scripts come and go.
+- A script with no number yet has its basename alone, or `#1`, `#2`,
+  ... among other unnumbered scripts sharing it, sorted by UUID:
+  - one just added, for the moment before the service worker numbers
+    it;
+  - one in an sm-dev test collection, which isn't numbered.
 
 ### Where you see them
 
-- SW console — every `[SourceMonkey] …` line that mentions a script
+- SW console: every `[SourceMonkey] ...` line that mentions a script
   uses its log ID. See [the message list below](#message-catalog).
-- Collections page — a faint `#N` is rendered after the name link
-  whenever a script is part of a dupe group. No suffix for unique
-  basenames.
-  - The column shows the script's `@name`, so the suffix can sit beside
-    a name that isn't the basename it was computed from. It is still
-    the marker that tells two rows apart in the SW console, which is
-    what it is there for.
-  - The converse: two scripts sharing an `@name` but not a basename
-    render as two identically labelled rows with no suffix.
-  - Either way the name link's tooltip leads with the location, so what
-    tells the rows apart is one hover away.
-- Userscript viewer — a `Log ID` row in the details panel, but only
-  for a script whose ID carries a `#N`. A unique log ID is just the
-  basename, which the `Location` row already says.
-  Absent in preview mode, which is showing a script that has never
-  run.
+- Stack traces: a script's code is named by a `sourcemonkey://` URL
+  with the log ID as its folder, encoded (`foo%23E4/foo.user.js`). See
+  `script-source-url.ts`.
+- Userscript viewer: a `Log ID` row in the details panel, always.
+  Its tooltip ends with the number sm-dev uses. Absent in preview
+  mode, which is showing a script that has never run.
+- Not the collections page: a suffix after the name there was more
+  confusing than useful. The name link's tooltip leads with the
+  location, which tells two same-named rows apart.
 
 ### Implementation
 
-`src/script-log-id.ts`:
+`src/extension/script-log-id.ts`:
 
-- Pure: `computeLogIds(scripts)` (over `scriptBasename` from
-  `script-display.ts`) — used by the collections page + viewer at render
-  time and unit-tested directly.
-- SW runtime: a `Map<id, {id, relativePath}>` populated by one
-  `chrome.storage.local.get(null)` scan at SW startup
+- Pure: `computeLogIds(scripts, numbers)` (over `scriptBasename` from
+  `script-display.ts`), used by the injector and the viewer, and
+  unit-tested directly.
+- SW runtime: a `Map<id, {id, relativePath}>` and the script numbers,
+  populated by one `chrome.storage.local.get(null)` scan at SW startup
   (`ensureLogIdsLoaded`) and kept fresh by `storage.onChanged`
-  (`installScriptLogIdListener`).
+  (`installScriptLogIdListener`), including the `scriptNumbers` row.
 - Sync getter: `getScriptLogLabel(id)` returns the log ID, or the
   first 8 chars of the UUID as a fallback (only seen during the
   brief window before the initial load resolves, or for late sm:*
   reports from scripts already removed).
-
-### Dupe reshuffle behavior
-
-Adding/removing a script in a dupe group can renumber siblings. The
-collections page recomputes its `currentLogIds` after every
-add/remove/refresh and walks `applyLogIdSuffixesToDom()` over OTHER
-sections so their suffixes stay in sync after a partial re-render.
+- A script's label is baked into its registered `//# sourceURL=`, so
+  the registration sync rebuilds every script whose label moved,
+  including when it is first numbered (see `runIncrementalSync`).
 
 ## Debug-logging gate
 
@@ -112,9 +105,9 @@ interpolates the same `message` the Log row uses.
 | `loaded new content: <logId> (<size>)` | no | log |
 | `update check failed: <logId>: <err>` | no | info |
 | `update check: <logId>: row vanished` | no | info |
-| `update check: <logId>: invalid — <msg>` | no | info |
+| `update check: <logId>: invalid: <msg>` | no | info |
 | `refresh failed: <logId>: <reason>` (transition / reason change only) | no | info |
-| `<logId>: Newer version <v> at <kind> URL (running <v>) — <url>` (version change only) | no | info |
+| `<logId>: Newer version <v> at <kind> URL (running <v>): <url>` (version change only) | no | info |
 | `collection refresh (mode): <path>` | no | log |
 | `collection refresh: <path>: <summary>` | no | log |
 | `collection refresh failed: <path>: <err>` | no | info |
@@ -130,7 +123,7 @@ The last two fire at most once per JS context, and only on a profile
 written before the August 2026 sources → collections rename — see
 [storage.md](storage.md#legacy-key-migration-temporary).
 
-Per-script `parser`-source rows (e.g. `Ignoring @grant <names> — unsupported APIs`) live in the viewer's Log tab, not the SW console — see "Page-console startup logs" below.
+Per-script `parser`-source rows (e.g. `Ignoring unsupported @grant <names>`) live in the viewer's Log tab, not the SW console — see "Page-console startup logs" below.
 
 **No `console.warn` / `console.error` anywhere in the extension** —
 not the SW, not extension pages, and not injected wrapper / prelude /
@@ -164,7 +157,7 @@ console call at all, and each has its own countermeasure:
   - SW startup fires many `void someStorageRead()` calls, so a reload
     mid-startup would list one entry per read. Nothing is broken: the
     next wake starts over and redoes them.
-  - `src/sw-teardown.ts` installs an `unhandledrejection` handler
+  - `src/extension/sw-teardown.ts` installs an `unhandledrejection` handler
     (first thing in `background.ts`) that marks exactly that rejection
     handled and notes it at `console.info`. Every other rejection
     still surfaces.
@@ -201,7 +194,7 @@ still drives the Log-tab mirror.
 ### Where startup logs come from
 
 - Detection happens at **parse time**, in
-  `extractStartupLogs(header)` (`src/script-store.ts`). The resulting
+  `extractStartupLogs(header)` (`src/script-build.ts`). The resulting
   list is stored on `StoredScript.startupLogs` and persisted to
   `chrome.storage.local` alongside the rest of the script row.
 - The injector reads `script.startupLogs` straight off the stored row
@@ -235,7 +228,7 @@ still drives the Log-tab mirror.
 ### Mirror to the Log tab
 
 When the refresh pipeline records a "Loaded new content" entry for a
-script (see `emitScriptOutcomeLog` in `src/script-updater.ts`), it
+script (see `emitScriptOutcomeLog` in `src/extension/script-updater.ts`), it
 also walks `script.startupLogs` and appends one Log-tab entry per
 diagnostic, with `source: 'parser'`. Result: every persisted version
 of a script lands one diagnostic row immediately after its load row,
@@ -247,7 +240,7 @@ regardless of how many times the SW restarts in between.
 Chrome shutdown, so a fresh Chrome session starts with an empty Log
 tab even though the state that explains it is still persisted in
 `chrome.storage.local`. To repopulate without forcing a manual
-refresh, `replayScriptLogsAtBoot()` (in `src/script-updater.ts`) runs
+refresh, `replayScriptLogsAtBoot()` (in `src/extension/script-updater.ts`) runs
 once at SW startup and walks every stored script, emitting:
 
 - one `parser` row per `startupLogs` diagnostic,

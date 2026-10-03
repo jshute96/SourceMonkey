@@ -438,3 +438,10 @@ test('representativeMatches: ports are distinct sites; cap at MAX_SITE_ICONS', (
 test('representativeMatches: empty when nothing names a site', () => {
   assert.deepEqual(representativeMatches({ matches: ['<all_urls>', 'file:///x/*'] }), []);
 });
+
+test('representativeMatch: a .tld host links to its .com site', () => {
+  assert.deepEqual(representativeMatch({ matches: ['*://www.google.tld/*'] }), {
+    origin: 'https://www.google.com',
+    linkUrl: 'https://www.google.com/',
+  });
+});

@@ -13,6 +13,7 @@ One-line descriptions of every source file, grouped by directory.
 | `package.json` | Node project manifest, scripts, devDependencies |
 | `pnpm-lock.yaml` | pnpm dependency lockfile |
 | `tsconfig.json` | TypeScript compiler config for the extension build |
+| `tsconfig.lib.json` | The `sourcemonkey` package build: every module plus the harness, with declarations, into `lib/` |
 | `tsconfig.tests.json` | Typecheck-only config extending the build one to cover `tests/` (`pnpm run typecheck`) |
 | `playwright.config.ts` | Playwright test runner config (e2e suite) |
 | `.gitignore` | Git ignore rules |
@@ -23,153 +24,247 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `.claude/settings.json` | Local dev settings — Bash permissions for `pnpm` commands |
 | `.claude/commands/codereview.md` | `/codereview` slash command — launches a background review subagent |
+| `.claude/skills/SourceMonkey-dev` | Symlink to `skills/SourceMonkey-dev/`, so agents here load the harness skill too |
+| `.claude/skills/SourceMonkey-friction` | Symlink to `skills/SourceMonkey-friction/`, so agents here log tool friction too |
+| `.claude/skills/corpus-testing/SKILL.md` | Repo-only skill: testing GreasyFork corpus scripts live, running batches with agents, re-testing after fixes |
+| `.claude/skills/corpus-testing/references/testing-a-script.md` | How to test and record one corpus script; the brief handed to each agent in a batch |
 | `.claude/commands/pushreview.md` | `/pushreview` slash command — `/codereview` then commit + push if clean |
 
 ## Build Scripts (`scripts/`)
 
 | File | Description |
 |------|-------------|
-| `scripts/build.mjs` | Clean `dist/`, copy icons + manifest + HTML + vendor (Prism), run `tsc` (optional `--watch`) |
-| `scripts/zip_extension.sh` | Build and zip `dist/` for distribution — `/tmp/SourceMonkey.zip`, or `-vVERSION` with `--release` |
+| `scripts/build.mjs` | Build the extension into `dist/` (assets + `tsc`) and the package into `lib/` (optional `--watch`) |
+| `scripts/sm-dev` | Runs the harness's command line from this checkout, from the built `lib/` (it never builds) |
+| `scripts/zip_extension.sh` | Build and zip the extension for distribution, packing all of `dist/` |
 | `scripts/release-extension.sh` | Cut a `vX.Y.Z` GitHub release: version/branch/tag checks, zip, push tag, `gh release create` (draft by default) |
 | `scripts/serve-examples.mjs` | Local HTTP server for `tests/examples/`, including the `/__slow/?ms=N` delay route the `headers-run-at` demo needs |
 | `scripts/make_manifest.sh` | Scan the current dir for `*.user.js` and emit a SourceMonkey HTTP-manifest JSON array to stdout (redirect to `script_manifest.json`) |
 | `scripts/open-test-browser-with-SourceMonkey.sh` | Launch Chromium with the unpacked SM extension + CDP port 9222 for cross-manager Playwright runs |
 | `scripts/open-test-browser.sh` | Launch Chromium with a named manager's persistent profile (TM or VM, installed manually) + its CDP port for that Playwright project |
 | `scripts/sync-manager-scripts.mjs` | Standalone CLI that connects to the running TM or VM browser via CDP and installs/updates every `*.user.js` under `tests/examples/` |
-| `scripts/clean-stale-test-profiles.mjs` | Sweep, run before the e2e suite, of `/tmp/sourcemonkey-test-*` profiles left by e2e runs that died before teardown |
+| `scripts/update-public-suffixes.mjs` | Regenerates `src/public-suffixes.ts` from the ICANN section of the Public Suffix List (run by hand, output committed) |
+| `scripts/clean-stale-test-profiles.mjs` | Sweep, run before the e2e suite, of the `/tmp` browser profiles left by e2e runs and temp browsers that died before closing |
 | `scripts/e2e-manager-preflight.mjs` | Gate before `test:e2e:tm` / `:vm`: probes the manager's CDP port, pre-grants TM's `downloads`, opens or asks to close the browser |
 | `scripts/inspect-tm-dashboard.mjs` | Diagnostic: dumps every visible row on the TM dashboard with cell classes — use when listInstalled selectors stop working |
 | `scripts/inspect-tm-install.mjs` | Diagnostic: drives one TM install and dumps the confirmation-page buttons — use when the Install-button selector stops working |
-| `scripts/validate-userscripts.mjs` | CLI that runs the install-time checks (header, `@require`/`@resource`, parse) over files on disk, with an offline dependency root |
-| `scripts/parse-check-node.mjs` | Node counterpart of the sandboxed parse check: `new Function` verdict plus `vm.Script` location probes |
 
-## Extension Source (`src/`)
+## Source (`src/`)
+
+`src/` is split by who loads each module (see
+[architecture.md](architecture.md#source-layout)):
+
+- `src/extension/`: modules only the extension loads. Built into
+  `dist/extension/`.
+- `src/harness/`: the Node-only development harness. Built into
+  `lib/harness/`, never into `dist/`.
+- Directly in `src/`: modules both use, built into both; plus the pages,
+  styles, icons, manifest and injected wrapper sources.
+
+### Shared modules (`src/`)
+
+Modules both the extension and the harness use. Compiled into `dist/`
+and `lib/`.
 
 | File | Description |
 |------|-------------|
-| `src/manifest.json` | MV3 extension manifest |
-| `src/parse-check.ts` | SW side of the compile-only parse check — offscreen lifecycle, batching, fails open when unavailable |
 | `src/parse-check-protocol.ts` | Parse-check wire types plus the session-storage off-switch every checker reads |
 | `src/parse-location.ts` | Picks between the sandbox's two location probes and maps the reported line back to the file it was written in |
 | `src/diagnostic-location.ts` | Shared `{file, line?, column?}` shape every content-derived verdict carries, plus the one phrasing surfaces render it with |
-| `src/parse-check-client.ts` | Page-side parse checker — embeds its own sandbox frame and compiles there, no service worker involved |
-| `src/parse-sandbox-host.ts` | Drives a sandboxed parse frame over postMessage: readiness, timeouts, verdict validation, circuit breaker |
-| `src/parse-sandbox.ts` | Sandboxed-page compile probe — `new Function` per source, plus the `<script>` probes that locate the error |
-| `src/parse-sandbox.html` | Sandboxed page (manifest `sandbox.pages`) — the only context allowed `'unsafe-eval'` / `'unsafe-inline'` |
-| `src/offscreen.ts` | Offscreen-document relay: the DOM the service worker lacks, hosting a sandboxed parse frame |
-| `src/offscreen.html` | Offscreen document markup — hosts the sandboxed parse iframe |
-| `src/background.ts` | Service worker entrypoint; per-tab badge + action menu wiring, sm:* listener, focus-triggered local refresh, the pages' http-read and log-write relays, injector + match-index bootstrap, first-run collections-page open |
-| `src/deep-link.ts` | `webNavigation` listener: rewrites the GitHub `redirect-page.md` URL to the matching `chrome-extension://…` page |
-| `src/install-capture.ts` | Captures http(s) + file:// navigations to `*.user.js` and redirects them to the viewer's preview mode |
-| `src/collections.html` | Collections page markup: header bar with Options / Refresh All, Add field, file-access banner slot, collection list |
-| `src/collections.ts` | Collections page controller — Add-field routing into the dialog, options gear, render, membership repair, in-place updates, refresh highlights + dropped-row ghosts, repaint-from-storage on change, `?refresh`/`?refresh_local`/`?refresh_file`/`?add`/`?first_run` triggers |
-| `src/collection-dialog.ts` | The create / edit collection dialog shared by the collections page and the install page: name / location / local-overrides fields, an inferred Type row, live validation, pre-create readability probe, create/install/move wording |
-| `src/refresh-targets.ts` | Picks the collections/scripts a `?refresh_local` or `?refresh_file=<path>` trigger should refresh |
-| `src/options.html` | Options page markup: header bar with the Collections link, settings list (link-capture toggle, debug-logging toggle), local search-roots box + file-access banner slot, Downloads-folder field, GitHub auth token |
-| `src/options.ts` | Options page controller — boolean setting checkboxes, local search-roots box (parse + existence checks, refresh on save), Downloads-folder field, GitHub-token controls |
-| `src/page-heading.ts` | Import-free module holding the viewer heading's vocabulary and DOM, and the early paint that names the header bar before the page's first paint |
-| `src/page-links.ts` | Cross-page links between extension pages: the named Collections / Options tabs and the header bar's home link |
-| `src/userscript.html` | Userscript viewer markup: header bar, status box (banner + versions panel), controls row, install callout + preview actions, details panel, tab strip, code box, log pane |
-| `src/userscript.ts` | Userscript viewer controller — installed mode (`?script=`), preview mode (`?preview=`), in-page switching between copies, the Collection row's Move button, the controls row's Local copy / delete-copy buttons, live `storage` watchers, log pane |
-| `src/compare.html` | Compare page markup: header bar, the fields table slot, view controls, tab strip, diff box |
-| `src/compare.ts` | Compare page controller — loads two copies (stored, or a preview's download), the fields table with its swap, per-file tabs, unified / side-by-side diff rendering, change-block arrows |
-| `src/debug/icons.html` | Debug icons page markup: common header bar with Delete All action and cached-icons inspection table |
-| `src/debug/icons.ts` | Debug icons controller — lists all cached icons with scope, expiry, per-row refresh/delete, and Delete All |
-| `src/select-all.ts` | The Ctrl/Cmd-A that selects a page's content rather than the page, given what each page wants selected |
-| `src/line-diff.ts` | Pure line diff (Myers) plus hunk folding and change counts, behind the compare page |
-| `src/move-dialog.ts` | The move-script dialog opened from the viewer's Collection row: destination dropdown, live refusals, runs the move itself |
-| `src/copy-dialog.ts` | The local-copy dialog opened from the viewer's controls row: filename, header fields, dependency checkbox, existing-file checks, runs the copy |
-| `src/delete-icon.ts` | Paints the two removal glyphs: plain trash can for a record, trash can + disk badge for a file delete |
-| `src/delete-dialog.ts` | The delete-local-script-file confirmation: the file and its path, the dependency lists, an on-disk watch, runs the deletion |
-| `src/file-changes.ts` | Paint-time "deleted" / "modified" chips and the per-collection "refresh pending" chip: listing-based probe, new-file scan, tagging, tooltips |
-| `src/local-delete.ts` | Deleting a local copy from disk: which scripts qualify, what goes with them, download-history lookup and removal |
-| `src/local-copy.ts` | Local copies of a script: the Downloads collection + setting, name rules, header rewriting, dependency layout, the `chrome.downloads` write |
-| `src/script-details.ts` | Builds the viewer's curated details `<dl>` — chosen header fields, the resolved provenance rows, and the Collection row's trailing slot — for both modes; lends the compare page its Collection cell |
-| `src/details-tooltips.ts` | The one table of tooltip text for the details panel's row labels, plus the mode/site-name lookups |
-| `src/copy-button.ts` | The square copy-to-clipboard button beside a path (viewer rows, delete dialog): sprite glyphs, per-button "Copied" flash, text read at click time |
-| `src/script-identity.ts` | Finds other installed copies of a script — match by absolute `fileUrl`, and by `@namespace`+`@name`; the content fingerprint behind the panel's Compare column; the exclusive-enable rule; the install / move target options |
-| `src/select-open-guard.ts` | Opens a `<select>`'s list on the mouse release, so the click that opens it can't also pick from it |
-| `src/related-versions.ts` | Renders the "Other versions" panel: a section per relationship, per-copy controls, the preview's install-offer section, the fold toggle, and the collection dropdown Install and Move share |
-| `src/code-tabs.ts` | Tabbed code view: tab strip with per-tab URL tooltip + chip, Prism pane, lazy tab bodies, line highlight, gutter clicks, `#file:line:col` hash sync |
-| `src/code-links.ts` | Linkifies a Prism-highlighted code block (header-tag values + bare URLs) and builds the shared open-in-new-tab anchor |
-| `src/prism-userscript.ts` | Side-effect module: teaches Prism the `// ==UserScript== …` metadata block so it renders as a tinted band |
-| `src/directories.ts` | Collection I/O + classifiers (single-file / manifest / github-dir / container, plus the read-it-first `classifyLocation`), input canonicalizer, file:// + http(s) fetch, listing parser, recursive scanner, manifest parser, URL helpers |
-| `src/file-access.ts` | "Allow access to file URLs" probe plus the shared "File access is disabled." banner and its chrome://extensions link |
-| `src/github-provider.ts` | GitHub-only provider integration: URL parsing, default-branch resolution, blob→raw rewrite, Contents-API recursive dir scanner, per-script raw/display URL builders |
+| `src/file-locations.ts` | Location kind and path helpers, `file://` reads, and Chrome's `file://` directory listings |
+| `src/github-urls.ts` | Maps a GitHub raw URL to its github.com page |
 | `src/github-auth.ts` | Persisted GitHub PAT cache + `githubAuthHeaders(url)` host-gated helper for attaching `Authorization: Bearer …` to api/raw/github.com-raw fetches |
 | `src/markup-response.ts` | Detects an HTML page served where JavaScript was expected (Content-Type + leading `<`), and words the failure |
 | `src/collection-scan.ts` | Cycle-neutral scan primitives shared by `directories.ts` and `github-provider.ts` |
-| `src/script-store.ts` | Persistent userscript store (chrome.storage.local) plus load/refresh pipeline, addCollection / createCollection / installScript / moveScript / setCollectionOptions / probeCollectionLocation, parse-time diagnostics, refreshAllCollections, membership reconcile, first-run flag + DEFAULT_COLLECTIONS, legacy `source:*` key migration |
-| `src/script-updater.ts` | Single entry point for refresh; rate-limits opportunistic background checks, and mirrors every load/refresh outcome into the per-script Log |
+| `src/script-build.ts` | Builds a script row from text: header parse and validation, matching, startup logs, `@require` loading, parse check |
 | `src/script-display.ts` | Pure display helpers: size/status formatting, the shared status view + viewer / preview / compare URLs, the script label and full source, slash-aware wrapping, name/path decoding, SRI-fragment strip, enable-toggle tooltip |
 | `src/version-compare.ts` | Pure `@version` ordering (dotted segments, numeric-aware, prerelease tails) + the newer/older/same/edited verdict and the `-local` suffix |
 | `src/version-probe.ts` | Pure probe logic: pick the `@updateURL`/`@downloadURL` targets we don't load from, judge staleness + outdated verdict |
-| `src/version-probe-fetch.ts` | Fetching half of update probes — reads a probe URL's `@version`, with bounded size, timeout, and fan-out |
-| `src/collection-display.ts` | Collection-display helpers: bubble key (kind + scheme) and its tooltip, per-row scheme chip, display-name inference, name-in-use + reserved-name checks, manifest flag, anchor id, disabled-collection tooltip |
-| `src/glyph.ts` | Renders a sprite glyph into a button, with the label/tooltip pair and the in-flight spin state |
-| `src/glyph-sprite.svg` | The one copy of every inline SVG glyph, inlined into each page at `<!--#include glyph-sprite-->` by the build |
-| `src/styles.css` | Cross-page shared stylesheet linked by every extension page: the header bar and page column, the button surface, collection bubble + scheme chip, display-name, warning banner, modal dialog shell, install-target select, tab strip, site favicons |
-| `src/script-sites.ts` | Rewrites a script's URL into the hosting site's listing page (Greasy Fork, Sleazy Fork, OpenUserJS, gists) and decides the viewer's row |
 | `src/script-links.ts` | Pure helpers for the viewer's link rendering: URL/text tokenizer, header-tag classifier sets, `// @tag value` line parser |
-| `src/stack-link.ts` | Pure stack-ref helpers: `parseStackRefs` splits a log message into text + `{url, line, col}` runs; `displayRefText` decodes our own URLs for reading |
+| `src/stack-link.ts` | Pure stack-ref helpers: parse refs in a log message, decode our URLs for reading, map a stack's lines back to its files |
 | `src/script-source-url.ts` | Canonical `sourcemonkey://SourceMonkey/…` URL builders for every `{code}` entry — main, config, prelude, require, plus page-wide bridge / GM runtime |
-| `src/script-url-hash.ts` | Pure `parseHash` / `buildHash` for the viewer's `#<filename>[:<line>[:<col>]]` / `#Log` URL fragment |
 | `src/userscript-header.ts` | Parser for the `// ==UserScript== … // ==/UserScript==` metadata block + header/body splitter, with per-tag line numbers |
-| `src/url-match.ts` | Pure URL-matching predicate for `@match` / `@include` / `@exclude` patterns, plus the `@match` grammar check and its lenient rewrites |
-| `src/match-index.ts` | In-memory cache of injectable scripts' matching info, execution world, and which load from disk, kept in sync with `chrome.storage.local`; reports which rows moved, skipping probe-only writes |
-| `src/injector.ts` | Incrementally syncs the enabled script set into `chrome.userScripts`, re-checking unverified rows first, and wraps each body with an activation/error shim |
-| `src/unsafe-window-use.ts` | Text scan for an ungranted `unsafeWindow` reference (and for a source that declares the name itself) |
-| `src/composed-source.ts` | Concatenates `@require` bodies ahead of the script body; owns the injected entry's line layout for both run paths |
-| `src/tab-status.ts` | Pure helpers for per-tab badge view (expected ∪ actual classification incl. NOT LOADED, color, row-label formatter) and per-tab document LRU |
+| `src/url-match.ts` | Pure URL-matching predicate for `@match` / `@include` / `@exclude` patterns (incl. `.tld` hosts), plus the `@match` grammar check and its lenient rewrites |
+| `src/public-suffixes.ts` | Generated: the ICANN public suffix rules that `.tld` host patterns match, one per line |
+| `src/unsafe-window-use.ts` | Text scan for an ungranted `unsafeWindow` reference, ignoring a source that declares the name itself |
+| `src/runtime-messages.ts` | The `sm:*` message types injected scripts send the service worker |
+| `src/script-world.ts` | Picks the injection world (page or isolated) from a script's `@grant` and `@inject-into` lines |
+| `src/eval-hook.ts` | The statement sm-dev's scripts get so `eval` runs in their scope (and their IIFE's), after any `"use strict"` |
+| `src/composed-source.ts` | Concatenates `@require` bodies ahead of the script body; owns the injected entry's line layout and the parse check's source, for stack and error mapping |
+| `src/sandboxed-page.ts` | Detects a CSP `sandbox` that blocks page-world scripts; the wording the Log warning and sm-dev share |
 | `src/debug-log.ts` | Debug-logging gate for verbose lifecycle messages; off by default, toggled via `chrome.storage.local.smDebugLogging` |
 | `src/phase-timing.ts` | Debug-gated timers behind the refresh / registration paths: per-sequence phases plus cumulative fan-out totals |
-| `src/storage-scan.ts` | Wrapper for every full-namespace `storage.local.get(null)`, naming each scan and its cost under debug logging |
-| `src/concurrency.ts` | Bounded fan-out helper plus the nested per-collection / per-script, probe, and directory-scan limits |
 | `src/bytes.ts` | Shared byte helpers: `sha256Hex` (content/file hashes) plus chunked `bytesToBase64` / `base64ToBytes` for message-hop and `@resource` transport |
-| `src/refresh-error.ts` | Session-storage map of collections whose last refresh was read but could not be saved, plus its shared message |
-| `src/sw-teardown.ts` | Marks `No SW` rejections (chrome.* calls cut off by service-worker shutdown) handled so they stay out of the Errors panel |
-| `src/script-log-id.ts` | Computes a per-script "log ID" (basename, with `#N` suffix on dupes) used in every log line + the collections/viewer UI |
-| `src/script-log.ts` | Per-script event log store: chrome.storage.session keyed by script ID, serialized appends with a fixed cap, a sibling `loglevel:` sentinel, and the page→worker write relay |
-| `src/log-format.ts` | Log cell formatting (time, status/level, source, message) shared by the viewer's table and its CSV export, plus the export's filename |
-| `src/script-rejection.ts` | Session-storage record of registrations `chrome.userScripts` refused, plus the one sentence every surface reports it with |
 | `src/match-targets.ts` | Pure `@match` pattern → `{origin, linkUrl}` extractor, the first-few-distinct-sites list behind multi-icon rows, and the same-directory fallback for site-less patterns |
-| `src/site-icon.ts` | Site-favicon discovery, `@icon`-header override (incl. local file stand-ins), and the one-icon-per-site slot renderer for collections page + viewer |
 | `src/file-loader.ts` | Resolves header refs (`@icon`, `@require`, `@resource`) against the script's own URL, containing a local script to its folder; scheme-aware byte + text fetcher reporting why it failed; `.js` suffix gate |
 | `src/run-context.ts` | The page-vs-service-worker test (`isPageContext`) the modules shared by both branch on |
 | `src/http-read.ts` | One http(s) read, made in the service worker when a page asks — a document fetch acts on the response's `Link: rel=preload` headers |
 | `src/external-files.ts` | `@require` + `@resource` orchestrator: resolve, fetch, dedup (cross-script + cross-kind), attach typed entries, word the failures |
 | `src/local-file-overrides.ts` | Local stand-ins for `@require` / `@resource` / `@icon` declared by absolute URL: search roots (script folder, collection root, configured), host/path suffix candidates, listing-gated probing, containment |
+| `src/gm-api-catalog.ts` | Catalog of supported `GM_*` / `GM.*` APIs: name, async/sync kind, subsystem; helpers for resolving `@grant` lines |
+| `src/source-map.ts` | Source Map v3 generator for the concatenated injection entry, plus the reverse lookup the Log tab maps stack refs with |
+| `src/gm-xhr-types.ts` | The `GM_xmlhttpRequest` request and event types passed between page and service worker |
+| `src/gm-connect.ts` | `@connect` policy — rule parsing, self hosts from `@match`/`@include`, the allow/deny verdict (same-origin always allowed), and the denial wording |
+| `src/sm-dev-protocol.ts` | What the extension and sm-dev share: the protocol version, the event line tag, the sm-dev skip reason |
+
+### Pages and assets (`src/`)
+
+The manifest, pages, styles, icons and injected wrapper sources. They
+stay directly in `src/` so the extension's URLs have no folder in them.
+
+| File | Description |
+|------|-------------|
+| `src/manifest.json` | MV3 extension manifest |
+| `src/parse-sandbox.html` | Sandboxed page (manifest `sandbox.pages`) — the only context allowed `'unsafe-eval'` / `'unsafe-inline'` |
+| `src/offscreen.html` | Offscreen document markup — hosts the sandboxed parse iframe |
+| `src/collections.html` | Collections page markup: header bar with Options / Refresh All, Add field, file-access banner slot, collection list |
+| `src/options.html` | Options page markup: header bar with the Collections link, settings list (link-capture toggle, debug-logging toggle), local search-roots box + file-access banner slot, Downloads-folder field, GitHub auth token |
+| `src/userscript.html` | Userscript viewer markup: header bar, status box (banner + versions panel), controls row, install callout + preview actions, details panel, tab strip, code box, log pane |
+| `src/compare.html` | Compare page markup: header bar, the fields table slot, view controls, tab strip, diff box |
+| `src/debug/icons.html` | Debug icons page markup: common header bar with Delete All action and cached-icons inspection table |
+| `src/glyph-sprite.svg` | The one copy of every inline SVG glyph, inlined into each page at `<!--#include glyph-sprite-->` by the build |
+| `src/styles.css` | Cross-page shared stylesheet linked by every extension page: the header bar and page column, the button surface, collection bubble + scheme chip, display-name, warning banner, modal dialog shell, install-target select, tab strip, site favicons |
 | `src/userscript-prelude.js` | Static per-world prelude (matcher, check-pending round-trip, @run-at gate, async-error listeners, focus signal); minified to WRAPPER_PRELUDE and spliced into each script's js[] as a `{code}` entry |
 | `src/wrapper-bridge.js` | USER_SCRIPT-world bridge relaying sm:* + GM_* traffic between MAIN-world wrappers and the SW, both directions |
-| `src/gm-api-catalog.ts` | Catalog of supported `GM_*` / `GM.*` APIs: name, async/sync kind, subsystem; helpers for resolving `@grant` lines |
-| `src/gm-bindings.ts` | Per-script `GM_*` / `GM.*` binding emitter — generates compile-in `const GM_X = ...` source spliced into the wrapper |
-| `src/source-map.ts` | Source Map v3 generator for the concatenated injection entry, plus the reverse lookup the Log tab maps stack refs with |
 | `src/wrapper-gm-runtime.js` | Shared per-world `GM_*` runtime — installs `window.__SM_GM__` (shim cache, dual transport, storage cache + stored-value codec + batched writes) |
-| `src/gm-values.ts` | SW-side persistent storage for `GM_*` values — `gmval:<scriptId>:<key>` rows in `chrome.storage.local`, batched writes |
-| `src/gm-xhr.ts` | SW-side `GM_xmlhttpRequest` runner — fetch + AbortController, text/json/blob/arraybuffer/document, cookies, timeout, page-relative URL resolution |
-| `src/gm-xhr-headers.ts` | Forbidden-request-header surgery for `GM_xmlhttpRequest` — classify, tag the URL, compile to a DNR session rule, stale-rule sweep |
-| `src/gm-connect.ts` | `@connect` policy — rule parsing, self hosts from `@match`/`@include`, the allow/deny verdict (same-origin always allowed), and the denial wording |
-| `src/gm-tab.ts` | SW-side `GM_openInTab` dispatcher (`chrome.tabs.create` + per-request mapping for close-event routing) |
-| `src/gm-download.ts` | SW-side `GM_download` dispatcher (`chrome.downloads` for http(s) + per-request mapping for progress/terminal routing) |
-| `src/gm-notification.ts` | SW-side `GM_notification` dispatcher (`chrome.notifications.create` + per-request mapping for click/close routing) |
-| `src/gm-url-scheme.ts` | Shared URL-scheme gate for the SW-side GM_* dispatchers (parse + allowlist check for tabs / notifications / downloads) |
-| `src/gm-originator-map.ts` | Shared shed-on-tab-close helper for the gm-tab / gm-notification / gm-download per-request maps (drop entries by originator tab) |
-| `src/gm-menu.ts` | SW-side `GM_registerMenuCommand` per-(tab, document, script) command registry feeding the action menu |
-| `src/gm-url-change.ts` | SW-side `window.onurlchange` driver — forwards `webNavigation.onHistoryStateUpdated` to the changed document as `sm:url-change` |
-| `src/gm-window-control.ts` | SW-side `window.close` / `window.focus` driver — closes or fronts the sender's own tab via `chrome.tabs` / `chrome.windows` |
-| `src/action-menu.ts` | Action context-menu planner — packs script + command groups and the fixed reload row into Chrome's 6-item cap with a "More" overflow submenu |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons (placeholder) |
+
+### Extension modules (`src/extension/`)
+
+Modules only the extension loads: the service worker, the pages'
+scripts, storage, the injector. Compiled into `dist/extension/`.
+
+| File | Description |
+|------|-------------|
+| `src/extension/parse-check.ts` | SW side of the compile-only parse check — offscreen lifecycle, batching, fails open when unavailable |
+| `src/extension/parse-check-client.ts` | Page-side parse checker — embeds its own sandbox frame and compiles there, no service worker involved |
+| `src/extension/parse-sandbox-host.ts` | Drives a sandboxed parse frame over postMessage: readiness, timeouts, verdict validation, circuit breaker |
+| `src/extension/parse-sandbox.ts` | Sandboxed-page compile probe — `new Function` per source, plus the `<script>` probes that locate the error |
+| `src/extension/offscreen.ts` | Offscreen-document relay: the DOM the service worker lacks, hosting a sandboxed parse frame |
+| `src/extension/background.ts` | Service worker entrypoint; per-tab badge + action menu wiring, sm:* listener, focus-triggered local refresh, the pages' http-read and log-write relays, injector + match-index bootstrap, first-run collections-page open |
+| `src/extension/deep-link.ts` | `webNavigation` listener: rewrites the GitHub `redirect-page.md` URL to the matching `chrome-extension://…` page |
+| `src/extension/install-capture.ts` | Captures http(s) + file:// navigations to `*.user.js` and redirects them to the viewer's preview mode |
+| `src/extension/collections.ts` | Collections page controller — Add-field routing into the dialog, options gear, render, membership repair, in-place updates, refresh highlights + dropped-row ghosts, repaint-from-storage on change, `?refresh`/`?refresh_local`/`?refresh_file`/`?add`/`?first_run` triggers |
+| `src/extension/collection-dialog.ts` | The create / edit collection dialog shared by the collections page and the install page: name / location / local-overrides fields, an inferred Type row, live validation, pre-create readability probe, create/install/move wording |
+| `src/extension/refresh-targets.ts` | Picks the collections/scripts a `?refresh_local` or `?refresh_file=<path>` trigger should refresh |
+| `src/extension/options.ts` | Options page controller — boolean setting checkboxes, local search-roots box (parse + existence checks, refresh on save), Downloads-folder field, GitHub-token controls |
+| `src/extension/page-heading.ts` | Import-free module holding the viewer heading's vocabulary and DOM, and the early paint that names the header bar before the page's first paint |
+| `src/extension/page-links.ts` | Cross-page links between extension pages: the named Collections / Options tabs and the header bar's home link |
+| `src/extension/userscript.ts` | Userscript viewer controller — installed mode (`?script=`), preview mode (`?preview=`), in-page switching between copies, the Collection row's Move button, the controls row's Local copy / delete-copy buttons, live `storage` watchers, log pane |
+| `src/extension/compare.ts` | Compare page controller — loads two copies (stored, or a preview's download), the fields table with its swap, per-file tabs, unified / side-by-side diff rendering, change-block arrows |
+| `src/extension/debug/icons.ts` | Debug icons controller — lists all cached icons with scope, expiry, per-row refresh/delete, and Delete All |
+| `src/extension/select-all.ts` | The Ctrl/Cmd-A that selects a page's content rather than the page, given what each page wants selected |
+| `src/extension/line-diff.ts` | Pure line diff (Myers) plus hunk folding and change counts, behind the compare page |
+| `src/extension/move-dialog.ts` | The move-script dialog opened from the viewer's Collection row: destination dropdown, live refusals, runs the move itself |
+| `src/extension/copy-dialog.ts` | The local-copy dialog opened from the viewer's controls row: filename, header fields, dependency checkbox, existing-file checks, runs the copy |
+| `src/extension/delete-icon.ts` | Paints the two removal glyphs: plain trash can for a record, trash can + disk badge for a file delete |
+| `src/extension/delete-dialog.ts` | The delete-local-script-file confirmation: the file and its path, the dependency lists, an on-disk watch, runs the deletion |
+| `src/extension/file-changes.ts` | Paint-time "deleted" / "modified" chips and the per-collection "refresh pending" chip: listing-based probe, new-file scan, tagging, tooltips |
+| `src/extension/local-delete.ts` | Deleting a local copy from disk: which scripts qualify, what goes with them, download-history lookup and removal |
+| `src/extension/local-copy.ts` | Local copies of a script: the Downloads collection + setting, name rules, header rewriting, dependency layout, the `chrome.downloads` write |
+| `src/extension/script-details.ts` | Builds the viewer's curated details `<dl>` — chosen header fields, the resolved provenance rows, and the Collection row's trailing slot — for both modes; lends the compare page its Collection cell |
+| `src/extension/details-tooltips.ts` | The one table of tooltip text for the details panel's row labels, plus the mode/site-name lookups |
+| `src/extension/copy-button.ts` | The square copy-to-clipboard button beside a path (viewer rows, delete dialog): sprite glyphs, per-button "Copied" flash, text read at click time |
+| `src/extension/script-identity.ts` | Finds other installed copies of a script — match by absolute `fileUrl`, and by `@namespace`+`@name`; the content fingerprint behind the panel's Compare column; the exclusive-enable rule; the install / move target options |
+| `src/extension/select-open-guard.ts` | Opens a `<select>`'s list on the mouse release, so the click that opens it can't also pick from it |
+| `src/extension/related-versions.ts` | Renders the "Other versions" panel: a section per relationship, per-copy controls, the preview's install-offer section, the fold toggle, and the collection dropdown Install and Move share |
+| `src/extension/code-tabs.ts` | Tabbed code view: tab strip with per-tab URL tooltip + chip, Prism pane, lazy tab bodies, line highlight, gutter clicks, `#file:line:col` hash sync |
+| `src/extension/code-links.ts` | Linkifies a Prism-highlighted code block (header-tag values + bare URLs) and builds the shared open-in-new-tab anchor |
+| `src/extension/prism-userscript.ts` | Side-effect module: teaches Prism the `// ==UserScript== …` metadata block so it renders as a tinted band |
+| `src/extension/directories.ts` | Collection I/O: `classifyLocation`, input canonicalizer, script and http(s) fetch, recursive scanner, manifest parser, scratch rows |
+| `src/extension/file-access.ts` | "Allow access to file URLs" probe plus the shared "File access is disabled." banner and its chrome://extensions link |
+| `src/extension/github-provider.ts` | GitHub-only provider integration: URL parsing, default-branch resolution, blob→raw rewrite, Contents-API recursive dir scanner, per-script raw/display URL builders |
+| `src/extension/script-store.ts` | Persistent userscript store (chrome.storage.local) plus load/refresh pipeline, addCollection / createCollection / installScript / moveScript / setCollectionOptions / probeCollectionLocation, refreshAllCollections, membership reconcile, first-run flag + DEFAULT_COLLECTIONS, legacy `source:*` key migration |
+| `src/extension/script-updater.ts` | Single entry point for refresh; rate-limits opportunistic background checks, and mirrors every load/refresh outcome into the per-script Log |
+| `src/extension/version-probe-fetch.ts` | Fetching half of update probes — reads a probe URL's `@version`, with bounded size, timeout, and fan-out |
+| `src/extension/collection-display.ts` | Collection-display helpers: bubble key (kind + scheme) and its tooltip, per-row scheme chip, display-name inference, name-in-use + reserved-name checks, manifest flag, anchor id, disabled-collection tooltip |
+| `src/extension/glyph.ts` | Renders a sprite glyph into a button, with the label/tooltip pair and the in-flight spin state |
+| `src/extension/script-sites.ts` | Rewrites a script's URL into the hosting site's listing page (Greasy Fork, Sleazy Fork, OpenUserJS, gists) and decides the viewer's row |
+| `src/extension/script-url-hash.ts` | Pure `parseHash` / `buildHash` for the viewer's `#<filename>[:<line>[:<col>]]` / `#Log` URL fragment |
+| `src/extension/match-index.ts` | In-memory cache of injectable scripts' matching info, execution world, and which load from disk, kept in sync with `chrome.storage.local`; reports which rows moved, skipping probe-only writes |
+| `src/extension/injector.ts` | Incrementally syncs the enabled script set into `chrome.userScripts`, re-checking unverified rows first, and wraps each body with an activation/error shim |
+| `src/extension/tab-status.ts` | Pure helpers for per-tab badge view (expected ∪ actual classification incl. NOT LOADED, color, row-label formatter) and per-tab document LRU |
+| `src/extension/missing-scripts.ts` | Log warnings for scripts that matched a page but never started |
+| `src/extension/storage-scan.ts` | Wrapper for every full-namespace `storage.local.get(null)`, naming each scan and its cost under debug logging |
+| `src/extension/concurrency.ts` | Bounded fan-out helper plus the nested per-collection / per-script, probe, and directory-scan limits |
+| `src/extension/refresh-error.ts` | Session-storage map of collections whose last refresh was read but could not be saved, plus its shared message |
+| `src/extension/sw-teardown.ts` | Marks `No SW` rejections (chrome.* calls cut off by service-worker shutdown) handled so they stay out of the Errors panel |
+| `src/extension/script-log-id.ts` | Computes each script's "log ID" (`foo.user.js#E4`: basename and script number) used in every log line and the viewer |
+| `src/extension/sticky-numbers.ts` | Script and collection numbers (sm-dev's `E4`, `C3`): handing them out, and holding removed ones back before reuse |
+| `src/extension/script-log.ts` | Per-script event log store: chrome.storage.session keyed by script ID, serialized appends with a fixed cap, a sibling `loglevel:` sentinel, and the page→worker write relay |
+| `src/extension/log-format.ts` | Log cell formatting (time, status/level, source, message) shared by the viewer's table and its CSV export, plus the export's filename |
+| `src/extension/script-rejection.ts` | Session-storage record of registrations `chrome.userScripts` refused, plus the one sentence every surface reports it with |
+| `src/extension/site-icon.ts` | Site-favicon discovery, `@icon`-header override (incl. local file stand-ins), and the one-icon-per-site slot renderer for collections page + viewer |
+| `src/extension/gm-bindings.ts` | Per-script `GM_*` / `GM.*` binding emitter — generates compile-in `const GM_X = ...` source spliced into the wrapper |
+| `src/extension/gm-values.ts` | SW-side persistent storage for `GM_*` values — `gmval:<scriptId>:<key>` rows in `chrome.storage.local`, batched writes |
+| `src/extension/gm-xhr.ts` | SW-side `GM_xmlhttpRequest` runner — fetch + AbortController, text/json/blob/arraybuffer/document, cookies, timeout, page-relative URL resolution |
+| `src/extension/gm-xhr-headers.ts` | Forbidden-request-header surgery for `GM_xmlhttpRequest` — classify, tag the URL, compile to a DNR session rule, stale-rule sweep |
+| `src/extension/gm-tab.ts` | SW-side `GM_openInTab` dispatcher (`chrome.tabs.create` + per-request mapping for close-event routing) |
+| `src/extension/sm-dev-link.ts` | SW side of sm-dev: tab claims and run leases, when a test collection is stale, the event stream to runs |
+| `src/extension/gm-download.ts` | SW-side `GM_download` dispatcher (`chrome.downloads` for http(s) + per-request mapping for progress/terminal routing) |
+| `src/extension/gm-notification.ts` | SW-side `GM_notification` dispatcher (`chrome.notifications.create` + per-request mapping for click/close routing) |
+| `src/extension/gm-url-scheme.ts` | Shared URL-scheme gate for the SW-side GM_* dispatchers (parse + allowlist check for tabs / notifications / downloads) |
+| `src/extension/gm-originator-map.ts` | Shared shed-on-tab-close helper for the gm-tab / gm-notification / gm-download per-request maps (drop entries by originator tab) |
+| `src/extension/gm-menu.ts` | SW-side `GM_registerMenuCommand` per-(tab, document, script) command registry feeding the action menu |
+| `src/extension/gm-url-change.ts` | SW-side `window.onurlchange` driver — forwards `webNavigation.onHistoryStateUpdated` to the changed document as `sm:url-change` |
+| `src/extension/gm-window-control.ts` | SW-side `window.close` / `window.focus` driver — closes or fronts the sender's own tab via `chrome.tabs` / `chrome.windows` |
+| `src/extension/action-menu.ts` | Action context-menu planner — packs script + command groups and the fixed reload row into Chrome's 6-item cap with a "More" overflow submenu |
+
+### Development harness (`src/harness/`)
+
+Node-side code Chrome never loads. Compiled into `lib/harness/`, and
+published as the `sourcemonkey/harness` entry and the `sm-dev`
+command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
+
+| File | Description |
+|------|-------------|
+| `src/harness/index.ts` | Public entry of the harness package: re-exports the install pipeline, hosts, page watcher, and Playwright fixture |
+| `src/harness/page-output.ts` | Which page console lines and errors `sm-dev start` streams (the scripts'), and how logged DOM nodes read |
+| `src/harness/prepare.ts` | Runs the real install pipeline over a file or text under Node and returns the stored row, its id, world, matching, and diagnostics; also how paths are shown |
+| `src/harness/parse-check-node.ts` | Node counterpart of the sandboxed parse check: `new Function` verdict plus `vm.Script` location probes |
+| `src/harness/host.ts` | What a run or fixture test knows of its scripts: their reports, a copy of their values, menus, and the waits on them |
+| `src/harness/page-watch.ts` | Watch-only page attachment: documents, DOM activity and requests for `wait`, `eval` worlds, the tab's scripts |
+| `src/harness/fixture.ts` | The Playwright fixture a consumer repo imports: scripts pushed into the real extension, `gm`, `reports`, request fakes |
+| `src/harness/save-html.ts` | Saving a page's DOM with a header of its URL and running userscripts, and reading that header |
+| `src/harness/saved-pages.ts` | Serving a saved page at its URL for `--from-saved` and `serveHtml`, with its `_files` folder |
+| `src/harness/checks.ts` | `match` and `validate`'s shared half: finding the scripts named, and the lines each prints |
+| `src/harness/path-args.ts` | Globs (`*`, `**`) and directory searches for sm-dev's file arguments |
+| `src/harness/command-lines.ts` | Input lines into a run's commands: multi-line `{{ ... }}` blocks (`eval`, `set`, `type`, `cdp`), comments, sent lists |
+| `src/harness/command-list.ts` | Every sm-dev command in one list, in `--help`'s sections, with each command's arguments and options, and its renderer |
+| `src/harness/command-args.ts` | The one parser of every sm-dev command's words: quotes, flags, a leading tab, text, forms, blocks |
+| `src/harness/prompt-editor.ts` | Multi-line editing of `{{` blocks at the `--interactive` prompt, on top of readline |
+| `src/harness/prompt-history.ts` | The `--interactive` prompt's history file (`~/.sm-dev-history`), shared by parallel sessions |
+| `src/harness/console-commands.ts` | A run's commands across its tabs, the page-dialog tracker, and the client's `--interactive` prompt |
+| `src/harness/json-output.ts` | `--json` output: each command's result type, and the marks a result and a stderr note travel under |
+| `src/harness/input-file.ts` | Reads a file a command names for its contents (`eval`, `set`, `type` and `cdp`'s `--file`, `--values-file`) |
+| `src/harness/page-commands.ts` | The run commands that drive and read a tab's page, from `click` and `eval` to `snapshot`, `logs` and raw `cdp` calls |
+| `src/harness/snapshot.ts` | `snapshot`'s element refs, the parts it shows (on screen, a selector's matches, `--find`), and `probe --css`'s suggested CSS selectors |
+| `src/harness/browser-lang.ts` | `sm-dev start --lang`: checks the tags and sets them on tabs; builds GM requests' `Accept-Language` |
+| `src/harness/browser-launch.ts` | `sm-dev --open-browser`: starts a browser that stays open, on a kept profile per port, unless one is up |
+| `src/harness/rebuild-advice.ts` | Says how to rebuild sm-dev, in the checkout or in the checkout an installed copy came from |
+| `src/harness/stuck-tabs.ts` | Before `sm-dev start` connects, names the tabs that don't answer (a dialog, say), and waits for them |
+| `src/harness/run.ts` | The run process `sm-dev start` spawns: open a browser, push the scripts into SourceMonkey, follow tabs, serve clients |
+| `src/harness/extension-launch.ts` | Launches Chromium with the built extension on a temp profile: `--temp-browser`, and the e2e suites' browser |
+| `src/harness/extension-link.ts` | A run's or fixture test's connection to the real extension: version check, worker calls, pushes, claims and lease, events |
+| `src/harness/extension-host.ts` | Fills a run's or fixture test's host (reports, values, menus) from the extension's events, and answers its commands |
+| `src/harness/extension-backend.ts` | Finds SourceMonkey in a browser: its id, whether it's installed and on, and its service worker |
+| `src/harness/run-log.ts` | A run's log file: timestamped names in `/tmp/sm-dev-logs-<user>`, stamped lines, per-run links |
+| `src/harness/tab-refs.ts` | Naming and picking a run's tabs (`T2`, target ids), the current tab, the dialog message |
+| `src/harness/wait.ts` | The `wait` command, when a tab has settled (loaded, scripts started, quiet), and when a load is done |
+| `src/harness/runs.ts` | The runs on this machine: record files, control sockets, and the client connection (`RunClient`) to one |
+| `src/harness/cli.ts` | The `sm-dev` client: global options, `start`, `attach`, `stop`, `exit`, `validate`, `match`, `clear`, `list`, `--stdin`, `--interactive` |
 
 ## Tests (`tests/`)
 
 | File | Description |
 |------|-------------|
 | `tests/fixtures/extension.ts` | Playwright fixture: launches Chromium with the extension, exposes SW handle, HTTP fixture server, and the `sm` SW-api proxy; `testWithBrowserDownloads` variant leaves downloads to Chrome |
-| `tests/fixtures/manager.ts` | Manager-agnostic Playwright fixture for the examples suite — picks SM (unpacked build) or TM/VM (persistent CWS profile) per project metadata |
+| `tests/fixtures/harness.ts` | Fixtures for the `sm-dev` project: the package fixture plus fixture server, scripts dir, `loadScript`, `watchPage` |
+| `tests/fixtures/debug-browser.ts` | A headless Chromium with SourceMonkey, a CDP debugging port and a temp profile, stopped with its helper processes |
+| `tests/fixtures/manager.ts` | Manager-agnostic Playwright fixture for the examples suite: SM (unpacked build) or TM/VM (persistent CWS profile) per project metadata |
 | `tests/fixtures/managers.mjs` | Per-manager table (profile dir, CDP port, Web Store ID, env vars) shared by the fixture, preflight, and CLIs |
 | `tests/fixtures/userscript-files.mjs` | Finds `*.user.js` files on disk and reads their `@name`/`@version`, shared by both manager drivers and the sync CLI |
-| `tests/fixtures/sourcemonkey-launch.ts` | Shared Chromium-launch / SW-handle / HTTP-fixture-server helpers used by both `extension.ts` and `manager.ts`; optional Chrome-managed downloads dir |
+| `tests/fixtures/sourcemonkey-launch.ts` | Launch (through sm-dev's launcher), SW-handle and HTTP-fixture-server helpers shared by `extension.ts` and `manager.ts` |
 | `tests/fixtures/slow-route.mjs` | `/__slow/?ms=N` delay route, static content-types, and the shared static-file server used by the fixture server and the example/sync CLIs |
 | `tests/fixtures/tampermonkey-driver.mjs` | TM dashboard driver: lists installed scripts, installs/updates via import-from-file, auto-OKs TM permission prompts |
 | `tests/fixtures/violentmonkey-driver.mjs` | VM driver: lists and installs scripts through VM's own background commands, installing from a fixture-server URL |
@@ -183,18 +278,29 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/fixtures/pages/blank.html` | Minimal fixture page served by the in-test HTTP server |
 | `tests/fixtures/pages/target.html` | Fixture page with a known `#target` element for injection assertions |
 | `tests/fixtures/pages/other.html` | Fixture page used to verify scripts skip non-matching URLs |
-| `tests/fixtures/pages/run-at.html` | Fixture page with a slow-blocker script + `#log` list used by the @run-at readyState-window test |
+| `tests/fixtures/pages/run-at.html` | Fixture page with a slow-blocker script + `#log` list used by the @run-at readyState-window tests |
+| `tests/fixtures/pages/window-stop.html` | Fixture page that calls `window.stop()` while an image is pending, so `load` never fires |
+| `tests/fixtures/pages/stalled-load.html` | Fixture page whose slow image holds `load` back for 5s, for the `document-idle` fallback |
 | `tests/fixtures/pages/slow-dcl.html` | Fixture page held at readyState=loading for ~1s, so DOMContentLoaded lands well after the reload fast-path window |
+| `tests/fixtures/pages/early-inline.html` | Fixture page whose first head script records whether a document-start script already ran |
 | `tests/fixtures/pages/page-globals.html` | Fixture page defining page-realm globals, so MAIN-vs-isolated world access can be asserted |
+| `tests/fixtures/pages/wide-icon.svg` | A red 2:1 SVG sized only by its viewBox, the site icon the favicon-badge tests draw under the badge |
+| `tests/fixtures/pages/stopped.html` | Fixture page that stops its own load with `window.stop()`, so it never fires `load` |
 | `tests/fixtures/pages/strict-csp.html` | Fixture page with `style-src 'none'`, for the MAIN-world CSP-blocked-style report |
+| `tests/fixtures/pages/strict-script-csp.html` | Fixture page with `script-src 'self'`, for which CSP governs userscript-inserted scripts |
+| `tests/fixtures/pages/set-page-global.js` | Script that sets a page global, loaded as an external `<script src>` by the CSP tests |
 | `tests/e2e/smoke.spec.ts` | Smoke test: SW loads, collections page renders, fixture server responds |
 | `tests/e2e/exclude-globs.spec.ts` | E2E for `@exclude`: excluded pages stay untouched, a later-added `@exclude` takes effect, plus a Chrome `update`-vs-globs probe |
-| `tests/e2e/include-only.spec.ts` | E2E for `@match`-less scripts: a glob-only `@include` injects and stays in its glob, plus a Chrome `includeGlobs` semantics probe |
+| `tests/e2e/include-only.spec.ts` | E2E for glob `@include`s: glob-only scripts, globs on another host, and probes of how Chrome reads `includeGlobs` |
+| `tests/e2e/tld-hosts.spec.ts` | `.tld` hosts ("any public suffix") in `@match` / `@include` / `@exclude` run where the header says, and only there |
+| `tests/e2e/include-regex.spec.ts` | A regex `@include` beside a `@match` registers `<all_urls>` and runs on the regex's pages too |
 | `tests/e2e/injection.spec.ts` | End-to-end userscript injection: matching, non-matching, lenient-`@match`, and multiple-script cases |
 | `tests/e2e/sync-window.spec.ts` | A navigation racing a registration sync still gets injected, and the set never empties mid-sync |
 | `tests/e2e/badge.spec.ts` | Per-tab badge classifications: green/red/orange/purple plus MISSING and post-update RELOAD |
+| `tests/e2e/sandbox-csp.spec.ts` | Pages sent with a CSP `sandbox` header: MAIN-world scripts skipped, USER_SCRIPT-world ones run, the Log hint |
 | `tests/e2e/reload-without-scripts.spec.ts` | "Reload page with no userscripts": one-shot skip, grey NOT LOADED badge, info Log entry, row presence |
 | `tests/e2e/focus-refresh.spec.ts` | Focus-triggered refresh: a tab switch or a page's own focus report picks up a local edit; http scripts stay unfetched |
+| `tests/e2e/document-start-early.spec.ts` | A document-start script runs before the page's first inline script; a live sm-dev claim makes every script ask |
 | `tests/e2e/reload-fast-path.spec.ts` | Reload triggers sm:check-pending → swap to fresh body on this reload; non-reload navs, world changes, and a newly-needed runtime don't |
 | `tests/e2e/reload-fast-path-parse-check.spec.ts` | The reload swap doesn't wait for the parse verdict, and the verdict still lands on the row afterwards |
 | `tests/e2e/reload-fast-path-sharing.spec.ts` | Navigation-triggered checks share one folder listing across the page's scripts, and still catch a per-script edit |
@@ -248,14 +354,15 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/collection-display.test.mjs` | Unit tests for collection-display helpers: type classification, manifest flag, short-name inference, effective display name |
 | `tests/unit/script-sites.test.mjs` | Unit tests for the hosting-site page rewrites, the cross-spelling identity key, and the row's suppression rules |
 | `tests/unit/script-links.test.mjs` | Unit tests for the viewer link helpers: URL/text tokenizer + `// @tag value` line parser + header-marker detectors |
-| `tests/unit/stack-link.test.mjs` | Unit tests for `parseStackRefs` (URL + line/col extraction, query strings, ports) and `displayRefText` (which URLs decode) |
-| `tests/unit/script-source-url.test.mjs` | Unit tests for the canonical `sourcemonkey://SourceMonkey/…` URL builders — every URL shape, plus label encoding (dedup `#N`, spaces, emoji) |
+| `tests/unit/stack-link.test.mjs` | Unit tests for `parseStackRefs` (ref extraction), `displayRefText` (which URLs decode) and `remapStackText` |
+| `tests/unit/script-source-url.test.mjs` | Unit tests for the canonical `sourcemonkey://SourceMonkey/…` URL builders — every URL shape, plus label encoding (`#E4` and `#N` suffixes, spaces, emoji) |
 | `tests/unit/bytes.test.mjs` | Base64 round-trip for the byte helpers, including the empty body and past the 32 KiB chunk boundary |
 | `tests/unit/script-url-hash.test.mjs` | Unit tests for `parseHash` / `buildHash`: filename/line/col forms, percent encoding, round-trip, and invalid-input fallbacks |
 | `tests/unit/code-tabs.test.mjs` | Unit tests for `expandToVisualColumn`: tab-stop expansion of a V8 stack column, and out-of-range clamping |
 | `tests/e2e/script-viewer-links.spec.ts` | E2E tests for the viewer's link rendering: Match-row anchors, Location anchor, body header `@match` / URL linkification |
 | `tests/unit/sw-teardown.test.mjs` | Unit tests for the `No SW` recognizer and the unhandledrejection handler that marks it handled |
-| `tests/unit/script-log-id.test.mjs` | Unit tests for `computeLogIds` (bare basename when unique, `#N` suffixes when dupes share a basename) |
+| `tests/unit/script-log-id.test.mjs` | Unit tests for `computeLogIds`: `#E<n>` for numbered scripts, the basename or `#N` for unnumbered ones |
+| `tests/unit/sticky-numbers.test.mjs` | Unit tests for sticky numbers: lowest free first, the 7-day hold, shared numbers, which items get none |
 | `tests/unit/script-log.test.mjs` | Unit tests for the per-script log store: append/get/clear, concurrent appends, LOG_CAP rotation |
 | `tests/unit/match-index.test.mjs` | `onlyProbesChanged` — which `script:*` writes may skip a re-registration, and the many that may not |
 | `tests/unit/log-format.test.mjs` | Unit tests for the log cell strings, the CSV rendering (quoting, order), and the export filename |
@@ -265,7 +372,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/parse-sandbox-host.test.mjs` | Unit tests for `isParseVerdict` — only the three real statuses pass, so an odd reply can't read as `invalid` |
 | `tests/unit/parse-location.test.mjs` | Unit tests for probe selection and line mapping, driven by positions Chromium really reported |
 | `tests/unit/parse-check-node.test.mjs` | Unit tests for the Node parse checker: verdict, both probes' positions, and the two probe-selection routes |
-| `tests/unit/validate-userscripts.test.mjs` | Drives the validator CLI as a subprocess over the example suites plus a hand-built offline tree |
+| `tests/unit/validate-corpus.test.mjs` | Drives the corpus validator as a subprocess over a hand-built offline dependency tree |
 | `tests/unit/diagnostic-location.test.mjs` | Unit tests for the diagnostic label + validator, especially what they do with a partial location |
 | `tests/unit/file-loader.test.mjs` | Unit tests for ref resolution (schemes, relative paths, traversal) and for the reason each resolve/fetch failure reports |
 | `tests/unit/refresh-error.test.mjs` | Unit tests for the refresh-error message wording and the storage-value coercion |
@@ -275,14 +382,19 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/parse-check.spec.ts` | The parse-check mechanism: compiles without executing, judges as a function body, catches join-only conflicts |
 | `tests/e2e/parse-check-install.spec.ts` | Install/refresh-time parse failures surface as `invalid`, healthy scripts stay `ok`, and an unverified row is caught before it registers |
 | `tests/e2e/parse-check-pages.spec.ts` | The parse check holds on page-driven paths: the install preview's warning, Install, Refresh, Refresh All |
+| `tests/e2e/sm-dev-claims.spec.ts` | sm-dev's tab claims: only the run's scripts run, across reloads and opened tabs, until released or expired |
+| `tests/e2e/scratch-scripts.spec.ts` | sm-dev test collections: write, rewrite, per-run isolation, release, crashed-run sweep, locking, bubble |
 | `tests/e2e/preload-hints.spec.ts` | A fetched response's `Link: rel=preload` header reaches no extension page — both page-side readers hop to the service worker |
 | `tests/e2e/local-file-overrides.spec.ts` | End-to-end local stand-ins across `@require` / `@resource` / `@icon`: suffix matching, live re-read, fallback, opt-out, traversal, configured roots |
 | `tests/e2e/options-local-roots.spec.ts` | Options-page local-file-override roots box: hydration, saving, format complaints, missing-directory warnings |
 | `tests/e2e/requires.spec.ts` | End-to-end `@require` coverage: file:// / HTTP relative path prefetch, `.js` suffix + traversal rejection, cross-script dedup, manual-vs-opportunistic refresh policy |
 | `tests/e2e/log-stack-mapping.spec.ts` | Log tab maps `err.stack` lines back to the `@require`/body they came from; clicks and the CSV export follow that mapping |
+| `tests/e2e/stack-lines.spec.ts` | The service worker's stack layout, which `sm-dev` maps with, sends a logged throw to the `@require` and script lines |
+| `tests/e2e/sticky-numbers.spec.ts` | Collection numbers: the service worker keeps them as collections come and go, and holds a dropped one's back |
 | `tests/e2e/log-export.spec.ts` | Log tab's Save / Copy buttons: save dialog, cancel + write-failure reporting, download fallback, clipboard text, empty-log disable |
 | `tests/unit/injector.test.mjs` | Unit tests for the injector: spec build, active-spec collection, refusal logging, retry limits, sync serialization and scoping |
 | `tests/unit/generated-wrappers.test.mjs` | Guard test: each minified wrapper (`WRAPPER_*`) is a single line of valid JS with load-bearing tokens intact |
+| `tests/unit/source-layout.test.mjs` | Checks the `src/` split: what `lib/` and `dist/` compile, and that shared modules are shared |
 | `tests/unit/source-map.test.mjs` | Unit tests for VLQ encoding, line-level mappings, and inline-map encoding |
 | `tests/unit/gm-api-catalog.test.mjs` | Unit tests for the GM_* / GM.* catalog: lookup, alias resolution, `@grant` canonicalization, `none` precedence |
 | `tests/unit/gm-bindings.test.mjs` | Unit tests for the per-script GM_* / GM.* binding emitter — granted output, sync stub routing, async sendMessage envelope, GM4 alias shape |
@@ -298,6 +410,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/versions-navigation.spec.ts` | E2E for the panel's place on the page, its keyboard walk, and selecting copies from it in place: click / Enter / Space / new-tab, where focus lands, sticky sections, Back, the preview's merged box |
 | `tests/e2e/compare.spec.ts` | E2E tests for the compare page: fields table, per-file tabs and chips, view controls, swap, preview side, missing copy |
 | `tests/e2e/other-versions.spec.ts` | E2E tests for the other-versions panel: absolute-URL matching across collection kinds, per-row toggle, Refresh all, removing the copy on screen, the preview's callout / banner / install-offer section, the heading fold |
+| `tests/e2e/user-script-world-csp.spec.ts` | E2E tests for userscript-inserted `<script>` elements (inline and `src`) under the world CSP and a strict page CSP |
 | `tests/e2e/gm-dom.spec.ts` | E2E tests for `GM_addStyle` / `GM_addElement` — CSS application, tag-aware default parent (head/body), explicit-parent form, GM4 alias, permission gating, the MAIN-world CSP-blocked report |
 | `tests/e2e/gm-clipboard.spec.ts` | E2E tests for `GM_setClipboard` via `navigator.clipboard.writeText` — text round-trip, GM4 alias, permission gating |
 | `tests/e2e/gm-broadcast.spec.ts` | E2E tests for cross-tab `GM_setValue` broadcast — tab B sees tab A's write, survives an SW restart, re-syncs after a missed write or delete |
@@ -307,13 +420,14 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/e2e/gm-storage-read-leak.spec.ts` | E2E: a page-forged bridge `sm:check-pending` can't read another script's `GM_setValue` snapshot (`__viaBridge` gate) |
 | `tests/e2e/gm-main-world-surface.spec.ts` | E2E: the GM_* surfaces that only ran isolated before — `window.onurlchange`, `window.close`/`focus`, value-change listeners, menu fires, `GM_openInTab` onclose — working from MAIN world |
 | `tests/e2e/gm-unsafe-window.spec.ts` | E2E: `@grant unsafeWindow` reaches real page globals, GM_* works over the MAIN-world bridge (also for `@inject-into page`), and forged bridge calls are refused per world and per grant |
+| `tests/e2e/wrapper-scope.spec.ts` | E2E: the user program runs in a scope nested in the wrap, so redeclaring `window`, `unsafeWindow` or `GM_*` shadows ours |
 | `tests/e2e/gm-unsafe-window-implicit.spec.ts` | E2E: `unsafeWindow` used without granting it — MAIN world, binding, startup log, and the cases we leave alone |
 | `tests/e2e/gm-value-listeners.spec.ts` | E2E tests for `GM_addValueChangeListener` / `GM_removeValueChangeListener` — local fire with remote=false, delete fire, remove-by-id, cross-tab remote=true, permission gating |
 | `tests/e2e/gm-xhr.spec.ts` | E2E tests for `GM_xmlhttpRequest` text path — GET text, JSON, POST body, HTTP errors firing onload, network failure → onerror, abort, permission gating |
 | `tests/e2e/gm-xhr-credentials.spec.ts` | E2E tests for `GM_xmlhttpRequest` cookies — credentialed by default, withheld by a truthy `anonymous` |
 | `tests/e2e/gm-xhr-headers.spec.ts` | E2E tests for `GM_xmlhttpRequest` header surgery — overrides reach the wire, URL tag stays inside the browser, rule torn down after |
 | `tests/e2e/gm-xhr-binary.spec.ts` | E2E tests for `GM_xmlhttpRequest` binary path — arraybuffer/blob/document via base64 wire reconstruction |
-| `tests/e2e/gm-connect.spec.ts` | E2E tests for `@connect` rule matching — exact, `*` wildcard, subdomain, mismatched host blocked, post-redirect re-check |
+| `tests/e2e/gm-connect.spec.ts` | E2E tests for `@connect` rule matching — bare host, `*` wildcard, subdomain, mismatched host blocked, post-redirect re-check |
 | `tests/e2e/gm-connect-default.spec.ts` | E2E tests for the default policy — same-origin allowed with no `@connect`, cross-origin denial + Log entry, redirect hop |
 | `tests/unit/gm-xhr.test.mjs` | Unit tests for `resolveXhrUrl` — page-relative, root-relative, protocol-relative, origin-fallback, and unresolvable request URLs |
 | `tests/unit/gm-connect.test.mjs` | Unit tests for `@connect` parsing/matching plus `decideConnect` — same-origin, `self`, undeclared default, denial wording |
@@ -337,6 +451,7 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/unit/gm-window-control.test.mjs` | Unit tests for the SW-side `window.close` / `window.focus` driver (tab close, tab select + window raise, minimized restore, failures) |
 | `tests/e2e/window-close-focus.spec.ts` | E2E for `@grant window.close` / `window.focus` — the tab really closes and re-selects, overrides are per-grant, the page's own methods stay native, and the per-document grant leak is pinned |
 | `tests/unit/tab-status.test.mjs` | Unit tests for the per-tab badge classification + report-merge helpers |
+| `tests/unit/missing-scripts.test.mjs` | Unit tests for the never-started Log warnings, their hints, and the CSP `sandbox` check |
 | `tests/examples/README.md` | Overview of the interactive userscript example pages; how to serve and use as a cross-manager compliance reference |
 | `tests/examples/index.html` | Index page linking the per-example subdirs |
 | `tests/examples/examples.css` | Shared styling for all example pages |
@@ -356,14 +471,61 @@ One-line descriptions of every source file, grouped by directory.
 | `tests/examples/window-onurlchange/` | `@grant window.onurlchange` example — page-wired pushState / replaceState / hash / back buttons with a urlchange log |
 | `tests/examples/window-close-focus/` | `@grant window.close` / `window.focus` example — buttons that close this tab and raise the browser window |
 | `tests/examples/headers-run-at/` | `@run-at` header example with one userscript per value (`document-start`/`-end`/`-idle`) on a shared page |
+| `tests/examples/headers-match-hash/` | How `@match`, `@include` and `@exclude` treat a URL's `#hash`, with each manager's observed results |
+| `tests/examples/headers-include-regex/` | How regex `@include` / `@exclude` treat slashes, flags and case, with each manager's results |
 | `tests/examples/headers-inject-into/` | `@inject-into` header example: MAIN-world (`page`) vs USER_SCRIPT-world (`content`) userscripts showing window-isolation |
 | `tests/examples/unsafe-window/` | `unsafeWindow` example: reading/calling/writing page globals, the isolated-world variant where it can't work, and the ungranted-reference variant |
+| `tests/examples/use-strict/` | Top-level `'use strict'` example: strict mode in both worlds, and which file's directive counts with a `@require` |
 | `tests/examples/require-scope/` | `@require` scope example: a shared lib's top-level class/const/function reaching both injection worlds |
 | `tests/examples/xmlhttp-denied/` | Negative cases for `@connect`: scripts with no `@connect`, mismatched host, and explicit allow show blocked-vs-allowed outcomes |
 | `tests/examples/xmlhttp-same-origin/` | Same-origin `GM_xmlhttpRequest` with no `@connect`, and with an unrelated `@connect` host — both load (TM-comparable) |
 | `tests/bad-examples/` | Deliberately broken `*.user.js` files (plus the `@require` libraries some of them need, and the ones that merely warn) for the SM-only spec; outside `tests/examples/` so the TM loader doesn't see them |
 | `tests/e2e/bad-scripts.spec.ts` | SM-only e2e: each bad script gets the expected status, error location, and byte-for-byte viewer render |
 | `tests/e2e/diagnostic-links.spec.ts` | Clicking a diagnostic's location jumps to the file and line, in the installed viewer and the install preview |
+
+### Harness unit tests (`tests/unit/harness/`)
+
+Node `--test` files for the `src/harness/` modules, run with the other
+unit tests.
+
+| File | Description |
+|------|-------------|
+| `tests/unit/harness/cdp-endpoint.test.mjs` | Unit tests for `cdpEndpoint`: the forms `sm-dev --browser` accepts |
+| `tests/unit/harness/run-log.test.mjs` | Unit tests for a run's log files: the timestamp format and unique names |
+| `tests/unit/harness/wait.test.mjs` | Unit tests for `wait`'s delays and the message when a tab doesn't settle |
+| `tests/unit/harness/path-args.test.mjs` | Unit tests for sm-dev's glob matching and file argument expansion |
+| `tests/unit/harness/cli-args.test.mjs` | Unit tests for `sm-dev`'s command line: `start` flags, `match` output, scripts by URL, `--run`, `--` lines, misuse |
+| `tests/unit/harness/page-commands.test.mjs` | Unit tests for how the page commands name keys for `key`, read `click`'s flags and `cdp` calls, word errors, collapse `logs` repeats |
+| `tests/unit/harness/command-args.test.mjs` | Unit tests for the command parser: quotes, flags with `=` or not, tabs, text, forms, refused arguments |
+| `tests/unit/harness/snapshot.test.mjs` | Unit tests for `snapshot`: which words are refs, which lines `--visible`, selectors and `--find` keep, the whole page's tree |
+| `tests/unit/harness/protocol-version.test.mjs` | Unit tests for comparing the extension's sm-dev protocol version with sm-dev's |
+| `tests/unit/harness/runs.test.mjs` | Unit tests for the run registry: a sent line's round trip, stale records, `stop`'s SIGTERM fallback |
+| `tests/unit/harness/prompt-editor.test.mjs` | Unit tests for multi-line prompt editing: Enter in blocks, Up/Down, paste, line keys |
+| `tests/unit/harness/prompt-history.test.mjs` | Unit tests for the prompt's history file: loading, appending, trimming |
+| `tests/unit/harness/json-output.test.mjs` | Unit tests for how `--json` results and stderr log messages are marked, and printed multi-line or on one line |
+| `tests/unit/harness/command-lines.test.mjs` | Unit tests for `{{ ... }}` blocks, comments, and lists of commands |
+| `tests/unit/harness/page-output.test.mjs` | Unit tests for which page console lines and errors `sm-dev start` shows |
+| `tests/unit/harness/validate.test.mjs` | Runs `sm-dev validate` over the example suites: verdicts matching the browser's, and warnings |
+| `tests/unit/harness/prepare.test.mjs` | Unit tests for `prepareScript` and `explainMatch` over real files on disk |
+| `tests/unit/harness/saved-header.test.mjs` | Unit tests for writing and reading a saved page's header: its URL and the userscripts that were running |
+
+### Harness suite (`tests/harness/`)
+
+Runs under the `sm-dev` Playwright project, in a Chromium with the
+built extension loaded; fixtures in `tests/fixtures/harness.ts`.
+
+| File | Description |
+|------|-------------|
+| `tests/harness/console-commands.spec.ts` | The commands typed into `sm-dev start`: `scripts`, `values`, `menu` by M number, dialogs, several tabs, stopped loads |
+| `tests/harness/run-tabs.spec.ts` | `sm-dev start` end to end: followed tabs, `--all`, `--notab`, `load` / `update` / `--watch` reloads, `--from-saved`, sandboxed pages, `--lang` |
+| `tests/harness/page-commands.spec.ts` | The run commands that drive and read a page, in both worlds, with dialogs, quoting, and files |
+| `tests/harness/stack-lines.spec.ts` | sm-dev's `threw` reports and console lines name the `@require` or script line a stack frame came from |
+| `tests/harness/wait.spec.ts` | `wait` in its forms, the actions settling on their own, `--nowait`, and what a busy page reports |
+| `tests/harness/browser-launch.spec.ts` | `sm-dev --open-browser`: a browser that outlives sm-dev, started once, and its profile's lock |
+| `tests/harness/run-remote.spec.ts` | `sm-dev start` driven from other shells: `--detach`, `--run`, `--` lines, sent commands, logs, stuck tabs, `--json` |
+| `tests/harness/temp-extension.spec.ts` | `--temp-browser` runs: the launched extension, `--values` and local files, run commands, managed scripts (E1) kept out |
+| `tests/harness/extension-state.spec.ts` | Whether sm-dev sees SourceMonkey in a browser: loaded unpacked, absent, or no browser to ask |
+| `tests/harness/fixture.spec.ts` | The consumer fixture from `lib/`: a script against a served page, `gm` and `reports`, the up-front URL check, the explained miss |
 
 ## GreasyFork Corpus Tooling (`tests/greasyfork-examples/`)
 
@@ -373,17 +535,34 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 |------|-------------|
 | `tests/greasyfork-examples/README.md` | Full pipeline docs: saving the Cloudflare-gated listing pages, downloading, the database schema, and the reports |
 | `tests/greasyfork-examples/greasyfork-dump/` | Hand-saved GreasyFork listing pages, the input to `fetch-top-scripts.mjs` (gitignored) |
-| `tests/greasyfork-examples/fetch-top-scripts.mjs` | CLI that parses hand-saved GreasyFork listing pages into a top-scripts CSV (installs, ratings, dates, code URL) |
-| `tests/greasyfork-examples/top-scripts.csv` | Extracted top 2000 GreasyFork scripts by total installs — the checked-in source of truth |
-| `tests/greasyfork-examples/download-scripts.mjs` | CLI that downloads the CSV's userscripts plus their `@require` / `@resource` dependencies into a URL-shaped tree |
-| `tests/greasyfork-examples/files/` | Downloaded userscripts, `@require` libraries, and `@resource` assets at `<host>/<url-path>` (gitignored) |
+| `tests/greasyfork-examples/fetch-top-scripts.mjs` | CLI that parses hand-saved GreasyFork listing pages into `corpus.json`'s listing blocks (installs, ratings, dates, code URL) |
+| `tests/greasyfork-examples/corpus.json` | Top 2000 GreasyFork scripts by installs, plus validation and test findings for each; the checked-in source of truth |
+| `tests/greasyfork-examples/validate-corpus.mjs` | CLI that runs the install-time checks over the corpus offline and groups failures, with JSON output |
+| `tests/greasyfork-examples/record-results.mjs` | CLI that records findings in `corpus.json`: imports offline validation, sets test results, tags, and notes |
+| `tests/greasyfork-examples/serve-results.mjs` | Serves `results.html`, `corpus.json` and the downloaded scripts on localhost, for the results page |
+| `tests/greasyfork-examples/results.html` | Static page that reads `corpus.json` into a sortable, filterable table of findings, a summary of counts, and a code viewer |
+| `tests/greasyfork-examples/download-scripts.mjs` | CLI that downloads the corpus's userscripts plus their `@require` / `@resource` dependencies into a URL-shaped tree |
+| `tests/greasyfork-examples/files/` | Downloaded userscripts, `@require` libraries, and `@resource` assets at `<host>/<url-path>`, plus `_location.json` (gitignored) |
 | `tests/greasyfork-examples/download-report.json` | Last download run's counts, dead links, and failed URLs (gitignored) |
-| `tests/greasyfork-examples/corpus.mjs` | Shared corpus helpers: CSV parsing plus the URL↔on-disk-path mapping both tools use |
-| `tests/greasyfork-examples/build-db.mjs` | Loads the CSV and downloaded files into `corpus.db` (scripts, headers, match patterns, deps) |
+| `tests/greasyfork-examples/corpus.mjs` | Shared corpus helpers: locked atomic `corpus.json` updates, URL↔on-disk-path mapping, `@match` parsing |
+| `tests/greasyfork-examples/build-db.mjs` | Loads `corpus.json` and downloaded files into `corpus.db` (scripts, headers, match patterns, deps, findings) |
 | `tests/greasyfork-examples/corpus.db` | SQLite database built from the corpus by `build-db.mjs` (gitignored) |
 | `tests/greasyfork-examples/analysis.sql` | Annotated analysis queries over `corpus.db`, one `-- @report` block per table |
-| `tests/greasyfork-examples/report.mjs` | Runs `analysis.sql` and renders the results as `analysis.html` |
+| `tests/greasyfork-examples/render-analysis.mjs` | Runs `analysis.sql` and renders the results as `analysis.html` |
 | `tests/greasyfork-examples/analysis.html` | Generated HTML report of corpus statistics, rendered from `analysis.sql` |
+
+## Agent skills (`skills/`)
+
+For userscript repos to install, so their coding agents know how to use `sm-dev` and the harness, and report where the tools got in the way.
+
+| File | Description |
+|------|-------------|
+| `skills/SourceMonkey-dev/SKILL.md` | The skill: what the tools are, working rules, the core loop, and recipes for common development tasks |
+| `skills/SourceMonkey-dev/references/commands.md` | `sm-dev` commands summarized by task, with naming, waiting and `eval` details |
+| `skills/SourceMonkey-dev/references/cdp.md` | Raw CDP recipes beside a run: wheel, clicks at a point, drag, window size, fullscreen, per-frame tracing |
+| `skills/SourceMonkey-dev/references/specs.md` | Writing Playwright specs with the harness fixture: example, sm-dev-to-fixture mapping, network requests |
+| `skills/SourceMonkey-friction/SKILL.md` | When and how to log friction with the SourceMonkey tools in the shared `../SourceMonkey-friction.md` log |
+| `skills/SourceMonkey-friction/references/template.md` | The friction log's starting file: title, tags, and the entry format |
 
 ## Docs (`docs/`)
 
@@ -400,7 +579,7 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 | `docs/injection.md` | `chrome.userScripts` registration lifecycle, activation/error wrapper, opt-in requirements |
 | `docs/injection-modes.md` | Three possible per-script `js[]` arrangements (separate entries vs concat vs eval-per-require); why we ship separate entries |
 | `docs/supported-headers.md` | Inventory of `@tag` metadata fields — which ones SourceMonkey honors, which are parsed-only, and which are ignored |
-| `docs/logging.md` | SW console-message catalog: log IDs (basename + `#N` dupes), the debug-logging gate, and which lines it gates |
+| `docs/logging.md` | SW console-message catalog: log IDs (basename + `#E<number>`), the debug-logging gate, and which lines it gates |
 | `docs/names-and-paths.md` | Decode-for-display rule for names/URLs: what gets percent-decoded, what stays encoded, and why |
 | `docs/script-log.md` | Per-script event log: schema, storage layout, what gets logged, viewer Log tab behavior |
 | `docs/diagnostics.md` | The shared location every content-derived verdict carries, who produces one, and how surfaces make it clickable |
@@ -414,7 +593,7 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 | `docs/xhr-header-surgery.md` | How `GM_xmlhttpRequest` sets forbidden request headers via short-lived DNR rules — URL-tag targeting, defaults, blind spots |
 | `docs/GM-APIs-storage.md` | Storage subsystem in depth: why values live in-document, how the cache is seeded, freshness mechanisms after `GM_setValue`, wire format |
 | `docs/supported-GM-APIs.md` | User-facing per-API inventory: which `GM_*` names work, which are stubbed, and how they map to TM / VM / GM4 |
-| `docs/offline-validation.md` | The install-time checks as a CLI: what it shares with production, the two pieces it can't, offline dependency roots |
+| `docs/corpus-validation.md` | The corpus validator: offline dependency roots, how the report groups failures, JSON records |
 | `docs/corpus-validation-results.md` | Snapshot of the validator's findings over the example suites and the GreasyFork top-2000 |
 | `docs/testing.md` | Unit + e2e test harness layout, the SW test surface, and the Chrome-flags workaround for headless user-scripts |
 | `docs/cross-manager-testing.md` | How the examples suite runs against Tampermonkey and Violentmonkey: persistent profiles, CDP attach, the two install mechanisms, fragile bits |
@@ -426,3 +605,8 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 | `docs/file-changes.md` | Files changed behind SourceMonkey's back: the drop-on-refresh rule per collection kind, the paint-time chips, the collection's "refresh pending" chip |
 | `docs/local-delete.md` | Deleting a local copy: what can be deleted and why, the dialog, dependency files, order and failure |
 | `docs/local-copy.md` | Local copies of a script: the Downloads collection, why `chrome.downloads`, the dialog, header rewriting, dependency layout, what's next |
+| `docs/harness-design.md` | The harness other repos install: `sm-dev` and the Playwright fixture, running scripts in the real extension |
+| `docs/sm-dev-design.md` | Internals of `sm-dev`: runs and clients, command input, tabs and claims, page commands, waiting, the extension's events |
+| `docs/sm-dev-managers.md` | Design draft: sm-dev commands for managing installed scripts, collections and managers (SM, TM, VM) |
+| `docs/sm-dev-json.md` | sm-dev's `--json` output: how it prints, each command's result type, and examples |
+| `docs/harness-guide.md` | User-facing: what a userscript repo installs, the `sm-dev` commands, the Playwright fixture API, known limitations |

@@ -1,12 +1,16 @@
 // `@connect` URL gating for `GM_xmlhttpRequest`.
 //
-// The `@connect` grammar (TM's, minus the divergence noted below):
+// @connect grammar (following Tampermonkey's docs):
 //   - `*` — wildcard, allow any host.
 //   - `self` — the script's own hosts: the requesting page's host,
 //     plus the hosts its @match / @include patterns name.
-//   - `example.com` — exact host match. TM counts subdomains in too;
-//     see `TODO.md` "bare `@connect` host doesn't cover subdomains".
-//   - `*.example.com` — match `example.com` itself OR any subdomain.
+//   - `example.com` — that host OR any subdomain of it
+//     (`api.example.com`), as Tampermonkey documents. A label-boundary
+//     match: `evilexample.com` does not match. IP addresses and
+//     single-label names (`127.0.0.1`, `localhost`, `com`) match only
+//     exactly, so a bare rule can't stand for a whole TLD or IP range.
+//     Multi-label public suffixes (`co.uk`) are not special-cased.
+//   - `*.example.com` — `example.com` itself OR any subdomain.
 //
 // SW-side validation: when a script issues `GM_xmlhttpRequest`, the
 // SW pulls the script's stored header, parses out the `@connect`
@@ -51,8 +55,11 @@ import { getValues, type ParsedHeader } from './userscript-header.js';
 
 // Each entry is one parsed @connect line.
 export interface ConnectRule {
-  kind: 'wildcard' | 'self' | 'exact' | 'subdomain';
-  // For `exact` and `subdomain`, the host (lowercased). Missing
+  // `host` is a bare host (`example.com`) and `subdomain` a
+  // `*.example.com` form. Both match the host and its subdomains,
+  // except that a bare IP or single-label `host` matches only exactly.
+  kind: 'wildcard' | 'self' | 'host' | 'subdomain';
+  // For `host` and `subdomain`, the host (lowercased). Missing
   // otherwise.
   host?: string;
 }
@@ -75,12 +82,12 @@ export function parseConnectEntry(raw: string): ConnectRule | null {
   try {
     if (/^[a-z]+:\/\//.test(t)) {
       const u = new URL(t);
-      return { kind: 'exact', host: u.hostname };
+      return { kind: 'host', host: u.hostname };
     }
   } catch {
     // Fall through — treat the raw value as a host.
   }
-  return { kind: 'exact', host: t };
+  return { kind: 'host', host: t };
 }
 
 // Parse every `@connect` line from a header, dropping empties.
@@ -113,14 +120,35 @@ export function hostMatchesRule(
       // subdomain handling" — known divergence pending a real compat
       // report.
       return selfHosts.has(h);
-    case 'exact':
-      return rule.host === h;
+    case 'host':
+      // A bare `example.com` covers its subdomains too, as Tampermonkey
+      // documents. But not a bare IP or single label: `@connect 0.0.1`
+      // must not reach `127.0.0.1`, nor `@connect com` all of `.com`.
+      if (!rule.host) return false;
+      if (h === rule.host) return true;
+      return !isExactOnlyHost(rule.host) && h.endsWith('.' + rule.host);
     case 'subdomain':
+      // The `.` prefix keeps it to whole labels, so `evilexample.com`
+      // doesn't match `*.example.com`.
       if (!rule.host) return false;
       return h === rule.host || h.endsWith('.' + rule.host);
     default:
       return false;
   }
+}
+
+// A bare `@connect` host that has no subdomains to cover: an IP
+// address (all-numeric dotted, or IPv6 with `:`), or a single label
+// (`localhost`, `com`).
+function isExactOnlyHost(host: string): boolean {
+  return /^[\d.]+$/.test(host) || host.includes(':') || !host.includes('.');
+}
+
+// True when the header has no usable `@connect` rule, so all its
+// `GM_xmlhttpRequest` calls are refused. The same parse enforcement
+// uses, so a header whose `@connect` lines are all malformed counts.
+export function hasNoConnectRules(header: ParsedHeader): boolean {
+  return parseConnectRules(header).length === 0;
 }
 
 // Extract the set of "self" hosts from a script header's match/
@@ -204,7 +232,7 @@ export function decideConnect(url: string, ctx: ConnectContext): ConnectVerdict 
       undeclared: false,
       // Query string dropped: the reason lands in the Log tab, which
       // never carries one (see `logConnectVerdict`).
-      reason: `${url.split('?')[0]} is not a valid URL — GM_xmlhttpRequest needs an absolute one`,
+      reason: `${url.split('?')[0]} is not a valid URL; GM_xmlhttpRequest needs an absolute one`,
     };
   }
   // Same-origin first, and independent of the declared rules: a

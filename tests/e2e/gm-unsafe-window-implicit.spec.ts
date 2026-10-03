@@ -148,13 +148,11 @@ test.describe('unsafeWindow without a grant', () => {
   test('a script that declares the name itself still installs and runs', async ({
     extensionContext, fixtureServer, sm,
   }) => {
-    // The one way this feature could BREAK a working script: our binding
-    // is a `const` in the same scope as the user program, so emitting one
-    // beside the script's own declaration is a duplicate declaration —
-    // the install-time parse check compiles what we emit, so the row
-    // would go `invalid` and the script would stop running. The scan
-    // recognizes a declarator list and a destructuring pattern for
-    // exactly this reason.
+    // The script reads its own binding, so the scan leaves it where its
+    // grants put it. It recognizes a declarator list and a
+    // destructuring pattern for this. (Our binding would be harmless
+    // beside it anyway: the user program runs in a nested scope that
+    // shadows ours; see wrapper-scope.spec.ts.)
     scriptsDir.write({
       relativePath: 'a.user.js',
       meta: {

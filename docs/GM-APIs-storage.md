@@ -56,10 +56,11 @@ prelude initScript
       └─ user body runs
 ```
 
-The check-pending await is unconditional — it happens for every
-script load regardless of @run-at — so we have a guaranteed
-synchronous-to-the-body point where we can fetch state from the
-SW. That's the only such point; nothing inside the body can pause
+Every storage-granting script awaits check-pending before its body,
+whatever its @run-at (only scripts without storage may skip it, see
+[injection.md](injection.md#skipping-the-check-at-document-start)), so
+we have a guaranteed synchronous-to-the-body point where we can fetch
+state from the SW. That's the only such point; nothing inside the body can pause
 for an async call.
 
 The SW's reply to `sm:check-pending` therefore carries the

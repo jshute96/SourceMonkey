@@ -1,11 +1,11 @@
-// Unit tests for the related-versions lookup (src/script-identity.ts):
+// Unit tests for the related-versions lookup (src/extension/script-identity.ts):
 // how a script is recognized as another copy of the one on screen.
 
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 
 const { findRelatedVersions, identityKey, installOptionsFor, locationKey } = await import(
-  '../../dist/script-identity.js'
+  '../../dist/extension/script-identity.js'
 );
 
 // ---------- fixtures ----------
@@ -411,4 +411,15 @@ test('no installOptions for something that is not a single-file input', () => {
     header: NAMED,
   });
   assert.equal(r.installOptions, undefined);
+});
+
+// ---------- sm-dev test collections ----------
+
+test('sm-dev test collections are never install or move targets, and a run\'s script has none', () => {
+  const collections = [
+    collection({ id: 'c', path: 'container:http' }),
+    collection({ id: 'run', path: 'container:sm-dev:D2-a3f9', displayName: 'sm-dev test collection (run D2-a3f9)' }),
+  ];
+  assert.deepEqual(installOptionsFor('https://origin.example/a.user.js', [], collections).map((o) => o.path), ['container:http']);
+  assert.equal(installOptionsFor('scratch:///D2-a3f9/a.user.js', [], collections, 'run'), undefined);
 });

@@ -3,7 +3,7 @@
 //
 // MV3 extensions can't be triggered by clicking the toolbar from Playwright,
 // so tests invoke functions through `serviceWorker.evaluate(...)`, which
-// calls into `self.SourceMonkey` (set up in src/background.ts).
+// calls into `self.SourceMonkey` (set up in src/extension/background.ts).
 
 import { test as base, type BrowserContext, type Worker } from '@playwright/test';
 import fs from 'node:fs';
@@ -103,13 +103,10 @@ function makeTest(browserDownloads: boolean) {
   extensionContext: [
     async ({ downloadsDir }, use) => {
       const launched = await launchSourceMonkeyContext({
-        extensionPath: EXTENSION_PATH,
-        extensionId: EXTENSION_ID,
         downloads: downloadsDir ? { dir: downloadsDir } : undefined,
       });
       await use(launched.ctx);
-      await launched.ctx.close();
-      launched.cleanup();
+      await launched.close();
     },
     { scope: 'worker' },
   ],
@@ -119,7 +116,7 @@ function makeTest(browserDownloads: boolean) {
   },
 
   extensionId: async ({ getServiceWorker }, use) => {
-    // Service worker URL looks like: chrome-extension://<id>/background.js
+    // Service worker URL looks like: chrome-extension://<id>/extension/background.js
     const sw = await getServiceWorker();
     const id = new URL(sw.url()).host;
     await use(id);

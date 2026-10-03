@@ -2,7 +2,7 @@
 // DOM-free so the URL-detection + tag-classification rules can be
 // unit tested in Node without a Prism-shaped DOM.
 //
-// Two consumers in src/userscript.ts:
+// Two consumers in src/extension/userscript.ts:
 //   - The Details panel renderer (Match / Location / etc.).
 //   - The post-Prism walk over the highlighted code box.
 // Both call the same classifiers so a header line in the body is
@@ -17,7 +17,7 @@
 //
 // `@resource` is *not* in this set even though its second token is a
 // URL — its grammar is two args (`<name> <url>`), so it gets its own
-// carve-out in `linkForHeaderTag` (src/userscript.ts) that linkifies
+// carve-out in `linkForHeaderTag` (src/extension/userscript.ts) that linkifies
 // only the URL portion. Treating it here would mis-resolve
 // `myCSS https://example.com/x.css` as a single relative path
 // `<parent>/myCSS%20https://...`.

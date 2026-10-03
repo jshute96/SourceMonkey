@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 
-import { resolveXhrUrl } from '../../dist/gm-xhr.js';
+import { resolveXhrUrl } from '../../dist/extension/gm-xhr.js';
 
 const PAGE = 'https://page.example/dir/index.html?q=1';
 

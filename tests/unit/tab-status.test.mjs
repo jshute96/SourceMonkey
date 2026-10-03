@@ -1,4 +1,4 @@
-// Tests for src/tab-status.ts (compiled to dist/tab-status.js).
+// Tests for src/extension/tab-status.ts (compiled to dist/extension/tab-status.js).
 //
 // The module owns the pure helpers behind the per-tab toolbar badge:
 // classifying each expected/actual script into OK/ERROR/MISSING/
@@ -25,7 +25,8 @@ import {
   BADGE_PURPLE,
   BADGE_RED,
   MAX_DOCS_PER_TAB,
-} from '../../dist/tab-status.js';
+  titleHead,
+} from '../../dist/extension/tab-status.js';
 
 // Shared default — the tests below don't care about documentId, they
 // just need the state shape to be valid.
@@ -85,6 +86,34 @@ test('computeBadge: skipped document → NOT_LOADED, GREY', () => {
   assert.equal(view.color, BADGE_GREY);
   assert.deepEqual(view.rows.map((r) => r.status), ['NOT_LOADED', 'NOT_LOADED']);
   assert.match(view.title, /Alpha \| NOT LOADED/);
+});
+
+test('computeBadge: an sm-dev claim keeps the rest out, and stays green when the allowed ones ran', () => {
+  // A tab an sm-dev run controls: only `smDevAllow` may run; the rest
+  // were told to skip, so NOT_LOADED, and the tab isn't greyed while
+  // something did run.
+  const view = computeBadge({
+    documentId: DOC, url: 'https://x',
+    matches: [expected('a', 'Alpha'), expected('b', 'Beta')],
+    actual: { a: { state: 'started', name: 'Alpha' } },
+    smDevAllow: ['a'],
+  });
+  assert.deepEqual(view.rows.map((r) => [r.name, r.status]), [['Alpha', 'OK'], ['Beta', 'NOT_LOADED']]);
+  assert.equal(view.color, BADGE_GREEN);
+  // The tooltip says whose tab it is, as the action menu does.
+  assert.equal(view.title.split('\n').slice(0, 2).join('\n'), 'SourceMonkey\nPage under sm-dev control');
+  // Nothing allowed: nothing ran, so grey.
+  const none = computeBadge({
+    documentId: DOC, url: 'https://x',
+    matches: [expected('a', 'Alpha')],
+    actual: {},
+    smDevAllow: null,
+  });
+  assert.equal(none.rows[0].status, 'NOT_LOADED');
+  assert.equal(none.color, BADGE_GREY);
+  // An ordinary tab's tooltip has no such line.
+  assert.equal(titleHead(null), 'SourceMonkey');
+  assert.equal(titleHead({ documentId: DOC, url: 'https://x', matches: [], actual: {}, smDevAllow: null }), 'SourceMonkey\nPage under sm-dev control');
 });
 
 test('computeBadge: NOT_LOADED beats REJECTED, but any real disagreement beats GREY', () => {

@@ -703,9 +703,9 @@ test('describeFetchFailure: size and emptiness name the file as their subject', 
   assert.match(describeFetchFailure({ failed: true, reason: 'oversize' }), /^The file is larger than the /);
 });
 
-// `scripts/validate-userscripts.mjs` asks this instead of matching the
-// wording, because it used to match the wording and went stale silently
-// when these messages were recased. If a reason ever stops being
+// The corpus validator (`tests/greasyfork-examples/validate-corpus.mjs`)
+// asks this instead of matching the wording, because it used to match
+// the wording and went stale silently when these messages were recased. If a reason ever stops being
 // recognized, the validator quietly mislabels that whole bucket rather
 // than failing — so the coverage has to be pinned here.
 test('isFetchFailureMessage: recognizes every message describeFetchFailure can produce', () => {
