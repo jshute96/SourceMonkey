@@ -307,14 +307,16 @@ Gaps that made corpus scripts fail on their live sites (see
 the scripts). Comparisons are against Violentmonkey's source; Tampermonkey
 wasn't checked.
 
-- **`GM` is frozen** (`gm-frozen`: 30766, 19993).
+- **`GM` is frozen** (`gm-frozen`: 30766, 19993, 437569).
   - `src/extension/gm-bindings.ts` emits `const GM = Object.freeze({...})`.
   - GM_config's polyfill sets `GM.getValue` when only `GM_getValue` is
     granted, and the assignment is silently dropped, so 30766 never
     starts. 19993 adds a `GM.cookie` stub, which throws.
+  - 437569 wraps `GM` in a `Proxy` whose `get` returns bound copies,
+    which breaks the Proxy invariant for a frozen target and throws.
   - VM builds `GM` as a plain writable object. Fix: drop the freeze,
     or freeze only the API properties and leave the object extensible.
-- **Granted `GM_*` names are `const`** (`gm-reassign`: 2129).
+- **Granted `GM_*` names are `const`** (`gm-reassign`: 2129, 2128).
   - A shim like `GM_xmlhttpRequest = GM.xmlHttpRequest;` throws
     "Assignment to constant variable" at startup.
   - VM resolves names through `with(this)` over a wrapper, so the
@@ -326,11 +328,13 @@ wasn't checked.
     `cloneInto is not defined`.
   - VM defines pass-through stand-ins on Chrome (`makeComponentUtils`
     in `src/injected/web/util.js`). Cheap to copy.
-- **Scripts never run in iframes** (`needs-iframes`: 461650, 382039).
-  - reCAPTCHA helpers must run inside Google's frames. See the
+- **Scripts never run in iframes** (`needs-iframes`: 461650, 382039, 492877).
+  - reCAPTCHA helpers must run inside Google's frames, and Sketchfab
+    downloaders inside the same-origin viewer frame. See the
     `allFrames` item under "Skeleton" for what blocks it.
 - **Granted scripts run in the isolated world** (`needs-page-globals`:
-  561432, 382030, 485608, and earlier ones).
+  561432, 382030, 485608, 395461, and earlier ones;
+  `needs-custom-elements`: 397848).
   - Scripts that read the page's globals without `unsafeWindow` (the
     YouTube player API, the page's `$`, `customElements`, which is null
     in the USER_SCRIPT world) fail. `@inject-into page` copies work.
@@ -338,12 +342,30 @@ wasn't checked.
     its `@sandbox` default). Worth deciding whether to pick the page
     world automatically, rather than only for `@inject-into page` and
     `@grant unsafeWindow` (see docs/injection.md).
-- **Strict `@connect`** (`connect-undeclared`: 25068, 373252).
+- **Strict `@connect`** (`connect-undeclared`: 25068, 373252, 476943,
+  479460, 445051).
   - With no `@connect`, every `GM_xmlhttpRequest` is refused. TM asks
     the user at request time; VM allows the request.
   - A per-host "allow this request" prompt (or a collections-page
     toggle) would cover it without dropping the check. Pairs with the
     `@connect *` warning under "`@connect` follow-ups".
+- **`GM_xmlhttpRequest` rejects a `URL` object** (`xhr-url-object`:
+  463326).
+  - `src/wrapper-gm-runtime.js` requires `typeof details.url ===
+    "string"` and throws "url required".
+  - VM converts a non-string `url` to a string
+    (`src/injected/web/requests.js`). A copy passing `.href` works.
+- **`document-idle` can wait forever** (seen on jianshu with 406337
+  and 40730).
+  - The wrapper waits for `load`. When one third-party script never
+    finishes loading, `load` never fires and idle scripts never run.
+  - VM runs idle scripts right after `DOMContentLoaded`, and Chrome's
+    own `document_idle` runs at most about 200ms after it. Fix: also
+    start the body after a short timeout once `DOMContentLoaded` has
+    fired.
+- **50 MB `GM_xmlhttpRequest` response cap** (`xhr-response-cap`:
+  445051) blocks video downloaders on ordinary few-minute videos.
+  Documented in `docs/GM-APIs.md`; worth revisiting.
 - **`GM_cookie`** (463802) is the whole failure for a Reddit script.
   See "GM_* APIs not yet in the catalog".
 

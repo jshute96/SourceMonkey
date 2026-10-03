@@ -210,11 +210,15 @@ const HELP = {
     'gm-on-window': 'Reads GM_* functions as window properties (window.GM_xmlhttpRequest), which Violentmonkey provides and SourceMonkey doesn\'t',
     'idle-after-load': 'Sets itself up in a window load handler, which never runs when the script starts after load, as SourceMonkey\'s document-idle does',
     'contextmenu-on-mousedown': 'Expects the contextmenu event after mouseup, as on Windows. On Linux and macOS Chrome it comes on mousedown.',
-    'gm-frozen': 'Adds properties to the GM object (like a GM_config polyfill setting GM.getValue), which SourceMonkey freezes but Violentmonkey leaves writable',
+    'gm-frozen': 'Adds properties to the GM object (like a GM_config polyfill setting GM.getValue) or wraps it in a Proxy whose get returns new values, which breaks on SourceMonkey\'s frozen GM but not Violentmonkey\'s writable one',
     'gm-reassign': 'Assigns to a granted GM_* name (GM_xmlhttpRequest = GM.xmlHttpRequest), which throws because SourceMonkey declares those names const',
     'needs-cloneinto': 'Calls Firefox\'s cloneInto or exportFunction unchecked, which Violentmonkey stands in for on Chrome and SourceMonkey doesn\'t',
     'needs-iframes': 'Must run inside an iframe (like the reCAPTCHA frames), and SourceMonkey only runs scripts in the top frame',
     'service-dead': 'Depends on a third-party download or proxy service that no longer responds',
+    'xhr-url-object': 'Passes a URL object as GM_xmlhttpRequest\'s url, which Violentmonkey converts to a string and SourceMonkey rejects',
+    'xhr-response-cap': 'Downloads files over 50 MB with GM_xmlhttpRequest, past SourceMonkey\'s response size cap',
+    'needs-custom-elements': 'Uses customElements, which is null in Chrome\'s isolated world and works only in the page',
+    'needs-gm-webrequest': 'Uses Tampermonkey\'s GM_webRequest (@webRequest), which SourceMonkey doesn\'t support',
   },
 };
 
