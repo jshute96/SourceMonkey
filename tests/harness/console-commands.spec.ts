@@ -318,8 +318,10 @@ test.describe('sm-dev typed commands', () => {
     const dialogs = await DialogTracker.attach(asker, (l) => lines.push(l), { visible: false, commandsComing: true });
     await asker.goto(`${fixtureServer.baseUrl}/target.html`);
     await asker.evaluate(() => window.addEventListener('beforeunload', (e) => e.preventDefault()));
-    // Chrome asks only on a page the person has used.
+    // Chrome asks only on a page the person has used. Waited for, since
+    // without it the tab would close with no dialog.
     await asker.mouse.click(5, 5);
+    await expect.poll(() => asker.evaluate(() => navigator.userActivation.hasBeenActive)).toBe(true);
     const tabs = [{ n: 1, page, link: attachment }, { n: 2, page: asker, link: attachment, dialogs }];
     const ctx: ConsoleContext = { host, tabs: () => tabs.filter((t) => !t.page.isClosed()), scripts: [], out: (l) => lines.push(l), stop: () => undefined };
     const run = async (line: string) => {
@@ -350,6 +352,7 @@ test.describe('sm-dev typed commands', () => {
     await asker.goto(`${fixtureServer.baseUrl}/target.html`);
     await asker.evaluate(() => window.addEventListener('beforeunload', (e) => e.preventDefault()));
     await asker.mouse.click(5, 5);
+    await expect.poll(() => asker.evaluate(() => navigator.userActivation.hasBeenActive)).toBe(true);
     const tabs = [{ n: 1, page, link: attachment }, { n: 2, page: asker, link: attachment, dialogs }];
     const ctx: ConsoleContext = { host, tabs: () => tabs.filter((t) => !t.page.isClosed()), scripts: [], out: (l) => lines.push(l), stop: () => undefined };
     await runConsoleCommand('closetab T2', ctx);

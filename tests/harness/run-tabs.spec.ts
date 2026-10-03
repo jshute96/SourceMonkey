@@ -15,6 +15,12 @@ import { run, type RunOptions } from '../../lib/harness/run.js';
 const CLI = fileURLToPath(new URL('../../lib/harness/cli.js', import.meta.url));
 
 // Run until every `wanted` text has appeared in a line, or 10s.
+// How long a run gets to print what a test waits for, launching its
+// browser included. It stops as soon as the lines are in, so this only
+// bounds a failure, and is generous for a loaded machine, under the
+// 30s test timeout.
+const RUN_DEADLINE_MS = 25_000;
+
 async function runUntil(
   opts: Omit<RunOptions, 'out' | 'until' | 'tempBrowser' | 'localRoots'>,
   wanted: string[],
@@ -32,7 +38,7 @@ async function runUntil(
     },
     until,
   });
-  const timer = setTimeout(stop, 10000);
+  const timer = setTimeout(stop, RUN_DEADLINE_MS);
   try {
     return { code: await done, lines };
   } finally {
@@ -71,7 +77,7 @@ test('scripts run in the tabs the run tab opens', async ({ fixtureServer, script
     },
     until,
   });
-  const timer = setTimeout(stop, 10000);
+  const timer = setTimeout(stop, RUN_DEADLINE_MS);
   try {
     await done;
   } finally {
@@ -155,7 +161,7 @@ test('closing a followed tab and T1 is noticed, and the run carries on', async (
   }, ['[sm-dev] Tab T1 closed']);
   // T2 or T3, whichever opened first.
   expect(lines.filter((l) => /^\[sm-dev\] Tab T[23] closed$/.test(l)), lines.join('\n')).toHaveLength(1);
-  expect(lines).toContain('[sm-dev] Tab T1 closed');
+  expect(lines, lines.join('\n')).toContain('[sm-dev] Tab T1 closed');
   expect(code).toBe(0);
 });
 
@@ -549,7 +555,7 @@ test('--watch re-pushes on a save and reloads the tab it runs in', async ({ fixt
       if (line === '[page log] [saved] after') stop();
     },
   });
-  const timer = setTimeout(stop, 10000);
+  const timer = setTimeout(stop, RUN_DEADLINE_MS);
   await done.finally(() => clearTimeout(timer));
   expect(lines).toContain('[sm-dev] Change detected, re-pushing');
   expect(lines).toContain('[sm-dev] Reloading T1');
