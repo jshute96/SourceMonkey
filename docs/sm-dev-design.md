@@ -325,22 +325,6 @@ Command marks:
 - A check that fails or takes over 3 seconds says nothing, and the
   socket is closed however it ends.
 
-### A stale build (`stale-build.ts`)
-
-- `scripts/build.mjs` writes `lib/build-info.json`: the checkout it
-  built from, and when the build started.
-- At startup, `cli.ts` warns on stderr when that checkout's `src/` has a
-  file modified since.
-  - Not in a detached run's own process.
-  - Not with `SM_DEV_NO_STALE_WARNING` set, as the test suites set it:
-    they compare sm-dev's output exactly.
-- The fix it names depends on where this sm-dev runs:
-  - In the checkout: `pnpm run build`.
-  - In an installed copy (a userscript repo): `pnpm install` there,
-    after `pnpm run build` in the checkout when its own `lib/` is
-    stale too. `pnpm install` copies `lib/` without building it.
-- No `build-info.json`, or no checkout at that path: no warning.
-
 ### Help and flags (`command-list.ts`)
 
 - The help is data: sections of commands, each with its arguments and
@@ -816,8 +800,9 @@ User-facing behavior is in [harness-guide.md](harness-guide.md).
     see;
   - `inject` only records the script, so the waits and reports know
     what to expect.
-- `eval --script` runs in the extension's user-script world: the tab's
-  execution context whose origin is the extension's.
+- `eval --script` runs in the script's own scope, in its world: for an
+  isolated script, the tab's execution context whose origin is the
+  extension's (see `eval --script` below).
 
 ### The extension's API
 
@@ -850,15 +835,40 @@ User-facing behavior is in [harness-guide.md](harness-guide.md).
 
 - The extension and sm-dev can come from different builds: sm-dev from
   a repo's install, the extension from the person's browser.
-- A run checks for the API calls it needs (`typeof
-  self.SourceMonkey.x`) as it starts.
-  - `namedTab` is the newest of them, and came with the claim calls'
-    present arguments, so an extension without it is refused as too old
-    (`EXTENSION_TOO_OLD`).
-  - The message says to update it, or to use `--temp-browser`, which
-    loads sm-dev's own copy.
-- It then calls `chrome.userScripts.getScripts()` in the worker, which
-  fails until "Allow User Scripts" is on.
+- Both sides carry a protocol version, `SM_DEV_PROTOCOL`
+  (`major.minor`, in `src/sm-dev-protocol.ts`), which the extension
+  shows as `self.SourceMonkey.smDevProtocol`. A run compares them as it
+  connects (`compareProtocol`).
+- **Major differs**: the two can't work together, so the run is
+  refused.
+  - Extension's major older, or it has no version (built before the
+    version existed): `SourceMonkey in this browser is older than this
+    sm-dev`, and how to update it.
+  - sm-dev's major older: `This sm-dev is older than SourceMonkey in
+    this browser`, and how to update sm-dev (see below).
+  - Either way it also offers `--temp-browser`, which loads sm-dev's
+    own copy of the extension.
+- **Minor differs**: compatible, so the run starts, with one line
+  saying which side is older and how to update it.
+  - Extension ahead: everything sm-dev uses is there. The note says
+    sm-dev lacks some newer features.
+  - sm-dev ahead: anything it uses that came in a later minor checks
+    first (`ExtensionLink.requireMinor`), and refuses with an error
+    naming the feature and saying to update the extension. The note
+    says some of sm-dev's newer features won't work.
+- **Same version**: nothing is said.
+- When to bump which is in `CLAUDE.md`.
+- How to update sm-dev (`rebuildAdvice` in `rebuild-advice.ts`), also
+  used when the built extension is missing:
+  - `scripts/build.mjs` writes `lib/build-info.json`, naming the
+    checkout it built from.
+  - In the checkout: `pnpm run build`.
+  - In an installed copy (a userscript repo): `pnpm run build` in the
+    checkout, then `pnpm install` there. `pnpm install` copies `lib/`
+    without building it.
+- After the version check, the run calls
+  `chrome.userScripts.getScripts()` in the worker, which fails until
+  "Allow User Scripts" is on.
   - CDP can't see that toggle, and without it the scripts would never
     run, with nothing said. So the run is refused, naming the toggle.
 
@@ -1294,13 +1304,30 @@ The run commands that drive and read a tab's page (`click`, `type`,
   a navigation they started to reach its DOM, then a MutationObserver
   in the page quiet for 100ms, within 3 seconds.
 - `eval` goes through the tab's own CDP session
-  (`PageAttachment.evaluate`), in the page's default context or the
-  scripts' world (the extension's user-script world, for `--script`). Results print as JSON,
-  or as the DevTools console describes an element or function.
+  (`PageAttachment.evaluate`), in the page's default context, or a
+  script's scope for `--script` (below). Results print as JSON, or as
+  the DevTools console describes an element or function.
   - It evaluates as console input (CDP `replMode`: top-level `await`,
     `let` redeclarable). A top-level `return` is a syntax error there,
     so code that fails with that runs again wrapped in
     `(async () => { ... })()`. The syntax error means nothing ran.
+- `eval --script` runs inside one script: the selected one, or the one
+  `--script=<script>` names (`evalScope` in console-commands.ts).
+  - It calls the script's eval hook, a direct `eval` in its scope (see
+    [injection.md](injection.md#sm-devs-eval-hook)), in the script's
+    world. The host says where the hook is kept (`evalHook`): the run's
+    key and the extension's id for the script.
+  - That's not console input: `await` and a top-level `return` are
+    syntax errors. The code is compiled first (`Runtime.compileScript`,
+    which runs nothing), and code with either runs in an async arrow:
+    as its expression when it is one, so `await x` gives x, else as
+    its body.
+  - A page-world script's hook `eval`s under the page's Content
+    Security Policy, but within a CDP evaluation, which Chrome exempts
+    from it.
+  - No hook in the document means the script hasn't run there. The
+    selected script then falls back to the shared scripts' world, as
+    `--script` was before, and says so; a named one is an error.
 - `cdp` opens a fresh CDP session on the tab (`newCDPSession`) for each
   command and detaches it after.
   - Settings the calls make (like `Emulation.*` overrides) end when

@@ -176,7 +176,9 @@ Node.
   the run lasts and released at its end.
 - Subscribes to the SW's event stream, and subscribes again when Chrome
   restarts an idle SW; the run says events in between may be missing.
-- Refuses an extension too old for the API it needs, naming the fix.
+- Compares its protocol version with the extension's, and refuses one
+  whose major differs, naming the fix
+  ([version skew](sm-dev-design.md#version-skew)).
 - The extension's side, and the claims, are in
   [sm-dev-design.md](sm-dev-design.md).
 
@@ -212,8 +214,9 @@ adds nothing the page or its scripts can see:
   the waits.
 - Reads what `wait` needs (DOM activity, requests in flight) from a
   CDP-made world of its own.
-- Evaluates `eval` in the page's world, or in the extension's
-  user-script world for `eval --script`.
+- Evaluates `eval` in the page's world, or inside one script for
+  `eval --script`, through the eval hook the extension gives a test
+  collection's scripts (see [injection.md](injection.md#sm-devs-eval-hook)).
 
 ### `fixture.ts`: the Playwright fixture
 

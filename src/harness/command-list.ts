@@ -399,7 +399,14 @@ export const HELP_SECTIONS: HelpSection[] = [
           'eval {{ starts a multi-line block, ended by }}.',
         ],
         options: [
-          { term: '--script', about: 'Evaluate in the scripts\' world.' },
+          {
+            term: '--script[=<script>]',
+            about: [
+              'Evaluate inside the selected script, or the one named: it sees the script\'s GM_* APIs, its @require libraries and its top-level declarations.',
+              'In a script that opens with a (function () { ... })() wrapper, it runs inside that, seeing its locals too.',
+              'A selected script that hasn\'t run on the page falls back to the scripts\' shared world.',
+            ],
+          },
           { term: '--file <path>', about: 'Evaluate a JavaScript file, in place of <js>.' },
         ],
         gap: true,
@@ -817,14 +824,21 @@ export function commandFlags(name: string): string[] {
   return Object.keys(commandSyntax(name).flags);
 }
 
+/**
+ * How a flag takes a value: `--out FILE` takes one, `--visible` none,
+ * and `--script[=<script>]` one only when joined by `=`, so a bare
+ * `--script` never takes the next word.
+ */
+export type FlagKind = 'bool' | 'value' | 'optional';
+
 /** How command-args.ts reads a command's words. */
 export interface CommandSyntax {
   /** Its syntax, before any form's keyword. */
   base: ArgSyntax;
   /** Each form's, by its keyword (`wait log`). */
   forms: Record<string, ArgSyntax>;
-  /** Its flags: each takes a value, or none. */
-  flags: Record<string, 'bool' | 'value' | 'optional'>;
+  /** Its flags: each takes a value, none, or one only as `--name=value`. */
+  flags: Record<string, FlagKind>;
   /** What a value flag's value is, as its help names it (`<path>`, `FILE`). */
   values: Record<string, string>;
   /** Its usage lines, without `sm-dev`, for messages. */
@@ -841,18 +855,18 @@ export function commandSyntax(name: string): CommandSyntax {
     if (keyword && command.syntax) syntax.forms[keyword] = command.syntax;
     else if (command.syntax) syntax.base = command.syntax;
   }
-  // `--out FILE`: a value; `--visible`: none; `--json[=single|multi]`:
-  // a value after `=`, or none.
+  // `--out FILE`: a value; `--visible`: none; `--script[=<script>]`: an
+  // optional one.
   for (const group of optionGroupsOf(name)) {
     for (const item of group.options) {
-      const [flag, value] = item.term.split(/\s+/);
-      if (!flag.startsWith('--')) continue;
-      const optional = /^(--[\w-]+)\[=([^\]]+)\]$/.exec(flag);
+      const optional = /^(--[\w-]+)\[=([^\]]+)\]$/.exec(item.term);
       if (optional) {
         syntax.flags[optional[1]] = 'optional';
         syntax.values[optional[1]] = optional[2];
         continue;
       }
+      const [flag, value] = item.term.split(/\s+/);
+      if (!flag.startsWith('--')) continue;
       const name = flag.split(',')[0];
       syntax.flags[name] = value ? 'value' : 'bool';
       if (value) syntax.values[name] = value;

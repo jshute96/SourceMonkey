@@ -81,6 +81,7 @@ import {
   buildBridgeSpec,
   buildConfigBlob,
   buildRegistrationSpec,
+  scratchEvalHookKey,
   NO_PAGE_MATCH,
   buildSwapEvalBody,
   collectActiveSpecs,
@@ -324,6 +325,81 @@ test('wrapCombinedEntry: a leading "use strict" applies, as in TM and VM', () =>
   };
   new Function('self', wrapped)(stub);
   assert.equal(got, true);
+});
+
+test('wrapCombinedEntry: the eval hook sees the program\'s scope, keeps "use strict", and adds no lines', () => {
+  // sm-dev's eval hook: a direct eval in the user program's scope, kept
+  // under the key. It goes after the directive, so the program stays
+  // strict, on the same line, so nothing moves.
+  const key = '__smDevEval:unit-test';
+  const wrapped = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    requireUrls: ['sourcemonkey://SourceMonkey/x/cdn/lib.js'],
+    gmBindings: 'const GM_info = "ours"; ',
+    evalHookKey: key,
+    script: scriptWith({
+      bodyText: '"use strict";\nconst secret = 42;\nreturn (function () { return this; })() === undefined;',
+      requires: [req('"use strict"; // the first file\'s directive counts\nconst lib = "L";')],
+    }),
+  });
+  let got = 'unset';
+  const stub = {
+    __smPrelude: { send: () => {} },
+    __smRun: (_id, fn) => { got = fn({ decision: {}, cfg: { name: 'n', id: 'abc', loadedAt: 0 } }); },
+  };
+  new Function('self', wrapped)(stub);
+  assert.equal(got, true);
+  const hook = globalThis[key][COMBINED_ARGS.scriptId];
+  assert.equal(hook('[GM_info, lib, secret].join()'), 'ours,L,42');
+  assert.equal(Object.keys(globalThis).includes(key), false);
+  const plain = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    requireUrls: ['sourcemonkey://SourceMonkey/x/cdn/lib.js'],
+    script: scriptWith({ bodyText: 'L1\nL2', requires: [req('lib')] }),
+  });
+  const hooked = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    requireUrls: ['sourcemonkey://SourceMonkey/x/cdn/lib.js'],
+    evalHookKey: key,
+    script: scriptWith({ bodyText: 'L1\nL2', requires: [req('lib')] }),
+  });
+  assert.equal(hooked.split('\n').length, plain.split('\n').length);
+  assert.notEqual(hooked, plain);
+});
+
+test('wrapCombinedEntry: the eval hook goes into the script\'s own IIFE, not a library\'s', () => {
+  const key = '__smDevEval:unit-iife-req';
+  const wrapped = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    requireUrls: ['sourcemonkey://SourceMonkey/x/cdn/lib.js'],
+    evalHookKey: key,
+    script: scriptWith({
+      bodyText: '(function () {\n  const mine = "script";\n})();',
+      requires: [req('(function () { var libLocal = "lib"; globalThis.unitLib = 1; })();')],
+    }),
+  });
+  const stub = {
+    __smPrelude: { send: () => {} },
+    __smRun: (_id, fn) => { fn({ decision: {}, cfg: { name: 'n', id: 'abc', loadedAt: 0 } }); },
+  };
+  new Function('self', wrapped)(stub);
+  const hook = globalThis[key][COMBINED_ARGS.scriptId];
+  assert.equal(hook('mine'), 'script');
+  assert.equal(hook('typeof libLocal'), 'undefined');
+});
+
+test('buildRegistrationSpec: only sm-dev\'s scripts get an eval hook', async () => {
+  const mine = await buildRegistrationSpec(scriptWith({ bodyText: 'x' }));
+  assert.doesNotMatch(mine.js[2].code, /__smDevEval/);
+  const scratch = await buildRegistrationSpec(scriptWith({ bodyText: 'x', fileUrl: 'scratch:///run-1a2b/t.user.js' }));
+  assert.match(scratch.js[2].code, /__smDevEval:run-1a2b/);
+  const asked = await buildRegistrationSpec(scriptWith({ bodyText: 'x' }), undefined, undefined, { evalHookKey: '__smDevEval:h' });
+  assert.match(asked.js[2].code, /__smDevEval:h/);
+});
+
+test('scratchEvalHookKey: a test collection\'s scripts only', () => {
+  assert.equal(scratchEvalHookKey('scratch:///run-ab12/a.user.js'), '__smDevEval:run-ab12');
+  assert.equal(scratchEvalHookKey('file:///a.user.js'), undefined);
 });
 
 test('wrapCombinedEntry: the nested scope adds no lines', () => {

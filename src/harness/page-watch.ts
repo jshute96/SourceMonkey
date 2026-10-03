@@ -14,6 +14,7 @@ import type { CDPSession, Page, Request } from '@playwright/test';
 
 import type { HarnessHost, PageLink } from './host.js';
 import type { PreparedScript } from './prepare.js';
+import type { InjectionWorld } from '../script-world.js';
 
 // The world the activity tracker runs in, created by CDP: its own, so
 // neither the page nor the scripts see it.
@@ -61,6 +62,19 @@ const DESCRIBED = new Set(['node', 'error', 'map', 'set', 'weakmap', 'weakset', 
 /** What an expression `evaluate` ran threw, as opposed to evaluate failing. */
 export class ScriptThrew extends Error {}
 
+/**
+ * A script's own scope, for `eval --script`: the world it runs in, and
+ * where its eval hook is kept there (see src/eval-hook.ts).
+ */
+export interface ScriptScope {
+  world: InjectionWorld;
+  key: string;
+  id: string;
+}
+
+/** `evaluate` found no eval hook for the script: it hasn't run in this document. */
+export class NoEvalHook extends Error {}
+
 // What an expression threw: an Error's description, else the value
 // thrown (`throw 'boom'`).
 function threw(details: { text: string; exception?: unknown }): ScriptThrew {
@@ -75,6 +89,13 @@ function threw(details: { text: string; exception?: unknown }): ScriptThrew {
 function isIllegalReturn(details: { exception?: unknown; stackTrace?: unknown }): boolean {
   const exception = details.exception as RemoteObject | undefined;
   return !details.stackTrace && exception?.className === 'SyntaxError' && (exception.description ?? '').startsWith('SyntaxError: Illegal return statement');
+}
+
+// Code that's only valid as a function body (a top-level `return`, or
+// `await`), from the syntax error compiling it as a script gave.
+function needsFunctionBody(details: { text: string; exception?: unknown }): boolean {
+  const exception = details.exception as RemoteObject | undefined;
+  return /Illegal return statement|await is only valid/.test(exception?.description ?? details.text);
 }
 
 // The parts of CDP's `Runtime.RemoteObject` that `evaluate` reads.
@@ -345,13 +366,15 @@ export class PageAttachment implements PageLink {
   }
 
   /**
-   * Evaluates `expression` in the main frame, in the page's own world or
+   * Evaluates `expression` in the main frame, in the page's own world,
    * the scripts' (the user-script world every script without `@grant
-   * none` shares), for `eval`. Resolves to the result as a line to print;
-   * rejects with a `ScriptThrew` for what the expression threw, or an
-   * error of the evaluation's own (the page gone, say).
+   * none` shares), or one script's own scope, for `eval`. Resolves to
+   * the result as a line to print; rejects with a `ScriptThrew` for what
+   * the expression threw, a `NoEvalHook` for a script that hasn't run
+   * here, or an error of the evaluation's own (the page gone, say).
    */
-  async evaluate(expression: string, world: 'page' | 'scripts'): Promise<string> {
+  async evaluate(expression: string, world: 'page' | 'scripts' | ScriptScope): Promise<string> {
+    if (typeof world === 'object') return this.evaluateInScript(expression, world);
     const contextId = world === 'page' ? this.contextFor('') : this.scriptsContext();
     if (contextId === null) throw new Error(world === 'page' ? 'The page has no document to evaluate in' : 'The scripts\' world isn\'t set up in this document');
     let { result, exceptionDetails } = await this.cdp.send('Runtime.evaluate', {
@@ -366,6 +389,46 @@ export class PageAttachment implements PageLink {
         expression: `(async () => {\n${expression}\n})()`, contextId, awaitPromise: true, userGesture: true,
       }));
     }
+    return this.evaluated(result, exceptionDetails);
+  }
+
+  // Through the script's eval hook, a direct `eval` in its scope. That
+  // isn't console input: `await` and a top-level `return` are syntax
+  // errors there. So the code is compiled first (which runs nothing),
+  // and code that needs it runs in an async arrow: as its expression
+  // when it is one (`await x` gives x, as in the console), else as its
+  // body, whose `return` is the value.
+  //
+  // A page-world script's hook `eval`s under the page's Content Security
+  // Policy, but within a CDP evaluation, which Chrome exempts from it.
+  private async evaluateInScript(expression: string, scope: ScriptScope): Promise<string> {
+    const contextId = scope.world === 'MAIN' ? this.contextFor('') : this.scriptsContext();
+    if (contextId === null) throw new NoEvalHook();
+    const hook = `globalThis[${JSON.stringify(scope.key)}]?.[${JSON.stringify(scope.id)}]`;
+    const { result: found } = await this.cdp.send('Runtime.evaluate', {
+      expression: `typeof ${hook} === 'function'`, contextId, returnByValue: true,
+    });
+    if (found.value !== true) throw new NoEvalHook();
+    const { exceptionDetails: compiled } = await this.cdp.send('Runtime.compileScript', {
+      expression, sourceURL: '', persistScript: false, executionContextId: contextId,
+    });
+    let code = expression;
+    if (compiled && needsFunctionBody(compiled)) {
+      const asExpression = `(async () => (\n${expression}\n))()`;
+      const { exceptionDetails: notExpression } = await this.cdp.send('Runtime.compileScript', {
+        expression: asExpression, sourceURL: '', persistScript: false, executionContextId: contextId,
+      });
+      code = notExpression ? `(async () => {\n${expression}\n})()` : asExpression;
+    }
+    const { result, exceptionDetails } = await this.cdp.send('Runtime.evaluate', {
+      // Called detached, so its stack frame isn't named `[as <script id>]`.
+      expression: `(0, ${hook})(${JSON.stringify(code)})`, contextId, awaitPromise: true, userGesture: true,
+    });
+    return this.evaluated(result, exceptionDetails);
+  }
+
+  // An evaluation's result as a line to print, or what it threw.
+  private async evaluated(result: RemoteObject, exceptionDetails: { text: string; exception?: unknown } | undefined): Promise<string> {
     if (exceptionDetails) throw threw(exceptionDetails);
     // A promise, as `eval fetch(url).then(...)` gives: what it settles
     // to, where the console would show the promise itself.

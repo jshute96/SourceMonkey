@@ -317,6 +317,13 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
     return this.getValues(scriptId);
   }
 
+  /**
+   * Where `eval --script` finds a script's eval hook in a page (see
+   * src/eval-hook.ts): the key the hooks are kept under, and the id the
+   * script has there. Null for a script that has none.
+   */
+  abstract evalHook(scriptId: string): { key: string; id: string } | null;
+
   getValue(scriptId: string, key: string): unknown {
     const store = this.storeFor(scriptId);
     return store.has(key) ? valueCodec().decodeValue(store.get(key)) : undefined;

@@ -57,6 +57,17 @@ test('flags take a value after them or after =, and are checked', () => {
   assert.deepEqual(typed('status', '--bad'), { error: 'The status command has no --bad flag. It takes --json, --nojson.', flag: '--bad' });
 });
 
+test('a flag with an optional value takes it only after =', () => {
+  assert.deepEqual(typed('eval', '--script=Foo x'), { flags: { '--script': 'Foo' }, words: [], text: 'x' });
+  // Bare, it never takes the next word: that's the tab, or the code.
+  assert.deepEqual(typed('eval', '--script T2 x'), { flags: { '--script': true }, tab: 'T2', words: [], text: 'x' });
+  assert.deepEqual(typed('eval', '--script GM_info'), { flags: { '--script': true }, words: [], text: 'GM_info' });
+  assert.deepEqual(typed('eval', '--script='), { error: 'The --script flag needs a value: --script=<script>', flag: '--script' });
+  assert.deepEqual(typed('eval', '--script=a --script'), { error: 'The --script flag can be given once', flag: '--script' });
+  // Sent as words, as `sm-dev eval --script=2 x` does.
+  assert.deepEqual(sent('eval', '--script=2', 'x').flags, { '--script': '2' });
+});
+
 test('arguments a command doesn\'t take are refused, with its usage', () => {
   assert.deepEqual(typed('status', 'extra'), { error: 'The status command takes no arguments' });
   assert.deepEqual(typed('focus', 'T1 T2 T3'), { error: 'The focus command takes at most one argument besides a tab (focus [T<n>])' });

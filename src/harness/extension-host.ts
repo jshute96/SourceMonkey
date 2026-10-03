@@ -21,6 +21,7 @@
 //   entries made in them, are left out.
 
 import { SM_ABANDONED_MSG, SM_ERROR_MSG, SM_START_MSG, SM_SWAPPED_MSG } from '../runtime-messages.js';
+import { evalHookKey } from '../eval-hook.js';
 import { SKIP_REASON_SM_DEV } from '../sm-dev-protocol.js';
 import { remapStackText } from '../stack-link.js';
 import type { StackLayout } from '../composed-source.js';
@@ -139,6 +140,13 @@ export class ExtensionHost extends HarnessHost {
     }
     this.tabsByPage.delete(page);
     super.detachPage(page);
+  }
+
+  // The extension gives a test collection's scripts their run's hook,
+  // under the script's id there.
+  override evalHook(scriptId: string): { key: string; id: string } | null {
+    const id = this.extensionIds.get(scriptId);
+    return id ? { key: evalHookKey(this.link.runId), id } : null;
   }
 
   override async valuesOf(scriptId: string): Promise<Record<string, unknown>> {

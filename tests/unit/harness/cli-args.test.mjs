@@ -13,8 +13,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const CLI = fileURLToPath(new URL('../../../lib/harness/cli.js', import.meta.url));
-// Outputs are compared exactly, so no warning that lib/ is older than src/.
-process.env.SM_DEV_NO_STALE_WARNING = '1';
 const SCRIPT = fileURLToPath(new URL('../../examples/gm-menu/gm-menu.user.js', import.meta.url));
 
 function run(...args) {

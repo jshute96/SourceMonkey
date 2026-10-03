@@ -28,7 +28,7 @@ import type { PageAttachment } from './page-watch.js';
 import { parseCommandArgs, splitWords, unquoteWhole, type ParsedArgs } from './command-args.js';
 import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, commandsHelp } from './command-list.js';
 import { errorSentence, readJsonFile, writeProblem } from './input-file.js';
-import { PAGE_COMMANDS, runPageCommand } from './page-commands.js';
+import { PAGE_COMMANDS, runPageCommand, type EvalIn } from './page-commands.js';
 import { editMultiLine } from './prompt-editor.js';
 import { appendHistory, HISTORY_SIZE, historyFile, loadHistory } from './prompt-history.js';
 import { defaultPageUrl, NO_DEFAULT_PAGE, preparedScriptMatches, preparedScriptName, preparedScriptPath, shownPath, withDefaultScheme, type PreparedScript } from './prepare.js';
@@ -795,7 +795,13 @@ export async function runConsoleCommand(
       // `logs` only reads what was recorded; the rest reach into a page
       // a dialog has stopped.
       if (command !== 'logs' && blockedByDialog([target])) return false;
-      return runPageCommand(command, { ...parsed, userscripts: runningOn(ctx, target).map(userscriptLabel), json: ctx.json === true }, target, ctx.out, cwd);
+      let evalIn: EvalIn | undefined;
+      if (command === 'eval' && parsed.flags['--script'] !== undefined) {
+        const resolved = evalScope(ctx, parsed.flags['--script']);
+        if (!resolved) return false;
+        evalIn = resolved;
+      }
+      return runPageCommand(command, { ...parsed, userscripts: runningOn(ctx, target).map(userscriptLabel), evalIn, json: ctx.json === true }, target, ctx.out, cwd);
     }
   }
 }
@@ -833,6 +839,20 @@ function scriptRow(ctx: ConsoleContext, script: PreparedScript): string {
 // none while a SourceMonkey-managed script (`E1`) is picked instead.
 function selectedScript(ctx: ConsoleContext): PreparedScript | undefined {
   return ctx.currentOther ? undefined : ctx.current ?? ctx.scripts[0];
+}
+
+/**
+ * Where `eval --script` runs: inside the selected script, or the one
+ * `--script=<script>` names. The scripts' shared world when no run
+ * script is selected (none loaded, or an `E` script picked, which has
+ * no eval hook). Null, said why, when the name picks none.
+ */
+function evalScope(ctx: ConsoleContext, flag: string | true): EvalIn | null {
+  const script = flag === true ? selectedScript(ctx) : pickScript(ctx, flag);
+  if (!script) return flag === true ? 'scripts' : null;
+  // No hook: not pushed into the extension, so it hasn't run anywhere.
+  const hook = script.id ? ctx.host.evalHook(script.id) : null;
+  return { scope: hook && { world: script.world, ...hook }, name: preparedScriptName(script), named: flag !== true };
 }
 
 /**

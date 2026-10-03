@@ -28,10 +28,6 @@ import { defineConfig } from '@playwright/test';
 // `--project=<name>`; the `test:e2e` script wires the SM project so
 // `pnpm test` doesn't try to reach a TM or VM browser. See
 // docs/cross-manager-testing.md.
-// sm-dev processes the specs start compare their output exactly, so
-// they skip the warning that lib/ is older than src/ (stale-build.ts).
-process.env.SM_DEV_NO_STALE_WARNING = '1';
-
 export default defineConfig({
   testDir: './tests',
   // Half the cores. Each worker runs its own Chromium with the

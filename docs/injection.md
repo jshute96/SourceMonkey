@@ -1219,6 +1219,42 @@ moves: the source map and the Log tab's stack mapping are unaffected.
 The reload swap eval and the install-time parse check use the same
 arrangement (see [parse-check.md](parse-check.md#what-is-checked)).
 
+### sm-dev's eval hook
+
+Scripts sm-dev runs get one more statement in the inner scope, so
+`sm-dev eval --script` can run code inside it (`src/eval-hook.ts`):
+
+```
+;(globalThis[<key>] || <a new map>)[<script id>] = (code) => eval(code);
+```
+
+- A direct `eval` runs in the scope it's written in, so the arrow sees
+  the script's `GM_*` bindings, its `@require`s' top-level declarations
+  and its own, after the script has finished.
+- Only the scripts in an sm-dev run's test collection get it
+  (`scratch:///<run>/...` locations), under a key naming the run.
+  - Registration and the reload swap both add it.
+  - Never the person's own scripts. The hook reaches everything the
+    script can, and a MAIN-world script's sits on the page's `window`.
+- The arrow is named `sm-dev eval`, so code run through it shows that
+  frame in stack traces rather than one named after the script id.
+- The map is a non-enumerable global under a key naming the run, out
+  of a page's casual view. A page that looks for it can still find it.
+- It goes after the user program's directive prologue, so a leading
+  `"use strict"` still applies, and on that line, so no line moves.
+  - The rest of that line moves right by the hook's length, which only
+    matters to a script written on one line: its stack columns are off.
+- A script whose own source opens with an IIFE (immediately invoked
+  function expression), the usual `(function () { ... })()` wrapper,
+  gets a second copy just inside it (`leadingFunctionBody`).
+  - It replaces the first in the map as the IIFE starts. The inner scope
+    sees everything the outer one does, plus the IIFE's locals.
+  - Looked for in the script's own source, after its `@require`s: a
+    library's wrapper isn't the script's scope.
+  - Arrows and `async`, `!function` and `void function` forms count.
+    Anything else gets only the outer copy.
+- Locals inside any other function stay out of reach.
+
 ### Async-error attribution
 
 The body's `try`/`catch` only catches **synchronous** throws — once

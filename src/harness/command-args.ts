@@ -9,8 +9,9 @@
 // help's options (`--out FILE` takes one).
 //
 // - A flag is `--name`, or `--name value` / `--name=value` for one that
-//   takes a value. An unknown flag, a value on one that takes none, and
-//   a flag given twice are refused.
+//   takes a value. One whose value is optional (`--script[=<script>]`)
+//   takes it only as `--name=value`. An unknown flag, a value on one
+//   that takes none, and a flag given twice are refused.
 // - A quoted word is never a flag, so `'--x'` is an argument.
 // - `--help`, where a flag can go, asks for the command's help, as
 //   `help <command>` does, rather than running it.
@@ -221,18 +222,16 @@ function takeFlag(command: string, syntax: CommandSyntax, parsed: ParsedArgs, li
   const kind = Object.hasOwn(syntax.flags, name) ? syntax.flags[name] : undefined;
   if (!kind) return { error: noSuchFlag(command, name, Object.keys(syntax.flags)), flag: name };
   if (Object.hasOwn(parsed.flags, name)) return { error: `The ${name} flag can be given once`, flag: name };
-  // A value only after `=` (`--json=multi`), never the next word.
-  if (kind === 'optional') {
-    parsed.flags[name] = eq > 0 ? text.slice(eq + 1) : true;
-    return i;
-  }
-  if (kind === 'bool') {
+  if (kind === 'bool' || (kind === 'optional' && eq < 0)) {
     if (eq > 0) return { error: `The ${name} flag takes no value`, flag: name };
     parsed.flags[name] = true;
     return i;
   }
   const what = syntax.values[name];
-  const needsValue = { error: `The ${name} flag needs a value${what ? `: ${name} ${what}` : ''}`, flag: name };
+  const needsValue = {
+    error: `The ${name} flag needs a value${what ? `: ${name}${kind === 'optional' ? '=' : ' '}${what}` : ''}`,
+    flag: name,
+  };
   if (eq > 0) {
     // `--out=` gives none.
     if (eq === text.length - 1) return needsValue;

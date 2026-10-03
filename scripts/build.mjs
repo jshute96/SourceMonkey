@@ -39,9 +39,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
 const src = resolve(root, 'src');
 const watch = process.argv.includes('--watch');
-// When the build began, for lib/build-info.json: a source file saved
-// after this may not be in the build.
-const buildStarted = Date.now();
 
 // 1. Build into a temporary directory of our own. It sits in the repo
 //    root rather than the system temp dir because the swap is a rename,
@@ -232,9 +229,9 @@ for (const args of compiles) {
   const r = spawnSync('pnpm', args, { stdio: 'inherit', cwd: root });
   if (r.status !== 0 && !(watch && r.status === 2)) process.exit(r.status ?? 1);
 }
-// Where and when lib/ was built, so sm-dev can say when the source has
-// moved on (src/harness/stale-build.ts), including in an installed copy.
-if (!watch) await writeFile(resolve(lib, 'build-info.json'), JSON.stringify({ source: root, builtAt: buildStarted }) + '\n');
+// Where lib/ was built from, so sm-dev can say how to rebuild it
+// (src/harness/rebuild-advice.ts), including in an installed copy.
+if (!watch) await writeFile(resolve(lib, 'build-info.json'), JSON.stringify({ source: root }) + '\n');
 await swapIn(dist, resolve(root, 'dist'));
 if (!watch) await swapIn(lib, resolve(root, 'lib'));
 await rm(buildDir, { recursive: true, force: true });

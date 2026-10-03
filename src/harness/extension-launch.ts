@@ -25,7 +25,7 @@ import type { BrowserContext } from '@playwright/test';
 
 import { leaveDialogsOpen } from './console-commands.js';
 import { ExtensionMissingError, findExtensionWorker, sourceMonkeyExtensionId } from './extension-backend.js';
-import { rebuildAdvice } from './stale-build.js';
+import { rebuildAdvice } from './rebuild-advice.js';
 
 // dist/, beside lib/: in the checkout, and in an installed package,
 // which ships both.

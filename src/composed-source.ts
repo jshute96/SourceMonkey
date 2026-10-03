@@ -62,6 +62,8 @@ export interface ComposedSource {
   // URLs (nothing to attribute lines to).
   segments: MappedSegment[];
   lineCount: number;
+  // Where the script's own source starts in `text`, after its requires.
+  mainStart: number;
 }
 
 export interface ComposeOptions {
@@ -113,6 +115,7 @@ export function composeSource(
       text: mainSource,
       segments: [],
       lineCount: countLines(mainSource),
+      mainStart: 0,
     };
   }
 
@@ -159,9 +162,10 @@ export function composeSource(
       lineCount: countLines(mainSource),
     });
   }
+  const mainStart = text.length;
   text += mainSource;
 
-  return { text, segments, lineCount: countLines(text) };
+  return { text, segments, lineCount: countLines(text), mainStart };
 }
 
 // ---------- The layout stack traces need ----------

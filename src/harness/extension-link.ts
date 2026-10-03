@@ -20,31 +20,51 @@ import { randomBytes } from 'node:crypto';
 
 import type { BrowserContext, Page, Worker } from '@playwright/test';
 
-import { SM_DEV_EVENT } from '../sm-dev-protocol.js';
+import { SM_DEV_EVENT, SM_DEV_PROTOCOL, type ProtocolVersion } from '../sm-dev-protocol.js';
 import type { StackLayout } from '../composed-source.js';
 import type { PushedFile } from '../external-files.js';
 import {
   findExtensionWorker, isSourceMonkeyWorker, sourceMonkeyExtensionId, sourceMonkeyOrigin, type LogEntry, type PushResult,
 } from './extension-backend.js';
+import { rebuildAdvice } from './rebuild-advice.js';
 
 // How long a claim lasts unrenewed, and how often it's renewed. A killed
 // run's tabs run the extension's scripts again within the lease.
 const LEASE_MS = 30_000;
 const RENEW_MS = 10_000;
 
-/** The calls a run needs, which an older SourceMonkey lacks. */
-// `namedTab` is the newest, and came with the claim calls' present
-// arguments, so an extension without it takes older ones.
-const NEEDED_CALLS = [
-  'claimTab', 'renewRun', 'releaseRun', 'setTabScriptsOff', 'writeRunScript', 'writeGmValues', 'scriptsOnTab', 'tabDocument',
-  'clickNotification', 'watchForNamingNavigation', 'namedTab',
-];
 // How long the extension watches for the navigation that names a tab.
 const NAMING_MS = 10_000;
 
-/** Said when the extension in the browser is older than these calls. */
-const EXTENSION_TOO_OLD = 'SourceMonkey in this browser is older than this sm-dev, so it can\'t run sm-dev\'s scripts. '
-  + 'Update it: rebuild it and reload it in chrome://extensions, or use --temp-browser, which loads this sm-dev\'s copy.';
+// How to bring each side up to date, for the messages below.
+const UPDATE_EXTENSION = 'Update it: rebuild it and reload it in chrome://extensions, or use --temp-browser, which loads this sm-dev\'s copy.';
+const updateSmDev = (): string => `Update sm-dev: ${rebuildAdvice()} Or use --temp-browser, which loads this sm-dev's copy of SourceMonkey.`;
+
+/** Said when the extension in the browser has an older protocol major, or none. */
+const EXTENSION_TOO_OLD = `SourceMonkey in this browser is older than this sm-dev, so it can't run sm-dev's scripts. ${UPDATE_EXTENSION}`;
+
+/**
+ * How the extension's protocol version compares with sm-dev's
+ * (`SM_DEV_PROTOCOL`): an error for a major that differs, a note for a
+ * minor that does, or null when they match.
+ */
+export function compareProtocol(
+  extension: ProtocolVersion | undefined,
+  ours: ProtocolVersion = SM_DEV_PROTOCOL,
+): { error?: string; note?: string } | null {
+  // Built before the version existed.
+  if (!extension || extension.major < ours.major) return { error: EXTENSION_TOO_OLD };
+  if (extension.major > ours.major) {
+    return { error: `This sm-dev is older than SourceMonkey in this browser, so it can't run scripts there. ${updateSmDev()}` };
+  }
+  if (extension.minor < ours.minor) {
+    return { note: `SourceMonkey in this browser is older than this sm-dev, so some of sm-dev's newer features won't work there. ${UPDATE_EXTENSION}` };
+  }
+  if (extension.minor > ours.minor) {
+    return { note: `This sm-dev is older than SourceMonkey in this browser, so it lacks some newer features. ${updateSmDev()}` };
+  }
+  return null;
+}
 
 /** Said when Chrome won't let the extension register user scripts. */
 function userScriptsOff(extensionId: string): string {
@@ -118,9 +138,24 @@ export class ExtensionLink {
   private readonly renewing = new Set<Promise<unknown>>();
   // A worker has been adopted before, so the next is a restart.
   private adopted = false;
+  /** The extension's protocol version, as `open` read it. */
+  private extensionProtocol: ProtocolVersion | undefined;
+  /** For the run to print: how the extension's protocol minor differs from sm-dev's, if it does. */
+  versionNote: string | null = null;
   private readonly onWorker = (worker: Worker): void => {
     if (isSourceMonkeyWorker(worker.url(), this.origin)) void this.adopt(worker).catch(() => undefined);
   };
+
+  /**
+   * Throws, naming `feature`, when the extension's protocol minor is
+   * older than `minor`: for a call or event added in that minor, before
+   * using it.
+   */
+  requireMinor(minor: number, feature: string): void {
+    if ((this.extensionProtocol?.minor ?? 0) < minor) {
+      throw new Error(`${feature} needs a newer SourceMonkey in this browser. ${UPDATE_EXTENSION}`);
+    }
+  }
 
   private constructor(
     private readonly context: BrowserContext,
@@ -138,17 +173,19 @@ export class ExtensionLink {
   /**
    * Connects to the extension in `context`'s browser, for a run. Its
    * tabs run its own scripts, and it hears the extension's events.
-   * Throws `EXTENSION_TOO_OLD` for an extension without the calls this
-   * needs, or `userScriptsOff` when Chrome won't let it run scripts.
+   * Throws when the extension's protocol major differs from sm-dev's
+   * (`compareProtocol`), or `userScriptsOff` when Chrome won't let it
+   * run scripts. A minor that differs leaves `versionNote` set.
    */
   static async open(context: BrowserContext, runId: string): Promise<ExtensionLink> {
     const worker = await findExtensionWorker(context);
     const link = new ExtensionLink(context, runId, worker.url(), await sourceMonkeyOrigin());
-    const missing = await worker.evaluate((names) => {
-      const api = (self as unknown as { SourceMonkey?: Record<string, unknown> }).SourceMonkey ?? {};
-      return names.filter((name) => typeof api[name] !== 'function');
-    }, NEEDED_CALLS);
-    if (missing.length > 0) throw new Error(EXTENSION_TOO_OLD);
+    link.extensionProtocol = await worker.evaluate(
+      () => (self as unknown as { SourceMonkey?: { smDevProtocol?: ProtocolVersion } }).SourceMonkey?.smDevProtocol,
+    );
+    const compared = compareProtocol(link.extensionProtocol);
+    if (compared?.error) throw new Error(compared.error);
+    link.versionNote = compared?.note ?? null;
     // Chrome lists `chrome.userScripts` once the manifest asks for it,
     // but every call fails until the user turns on "Allow User
     // Scripts", which would leave the run's scripts silently unrun.

@@ -63,6 +63,24 @@ entries, banners). Full rules in [docs/diagnostics.md](docs/diagnostics.md#wordi
   file the plumbing in TODO.md.
 - **`Internal error:` prefix** when the user can't act on it.
 
+### sm-dev protocol version
+`SM_DEV_PROTOCOL` in `src/sm-dev-protocol.ts` versions what sm-dev and
+the extension exchange (the calls and events `ExtensionLink` uses),
+since each side can come from a different build. The e2e-only parts of
+`self.SourceMonkey` are always the same build, so they don't count.
+When changing that surface:
+- **Bump the major** when a change needs both sides updated: a run
+  refuses an extension whose major differs.
+- **Bump the minor** for anything else new, including a new sm-dev
+  feature that needs a newer extension.
+  - An extension ahead by a minor must keep working with the older
+    sm-dev.
+  - An sm-dev feature that needs the new minor calls
+    `ExtensionLink.requireMinor` before using it. With an older
+    extension, the person then gets an error saying to update it,
+    rather than a failed call.
+- Reset the minor to 0 on a major bump.
+
 ## Planning vs Implementation
 When the user asks you to implement something, start coding quickly. Do NOT
 spend the entire session planning unless explicitly asked for a plan. If a plan

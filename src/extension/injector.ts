@@ -85,7 +85,8 @@ import {
 import { grantedSubsystems, resolveGrants } from '../gm-api-catalog.js';
 import { resolveScriptWorld, type InjectionWorld } from '../script-world.js';
 import { scanAllStorage } from './storage-scan.js';
-import { isScratchUrl } from './directories.js';
+import { isScratchUrl, scratchRunOf } from './directories.js';
+import { evalHookKey, withEvalHook } from '../eval-hook.js';
 import { canonicalMatchPatterns, hostEndsInTld, matchPatternProblem, tldCoarseGlob } from '../url-match.js';
 import { dlog } from '../debug-log.js';
 import { startPhaseTimer } from '../phase-timing.js';
@@ -362,6 +363,22 @@ export function wrapPreludeEntry(): string {
 const USER_SCOPE_OPEN = '(()=>{';
 const USER_SCOPE_CLOSE = '\n})();';
 
+// The eval hook key (src/eval-hook.ts) for a script in an sm-dev run's
+// test collection (`scratch:///<run>/...`): its run's. None for any
+// other script.
+export function scratchEvalHookKey(fileUrl: string): string | undefined {
+  const run = scratchRunOf(fileUrl);
+  return run ? evalHookKey(run) : undefined;
+}
+
+// The composed user program with the eval hook under `key`, when there
+// is one. `mainStart` is where the script's own source starts in it,
+// after its requires: the IIFE the hook also goes into is looked for
+// there, since a library's own wrapper isn't the script's scope.
+function withScriptEvalHook(program: string, mainStart: number, scriptId: string, key: string | undefined): string {
+  return key ? withEvalHook(program, key, scriptId, mainStart) : program;
+}
+
 // Wrap the whole user program — every `@require` plus the script's own
 // body — as ONE js[] entry. Output shape:
 //
@@ -421,8 +438,12 @@ export function wrapCombinedEntry(args: {
   requireUrls: readonly string[];
   gmBindings: string;
   gmPrelude: string;
+  // sm-dev's eval hook (src/eval-hook.ts), under this key. None for the
+  // person's own scripts.
+  evalHookKey?: string;
 }): string {
   const idLit = jsLit(args.scriptId);
+  const hooked = (program: string, mainStart = 0): string => withScriptEvalHook(program, mainStart, args.scriptId, args.evalHookKey);
   // Declaration preamble — pulls per-script values out of the entry
   // the prelude passes in. The names match what gm-bindings.ts's
   // prelude expects (`__smDecision`, `__smName`, `__smId`,
@@ -445,7 +466,7 @@ export function wrapCombinedEntry(args: {
     // original line N and lets the viewer pass refs through unmapped.
     // `buildSwapEvalBody` mirrors this exactly — see NO_REQUIRE_LAYOUT
     // in composed-source.ts.
-    return head + composeRequiredBody(args.script) + `${USER_SCOPE_CLOSE}});\n//# sourceURL=${args.sourceUrl}\n`;
+    return head + hooked(composeRequiredBody(args.script)) + `${USER_SCOPE_CLOSE}});\n//# sourceURL=${args.sourceUrl}\n`;
   }
 
   // Head occupies generated line 0; user source starts below it.
@@ -454,7 +475,7 @@ export function wrapCombinedEntry(args: {
     mainUrl: args.sourceUrl,
     startLine: USER_SOURCE_START_LINE,
   });
-  const code = head + '\n' + composed.text + `${USER_SCOPE_CLOSE}});\n`;
+  const code = head + '\n' + hooked(composed.text, composed.mainStart) + `${USER_SCOPE_CLOSE}});\n`;
   const map = buildSourceMap({
     file: args.sourceUrl,
     segments: composed.segments,
@@ -732,6 +753,9 @@ export async function buildSwapEvalBody(
   // it occupies generated line 0 exactly as `wrapCombinedEntry`'s wrap
   // head does.
   const head = gmEmit.js + USER_SCOPE_OPEN;
+  // An sm-dev test collection's script keeps its eval hook when swapped.
+  const hookKey = scratchEvalHookKey(script.fileUrl);
+  const hooked = (program: string, mainStart = 0): string => withScriptEvalHook(program, mainStart, script.id, hookKey);
   if (requires.length === 0) {
     // No newline, matching the registered path's no-require branch:
     // the body's first line shares line 0 with the preamble, so
@@ -740,7 +764,7 @@ export async function buildSwapEvalBody(
     // every logged stack line for the majority of scripts, which have
     // no `@require` — and with no segments to map by, the viewer
     // could not detect it, let alone correct it.
-    return { body: head + composeRequiredBody(script) + USER_SCOPE_CLOSE, needsValues: gmEmit.needsValues };
+    return { body: head + hooked(composeRequiredBody(script)) + USER_SCOPE_CLOSE, needsValues: gmEmit.needsValues };
   }
   const composed = composeSource(script, {
     requireUrls: requires.map((r) => buildRequireSourceUrl(logLabel, r.url)),
@@ -759,7 +783,7 @@ export async function buildSwapEvalBody(
     totalLines: 1 + composed.lineCount + 1,
   });
   return {
-    body: head + '\n' + composed.text + USER_SCOPE_CLOSE + '\n' + inlineSourceMapComment(map),
+    body: head + '\n' + hooked(composed.text, composed.mainStart) + USER_SCOPE_CLOSE + '\n' + inlineSourceMapComment(map),
     needsValues: gmEmit.needsValues,
   };
 }
@@ -783,6 +807,10 @@ export interface RegistrationSpecOptions {
   // Tell the wrapper to wait for the SW's check-pending answer (see
   // `mustAskForDecision`). Scratch scripts always do.
   mustAsk?: boolean;
+  // Give the script sm-dev's eval hook under this key (see
+  // src/eval-hook.ts). A script in an sm-dev test collection gets its
+  // run's without being asked; the person's own scripts never get one.
+  evalHookKey?: string;
 }
 
 export async function buildRegistrationSpec(
@@ -945,6 +973,7 @@ export async function buildRegistrationSpec(
     requireUrls: requireSourceUrls,
     gmBindings: gmEmit.js,
     gmPrelude: gmEmit.prelude,
+    evalHookKey: options.evalHookKey ?? scratchEvalHookKey(script.fileUrl),
   });
 
   // Register at document_start regardless of the declared @run-at. The

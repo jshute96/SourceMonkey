@@ -808,6 +808,7 @@ async function runInBrowser(
     return 1;
   }
   held.extension = link;
+  if (link.versionNote) opts.out(`[sm-dev] ${link.versionNote}`);
   const host = new ExtensionHost(link, (name, level, message) => opts.out(`[sm-dev] ${name} ${level}: ${message}`));
   link.onRestart((restored) => opts.out('[sm-dev] SourceMonkey\'s background script restarted, so what the scripts did meanwhile may be missing here.'
     + (restored > 0 ? ` It had lost its hold on ${restored === 1 ? 'one of the run\'s tabs' : `${restored} of the run's tabs`}, which it has again.` : '')));

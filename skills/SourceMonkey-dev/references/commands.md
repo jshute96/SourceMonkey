@@ -119,7 +119,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `snapshot ... [--up N] [--context] [--limit N]` | For each match of `sel` or `--find`: N levels up, or with wrapper divs and small containers; first 5 matches (0: all) |
 | `probe <sel>... [--css] [--html]` | Which match and how many; selector / HTML of the first 10 |
 | `eval <js>` | Evaluate in the page; prints JSON (promises awaited) |
-| `eval --script <js>` | Evaluate in the scripts' world |
+| `eval --script[=<script>] <js>` | Evaluate inside the selected (or named) script, where its `GM_*` APIs, `@require` libraries, top-level declarations and IIFE locals are visible |
 | `eval --file <path>` | Evaluate a JavaScript file |
 | `cdp <Method> [json]` | A raw CDP call on the tab; the result as JSON. A `{{` block or `--file` holds several, one per line (see [cdp.md](cdp.md)) |
 | `screenshot [sel] [--full] <file>` | PNG of the view, the page, or an element |
