@@ -51,6 +51,18 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('eval document.title')).toEqual(['"target"']);
   expect(await run('eval typeof widget')).toEqual(['"undefined"']);
   expect(await run('eval --script widget')).toEqual(['{\n  "clicks": 0\n}']);
+  // Inside the script: its GM_* bindings and top-level declarations.
+  expect(await run('eval --script GM_info.script.name')).toEqual(['"Widget"']);
+  expect(await run('eval --script=Widget button.textContent')).toEqual(['"Add one"']);
+  expect(await run('eval --script=1 typeof GM_log')).toEqual(['"function"']);
+  expect(await run('eval typeof button')).toEqual(['"undefined"']);
+  // Function-body code (await, return) runs there too.
+  expect(await run('eval --script await 0; return input.getAttribute("aria-label")')).toEqual(['"Note"']);
+  // An awaited expression is the value, as in the console.
+  expect(await run('eval --script await Promise.resolve(button.localName)')).toEqual(['"button"']);
+  expect(await run('eval --script missing')).toEqual(['[sm-dev] The expression threw: ReferenceError: missing is not defined']);
+  expect(await run('eval --script=nope 1')).toEqual(['[sm-dev] No loaded script matches nope. Use scripts to list them.']);
+  expect(await run('eval --script= 1')).toEqual(['[sm-dev] ERROR: The --script flag needs a value: --script=<script>']);
   expect(await run('eval document.querySelector("main")')).toEqual(['main#target']);
   expect(await run('eval nothing.here')).toEqual(['[sm-dev] The expression threw: ReferenceError: nothing is not defined']);
   expect(await run('eval throw \'boom\'')).toEqual(['[sm-dev] The expression threw: "boom"']);
@@ -244,6 +256,58 @@ test('a tab closing mid-expression is said as such', async ({ page, fixtureServe
   await page.close();
   await pending;
   expect(lines).toEqual(['[sm-dev] The tab closed before the expression finished']);
+});
+
+test('eval --script reaches a MAIN-world script and a script\'s IIFE, keeps strictness, and says when a script hasn\'t run', async ({ page, fixtureServer, host, attachment, loadScript }) => {
+  const main = await loadScript({
+    relativePath: 'main.user.js',
+    meta: { name: 'Main', match: ['*://*/target.html'], grant: ['none'] },
+    body: '"use strict";\nconst strict = (function () { return this; })() === undefined;\nlet count = 1;',
+  });
+  const other = await loadScript({ relativePath: 'other.user.js', meta: { name: 'Other', match: ['*://*/other.html'], grant: ['GM_log'] }, body: 'window.otherRan = true;' });
+  const iife = await loadScript({
+    relativePath: 'iife.user.js',
+    meta: { name: 'Iife', match: ['*://*/target.html'], grant: ['GM_log'] },
+    body: '(function () {\n  \'use strict\';\n  const hidden = \'inside\';\n})();',
+  });
+  await page.goto(`${fixtureServer.baseUrl}/target.html`);
+  await expect.poll(() => host.reports.started.length).toBe(2);
+  const lines: string[] = [];
+  const tabs = [{ n: 1, page, link: attachment }];
+  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [main, other, iife], out: (l) => lines.push(l), stop: () => undefined };
+  const run = async (line: string) => {
+    lines.length = 0;
+    await runConsoleCommand(line, ctx);
+    return [...lines];
+  };
+  expect(await run('eval --script strict')).toEqual(['true']);
+  // An assignment reaches the script's own let.
+  expect(await run('eval --script count += 1')).toEqual(['2']);
+  expect(await run('eval --script count')).toEqual(['2']);
+  // Inside the script's IIFE, with its GM_* bindings still in reach.
+  expect(await run('eval --script=Iife hidden + " " + typeof GM_log')).toEqual(['"inside function"']);
+  // Other didn't match the page: selected, its code runs in the shared
+  // world as it always did; named, that's a failure.
+  ctx.current = other;
+  expect(await run('eval --script document.title')).toEqual([
+    '[sm-dev] Other hasn\'t run on this page, so this ran in the scripts\' shared world',
+    '"target"',
+  ]);
+  expect(await run('eval --script=Other 1')).toEqual(['[sm-dev] Other hasn\'t run on this page, so its scope can\'t be reached. Load a page it matches, or reload this one.']);
+  expect(await runConsoleCommand('eval --script=Other 1', ctx)).toBe(false);
+});
+
+test('eval --script reaches a page-world script on a page whose CSP forbids eval', async ({ page, fixtureServer, host, attachment, loadScript }) => {
+  const main = await loadScript({ relativePath: 'csp.user.js', meta: { name: 'Csp', match: ['*://*/strict-script-csp.html'], grant: ['none'] }, body: 'const here = 1;' });
+  await page.goto(`${fixtureServer.baseUrl}/strict-script-csp.html`);
+  await expect.poll(() => host.reports.started.length).toBe(1);
+  const lines: string[] = [];
+  const tabs = [{ n: 1, page, link: attachment }];
+  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [main], out: (l) => lines.push(l), stop: () => undefined };
+  // The hook's eval runs inside a CDP evaluation, which Chrome exempts
+  // from the page's policy.
+  await runConsoleCommand('eval --script here', ctx);
+  expect(lines).toEqual(['1']);
 });
 
 test('click takes a button, modifiers and a count, and says which check its element failed', async ({ page, fixtureServer, host, attachment, loadScript }) => {

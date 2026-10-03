@@ -316,10 +316,27 @@ $R screenshot shot.png               # then look at the PNG
 
 ### Seeing into the script: debug state and logging
 
-A script's state is invisible from outside unless it exposes some.
-Build this in while developing; it's cheap and can stay.
+`eval --script` runs inside the selected script (`--script=<script>`
+names another), so it sees what the script's own code sees:
 
-Expose state and functions on `window`:
+```sh
+$R eval --script 'GM_info.script.version'
+$R eval --script 'GM_getValue("prefs")'
+$R eval --script 'config.mode'               # a top-level const of the script
+```
+
+- That covers the script's `GM_*` functions, its `@require`
+  libraries, its top-level declarations, and its world's globals.
+- A script that opens with a `(function () { ... })()` wrapper (or an
+  arrow or `async` one) gets it inside that wrapper, so its locals
+  there are in reach too.
+- Locals inside other functions aren't. Expose them on `window`
+  (below).
+- A selected script that hasn't run on the page falls back to the
+  scripts' shared world, and says so.
+
+For state inside other functions, expose state and functions on
+`window`. Build this in while developing; it's cheap and can stay:
 
 ```js
 const state = { slide: 0, zoom: 1 };
@@ -332,17 +349,11 @@ $R eval --script 'myScript.currentSlide()'
 $R eval --script 'myScript.relayout(); myScript.state'
 ```
 
-- `eval --script` runs in the scripts' world. With any `@grant` other
-  than `none`, that's an isolated world the page can't see, so a
-  `window` property there is private to the script.
-- A `@grant none` script shares the page's world: use plain `eval`,
-  and pick a name the site won't collide with.
-- It reaches what's on `window`, not local variables. Expose what you
-  want to see.
-  - The script's `GM_*` functions aren't there either. Read storage
-    with `values` and `get`, and change it with `set`.
-  - With `@grant none`, `--script` is just the page (there's no
-    `unsafeWindow`).
+- With any `@grant` other than `none`, the script runs in an isolated
+  world the page can't see, so a `window` property there is private
+  to the script.
+- A `@grant none` script shares the page's world: pick a name the site
+  won't collide with. Plain `eval` reaches it too.
 
 Log what happens, and wait for it instead of sleeping:
 

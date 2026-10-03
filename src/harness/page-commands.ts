@@ -17,7 +17,7 @@ import type { Locator, Page, Request } from '@playwright/test';
 import type { ParsedArgs } from './command-args.js';
 import { PART_LIMIT, PROBE_MAX } from './command-list.js';
 import type { ControlledTab } from './console-commands.js';
-import { ScriptThrew } from './page-watch.js';
+import { NoEvalHook, ScriptThrew, type ScriptScope } from './page-watch.js';
 import { readInputFile, writeProblem } from './input-file.js';
 import { notSettledMessage, SETTLE_TIMEOUT_MS, settleTab } from './wait.js';
 import { savePageHtml } from './save-html.js';
@@ -77,7 +77,17 @@ const MODIFIERS = ['Alt', 'Control', 'ControlOrMeta', 'Meta', 'Shift'] as const;
  */
 export interface PageInput extends ParsedArgs {
   userscripts: string[];
+  /** Where `eval --script` runs, resolved from the flag (see `EvalIn`). */
+  evalIn?: EvalIn;
 }
+
+/**
+ * Where `eval --script` runs: a script's own scope, with its name for
+ * messages and whether it was named (`--script=<script>`) or is the
+ * selected one; or the scripts' shared world, with no run script
+ * selected.
+ */
+export type EvalIn = { scope: ScriptScope | null; name: string; named: boolean } | 'scripts';
 
 // Image types `screenshot` can write, by the file's extension.
 const IMAGE_FILE = /\.(png|jpe?g)$/i;
@@ -134,7 +144,7 @@ export async function runPageCommand(
       case 'eval': {
         // Its JavaScript: the rest of the line as typed, its quotes its
         // own, or a block's lines, or a file's.
-        const world = input.flags['--script'] ? 'scripts' : 'page';
+        const evalIn = input.evalIn ?? (input.flags['--script'] ? 'scripts' : 'page');
         const from = input.flags['--file'];
         let expression = [input.text, input.block].filter((part) => part).join('\n');
         if (typeof from === 'string') {
@@ -154,7 +164,25 @@ export async function runPageCommand(
           return;
         }
         let result = '';
-        const evaluated = tab.link.evaluate(expression, world).then((r) => { result = r; });
+        // Why a script has no scope to reach here: not in the extension
+        // at all (it failed to install), or not run in this document.
+        const noScope = typeof evalIn === 'object'
+          ? `${evalIn.name} ${evalIn.scope ? 'hasn\'t run on this page' : 'isn\'t installed in the extension'}`
+          : '';
+        // A selected script with no scope runs its code where `--script`
+        // always did, as said. A named one was asked for, so that's a
+        // failure.
+        const evaluate = (): Promise<string> => {
+          if (typeof evalIn === 'string') return tab.link.evaluate(expression, evalIn);
+          const inScript = evalIn.scope ? tab.link.evaluate(expression, evalIn.scope) : Promise.reject(new NoEvalHook());
+          return inScript.catch((err: unknown) => {
+            if (!(err instanceof NoEvalHook)) throw err;
+            if (evalIn.named) throw err;
+            say(`${noScope}, so this ran in the scripts' shared world`);
+            return tab.link.evaluate(expression, 'scripts');
+          });
+        };
+        const evaluated = evaluate().then((r) => { result = r; });
         try {
           if (!await done(evaluated)) {
             say('The expression opened a dialog, which is waiting for an answer.');
@@ -166,7 +194,11 @@ export async function runPageCommand(
           if (page.isClosed()) say('The tab closed before the expression finished');
           else if (CUT_OFF_BY_NAVIGATION.test((err as Error).message)) say('The page navigated away before the expression finished');
           else {
-            say(err instanceof ScriptThrew ? `The expression threw: ${err.message}` : `Internal error: ${(err as Error).message}`);
+            if (err instanceof NoEvalHook && typeof evalIn === 'object') {
+              say(evalIn.scope
+                ? `${noScope}, so its scope can't be reached. Load a page it matches, or reload this one.`
+                : `${noScope}, so its scope can't be reached`);
+            } else say(err instanceof ScriptThrew ? `The expression threw: ${err.message}` : `Internal error: ${(err as Error).message}`);
             return false;
           }
           return;

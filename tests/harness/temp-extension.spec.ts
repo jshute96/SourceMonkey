@@ -144,7 +144,10 @@ test('an extension run takes the run commands: status, values, set, menu, eval, 
     ['[cmds] count 10', 'get count'],
     // The extension's own world, where `chrome.runtime` is there.
     ['count = 11', 'eval --script typeof chrome.runtime.sendMessage'],
-    ['"function"', 'menu Open'],
+    // Inside the script, through the eval hook the extension gives a
+    // test collection's scripts.
+    ['"function"', 'eval --script GM_getValue("count") + "!"'],
+    ['"11!"', 'menu Open'],
     // Followed into the tab it opens, which runs the run's script.
     ['[T2] [sm-dev] Cmds started on', 'newtab'],
     ['Tab T3 opened', 'stop'],

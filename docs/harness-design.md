@@ -212,8 +212,9 @@ adds nothing the page or its scripts can see:
   the waits.
 - Reads what `wait` needs (DOM activity, requests in flight) from a
   CDP-made world of its own.
-- Evaluates `eval` in the page's world, or in the extension's
-  user-script world for `eval --script`.
+- Evaluates `eval` in the page's world, or inside one script for
+  `eval --script`, through the eval hook the extension gives a test
+  collection's scripts (see [injection.md](injection.md#sm-devs-eval-hook)).
 
 ### `fixture.ts`: the Playwright fixture
 

@@ -787,8 +787,9 @@ User-facing behavior is in [harness-guide.md](harness-guide.md).
     see;
   - `inject` only records the script, so the waits and reports know
     what to expect.
-- `eval --script` runs in the extension's user-script world: the tab's
-  execution context whose origin is the extension's.
+- `eval --script` runs in the script's own scope, in its world: for an
+  isolated script, the tab's execution context whose origin is the
+  extension's (see `eval --script` below).
 
 ### The extension's API
 
@@ -1265,13 +1266,30 @@ The run commands that drive and read a tab's page (`click`, `type`,
   a navigation they started to reach its DOM, then a MutationObserver
   in the page quiet for 100ms, within 3 seconds.
 - `eval` goes through the tab's own CDP session
-  (`PageAttachment.evaluate`), in the page's default context or the
-  scripts' world (the extension's user-script world, for `--script`). Results print as JSON,
-  or as the DevTools console describes an element or function.
+  (`PageAttachment.evaluate`), in the page's default context, or a
+  script's scope for `--script` (below). Results print as JSON, or as
+  the DevTools console describes an element or function.
   - It evaluates as console input (CDP `replMode`: top-level `await`,
     `let` redeclarable). A top-level `return` is a syntax error there,
     so code that fails with that runs again wrapped in
     `(async () => { ... })()`. The syntax error means nothing ran.
+- `eval --script` runs inside one script: the selected one, or the one
+  `--script=<script>` names (`evalScope` in console-commands.ts).
+  - It calls the script's eval hook, a direct `eval` in its scope (see
+    [injection.md](injection.md#sm-devs-eval-hook)), in the script's
+    world. The host says where the hook is kept (`evalHook`): the run's
+    key and the extension's id for the script.
+  - That's not console input: `await` and a top-level `return` are
+    syntax errors. The code is compiled first (`Runtime.compileScript`,
+    which runs nothing), and code with either runs in an async arrow:
+    as its expression when it is one, so `await x` gives x, else as
+    its body.
+  - A page-world script's hook `eval`s under the page's Content
+    Security Policy, but within a CDP evaluation, which Chrome exempts
+    from it.
+  - No hook in the document means the script hasn't run there. The
+    selected script then falls back to the shared scripts' world, as
+    `--script` was before, and says so; a named one is an error.
 - `cdp` opens a fresh CDP session on the tab (`newCDPSession`) for each
   command and detaches it after.
   - Settings the calls make (like `Emulation.*` overrides) end when

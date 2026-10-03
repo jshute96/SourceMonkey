@@ -1177,7 +1177,7 @@ current one.
 | `type <selector> --file <path>` | Types a file's text into an element, a last line break included |
 | `key <keys>...` | Presses keys in order: `key j Shift+ArrowRight Escape` (`keys` works too) |
 | `eval <js>` | Evaluates in the page and prints the result |
-| `eval --script <js>` | Evaluates in the scripts' world |
+| `eval --script[=<script>] <js>` | Evaluates inside the selected script, or the one named |
 | `eval --file <path>` | Evaluates JavaScript from a file |
 | `snapshot [selector] [--visible] [--out file]` | The page (or each element the selector matches) as its accessibility tree, one line per element, each with a ref. `--visible`: only what's on screen. `--out` writes it to a file. `--find <text>`: only elements containing that text (case insensitive). For each match, `--up n` / `--context` add its containers; `--limit n`: how many matches to show (5; 0 for all) |
 | `screenshot [selector] [--full] <file>` | A PNG of what's showing, of the whole page (`--full`), or of one element |
@@ -1221,11 +1221,25 @@ current one.
     code keeps them for later `eval`s.
 - Prints JSON, or an element's or function's description. A promise
   prints what it settles to.
-- `eval --script` runs in the scripts' world, where a script without
-  `@grant none` keeps its globals.
-  - It reaches what scripts put on `window`, not their local variables.
-  - A `@grant none` script runs in the page's world, so plain `eval`
-    reaches it.
+- `eval --script` runs inside the selected script (`scripts` shows
+  it); `--script=<script>` names another, as `scripts` does.
+  - It sees what the script's own code sees: its `GM_*` functions, its
+    `@require` libraries, its top-level `const`/`let`/`function`s, and
+    the globals of its world.
+  - A script that opens with a wrapper function, the usual
+    `(function () { ... })()`, an arrow or `async` one included, gets
+    it inside that function, so its locals are in reach too.
+  - Not the locals inside other functions. Expose what you want to see
+    from there on `window`.
+  - What it declares (`const`, `let`, `var`, `function`) lasts for that
+    one `eval` only. Assigning to the script's variables changes them.
+  - `await x` gives x, as in the console. Longer code with `await`
+    needs a `return` for its value.
+  - A selected script that hasn't run on the page (it doesn't match,
+    or hasn't reached its `@run-at` yet) falls back to the scripts'
+    shared world, and says so. A named one is an error.
+  - How it works: sm-dev's scripts carry a small eval hook in their
+    wrapper (see [injection.md](injection.md#sm-devs-eval-hook)).
 
 ### Snapshots and refs
 
