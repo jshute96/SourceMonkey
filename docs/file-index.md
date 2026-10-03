@@ -245,10 +245,8 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/extension-link.ts` | A run's or fixture test's connection to the real extension: its unique id, worker calls, pushes, claims and lease, events |
 | `src/harness/extension-host.ts` | Fills a run's or fixture test's host (reports, values, menus) from the extension's events, and answers its commands |
 | `src/harness/extension-backend.ts` | Finds SourceMonkey in a browser: its id, whether it's installed and on, and its service worker |
-| `src/harness/cdp-proxy.ts` | A CDP endpoint that shows a client only the run's tabs, for the `--devtools` server to connect to |
-| `src/harness/devtools.ts` | `sm-dev start --devtools`: a Chrome DevTools server per run, and each tab's DevTools page id |
 | `src/harness/run-log.ts` | A run's log file: timestamped names in `/tmp/sm-dev-logs-<user>`, stamped lines, per-run links |
-| `src/harness/tab-refs.ts` | Naming and picking a run's tabs (`T2`, target or page ids), the current tab, the dialog message |
+| `src/harness/tab-refs.ts` | Naming and picking a run's tabs (`T2`, target ids), the current tab, the dialog message |
 | `src/harness/wait.ts` | The `wait` command, when a tab has settled (loaded, scripts started, quiet), and when a load is done |
 | `src/harness/runs.ts` | The runs on this machine: record files, control sockets, and the client connection (`RunClient`) to one |
 | `src/harness/cli.ts` | The `sm-dev` client: global options, `start`, `attach`, `stop`, `exit`, `validate`, `match`, `clear`, `list`, `--stdin`, `--interactive` |
@@ -488,7 +486,6 @@ unit tests.
 | `tests/unit/harness/wait.test.mjs` | Unit tests for `wait`'s delays and the message when a tab doesn't settle |
 | `tests/unit/harness/path-args.test.mjs` | Unit tests for sm-dev's glob matching and file argument expansion |
 | `tests/unit/harness/cli-args.test.mjs` | Unit tests for `sm-dev`'s command line: `start` flags, `match` output, scripts by URL, `--run`, `--` lines, misuse |
-| `tests/unit/harness/devtools.test.mjs` | Unit tests for `start --devtools`: when it is on, and the message when `chrome-devtools` is missing |
 | `tests/unit/harness/page-commands.test.mjs` | Unit tests for how the page commands name keys for `key`, read `click`'s flags and `cdp` calls, and word errors |
 | `tests/unit/harness/command-args.test.mjs` | Unit tests for the command parser: quotes, flags with `=` or not, tabs, text, forms, refused arguments |
 | `tests/unit/harness/snapshot.test.mjs` | Unit tests for `snapshot`: which words are refs, which lines `--visible`, selectors and `--find` keep, the whole page's tree |
@@ -510,12 +507,11 @@ built extension loaded; fixtures in `tests/fixtures/harness.ts`.
 |------|-------------|
 | `tests/harness/console-commands.spec.ts` | The commands typed into `sm-dev start`: `scripts`, `values`, `menu` by M number, dialogs, several tabs, stopped loads |
 | `tests/harness/run-tabs.spec.ts` | `sm-dev start` end to end: followed tabs, `--all`, `--notab`, `load` / `update` / `--watch` reloads, `--from-saved`, sandboxed pages, `--lang` |
-| `tests/harness/cdp-proxy.spec.ts` | The `--devtools` CDP proxy with a plain CDP client: only allowed tabs, in the initial attach, late claims, own sessions |
 | `tests/harness/page-commands.spec.ts` | The run commands that drive and read a page, in both worlds, with dialogs, quoting, and files |
 | `tests/harness/stack-lines.spec.ts` | sm-dev's `threw` reports and console lines name the `@require` or script line a stack frame came from |
 | `tests/harness/wait.spec.ts` | `wait` in its forms, the actions settling on their own, `--nowait`, and what a busy page reports |
 | `tests/harness/browser-launch.spec.ts` | `sm-dev --open-browser`: a browser that outlives sm-dev, started once, and its profile's lock |
-| `tests/harness/run-remote.spec.ts` | `sm-dev start` driven from other shells: `--detach`, `--run`, `--` lines, sent commands, logs, `--devtools`, stuck tabs |
+| `tests/harness/run-remote.spec.ts` | `sm-dev start` driven from other shells: `--detach`, `--run`, `--` lines, sent commands, logs, stuck tabs |
 | `tests/harness/temp-extension.spec.ts` | `--temp-browser` runs: the launched extension, `--values` and local files, run commands, managed scripts (E1) kept out |
 | `tests/harness/extension-state.spec.ts` | Whether sm-dev sees SourceMonkey in a browser: loaded unpacked, absent, or no browser to ask |
 | `tests/harness/fixture.spec.ts` | The consumer fixture from `lib/`: a script against a served page, `gm` and `reports`, the up-front URL check, the explained miss |

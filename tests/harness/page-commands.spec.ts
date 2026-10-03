@@ -39,7 +39,7 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   await page.goto(`${fixtureServer.baseUrl}/target.html`);
   await expect(page.locator('button')).toHaveText('Add one');
 
-  const tabs = [{ n: 1, page, link: attachment, dialogs, targetId: 'ABCDEF0123456789', pageId: 7 }];
+  const tabs = [{ n: 1, page, link: attachment, dialogs, targetId: 'ABCDEF0123456789' }];
   const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(l), stop: () => undefined };
   const run = async (line: string, cwd?: string) => {
     lines.length = 0;
@@ -69,8 +69,8 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('eval document.querySelector("button").textContent')).toEqual(['"Added 1"']);
   expect(await run('eval --script T1 widget.clicks')).toEqual(['1']);
   expect(await run('click \'#nothing\'')).toEqual(['[sm-dev] No element matches #nothing']);
-  // The ids as `tabs` shows them name the tab.
-  expect(await run('eval [targetId=ABCDEF0123456789 pageId=7] document.title')).toEqual(['"target"']);
+  // The id as `tabs` shows it names the tab.
+  expect(await run('eval [targetId=ABCDEF0123456789] document.title')).toEqual(['"target"']);
   expect(await run('hover button')).toEqual(['[sm-dev] Hovered over button']);
   expect(await run('hover button --modifiers Shift --at 2,2')).toEqual(['[sm-dev] Hovered over button with Shift held, the mouse at 2,2 in it']);
   // A command that failed is false, so a line of several stops there.
@@ -519,7 +519,7 @@ test('click and hover say when the mouse can\'t reach the point', async ({ page,
   await page.setViewportSize({ width: 800, height: 600 });
   await page.goto(`${fixtureServer.baseUrl}/target.html`);
   await expect(page.locator('#panel')).toHaveCount(1);
-  const tabs = [{ n: 1, page, link: attachment, dialogs, targetId: 'ABCDEF0123456789', pageId: 7 }];
+  const tabs = [{ n: 1, page, link: attachment, dialogs, targetId: 'ABCDEF0123456789' }];
   const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(l), stop: () => undefined };
   const run = async (line: string) => {
     lines.length = 0;

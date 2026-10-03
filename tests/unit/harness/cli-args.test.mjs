@@ -424,10 +424,6 @@ test('--lang takes language tags, alone or in a list, and refuses anything else'
   ]) assert.deepEqual(run(SCRIPT, '--lang', given), { code: 2, out: message });
 });
 
-test('--devtools refuses the runs it can\'t serve', () => {
-  assert.deepEqual(cliLine('--temp-browser', 'start', SCRIPT, '--devtools'), { code: 2, out: 'ERROR: The --devtools flag can\'t be used with --temp-browser' });
-});
-
 test('--help lists every command, in sections, and how to name things', () => {
   const r = spawnSync(process.execPath, [CLI, '--help'], { encoding: 'utf8' });
   assert.equal(r.status, 0);

@@ -545,11 +545,6 @@ $R cdp T2 Page.getNavigationHistory
 - `cdp` doesn't wait for the page to settle. Run `wait` after it.
 - For events, or state that outlasts one command, connect your own CDP
   client alongside the run (see the reference).
-- For DevTools' own tools (network requests, performance traces,
-  Lighthouse), `start --devtools` runs a Chrome DevTools MCP server on
-  the run's tabs, for the `chrome-devtools` command. MCP (Model Context
-  Protocol) is the protocol agent tools speak. `tabs` then shows each
-  tab's DevTools `pageId`.
 - Things sm-dev can do itself are better done there: it waits for the
   page to settle, and its output lands in the run's stream.
 - Some things need no CDP: `eval history.back()` then `wait`,

@@ -36,7 +36,6 @@ has them log where the tools got in the way.
 - [Saved pages](#saved-pages)
 - [Waiting](#waiting)
 - [Background runs and logs](#background-runs-and-logs)
-- [DevTools alongside a run](#devtools-alongside-a-run)
 - [Writing specs: the Playwright fixture](#writing-specs-the-playwright-fixture)
 - [Known limitations](#known-limitations)
 - [Troubleshooting](#troubleshooting)
@@ -498,7 +497,6 @@ running, --seconds N to watch it for a while, or commands after --.`
 | `--nowait` | Don't wait for the pages to settle |
 | `--seconds N` | Stop the run after N seconds |
 | `--idle-seconds N` | Stop after N idle seconds (default 30 minutes; `0` never) |
-| `--devtools` | Start a Chrome DevTools server for the run |
 
 Details on each are in [`start` options in detail](#start-options-in-detail).
 
@@ -622,13 +620,6 @@ The run's lifetime:
     stop`, so it can't expire mid-test.
 - `--nowait`: don't wait for the pages to settle before continuing. It
   still waits for the scripts to start.
-
-DevTools:
-
-- `--devtools` starts a Chrome DevTools server for the run. See
-  [DevTools alongside a run](#devtools-alongside-a-run).
-  `SM_DEV_DEVTOOLS=1` makes it the default, and `--nodevtools` turns it
-  off again.
 
 ### Which tab `start` uses
 
@@ -978,10 +969,9 @@ The options:
   modified since it was read, so touching a file forces it.
   - It reloads, all at once, the tabs where an updated script runs or
     where its rules now match. Stored values are kept.
-- `status` also shows the DevTools address with `--devtools`. Per
-  script, it gives active or not, the other tabs it is active on, and
-  counts of its menu commands, stored values and errors that are not
-  zero.
+- Per script, `status` gives active or not, the other tabs it is
+  active on, and counts of its menu commands, stored values and errors
+  that are not zero.
 - `menu <label>` piped in while none is registered yet waits a moment
   for a script that is still loading. Typed at the prompt, it answers
   at once.
@@ -1138,9 +1128,6 @@ alongside the run to name the same tab:
 - A command that takes a tab alone (`tabs`, `reload`, `focus`) also
   takes the id: whole, its first 6 or more characters, or pasted as
   shown, `targetId=` and all.
-- With `--devtools`, `tabs` also shows each tab's DevTools page id, as
-  `[targetId=… pageId=4]`. Those commands take either id, pasted on its
-  own.
 
 ### Page dialogs
 
@@ -1178,7 +1165,7 @@ the stream, rather than being answered automatically.
 ## Driving and reading the page
 
 These act on a tab's page, as a person would, and read it back. Each
-takes a tab first (`T2`, `targetId=…`, `pageId=…`), or acts on the
+takes a tab first (`T2`, `targetId=…`), or acts on the
 current one.
 
 | Run command | What it does |
@@ -1612,63 +1599,6 @@ It's what the page and scripts do, not all the replies:
   typed at their prompt aren't repeated.
 - Commands that only look (`status`, `snapshot`) and their replies are
   left out.
-
-## DevTools alongside a run
-
-The run's own commands cover most of what a script needs. For the rest
-of DevTools (network requests, performance traces, Lighthouse), the
-`chrome-devtools` command from Chrome DevTools MCP (a DevTools server
-for agents; MCP is Model Context Protocol), installed with
-`npm i -g chrome-devtools-mcp`, can reach the run's own tabs with
-`start --devtools`:
-
-```sh
-sm-dev start sites/x/y.user.js --devtools --detach
-# [sm-dev] DevTools: chrome-devtools --sessionId=D1 <tool> <pageId> ...
-# [sm-dev] T1 is DevTools page 3
-chrome-devtools --sessionId=D1 take_snapshot 3
-chrome-devtools --sessionId=D1 click 3 1_2     # an element id from the snapshot
-chrome-devtools --sessionId=D1 press_key 3 "Shift+ArrowRight"
-chrome-devtools --sessionId=D1 evaluate_script "() => document.title" --pageId 3
-```
-
-Using it:
-
-- Each tab's page id is printed as it's found, and shown by `tabs`.
-  `status` shows the command to use.
-- Most page tools take the page id first; `evaluate_script` takes it as
-  `--pageId`.
-- The page ids only work with the run's `--sessionId`. DevTools MCP
-  tools in an agent use a server of their own, with other numbers.
-- The session id is the run's id, unless `--run` named it something
-  that isn't hex (as DevTools requires). Then it is a random one,
-  printed on the `DevTools:` line.
-- A tab whose page id isn't found after several tries is named; reload
-  it to try again.
-
-Its lifetime:
-
-- The run starts its DevTools server, and stops it when it ends.
-- If a run is killed, `chrome-devtools --sessionId=D1 stop` stops the
-  one it left behind.
-- Without the `chrome-devtools` command, the run says so and carries on
-  without it.
-- Not with `--temp-browser`, and not on Windows yet.
-
-Things to know:
-
-- DevTools only sees the run's tabs; your other tabs are hidden from
-  it.
-- DevTools makes the run's tabs report that they have focus, even when
-  they don't, which can hide a script's focus bugs. That's why
-  `--devtools` is off by default.
-- If one of the run's tabs stops answering DevTools, all DevTools calls
-  wait on it. The run says so when that happens.
-- `evaluate_script` answers a dialog that opens while it runs with OK.
-  Pass `--dialogAction dismiss`, or answer through the run
-  (`sm-dev accept`) when a dialog matters.
-- To find a tab, the run briefly sets a hidden property on the page's
-  `window`, under `Symbol.for('sm-dev')`.
 
 ## Writing specs: the Playwright fixture
 

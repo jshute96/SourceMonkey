@@ -1,21 +1,18 @@
 // `sm-dev start` as a background process, driven from other commands
 // the way an agent drives it: `list` finds it, its commands given to
 // sm-dev directly (or piped to its stdin) run in it, `stop` ends it. Also
-// `start --detach`, and a line of several commands. And with
-// `--devtools`, its tabs' DevTools page ids, which the
-// `chrome-devtools` command then reaches.
+// `start --detach`, and a line of several commands.
 //
 // The real command line, not `run()` in-process: what's under test is
 // the run registry, the control socket and the processes around them.
-// The browser is a Chromium with a debugging port, since `--devtools`
-// needs one to attach to.
+// The browser is a Chromium with a debugging port, which the run
+// connects to.
 //
-// Each test gets its own runs directory and runtime directory, so its
-// run (D1) never meets a real run, or a real run's DevTools server,
-// which is named by the run's id.
+// Each test gets its own runs directory, so its run (D1) never meets a
+// real run.
 
-import { execFile, spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readlinkSync } from 'node:fs';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
+import { existsSync, readFileSync, readlinkSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -23,11 +20,6 @@ import { launchDebugBrowser, openTab } from '../fixtures/debug-browser.js';
 import { test, expect } from '../fixtures/harness.js';
 
 const CLI = fileURLToPath(new URL('../../lib/harness/cli.js', import.meta.url));
-
-// As the run starts it: no usage statistics or update checks.
-const DEVTOOLS_ENV = { CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS: '1', CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS: '1' };
-
-const devtoolsInstalled = spawnSync('chrome-devtools', ['--version'], { env: { ...process.env, ...DEVTOOLS_ENV } }).status === 0;
 
 interface Run {
   proc: ChildProcess;
@@ -51,8 +43,6 @@ interface Setup {
   piped: (input: string, ...args: string[]) => Promise<string[]>;
   /** `cli`, with its exit code. */
   cliExit: (...args: string[]) => Promise<{ code: number | null; lines: string[] }>;
-  /** Runs a `chrome-devtools` command in the run's session, for its output. */
-  devtools: (...args: string[]) => Promise<string>;
   /**
    * `sm-dev start` in the background, its stdin closed, showing what the
    * run prints until it is stopped (`--seconds`, long). `cdp`: the
@@ -74,18 +64,15 @@ function within<T>(work: Promise<T>, ms: number): Promise<T | undefined> {
 }
 
 // A headless Chromium with a debugging port, and directories of the
-// test's own for runs and DevTools servers.
+// test's own for runs and logs.
 async function setUp(): Promise<Setup> {
   const browser = await launchDebugBrowser();
   const { port, dir } = browser;
   const env = {
     ...process.env,
-    ...DEVTOOLS_ENV,
     SM_DEV_RUNS_DIR: path.join(dir, 'runs'),
     SM_DEV_LOGS_DIR: path.join(dir, 'logs'),
-    XDG_RUNTIME_DIR: path.join(dir, 'runtime'),
   };
-  mkdirSync(env.XDG_RUNTIME_DIR, { mode: 0o700 });
   const runs: ChildProcess[] = [];
   const cliIn = (cwd: string, ...args: string[]): Promise<string[]> => new Promise((resolve) => {
     execFile(process.execPath, [CLI, ...args], { env, cwd, timeout: 30_000 }, (_err, stdout, stderr) => {
@@ -103,13 +90,9 @@ async function setUp(): Promise<Setup> {
     });
     child.stdin?.end(input);
   });
-  const devtools = (...args: string[]): Promise<string> => new Promise((resolve) => {
-    execFile('chrome-devtools', ['--sessionId=D1', ...args], { env, timeout: 30_000 }, (_err, stdout) => resolve(stdout));
-  });
   return {
     env,
     port,
-    devtools,
     cli: (...args) => cliIn(process.cwd(), ...args),
     cliIn,
     piped,
@@ -147,15 +130,12 @@ async function setUp(): Promise<Setup> {
       });
       return { proc, lines, waitFor };
     },
-    // Runs first, so each stops its DevTools server while its files are
-    // still there; then any server a failed test left; then the browser,
-    // which removes the directories.
+    // Runs first, then the browser, which removes the directories.
     cleanup: async () => {
       for (const proc of runs) {
         if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGTERM');
         await within(exited(proc), 10_000);
       }
-      if (devtoolsInstalled) await devtools('stop');
       await browser.close();
     },
   };
@@ -495,60 +475,6 @@ test('a run logs its stream and the commands that change something', async ({ fi
     expect(readlinkSync(path.join(path.dirname(log), 'D1.log'))).toBe(path.basename(log));
   } finally {
     await setup.cli('stop', '--all');
-    await setup.cleanup();
-  }
-});
-
-test('--devtools reports each tab\'s page id, which chrome-devtools reaches', async ({ fixtureServer, scriptsDir }) => {
-  test.skip(!devtoolsInstalled, 'The chrome-devtools command is not installed');
-  test.setTimeout(60_000);
-  const setup = await setUp();
-  try {
-    const file = scriptsDir.write({
-      relativePath: 'devtools.user.js',
-      meta: { name: 'DevTools', match: ['*://*/target.html'] },
-      body: `console.log('[devtools] on ' + document.title);`,
-    });
-    const url = `${fixtureServer.baseUrl}/target.html`;
-    const run = setup.startRun([file, url, '--root', scriptsDir.path, '--devtools']);
-    await run.waitFor(/^\[sm-dev\] DevTools: chrome-devtools --sessionId=D1 /);
-    const first = (await run.waitFor(/^\[sm-dev\] T1 is DevTools page \d+$/)).match(/(\d+)$/)![1];
-    // The run's own server, not one a tool call would start on its own
-    // (with a browser of its own) if the run's had gone.
-    expect(await setup.devtools('status')).toContain('is running');
-
-    // A second tab on the same URL: the one case only the marker can
-    // tell apart.
-    await setup.cli('--run', 'D1', 'newtab', url);
-    const second = (await run.waitFor(/^\[sm-dev\] T2 is DevTools page \d+$/)).match(/(\d+)$/)![1];
-    expect(second).not.toBe(first);
-
-    // The id names the run's tab in DevTools' own numbering.
-    expect(await setup.devtools('take_snapshot', first)).toContain('RootWebArea "target"');
-    // The run lists both ids with the tab, and takes either back,
-    // or both as shown.
-    const t1 = (await setup.cli('--run', 'D1', 'tabs')).find((l) => /^[* ] T1: /.test(l))!;
-    const ids = t1.match(/(\[targetId=[0-9A-F]+ pageId=\d+\])$/)![1];
-    expect(ids).toContain(`pageId=${first}]`);
-    expect(await setup.cli('--run', 'D1', 'tabs', `pageId=${first}`)).toEqual([`[sm-dev] The page commands now act on T1 (${url})`]);
-    expect(await setup.cli('--run', 'D1', 'tabs', `pageId=${second}`)).toEqual([`[sm-dev] The page commands now act on T2 (${url})`]);
-    expect(await setup.cli('--run', 'D1', 'tabs', ids)).toEqual([`[sm-dev] The page commands now act on T1 (${url})`]);
-    // A tab that isn't the run's, stopped on a dialog: DevTools sees
-    // only the run's tabs, so it neither lists this one nor waits on it.
-    await openForeignDialogTab(setup.port, `${fixtureServer.baseUrl}/other.html`);
-    const started = Date.now();
-    const pages = await setup.devtools('list_pages', '--output-format=json');
-    expect(Date.now() - started).toBeLessThan(5000);
-    expect((JSON.parse(pages) as { pages: { id: number }[] }).pages.map((p) => String(p.id)).sort()).toEqual([first, second].sort());
-
-    // The marker the lookup used is gone again.
-    expect(await setup.devtools('evaluate_script', '() => Symbol.for("sm-dev") in window', '--pageId', first)).toContain('false');
-
-    await setup.cli('stop', 'D1');
-    expect(await exited(run.proc)).toBe(0);
-    // The run's DevTools server went with it.
-    expect(await setup.devtools('status')).toContain('not running');
-  } finally {
     await setup.cleanup();
   }
 });

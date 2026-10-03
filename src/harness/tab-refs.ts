@@ -1,5 +1,5 @@
 // Naming and picking a run's tabs, for the commands that take one
-// (console-commands.ts, wait.ts): `T2`, its target or DevTools page id,
+// (console-commands.ts, wait.ts): `T2`, its target id,
 // the current tab, and what to say when one is stopped on a dialog.
 
 import type { Dialog } from '@playwright/test';
@@ -12,7 +12,7 @@ export const NO_TABS = '[sm-dev] No tabs are active. Use newtab to open one.';
 // A tab named before a page command's own words: `T2`, or an id as the
 // output shows one. A bare hex prefix isn't taken, since it could be a
 // selector.
-export const TAB_ARG = /^(\[?(targetId|pageId)=\S+|[Tt]\d+)$/i;
+export const TAB_ARG = /^(\[?targetId=\S+|[Tt]\d+)$/i;
 
 export function tabName(tab: ControlledTab): string {
   return `T${tab.n}`;
@@ -38,21 +38,11 @@ const MIN_TARGET_ID_PREFIX = 6;
 /**
  * The tab a typed argument names: `T2`, or its CDP target id (or the
  * start of one, if only one open tab's id starts that way), bare or as
- * the output shows it (`[targetId=...]`), or its DevTools page id as
- * `pageId=4`.
+ * the output shows it (`[targetId=...]`).
  */
 export function pickTab(ctx: ConsoleContext, input: string): ControlledTab | null {
-  // Both ids as `tabs` shows them, `[targetId=... pageId=4]`: the target
-  // id names the tab.
-  const typed = input.replace(/^\[(targetId=[0-9a-f]+)\s+pageId=\d+\]$/i, '$1');
-  const page = /^\[?pageId=(\d+)\]?$/i.exec(typed);
-  if (page) {
-    const tab = ctx.tabs().find((t) => t.pageId === Number(page[1]));
-    if (!tab) ctx.out(`[sm-dev] No open tab is DevTools page ${page[1]}. Use tabs to list them.`);
-    return tab ?? null;
-  }
   // As copied from the output: `targetId=ABC...`, brackets and all.
-  const arg = typed.replace(/^\[?targetId=([0-9a-f]+)\]?$/i, '$1');
+  const arg = input.replace(/^\[?targetId=([0-9a-f]+)\]?$/i, '$1');
   if (arg.length >= MIN_TARGET_ID_PREFIX && /^[0-9a-f]+$/i.test(arg)) {
     const upper = arg.toUpperCase();
     const hits = ctx.tabs().filter((t) => t.targetId?.toUpperCase().startsWith(upper));
