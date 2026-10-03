@@ -9,12 +9,12 @@ import type { ConsoleMessage } from '@playwright/test';
 import { ROOT } from '../script-source-url.js';
 import { displayRefText, parseStackRefs } from '../stack-link.js';
 
-// Every URL SourceMonkey injects code under: the scripts, and its own
+// Every URL SourceMonkey runs code under: the scripts, and its own
 // prelude, bridge and GM runtime, whose failures are ours to show too.
 const OURS = `${ROOT}/`;
 
 // A script's main body, `<ROOT>/<folder>/<name>.user.js`, as a stack
-// frame (`:line:col` follows). The harness concatenates `@require`s
+// frame (`:line:col` follows). The extension concatenates `@require`s
 // into it, so their frames carry this URL too.
 const SCRIPT_BODY_FRAME = new RegExp(`${ROOT.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}/[^/\\s]+/[^/\\s]+\\.user\\.js:`);
 
@@ -52,9 +52,9 @@ export function showConsoleLine(line: ConsoleLine, pageErrors: boolean): boolean
 export interface PageErrorOptions {
   pageErrors: boolean;
   /**
-   * Whether the harness host already reports errors a script body
-   * threw (as `<name> threw:`). The extension's reports come from its
-   * Log tab instead, later, so there the page's copy stays.
+   * Whether the host already reports errors a script body threw (as
+   * `<name> threw:`, from the extension's events), so the page's copy
+   * isn't shown again.
    */
   hostReports: boolean;
 }

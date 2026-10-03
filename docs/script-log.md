@@ -34,7 +34,7 @@ Notes on the storage shape:
 - Single-array (rather than one-key-per-entry) keeps the log-pane
   render cheap — no scan-all-keys on open.
 - Concurrent appends for the **same script** are serialized through
-  an in-memory promise chain in `src/script-log.ts` so the
+  an in-memory promise chain in `src/extension/script-log.ts` so the
   read/modify/write window doesn't lose writes.
 - Cross-script appends still run concurrently.
 
@@ -165,7 +165,7 @@ Two naming notes worth keeping:
 
 ## API
 
-`src/script-log.ts` exports the public surface:
+`src/extension/script-log.ts` exports the public surface:
 
 - `appendScriptLog(scriptId, input)` — async write. Promise resolves
   once the entry is persisted. Also bumps `loglevel:<scriptId>` when
@@ -225,7 +225,7 @@ Rule: if a script's status column or viewer pane shows a failure, that
 script's Log explains it. A badge the user can't click through to a
 reason is worse than no badge.
 
-`loadStateLogEntry` (`src/script-store.ts`) is the single mapping from
+`loadStateLogEntry` (`src/extension/script-store.ts`) is the single mapping from
 a row's persisted state to the entry it warrants:
 
 | Row state | `state` | Level | Message |
@@ -256,13 +256,13 @@ way whichever path reported it:
 Beyond the load pipeline:
 
 - **Rejected registration** (`registerWithFallback` in
-  `src/injector.ts`, source `chrome-injector`) — Chrome refused the
+  `src/extension/injector.ts`, source `chrome-injector`) — Chrome refused the
   script's spec, so it never runs even though its row loaded fine.
   Error level, `state: 'rejected'`. The status cell says REJECTED for
   as long as the refusal stands; the Log is where the reason gets a
   timestamp and a permanent home. See
   [injection.md](injection.md#rejected-registrations).
-- **Outdated** (`probeOneScript` in `src/script-updater.ts`, source
+- **Outdated** (`probeOneScript` in `src/extension/script-updater.ts`, source
   `version-probe`) — an upstream copy moved ahead of ours. Warning
   level, `state: 'outdated'`; the probe going quiet again logs
   `Up to date again` with `state: 'ok'`. Restated at boot with source
@@ -393,7 +393,7 @@ naming what recovered:
 - `Refresh succeeded again (collection is reachable)`
 - `This collection is readable again`
 - `Chrome accepted this script's registration, so it runs again`
-  (`logRecoveries` in `src/injector.ts`, source `chrome-injector`)
+  (`logRecoveries` in `src/extension/injector.ts`, source `chrome-injector`)
 
 This matters most when the bytes didn't change — e.g. a `@require`
 host that starts answering again clears the failure without bumping
@@ -424,7 +424,7 @@ tracked in `TODO.md`.
 
 ## What gets logged today
 
-- **Refresh paths** (`src/script-updater.ts`):
+- **Refresh paths** (`src/extension/script-updater.ts`):
   - `Checking for updates` (info) — ahead of any outcome worth
     reporting; omitted when the check has nothing to say (see
     [How a check frames itself](#how-a-check-frames-itself)).
@@ -462,7 +462,7 @@ tracked in `TODO.md`.
     record.
   - Collection / refresh-all paths route per-script outcomes through the
     same helper so each affected script gets one entry.
-- **Injector** (`registerWithFallback` in `src/injector.ts`, source
+- **Injector** (`registerWithFallback` in `src/extension/injector.ts`, source
   `chrome-injector`):
   - `Chrome rejected this script's registration, so it will not
     run: <reason>` (error) — the spec was refused, so the script never
@@ -470,13 +470,13 @@ tracked in `TODO.md`.
     Chrome's own wording, verbatim, because it names the offending
     header value.
     - The sentence is built by `describeRejection`
-      (`src/script-rejection.ts`), shared with the viewer's message
+      (`src/extension/script-rejection.ts`), shared with the viewer's message
       bar so one problem keeps one wording.
     - Written on every refused attempt, not just when the state
       changes — see
       [injection.md](injection.md#rejected-registrations).
 - **Add** (`emitInitialLoadLog` in
-  `src/script-store.ts`, source `add`):
+  `src/extension/script-store.ts`, source `add`):
   - The same load-failure entry, for a script that lands broken on its
     very first load. The add path bypasses the updater, so without
     this a brand-new INVALID row would have an empty Log.
@@ -488,7 +488,7 @@ tracked in `TODO.md`.
     long-broken script would show a red badge over an empty Log.
   - The OUTDATED row too, for a row whose persisted probe is still
     ahead of it — same reasoning, same wording as the probe's own row.
-- **Update probes** (`src/script-updater.ts`, source `version-probe`):
+- **Update probes** (`src/extension/script-updater.ts`, source `version-probe`):
   - `Newer version <v> at <update|download> URL (running <v>): <url>`
     (warning) — an `@updateURL` / `@downloadURL` declares a version
     ahead of the copy we run. Emitted only when the newer version
@@ -496,8 +496,8 @@ tracked in `TODO.md`.
     add a row every check. Nothing is logged for a probe that fails,
     finds nothing newer, or is skipped as still-fresh. See
     [updates.md](updates.md).
-- **Parser** (`extractStartupLogs` in `src/script-store.ts`, replayed
-  by `emitScriptOutcomeLog` in `src/script-updater.ts`):
+- **Parser** (`extractStartupLogs` in `src/script-build.ts`, replayed
+  by `emitScriptOutcomeLog` in `src/extension/script-updater.ts`):
   - `Ignoring unsupported @grant <names>` (warning) — emitted
     once per loaded content version, immediately after the
     `Loaded new content` row. Detection happens at parse time and is
@@ -528,7 +528,7 @@ tracked in `TODO.md`.
     `chrome.runtime.sendMessage` can't carry non-cloneable values
     and the Log tab is text-only.
 - **window.close / window.focus failures** (`handleWindowControl` in
-  `src/background.ts`, source `gm-window`, `tabId` attached):
+  `src/extension/background.ts`, source `gm-window`, `tabId` attached):
   - `window.close: <reason>` / `window.focus: <reason>` (warning) —
     the tab was already gone, or `chrome.windows` was unavailable. A
     window manager that declines to raise the window is NOT a failure
@@ -540,7 +540,7 @@ tracked in `TODO.md`.
     console with it — the Log tab is the only place a user can look
     afterwards.
 - **GM_download failures** (`sendDownloadEvent` in
-  `src/background.ts`, source `gm-download`, `tabId` attached):
+  `src/extension/background.ts`, source `gm-download`, `tabId` attached):
   - `GM_download <reason> (<url>)` (warning) — a download that was
     refused (`not_permitted`), interrupted (`not_succeeded`, with
     Chrome's interrupt reason), or timed out. A file that silently
@@ -551,7 +551,7 @@ tracked in `TODO.md`.
     a SourceMonkey malfunction.
   - Successful downloads are **not** logged — a batch downloader fires
     hundreds and would push everything else past `LOG_CAP`.
-- **Wrapper reports** (`src/background.ts`'s `recordScriptReport`):
+- **Wrapper reports** (`src/extension/background.ts`'s `recordScriptReport`):
   - `sm:start` (info) — wrapper reached its body in a tab.
   - `sm:swapped` (info) — reload fast-path swapped in newer content.
   - `sm:abandoned` (warning) — wrapper skipped because the SW told it
@@ -620,7 +620,7 @@ tracked in `TODO.md`.
 ## Export
 
 The Log tab's **Save** and **Copy** buttons hand out the same CSV text,
-built by `formatLogCsv` in `src/log-format.ts`. (Ctrl-A on the tab
+built by `formatLogCsv` in `src/extension/log-format.ts`. (Ctrl-A on the tab
 selects the table itself instead — see
 [script-viewer.md](script-viewer.md#layout).)
 
@@ -642,7 +642,7 @@ Format:
       the table shows them (see below). Exporting the stored text would
       name the `.user.js` at a generated line inside the combined
       injected entry — the coordinate the Log tab exists to correct.
-  - `Time` / `Source` come from `src/log-format.ts`; the mapped
+  - `Time` / `Source` come from `src/extension/log-format.ts`; the mapped
     `Message` needs the viewer's tabs and the script's current layout,
     so `formatLogCsv` takes that renderer as an argument.
 - Quoted when the value contains the separator, a quote, or any
@@ -715,15 +715,12 @@ Behavior:
 ### Other readers of stacks
 
 - sm-dev prints stacks as text: `threw` reports, console lines that
-  carry a stack (`console.error(err)`), and with `--extension` the Log
-  tab's entries.
+  carry a stack (`console.error(err)`), and the Log tab's entries.
 - It rewrites them with `remapStackText` (`src/stack-link.ts`), the
   same `remapStackRef` applied to every ref in a string.
 - The layout comes from `stackLayout` (`src/composed-source.ts`), the
-  helper the Log tab uses too:
-  - the harness computes it when it prepares the script;
-  - `--extension` runs ask the service worker for the stored script's
-    (`getStackLayout` on its test surface).
+  helper the Log tab uses too. sm-dev asks the service worker for the
+  pushed script's (`getStackLayout` on its test surface).
 - Refs from scripts it doesn't know stay as they were. So do refs to
   an entry URL that scripts with different layouts share (two
   `foo.user.js` files in one sm-dev run), rather than risk naming the

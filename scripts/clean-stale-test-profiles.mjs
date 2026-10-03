@@ -11,10 +11,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-// Chromium profiles, checked for liveness before removal. The other two
-// are plain data dirs (ScriptsDir and its `sm-parent-` variants) with no
-// process attached, where age alone is a sufficient signal.
-const PROFILE_PREFIX = 'sourcemonkey-test-';
+// Chromium profiles, checked for liveness before removal: the launcher's
+// (src/harness/extension-launch.ts, which an sm-dev run's temp browser
+// shares, kept while its browser is live) and the older e2e name. The
+// data prefixes are plain dirs (ScriptsDir and its `sm-parent-`
+// variants) with no process attached, where age alone is a sufficient
+// signal.
+const PROFILE_PREFIXES = ['sm-dev-extension-', 'sourcemonkey-test-'];
 const DATA_PREFIXES = ['sourcemonkey-scripts-', 'sm-parent-'];
 
 // Long enough that a dir belonging to a run starting right now in
@@ -52,7 +55,7 @@ function sweep() {
   let removed = 0;
 
   for (const name of fs.readdirSync(tmp)) {
-    const isProfile = name.startsWith(PROFILE_PREFIX);
+    const isProfile = PROFILE_PREFIXES.some((p) => name.startsWith(p));
     const isData = DATA_PREFIXES.some((p) => name.startsWith(p));
     if (!isProfile && !isData) continue;
 

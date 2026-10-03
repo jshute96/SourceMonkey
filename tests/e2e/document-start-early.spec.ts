@@ -49,7 +49,7 @@ test.describe('document-start runs before the page', () => {
       return got.some((s) => s.js.some((j) => (j.code ?? '').includes('"mustAsk":true')));
     }));
     expect(await flag()).toBe(false);
-    await sm.claimTab(tabId, 'R1', false, 60_000);
+    await sm.claimTab(tabId, 'R1', 60_000);
     expect(await flag()).toBe(true);
     await sm.releaseRun('R1');
     await expect.poll(flag).toBe(false);

@@ -10,12 +10,9 @@ export {
   type PreparedScript,
   type MatchExplanation,
   type InjectionWorld,
-  type RunAt,
-  type RegistrationEntries,
 } from './prepare.js';
-export type { StoredScript, ScriptMatching, StartupLog } from '../script-store.js';
+export type { StoredScript, ScriptMatching, StartupLog } from '../script-build.js';
 export type { DiagnosticLocation } from '../diagnostic-location.js';
-export type { ApiSubsystem } from '../gm-api-catalog.js';
 export { checkParseNode } from './parse-check-node.js';
 export {
   HarnessHost,
@@ -25,15 +22,13 @@ export {
   type StartReport,
   type ErrorReport,
   type SkipReport,
-  type LogReport,
   type XhrRecord,
   type TabRecord,
   type MenuCommandRecord,
   type NotificationRecord,
   type DownloadRecord,
-  type BrowserActions,
-  type OpenedTab,
   type RequestInterceptor,
 } from './host.js';
-export { attachPage, PageAttachment, readUserAgentData, type InjectOptions } from './inject.js';
+export { ExtensionHost } from './extension-host.js';
+export { attachPage, PageAttachment, type InjectOptions } from './page-watch.js';
 export { test, expect, type GmApi, type ReportsApi, type LoadOptions, type HarnessFixtures } from './fixture.js';

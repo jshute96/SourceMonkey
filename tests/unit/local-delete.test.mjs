@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { copyDeletePlan, deletableCopyPath, deleteCopyFiles } from '../../dist/local-delete.js';
+import { copyDeletePlan, deletableCopyPath, deleteCopyFiles } from '../../dist/extension/local-delete.js';
 
 const DIR = '/home/me/Downloads';
 const COPIES = '/home/me/Downloads/SourceMonkey';

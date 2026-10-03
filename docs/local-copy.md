@@ -5,10 +5,10 @@ on disk — and writing an editable copy into a local directory, where
 ordinary file-editing workflows change it and SourceMonkey runs the
 result.
 
-- Logic and the write: [`src/local-copy.ts`](../src/local-copy.ts)
-- Dialog: [`src/copy-dialog.ts`](../src/copy-dialog.ts)
+- Logic and the write: [`src/extension/local-copy.ts`](../src/extension/local-copy.ts)
+- Dialog: [`src/extension/copy-dialog.ts`](../src/extension/copy-dialog.ts)
 - Button and what follows a copy: `makeLocalCopyControl` in
-  [`src/userscript.ts`](../src/userscript.ts)
+  [`src/extension/userscript.ts`](../src/extension/userscript.ts)
 - Tests: `tests/e2e/local-copy.spec.ts`, `tests/unit/local-copy.test.mjs`
 
 Related: [local-delete.md](local-delete.md) (taking a copy back off

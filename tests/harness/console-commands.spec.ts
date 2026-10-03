@@ -9,7 +9,6 @@ import path from 'node:path';
 
 import { test, expect } from '../fixtures/harness.js';
 import { DialogTracker, runConsoleCommand, type ConsoleContext } from '../../lib/harness/console-commands.js';
-import { attachPage } from '../../lib/harness/inject.js';
 
 test.describe('sm-dev typed commands', () => {
   test('scripts picks the script values, get and set act on', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {
@@ -21,7 +20,7 @@ test.describe('sm-dev typed commands', () => {
     const first = await loadScript(spec('First', 'one'));
     const second = await loadScript(spec('Second', 'two'));
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
-    await expect.poll(() => [host.getValue(first.spec!.id, 'who'), host.getValue(second.spec!.id, 'who')]).toEqual(['one', 'two']);
+    await expect.poll(() => [host.getValue(first.id!, 'who'), host.getValue(second.id!, 'who')]).toEqual(['one', 'two']);
 
     const lines: string[] = [];
     const tabs = [{ n: 1, page, link: attachment }];
@@ -41,8 +40,8 @@ test.describe('sm-dev typed commands', () => {
     expect(await run('script 2')).toEqual([`[sm-dev] Selected Second (${scriptsDir.path}/second.user.js)`]);
     expect(await run('get who')).toEqual(['  who = "two"']);
     expect(await run('set who "changed"')).toEqual(['[sm-dev] Set who (Second)']);
-    expect(host.getValue(second.spec!.id, 'who')).toBe('changed');
-    expect(host.getValue(first.spec!.id, 'who')).toBe('one');
+    expect(host.getValue(second.id!, 'who')).toBe('changed');
+    expect(host.getValue(first.id!, 'who')).toBe('one');
     // By exact file name, or by a piece of a name that only one has.
     expect(await run('scripts first.user.js')).toEqual([`[sm-dev] Selected First (${scriptsDir.path}/first.user.js)`]);
     expect(await run('scripts cond')).toEqual([`[sm-dev] Selected Second (${scriptsDir.path}/second.user.js)`]);
@@ -60,10 +59,10 @@ test.describe('sm-dev typed commands', () => {
     // Several lines of JSON, as a {{ block gives them, or from a file,
     // the flag before the key or after it.
     expect(await run('set prefs\n{\n  "units": "metric"\n}')).toEqual(['[sm-dev] Set prefs (Second)']);
-    expect(host.getValue(second.spec!.id, 'prefs')).toEqual({ units: 'metric' });
+    expect(host.getValue(second.id!, 'prefs')).toEqual({ units: 'metric' });
     writeFileSync(path.join(scriptsDir.path, 'prefs.json'), '{ "units": "imperial" }\n');
     expect(await run('set prefs --file prefs.json')).toEqual(['[sm-dev] Set prefs (Second)']);
-    expect(host.getValue(second.spec!.id, 'prefs')).toEqual({ units: 'imperial' });
+    expect(host.getValue(second.id!, 'prefs')).toEqual({ units: 'imperial' });
     expect(await run('set --file prefs.json other')).toEqual(['[sm-dev] Set other (Second)']);
     writeFileSync(path.join(scriptsDir.path, 'bad.json'), '{ units: 1 }');
     expect(await run('set prefs --file bad.json')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The file bad\.json is not JSON: \S/)]);
@@ -71,17 +70,17 @@ test.describe('sm-dev typed commands', () => {
     // A quoted path, with a space in it.
     writeFileSync(path.join(scriptsDir.path, 'my prefs.json'), '{ "units": "si" }');
     expect(await run('set spaced --file "my prefs.json"')).toEqual(['[sm-dev] Set spaced (Second)']);
-    expect(host.getValue(second.spec!.id, 'spaced')).toEqual({ units: 'si' });
+    expect(host.getValue(second.id!, 'spaced')).toEqual({ units: 'si' });
     // The key is on the command's line, not the block's first.
     expect(await run('set\nfoo 1')).toEqual(['[sm-dev] ERROR: The set command needs a key and a JSON value, e.g. set units "metric"']);
     expect(await run('set prefs\n{ "a": 1,\n}')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The value of prefs is not JSON: \S/)]);
     // Single quotes around the JSON, as a shell would take them.
     expect(await run('set quoted \'["a"]\'')).toEqual(['[sm-dev] Set quoted (Second)']);
-    expect(host.getValue(second.spec!.id, 'quoted')).toEqual(['a']);
+    expect(host.getValue(second.id!, 'quoted')).toEqual(['a']);
     expect(await run('set prefs --flie x.json')).toEqual(['[sm-dev] ERROR: The set command has no --flie flag. It takes --file, --force.']);
     expect(await run('set prefs --file')).toEqual(['[sm-dev] ERROR: The --file flag needs a value: --file <path>']);
     expect(await run('set --file prefs.json')).toEqual(['[sm-dev] ERROR: The set command takes a key and one file, e.g. set units --file units.json']);
-    expect(host.getValue(second.spec!.id, 'prefs')).toEqual({ units: 'imperial' });
+    expect(host.getValue(second.id!, 'prefs')).toEqual({ units: 'imperial' });
   });
 
   test('menu lists commands by script, and fires one by its M number', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {
@@ -105,10 +104,10 @@ test.describe('sm-dev typed commands', () => {
 
     expect(await run('menu')).toEqual(['Menu commands:', `* 1: Menus (${scriptsDir.path}/menus.user.js)`, '    M1: Say one', '    M2: Say two']);
     expect(await run('menu M2')).toEqual(['[sm-dev] Fired "Say two"']);
-    await expect.poll(() => host.getValue(script.spec!.id, 'said')).toBe(2);
+    await expect.poll(() => host.getValue(script.id!, 'said')).toBe(2);
     expect(await run('menu Say one')).toEqual(['[sm-dev] Fired "Say one"']);
     expect(await run('menu \'Say one\'')).toEqual(['[sm-dev] Fired "Say one"']);
-    await expect.poll(() => host.getValue(script.spec!.id, 'said')).toBe(1);
+    await expect.poll(() => host.getValue(script.id!, 'said')).toBe(1);
     // A wrong name is reported at once while others are registered.
     const started = Date.now();
     expect(await run('menu abc')).toEqual(['[sm-dev] No menu command named "abc" is registered. Use menu to list them.']);
@@ -148,17 +147,17 @@ test.describe('sm-dev typed commands', () => {
     expect(await run('set name "x"')).toEqual(blocked);
     expect(await run('dismiss now')).toEqual(['[sm-dev] ERROR: The dismiss command takes no arguments']);
     expect(await run('accept Alice')).toEqual(['[sm-dev] Accepted the dialog']);
-    await expect.poll(() => host.getValue(script.spec!.id, 'name')).toBe('Alice');
+    await expect.poll(() => host.getValue(script.id!, 'name')).toBe('Alice');
     expect(await run('accept')).toEqual(['[sm-dev] No dialog is open']);
 
     // A later prompt is tracked as the open one, not cleared by the
     // first one closing.
     await run('menu M1');
     expect(await run('accept')).toEqual(['[sm-dev] Accepted the dialog']);
-    await expect.poll(() => host.getValue(script.spec!.id, 'name')).toBe('Bob');
+    await expect.poll(() => host.getValue(script.id!, 'name')).toBe('Bob');
   });
 
-  test('with several tabs, commands act on the picked one, or on all', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {
+  test('with several tabs, commands act on the picked one, or on all', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir, watchPage }) => {
     const script = await loadScript({
       relativePath: 'menus.user.js',
       meta: { name: 'Menus', match: ['*://*/target.html', '*://*/other.html'], grant: ['GM_registerMenuCommand', 'GM_setValue'] },
@@ -168,7 +167,7 @@ test.describe('sm-dev typed commands', () => {
     const other = `${fixtureServer.baseUrl}/other.html`;
     await page.goto(target);
     const page2 = await page.context().newPage();
-    const attachment2 = await attachPage(page2, host);
+    const attachment2 = await watchPage(page2);
     try {
       await attachment2.inject(script);
       await page2.goto(other);
@@ -230,7 +229,7 @@ test.describe('sm-dev typed commands', () => {
       ]);
       // Another tab's command, by its number there or by label.
       expect(await run('menu T2.M1')).toEqual(['[sm-dev] Fired "Hit /other.html"']);
-      await expect.poll(() => host.getValue(script.spec!.id, 'hit')).toBe('/other.html');
+      await expect.poll(() => host.getValue(script.id!, 'hit')).toBe('/other.html');
       expect(await run('menu Hit /other.html')).toEqual([
         '[sm-dev] "Hit /other.html" is registered on T2, not T1. Type menu T2.Hit /other.html to fire it there.',
       ]);
@@ -465,7 +464,7 @@ test.describe('sm-dev typed commands', () => {
     expect(opened).toEqual([target]);
   });
 
-  test('a dialog on another tab blocks set, and accept points to it', async ({ page, fixtureServer, host, attachment, loadScript }) => {
+  test('a dialog on another tab blocks set, and accept points to it', async ({ page, fixtureServer, host, attachment, loadScript, watchPage }) => {
     const script = await loadScript({
       relativePath: 'store.user.js',
       meta: { name: 'Store', match: ['*://*/target.html', '*://*/other.html'], grant: ['GM_setValue'] },
@@ -473,7 +472,7 @@ test.describe('sm-dev typed commands', () => {
     });
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const page2 = await page.context().newPage();
-    const attachment2 = await attachPage(page2, host);
+    const attachment2 = await watchPage(page2);
     try {
       await attachment2.inject(script);
       const lines: string[] = [];

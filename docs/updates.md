@@ -33,7 +33,7 @@ without the user doing anything.
 ## Focus-triggered refresh
 
 Bringing a tab to the front also checks the **local** scripts running
-on it. `installFocusRefresh` in `src/background.ts`.
+on it. `installFocusRefresh` in `src/extension/background.ts`.
 
 ### Why
 
@@ -108,7 +108,7 @@ stay distinguishable — the distinction that found the Linux gap.
   badge is computed from. An older document in the tab is off screen.
 - **Local rows only**, keyed on each script's own `fileUrl`, not on its
   collection's location: a container collection holds scripts of both
-  kinds. `localScriptIds` in `src/match-index.ts`.
+  kinds. `localScriptIds` in `src/extension/match-index.ts`.
   - An http(s) script would mean a conditional GET to a third party on
     every alt-tab, for a script the user is unlikely to be editing.
 - `@require` / `@resource` follow the ordinary opportunistic policy: a
@@ -254,7 +254,7 @@ metadata block wherever it sits.
 Split across two modules so display code stays off the fetch stack:
 `src/version-probe.ts` is pure (targets, verdict, staleness, types) and
 is what `script-display.ts` / `collections.ts` / `script-details.ts`
-import; `src/version-probe-fetch.ts` does the fetching and is reached
+import; `src/extension/version-probe-fetch.ts` does the fetching and is reached
 only from `script-updater.ts`.
 
 ## Version comparison

@@ -33,15 +33,15 @@
     "build": "node scripts/build.mjs",
     "typecheck": "tsc -p tsconfig.tests.json --noEmit",
     "watch": "node scripts/build.mjs --watch",
-    "test": "pnpm run test:unit && pnpm run test:e2e && pnpm run test:harness",
+    "test": "pnpm run test:unit && pnpm run test:e2e && pnpm run test:sm-dev",
     "test:e2e": "node scripts/clean-stale-test-profiles.mjs && node scripts/build.mjs && playwright test --project=sourcemonkey",
-    "test:harness": "node scripts/build.mjs && playwright test --project=harness",
+    "test:sm-dev": "node scripts/clean-stale-test-profiles.mjs && node scripts/build.mjs && playwright test --project=sm-dev",
     "test:e2e:tm": "node scripts/build.mjs && node scripts/e2e-manager-preflight.mjs tampermonkey --need-closed && playwright test --project=tampermonkey --workers=1",
     "test:e2e:tm:headed": "node scripts/build.mjs && node scripts/e2e-manager-preflight.mjs tampermonkey --need-open && TM_HEADED=1 playwright test --project=tampermonkey --workers=1",
     "test:e2e:vm": "node scripts/build.mjs && node scripts/e2e-manager-preflight.mjs violentmonkey --need-closed && playwright test --project=violentmonkey --workers=1",
     "test:e2e:vm:headed": "node scripts/build.mjs && node scripts/e2e-manager-preflight.mjs violentmonkey --need-open && VM_HEADED=1 playwright test --project=violentmonkey --workers=1",
     "test:headed": "playwright test --project=sourcemonkey --headed --workers=1",
-    "test:unit": "node scripts/build.mjs && node --test 'tests/unit/*.test.mjs'",
+    "test:unit": "node scripts/build.mjs && node --test 'tests/unit/**/*.test.mjs'",
     "clean": "rm -rf dist lib .build-* test-results playwright-report"
   },
   "devDependencies": {

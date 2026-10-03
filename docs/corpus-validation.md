@@ -87,7 +87,7 @@ Failures are grouped by category (`header`, `@require`, `@resource`,
 Strings shared with the pipeline are imported, never copied or
 pattern-matched, so they can't go stale when the wording changes:
 
-- `SYNTAX_ERROR_PREFIX` (`script-store.ts`) and `isFetchFailureMessage`
+- `SYNTAX_ERROR_PREFIX` (`script-build.ts`) and `isFetchFailureMessage`
   (`external-files.ts`) recognize syntax and fetch failures.
 - `unusableMatchGroupKey` (`url-match.ts`) elides the pattern from an
   unusable-`@match` message, so every script making that mistake groups
@@ -117,7 +117,7 @@ each verdict in `corpus.json`.
     a failure mode that reports *zero problems found*.
   - A hand-built tree because the real corpus is gitignored (~270 MB).
 - The checking itself is tested through `sm-dev validate` in
-  `tests/unit/harness-validate.test.mjs`, against the same
+  `tests/unit/harness/validate.test.mjs`, against the same
   `tests/bad-examples/` table the browser test uses.
 
 ## Running it

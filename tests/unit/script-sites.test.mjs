@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { scriptSitePage, sitePageRow } from '../../dist/script-sites.js';
+import { scriptSitePage, sitePageRow } from '../../dist/extension/script-sites.js';
 
 test('Greasy Fork code URL maps to the script page, slug kept', () => {
   assert.deepEqual(

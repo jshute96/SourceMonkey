@@ -6,19 +6,22 @@ real-browser end-to-end suite for everything that touches the
 
 ## Layout
 
-- `tests/unit/*.test.mjs` — Node `--test` files. Import from
-  `dist/*.js`, so `pnpm run build` is a prerequisite (the
-  `test:unit` script runs it first).
+- `tests/unit/**/*.test.mjs` — Node `--test` files. Import from
+  `dist/**/*.js` (or `lib/` for the harness), so `pnpm run build` is a
+  prerequisite (the `test:unit` script runs it first).
+  - `tests/unit/harness/` holds the tests of `src/harness/` modules.
 - `tests/e2e/*.spec.ts` — Playwright specs. Launch headless Chromium
   with the unpacked extension loaded.
 - `tests/fixtures/` — shared harness code.
-- `tests/harness/*.spec.ts` — the development harness (`src/harness/`,
-  see [harness-design.md](harness-design.md)) on a plain Chromium with
-  no extension, under the `harness` Playwright project
-  (`pnpm run test:harness`), which also runs the examples suite through
-  it. Fixtures in `tests/fixtures/harness.ts`. The `--devtools` test in
-  `run-remote.spec.ts` needs the `chrome-devtools` command, and is
-  skipped without it.
+- `tests/harness/*.spec.ts` — sm-dev and the fixture consumers import
+  (`src/harness/`, see [harness-design.md](harness-design.md)), under
+  the `sm-dev` Playwright project (`pnpm run test:sm-dev`).
+  - They run in a browser with the extension loaded, as sm-dev and the
+    fixture do for users.
+  - Fixtures in `tests/fixtures/harness.ts`, which extends the
+    package's own fixture.
+  - The `--devtools` test in `run-remote.spec.ts` needs the
+    `chrome-devtools` command, and is skipped without it.
 - `tests/greasyfork-examples/` — not a test suite: tooling that builds a
   corpus of the top 2000 real-world GreasyFork scripts, analyses it, and
   records per-script validation and test results in `corpus.json` (see
@@ -26,7 +29,7 @@ real-browser end-to-end suite for everything that touches the
   `e2e/**` and `examples/**`, so nothing here runs as a test.
 
 `sm-dev validate` runs the install-time pipeline over files on disk
-with no browser. `tests/unit/harness-validate.test.mjs` spawns it over
+with no browser. `tests/unit/harness/validate.test.mjs` spawns it over
 `tests/examples/` and `tests/bad-examples/`.
 
 - `validate`'s `tests/bad-examples/` expectations live in
@@ -37,7 +40,7 @@ with no browser. `tests/unit/harness-validate.test.mjs` spawns it over
 
 ## Running
 
-- All tests: `pnpm test` (unit, e2e, then the harness suite)
+- All tests: `pnpm test` (unit, e2e, then `test:sm-dev`)
 - Unit only: `pnpm run test:unit`
 - E2E only: `pnpm run test:e2e`
 - One unit file: `node --test tests/unit/<name>.test.mjs`
@@ -116,7 +119,9 @@ It runs against real headless Chromium with `chrome.userScripts`,
 
 - `extension.ts` — Playwright `test` extended with:
   - `extensionContext` (worker-scoped) — persistent Chromium with the
-    extension loaded and Preferences pre-seeded.
+    extension loaded and Preferences pre-seeded, launched by sm-dev's
+    own launcher (`src/harness/extension-launch.ts`), so the suites and
+    `sm-dev --temp-browser` run the same browser.
   - `fixtureServer` (worker-scoped) — local HTTP server serving
     `tests/fixtures/pages/` first, with `tests/examples/` mounted as
     a fallback root so example pages are reachable at
@@ -208,7 +213,7 @@ derivations still resolve correctly.
 
 ### SW test surface
 
-`src/background.ts` exposes `self.SourceMonkey` so Playwright can invoke
+`src/extension/background.ts` exposes `self.SourceMonkey` so Playwright can invoke
 SW functions via `serviceWorker.evaluate(...)`. Methods relevant to
 tests:
 
@@ -243,13 +248,13 @@ tests:
   sharing has no other observable signature. Both are per-JS-context and
   count *all* such reads in the worker, so reset around the window under
   test.
-- sm-dev runs: `writeRunScript({ run, text, name? })` installs text
+- sm-dev runs: `writeRunScript({ run, text, name?, files? })` installs text
   into run `run`'s test collection and syncs before it resolves (a
   rewrite of the same name replaces in place); `releaseRun(run)`
   removes the collection. `sweepRunCollections(now)` runs the
-  crashed-run cleanup as if at `now`, past the grace period. sm-dev's
-  extension backend drives these; see
-  [sm-dev-extension.md](sm-dev-extension.md#test-collections).
+  crashed-run cleanup as if at `now`, past the grace period. sm-dev
+  drives these; see
+  [sm-dev-design.md](sm-dev-design.md#test-collections).
 - GM values: `getGmValues(id)` returns every **persisted** value for a
   script, deliberately excluding the SW's in-flight overlay.
   `GM_setValue` batches its write 150ms after the last one, so a test

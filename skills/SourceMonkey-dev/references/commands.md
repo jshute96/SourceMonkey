@@ -41,16 +41,19 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | Command | Use |
 | --- | --- |
 | `sm-dev --open-browser` | Start a lasting, visible browser on port 9233 (kept profile, so logins persist). A no-op if one is up |
-| `sm-dev --temp-browser start ...` | A hidden throwaway browser for this run. Good for pages with no login |
-| `sm-dev --temp-browser start ... --extension` | The same, with SourceMonkey installed in it (Allow User Scripts on), so `--extension` needs no setup |
+| `sm-dev --temp-browser start ...` | A hidden throwaway browser for this run, with SourceMonkey loaded. Good for pages with no login |
 | `sm-dev --browser 9300 ...` | Use the browser on another port |
+
+- A run pushes its scripts into SourceMonkey in that browser. With
+  `--open-browser` or `--browser`, it must be loaded there with Allow
+  User Scripts on.
 
 ## Runs
 
 | Command | Does |
 | --- | --- |
 | `start [script]... [url]... --detach` | Start a run in the background; returns once pages settle |
-| `start ... --watch` | Re-inject and reload on each save of a script or local `@require` |
+| `start ... --watch` | Re-push and reload on each save of a script or local `@require` |
 | `start ... --values '<json>'` | Seed GM storage first |
 | `start ... --values-file <path>` | Seed GM storage first, from a JSON file |
 | `start ... --page-errors` | Also stream the site's own errors |
@@ -58,7 +61,6 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `start ... --all` | Open each script's default page, a tab each |
 | `start [url]...` | No scripts: just a browser to drive (`load` adds them later) |
 | `start ... --notab` | No tab at first; `newtab` later |
-| `start ... --extension` | Push into the real extension instead. Needs SourceMonkey in the browser; a `--temp-browser` installs it for the run |
 | `start ... --detach --new` | Start another detached run, keeping earlier ones |
 | `list` | The active runs |
 | `status` | The run, its log file, tabs, and each script's state |
@@ -74,7 +76,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `validate <path>...` | Header, `@require` and syntax checks, plus warnings (files, dirs, globs) |
 | `match <script>... <url>...` | Would it run there; which rule decided |
 | `match`, `match all` | In a run: the selected script on the current tab; all scripts on all tabs |
-| `scripts`, `script <script>` | List; pick the one `get`/`set`/`match` use. With `--extension` it also lists SourceMonkey-managed scripts on the tab as E1, ...; `scripts E1` picks one for `get`/`set` (`set key --force <json>` outside a `--temp-browser`) |
+| `scripts`, `script <script>` | List; pick the one `get`/`set`/`match` use. It also lists SourceMonkey-managed scripts on the tab as E1, ...; `scripts E1` picks one for `get`/`set` (`set key --force <json>` outside a `--temp-browser`) |
 | `load <script>...` | Add scripts to the run |
 | `update [script]` | Re-read changed scripts and reload affected tabs |
 
@@ -146,7 +148,7 @@ old) or DOM changes for 200ms. Timers aren't waited for.
 | --- | --- |
 | `menu`, `menu all` | List menu commands (`M1`...) |
 | `menu <label or M1>` | Fire one |
-| `values [script\|T2\|E1]` | Stored values (`E1`: a SourceMonkey-managed script, with `--extension`) |
+| `values [script\|T2\|E1]` | Stored values (`E1`: a SourceMonkey-managed script) |
 | `get <key>`, `set <key> <json>` | One value; `set` fires change listeners |
 | `set <key> --file <path>` | The value from a JSON file (or a `{{` block, as `eval` takes) |
 

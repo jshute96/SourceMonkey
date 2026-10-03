@@ -7,20 +7,20 @@
 
    Currently shared:
    - the collection-type bubble + its display-name sibling (DOM helper in
-     src/collection-display.ts, used on the collections page heading and the
+     src/extension/collection-display.ts, used on the collections page heading and the
      userscript viewer's Collection row), and the per-row scheme chip a
      script wears inside a scripts collection;
    - the warning banner box, whose file-access variant (DOM helper in
-     src/file-access.ts) renders on both the collections page and the
+     src/extension/file-access.ts) renders on both the collections page and the
      viewer / install preview;
    - the modal dialog shell, shared by the create / edit collection
-     dialog (src/collection-dialog.ts) and the move-script dialog
-     (src/move-dialog.ts);
-   - the "Install into" dropdown (src/related-versions.ts), in the
+     dialog (src/extension/collection-dialog.ts) and the move-script dialog
+     (src/extension/move-dialog.ts);
+   - the "Install into" dropdown (src/extension/related-versions.ts), in the
      install page's callout and its versions table;
    - the removal buttons' glyph sizing and destructive colour
-     (src/delete-icon.ts), on every page that has a remove button;
-   - the icon-button layout and spin state (src/glyph.ts), shared by
+     (src/extension/delete-icon.ts), on every page that has a remove button;
+   - the icon-button layout and spin state (src/extension/glyph.ts), shared by
      the Refresh / options buttons on the collections page and the
      viewer. */
 
@@ -58,7 +58,7 @@
 .collection-display-name {
   /* Prefer space / slash boundaries when wrapping. `<wbr>` markers
      inserted after each `/` (see appendWithSlashBreaks in
-     src/collection-display.ts) give the browser preferred break points
+     src/extension/collection-display.ts) give the browser preferred break points
      before it has to break inside a word. */
   overflow-wrap: anywhere;
   word-break: normal;
@@ -128,8 +128,8 @@
 /* ---- Modal dialog shell ---- */
 /* `.sm-dialog` is the shell — frame, title bar, body grid, error slot,
    action row — shared by the create / edit collection dialog
-   (src/collection-dialog.ts) and the move-script dialog
-   (src/move-dialog.ts). Each dialog also carries its own identity
+   (src/extension/collection-dialog.ts) and the move-script dialog
+   (src/extension/move-dialog.ts). Each dialog also carries its own identity
    class, which is what page code and tests select on. */
 dialog.sm-dialog {
   border: 1px solid #bbb;
@@ -243,7 +243,7 @@ dialog.sm-dialog.delete-dialog { width: 680px; }
   flex: 0 0 auto;
 }
 .sm-dialog .dlg-error-action[hidden] { display: none; }
-/* Copy dialog (src/copy-dialog.ts): read-only values in the body
+/* Copy dialog (src/extension/copy-dialog.ts): read-only values in the body
    grid, the dependency list under its checkbox, and the file-access
    banner slot above the form. */
 .sm-dialog .dlg-static { padding-top: 5px; min-width: 0; overflow-wrap: anywhere; }
@@ -253,7 +253,7 @@ dialog.sm-dialog.delete-dialog { width: 680px; }
 .sm-dialog .dlg-banner > * { margin: 0; }
 .sm-dialog .dlg-deps { min-width: 0; padding-top: 3px; }
 .sm-dialog .dlg-deps .dlg-hint { margin-top: 3px; }
-/* The delete dialog's headed lists (src/delete-dialog.ts): one block
+/* The delete dialog's headed lists (src/extension/delete-dialog.ts): one block
    per reason, stacked, each hidden whole when it holds no files.
    Scoped to that dialog — the copy dialog builds its checkbox and list
    inside a `.dlg-deps` of its own, and stacking that one would move a
@@ -321,7 +321,7 @@ dialog.sm-dialog.delete-dialog { width: 680px; }
 }
 .sm-dialog .dlg-actions button { padding: 0 11px; }
 .sm-dialog .dlg-actions button.primary { font-weight: 600; }
-/* The confirm of a dialog that destroys something (src/delete-dialog.ts).
+/* The confirm of a dialog that destroys something (src/extension/delete-dialog.ts).
    Coloured, not just bold: the button is one click from files leaving
    the disk with nothing to undo it. */
 .sm-dialog .dlg-actions button.danger { color: #b00; }
@@ -337,7 +337,7 @@ dialog.sm-dialog.delete-dialog { width: 680px; }
   box-sizing: border-box;
 }
 
-/* ---- "Install into" dropdown (src/related-versions.ts) ---- */
+/* ---- "Install into" dropdown (src/extension/related-versions.ts) ---- */
 /* Ellipsised, not clipped: the control gives way to its neighbours
    where a collection name is longer than the row (see the install
    callout and the panel's offer row), and Chrome sizes the OPEN list
@@ -349,7 +349,7 @@ select.install-target {
   text-overflow: ellipsis;
 }
 
-/* ---- Icon buttons (src/glyph.ts, src/delete-icon.ts) ---- */
+/* ---- Icon buttons (src/extension/glyph.ts, src/extension/delete-icon.ts) ---- */
 
 /* Every button whose content is a glyph — the removal cans, the
    refresh arrow, the options gear — is one control with one look, on
@@ -558,14 +558,14 @@ select.install-target {
    Two shapes wear it, both rendering the same thing:
    - Collections and Options spell it in their markup, as one span
      around `SourceMonkey |`.
-   - The viewer builds it (`headingPrefixEl`, src/page-heading.ts), a
+   - The viewer builds it (`headingPrefixEl`, src/extension/page-heading.ts), a
      span per term, because its heading has a page name in the middle
      ("SourceMonkey | Install | <script>"). Those spans wear
      `.heading-prefix` as well. */
 .page-header h1 .brand { color: var(--brand-fg); }
 
 /* The icon and the product name are a link home to the collections
-   page (src/page-links.ts). Styled to look like the bar, not like a
+   page (src/extension/page-links.ts). Styled to look like the bar, not like a
    link: it is chrome, and underlining it permanently would read as an
    error. The underline on hover is what says it is clickable.
 
@@ -604,7 +604,7 @@ select.install-target {
   padding: 24px 16px;
 }
 
-/* Square icon-only copy-to-clipboard button (src/copy-button.ts), beside
+/* Square icon-only copy-to-clipboard button (src/extension/copy-button.ts), beside
    a path in the viewer's Location row and the delete dialog's file row.
    Swaps the copy icon for a checkmark while the .copied class is on it
    (set briefly after a successful clipboard write). */
@@ -631,7 +631,7 @@ select.install-target {
 .copy-btn.copied .check-icon { display: block; }
 
 /* "deleted" / "modified" chip after a local file path whose file has
-   gone or changed on disk since it was read (src/file-changes.ts).
+   gone or changed on disk since it was read (src/extension/file-changes.ts).
    Sized like `.scheme-chip` above but square-cornered like the
    viewer's tab marks, so it reads as a remark on the path rather than
    a collection kind. Red for a file that isn't there; amber for one
@@ -672,7 +672,7 @@ select.install-target {
 .filename-cell > .file-change-chip,
 .local-override-cell > .file-change-chip { margin-left: 0; }
 
-/* ---- Tab strip over a code box (src/code-tabs.ts, src/compare.ts) ---- */
+/* ---- Tab strip over a code box (src/extension/code-tabs.ts, src/extension/compare.ts) ---- */
 
 /* One file per tab: the viewer's main script, `@require`s and Log; the
    compare page's per-file diffs. The active tab's bottom border takes
@@ -716,7 +716,7 @@ select.install-target {
 }
 .tab:focus-visible { outline: 2px solid #4a90e2; outline-offset: -2px; }
 
-/* ---- Site favicons (src/site-icon.ts) ---- */
+/* ---- Site favicons (src/extension/site-icon.ts) ---- */
 
 /* The icons inside a slot: one clickable <a> (or inert <span>) per
    site, each a globe until the real favicon lands. The slot itself is

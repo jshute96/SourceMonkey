@@ -1,4 +1,4 @@
-// Tests for src/collection-display.ts (compiled to dist/collection-display.js).
+// Tests for src/extension/collection-display.ts (compiled to dist/extension/collection-display.js).
 //
 // Pure display helpers: collection-type classification, manifest detection,
 // short-name inference, and the bubble label key.
@@ -15,7 +15,7 @@ import {
   collectionHasManifest,
   reservedNameOwner,
   mayUseReservedName,
-} from '../../dist/collection-display.js';
+} from '../../dist/extension/collection-display.js';
 
 // ---------- inferCollectionType ----------
 

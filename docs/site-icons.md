@@ -8,12 +8,12 @@
     outright when set, and collapses the slot to that one icon.
   - Otherwise one icon per distinct site is discovered from the
     matched sites themselves (see [Multiple sites](#multiple-sites)).
-- Implemented in [`src/site-icon.ts`](../src/site-icon.ts).
+- Implemented in [`src/extension/site-icon.ts`](../src/extension/site-icon.ts).
 
 ## Debug page
 
 - `/debug/icons.html` ([`src/debug/icons.html`](../src/debug/icons.html) +
-  [`src/debug/icons.ts`](../src/debug/icons.ts)) inspects and manages cached
+  [`src/extension/debug/icons.ts`](../src/extension/debug/icons.ts)) inspects and manages cached
   icons in `chrome.storage.local`.
 - Displays a table of all cached rows (`siteIcon:*`, `pathIcon:*`, and
   `iconUrl:*`) with icon preview, target site/URL, scope chip,

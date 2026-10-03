@@ -108,7 +108,7 @@ test.describe('preload hints on fetched responses', () => {
       const page = await extensionContext.newPage();
       await page.goto(`chrome-extension://${extensionId}/collections.html`);
       const len = await page.evaluate(async (url) => {
-        const spec = './directories.js';
+        const spec = './extension/directories.js';
         const mod = await import(spec) as {
           fetchHttpText: (u: string) => Promise<{ kind: string; text?: string }>;
         };

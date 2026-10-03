@@ -15,7 +15,7 @@
 //
 // The URL hash is the assertion of record for "which tab, which line":
 // it is the viewer's own single source of truth for view state (see
-// src/script-url-hash.ts), so checking it can't pass while the pane
+// src/extension/script-url-hash.ts), so checking it can't pass while the pane
 // shows something else.
 
 import { test, expect } from '../fixtures/extension';

@@ -183,9 +183,9 @@ export interface SavedPageFile {
 }
 
 /**
- * What `routeSavedPage` serves for `saved` in `page`, for `--from-saved`
- * with the harness or the extension: the file read fresh on each load,
- * and a read failure told to `out` as well as shown.
+ * What `routeSavedPage` serves for `saved` in `page`, for `--from-saved`:
+ * the file read fresh on each load, and a read failure told to `out` as
+ * well as shown.
  */
 export function savedPageServe(page: Page, saved: SavedPageFile, out: (line: string) => void): SavedPageServe {
   return {

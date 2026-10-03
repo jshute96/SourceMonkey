@@ -18,7 +18,7 @@ A backlog of **candidates**, not a list of obligations.
   section of [docs/injection.md](docs/injection.md): `@noframes` /
   `allFrames`. (`@grant` / `GM_*`, `@require`, and `@resource` are
   all implemented; per-area follow-ups below.)
-  - `allFrames` is no longer a self-contained change: `src/gm-menu.ts`
+  - `allFrames` is no longer a self-contained change: `src/extension/gm-menu.ts`
     keys menu commands by one `documentId` per tab, which only works
     while every wrapper shares the top-level document. Re-key it by
     (tabId, documentId) first, or subframe and top-frame scripts will
@@ -51,8 +51,9 @@ A backlog of **candidates**, not a list of obligations.
 - `@run-at document-start` isn't guaranteed to run before page scripts.
   - The body waits for the async `sm:check-pending` reply, while the
     parser can run the page's early `<head>` scripts. The extension
-    usually wins (~1-5ms reply); sm-dev, whose reply goes through Node,
-    usually loses (a documented known difference in harness-guide.md).
+    usually wins (~1-5ms reply). While an sm-dev run is live every
+    script asks, and often loses (a documented caveat in
+    harness-guide.md).
   - Tampermonkey users expect it to run first: scripts that hook
     `fetch`, `XMLHttpRequest` or `addEventListener` miss page code
     otherwise.
@@ -307,7 +308,7 @@ the scripts). Comparisons are against Violentmonkey's source; Tampermonkey
 wasn't checked.
 
 - **`GM` is frozen** (`gm-frozen`: 30766, 19993).
-  - `src/gm-bindings.ts` emits `const GM = Object.freeze({...})`.
+  - `src/extension/gm-bindings.ts` emits `const GM = Object.freeze({...})`.
   - GM_config's polyfill sets `GM.getValue` when only `GM_getValue` is
     granted, and the assignment is silently dropped, so 30766 never
     starts. 19993 adds a `GM.cookie` stub, which throws.
@@ -394,7 +395,7 @@ for the current state of the per-API matrix and
 
 ### XHR header surgery — leftovers
 
-The surgery itself shipped (`src/gm-xhr-headers.ts`): forbidden
+The surgery itself shipped (`src/extension/gm-xhr-headers.ts`): forbidden
 request headers, `Sec-Fetch-*` included, travel as a per-request
 declarativeNetRequest session rule keyed on a URL-fragment tag, and our
 extension `Origin` is removed by default. What's still open:
@@ -438,7 +439,7 @@ Adding any of these is a catalog entry + a body — nothing structural.
 
 ### GM_* implementation follow-ups
 
-- **Menu commands vanish on a bfcache restore.** `src/gm-menu.ts`
+- **Menu commands vanish on a bfcache restore.** `src/extension/gm-menu.ts`
   holds ONE document's commands per tab, so leaving a page drops its
   registrations — and Chrome doesn't re-inject on back/forward, so
   nothing re-registers them. The restored page's callbacks are still
@@ -460,14 +461,14 @@ Adding any of these is a catalog entry + a body — nothing structural.
   writeText` may reject without focus / transient activation. TM/VM
   use an offscreen `execCommand('copy')` to avoid the requirement.
   The offscreen document already exists (`src/offscreen.html` +
-  `src/offscreen.ts`, built for the parse check) and the `offscreen`
+  `src/extension/offscreen.ts`, built for the parse check) and the `offscreen`
   permission is declared — MV3 allows only ONE per extension, so
   EXTEND that host rather than adding a second. Needs
   `clipboardWrite` in the manifest and `CLIPBOARD` added to the
   `reasons` array in `parse-check.ts`, which is fixed at creation
   time.
 - **Binary XHR encoding monopolizes the SW loop.** `runXhr` buffers
-  the whole body and calls `bytesToBase64` once (`src/gm-xhr.ts`),
+  the whole body and calls `bytesToBase64` once (`src/extension/gm-xhr.ts`),
   bounded only by the 50 MB `MAX_RESPONSE_BYTES` cap.
   `String.fromCharCode` is chunked at 32 KB but the closing `btoa` is
   a single call over the whole string, and the worker holds the bytes
@@ -833,17 +834,6 @@ Adding any of these is a catalog entry + a body — nothing structural.
 
 See [docs/harness-design.md](docs/harness-design.md).
 
-- A tab `GM_openInTab` opens under the push backend gets no scripts;
-  the extension would inject whatever matches it. Attaching after the
-  tab exists would only reach its next document, so this needs the
-  attachment to be created with the tab.
-- `GM_download` under the push backend has no `onprogress`, and
-  `GM_notification` shows nothing. Both are recorded and reported;
-  a script that needs the real thing wants `--extension`.
-- The harness's own `@require` fetches and the extension's differ in
-  one way worth closing: a `file://` read in Node returns no
-  `Content-Type`, matching Chrome, but an http(s) one goes out without
-  the extension's identity. Nothing depends on it today.
 - Scratch scripts are keyed by a sanitized name, so different names in
   one run's test collection can share one `scratch:///` URL and replace
   each other: `Foo Bar` and `Foo-Bar` both become `Foo-Bar.user.js`.
@@ -855,40 +845,11 @@ See [docs/harness-design.md](docs/harness-design.md).
   fresh text: the write stores the text row before installing the row
   that reads it, and the remove, in another context, sees no reader in
   between. The install then fails with "The scratch script's text was
-  cleared". Narrow, and only with the harness pushing while someone
+  cleared". Narrow, and only with sm-dev pushing while someone
   edits the page.
-- `PUSHED_ANY_WORLD` in `src/harness/inject.ts` repeats the list of
-  world-free pushes in `wrapper-bridge.js`, which is plain injected JS
-  and can't import it. A pushed type added to one and not the other
-  reaches the wrong world under the harness. Generate one from the
-  other at build time, or check them against each other in a unit test.
-- Two scratch-script errors name the harness as the fix: "Push it
-  again" when the text row is gone (`directories.ts`), and "run it
-  without --extension" for a relative path (`external-files.ts`). Word
-  them for the writer once anything but the harness writes scratch
-  scripts.
-- Scratch scripts carry only their own text, so under `sm-dev start
-  --extension` a relative `@require` is refused (with a message saying
-  so) and a local copy of a remote `@require` is not used. Pushing the
-  resolved `@require` bodies along with the text would close both.
-- Detaching a page from the harness host (the page closed, or its
-  attachment disposed) drops its menus, notifications and tab tracking
-  but not its in-flight `GM_download`s or `GM_xmlhttpRequest`s. They
-  run to completion or time out with nobody listening; a download can
-  still land in a test's output directory after teardown.
-- A page the harness attached to that closes (a granted `window.close`,
-  or the user closing it) leaves the tabs its scripts opened until the
-  attachment is disposed.
-- `sm-dev start` gives scripts `GM_info.userAgentData` of `null`: scripts
-  are prepared once at startup, while the run's tab is still on
-  `about:blank` (or, with `--notab`, before any tab exists), and the
-  browser only exposes `navigator.userAgentData` on secure origins. A
-  reused tab already on a secure page is the exception. Reading it
-  from a secure context the run doesn't show (or re-preparing once a
-  tab reaches one) would close it.
-- Two `loadUserscript` / `inject` calls at once on one attachment can
-  both add the GM runtime to a world (harmless: it installs once) and
-  lose track of one of them. Serialize `inject` if it ever matters.
+- A scratch-script error names sm-dev's push as the fix: "Push it
+  again" when the text row is gone (`directories.ts`). Word it for the
+  writer once anything but sm-dev writes scratch scripts.
 - Two `writeRunScript`s of the same new name in one run at once both
   miss the lookup, and the second fails with an `Internal error`.
   sm-dev pushes one at a time, so only another caller of the worker's
@@ -921,22 +882,15 @@ See [docs/harness-design.md](docs/harness-design.md).
     stop signal is dropped, but sending SIGCONT still runs readline's
     resume path.
 
-## sm-dev extension runs: follow-ups
+## sm-dev runs: follow-ups
 
 - After SourceMonkey's worker restarts mid-run, the events from while it
   was stopped are lost (the run says so). Catch up by reading each
   pushed script's Log once after the restart. See
-  [docs/sm-dev-extension.md](docs/sm-dev-extension.md#when-the-sw-restarts).
+  [docs/sm-dev-design.md](docs/sm-dev-design.md#when-the-sw-restarts).
 - A tab a run tab opens is set up after its scripts ran, so their
   console lines from that first load don't reach the run (the reports
   do).
-- A harness run's page-world script's `GM_*` requests also reach
-  SourceMonkey's bridge in a browser with SourceMonkey, whose worker
-  answers `BRIDGE_DENIED` for an id it doesn't know, racing the
-  harness's answer. Have the worker leave ids it doesn't know
-  unanswered, as the harness now does for SourceMonkey's.
-- A harness run doesn't hear which tabs its tabs open, so it can't
-  restore their claims after an extension reload (an extension run can).
 - When a claimed tab's wrapper times out asking the worker (a worker
   slow to start) and runs an extension script anyway, the run doesn't
   say so. The extension's `started` event could tell it: a script the
@@ -1013,7 +967,7 @@ here — they are decisions, not proposals.
 One thing does have a concrete fix we chose not to make:
 
 - **`setRefreshError` is a lost update waiting on a rare trigger.**
-  `src/refresh-error.ts` read-modify-writes one whole map, with nothing
+  `src/extension/refresh-error.ts` read-modify-writes one whole map, with nothing
   serializing it, and `refreshAllCollections` runs collections two at a
   time. Two collections failing in one pass can drop each other's entry;
   a healthy collection's clear can resurrect a sibling's error.
@@ -1030,7 +984,7 @@ One thing does have a concrete fix we chose not to make:
 
 ## Storage-key migration — remove after 2026-09-01
 
-- **`ensureCollectionKeysMigrated` in `src/script-store.ts` is
+- **`ensureCollectionKeysMigrated` in `src/extension/script-store.ts` is
   temporary.** "Sources" were renamed to "collections" in August 2026,
   which moved the `"sources"` index to `"collections"`, every
   `source:<id>` row to `collection:<id>`, and each script's `sourceId`
@@ -1210,7 +1164,7 @@ with a trade-off worth recording:
   covers …" for a path that really is on disk. Refreshing just that row
   (`updateScript`) would avoid re-reading the manifest over the network,
   but the shape is rare enough that the extra branch hasn't earned its
-  keep yet. See `src/refresh-targets.ts`.
+  keep yet. See `src/extension/refresh-targets.ts`.
 
 - **`setToggleBusy` is not re-entrant.** Two quick clicks on the same
   toggle produce overlapping `onToggleScript` calls sharing one spinner
@@ -1515,7 +1469,7 @@ itself once a sync places it. What's missing:
   syntax errors, but drops `startupLogs` — so an unsupported `@grant`
   or a dropped `@match` is only visible after installing.
 - **Registration has no single owner across contexts.** The lock in
-  `src/injector.ts` serializes registration work within one JS context,
+  `src/extension/injector.ts` serializes registration work within one JS context,
   but the collections page and the viewer call
   `retryRejectedRegistrations` in theirs, so a page-side registration
   can still land in the middle of the SW's sync. `placeSpec` makes that
@@ -1673,14 +1627,14 @@ they follow are in
   be noise-free, but it needs a wording that reads as a capability
   rather than a tag dump.
 - large collections still blow past `chrome.storage.local` (and RAM). The
-  refresh fan-out is bounded now (`src/concurrency.ts`), but the whole
+  refresh fan-out is bounded now (`src/extension/concurrency.ts`), but the whole
   result set — every script body, plus prefetched `@require` /
   `@resource` payloads — is still held live and then written in one
   `set`. Open pieces:
   - No `unlimitedStorage` permission, so the whole extension shares a
     10 MB `storage.local` budget. Decide between taking the permission
     and moving bodies out of `storage.local`.
-  - Reporting the failure is done (`src/refresh-error.ts`) — what's
+  - Reporting the failure is done (`src/extension/refresh-error.ts`) — what's
     left is not hitting it. The user still has to work out for
     themselves that one enormous collection is what filled the budget;
     the banner names total usage, not the collection responsible. A
@@ -1692,8 +1646,8 @@ they follow are in
     thousands-of-scripts path, all of them storage writes rather than
     fetches (so lighter per item, but still one-per-script):
     `emitInitialLoadLog` over a freshly added collection
-    (`src/script-store.ts`), and the boot log replay in
-    `src/script-updater.ts`. Both want `mapWithConcurrency`.
+    (`src/extension/script-store.ts`), and the boot log replay in
+    `src/extension/script-updater.ts`. Both want `mapWithConcurrency`.
 - a collection whose refresh drops its LAST script says nothing about it.
   The tombstone rows the collections page leaves for dropped scripts
   (`docs/storage.md`, "Tombstones") hang off the script table, and a

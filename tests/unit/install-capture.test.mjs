@@ -1,4 +1,4 @@
-// Tests for src/install-capture.ts (compiled to dist/install-capture.js).
+// Tests for src/extension/install-capture.ts (compiled to dist/extension/install-capture.js).
 //
 // Covers the pure pieces of the `.user.js` capture: which URLs it acts
 // on, the install-page URL it builds, and the one-shot bypass
@@ -36,7 +36,7 @@ const {
   consumeInstallBypass,
   isUserJsUrl,
   markInstallBypass,
-} = await import('../../dist/install-capture.js');
+} = await import('../../dist/extension/install-capture.js');
 
 test('captures http(s) URLs whose path ends in .user.js', () => {
   assert.equal(isUserJsUrl('https://example.com/foo.user.js'), true);

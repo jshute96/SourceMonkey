@@ -8,7 +8,7 @@
 // pure half of the probe module; its fetching half lives in
 // `version-probe-fetch.js` and is deliberately not reachable here.)
 
-import type { StoredScript } from './script-store.js';
+import type { StoredScript } from './script-build.js';
 import { getValue, joinFullSource, type ParsedHeader } from './userscript-header.js';
 import { outdatedProbe, probeLabel, type VersionProbe } from './version-probe.js';
 import { describeDiagnostic } from './diagnostic-location.js';
@@ -286,7 +286,7 @@ export function viewerUrl(scriptId: string, tab?: 'log'): string {
   return `userscript.html?${params.toString()}${tab === 'log' ? '#Log' : ''}`;
 }
 
-// The compare page for two copies of a script (src/compare.ts). The
+// The compare page for two copies of a script (src/extension/compare.ts). The
 // right-hand side is the base: the copy on screen, or the download a
 // preview is showing; `other` is the copy to hold up against it.
 export function compareUrl(

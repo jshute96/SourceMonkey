@@ -1,4 +1,4 @@
-// Tests for the pure helpers in src/script-store.ts. The storage I/O
+// Tests for the pure helpers in src/extension/script-store.ts. The storage I/O
 // layer (chrome.storage.local) is not exercised here — those functions
 // are thin wrappers around the helpers tested below.
 
@@ -26,7 +26,7 @@ import {
   CONTEXT_MENU_UNSUPPORTED,
   NO_MATCH_OR_INCLUDE,
   NO_NAME,
-} from '../../dist/script-store.js';
+} from '../../dist/extension/script-store.js';
 import {
   parseHeader,
   NO_METADATA_BLOCK,

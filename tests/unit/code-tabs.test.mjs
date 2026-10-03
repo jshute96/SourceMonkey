@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 // one method it calls so the module can be imported under Node.
 globalThis.Prism = { languages: { insertBefore() {} } };
 
-const { expandToVisualColumn } = await import('../../dist/code-tabs.js');
+const { expandToVisualColumn } = await import('../../dist/extension/code-tabs.js');
 
 test('expandToVisualColumn: no tabs means col-1 (0-based)', () => {
   assert.equal(expandToVisualColumn('const x = 1;', 1, 4), 0);

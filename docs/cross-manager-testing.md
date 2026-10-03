@@ -10,11 +10,6 @@ managers.
 - **`tampermonkey` project** — runs only the examples suite against a
   persistent Chromium profile with Tampermonkey (TM) installed.
 - **`violentmonkey` project** — the same, for Violentmonkey (VM).
-- **`harness` project** — no manager: the development harness
-  (`src/harness/`, [harness-design.md](harness-design.md)) injects the
-  scripts into a plain Chromium and a Node host stands in for the
-  service worker. Runs the harness's own specs too. `pnpm run
-  test:harness`.
 
 "TM" and "VM" below are those two extensions; both are third-party
 userscript managers installed from the Chrome Web Store rather than
@@ -22,11 +17,8 @@ built from this repo.
 
 ## Running the suite
 
-- `pnpm run test:e2e` — SM project only (`pnpm test` runs it, then the
-  harness project).
-- `pnpm run test:harness` — the harness project: its own specs plus the
-  examples suite on a plain Chromium, no manager installed, nothing to
-  set up.
+- `pnpm run test:e2e` — SM project only (`pnpm test` runs it, then
+  the `sm-dev` project).
 - `pnpm run test:e2e:tm` / `pnpm run test:e2e:vm` — TM / VM project,
   **headless**.
   - Launches its own Chromium against that manager's persistent profile.

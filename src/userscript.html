@@ -10,8 +10,8 @@
          one paints the header bar's heading, and it has to run before
          the browser's first paint rather than after the viewer's whole
          module graph has loaded. Deferred like every module, so the <h1>
-         it writes into is already parsed. See src/page-heading.ts. -->
-    <script src="page-heading.js" type="module"></script>
+         it writes into is already parsed. See src/extension/page-heading.ts. -->
+    <script src="extension/page-heading.js" type="module"></script>
     <style>
       /* The body is at least the viewport and grows past it only when
          the code box's minimum height (`--code-box-min`) no longer
@@ -359,7 +359,7 @@
          filename, not code, and it was the only monospace row. The
          class stays as a hook for finding the cell. Wrapping comes from
          the `dd`'s own slash-aware rule. */
-      /* ---- "Other versions" panel (src/related-versions.ts) ----
+      /* ---- "Other versions" panel (src/extension/related-versions.ts) ----
          Sits at the top of the page, under the title and above the
          controls row: which copy you are looking at comes before
          anything that acts on it. Same card shape as #header-summary
@@ -992,7 +992,7 @@
         <!-- The brand run ships in the markup, so the bar reads
              "SourceMonkey |" from the document's own first paint rather
              than after any script has run. Exactly what
-             `headingPrefixEl(INSTALLED_HEADING)` builds (src/page-heading.ts),
+             `headingPrefixEl(INSTALLED_HEADING)` builds (src/extension/page-heading.ts),
              so when the heading is rendered for real this part of it does
              not move: the installed page repaints the same link and
              separator, and the install page appends its "Install |"
@@ -1001,7 +1001,7 @@
              It carries a real href and `target` so a click before
              `userscript.js` has run still opens a new tab; once the
              page's delegated handler is installed (installHomeLinkHandler,
-             src/page-links.ts) the click goes to the NAMED collections
+             src/extension/page-links.ts) the click goes to the NAMED collections
              tab instead. -->
         <h1 id="filename" tabindex="-1"><a class="heading-prefix brand page-home" href="collections.html"
              target="_blank" rel="noopener" title="Open the collections page">SourceMonkey</a><span class="heading-prefix brand"> | </span></h1>
@@ -1033,7 +1033,7 @@
            (`makeScriptActions`). Empty until the first one, and the
            row it is in stays hidden until then. -->
       <span id="meta-actions" class="meta-actions"></span>
-      <!-- Icon-only; the glyph is painted by src/userscript.ts
+      <!-- Icon-only; the glyph is painted by src/extension/userscript.ts
            (setGlyphButton), which is safe to leave empty here
            because #meta-row ships `hidden` and is only revealed
            once the script has loaded. -->
@@ -1079,6 +1079,6 @@
          <a> elements code-links.ts puts in. -->
     <script src="vendor/prism/prism.js" data-manual defer></script>
     <script src="vendor/prism/prism-line-numbers.js" defer></script>
-    <script src="userscript.js" type="module"></script>
+    <script src="extension/userscript.js" type="module"></script>
   </body>
 </html>

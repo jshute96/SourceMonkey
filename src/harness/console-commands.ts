@@ -22,7 +22,7 @@ import { CommandAssembler, endsOutsideBlock } from './command-lines.js';
 import { extensionLabel, type ExtensionState } from './extension-backend.js';
 import { firstLine } from './extension-link.js';
 import type { HarnessHost, MenuCommandRecord } from './host.js';
-import type { PageAttachment } from './inject.js';
+import type { PageAttachment } from './page-watch.js';
 import { parseCommandArgs, splitWords, unquoteWhole, type ParsedArgs } from './command-args.js';
 import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, commandsHelp } from './command-list.js';
 import { errorSentence, readJsonFile, writeProblem } from './input-file.js';
@@ -90,7 +90,7 @@ function tabIdsSuffix(tab: ControlledTab): string {
 }
 
 /**
- * A SourceMonkey-managed script, which an `--extension` run didn't
+ * A SourceMonkey-managed script, which the run didn't
  * push: named E1, E2, ... for the run, in the order it first sees them.
  */
 export interface OtherScript {
@@ -120,9 +120,9 @@ export interface ConsoleContext {
   loadScript?: (file: string) => Promise<void>;
   /** Re-read scripts from disk (all, when none are named), for `update`. */
   updateScripts?: (scripts?: PreparedScript[]) => Promise<void>;
-  /** The scripts this run injected, in load order. */
+  /** The scripts this run pushed, in load order. */
   scripts: PreparedScript[];
-  /** With `--extension`: SourceMonkey-managed scripts (see `OtherScript`). */
+  /** SourceMonkey-managed scripts (see `OtherScript`). */
   others?: {
     /** Those on the tab's page, as its toolbar badge lists them. */
     onTab(tab: ControlledTab): Promise<OtherScript[]>;
@@ -155,9 +155,8 @@ export interface ConsoleContext {
   /** The run's browser, for `status`: `connected to browser 127.0.0.1:9233`. */
   browser?: string;
   /**
-   * Where the scripts run, for `status`, when it isn't sm-dev's own
-   * stand-in: `SourceMonkey extension, test collection D2-a3f9`. Read
-   * as `status` runs.
+   * Where the scripts run, for `status`: `SourceMonkey extension, test
+   * collection D2-a3f9`. Read as `status` runs.
    */
   backend?: () => string;
   /** Whether SourceMonkey is there now, for `status`; null when unknown. */
@@ -327,7 +326,7 @@ export async function runConsoleCommand(
   const text = parsed.text ?? '';
   const { flags } = parsed;
   const current = ctx.current ?? ctx.scripts[0];
-  const scriptId = current?.spec?.id;
+  const scriptId = current?.id;
   const other = ctx.currentOther;
   // Named in the output only when there is a choice to be clear about.
   const whose = other ? ` (${other.label}: ${other.name})`
@@ -412,7 +411,7 @@ export async function runConsoleCommand(
         if (ctx.scripts.length === 0) ctx.out(`  ${NO_SCRIPTS}`);
         for (const script of ctx.scripts) {
           ctx.out(scriptRow(ctx, script));
-          if (picked) ctx.out(activityLine(ctx, picked, script.spec?.id));
+          if (picked) ctx.out(activityLine(ctx, picked, script.id));
         }
         for (const l of await otherLines(ctx, picked)) ctx.out(l);
         return;
@@ -599,7 +598,7 @@ export async function runConsoleCommand(
         ctx.out('[sm-dev] This run cannot load scripts');
         return;
       }
-      // Its injection reaches every tab, so any tab's dialog blocks it.
+      // It reloads every tab it affects, so any tab's dialog blocks it.
       if (blockedByDialog(ctx.tabs())) return;
       // All expanded first, so a glob matching nothing loads none.
       for (const file of expandPathArgs(args, cwd, { scripts: true })) {
@@ -1102,8 +1101,8 @@ const SCRIPTS_REPORT_MAX_MS = 10_000;
 async function loadInTab(
   tab: ControlledTab, host: HarnessHost, load: () => Promise<void>, failed: string, out: (line: string) => void,
 ): Promise<boolean> {
-  const scripts = tab.link.injectedScripts().filter((s) => s.spec);
-  const ids = scripts.map((s) => s.spec!.id);
+  const scripts = tab.link.injectedScripts().filter((s) => s.id);
+  const ids = scripts.map((s) => s.id!);
   const before = tab.link.documentStart();
   let since = before;
   // Ends the wait on the scripts however it ends, so it stops checking.
@@ -1145,7 +1144,7 @@ async function loadInTab(
   try {
     if (await (tab.dialogs ? tab.dialogs.untilDialog(outcome) : outcome)) return result(!loadFailed);
     const waiting = host.unreported(tab.link, ids, since);
-    const names = scripts.filter((s) => waiting.includes(s.spec!.id)).map(preparedScriptName);
+    const names = scripts.filter((s) => waiting.includes(s.id!)).map(preparedScriptName);
     if (names.length > 0) {
       out(`[sm-dev] ${names.join(', ')} had not started on ${tabName(tab)} after ${SCRIPTS_REPORT_MAX_MS / 1000} seconds`);
     }
@@ -1410,7 +1409,7 @@ function printPerTab(
 }
 
 function runningOn(ctx: ConsoleContext, tab: ControlledTab): PreparedScript[] {
-  return ctx.scripts.filter((script) => activeOn(ctx, tab, script.spec?.id));
+  return ctx.scripts.filter((script) => activeOn(ctx, tab, script.id));
 }
 
 
@@ -1424,7 +1423,7 @@ function menuGroups(ctx: ConsoleContext, tab: ControlledTab): { label: string; c
   return ctx.scripts
     .map((script) => ({
       label: scriptRow(ctx, script),
-      commands: all.filter((c) => c.scriptId === script.spec?.id),
+      commands: all.filter((c) => c.scriptId === script.id),
     }))
     .filter((group) => group.commands.length > 0);
 }
@@ -1517,7 +1516,7 @@ async function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined):
   lines.push(`Scripts${activityHeading(tab)}:`);
   if (scripts.length === 0) lines.push(`  ${NO_SCRIPTS}`);
   for (const script of scripts) {
-    const id = script.spec?.id;
+    const id = script.id;
     lines.push(scriptRow(ctx, script));
     if (!tab) {
       // Errors are the script's, from tabs since closed, so still told.
@@ -1568,7 +1567,7 @@ async function valueLines(ctx: ConsoleContext, scripts: PreparedScript[]): Promi
   const lines: string[] = [];
   for (const script of scripts) {
     lines.push(scriptRow(ctx, script));
-    const id = script.spec?.id;
+    const id = script.id;
     lines.push(...valueEntries(id ? await ctx.host.valuesOf(id) : {}));
   }
   return lines;
@@ -1590,7 +1589,7 @@ const OTHER_LABEL = /^E\d+$/i;
 async function pickOther(ctx: ConsoleContext, label: string, tab: ControlledTab | undefined): Promise<OtherScript | null> {
   const name = label.toUpperCase();
   if (!ctx.others) {
-    ctx.out(`[sm-dev] ERROR: ${name} labels are only given in --extension runs`);
+    ctx.out(`[sm-dev] ERROR: ${name} names a SourceMonkey-managed script, which only a run lists`);
     return null;
   }
   if (!ctx.others.byLabel(name) && tab) {
@@ -1625,8 +1624,8 @@ function otherLabel(o: OtherScript): string {
   return `${o.label}: ${o.name}${o.collection ? ` (${o.collection})` : ''}`;
 }
 
-// SourceMonkey-managed scripts on `tab`, for `scripts` and `status`. None
-// outside an `--extension` run, or when there are none.
+// SourceMonkey-managed scripts on `tab`, for `scripts` and `status`.
+// None when there are none.
 async function otherLines(ctx: ConsoleContext, tab: ControlledTab | undefined): Promise<string[]> {
   if (!ctx.others || !tab) return [];
   let others: OtherScript[];

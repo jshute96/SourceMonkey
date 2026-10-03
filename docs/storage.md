@@ -1,6 +1,6 @@
 # Storage and the load/refresh pipeline
 
-The script store (`src/script-store.ts`) is the persistence layer for
+The script store (`src/extension/script-store.ts`) is the persistence layer for
 every userscript SourceMonkey knows about. It backs onto
 `chrome.storage.local` with **one row per record** — no monolithic
 blob.
@@ -27,6 +27,7 @@ Key spaces in `chrome.storage.local`:
 | `"firstRunComplete"`   | `boolean`           | Set once the SW has seeded the default collections; gates first-run seeding (see [First-run seeding](#first-run-seeding)). |
 | `"smLocalFileRoots"`   | `string[]`          | Canonical `file://` directory URLs searched for local stand-ins, in order (see [local-file-overrides.md](local-file-overrides.md)). |
 | `"scratch:<url>"`      | `string`            | The text of a scratch script, keyed by its `scratch:///…` location (see [Container collections](#container-collections)). |
+| `"scratchFiles:<url>"` | `Record<ref, PushedFile>` | The `@require` / `@resource` bodies sm-dev pushed with a scratch script, by ref; absent when none were. |
 
 Key spaces in `chrome.storage.session` — everything here is dropped on
 browser shutdown, which is the point: each row describes the *current*
@@ -38,8 +39,8 @@ browsing session, not the user's configuration.
 | `"loglevel:<scid>"`      | `LogLevel`              | Highest level a script-originated entry in that log has carried; drives WARNING / ERROR in the Status column. |
 | `"tab:<tabId>"`          | `TabRecord`             | Per-tab expected vs actual injection state behind the toolbar badge (see [matching.md](matching.md)). |
 | `"injector-rejections"`  | `Record<string,string>` | `{script id → Chrome's reason for refusing its registration}` — what the UI renders as REJECTED (see [injection.md](injection.md#rejected-registrations)). |
-| `"smDevClaims"`          | `Record<tabId, SmDevClaim>` | sm-dev's tab claims: the run that controls each tab, and its lease (see [sm-dev-extension.md](sm-dev-extension.md#tab-claims)). |
-| `"smDevRuns"`            | `Record<runId, number>` | When each sm-dev run's lease runs out, for removing a crashed run's test collection (see [sm-dev-extension.md](sm-dev-extension.md#test-collections)). |
+| `"smDevClaims"`          | `Record<tabId, SmDevClaim>` | sm-dev's tab claims: the run that controls each tab, and its lease (see [sm-dev-design.md](sm-dev-design.md#tab-claims)). |
+| `"smDevRuns"`            | `Record<runId, number>` | When each sm-dev run's lease runs out, for removing a crashed run's test collection (see [sm-dev-design.md](sm-dev-design.md#test-collections)). |
 | `"smDevLastSweep"`       | `number`                | When the test collections were last checked, to tell a gap (the computer slept) from runs gone. |
 
 ### Legacy key migration (temporary)
@@ -51,7 +52,7 @@ keys would look like a wiped profile.
 - **What moves**: `"sources"` → `"collections"`, every `source:<id>` row
   → `collection:<id>`, and each script's `sourceId` field →
   `collectionId`. Nothing else changes.
-- **When**: `ensureCollectionKeysMigrated` (`src/script-store.ts`) runs
+- **When**: `ensureCollectionKeysMigrated` (`src/extension/script-store.ts`) runs
   on the first storage read in each JS context, memoized. A cheap
   `get("sources")` probe gates the full `get(null)`, so a migrated
   profile pays one small read per context and no more.
@@ -60,7 +61,7 @@ keys would look like a wiped profile.
   what it already moved. A failed run clears the memo instead of wedging
   every read behind it.
 - **Who awaits it**: every read path in the store, plus `loadAll` in
-  `src/match-index.ts` and `readAll` in `src/injector.ts` — the two
+  `src/extension/match-index.ts` and `readAll` in `src/extension/injector.ts` — the two
   modules that read the structural rows straight out of
   `chrome.storage.local`.
 - **Removal** is scheduled in [TODO.md](../TODO.md) for after
@@ -106,7 +107,7 @@ keys would look like a wiped profile.
   dialog's Name field rewrites it (`setCollectionOptions`). Required for
   a user-created container, which has no path to infer from. The UI
   prefers it over the inferred form whenever it's set (see
-  [`src/collection-display.ts`](../src/collection-display.ts)).
+  [`src/extension/collection-display.ts`](../src/extension/collection-display.ts)).
   - A name the user chose is unique across collections
     (case-insensitive); an inferred one may collide, since two refs of
     one GitHub tree infer the same short form.
@@ -292,7 +293,7 @@ viewer render. Priority order (highest wins):
 - `INVALID` — `status === 'invalid'`.
 - `REJECTED` — `status === 'ok'`, but Chrome refused the registration,
   so the script never runs. Not stored on the row: it comes from the
-  injector's session-storage map (`src/script-rejection.ts`, and
+  injector's session-storage map (`src/extension/script-rejection.ts`, and
   [injection.md](injection.md#rejected-registrations)). Ranks under
   `INVALID` — both mean "can't run", and the two can't co-occur since
   an invalid script is never offered to Chrome. Rendered in red.
@@ -389,10 +390,10 @@ individually installed scripts. Two kinds of row, told apart by path:
 - **User-created** — `container:<uuid>`, made by the collection dialog
   with a name of the user's choosing.
 - **sm-dev test collections** — `container:sm-dev:<run>`, one per
-  `sm-dev --extension` run, holding scripts whose only copy is their
+  `sm-dev` run, holding scripts whose only copy is their
   text in storage. Created by the run's first `writeRunScript` on the
   test surface, named `sm-dev test collection (run <run>)` (see
-  [sm-dev-extension.md](sm-dev-extension.md#test-collections)).
+  [sm-dev-design.md](sm-dev-design.md#test-collections)).
   - Each row's location is a `scratch:///<run>/<path>.user.js` URL
     naming the storage row (`scratch:<url>`) that holds the text. The
     file fetcher reads that row back, so every refresh path treats them
@@ -584,7 +585,7 @@ Why it's shaped this way:
 ### Fan-out is bounded
 
 Steps 2–4 run concurrently across entries, but with a cap
-(`src/concurrency.ts`).
+(`src/extension/concurrency.ts`).
 
 - **Why**: an unbounded `Promise.all` over the scan starts one fetch per
   scanned file. On a collection with thousands of scripts, that puts every
@@ -639,7 +640,7 @@ The write in step 5 is the last thing that can fail, and the one failure
   does not take `unlimitedStorage`.
 - **Outcome**: nothing is written, so every script keeps its prior
   content and keeps running. The reason goes to the session-storage map
-  in `src/refresh-error.ts`, keyed by collection.
+  in `src/extension/refresh-error.ts`, keyed by collection.
 - **Why not the collection row**: writing the error there needs the
   bucket that just rejected. `chrome.storage.session` is a separate
   quota, so it still has room in exactly the situation being reported.
@@ -952,7 +953,7 @@ materialising silently.
 
 ## Updater
 
-`src/script-updater.ts` is the single entry point every refresh path
+`src/extension/script-updater.ts` is the single entry point every refresh path
 goes through, so concurrency and rate-limiting live in one place.
 
 - **`updateScript(id, mode)`**, **`updateCollection(id, mode)`**,
@@ -1017,7 +1018,7 @@ collection**:
 - Heading: the type bubble (`file-dir`, `github-dir`, `file-manifest`,
   `http-manifest`, `github-manifest`, `scripts`, or `sm-dev` for an
   sm-dev test collection — see
-  [`src/collection-display.ts`](../src/collection-display.ts)), then
+  [`src/extension/collection-display.ts`](../src/extension/collection-display.ts)), then
   the display name. For a location collection the tooltip carries the
   path.
   - An `sm-dev` collection has no gear (rename and options), since its
@@ -1030,7 +1031,7 @@ collection**:
 - **Remove** trash can → `removeCollection`. If the collection owns ≥ 1 script,
   a `confirm()` dialog prompts "Remove collection with N scripts?" first;
   cancel aborts the remove. An empty collection removes silently.
-  - The plain `record` glyph of `src/delete-icon.ts`, the same one the
+  - The plain `record` glyph of `src/extension/delete-icon.ts`, the same one the
     script rows carry: a collection's removal drops SourceMonkey's rows,
     never the files behind them.
 - **Options** gear → the [collection dialog](#the-collection-dialog) in
@@ -1042,7 +1043,7 @@ collection**:
   row, matching Refresh All at the top of the page.
   - Icon-only, so the tooltip *Refresh this collection* is its whole
     label. While it runs, the arrow spins in place instead of a label
-    changing to "Refreshing…" (`setGlyphButtonBusy`, src/glyph.ts) —
+    changing to "Refreshing…" (`setGlyphButtonBusy`, src/extension/glyph.ts) —
     nothing beside it moves.
   - Under `prefers-reduced-motion` the arrow dims rather than spins, so
     the in-flight cue there is the dimming plus the disabled state. The
@@ -1104,7 +1105,7 @@ Refresh after adding.
 
 ### The collection dialog
 
-`src/collection-dialog.ts`, one `<dialog>` per page, shared by the
+`src/extension/collection-dialog.ts`, one `<dialog>` per page, shared by the
 collections page (Add, Edit) and the install page ("New collection…").
 
 - **Fields**: Name (its placeholder says whether it is required — no
@@ -1154,7 +1155,7 @@ collections page (Add, Edit) and the install page ("New collection…").
 
 #### What a location turns out to be
 
-`classifyLocation` (`src/directories.ts`) decides, debounced ~250ms
+`classifyLocation` (`src/extension/directories.ts`) decides, debounced ~250ms
 after typing stops. It reads rather than guesses, so a path that isn't
 there says so instead of being filed as a directory and failing later
 in a scan.
@@ -1209,7 +1210,7 @@ this is cheap when most files are untouched.
 
 `?refresh` re-reads every http(s) and GitHub collection too, which is
 wasted work when what changed was a file on disk. Two narrower triggers
-cover that case (selection rules in `src/refresh-targets.ts`):
+cover that case (selection rules in `src/extension/refresh-targets.ts`):
 
 - **`?refresh_local`** — every local collection: scanned directories,
   local `script_manifest.json` collections, and the local-files

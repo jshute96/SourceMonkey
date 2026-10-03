@@ -231,12 +231,12 @@ ships the script's freshly-updated body to the in-page prelude for
 in-place `eval`.
 
 - The payload concatenates every `@require` body before the main body
-  via `composeRequiredBody` in `src/injector.ts`, so the eval'd swap
+  via `composeRequiredBody` in `src/extension/injector.ts`, so the eval'd swap
   sees whatever the requires set up.
 - Without that, a body referencing a require added between the
   registered version and the refreshed one would throw
   `ReferenceError` on the swap, resolving only on the *next* reload.
-- `handleCheckPending` in `src/background.ts` therefore returns
+- `handleCheckPending` in `src/extension/background.ts` therefore returns
   `composeRequiredBody(refreshed)` rather than the raw body text.
 
 Both paths now share that one concatenation, so the swap and the

@@ -28,8 +28,8 @@ export interface SmApi {
     target: { collectionId: string } | { schemeDefault: true },
   ): Promise<{ id: string; path: string } | null>;
   // An sm-dev run's scripts, in its test collection: text in,
-  // registered before the promise settles. See docs/sm-dev-extension.md.
-  writeRunScript(args: { run: string; text: string; name?: string }): Promise<{
+  // registered before the promise settles. See docs/sm-dev-design.md.
+  writeRunScript(args: { run: string; text: string; name?: string; files?: Record<string, { url: string; localUrl?: string; bytesBase64: string; contentType: string }> }): Promise<{
     scriptId: string;
     collectionId: string;
     status: 'ok' | 'invalid';
@@ -37,10 +37,10 @@ export interface SmApi {
     errorLocation?: { file: string; line?: number; column?: number };
     replaced: boolean;
   }>;
-  // sm-dev's tab claims (src/sm-dev-link.ts).
-  claimTab(tabId: number, runId: string, ownScripts: boolean, ttlMs: number): Promise<void>;
+  // sm-dev's tab claims (src/extension/sm-dev-link.ts).
+  claimTab(tabId: number, runId: string, ttlMs: number): Promise<void>;
   isSmDevMarked(tabId: number): Promise<boolean>;
-  renewRun(runId: string, ttlMs: number, ownScripts: boolean, tabs?: { tabId: number; scriptsOff?: boolean }[]): Promise<number>;
+  renewRun(runId: string, ttlMs: number, tabs?: { tabId: number; scriptsOff?: boolean }[]): Promise<number>;
   releaseRun(runId: string): Promise<void>;
   sweepRunCollections(now: number): Promise<void>;
   setTabScriptsOff(tabId: number, off: boolean): Promise<void>;
@@ -196,7 +196,7 @@ export interface SmApi {
   // fetched successfully since the last reset — cache hits excluded,
   // and listings done in an extension page not counted at all. A
   // navigation's checks share one listing across the page's scripts
-  // (see `RefreshBatch` in src/script-store.ts), and this is what makes
+  // (see `RefreshBatch` in src/extension/script-store.ts), and this is what makes
   // that visible.
   //
   // Counts collection scans too, so reset around the window under test
@@ -223,7 +223,7 @@ export interface ActionMenuScriptLike {
   commands: { commandId: string; title: string }[];
 }
 
-// Mirrors the fields of `StoredScript` (src/script-store.ts) that specs
+// Mirrors the fields of `StoredScript` (src/extension/script-store.ts) that specs
 // read back. Deliberately a subset — it only has to be accurate about
 // what it declares, and it crosses `evaluate()` as plain JSON.
 export interface StoredScriptLike {

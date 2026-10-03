@@ -1,5 +1,5 @@
 // The development harness's front door: a userscript on disk (or as
-// text) in, an injectable script out.
+// text) in, a checked script out.
 //
 // This runs SourceMonkey's real install pipeline under Node — the same
 // functions the extension calls when it installs or refreshes a script:
@@ -14,12 +14,9 @@
 //      it, so a syntax error is reported against the file and line it
 //      was written in — under Node's V8 rather than Chrome's, which is
 //      the one piece that differs (see parse-check-node.ts).
-//   4. `buildRegistrationSpec` produces the exact code entries the
-//      extension would register with `chrome.userScripts`: the config
-//      blob, the prelude, the combined `@require` + body entry, and the
-//      seal. The harness injects those entries as init scripts, so the
-//      prelude's `@run-at` gate, the in-page matcher, the `GM_*`
-//      bindings, and error attribution all run unchanged.
+//
+// The extension itself builds what runs (sm-dev pushes the script's
+// text); this is for checking a script up front and reading it back.
 //
 // Nothing here touches `chrome.*`. The two globals the pipeline reaches
 // for are replaced once per process: `fetch`, which Node doesn't
@@ -38,42 +35,20 @@ import {
   type StoredScript,
   type ScriptMatching,
   type StartupLog,
-} from '../script-store.js';
-import {
-  buildParseCheckSource,
-  buildRegistrationSpec,
-  grantedSubsystems,
-  needsGmRuntime,
-  normalizeDeclaredRunAt,
-  resolveScriptWorld,
-  type RegistrationSpec,
-} from '../injector.js';
+} from '../script-build.js';
 import { attachParseLocation } from '../parse-location.js';
 import { describeDiagnostic, type DiagnosticLocation } from '../diagnostic-location.js';
 import { setConfiguredLocalRoots } from '../local-file-overrides.js';
-import { getValue, hasTag } from '../userscript-header.js';
 import { explainUrlMatch, type UrlMatchExplanation } from '../url-match.js';
 import { scriptBasename } from '../script-display.js';
 import { representativeMatch } from '../match-targets.js';
-import { sha256Hex } from '../bytes.js';
-import { stackLayout, type StackLayout } from '../composed-source.js';
-import type { ApiSubsystem } from '../gm-api-catalog.js';
+import { bytesToBase64, sha256Hex } from '../bytes.js';
+import type { PushedFile } from '../external-files.js';
+import { buildParseCheckSource } from '../composed-source.js';
+import { resolveScriptWorld, type InjectionWorld } from '../script-world.js';
 import { checkParseNode } from './parse-check-node.js';
 
-export type InjectionWorld = 'MAIN' | 'USER_SCRIPT';
-export type RunAt = 'document-start' | 'document-body' | 'document-end' | 'document-idle';
-
-// The registration `buildRegistrationSpec` produces, in the harness's
-// own words so a consumer needs no `@types/chrome` to read it.
-export interface RegistrationEntries {
-  id: string;
-  /** The code entries, in injection order. */
-  js: { code: string }[];
-  matches?: string[];
-  includeGlobs?: string[];
-  excludeGlobs?: string[];
-  world: InjectionWorld;
-}
+export type { InjectionWorld };
 
 export interface PrepareOptions {
   /** Absolute path of the `.user.js` file. Either this or `text`. */
@@ -98,16 +73,6 @@ export interface PrepareOptions {
   localRoots?: string[];
   /** Turn local stand-ins off entirely. Default on. */
   localFiles?: boolean;
-  /**
-   * The `GM_info.scriptHandler` version to bake in. Defaults to the
-   * package version.
-   */
-  handlerVersion?: string;
-  /**
-   * The label devtools and stack traces show for the script. Defaults
-   * to the file's basename.
-   */
-  logLabel?: string;
   /**
    * Tells two loads of the same file apart, so both can run on one
    * page as two installed copies would: each gets its own script id,
@@ -148,37 +113,15 @@ export interface PreparedScript {
   startupLogs: readonly StartupLog[];
   /** Set when the syntax check couldn't decide; the script stays `ok`. */
   parseCheckNote?: ParseCheckNote;
-  /** The registration Chrome would get, entries in order. Null when invalid. */
-  spec: RegistrationEntries | null;
+  /**
+   * The run's id for the script, which the host maps to the extension's
+   * own once it's pushed (`setPushed`). Unset when invalid.
+   */
+  id: string | undefined;
   world: InjectionWorld;
-  runAt: RunAt;
   matching: ScriptMatching;
-  noframes: boolean;
-  /** Whether the shared `__SM_GM__` runtime has to be on the page. */
-  needsGmRuntime: boolean;
-  /** The GM subsystems the script's `@grant` lines reach. */
-  grantedSubsystems: Set<ApiSubsystem>;
   /** The `@require` URLs, resolved, with where each was read from. */
   requires: { url: string; localUrl?: string }[];
-  /**
-   * How the injected entry's lines map back to the script and its
-   * `@require`s, for rewriting stack traces (`remapStackText`). No
-   * segments when nothing moved: no `@require`s, or an invalid script.
-   */
-  stackLayout: StackLayout;
-}
-
-let handlerVersionDefault: string | null = null;
-
-async function packageVersion(): Promise<string> {
-  if (handlerVersionDefault) return handlerVersionDefault;
-  try {
-    const raw = await readFile(new URL('../../package.json', import.meta.url), 'utf8');
-    handlerVersionDefault = String(JSON.parse(raw).version ?? '0.0.0');
-  } catch {
-    handlerVersionDefault = '0.0.0';
-  }
-  return handlerVersionDefault;
 }
 
 // ---------- The two process-wide seams ----------
@@ -280,10 +223,9 @@ async function prepareScriptNow(opts: PrepareOptions): Promise<PreparedScript> {
   // reason.
   setConfiguredLocalRoots((opts.localRoots ?? []).map(dirUrl));
   const built = await buildScriptFromText({
-    // Stable across re-prepares of the same file, so the host can keep
-    // that script's GM values under one key, and distinct for two
-    // scripts sharing a basename, so their prelude entries don't
-    // collide when both are injected into one page.
+    // Stable across re-prepares of the same file, so the host keeps
+    // that script's values and records under one key, and distinct for
+    // two scripts sharing a basename, so the host tells them apart.
     id: `harness-${scriptBasename(relativePath)}-${(await sha256Hex(sourceUrl + (opts.copy ?? ''))).slice(0, 12)}`,
     collectionId: 'harness',
     relativePath,
@@ -299,26 +241,15 @@ async function prepareScriptNow(opts: PrepareOptions): Promise<PreparedScript> {
     collectionPath: opts.collectionRoot ? dirUrl(opts.collectionRoot) : undefined,
   });
 
-  const handlerVersion = opts.handlerVersion ?? await packageVersion();
-  const logLabel = opts.logLabel ?? scriptBasename(relativePath);
-  const spec = script.status === 'ok'
-    ? asEntries(await buildRegistrationSpec(script, handlerVersion, logLabel, { inPageMatcher: true }))
-    : null;
-
   const out: PreparedScript = {
     script,
     status: script.status,
     startupLogs: script.startupLogs ?? [],
     ...(parseCheckNote && { parseCheckNote }),
-    spec,
+    id: script.status === 'ok' ? script.id : undefined,
     world: resolveScriptWorld(script),
-    runAt: normalizeDeclaredRunAt(script.header ? getValue(script.header, 'run-at') : undefined) as RunAt,
     matching: script.matching,
-    noframes: script.header ? hasTag(script.header, 'noframes') : false,
-    needsGmRuntime: needsGmRuntime(script.header),
-    grantedSubsystems: grantedSubsystems(script.header),
     requires: (script.requires ?? []).map((r) => ({ url: r.url, localUrl: r.localUrl })),
-    stackLayout: spec ? stackLayout(script, logLabel) : { entryUrl: '', segments: [], lineCount: 0 },
   };
   if (script.errorMessage) {
     out.errorMessage = script.errorMessage;
@@ -331,7 +262,7 @@ async function prepareScriptNow(opts: PrepareOptions): Promise<PreparedScript> {
 // The path the extension would store for this script: relative to the
 // collection root when it sits under one, else just its name. The
 // diagnostics, the composed-source segments, and `GM_info` all carry
-// it, so a harness run reads the same as the extension's Log tab.
+// it, so sm-dev's output reads the same as the extension's Log tab.
 function relativePathFor(opts: PrepareOptions, sourceUrl: string): string {
   if (!opts.file) return scriptBasename(sourceUrl);
   const file = path.resolve(opts.file);
@@ -340,19 +271,6 @@ function relativePathFor(opts: PrepareOptions, sourceUrl: string): string {
     if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) return rel.split(path.sep).join('/');
   }
   return path.basename(file);
-}
-
-function asEntries(spec: RegistrationSpec | null): RegistrationEntries | null {
-  if (!spec) return null;
-  const out: RegistrationEntries = {
-    id: spec.id,
-    js: (spec.js ?? []).map((e) => ({ code: e.code ?? '' })),
-    world: (spec.world ?? 'USER_SCRIPT') as InjectionWorld,
-  };
-  if (spec.matches) out.matches = [...spec.matches];
-  if (spec.includeGlobs) out.includeGlobs = [...spec.includeGlobs];
-  if (spec.excludeGlobs) out.excludeGlobs = [...spec.excludeGlobs];
-  return out;
 }
 
 // A directory as the `file://` URL the override resolver wants, with
@@ -487,4 +405,21 @@ export function preparedScriptMatches(script: PreparedScript, name: string): boo
   return script.script.relativePath === name
     || path.basename(script.script.relativePath) === name
     || script.script.header?.tags.some((t) => t.tag === 'name' && !t.locale && t.value === name) === true;
+}
+
+/**
+ * The `@require` / `@resource` bodies a run pushes into SourceMonkey with
+ * the script's text, by the ref its header declares: those read from
+ * disk, a relative ref's file or a local stand-in for a remote URL,
+ * which the extension couldn't read itself. Remote ones it fetches.
+ */
+export function pushedFiles(prepared: PreparedScript): Record<string, PushedFile> {
+  const out: Record<string, PushedFile> = {};
+  const add = (ref: string, file: { url: string; localUrl?: string; contentType?: string }, bytesBase64: string): void => {
+    if (!file.localUrl && !file.url.startsWith('file:')) return;
+    out[ref] = { url: file.url, ...(file.localUrl ? { localUrl: file.localUrl } : {}), bytesBase64, contentType: file.contentType ?? '' };
+  };
+  for (const r of prepared.script.requires ?? []) add(r.ref, r, bytesToBase64(new TextEncoder().encode(r.source)));
+  for (const r of prepared.script.resources ?? []) add(r.ref, r, r.bytesBase64);
+  return out;
 }

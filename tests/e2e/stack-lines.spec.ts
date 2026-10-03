@@ -1,5 +1,5 @@
 // Stack lines from a script with a `@require`, as the extension logs
-// them and `sm-dev --extension` prints them: the raw frames count lines
+// them and sm-dev prints them: the raw frames count lines
 // in the injected entry (requires, then the script); the layout the
 // service worker hands out maps them back to each file's own lines.
 

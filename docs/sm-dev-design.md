@@ -13,10 +13,10 @@ the commands themselves are in [harness-guide.md](harness-guide.md).
   back. Any number of clients can talk to one run.
 - The run connects with Playwright's `connectOverCDP`, or launches a
   Chromium itself with `--temp-browser`.
-- `--extension` has the real extension run the scripts: the run pushes
-  them into it, claims its tabs, and fills its host from the extension's
-  events. The commands, tabs and waits are the same for both. See
-  [sm-dev-extension.md](sm-dev-extension.md).
+- A run pushes its scripts into SourceMonkey in its browser, which
+  needs it installed: it claims its tabs, and fills its host from the
+  extension's events. See
+  [Running scripts in SourceMonkey](#running-scripts-in-sourcemonkey).
 
 ### Processes and connections
 
@@ -24,23 +24,24 @@ the commands themselves are in [harness-guide.md](harness-guide.md).
 flowchart LR
     Clients["sm-dev clients<br/>(any shells)"]
     subgraph RunProc["Run process (run.ts)"]
-        Host["Host + attachments<br/>(host.ts, inject.ts)"]
+        Host["Host + attachments<br/>(extension-host.ts, host.ts,<br/>page-watch.ts)"]
         Proxy["CDP proxy<br/>(cdp-proxy.ts)"]
     end
-    Browser["Browser<br/>(tabs, and SourceMonkey's SW<br/>under --extension)"]
+    Browser["Browser<br/>(tabs, and SourceMonkey's SW)"]
     DevServer["DevTools server<br/>(chrome-devtools-mcp)"]
     DevCli["chrome-devtools<br/>command"]
 
     Clients -- "Unix socket, JSON lines" --> RunProc
-    Host -- "CDP via Playwright<br/>(pages, bindings, worker.evaluate)" --> Browser
+    Host -- "CDP via Playwright<br/>(pages, worker.evaluate,<br/>the SW's console)" --> Browser
     Proxy -- "own CDP connection" --> Browser
     DevServer -- "WebSocket, run's tabs only" --> Proxy
     DevCli -- "server socket" --> DevServer
     RunProc -. "page ids (--devtools)" .-> DevServer
 ```
 
-- Pages talk back to the host through CDP bindings, one channel per
-  world (see [harness-design.md](harness-design.md#a-channel-per-world)).
+- The host hears what the scripts do from the SW's event stream (see
+  [The event stream](#the-event-stream)); pages add nothing of sm-dev's
+  that they can see.
 - The DevTools pieces exist only with `--devtools`.
 
 ### Modules
@@ -60,13 +61,18 @@ flowchart LR
 | `page-commands.ts`, `snapshot.ts` | Commands that drive and read a page |
 | `wait.ts` | `wait`, and when a tab has settled |
 | `tab-refs.ts` | Naming and picking tabs (`T2`, target and DevTools page ids), the current tab, the dialog message |
-| `tab-badge.ts` | The favicon badge on controlled tabs |
 | `save-html.ts`, `saved-pages.ts` | Saving a page, and serving it back at its URL |
 | `browser-launch.ts` | `--open-browser` |
 | `browser-lang.ts` | `start --lang`: the languages the run's tabs prefer |
 | `stuck-tabs.ts` | Waiting out unresponsive tabs before connecting |
 | `cdp-proxy.ts`, `devtools.ts` | `--devtools` |
 | `page-output.ts` | Which page console lines and errors the run streams |
+| `host.ts` | The records host: the scripts' reports, a copy of their values, menus, and the waits on them |
+| `extension-host.ts` | `ExtensionHost`: fills the records host from the extension's events, and answers commands from it |
+| `page-watch.ts` | Watch-only attachments: a tab's documents, activity for `wait`, and `eval` |
+| `extension-link.ts` | `ExtensionLink`: the calls into SourceMonkey's SW, tab claims, and its event stream |
+| `extension-backend.ts` | Whether SourceMonkey is installed and on, and finding its SW |
+| `extension-launch.ts` | `--temp-browser`: Chromium with SourceMonkey loaded |
 
 ## Runs and clients
 
@@ -182,19 +188,19 @@ instead wait out what they set off that has a known end:
 
 - Every page load a command or `--watch` save makes (`loadInTab`)
   waits for each script in the tab to report starting, being skipped,
-  or throwing in the new document (`HarnessHost.untilReported`), or for
-  a dialog.
+  or throwing in the new document (the host's `untilReported`, filled
+  by `ExtensionHost`), or for a dialog.
   - Only reports stamped at or after the new document's start count, so
     late ones from the old document don't end it.
   - A hash-only change loads no document, and waits for nothing.
   - A 10-second backstop, counted from the load, covers a script that
     never reports. It is not how the end is found.
-- `drain` (in `inject.ts`) then makes a round trip through each CDP
+- `drain` (in `page-watch.ts`) then makes a round trip through each CDP
   session, after a `setTimeout(0)` in the page.
   - Needed because a script reports its start before its body runs,
-    and a MAIN-world menu handler runs a task after its push.
-  - Console lines come on Playwright's session and reports on the
-    harness's, so each gets its own round trip.
+    and a menu handler runs a task after its click.
+  - Console lines come on Playwright's session and navigations on the
+    attachment's, so each gets its own round trip.
   - Used after page loads, `menu` fires and `eval`.
 
 #### Who sees the output
@@ -495,10 +501,9 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
   - a forced light color scheme.
 - A connected browser is headless when the user agent from Chrome's
   `Browser.getVersion` says `HeadlessChrome`.
-- A launched Chromium (`--temp-browser`) gets a free debugging port
-  too, so other tools can connect, and `list` shows where. (Playwright
-  itself talks to it over a pipe, except with `--extension`; see
-  below.)
+- A launched Chromium (`--temp-browser`) gets a debugging port too,
+  which the run connects to, so other tools can as well, and `list`
+  shows where (see below).
 - A hidden one is started with `--mute-audio`, so pages (e.g. video sites)
   play no sound; a `--headed` one keeps its sound.
 
@@ -526,35 +531,31 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
   - In a `--headed` one they may not apply: on Linux, Chrome takes its
     language from `LANGUAGE`, and `--accept-lang` is a headless switch.
     Untested; the tab's session still applies.
-- `GM_xmlhttpRequest` and `GM_download` go out from Node, which would
-  send `Accept-Language: *`. The host adds the requesting page's
-  instead, with or without `--lang`.
-  - Built from its `navigator.languages` (`PageLink.languages`) with
-    descending q-values (`acceptLanguageHeader`), as Chrome and the
-    `--lang` override build it. Chromium's headless shell differs
-    (no header by default), which is harmless.
-  - Read once per document, from the scripts' world, with a 1s cap: a
-    request never waits on a page held by a dialog, and the page's
-    own code can't change the value.
-  - A header the script sets wins.
-  - Matches the extension, whose requests carry the browser's
-    languages.
+- `GM_xmlhttpRequest` and `GM_download` go out from the extension's
+  SW, a target of its own, so they carry the browser's languages, not
+  a tab's override. A headless launched browser's `--accept-lang`
+  reaches them.
 - Playwright's test runner gives the contexts it launches a locale of
   its own, which holds the override. So the spec checks a launched
   browser through the `sm-dev` command line.
 
-### `--temp-browser` with `--extension` (`extension-launch.ts`)
+### `--temp-browser` (`extension-launch.ts`)
 
-- Launches Playwright's Chromium with `--load-extension` pointing at the
-  package's `dist/` (Google Chrome ignores that flag).
+- Always loads SourceMonkey: launches Playwright's Chromium with
+  `--load-extension` pointing at the package's `dist/` (Google Chrome
+  ignores that flag).
+- The same launch serves the repo's own e2e suites, which drive its
+  persistent context directly (with Chrome's own downloads, when a
+  suite asks for them).
   - Hidden runs use `--headless=new`, the only headless mode that loads
     extensions.
-- A persistent context on a temp profile, deleted when the run ends.
+- A persistent context on a temp profile, deleted when the browser is
+  closed (for a run, as it ends).
   - Its Preferences grant "Allow User Scripts" and pin the extension to
     the toolbar before launch.
   - It has no Playwright `Browser`, so the run connects over CDP to its
-    port, as to any browser. That client leaves dialogs open, so only
-    the run answers them.
+    port, as to any browser. The launch's own client then leaves
+    dialogs open (`connectedElsewhere`), so only the run answers them.
   - The port is Chrome's pick (`--remote-debugging-port=0`, read from
     the profile's `DevToolsActivePort`). One picked beforehand could be
     taken first, and the run would connect to whatever took it.
@@ -659,16 +660,14 @@ A tab the run's tab opens (link, `window.open`, `GM_openInTab`), and
 any tab those open, gets its own attachment on the same host with all
 loaded scripts.
 
-- Found by Playwright's `popup` event, plus a hook on the attachment
-  for `GM_openInTab`, whose tab has no opener.
+- Found by the extension's tab-opened events: it claims such a tab for
+  the run itself, so the run's scripts run there from its first load.
+  The run then finds its page (see
+  [Tabs a script opens](#tabs-a-script-opens)) and watches it.
 - Tabs the person opens have no opener, so they are left alone.
-- Playwright reports a tab only once its document has committed, so the
-  scripts also run in that document (`runImmediately`). An earlier
-  run-at than idle may run late there, and the run says so. (See
-  [Platform behavior](harness-design.md#platform-behavior-the-design-relies-on).)
-- Link and `window.open` tabs stay open when the run ends, as under the
-  extension. `GM_openInTab` ones still close with the opener's
-  attachment.
+- The tab is set up after its first load has begun, so console lines
+  from that load aren't shown; the scripts' reports are.
+- All of them stay open when the run ends, only no longer watched.
 - Host output from a followed tab gets its `[T<n>]` prefix through
   `host.pageOf`, and a map of numbers that outlives the tab, so a late
   report (a request finishing) still names it.
@@ -692,13 +691,11 @@ word. The extension can only infer it after the fact (see
 [matching.md](matching.md#scripts-that-never-start)); sm-dev sees the
 response, so it says so directly.
 
-- Watches each tab's main-frame navigation responses, in both backends,
-  skipping redirects, whose headers don't apply to the page.
+- Watches each tab's main-frame navigation responses, skipping
+  redirects, whose headers don't apply to the page.
 - Warns on each load of such a page that the run's MAIN-world scripts
   match, naming them. The check and the wording live in
-  `src/missing-scripts.ts`, shared with the extension's Log hint.
-- The harness's own CDP injection is blocked there too, so under sm-dev
-  those scripts also time out without starting.
+  `src/sandboxed-page.ts`, shared with the extension's Log hint.
 
 ### Applying script changes
 
@@ -717,7 +714,7 @@ response, so it says so directly.
 - The file watcher restarts on the new set, so a loaded script, or a
   new local `@require`, is watched too.
 - These changes run one at a time through one `serial` queue in
-  `runInHarness`, since each reads the script list, awaits, and
+  `runInBrowser`, since each reads the script list, awaits, and
   replaces it.
 - A tab still being set up is left out of `apply` until its setup has
   caught up with the latest set.
@@ -726,14 +723,15 @@ response, so it says so directly.
 
 ### Tabs without scripts
 
-- Tabs opened with `newtab --noscript` are attached and followed like
-  any, but get no injection, no badge, and no part in `load` /
+- Tabs opened with `newtab --noscript` are claimed, attached and
+  followed like any, but their claim is marked `scriptsOff`, so the
+  extension runs no script there, and they take no part in `load` /
   `update`. Tabs they open inherit that.
-- The harness's bridge is still attached to them, so a page could tell.
+- Nothing of sm-dev's is added to them, as to any run tab.
 - `open` / `reload` `--noscript` / `--script` switch a tab's mode for
   good (`FollowedTabs.setNoScript`):
-  - Its scripts come off or go back on (the current set), and so does
-    its badge, whose page script is unregistered too (`hideBadge`).
+  - Its claim's `scriptsOff` is set or cleared (`setTabScriptsOff`),
+    and its recorded scripts come off or go back on (the current set).
   - Run in turn with `load` / `update` / `--watch` saves (the `serial`
     queue), since they change what a tab has too. Refused while the
     tab is still being set up.
@@ -759,55 +757,505 @@ response, so it says so directly.
   `start` opens when given no URL; `open`, `newtab` and `--all` use the
   same one.
 
-### The tab badge (`tab-badge.ts`)
+## Running scripts in SourceMonkey
 
-The badge `sm-dev start` draws over each controlled tab's favicon.
-Push backend only; under `--extension` the toolbar badge does this job.
+A run's scripts run in the real SourceMonkey in its browser:
 
-What it shows:
+- The run pushes them into a test collection of its own.
+- It claims its tabs, so only its scripts run there.
+- It hears what they do from the extension's event stream.
 
-- Count and color follow the extension's toolbar badge
-  (`computeBadge`): the scripts matching the document's URL, plus any
-  that started or failed there.
-- Red for an error, orange while expected and started disagree, else
-  green. No purple: the run reloads the tabs a change affects.
-- Reports count for the document they arrived during. The attachment
-  keeps recent documents by loader id, with the times each was showing,
-  so one restored from the back/forward cache keeps its own.
+User-facing behavior is in [harness-guide.md](harness-guide.md).
 
-Drawing it:
+### Shared commands
 
-- Drawn in the isolated world, top frame only, on a canvas over the
-  site's icon.
-- The site's icon links get their `rel` renamed, since Chrome doesn't
-  reliably pick the last of several icon links.
-- A site changing its icon later is followed, including code that finds
-  the badge's link as "the" icon and sets its `href`.
-- Only `<head>` is watched, and only icon links are looked at.
-- Same-origin icons load in the page. A cross-origin one would taint
-  the canvas, so the page asks the run through a binding.
-  - The run fetches it with the browser context's cookies and hands
-    back a `data:` URL.
-  - Images only, so the binding can't be used to read pages past
-    `@connect`.
-  - A small cache keeps successes only.
+- One implementation of each command (`console-commands.ts`,
+  `page-commands.ts`, `wait.ts`).
+- Commands that only use Chrome, CDP or sm-dev never touch the
+  extension:
+  - `snapshot`, `click`, `type`, `hover`, `screenshot`, `savehtml`;
+  - `cdp`, `tabs`, `closetab`, `accept`, `dismiss`;
+  - `wait <time>`, `wait selector`, `wait log`.
+- The rest go through the run's host and each tab's attachment:
+  waiting for scripts to start or a page to settle, the world `eval`
+  runs in, values, menus, and pushing scripts for `load`, `update` and
+  `--watch`.
+  - The host is an `ExtensionHost` (extension-host.ts), which extends
+    the records host in host.ts: it fills the reports, values and menus
+    from the extension's events. Values and menu clicks go to the
+    extension.
+  - The attachments are watch-only (page-watch.ts), below.
 
-Going grey:
+#### Watch-only attachments
 
-- The run pings every 2 seconds, through one pair of host listeners for
-  all tabs. On dispose it greys the badge at once.
-- After 6 seconds without a ping (a killed run), the page greys it
-  itself.
-  - A hidden tab's timers are slowed, so there it can take up to a
-    minute.
-  - A late timer in a showing tab (a dialog, a restore) restarts the
-    wait instead of flashing grey.
-- A tab taken over from an earlier run shares that run's isolated
-  world, so the old badge code carries on with the new pings. An owner
-  mark on the root element keeps a second copy from drawing.
+- The extension runs the scripts, so a tab's `PageAttachment` adds
+  nothing the page or its scripts can see:
+  - no bindings, no bridge, no runtime;
+  - only the activity tracker `wait` reads, in an isolated world CDP
+    creates, which neither the page nor the extension's scripts can
+    see;
+  - `inject` only records the script, so the waits and reports know
+    what to expect.
+- `eval --script` runs in the extension's user-script world: the tab's
+  execution context whose origin is the extension's.
 
-Opt-in (`PageAttachment.showBadge`) and best effort, so specs using the
-fixture see the site's own icon, and a failed badge doesn't fail a tab.
+### The extension's API
+
+- The extension's service worker (SW) exposes `self.SourceMonkey`,
+  first added for the e2e tests. sm-dev calls it over CDP with
+  Playwright's `worker.evaluate` (`ExtensionLink` in
+  `src/harness/extension-link.ts`).
+- What sm-dev uses:
+  - the run's scripts: `writeRunScript` (see
+    [Test collections](#test-collections)), `getScriptLog`;
+  - notifications: `clickNotification(id)`, which runs the script's
+    `onclick` as a click would;
+  - values and menus: `getGmValues`, `writeGmValues`,
+    `fireActionContextMenuItem`;
+  - claims: `watchForNamingNavigation` and `namedTab` (which tab is
+    which, see [Naming the tab](#naming-the-tab)), `claimTab`,
+    `renewRun`, `releaseRun`, `setTabScriptsOff` (below). `releaseRun`
+    also removes the run's test collection.
+  - SourceMonkey-managed scripts: `scriptsOnTab(tabId)`, the rows the
+    toolbar badge shows for a tab, with each one's collection;
+  - tabs: `tabDocument(tabId)`, which document a tab shows, to tell
+    which page an opened tab is.
+- Scripts are named by the extension's script id, a UUID kept stable
+  across refreshes ([script-identity.md](script-identity.md)).
+  - A re-push of the same file in a run keeps the script's id and
+    its stored values.
+  - A script deleted in the browser and pushed again gets a new id.
+
+#### Version skew
+
+- The extension and sm-dev can come from different builds: sm-dev from
+  a repo's install, the extension from the person's browser.
+- A run checks for the API calls it needs (`typeof
+  self.SourceMonkey.x`) as it starts.
+  - `namedTab` is the newest of them, and came with the claim calls'
+    present arguments, so an extension without it is refused as too old
+    (`EXTENSION_TOO_OLD`).
+  - The message says to update it, or to use `--temp-browser`, which
+    loads sm-dev's own copy.
+- It then calls `chrome.userScripts.getScripts()` in the worker, which
+  fails until "Allow User Scripts" is on.
+  - CDP can't see that toggle, and without it the scripts would never
+    run, with nothing said. So the run is refused, naming the toggle.
+
+### Tab claims
+
+A claim tells the extension what to run in a tab sm-dev controls:
+only the claiming run's scripts, the ones in its test collection.
+
+- That is the right default: the usual case is a copy of a script
+  also installed in a collection, and both would run in the same tab
+  otherwise.
+- To test a script alongside installed ones, push those with the run
+  too.
+- A tab switched to no scripts (`--noscript`) has its claim marked
+  `scriptsOff` (`setTabScriptsOff`): no script runs there at all.
+
+#### How the extension honours a claim
+
+- SourceMonkey wrappers ask the SW `sm:check-pending` before running
+  their script's body, and honour a `skip` answer. That is how "Reload
+  page with no userscripts" works (`background.ts`).
+- A claim is a per-tab rule the check-pending handler consults first:
+  `skip` unless the script is one of the claiming run's own.
+- A run's script is skipped in every other tab, unclaimed or claimed
+  by another run, so it runs only in its own run's tabs.
+  - The handler tells by the script's location, which names its run
+    (`scratch:///<run>/<path>`).
+  - The toolbar badge leaves it out of those other tabs entirely, so
+    it shows as neither missing nor not loaded there.
+- Chrome still injects the wrappers; only their bodies are skipped.
+
+##### Making every wrapper ask
+
+A `document-start` wrapper normally skips the check where the answer
+can only be `run` (see
+[injection.md](injection.md#skipping-the-check-at-document-start)).
+A claim can `skip` on any navigation, so the SW turns that off:
+
+- While any claim is live, the SW re-registers every script with a
+  `mustAsk` flag that makes its wrapper ask.
+- `claimTab` and `renewRun` resolve only once that is in place, so the
+  run's first page is covered.
+- A release, or a lapsed lease (on a timer), turns it back off.
+- Until the SW has loaded the claims after a restart, registrations
+  are built as asking.
+- Scratch scripts always carry `mustAsk`.
+
+What that costs:
+
+- Registrations are global, so the person's other tabs ask too while a
+  run is active. Their `document-start` scripts may run after the
+  page's first inline scripts there.
+- In a run's own tabs, a `document-start` script may also run after
+  those page scripts, where the extension alone would run it first.
+
+#### Naming the tab
+
+sm-dev knows a tab by its CDP target id; the extension knows it by its
+`chrome.tabs` id. Neither can see the other's. The claim step names it
+(`claimPage` in extension-link.ts):
+
+- sm-dev asks the SW to watch for a navigation to
+  `about:blank#<fragment>`, a random one (`watchForNamingNavigation`),
+  and then sends the tab there.
+- The SW hears it from `chrome.webNavigation` with the tab's id, which
+  sm-dev reads back (`namedTab`) and claims (`claimTab`).
+- sm-dev then clears the fragment with `history.replaceState`, leaving
+  the tab on `about:blank` for the run to load its page in. The claim is
+  in place before the first document the scripts could run in.
+  - Not a navigation: one to `about:blank` would swap the tab's main
+    frame, and Playwright would then number the page's snapshot refs
+    as an iframe's (`f1e5`).
+- sm-dev keeps the tab id, which also names the tab in the extension's
+  events and per-tab calls.
+
+#### Which tabs get claimed
+
+- T1, `newtab` tabs, and a reused tab from an earlier run: sm-dev
+  opens them, so it claims them as above.
+- Tabs a claimed page opens (`window.open`, `target=_blank` links):
+  the SW claims them itself, from
+  `webNavigation.onCreatedNavigationTarget`, whose `sourceTabId` is the
+  claimed tab. They get the opener's claim.
+  - That event comes before the new tab's first commit. The claim waits
+    on the stored claims loading, and `sm:check-pending` waits behind
+    it, so the new tab's scripts see it.
+- Tabs a script in a claimed tab opens with `GM_openInTab`: the
+  extension opens the tab blank, claims it, and only then loads the
+  URL.
+- Tabs the person opens: never claimed, in any browser, a
+  `--temp-browser` included (another sm-dev can connect to its port
+  too). They run whatever the extension has, as in normal browsing.
+  - To bring one under the run, open it with `newtab` instead.
+  - Possible later: an action-menu row, "Put this tab under sm-dev
+    control".
+
+#### Lifetime
+
+- A claim is per tab, not per document: it lasts across reloads and
+  navigations in that tab.
+- It ends when:
+  - sm-dev releases it, as the run ends or a tab is closed in the run;
+  - the tab closes (`tabs.onRemoved`);
+  - its lease runs out.
+- **Lease**: a killed sm-dev can't release its claims, and the person's
+  tab would then quietly run no scripts.
+  - So each claim carries the run's id and an expiry, about 30
+    seconds, which the run renews about every 10 seconds.
+  - The handler treats an expired claim as gone.
+- A connected browser's tabs stay open after the run. Released, they
+  run the extension's scripts again on their next load.
+
+#### Surviving the SW stopping
+
+- Chrome stops an idle SW (after about 30 seconds) and starts a new one
+  for the next event. "Reload with no userscripts" keeps its marker in
+  memory, which is fine for its few milliseconds; claims last minutes.
+- So claims are kept in `chrome.storage.session` too: kept while the
+  browser runs, cleared when it closes.
+  - The SW loads them as it starts. `handleCheckPending` awaits that
+    load before answering, so a restarted SW can't answer `run` for a
+    claimed tab.
+  - Renewals write through to storage.
+
+#### Failure modes
+
+- **The wrapper's 2-second timeout runs the script.** If the SW can't
+  answer `sm:check-pending` in time, the prelude runs the body anyway
+  (`userscript-prelude.js`).
+  - A claimed tab can then run an extension script. This is rare (a SW
+    starting takes well under a second).
+  - The run doesn't say when it happens yet (see TODO.md).
+- **A MAIN-world script** asks through the page bridge, which also ends
+  at the SW, so the same rule covers it.
+- **An older SourceMonkey** without the claim calls: see
+  [Version skew](#version-skew).
+- **Claims lost**: an extension reload clears session storage, and a
+  claim runs out if the worker was stopped past its lease.
+  - Each renewal lists the run's tabs, and the extension claims again
+    any that are still open and lost their claim.
+  - It says how many, and the run prints that when a worker restart
+    caused it.
+- **Several runs in one browser**: see below.
+- **A run with no scripts** claims its tabs too, with nothing in its
+  test collection yet, so a later `load` runs only its own scripts
+  there. Tabs the person opens by hand aren't claimed, and run
+  SourceMonkey-managed scripts as usual.
+
+#### Several runs in one browser
+
+Two sm-dev runs can share a browser: two shells on the shared browser,
+or a second run pointed at a `--temp-browser`'s port.
+
+- **Claims**: each tab has at most one claim, naming its run.
+  - A run claims only tabs it opens, so two live runs never claim the
+    same tab. A run takes over a tab only from a run that has ended
+    (`openRunTab`), whose claim was released or has expired.
+  - Leases are per run: one run's renewals and release touch only its
+    own claims.
+- **Scripts**: each run has its own test collection, so two runs
+  pushing the same file each get their own copy.
+- **Event stream**: each run subscribes under its own id. The SW writes
+  each event once, and every subscribed run hears it and keeps the ones
+  about its tabs and scripts.
+
+### Test collections
+
+A run's scripts go into a collection of the run's own, its test
+collection, which holds exactly the scripts the run pushed.
+
+#### Naming
+
+- The run's id in the extension is sm-dev's run id with a random tail,
+  such as `D2-a3f9` (`linkRunId` in extension-link.ts), since sm-dev
+  reuses run ids once a run ends. Its claims carry the same id.
+- The collection is `container:sm-dev:<id>`, shown on the collections
+  page as `sm-dev test collection (run D2-a3f9)`, with an `sm-dev` type
+  bubble in place of `scripts`.
+- Its scripts' locations are `scratch:///<id>/<path>`, where `<path>`
+  is the file's path as given to `start` or `load`, relative or
+  absolute (`scratch:///D2-a3f9/../sites/x.com/x.user.js`). Their text
+  is a storage row ([storage.md](storage.md#container-collections)).
+- `status` shows the id on its `Backend:` line, to find the collection
+  in the extension.
+
+#### Contents
+
+- The first push creates it, so a run with no scripts has none.
+- One script per file path, so two files of the same name in
+  different folders are two scripts.
+  - A re-push replaces it in place, keeping its id and stored values.
+  - A new push that doesn't parse is reported and not kept.
+- Each run starts with empty stored values, since its collection is
+  new. `--values` writes its seed with `writeGmValues` after the push,
+  before any of the run's tabs loads a page.
+
+#### Files read from disk
+
+- A scratch script has no folder, so the extension can't read the
+  files its header names on disk. sm-dev pushes them with the text:
+  `writeRunScript`'s `files`, by the ref the header declares.
+  - A relative `@require` / `@resource`: the file beside the script.
+  - A remote URL with a local copy under the collection root or a
+    `--local` directory: the copy (`pushedFiles` in prepare.ts).
+- The extension keeps them in a storage row beside the text
+  (`scratchFiles:<url>`), and its loaders use them in place of
+  resolving and fetching the ref (`PushedFile` in external-files.ts).
+  Remote refs with no local copy it fetches as usual.
+- A relative ref with no pushed file is refused, saying so.
+- A pushed file is a snapshot: a refresh reloads the stored bytes, not
+  the file on disk. Only the next push (`update`, `load`, a `--watch`
+  save) picks up an edit.
+  - The script's page says so, since the file's `file://` URL alone
+    reads as live:
+    - a `snapshot` chip on a `@require`'s code tab, with a tooltip
+      naming the file;
+    - for a local copy of a remote URL, a line on the Local overrides
+      row's tooltip, and a deleted chip that says the snapshot still
+      runs.
+  - A `@resource` by relative path has no tab or row, so nothing marks
+    it.
+
+#### Removal
+
+- **The run ends**: `releaseRun` removes the collection, its scripts
+  and their stored values.
+- **The run crashed, or lost its browser connection**: each run has a
+  lease of its own, renewed with its claims. The worker removes a
+  collection 5 minutes after its run's lease ran out
+  (`RUN_GRACE_MS`), in case the run was only stalled.
+  - Checked as the worker starts, and every minute by a
+    `chrome.alarms` alarm while any test collection exists.
+  - A sweep more than 3 minutes after the last one means the computer
+    slept or the browser stalled, sm-dev with it. It removes nothing,
+    and every lease starts its 5 minutes again.
+  - A collection whose run has no lease on record (the browser
+    restarted since) gets its 5 minutes from when the worker finds
+    it.
+- Only its run changes a test collection. Otherwise it behaves like a
+  `scripts` collection.
+  - The extension's pages offer no move into or out of one, no install
+    into one, and no rename; the store refuses the moves and installs
+    (`SM_DEV_COLLECTION_LOCKED`).
+  - Removing its scripts, or the whole collection, by hand still
+    works.
+
+### The event stream
+
+- The SW pushes events to sm-dev, over its console:
+  - While a run is subscribed (`renewRun`, a lease like the claims),
+    the SW writes each event as `console.debug('sm-dev-event', json)`.
+    Without a subscriber it writes nothing.
+  - Playwright reports the worker's console to the run
+    (`worker.on('console')`), over the run's own connection.
+  - Not a CDP binding in the worker: Playwright opens no CDP session on
+    a worker, and the console needs none.
+- Events:
+  - Log entries;
+  - a script started, errored, or was skipped on a tab;
+  - a menu command registered or removed;
+  - a value changed;
+  - a tab opened by a run tab (a link, `window.open`, `GM_openInTab`),
+    with its opener, and one a script opened closing;
+  - a `GM_xmlhttpRequest` or `GM_download` starting, and again as it
+    ends, with its outcome;
+  - a notification shown, clicked or closed.
+- So output arrives as it happens, and `wait`, `open` and `reload`
+  wait on "started" events.
+
+#### Ordering events against navigations
+
+- A tab's events come over the worker's connection, its navigations
+  over the page's, and nothing orders the two.
+- A report handled before its document's navigation would be stamped
+  before that document began, so `open`, `reload` and `wait` wouldn't
+  count it; a menu command would be cleared by the navigation after.
+- So `ExtensionHost` handles each tab's events in order, and one from
+  a new document (a new `documentId`) waits, up to a few seconds, for
+  the attachment to enter a document after the last one.
+- Log entries that only repeat a report (started, threw, skipped) are
+  marked `fromReport` by the extension and not printed twice.
+
+#### When the SW restarts
+
+- A new SW has no subscriptions. sm-dev watches for the new worker
+  (Playwright's `serviceworker` event), listens to it, and subscribes
+  again.
+- Events in the gap are lost, and the run says so. To do: read each
+  script's Log once after a restart, to catch up on its entries (see
+  TODO.md).
+
+#### Tabs a script opens
+
+- The extension opens `GM_openInTab` tabs with `chrome.tabs.create`, so
+  Playwright reports no popup for them. The event carries the new tab's
+  `chrome.tabs` id and its opener's.
+- The opener is a claimed tab, so sm-dev knows it. Which Playwright
+  page is the new tab is matched by document (`adoptOpened` in run.ts):
+  - the worker reads the tab's top-frame URL and
+    `performance.timeOrigin` (`tabDocument`, with
+    `chrome.scripting.executeScript` in the page's world);
+  - sm-dev reads the same from each page not yet accounted for, and
+    takes the one that agrees. The time origin is the document's start
+    to the microsecond, so two pages don't share it.
+  - Both are read again until they agree, since the tab may be
+    navigating (a redirect). Nothing is added to the page.
+  - A tab that can't be matched (a page extensions can't script, such
+    as `chrome://`) is said, not guessed: its claim still holds, but
+    its output isn't shown.
+- The new tab's events wait until it's set up (`expectTab`), and then
+  print under it.
+- CDP's `TargetInfo.openerId` is not set for a tab `chrome.tabs.create`
+  opens, so it can't settle this.
+- The same events adopt `window.open` and link tabs, in place of
+  Playwright's `popup` event, since they carry the tab id.
+
+### What runs where
+
+Terms used below:
+
+- **sm-dev's tabs**: the tabs an sm-dev run opened (T1, `newtab`), and
+  the tabs that sm-dev's tabs open.
+- **Your tabs**: every other tab in the browser.
+- **SourceMonkey-managed scripts**: the scripts installed in
+  SourceMonkey's collections, not via sm-dev.
+
+#### Which scripts run in sm-dev's tabs
+
+| Browser | sm-dev's tabs run |
+|---|---|
+| No SourceMonkey | nothing: the run is refused (not installed) |
+| SourceMonkey turned off | nothing: the run is refused (turned off) |
+| "Allow User Scripts" off | nothing: the run is refused (toggle off) |
+| SourceMonkey on | sm-dev's scripts only |
+
+- `--temp-browser` loads SourceMonkey in the temporary browser, so it
+  is in the "SourceMonkey on" row.
+- Your tabs run SourceMonkey-managed scripts if SourceMonkey is on.
+  sm-dev's scripts never run in your tabs.
+- A run's scripts run only in that run's tabs: not in your tabs, and
+  not in another sm-dev run's tabs.
+
+#### What shows for sm-dev's tabs
+
+| | sm-dev's tabs |
+|---|---|
+| Toolbar icon | cyan **T** |
+| Tooltip and menu | `Page under sm-dev control` |
+| Badge rows | sm-dev's scripts: their status<br>managed scripts that match: `NOT LOADED` |
+| Badge count and color | sm-dev's scripts, colored by their status |
+| sm-dev `status` | `Backend:` line<br>sm-dev's scripts<br>managed scripts on the tab as E1, ... |
+
+#### Notes
+
+- The tables above also hold for an sm-dev run started with no
+  scripts: sm-dev's tabs are claimed all the same, so scripts added
+  later with `load` run alone in sm-dev's tabs.
+- The run's test collection is removed as the run ends, so its scripts
+  run nowhere after.
+- After an sm-dev run ends, sm-dev's tabs keep the toolbar state
+  described above until each tab's next load, which runs
+  SourceMonkey-managed scripts again.
+
+### `status` and `scripts`
+
+- A line says where the figures come from:
+  `Backend: SourceMonkey extension, test collection D2-a3f9`.
+  - Before the first push, there is no test collection yet, and the
+    line says so: `Backend: SourceMonkey extension, run D2-a3f9, with
+    no test collection until a script is pushed`.
+- The run's scripts keep their numbers (1, 2, ...), in push order, the
+  same ones `get`, `set` and `menu` use.
+  - Not yet: a script deleted or turned off in the browser keeps its
+    number, and its row says `Removed from the extension` or `Disabled
+    in the extension`, read live from the extension.
+- **SourceMonkey-managed scripts on the tab**: a separate list, shown
+  only when there are any.
+  - The extension's other scripts that match the current tab, as its
+    toolbar badge lists them, named E1, E2, ... in the order sm-dev
+    first sees them, kept for the run.
+  - The run's claim keeps them out of its tabs, so their status there
+    is "Kept out of the run's tabs".
+  - `values E1` shows one's values; `scripts E1` picks it for `get`
+    and `set`, and it's marked `*` in the list.
+  - `set` on one needs `--force` after the key outside a
+    `--temp-browser`, since it changes the person's real data:
+    `set key --force <json>`.
+  - `menu` and `logs` don't take them: they never run in the run's
+    tabs. `load`, `update` and `--watch` don't apply either: the run
+    didn't push them.
+
+### The toolbar badge in a claimed tab
+
+- The scripts the claim keeps out show as **not loaded** (grey), as
+  after "Reload page with no userscripts": nothing is wrong, they were
+  told to skip.
+- The count is of the scripts the claim let run (`computeBadge` in
+  tab-status.ts). The badge stays green when the run's scripts ran,
+  and is grey when nothing did (a tab with its scripts off included).
+- The action menu's first row says `Page under sm-dev control`
+  (disabled, a note). The icon's tooltip says it too, under
+  `SourceMonkey` (`titleHead` in tab-status.ts).
+- The menu has no "Reload page with no userscripts" row there: which
+  scripts run in the tab is the run's choice (`reload --noscript`).
+- A cyan **T** drawn in a corner of the icon marks a claimed tab (see
+  below). Cyan is used nowhere else in the badge colors.
+- All of these follow the document: a page loaded under a claim keeps
+  them until the tab's next load, the one after the run ends
+  included.
+- Chrome's action API gives one badge (text and color) per tab, so the
+  marker can't be a second badge.
+  - `chrome.action.setIcon({ tabId, imageData })` sets a per-tab icon.
+    The SW draws it with `OffscreenCanvas`: the normal icon with the
+    marker in the top-left corner, clear of the badge at bottom-right.
+  - It's set back on the tab's first page load with no claim. A worker
+    that restarted doesn't know which tabs an earlier one marked, so
+    it sets each tab's icon back on its first render.
 
 ## Page commands
 
@@ -827,7 +1275,7 @@ The run commands that drive and read a tab's page (`click`, `type`,
   in the page quiet for 100ms, within 3 seconds.
 - `eval` goes through the tab's own CDP session
   (`PageAttachment.evaluate`), in the page's default context or the
-  isolated world the harness keeps for scripts. Results print as JSON,
+  scripts' world (the extension's user-script world, for `--script`). Results print as JSON,
   or as the DevTools console describes an element or function.
   - It evaluates as console input (CDP `replMode`: top-level `await`,
     `let` redeclarable). A top-level `return` is a syntax error there,
@@ -973,16 +1421,15 @@ where each comes from.
   the wait began, so what an action sets off a moment later on a quiet
   page is waited for.
 - **The DOM**: a `MutationObserver` the attachment adds to each
-  top-frame document at its start, in the isolated world, recording
-  when the DOM last changed and where. The favicon badge's own
-  `data-sm-*` edits don't count.
+  top-frame document at its start, in an isolated world of its own,
+  recording when the DOM last changed and where.
 - **The page's requests**: Playwright's request events, tracked per
   page by the attachment from the start, so a wait on a quiet page
   returns at once.
 - **The scripts**: the host's start / skip / error reports since the
   document first started.
-  - From the scripts it runs (`scriptsInDocument`: injected before it
-    started, or into it directly) whose rules match its URL. One that
+  - From the scripts it runs (`scriptsInDocument`: recorded before it
+    started, or for it directly) whose rules match its URL. One that
     doesn't match may never report, as on `about:blank`.
   - A document the back/forward cache restored doesn't run its scripts
     again, so its first start counts.
@@ -1036,8 +1483,8 @@ fixture's `serveHtml`.
   any tab opens.
 - Served with a `page.route` on the real URL, not as a `file://` page,
   so matching, origin, cookies and relative URLs are the site's. The
-  same holds under `--extension`, whose own injection only sees the
-  URL.
+  extension's injection only sees the URL, so its scripts run as on the
+  live site.
 - A `<name>_files` folder beside the file (a browser's "Webpage,
   Complete" save) is served from disk. The page links it relatively, so
   requests under that path on the page's URL map into the folder, and

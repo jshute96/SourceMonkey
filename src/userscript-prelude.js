@@ -177,7 +177,7 @@
      so the SW can explain a script that never started here: on an
      http(s) page it means a CSP `sandbox` header, which keeps Chrome
      from injecting MAIN-world scripts at all. See
-     src/missing-scripts.ts. */
+     src/extension/missing-scripts.ts. */
   var OPAQUE_ORIGIN = false;
   try { OPAQUE_ORIGIN = self.origin === "null"; } catch (_oE) {}
   function send(payload) {
@@ -786,7 +786,7 @@
          to the baked-in body on a CSP refusal. The eval runs at
          function-scope of runMain, NOT inside `fn`'s closure — so the
          GM bindings the injector spliced into `fn` are NOT visible
-         here. To compensate, `buildSwapEvalBody` (in src/injector.ts)
+         here. To compensate, `buildSwapEvalBody` (in src/extension/injector.ts)
          prepends the script's GM bindings to `decision.body`, and the
          single (0,eval) call runs the bindings + body in one
          environment so the body's GM_* references resolve. See

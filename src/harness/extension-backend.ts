@@ -40,10 +40,29 @@ export function extensionIdFromKey(base64Key: string): string {
 
 export async function sourceMonkeyExtensionId(): Promise<string> {
   if (cachedId) return cachedId;
-  const manifest = JSON.parse(await readFile(new URL('../manifest.json', import.meta.url), 'utf8'));
+  const manifest = await readManifest();
   if (typeof manifest.key !== 'string') throw new Error('Internal error: the manifest has no key to derive the extension id from');
   cachedId = extensionIdFromKey(manifest.key);
   return cachedId;
+}
+
+/** The origin of the extension's pages and worker: `chrome-extension://<id>`. */
+export async function sourceMonkeyOrigin(): Promise<string> {
+  return `chrome-extension://${await sourceMonkeyExtensionId()}`;
+}
+
+/**
+ * Whether `url` is the extension's service worker. Matched by origin,
+ * not path: an extension has one worker, and its path differs between
+ * builds (it moved into extension/), so a browser's older build is still
+ * found and told it is too old rather than timing out.
+ */
+export function isSourceMonkeyWorker(url: string, origin: string): boolean {
+  return url.startsWith(`${origin}/`);
+}
+
+async function readManifest(): Promise<{ key?: unknown }> {
+  return JSON.parse(await readFile(new URL('../manifest.json', import.meta.url), 'utf8'));
 }
 
 /** Whether SourceMonkey is in a browser, as `sourceMonkeyState` finds it. */
@@ -165,8 +184,8 @@ export async function findExtensionWorker(ctx: BrowserContext, timeoutMs = 10000
 // of the extension will do, and the collections page has the least
 // side effects.
 async function listedWorker(ctx: BrowserContext, timeoutMs: number): Promise<Worker> {
-  const workerUrl = `chrome-extension://${await sourceMonkeyExtensionId()}/background.js`;
-  const listed = (): Worker | undefined => ctx.serviceWorkers().find((w) => w.url() === workerUrl);
+  const origin = await sourceMonkeyOrigin();
+  const listed = (): Worker | undefined => ctx.serviceWorkers().find((w) => isSourceMonkeyWorker(w.url(), origin));
   const found = listed();
   if (found) return found;
   const page = await ctx.newPage();
@@ -175,7 +194,7 @@ async function listedWorker(ctx: BrowserContext, timeoutMs: number): Promise<Wor
     // A navigation to a page of an extension that isn't installed is
     // refused at once; that is the "not installed" answer.
     try {
-      await page.goto(workerUrl.replace(/background\.js$/, 'collections.html'));
+      await page.goto(`${origin}/collections.html`);
     } catch {
       throw new ExtensionMissingError(NOT_INSTALLED);
     }

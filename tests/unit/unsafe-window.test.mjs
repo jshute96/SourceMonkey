@@ -51,18 +51,17 @@ import {
   buildGmRuntimeSpecs,
   buildRegistrationSpec,
   collectActiveSpecs,
-  grantedSubsystems,
   grantsUnsafeWindow,
   needsGmRuntime,
-  resolveScriptWorld,
-  resolveWorld,
-} from '../../dist/injector.js';
-import { emitGmBindings } from '../../dist/gm-bindings.js';
+} from '../../dist/extension/injector.js';
+import { resolveScriptWorld, resolveWorld } from '../../dist/script-world.js';
+import { grantedSubsystems } from '../../dist/gm-api-catalog.js';
+import { emitGmBindings } from '../../dist/extension/gm-bindings.js';
 import {
   IMPLICIT_UNSAFE_WINDOW_INFO,
   ISOLATED_UNSAFE_WINDOW_WARNING,
   extractStartupLogs,
-} from '../../dist/script-store.js';
+} from '../../dist/extension/script-store.js';
 import { WRAPPER_BRIDGE, WRAPPER_GM_RUNTIME } from '../../dist/generated-wrappers.js';
 
 function makeHeader(tags) {

@@ -10,7 +10,7 @@
 // replaces `chrome.extension.isAllowedFileSchemeAccess` before any page
 // script runs, so the page under test believes the toggle is off while
 // the browser keeps reading files normally. That covers the branch, the
-// shared renderer in `src/file-access.ts`, and the shared banner CSS —
+// shared renderer in `src/extension/file-access.ts`, and the shared banner CSS —
 // everything except Chrome's own enforcement, which stays a manual
 // check.
 //

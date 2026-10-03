@@ -1,5 +1,5 @@
 // End-to-end coverage of the compare page (`compare.html`,
-// src/compare.ts): two copies of a script, their header fields in one
+// src/extension/compare.ts): two copies of a script, their header fields in one
 // table and a diff per file.
 //
 // The diff itself is unit-tested (tests/unit/line-diff.test.mjs); what

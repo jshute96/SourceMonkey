@@ -17,7 +17,7 @@ import type { Locator, Page, Request } from '@playwright/test';
 import type { ParsedArgs } from './command-args.js';
 import { PART_LIMIT, PROBE_MAX } from './command-list.js';
 import type { ControlledTab } from './console-commands.js';
-import { ScriptThrew } from './inject.js';
+import { ScriptThrew } from './page-watch.js';
 import { readInputFile, writeProblem } from './input-file.js';
 import { notSettledMessage, SETTLE_TIMEOUT_MS, settleTab } from './wait.js';
 import { savePageHtml } from './save-html.js';

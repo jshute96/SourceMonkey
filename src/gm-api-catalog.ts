@@ -28,6 +28,8 @@
 // sync body in src/wrapper-gm-runtime.js if `kind === 'sync'` or (b)
 // add an SW-side handler if `kind === 'async'`.
 
+import { getValues, type ParsedHeader } from './userscript-header.js';
+
 export type ApiKind = 'sync' | 'async';
 
 export type ApiSubsystem =
@@ -50,7 +52,7 @@ export type ApiSubsystem =
 // What a request that reads or writes a script's stored values has to
 // have granted: any storage API, or a value-change listener (its
 // snapshot seeds the listener's remote-change detection). Used by the
-// bridge gate in background.ts and its harness twin in host.ts.
+// bridge gate in background.ts.
 export const STORAGE_SUBSYSTEMS: readonly ApiSubsystem[] = ['storage', 'storage-listener'];
 
 // The refusal a bridge-relayed request gets when the page may not act
@@ -257,4 +259,20 @@ export function resolveGrants(rawGrants: readonly string[]): {
 // drive any handler).
 export function isSupportedApi(name: string): boolean {
   return findApi(name) !== undefined;
+}
+
+// The catalog subsystems the script's `@grant` lines reach — the set the
+// SW's bridge gate (`bridgeMayActAs` in background.ts) checks a relayed
+// request against, so a page can only act for a script through APIs
+// that script actually has. `@grant none` and unknown names contribute
+// nothing.
+export function grantedSubsystems(header: ParsedHeader | null | undefined): Set<ApiSubsystem> {
+  const out = new Set<ApiSubsystem>();
+  if (!header) return out;
+  const { granted } = resolveGrants(getValues(header, 'grant'));
+  for (const name of granted) {
+    const spec = findApi(name);
+    if (spec) out.add(spec.subsystem);
+  }
+  return out;
 }

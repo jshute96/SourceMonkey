@@ -68,19 +68,19 @@
 | `userscript.html` | Script viewer | `script=<id>`, `preview=<url>` (`captured` is stripped — see Security) |
 
 - Adding a new entrypoint means:
-  - Add the page filename to `ALLOWED_PAGES` in `src/deep-link.ts`.
+  - Add the page filename to `ALLOWED_PAGES` in `src/extension/deep-link.ts`.
   - Document the new params in this file and in
     [`redirect-page.md`](redirect-page.md).
 
 ## Implementation
 
-- All logic lives in `src/deep-link.ts`:
+- All logic lives in `src/extension/deep-link.ts`:
   - `buildDeepLinkTarget(srcUrl)` — pure URL→URL mapping, returns
     `null` when the URL is not a deep link. Unit-testable.
   - `installDeepLinkRedirect()` — wires the
     `webNavigation.onBeforeNavigate` listener (with a `urlPrefix`
     pre-filter for cheapness) and calls `chrome.tabs.update`.
-- The install function is invoked from `src/background.ts` next to
+- The install function is invoked from `src/extension/background.ts` next to
   the other navigation listeners.
 - `chrome.runtime.getURL(...)` builds the final target so the same
   code works for both unpacked (key-pinned) and Web Store IDs.

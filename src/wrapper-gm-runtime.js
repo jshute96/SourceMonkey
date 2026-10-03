@@ -2,7 +2,7 @@
    execution world at document_start, ahead of every userscript — in
    USER_SCRIPT world, in MAIN world, or both, depending on which worlds
    have a script granting a runtime-backed API (see buildGmRuntimeSpecs
-   in src/injector.ts). One source, two transports; see the transport
+   in src/extension/injector.ts). One source, two transports; see the transport
    section below.
 
    Per-script wrappers compile in `const GM_X = function(...) { ... }`
@@ -180,7 +180,7 @@
   /* ---------- transport ----------
 
      This one runtime source is registered in BOTH execution worlds
-     (see buildGmRuntimeSpecs in src/injector.ts). Everything above and
+     (see buildGmRuntimeSpecs in src/extension/injector.ts). Everything above and
      below this block is world-agnostic; only the two primitives here
      differ:
 

@@ -1,16 +1,18 @@
 # Userscript development harness: design
 
-The harness lets a userscript repo develop, probe, and test scripts
-with SourceMonkey's real semantics.
+The harness is what a userscript repo installs to develop and test its
+scripts in the real SourceMonkey: the `sourcemonkey` package, with
+`sm-dev`, the `sourcemonkey/harness` Playwright fixture, and the Node
+checks behind `validate` and `match`.
 
 - User-facing side: [harness-guide.md](harness-guide.md).
-- The `sm-dev` command-line tool's internals:
-  [sm-dev-design.md](sm-dev-design.md).
+- The `sm-dev` command-line tool's internals, and how the extension
+  serves a run: [sm-dev-design.md](sm-dev-design.md).
 
 ## The problem
 
 - Most userscript testing is **interactive**: an agent (or a person)
-  probes a site, injects the script as it exists so far, watches what
+  probes a site, runs the script as it exists so far, watches what
   happens, edits, and tries again. Fast iteration matters more than a
   green suite.
 - A typical homemade harness strips the metadata block and runs the
@@ -18,14 +20,14 @@ with SourceMonkey's real semantics.
   - Nothing a manager does exists there: no `GM_*`, no `@match`, no
     `@run-at`, no isolation.
   - A hand-written stub file fakes a few `GM_*` calls.
-- Running the real extension is faithful but needs coordination: a
-  collection registered in a profile, a refresh when headers change,
-  other scripts in the same profile adding noise.
-- SourceMonkey contains nearly everything needed to inject a script
-  with real manager semantics **without** the extension.
-  - The harness packages that.
-  - It also adds a way to push scripts into the real extension, with
-    no persistent state, for the cases that need Chrome itself.
+- Running a script in an installed manager is faithful but needs
+  coordination: a collection registered in a profile, a refresh when
+  headers change, other scripts in the same profile adding noise.
+- The harness runs the scripts in the real extension without that
+  coordination:
+  - It pushes script text straight into the extension, with no
+    persistent state.
+  - It claims the tabs it works in, so only its own scripts run there.
 
 ## Terms
 
@@ -36,94 +38,65 @@ and [injection.md](injection.md).
 | Term | Meaning |
 | --- | --- |
 | CDP | Chrome DevTools Protocol: the JSON-over-WebSocket protocol DevTools and Playwright use to drive Chrome. The harness uses it directly where Playwright has no API. |
-| Init script | Code a CDP client registers (`Page.addScriptToEvaluateOnNewDocument`) to run at the start of every new document in a page, before the page's own scripts. |
-| CDP binding | A function a CDP client installs in a page (`Runtime.addBinding`). Calling it sends a message to the client; the page can't see who's listening. |
-| Worlds | Chrome runs injected code in the page's **MAIN** world (shares the page's globals) or an isolated **USER_SCRIPT** world (own globals, shared DOM). |
-| Prelude, GM runtime | The extension's injected code: the prelude runs ahead of each script (`@run-at`, URL check, error attribution); the GM runtime (`window.__SM_GM__`) is the page half of the `GM_*` APIs. |
-| Bridge | How the GM runtime talks to the SW from the MAIN world, which has no `chrome.runtime`: DOM events out, `postMessage` replies back. |
-| Test surface | `self.SourceMonkey`, functions the SW exposes to code evaluated inside it (Playwright's `serviceWorker.evaluate`, or CDP). |
-| Push backend | Running scripts without the extension: the test process injects them and answers their messages itself. |
-| Extension backend | Running scripts in the real extension, pushed into a test collection of the run's own. |
-| Host | `host.ts`: the stand-in for the service worker (SW) under the push backend. |
-| Attachment | A `PageAttachment` (`inject.ts`): one Playwright page with scripts injected and wired to a host. |
+| SW | The extension's service worker (its background script). |
+| Test surface | `self.SourceMonkey`, functions the SW exposes to code evaluated inside it (Playwright's `worker.evaluate`, or CDP). |
 | Run | A background `sm-dev` process that owns a browser connection and its tabs (see [sm-dev-design.md](sm-dev-design.md)). |
+| Test collection | A collection of scratch scripts belonging to one run (or one spec test), removed when it ends. |
+| Claim | A run's hold on a tab: only that run's scripts run there while it lasts (see [sm-dev-design.md](sm-dev-design.md#tab-claims)). |
+| Host | `host.ts`: the run's record of what its scripts reported and did. |
+| Attachment | A `PageAttachment` (`page-watch.ts`): one Playwright page the run or fixture watches. |
 
-## Two backends
+## How it fits together
 
-The harness offers the same operations over two backends. Both take
-script **text or a file path**, never a collection.
+- Scripts come in as **text or a file path**, never a collection.
+- Node checks each one first with the real install pipeline
+  (`prepare.ts`), so a broken header or syntax error is reported with
+  the extension's wording before anything is pushed.
+- The text, and any local `@require` / `@resource` files, are pushed
+  into the extension as **scratch scripts** in the run's test
+  collection.
+- The run claims its tabs, so the extension runs only that run's
+  scripts there.
+- The SW streams events back (starts, errors, Log entries, menus,
+  values, requests, downloads, notifications, opened tabs). The run's
+  host records them, and its commands and waits read the record.
+- The fixture does the same per test.
 
-### Push backend (no extension)
+## Extension code the harness reuses under Node
 
-- The test process builds the registration entries in Node, injects
-  them into a page as init scripts, and hosts a stand-in SW that
-  answers the bridge.
-- Works in any Chromium Playwright can reach.
-  - That includes a manually launched, CDP-attached browser, which a
-    repo needs for sites with a login: a browser Playwright launched
-    is refused Google sign-in.
-- Deterministic: the caller knows exactly what was injected and when.
-  No storage, no debounce, no other scripts.
-- This is the default for interactive work and for specs.
-
-### Extension backend (real SourceMonkey)
-
-- The browser runs the real extension. The harness talks to the SW's
-  test surface (`self.SourceMonkey`).
-- Use it for what only Chrome can answer:
-  - CSP, real world registration, Chrome's own match gating.
-  - Cross-tab broadcast between real tabs.
-  - The real identity of a `GM_xmlhttpRequest`: extension cookies, no
-    `Origin`, `Sec-Fetch-Site: none`.
-- Details in [Extension backend](#extension-backend) below.
-
-## Extension code the harness reuses
-
-The harness writes little of its own semantics. It runs these pieces of
-the extension under Node or in the page:
+These checks run without a browser, for `validate`, `match`, and the
+up-front check before a push:
 
 | Piece | Where | Chrome-free? |
 | --- | --- | --- |
 | Header split + parse | `src/userscript-header.ts` | Yes |
-| Header validation, status, diagnostics | `validateHeader`, `buildScriptFromText` in `src/script-store.ts` | The functions are; the module also imports storage code |
+| Header validation, status, diagnostics, `@require` loading | `validateHeader`, `buildScriptFromText`, `applyFiles` in `src/script-build.ts` | Yes, given a `fetch` |
 | `@match` / `@include` / `@exclude` evaluator | `src/url-match.ts` | Yes |
 | `@grant` catalog and resolution | `src/gm-api-catalog.ts` | Yes |
-| `GM_*` binding emitter | `src/gm-bindings.ts` | Yes |
 | `@require` / `@resource` resolution and fetch | `src/external-files.ts`, `src/file-loader.ts`, `src/local-file-overrides.ts` | Yes, given a `fetch` |
-| Wrapper builder: world choice, `@run-at`, the ordered code entries Chrome registers | pure half of `src/injector.ts` (`buildRegistrationSpec` and friends) | Yes, as `src/harness/prepare.ts` calls it |
+| Injection world (`@grant none`, `@inject-into`) | `src/script-world.ts` | Yes |
 | Compile-only parse check | `src/harness/parse-check-node.ts` | Yes |
-| Stored-value codec, `@connect` gating | `src/gm-values.ts`, `src/gm-connect.ts` | `gm-connect` yes; `gm-values` with a storage stub |
-| `GM_xmlhttpRequest` driver | `runXhr` in `src/gm-xhr.ts` | Yes, on Node's `fetch` |
-| Injected code as strings | `dist/generated-wrappers.js` | Yes |
-| Compliance pages and specs | `tests/examples/` | n/a |
-
-Two facts make the push backend cheap:
-
-- **The GM runtime picks its transport at init.**
-  - With a `chrome.runtime.id` it uses `chrome.runtime`; without one it
-    uses the DOM-event bridge.
-  - The host answers both, with a stand-in `chrome.runtime` in the
-    isolated world, in place of the SW. Nothing on the page side
-    changes.
-- **`buildRegistrationSpec` returns the exact entries Chrome would
-  register.** Injecting those as init scripts runs the prelude, the
-  bindings, the `@require` bodies, and the script unchanged.
+| Stored-value codec | `src/extension/gm-values.ts` | With a storage stub |
 
 ## Package and distribution
 
 ### The package
 
 - The package is `sourcemonkey`, built by `tsconfig.lib.json` into
-  `lib/` with declarations; `dist/` stays the extension alone. See
+  `lib/` with declarations; `dist/` is the extension. See
   [architecture.md](architecture.md#two-outputs-dist-and-lib).
+- Both ship: `dist/` is the extension `--temp-browser` and the fixture
+  load into the browsers they launch.
 - `package.json` carries:
   - `exports`: `./harness` for the harness entry, and `./*` mapping to
     `lib/*.js` so pure modules such as `url-match` and
     `userscript-header` are importable too.
-  - `files: ["lib", "skills"]` (the agent skill ships beside the code)
-    and `bin: { "sm-dev": ... }`.
+    - Only the modules the harness imports are in `lib/`, so only those
+      are importable.
+  - `files` for the built outputs and `skills` (the agent skill ships
+    beside the code), and `bin: { "sm-dev": ... }`.
   - A `prepare` script that runs the build, so a git install produces
-    `lib/`.
+    `lib/` and `dist/`.
   - `@playwright/test` as an optional peer dependency, used only by the
     harness entry.
   - `private: true`. It only blocks `npm publish`; a git install works
@@ -145,14 +118,13 @@ Details are in the guide; the shape is:
   `sourcemonkey/harness`.
 - Its specs are ES modules (`.mjs`, or `"type": "module"`), since
   SourceMonkey is written as ESM.
-- Its agent instructions: run `sm-dev start` while iterating, write a
-  spec on the harness fixture once the script is confirmed, and use
-  `--extension` for the request-identity and Chrome-only checks.
+- Its agent instructions: run `sm-dev start` while iterating, and write
+  a spec on the harness fixture once the script is confirmed.
 
-## Push backend components
+## Components
 
-The core modules in `src/harness/`, compiled to `lib/harness/`. They
-run in Node, except for the strings they send into pages.
+The modules in `src/harness/`, compiled to `lib/harness/`. They run in
+Node.
 
 ### `prepare.ts`: script in, injectable script out
 
@@ -162,15 +134,18 @@ run in Node, except for the strings they send into pages.
   - Fetches with Node's `fetch`, plus SourceMonkey's local-override
     rules, so a `@require` pointing at a raw GitHub URL reads the local
     `lib/` copy, exactly as the extension would.
-- Emits bindings and calls `buildRegistrationSpec`.
-- Returns a `PreparedScript`: the stored row, the registration entries,
-  world, `@run-at`, matching rules, startup logs, and the diagnostic
-  when the script is invalid.
+- Runs the parse check, composing the program with
+  `buildParseCheckSource` (`src/composed-source.ts`).
+- Doesn't build the code the extension registers: the extension builds
+  that from the pushed text.
+- Returns a `PreparedScript`: the stored row, its id, world, matching
+  rules, startup logs, and the diagnostic when the script is invalid.
   - An `invalid` script is returned with its diagnostics, not thrown,
     so a tool can print the same message the viewer shows.
+  - The files it read from disk are what a push sends with the text
+    (`pushedFiles`).
 - The script's id is derived from its source URL.
-  - Re-preparing the same file keeps its id (and its GM values in the
-    host).
+  - Re-preparing the same file keeps its id.
   - Two files sharing a basename stay distinct.
 - Calls are serialized: the local-roots setting the override resolver
   reads is process-wide, and so is the state behind the `fetch`
@@ -189,113 +164,74 @@ run in Node, except for the strings they send into pages.
     falls back to 1: V8 clips the frame it renders in `err.stack`. The
     line is still exact.
 
-### `host.ts`: the stand-in service worker
+### `extension-link.ts`: the connection to the extension
 
-Messages it answers (every type the SW handles for injected code):
+- Reaches the SW through Playwright, which lists an extension's service
+  worker on a CDP-connected browser as well as a launched one, and
+  calls its test surface with `worker.evaluate`.
+- The SW's URL is known up front, since the manifest's fixed `key`
+  fixes the extension id. An idle SW is woken by opening the
+  collections page.
+- Pushes scripts, claims tabs, and holds a lease on them, renewed while
+  the run lasts and released at its end.
+- Subscribes to the SW's event stream, and subscribes again when Chrome
+  restarts an idle SW; the run says events in between may be missing.
+- Refuses an extension too old for the API it needs, naming the fix.
+- The extension's side, and the claims, are in
+  [sm-dev-design.md](sm-dev-design.md).
 
-- `sm:check-pending`, with a values snapshot when the script needs one.
-- `sm:start` / `sm:error` / `sm:abandoned`, recorded as reports.
-- Storage batch writes and resync.
-- XHR start and abort; tab open and close; downloads; notifications;
-  menu register and unregister; log; focus.
+### `host.ts` and `extension-host.ts`: the records
 
-Pushes it sends back (what the SW pushes):
+- `host.ts` (`HarnessHost`) is the record a run or a test reads:
+  - the start / error / skipped reports, with `pageOf(record)` naming
+    the page each came from (kept in a `WeakMap`, so records stay plain
+    data a test can compare);
+  - a copy of each script's stored values, kept current from the
+    events, for reads that can't wait on a round trip;
+  - menu commands, per page document;
+  - the recorded requests, downloads, notifications and opened tabs;
+  - the waits on these (`untilReported` and friends).
+- `ExtensionHost` (`extension-host.ts`) fills it from the extension's
+  events, and answers commands (`set`, menu clicks, notification
+  clicks) by calling into the extension.
+  - It maps the run's script ids to the extension's, and tabs by their
+    `chrome.tabs` id.
+  - An event from a document the attachment hasn't seen begin yet waits
+    for it, since the SW's events and the page's navigations come over
+    separate connections.
+  - Events from tabs that aren't the run's are left out.
 
-- Value updates to the other pages running the script: attached,
-  holding it, URL matching.
-- XHR events, tab closed, menu fired, notification and download events.
-- `urlchange`, from CDP's `Page.navigatedWithinDocument`.
+### `page-watch.ts`: watching a page
 
-How the APIs behave:
+A `PageAttachment` watches one tab the extension runs scripts in, and
+adds nothing the page or its scripts can see:
 
-- Values go through the real codec (`gm-values.ts`).
-- `GM_openInTab` opens a real page in the same browser context, so a
-  test can wait for it.
-- `window.close` and `window.focus` act on the page.
-- `GM_download` fetches the bytes from Node into a directory the host
-  names, reporting the extension's event shapes.
-- `GM_notification` records the call and resolves with an id; a test
-  delivers the click or close.
-- `GM_xmlhttpRequest` runs `runXhr` itself on Node's `fetch`:
-  - Gated by the real `@connect` code.
-  - The browser context's cookies for the target are copied onto the
-    request unless it is `anonymous`.
-  - Forbidden headers pass straight through (`runXhr`'s
-    `forbiddenHeaders: 'passthrough'`), where the extension would use a
-    declarativeNetRequest rule.
-  - No CORS limit, but not the extension's request identity either.
-
-State exposed to tests:
-
-- Seed and read values.
-- The recorded tab opens, downloads, requests, window calls.
-- Menu commands (and `fireMenuCommand`).
-- Notifications (and `clickNotification` / `closeNotification`).
-- The start / error / skipped reports.
-- `pageOf(record)` says which attached page sent a report. It is kept
-  in a `WeakMap` rather than on the record, so records stay plain data
-  a test can compare.
-
-### `inject.ts`: attaching scripts to a page
-
-#### A channel per world
-
-Each world gets its own channel to the host, so the page sees only
-what it would in the extension:
-
-- **Isolated world**:
-  - An init script installs a stand-in `chrome.runtime` (`id`,
-    `sendMessage`, `onMessage`).
-  - It calls a CDP binding exposed only in that world; replies and
-    pushes come back by `Runtime.evaluate` into it.
-  - The page can neither read nor forge this traffic.
-  - A request nobody answers rejects after 30 seconds, as the MAIN
-    bridge's do.
-- **MAIN world**:
-  - A top-frame init script forwards bridge events to its own binding,
-    captured before page scripts run so the page can't swap it out.
-  - Replies and pushes are posted with `postMessage`, as the
-    extension's relay does.
-
-#### MAIN-world traffic is untrusted
-
-As in the worker, anything from the MAIN world may be forged by the
-page:
-
-- `host.ts`'s `pageMayActAs` honors a bridge request only for a
-  MAIN-world script on this page, matching its URL, that granted an API
-  the request uses (the worker's `bridgeMayActAs`).
-- Pushes reach MAIN world only when addressed to a MAIN-world script
-  (`smWorld`) or carrying nothing script-scoped.
-
-#### Registering the entries
-
-- Uses one CDP session rather than Playwright's own init scripts, so
-  registration order (channels first, then the entries) is the
-  execution order.
-- Adds the entries with `Page.addScriptToEvaluateOnNewDocument` in the
-  script's world, naming a `worldName` for USER_SCRIPT, which
-  Playwright's own init scripts cannot do.
-- Wraps each entry in a top-frame guard, since CDP init scripts run in
-  every frame and `chrome.userScripts` registrations do not.
-- Survives reloads (init scripts persist), so the interactive loop
-  costs one keystroke. Re-injecting a script removes its old entries
-  first.
-
-#### URL matching
-
-- Always attaches the in-page matcher block to the prelude config
-  (`buildRegistrationSpec`'s `inPageMatcher` option). The prelude
-  decides per document, where Chrome's registration `matches` would
-  have.
-- The prelude's miss is silent, so the host evaluates the same rules on
-  every navigation and records the rule that kept the script off the
-  page.
+- Tracks the page's documents and when each began, for the waits and
+  for ordering the extension's events against navigations.
+- Records which scripts the tab runs, for the host's skip reports and
+  the waits.
+- Reads what `wait` needs (DOM activity, requests in flight) from a
+  CDP-made world of its own.
+- Evaluates `eval` in the page's world, or in the extension's
+  user-script world for `eval --script`.
 
 ### `fixture.ts`: the Playwright fixture
 
-- The `@playwright/test` extension consumers import.
-- Wraps the three above into `loadUserscript`, `gm`, `reports`, and
+- The `@playwright/test` extension consumers import. Runs the scripts
+  in the real extension, as an `sm-dev` run does:
+  - a browser per worker from `extension-launch.ts`, unless the repo
+    overrides `browser` / `context` / `page` (that browser then needs
+    SourceMonkey loaded);
+  - per test, an `ExtensionLink` claiming the page and an
+    `ExtensionHost` filled from the extension's events;
+  - `loadUserscript` prepares the file (validation, `url` check,
+    pushed files) and pushes it into the test's collection.
+- Request fakes (`interceptRequests`, `failHosts`) pause the worker's
+  own requests with CDP's Fetch domain in its target, attached over a
+  browser-level session. Playwright's `context.route` sees the worker's
+  requests too, but not the hop after a redirect, which a response with
+  another `finalUrl` needs.
+- Wraps these into `loadUserscript`, `gm`, `reports`, and
   `serveHtml` / `saveHtml`.
   - `serveHtml` routes a saved HTML file at its original URL so
     `@match` and relative URLs still hold (see
@@ -304,16 +240,22 @@ page:
 - `tests/harness/fixture.spec.ts` drives it from `lib/` the way a
   consumer would.
 
-## Extension backend
+### `extension-launch.ts`: a browser with SourceMonkey
 
-### Service-worker additions
+- Launches Playwright's Chromium with the package's `dist/` loaded, in
+  a throwaway profile with "Allow User Scripts" granted up front.
+- One launcher serves `sm-dev --temp-browser`, the fixture, and the
+  repo's own e2e suites.
+- Details in [sm-dev-design.md](sm-dev-design.md#--temp-browser-extension-launchts).
+
+## Service-worker additions for scratch scripts
 
 Test-surface calls write **scratch scripts**, whose only copy is their
 text in storage (see [storage.md](storage.md#container-collections)
 for the rows):
 
-- `writeRunScript({ run, text, name? })` installs the text into run
-  `run`'s **test collection**, made by its first push.
+- `writeRunScript({ run, text, name?, files? })` installs the text into
+  run `run`'s **test collection**, made by its first push.
   - Returns the row's id, status, and diagnostics, after registration
     has completed. (The wrapper names the changed rows to the sync
     itself rather than waiting for the storage event to.)
@@ -323,64 +265,31 @@ for the rows):
   - Rewriting a name replaces the text in place, keeping the row's id
     and GM values, so the next reload runs the new version.
   - Names that differ only in punctuation collapse into one identity.
+  - `files` carries the local `@require` / `@resource` files read from
+    disk, which the loaders use in place of resolving or fetching.
 - `releaseRun(run)` ends the run's claims and removes its test
-  collection, with the rows' `GM_*` values. The worker also removes a
+  collection, with the rows' `GM_*` values. The SW also removes a
   crashed run's after a grace period (see
-  [sm-dev-extension.md](sm-dev-extension.md#test-collections)).
+  [sm-dev-design.md](sm-dev-design.md#test-collections)).
 - For a throwaway profile, `resetAllState()` wipes everything.
 - A test collection is a normal `scripts` collection, so the
   collections page and viewer show it like any other and the Log tab
   works unchanged.
 - A scratch script runs only in the tabs of the run that pushed it (see
-  [sm-dev-extension.md](sm-dev-extension.md#how-the-extension-honours-a-claim)).
+  [sm-dev-design.md](sm-dev-design.md#how-the-extension-honours-a-claim)).
 - No new message transport into the extension: Playwright's worker
   handle serves both a launched and a CDP-connected browser.
 
-### Driving it (`extension-link.ts`, `extension-host.ts`)
+## Tests
 
-- `sm-dev start --extension` reaches the worker through Playwright,
-  which lists an extension's service worker on a CDP-connected browser
-  as well as a launched one.
-- The worker's URL is known up front, since the manifest's fixed `key`
-  fixes the extension id. An idle worker is woken by opening the
-  collections page.
-- The run claims its tabs, so only its own scripts run there, and
-  hears the extension's events (starts, errors, Log entries, menus,
-  values) as they happen. Its commands work as in a harness run. See
-  [sm-dev-extension.md](sm-dev-extension.md).
-- Its test collection goes when the run ends.
-
-## Compliance check for the host
-
-- A `harness` project in `playwright.config.ts` runs `tests/harness/`
-  (the harness's own specs) and `tests/examples/` on a plain Chromium,
-  beside the `sourcemonkey`, `tampermonkey`, and `violentmonkey`
-  projects.
-- The manager fixture's `harness` backend (`tests/fixtures/manager.ts`)
-  prepares every script under the example directory, and injects them
-  into each page the spec opens.
-- Each example directory exercises one API through the public surface.
-  So the stand-in SW is measured against the real one by the same
-  specs, and a divergence fails a test instead of surprising a script
-  author.
-- Exceptions:
-  - Skipped: the wire-header report, which measures a browser's request
-    and says nothing about a request sent from Node.
-  - Run: the examples that check SourceMonkey-specific values
-    (`GM_info` fields, the `@connect` refusal message), since the
-    harness produces them with the extension's own code.
+- The `sm-dev` project in `playwright.config.ts` runs `tests/harness/`,
+  sm-dev's and the fixture's own specs (`pnpm run test:sm-dev`).
+- The examples suite (`tests/examples/`) runs under the real managers
+  only; the fixture runs scripts in the real extension, which the
+  `sourcemonkey` project already covers.
 
 ## Platform behavior the design relies on
 
-Each was checked in a throwaway script before the harness was built.
-
-- **Isolated-world init scripts over CDP work beside Playwright.**
-  `Page.addScriptToEvaluateOnNewDocument` with a `worldName`:
-  - runs in its own world (separate globals, no `chrome`);
-  - fires again on reload;
-  - can be evaluated into from a CDP session by its context id;
-  - dispatches DOM events a MAIN-world listener hears.
-  - Playwright's own `addInitScript` keeps working on the same page.
 - **pnpm builds a git dependency's `prepare` script**, but only when
   the consumer allowlists it under `allowBuilds` in
   `pnpm-workspace.yaml`.
@@ -391,22 +300,12 @@ Each was checked in a throwaway script before the harness was built.
     installed there.
 - **Playwright lists an extension's service worker on a
   `connectOverCDP` connection** (`context.serviceWorkers()`), so the
-  extension backend uses `worker.evaluate` in both cases.
-- **A new tab can't be held before it loads from Playwright.** Found
-  while adding opened-tab injection:
-  - Playwright's `popup` event fires after the tab's document commits,
-    so init scripts added then first reach its next document.
-  - Holding the tab (`Target.setAutoAttach` with
-    `waitForDebuggerOnStart`) needs a browser-level session in flat
-    mode, whose child sessions Playwright's `CDPSession` can't address.
-  - A page-level auto-attach doesn't cover popups.
+  same `worker.evaluate` works for a launched and a connected browser.
+- **Google Chrome (137+) ignores `--load-extension`**, so a launched
+  browser with SourceMonkey is Playwright's Chromium, and a Chrome the
+  person uses needs the unpacked extension loaded by hand once.
 
 ## Open questions
 
-- Whether opened tabs should get exact `document-start` timing, via a
-  raw CDP connection of our own that holds each new tab until the
-  scripts are in.
-- Whether the Playwright fixture should follow opened tabs too, as an
-  opt-in.
 - Whether the package should be published to npm, which would remove
   the consumer's `injected` workaround and the build allowlist.

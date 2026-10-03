@@ -1,4 +1,4 @@
-// Tests for the rate-limit + concurrency gate in src/script-updater.ts.
+// Tests for the rate-limit + concurrency gate in src/extension/script-updater.ts.
 // We cover the gate() helper directly so we don't have to stub the
 // chrome.storage path the public updateScript / updateCollection /
 // updateAllCollections wrappers go through.
@@ -10,7 +10,7 @@ import {
   UPDATE_MIN_INTERVAL_MS,
   _setNowForTests,
   gate,
-} from '../../dist/script-updater.js';
+} from '../../dist/extension/script-updater.js';
 
 // Tiny helper: a Promise the test resolves manually so we can control
 // when "the fetch finishes" without real I/O.
@@ -186,14 +186,14 @@ const {
   replayScriptLogsAtBoot,
   emitScriptOutcomeLog,
   summarizeCollectionOutcome,
-} = await import('../../dist/script-updater.js');
+} = await import('../../dist/extension/script-updater.js');
 const {
   appendScriptLog,
   clearScriptLog,
   getMaxLogLevel,
   getScriptLog,
   _flushScriptLogQueueForTests,
-} = await import('../../dist/script-log.js');
+} = await import('../../dist/extension/script-log.js');
 
 function seedScript({ scriptId, collectionId = 'src-x', startupLogs, ...overrides }) {
   // replayScriptLogsAtBoot reads via getAllScripts (one storage.local
@@ -269,7 +269,7 @@ test('replayScriptLogsAtBoot: replays diagnostics even if a refresh got there fi
     startupLogs: [{ level: 'warn', message: 'Ignoring unsupported @grant GM_audio' }],
   });
   // Pre-seed the log with what a refresh path would have written.
-  await (await import('../../dist/script-log.js')).appendScriptLog('sc-race', {
+  await (await import('../../dist/extension/script-log.js')).appendScriptLog('sc-race', {
     level: 'warning',
     source: 'parser',
     message: 'Ignoring unsupported @grant GM_audio',

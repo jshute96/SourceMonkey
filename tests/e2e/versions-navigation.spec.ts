@@ -169,7 +169,7 @@ test.describe('switching copies from the versions panel', () => {
 
     // Nor does the Collection cell's link out to the collections page.
     // That one opens the collections page's named tab beside this one
-    // (src/page-links.ts), so the viewer is left showing the copy it
+    // (src/extension/page-links.ts), so the viewer is left showing the copy it
     // was already showing rather than the row that was clicked.
     const [collections] = await Promise.all([
       extensionContext.waitForEvent('page'),

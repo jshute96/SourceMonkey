@@ -46,7 +46,7 @@ so a rewording can't quietly stop matching what compares against them:
 | Constant | Module |
 |----------|--------|
 | `UNTERMINATED_METADATA_BLOCK`, `NO_METADATA_BLOCK` | `userscript-header.ts` |
-| `NO_NAME`, `NO_MATCH_OR_INCLUDE`, `SYNTAX_ERROR_PREFIX` | `script-store.ts` |
+| `NO_NAME`, `NO_MATCH_OR_INCLUDE`, `SYNTAX_ERROR_PREFIX` | `script-build.ts` |
 | `ignoredMatchMessage`, `unusableMatchMessage` | `url-match.ts` |
 
 The same rule covers anything that *recognizes* a message rather than
@@ -120,7 +120,7 @@ what the row now says.
 
 ## Rendering it
 
-`appendDiagnostic` (`src/userscript.ts`) paints
+`appendDiagnostic` (`src/extension/userscript.ts`) paints
 `<message> (in <where>)` with the "where" a link.
 
 - It resolves `location.file` to a tab: `@require`s match a tab's
@@ -188,7 +188,7 @@ located warnings or an INVALID row before anything is registered (see
 parser, because a false positive would drop a pattern that works. What
 reaches REJECTED is the remainder: a malformed port, a host Chrome's
 canonicalizer rejects, or whatever it tightens next. See
-[file-index](file-index.md) for `src/script-rejection.ts`, which holds
+[file-index](file-index.md) for `src/extension/script-rejection.ts`, which holds
 the state, and [injection.md](injection.md#rejected-registrations) for
 the registration path that produces it.
 
@@ -211,7 +211,7 @@ verdict about a script's *fate* rather than its content.
   reader needs to know is that what they see on the page is not what is
   on disk, not that something is broken.
 - **One string, one place**: `describeRefreshError` in
-  `src/refresh-error.ts`, listed under
+  `src/extension/refresh-error.ts`, listed under
   [One string, one place](#one-string-one-place).
 - **The reason is ours, not Chrome's.** An out-of-quota write rejects
   with `Resource::kQuotaBytes quota exceeded` (the exact text varies by
@@ -374,7 +374,7 @@ constant, so the copies can't drift:
 | `connectBlockedMessage` (`gm-connect.ts`) | the pre-flight and post-redirect `@connect` denials |
 | `NO_ORIGINATOR_TAB` (`background.ts`) | the GM handlers that reply when the calling tab can't be identified |
 | `NOTIFICATIONS_UNAVAILABLE` (`gm-notification.ts`) | both guards on `chrome.notifications` |
-| `LOCATION_SHAPES` (`directories.ts`) | the Add-field and preview validators' description of a valid location |
+| `LOCATION_SHAPES` (`file-locations.ts`) | the Add-field and preview validators' description of a valid location |
 | `gmValuesFailure` (`gm-bindings.ts`) | the injected console line and the `sm:error` payload |
 | `describeRejection` (`script-rejection.ts`) | the refused-registration sentence, in the Log row and the viewer's message bar |
 | `describeRefreshError` (`refresh-error.ts`) | the could-not-be-saved sentence, in the collection's section message |
@@ -682,7 +682,7 @@ The lesson worth keeping:
   - The expected locations live in `tests/fixtures/bad-script-cases.mjs`
     and are pinned twice: by `bad-scripts.spec.ts` against the stored
     `errorLocation` in Chromium, and by
-    `tests/unit/harness-validate.test.mjs` against `sm-dev validate`'s
+    `tests/unit/harness/validate.test.mjs` against `sm-dev validate`'s
     output under Node. Both go through `locationPattern`, so the two
     engines' answers stay checked against each other.
   - Lines are read off each example's `>>> the error` marker rather than

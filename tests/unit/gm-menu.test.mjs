@@ -16,7 +16,7 @@ const {
   getMenuCommandsForTab,
   findMenuCommand,
   clearTab,
-} = await import('../../dist/gm-menu.js');
+} = await import('../../dist/extension/gm-menu.js');
 
 // Each test picks its own tabId so the module-level state can't leak
 // between them.

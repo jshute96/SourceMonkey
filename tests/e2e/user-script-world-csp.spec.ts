@@ -3,7 +3,7 @@
 //
 // - Chrome checks script elements inserted from the USER_SCRIPT world
 //   against that world's own CSP (set by `configureWorld` in
-//   src/injector.ts), not the page's. So the world CSP must allow
+//   src/extension/injector.ts), not the page's. So the world CSP must allow
 //   inline and external scripts, or this common pattern (injecting
 //   page code) fails even on pages with no CSP.
 // - The same rule means a strict page CSP doesn't stop them either,

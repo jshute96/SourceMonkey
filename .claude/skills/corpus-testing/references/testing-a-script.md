@@ -24,9 +24,8 @@ with its script IDs and a run name prefix.
    - Use `--temp-browser` (headless, muted) by default.
    - Many big sites block headless: Google (`/sorry`), Reddit, Amazon,
      IMDb (403), Codeforces and other Cloudflare sites, DuckDuckGo (empty
-     results), Metacritic (its `GM_xmlhttpRequest` too, so use
-     `--extension`), YouTube live chat and captions. Use the shared visible
-     browser on port 9233 for those.
+     results), Metacritic (its `GM_xmlhttpRequest` too), YouTube live chat
+     and captions. Use the shared visible browser on port 9233 for those.
    - Headless also has overlay scrollbars, no clipboard access, and
      background tabs that stay visible and focused.
 3. **Judge it**, and time-box it (about 10-15 minutes). Read the run's
@@ -58,44 +57,23 @@ No logins, posting, submitting, purchasing, or account changes, and no
 downloads beyond what the check needs. A script that only works with an
 account is `n/a` with `--reason requires-login`.
 
-### sm-dev or SourceMonkey?
+### The real extension
 
-sm-dev imitates the extension, but not perfectly. The current list of
-differences is [Known differences under the push
-backend](../../../../docs/harness-guide.md#known-differences-under-the-push-backend).
-The ones that come up in the corpus:
+Every run runs the script in the real SourceMonkey:
 
-- `@run-at document-start` code usually runs after the page's early
-  scripts, so a script that hooks `fetch` or `XMLHttpRequest` first may
-  miss page code.
-- The isolated world (a granted script's own JavaScript context, apart
-  from the page's) enforces the page's Trusted Types, a site policy that
-  blocks setting HTML from plain strings (`innerHTML`).
-- An inline `<script>` a granted script inserts is blocked by a strict
-  page CSP (Content Security Policy).
-- A `GM_setValue` just before a reload, or in `beforeunload`, is lost.
-- Only the top frame gets scripts.
-
-When a failure might be one of these, confirm it in the real extension
-with `--extension`. Testing in sm-dev stays the default: it's faster.
-
-```sh
-scripts/sm-dev --temp-browser --run <prefix>1 start <file> <url> --extension --detach
-# ... the same commands as any run: logs, wait log, eval, snapshot ...
-scripts/sm-dev --run <prefix>1 stop
-```
-
-- `--temp-browser` installs SourceMonkey in a throwaway headless
-  browser, so it needs no setup and is safe beside other agents.
-- For a site that blocks headless, use the shared browser on port 9233
-  instead (drop `--temp-browser`), if its first line says `has
-  SourceMonkey`.
-  - Each run pushes its scripts into a test collection of its own,
-    which `stop` removes, so parallel agents don't see each other's
-    scripts. Always `stop` your runs.
+- `--temp-browser` installs it in a throwaway headless browser, so it
+  needs no setup and is safe beside other agents.
+- The shared browser on port 9233 works too, when the run's first line
+  says `has SourceMonkey`.
+- Each run pushes its scripts into a test collection of its own, which
+  `stop` removes, so parallel agents don't see each other's scripts.
+  Always `stop` your runs.
 - The script's remote `@require`s are fetched live, not from the copies
   in `files/`.
-- Say in the note that the real extension was used.
+- While a run is live, `@run-at document-start` code may run after the
+  page's first inline scripts, where SourceMonkey alone would run it
+  first. A script that hooks `fetch` or `XMLHttpRequest` early may miss
+  page code for that reason; say so in the note.
 
 ## Blame
 
@@ -137,8 +115,7 @@ node $R set ID --test n/a --reason requires-login --note-file note.md
 
 Markdown, short, factual. Say the page, the action, and what was observed,
 with numbers where there are any. Bullets for separate facts, prefixed
-"SourceMonkey:", "Script:" or "sm-dev:" where it helps. Say when the real
-extension was used. No em-dashes.
+"SourceMonkey:", "Script:" or "sm-dev:" where it helps. No em-dashes.
 
 > On a watch page the player fills the window (1393x983 at 0,0); `w`
 > toggles it off and back. A `--noscript` tab stayed at 853x480.

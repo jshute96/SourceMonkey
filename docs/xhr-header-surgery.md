@@ -1,8 +1,8 @@
 # XHR header surgery
 
 How `GM_xmlhttpRequest` sets request headers the browser forbids a
-script to set. Code: `src/gm-xhr-headers.ts`, driven from
-`src/gm-xhr.ts`.
+script to set. Code: `src/extension/gm-xhr-headers.ts`, driven from
+`src/extension/gm-xhr.ts`.
 
 For the rest of the XHR implementation see
 [GM-APIs.md](GM-APIs.md#gm_xmlhttprequest); for the script-facing

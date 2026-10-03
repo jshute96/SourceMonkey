@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 
-import { emitGmBindings } from '../../dist/gm-bindings.js';
+import { emitGmBindings } from '../../dist/extension/gm-bindings.js';
 
 function makeInfo(over = {}) {
   return {

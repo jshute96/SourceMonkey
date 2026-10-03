@@ -1,13 +1,13 @@
 # Testing userscripts with the SourceMonkey harness
 
 The harness is for a repo of userscripts that wants to probe sites,
-run a script under development, and write regression tests, using
-SourceMonkey's own code for the manager's half of the picture.
+run a script under development, and write regression tests, with the
+script running in the real SourceMonkey extension.
 
 It has two parts:
 
 - **`sm-dev`**, a command-line tool for interactive work: open a site
-  with your script injected, watch what it does, poke at the page, edit,
+  with your script running, watch what it does, poke at the page, edit,
   repeat.
 - **A Playwright fixture** for writing specs once the script works.
 
@@ -27,6 +27,7 @@ has them log where the tools got in the way.
 - [Quick start](#quick-start)
 - [How sm-dev works](#how-sm-dev-works)
 - [A browser to work in](#a-browser-to-work-in)
+- [How scripts run](#how-scripts-run)
 - [Starting a run](#starting-a-run)
 - [Sending commands](#sending-commands)
 - [Working with scripts](#working-with-scripts)
@@ -37,30 +38,30 @@ has them log where the tools got in the way.
 - [Background runs and logs](#background-runs-and-logs)
 - [DevTools alongside a run](#devtools-alongside-a-run)
 - [Writing specs: the Playwright fixture](#writing-specs-the-playwright-fixture)
-- [The extension backend](#the-extension-backend)
-- [What is and isn't faithful](#what-is-and-isnt-faithful)
+- [Known limitations](#known-limitations)
 - [Troubleshooting](#troubleshooting)
 
 ## What you get
 
-- **The manager's semantics without the extension.** Your script runs
-  behind SourceMonkey's real injected code:
+- **The real manager.** Your script runs in the SourceMonkey extension,
+  in the browser sm-dev drives:
   - the header is validated;
   - `@match` / `@include` / `@exclude` decide whether it runs;
   - `@run-at` is honored;
   - `@require` files load, with local copies overriding GitHub URLs the
     way the extension does;
   - `@grant` decides which `GM_*` names exist;
-  - the script lands in the same world (page or isolated) it would in
-    Chrome.
-- **Real `GM_*` behavior.** Storage with the real value codec and
-  cross-page broadcast, `GM_xmlhttpRequest` gated by `@connect`, menu
-  commands you can fire, tab opens and notifications you can inspect.
+  - the script lands in the world (page or isolated) Chrome gives it.
+- **Real `GM_*` behavior.** Storage with cross-tab broadcast,
+  `GM_xmlhttpRequest` with the extension's own request identity, menu
+  commands you can fire, tab opens, downloads and notifications you can
+  inspect.
+- **Nothing left behind.** The run's scripts live in a test collection
+  of its own, removed when it ends, and only they run in the run's tabs
+  (see [How scripts run](#how-scripts-run)).
 - **The script's own reports.** Whether it started, was skipped for a
   URL miss, or threw, attributed the same way the extension's Log tab
   does.
-- **A switch to the real extension** for the cases only Chrome can
-  answer (see [The extension backend](#the-extension-backend)).
 
 ## Setup
 
@@ -69,8 +70,9 @@ has them log where the tools got in the way.
 - Node 22+ and pnpm.
 - A Chromium that Playwright can reach, with a remote-debugging port.
   See [A browser to work in](#a-browser-to-work-in).
-- For the extension backend only: SourceMonkey loaded in that browser
-  (see [Setting it up](#setting-it-up)).
+- SourceMonkey loaded in that browser, with "Allow User Scripts" on. A
+  `--temp-browser` has it; for another browser, see
+  [Setting it up](#setting-it-up).
 
 ### Install
 
@@ -139,6 +141,10 @@ sm-dev --open-browser
 - A Chrome window opens, listening for sm-dev on port 9233.
 - It stays open across runs, and keeps its profile, so sign in to the
   sites your scripts need once, there.
+- The first time, load SourceMonkey into it (see
+  [Setting it up](#setting-it-up)). The profile keeps it.
+- For a quick try with no login, use `--temp-browser` on the next step
+  instead, which comes with SourceMonkey.
 
 ### 2. Start a run
 
@@ -146,10 +152,10 @@ sm-dev --open-browser
 sm-dev --interactive start sites/example.com/add-button.user.js --watch
 ```
 
-- Opens the script's page (the first URL its `@match` implies) in tab
-  `T1`, with the script injected.
+- Pushes the script into SourceMonkey, and opens its page (the first
+  URL its `@match` implies) in tab `T1`, where it runs.
 - Streams the script's console lines, errors, and whether it started.
-- `--watch` re-injects the script and reloads the page on each save.
+- `--watch` pushes the script again and reloads the page on each save.
 - `--interactive` then shows a `> ` prompt for more commands.
 
 ### 3. Work at the prompt
@@ -180,7 +186,7 @@ sm-dev stop
 What a run prints as it goes:
 
 ```
-[sm-dev] Injected sites/example.com/add-button.user.js in world USER_SCRIPT, run-at document-idle
+[sm-dev] Pushed to SourceMonkey: sites/example.com/add-button.user.js
 [sm-dev] Opening https://example.com/items/42 in T1 [targetId=61023580282B1D684FAF4072C201AB51]
 [sm-dev] Add button started on https://example.com/items/42
 [page log] [add-button] toolbar found, button inserted
@@ -191,7 +197,7 @@ What a run prints as it goes:
   script off it (`skipped on <url>: No @match or @include covers this
   URL`), and nothing runs.
 - A header problem prints the same wording the extension's viewer
-  would, and nothing is injected.
+  would, and nothing is pushed.
 - A long stored value is cut after 100 characters in its `GM_setValue`
   line; `get` and `values` show it whole.
 - A DOM node logged to the console, at any level, prints as its opening
@@ -231,8 +237,8 @@ sm-dev [global-options] <command> [args and options] [-- <command> ...]
 ### Runs and clients
 
 - `sm-dev start` begins a **run**: a background process of its own
-  that connects to the browser, opens tabs, injects the scripts, and
-  logs what they do.
+  that connects to the browser, pushes the scripts into SourceMonkey
+  there, opens tabs, and logs what the scripts do.
 - Each `sm-dev` command is a **client** of a run. It connects to the
   run, sends it commands, and prints what comes back.
 - Any number of sm-devs, in any shells, can work with the same run.
@@ -248,6 +254,7 @@ up:
 | --- | --- | --- |
 | Runs | `D1`, `D2` (or one you pick with `--run Dname`) | `sm-dev list` |
 | Scripts | `1`, `2` | `scripts` |
+| SourceMonkey-managed scripts on the tab | `E1`, `E2` | `scripts` |
 | Tabs | `T1`, `T2` | `tabs` |
 | Menu commands | `M1`, `M2` | `menu` |
 
@@ -286,7 +293,8 @@ up:
 
 `sm-dev` connects to a browser over CDP (Chrome DevTools Protocol, the
 remote-control interface DevTools and Playwright use). There are three
-ways to get one.
+ways to get one. Each needs SourceMonkey in it (see
+[A browser with SourceMonkey installed](#a-browser-with-sourcemonkey-installed)).
 
 ### A lasting browser: `--open-browser`
 
@@ -304,6 +312,8 @@ sm-dev --open-browser --browser 9300            # another one, on port 9300
   its window.
 - Google Chrome when it's installed (it handles Google sign-in), else
   Playwright's Chromium. `SM_DEV_BROWSER_BINARY` names another binary.
+- Google Chrome ignores the flag that would load SourceMonkey, so load
+  it there by hand once (see [Setting it up](#setting-it-up)).
 - Its profile is kept, so sign-ins and extensions carry over:
   `~/.config/sm-dev/browser-profile-<port>`, or `--profile DIR`.
   - One per port, since only one browser at a time can use a profile.
@@ -322,31 +332,64 @@ sm-dev --open-browser --browser 9300            # another one, on port 9300
 - Launches a hidden Chromium for each run, with an empty profile,
   closed when the run ends. `--headed` shows it.
 - Useful for a quick run whose page needs no login.
-- With `start --extension`, it loads SourceMonkey's built extension
-  (its `dist/`), with "Allow User Scripts" on and pinned to the toolbar. See
-  [The extension backend](#the-extension-backend).
+- It needs no setup: it loads SourceMonkey's built extension (the
+  `dist/` beside sm-dev: the checkout's own build, or the copy
+  `pnpm install` took in a repo of userscripts), with "Allow User
+  Scripts" on and pinned to the toolbar.
+- Starting it takes a few seconds, for the extension's first run in the
+  new profile.
+- Hidden, it still sends a windowed Chrome's user agent, not
+  `HeadlessChrome`, which some servers refuse a script's `@require`s
+  and requests for.
 - Needs a `start` on the line (or `--interactive` or `--stdin`, where
   one can come).
 
 ### Your own browser
 
-Any Chromium started with
-`--remote-debugging-port`. Point sm-dev at it with `--browser`.
+Any Chromium started with `--remote-debugging-port`, with SourceMonkey
+loaded. Point sm-dev at it with `--browser`. Your ordinary browser with
+SourceMonkey installed works too, given that port.
 
 ### A browser with SourceMonkey installed
 
-- The run keeps SourceMonkey-managed scripts out of the tabs it opens
-  (and the tabs those open), so only the run's scripts run there. They
-  run there again from the tab's next load after the run ends.
-- That holds for a run started with no scripts too, so scripts it
-  `load`s later run alone.
-- Your other tabs are left alone.
-- In those tabs, SourceMonkey's toolbar icon has a cyan **T** in its
-  corner, its badge counts none of its scripts, and both its tooltip
+- Every run needs SourceMonkey in its browser, with "Allow User
+  Scripts" on. A `--temp-browser` has it; an `--open-browser` or your
+  own browser needs it loaded once (see
+  [Setting it up](#setting-it-up)).
+  - Without it, with it turned off, or with "Allow User Scripts" off,
+    the run refuses to start and says how to fix it.
+  - `status` and the run's first line say which: `has SourceMonkey`,
+    `SourceMonkey disabled` or `no extension` (see
+    [Managing runs](#managing-runs)).
+- The run's tabs (the ones it opens, and the tabs those open) run only
+  the run's scripts: SourceMonkey keeps its own scripts out of them.
+  - They run there again from the tab's next load after the run ends.
+  - That holds for a run started with no scripts too, so scripts it
+    `load`s later run alone.
+- Your other tabs are left alone, and the run's scripts don't run in
+  them.
+- In the run's tabs, SourceMonkey's toolbar icon has a cyan **T** in
+  its corner, its badge counts the run's scripts, and both its tooltip
   and its right-click menu say "Page under sm-dev control".
-- With an older SourceMonkey, the run says once that its scripts may
-  also run in the run's tabs.
-- How it works: [sm-dev-extension.md](sm-dev-extension.md#tab-claims).
+- An older SourceMonkey than sm-dev is refused, with how to update it.
+- How it works: [sm-dev-design.md](sm-dev-design.md#tab-claims).
+
+### Setting it up
+
+For a browser that keeps the extension (and your logins):
+
+1. Build SourceMonkey (`pnpm run build`), which writes the unpacked
+   extension to its `dist/`. In a repo of userscripts, `pnpm install`
+   already built it under `node_modules/sourcemonkey/dist/`.
+2. Load it into the browser sm-dev uses: in `chrome://extensions`, turn
+   on Developer mode, then "Load unpacked" and pick `dist/`. An
+   `--open-browser` profile keeps it from then on.
+3. On SourceMonkey's details page there, turn on "Allow User Scripts".
+
+- A Chromium started with `--load-extension=<SourceMonkey dist>` works
+  as well, though Google Chrome itself ignores that flag.
+- After rebuilding SourceMonkey, reload it in `chrome://extensions` so
+  the browser runs the new build.
 
 ### Choosing the browser: `--browser`
 
@@ -365,13 +408,65 @@ Any Chromium started with
   `--browser` or `--open-browser`, and after `--open-browser`, `start`
   takes no `--browser` of its own.
 
+## How scripts run
+
+### A test collection per run
+
+- `sm-dev start` pushes the script text into SourceMonkey, stored only
+  there, in a **test collection** of the run's own.
+  - It shows on the collections page as `sm-dev test collection (run
+    D2-a3f9)`, the same id `status` shows on its `Backend:` line.
+  - The script is registered before the page opens.
+  - The next push of the same file in the run (`update`, `--watch`)
+    replaces it in place, keeping its stored values. Each run starts
+    with no stored values, or those `--values` seeds.
+  - The `@require` and `@resource` files the script reads from disk are
+    pushed with it: relative paths, and local copies of remote URLs
+    under the collection root or a `--local` directory. Remote ones the
+    extension fetches.
+    - They're snapshots: a refresh in SourceMonkey doesn't reread them,
+      and the script's page marks a `@require` tab `snapshot`. `update`
+      (or a `--watch` save) pushes new versions.
+  - Nothing on disk is scanned.
+- The test collection is removed when the run ends, with its stored
+  values. A run that crashed has its collection removed about 6 minutes
+  later.
+- Only the run changes it: the extension won't move scripts into or
+  out of it, or install scripts into it.
+
+### Which tabs they run in
+
+- The run's tabs run only the scripts it pushed, across reloads and in
+  the tabs they open, until the run ends.
+- The scripts it pushed run only in the run's tabs: not in tabs you
+  open yourself, another run's tabs, or anywhere once the run ends.
+- The run's tabs show a cyan **T** at the top left of SourceMonkey's
+  toolbar icon, so you can tell them apart from your own tabs.
+- See [sm-dev-design.md](sm-dev-design.md#tab-claims) for how.
+
+### What the run reports
+
+- The script's starts, errors, menu commands and value writes.
+- Its `GM_xmlhttpRequest`s, downloads, notifications and opened tabs.
+- The entries it adds to its Log tab, and the page's console lines.
+- Values and menu clicks sent from sm-dev go through the extension.
+
+### SourceMonkey-managed scripts
+
+- `scripts` and `status` also list the SourceMonkey-managed scripts
+  that match the current tab, as E1, E2, ..., with their status.
+- `values E1` shows one's stored values, and `scripts E1` picks it for
+  `get` and `set`.
+- Outside a `--temp-browser`, `set` on one needs `--force`, since it
+  changes your real data: `set key --force <json>`.
+
 ## Starting a run
 
 ```sh
 sm-dev start [script.user.js]... [url]... [options]
 ```
 
-- Opens a tab at each URL, injects the scripts as they are on disk, and
+- Pushes the scripts as they are on disk, opens a tab at each URL, and
   streams the scripts' console lines, errors, and start / skipped /
   error reports.
 - With no URL, it opens the first script's **default page**: the first
@@ -390,7 +485,7 @@ running, --seconds N to watch it for a while, or commands after --.`
 
 | Option | Effect |
 | --- | --- |
-| `--watch` | Re-inject and reload on each save of a script or local `@require` |
+| `--watch` | Push again and reload on each save of a script or local `@require` |
 | `--detach` | Return once the pages settle, and leave the run going |
 | `--new` | With `--detach`, keep earlier detached runs going |
 | `--all` | Open each script's default page, one tab per page |
@@ -403,7 +498,6 @@ running, --seconds N to watch it for a while, or commands after --.`
 | `--nowait` | Don't wait for the pages to settle |
 | `--seconds N` | Stop the run after N seconds |
 | `--idle-seconds N` | Stop after N idle seconds (default 30 minutes; `0` never) |
-| `--extension` | Use the real extension |
 | `--devtools` | Start a Chrome DevTools server for the run |
 
 Details on each are in [`start` options in detail](#start-options-in-detail).
@@ -460,30 +554,29 @@ What to open:
   - The extra tabs are T2, T3, and stay open when the run ends.
   - Scripts it opened no tab for are listed at the end, with the
     reason.
-  - Works with `--extension` too.
   - Can't be combined with a URL.
 - `--notab` opens no tab at startup. `newtab` opens one later, and the
   first it opens is T1.
   - That tab isn't one a later run takes over (see
     [Which tab `start` uses](#which-tab-start-uses)).
-  - With `--extension` too, the scripts run only in the tabs the run
-    opens (`newtab`), not in pages you browse to yourself.
+  - The scripts run only in the tabs the run opens (`newtab`), not in
+    pages you browse to yourself.
   - Can't be combined with a URL or `--all`.
 - With no scripts given, it starts as a browser to drive with the run
   commands, on a blank page or the URLs given. `load` adds scripts
   later. It can't be combined with `--all`, `--values`,
   `--values-file` or `--watch`.
-  - With `--temp-browser --headed --extension`, that's a throwaway
-    browser with the extension, to try by hand. The scripts it `load`s
-    run only in the run's tabs (`newtab`, and the tabs those open), not
-    in tabs you open yourself.
+  - With `--temp-browser --headed`, that's a throwaway browser with
+    SourceMonkey, to try by hand. The scripts it `load`s run only in
+    the run's tabs (`newtab`, and the tabs those open), not in tabs you
+    open yourself.
 - `--from-saved` opens each `.html` file given as a saved page, at the
   URL it was saved from, with `--url` and `--offline` as for `newtab`.
   See [Saved pages](#saved-pages). Not with `--all` or `--notab`.
 
 The scripts:
 
-- `--watch` re-injects on each save of a script or a `@require`d file,
+- `--watch` pushes again on each save of a script or a `@require`d file,
   and reloads the tabs it runs in or now matches, all at once. (The run
   command `update` does the same on demand.)
 - `--values '{"key": 1}'` seeds `GM_*` storage before the script runs.
@@ -508,11 +601,12 @@ The browser's language:
 - A headless `--temp-browser` is also launched with Chrome's `--lang`
   and `--accept-lang`, which reach those iframes and workers too, and a
   popup's first page. Use it when a script runs in frames.
-- `GM_xmlhttpRequest` and `GM_download` requests ask for the tab's
-  languages too, unless the script sets `Accept-Language` itself.
-  - With `--lang` and `--extension` in a connected browser they carry
-    the browser's own languages instead: the extension sends them from
-    its service worker, which the tab's setting doesn't reach.
+- `GM_xmlhttpRequest` and `GM_download` requests go from the
+  extension's service worker (its background script), which the tab's
+  setting doesn't reach. They carry the browser's own languages, unless
+  the script sets `Accept-Language` itself.
+  - A headless `--temp-browser`'s launch flags reach them, so there
+    they carry the `--lang` languages.
 
 The run's lifetime:
 
@@ -529,10 +623,8 @@ The run's lifetime:
 - `--nowait`: don't wait for the pages to settle before continuing. It
   still waits for the scripts to start.
 
-Other modes:
+DevTools:
 
-- `--extension` uses the real extension in that browser instead of the
-  built-in stand-in. See [The extension backend](#the-extension-backend).
 - `--devtools` starts a Chrome DevTools server for the run. See
   [DevTools alongside a run](#devtools-alongside-a-run).
   `SM_DEV_DEVTOOLS=1` makes it the default, and `--nodevtools` turns it
@@ -590,9 +682,9 @@ them (blocked trackers, failed ad requests) to bury the script's lines.
 - `logs` shows everything the page logged, filtered or not.
 - A page whose `Content-Security-Policy` header sandboxes it without
   `allow-scripts` blocks scripts in the page's own context (`@grant
-  none`, `@inject-into page`), under sm-dev and in the extension
-  alike. On each load of such a page, the run names the loaded scripts
-  that this blocks and suggests `@inject-into content`.
+  none`, `@inject-into page`). On each load of such a page, the run
+  names the loaded scripts that this blocks and suggests
+  `@inject-into content`.
 
 ## Sending commands
 
@@ -870,7 +962,7 @@ The options:
 
 | Run command | What it does |
 | --- | --- |
-| `scripts` | Lists the loaded scripts, numbered, and where each is active |
+| `scripts` | Lists the loaded scripts, numbered, and where each is active, then the SourceMonkey-managed scripts on the current tab (E1, ...) |
 | `script <script>` | Picks the script `get`, `set`, `match` and `validate` act on (the first, until changed). `scripts <script>` works too |
 | `load <script>...` | Loads more scripts from disk (files, directories, globs), and reloads the tabs they match. Quote a path with spaces |
 | `update [script]` | Re-reads one script from disk, or all (with no argument, or `all`), as `--watch` does on a save |
@@ -965,6 +1057,10 @@ In a run, not given files, they act on the run's scripts and tabs:
   - `newtab all` opens one tab per script's default page, as `--all`
     does at startup, and leaves the current tab as it was. Scripts it
     opened no tab for are listed at the end.
+- In the browser, a tab the run controls shows SourceMonkey's toolbar
+  icon with a cyan **T** in its corner, and its badge counts the run's
+  scripts there (see
+  [A browser with SourceMonkey installed](#a-browser-with-sourcemonkey-installed)).
 - `newtab`, `open` and `reload` take `--noscript` / `--script` (see
   [Tabs without scripts](#tabs-without-scripts)); `newtab` and `open`
   take `--from-saved` (see [Saved pages](#saved-pages)).
@@ -1002,23 +1098,20 @@ In a run, not given files, they act on the run's scripts and tabs:
 
 ### Tabs the page opens
 
-A tab the run's tab opens gets the loaded scripts too, as it would
-under the extension, where each one's `@match` decides.
+A tab the run's tab opens is the run's too: it runs the run's scripts
+(each one's `@match` decides), and only those.
 
 - Covered: links and `window.open` calls, `GM_openInTab`, and tabs
   those tabs open in turn.
 - Tabs you open yourself are left alone, unless you open them from a
   controlled tab's link (Ctrl-click, middle-click), which gives them
   that tab as their opener.
-- A followed tab's lines, its page output and the harness's reports
-  alike, are prefixed with its name, as in `[T2]`.
-- When the run ends, link and `window.open` tabs stay open.
-  `GM_openInTab` ones close, as they do in tests, so runs don't pile up
-  tabs.
-- The harness only sees such a tab once its page has started loading,
-  so a `document-start` script can run late there. The run prints a
-  note when that may have happened; `document-idle` scripts, the
-  default, run on time.
+- A followed tab's lines, its page output and the run's reports alike,
+  are prefixed with its name, as in `[T2]`.
+- The scripts run there from its first load. sm-dev finds the tab just
+  after, so console lines from that first load aren't shown; the
+  scripts' reports are.
+- When the run ends, these tabs stay open.
 
 ### Tabs without scripts
 
@@ -1028,8 +1121,8 @@ unmodified pages, or save one for a spec (`savehtml`).
 - `--noscript` on `newtab`, `open` or `reload` enters it; `--script`
   leaves it.
 - All pages the tab loads, and all tabs it opens, get no scripts.
-- `tabs` marks it `(no scripts)`. It has no badge, and `load` and
-  `update` skip it.
+- `tabs` marks it `(no scripts)`, and `load` and `update` skip it.
+- SourceMonkey-managed scripts stay out of it too, while the run lasts.
 
 ### Tab ids for other tools
 
@@ -1048,26 +1141,6 @@ alongside the run to name the same tab:
 - With `--devtools`, `tabs` also shows each tab's DevTools page id, as
   `[targetId=… pageId=4]`. Those commands take either id, pasted on its
   own.
-
-### Tab badges
-
-Each tab the run controls gets a badge over its icon in the tab strip,
-in the colors the extension's toolbar badge uses:
-
-- The number is how many scripts are in play on the page: the ones
-  whose `@match` covers it, plus any that ran there anyway. `0` means
-  the tab is controlled, but no script applies.
-- Green: all is well. Red: a script reported an error. Orange: a script
-  that should run hasn't started yet, or one ran that shouldn't have.
-- Grey: the run has ended, or was killed, so nothing streams from this
-  tab anymore. Reload it to get the site's own icon back.
-  - After a kill it takes a few seconds, or up to a minute in a tab
-    that isn't showing, since Chrome slows timers there.
-- Not with `--extension`: there, the extension's toolbar badge covers
-  the tabs.
-- To have only the badge as the tab's icon, the site's own icon links
-  get their `rel` renamed (see
-  [What is and isn't faithful](#what-is-and-isnt-faithful)).
 
 ### Page dialogs
 
@@ -1453,10 +1526,10 @@ D2   81502  1m      127.0.0.1:41234 (owned, headless)  1     a.user.js
 - `owned` marks one the run launched (`--temp-browser`), which closes
   when it ends; `headless`, one without a window.
 - `status` says the same on its `Run:` line:
-  `connected to owned headless browser 127.0.0.1:41234 (no extension)`.
+  `connected to owned headless browser 127.0.0.1:41234 (has SourceMonkey)`.
   - `has SourceMonkey`, `SourceMonkey disabled` or `no extension`
-    says whether the real extension is there, for `--extension`.
-    Checked each time. It doesn't check "Allow User Scripts".
+    says whether SourceMonkey is there. Checked each time. It doesn't
+    check "Allow User Scripts".
   - A disabled copy installed from the Chrome Web Store shows as `no
     extension`; one loaded unpacked shows as disabled.
   - The run's first line says it too, after the Chrome version.
@@ -1470,9 +1543,11 @@ D2   81502  1m      127.0.0.1:41234 (owned, headless)  1     a.user.js
   `--idle-seconds 0` turns it off.
 - Piping sm-dev's output into something that stops reading (`| head`)
   ends sm-dev.
-- Every run's last line says it has ended. From then on, pages loaded
-  don't get the scripts. Pages already open keep them until reloaded,
-  but nothing from them streams anywhere, and their badge turns grey.
+- Every run's last line says it has ended. Its test collection is
+  removed, and its tabs are SourceMonkey's again: from their next load
+  they run SourceMonkey-managed scripts, not the run's.
+- Pages already open keep what the run's scripts did until reloaded,
+  but nothing from them streams anywhere.
 
 ### Detached runs
 
@@ -1578,7 +1653,7 @@ Its lifetime:
   one it left behind.
 - Without the `chrome-devtools` command, the run says so and carries on
   without it.
-- Not with `--temp-browser` or `--extension`, and not on Windows yet.
+- Not with `--temp-browser`, and not on Windows yet.
 
 Things to know:
 
@@ -1612,16 +1687,37 @@ test('adds the button to the toolbar', async ({ page, loadUserscript, gm, report
 });
 ```
 
+### How it runs the scripts
+
+- In the real SourceMonkey, as `sm-dev`'s runs do. Each test's scripts
+  go into a test collection of its own, removed when the test ends.
+- The test's `page` is claimed for the test, so only its scripts run
+  there, and SourceMonkey-managed ones stay out.
+- The browser: by default each Playwright worker process launches one
+  hidden Chromium with the package's built extension (its `dist/`),
+  and its tests share it.
+  - Starting it takes a few seconds, once per worker.
+  - `--headed` shows it.
+- A worker's tests share the browser's own context: cookies and
+  storage carry over between them, and Playwright's context options
+  (`baseURL`, `viewport`, `locale`) don't apply. Each test's tabs are
+  closed at its end.
+- A repo that drives its own browser (a logged-in one, over CDP)
+  overrides `browser`, `context` and `page` in its fixture file, and
+  re-exports the harness `test` extended with them. That browser needs
+  SourceMonkey loaded with "Allow User Scripts" on (see
+  [Setting it up](#setting-it-up)).
+
 ### What the fixture provides
 
 | Name | Purpose |
 | --- | --- |
-| `loadUserscript(path, options?)` | Prepares the file with the real pipeline and attaches it to `page`, before the navigation that should see it |
+| `loadUserscript(path, options?)` | Checks the file with the real pipeline and pushes it into SourceMonkey, before the navigation that should see it |
 | `gm` | The scripts' storage, menu commands, and recorded `GM_*` side effects |
 | `reports` | `started()`, `skipped()` (with the rule that missed), `errors()` (message and stack, its lines mapped to the `@require` or script file as in the run's output) |
 | `serveHtml(file, url?, { block? })` | Routes a saved HTML file at its URL, so `@match` and relative URLs behave as on the live site |
 | `saveHtml(file)` | Writes the page's current DOM to `file`, for `serveHtml` to replay later |
-| `host`, `attachment` | The underlying objects, for anything the others don't cover |
+| `host`, `attachment` | The underlying objects, for anything the others don't cover: the reports' host, and the page's watcher |
 
 `loadUserscript`:
 
@@ -1634,7 +1730,8 @@ test('adds the button to the toolbar', async ({ page, loadUserscript, gm, report
   - `copy` loads the same file again as a second installed copy, with
     its own id and storage.
   - `collectionRoot` and `localRoots` set the `@require` lookups
-    (default: the config's root).
+    (default: the config's root). Files read from disk are pushed with
+    the script.
 
 `gm`:
 
@@ -1646,7 +1743,17 @@ test('adds the button to the toolbar', async ({ page, loadUserscript, gm, report
   `closeNotification(requestId)`.
 - Network control: `failHosts(...hosts)` gives a synthetic 503 for
   those hosts, to force a fallback path. `interceptRequests(fn)`
-  answers any request from the test.
+  answers any request from the test. Await either before the request
+  can go.
+  - A `load` answer's status, headers, `responseText` and `finalUrl`
+    are what the script sees; `finalUrl` by a redirect to it.
+  - An `error`, `timeout` or `abort` answer reaches the script as a
+    network failure, with the extension's own message.
+  - The interceptor gets a script id only when one script is loaded.
+  - In a browser of your own, other tabs' scripts' requests are
+    intercepted too while it is set.
+- `downloads()` lists the ones the extension handles: http(s) URLs.
+  A `data:` or `blob:` download happens in the page, and isn't listed.
 - Values and commands are per script. When several are loaded, name one
   by the path it was loaded from, its basename, or its `@name`.
 
@@ -1668,9 +1775,6 @@ test('adds the button to the toolbar', async ({ page, loadUserscript, gm, report
 
 Other notes:
 
-- The fixture leaves `browser` and `context` to you. A repo that
-  attaches to a manually launched browser keeps that logic in its own
-  fixture file, and re-exports the harness `test` extended with it.
 - `sourcemonkey/harness` loads Playwright when imported. A Node-only
   tool that wants just `prepareScript` can import
   `sourcemonkey/harness/prepare` instead.
@@ -1702,203 +1806,45 @@ A spec can also answer the script's network requests itself
 (`gm.interceptRequests`, `gm.failHosts`). `sm-dev` has no command for
 that, since the answer is a function.
 
-## The extension backend
+## Known limitations
 
-Everything above runs your script behind a stand-in for the extension.
-`--extension` runs it in the real SourceMonkey instead, for what only
-Chrome can answer:
-
-- Content security policy, Chrome's own match gating, and cross-tab
-  broadcast between real tabs.
-- The real identity of a `GM_xmlhttpRequest`: the extension's cookies,
-  no `Origin` header, `Sec-Fetch-Site: none`. A request that works from
-  a page can still be refused when it comes from the extension, so send
-  one real request per endpoint here before building on it.
-
-### Setting it up
-
-The quickest way needs no setup: `--temp-browser` loads the extension
-into a throwaway browser for the run.
-
-```sh
-sm-dev --temp-browser start my-script.user.js https://example.com/ --extension
-```
-
-- It loads the extension from the `dist/` beside sm-dev: the checkout's
-  own build, or the copy `pnpm install` took in a repo of userscripts.
-- The profile is empty, so the site has no login.
-- Starting it takes a few seconds longer than a plain `--temp-browser`.
-- Hidden, it still sends a windowed Chrome's user agent, not
-  `HeadlessChrome`, which some servers refuse a script's `@require`s
-  and requests for.
-
-For a browser that keeps the extension (and your logins):
-
-1. Build SourceMonkey (`pnpm run build`), which writes the unpacked
-   extension to its `dist/`.
-2. Load it into the browser sm-dev uses: in `chrome://extensions`, turn
-   on Developer mode, then "Load unpacked" and pick `dist/`. An
-   `--open-browser` profile keeps it from then on.
-3. On SourceMonkey's details page there, turn on "Allow User Scripts".
-4. Start runs with `--extension`:
-   ```sh
-   sm-dev start my-script.user.js https://example.com/ --extension
-   ```
-
-- Your ordinary browser with SourceMonkey installed works too, as long
-  as it has a remote-debugging port.
-- A Chromium started with `--load-extension=<SourceMonkey dist>` works
-  as well, though Google Chrome itself ignores that flag.
-
-### How it works
-
-- `sm-dev start --extension` pushes the script text into the extension,
-  stored only there, in a **test collection** of the run's own.
-  - It shows on the collections page as `sm-dev test collection (run
-    D2-a3f9)`, the same id `status` shows on its `Backend:` line.
-  - The script is registered before the page opens.
-  - The next push of the same file in the run (`update`,
-    `--watch`) replaces it in place, keeping its stored values. Each
-    run starts with no stored values.
-  - Nothing on disk is scanned.
-  - The test collection is removed when the run ends, with its stored
-    values. A run that crashed has its collection removed about 6
-    minutes later.
-  - Only the run changes it: the extension won't move scripts into or
-    out of it, or install scripts into it.
-- The run commands work as in a harness run: `status`, `get`/`set`,
-  `menu`, the page commands, `reload`. Values and menu clicks go
-  through the extension.
-- What it prints: the script's starts, errors, menu commands and value
-  writes, the entries it adds to its Log tab, and the page's console
-  lines.
-- The run's tabs run only the scripts it pushed: the extension keeps
-  its other scripts out of them, across reloads and in the tabs they
-  open, until the run ends.
-- The scripts it pushed run only in the run's tabs: not in tabs you
-  open yourself, another run's tabs, or anywhere once the run ends. See
-  [sm-dev-extension.md](sm-dev-extension.md#tab-claims).
-- `scripts` and `status` also list the SourceMonkey-managed scripts that
-  match the current tab, as E1, E2, ..., with their status.
-  - `values E1` shows one's stored values, and `scripts E1` picks it for
-    `get` and `set`.
-  - Outside a `--temp-browser`, `set` on one needs `--force`, since it
-    changes your real data: `set key --force <json>`.
-
-### Differences from the push backend
-
-- `--values` and `--values-file` can't be used: the extension keeps
-  its own storage, which the run can't seed.
-- Only the script's own text is pushed, not the files beside it. A
-  relative `@require` is refused, and a local copy of a remote
-  `@require` is not used: the extension fetches the URL.
-- No tab badges; the extension's toolbar badge covers the tabs.
 - A `document-start` script may run after the page's first inline
-  `<head>` scripts, where the extension alone would usually run it
-  first. While a run is live, every wrapper waits for the extension's
-  check before running (see
-  [sm-dev-extension.md](sm-dev-extension.md#making-every-wrapper-ask)).
-- Specs stay on the push backend. For a check that needs the real
-  extension, drive it from a spec with SourceMonkey's own test
-  fixtures, or by hand with `sm-dev start --extension`.
-
-## What is and isn't faithful
-
-### Faithful
-
-Under the push backend (the default):
-
-- Header validation, URL matching, `@require` scope and local
-  overrides, `@grant` gating, world choice.
-- `@run-at` order, including `document-start` code seeing `<html>`
-  and `document-body` code seeing `<body>`. But see
-  [Known differences](#known-differences-under-the-push-backend) for
-  some `document-start` scripts against early page scripts.
-- `GM_*` storage semantics, including the write batching and broadcast
-  to other pages running the script.
-- `@connect` gating of `GM_xmlhttpRequest`.
-- Which of a script's messages the web page can see or fake.
-- Error attribution to file and line.
-
-### Close, but not the same
-
-- **`GM_xmlhttpRequest`** goes out from Node.
-  - The browser's cookies for the target are copied onto it, unless
-    the request is `anonymous` or sets its own `Cookie` header.
-  - Any header the script asked for is sent.
-  - A server sees a request from Node, not from the extension: no
-    `Sec-Fetch-Site: none`, cookies are not re-attached after a
-    cross-origin redirect, and a `Set-Cookie` in the response does not
-    reach the browser.
-- **`GM_info.userAgentData`** is read from the browser once a page has
-  reached a secure origin (`https:`, `localhost`, `file:`). A script
-  loaded before that sees `null` there.
-- **`GM_openInTab`** opens a real page in the same context, born at its
-  URL as Chrome's would be.
-  - In the fixture no scripts are injected into it; the extension would
-    inject whatever matches the new page. (`sm-dev start` does, see
-    [Tabs the page opens](#tabs-the-page-opens).)
-  - It is closed when the attachment is disposed, where the extension
-    would leave it open, so a test run leaves no tabs behind.
-  - It needs a context that belongs to a browser, so it fails under
-    Playwright's `launchPersistentContext`.
-- **`GM_download`** fetches the file from Node into a directory of the
-  host's choosing (the fixture uses the test's output directory).
-  - It reports the extension's events, numbering a taken name as Chrome
-    does.
-  - There is no download bar or prompt, and no `onprogress`.
-- **`GM_notification`** shows nothing. A `timeout` still fires
-  `ondone`, and a test delivers the click.
-- **Favicons under `sm-dev start`** are not as the site left them: its
-  icon links have `rel="sm-set-aside-icon"`, and the badge's own
-  `rel="icon"` link is added. A script that reads or changes the
-  favicon sees that. The fixture leaves them alone.
-
-### Known differences under the push backend
-
-These apply to `sm-dev start` and to specs alike.
-
-- Scripts run in the top frame only. A script meant for an iframe
-  (`@match` of the frame's URL, no `@noframes`) never starts there.
-- A `@run-at document-start` script that grants storage, has a
-  `.tld` rule, or loads on a reload waits for a reply before it runs,
-  so it may run before or after the page's early `<head>` scripts.
-  - In sm-dev the reply goes through Node. Measured, it still often
-    came first, while in the extension the page's early scripts
-    usually ran first.
-  - A script whose early change a page script then overwrites (a
-    class on `<html>`) can work in one and not the other.
-  - Other `document-start` scripts skip that reply, and run ahead of
-    page scripts in both.
-- The isolated world enforces the page's Trusted Types policy, so a
-  granted script setting `innerHTML` fails on sites like YouTube. The
-  extension's `USER_SCRIPT` world is exempt.
-- An inline `<script>` a granted script inserts (`createElement`,
-  `GM_addElement`) is blocked by a strict page `script-src`. The
-  extension runs it, as Tampermonkey does.
-- A `GM_setValue` made just before the page unloads (a "save and
-  reload" button, a `beforeunload` handler) can be lost.
-
-### Not faithful: use the extension backend
-
-- The request identity of `GM_xmlhttpRequest` as a site's edge sees it.
-- Chrome's own download manager and notification UI.
-- Chrome refusing a registration, and page CSP effects on `GM_addStyle`
-  in the page world.
-- Anything about the extension's UI: badge, collections page, Log tab.
+  `<head>` scripts while a run is live, where SourceMonkey alone would
+  usually run it first.
+  - While a run is live, every script waits for the extension's check
+    before running (see
+    [sm-dev-design.md](sm-dev-design.md#making-every-wrapper-ask)).
+  - A script whose early change a page script then overwrites (a class
+    on `<html>`) can work alone and not under sm-dev, or the reverse.
+- A tab a run tab opens is found just after its first load, so console
+  lines from that load aren't shown; the scripts' reports are (see
+  [Tabs the page opens](#tabs-the-page-opens)).
+- When Chrome restarts SourceMonkey's service worker (its background
+  script) during a run, what the scripts did meanwhile may be missing
+  from the run's output. The run says when this happens.
+- SourceMonkey runs scripts in the top frame only. A script meant for
+  an iframe (`@match` of the frame's URL) never starts there.
+- `--lang` doesn't reach `GM_xmlhttpRequest` and `GM_download` in a
+  connected browser (see [`start` options in detail](#start-options-in-detail)).
+- In specs, a worker's tests share the browser's context (see
+  [How it runs the scripts](#how-it-runs-the-scripts)).
 
 ## Troubleshooting
 
+- **"SourceMonkey is not installed in this browser"**, **"is turned
+  off"**, or a message that "Allow User Scripts" is off: load it, or
+  turn it on, as in [Setting it up](#setting-it-up), or use
+  `--temp-browser`.
 - **"skipped on <url>: No @match or @include covers this URL"**, or
-  another rule named there: the script would not run there in the
-  extension either. Broaden the pattern or change the URL; see
+  another rule named there: the script would not run there outside
+  sm-dev either. Broaden the pattern or change the URL; see
   `sm-dev match`.
 - **`GM_getValue is not defined`**: the script uses an API it did not
-  `@grant`. The extension behaves the same way.
+  `@grant`.
 - **The script sees `undefined` for a page global**: it is in the
   isolated world. Reading page globals needs `@grant none` or
   `unsafeWindow`.
-- **A `@require` fails to load**: the harness resolves it the way the
+- **A `@require` fails to load**: sm-dev resolves it the way the
   extension does, including local overrides. The message names the URL
   and the reason.
 - **`sm-dev start` hangs at connect**: a tab in the browser is showing

@@ -3,12 +3,12 @@
 Deleting a [local copy](local-copy.md) from disk: the script file, and
 the dependency files beside it that nothing else is using.
 
-- Logic and the deletion: [`src/local-delete.ts`](../src/local-delete.ts)
-- Dialog: [`src/delete-dialog.ts`](../src/delete-dialog.ts)
+- Logic and the deletion: [`src/extension/local-delete.ts`](../src/extension/local-delete.ts)
+- Dialog: [`src/extension/delete-dialog.ts`](../src/extension/delete-dialog.ts)
 - Trash cans: `makeDeleteCopyControl` and the panel's `remove` action in
-  [`src/userscript.ts`](../src/userscript.ts), `makeDeleteCopyButton` in
-  [`src/collections.ts`](../src/collections.ts), `removeCell` in
-  [`src/related-versions.ts`](../src/related-versions.ts)
+  [`src/extension/userscript.ts`](../src/extension/userscript.ts), `makeDeleteCopyButton` in
+  [`src/extension/collections.ts`](../src/extension/collections.ts), `removeCell` in
+  [`src/extension/related-versions.ts`](../src/extension/related-versions.ts)
 - Tests: `tests/e2e/local-delete.spec.ts`, `tests/unit/local-delete.test.mjs`
 
 Related: [local-copy.md](local-copy.md) (how the files got there),
@@ -23,7 +23,7 @@ file beside a script is used at all).
   row on the collections page. All three open the one dialog.
   - The badge (and a red resting colour) is what separates this button
     from the plain trash can that only drops SourceMonkey's record of a
-    script. Both glyphs come from `src/delete-icon.ts`.
+    script. Both glyphs come from `src/extension/delete-icon.ts`.
   - The panel's button is normally dead for a script that came in with
     a directory collection, because the collection's next scan would
     bring the row straight back. Deleting the file is what stops it, so

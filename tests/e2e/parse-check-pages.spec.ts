@@ -10,7 +10,7 @@
 // in the other direction — a broken script landed as `ok`.
 //
 // Each page now embeds its own sandbox and checks locally
-// (src/parse-check-client.ts). These cases drive the real buttons,
+// (src/extension/parse-check-client.ts). These cases drive the real buttons,
 // because the whole bug lived in which context ran the pipeline —
 // `sm.*` helpers run in the SW and cannot see it.
 //

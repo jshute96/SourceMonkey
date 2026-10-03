@@ -63,7 +63,7 @@ That is the whole job of the offscreen document.
 ## What is checked
 
 The user program exactly as `wrapCombinedEntry` compiles it, as one
-function body, built by `buildParseCheckSource` in `injector.ts`:
+function body, built by `buildParseCheckSource` in `composed-source.ts`:
 
 - every `@require` body, in declaration order;
 - then the script's own full source.
@@ -130,10 +130,10 @@ missed here is still reported exactly as it was before.
 
 ## Where the checker is installed
 
-`script-store.ts` does **not** import the injector — a real (not
-type-only) module cycle between them is something this codebase avoids.
-Instead the dependency is inverted: `setParseChecker` takes the
-implementation, and each context installs one at startup.
+The load pipeline (`script-build.ts`) doesn't pick the checker, because
+what compiles the text depends on the context. Instead
+`setParseChecker` takes the implementation, and each context installs
+one at startup.
 
 ### The service worker
 
@@ -327,7 +327,7 @@ before this feature existed — or while the check was failing open —
 keeps `status: 'ok'` with no `parseCheckedHash`, and nothing revisits
 it.
 
-`runSync` (`src/injector.ts`) closes that. Before it builds specs it
+`runSync` (`src/extension/injector.ts`) closes that. Before it builds specs it
 calls `verifyParseChecks` with exactly the rows it is about to
 register:
 
@@ -523,7 +523,7 @@ See [harness-design.md](harness-design.md#preparets-script-in-injectable-script-
   construct). Add the directory as a collection to see the real messages.
   The expectations live in `tests/fixtures/bad-script-cases.mjs` and
   are pinned twice: by `bad-scripts.spec.ts` in Chromium and by
-  `tests/unit/harness-validate.test.mjs` under Node, which is what
+  `tests/unit/harness/validate.test.mjs` under Node, which is what
   keeps the two engines' answers verified against each other. The same
   directory covers the header diagnostics — see
   [diagnostics.md](diagnostics.md).

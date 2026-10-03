@@ -205,7 +205,9 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run(`cdp T1\nEmulation.setEmulatedMedia {"features": [{"name": "prefers-color-scheme", "value": "dark"}]}\nRuntime.evaluate ${dark}`)).toEqual([
     '{}', JSON.stringify({ result: { type: 'boolean', value: true } }, null, 2),
   ]);
-  expect(await run(`cdp Runtime.evaluate ${dark}`)).toEqual([JSON.stringify({ result: { type: 'boolean', value: false } }, null, 2)]);
+  // Undone as the block's session detaches, which Chrome finishes a
+  // moment after.
+  await expect.poll(() => run(`cdp Runtime.evaluate ${dark}`)).toEqual([JSON.stringify({ result: { type: 'boolean', value: false } }, null, 2)]);
   // A call cut off by the page loading a new document succeeds; a later
   // call's own failure still fails, the navigation being over by then.
   expect(await runConsoleCommand('cdp Runtime.evaluate {"expression": "new Promise(() => location.reload())", "awaitPromise": true}', ctx)).not.toBe(false);

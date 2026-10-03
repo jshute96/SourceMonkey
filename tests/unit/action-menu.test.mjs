@@ -1,4 +1,4 @@
-// Tests for src/action-menu.ts (compiled to dist/action-menu.js).
+// Tests for src/extension/action-menu.ts (compiled to dist/extension/action-menu.js).
 //
 // Pure layout planner: packs script + nested-menu-command groups into
 // the 6-item action context-menu cap, spilling any overflow into a
@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import {
   ACTION_MENU_LIMIT,
   planActionMenu,
-} from '../../dist/action-menu.js';
+} from '../../dist/extension/action-menu.js';
 
 function mkGroup(scriptId, commandCount) {
   return {

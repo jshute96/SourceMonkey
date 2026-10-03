@@ -32,7 +32,7 @@ const {
   notifyUrlChange,
   installUrlChangeWatch,
   urlChangeTarget,
-} = await import('../../dist/gm-url-change.js');
+} = await import('../../dist/extension/gm-url-change.js');
 
 test('shouldNotifyUrlChange accepts a normal main-frame history update', () => {
   assert.equal(

@@ -39,11 +39,6 @@ test.describe('examples / gm-xmlhttp wire headers', () => {
   test('report the headers the manager sends', async ({
     extensionContext, fixtureServer, setup, manager,
   }) => {
-    // The harness's request goes out from Node and carries none of the
-    // browser's fetch metadata; what it sends is documented in
-    // docs/harness-guide.md, and measuring it here would say nothing
-    // about any manager.
-    test.skip(manager === 'harness', 'The harness sends its request from Node, not from a browser context');
     await setup.installScriptsFrom(__dirname);
 
     const page = await extensionContext.newPage();

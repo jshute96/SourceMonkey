@@ -1,4 +1,4 @@
-// Node counterpart of `src/parse-sandbox.ts` — the compile-only parse
+// Node counterpart of `src/extension/parse-sandbox.ts` — the compile-only parse
 // check, run under Node's V8 instead of Chrome's. Used by the development
 // harness (`prepare.ts`), which runs the install pipeline outside a
 // browser for `sm-dev` and the corpus validator.

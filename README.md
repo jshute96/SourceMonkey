@@ -32,16 +32,15 @@ the one thing that cannot tell you your script works.
 SourceMonkey ships a harness that uses its own code instead. A repo of
 userscripts installs SourceMonkey as a package and gets two things:
 
-- **A Playwright fixture.** A script under test is prepared by the
-  extension's own install pipeline and injected behind its real
-  prelude and `GM_*` runtime, with a stand-in for the service worker.
-  A test drives what the script did through the manager: read what it
-  stored, fire a menu command, answer a network request.
-- **`sm-dev`, a command-line tool.** Run a script against a live page
-  and watch what it does, re-injecting as you save. Check which
-  selectors still resolve after a site changes. Save a page so a test
-  can replay it without logging in. Run a script in a running
-  SourceMonkey, in a test collection of its own.
+- **A Playwright fixture.** A script under test is checked by the
+  extension's own install pipeline and run in the real SourceMonkey
+  extension, in a browser the fixture launches. A test drives what the
+  script did through the manager: read what it stored, fire a menu
+  command, answer a network request.
+- **`sm-dev`, a command-line tool.** Run a script in SourceMonkey
+  against a live page and watch what it does, re-pushing as you save.
+  Check which selectors still resolve after a site changes. Save a page
+  so a test can replay it without logging in.
 
 See [docs/harness-guide.md](docs/harness-guide.md) to use it, and
 [docs/harness-design.md](docs/harness-design.md) for how it works.
@@ -207,7 +206,7 @@ Single scripts go into **scripts collections** — folders you create
 and name, or the defaults created on demand (`Scripts from local disk`,
 `Scripts from web`, `Scripts from GitHub`). One scripts collection can
 mix local, web, and GitHub scripts. An `sm-dev test collection`
-holds the scripts an `sm-dev --extension` run pushed, whose only copy
+holds the scripts an `sm-dev` run pushed, whose only copy
 is in SourceMonkey itself; it goes when the run ends (see
 [docs/harness-guide.md](docs/harness-guide.md)).
 
@@ -459,11 +458,11 @@ first, and again after changing the harness.
 ### Test
 
 ```sh
-pnpm test              # unit + e2e + harness
+pnpm test              # unit + e2e + sm-dev
 pnpm run test:unit     # node --test, fast
 pnpm run test:e2e      # Playwright with the extension loaded
 pnpm run test:headed   # e2e with a visible browser
-pnpm run test:harness  # the development harness, on a plain Chromium
+pnpm run test:sm-dev   # sm-dev and the harness fixture's own specs
 ```
 
 To narrow a run to one file:
@@ -548,7 +547,11 @@ scripts/zip_extension.sh   # writes /tmp/SourceMonkey.zip
 
 ### Code layout
 
-- `src/` — extension source (TypeScript + manifest + HTML).
+- `src/` — source (TypeScript + manifest + HTML). See
+  [Source layout](docs/architecture.md#source-layout).
+  - `src/extension/` — modules only the extension loads.
+  - `src/harness/` — the Node-only development harness (`sm-dev`).
+  - Directly in `src/` — modules both use, plus the pages and manifest.
 - `scripts/build.mjs` — bundler-free build script.
 - `scripts/zip_extension.sh` — builds and zips `dist/` for distribution.
 - `scripts/release-extension.sh` — cuts a tagged GitHub release with the

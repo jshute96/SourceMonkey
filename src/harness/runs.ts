@@ -688,7 +688,7 @@ const LISTED_SCRIPTS = 3;
  * `sm-dev list`'s table: a heading row, then a row per run, in aligned
  * columns. Scripts are listed by file name, the first few and a count
  * of the rest, so the total shows without a column of its own. `-` is
- * none, or no tab count for a run that keeps none (`--extension`).
+ * none, or no tab count for a run that keeps none.
  */
 export function runTable(records: RunRecord[], now = Date.now()): string[] {
   const rows = [

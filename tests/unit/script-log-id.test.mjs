@@ -1,9 +1,9 @@
-// Unit tests for the pure helpers in src/script-log-id.ts.
+// Unit tests for the pure helpers in src/extension/script-log-id.ts.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { computeLogIds } from '../../dist/script-log-id.js';
+import { computeLogIds } from '../../dist/extension/script-log-id.js';
 import { buildSourceUrl } from '../../dist/script-source-url.js';
 
 test('computeLogIds: a single script gets the bare basename', () => {

@@ -1,5 +1,5 @@
 // Making a local copy of an installed script from the viewer's
-// Collection row (src/copy-dialog.ts, src/local-copy.ts): the copy
+// Collection row (src/extension/copy-dialog.ts, src/extension/local-copy.ts): the copy
 // lands in `<Downloads>/SourceMonkey/`, that directory becomes the
 // "Scripts copied in Downloads" collection, and the copy takes over as
 // the running version.

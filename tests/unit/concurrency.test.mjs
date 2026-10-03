@@ -7,7 +7,7 @@ import {
   FETCH_COLLECTIONS_CONCURRENCY,
   PROBE_SCRIPTS_CONCURRENCY,
   PROBE_URLS_PER_SCRIPT_CONCURRENCY,
-} from '../../dist/concurrency.js';
+} from '../../dist/extension/concurrency.js';
 
 // Resolve-on-demand task: lets a test hold tasks open and observe how
 // many the mapper started before any of them finished.

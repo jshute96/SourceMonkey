@@ -1,4 +1,4 @@
-// Unit tests for the shared log formatting in src/log-format.ts —
+// Unit tests for the shared log formatting in src/extension/log-format.ts —
 // the cell strings the Log pane renders and the CSV its Save / Copy
 // buttons hand out.
 
@@ -12,7 +12,7 @@ import {
   formatLogSource,
   formatLogTimestamp,
   logFileName,
-} from '../../dist/log-format.js';
+} from '../../dist/extension/log-format.js';
 
 // Local time, so build the expectation from a local-time Date rather
 // than from a fixed UTC string.

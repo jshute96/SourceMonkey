@@ -40,8 +40,7 @@ test.describe('examples / gm-info', () => {
   test('SourceMonkey reports the declared refs and the browser snapshot', async ({
     extensionContext, fixtureServer, setup,
   }) => {
-    // The harness bakes GM_info with the same emitter, so it answers too.
-    test.skip(setup.manager !== 'sourcemonkey' && setup.manager !== 'harness', 'Checks SM-specific GM_info values');
+    test.skip(setup.manager !== 'sourcemonkey', 'Checks SM-specific GM_info values');
     await setup.installScriptsFrom(__dirname);
 
     const page = await extensionContext.newPage();

@@ -34,7 +34,7 @@ globalThis.chrome = {
   },
 };
 
-const mod = await import('../../dist/gm-notification.js');
+const mod = await import('../../dist/extension/gm-notification.js');
 const {
   showGmNotification,
   takeForClicked,

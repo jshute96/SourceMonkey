@@ -1,4 +1,4 @@
-// Tests for src/tab-status.ts (compiled to dist/tab-status.js).
+// Tests for src/extension/tab-status.ts (compiled to dist/extension/tab-status.js).
 //
 // The module owns the pure helpers behind the per-tab toolbar badge:
 // classifying each expected/actual script into OK/ERROR/MISSING/
@@ -26,7 +26,7 @@ import {
   BADGE_RED,
   MAX_DOCS_PER_TAB,
   titleHead,
-} from '../../dist/tab-status.js';
+} from '../../dist/extension/tab-status.js';
 
 // Shared default — the tests below don't care about documentId, they
 // just need the state shape to be valid.

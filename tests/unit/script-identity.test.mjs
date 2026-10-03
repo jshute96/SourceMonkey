@@ -1,11 +1,11 @@
-// Unit tests for the related-versions lookup (src/script-identity.ts):
+// Unit tests for the related-versions lookup (src/extension/script-identity.ts):
 // how a script is recognized as another copy of the one on screen.
 
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 
 const { findRelatedVersions, identityKey, installOptionsFor, locationKey } = await import(
-  '../../dist/script-identity.js'
+  '../../dist/extension/script-identity.js'
 );
 
 // ---------- fixtures ----------

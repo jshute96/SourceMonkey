@@ -1,4 +1,4 @@
-// Unit tests for src/script-log.ts. Exercises the public API end-to-
+// Unit tests for src/extension/script-log.ts. Exercises the public API end-to-
 // end against an in-memory chrome.storage.session stub so we cover the
 // read/modify/write append loop, the per-script serialization, and the
 // LOG_CAP rotation.
@@ -88,7 +88,7 @@ const {
   handleScriptLogWrite,
   SCRIPT_LOG_WRITE_MESSAGE,
   _flushScriptLogQueueForTests,
-} = await import('../../dist/script-log.js');
+} = await import('../../dist/extension/script-log.js');
 
 beforeEach(() => {
   store.clear();

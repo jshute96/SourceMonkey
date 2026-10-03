@@ -10,10 +10,9 @@
 // launched with Chrome's own language flags, which reach those too,
 // and a popup's first load.
 //
-// sm-dev sends `GM_xmlhttpRequest` and `GM_download` from Node, not the
-// tab, so the host adds the tab's `Accept-Language` itself (see
-// `acceptLanguageHeader`), with or without `--lang`, as the extension's
-// requests carry the browser's.
+// The extension's own requests (`GM_xmlhttpRequest`, `GM_download`)
+// carry the browser's languages, not a tab's: a launched browser's
+// flags, or a connected one's own.
 
 import type { Page } from '@playwright/test';
 
@@ -50,15 +49,6 @@ export function parseLang(text: string): string[] {
     }
   }
   return [...new Set(Intl.getCanonicalLocales(tags))];
-}
-
-/**
- * The `Accept-Language` header Chrome sends for a tab's languages
- * (`navigator.languages`): the first as is, then descending q-values,
- * `zh-CN,en;q=0.9,fr;q=0.8`, never below 0.1.
- */
-export function acceptLanguageHeader(languages: readonly string[]): string {
-  return languages.map((lang, i) => (i === 0 ? lang : `${lang};q=${Math.max(1, 10 - i) / 10}`)).join(',');
 }
 
 /** Chrome's own flags for the languages, for a browser the run launches. */

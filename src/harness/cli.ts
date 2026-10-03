@@ -9,8 +9,8 @@
 //     browser command uses.
 //   - `list`, `stop`, and the commands sent to a run, reach running
 //     runs through runs.ts.
-//   - `start --extension` runs go through run.ts like the rest, and
-//     reach the real SourceMonkey through extension-link.ts.
+//   - A run reaches the real SourceMonkey, which runs its scripts,
+//     through extension-link.ts.
 //
 // Each command loads only the modules it needs. `validate` and `match`
 // never import Playwright, so they run in a repo that has not
@@ -68,7 +68,6 @@ interface Opts {
   values?: Record<string, unknown>;
   /** Which flag gave `values`, to name in messages. */
   valuesFlag?: string;
-  extension: boolean;
   pageErrors: boolean;
   /** `--devtools` / `--nodevtools`; unset leaves it to `SM_DEV_DEVTOOLS`. */
   devtools?: boolean;
@@ -102,7 +101,7 @@ const OWN_VALUE_FLAGS = new Set([...OWN_COMMANDS].flatMap((name) => Object.entri
 function parseArgs(argv: string[]): Opts {
   const opts: Opts = {
     command: null, args: [],
-    all: false, noTab: false, watch: false, extension: false, pageErrors: false, detach: false, newRun: false, noWait: false, fromSaved: false, offline: false,
+    all: false, noTab: false, watch: false, pageErrors: false, detach: false, newRun: false, noWait: false, fromSaved: false, offline: false,
   };
   // The command's name: the first word that is no flag, nor a flag's value.
   let at = 0;
@@ -164,7 +163,6 @@ function parseArgs(argv: string[]): Opts {
         opts.valuesFlag = flag;
         break;
       }
-      case '--extension': opts.extension = true; break;
       case '--page-errors': opts.pageErrors = true; break;
       case '--devtools': opts.devtools = true; break;
       case '--nodevtools': opts.devtools = false; break;
@@ -224,7 +222,7 @@ function scriptsAndUrls(words: string[]): { scripts: string[]; urls: string[]; p
     if (!pages.has(url)) pages.set(url, { word, url });
   }
   // Each once too, by the file it names, so `x.user.js ./x.user.js` is
-  // one script (an extension run keeps its scripts by the path typed).
+  // one script (the extension keeps a run's scripts by the path typed).
   // The first spelling is kept.
   const scripts = new Map<string, string>();
   for (const word of args.filter((a) => SCRIPT_ARG.test(a))) {
@@ -329,8 +327,6 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
   }
   // Asked for by name, it must be able to run; on by default from the
   // environment, it just sits out the runs it can't serve.
-  // The extension keeps its own storage, which a run doesn't seed.
-  if (opts.valuesFlag) clash(opts.valuesFlag, [[opts.extension, '--extension']]);
   if (opts.devtools === true) clash('--devtools', [[lineTempBrowser, '--temp-browser']]);
   if (lineTempBrowser && opts.cdp !== undefined) throw new UsageError('The --temp-browser flag can\'t be used with --browser');
   if (lineOpenBrowser && opts.cdp !== undefined) throw new UsageError('The start command connects to the browser --open-browser starts, so give --browser once, first: sm-dev --open-browser --browser ... start ...');
@@ -416,7 +412,6 @@ async function runHere(
       lang: opts.lang,
       watch: opts.watch,
       values: opts.values,
-      extension: opts.extension,
       pageErrors: opts.pageErrors,
       devtools,
       collectionRoot: lineRoots.collectionRoot,
