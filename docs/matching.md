@@ -191,6 +191,8 @@ pattern is wrapped in `/.../` it is treated as a JavaScript regex instead.
 - A glob is case-sensitive: Chrome evaluates it.
 - A regex ignores case, as in Tampermonkey and Violentmonkey. Chrome
   has no regex rules, so the wrapper's in-page matcher applies it.
+  Chrome only narrows which pages it injects the script into, by globs
+  derived from the regex (see [injection.md](injection.md#globs-for-a-regex-include)).
 - Slashes inside a regex need no escaping. A flag after the closing
   slash (`/.../i`) makes the pattern a glob, which matches nothing, as
   in the other managers.
