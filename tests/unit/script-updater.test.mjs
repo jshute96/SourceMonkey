@@ -423,7 +423,7 @@ async function framing(prior, next, mode = 'manual') {
 }
 
 test('framing: an uneventful check is a single self-describing row', async () => {
-  assert.deepEqual(await framing(OK_ROW, OK_ROW), ['Checked for updates — no change']);
+  assert.deepEqual(await framing(OK_ROW, OK_ROW), ['Checked for updates and found no change']);
 });
 
 test('framing: an uneventful background check says nothing at all', async () => {
@@ -477,7 +477,7 @@ test('emitScriptOutcomeLog: a manual no-change check restates parse-time diagnos
   };
   const log = await emitAll([[warned, warned]]);
   assert.deepEqual(log.map((e) => e.message), [
-    'Checked for updates — no change',
+    'Checked for updates and found no change',
     'unsafeWindow cannot reach the page',
   ]);
   assert.equal(log[1].level, 'warning');
@@ -513,7 +513,7 @@ test('emitScriptOutcomeLog: a still-failing check reports, like a healthy one do
   const healthy = await emitAll([[OK_ROW, OK_ROW]]);
   const broken = await emitAll([[bad, bad]]);
   assert.equal(healthy.length, 1);
-  assert.equal(healthy[0].message, 'Checked for updates — no change');
+  assert.equal(healthy[0].message, 'Checked for updates and found no change');
   assert.equal(broken.length, 1, 'a broken script must not go quiet');
   assert.equal(broken[0].message, 'no metadata block');
 });
@@ -684,7 +684,7 @@ test('summarizeCollectionOutcome: a readable-again collection logs the recovery'
   );
   assert.deepEqual(log.map((e) => e.message), [
     'This collection is readable again',
-    'Checked for updates — no change',
+    'Checked for updates and found no change',
   ]);
   assert.equal(log[0].level, 'info');
 });
@@ -701,7 +701,7 @@ test('summarizeCollectionOutcome: a broad refresh frames each script for itself'
     [healthy, broken],
     { collection: COLLECTION_OK, scripts: [healthy, broken] },
   );
-  assert.deepEqual(healthyLog.map((e) => e.message), ['Checked for updates — no change']);
+  assert.deepEqual(healthyLog.map((e) => e.message), ['Checked for updates and found no change']);
   assert.deepEqual(
     brokenLog.map((e) => e.message),
     ['Checking for updates', 'no metadata block'],

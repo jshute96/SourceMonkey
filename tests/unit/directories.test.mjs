@@ -34,6 +34,10 @@ import {
   locationFsPath,
   parentDir,
   baseName,
+  scratchUrl,
+  scratchRunOf,
+  smDevContainerPath,
+  smDevRunOfContainer,
 } from '../../dist/directories.js';
 
 test('parseListing extracts files and directories, skipping ..', () => {
@@ -792,3 +796,23 @@ test('scriptAbsolutePath returns the github.com blob URL for a github-dir entry'
   );
 });
 
+
+test('a run\'s scratch script URL names its run, and its basename is the script\'s name', () => {
+  const url = scratchUrl('D2-a3f9', 'My Script.user.js');
+  assert.equal(url, 'scratch:///D2-a3f9/My-Script.user.js');
+  assert.equal(baseName(url), 'My-Script.user.js');
+  assert.equal(scratchRunOf(url), 'D2-a3f9');
+  // A path sm-dev was given stays whole, relative or absolute.
+  assert.equal(scratchUrl('R1', '../sites/a.com/x.user.js'), 'scratch:///R1/../sites/a.com/x.user.js');
+  assert.equal(scratchUrl('R1', '/home/me/x.user.js'), 'scratch:///R1//home/me/x.user.js');
+  assert.equal(scratchRunOf(scratchUrl('R1', '../x.user.js')), 'R1');
+  assert.equal(baseName(scratchUrl('R1', '../sites/a.com/x.user.js')), 'x.user.js');
+  assert.equal(scratchRunOf('file:///x.user.js'), null);
+});
+
+test('a run\'s test collection path round-trips its run', () => {
+  assert.equal(smDevContainerPath('D2-a3f9'), 'container:sm-dev:D2-a3f9');
+  assert.equal(smDevRunOfContainer('container:sm-dev:D2-a3f9'), 'D2-a3f9');
+  assert.equal(isContainerCollection('container:sm-dev:D2-a3f9'), true);
+  assert.equal(smDevRunOfContainer('container:file'), null);
+});

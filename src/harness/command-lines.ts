@@ -127,7 +127,15 @@ export class CommandAssembler {
     // Not where the text may hold the word (type's). Split as a
     // command's words are, so a {{ in a quoted string is left alone.
     const name = ALIASES[words[0]] ?? words[0];
-    if (BLOCK_COMMANDS.has(name) && !commandSyntax(name).base.bracesInText && splitWords(trimmed).slice(1, -1).some((w) => w.text === OPEN)) {
+    const split = splitWords(trimmed);
+    if (BLOCK_COMMANDS.has(name) && !commandSyntax(name).base.bracesInText && split.slice(1, -1).some((w) => w.text === OPEN)) {
+      // Unless a }} follows on this line (`eval {{ x }}`, `{{ f()}});`),
+      // the lines up to the }} line are the refused block's: skipped,
+      // not each refused as a command.
+      if (!trimmed.slice(trimmed.indexOf(OPEN) + OPEN.length).includes(CLOSE)) {
+        this.block = { text: trimmed, source: [line], line: n };
+        this.refused = true;
+      }
       return { error: OPEN_NOT_LAST };
     }
     return { command: { text: trimmed, source: [line], line: n } };
@@ -144,6 +152,16 @@ export class CommandAssembler {
     this.refused = false;
     return start;
   }
+}
+
+/**
+ * Whether the lines of `text` end outside a `{{` block, so are ready to
+ * run, rather than waiting for a `}}` line.
+ */
+export function endsOutsideBlock(text: string): boolean {
+  const assembler = new CommandAssembler();
+  for (const line of text.split('\n')) assembler.push(line);
+  return !assembler.open;
 }
 
 export const NONE_RUN = 'None of the commands were run.';

@@ -95,7 +95,8 @@
    *                  passed in by the per-script config blob.
    *   matched      : did the in-page matcher accept this URL? Sync;
    *                  set during initScript.
-   *   decision     : null|run|run-new|skip — settled by check-pending.
+   *   decision     : null|run|run-new|skip — settled by check-pending,
+   *                  or set to run at init by canSkipDecision.
    *   runAtFired   : true once the @run-at lifecycle event happened.
    *   pendingRun   : the main-body fn passed to __smRun, queued until
    *                  (matched && decision !== 'skip' && runAtFired).
@@ -414,10 +415,10 @@
          land under an <html> that didn't exist when we started.
        - Mutation records are delivered at the microtask checkpoint the
          parser runs before each page <script>, so the start gate opens
-         before any page script. The body still waits for the async
-         `sm:check-pending` decision too (`flushPending`), so early page
-         scripts can run first; in sm-dev, whose reply goes through
-         Node, they usually do. */
+         before any page script. Unless `canSkipDecision` lets it run
+         straight away, the body also waits for the async
+         `sm:check-pending` decision (`flushPending`), so early page
+         scripts can run first. */
     if (declared === "document-start") {
       waitForNode(function () { return document.documentElement; }, false, true, cb);
       return;
@@ -692,14 +693,20 @@
          answers is bounded by `awaitDecision`'s own 2s safety timeout,
          not by the lifecycle listener never getting installed.
 
-       `document-start` is unchanged either way: once <html> exists
-       (always, in the extension) `waitForRunAt` calls back
-       synchronously for it, so the decision is the only gate left and
-       the body still runs as early as it safely can. */
+       For `document-start`, once <html> exists (always, in the
+       extension) `waitForRunAt` calls back synchronously, so the
+       decision is the only gate left. `canSkipDecision` settles it
+       here, synchronously, where the answer can only be `run`. */
     waitForRunAt(cfg.runAt, function () {
       entry.runAtFired = true;
       flushPending(entry);
     });
+    if (canSkipDecision(cfg)) {
+      /* Nothing the SW could answer here is anything but `run`, so
+         don't wait for it: see canSkipDecision. */
+      entry.decision = { action: "run" };
+      return entry;
+    }
     awaitDecision(entry, function (decision) {
       entry.decision = decision || { action: "run" };
       if (entry.decision.action === "skip") {
@@ -728,6 +735,37 @@
       flushPending(entry);
     });
     return entry;
+  }
+
+  /* Whether a `document-start` body can run without the check-pending
+     round trip. The round trip is async, so an inline page <script>
+     early in <head> can run while the wrapper waits, which defeats a
+     script that must patch the page before its own code runs.
+
+     Skipping it is safe only where the SW's answer is known to be
+     `run`. Every other answer needs something this skips:
+     - `run-new` (reload fast path) and the "Reload page with no
+       userscripts" `skip` happen only on a reload. That `skip` covers
+       the tab's subframes too, and a subframe can't see the top
+       page's navigation type, so subframes always ask.
+     - an sm-dev tab claim, or a scratch script, can `skip` on any
+       navigation. The SW sets `mustAsk` in the config of every script
+       while a claim is live, and always for scratch scripts.
+     - the reply carries a GM storage snapshot (`needsGmValues`).
+     - a `.tld` rule needs the SW's exact match check.
+     Other `@run-at` values wait for a later lifecycle event anyway, so
+     the round trip costs them nothing. */
+  function canSkipDecision(cfg) {
+    if (cfg.runAt !== "document-start") return false;
+    if (cfg.mustAsk || cfg.needsGmValues) return false;
+    if (cfg.matching && hasTldRule(cfg.matching)) return false;
+    try {
+      if (window.top !== window) return false;
+      var nav = performance.getEntriesByType("navigation")[0];
+      return !!nav && nav.type !== "reload";
+    } catch (_e) {
+      return false;
+    }
   }
 
   function flushPending(entry) {
@@ -783,7 +821,7 @@
            (previous) body instead. */
         swapReady = false;
         try {
-          console.info("[SourceMonkey] " + cfg.name + ": The updated copy needs the GM runtime, which this page does not have yet, so the previous version ran — reload the page to pick it up");
+          console.info("[SourceMonkey] " + cfg.name + ": The updated copy needs the GM runtime, which this page does not have yet, so the previous version ran. Reload the page to pick it up.");
         } catch (_smNR) {}
       }
       if (swapReady && decision.seedValues) {
@@ -797,7 +835,7 @@
         }
         if (!swapReady) {
           try {
-            console.info("[SourceMonkey] " + cfg.name + ": Could not load this script's stored GM values for the updated copy, so the previous version ran — reload the page to retry");
+            console.info("[SourceMonkey] " + cfg.name + ": Could not load this script's stored GM values for the updated copy, so the previous version ran. Reload the page to retry.");
           } catch (_smSI2) {}
         }
       }
@@ -814,7 +852,7 @@
       }
       if (evalRefused || !swapReady) {
         if (evalRefused) {
-          try { console.info("[SourceMonkey] swap blocked by page CSP for", cfg.name, "— running prior version"); } catch (_e0) {}
+          try { console.info("[SourceMonkey] swap blocked by page CSP for " + cfg.name + ", running prior version"); } catch (_e0) {}
         }
         /* Fall through to the default baked-body path. `entry.decision`
            deliberately keeps the run-new object: the registered body's

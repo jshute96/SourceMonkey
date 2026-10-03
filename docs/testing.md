@@ -243,12 +243,13 @@ tests:
   sharing has no other observable signature. Both are per-JS-context and
   count *all* such reads in the worker, so reset around the window under
   test.
-- Scratch scripts: `writeScratchScript({ text, name? })` installs text
-  into the Scratch collection and syncs before it resolves (a rewrite
-  of the same name replaces in place); `clearScratchScripts()` drops them
-  all; `soloMode(on)` disables every other collection until turned
-  off. The development harness's extension backend drives these; see
-  [harness-design.md](harness-design.md).
+- sm-dev runs: `writeRunScript({ run, text, name? })` installs text
+  into run `run`'s test collection and syncs before it resolves (a
+  rewrite of the same name replaces in place); `releaseRun(run)`
+  removes the collection. `sweepRunCollections(now)` runs the
+  crashed-run cleanup as if at `now`, past the grace period. sm-dev's
+  extension backend drives these; see
+  [sm-dev-extension.md](sm-dev-extension.md#test-collections).
 - GM values: `getGmValues(id)` returns every **persisted** value for a
   script, deliberately excluding the SW's in-flight overlay.
   `GM_setValue` batches its write 150ms after the last one, so a test

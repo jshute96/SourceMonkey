@@ -52,10 +52,12 @@ import {
   isHttpUrl,
   isLocalDirectoryCollection,
   isSingleFileInput,
-  SCRATCH_CONTAINER_PATH,
   isScratchUrl,
   scratchTextKey,
   scratchUrl,
+  isSmDevCollection,
+  smDevContainerPath,
+  smDevRunOfContainer,
   baseName,
   isFileUrl,
   isManifestCollection,
@@ -448,7 +450,7 @@ export function extractStartupLogs(
       const log: StartupLog = {
         level: 'warn',
         message:
-          `@grant none overrides @grant ${overridden.join(', ')} — the script runs in the ` +
+          `@grant none overrides @grant ${overridden.join(', ')}, so the script runs in the ` +
           'page with no GM APIs. Remove the none line to use them.',
       };
       const line = headerTagLine(header, 'grant', 'none');
@@ -2277,7 +2279,7 @@ export async function markFirstRunComplete(): Promise<void> {
 // Where a single script should be installed: a specific container by
 // id, or the built-in default container for the script's own scheme
 // (created if it doesn't exist).
-export type InstallTarget = { collectionId: string } | { schemeDefault: true } | { scratch: true };
+export type InstallTarget = { collectionId: string } | { schemeDefault: true } | { smDevRun: string };
 
 // Install one `.user.js` location into a container collection. Returns
 // null if the location is already a script in THAT container — the
@@ -2299,15 +2301,18 @@ export async function installScript(
 // ---------- Scratch scripts ----------
 //
 // Scripts whose only copy is their text in storage (see directories.ts).
-// For now only the development harness writes them
-// (docs/harness-design.md, "Extension backend"). They live in one
-// container, `container:scratch`, shown on the collections page like any
-// other; their text is a storage row the fetcher reads back, so every
-// refresh path treats them as ordinary scripts.
+// Only sm-dev writes them (docs/sm-dev-extension.md). Each sm-dev run
+// gets its own collection of them, its test collection, shown on the
+// collections page like any other; their text is a storage row the
+// fetcher reads back, so every refresh path treats them as ordinary
+// scripts.
 
-export const SCRATCH_COLLECTION_NAME = 'Scratch';
+// The name a run's test collection is shown under.
+export function smDevCollectionName(run: string): string {
+  return `sm-dev test collection (run ${run})`;
+}
 
-export interface WriteScratchScriptResult {
+export interface WriteRunScriptResult {
   scriptId: string;
   collectionId: string;
   status: ScriptStatus;
@@ -2317,16 +2322,20 @@ export interface WriteScratchScriptResult {
   replaced: boolean;
 }
 
-// Install or replace a scratch script. The name (the `@name`, or one the
-// caller gives) is the identity: writing it again replaces the earlier
-// text in place, keeping the row's id and its GM values, which is what
-// lets a page reload hot-swap the new version.
-export async function writeScratchScript(args: { text: string; name?: string }): Promise<WriteScratchScriptResult> {
+// Install or replace one of run `run`'s scripts, in its test collection.
+// The name (the `@name`, or one the caller gives) is the identity:
+// writing it again replaces the earlier text in place, keeping the row's
+// id and its GM values, which is what lets a page reload hot-swap the
+// new version. A new script that doesn't parse is reported and not
+// kept, so the collection holds only scripts the run has.
+export async function writeRunScript(args: { run: string; text: string; name?: string }): Promise<WriteRunScriptResult> {
+  // Its scripts' URLs carry it as is, and '' would be no run's.
+  if (!/^[A-Za-z0-9._-]+$/.test(args.run)) throw new Error(`Internal error: ${JSON.stringify(args.run)} is not an sm-dev run id`);
   const header = parseHeader(args.text);
   const name = args.name?.trim() || (header ? getValue(header, 'name')?.trim() : '') || 'script';
-  const url = scratchUrl(name);
+  const url = scratchUrl(args.run, name);
   await writeLocal({ [scratchTextKey(url)]: args.text });
-  const container = (await getCollections()).find((c) => c.path === SCRATCH_CONTAINER_PATH);
+  const container = (await getCollections()).find((c) => c.path === smDevContainerPath(args.run));
   let scriptId: string | undefined;
   let collectionId: string | undefined;
   let replaced = false;
@@ -2344,7 +2353,7 @@ export async function writeScratchScript(args: { text: string; name?: string }):
   if (scriptId === undefined) {
     let result: AddCollectionResult;
     try {
-      result = await installScript(url, { scratch: true });
+      result = await installScript(url, { smDevRun: args.run });
     } catch (err) {
       // The install took its seed back out; the text row goes with it.
       await chrome.storage.local.remove(scratchTextKey(url));
@@ -2362,64 +2371,28 @@ export async function writeScratchScript(args: { text: string; name?: string }):
   }
   const row = await getScript(scriptId);
   if (!row) throw new Error('Internal error: the scratch script vanished during install');
-  const out: WriteScratchScriptResult = { scriptId, collectionId: collectionId!, status: row.status, replaced };
+  const out: WriteRunScriptResult = { scriptId, collectionId: collectionId!, status: row.status, replaced };
   if (row.errorMessage) out.errorMessage = row.errorMessage;
   if (row.errorLocation) out.errorLocation = row.errorLocation;
+  if (!replaced && row.status !== 'ok') await removeScript(scriptId);
   return out;
 }
 
-// Remove the Scratch container, its rows, their GM values, and the text
-// rows behind them. Returns what went, for the caller's registration
-// sync. `removeCollection` deletes the text rows, keeping any that a
-// copy moved into another collection still reads.
-export async function clearScratchScripts(): Promise<{ scriptIds: string[]; collectionId: string | null }> {
-  const container = (await getCollections()).find((c) => c.path === SCRATCH_CONTAINER_PATH);
+// Remove run `run`'s test collection, its rows, their GM values, and the
+// text rows behind them. Returns what went, for the caller's
+// registration sync. `removeCollection` deletes the text rows, keeping
+// any that a copy moved into another collection still reads.
+export async function removeSmDevCollection(run: string): Promise<{ scriptIds: string[]; collectionId: string | null }> {
+  const container = (await getCollections()).find((c) => smDevRunOfContainer(c.path) === run);
   if (!container) return { scriptIds: [], collectionId: null };
   for (const sid of container.scriptIds) await wipeScriptValues(sid);
   await removeCollection(container.id);
   return { scriptIds: container.scriptIds, collectionId: container.id };
 }
 
-// Solo mode: every collection but Scratch disabled, so a scratch
-// script runs alone. Turning it off restores the enabled flags as they
-// were, from the note taken when it went on, so the user's own
-// collections come back exactly as they were. The note is in local
-// storage, beside the flags it restores: a run killed without turning
-// solo mode off leaves it on, even across a browser or extension
-// restart, and the next `setSoloMode(false)` (any `sm-dev clear
-// --extension`, or another solo run ending) restores from the note.
-// Returns the ids of the collections it toggled.
-const SOLO_MODE_KEY = 'sm:solo-mode';
-
-export async function setSoloMode(on: boolean): Promise<string[]> {
-  const noted = (await chrome.storage.local.get(SOLO_MODE_KEY))[SOLO_MODE_KEY] as
-    Record<string, boolean> | undefined;
-  const toggled: string[] = [];
-  if (on) {
-    // Already on: the note stands, and a second run must not overwrite
-    // it with "everything was disabled".
-    if (noted) return toggled;
-    const collections = await getCollections();
-    const previous: Record<string, boolean> = {};
-    for (const c of collections) {
-      if (c.path !== SCRATCH_CONTAINER_PATH) previous[c.id] = isCollectionEnabled(c);
-    }
-    // Noted before anything is disabled, so a worker killed partway
-    // through still leaves the note that restores what it did.
-    await chrome.storage.local.set({ [SOLO_MODE_KEY]: previous });
-    for (const [id, wasEnabled] of Object.entries(previous)) {
-      if (!wasEnabled) continue;
-      await setCollectionEnabled(id, false);
-      toggled.push(id);
-    }
-    return toggled;
-  }
-  if (!noted) return toggled;
-  for (const [id, wasEnabled] of Object.entries(noted)) {
-    if (wasEnabled && await setCollectionEnabled(id, true)) toggled.push(id);
-  }
-  await chrome.storage.local.remove(SOLO_MODE_KEY);
-  return toggled;
+// The runs that have a test collection.
+export async function smDevCollectionRuns(): Promise<string[]> {
+  return (await getCollections()).map((c) => smDevRunOfContainer(c.path)).filter((run) => run !== null);
 }
 
 // Does this container already hold `canonicalPath`?
@@ -2482,9 +2455,10 @@ async function addScriptToContainer(
       if (!isContainerCollection(existingContainer.path)) {
         throw new Error('Internal error: scripts can only be installed into a scripts collection');
       }
+      if (isSmDevCollection(existingContainer.path)) throw new Error(SM_DEV_COLLECTION_LOCKED);
       cPath = existingContainer.path;
-    } else if ('scratch' in target) {
-      cPath = SCRATCH_CONTAINER_PATH;
+    } else if ('smDevRun' in target) {
+      cPath = smDevContainerPath(target.smDevRun);
       existingContainer = collections.find((s) => s.path === cPath);
     } else {
       cPath = containerPath(containerKindForSingleFileInput(path));
@@ -2503,7 +2477,7 @@ async function addScriptToContainer(
     const nextContainer: StoredCollection = existingContainer
       ? { ...existingContainer, scriptIds: [...priorScriptIds, scriptId] }
       : newContainerRow(containerId, cPath, [scriptId]);
-    if (isNew && cPath === SCRATCH_CONTAINER_PATH) nextContainer.displayName = SCRATCH_COLLECTION_NAME;
+    if (isNew && 'smDevRun' in target) nextContainer.displayName = smDevCollectionName(target.smDevRun);
     const seedScript = buildInitialInvalidEntry({
       id: scriptId,
       collectionId: containerId,
@@ -2619,6 +2593,11 @@ export const ALREADY_INSTALLED_IN_TARGET = 'This script is already installed the
 export const NOT_A_MOVABLE_SCRIPT =
   'Internal error: only a script in an individual scripts collection can be moved';
 
+// The pages never offer it (see `installOptionsFor`); said if another
+// path tries.
+export const SM_DEV_COLLECTION_LOCKED =
+  'Scripts can\'t be moved into or out of an sm-dev test collection, or installed into one, since only its sm-dev run changes it';
+
 // Move one already-installed script from its container collection into
 // another. The stored row keeps its `id`, so its Chrome registration,
 // its `gmval:` rows, and its Log all follow it untouched — only the
@@ -2642,6 +2621,7 @@ export async function moveScript(
     if (!script) throw new Error(SCRIPT_GONE);
     const source = await getRaw<StoredCollection>(collectionKey(script.collectionId));
     if (!source || !isContainerCollection(source.path)) throw new Error(NOT_A_MOVABLE_SCRIPT);
+    if (isSmDevCollection(source.path)) throw new Error(SM_DEV_COLLECTION_LOCKED);
     const collections = await getCollections();
     let dest: StoredCollection | undefined;
     let destPath: string;
@@ -2651,6 +2631,7 @@ export async function moveScript(
       // removed from another tab since.
       if (!dest) throw new Error(COLLECTION_GONE);
       if (!isContainerCollection(dest.path)) throw new Error(NOT_A_MOVABLE_SCRIPT);
+      if (isSmDevCollection(dest.path)) throw new Error(SM_DEV_COLLECTION_LOCKED);
       destPath = dest.path;
     } else {
       destPath = containerPath(containerKindForSingleFileInput(script.relativePath));

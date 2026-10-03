@@ -90,9 +90,9 @@ Where to look:
 
 ## Getting a browser
 
-sm-dev connects to a browser on port 9233 (or `--cdp PORT`). With none
-there, it says so: `Start one with sm-dev --open-browser, pass --cdp,
-or use --temp-browser`.
+sm-dev connects to a browser on port 9233 (or `--browser PORT`). With
+none there, it says so: `Start one with sm-dev --open-browser, pass
+--browser, or use --temp-browser`.
 
 - `pnpm sm-dev --open-browser`: a visible browser that stays open, with
   a kept profile, so sign-ins persist. Use it for sites that need a
@@ -104,6 +104,9 @@ or use --temp-browser`.
   [Testing in the real extension](#testing-in-the-real-extension)).
 - If the person already has a browser on the port, use it: their tabs
   are left alone, and only the run's own tabs are touched.
+  - If it has SourceMonkey installed, the run keeps SourceMonkey-managed
+    scripts out of the run's tabs, so only the scripts you started run
+    there.
 
 The headless `--temp-browser` is often blocked by large sites (Reddit,
 Google, Amazon, Vimeo, IMDb, parts of YouTube).
@@ -167,9 +170,9 @@ What the stream looks like:
   In a connected browser, cross-site iframes and workers keep the
   browser's languages; use `--temp-browser` for a script in frames.
 
-A person at a terminal can use `pnpm sm-dev --interactive start ...`
-for a `> ` prompt instead. An agent should use `--detach` and separate
-commands.
+A person at a terminal can use `pnpm sm-dev start ...` with no commands
+after `start` for an interactive prompt. An agent should use `--detach`
+and separate commands.
 
 ## Recipes
 
@@ -232,6 +235,7 @@ $R status
 
 ```sh
 $R snapshot --visible               # what's on screen, one line per element, with refs
+$R snapshot --find 'Liked Songs' --context   # only elements containing that, with their wrapper divs
 $R probe --css e14                  # a short unique CSS selector for a ref
 $R probe --css --html '.titleline > a'   # selector + HTML for the first 10 matches
 $R probe '.title a' '[data-testid=post]' '#missing'   # which match, how many
@@ -239,8 +243,15 @@ $R click e14                        # refs work anywhere a selector does
 ```
 
 - `snapshot` is the accessibility tree: roles, names, and a ref like
-  `e14` (`f2e6` inside a frame). `snapshot <selector>` shows part of the
-  page; `--out file` saves a large one.
+  `e14`, or `f2e6` with a frame number. `snapshot <selector>` shows
+  each of its matches (the first 5; `--limit 0` for all); `--out file`
+  saves a large one.
+- When you know some text on the page (from a screenshot, the person,
+  or an earlier look), use `snapshot --find <text>` instead of a full
+  snapshot piped to `grep`. It shows the matching elements with refs.
+  - With a selector, it looks only within the selector's matches.
+  - `--context` adds the wrapper divs and small containers around each
+    match (of `--find` or a selector); `--up N` climbs N levels.
 - Refs only last until the page changes: take a new snapshot after a
   reload or navigation. Refs from `snapshot <selector>` and from the
   whole page both work.
@@ -555,20 +566,18 @@ Use it when the question is about Chrome itself:
   UI.
 
 ```sh
-$R start sites/x/y.user.js https://x.com/ --extension --solo --detach
+$R start sites/x/y.user.js https://x.com/ --extension --detach
 # ... same commands ...
-$R stop
-$R clear --extension     # drop scratch scripts; restores other collections
+$R stop                  # also removes the run's test collection
 ```
 
 - Needs SourceMonkey in the browser, with "Allow User Scripts" on.
   - **`--temp-browser` with `--extension` installs the extension**
     (Allow User Scripts on), so it needs no setup:
     `$R --temp-browser start x.user.js https://x.com/ --extension`.
-    Its profile is empty (no logins), and the scratch scripts go with
-    it. For a site that needs a login, or blocks headless browsers,
-    use the `--open-browser` browser, once the extension is loaded
-    there.
+    Its profile is empty (no logins). For a site that needs a login,
+    or blocks headless browsers, use the `--open-browser` browser,
+    once the extension is loaded there.
   - The run's first line (`Connected to browser ... (Chrome ...,
     has SourceMonkey)`) and `status` say whether the extension is
     there: `has SourceMonkey`, `SourceMonkey disabled` or `no
@@ -576,9 +585,25 @@ $R clear --extension     # drop scratch scripts; restores other collections
   - If the extension is missing or disabled there, use `--temp-browser`
     (when no login is needed), ask the person, or see
     [Setting it up](https://github.com/jshute96/SourceMonkey/blob/main/docs/harness-guide.md#setting-it-up).
-- The script is pushed as a scratch script; relative `@require`s are
-  refused, and remote ones are fetched live, not from local copies.
-- Output is the script's Log tab entries plus page console lines.
+- The script is pushed into a test collection of the run's own
+  (`sm-dev test collection (run D2-a3f9)` in the extension, the id
+  `status` shows), removed when the run ends. Each run starts with no
+  stored values. Relative `@require`s are refused, and remote ones are
+  fetched live, not from local copies.
+- A `document-start` script may run after the page's first inline
+  scripts here, where the extension alone would run it first: during a
+  run, every script waits for the extension's check before running.
+- The run commands work as in a harness run (`status`, `get`/`set`,
+  `menu`, `snapshot`, `click`, `eval`, `reload`, ...). Output is the
+  script's starts, errors, menus and value writes, its Log tab entries,
+  and page console lines.
+- The run's tabs run only its own scripts: SourceMonkey-managed
+  scripts are kept out of them. The run's scripts run only in the
+  run's tabs, not in tabs you open yourself.
+  - `scripts` lists those others on the tab as E1, E2, ...;
+    `values E1` reads one's stored values, and `scripts E1` picks it
+    for `get`/`set` (`set key --force <json>` outside a
+    `--temp-browser`, since that's the person's real data).
 - **Before building on a new request path, send one real request
   from it here.**
   - A request that works from the page can still be refused from the
@@ -618,7 +643,7 @@ test('adds the button', async ({ page, loadUserscript, gm, reports }) => {
   frame only.
 - **It works in sm-dev but not in the extension, or the reverse**: see
   [Known differences](https://github.com/jshute96/SourceMonkey/blob/main/docs/harness-guide.md#known-differences-under-the-push-backend):
-  `document-start` code running after early page scripts, Trusted
+  some `document-start` code running after early page scripts, Trusted
   Types in the isolated world, an inserted inline `<script>` blocked by
   a strict page CSP, a `GM_setValue` lost to an unload. Check in the
   extension (above).

@@ -9,8 +9,8 @@
 //     browser command uses.
 //   - `list`, `stop`, and the commands sent to a run, reach running
 //     runs through runs.ts.
-//   - `--extension` and `clear` go through extension-backend.ts, which
-//     drives a real SourceMonkey rather than the harness.
+//   - `start --extension` runs go through run.ts like the rest, and
+//     reach the real SourceMonkey through extension-link.ts.
 //
 // Each command loads only the modules it needs. `validate` and `match`
 // never import Playwright, so they run in a repo that has not
@@ -69,7 +69,6 @@ interface Opts {
   /** Which flag gave `values`, to name in messages. */
   valuesFlag?: string;
   extension: boolean;
-  solo: boolean;
   pageErrors: boolean;
   /** `--devtools` / `--nodevtools`; unset leaves it to `SM_DEV_DEVTOOLS`. */
   devtools?: boolean;
@@ -103,7 +102,7 @@ const OWN_VALUE_FLAGS = new Set([...OWN_COMMANDS].flatMap((name) => Object.entri
 function parseArgs(argv: string[]): Opts {
   const opts: Opts = {
     command: null, args: [],
-    all: false, noTab: false, watch: false, extension: false, solo: false, pageErrors: false, detach: false, newRun: false, noWait: false, fromSaved: false, offline: false,
+    all: false, noTab: false, watch: false, extension: false, pageErrors: false, detach: false, newRun: false, noWait: false, fromSaved: false, offline: false,
   };
   // The command's name: the first word that is no flag, nor a flag's value.
   let at = 0;
@@ -139,7 +138,7 @@ function parseArgs(argv: string[]): Opts {
     switch (flag) {
       case '--all': opts.all = true; break;
       case '--notab': opts.noTab = true; break;
-      case '--cdp': opts.cdp = text; break;
+      case '--browser': opts.cdp = text; break;
       case '--watch': opts.watch = true; break;
       case '--values':
       case '--values-file': {
@@ -166,7 +165,6 @@ function parseArgs(argv: string[]): Opts {
         break;
       }
       case '--extension': opts.extension = true; break;
-      case '--solo': opts.solo = true; break;
       case '--page-errors': opts.pageErrors = true; break;
       case '--devtools': opts.devtools = true; break;
       case '--nodevtools': opts.devtools = false; break;
@@ -225,8 +223,16 @@ function scriptsAndUrls(words: string[]): { scripts: string[]; urls: string[]; p
     const url = withDefaultScheme(word);
     if (!pages.has(url)) pages.set(url, { word, url });
   }
+  // Each once too, by the file it names, so `x.user.js ./x.user.js` is
+  // one script (an extension run keeps its scripts by the path typed).
+  // The first spelling is kept.
+  const scripts = new Map<string, string>();
+  for (const word of args.filter((a) => SCRIPT_ARG.test(a))) {
+    const file = path.resolve(word);
+    if (!scripts.has(file)) scripts.set(file, word);
+  }
   return {
-    scripts: [...new Set(args.filter((a) => SCRIPT_ARG.test(a)))],
+    scripts: [...scripts.values()],
     urls: [...pages.keys()],
     pages: [...pages.values()],
   };
@@ -313,24 +319,23 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
   };
   if (opts.noTab) clash('--notab', [[opts.all, '--all'], [urls.length > 0, 'a URL']]);
   // With no scripts, just a browser to drive: the flags that act on
-  // scripts would do nothing. (`--extension` alone is a browser whose
-  // SourceMonkey runs its own collections; `--solo` would silence them.)
+  // scripts would do nothing.
   if (scripts.length === 0) {
     const used = ([
       [opts.all, '--all'], [Boolean(opts.values), opts.valuesFlag ?? '--values'],
-      [opts.watch, '--watch'], [opts.solo, '--solo'],
+      [opts.watch, '--watch'],
     ] as [boolean, string][]).filter(([on]) => on).map(([, name]) => name);
     if (used.length > 0) throw new UsageError(`The start command was given no scripts, so it can't take ${used.join(' or ')}`);
   }
   // Asked for by name, it must be able to run; on by default from the
   // environment, it just sits out the runs it can't serve.
-  // The extension keeps its own storage, which a run can't seed.
+  // The extension keeps its own storage, which a run doesn't seed.
   if (opts.valuesFlag) clash(opts.valuesFlag, [[opts.extension, '--extension']]);
-  if (opts.devtools === true) clash('--devtools', [[lineTempBrowser, '--temp-browser'], [opts.extension, '--extension']]);
-  if (lineTempBrowser && opts.cdp !== undefined) throw new UsageError('The --temp-browser flag can\'t be used with --cdp');
-  if (lineOpenBrowser && opts.cdp !== undefined) throw new UsageError('The start command connects to the browser --open-browser starts, so give --cdp once, first: sm-dev --open-browser --cdp ... start ...');
+  if (opts.devtools === true) clash('--devtools', [[lineTempBrowser, '--temp-browser']]);
+  if (lineTempBrowser && opts.cdp !== undefined) throw new UsageError('The --temp-browser flag can\'t be used with --browser');
+  if (lineOpenBrowser && opts.cdp !== undefined) throw new UsageError('The start command connects to the browser --open-browser starts, so give --browser once, first: sm-dev --open-browser --browser ... start ...');
   if (!opts.detach && !detachedLog && opts.newRun) throw new UsageError('The --new flag only applies with --detach');
-  const devtools = devtoolsWanted(opts.devtools) && !lineTempBrowser && !opts.extension;
+  const devtools = devtoolsWanted(opts.devtools) && !lineTempBrowser;
   const files = await Promise.all(scripts.map((s) => scriptFile(s)));
   if (opts.fromSaved) clash('--from-saved', [[opts.all, '--all'], [opts.noTab, '--notab']]);
   // Read before the run starts, so a file that can't be opened is said now.
@@ -412,7 +417,6 @@ async function runHere(
       watch: opts.watch,
       values: opts.values,
       extension: opts.extension,
-      solo: opts.solo,
       pageErrors: opts.pageErrors,
       devtools,
       collectionRoot: lineRoots.collectionRoot,
@@ -563,36 +567,6 @@ async function detachRun(words: string[], runId: string | undefined): Promise<{ 
   }
   child.unref();
   return { code: 0, id, log, exited, hold: () => child.ref() };
-}
-
-function checkClear(opts: Opts): void {
-  if (!opts.extension) throw new UsageError('The clear command needs --extension; the harness itself keeps nothing between runs');
-  if (lineTempBrowser) throw new UsageError('The clear command has nothing to clear in a --temp-browser, whose scratch scripts go when its run ends');
-}
-
-async function clearCommand(opts: Opts): Promise<number> {
-  checkClear(opts);
-  const { connectBrowser } = await import('./run.js');
-  const { ExtensionBackend } = await import('./extension-backend.js');
-  const out = (line: string): void => { process.stdout.write(line + '\n'); };
-  const session = await connectBrowser({ cdp: opts.cdp ?? lineCdp, tempBrowser: false, headed: false }, out);
-  if (!session) return 1;
-  try {
-    const backend = await ExtensionBackend.connect(session.context);
-    const count = await backend.clear();
-    // A run killed before it could turn solo mode off leaves the user's
-    // collections disabled. Put them back here, since clearing the
-    // scratch scripts is the other half of the same cleanup.
-    await backend.solo(false);
-    out(`[sm-dev] Removed ${count} scratch script(s)`);
-    return 0;
-  } catch (err) {
-    out(`[sm-dev] ${(err as Error).message}`);
-    return 1;
-  } finally {
-    await session.page.close().catch(() => undefined);
-    await session.done();
-  }
 }
 
 const NO_RUNS = 'No sm-dev runs are active';
@@ -1153,7 +1127,7 @@ function runsHere(words: string[]): boolean {
 }
 
 // Ones that need no run, or act on runs themselves.
-const HERE = new Set(['start', 'attach', 'stop', 'exit', 'list', 'clear', 'help']);
+const HERE = new Set(['start', 'attach', 'stop', 'exit', 'list', 'help']);
 
 /**
  * Whether a command only looks, so a line of only such commands needn't
@@ -1270,8 +1244,8 @@ let lineRoots: ScriptRoots = { collectionRoot: process.cwd(), localRoots: [] };
 let rootsGiven = false;
 // `--run`: the run the line works with.
 let globalRun: string | undefined;
-// `--cdp`, for the commands that connect to a browser (their own
-// `--cdp` wins) and for `--open-browser`.
+// `--browser`, for the commands that connect to a browser (their own
+// `--browser` wins) and for `--open-browser`.
 let lineCdp: string | undefined;
 // `--open-browser` and `--profile`: a lasting browser to start first.
 let lineOpenBrowser = false;
@@ -1283,13 +1257,13 @@ let lineHeaded = false;
 
 
 // The flags for the whole line, which go before any command.
-const GLOBAL_FLAGS = ['--run', '--root', '--local', '--stdin', '--interactive', '--cdp', '--open-browser', '--profile', '--temp-browser', '--headed'];
+const GLOBAL_FLAGS = ['--run', '--root', '--local', '--stdin', '--interactive', '--browser', '--open-browser', '--profile', '--temp-browser', '--headed'];
 
 function globalFlagMistake(flag: string): string {
   return `The ${flag} flag is for the whole command line, so it goes first, before any command: sm-dev ${flag}${VALUE_GLOBALS.has(flag) ? ' ...' : ''} <command>`;
 }
 
-const VALUE_GLOBALS = new Set(['--run', '--root', '--local', '--cdp', '--profile']);
+const VALUE_GLOBALS = new Set(['--run', '--root', '--local', '--browser', '--profile']);
 
 interface GlobalFlags {
   stdin: boolean;
@@ -1301,7 +1275,7 @@ interface GlobalFlags {
 /**
  * Takes the global options off the front of the line: `--run ID`,
  * `--root DIR`, `--local DIR` (repeatable), `--stdin`, `--interactive`
- * and the browser's: `--cdp`, `--open-browser`, `--profile`,
+ * and the browser's: `--browser`, `--open-browser`, `--profile`,
  * `--temp-browser`, `--headed`. One later on the line, among a
  * command's words, is said to go first.
  */
@@ -1320,12 +1294,12 @@ function takeGlobalFlags(argv: string[]): GlobalFlags {
     else if (word === '--headed') lineHeaded = true;
     else {
       const value = inline ?? argv[++i];
-      // Not the next option taken for this one's value (`--cdp --open-browser`).
+      // Not the next option taken for this one's value (`--browser --open-browser`).
       if (value === undefined || value === '' || value === SEPARATOR || (inline === undefined && value.startsWith('--'))) {
         throw new UsageError(word === '--run' ? 'The --run flag needs a run ID, e.g. --run D2' : `The ${word} flag needs a value`);
       }
       if (word === '--run') globalRun = checkedRunId(value);
-      else if (word === '--cdp') lineCdp = value;
+      else if (word === '--browser') lineCdp = value;
       else if (word === '--profile') lineProfile = path.resolve(value);
       else if (word === '--root') collectionRoot = path.resolve(value);
       else localRoots.push(path.resolve(value));
@@ -1334,9 +1308,9 @@ function takeGlobalFlags(argv: string[]): GlobalFlags {
   }
   lineRoots = { collectionRoot, localRoots };
   flags.rest = argv.slice(i);
-  // The browser: one of --cdp, --open-browser and --temp-browser's own.
+  // The browser: one of --browser, --open-browser and --temp-browser's own.
   if (lineTempBrowser) {
-    const others = [[lineCdp !== undefined, '--cdp'], [lineOpenBrowser, '--open-browser']].filter(([on]) => on).map(([, name]) => name);
+    const others = [[lineCdp !== undefined, '--browser'], [lineOpenBrowser, '--open-browser']].filter(([on]) => on).map(([, name]) => name);
     if (others.length > 0) throw new UsageError(`The --temp-browser flag can't be used with ${others.join(' or ')}`);
   }
   if (lineHeaded && !lineTempBrowser) throw new UsageError('The --headed flag only applies with --temp-browser');
@@ -1344,7 +1318,7 @@ function takeGlobalFlags(argv: string[]): GlobalFlags {
   return flags;
 }
 
-// A global option with its value in the same word (`--cdp=9300`), as
+// A global option with its value in the same word (`--browser=9300`), as
 // the option and the value; else the word and no value.
 function splitInline(word: string): [string, string | undefined] {
   const eq = word.indexOf('=');
@@ -1368,7 +1342,7 @@ function globalWords(runId: string | undefined): string[] {
   return [
     ...(rootsGiven ? ['--root', lineRoots.collectionRoot, ...lineRoots.localRoots.flatMap((dir) => ['--local', dir])] : []),
     ...(runId ? ['--run', runId] : []),
-    ...(lineCdp !== undefined ? ['--cdp', lineCdp] : []),
+    ...(lineCdp !== undefined ? ['--browser', lineCdp] : []),
     ...(lineTempBrowser ? ['--temp-browser'] : []),
     ...(lineHeaded ? ['--headed'] : []),
   ];
@@ -1448,7 +1422,6 @@ async function checkCommand(words: string[]): Promise<void> {
     case 'match': return checkMatch(opts);
     case 'start': await checkStart(opts); return;
     case 'attach': checkAttach(opts); return;
-    case 'clear': return checkClear(opts);
     case 'stop': checkStop(opts); return;
   }
 }
@@ -1476,7 +1449,6 @@ async function runOne(words: string[], client: Client): Promise<number> {
       case 'match': return await match(opts);
       case 'start': return await startCommand(opts, parsed.words, client);
       case 'attach': return await attachCommand(opts, client);
-      case 'clear': return await clearCommand(opts);
       case 'list': return await listCommand();
       case 'exit':
         client.exiting = true;
@@ -1486,6 +1458,11 @@ async function runOne(words: string[], client: Client): Promise<number> {
   } catch (err) {
     return printMistake(err);
   }
+}
+
+/** Whether stdin and stdout are both a terminal, for the prompt by default. */
+function atTerminal(): boolean {
+  return Boolean(process.stdin.isTTY && process.stdout.isTTY);
 }
 
 const START_ALONE = 'The start command with nothing after it would stop the run as soon as it started. Add --interactive for a prompt, --detach to leave it running, --seconds N to watch it for a while, or commands after --.';
@@ -1529,6 +1506,12 @@ async function main(): Promise<void> {
     return;
   }
   const commands = splitCommands(flags.rest);
+  // No commands, with stdin and stdout both a terminal: the prompt, as
+  // with --interactive. Not with --stdin, in a detached run, or after
+  // `--open-browser` alone, which is a whole line: start a browser.
+  if (commands.length === 0 && !flags.stdin && !lineOpenBrowser && !detachedLog && atTerminal()) {
+    flags.interactive = true;
+  }
   // The background process a `start` began: the run itself, which
   // handles its own signals.
   if (detachedLog) {
@@ -1560,12 +1543,17 @@ async function main(): Promise<void> {
     return;
   }
   // A `start` with nothing after it to keep it going: it would start the
-  // run and stop it again straight away. Its flags can come first.
+  // run and stop it again straight away. Its flags can come first. At a
+  // terminal, the prompt keeps it going, as with --interactive.
   const last = commands.at(-1);
   const ending = last && parseCommand(last).kind === 'cli' ? parseArgs(last) : null;
   if (ending?.command === 'start' && !ending.detach && ending.seconds === undefined && !stdin && !flags.interactive) {
-    process.exitCode = printMistake(new UsageError(START_ALONE));
-    return;
+    if (atTerminal()) {
+      flags.interactive = true;
+    } else {
+      process.exitCode = printMistake(new UsageError(START_ALONE));
+      return;
+    }
   }
   // --temp-browser and --headed shape the runs this line starts; with no
   // start to use them, they'd be silently ignored.
@@ -1577,10 +1565,10 @@ async function main(): Promise<void> {
   // The lasting browser first, for the commands to connect to.
   if (lineOpenBrowser) {
     const { launchBrowser, launchEndpointMistake } = await import('./browser-launch.js');
-    const { cdpEndpoint } = await import('./run.js');
+    const { browserSettingName, cdpEndpoint } = await import('./run.js');
     try {
-      const endpoint = cdpEndpoint(lineCdp?.trim() || process.env.SM_DEV_CDP?.trim() || '9233');
-      const mistake = launchEndpointMistake(endpoint);
+      const endpoint = cdpEndpoint(lineCdp?.trim() || process.env.SM_DEV_BROWSER?.trim() || '9233');
+      const mistake = launchEndpointMistake(endpoint, browserSettingName(lineCdp));
       if (mistake) throw new UsageError(mistake);
       await launchBrowser(endpoint, lineProfile, print);
     } catch (err) {

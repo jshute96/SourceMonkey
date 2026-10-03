@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { framePaths, onScreen, refLabels, refOf, tidy, withoutDocument } from '../../lib/harness/snapshot.js';
+import { framePaths, onScreen, refLabels, refOf, tidy, topRefs, treeParts, withoutDocument } from '../../lib/harness/snapshot.js';
 
 test('a whole page\'s tree goes without its document line, a level less indented', () => {
   const tree = [
@@ -77,9 +77,9 @@ test('each ref is noted with the iframes it is in, outermost first', () => {
     '      - button "Deeper" [ref=f6e1]',
     '  - button "Out" [ref=f3e3]',
   ].join('\n');
-  assert.deepEqual([...framePaths(tree, ['e9'])], [
-    ['f3e1', ['e9']], ['f3e2', ['e9']], ['f5e1', ['e9', 'f3e2']], ['f5e2', ['e9', 'f3e2']],
-    ['f6e1', ['e9', 'f3e2', 'f5e2']], ['f3e3', ['e9']],
+  assert.deepEqual([...framePaths(tree)], [
+    ['f3e1', []], ['f3e2', []], ['f5e1', ['f3e2']], ['f5e2', ['f3e2']],
+    ['f6e1', ['f3e2', 'f5e2']], ['f3e3', []],
   ]);
 });
 
@@ -110,4 +110,71 @@ test('a ref is labeled by its role and name, unquoted and cut short', () => {
   assert.equal(labels.get('e5'), 'link "past"');
   assert.equal(labels.get('e6'), 'link "It\'s: here"');
   assert.equal(labels.get('e7'), `heading "${'x'.repeat(51)}…`);
+});
+
+test('--find shows the elements that say the text, not ones whose role or attributes do', () => {
+  const tree = [
+    '- main [ref=e1]:',
+    '  - generic [ref=e2]:',
+    '    - generic [ref=e3]:',
+    '      - link "Liked  Songs" [ref=e4]:',
+    '        - /url: /collection/tracks',
+    '      - text: 12 songs',
+    '  - list [ref=e5]:',
+    '    - listitem [ref=e6]: Discover Weekly',
+    '    - \'button "Play: songs" [ref=e7]\'',
+    '    - button "Other" [ref=e8]',
+    '    - button "Save [draft]" [ref=e9]',
+  ].join('\n');
+  const find = (text) => treeParts(tree, { text });
+  // A link's name, its /url, any case and spacing; a text line stands for its element.
+  assert.deepEqual(find('liked songs'), ['- link "Liked  Songs" [ref=e4]:\n  - /url: /collection/tracks']);
+  assert.deepEqual(find('/collection'), ['- link "Liked  Songs" [ref=e4]:\n  - /url: /collection/tracks']);
+  assert.equal(find('12 songs')[0].split('\n')[0], '- generic [ref=e3]:');
+  assert.deepEqual(find('play: songs'), ['- \'button "Play: songs" [ref=e7]\'']);
+  assert.deepEqual(find('button'), []);
+  assert.deepEqual(find('ref=e4'), []);
+  assert.deepEqual(find('[draft]'), ['- button "Save [draft]" [ref=e9]']);
+  // A match inside another's part shows once.
+  assert.equal(find('songs').length, 2);
+  // Within a selector's matches only.
+  assert.deepEqual(treeParts(tree, { text: 'songs', matches: [['e5']] }), ['- \'button "Play: songs" [ref=e7]\'']);
+});
+
+test('a selector shows each of its matches in the tree, and those it can\'t find go', () => {
+  const tree = [
+    '- list [ref=e1]:',
+    '  - listitem [ref=e2]: One',
+    '  - listitem [ref=e3]: Two',
+    '- generic [ref=e4]:',
+    '  - button "A" [ref=e5]',
+    '  - button "B" [ref=e6]',
+  ].join('\n');
+  assert.deepEqual(treeParts(tree, { matches: [['e2'], ['e3'], ['e9']] }), ['- listitem [ref=e2]: One', '- listitem [ref=e3]: Two']);
+  // A match the tree leaves out itself is its children together.
+  assert.deepEqual(treeParts(tree, { matches: [['e5', 'e6']] }), ['- button "A" [ref=e5]\n- button "B" [ref=e6]']);
+  // Matches inside another show once, in it.
+  assert.equal(treeParts(tree, { matches: [['e2'], ['e3']], up: 1 }).length, 1);
+  assert.deepEqual(topRefs('- generic [ref=e2]:\n  - link "x" [ref=e3]'), ['e2']);
+  assert.deepEqual(topRefs('- link "a" [ref=e3]\n- text: b\n- link "c" [ref=e4]'), ['e3', 'e4']);
+});
+
+test('--find goes --up levels, and with --context, up through what adds few lines', () => {
+  const tree = [
+    '- main [ref=e1]:',
+    ...Array.from({ length: 20 }, (_, i) => `  - paragraph [ref=p${i}]: filler ${i}`),
+    '  - generic [ref=e2]:',
+    '    - generic [ref=e3]:',
+    '      - heading "Title" [ref=e4]',
+    '      - text: by someone',
+  ].join('\n');
+  assert.equal(treeParts(tree, { text: 'title', up: 1 })[0].split('\n')[0], '- generic [ref=e3]:');
+  assert.equal(treeParts(tree, { text: 'title', up: 9 })[0].split('\n')[0], '- main [ref=e1]:');
+  // Up through both wrappers, not to main, which has 20 more lines.
+  assert.equal(treeParts(tree, { text: 'title', context: true })[0], [
+    '- generic [ref=e2]:',
+    '  - generic [ref=e3]:',
+    '    - heading "Title" [ref=e4]',
+    '    - text: by someone',
+  ].join('\n'));
 });

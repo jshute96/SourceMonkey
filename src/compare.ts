@@ -232,7 +232,7 @@ async function loadInstalled(id: string, what: string): Promise<Side> {
 // what installing would store.
 async function loadPreview(input: string): Promise<Side> {
   if (!isSingleFileLocation(input)) {
-    throw new Error(`This is not a script location — it ${LOCATION_SHAPES}`);
+    throw new Error(`This is not a script location. It ${LOCATION_SHAPES}.`);
   }
   await githubTokenReady;
   const previewLocation = canonicalCollectionInput(await normalizeCollectionInput(input));

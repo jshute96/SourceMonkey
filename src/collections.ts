@@ -132,6 +132,7 @@ import {
   canonicalCollectionInput,
   collectionCanonicalUrl,
   isContainerCollection,
+  isSmDevCollection,
   isFileUrl,
   isManifestCollection,
   isValidLocationShape,
@@ -1350,13 +1351,16 @@ async function renderCollectionSection(collection: StoredCollection): Promise<HT
   removeBtn.addEventListener('click', () => void onRemoveCollection(collection.id, section, removeBtn));
   buttons.appendChild(removeBtn);
 
-  const editBtn = document.createElement('button');
-  editBtn.className = 'edit-collection';
-  // A gear, not a pencil: the dialog behind it is mostly options, and
-  // a pencil would promise editing the scripts themselves.
-  setGlyphButton(editBtn, '#sm-gear', 'Rename this collection or change its options');
-  editBtn.addEventListener('click', () => void onEditCollection(collection.id));
-  buttons.appendChild(editBtn);
+  // None for an sm-dev test collection, which its run names.
+  if (!isSmDevCollection(collection.path)) {
+    const editBtn = document.createElement('button');
+    editBtn.className = 'edit-collection';
+    // A gear, not a pencil: the dialog behind it is mostly options, and
+    // a pencil would promise editing the scripts themselves.
+    setGlyphButton(editBtn, '#sm-gear', 'Rename this collection or change its options');
+    editBtn.addEventListener('click', () => void onEditCollection(collection.id));
+    buttons.appendChild(editBtn);
+  }
 
   // Rightmost, matching Refresh All at the top of the page: the same
   // action in the same place, whichever row of the page you are on.
@@ -2844,8 +2848,8 @@ async function buildStorageBanner(liveIds: ReadonlySet<string>): Promise<HTMLEle
   explain.textContent = full
     ? 'Collections below were read successfully, but Chrome refused to '
       + 'store them, so their scripts are still running the last version '
-      + 'that fit. Removing a collection you no longer need — or trimming '
-      + 'a very large one — frees the space to save them.'
+      + 'that fit. Removing a collection you no longer need (or trimming '
+      + 'a very large one) frees the space to save them.'
     // The non-full branch is genuinely unexplained, so it says so
     // rather than guessing a cause the reader would then chase.
     : 'Collections below were read successfully, but Chrome refused to '

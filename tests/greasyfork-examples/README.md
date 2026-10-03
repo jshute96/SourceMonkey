@@ -4,6 +4,10 @@ Tools and data for testing SourceMonkey against real-world userscripts: the
 2000 most-installed scripts on [GreasyFork](https://greasyfork.org), downloaded
 with their dependencies, plus a record of what testing each one found.
 
+This README covers the tools and data. For how to test scripts on their
+live sites and record results (also for agents), see the `corpus-testing`
+skill in [`.claude/skills/corpus-testing/`](../../.claude/skills/corpus-testing/SKILL.md).
+
 ## Overview
 
 ### State files
@@ -269,6 +273,10 @@ sqlite3 tests/greasyfork-examples/corpus.db < tests/greasyfork-examples/analysis
 SourceMonkey's install checks, and whether it works when run on its target
 site. `record-results.mjs` is the only tool that writes these findings.
 
+How to test scripts (the method, blame rules, tags, running batches with
+agents, and re-testing after a fix) is in the `corpus-testing` skill,
+[`.claude/skills/corpus-testing/`](../../.claude/skills/corpus-testing/SKILL.md).
+
 **`record-results.mjs` records individual facts into the corpus**: one
 script's test result, tag or note, as you (or an agent) learn it. It doesn't
 compute anything over the corpus. The exception is `validate`, which checks
@@ -347,7 +355,13 @@ node tests/greasyfork-examples/serve-results.mjs   # then open http://localhost:
 - Opened straight from disk, Chrome won't let the page fetch another file, so
   it asks you to choose `corpus.json`. You navigate to it once; after that the
   page offers to reopen the same file with one click.
-- Every link opens in a new tab.
+- Every link opens in a new tab, except the Summary ones below.
+- Summary shows each filter's choices (Validation, Testing, Tag) with how many
+  scripts are in each; tags are listed most common first.
+  - Each line links to the table filtered that way, and Full results goes
+    back to the whole table.
+  - These switch views in the same tab, so Back and Forward move between
+    them; middle-click opens a new tab as usual.
 - Under each name:
   - "Code" opens the downloaded copy in a viewer tab (this page with
     `?view=<id>`). A link straight to the `.user.js` file would make a

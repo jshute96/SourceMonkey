@@ -797,7 +797,7 @@ function enabledCell(
   box.setAttribute(
     'aria-label',
     collectionOff
-      ? `${what} — the collection is disabled, so this copy does not run`
+      ? `${what}. The collection is disabled, so this copy does not run.`
       : `${label.title}, in ${what}`,
   );
 
@@ -1050,7 +1050,7 @@ function contentCell(
   btn.type = 'button';
   btn.className = 'content-diff';
   btn.textContent = 'DIFF';
-  btn.title = `This copy\u2019s code or @require files differ from ${other} — show the differences`;
+  btn.title = `This copy\u2019s code or @require files differ from ${other}. Click to show the differences.`;
   btn.dataset.href = href;
   btn.addEventListener('click', () => { void openExtensionTab(href); });
   td.appendChild(btn);

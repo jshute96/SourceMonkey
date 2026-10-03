@@ -27,9 +27,9 @@ export interface SmApi {
     location: string,
     target: { collectionId: string } | { schemeDefault: true },
   ): Promise<{ id: string; path: string } | null>;
-  // Scratch scripts for the development harness: text in, registered
-  // before the promise settles. See docs/harness-design.md.
-  writeScratchScript(args: { text: string; name?: string }): Promise<{
+  // An sm-dev run's scripts, in its test collection: text in,
+  // registered before the promise settles. See docs/sm-dev-extension.md.
+  writeRunScript(args: { run: string; text: string; name?: string }): Promise<{
     scriptId: string;
     collectionId: string;
     status: 'ok' | 'invalid';
@@ -37,8 +37,14 @@ export interface SmApi {
     errorLocation?: { file: string; line?: number; column?: number };
     replaced: boolean;
   }>;
-  clearScratchScripts(): Promise<number>;
-  soloMode(on: boolean): Promise<void>;
+  // sm-dev's tab claims (src/sm-dev-link.ts).
+  claimTab(tabId: number, runId: string, ownScripts: boolean, ttlMs: number): Promise<void>;
+  isSmDevMarked(tabId: number): Promise<boolean>;
+  renewRun(runId: string, ttlMs: number, ownScripts: boolean, tabs?: { tabId: number; scriptsOff?: boolean }[]): Promise<number>;
+  releaseRun(runId: string): Promise<void>;
+  sweepRunCollections(now: number): Promise<void>;
+  setTabScriptsOff(tabId: number, off: boolean): Promise<void>;
+  getStackLayout(scriptId: string): Promise<import('../../src/composed-source.js').StackLayout | null>;
   // Move an installed script from one scripts collection to another.
   // Resolves to the moved row, or null when the destination already
   // has it. Not unwrapped — it returns a script row, not a collection.
@@ -208,6 +214,7 @@ export interface ActionMenuPlanLike {
   top: ActionMenuScriptLike[];
   more: ActionMenuScriptLike[];
   reloadWithoutScripts: boolean;
+  smDevControl: boolean;
 }
 
 export interface ActionMenuScriptLike {

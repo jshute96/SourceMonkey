@@ -12,17 +12,17 @@
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { Page, Request } from '@playwright/test';
+import type { Locator, Page, Request } from '@playwright/test';
 
 import type { ParsedArgs } from './command-args.js';
-import { PROBE_MAX } from './command-list.js';
+import { PART_LIMIT, PROBE_MAX } from './command-list.js';
 import type { ControlledTab } from './console-commands.js';
 import { ScriptThrew } from './inject.js';
-import { readInputFile } from './input-file.js';
+import { readInputFile, writeProblem } from './input-file.js';
 import { notSettledMessage, SETTLE_TIMEOUT_MS, settleTab } from './wait.js';
 import { savePageHtml } from './save-html.js';
 import { shownPath } from './prepare.js';
-import { documentOf, framesAround, locate, named, noteRefs, onScreen, probeMatches, refOf, refProblem, tidy, withoutDocument } from './snapshot.js';
+import { documentOf, locate, named, noteRefs, onScreen, probeMatches, refOf, refProblem, refsOf, tidy, treeParts, withoutDocument } from './snapshot.js';
 
 export const PAGE_COMMANDS = new Set(['click', 'hover', 'type', 'key', 'eval', 'snapshot', 'screenshot', 'savehtml', 'probe', 'logs', 'cdp']);
 
@@ -191,9 +191,18 @@ export async function runPageCommand(
         const count = await matches(page, selector, say);
         if (count === null) return false;
         const target = locate(page, selector).first();
-        const action = command === 'click'
+        const action = (command === 'click'
           ? target.click({ ...options.click, timeout: ACTION_TIMEOUT_MS })
-          : target.hover({ modifiers: options.click.modifiers, position: options.click.position, timeout: ACTION_TIMEOUT_MS });
+          : target.hover({ modifiers: options.click.modifiers, position: options.click.position, timeout: ACTION_TIMEOUT_MS }))
+          // A point it can't reach says so, rather than that the element
+          // was covered (by whatever is at that point) or not ready.
+          .catch(async (err: Error) => {
+            if (!/Timeout \d+ms exceeded/.test(err.message)) throw err;
+            const why = plain(err);
+            // The call log's own reasons (hidden, disabled, moving) stand.
+            if (why !== notReadyGeneral(ACTION_TIMEOUT_MS / 1000) && !why.startsWith(COVERED)) throw err;
+            throw new Error(await placeProblem(page, target, options.click.position) ?? err.message);
+          });
         const how = options.how.length > 0 ? ` with ${options.how.join(', ')}` : '';
         await act(action, `${command === 'click' ? 'Clicked' : 'Hovered over'} ${named(page, selector)}${count > 1 ? ` (the first of ${count} matches)` : ''}${how}`);
         return;
@@ -271,35 +280,63 @@ export async function runPageCommand(
         return;
       }
       case 'snapshot': {
-        // The whole page is `:root`, not `body`: scripts often add their
-        // panels to <html>, after <body>.
-        const selector = input.text || ':root';
-        if (await matches(page, selector, say) === null) return false;
+        const selector = input.text;
         const visible = input.flags['--visible'] === true;
+        const parts = partOptions(input.flags, !!selector);
+        if (typeof parts === 'string') {
+          say(`ERROR: ${parts}`);
+          return;
+        }
+        const count = selector ? await matches(page, selector, say) : 0;
+        if (count === null) return false;
         let tree = '';
         const taking = (async () => {
           const doc = await documentOf(page);
-          tree = await locate(page, selector).first().ariaSnapshot({ mode: 'ai', boxes: visible, timeout: ACTION_TIMEOUT_MS });
-          noteRefs(page, tree, doc, framesAround(page, selector));
+          // The whole page is `:root`, not `body`: scripts often add their
+          // panels to <html>, after <body>.
+          const whole = page.locator(':root');
+          tree = await whole.ariaSnapshot({ mode: 'ai', boxes: visible, timeout: ACTION_TIMEOUT_MS });
+          noteRefs(page, tree, doc);
           if (visible) {
             const [width, height] = await page.evaluate(() => [window.innerWidth, window.innerHeight]);
             tree = onScreen(tree, width, height);
           }
-          // Refs resolve against the latest snapshot only, so one of part
-          // of the page is followed by one of the whole, quietly, to keep
-          // the rest's refs working. An element keeps its ref across
-          // snapshots. The whole is all of `:root`, or a part's elements
-          // outside <body> would lose their refs to it. Failing, it costs
-          // only those refs.
-          if (input.text) {
-            const whole = await page.locator(':root').ariaSnapshot({ mode: 'ai', timeout: ACTION_TIMEOUT_MS }).catch(() => null);
-            if (whole !== null) noteRefs(page, whole, doc);
+          if (!parts) {
+            tree = tidy(withoutDocument(tree));
+            return;
           }
-          // The whole page's, however named (`:root`, `html`).
-          tree = tidy(withoutDocument(tree));
+          // Each match is found in the whole tree by its refs (an element
+          // keeps its ref across snapshots). Only enough for the limit:
+          // each costs a snapshot of the match.
+          const found = selector ? locate(page, selector) : null;
+          const tops: string[][] = [];
+          let rest: { total?: number; unsearched?: number } = {};
+          for (let i = 0; found && i < count; i++) {
+            tops.push(await refsOf(found.nth(i), ACTION_TIMEOUT_MS));
+            if (parts.limit > 0 && i + 1 < count && treeParts(tree, { ...parts, matches: tops }).length >= parts.limit) {
+              // The selector's count is the total, but --find's hits in
+              // the matches not looked at are unknown.
+              rest = parts.text === undefined ? { total: count } : { unsearched: count - i - 1 };
+              break;
+            }
+          }
+          // Refs resolve against the latest snapshot only, so the whole
+          // is taken again, after the matches'. Failing, it costs only the
+          // refs outside the last match.
+          if (found) await whole.ariaSnapshot({ mode: 'ai', timeout: ACTION_TIMEOUT_MS }).catch(() => null);
+          // A part can be the whole, however named (`:root`, `html`).
+          const shown = treeParts(tree, { ...parts, matches: found ? tops : undefined }).map((part) => tidy(withoutDocument(part)));
+          tree = shown.length === 0 ? '' : partsText(shown, parts.limit, rest);
         })();
         if (!await done(taking)) {
           say('The page opened a dialog during the snapshot, which is waiting for an answer.');
+          return;
+        }
+        if (parts && tree === '') {
+          // Not the selector itself, which can be long.
+          const where = selector ? ' in the selector\'s matches' : '';
+          if (parts.text !== undefined) say(`No element${where} contains "${parts.text}"${visible ? ' on screen' : ''}`);
+          else say(`No selector match is ${visible ? 'on screen' : 'in the accessibility tree, which leaves out hidden elements'}`);
           return;
         }
         const outFile = input.flags['--out'];
@@ -572,10 +609,8 @@ async function write(name: string, work: () => Promise<unknown>): Promise<void> 
   try {
     await work();
   } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code ?? /\b(ENOENT|EACCES|EISDIR)\b/.exec((err as Error).message)?.[1];
-    if (code === 'ENOENT') throw new Error(`Could not write ${name}: Its folder doesn't exist`);
-    if (code === 'EACCES') throw new Error(`Could not write ${name}: Permission was refused`);
-    if (code === 'EISDIR') throw new Error(`Could not write ${name}: It's a folder`);
+    const problem = writeProblem(err);
+    if (problem) throw new Error(`Could not write ${name}: ${problem}`);
     throw err;
   }
 }
@@ -638,6 +673,52 @@ interface ClickFlags {
   modifiers?: (typeof MODIFIERS)[number][];
   clickCount?: number;
   position?: { x: number; y: number };
+}
+
+/**
+ * Which parts of the page `snapshot` shows, from its flags: the
+ * `--find` text, and how much around each match (see `treeParts`).
+ * Null for all of it (no selector or --find); what's wrong, if anything
+ * is.
+ */
+export function partOptions(flags: Record<string, string | true>, selector: boolean): { text?: string; up: number; context: boolean; limit: number } | null | string {
+  const count = (flag: string, fallback: number): number | string => {
+    const value = flags[flag];
+    if (value === undefined) return fallback;
+    const n = Number(value);
+    return typeof value === 'string' && Number.isInteger(n) && n >= 0 ? n : `The ${flag} flag takes a whole number, not ${value}`;
+  };
+  const find = flags['--find'];
+  if (typeof find === 'string' && find.trim() === '') return 'The --find flag needs some text';
+  const text = typeof find === 'string' ? find : undefined;
+  if (text === undefined && !selector) {
+    const other = ['--up', '--context', '--limit'].find((f) => flags[f] !== undefined);
+    return other ? `The ${other} flag goes with a selector or --find` : null;
+  }
+  const up = count('--up', 0);
+  if (typeof up === 'string') return up;
+  const limit = count('--limit', PART_LIMIT);
+  if (typeof limit === 'string') return limit;
+  return { text, up, context: flags['--context'] === true, limit };
+}
+
+/**
+ * `snapshot`'s parts as shown: one bare; more numbered, a blank line
+ * apart, the first `limit` of them (0: all), and what wasn't shown.
+ * When only some of a selector's matches were looked at: `total`, all
+ * the matches; or for --find, `unsearched`, how many weren't searched.
+ */
+export function partsText(parts: string[], limit: number, { total = parts.length, unsearched = 0 }: { total?: number; unsearched?: number } = {}): string {
+  if (total === 1 && unsearched === 0) return parts[0];
+  const shown = limit === 0 ? parts : parts.slice(0, limit);
+  let text = shown.map((part, i) => `# Match ${i + 1}\n${part}`).join('\n\n');
+  if (unsearched > 0) {
+    const more = unsearched === 1 ? '1 more selector match was' : `${unsearched} more selector matches were`;
+    text += `\n\n# Showed ${shown.length} matches. ${more} not searched for find matches. --limit 0 shows all.`;
+  } else if (shown.length < total) {
+    text += `\n\n# Showed ${shown.length} of ${total} matches. --limit 0 shows all.`;
+  }
+  return text;
 }
 
 /**
@@ -710,14 +791,60 @@ function notReady(message: string, seconds: number): string {
     const covered = /^(.+) intercepts pointer events$/.exec(line);
     if (covered) {
       const html = covered[1].length > COVER_HTML_MAX ? `${covered[1].slice(0, COVER_HTML_MAX)}…` : covered[1];
-      return `The element stayed covered ${within}, by ${html}`;
+      return `${COVERED}${within}, by ${html}`;
     }
     if (line === 'element is not visible') return `The element stayed hidden (or zero-size) ${within}`;
     if (line === 'element is not enabled') return `The element stayed disabled ${within}`;
     if (line === 'element is not stable') return `The element kept moving ${within}`;
     if (line === 'element is outside of the viewport') return `The element stayed outside the viewport ${within}, where it can't be scrolled to`;
   }
+  return notReadyGeneral(seconds);
+}
+
+// How `notReady` starts when the element was covered.
+const COVERED = 'The element stayed covered ';
+
+// `notReady` when the call log names no reason.
+function notReadyGeneral(seconds: number): string {
   return `The element wasn't ready (visible, stable, and not covered) within ${seconds} seconds`;
+}
+
+/**
+ * Why the mouse can't reach the element, for a timeout Playwright gave
+ * no specific reason for, or called covered: the `--at` point is
+ * outside the element, or outside the window (where Playwright reports
+ * whatever is under the point as covering it), or with no `--at`, the
+ * whole element is off the window. (Playwright aims at the middle of
+ * the element's visible part itself.) Null when none of those, or the
+ * element can't be measured.
+ */
+async function placeProblem(page: Page, target: Locator, position: { x: number; y: number } | undefined): Promise<string | null> {
+  const box = await target.boundingBox({ timeout: 1000 }).catch(() => null);
+  if (!box) return null;
+  const view = page.viewportSize() ?? await withTimeout(page.evaluate(() => ({ width: innerWidth, height: innerHeight })), 1000).catch(() => null);
+  if (!view) return null;
+  const r = Math.round;
+  const size = `${r(box.width)}x${r(box.height)} pixels`;
+  if (position && (position.x > box.width || position.y > box.height)) {
+    return `The point ${position.x},${position.y} is outside the element, which is ${size} (--at counts from its top left corner)`;
+  }
+  // One sentence each: plain() drops a final period.
+  const win = `the ${view.width}x${view.height} window`;
+  if (position) {
+    const x = box.x + position.x;
+    const y = box.y + position.y;
+    if (x >= 0 && y >= 0 && x < view.width && y < view.height) return null;
+    return `The point ${position.x},${position.y} in the element is outside ${win}, at ${r(x)},${r(y)}, so pick a point in the element's visible part`;
+  }
+  const shows = box.x + box.width > 0 && box.y + box.height > 0 && box.x < view.width && box.y < view.height;
+  return shows ? null : `The element (${size} at ${r(box.x)},${r(box.y)}) is entirely outside ${win}, where it can't be scrolled to`;
+}
+
+// `promise`, or a rejection after `ms`: a page held by a dialog never answers.
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('timed out')), ms); });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
 }
 
 // How many elements a selector matches, or why it can't be counted.

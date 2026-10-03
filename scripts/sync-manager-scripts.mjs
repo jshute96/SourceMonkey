@@ -158,7 +158,7 @@ async function main() {
       }
       return {
         script, current, action: 'skip-older',
-        detail: `(installed v${current}, local is older — pass --allow-downgrade to install anyway)`,
+        detail: `(installed v${current}, local is older; pass --allow-downgrade to install anyway)`,
       };
     });
 

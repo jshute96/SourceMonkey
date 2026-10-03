@@ -83,7 +83,8 @@ const NODE_LOOKUP_MS = 1000;
 
 /**
  * A console call's text, as `msg.text()` gives it but with each DOM
- * node described (see NODE_TEXT_CHARS). Every level goes through this,
+ * node described (see NODE_TEXT_CHARS) and `%` directives applied
+ * (`formatConsoleArgs`). Every level goes through this,
  * so `debug` and `error` lines read alike. A node that can't be read
  * now keeps Playwright's text: its page gone, or not answering within
  * NODE_LOOKUP_MS (a dialog open, paused in the debugger), since the
@@ -103,7 +104,41 @@ export async function consoleText(msg: ConsoleMessage): Promise<string> {
       clearTimeout(timer);
     }
   }));
-  return parts.join(' ');
+  return formatConsoleArgs(parts);
+}
+
+/**
+ * A console call's values as one line, the first one's `%` directives
+ * applied as the browser's console does: `%s`, `%d`, `%i`, `%f`, `%o`
+ * and `%O` take the next value in its place, `%c` takes the next value
+ * (its CSS) and shows nothing, and `%%` is a `%`. The values left over
+ * follow, space-separated. A string the page logged with `%` and no
+ * values to take reads as written.
+ */
+export function formatConsoleArgs(parts: string[]): string {
+  if (parts.length < 2 || !parts[0].includes('%')) return parts.join(' ');
+  let next = 1;
+  const first = parts[0].replace(/%([sdifoOc%])/g, (whole, kind: string) => {
+    if (kind === '%') return '%';
+    if (next >= parts.length) return whole;
+    const value = parts[next++];
+    if (kind === 'c') return '';
+    if (kind === 'd' || kind === 'i') return String(parseInt(value, 10));
+    if (kind === 'f') return String(parseFloat(value));
+    return value;
+  });
+  return [first, ...parts.slice(next)].join(' ');
+}
+
+// Longer console lines are cut in the stream, so one huge value (a
+// fetched page, a cache) doesn't bury the rest. `logs` shows them whole.
+const CONSOLE_SHOWN_CHARS = 1000;
+
+/** A console line as the stream shows it: cut past CONSOLE_SHOWN_CHARS. */
+export function shortConsoleText(text: string): string {
+  if (text.length <= CONSOLE_SHOWN_CHARS) return text;
+  // By code point, so an emoji isn't cut in half.
+  return `${Array.from(text).slice(0, CONSOLE_SHOWN_CHARS).join('')}... (${text.length} chars; logs shows it all)`;
 }
 
 // Runs in the page.

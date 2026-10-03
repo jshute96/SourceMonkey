@@ -38,14 +38,14 @@ test.describe('sm-dev typed commands', () => {
       `* 1: First (${scriptsDir.path}/first.user.js)`, '     Active',
       `  2: Second (${scriptsDir.path}/second.user.js)`, '     Active',
     ]);
-    expect(await run('script 2')).toEqual([`[sm-dev] Using Second (${scriptsDir.path}/second.user.js) for get and set`]);
+    expect(await run('script 2')).toEqual([`[sm-dev] Selected Second (${scriptsDir.path}/second.user.js)`]);
     expect(await run('get who')).toEqual(['  who = "two"']);
     expect(await run('set who "changed"')).toEqual(['[sm-dev] Set who (Second)']);
     expect(host.getValue(second.spec!.id, 'who')).toBe('changed');
     expect(host.getValue(first.spec!.id, 'who')).toBe('one');
     // By exact file name, or by a piece of a name that only one has.
-    expect(await run('scripts first.user.js')).toEqual([`[sm-dev] Using First (${scriptsDir.path}/first.user.js) for get and set`]);
-    expect(await run('scripts cond')).toEqual([`[sm-dev] Using Second (${scriptsDir.path}/second.user.js) for get and set`]);
+    expect(await run('scripts first.user.js')).toEqual([`[sm-dev] Selected First (${scriptsDir.path}/first.user.js)`]);
+    expect(await run('scripts cond')).toEqual([`[sm-dev] Selected Second (${scriptsDir.path}/second.user.js)`]);
     expect(await run('scripts user.js')).toEqual(['[sm-dev] Several loaded scripts match user.js (1, 2). Name one by its number.']);
     expect(await run('scripts Nobody')).toEqual(['[sm-dev] No loaded script matches Nobody. Use scripts to list them.']);
     expect(await run('scripts 3')).toEqual(['[sm-dev] There is no script 3. Use scripts to list them.']);
@@ -78,7 +78,7 @@ test.describe('sm-dev typed commands', () => {
     // Single quotes around the JSON, as a shell would take them.
     expect(await run('set quoted \'["a"]\'')).toEqual(['[sm-dev] Set quoted (Second)']);
     expect(host.getValue(second.spec!.id, 'quoted')).toEqual(['a']);
-    expect(await run('set prefs --flie x.json')).toEqual(['[sm-dev] ERROR: The set command has no --flie flag. It takes --file.']);
+    expect(await run('set prefs --flie x.json')).toEqual(['[sm-dev] ERROR: The set command has no --flie flag. It takes --file, --force.']);
     expect(await run('set prefs --file')).toEqual(['[sm-dev] ERROR: The --file flag needs a value: --file <path>']);
     expect(await run('set --file prefs.json')).toEqual(['[sm-dev] ERROR: The set command takes a key and one file, e.g. set units --file units.json']);
     expect(host.getValue(second.spec!.id, 'prefs')).toEqual({ units: 'imperial' });
@@ -259,7 +259,7 @@ test.describe('sm-dev typed commands', () => {
       // Picking a tab moves the page commands and the default for menu.
       expect(await run('tabs T2')).toEqual([`[sm-dev] The page commands now act on T2 (${other})`]);
       expect(await run('menu M1')).toEqual(['[sm-dev] Fired "Hit /other.html"']);
-      expect(await run('scripts T1.1')).toEqual([`[sm-dev] Using Menus (${scriptsDir.path}/menus.user.js) for get and set, and T1 for the page commands`]);
+      expect(await run('scripts T1.1')).toEqual([`[sm-dev] Selected Menus (${scriptsDir.path}/menus.user.js), and T1 for the page commands`]);
       expect(await run('menu')).toEqual(['Menu commands on T1:', row, '    M1: Hit /target.html']);
 
       // `newtab` opens one, with a bare host given a scheme, and

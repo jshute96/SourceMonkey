@@ -610,7 +610,7 @@ function outdatedLogEntry(
     state: 'outdated',
     message:
       `Newer version ${probe.version} at ${probeLabel(probe.kinds)} ` +
-      `(running ${loadedVersion}) — ${probe.url}`,
+      `(running ${loadedVersion}): ${probe.url}`,
   };
 }
 
@@ -657,7 +657,7 @@ function logScriptOutcome(
   }
   if (next.status === 'invalid') {
     console.info(
-      `[SourceMonkey] update check: ${label}: invalid — ` +
+      `[SourceMonkey] update check: ${label}: invalid: ` +
       `${describeDiagnostic(next.errorMessage ?? 'unknown', next.errorLocation)}`,
     );
     return;
@@ -696,7 +696,7 @@ function logScriptOutcome(
 // phrasing.
 //
 // **One row per uneventful check, two when there's news.** A check
-// that finds nothing writes a single `Checked for updates — no change`
+// that finds nothing writes a single `Checked for updates and found no change`
 // line. A check with something to report writes `Checking for updates`
 // and then the outcome, which carries its own severity and is what the
 // status badge links to.
@@ -854,7 +854,7 @@ function refreshLogSource(mode: UpdateMode): string {
 // The single line a check writes when it has nothing to report: names
 // the check AND its result, so a routine poll costs one row rather than
 // a start/outcome pair. Manual-only (see `emitScriptOutcomeLog`).
-const NO_CHANGE_MESSAGE = 'Checked for updates — no change';
+const NO_CHANGE_MESSAGE = 'Checked for updates and found no change';
 
 // Whether this check has anything to say beyond that one line — i.e.
 // whether there was something to check for this script in the first
@@ -1043,7 +1043,7 @@ export function summarizeCollectionOutcome(
       nextScripts, mode,
       // Same no-echo phrasing as the collections page's banner, since
       // `scanError` usually starts with its own `Could not read …`.
-      `This collection did not load: ${scanError} — still running the cached copy`,
+      `This collection did not load: ${scanError}. Still running the cached copy.`,
     );
     console.log(`[SourceMonkey] collection refresh: ${label}: scan failed: ${scanError}`);
     return;

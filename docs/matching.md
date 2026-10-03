@@ -356,6 +356,10 @@ For each tab we:
   - **GREY** (`#757575`) — nothing else to report, and the user loaded
     this document with "Reload page with no userscripts" (rows show
     NOT LOADED). Nothing is wrong; nothing ran.
+    - Also in a tab an sm-dev run controls, for the scripts its claim
+      kept out, when no script ran there. See
+      [sm-dev-extension.md](sm-dev-extension.md#the-toolbar-badge-in-a-claimed-tab)
+      for that tab's count, icon marker, tooltip and menu row.
   - **GREEN** (`#2e7d32`) — expected and actual line up exactly with
     no errors.
 - **Tooltip** — `"SourceMonkey"` followed by one line per script,
@@ -413,8 +417,12 @@ For each tab we:
     the registered callback. See [GM-APIs.md](GM-APIs.md) for the
     full lifecycle.
   - **"Reload page with no userscripts"** — the last row, present
-    whenever the menu has at least one script row. See
+    whenever the menu has at least one script row, except in a tab an
+    sm-dev run controls (there it's the run's choice). See
     [Reload with no userscripts](#reload-with-no-userscripts).
+  - **"Page under sm-dev control"** — a disabled first row, in a tab
+    whose page loaded under an sm-dev run's claim. It takes the reload
+    row's slot of the cap.
   - **6-item cap + "More" submenu** — Chrome skips action
     context menus after 6 top-level rows. We pre-empt that by capping
     the top level ourselves:
@@ -439,8 +447,9 @@ skipped.
   running their scripts, and the tab's next navigation runs them again.
 - Needs `chrome.webNavigation`; the row is withheld without it.
 
-- **Mechanism** — every wrapper asks the SW `sm:check-pending` before
-  running its body, and `skip` is an answer it already honours (see
+- **Mechanism** — on a reload, every wrapper asks the SW
+  `sm:check-pending` before running its body, and `skip` is an answer
+  it already honours (see
   [injection.md](injection.md#sm-check-pending-handler)). A skip
   reload is a per-tab marker that handler consults first, ahead of
   the reload fast path (which isn't set up for a skip reload).

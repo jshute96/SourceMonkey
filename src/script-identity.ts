@@ -44,6 +44,8 @@ import {
   containerKindForSingleFileInput,
   containerPath,
   isContainerCollection,
+  isScratchUrl,
+  isSmDevCollection,
   isSingleFileInput,
 } from './directories.js';
 import { isScriptEnabled, isCollectionEnabled, type StoredScript, type StoredCollection } from './script-store.js';
@@ -221,14 +223,16 @@ export function installOptionsFor(
   collections: readonly StoredCollection[],
   current?: string,
 ): InstallOption[] | undefined {
-  if (!isSingleFileInput(loc)) return undefined;
+  // A run's script stays in its sm-dev test collection, and nothing else
+  // goes into one.
+  if (!isSingleFileInput(loc) || isScratchUrl(loc)) return undefined;
   const kind = containerKindForSingleFileInput(loc);
   const defaultPath = containerPath(kind);
   const holding = new Set<string>();
   for (const r of sameLocation) {
     if (r.collection) holding.add(r.collection.id);
   }
-  const containers = collections.filter((c) => isContainerCollection(c.path));
+  const containers = collections.filter((c) => isContainerCollection(c.path) && !isSmDevCollection(c.path));
   const def = containers.find((c) => c.path === defaultPath) ?? null;
   const options: InstallOption[] = [{
     collection: def,

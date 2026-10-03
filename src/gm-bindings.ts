@@ -602,7 +602,7 @@ export function emitGmBindings(
     // part the reader can act on.
     const gmValuesFailure =
       "Failed reading this script's stored GM values during setup, " +
-      'so the script did not run — reload the page to retry';
+      'so the script did not run. Reload the page to retry.';
     preludeLines.push(
       `var __smGmSnap = (typeof __smDecision === "object" && __smDecision && __smDecision.gmValues);`,
       `if (!__smGmSnap) {`,

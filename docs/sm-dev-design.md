@@ -13,8 +13,10 @@ the commands themselves are in [harness-guide.md](harness-guide.md).
   back. Any number of clients can talk to one run.
 - The run connects with Playwright's `connectOverCDP`, or launches a
   Chromium itself with `--temp-browser`.
-- `--extension` switches a run to the extension backend
-  (`extension-backend.ts`); everything else here is the same for both.
+- `--extension` has the real extension run the scripts: the run pushes
+  them into it, claims its tabs, and fills its host from the extension's
+  events. The commands, tabs and waits are the same for both. See
+  [sm-dev-extension.md](sm-dev-extension.md).
 
 ### Processes and connections
 
@@ -53,6 +55,8 @@ flowchart LR
 | `command-lines.ts` | Input lines into commands: blocks, lists, stdin |
 | `checks.ts`, `path-args.ts` | `match` / `validate`, and file-argument globs |
 | `console-commands.ts` | A run's commands across its tabs, the dialog tracker, the `--interactive` prompt |
+| `prompt-history.ts` | The prompt's history file, kept across sessions |
+| `prompt-editor.ts` | Multi-line editing of `{{` blocks at the prompt |
 | `page-commands.ts`, `snapshot.ts` | Commands that drive and read a page |
 | `wait.ts` | `wait`, and when a tab has settled |
 | `tab-refs.ts` | Naming and picking tabs (`T2`, target and DevTools page ids), the current tab, the dialog message |
@@ -143,8 +147,8 @@ Serves `sm-dev list`, `stop`, `attach` and the commands sent to a run.
   no known end (`--stdin`, `--interactive`).
 - The `--interactive` prompt and stdin reading both run in the client.
 - sm-dev's own commands run there: `start`, `attach`, `stop`, `exit`,
-  `list`, `clear`, `help`, and `match` / `validate` on files. The rest
-  go to the run.
+  `list`, `help`, and `match` / `validate` on files. The rest go to the
+  run.
 
 ### The protocol
 
@@ -260,17 +264,19 @@ Command marks:
   command named, and nothing run or checked.
 - The global options are taken off the front of the line first:
   `--run`, `--root`, `--local`, `--stdin`, `--interactive`, and the
-  browser's `--cdp`, `--open-browser`, `--profile`, `--temp-browser`,
-  `--headed`.
+  browser's `--browser`, `--open-browser`, `--profile`,
+  `--temp-browser`, `--headed`.
   - One later on the line is refused, and said to go first.
-  - `--cdp`, which `start` and `clear` also take, is excepted.
+  - `--browser`, which `start` also takes, is excepted.
 - The rest of the line holds one or more commands, split on `--`.
   Stdin and prompt lines are split the same way, except an `eval`
   block, which stays one command.
+- With no commands, input comes from stdin when it's piped, and the
+  `--interactive` prompt when stdin and stdout are a terminal.
 - Every command is checked before any runs.
   - A lone `start` with no `--detach`, `--seconds`, `--stdin`,
-    `--interactive`, or commands after it is refused, since its run
-    would stop at once.
+    `--interactive`, or commands after it would stop its run at once.
+    At a terminal it opens the prompt instead; elsewhere it is refused.
 - A name that isn't an `sm-dev` command but is a run command goes to
   the run. So does one argument of several lines, as a list.
 
@@ -392,6 +398,42 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
 
 - `readPromptCommands` runs in the client, never in the run.
 - Output is drawn around it.
+- History (`prompt-history.ts`):
+  - Each typed command is appended to the file as a JSON string per
+    line, so a `{{` block is one entry with its line breaks.
+  - Loaded once at start, newest first. Sessions append, so parallel
+    ones keep each other's entries.
+  - Loading cuts the file back once it holds twice `HISTORY_SIZE`. That
+    rewrite can lose an entry another session appends at that moment.
+  - Every write keeps the file mode 0600, since commands can hold
+    passwords and tokens.
+  - readline adds each typed line itself; its `history` event takes
+    that back out, and the prompt adds whole entries instead.
+- Multi-line editing (`prompt-editor.ts`):
+  - A block is one readline buffer holding newlines, sent when Enter
+    finds it complete (`endsOutsideBlock`). The buffer is split into
+    lines before `CommandAssembler` sees it.
+  - readline has no hooks for this, so its per-instance methods are
+    replaced: `_ttyWrite` (keys), `_refreshLine` (drawing `... `
+    before later lines) and `getCursorPos`.
+  - The redraw lays out the screen rows itself, and draws only a window
+    of them around the cursor when the buffer is taller than the
+    terminal. `getCursorPos` counts rows from the window's top, as
+    readline and `writeOutputLine` expect.
+  - Its own edits (Ctrl-U, Ctrl-K, newlines, recalls) go through
+    readline's undo stack and kill ring, reached by symbol name.
+  - History browsing is its own. readline's replaces the buffer with
+    the text before the cursor when nothing older matches, and loses
+    what was being typed.
+  - Up / Down step whole entries while browsing (until another key), so
+    a recalled block isn't walked line by line.
+  - Esc clears the buffer. `escapeCodeTimeout` is cut to 100ms, from
+    readline's 500, so a lone Esc is taken promptly.
+  - Pasted text, and the newlines inside a pasted block, are put in the
+    buffer and drawn once. readline writes pasted text out without
+    redrawing, so a wrapped paste threw later redraws off.
+  - Without a terminal (stdout not a TTY, or `TERM=dumb`), lines are
+    sent one by one, and `CommandAssembler` collects a block.
 - Each command says whether it was typed at a person's prompt
   (`interactive`). There, `menu <label>` answers at once, rather than
   waiting a moment for a script still registering, as it does for
@@ -541,8 +583,8 @@ A browser that outlives sm-dev, started before the line's commands.
   - A lock whose process is alive is refused, naming that browser's
     port (from its command line, via `ps`).
 - Google Chrome's usual install paths first, then Playwright's
-  Chromium. `SM_DEV_BROWSER` and `SM_DEV_BROWSER_ARGS` override, which
-  the tests use for a headless Chromium.
+  Chromium. `SM_DEV_BROWSER_BINARY` and `SM_DEV_BROWSER_ARGS`
+  override, which the tests use for a headless Chromium.
 
 ### Tabs stuck at connect (`stuck-tabs.ts`)
 
@@ -808,6 +850,11 @@ The run commands that drive and read a tab's page (`click`, `type`,
   That takes a round trip, so the page's later console lines queue
   behind it to keep their order. A lookup that takes over a second (a
   dialog open, a paused page) prints Playwright's text instead.
+- A console call's `%` directives are applied as the browser's console
+  does (`formatConsoleArgs`): `%c` and its CSS drop out, `%s` and the
+  like take the next value.
+- A stream line over a thousand characters is cut, with its length;
+  `logs` keeps it whole (`shortConsoleText`).
 - Our own `sourcemonkey://` stack refs in stream lines are decoded once
   for display (`decodeOwnRefs`, sharing the viewer's `displayRefText`).
 - Keys sent over CDP go to the renderer, so Chrome's own shortcuts
@@ -845,11 +892,20 @@ each element a ref, `(f<n>)?e<n>`.
 - The whole page is `:root`, not `body`: scripts often add their panels
   to `<html>`, after `<body>`. Its `- document` line is left out, and
   the rest shown a level less indented.
-- Playwright resolves refs against the latest snapshot only. So a
-  snapshot of part of the page is followed by a quiet one of the whole,
-  which keeps the rest's refs working.
-  - That doubles the cost of `snapshot <selector>` on a large page. A
-    failure only costs refs.
+- Playwright resolves refs against the latest snapshot only. So
+  `snapshot <selector>` shows parts of a snapshot of the whole, which
+  keeps the rest's refs working.
+  - Each match is found in it by its top refs, from a depth-1 snapshot
+    of the match. An element keeps its ref across snapshots, and the
+    whole is taken again after, to be the latest.
+  - A match that is only text (a span in a link) has no line of its
+    own, so it's found as the nearest element above it that has one.
+  - Each match's snapshot still walks its whole subtree, so thousands of
+    matches take seconds. Only enough matches for `--limit` are looked
+    at, in page order.
+    - Without `--find`, the total shown is the selector's count.
+    - With it, hits in the rest are unknown: the last line says how many
+      matches weren't searched.
   - When the whole was `body`, refs from a part outside it (such as a
     panel) stopped working at once.
 - Each page's latest snapshot is noted with its document's
@@ -866,6 +922,31 @@ each element a ref, `(f<n>)?e<n>`.
 - `--visible` takes the tree with boxes and keeps lines whose box meets
   the viewport, plus their parents. A frame's boxes are offset by the
   frame's, and clipped to it.
+
+#### Selectors, `--find` and parts
+
+Both pick parts of the finished tree (after `--visible`), so each
+comes with its refs.
+
+- A selector shows each of its matches; a match the tree leaves out
+  (hidden, or off screen) is skipped.
+- `--find` searches the whole tree, or within the selector's matches.
+- A line matches on its content (name, text, value, `/url`), ignoring
+  case and runs of spaces. Its role and `[...]` attributes don't count,
+  so `--find button` doesn't find every button.
+- A text or `/url` line stands for the element it's in.
+- For each match, `--up n` climbs n tree levels. `--context` then
+  climbs while the part grows by at most `CONTEXT_LINES` lines: wrapper
+  divs cost one line each, a big container stops it.
+- A part inside another's is left out, so nested matches show once.
+- `--limit` (`PART_LIMIT` by default) caps the parts shown, and a last
+  line counts them all.
+- It searches the tree, not the DOM, so results have refs and the
+  usual format. Each line is checked on its own:
+  - `<p>Hello <b>world</b></p>` is one line (`paragraph: Hello world`),
+    so `hello world` matches.
+  - `<p>Hello <a>world</a></p>` is two (`text: Hello`, `link "world"`),
+    so `hello world` doesn't; either word alone does.
 
 #### `probe --css` and `--html`
 

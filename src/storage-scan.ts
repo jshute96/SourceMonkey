@@ -52,7 +52,7 @@ export async function timeStorageRead<T extends Record<string, unknown> | null>(
   const ms = performance.now() - start;
   if (rows === null) return rows;
   console.log(
-    `[SourceMonkey] timing — storage scan (${reason}): `
+    `[SourceMonkey] timing: storage scan (${reason}): `
     + `${formatMs(ms)}, ${Object.keys(rows).length} row(s)`,
   );
   return rows;

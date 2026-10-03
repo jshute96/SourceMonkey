@@ -191,7 +191,7 @@ test.describe('update probes', () => {
     expect(restated).toHaveLength(1);
     expect(restated[0]).toMatchObject({
       state: 'outdated',
-      message: `Newer version 2.0 at update URL (running 1.0) — ${server.baseUrl}/thing.meta.js`,
+      message: `Newer version 2.0 at update URL (running 1.0): ${server.baseUrl}/thing.meta.js`,
     });
   });
 

@@ -96,3 +96,9 @@ test('notePageReport: records worlds and the opaque origin, identity when nothin
   assert.deepEqual(notePageReport(s1, 'MAIN', false).reportedWorlds, ['USER_SCRIPT', 'MAIN']);
   assert.equal(notePageReport(s0, 'MAIN', false).opaqueOrigin, undefined);
 });
+
+test('findMissingScripts: scripts an sm-dev claim kept out are not missing', () => {
+  const s = state({ matches: [script('a', 'MAIN'), script('b', 'MAIN')], smDevAllow: ['a'] });
+  assert.deepEqual(findMissingScripts(s).map((m) => m.id), ['a']);
+  assert.deepEqual(findMissingScripts(state({ matches: [script('a', 'MAIN')], smDevAllow: null })), []);
+});

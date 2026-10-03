@@ -227,7 +227,7 @@ async function main() {
   // Before launching, while the profile is still ours to edit — Chrome
   // rewrites Preferences from memory on exit, so a later edit is lost.
   grantDownloadsPermission();
-  console.log(`${CFG.label} test browser isn't running — launching it now…`);
+  console.log(`${CFG.label} test browser isn't running, launching it now…`);
   const script = path.join(ROOT, 'scripts/open-test-browser.sh');
   // Detached + ignore so the child survives after this preflight exits.
   // The opener script execs Chromium directly, so the unrefed child IS

@@ -13,6 +13,8 @@
 
 import type { FrameLocator, Locator, Page } from '@playwright/test';
 
+import { CONTEXT_LINES } from './command-list.js';
+
 // A ref as `snapshot` shows it, and as typed: e4, ref=e4 or [ref=e4].
 const REF = /^\[?(?:ref=)?((?:f\d+)?e\d+)\]?$/;
 
@@ -46,12 +48,12 @@ export function locate(page: Page, selector: string): Locator {
 
 /**
  * Notes where each ref of a snapshot is, for `locate`: the latest
- * snapshot is the only one Playwright resolves refs against. `within`
- * is the frames the snapshot's root is in; `document`, the page's
- * document it was of, from `documentOf`.
+ * snapshot is the only one Playwright resolves refs against. `tree` is
+ * the whole page's; `document`, the page's document it was of, from
+ * `documentOf`.
  */
-export function noteRefs(page: Page, tree: string, document: number, within: string[] = []): void {
-  snapshots.set(page, { frames: framePaths(tree, within), labels: refLabels(tree), document });
+export function noteRefs(page: Page, tree: string, document: number): void {
+  snapshots.set(page, { frames: framePaths(tree), labels: refLabels(tree), document });
 }
 
 /**
@@ -78,7 +80,7 @@ export async function refProblem(page: Page, selector: string): Promise<string |
 }
 
 /** Where a snapshot's refs are: the refs of the iframes each is in. */
-export function framePaths(tree: string, within: string[] = []): Map<string, string[]> {
+export function framePaths(tree: string): Map<string, string[]> {
   const paths = new Map<string, string[]>();
   // The iframe lines this one is under, with their indents.
   const open: { depth: number; ref: string }[] = [];
@@ -87,7 +89,7 @@ export function framePaths(tree: string, within: string[] = []): Map<string, str
     while (open.length && open[open.length - 1].depth >= depth) open.pop();
     const ref = /\[ref=([^\]]+)\]/.exec(line)?.[1];
     if (!ref) continue;
-    paths.set(ref, [...within, ...open.map((o) => o.ref)]);
+    paths.set(ref, [...open.map((o) => o.ref)]);
     if (/^ *- '?iframe\b/.test(line)) open.push({ depth, ref });
   }
   return paths;
@@ -121,12 +123,6 @@ export function named(page: Page, selector: string): string {
   return label ? `${selector} (${label})` : selector;
 }
 
-/** The frames a ref's element is in, as `noteRefs` recorded them. */
-export function framesAround(page: Page, selector: string): string[] {
-  const ref = refOf(selector);
-  return (ref && snapshots.get(page)?.frames.get(ref)) || [];
-}
-
 /**
  * A tree of the whole page (`:root`) without its top `- document`
  * line, which only wraps the rest, and with the rest a level less
@@ -146,6 +142,125 @@ export function withoutDocument(tree: string): string {
  */
 export function tidy(tree: string): string {
   return tree.replace(/^( *- '?(?:link|button)\b.*?) \[cursor=pointer\]/gm, '$1');
+}
+
+/**
+ * The top refs of a snapshot of one element: its own line's, or its
+ * children's when the tree leaves the element itself out. For finding
+ * where it is in a snapshot of the whole page (`treeParts`).
+ */
+export function topRefs(tree: string): string[] {
+  return tree.split('\n').filter((l) => l.startsWith('- ')).map((l) => /\[ref=([^\]]+)\]/.exec(l)?.[1]).filter((r) => r !== undefined);
+}
+
+/**
+ * Where a selector's match is in the whole page's tree, as `topRefs`.
+ * The whole tree folds a match that is only text (a span in a link or
+ * a paragraph) into the element above it, so it's found as the nearest
+ * one above that has a line. None for a match the tree leaves out
+ * (hidden). Depth 1 keeps each snapshot short; Playwright still walks
+ * the match's whole subtree.
+ */
+export async function refsOf(match: Locator, timeout: number): Promise<string[]> {
+  for (let at = match; ; at = at.locator('xpath=..')) {
+    const tree = await at.ariaSnapshot({ mode: 'ai', depth: 1, timeout });
+    if (tree.trim() === '') return [];
+    const refs = topRefs(tree);
+    if (refs.length) return refs;
+  }
+}
+
+/**
+ * The parts of a whole page's tree `snapshot` shows for a selector or
+ * `--find`, each dedented to start at the left.
+ *
+ * - `matches`: a selector's matches, as each one's `topRefs`. A match
+ *   not in the tree (hidden, or off screen) is left out.
+ * - `text`: the elements containing it, within `matches` when given. A text
+ *   or /url line stands for the element it's in.
+ *
+ * Each part then goes `up` levels, then with `context`, as far up as
+ * adds at most `CONTEXT_LINES` lines (wrappers add one each). A part
+ * inside another is left out.
+ *
+ * The text is matched without regard to case or runs of spaces, against
+ * a line's content (names, text, values, URLs), not its role or
+ * `[ref=e4]`-style attributes, so `button` doesn't find every button.
+ */
+export function treeParts(tree: string, { matches, text, up = 0, context = false }: {
+  matches?: string[][]; text?: string; up?: number; context?: boolean;
+}): string[] {
+  const lines = tree.split('\n');
+  const depth = lines.map((l) => /^ */.exec(l)![0].length / 2);
+  // Where the part a line starts ends: the next line no deeper.
+  const end = (i: number): number => {
+    let j = i + 1;
+    while (j < lines.length && depth[j] > depth[i]) j++;
+    return j;
+  };
+  const parent = (i: number): number => {
+    for (let j = i - 1; j >= 0; j--) if (depth[j] < depth[i]) return j;
+    return -1;
+  };
+  // Each part as the lines [start, end).
+  let parts: [number, number][];
+  if (matches) {
+    const lineOf = new Map<string, number>();
+    lines.forEach((l, i) => {
+      const ref = /\[ref=([^\]]+)\]/.exec(l)?.[1];
+      if (ref) lineOf.set(ref, i);
+    });
+    parts = [];
+    for (const refs of matches) {
+      const at = refs.map((r) => lineOf.get(r)).filter((i) => i !== undefined);
+      if (at.length) parts.push([Math.min(...at), end(Math.max(...at))]);
+    }
+  } else {
+    parts = [[0, lines.length]];
+  }
+  if (text !== undefined) {
+    const wanted = squash(text);
+    const hits: [number, number][] = [];
+    for (let i = 0; i < lines.length; i++) {
+      if (!parts.some(([a, b]) => i >= a && i < b) || !squash(contentOf(lines[i])).includes(wanted)) continue;
+      const root = /\[ref=/.test(lines[i]) ? i : Math.max(0, parent(i));
+      hits.push([root, end(root)]);
+    }
+    parts = hits;
+  }
+  parts = parts.map(([a, b]) => {
+    for (let n = 0; n < up && parent(a) >= 0; n++) [a, b] = [parent(a), end(parent(a))];
+    if (context) {
+      const size = b - a;
+      while (parent(a) >= 0 && end(parent(a)) - parent(a) <= size + CONTEXT_LINES) [a, b] = [parent(a), end(parent(a))];
+    }
+    return [a, b];
+  });
+  // Parts are nested or apart: the outer one sorts first.
+  parts.sort((x, y) => x[0] - y[0] || y[1] - x[1]);
+  const shown: string[] = [];
+  let covered = -1;
+  for (const [a, b] of parts) {
+    if (a < covered) continue;
+    covered = b;
+    shown.push(lines.slice(a, b).map((l) => l.slice(depth[a] * 2)).join('\n'));
+  }
+  return shown;
+}
+
+// A tree line's content, for `treeParts`: without its indent, YAML
+// quoting, role or `text:`-style key, and `[...]` attributes.
+function contentOf(line: string): string {
+  let rest = line.replace(/^ *- /, '');
+  if (rest.startsWith('\'')) rest = rest.replace(/^'|'(:?)$/g, '$1').replace(/''/g, '\'');
+  // role "name" [attr] [attr]: text, each part but the role optional.
+  const parts = /^[\w/-]+(?: ("(?:[^"\\]|\\.)*"))?(?: \[[^\]]*\])*(?::(.*))?$/.exec(rest);
+  if (!parts) return rest;
+  return `${parts[1] ?? ''} ${parts[2] ?? ''}`.replace(/\\"/g, '"');
+}
+
+function squash(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
 interface Box {

@@ -4,7 +4,8 @@
 //
 // - Playwright's Chromium, since Google Chrome (137+) ignores
 //   `--load-extension`. Hidden runs use Chrome's new headless mode
-//   (`--headless=new`), the only headless mode that loads extensions.
+//   (`--headless=new`), the only headless mode that loads extensions,
+//   with a windowed Chrome's user agent (see `windowedUserAgent`).
 // - A fresh profile in a temp directory, deleted when the run ends. Its
 //   Preferences grant "Allow User Scripts" before launch, which Chrome
 //   otherwise leaves to a click (chrome.userScripts is undefined
@@ -13,9 +14,11 @@
 //   which has no Playwright `Browser`. The run connects over CDP to the
 //   launched browser's port for that, as it would to any browser.
 // - Mirrors tests/fixtures/sourcemonkey-launch.ts, which the e2e tests
-//   launch the extension with.
+//   launch the extension with, except for the user agent, which only
+//   matters to real sites.
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 import type { BrowserContext } from '@playwright/test';
 
 import { leaveDialogsOpen } from './console-commands.js';
-import { ExtensionBackend, ExtensionMissingError, findExtensionWorker, sourceMonkeyExtensionId } from './extension-backend.js';
+import { ExtensionMissingError, findExtensionWorker, sourceMonkeyExtensionId } from './extension-backend.js';
 import { rebuildAdvice } from './stale-build.js';
 
 // dist/, beside lib/: in the checkout, and in an installed package,
@@ -80,8 +83,32 @@ export async function launchExtensionBrowser(headed: boolean, args: string[] = [
   }
 }
 
+// The user agent a windowed Chrome of this version sends, in Chrome's
+// reduced form (`Chrome/153.0.0.0`). A hidden one says HeadlessChrome,
+// which some servers refuse, and the extension fetches a script's
+// `@require`s and `GM_xmlhttpRequest`s with it. Only the user agent
+// string changes: the client hints (`Sec-CH-UA`,
+// `navigator.userAgentData`) still name HeadlessChrome. Null when the
+// version can't be read; the browser's own is kept then.
+async function windowedUserAgent(executable: string): Promise<string | null> {
+  const version = process.platform === 'win32'
+    // There `chrome.exe --version` opens a window instead of printing;
+    // the version is the name of a folder beside it.
+    ? readdirSync(path.dirname(executable)).find((name) => /^\d+\.\d+\.\d+\.\d+$/.test(name)) ?? ''
+    : await new Promise<string>((resolve) => {
+      execFile(executable, ['--version'], { timeout: 5000 }, (err, stdout) => resolve(err ? '' : stdout));
+    });
+  const major = /(\d+)\.\d+\.\d+\.\d+/.exec(version)?.[1];
+  if (!major) return null;
+  const platform = process.platform === 'darwin' ? 'Macintosh; Intel Mac OS X 10_15_7'
+    : process.platform === 'win32' ? 'Windows NT 10.0; Win64; x64'
+      : 'X11; Linux x86_64';
+  return `Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`;
+}
+
 async function launch(profile: string, headed: boolean, args: string[] = []): Promise<BrowserContext> {
   const { chromium } = await import('@playwright/test');
+  const userAgent = headed ? null : await windowedUserAgent(chromium.executablePath()).catch(() => null);
   try {
     return await chromium.launchPersistentContext(profile, {
       // `headless: false` keeps Playwright from adding its own headless
@@ -96,6 +123,7 @@ async function launch(profile: string, headed: boolean, args: string[] = []): Pr
       handleSIGHUP: false,
       args: [
         ...(headed ? [] : ['--headless=new', '--mute-audio']),
+        ...(userAgent ? [`--user-agent=${userAgent}`] : []),
         `--disable-extensions-except=${EXTENSION_DIR}`,
         `--load-extension=${EXTENSION_DIR}`,
         ...args,
@@ -120,9 +148,19 @@ async function launch(profile: string, headed: boolean, args: string[] = []): Pr
  *   opened after this. See TODO.md.
  */
 async function warmUp(context: BrowserContext): Promise<void> {
-  const backend = await ExtensionBackend.connect(context);
-  await backend.push('// ==UserScript==\n// @name sm-dev warm-up\n// @match https://sm-dev.invalid/*\n// ==/UserScript==\n');
-  await backend.clear();
+  const worker = await findExtensionWorker(context);
+  await worker.evaluate(async (text) => {
+    const api = (self as unknown as { SourceMonkey: WarmUpApi }).SourceMonkey;
+    const run = 'sm-dev-warm-up';
+    await api.writeRunScript({ run, text });
+    await api.releaseRun(run);
+  }, '// ==UserScript==\n// @name sm-dev warm-up\n// @match https://sm-dev.invalid/*\n// ==/UserScript==\n');
+}
+
+// The part of the worker's `self.SourceMonkey` `warmUp` calls.
+interface WarmUpApi {
+  writeRunScript(args: { run: string; text: string }): Promise<unknown>;
+  releaseRun(runId: string): Promise<void>;
 }
 
 // Grants the extension "Allow User Scripts" and pins it to the toolbar,

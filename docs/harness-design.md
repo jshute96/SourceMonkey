@@ -43,7 +43,7 @@ and [injection.md](injection.md).
 | Bridge | How the GM runtime talks to the SW from the MAIN world, which has no `chrome.runtime`: DOM events out, `postMessage` replies back. |
 | Test surface | `self.SourceMonkey`, functions the SW exposes to code evaluated inside it (Playwright's `serviceWorker.evaluate`, or CDP). |
 | Push backend | Running scripts without the extension: the test process injects them and answers their messages itself. |
-| Extension backend | Running scripts in the real extension, pushed in as scratch scripts. |
+| Extension backend | Running scripts in the real extension, pushed into a test collection of the run's own. |
 | Host | `host.ts`: the stand-in for the service worker (SW) under the push backend. |
 | Attachment | A `PageAttachment` (`inject.ts`): one Playwright page with scripts injected and wired to a host. |
 | Run | A background `sm-dev` process that owns a browser connection and its tabs (see [sm-dev-design.md](sm-dev-design.md)). |
@@ -312,30 +312,31 @@ Test-surface calls write **scratch scripts**, whose only copy is their
 text in storage (see [storage.md](storage.md#container-collections)
 for the rows):
 
-- `writeScratchScript({ text, name? })` installs the text into a
-  built-in **Scratch** collection.
+- `writeRunScript({ run, text, name? })` installs the text into run
+  `run`'s **test collection**, made by its first push.
   - Returns the row's id, status, and diagnostics, after registration
     has completed. (The wrapper names the changed rows to the sync
     itself rather than waiting for the storage event to.)
   - The name is the identity: the one the caller gives, else the
-    `@name`. `sm-dev` passes the file's basename.
+    `@name`. `sm-dev` passes the file's path as it was given, relative
+    or absolute, kept whole in the location.
   - Rewriting a name replaces the text in place, keeping the row's id
     and GM values, so the next reload runs the new version.
   - Names that differ only in punctuation collapse into one identity.
-- `clearScratchScripts()` drops that collection's rows and their
-  `GM_*` values.
-- `soloMode(on)` disables all other collections while on, and restores
-  the previous enabled set when off. A scratch script runs alone
-  without touching the user's real collections.
-  - For a throwaway profile, `resetAllState()` wipes everything
-    instead.
-- The Scratch collection is a normal `scripts` collection at a fixed
-  path, so the collections page and viewer show it like any other and
-  the Log tab works unchanged.
+- `releaseRun(run)` ends the run's claims and removes its test
+  collection, with the rows' `GM_*` values. The worker also removes a
+  crashed run's after a grace period (see
+  [sm-dev-extension.md](sm-dev-extension.md#test-collections)).
+- For a throwaway profile, `resetAllState()` wipes everything.
+- A test collection is a normal `scripts` collection, so the
+  collections page and viewer show it like any other and the Log tab
+  works unchanged.
+- A scratch script runs only in the tabs of the run that pushed it (see
+  [sm-dev-extension.md](sm-dev-extension.md#how-the-extension-honours-a-claim)).
 - No new message transport into the extension: Playwright's worker
   handle serves both a launched and a CDP-connected browser.
 
-### Driving it (`extension-backend.ts`)
+### Driving it (`extension-link.ts`, `extension-host.ts`)
 
 - `sm-dev start --extension` reaches the worker through Playwright,
   which lists an extension's service worker on a CDP-connected browser
@@ -343,10 +344,11 @@ for the rows):
 - The worker's URL is known up front, since the manifest's fixed `key`
   fixes the extension id. An idle worker is woken by opening the
   collections page.
-- Reports are the script's own Log tab entries, polled. Only those
-  added after the push are printed.
-- `--solo` turns solo mode on for the run and off after.
-- `sm-dev clear --extension` drops the scratch scripts.
+- The run claims its tabs, so only its own scripts run there, and
+  hears the extension's events (starts, errors, Log entries, menus,
+  values) as they happen. Its commands work as in a harness run. See
+  [sm-dev-extension.md](sm-dev-extension.md).
+- Its test collection goes when the run ends.
 
 ## Compliance check for the host
 

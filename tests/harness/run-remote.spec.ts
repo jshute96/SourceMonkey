@@ -117,7 +117,7 @@ async function setUp(): Promise<Setup> {
     startRun: (args, cdp = String(port)) => {
       const at = args.indexOf('--root');
       const root = at >= 0 ? args.splice(at, 2) : [];
-      const proc = spawn(process.execPath, [CLI, ...root, 'start', '--cdp', cdp, '--seconds', '600', ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+      const proc = spawn(process.execPath, [CLI, ...root, 'start', '--browser', cdp, '--seconds', '600', ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
       runs.push(proc);
       const lines: string[] = [];
       const waiters = new Set<() => void>();
@@ -313,7 +313,7 @@ test('start --detach returns once started, is replaced by the next unless --new,
     });
     const url = `${fixtureServer.baseUrl}/target.html`;
     const detach = (...more: string[]): Promise<string[]> =>
-      setup.cli('--root', scriptsDir.path, 'start', '--cdp', String(setup.port), '--detach', file, url, ...more);
+      setup.cli('--root', scriptsDir.path, 'start', '--browser', String(setup.port), '--detach', file, url, ...more);
     // Back once the script has started, with its startup output.
     const first = await detach();
     expect(first).toContain(`[sm-dev] Detached started on ${url}`);
@@ -372,7 +372,7 @@ test('one line starts a run, sends it commands, and stops it unless detached', a
       body: `console.log('[line] body ran');`,
     });
     const url = `${fixtureServer.baseUrl}/target.html`;
-    const start = ['--root', scriptsDir.path, 'start', '--cdp', String(setup.port), file, url];
+    const start = ['--root', scriptsDir.path, 'start', '--browser', String(setup.port), file, url];
     // Not detached: stopped once the commands are done.
     const out = await setup.cli(...start, '--', 'eval', 'document.title', '--', 'status');
     expect(out).toContain('arg > eval document.title');
@@ -426,7 +426,7 @@ test('a reused tab drops the last run\'s scripts; nodes print as tags; own refs 
       meta: { name: 'Ticker', match: ['*://*/target.html'] },
       body: `setInterval(() => console.log('[ticker] tick'), 10);`,
     });
-    const first = await setup.cli('--root', scriptsDir.path, 'start', '--cdp', String(setup.port), ticker, url, '--', 'wait', 'log', 'tick');
+    const first = await setup.cli('--root', scriptsDir.path, 'start', '--browser', String(setup.port), ticker, url, '--', 'wait', 'log', 'tick');
     expect(first).toContain('[page log] [ticker] tick');
     expect(first).toContain('[sm-dev] Run D1 ended. Pages still have previously loaded scripts.');
 
@@ -439,12 +439,15 @@ test('a reused tab drops the last run\'s scripts; nodes print as tags; own refs 
         (function boom() { throw new Error('boom'); })();`,
     });
     const second = await setup.cli(
-      '--root', scriptsDir.path, 'start', '--cdp', String(setup.port), nodes, url,
+      '--root', scriptsDir.path, 'start', '--browser', String(setup.port), nodes, url,
       // Logged from the page, with no `[name]`, so the stream leaves it out.
       '--', 'eval', 'setTimeout(() => console.log("KEYUP", 143), 100)',
       '--', 'wait', 'log', 'KEYUP',
     );
-    expect(second).toContain('[sm-dev] Reusing the selected tab, which an earlier run opened');
+    // Named, and after the line naming the browser.
+    const reusing = second.findIndex((l) => l.startsWith('[sm-dev] Reusing the selected tab ('));
+    expect(second[reusing]).toMatch(/^\[sm-dev\] Reusing the selected tab \(http:.*target\.html\), which run D1 opened\. That run has ended\.$/);
+    expect(second.findIndex((l) => l.startsWith('[sm-dev] Connected to'))).toBeLessThan(reusing);
     expect(second.filter((l) => l.includes('[ticker]'))).toEqual([]);
     expect(second).toContain('[page debug] <main id="target">');
     expect(second).toContain('[page warning] [nodes] at <body> 2');
@@ -467,7 +470,7 @@ test('a run logs its stream and the commands that change something', async ({ fi
     });
     // Commands piped in, as typed ones are logged. Not spawnSync, which
     // would hold up the fixture server in this process.
-    const proc = spawn(process.execPath, [CLI, '--stdin', '--root', scriptsDir.path, 'start', '--cdp', String(setup.port), file, `${fixtureServer.baseUrl}/target.html`], {
+    const proc = spawn(process.execPath, [CLI, '--stdin', '--root', scriptsDir.path, 'start', '--browser', String(setup.port), file, `${fixtureServer.baseUrl}/target.html`], {
       env: setup.env, stdio: ['pipe', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -618,7 +621,7 @@ test('several stuck tabs, a dialog and a busy page, are all named, over a ws:// 
     const dialog = `${fixtureServer.baseUrl}/other.html`;
     await openForeignDialogTab(setup.port, dialog);
 
-    // The browser's own connection, as `--cdp` also takes it.
+    // The browser's own connection, as `--browser` also takes it.
     const { webSocketDebuggerUrl } = await (await fetch(`http://127.0.0.1:${setup.port}/json/version`)).json() as { webSocketDebuggerUrl: string };
     const run = setup.startRun([file, `${fixtureServer.baseUrl}/target.html`, '--root', scriptsDir.path], webSocketDebuggerUrl);
     await run.waitFor(/^Some tabs are not responding, so sm-dev can't connect to the browser over CDP:$/);

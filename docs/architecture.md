@@ -437,10 +437,13 @@ takes effect:
   [corpus-validation-results.md](corpus-validation-results.md).
 - [harness-design.md](harness-design.md) — the development and testing
   harness other repos install: the push backend that runs the injected
-  code without the extension, and scratch scripts pushed into the real
-  one. User-facing side in [harness-guide.md](harness-guide.md).
+  code without the extension, and scripts pushed into the real one.
+  User-facing side in [harness-guide.md](harness-guide.md).
 - [sm-dev-design.md](sm-dev-design.md) — internals of the harness's
   `sm-dev` command-line tool: runs and clients, tabs, page commands.
+- [sm-dev-extension.md](sm-dev-extension.md) — sm-dev with the
+  real extension: shared commands, tab claims, test collections, the
+  event stream.
 - [logging.md](logging.md) — SW console-message catalog, log IDs
   (basename + `#N` dupes), and the debug-logging gate.
 - [names-and-paths.md](names-and-paths.md) — the decode-for-display

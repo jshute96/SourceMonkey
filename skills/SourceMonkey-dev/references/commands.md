@@ -9,7 +9,7 @@ options; `pnpm sm-dev --help` lists everything.
 sm-dev [global options] <command> [args] [-- <command> ...]
 ```
 
-- Global options go first: `--run ID`, `--cdp PORT|URL`,
+- Global options go first: `--run ID`, `--browser URL|PORT`,
   `--open-browser`, `--temp-browser`, `--stdin`, `--interactive`,
   `--root DIR`, `--local DIR`.
 - `--` separates commands. They run in order and stop at the first
@@ -43,7 +43,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `sm-dev --open-browser` | Start a lasting, visible browser on port 9233 (kept profile, so logins persist). A no-op if one is up |
 | `sm-dev --temp-browser start ...` | A hidden throwaway browser for this run. Good for pages with no login |
 | `sm-dev --temp-browser start ... --extension` | The same, with SourceMonkey installed in it (Allow User Scripts on), so `--extension` needs no setup |
-| `sm-dev --cdp 9300 ...` | Use the browser on another port |
+| `sm-dev --browser 9300 ...` | Use the browser on another port |
 
 ## Runs
 
@@ -58,8 +58,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `start ... --all` | Open each script's default page, a tab each |
 | `start [url]...` | No scripts: just a browser to drive (`load` adds them later) |
 | `start ... --notab` | No tab at first; `newtab` later |
-| `start ... --extension [--solo]` | Push into the real extension instead. Needs SourceMonkey in the browser; a `--temp-browser` installs it for the run |
-| `clear --extension` | Drop the extension's scratch scripts; turn solo mode off |
+| `start ... --extension` | Push into the real extension instead. Needs SourceMonkey in the browser; a `--temp-browser` installs it for the run |
 | `start ... --detach --new` | Start another detached run, keeping earlier ones |
 | `list` | The active runs |
 | `status` | The run, its log file, tabs, and each script's state |
@@ -75,7 +74,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `validate <path>...` | Header, `@require` and syntax checks, plus warnings (files, dirs, globs) |
 | `match <script>... <url>...` | Would it run there; which rule decided |
 | `match`, `match all` | In a run: the selected script on the current tab; all scripts on all tabs |
-| `scripts`, `script <script>` | List; pick the one `get`/`set`/`match` use |
+| `scripts`, `script <script>` | List; pick the one `get`/`set`/`match` use. With `--extension` it also lists SourceMonkey-managed scripts on the tab as E1, ...; `scripts E1` picks one for `get`/`set` (`set key --force <json>` outside a `--temp-browser`) |
 | `load <script>...` | Add scripts to the run |
 | `update [script]` | Re-read changed scripts and reload affected tabs |
 
@@ -97,6 +96,8 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | Command | Does |
 | --- | --- |
 | `snapshot [sel] [--visible] [--out F]` | Accessibility tree with refs |
+| `snapshot [sel] --find <text>` | Only elements containing the text (case insensitive), within `sel`'s matches |
+| `snapshot ... [--up N] [--context] [--limit N]` | For each match of `sel` or `--find`: N levels up, or with wrapper divs and small containers; first 5 matches (0: all) |
 | `probe <sel>... [--css] [--html]` | Which match and how many; selector / HTML of the first 10 |
 | `eval <js>` | Evaluate in the page; prints JSON (promises awaited) |
 | `eval --script <js>` | Evaluate in the scripts' world |
@@ -104,7 +105,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `cdp <Method> [json]` | A raw CDP call on the tab; the result as JSON. A `{{` block or `--file` holds several, one per line (see [cdp.md](cdp.md)) |
 | `screenshot [sel] [--full] <file>` | PNG of the view, the page, or an element |
 | `savehtml <file>` | Save the DOM for `--from-saved` / `serveHtml` |
-| `logs` | All console lines and errors so far |
+| `logs` | All console lines and errors so far, whole (the stream cuts a line past 1000 characters) |
 
 ## Driving the page
 
@@ -145,7 +146,7 @@ old) or DOM changes for 200ms. Timers aren't waited for.
 | --- | --- |
 | `menu`, `menu all` | List menu commands (`M1`...) |
 | `menu <label or M1>` | Fire one |
-| `values [script\|T2]` | Stored values |
+| `values [script\|T2\|E1]` | Stored values (`E1`: a SourceMonkey-managed script, with `--extension`) |
 | `get <key>`, `set <key> <json>` | One value; `set` fires change listeners |
 | `set <key> --file <path>` | The value from a JSON file (or a `{{` block, as `eval` takes) |
 

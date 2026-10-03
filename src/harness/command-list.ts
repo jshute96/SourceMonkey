@@ -8,6 +8,10 @@
 
 // How many of a selector's matches `probe --css` and `--html` show.
 export const PROBE_MAX = 10;
+// How many matches `snapshot` shows by default, of a selector or --find.
+export const PART_LIMIT = 5;
+// How many lines `snapshot --context` lets a match's shown part grow by.
+export const CONTEXT_LINES = 10;
 
 /**
  * A term and what it means: an argument, an option, a way to name
@@ -81,8 +85,6 @@ export interface HelpSection {
   subsections?: HelpSection[];
 }
 
-const BROWSER = ['start', 'clear'];
-
 // The common syntaxes.
 const NONE: ArgSyntax = { args: 'none' };
 const WORDS: ArgSyntax = { args: 'words' };
@@ -102,7 +104,8 @@ export const HELP_SECTIONS: HelpSection[] = [
       '     - With --stdin, or with pipe input and no command-line commands.',
       '     - One command per line.',
       '  3. A prompt',
-      '     - With --interactive.',
+      '     - With --interactive, or at a terminal with no command-line commands',
+      '       or ending with a start command.',
     ],
   },
   {
@@ -113,15 +116,16 @@ export const HELP_SECTIONS: HelpSection[] = [
       '  sm-dev --temp-browser start <script> [<url>] ...',
       '',
       '  # Launch a visible browser (if not already running).',
-      '  sm-dev --open-browser [--cdp <port>] [<commands...>]',
+      '  sm-dev --open-browser [--browser <port>] [<commands...>]',
       '',
       '  # Connect to an existing browser.',
-      '  sm-dev [--cdp <port>|<url>] <commands...>',
+      '  sm-dev [--browser <port>|<url>] <commands...>',
+      '',
+      'Open an interactive prompt (the default at a terminal):',
+      '  # Optionally start an initial run first.',
+      '  sm-dev [start example.user.js http://example.com]',
       '',
       'Start sm-dev with a tab, injecting a userscript:',
-      '  # Start with an interactive prompt.',
-      '  sm-dev --interactive start example.user.js http://example.com',
-      '',
       '  # Start, run commands (separated by --), then exit.',
       '  sm-dev start example.user.js http://example.com -- status -- snapshot',
       '',
@@ -229,7 +233,7 @@ export const HELP_SECTIONS: HelpSection[] = [
   {
     title: 'Scripts',
     commands: [
-      { usage: 'scripts', syntax: TEXT, about: 'List the loaded scripts.' },
+      { usage: 'scripts', syntax: TEXT, about: 'List the loaded scripts, and with --extension, the SourceMonkey-managed scripts on the current tab.' },
       { usage: 'script <script>', about: 'Select the active script by ID. With T2.3, pick tab T2 too.' },
       { usage: 'load <script>...', syntax: WORDS, about: 'Load more scripts from disk: files, directories, or globs. See Files and file patterns.' },
       { usage: 'update [script]', syntax: TEXT, about: 'Re-read one (or all) scripts from disk, and reload all affected tabs.' },
@@ -327,10 +331,14 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         usage: 'snapshot [tab] [selector]',
         syntax: { args: 'selector', tab: true },
-        about: ['Print the page, or an element, as its accessibility tree, with a ref for each element.'],
+        about: ['Print the page, or the selector\'s matches, as the accessibility tree, with a ref for each element.'],
         options: [
           { term: '--visible', about: 'Only what is on screen.' },
           { term: '--out FILE', about: 'Write it to a file instead.' },
+          { term: '--find <text>', about: 'Only elements containing this text (in a name, text, value or URL; case insensitive), within the selector\'s matches.' },
+          { term: '--up <n>', about: 'Start from the element n levels above each match.' },
+          { term: '--context', about: `Go further up from each match while that adds at most ${CONTEXT_LINES} lines: wrapper divs, small containers.` },
+          { term: '--limit <n>', about: `How many matches to show (${PART_LIMIT} by default, 0 for all).` },
         ],
       },
       {
@@ -476,7 +484,10 @@ export const HELP_SECTIONS: HelpSection[] = [
             usage: 'set <key> <json>',
             syntax: { args: 'text', before: 1, block: true, unquote: 'single' },
             about: ['Store a value for the selected script.', 'set <key> {{ starts a multi-line block of JSON, ended by }}.'],
-            options: [{ term: '--file <path>', about: 'Read the JSON from a file, in place of <json>.' }],
+            options: [
+              { term: '--file <path>', about: 'Read the JSON from a file, in place of <json>.' },
+              { term: '--force', about: 'Needed, after the key, to change the real stored data of a SourceMonkey-managed script (E1, ...) outside a --temp-browser.' },
+            ],
           },
         ],
       },
@@ -492,13 +503,9 @@ export const HELP_SECTIONS: HelpSection[] = [
   {
     title: 'Controlling the SourceMonkey extension',
     text: ['Instead of injecting the scripts itself, a run can push them into the SourceMonkey extension in the browser it connects to.', ''],
-    commands: [
-      { usage: 'clear --extension', syntax: NONE, about: 'Remove all scripts in the extension\'s Scratch collection, and turn solo mode off.' },
-    ],
     optionsTitle: 'Options for start',
     options: [
-      { term: '--extension', about: 'Push the scripts into the extension\'s Scratch collection instead of injecting them. A --temp-browser installs the extension itself.', commands: ['start'] },
-      { term: '--solo', about: 'With --extension: Disable all other collections, and run only the started scripts, until this run ends.', commands: ['start'] },
+      { term: '--extension', about: 'Push the scripts into the extension, in a test collection of the run\'s own, instead of injecting them. The extension removes it when the run ends. A --temp-browser installs the extension itself.', commands: ['start'] },
     ],
   },
   {
@@ -509,17 +516,17 @@ export const HELP_SECTIONS: HelpSection[] = [
         title: 'Where to get input commands (after processing command-line arguments)',
         options: [
           { term: '--stdin', about: ['Read commands from stdin.', 'This is the default when command-line has no commands and stdin is piped input.'] },
-          { term: '--interactive', about: 'Read commands interactively from a prompt.' },
+          { term: '--interactive', about: ['Read commands interactively from a prompt.', 'This is the default when command-line has no commands and stdin and stdout are a terminal.'] },
         ],
       },
       {
         title: 'Browser selection',
         options: [
-          { term: '--cdp URL|PORT', about: ['The browser to connect to, and where --open-browser starts one: a URL, host:port, or port.', '(Default: $SM_DEV_CDP or 9233)'], commands: BROWSER },
+          { term: '--browser URL|PORT', about: ['The browser to connect to, and where --open-browser starts one: a URL, host:port, or port.', '(Default: $SM_DEV_BROWSER or 9233)'], commands: ['start'] },
           {
             term: '--open-browser',
             about: [
-              'Start a browser, if one isn\'t running on --cdp (which must be a port or on localhost target).',
+              'Start a browser, if none is running at the --browser address (which must be a local port).',
               'Starts it headed (with a visible window), and leaves it open after sm-dev ends.',
               'Uses Google Chrome if installed, else Chromium.',
               'Used alone (sm-dev --open-browser), just start the browser.',
@@ -573,6 +580,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         items: [
           { term: '2', about: 'Script ID in the scripts list.' },
           { term: 'T2.3', about: 'Script 3, on tab T2.' },
+          { term: 'E1', about: 'A SourceMonkey-managed script. (With --extension)' },
           { term: '<name>', about: ['Its name, file name or path, or a unique substring.', '(Only in commands that expect script names.)'] },
           { term: '<file>', about: 'A script file. (Ending with .user.js)' },
           { term: '<url>', about: 'A script file loaded from a URL. (Ending with .user.js)' },
@@ -748,7 +756,7 @@ function formsOf(name: string): { command: HelpCommand; section: HelpSection }[]
 export const COMMAND_NAMES = [...new Set(allSections().flatMap((section) => (section.commands ?? []).map(nameOf)))];
 
 /** The commands sm-dev runs itself, never sent to a run. */
-export const CLIENT_COMMANDS = new Set(['start', 'attach', 'stop', 'list', 'exit', 'clear', 'help']);
+export const CLIENT_COMMANDS = new Set(['start', 'attach', 'stop', 'list', 'exit', 'help']);
 
 /**
  * The commands sm-dev runs itself when given only files and URLs, and

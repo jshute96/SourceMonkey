@@ -1,21 +1,13 @@
-// The extension backend of `sm-dev start`: the real SourceMonkey in the
-// connected browser, with the script pushed in as text rather than
-// injected by the harness.
-//
-// The service worker's test surface (`self.SourceMonkey` in
-// src/background.ts) does the work: `writeScratchScript` installs the
-// text into the Scratch collection and registers it before it answers,
-// a rewrite replaces it in place, `soloMode` silences the user's other
-// collections for the run, and `start` prints the per-script log as the
-// script's reports. Playwright exposes the worker on a
-// CDP-connected browser as well as a launched one, so the same
-// `worker.evaluate` reaches it either way.
+// Finding the real SourceMonkey in sm-dev's browser: whether it is
+// installed and turned on, and its service worker, which every call
+// into it goes through (extension-link.ts). Playwright exposes the
+// worker on a CDP-connected browser as well as a launched one, so the
+// same `worker.evaluate` reaches it either way.
 
 import crypto from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
 import type { BrowserContext, Worker } from '@playwright/test';
-import type { StackLayout } from '../composed-source.js';
 
 export interface PushResult {
   scriptId: string;
@@ -196,48 +188,4 @@ async function listedWorker(ctx: BrowserContext, timeoutMs: number): Promise<Wor
     await page.close().catch(() => undefined);
   }
   throw new Error(`SourceMonkey did not respond within ${Math.round(timeoutMs / 1000)} seconds`);
-}
-
-export class ExtensionBackend {
-  constructor(private readonly worker: Worker) {}
-
-  static async connect(ctx: BrowserContext): Promise<ExtensionBackend> {
-    return new ExtensionBackend(await findExtensionWorker(ctx));
-  }
-
-  push(text: string, name?: string): Promise<PushResult> {
-    return this.worker.evaluate(
-      ([t, n]) => (self as unknown as { SourceMonkey: { writeScratchScript(a: { text: string; name?: string }): Promise<PushResult> } })
-        .SourceMonkey.writeScratchScript({ text: t, name: n }),
-      [text, name] as const,
-    );
-  }
-
-  clear(): Promise<number> {
-    return this.worker.evaluate(() =>
-      (self as unknown as { SourceMonkey: { clearScratchScripts(): Promise<number> } }).SourceMonkey.clearScratchScripts());
-  }
-
-  solo(on: boolean): Promise<void> {
-    return this.worker.evaluate(
-      (flag) => (self as unknown as { SourceMonkey: { soloMode(o: boolean): Promise<void> } }).SourceMonkey.soloMode(flag),
-      on,
-    );
-  }
-
-  /** How the script's injected entry maps back to its files; see `remapStackText`. */
-  stackLayout(scriptId: string): Promise<StackLayout | null> {
-    return this.worker.evaluate(
-      (id) => (self as unknown as { SourceMonkey: { getStackLayout(i: string): Promise<StackLayout | null> } }).SourceMonkey.getStackLayout(id),
-      scriptId,
-    );
-  }
-
-  /** The script's Log tab entries. */
-  log(scriptId: string): Promise<LogEntry[]> {
-    return this.worker.evaluate(
-      (id) => (self as unknown as { SourceMonkey: { getScriptLog(i: string): Promise<LogEntry[]> } }).SourceMonkey.getScriptLog(id),
-      scriptId,
-    );
-  }
 }

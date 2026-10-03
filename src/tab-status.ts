@@ -11,6 +11,7 @@
 // script's status. Keeping the computation here (pure) makes it easy
 // to unit test without the chrome.* surface.
 
+import { ACTION_MENU_SM_DEV_LABEL } from './action-menu.js';
 import type { MatchedScript } from './match-index.js';
 import type { InjectionWorld } from './injector.js';
 
@@ -55,6 +56,12 @@ export interface TabMatchState {
   // MISSING (orange) — nothing is wrong, the user asked for this.
   // Dies with the document like everything else on this state.
   scriptsSkipped?: boolean;
+  // Set when an sm-dev run controlled the tab as this document loaded
+  // (sm-dev-link.ts): the script ids it let run, or null for none. The
+  // rest were told to skip, so they show as NOT LOADED too.
+  smDevAllow?: string[] | null;
+  // And the run that claimed it, whose own scripts the badge lists.
+  smDevRun?: string;
   // What our wrappers' own reports say about this document, for
   // explaining a script that never started (src/missing-scripts.ts):
   //   - `reportedWorlds`: the worlds a wrapper reported from. A world
@@ -107,6 +114,10 @@ export const BADGE_PURPLE = '#d500f9';
 // ran on purpose. Loses to every other color: an UNEXPECTED report on a
 // skipped document is still a disagreement worth orange.
 export const BADGE_GREY = '#757575';
+// Material cyan-600: the corner marker drawn on the icon in a tab an
+// sm-dev run controls. Used for nothing else, so it can't be read as a
+// status.
+export const SM_DEV_MARKER_CYAN = '#00acc1';
 
 // Tooltip status string for RELOAD rows. Kept verbose because the
 // tooltip is the only place the user is told *what to do*.
@@ -188,7 +199,7 @@ export function computeBadge(
       status = 'ERROR';
       message = actual.message;
       anyError = true;
-    } else if (expected && !actual && state.scriptsSkipped) {
+    } else if (expected && !actual && skippedOnDocument(state, id)) {
       // Settled too, but by the user: the SW told every wrapper on this
       // document to skip, so "never reported" is the intended outcome.
       // Checked ahead of REJECTED — a refused registration didn't get
@@ -217,11 +228,35 @@ export function computeBadge(
   if (anyError) color = BADGE_RED;
   else if (anyReload) color = BADGE_PURPLE;
   else if (anyMismatch) color = BADGE_ORANGE;
-  else if (anySkipped) color = BADGE_GREY;
+  // Grey says nothing ran: not for a tab where some scripts were kept
+  // out (an sm-dev claim) and the rest ran.
+  else if (anySkipped && !rows.some((r) => r.status === 'OK')) color = BADGE_GREY;
 
-  const title = ['SourceMonkey', ...rows.map((r) => formatRowLabel(r))].join('\n');
+  const title = [titleHead(state), ...rows.map((r) => formatRowLabel(r))].join('\n');
 
-  return { count: allIds.size, color, title, rows };
+  // In a tab an sm-dev run controls, the count is of the scripts its
+  // claim let run: the rest were kept out, not left out by a problem.
+  const count = state.smDevAllow === undefined || state.scriptsSkipped
+    ? allIds.size
+    : [...allIds].filter((id) => !skippedOnDocument(state, id) || state.actual[id]).length;
+  return { count, color, title, rows };
+}
+
+/**
+ * The tooltip's first lines: the extension's name, and in a tab an
+ * sm-dev run controls, the same note the action menu opens with.
+ */
+export function titleHead(state: TabMatchState | null): string {
+  return state?.smDevAllow === undefined ? 'SourceMonkey' : `SourceMonkey\n${ACTION_MENU_SM_DEV_LABEL}`;
+}
+
+/**
+ * Whether the worker told `id` to skip this document: a reload with no
+ * userscripts, or a tab an sm-dev run controls that doesn't allow it.
+ */
+export function skippedOnDocument(state: TabMatchState, id: string): boolean {
+  if (state.scriptsSkipped) return true;
+  return state.smDevAllow !== undefined && !(state.smDevAllow?.includes(id) ?? false);
 }
 
 // Shared "{name} | {status}" formatter — same text the badge tooltip

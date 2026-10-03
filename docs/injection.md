@@ -550,9 +550,12 @@ the user body. This is the TM/VM pattern.
   - sm-dev injects earlier, before the parser makes `<html>`, so there
     the wrapper waits for it with a `MutationObserver` on `document`.
   - Mutation records are delivered before the first page `<script>`
-    runs, so the gate opens ahead of page scripts. The body still
-    waits for the async [check-pending decision](#reload-fast-path),
-    so early page scripts can run first (in sm-dev, usually).
+    runs, so the gate opens ahead of page scripts.
+  - Where the [check-pending decision](#reload-fast-path) could only
+    be `run`, the body runs right away, ahead of the page's own
+    scripts. Elsewhere it waits for that async answer, so early page
+    scripts can run first. See
+    [Skipping the check at document-start](#skipping-the-check-at-document-start).
   - If `<html>` is still missing at `DOMContentLoaded`, the body runs
     anyway.
 - `document-body` — wrapper waits for `document.body` (via a
@@ -925,8 +928,9 @@ Mechanics:
     the caller returns. A postMessage is delivered on a later task, and
     a document in `pagehide` never gets one — `GM_setValue()` before
     `location.href = …` or a tab close lost the write every time.
-  - It also saves a task hop on `sm:check-pending`, which every
-    MAIN-world script waits on at `document_start`. The hop is small at
+  - It also saves a task hop on `sm:check-pending`, which a
+    MAIN-world script waits on at `document_start` unless it can
+    [skip it](#skipping-the-check-at-document-start). The hop is small at
     rest — a `postMessage` to one's own window round-trips in well under
     a millisecond on an idle page, against roughly a millisecond for the
     whole SW round-trip — but it is a *queued task*, so it grows with
@@ -1533,6 +1537,43 @@ reload's own refresh, racing the same 500 ms window as before.
 Setup is fire-and-forget. The listener does not block on it. If a
 wrapper's `sm:check-pending` arrives before setup populates the entry,
 it just gets the default `run` reply — the optimization is best-effort.
+
+### Skipping the check at document-start
+
+The check-pending round trip is async. For a `document-start` script
+that is the only gate, so an inline `<script>` early in `<head>` can
+run before the body, which defeats a script that must patch the page
+first (user-agent spoofing, API shims).
+
+So the wrapper skips the round trip and runs `run` straight away
+(`canSkipDecision` in `userscript-prelude.js`) when every one of
+these holds:
+
+- `@run-at document-start`. Later gates wait for a lifecycle event
+  anyway, so the round trip costs them nothing.
+- The top frame, on a navigation that isn't a reload (the
+  Navigation Timing entry's `type`).
+  - `run-new` and the "Reload page with no userscripts" `skip` only
+    happen on a reload.
+  - That `skip` covers subframes too, and a subframe can't see the
+    top page's navigation type, so subframes always ask.
+- No `mustAsk` in the script's config. It is set:
+  - for every script while any sm-dev tab claim is live, since a
+    claim can `skip` on any navigation (see
+    [sm-dev-extension.md](sm-dev-extension.md#making-every-wrapper-ask));
+  - for every script built before the SW has loaded the claims, or
+    built in an extension page (a retry of a rejected script), which
+    can't know them;
+  - always for scratch scripts, which run only in claimed tabs.
+- No GM storage grant: the reply carries the values snapshot.
+- No `.tld` rule: the reply carries the SW's exact match check.
+
+Gaps:
+
+- On a reload, `document-start` scripts still wait, so a page's
+  first inline scripts can win there.
+- A rejected script re-offered from an extension page asks until the
+  SW next re-registers it.
 
 ### sm:check-pending handler
 

@@ -79,6 +79,10 @@ export function tabUrlRefusedMessage(url: string): string {
 export async function openGmTab(
   payload: GmTabOpenPayload,
   originatorTabId: number,
+  // Run on the new tab before it loads the URL: it opens blank, this
+  // runs, then the URL loads. For a tab sm-dev controls, whose claim
+  // has to be on the new tab before its scripts ask (sm-dev-link.ts).
+  beforeLoad?: (tabId: number) => Promise<void>,
 ): Promise<GmTabOpenResult> {
   if (!isAllowedTabUrl(payload.url)) {
     return { ok: false, error: tabUrlRefusedMessage(payload.url) };
@@ -96,7 +100,7 @@ export async function openGmTab(
   });
   try {
     const created = await chrome.tabs.create({
-      url: payload.url,
+      url: beforeLoad ? 'about:blank' : payload.url,
       active: payload.active,
       // Bias positioning: when `insert` is true, hint Chrome to place
       // the new tab next to the originator.
@@ -118,6 +122,17 @@ export async function openGmTab(
     }
     entry.tabId = created.id;
     tabIdToRequest.set(created.id, payload.requestId);
+    if (beforeLoad) {
+      try {
+        await beforeLoad(created.id);
+        // Closed meanwhile, by the script or the person: nothing to load.
+        if (!entry.closeRequested) await chrome.tabs.update(created.id, { url: payload.url });
+      } catch (err) {
+        // The tab opened, so the script is told so. A tab gone before
+        // its URL loaded is reported closed by the onRemoved listener.
+        console.info('[SourceMonkey] GM_openInTab: could not load the URL into the new tab:', err);
+      }
+    }
     if (entry.closeRequested) {
       // The page called close() before create resolved. Close
       // immediately — the onRemoved listener will then clear the

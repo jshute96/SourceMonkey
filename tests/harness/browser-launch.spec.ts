@@ -29,7 +29,7 @@ test('--open-browser starts a lasting browser once, on a profile of its port', a
   const runs = mkdtempSync(path.join(os.tmpdir(), 'sm-dev-launch-runs-'));
   const env = {
     ...process.env, XDG_CONFIG_HOME: config, SM_DEV_RUNS_DIR: runs, SM_DEV_LOGS_DIR: runs,
-    SM_DEV_BROWSER: chromium.executablePath(), SM_DEV_BROWSER_ARGS: '--headless=new',
+    SM_DEV_BROWSER_BINARY: chromium.executablePath(), SM_DEV_BROWSER_ARGS: '--headless=new',
   };
   const cli = (...args: string[]): { code: number | null; out: string } => {
     const r = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env });
@@ -38,20 +38,20 @@ test('--open-browser starts a lasting browser once, on a profile of its port', a
   const port = await freePort();
   const profile = path.join(config, 'sm-dev', `browser-profile-${port}`);
   try {
-    expect(cli('--open-browser', '--cdp', String(port))).toEqual({ code: 0, out: `[sm-dev] Launched chrome at 127.0.0.1:${port} (profile ${profile})` });
+    expect(cli('--open-browser', '--browser', String(port))).toEqual({ code: 0, out: `[sm-dev] Launched chrome at 127.0.0.1:${port} (profile ${profile})` });
     // Still up once sm-dev has ended, and asked again, used as it is,
     // here by a run that connects to it.
     expect((await fetch(`http://127.0.0.1:${port}/json/version`)).ok).toBe(true);
-    const started = cli('--cdp', String(port), '--open-browser', 'start', 'about:blank', '--detach');
+    const started = cli('--browser', String(port), '--open-browser', 'start', 'about:blank', '--detach');
     expect(started.code).toBe(0);
     expect(started.out.split('\n')[0]).toBe(`[sm-dev] A browser is already running at 127.0.0.1:${port}`);
     expect(cli('list').out).toMatch(new RegExp(`^D1 .* 127\\.0\\.0\\.1:${port} \\(headless\\) `, 'm'));
     expect(cli('stop', '--all').code).toBe(0);
     // Its profile can't be had by a second browser, on another port.
     const other = await freePort();
-    expect(cli('--open-browser', '--cdp', String(other), '--profile', profile)).toEqual({
+    expect(cli('--open-browser', '--browser', String(other), '--profile', profile)).toEqual({
       code: 1,
-      out: `The profile ${profile} is in use by the browser on port ${port}. Use --cdp ${port}, or another --profile`,
+      out: `The profile ${profile} is in use by the browser on port ${port}. Use --browser ${port}, or another --profile`,
     });
   } finally {
     // The browser, by the lock on its profile, however far this got.
@@ -70,8 +70,8 @@ test('--open-browser starts a lasting browser once, on a profile of its port', a
 test('--open-browser says why a browser didn\'t start', async () => {
   const config = mkdtempSync(path.join(os.tmpdir(), 'sm-dev-launch-'));
   try {
-    const r = spawnSync(process.execPath, [CLI, '--open-browser', '--cdp', String(await freePort())], {
-      encoding: 'utf8', env: { ...process.env, XDG_CONFIG_HOME: config, SM_DEV_BROWSER: '/no/such/chrome' },
+    const r = spawnSync(process.execPath, [CLI, '--open-browser', '--browser', String(await freePort())], {
+      encoding: 'utf8', env: { ...process.env, XDG_CONFIG_HOME: config, SM_DEV_BROWSER_BINARY: '/no/such/chrome' },
     });
     expect(r.status).toBe(1);
     expect(r.stderr.trim()).toMatch(/^Could not launch chrome at 127\.0\.0\.1:\d+: It could not be started from \/no\/such\/chrome: spawn \/no\/such\/chrome ENOENT$/);

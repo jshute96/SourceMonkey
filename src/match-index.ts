@@ -15,7 +15,7 @@
 // collection flips every script under it in O(1) without rewalking
 // storage.
 
-import { isFileUrl } from './directories.js';
+import { isFileUrl, scratchRunOf } from './directories.js';
 import { scriptDisplayName } from './script-display.js';
 import { scanAllStorage } from './storage-scan.js';
 import {
@@ -42,6 +42,9 @@ export interface MatchedScript {
   // this URL?" synchronously per GM_* call; re-reading the header from
   // chrome.storage.local on every call would put I/O on that path.
   world: InjectionWorld;
+  // A scratch script's sm-dev run, which pushed it: it runs only in
+  // tabs that run's claim holds (sm-dev-link.ts).
+  smDevRun?: string;
 }
 
 const SCRIPT_PREFIX = 'script:';
@@ -120,7 +123,13 @@ function toEntry(script: StoredScript): CacheEntry | null {
     subsystems: grantedSubsystems(script.header),
     enabled: isScriptEnabled(script),
     local: isFileUrl(script.fileUrl),
+    ...smDevRunField(script.fileUrl),
   };
+}
+
+function smDevRunField(fileUrl: string): { smDevRun?: string } {
+  const run = scratchRunOf(fileUrl);
+  return run === null ? {} : { smDevRun: run };
 }
 
 // Install the storage listener exactly once. Safe to call repeatedly.
@@ -283,6 +292,7 @@ export function findMatchesForUrl(url: string): MatchedScript[] {
         matching: entry.matching,
         collectionId: entry.collectionId,
         world: entry.world,
+        ...(entry.smDevRun !== undefined ? { smDevRun: entry.smDevRun } : {}),
       });
     }
   }

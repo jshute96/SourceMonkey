@@ -177,7 +177,7 @@ export function isUrlConnectAllowed(
     return {
       allowed: false,
       denied: false,
-      reason: `${url} is not a valid URL — GM_xmlhttpRequest needs an absolute one`,
+      reason: `${url} is not a valid URL; GM_xmlhttpRequest needs an absolute one`,
     };
   }
   for (const rule of rules) {

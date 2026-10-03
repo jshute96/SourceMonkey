@@ -223,8 +223,8 @@ test('adds the button', async ({ page, loadUserscript, reports }) => {
 sm-dev [global-options] <command> [args and options] [-- <command> ...]
 ```
 
-- Global options (`--run`, `--cdp`, `--interactive`, ...) go first, and
-  hold for the whole line (see [Global options](#global-options)).
+- Global options (`--run`, `--browser`, `--interactive`, ...) go
+  first, and hold for the whole line (see [Global options](#global-options)).
 - `--` separates commands, which run in order (see
   [Sending commands](#sending-commands)).
 
@@ -263,7 +263,7 @@ up:
 ### Two kinds of command
 
 - **sm-dev's own**, which run in sm-dev itself: `start`, `attach`,
-  `stop`, `exit`, `list`, `clear`, `help`, and `match` / `validate`
+  `stop`, `exit`, `list`, `help`, and `match` / `validate`
   given files.
 - **Run commands**, which go to a run: everything else (`status`,
   `eval`, `click`, `menu`, ...). `sm-dev eval document.title` sends
@@ -295,22 +295,22 @@ Best for sites that need a login.
 ```sh
 sm-dev --open-browser                           # just the browser
 sm-dev --open-browser start x.user.js --detach  # the browser, then a run in it
-sm-dev --open-browser --cdp 9300                # another one, on port 9300
+sm-dev --open-browser --browser 9300            # another one, on port 9300
 ```
 
-- It has a window, and listens on `--cdp`'s port (9233 by default),
+- It has a window, and listens on `--browser`'s port (9233 by default),
   which is where later commands connect.
 - It stays open after sm-dev ends. Close it as any browser: by closing
   its window.
 - Google Chrome when it's installed (it handles Google sign-in), else
-  Playwright's Chromium. `SM_DEV_BROWSER` names another binary.
+  Playwright's Chromium. `SM_DEV_BROWSER_BINARY` names another binary.
 - Its profile is kept, so sign-ins and extensions carry over:
   `~/.config/sm-dev/browser-profile-<port>`, or `--profile DIR`.
   - One per port, since only one browser at a time can use a profile.
     One already in use is refused, naming the port its browser is on.
 - A browser already answering on the port is used as it is, whatever
   its profile, so `--open-browser` can go on any command line.
-- It only starts one on this machine: `--cdp` has to be a port alone
+- It only starts one on this machine: `--browser` has to be a port alone
   (`9300`), or one on `127.0.0.1` or `localhost`.
 - A browser that can't start, or whose port doesn't open within 10
   seconds, is closed again, with the reason.
@@ -331,23 +331,39 @@ sm-dev --open-browser --cdp 9300                # another one, on port 9300
 ### Your own browser
 
 Any Chromium started with
-`--remote-debugging-port`. Point sm-dev at it with `--cdp`.
+`--remote-debugging-port`. Point sm-dev at it with `--browser`.
 
-### Choosing the browser: `--cdp`
+### A browser with SourceMonkey installed
 
-- `--cdp` takes a URL, a `host:port` (`http://` is added), or just a
+- The run keeps SourceMonkey-managed scripts out of the tabs it opens
+  (and the tabs those open), so only the run's scripts run there. They
+  run there again from the tab's next load after the run ends.
+- That holds for a run started with no scripts too, so scripts it
+  `load`s later run alone.
+- Your other tabs are left alone.
+- In those tabs, SourceMonkey's toolbar icon has a cyan **T** in its
+  corner, its badge counts none of its scripts, and both its tooltip
+  and its right-click menu say "Page under sm-dev control".
+- With an older SourceMonkey, the run says once that its scripts may
+  also run in the run's tabs.
+- How it works: [sm-dev-extension.md](sm-dev-extension.md#tab-claims).
+
+### Choosing the browser: `--browser`
+
+- `--browser` takes a URL, a `host:port` (`http://` is added), or just a
   port on this machine (`9222` or `:9222`). An IPv6 host needs brackets
   (`[::1]:9222`).
-- It defaults to the `SM_DEV_CDP` environment variable, which takes the
-  same forms, then port 9233.
+- It defaults to the `SM_DEV_BROWSER` environment variable, which
+  takes the same forms, then port 9233.
+- `SM_DEV_BROWSER_BINARY` (not `SM_DEV_BROWSER`) names the binary
+  `--open-browser` starts.
 - These are global options, so they go first:
   `sm-dev --temp-browser start x.user.js`.
-  - As a global option, `--cdp` holds for the whole line (and
-    `--open-browser`). After `start` or `clear`, it's for that command
-    alone.
-- One browser choice per line: `--temp-browser` can't go with `--cdp`
-  or `--open-browser`, and after `--open-browser`, `start` takes no
-  `--cdp` of its own.
+  - As a global option, `--browser` holds for the whole line (and
+    `--open-browser`). After `start`, it's for that command alone.
+- One browser choice per line: `--temp-browser` can't go with
+  `--browser` or `--open-browser`, and after `--open-browser`, `start`
+  takes no `--browser` of its own.
 
 ## Starting a run
 
@@ -363,7 +379,9 @@ sm-dev start [script.user.js]... [url]... [options]
 - Several scripts go into the same page, for interaction tests.
 - Without `--detach`, the run stops when sm-dev ends.
 
-`start` with nothing after it to keep the run going is refused:
+`start` with nothing after it to keep the run going opens the `> `
+prompt at a terminal (stdin and stdout both), as `--interactive`
+would. Elsewhere it is refused:
 `The start command with nothing after it would stop the run as soon as
 it started. Add --interactive for a prompt, --detach to leave it
 running, --seconds N to watch it for a while, or commands after --.`
@@ -385,7 +403,7 @@ running, --seconds N to watch it for a while, or commands after --.`
 | `--nowait` | Don't wait for the pages to settle |
 | `--seconds N` | Stop the run after N seconds |
 | `--idle-seconds N` | Stop after N idle seconds (default 30 minutes; `0` never) |
-| `--extension`, `--solo` | Use the real extension; silence its other collections |
+| `--extension` | Use the real extension |
 | `--devtools` | Start a Chrome DevTools server for the run |
 
 Details on each are in [`start` options in detail](#start-options-in-detail).
@@ -442,23 +460,23 @@ What to open:
   - The extra tabs are T2, T3, and stay open when the run ends.
   - Scripts it opened no tab for are listed at the end, with the
     reason.
-  - Works with `--extension` too, where only page output carries the
-    tab's name (the extension's Log entries don't say which tab).
+  - Works with `--extension` too.
   - Can't be combined with a URL.
 - `--notab` opens no tab at startup. `newtab` opens one later, and the
   first it opens is T1.
   - That tab isn't one a later run takes over (see
     [Which tab `start` uses](#which-tab-start-uses)).
-  - With `--extension`, the scripts just run in whatever pages you
-    browse to, and after a `--watch` save you reload them yourself.
+  - With `--extension` too, the scripts run only in the tabs the run
+    opens (`newtab`), not in pages you browse to yourself.
   - Can't be combined with a URL or `--all`.
 - With no scripts given, it starts as a browser to drive with the run
   commands, on a blank page or the URLs given. `load` adds scripts
   later. It can't be combined with `--all`, `--values`,
-  `--values-file`, `--watch` or `--solo`.
-  - With `--extension`, it's a browser whose SourceMonkey runs its own
-    collections. With `--temp-browser --headed`, that's a throwaway
-    browser with the extension, to try by hand.
+  `--values-file` or `--watch`.
+  - With `--temp-browser --headed --extension`, that's a throwaway
+    browser with the extension, to try by hand. The scripts it `load`s
+    run only in the run's tabs (`newtab`, and the tabs those open), not
+    in tabs you open yourself.
 - `--from-saved` opens each `.html` file given as a saved page, at the
   URL it was saved from, with `--url` and `--offline` as for `newtab`.
   See [Saved pages](#saved-pages). Not with `--all` or `--notab`.
@@ -484,7 +502,7 @@ The browser's language:
 - Each tab the run opens or follows gets it from its next load, over a
   CDP (Chrome DevTools Protocol) session held for the run. Other tabs
   in a shared browser keep theirs.
-- In a browser the run connects to (`--cdp`, `--open-browser`),
+- In a browser the run connects to (`--browser`, `--open-browser`),
   cross-site iframes and workers keep the browser's own languages, so a
   script running in such an iframe sees those.
 - A headless `--temp-browser` is also launched with Chrome's `--lang`
@@ -514,8 +532,7 @@ The run's lifetime:
 Other modes:
 
 - `--extension` uses the real extension in that browser instead of the
-  built-in stand-in; `--solo` silences the other collections for the
-  run. See [The extension backend](#the-extension-backend).
+  built-in stand-in. See [The extension backend](#the-extension-backend).
 - `--devtools` starts a Chrome DevTools server for the run. See
   [DevTools alongside a run](#devtools-alongside-a-run).
   `SM_DEV_DEVTOOLS=1` makes it the default, and `--nodevtools` turns it
@@ -559,8 +576,7 @@ them (blocked trackers, failed ad requests) to bury the script's lines.
   - errors whose stack runs through the script;
   - a thrown value that isn't an `Error` (it has no stack, so it is
     always shown).
-- A script's own throw prints once, as `<name> threw:` (with
-  `--extension`, also as the Log tab's entry).
+- A script's own throw prints once, as `<name> threw:`.
 - Stack lines name the file and line the code was written on, as the
   extension's Log tab does. A script's `@require`s run concatenated
   ahead of it, so the raw frames count from the top of the requires;
@@ -626,8 +642,32 @@ sm-dev --interactive      # no run yet: type start or attach
 
 - sm-dev reads the terminal only then. It needs a terminal, and can't
   be combined with `--stdin`.
+- With no commands on the line, at a terminal (stdin and stdout both),
+  the prompt is the default: plain `sm-dev` is the same as
+  `sm-dev --interactive`.
 - Line editing and history work as in most shells (arrows, Ctrl-A /
   Ctrl-E, Ctrl-U), and Tab completes a command name.
+- A `{{` block is typed and edited as one, over several lines:
+  - Enter starts a new line until the `}}` line closes the block, then
+    runs it, wherever the cursor is. Alt-Enter always starts a new
+    line, such as inside a block brought back from the history.
+  - Up and Down move between its lines, and go through the history
+    from the first and last line.
+  - Once Up or Down has brought back an entry, they step whole entries,
+    a block in one step, until you press another key. Ctrl-P / Ctrl-N
+    always step whole entries.
+  - Home / End, Ctrl-A / Ctrl-E, Ctrl-U and Ctrl-K act on the cursor's
+    line. Ctrl-K at a line's end joins the next line on, and Ctrl-Y
+    brings back what Ctrl-U or Ctrl-K deleted.
+  - A block taller than the terminal shows the rows around the cursor,
+    scrolling as it moves. Once run, it is shown whole.
+- At a terminal, history is kept across sessions in
+  `~/.sm-dev-history`, readable only by you.
+  - `SM_DEV_HISTORY` names another file, or set it empty for none.
+  - A `{{` block is one entry, brought back whole to edit or run again.
+  - Sessions open at once each add their own commands, without
+    overwriting the others'. A session sees the others' only once it
+    is restarted, as in a shell.
 - Output streamed while you type is printed above the prompt, which is
   then redrawn with what you had typed so far.
 - `--` splits a typed line into several commands, as on the command
@@ -636,8 +676,9 @@ sm-dev --interactive      # no run yet: type start or attach
 
 Keys:
 
-- Ctrl-C clears a half-typed line, and inside a `{{` block drops the
-  block.
+- Ctrl-C or Esc clears a half-typed command. One of several lines
+  cleared this way stays in the history, to bring back. A one-line
+  command doesn't.
 - On an empty line, Ctrl-C or Ctrl-D exits, as `exit` does: a run this
   sm-dev started without `--detach` stops, and one it only attached to
   goes on.
@@ -793,7 +834,7 @@ The options:
   - A run keeps the `--root` and `--local` it started with. A line that
     sends a command to a run it didn't start refuses them.
 - `--stdin` and `--interactive`, above.
-- The browser options, `--cdp`, `--open-browser`, `--profile`,
+- The browser options, `--browser`, `--open-browser`, `--profile`,
   `--temp-browser` and `--headed` (see
   [A browser to work in](#a-browser-to-work-in)).
 
@@ -1078,7 +1119,7 @@ current one.
 | `eval <js>` | Evaluates in the page and prints the result |
 | `eval --script <js>` | Evaluates in the scripts' world |
 | `eval --file <path>` | Evaluates JavaScript from a file |
-| `snapshot [selector] [--visible] [--out file]` | The page (or an element) as its accessibility tree, one line per element, each with a ref. `--visible`: only what's on screen. `--out` writes it to a file |
+| `snapshot [selector] [--visible] [--out file]` | The page (or each element the selector matches) as its accessibility tree, one line per element, each with a ref. `--visible`: only what's on screen. `--out` writes it to a file. `--find <text>`: only elements containing that text (case insensitive). For each match, `--up n` / `--context` add its containers; `--limit n`: how many matches to show (5; 0 for all) |
 | `screenshot [selector] [--full] <file>` | A PNG of what's showing, of the whole page (`--full`), or of one element |
 | `savehtml <file>` | The page's HTML, to replay later (see [Saved pages](#saved-pages)) |
 | `probe <selector>... [--html] [--css]` | Which selectors match, and how many |
@@ -1138,8 +1179,8 @@ current one.
 - Only refs in the latest snapshot work, so take a new one after the
   page changes. A reload or navigation drops them all; a route change
   within the page (a single-page app's) doesn't.
-  - Refs from `snapshot <selector>` work beside the rest's: sm-dev
-    quietly snapshots the whole page after it.
+  - Refs from `snapshot <selector>` work beside the rest's: it shows
+    parts of a snapshot of the whole page.
 - The whole page includes what scripts add after `<body>` (to
   `<html>`), and open shadow roots.
 - `[cursor=pointer]` marks an element the mouse shows a hand over: one
@@ -1395,9 +1436,9 @@ sm-dev stop                               # or stop D1, or stop --all
   killed.
 - `exit` (or Ctrl-C) ends sm-dev. A run it started without `--detach`
   stops with it; a run it only attached to goes on.
-- At the prompt or on stdin, `start`, `attach`, `stop`, `exit`, `list`
-  and `clear --extension` work as on sm-dev's command line. `stop` there leaves
-  sm-dev with no run.
+- At the prompt or on stdin, `start`, `attach`, `stop`, `exit` and
+  `list` work as on sm-dev's command line. `stop` there leaves sm-dev
+  with no run.
 
 `list` prints a table of the runs active on this machine, with the
 first few scripts' files and a count of the rest:
@@ -1685,9 +1726,11 @@ sm-dev --temp-browser start my-script.user.js https://example.com/ --extension
 
 - It loads the extension from the `dist/` beside sm-dev: the checkout's
   own build, or the copy `pnpm install` took in a repo of userscripts.
-- The profile is empty, so the site has no login, and the scripts
-  pushed are gone when the run ends (no `clear` needed).
+- The profile is empty, so the site has no login.
 - Starting it takes a few seconds longer than a plain `--temp-browser`.
+- Hidden, it still sends a windowed Chrome's user agent, not
+  `HeadlessChrome`, which some servers refuse a script's `@require`s
+  and requests for.
 
 For a browser that keeps the extension (and your logins):
 
@@ -1699,9 +1742,8 @@ For a browser that keeps the extension (and your logins):
 3. On SourceMonkey's details page there, turn on "Allow User Scripts".
 4. Start runs with `--extension`:
    ```sh
-   sm-dev start my-script.user.js https://example.com/ --extension --solo
+   sm-dev start my-script.user.js https://example.com/ --extension
    ```
-5. When done, drop the scratch scripts with `sm-dev clear --extension`.
 
 - Your ordinary browser with SourceMonkey installed works too, as long
   as it has a remote-debugging port.
@@ -1710,21 +1752,38 @@ For a browser that keeps the extension (and your logins):
 
 ### How it works
 
-- `sm-dev start --extension` pushes the script text into the extension
-  as a **scratch script**, stored only in the extension.
-  - It lands in the "Scratch" collection, and is registered before the
-    page opens.
-  - The next push of the same file name replaces it in place, keeping
-    its stored values.
+- `sm-dev start --extension` pushes the script text into the extension,
+  stored only there, in a **test collection** of the run's own.
+  - It shows on the collections page as `sm-dev test collection (run
+    D2-a3f9)`, the same id `status` shows on its `Backend:` line.
+  - The script is registered before the page opens.
+  - The next push of the same file in the run (`update`,
+    `--watch`) replaces it in place, keeping its stored values. Each
+    run starts with no stored values.
   - Nothing on disk is scanned.
-- What it prints are the entries the script adds to its own Log tab,
-  plus the page's console lines.
-- `--solo` disables all other collections for the run and restores them
-  after, so the scratch script runs without noise from the rest.
-- `sm-dev clear --extension` drops all scratch scripts and their stored
-  values, and turns solo mode off. If a `--solo` run was killed rather
-  than stopped, this is how to get the other collections back; they are
-  restored to how they were.
+  - The test collection is removed when the run ends, with its stored
+    values. A run that crashed has its collection removed about 6
+    minutes later.
+  - Only the run changes it: the extension won't move scripts into or
+    out of it, or install scripts into it.
+- The run commands work as in a harness run: `status`, `get`/`set`,
+  `menu`, the page commands, `reload`. Values and menu clicks go
+  through the extension.
+- What it prints: the script's starts, errors, menu commands and value
+  writes, the entries it adds to its Log tab, and the page's console
+  lines.
+- The run's tabs run only the scripts it pushed: the extension keeps
+  its other scripts out of them, across reloads and in the tabs they
+  open, until the run ends.
+- The scripts it pushed run only in the run's tabs: not in tabs you
+  open yourself, another run's tabs, or anywhere once the run ends. See
+  [sm-dev-extension.md](sm-dev-extension.md#tab-claims).
+- `scripts` and `status` also list the SourceMonkey-managed scripts that
+  match the current tab, as E1, E2, ..., with their status.
+  - `values E1` shows one's stored values, and `scripts E1` picks it for
+    `get` and `set`.
+  - Outside a `--temp-browser`, `set` on one needs `--force`, since it
+    changes your real data: `set key --force <json>`.
 
 ### Differences from the push backend
 
@@ -1734,6 +1793,11 @@ For a browser that keeps the extension (and your logins):
   relative `@require` is refused, and a local copy of a remote
   `@require` is not used: the extension fetches the URL.
 - No tab badges; the extension's toolbar badge covers the tabs.
+- A `document-start` script may run after the page's first inline
+  `<head>` scripts, where the extension alone would usually run it
+  first. While a run is live, every wrapper waits for the extension's
+  check before running (see
+  [sm-dev-extension.md](sm-dev-extension.md#making-every-wrapper-ask)).
 - Specs stay on the push backend. For a check that needs the real
   extension, drive it from a spec with SourceMonkey's own test
   fixtures, or by hand with `sm-dev start --extension`.
@@ -1749,7 +1813,7 @@ Under the push backend (the default):
 - `@run-at` order, including `document-start` code seeing `<html>`
   and `document-body` code seeing `<body>`. But see
   [Known differences](#known-differences-under-the-push-backend) for
-  `document-start` against early page scripts.
+  some `document-start` scripts against early page scripts.
 - `GM_*` storage semantics, including the write batching and broadcast
   to other pages running the script.
 - `@connect` gating of `GM_xmlhttpRequest`.
@@ -1796,12 +1860,16 @@ These apply to `sm-dev start` and to specs alike.
 
 - Scripts run in the top frame only. A script meant for an iframe
   (`@match` of the frame's URL, no `@noframes`) never starts there.
-- A `@run-at document-start` script usually runs after the page's
-  early `<head>` scripts, where the extension usually runs it first.
-  - Before it runs, it waits for a reply that goes through Node in
-    sm-dev, a much longer trip than the extension's.
-  - A script that must get in first (to capture or hook `fetch`,
-    `XMLHttpRequest`, `addEventListener`) may miss page code here.
+- A `@run-at document-start` script that grants storage, has a
+  `.tld` rule, or loads on a reload waits for a reply before it runs,
+  so it may run before or after the page's early `<head>` scripts.
+  - In sm-dev the reply goes through Node. Measured, it still often
+    came first, while in the extension the page's early scripts
+    usually ran first.
+  - A script whose early change a page script then overwrites (a
+    class on `<html>`) can work in one and not the other.
+  - Other `document-start` scripts skip that reply, and run ahead of
+    page scripts in both.
 - The isolated world enforces the page's Trusted Types policy, so a
   granted script setting `innerHTML` fails on sites like YouTube. The
   extension's `USER_SCRIPT` world is exempt.
@@ -1836,5 +1904,3 @@ These apply to `sm-dev start` and to specs alike.
 - **`sm-dev start` hangs at connect**: a tab in the browser is showing
   a dialog. The run names it; answer the dialog or close the tab (see
   [Page dialogs](#page-dialogs)).
-- **The other collections stay disabled after `--solo`**: the run was
-  killed. `sm-dev clear --extension` restores them.

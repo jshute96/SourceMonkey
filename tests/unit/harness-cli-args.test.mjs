@@ -67,6 +67,9 @@ test('match takes several scripts and URLs in any order, a heading per script', 
   // A script or URL given twice is checked once.
   const twice = spawnSync(process.execPath, [CLI, 'match', path.join(dir, 'match-exact.user.js'), page, path.join(dir, 'match-exact.user.js'), page], { encoding: 'utf8' });
   assert.equal(twice.stdout, `match    ${page}\n    Matched by:  @match *://*/headers-match-hash/headers-match-hash.html\n`);
+  // Two spellings of one file are one script too.
+  const spelled = spawnSync(process.execPath, [CLI, 'match', path.join(dir, 'match-exact.user.js'), `${dir}./x/../match-exact.user.js`, page], { encoding: 'utf8' });
+  assert.equal(spelled.stdout, twice.stdout);
   // With no .user.js argument, and no run to take the script from.
   const none = spawnSync(process.execPath, [CLI, 'match', page], { encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
   assert.equal(none.status, 2);
@@ -158,7 +161,6 @@ test('start with no scripts refuses the flags that act on scripts', () => {
   const none = 'ERROR: The start command was given no scripts, so it can\'t take';
   assert.deepEqual(run('--watch'), { code: 2, out: `${none} --watch` });
   assert.deepEqual(run('--all', '--values', '{}'), { code: 2, out: `${none} --all or --values` });
-  assert.deepEqual(run('--extension', '--solo'), { code: 2, out: `${none} --solo` });
   assert.deepEqual(run('--noscript'), { code: 2, out: 'ERROR: The start command no longer takes --noscript. Give it no scripts to start without any.' });
   // A script not named .user.js is refused, not opened as a page.
   assert.deepEqual(run('helper.js'), { code: 2, out: 'ERROR: helper.js is not a userscript: Its name doesn\'t end in .user.js' });
@@ -363,7 +365,7 @@ test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
   for (const name of ['open', 'reload', 'newtab']) assert.match(cli(name, '--bogus').out, new RegExp(`^ERROR: The ${name} command has no --bogus flag\\. It takes --noscript, --script, `));
   // The flags it does take, for a near miss.
   assert.deepEqual(cli('wait', '--timeout', '9'), { code: 2, out: 'ERROR: The wait command has no --timeout flag. It takes --timeout-seconds.' });
-  assert.deepEqual(cli('snapshot --out f --bad'), { code: 2, out: 'ERROR: The snapshot command has no --bad flag. It takes --visible, --out.' });
+  assert.deepEqual(cli('snapshot --out f --bad'), { code: 2, out: 'ERROR: The snapshot command has no --bad flag. It takes --visible, --out, --find, --up, --context, --limit.' });
   // In free text, -- is content: eval's JavaScript here.
   assert.deepEqual(cli('eval', 'T2', '--x'), { code: 2, out: 'ERROR: The eval command has no --x flag. It takes --script, --file.' });
   assert.deepEqual(cli('eval', 'x', '--y'), { code: 1, out: 'No sm-dev runs are active. Start one with sm-dev start.' });
@@ -435,7 +437,6 @@ test('the Accept-Language a request sent from Node carries is built as Chrome bu
 
 test('--devtools refuses the runs it can\'t serve', () => {
   assert.deepEqual(cliLine('--temp-browser', 'start', SCRIPT, '--devtools'), { code: 2, out: 'ERROR: The --devtools flag can\'t be used with --temp-browser' });
-  assert.deepEqual(run(SCRIPT, '--devtools', '--extension'), { code: 2, out: 'ERROR: The --devtools flag can\'t be used with --extension' });
 });
 
 test('--help lists every command, in sections, and how to name things', () => {
@@ -465,14 +466,14 @@ test('help for one command shows its entry and only its flags', () => {
   assert.match(match.out, /^Arguments:\n {2}all-scripts +In a run/m);
   // Its section's note comes along.
   assert.match(match.out, /^Without a run, these check script files and URLs\./m);
-  assert.doesNotMatch(match.out, /--cdp|--watch|^ {2}start /m);
+  assert.doesNotMatch(match.out, /--browser|--watch|^ {2}start /m);
   // A section's options, only for the commands that take them.
   assert.match(help('help', 'click').out, /^Common options:\n {2}--nowait /m);
   assert.doesNotMatch(help('help', 'eval').out, /--nowait/);
   // start's own groups, then the ones it shares.
   const start = help('help', 'start').out;
   assert.ok(start.indexOf('Lifetime:') < start.indexOf('Browser selection'));
-  assert.match(start, /^ {2}--solo /m);
+  assert.match(start, /^ {2}--extension /m);
   // --help before or after the command asks the same.
   assert.equal(help('match', '--help').out, match.out);
   assert.equal(help('--help', 'match').out, match.out);
@@ -503,8 +504,8 @@ test('each run command takes the flags its help lists, and no others', async () 
     newtab: saved, open: saved, reload: loads,
     closetab: ['--force'], cdp: ['--file'],
     click: ['--at', '--button', '--count', '--modifiers', '--nowait'], hover: ['--at', '--modifiers', '--nowait'], type: ['--nowait', '--file'], key: ['--nowait'],
-    eval: ['--script', '--file'], snapshot: ['--visible', '--out'], screenshot: ['--full'], probe: ['--css', '--html'],
-    wait: ['--timeout-seconds'], status: [], values: [], set: ['--file'], menu: [], tabs: [], focus: [],
+    eval: ['--script', '--file'], snapshot: ['--visible', '--out', '--find', '--up', '--context', '--limit'], screenshot: ['--full'], probe: ['--css', '--html'],
+    wait: ['--timeout-seconds'], status: [], values: [], set: ['--file', '--force'], menu: [], tabs: [], focus: [],
   };
   for (const [name, flags] of Object.entries(expected)) assert.deepEqual(commandFlags(name).sort(), [...flags].sort(), name);
 });
@@ -534,20 +535,22 @@ test('the browser options are global, and only one browser is chosen', () => {
   assert.deepEqual(run(SCRIPT, '--profile', 'x'), { code: 2, out: 'ERROR: The --profile flag is for the whole command line, so it goes first, before any command: sm-dev --profile ... <command>' });
   assert.deepEqual(cliLine('--headed', 'start', SCRIPT), { code: 2, out: 'ERROR: The --headed flag only applies with --temp-browser' });
   assert.deepEqual(cliLine('--profile', 'x', 'start', SCRIPT), { code: 2, out: 'ERROR: The --profile flag only applies with --open-browser' });
-  assert.deepEqual(cliLine('--cdp', '9222', '--temp-browser', 'start', SCRIPT), { code: 2, out: 'ERROR: The --temp-browser flag can\'t be used with --cdp' });
-  assert.deepEqual(cliLine('--temp-browser', 'start', SCRIPT, '--cdp', '9222'), { code: 2, out: 'ERROR: The --temp-browser flag can\'t be used with --cdp' });
+  assert.deepEqual(cliLine('--browser', '9222', '--temp-browser', 'start', SCRIPT), { code: 2, out: 'ERROR: The --temp-browser flag can\'t be used with --browser' });
+  assert.deepEqual(cliLine('--temp-browser', 'start', SCRIPT, '--browser', '9222'), { code: 2, out: 'ERROR: The --temp-browser flag can\'t be used with --browser' });
   assert.deepEqual(cliLine('--open-browser', '--temp-browser', 'start', SCRIPT), { code: 2, out: 'ERROR: The --temp-browser flag can\'t be used with --open-browser' });
   // Given on a line with no start, they'd do nothing.
   assert.deepEqual(cliLine('--temp-browser', 'eval', '1'), { code: 2, out: 'ERROR: The --temp-browser flag is for the runs a start begins, and this line has no start' });
-  assert.deepEqual(cliLine('--temp-browser', 'clear', '--extension'), { code: 2, out: 'ERROR: The clear command has nothing to clear in a --temp-browser, whose scratch scripts go when its run ends' });
-  // start's own --cdp would go elsewhere than the browser --open-browser starts.
-  assert.deepEqual(cliLine('--open-browser', 'start', SCRIPT, '--cdp', '9300', '--detach'), { code: 2, out: 'ERROR: The start command connects to the browser --open-browser starts, so give --cdp once, first: sm-dev --open-browser --cdp ... start ...' });
+  // start's own --browser would go elsewhere than the browser --open-browser starts.
+  assert.deepEqual(cliLine('--open-browser', 'start', SCRIPT, '--browser', '9300', '--detach'), { code: 2, out: 'ERROR: The start command connects to the browser --open-browser starts, so give --browser once, first: sm-dev --open-browser --browser ... start ...' });
   // A value in the same word, and not the next option taken for one.
-  assert.deepEqual(cliLine('--cdp=9222', '--temp-browser', 'start', SCRIPT), { code: 2, out: 'ERROR: The --temp-browser flag can\'t be used with --cdp' });
-  assert.deepEqual(cliLine('--cdp', '--open-browser'), { code: 2, out: 'ERROR: The --cdp flag needs a value' });
-  assert.deepEqual(cliLine('--open-browser', '--cdp', 'http://127.0.0.1'), { code: 2, out: 'ERROR: The --open-browser flag starts a browser on this machine, so --cdp must be a local port, not 127.0.0.1' });
-  assert.deepEqual(cliLine('--open-browser', '--cdp', 'http://abc.com:234/xxx'), { code: 2, out: 'ERROR: The --open-browser flag starts a browser on this machine, so --cdp must be a local port, not abc.com:234/xxx' });
-  assert.deepEqual(cliLine('--open-browser', '--cdp', 'localhost:9222/xxx'), { code: 2, out: 'ERROR: The --open-browser flag starts a browser on this machine, so --cdp must be a local port, not localhost:9222/xxx' });
-  assert.deepEqual(cliLine('--open-browser', '--cdp', '[::1]:9222'), { code: 2, out: 'ERROR: The --open-browser flag starts a browser on this machine, so --cdp must be a local port, not [::1]:9222' });
-  assert.deepEqual(cliLine('--open-browser', '--cdp', 'example.com:9222'), { code: 2, out: 'ERROR: The --open-browser flag starts a browser on this machine, so --cdp must be a local port, not example.com:9222' });
+  assert.deepEqual(cliLine('--browser=9222', '--temp-browser', 'start', SCRIPT), { code: 2, out: 'ERROR: The --temp-browser flag can\'t be used with --browser' });
+  assert.deepEqual(cliLine('--browser', '--open-browser'), { code: 2, out: 'ERROR: The --browser flag needs a value' });
+  assert.deepEqual(cliLine('--open-browser', '--browser', 'http://127.0.0.1'), { code: 2, out: 'ERROR: The --open-browser flag starts a browser on this machine, so --browser must be a local port, not 127.0.0.1' });
+  assert.deepEqual(cliLine('--open-browser', '--browser', 'http://abc.com:234/xxx'), { code: 2, out: 'ERROR: The --open-browser flag starts a browser on this machine, so --browser must be a local port, not abc.com:234/xxx' });
+  assert.deepEqual(cliLine('--open-browser', '--browser', 'localhost:9222/xxx'), { code: 2, out: 'ERROR: The --open-browser flag starts a browser on this machine, so --browser must be a local port, not localhost:9222/xxx' });
+  assert.deepEqual(cliLine('--open-browser', '--browser', '[::1]:9222'), { code: 2, out: 'ERROR: The --open-browser flag starts a browser on this machine, so --browser must be a local port, not [::1]:9222' });
+  assert.deepEqual(cliLine('--open-browser', '--browser', 'example.com:9222'), { code: 2, out: 'ERROR: The --open-browser flag starts a browser on this machine, so --browser must be a local port, not example.com:9222' });
+  // A setting from $SM_DEV_BROWSER (once the binary's variable) is named as such.
+  const fromEnv = spawnSync(process.execPath, [CLI, '--open-browser'], { encoding: 'utf8', env: { ...process.env, SM_DEV_BROWSER: '/usr/bin/google-chrome' } });
+  assert.equal(fromEnv.stderr.trim() || fromEnv.stdout.trim(), 'ERROR: The --open-browser flag starts a browser on this machine, so $SM_DEV_BROWSER must be a local port, not /usr/bin/google-chrome');
 });

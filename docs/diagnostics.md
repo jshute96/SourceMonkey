@@ -328,18 +328,20 @@ One capitalization convention, with carve-outs:
 - **Every message a user reads starts with a capital and ends without
   a period** — diagnostics, Log rows, banners, and the viewer's
   `setMessage` copy alike (`Install failed: …`, `This script is already
-  installed`, `Checked for updates — no change`).
+  installed`, `Checked for updates and found no change`).
   - "No period" is about a *single-sentence* message. Copy that is
     genuinely two sentences punctuates all of them, last one included —
     `Syntax error: … (in a.user.js, line 12). Installing it will store
     it as INVALID.`
-  - **A statement plus a fix is two sentences**, not one joined by an
-    em-dash: `This location is a manifest. Choose Manifest as the type.`
-    The dash reads as an aside, where the fix is the half the user acts
-    on. (An em-dash still fits a genuine aside, and the
-    subject-plus-shapes messages — `Location must be a URL or absolute
-    file path` — stay one sentence with no period.) Same for `Script not found in storage.
-    Open it from the collections page.`
+  - **A statement plus a fix is two sentences**, not one joined by a
+    dash: `This location is a manifest. Choose Manifest as the type.`
+    Same for `Script not found in storage. Open it from the
+    collections page.`
+  - The subject-plus-shapes messages (`Location must be a URL or
+    absolute file path`) stay one sentence with no period.
+  - **No em-dashes in any user-visible text** (messages, Log rows,
+    tooltips, UI copy, console diagnostics). Use a colon, comma,
+    parentheses, or two sentences instead.
   - Wrapping doesn't change that. `This file cannot be installed: No
     @name in the metadata block` is the intended reading: the prefix is
     its own clause, and the message keeps its capital wherever it lands.
@@ -428,8 +430,8 @@ lines land in two consoles, and you need both:
 ### Reading it
 
 ```
-timing — collection refresh: total 34ms (read 3.9, scan 8.7, fetch 0.4,
-  rebuild 0.7, write 21) — /path/to/scripts, 5 scripts, 5 unchanged,
+timing: collection refresh: total 34ms (read 3.9, scan 8.7, fetch 0.4,
+  rebuild 0.7, write 21); /path/to/scripts, 5 scripts, 5 unchanged,
   rows written: 0
 ```
 
@@ -530,10 +532,10 @@ large *waited* is the per-script check below.
 | `reload fast-path cumulative` | one for the batch, breaking `rebuild` into its concurrent stages |
 
 ```
-timing — script check: total 731ms (read-script 38, read-collection 169,
+timing: script check: total 731ms (read-script 38, read-collection 169,
   stat 17, fetch 23, rebuild 450, write 34)
   — garmin/upload.user.js, 46 KB row, refetched
-timing — reload fast-path cumulative: parse-check 448ms/3, build 2.8ms/1, deps 0.3ms/3
+timing: reload fast-path cumulative: parse-check 448ms/3, build 2.8ms/1, deps 0.3ms/3
 ```
 
 - **read-script / read-collection** — two point reads, in series because
@@ -586,7 +588,7 @@ numbers anyway, both because the worker is single-threaded:
 ### Storage scans
 
 ```
-timing — storage scan (registration sync): 183ms, 266 row(s)
+timing: storage scan (registration sync): 183ms, 266 row(s)
 ```
 
 - A `chrome.storage.local.get(null)` returns **every row the extension

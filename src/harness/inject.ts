@@ -31,7 +31,9 @@
 import type { CDPSession, Page, Request } from '@playwright/test';
 
 import { WRAPPER_GM_RUNTIME } from '../generated-wrappers.js';
-import { setUserAgentDataSnapshot } from '../injector.js';
+import {
+  setUserAgentDataSnapshot, SM_ABANDONED_MSG, SM_CHECK_PENDING_MSG, SM_ERROR_MSG, SM_START_MSG, SM_SWAPPED_MSG,
+} from '../injector.js';
 import { GM_RUNTIME_SOURCE_URL } from '../script-source-url.js';
 import type { BrowserActions, HarnessHost, OpenedTab, PageLink } from './host.js';
 import { isLanguageTag } from './browser-lang.js';
@@ -234,6 +236,27 @@ interface ContextInfo {
   frameId: string;
   name: string;
   isDefault: boolean;
+  origin: string;
+}
+
+export interface AttachOptions {
+  /**
+   * Watch the page without running scripts in it, for a run whose
+   * scripts the real extension runs (`--extension`). Adds nothing the
+   * page or the extension's scripts can see: no bindings, no bridge,
+   * no runtime. Only the activity tracker, in a world of its own that
+   * CDP creates, which `wait` reads. `inject` then only records the
+   * script, for the waits and the reports to know what to expect, and
+   * `eval --script` runs in the extension's user-script world.
+   * `extensionOrigin` names that world: `chrome-extension://<id>`.
+   */
+  watchOnly?: { extensionOrigin: string };
+  /**
+   * Run on each tab the page's scripts open (`GM_openInTab`) before it
+   * loads: it opens blank, this runs, then the URL loads. A harness
+   * run claims it here, so SourceMonkey-managed scripts stay out of it.
+   */
+  claimOpenedTab?: (page: Page) => Promise<void>;
 }
 
 export interface InjectOptions {
@@ -252,6 +275,10 @@ interface Injected {
   /** The document it was also run in at once (`immediately`), if any. */
   into?: BadgeDocument;
 }
+
+// The wrapper's messages that name their script by `id`; the rest name
+// it by `scriptId`, and an `id` of theirs is a request's.
+const WRAPPER_REPORTS = new Set([SM_CHECK_PENDING_MSG, SM_START_MSG, SM_ERROR_MSG, SM_ABANDONED_MSG, SM_SWAPPED_MSG]);
 
 // Pages that already have an attachment. A second attachment on the
 // same page would replace the binding and skip the listener (the live
@@ -355,9 +382,15 @@ export class PageAttachment implements PageLink {
     readonly page: Page,
     readonly host: HarnessHost,
     private readonly cdp: CDPSession,
+    private readonly options: AttachOptions,
   ) {}
 
-  static async create(page: Page, host: HarnessHost): Promise<PageAttachment> {
+  /** Watching only, with the extension running the scripts (see `AttachOptions`). */
+  get watchOnly(): boolean {
+    return this.options.watchOnly !== undefined;
+  }
+
+  static async create(page: Page, host: HarnessHost, options: AttachOptions = {}): Promise<PageAttachment> {
     if (attached.has(page)) throw new Error('This page already has a harness attachment');
     // Claimed before the first await, so two concurrent attaches can't
     // both pass the check; released if setup fails, so the page can be
@@ -366,7 +399,7 @@ export class PageAttachment implements PageLink {
     let cdp: CDPSession | null = null;
     try {
       cdp = await page.context().newCDPSession(page);
-      const attachment = new PageAttachment(page, host, cdp);
+      const attachment = new PageAttachment(page, host, cdp, options);
       await attachment.install();
       return attachment;
     } catch (err) {
@@ -380,7 +413,7 @@ export class PageAttachment implements PageLink {
     // Before `Runtime.enable`, which reports the contexts that already exist.
     this.cdp.on('Runtime.executionContextCreated', ({ context }) => {
       const aux = (context.auxData ?? {}) as { frameId?: string; isDefault?: boolean };
-      this.contexts.set(context.id, { frameId: aux.frameId ?? '', name: context.name, isDefault: aux.isDefault === true });
+      this.contexts.set(context.id, { frameId: aux.frameId ?? '', name: context.name, isDefault: aux.isDefault === true, origin: context.origin });
       // Read as the document starts, before a script can open a dialog
       // that would hold the read up.
       if (aux.frameId === this.mainFrameId && context.name === ISOLATED_WORLD) void this.languages();
@@ -389,28 +422,7 @@ export class PageAttachment implements PageLink {
     this.cdp.on('Runtime.executionContextsCleared', () => { this.contexts.clear(); });
     await this.cdp.send('Page.enable');
     await this.cdp.send('Runtime.enable');
-    this.cdp.on('Runtime.bindingCalled', (ev) => {
-      if (ev.name === BADGE_BINDING) {
-        const context = this.contexts.get(ev.executionContextId);
-        if (context?.frameId === this.mainFrameId && context.name === ISOLATED_WORLD) this.badgeCall?.(ev.payload);
-        return;
-      }
-      const origin = ev.name === RUNTIME_BINDING ? 'isolated' : ev.name === BINDING ? 'page' : null;
-      if (origin) void this.onBridgeEvent(ev.payload, ev.executionContextId, origin);
-    });
-    await this.cdp.send('Runtime.addBinding', { name: BINDING });
-    // Only in the isolated world, so the page can't call it.
-    await this.cdp.send('Runtime.addBinding', { name: RUNTIME_BINDING, executionContextName: ISOLATED_WORLD });
-    await this.cdp.send('Runtime.addBinding', { name: BADGE_BINDING, executionContextName: ISOLATED_WORLD });
-    await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', {
-      source: BRIDGE_LISTENER,
-      runImmediately: true,
-    });
-    await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', {
-      source: ISOLATED_RUNTIME,
-      runImmediately: true,
-      worldName: ISOLATED_WORLD,
-    });
+    if (!this.watchOnly) await this.installBridge();
     await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', {
       source: ACTIVITY_TRACKER,
       runImmediately: true,
@@ -448,13 +460,41 @@ export class PageAttachment implements PageLink {
     if (this.page.isClosed()) this.onClose();
   }
 
+  // The harness's side of the scripts' messages: the bindings they call,
+  // and the bridge and runtime they call them through.
+  private async installBridge(): Promise<void> {
+    this.cdp.on('Runtime.bindingCalled', (ev) => {
+      if (ev.name === BADGE_BINDING) {
+        const context = this.contexts.get(ev.executionContextId);
+        if (context?.frameId === this.mainFrameId && context.name === ISOLATED_WORLD) this.badgeCall?.(ev.payload);
+        return;
+      }
+      const origin = ev.name === RUNTIME_BINDING ? 'isolated' : ev.name === BINDING ? 'page' : null;
+      if (origin) void this.onBridgeEvent(ev.payload, ev.executionContextId, origin);
+    });
+    await this.cdp.send('Runtime.addBinding', { name: BINDING });
+    // Only in the isolated world, so the page can't call it.
+    await this.cdp.send('Runtime.addBinding', { name: RUNTIME_BINDING, executionContextName: ISOLATED_WORLD });
+    await this.cdp.send('Runtime.addBinding', { name: BADGE_BINDING, executionContextName: ISOLATED_WORLD });
+    await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', {
+      source: BRIDGE_LISTENER,
+      runImmediately: true,
+    });
+    await this.cdp.send('Page.addScriptToEvaluateOnNewDocument', {
+      source: ISOLATED_RUNTIME,
+      runImmediately: true,
+      worldName: ISOLATED_WORLD,
+    });
+  }
+
   /**
    * Badge the tab's icon with its script count and status, as the
    * extension's toolbar badge does, until the attachment is disposed.
    * See tab-badge.ts.
    */
   async showBadge(options?: BadgeOptions): Promise<void> {
-    if (this.badge || this.disposing) return;
+    // The extension's toolbar badge covers a watched tab.
+    if (this.badge || this.disposing || this.watchOnly) return;
     const badge = new TabBadge({
       page: this.page,
       link: this,
@@ -599,7 +639,8 @@ export class PageAttachment implements PageLink {
   // with `smWorld`, so an isolated script's values and responses stay
   // out of the page.
   async push(message: object): Promise<void> {
-    if (this.closed) return;
+    // No scripts of the harness's here to hear it.
+    if (this.closed || this.watchOnly) return;
     const { type, smWorld } = message as { type?: unknown; smWorld?: unknown };
     const isolated = this.contextFor(ISOLATED_WORLD);
     const sends: Promise<unknown>[] = [];
@@ -616,6 +657,19 @@ export class PageAttachment implements PageLink {
       ));
     }
     await Promise.all(sends);
+  }
+
+  // The top frame's context the scripts without `@grant none` run in:
+  // the harness's isolated world, or the extension's user-script world
+  // when watching.
+  private scriptsContext(): number | null {
+    const origin = this.options.watchOnly?.extensionOrigin;
+    if (!origin) return this.contextFor(ISOLATED_WORLD);
+    let found: number | null = null;
+    for (const [id, info] of this.contexts) {
+      if (info.frameId === this.mainFrameId && !info.isDefault && info.origin === origin) found = id;
+    }
+    return found;
   }
 
   // The top frame's context for a world: '' is the page's own (MAIN).
@@ -638,7 +692,7 @@ export class PageAttachment implements PageLink {
    * error of the evaluation's own (the page gone, say).
    */
   async evaluate(expression: string, world: 'page' | 'scripts'): Promise<string> {
-    const contextId = this.contextFor(world === 'page' ? '' : ISOLATED_WORLD);
+    const contextId = world === 'page' ? this.contextFor('') : this.scriptsContext();
     if (contextId === null) throw new Error(world === 'page' ? 'The page has no document to evaluate in' : 'The scripts\' world isn\'t set up in this document');
     let { result, exceptionDetails } = await this.cdp.send('Runtime.evaluate', {
       expression, contextId, awaitPromise: true, replMode: true, userGesture: true,
@@ -757,8 +811,9 @@ export class PageAttachment implements PageLink {
       // never attached to just to ask their id: under `sm-dev start` they
       // are the developer's own tabs.
       const before = new Set(this.page.context().pages());
+      const claim = this.options.claimOpenedTab;
       const { targetId } = await browserSession.send('Target.createTarget', {
-        url,
+        url: claim ? 'about:blank' : url,
         browserContextId: targetInfo.browserContextId,
         background: !active,
       });
@@ -769,6 +824,12 @@ export class PageAttachment implements PageLink {
         // Never found, so nothing else would close it.
         await browserSession.send('Target.closeTarget', { targetId }).catch(() => undefined);
         throw err;
+      }
+      if (opened && claim) {
+        // Until it commits, so the run sets it up at its own page; the
+        // scripts are injected into it as it loads.
+        await claim(opened).catch(() => undefined);
+        await opened.goto(url, { waitUntil: 'commit' }).catch(() => undefined);
       }
       if (opened && active) await opened.bringToFront().catch(() => undefined);
       return opened;
@@ -818,6 +879,14 @@ export class PageAttachment implements PageLink {
     }
     const payload = envelope?.payload;
     if (!payload || typeof payload !== 'object') return;
+    // A page-world message about a script the harness didn't inject is
+    // SourceMonkey-managed, in the same browser: its bridge answers it.
+    // Answering too would race it, and a `run` here would beat the
+    // extension's `skip` for a tab the run claimed.
+    const fields = payload as Record<string, unknown>;
+    const about = typeof fields.scriptId === 'string' ? fields.scriptId
+      : WRAPPER_REPORTS.has(String(fields.type)) && typeof fields.id === 'string' ? fields.id : '';
+    if (origin === 'page' && about && !this.host.hasHosted(about)) return;
     // A listener on the host that throws must not become an unhandled
     // rejection here, and the page still gets an answer: the extension's
     // bridge always replies, and `{action: 'run'}` is its fallback too.
@@ -852,6 +921,11 @@ export class PageAttachment implements PageLink {
     const id = prepared.spec.id;
     if (this.injected.has(id)) await this.remove(id);
     this.host.addScript(prepared, this);
+    if (this.watchOnly) {
+      // Recorded only; the extension runs it.
+      this.injected.set(id, { script: prepared, identifiers: [], at: Date.now() });
+      return;
+    }
     const world = prepared.world;
     const identifiers: string[] = [];
     if (prepared.needsGmRuntime && !this.runtimeWorlds.has(world)) {
@@ -991,9 +1065,9 @@ export async function targetIdOf(page: Page): Promise<string | null> {
   }
 }
 
-export async function attachPage(page: Page, host: HarnessHost): Promise<PageAttachment> {
+export async function attachPage(page: Page, host: HarnessHost, options: AttachOptions = {}): Promise<PageAttachment> {
   await readUserAgentData(page);
-  return PageAttachment.create(page, host);
+  return PageAttachment.create(page, host, options);
 }
 
 let userAgentDataRead = false;

@@ -47,7 +47,7 @@ test('flags take a value after them or after =, and are checked', () => {
   assert.deepEqual(typed('snapshot', '--out='), { error: 'The --out flag needs a value: --out FILE', flag: '--out' });
   assert.deepEqual(typed('snapshot', '--out --visible'), { error: 'The --out flag needs a value: --out FILE', flag: '--out' });
   assert.deepEqual(typed('snapshot', '--visible --visible'), { error: 'The --visible flag can be given once', flag: '--visible' });
-  assert.deepEqual(typed('snapshot', '--deep'), { error: 'The snapshot command has no --deep flag. It takes --visible, --out.', flag: '--deep' });
+  assert.deepEqual(typed('snapshot', '--deep'), { error: 'The snapshot command has no --deep flag. It takes --visible, --out, --find, --up, --context, --limit.', flag: '--deep' });
   // A quoted word is never a flag.
   assert.deepEqual(typed('probe', `'--x' .y`).words, ['--x', '.y']);
   // Also on a command that takes nothing else.
@@ -86,7 +86,7 @@ test('text is the rest of the line, its --words its own', () => {
   assert.deepEqual(typed('set', `k '["a"]'`), { flags: {}, words: ['k'], text: '["a"]' });
   assert.equal(typed('set', 'k "metric"').text, '"metric"');
   assert.deepEqual(typed('set', 'k --file v.json'), { flags: { '--file': 'v.json' }, words: ['k'], text: '' });
-  assert.equal(typed('set', 'k --flie v.json').error, 'The set command has no --flie flag. It takes --file.');
+  assert.equal(typed('set', 'k --flie v.json').error, 'The set command has no --flie flag. It takes --file, --force.');
   // A menu label is unquoted by menu itself, after any T2. before it.
   assert.equal(typed('menu', `T2.'Toggle dark'`).text, `T2.'Toggle dark'`);
   assert.equal(typed('type', `'#x' 'Test User'`).text, 'Test User');
@@ -123,8 +123,8 @@ test('wait: a tab, then the form, and flags ending wait log\'s text', () => {
 });
 
 test('sm-dev\'s own commands read the same way', () => {
-  assert.deepEqual(sent('start', 'a.user.js', '--watch', '--cdp=9300', 'https://x.com/'), {
-    flags: { '--watch': true, '--cdp': '9300' }, words: ['a.user.js', 'https://x.com/'],
+  assert.deepEqual(sent('start', 'a.user.js', '--watch', '--browser=9300', 'https://x.com/'), {
+    flags: { '--watch': true, '--browser': '9300' }, words: ['a.user.js', 'https://x.com/'],
   });
   assert.equal(sent('stop', '--watch').error, 'The stop command has no --watch flag. It takes --all.');
   assert.equal(sent('list', 'x').error, 'The list command takes no arguments');

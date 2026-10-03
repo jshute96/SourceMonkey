@@ -18,14 +18,17 @@ import { fileURLToPath } from 'node:url';
 
 import type { BrowserContext, Dialog, Page } from '@playwright/test';
 
-import { CommandAssembler } from './command-lines.js';
+import { CommandAssembler, endsOutsideBlock } from './command-lines.js';
 import { extensionLabel, type ExtensionState } from './extension-backend.js';
+import { firstLine } from './extension-link.js';
 import type { HarnessHost, MenuCommandRecord } from './host.js';
 import type { PageAttachment } from './inject.js';
 import { parseCommandArgs, splitWords, unquoteWhole, type ParsedArgs } from './command-args.js';
 import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, commandsHelp } from './command-list.js';
-import { readJsonFile } from './input-file.js';
+import { errorSentence, readJsonFile, writeProblem } from './input-file.js';
 import { PAGE_COMMANDS, runPageCommand } from './page-commands.js';
+import { editMultiLine } from './prompt-editor.js';
+import { appendHistory, HISTORY_SIZE, historyFile, loadHistory } from './prompt-history.js';
 import { defaultPageUrl, NO_DEFAULT_PAGE, preparedScriptMatches, preparedScriptName, preparedScriptPath, shownPath, withDefaultScheme, type PreparedScript } from './prepare.js';
 import { currentTab, dialogKind, dialogWaitingMessage, NO_TABS, pickTab, TAB_ARG, tabName } from './tab-refs.js';
 import { runLogLabel } from './run-log.js';
@@ -86,6 +89,20 @@ function tabIdsSuffix(tab: ControlledTab): string {
   return ids.length > 0 ? ` [${ids.join(' ')}]` : '';
 }
 
+/**
+ * A SourceMonkey-managed script, which an `--extension` run didn't
+ * push: named E1, E2, ... for the run, in the order it first sees them.
+ */
+export interface OtherScript {
+  label: string;
+  name: string;
+  collection: string;
+  /** What the toolbar badge says of it on the tab it was listed for. */
+  status: string;
+  values(): Promise<Record<string, unknown>>;
+  setValues(values: Record<string, unknown>): Promise<void>;
+}
+
 export interface ConsoleContext {
   host: HarnessHost;
   /** The controlled tabs still open, T1 first. */
@@ -105,6 +122,17 @@ export interface ConsoleContext {
   updateScripts?: (scripts?: PreparedScript[]) => Promise<void>;
   /** The scripts this run injected, in load order. */
   scripts: PreparedScript[];
+  /** With `--extension`: SourceMonkey-managed scripts (see `OtherScript`). */
+  others?: {
+    /** Those on the tab's page, as its toolbar badge lists them. */
+    onTab(tab: ControlledTab): Promise<OtherScript[]>;
+    /** One already listed, by its label (`E2`). */
+    byLabel(label: string): OtherScript | undefined;
+    /** `set` on one changes the person's own data, so needs `--force`. */
+    guarded: boolean;
+  };
+  /** One of `others` picked for `get` and `set` (`scripts E1`), in place of `current`. */
+  currentOther?: OtherScript;
   /**
    * The script `get` and `set` act on. Starts as the first; `scripts`
    * changes it.
@@ -126,6 +154,12 @@ export interface ConsoleContext {
   devtools?: () => string | null;
   /** The run's browser, for `status`: `connected to browser 127.0.0.1:9233`. */
   browser?: string;
+  /**
+   * Where the scripts run, for `status`, when it isn't sm-dev's own
+   * stand-in: `SourceMonkey extension, test collection D2-a3f9`. Read
+   * as `status` runs.
+   */
+  backend?: () => string;
   /** Whether SourceMonkey is there now, for `status`; null when unknown. */
   extension?: () => Promise<ExtensionState | null>;
   /** The run's output so far, for `wait log`. */
@@ -294,8 +328,10 @@ export async function runConsoleCommand(
   const { flags } = parsed;
   const current = ctx.current ?? ctx.scripts[0];
   const scriptId = current?.spec?.id;
+  const other = ctx.currentOther;
   // Named in the output only when there is a choice to be clear about.
-  const whose = ctx.scripts.length > 1 && current ? ` (${preparedScriptName(current)})` : '';
+  const whose = other ? ` (${other.label}: ${other.name})`
+    : ctx.scripts.length > 1 && current ? ` (${preparedScriptName(current)})` : '';
   const picked = currentTab(ctx);
   // Every controlled tab can be closed, T1 included.
   if (!picked && NEEDS_A_TAB.has(command)) {
@@ -378,6 +414,14 @@ export async function runConsoleCommand(
           ctx.out(scriptRow(ctx, script));
           if (picked) ctx.out(activityLine(ctx, picked, script.spec?.id));
         }
+        for (const l of await otherLines(ctx, picked)) ctx.out(l);
+        return;
+      }
+      if (OTHER_LABEL.test(text)) {
+        const found = await pickOther(ctx, text, picked);
+        if (!found) return false;
+        ctx.currentOther = found;
+        ctx.out(`[sm-dev] Selected ${found.label}: ${found.name}`);
         return;
       }
       const ref = tabRef(ctx, text, tab);
@@ -389,12 +433,13 @@ export async function runConsoleCommand(
       const found = pickScript(ctx, ref.rest);
       if (!found) return false;
       ctx.current = found;
+      ctx.currentOther = undefined;
       if (!ref.named) {
-        ctx.out(`[sm-dev] Using ${scriptLabel(found)} for get and set`);
+        ctx.out(`[sm-dev] Selected ${scriptLabel(found)}`);
         return;
       }
       ctx.tab = ref.tab;
-      ctx.out(`[sm-dev] Using ${scriptLabel(found)} for get and set, and ${tabName(ref.tab)} for the page commands`);
+      ctx.out(`[sm-dev] Selected ${scriptLabel(found)}, and ${tabName(ref.tab)} for the page commands`);
       return;
     }
     case 'status': {
@@ -403,6 +448,7 @@ export async function runConsoleCommand(
         const extension = ctx.browser ? extensionLabel(await ctx.extension?.() ?? null) : '';
         ctx.out(`Run: ${ctx.runId} (pid ${process.pid})${ctx.browser ? `, ${ctx.browser}${extension ? ` (${extension})` : ''}` : ''}`);
       }
+      if (ctx.backend) ctx.out(`Backend: ${ctx.backend()}`);
       if (ctx.log) ctx.out(`Log: ${runLogLabel(ctx.log, ctx.runId)}`);
       const devtools = ctx.devtools?.();
       if (devtools) ctx.out(`DevTools: ${devtools}`);
@@ -410,10 +456,19 @@ export async function runConsoleCommand(
       // the scripts on the current one, which is marked there. With no
       // tab, still the scripts and what they have stored.
       printTabs(ctx);
-      for (const l of statusLines(ctx, tab)) ctx.out(l);
+      for (const l of await statusLines(ctx, tab)) ctx.out(l);
+      for (const l of await otherLines(ctx, tab)) ctx.out(l);
       return;
     }
     case 'values': {
+      if (OTHER_LABEL.test(text)) {
+        const found = await pickOther(ctx, text, picked);
+        if (!found) return false;
+        ctx.out('Stored values:');
+        ctx.out(`  ${otherLabel(found)}`);
+        for (const l of valueEntries(await found.values())) ctx.out(l);
+        return;
+      }
       if (ctx.scripts.length === 0) {
         ctx.out(`[sm-dev] ${NO_SCRIPTS}`);
         return;
@@ -436,11 +491,11 @@ export async function runConsoleCommand(
       }
       await settleWrites();
       ctx.out('Stored values:');
-      for (const l of valueLines(ctx, scripts)) ctx.out(l);
+      for (const l of await valueLines(ctx, scripts)) ctx.out(l);
       return;
     }
     case 'get': {
-      if (!scriptId) {
+      if (!scriptId && !other) {
         ctx.out(`[sm-dev] ${NO_SCRIPTS}`);
         return;
       }
@@ -449,11 +504,12 @@ export async function runConsoleCommand(
         return false;
       }
       await settleWrites();
-      ctx.out(`  ${text} = ${JSON.stringify(ctx.host.getValue(scriptId, text))}`);
+      const values = other ? await other.values() : await ctx.host.valuesOf(scriptId!);
+      ctx.out(`  ${text} = ${JSON.stringify(values[text])}`);
       return;
     }
     case 'set': {
-      if (!scriptId) {
+      if (!scriptId && !other) {
         ctx.out(`[sm-dev] ${NO_SCRIPTS}`);
         return;
       }
@@ -492,11 +548,25 @@ export async function runConsoleCommand(
           return;
         }
       }
-      if (blockedByDialog(ctx.tabs())) return;
+      if (flags['--force'] === true && !other) {
+        ctx.out('[sm-dev] ERROR: The --force flag is for SourceMonkey-managed scripts only (E1, ...)');
+        return false;
+      }
+      // A SourceMonkey-managed script never runs in the run's tabs, so a
+      // dialog there doesn't hold up its write.
+      if (!other && blockedByDialog(ctx.tabs())) return;
       // Through the host, so a running script sees it on its next read
       // and its value-change listeners fire, as another tab's write
       // would.
-      await ctx.host.setValues(scriptId, { [key]: value });
+      if (other) {
+        if (ctx.others?.guarded && flags['--force'] !== true) {
+          ctx.out(`[sm-dev] ERROR: ${other.label} is a SourceMonkey-managed script, so this would change its real stored data. Use --force to continue.`);
+          return false;
+        }
+        await other.setValues({ [key]: value });
+      } else {
+        await ctx.host.setValues(scriptId!, { [key]: value });
+      }
       ctx.out(`[sm-dev] Set ${key}${whose}`);
       return;
     }
@@ -694,8 +764,13 @@ function scriptLabel(script: PreparedScript): string {
 // One script's row in any list of them: its number in the `scripts` list,
 // with `*` on the one `get` and `set` act on.
 function scriptRow(ctx: ConsoleContext, script: PreparedScript): string {
-  const current = ctx.current ?? ctx.scripts[0];
-  return `${script === current ? '* ' : '  '}${ctx.scripts.indexOf(script) + 1}: ${scriptLabel(script)}`;
+  return `${script === selectedScript(ctx) ? '* ' : '  '}${ctx.scripts.indexOf(script) + 1}: ${scriptLabel(script)}`;
+}
+
+// The run's script `get` and `set` act on, marked `*` in the lists:
+// none while a SourceMonkey-managed script (`E1`) is picked instead.
+function selectedScript(ctx: ConsoleContext): PreparedScript | undefined {
+  return ctx.currentOther ? undefined : ctx.current ?? ctx.scripts[0];
 }
 
 /**
@@ -1099,7 +1174,7 @@ function printTabs(ctx: ConsoleContext): void {
     const running = runningOn(ctx, tab);
     // By @name alone, the file being in `scripts`. The selected script is one
     // for the whole run, so its `*` goes only under the current tab.
-    const selected = tab === current ? ctx.current ?? ctx.scripts[0] : undefined;
+    const selected = tab === current ? selectedScript(ctx) : undefined;
     for (const script of running) {
       ctx.out(`   ${script === selected ? '* ' : '  '}${ctx.scripts.indexOf(script) + 1}: ${preparedScriptName(script)}`);
     }
@@ -1435,7 +1510,7 @@ function fire(tab: ControlledTab, fired: Promise<boolean>): Promise<boolean> {
 // where it is active, its counts, and its last error. With no `tab`,
 // only what doesn't depend on one: stored values and errors.
 // The lines under a script are indented to start under its name.
-function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined): string[] {
+async function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined): Promise<string[]> {
   const { scripts } = ctx;
   const { reports } = ctx.host;
   const lines: string[] = [];
@@ -1446,7 +1521,7 @@ function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined): strin
     lines.push(scriptRow(ctx, script));
     if (!tab) {
       // Errors are the script's, from tabs since closed, so still told.
-      const values = id ? Object.keys(ctx.host.getValues(id)).length : 0;
+      const values = id ? Object.keys(await ctx.host.valuesOf(id)).length : 0;
       const errors = reports.errors.filter((r) => r.scriptId === id);
       const counts = [count(values, 'stored value'), count(errors.length, 'error')].filter((c) => !c.startsWith('0 '));
       if (counts.length > 0) lines.push(`${DETAIL}${counts.join(', ')}`);
@@ -1458,7 +1533,7 @@ function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined): strin
     const errors = fromTab(ctx, tab, reports.errors).filter((r) => r.scriptId === id);
     const menus = fromTab(ctx, tab, reports.menuCommands).filter((r) => r.scriptId === id).length;
     // Stored values are the script's, shared by every tab.
-    const values = id ? Object.keys(ctx.host.getValues(id)).length : 0;
+    const values = id ? Object.keys(await ctx.host.valuesOf(id)).length : 0;
     // Only the counts that aren't zero, and no line when none is.
     const counts = [count(menus, 'menu command'), count(values, 'stored value'), count(errors.length, 'error')]
       .filter((c) => !c.startsWith('0 '));
@@ -1489,17 +1564,83 @@ function activityLine(ctx: ConsoleContext, tab: ControlledTab, id: string | unde
   return `${DETAIL}${here} (${active ? 'Also active' : 'Active'} on ${elsewhere.join(',')}.)`;
 }
 
-function valueLines(ctx: ConsoleContext, scripts: PreparedScript[]): string[] {
+async function valueLines(ctx: ConsoleContext, scripts: PreparedScript[]): Promise<string[]> {
   const lines: string[] = [];
   for (const script of scripts) {
     lines.push(scriptRow(ctx, script));
     const id = script.spec?.id;
-    const values = id ? ctx.host.getValues(id) : {};
-    const keys = Object.keys(values);
-    if (keys.length === 0) lines.push('    Nothing stored');
-    for (const key of keys) lines.push(`    ${key} = ${JSON.stringify(values[key])}`);
+    lines.push(...valueEntries(id ? await ctx.host.valuesOf(id) : {}));
   }
   return lines;
+}
+
+// One script's values, a line each, under its row.
+function valueEntries(values: Record<string, unknown>): string[] {
+  const keys = Object.keys(values);
+  if (keys.length === 0) return ['    Nothing stored'];
+  return keys.map((key) => `    ${key} = ${JSON.stringify(values[key])}`);
+}
+
+// `E1`: a SourceMonkey-managed script (see `OtherScript`).
+const OTHER_LABEL = /^E\d+$/i;
+
+// The SourceMonkey-managed script `label` names, or null having said
+// why. Lists the current tab's first if it isn't known yet, so it can
+// be named before anything listed it.
+async function pickOther(ctx: ConsoleContext, label: string, tab: ControlledTab | undefined): Promise<OtherScript | null> {
+  const name = label.toUpperCase();
+  if (!ctx.others) {
+    ctx.out(`[sm-dev] ERROR: ${name} labels are only given in --extension runs`);
+    return null;
+  }
+  if (!ctx.others.byLabel(name) && tab) {
+    try {
+      await ctx.others.onTab(tab);
+    } catch (err) {
+      ctx.out(`[sm-dev] SourceMonkey-managed scripts on ${tabName(tab)} could not be listed: ${firstLine(err)}`);
+      return null;
+    }
+  }
+  const found = ctx.others.byLabel(name);
+  if (!found) ctx.out(`[sm-dev] There is no script ${name}. Use scripts to list them.`);
+  return found ?? null;
+}
+
+// How `scripts` and `status` show an extension script's badge status.
+// In the run's tabs, which the run claims, NOT_LOADED is the claim
+// keeping it out.
+const OTHER_STATUS: Record<string, string> = {
+  OK: 'Running',
+  ERROR: 'Threw an error',
+  REJECTED: 'Refused by Chrome',
+  MISSING: 'Not started',
+  UNEXPECTED: 'Running, though it doesn\'t match',
+  RELOAD: 'Changed since it started',
+  NOT_LOADED: 'Kept out of the run\'s tabs',
+};
+
+// `E1: Name (Collection)`, without the parentheses for a script whose
+// collection isn't known (one deleted since the page loaded).
+function otherLabel(o: OtherScript): string {
+  return `${o.label}: ${o.name}${o.collection ? ` (${o.collection})` : ''}`;
+}
+
+// SourceMonkey-managed scripts on `tab`, for `scripts` and `status`. None
+// outside an `--extension` run, or when there are none.
+async function otherLines(ctx: ConsoleContext, tab: ControlledTab | undefined): Promise<string[]> {
+  if (!ctx.others || !tab) return [];
+  let others: OtherScript[];
+  try {
+    others = await ctx.others.onTab(tab);
+  } catch (err) {
+    return [`[sm-dev] SourceMonkey-managed scripts on ${tabName(tab)} could not be listed: ${firstLine(err)}`];
+  }
+  if (others.length === 0) return [];
+  return [
+    `SourceMonkey-managed scripts on ${tabName(tab)}:`,
+    // By label: each listing gets the scripts afresh.
+    ...others.map((o) => `${o.label === ctx.currentOther?.label ? '* ' : '  '}${otherLabel(o)}: ${OTHER_STATUS[o.status] ?? o.status}`),
+  ];
 }
 
 function count(n: number, noun: string): string {
@@ -1803,9 +1944,10 @@ export interface PromptIO {
  * The `> ` prompt of `sm-dev --interactive`, reading the terminal: line
  * editing and history (readline's own keys: arrows, Ctrl-A/E, Ctrl-U
  * and so on), Tab completion of command names, and `... ` inside an
- * `{{` block (see command-lines.ts). Ctrl-C clears the typed
- * line; on an empty one it drops an open block, and otherwise it or
- * Ctrl-D leaves. Each command goes to `runLine` once typed, in order.
+ * `{{` block (see command-lines.ts), edited as one buffer at a terminal
+ * (see prompt-editor.ts). A block is one history entry, and history is
+ * kept across sessions (see prompt-history.ts). Ctrl-C clears the
+ * typed command, and on an empty line it or Ctrl-D leaves. Each command goes to `runLine` once typed, in order.
  * Returns a function that closes the prompt.
  */
 export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?: { start?: () => void }) => Promise<unknown>): () => void {
@@ -1822,28 +1964,85 @@ export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?:
     void runLine('', { start: () => io.out(`[sm-dev] ERROR: ${message}`) });
   };
   const names = [...COMMAND_NAMES].sort();
+  // Kept across sessions (see prompt-history.ts). Newest first.
+  const file = terminal ? historyFile() : null;
+  const history = file ? loadHistory(file) : [];
   const lines = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
     terminal,
     prompt: PROMPT,
-    // Tab completes a command name, except inside a {{ block,
-    // where the line is the block's (JavaScript or JSON).
-    completer: (line: string) => (blocks.open ? [[], line] : completeFrom(names, line)),
+    history,
+    // A lone Esc clears the command (see prompt-editor.ts). readline
+    // waits this long for more of an escape sequence before taking it
+    // as one: 500ms by default, which made Esc feel slow.
+    escapeCodeTimeout: 100,
+    // One over, so readline never drops an entry for the typed line
+    // it adds, which the 'history' handler below takes back out.
+    historySize: HISTORY_SIZE + 1,
+    // Tab completes a command name, except in a {{ block, where the
+    // text is the block's (JavaScript or JSON). Only at a terminal,
+    // where the editor holds a block as one buffer.
+    completer: (line: string) => (line.includes('\n') ? [[], line] : completeFrom(names, line)),
   });
+  // At a terminal a {{ block is typed and edited as one buffer, sent
+  // once its }} line ends it (see prompt-editor.ts). Without one, each
+  // line is sent as typed, and `blocks` collects them.
+  // A command of several lines (a {{ block, or lines joined with
+  // Alt-Enter) cleared by Ctrl-C or Esc is kept, unfinished, to take
+  // up again. Not one brought back from the history unchanged.
+  const editor = terminal ? editMultiLine(lines, BLOCK_PROMPT, endsOutsideBlock, (text) => {
+    if (text.includes('\n') && !history.includes(text)) remember(text);
+  }) : null;
+  // readline adds each typed line to the history itself, but a {{
+  // block should be one entry of all its lines, so its additions are
+  // taken back out here and `remember` adds whole entries instead.
+  // This leans on how readline (checked on Node 22) adds a line:
+  // - It skips a blank line, and one equal to the newest entry, so the
+  //   newest entry changing (from `newest`, ours) means it added one.
+  // - It reads the line it hands to 'line' before this event, so
+  //   removing it here doesn't change what is run.
+  let newest: string | undefined = history[0];
+  lines.on('history', (entries: string[]) => {
+    if (entries.length > 0 && entries[0] !== newest) entries.shift();
+  });
+  let saveFailed = false;
+  const remember = (entry: string): void => {
+    if (!entry.trim() || entry === newest) return;
+    history.unshift(entry);
+    if (history.length > HISTORY_SIZE) history.pop();
+    newest = entry;
+    if (!file || saveFailed) return;
+    try {
+      appendHistory(file, entry);
+    } catch (err) {
+      saveFailed = true;
+      io.out(`[sm-dev] Command history isn't being saved: Could not write ${file}: ${writeProblem(err) ?? errorSentence(err)}`);
+    }
+  };
+  // The lines of the {{ block being typed, for its history entry.
+  let blockLines: string[] = [];
   // Typed commands not yet done. The `> ` prompt waits for them, as a
   // shell's does, so a command's output lands before the next prompt
   // rather than under it. Typing ahead still works, on a bare line.
   let running = 0;
   // Set by a Ctrl-C while a command runs, so a second one leaves.
   let exitArmed = false;
+  // `blocks` is only open without a terminal, where lines are sent one
+  // by one.
   const promptText = (): string => (blocks.open ? BLOCK_PROMPT : running > 0 ? '' : PROMPT);
   const showPrompt = (preserveCursor: boolean): void => {
     lines.setPrompt(promptText());
     lines.prompt(preserveCursor);
   };
-  lines.on('line', (line) => {
+  const take = (line: string): void => {
+    const inBlock = blocks.open;
     const got = blocks.push(line);
+    if (inBlock || blocks.open) blockLines.push(line);
+    if (!blocks.open) {
+      remember(blockLines.length > 0 ? blockLines.join('\n') : line);
+      blockLines = [];
+    }
     if (got && 'error' in got) say(got.error);
     else if (got) {
       running++;
@@ -1853,6 +2052,10 @@ export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?:
         if (running === 0 && activePrompt === lines) showPrompt(true);
       });
     }
+  };
+  lines.on('line', (input) => {
+    // At a terminal, a block arrives as one line holding its lines.
+    for (const line of input.split('\n')) take(line);
     showPrompt(false);
   });
   // Erases the prompt and stops drawing output around it. Before the
@@ -1869,14 +2072,9 @@ export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?:
   // readline puts the terminal in raw mode, so Ctrl-C arrives here
   // rather than as the process's SIGINT. As in a shell, it first
   // clears a half-typed line, and only leaves on an empty one.
+  // Only at a terminal, so with the editor, where a {{ block is the
+  // typed buffer rather than lines `blocks` holds.
   lines.on('SIGINT', () => {
-    if (!lines.line && blocks.open) {
-      blocks.drop();
-      // Before the output, which redraws the prompt.
-      lines.setPrompt(promptText());
-      io.out('[sm-dev] Dropped the {{ block');
-      return;
-    }
     // With no prompt showing, Ctrl-C looks like it would cancel the
     // command. It can't, so the first one only says so.
     if (!lines.line && running > 0 && !exitArmed) {
@@ -1889,8 +2087,7 @@ export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?:
       io.exit(running > 0);
       return;
     }
-    lines.write(null, { ctrl: true, name: 'e' });
-    lines.write(null, { ctrl: true, name: 'u' });
+    editor?.clear();
   });
   // readline handles Ctrl-Z itself. On `fg` it pauses its input and
   // emits this event, but never resumes the input. Without this the
