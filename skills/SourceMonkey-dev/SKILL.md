@@ -319,13 +319,13 @@ $R screenshot shot.png               # then look at the PNG
 
 ### Seeing into the script: debug state and logging
 
-`eval --script` runs inside the selected script (`--script=<script>`
-names another), so it sees what the script's own code sees:
+`eval` runs inside the selected script (`--script=<script>` names
+another), so it sees what the script's own code sees:
 
 ```sh
-$R eval --script 'GM_info.script.version'
-$R eval --script 'GM_getValue("prefs")'
-$R eval --script 'config.mode'               # a top-level const of the script
+$R eval 'GM_info.script.version'
+$R eval 'GM_getValue("prefs")'
+$R eval 'config.mode'                        # a top-level const of the script
 ```
 
 - That covers the script's `GM_*` functions, its `@require`
@@ -335,28 +335,28 @@ $R eval --script 'config.mode'               # a top-level const of the script
   there are in reach too.
 - Locals inside other functions aren't. Expose them on `window`
   (below).
-- A selected script that hasn't run on the page falls back to the
-  scripts' shared world, and says so.
+- Use `eval --page` for the page's own globals (its `$`, an app's
+  state object), which a granted script's world can't see.
 
 For state inside other functions, expose state and functions on
 `window`. Build this in while developing; it's cheap and can stay:
 
 ```js
 const state = { slide: 0, zoom: 1 };
-window.myScript = { state, currentSlide, relayout };   // for eval --script
+window.myScript = { state, currentSlide, relayout };   // for eval
 ```
 
 ```sh
-$R eval --script 'myScript.state'            # printed as JSON
-$R eval --script 'myScript.currentSlide()'
-$R eval --script 'myScript.relayout(); myScript.state'
+$R eval 'myScript.state'                     # printed as JSON
+$R eval 'myScript.currentSlide()'
+$R eval 'myScript.relayout(); myScript.state'
 ```
 
 - With any `@grant` other than `none`, the script runs in an isolated
   world the page can't see, so a `window` property there is private
   to the script.
 - A `@grant none` script shares the page's world: pick a name the site
-  won't collide with. Plain `eval` reaches it too.
+  won't collide with. `eval --page` reaches it too.
 
 Log what happens, and wait for it instead of sleeping:
 
@@ -506,6 +506,10 @@ like `&&`. A `match` or `validate` miss doesn't stop them, nor does an
 `eval` or `cdp` call cut off by a navigation it set off. To check for
 an element that may not be there, use `probe`, which doesn't fail.
 
+Keep sm-dev's stderr: that's where a mistyped command says what was
+wrong. To keep output short, filter stdout (`| tail`, `| grep`) or send
+only stdout to `/dev/null`, never `2>/dev/null`.
+
 ```sh
 $R start sites/x/y.user.js https://x.com/ --detach -- click '.open' -- wait selector '#modal' -- snapshot '#modal'
 ```
@@ -522,7 +526,7 @@ wait selector '#modal-dialog'
 type '#input-name' 'Test User'
 click '#modal-submit'
 wait log /Saved record \d+/
-eval --script myScript.state
+eval myScript.state
 EOF
 ```
 

@@ -32,8 +32,10 @@ import { rebuildAdvice } from './rebuild-advice.js';
 export const EXTENSION_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist');
 
 export interface ExtensionLaunchOptions {
-  /** A visible window, with sound. Hidden and muted otherwise. */
+  /** A visible window. Hidden otherwise. */
   headed?: boolean;
+  /** Without sound (the default), or with it when false. */
+  muted?: boolean;
   /** More Chrome flags. */
   args?: string[];
   /**
@@ -82,7 +84,7 @@ export async function launchExtensionBrowser(options: ExtensionLaunchOptions = {
     // Port 0 has Chrome pick a free port and write it to the profile.
     // A port picked here could be taken before Chrome binds it, and the
     // run would connect to whatever took it.
-    context = await launch(profile, headed, ['--remote-debugging-port=0', ...(options.args ?? [])]);
+    context = await launch(profile, headed, ['--remote-debugging-port=0', ...(options.muted === false ? [] : ['--mute-audio']), ...(options.args ?? [])]);
     const port = readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0].trim();
     if (options.connectedElsewhere) leaveDialogsOpen(context);
     if (options.downloadsDir) await chromeDownloads(context);
@@ -140,7 +142,7 @@ async function launch(profile: string, headed: boolean, args: string[] = []): Pr
       handleSIGTERM: false,
       handleSIGHUP: false,
       args: [
-        ...(headed ? [] : ['--headless=new', '--mute-audio']),
+        ...(headed ? [] : ['--headless=new']),
         ...(userAgent ? [`--user-agent=${userAgent}`] : []),
         ...extensionArgs(),
         ...args,

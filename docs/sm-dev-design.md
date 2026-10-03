@@ -294,7 +294,7 @@ Command marks:
 - The global options are taken off the front of the line first:
   `--run`, `--root`, `--local`, `--stdin`, `--interactive`, and the
   browser's `--browser`, `--open-browser`, `--profile`,
-  `--temp-browser`, `--headed`.
+  `--temp-browser`, `--headed`, `--mute`, `--nomute`.
   - One later on the line is refused, and said to go first.
   - `--browser`, which `start` also takes, is excepted.
 - The rest of the line holds one or more commands, split on `--`.
@@ -511,8 +511,10 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
 - A launched Chromium (`--temp-browser`) gets a debugging port too,
   which the run connects to, so other tools can as well, and `list`
   shows where (see below).
-- A hidden one is started with `--mute-audio`, so pages (e.g. video sites)
-  play no sound; a `--headed` one keeps its sound.
+- It's started with `--mute-audio`, so pages (e.g. video sites) play no
+  sound, headed or not, unless the line has `--nomute`.
+  - `--open-browser` has sound unless the line has `--mute`, since
+    it's the person's lasting browser.
 
 ### Languages (`--lang`, `browser-lang.ts`)
 
@@ -649,17 +651,15 @@ and waits for them.
 
 ## Tabs
 
-### Reusing a tab (`openRunTab`)
+### A run's tab (`openRunTab`)
 
+- A run always opens a new tab, so it starts on a clean page.
 - The tabs runs opened are recorded in a file in the runs directory,
   with the owning pid.
-- A later run can take over a finished run's selected tab.
+- A later run closes a finished run's selected tab, after opening its
+  own, and only when its own opened in that window (so the window isn't
+  left empty and closed).
 - A tab carries no mark a page couldn't fake, hence the file.
-- A taken tab's page still runs the earlier run's scripts. Its console
-  lines and errors are dropped (`staleTabs`) until the run's first
-  navigation there commits, or kept if the run opens no page there.
-  - Not navigated away first: a run that fails before loading anything
-    leaves the page as it was.
 
 ### Followed tabs (`FollowedTabs` in `run.ts`)
 
@@ -803,9 +803,9 @@ User-facing behavior is in [harness-guide.md](harness-guide.md).
     see;
   - `inject` only records the script, so the waits and reports know
     what to expect.
-- `eval --script` runs in the script's own scope, in its world: for an
+- `eval` runs in the selected script's own scope, in its world: for an
   isolated script, the tab's execution context whose origin is the
-  extension's (see `eval --script` below).
+  extension's (see `eval` in a script below).
 
 ### The extension's API
 
@@ -949,8 +949,7 @@ sm-dev knows a tab by its CDP target id; the extension knows it by its
 
 #### Which tabs get claimed
 
-- T1, `newtab` tabs, and a reused tab from an earlier run: sm-dev
-  opens them, so it claims them as above.
+- T1 and `newtab` tabs: sm-dev opens them, so it claims them as above.
 - Tabs a claimed page opens (`window.open`, `target=_blank` links):
   the SW claims them itself, from
   `webNavigation.onCreatedNavigationTarget`, whose `sourceTabId` is the
@@ -1027,7 +1026,7 @@ or a second run pointed at a `--temp-browser`'s port.
 
 - **Claims**: each tab has at most one claim, naming its run.
   - A run claims only tabs it opens, so two live runs never claim the
-    same tab. A run takes over a tab only from a run that has ended
+    same tab. A run closes a tab only from a run that has ended
     (`openRunTab`), whose claim was released or has expired.
   - Leases are per run: one run's renewals and release touch only its
     own claims.
@@ -1326,8 +1325,9 @@ The run commands that drive and read a tab's page (`click`, `type`,
     documents.
   - Printed results are cut past 10,000 characters; `--out` writes
     them whole.
-- `eval --script` runs inside one script: the selected one, or the one
+- `eval` runs inside one script: the selected one, or the one
   `--script=<script>` names (`evalScope` in console-commands.ts).
+  `--page` runs in the page instead.
   - It calls the script's eval hook, a direct `eval` in its scope (see
     [injection.md](injection.md#sm-devs-eval-hook)), in the script's
     world. The host says where the hook is kept (`evalHook`): the run's
@@ -1340,9 +1340,12 @@ The run commands that drive and read a tab's page (`click`, `type`,
   - A page-world script's hook `eval`s under the page's Content
     Security Policy, but within a CDP evaluation, which Chrome exempts
     from it.
-  - No hook in the document means the script hasn't run there. The
-    selected script then falls back to the shared scripts' world, as
-    `--script` was before, and says so; a named one is an error.
+  - No hook in the document means the script hasn't run there. Then,
+    and with no run script selected, a bare `eval` runs in the page,
+    so the page's globals aren't silently out of reach.
+    - With `--script` it falls back to the scripts' shared world.
+    - It says so for a selected script, except in a `--noscript` tab;
+      a named one is an error.
 - `cdp` opens a fresh CDP session on the tab (`newCDPSession`) for each
   command and detaches it after.
   - Settings the calls make (like `Emulation.*` overrides) end when

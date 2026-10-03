@@ -394,16 +394,19 @@ export const HELP_SECTIONS: HelpSection[] = [
         usage: 'eval [tab] <js>',
         syntax: { args: 'text', tab: true, block: true, unquote: 'none' },
         about: [
-          'Evaluate JavaScript in the page and print the result.',
+          'Evaluate JavaScript inside the selected script and print the result.',
+          'It sees the page\'s DOM, the script\'s GM_* APIs, its @require libraries and its top-level declarations.',
+          'In a script that opens with a (function () { ... })() wrapper, it runs inside that, seeing its locals too.',
+          'With no script selected, or one that hasn\'t run on the page, it runs in the page.',
           'The last expression is the result, as in the DevTools console. A top-level return works too.',
           'eval {{ starts a multi-line block, ended by }}.',
         ],
         options: [
+          { term: '--page', about: 'Evaluate in the page instead, where the page\'s own globals are.' },
           {
             term: '--script[=<script>]',
             about: [
-              'Evaluate inside the selected script, or the one named: it sees the script\'s GM_* APIs, its @require libraries and its top-level declarations.',
-              'In a script that opens with a (function () { ... })() wrapper, it runs inside that, seeing its locals too.',
+              'Evaluate inside the selected script, or the one named.',
               'A selected script that hasn\'t run on the page falls back to the scripts\' shared world.',
             ],
           },
@@ -530,7 +533,8 @@ export const HELP_SECTIONS: HelpSection[] = [
           },
           { term: '--profile DIR', about: ['With --open-browser: the browser profile, kept between launches.', '(Default: ~/.config/sm-dev/browser-profile-<port>)'] },
           { term: '--temp-browser', about: 'Instead, launch a hidden, muted browser for each run, with an empty profile and SourceMonkey installed, and close it when the run ends.' },
-          { term: '--headed', about: 'With --temp-browser: make its window visible, with sound.' },
+          { term: '--headed', about: 'With --temp-browser: make its window visible.' },
+          { term: '--mute, --nomute', about: ['When launching a browser: turn its sound off or on.', '(Default: muted for --temp-browser, sound on for --open-browser)'] },
         ],
       },
       {

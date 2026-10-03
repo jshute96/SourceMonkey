@@ -307,6 +307,8 @@ sm-dev --open-browser --browser 9300            # another one, on port 9300
   which is where later commands connect.
 - It stays open after sm-dev ends. Close it as any browser: by closing
   its window.
+- It has sound. `--mute` starts it muted (no effect on one already
+  running).
 - Google Chrome when it's installed (it handles Google sign-in), else
   Playwright's Chromium. `SM_DEV_BROWSER_BINARY` names another binary.
 - Google Chrome ignores the flag that would load SourceMonkey, so load
@@ -328,6 +330,7 @@ sm-dev --open-browser --browser 9300            # another one, on port 9300
 
 - Launches a hidden Chromium for each run, with an empty profile,
   closed when the run ends. `--headed` shows it.
+- It's muted, headed or not. `--nomute` gives it sound.
 - Useful for a quick run whose page needs no login.
 - It needs no setup: it loads SourceMonkey's built extension (the
   `dist/` beside sm-dev: the checkout's own build, or the copy
@@ -558,7 +561,7 @@ What to open:
   - Can't be combined with a URL.
 - `--notab` opens no tab at startup. `newtab` opens one later, and the
   first it opens is T1.
-  - That tab isn't one a later run takes over (see
+  - That tab isn't one a later run closes (see
     [Which tab `start` uses](#which-tab-start-uses)).
   - The scripts run only in the tabs the run opens (`newtab`), not in
     pages you browse to yourself.
@@ -626,18 +629,15 @@ The run's lifetime:
 
 ### Which tab `start` uses
 
-In a connected browser, `start` opens a new tab, unless the tab showing
-in its window is one an earlier run opened and that run has ended. Then
-it takes that tab over, so re-running with the old tab still selected
-reuses it rather than piling up tabs.
+In a connected browser, `start` always opens a new tab, so the run
+starts on a clean page.
 
-- A tab whose run is still going is never taken.
-- The earlier run's scripts still run in a reused tab's page. Its
-  console lines and errors are dropped until the new run's first page
-  load there, so they don't show as the new run's. A run that opens no
-  page there (no scripts, no URL) keeps them.
-- With several windows open, each window's showing tab counts, and the
-  first free one found is taken.
+- When the tab showing in its window is one an earlier run opened, and
+  that run has ended, `start` closes it. Re-running with the old tab
+  still selected then doesn't pile up tabs.
+- A tab whose run is still going is never closed.
+- With several windows open, each window's showing tab counts. The
+  first such tab found is closed, if the new tab opened in its window.
 - The tabs runs opened are recorded in `run-tabs.json` in
   `sm-dev-runs-<user name>` in the system temp directory, with the
   process that owns each.
@@ -839,7 +839,7 @@ Some commands take several lines as a block, at the prompt or on stdin:
 - `cdp`: calls, one per line, sharing a session (see [`cdp`](#cdp)).
 
 ```
-> eval T2 --script {{
+> eval T2 {{
 ... const rows = [...document.querySelectorAll('.athing')];
 ... rows.map((r) => r.id)
 ... }}
@@ -1222,8 +1222,9 @@ current one.
 | `type <selector> <text>` | Types into an element, key by key |
 | `type <selector> --file <path>` | Types a file's text into an element, a last line break included |
 | `key <keys>...` | Presses keys in order: `key j Shift+ArrowRight Escape` (`keys` works too) |
-| `eval <js>` | Evaluates in the page and prints the result |
-| `eval --script[=<script>] <js>` | Evaluates inside the selected script, or the one named |
+| `eval <js>` | Evaluates inside the selected script (or in the page, with none) and prints the result |
+| `eval --page <js>` | Evaluates in the page |
+| `eval --script=<script> <js>` | Evaluates inside the named script |
 | `eval --file <path>` | Evaluates JavaScript from a file |
 | `eval --out FILE <js>` | Writes the result to a file, uncut |
 | `snapshot [selector] [--visible] [--out file]` | The page (or each element the selector matches) as its accessibility tree, one line per element, each with a ref. `--visible`: only what's on screen. `--out` writes it to a file. `--find <text>`: only elements containing that text (case insensitive). For each match, `--up n` / `--context` add its containers; `--limit n`: how many matches to show (5; 0 for all) |
@@ -1273,8 +1274,9 @@ current one.
     instead.
 - On a page that is reloading or navigating, it waits up to 5 seconds
   for the new document, and runs there.
-- `eval --script` runs inside the selected script (`scripts` shows
-  it); `--script=<script>` names another, as `scripts` does.
+- `eval` runs inside the selected script (`scripts` shows it);
+  `--script=<script>` names another, as `scripts` does. `eval --page`
+  runs in the page, where its own globals are.
   - It sees what the script's own code sees: its `GM_*` functions, its
     `@require` libraries, its top-level `const`/`let`/`function`s, and
     the globals of its world.
@@ -1287,9 +1289,11 @@ current one.
     one `eval` only. Assigning to the script's variables changes them.
   - `await x` gives x, as in the console. Longer code with `await`
     needs a `return` for its value.
+  - With no script selected, `eval` runs in the page.
   - A selected script that hasn't run on the page (it doesn't match,
-    or hasn't reached its `@run-at` yet) falls back to the scripts'
-    shared world, and says so. A named one is an error.
+    or hasn't reached its `@run-at` yet) runs the code in the page
+    too, and says so. With `--script` that is the scripts' shared world
+    instead. A named one is an error.
   - How it works: sm-dev's scripts carry a small eval hook in their
     wrapper (see [injection.md](injection.md#sm-devs-eval-hook)).
 
@@ -1624,8 +1628,9 @@ sm-dev stop
   'measure()'`), it sends them, and leaves the run going.
 - It exits with the run's code if the run ends before that (a script
   that doesn't parse, no browser to connect to).
-- Starting one stops any earlier detached run first, and reuses its
-  tab. Runs started without `--detach` are left alone.
+- Starting one stops any earlier detached run first, and closes its
+  tab when that tab is selected. Runs started without `--detach` are
+  left alone.
   - `--new` leaves the earlier ones going, and starts another beside
     them.
   - `sm-dev --run Dname start ... --detach` stops only the run named

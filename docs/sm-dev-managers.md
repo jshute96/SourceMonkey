@@ -276,7 +276,7 @@ What `script show` shows, where the manager has it:
 | Management commands above | all | all but collections |
 | `start`, page commands, `eval`, `snapshot`, `logs` | yes | yes |
 | Run's scripts in a test collection, `load`, `update`, `--watch` | yes | installed as normal scripts and removed at the end of the run |
-| `eval --script` | yes | yes, in the manager's world where it can be found |
+| `eval` in a script | yes | yes, in the manager's world where it can be found |
 | Reports, `wait` for script starts, `menu`, `get`/`set` | yes | no |
 | Tab claims (other scripts kept out of run tabs) | yes | no: all the manager's scripts run |
 

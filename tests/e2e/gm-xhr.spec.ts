@@ -73,6 +73,41 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
     await page.close();
   });
 
+  test('a URL object works as the url', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    dataServer.setRoute('/hello', 'hello from server', {
+      contentType: 'text/plain; charset=utf-8',
+    });
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'GetUrlObject',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ["GM_xmlhttpRequest"],
+        connect: ["127.0.0.1"],
+      },
+      body: `
+        GM_xmlhttpRequest({
+          url: new URL('/hello', '${dataServer.baseUrl}'),
+          onload: (res) => {
+            document.body.dataset.smText = String(res.responseText);
+          },
+        });
+      `,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-text', 'hello from server');
+    await page.close();
+  });
+
   test('onreadystatechange fires with readyState 4 before onload', async ({
     extensionContext,
     fixtureServer,

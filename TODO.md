@@ -349,23 +349,16 @@ wasn't checked.
   - A per-host "allow this request" prompt (or a collections-page
     toggle) would cover it without dropping the check. Pairs with the
     `@connect *` warning under "`@connect` follow-ups".
-- **`GM_xmlhttpRequest` rejects a `URL` object** (`xhr-url-object`:
-  463326).
-  - `src/wrapper-gm-runtime.js` requires `typeof details.url ===
-    "string"` and throws "url required".
-  - VM converts a non-string `url` to a string
-    (`src/injected/web/requests.js`). A copy passing `.href` works.
-- **`document-idle` can wait forever** (seen on jianshu with 406337
-  and 40730).
-  - The wrapper waits for `load`. When one third-party script never
-    finishes loading, `load` never fires and idle scripts never run.
-  - VM runs idle scripts right after `DOMContentLoaded`, and Chrome's
-    own `document_idle` runs at most about 200ms after it. Fix: also
-    start the body after a short timeout once `DOMContentLoaded` has
-    fired.
 - **50 MB `GM_xmlhttpRequest` response cap** (`xhr-response-cap`:
   445051) blocks video downloaders on ordinary few-minute videos.
-  Documented in `docs/GM-APIs.md`; worth revisiting.
+  - The cap (`MAX_RESPONSE_BYTES` in `src/extension/gm-xhr.ts`) keeps
+    the worker from holding a huge body in memory.
+  - Raising it alone won't help: the body goes to the page as one
+    message, base64 for binary (+33%), and Chrome caps an extension
+    message at 64 MiB. So binary bodies past about 48 MB likely fail
+    even now.
+  - Fix: stream the body to the page in chunks, then drop or raise the
+    cap. The same wire format would allow `onprogress` events.
 - **`GM_cookie`** (463802) is the whole failure for a Reddit script.
   See "GM_* APIs not yet in the catalog".
 
@@ -911,6 +904,19 @@ See [docs/harness-design.md](docs/harness-design.md).
   slow to start) and runs an extension script anyway, the run doesn't
   say so. The extension's `started` event could tell it: a script the
   run didn't push starting in its tab.
+- **A run's commands take turns across all its clients.**
+  `commandRunner` (`src/harness/console-commands.ts`) queues every
+  command, so one client's `wait 30s` holds up the others.
+  - Waits and commands that only look could run alongside others.
+  - Needs a per-command context: `ctx.out` and `ctx.json` are swapped
+    per command now.
+- **`click --at X,Y` in CSS pixels, and `click --force`** to skip the
+  covered-element check. Closed shadow roots and covering overlays
+  (cookie footers, login panels) defeat `click`/`hover`, and agents
+  fall back to raw CDP, dividing screenshot pixels by devicePixelRatio.
+- **An init script for the run's lifetime.** `cdp
+  Page.addScriptToEvaluateOnNewDocument` ends with that one call's
+  session, so an observer can't be put in place before a reload.
 
 ## Tabs that predate the first script install
 

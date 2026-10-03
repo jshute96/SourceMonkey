@@ -63,7 +63,7 @@ const DESCRIBED = new Set(['node', 'error', 'map', 'set', 'weakmap', 'weakset', 
 export class ScriptThrew extends Error {}
 
 /**
- * A script's own scope, for `eval --script`: the world it runs in, and
+ * A script's own scope, for `eval` in a script: the world it runs in, and
  * where its eval hook is kept there (see src/eval-hook.ts).
  */
 export interface ScriptScope {
@@ -127,7 +127,7 @@ interface ContextInfo {
 export interface AttachOptions {
   /**
    * The extension's origin (`chrome-extension://<id>`), which names the
-   * world its scripts run in, for `eval --script`.
+   * world its scripts run in, for `eval` in a script.
    */
   watchOnly: { extensionOrigin: string };
 }

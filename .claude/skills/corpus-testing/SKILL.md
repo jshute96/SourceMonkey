@@ -96,8 +96,7 @@ When every agent has reported:
    TODO.md entries (the README says a `sourcemonkey` failure should get one).
 7. **Log friction** with the `SourceMonkey-friction` skill: a new entry per
    batch, listing the IDs, with repeats of earlier items marked as such.
-8. Tell the person the totals, the SourceMonkey gaps, and anything an agent
-   did on a signed-in site.
+8. Tell the person the totals and the SourceMonkey gaps.
 
 ## Re-testing after a fix
 

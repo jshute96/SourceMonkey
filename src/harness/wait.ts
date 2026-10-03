@@ -227,6 +227,20 @@ export async function waitFor(ctx: ConsoleContext, parsed: ParsedArgs): Promise<
     return waitForLog(ctx, parsed.text ?? '', timeoutMs);
   }
 
+  // A plain delay. A tab or `all` before it (`wait T2 3s`) is allowed
+  // and has no effect: a delay waits the same whichever tab is named.
+  // A named tab must still exist, so a mistyped one is said.
+  const delayWord = parsed.words.length === 2 && parsed.words[0] === 'all' && parsed.tab === undefined
+    ? parsed.words[1] : parsed.words.length === 1 ? parsed.words[0] : undefined;
+  const delay = delayWord !== undefined ? parseDelay(delayWord) : null;
+  if (delay !== null) {
+    if (timeout !== undefined) return mistake('A delay takes no --timeout-seconds');
+    if (delay > MAX_WAIT_SECONDS * 1000) return mistake(`A delay can be at most ${MAX_WAIT_SECONDS}s`);
+    if (parsed.tab !== undefined && !pickTab(ctx, parsed.tab)) return false;
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    return true;
+  }
+
   const [word, ...more] = parsed.words;
   if (more.length > 0) {
     // `wait all selector .x`: `all` isn't a tab, so the form wasn't taken.
@@ -235,23 +249,6 @@ export async function waitFor(ctx: ConsoleContext, parsed: ParsedArgs): Promise<
     }
     const valid = word === 'all' || parseDelay(word) !== null;
     return mistake(`The wait command takes a tab, all, selector, selector-gone, log, or a delay such as 500ms or 2s, not ${valid ? more.join(' ') : word}`);
-  }
-
-  // A plain delay.
-  const delay = word !== undefined && parsed.tab === undefined ? parseDelay(word) : null;
-  if (delay !== null) {
-    if (timeout !== undefined) return mistake('A delay takes no --timeout-seconds');
-    if (delay > MAX_WAIT_SECONDS * 1000) return mistake(`A delay can be at most ${MAX_WAIT_SECONDS}s`);
-    await new Promise((resolve) => setTimeout(resolve, delay));
-    return true;
-  }
-  // `wait T2 10s`: a tab and a delay don't go together.
-  const tabDelay = parsed.tab !== undefined && word !== undefined ? parseDelay(word) : null;
-  if (tabDelay !== null) {
-    // The delay as a timeout only where it would be a valid one.
-    const seconds = tabDelay / 1000;
-    const timed = timeout === undefined && seconds > 0 && seconds <= MAX_WAIT_SECONDS ? ` --timeout-seconds ${seconds}` : '';
-    return mistake(`A delay takes no tab. Use wait ${word} to wait that long, or wait ${parsed.tab}${timed} to wait for ${parsed.tab} to settle.`);
   }
 
   // The tab, or all of them.

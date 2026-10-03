@@ -421,6 +421,7 @@ async function runHere(
       cdp: opts.cdp ?? lineCdp,
       tempBrowser: lineTempBrowser,
       headed: lineHeaded,
+      muted: lineMuted,
       lang: opts.lang,
       watch: opts.watch,
       values: opts.values,
@@ -1336,12 +1337,15 @@ let lineProfile: string | undefined;
 // with it.
 let lineTempBrowser = false;
 let lineHeaded = false;
+// `--mute` / `--nomute`: sound in the browser the line launches. Unset
+// is muted for --temp-browser, and with sound for --open-browser.
+let lineMuted: boolean | undefined;
 // `--json`: the commands with a JSON form print it (see json-output.ts).
 let lineJson = false;
 
 
 // The flags for the whole line, which go before any command.
-const GLOBAL_FLAGS = ['--run', '--root', '--local', '--stdin', '--interactive', '--browser', '--open-browser', '--profile', '--temp-browser', '--headed', '--json'];
+const GLOBAL_FLAGS = ['--run', '--root', '--local', '--stdin', '--interactive', '--browser', '--open-browser', '--profile', '--temp-browser', '--headed', '--mute', '--nomute', '--json'];
 
 function globalFlagMistake(flag: string): string {
   return `The ${flag} flag is for the whole command line, so it goes first, before any command: sm-dev ${flag}${VALUE_GLOBALS.has(flag) ? ' ...' : ''} <command>`;
@@ -1360,7 +1364,7 @@ interface GlobalFlags {
  * Takes the global options off the front of the line: `--run ID`,
  * `--root DIR`, `--local DIR` (repeatable), `--stdin`, `--interactive`
  * and the browser's: `--browser`, `--open-browser`, `--profile`,
- * `--temp-browser`, `--headed`. One later on the line, among a
+ * `--temp-browser`, `--headed`, `--mute`, `--nomute`. One later on the line, among a
  * command's words, is said to go first.
  */
 function takeGlobalFlags(argv: string[]): GlobalFlags {
@@ -1376,6 +1380,11 @@ function takeGlobalFlags(argv: string[]): GlobalFlags {
     else if (word === '--open-browser') lineOpenBrowser = true;
     else if (word === '--temp-browser') lineTempBrowser = true;
     else if (word === '--headed') lineHeaded = true;
+    else if (word === '--mute' || word === '--nomute') {
+      const muted = word === '--mute';
+      if (lineMuted !== undefined && lineMuted !== muted) throw new UsageError('The command line takes --mute or --nomute, not both');
+      lineMuted = muted;
+    }
     else if (word === '--json') {
       const mistake = inline === undefined ? null : jsonLayoutMistake(inline);
       if (mistake) throw new UsageError(mistake);
@@ -1404,6 +1413,9 @@ function takeGlobalFlags(argv: string[]): GlobalFlags {
     if (others.length > 0) throw new UsageError(`The --temp-browser flag can't be used with ${others.join(' or ')}`);
   }
   if (lineHeaded && !lineTempBrowser) throw new UsageError('The --headed flag only applies with --temp-browser');
+  if (lineMuted !== undefined && !lineTempBrowser && !lineOpenBrowser) {
+    throw new UsageError(`The ${lineMuted ? '--mute' : '--nomute'} flag only applies with --temp-browser or --open-browser`);
+  }
   if (lineProfile !== undefined && !lineOpenBrowser) throw new UsageError('The --profile flag only applies with --open-browser');
   return flags;
 }
@@ -1436,6 +1448,7 @@ function globalWords(runId: string | undefined): string[] {
     ...(lineCdp !== undefined ? ['--browser', lineCdp] : []),
     ...(lineTempBrowser ? ['--temp-browser'] : []),
     ...(lineHeaded ? ['--headed'] : []),
+    ...(lineTempBrowser && lineMuted !== undefined ? [lineMuted ? '--mute' : '--nomute'] : []),
   ];
 }
 
@@ -1656,7 +1669,7 @@ async function main(): Promise<void> {
       const endpoint = cdpEndpoint(lineCdp?.trim() || process.env.SM_DEV_BROWSER?.trim() || '9233');
       const mistake = launchEndpointMistake(endpoint, browserSettingName(lineCdp));
       if (mistake) throw new UsageError(mistake);
-      await launchBrowser(endpoint, lineProfile, print);
+      await launchBrowser(endpoint, lineProfile, print, lineMuted === true);
     } catch (err) {
       process.exitCode = printMistake(err);
       return;

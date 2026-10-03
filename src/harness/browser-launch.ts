@@ -131,7 +131,7 @@ export function launchEndpointMistake(endpoint: string, setting = '--browser'): 
  * Starts the browser at `endpoint` unless one answers there already,
  * and says which. Throws an error saying why it couldn't.
  */
-export async function launchBrowser(endpoint: string, profile: string | undefined, out: (line: string) => void): Promise<void> {
+export async function launchBrowser(endpoint: string, profile: string | undefined, out: (line: string) => void, muted = false): Promise<void> {
   const url = new URL(endpoint);
   const where = `${url.hostname}:${url.port}`;
   if (await answers(endpoint)) {
@@ -156,7 +156,7 @@ export async function launchBrowser(endpoint: string, profile: string | undefine
   try {
     child = spawn(file, [
       `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`,
-      '--no-first-run', '--no-default-browser-check', ...extra,
+      '--no-first-run', '--no-default-browser-check', ...(muted ? ['--mute-audio'] : []), ...extra,
     ], { detached: true, stdio: ['ignore', log, log] });
     child.on('exit', (code, signal) => { ended ??= `It exited (${signal ?? `code ${code}`})`; });
     child.on('error', (err) => { ended = `It could not be started from ${file}: ${err.message}`; });

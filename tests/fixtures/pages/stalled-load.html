@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>stalled load</title>
+  </head>
+  <body>
+    <div id="target">stalled load</div>
+    <!-- The image holds `load` back for 5s, standing in for a
+         third-party script that never finishes. -->
+    <img src="/__slow/stalled.png?ms=5000" />
+  </body>
+</html>

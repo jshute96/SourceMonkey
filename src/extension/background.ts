@@ -1884,8 +1884,8 @@ function installNavigationListeners(): void {
     if (d.frameId !== 0) return;
     enqueueTabWork(d.tabId, () => updateTabMatches(d.tabId, d.url, d.documentId ?? null, 'navigation'));
   });
-  // A grace period after the load, since a document-idle script only
-  // starts at the load and then waits on its check-pending reply
+  // A grace period after the load, since a document-idle script may
+  // start only at the load and then waits on its check-pending reply
   // (bounded at 2s by the wrapper).
   wn.onCompleted.addListener((d) => {
     if (d.frameId !== 0 || !d.documentId) return;

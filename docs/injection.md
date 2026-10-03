@@ -575,6 +575,12 @@ the user body. This is the TM/VM pattern.
     zero-delay fallback, so the body runs there too.
   - On a normal page `load` comes in the same task as that change, so
     the body still runs after `load`, and only once.
+  - A subresource that never finishes (a stalled third-party script)
+    holds `load` back forever. So the body runs at `load` or 200ms
+    after `DOMContentLoaded` (`IDLE_AFTER_DCL_MS`), whichever comes
+    first, about when Chrome's own `document_idle` would.
+  - A page with slow images or ads thus runs it before `load`, while
+    `readyState` is still `interactive`.
   - An unknown value (a typo) gets a parse-time warning
     (`unsupportedRunAtWarning`): Log tab, `sm-dev validate`, and
     sm-dev's warning lines when it loads the script.
@@ -1222,7 +1228,7 @@ arrangement (see [parse-check.md](parse-check.md#what-is-checked)).
 ### sm-dev's eval hook
 
 Scripts sm-dev runs get one more statement in the inner scope, so
-`sm-dev eval --script` can run code inside it (`src/eval-hook.ts`):
+`sm-dev eval` can run code inside it (`src/eval-hook.ts`):
 
 ```
 ;(globalThis[<key>] || <a new map>)[<script id>] = (code) => eval(code);

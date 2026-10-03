@@ -804,8 +804,11 @@ export async function runConsoleCommand(
       // a dialog has stopped.
       if (command !== 'logs' && blockedByDialog([target])) return false;
       let evalIn: EvalIn | undefined;
-      if (command === 'eval' && parsed.flags['--script'] !== undefined) {
-        const resolved = evalScope(ctx, parsed.flags['--script']);
+      if (command === 'eval') {
+        // A tab that runs no scripts has no script to be in, so a bare
+        // `eval` there runs in the page without a word about it.
+        const page = parsed.flags['--page'] === true || (target.noScript === true && parsed.flags['--script'] === undefined);
+        const resolved = evalScope(ctx, parsed.flags['--script'], page);
         if (!resolved) return false;
         evalIn = resolved;
       }
@@ -850,17 +853,27 @@ function selectedScript(ctx: ConsoleContext): PreparedScript | undefined {
 }
 
 /**
- * Where `eval --script` runs: inside the selected script, or the one
- * `--script=<script>` names. The scripts' shared world when no run
- * script is selected (none loaded, or an `E` script picked, which has
- * no eval hook). Null, said why, when the name picks none.
+ * Where `eval` runs: inside the selected script, or the one
+ * `--script=<script>` names; in the page with `--page`.
+ * - With no run script selected (none loaded, or an `E` script picked,
+ *   which has no eval hook), a bare `eval` runs in the page, and
+ *   `--script` in the scripts' shared world.
+ * - The same goes for a selected script that hasn't run on the page.
+ *   The page by default, so its globals aren't silently out of reach.
+ * Null, said why, when the name picks none or the flags clash.
  */
-function evalScope(ctx: ConsoleContext, flag: string | true): EvalIn | null {
-  const script = flag === true ? selectedScript(ctx) : pickScript(ctx, flag);
-  if (!script) return flag === true ? 'scripts' : null;
+function evalScope(ctx: ConsoleContext, flag: string | true | undefined, page: boolean): EvalIn | null {
+  if (page) {
+    if (flag === undefined) return 'page';
+    ctx.out(`${MISTAKE_PREFIX}The eval command takes --page or --script, not both`);
+    return null;
+  }
+  const fallback = flag === undefined ? 'page' : 'scripts';
+  const script = flag === undefined || flag === true ? selectedScript(ctx) : pickScript(ctx, flag);
+  if (!script) return typeof flag === 'string' ? null : fallback;
   // No hook: not pushed into the extension, so it hasn't run anywhere.
   const hook = script.id ? ctx.host.evalHook(script.id) : null;
-  return { scope: hook && { world: script.world, ...hook }, name: preparedScriptName(script), named: flag !== true };
+  return { scope: hook && { world: script.world, ...hook }, name: preparedScriptName(script), named: typeof flag === 'string', fallback };
 }
 
 /**

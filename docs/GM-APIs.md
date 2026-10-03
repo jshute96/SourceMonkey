@@ -205,7 +205,8 @@ output ships whether the script lands in USER_SCRIPT or MAIN.
   `waitForRunAt` gate resolves,
   `ready` flips later than it used to (after the declared `@run-at`
   lifecycle event). For `@run-at document-idle` the gap can stretch
-  to `window.load`. A sibling tab's `GM_setValue` that broadcasts
+  to `window.load`, or 200ms after `DOMContentLoaded` when `load` is
+  later. A sibling tab's `GM_setValue` that broadcasts
   during that window gets dropped on the floor by this document. In
   the common case the same write is already reflected in the
   check-pending snapshot the SW sent us (the SW persisted it before
@@ -296,6 +297,8 @@ Architecture:
   keyed by a generated request id (callbacks aren't serializable
   across the bridge), and ships a `sm:gm-xhr-start` envelope to the
   SW with the serializable request fields.
+  - A `URL` object as `url` is taken as its `href`, as in VM.
+    `GM_download` and `GM_openInTab` accept one too (`urlArg`).
 - SW (`src/extension/gm-xhr.ts`) runs `fetch(url, init)` against an
   `AbortController`. On settle it ships a single `sm:gm-xhr-event`
   back to the originating tab via `chrome.tabs.sendMessage`. The

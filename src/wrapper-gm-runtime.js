@@ -1629,6 +1629,15 @@
     dispatchXhrEvent(msg.id, msg.event);
   });
 
+  /* A URL argument as a string. Scripts pass `URL` objects too (and
+     VM converts any non-string `url` with String()), so an object with
+     a string `href` is taken as its href. Not one with a `url` of its
+     own: that's GM_download's details object. Anything else is left
+     as it is, for the caller's "url required" check. */
+  function urlArg(v) {
+    return v !== null && typeof v === "object" && typeof v.href === "string" && !("url" in v) ? v.href : v;
+  }
+
   var xhr = {
     /* GM_xmlhttpRequest(details) — kicks off the request, returns
        `{abort}` immediately. The user's onload/onerror/ontimeout/
@@ -1639,7 +1648,8 @@
       if (!details || typeof details !== "object") {
         throw new _Error("[SourceMonkey] GM_xmlhttpRequest: details object required");
       }
-      if (typeof details.url !== "string" || !details.url) {
+      var url = urlArg(details.url);
+      if (typeof url !== "string" || !url) {
         throw new _Error("[SourceMonkey] GM_xmlhttpRequest: url required");
       }
       var id = "xhr-" + (_xhrNextId++) + "-" + Math.random().toString(36).slice(2, 10);
@@ -1649,7 +1659,7 @@
         ontimeout: details.ontimeout,
         onabort: details.onabort,
         onreadystatechange: details.onreadystatechange,
-        url: details.url,
+        url: url,
         responseType: typeof details.responseType === "string" ? details.responseType : "",
         ttlTimer: null,
       };
@@ -1672,7 +1682,7 @@
          and other non-cloneable fields. */
       var request = {
         method: typeof details.method === "string" ? details.method : "GET",
-        url: details.url,
+        url: url,
         headers: (details.headers && typeof details.headers === "object") ? details.headers : undefined,
         data: details.data,
         timeout: typeof details.timeout === "number" ? details.timeout : undefined,
@@ -1805,6 +1815,7 @@
   var _tabNextId = 1;
   var tab = {
     open: function (scriptId, url, options) {
+      url = urlArg(url);
       if (typeof url !== "string" || !url) {
         throw new _Error("[SourceMonkey] GM_openInTab: url required");
       }
@@ -2014,6 +2025,7 @@
      there's no URL to download. */
   function normalizeDownloadArgs(detailsOrUrl, name) {
     var d = null;
+    detailsOrUrl = urlArg(detailsOrUrl);
     if (typeof detailsOrUrl === "string") {
       d = { url: detailsOrUrl, name: name };
     } else if (detailsOrUrl && typeof detailsOrUrl === "object") {
@@ -2021,7 +2033,8 @@
     } else {
       throw new _Error("[SourceMonkey] GM_download: details object or url required");
     }
-    if (typeof d.url !== "string" || !d.url) {
+    var url = urlArg(d.url);
+    if (typeof url !== "string" || !url) {
       throw new _Error("[SourceMonkey] GM_download: url required");
     }
     return {
@@ -2030,7 +2043,7 @@
          normalizes the scheme's case and strips stray whitespace, which
          is what the transport check below keys off. An unparseable URL
          falls through unchanged and is refused SW-side. */
-      url: resolveDownloadUrl(d.url),
+      url: resolveDownloadUrl(url),
       name: d.name != null ? String(d.name) : "",
       headers: plainHeaders(d.headers),
       saveAs: !!d.saveAs,

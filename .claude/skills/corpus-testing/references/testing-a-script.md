@@ -21,35 +21,23 @@ with its script IDs and a run name prefix.
    that proves it: a DOM state, a measured value, a stored value. A
    `newtab --noscript` tab on the same page is the control to compare with.
 2. **Run it on the live site** with `start <file> <url> --detach`.
-   - Use `--temp-browser` (headless, muted) by default.
+   - Use `--temp-browser` (headless, muted), a browser of the run's own.
+     Don't use the shared browser on port 9233: one agent's busy tab
+     there stalls every other agent's `start`.
    - Many big sites block headless: Google (`/sorry`), Reddit, Amazon,
      IMDb (403), Codeforces and other Cloudflare sites, DuckDuckGo (empty
      results), Metacritic (its `GM_xmlhttpRequest` too), YouTube live chat
-     and captions. Use the shared visible browser on port 9233 for those.
+     and captions. Use `--temp-browser --headed` for those, a visible
+     browser of your own (muted too).
    - Headless also has overlay scrollbars, no clipboard access, and
-     background tabs that stay visible and focused.
+     background tabs that stay visible and focused. A `--headed` browser's
+     background tabs are throttled: if a script's timers seem stalled or a
+     `click` says the element wasn't ready, `focus` the run's tab.
 3. **Judge it**, and time-box it (about 10-15 minutes). Read the run's
    output before theorizing: it says whether the script started, and what
    threw. Errors from later events show up only in `logs`, and "settled"
    can come before a script's delayed setup; `wait log` for its own ready
    line.
-
-### The shared browser
-
-Other runs live there: the person's (`D1`, `D2`) and other agents'.
-
-- Name tabs by `T<n>` or `targetId`, never touch other runs' tabs, and
-  `closetab` your own before `stop`.
-- Mute any media you start (YouTube plays with sound there):
-  `eval 'document.querySelectorAll("video,audio").forEach(m => m.muted = true)'`.
-- It's normally signed in nowhere, but the person may have a profile of
-  their own on the port. If a page shows you signed in, stay read-only: no
-  votes, comments, follows, setting changes, or anything saved to the
-  account, and say so in your report. Put back anything a script changed
-  locally (a stored setting, a localStorage entry) when you can do it
-  safely; otherwise leave it and report it.
-- Its background tabs are throttled. If a script's timers seem stalled or a
-  `click` says the element wasn't ready, `focus` the run's tab.
 
 ### No side effects
 
@@ -61,10 +49,8 @@ account is `n/a` with `--reason requires-login`.
 
 Every run runs the script in the real SourceMonkey:
 
-- `--temp-browser` installs it in a throwaway headless browser, so it
-  needs no setup and is safe beside other agents.
-- The shared browser on port 9233 works too, when the run's first line
-  says `has SourceMonkey`.
+- `--temp-browser` installs it in a throwaway browser, so it needs no
+  setup and is safe beside other agents.
 - Each run pushes its scripts into a test collection of its own, which
   `stop` removes, so parallel agents don't see each other's scripts.
   Always `stop` your runs.
@@ -142,8 +128,7 @@ report it with a one-sentence description, so it can be added to
 
 ## Finishing
 
-- Stop your runs and check with `scripts/sm-dev list`; close your tabs in
-  the shared browser.
+- Stop your runs and check with `scripts/sm-dev list`.
 - Don't commit or change git staging. Change files in the repo only
   through `record-results.mjs`; copies go in your scratchpad.
 - Report: one line per script (ID, name, result, tags, summary), new tags
