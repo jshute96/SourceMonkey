@@ -195,6 +195,10 @@ export interface SmApi {
   // the cross-tab broadcast across a simulated worker restart without
   // killing the worker the test is talking to.
   dropGmOpenersForTests(): Promise<void>;
+  // The worker's "should I run?" decision for a request from a document
+  // with no tab (the sender has only its URL). Gives `action` and, for a
+  // skip, `reason`.
+  checkPendingWithoutTabForTests(id: string, url: string, tld: boolean): Promise<{ action: string; reason?: string }>;
   // Makes the SW drop every cross-tab value broadcast, standing in for
   // one that never arrives. Stays armed until cleared with false.
   setDebugSuppressGmBroadcast(value: boolean): Promise<void>;

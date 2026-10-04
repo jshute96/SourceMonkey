@@ -261,7 +261,10 @@ test('a run keeps SourceMonkey-managed scripts out of its tabs, and runs its pag
 
 // Its own scripts on another page re-register the page bridge behind
 // the installed script, whose request to run the bridge then misses;
-// it asks again once the bridge is in, and is kept out.
+// it asks again once the bridge is in, and is kept out. Without the
+// second ask it would still be out, but only by failing closed after
+// the wrapper's 10s wait, with an error in its Log: so the test waits
+// that out and checks there's none.
 test('a run keeps an installed page-world script out even where none of its own run', async ({ fixtureServer, scriptsDir }) => {
   test.setTimeout(90_000);
   const launched = await launchExtensionBrowser({ connectedElsewhere: true });
@@ -279,13 +282,54 @@ test('a run keeps an installed page-world script out even where none of its own 
       body: '',
     });
     const { lines, left } = await driveCli(['--browser', launched.endpoint, 'start', file, `${fixtureServer.baseUrl}/target.html`], [
-      // Well past the 2s it would have waited before running anyway.
-      ['Mine skipped on', 'wait 4s\neval "other is " + (document.documentElement.dataset.other ?? "out")'],
+      // Past the 10s it would have waited for an answer.
+      ['Mine skipped on', 'wait 12s\neval "other is " + (document.documentElement.dataset.other ?? "out")'],
       ['other is', 'stop'],
     ]);
     const text = lines.join('\n');
     expect(left, text).toEqual([]);
     expect(text).toContain('"other is out"');
+    const after = await chromium.connectOverCDP(launched.endpoint);
+    const worker = await findExtensionWorker(after.contexts()[0]);
+    const errors = await worker.evaluate(async () => {
+      const api = (self as unknown as { SourceMonkey: {
+        managedScripts(): Promise<{ id: string; name: string }[]>;
+        getScriptLog(id: string): Promise<{ level: string; message: string }[]>;
+      } }).SourceMonkey;
+      const other = (await api.managedScripts()).find((s) => s.name === 'Other')!;
+      return (await api.getScriptLog(other.id)).filter((e) => e.level === 'error').map((e) => e.message);
+    });
+    await after.close();
+    expect(errors).toEqual([]);
+  } finally {
+    await launched.close();
+  }
+});
+
+// A script with no run decision: the run says why, not the bare
+// `no-decision` token. The script sends the report itself, as its
+// wrapper would after a failed ask; Chrome's messages end in a period,
+// which the line leaves off.
+test('a skip with no decision says why', async ({ fixtureServer, scriptsDir }) => {
+  test.setTimeout(90_000);
+  const launched = await launchExtensionBrowser({ connectedElsewhere: true });
+  try {
+    const file = scriptsDir.write({
+      relativePath: 'mine.user.js',
+      meta: { name: 'Mine', match: ['*://*/target.html'], grant: ['none'] },
+      body: `
+        document.dispatchEvent(new CustomEvent('sourcemonkey-bridge-sync', { detail: JSON.stringify({ payload: {
+          type: 'sm:abandoned', id: GM_info.uuid, name: 'Mine', reason: 'no-decision',
+          detail: 'Asking SourceMonkey whether to run it failed: Receiving end does not exist.',
+        } }) }));
+      `,
+    });
+    const { lines, left } = await driveCli(['--browser', launched.endpoint, 'start', file, `${fixtureServer.baseUrl}/target.html`], [
+      ['Mine skipped on', 'stop'],
+    ]);
+    const text = lines.join('\n');
+    expect(left, text).toEqual([]);
+    expect(text).toMatch(/Mine skipped on \S+target\.html: Asking SourceMonkey whether to run it failed: Receiving end does not exist$/m);
   } finally {
     await launched.close();
   }

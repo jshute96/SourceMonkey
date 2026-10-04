@@ -553,6 +553,11 @@ interface SourceMonkeyApi {
   // the tabs loading and the write" case without killing the worker
   // (which would also kill the test's handle on it).
   dropGmOpenersForTests: () => Promise<void>;
+  // Test-only: the "should I run?" decision for a request from a
+  // document Chrome gives no tab, whose sender carries only its URL.
+  // No real page reliably makes one, so this is how the tab-less path
+  // gets tested.
+  checkPendingWithoutTabForTests: (id: string, url: string, tld: boolean) => Promise<CheckPendingReply>;
   // Test-only fault injection: when true, `broadcastValueUpdate` sends
   // nothing, standing in for a broadcast that never reached the other
   // tab. Drives the resync-recovery test. No production caller flips it.
@@ -747,6 +752,7 @@ const api: SourceMonkeyApi = {
   },
   setDebugForceSnapshotFailure,
   dropGmOpenersForTests: resetGmOpenersState,
+  checkPendingWithoutTabForTests: (id, url, tld) => handleCheckPending({ url }, { id, url, tld }),
   setDebugSuppressGmBroadcast: (value: boolean) => { __debugSuppressGmBroadcast = !!value; },
   // The unthrottled sweep: a test drives it on demand, where the
   // once-a-minute rate limit on the startup path would just make the
