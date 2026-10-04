@@ -7,8 +7,11 @@
 // in headless mode (file:// access enabled + user_scripts_enabled set
 // in extension Preferences, both done by the fixture).
 
+import path from 'node:path';
+
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
+import { allScripts } from '../fixtures/sw-api';
 
 test.describe('injection', () => {
   let scriptsDir: ScriptsDir;
@@ -330,6 +333,38 @@ test.describe('injection', () => {
     // The image holds `load` for 5s; the fallback runs the body well
     // before that, while the page is still `interactive`.
     await expect(page.locator('#target')).toHaveText('idle ran: interactive', { timeout: 3000 });
+    await page.close();
+  });
+
+  // A sync that widens the page bridge's patterns re-registers it, and
+  // Chrome puts it after the scripts already registered. A page-world
+  // script injected ahead of it asks whether to run before it listens,
+  // so it asks again when the bridge announces itself, rather than
+  // waiting out its 2s timer and running whatever the answer would be.
+  test('a page-world script ahead of the bridge gets its answer at once', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    const base = fixtureServer.baseUrl;
+    scriptsDir.write({
+      relativePath: 'first/early.user.js',
+      meta: { name: 'Early', match: [`${base}/target.html`], grant: ['none'] },
+      body: `document.documentElement.dataset.ranAt = String(Math.round(performance.now()));`,
+    });
+    await sm.addCollection(path.join(scriptsDir.path, 'first'));
+    await sm.syncNow();
+    // A page-world script on another page widens the bridge.
+    scriptsDir.write({ relativePath: 'second/wider.user.js', meta: { name: 'Wider', match: [`${base}/other.html`], grant: ['none'] }, body: '' });
+    await sm.addCollection(path.join(scriptsDir.path, 'second'));
+    await sm.syncNow();
+    const order = await (await getServiceWorker()).evaluate(async () => (await chrome.userScripts.getScripts()).map((r) => r.id));
+    const early = (await allScripts(sm)).find((r) => r.relativePath.endsWith('early.user.js'))!.id;
+    expect(order.indexOf('sourcemonkey-bridge')).toBeGreaterThan(order.indexOf(early));
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${base}/target.html`);
+    await expect.poll(() => page.evaluate(() => document.documentElement.dataset.ranAt ?? null)).not.toBeNull();
+    // Well before the 2s timer.
+    expect(Number(await page.evaluate(() => document.documentElement.dataset.ranAt))).toBeLessThan(1500);
     await page.close();
   });
 });

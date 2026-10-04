@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 
 import { CommandAssembler, NONE_RUN, echoCommand, parseCommandList, shellWord, unclosedBlockMessage, type AssembledCommand } from './command-lines.js';
 import {
-  commandWords, onlyInspects, readPromptCommands, runCommandHelp, runCommandMistake, setJsonOutput, writeOutputLine,
+  commandWords, installedListing, managerCommand, onlyInspects, readPromptCommands, runCommandHelp, runCommandMistake, setJsonOutput, writeOutputLine,
 } from './console-commands.js';
 import { parseLang } from './browser-lang.js';
 import { parseCommandArgs } from './command-args.js';
@@ -658,6 +658,7 @@ class Client {
     if (this.finishing) throw new Error('This sm-dev is exiting');
     if (this.connection?.open && this.connection.id === (wanted ?? this.connection.id)) return this.connection;
     const target = await targetRun(wanted);
+    await checkRunBrowser(target);
     const { RunClient } = await import('./runs.js');
     const connection = await RunClient.open(target.id, print, { follow: this.follow });
     await this.disconnect();
@@ -809,6 +810,9 @@ function isTypedCommand(name: string): boolean {
 async function sendCommand(words: string[], client: Client): Promise<number> {
   const { liveRuns } = await import('./runs.js');
   await checkSend(words);
+  // A list of several lines goes to a run whole, as before.
+  const typed = words.length === 1 ? commandWords(words[0]) : words;
+  if (!sentList(words) && await listsHere(typed, client)) return managerHere(typed);
   // With no run to work with, what the command needs instead.
   const needs = NEEDS_A_RUN[words[0]];
   if (needs && client.runId === undefined && (await liveRuns()).length === 0) throw new UsageError(needs);
@@ -1008,6 +1012,10 @@ async function runTyped(command: { words: string[]; text: string }, client: Clie
     return runOne(command.words, client);
   }
   try {
+    if (await listsHere(command.words, client)) {
+      echo();
+      return await managerHere(command.words);
+    }
     if (!client.toEveryRun(command.text)) await client.connect();
     else if ((await import('./runs.js').then((m) => m.liveRuns())).length === 0) throw new Error(NO_RUN_TO_USE);
     echo();
@@ -1201,6 +1209,65 @@ function promptCommands(client: Client): Promise<number> {
   });
 }
 
+/**
+ * Whether `collection list` or `script list` runs here rather than in a
+ * run: when no run is picked and none is going, or `--browser` names a
+ * browser no run is in. They need SourceMonkey, not a run.
+ */
+async function listsHere(words: string[], client: Client): Promise<boolean> {
+  if (!installedListing(words) || client.runId !== undefined) return false;
+  const { liveRuns } = await import('./runs.js');
+  const runs = await liveRuns();
+  if (runs.length === 0) return true;
+  if (lineCdp === undefined) return false;
+  const { sameBrowser } = await import('./run.js');
+  return !runs.some((run) => sameBrowser(run.browser, lineCdp!));
+}
+
+/**
+ * `collection list` or `script list` with no run: connects to the --browser
+ * browser for it, and disconnects after.
+ */
+async function managerHere(words: string[]): Promise<number> {
+  const [, ...rest] = words;
+  const name = installedListing(words)!;
+  const parsed = parseCommandArgs(name, { words: rest });
+  if ('error' in parsed) throw new UsageError(parsed.error);
+  if (parsed.help) {
+    print(commandsHelp([name]).text.trimEnd());
+    return 0;
+  }
+  const { noSuchVerb } = await import('./manager-commands.js');
+  if (parsed.form !== 'list' && parsed.words.length > 0) throw new UsageError(noSuchVerb(parsed.words[0]));
+  const own = parsed.flags['--json'];
+  if (typeof own === 'string') {
+    const mistake = jsonLayoutMistake(own);
+    if (mistake) throw new UsageError(mistake);
+  }
+  const json = parsed.flags['--nojson'] ? false : own ? true : lineJson;
+  const out = (line: string): void => print(typeof own === 'string' && isJsonLine(line) ? withLayout(line, own as JsonLayout) : line);
+  const { connectWithoutRun } = await import('./run.js');
+  const { firstLine, openManagerLink } = await import('./extension-link.js');
+  // What went wrong connecting goes to stderr, as other mistakes do.
+  const session = await connectWithoutRun(lineCdp, (line) => process.stderr.write(`${line}\n`));
+  if (!session) return 1;
+  try {
+    const { manager, versionNote } = await openManagerLink(session.context);
+    if (versionNote) process.stderr.write(`${versionNote}\n`);
+    // Its failures go to stderr, as sm-dev's own commands' do.
+    const said = (line: string): void => {
+      if (line.startsWith('[sm-dev] ')) process.stderr.write(`${line.slice('[sm-dev] '.length)}\n`);
+      else out(line);
+    };
+    return await managerCommand({ manager, out: said, json }, name, parsed.form, parsed.words) === false ? 1 : 0;
+  } catch (err) {
+    process.stderr.write(`${firstLine(err)}\n`);
+    return 1;
+  } finally {
+    await session.done();
+  }
+}
+
 // sm-dev's own commands, which run in this process rather than going
 // to a run, when read from stdin or typed at the prompt.
 function runsHere(words: string[]): boolean {
@@ -1316,6 +1383,23 @@ const STOP_SIGNALS: NodeJS.Signals[] = process.platform === 'win32' ? ['SIGINT',
 
 // After a command of several that failed.
 const LINE_STOPPED = 'That command failed, so the commands after it were not run';
+
+/**
+ * Throws when the line's `--browser` names a browser other than the
+ * run's, which the run's commands act in: the flag would otherwise be
+ * passed over without a word.
+ */
+async function checkRunBrowser(run: RunRecord): Promise<void> {
+  if (lineCdp === undefined) return;
+  const { cdpEndpoint, sameBrowser } = await import('./run.js');
+  if (sameBrowser(run.browser, lineCdp)) return;
+  const named = cdpEndpoint(lineCdp.trim());
+  const shown = (endpoint: string): string => endpoint.replace(/^https?:\/\//, '');
+  throw new UsageError(
+    `The --browser flag names the browser at ${shown(named)}, but run ${run.id} uses the one at ${shown(run.browser)}. `
+    + `Leave out --browser to use run ${run.id}, or pick a run in that browser with --run.`,
+  );
+}
 
 const ROOTS_ARE_THE_RUNS = 'The --root and --local flags are set when a run starts, and a command sent to a run uses the run\'s own';
 

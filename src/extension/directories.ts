@@ -265,6 +265,7 @@ const SM_DEV_CONTAINER_PREFIX = 'container:sm-dev:';
 const SCRATCH_SCHEME = 'scratch:///';
 const SCRATCH_TEXT_KEY_PREFIX = 'scratch:';
 const SCRATCH_FILES_KEY_PREFIX = 'scratchFiles:';
+const SCRATCH_SOURCE_KEY_PREFIX = 'scratchSource:';
 
 // Kept to a URL path segment's safe characters.
 function safeSegment(text: string): string {
@@ -310,6 +311,20 @@ export function scratchTextKey(url: string): string {
 // extension couldn't (see `PushedFile` in external-files.ts).
 export function scratchFilesKey(url: string): string {
   return SCRATCH_FILES_KEY_PREFIX + url;
+}
+
+// The storage row naming the file on the developer's disk a scratch
+// script came from (`ScratchSource`), for sm-dev's `script list`.
+export function scratchSourceKey(url: string): string {
+  return SCRATCH_SOURCE_KEY_PREFIX + url;
+}
+
+/** Where a scratch script came from, as sm-dev pushed it. */
+export interface ScratchSource {
+  /** Its file's absolute `file://` URL. */
+  fileUrl: string;
+  /** Its path as the run was given it, often relative to where the run started. */
+  given: string;
 }
 
 // The path of run `run`'s test collection.

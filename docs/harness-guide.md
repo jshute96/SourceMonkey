@@ -251,7 +251,8 @@ up:
 | --- | --- | --- |
 | Runs | `D1`, `D2` (or one you pick with `--run Dname`) | `sm-dev list` |
 | Scripts | `1`, `2` | `scripts` |
-| SourceMonkey-managed scripts on the tab | `E1`, `E2` | `scripts` |
+| SourceMonkey-managed scripts | `E1`, `E2` | `scripts` (those on the tab), `script list` (all) |
+| SourceMonkey's collections | `C1`, `C2` (a run's test collection: its run, `D1`) | `collection list` |
 | Tabs | `T1`, `T2` | `tabs` |
 | Menu commands | `M1`, `M2` | `menu` |
 
@@ -410,6 +411,10 @@ For a browser that keeps the extension (and your logins):
 - One browser choice per line: `--temp-browser` can't go with
   `--browser` or `--open-browser`, and after `--open-browser`, `start`
   takes no `--browser` of its own.
+- A command sent to a run acts in the run's browser. A `--browser` that
+  names another one is refused, rather than passed over.
+  - `collection list` and `script list` are the exception: they need
+    no run, so with a `--browser` no run is in, they list that browser.
 
 ## How scripts run
 
@@ -461,7 +466,8 @@ For a browser that keeps the extension (and your logins):
   script number in SourceMonkey (`E12`), the same in every run, and
   the `#E12` its Log ID shows in the script viewer.
 - `values E1` shows one's stored values, and `scripts E1` picks it for
-  `get` and `set`.
+  `get` and `set`. Any installed script can be picked (`script list`
+  lists them), not only one on the current tab.
 - Outside a `--temp-browser`, `set` on one needs `--force`, since it
   changes your real data: `set key --force <json>`.
 
@@ -932,7 +938,8 @@ For a program reading sm-dev's answers rather than a person.
 
 - `--json`, first on the line, makes the commands that have a JSON form
   print it: `list`, `status`, `scripts`, `tabs`, `values`, `get`,
-  `match`, `validate`, `menu`, `logs` and `probe`.
+  `match`, `validate`, `menu`, `logs`, `probe`, `collection list` and
+  `script list`.
   - The listing forms only: `tabs`, `scripts` and `menu T2`, not
     `tab T2`, `script 2` or a menu command fired.
   - The rest print text as usual.
@@ -998,6 +1005,8 @@ The shapes of every command's result, with examples:
 | `script <script>` | Picks the script `get`, `set`, `match` and `validate` act on (the first, until changed). `scripts <script>` works too |
 | `load <script>...` | Loads more scripts from disk (files, directories, globs), and reloads the tabs they match. Quote a path with spaces |
 | `update [script]` | Re-reads one script from disk, or all (with no argument, or `all`), as `--watch` does on a save |
+| `collection list` | Lists SourceMonkey's collections (`C1`, ...), with each one's kind, script count and whether it's enabled. `collection`, `collections` and `collections list` do the same. Works with no run too, against `--browser` |
+| `script list [collection]` | Lists every installed script (`E1`, ...) under its collection, or one collection's (`C3`, a name, or `id=<id>`). Runs' test collections' scripts too: this run's as `1`, `2`, another run's by name. The selected script is marked `*`. `scripts list` does the same. Works with no run too |
 | `status` | The run and its log file, the tab list, and each script's state on the current tab |
 | `menu` | Lists the registered menu commands, numbered `M1`, `M2`, under the script that registered each |
 | `menu <M-number or label>` | Fires one, as picking it from the toolbar would |

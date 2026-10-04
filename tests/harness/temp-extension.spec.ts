@@ -201,7 +201,7 @@ test('SourceMonkey-managed scripts on the tab are E1, ..., kept out, and their v
     // The picked one is marked, and the run's own script isn't.
     expect(text).toMatch(/\* E1: Other \(Scripts from web\)/);
     // Kept out of the run's tab: only the run's own script ran there.
-    expect(text).toContain('Kept out of the run\'s tabs');
+    expect(text).toContain('SourceMonkey script not loaded in sm-dev tab');
     expect(text).not.toContain('other ran');
     // The run's test collection went with it; the person's stays.
     const after = await chromium.connectOverCDP(launched.endpoint);
@@ -254,6 +254,38 @@ test('a run keeps SourceMonkey-managed scripts out of its tabs, and runs its pag
     expect(text).toContain('[mine] other is out on /target.html');
     expect(text).toContain('[main] ran');
     expect(text).not.toMatch(/Main skipped on \S+target\.html/);
+  } finally {
+    await launched.close();
+  }
+});
+
+// Its own scripts on another page re-register the page bridge behind
+// the installed script, whose request to run the bridge then misses;
+// it asks again once the bridge is in, and is kept out.
+test('a run keeps an installed page-world script out even where none of its own run', async ({ fixtureServer, scriptsDir }) => {
+  test.setTimeout(90_000);
+  const launched = await launchExtensionBrowser({ connectedElsewhere: true });
+  try {
+    const browser = await chromium.connectOverCDP(launched.endpoint);
+    await installScript(browser.contexts()[0], renderUserscript({
+      relativePath: 'other.user.js',
+      meta: { name: 'Other', match: ['*://*/target.html'], grant: ['none'], runAt: 'document-idle' },
+      body: `document.documentElement.dataset.other = 'ran';`,
+    }));
+    await browser.close();
+    const file = scriptsDir.write({
+      relativePath: 'mine.user.js',
+      meta: { name: 'Mine', match: ['*://*/other.html'], grant: ['none'] },
+      body: '',
+    });
+    const { lines, left } = await driveCli(['--browser', launched.endpoint, 'start', file, `${fixtureServer.baseUrl}/target.html`], [
+      // Well past the 2s it would have waited before running anyway.
+      ['Mine skipped on', 'wait 4s\neval "other is " + (document.documentElement.dataset.other ?? "out")'],
+      ['other is', 'stop'],
+    ]);
+    const text = lines.join('\n');
+    expect(left, text).toEqual([]);
+    expect(text).toContain('"other is out"');
   } finally {
     await launched.close();
   }

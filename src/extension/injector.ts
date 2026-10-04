@@ -1100,10 +1100,9 @@ export async function collectActiveSpecs(
 // not a queued message, so an event dispatched before this spec's
 // listener exists is dropped rather than delivered later. We emit our
 // own specs ahead of the user scripts' for that reason (see
-// `orderWithOwnSpecs`); the fallback when it still races is
-// the prelude's 2s safety timer, which seals check-pending with
-// {action: "run"} — the script runs, just without the reload
-// fast-path swap.
+// `orderWithOwnSpecs`). When it still races (a sync that widened the
+// bridge re-registered it behind them), the wrapper sends its
+// check-pending again when the bridge announces itself.
 //
 // Scoping. The bridge registers on the union of every MAIN-world
 // script's patterns — the same rule as the GM runtime, and for the
@@ -2118,13 +2117,12 @@ async function runIncrementalSync(scope: SyncScope, state: RegistrationState): P
 // Bridge next so MAIN wrappers have a listener for their requests.
 // Then the user scripts. (Cross-registration ordering isn't guaranteed
 // by the userScripts API, but in practice Chrome runs registrations in
-// order. The bridge relies on this: a request is a synchronous DOM
-// event, so one dispatched before the bridge's IIFE installed its
-// listener is dropped, not queued — unlike the postMessage this
-// replaced, which the bridge would have picked up on a later task. The
-// exposure is one message, `sm:check-pending`, and the prelude's 2s
-// safety timer seals it; every other request originates from code that
-// runs only after that handshake settles. For GM_*: everything gm-bindings.ts emits — both
+// order. The bridge benefits from it: a request is a synchronous DOM event,
+// so one dispatched before the bridge's IIFE installed its listener is
+// dropped, not queued. The exposure is one message, `sm:check-pending`,
+// which the wrapper sends again when the bridge announces itself
+// (`sourcemonkey-bridge-ready`); every other request originates from
+// code that runs only after that handshake settles. For GM_*: everything gm-bindings.ts emits — both
 // the `const GM_x` declarations and the eager calls (`storage.init`,
 // `urlchange.enable`) — is spliced INSIDE the main-body wrap function,
 // which the prelude only invokes after its awaitDecision + run-at gates
@@ -2140,7 +2138,8 @@ async function runIncrementalSync(scope: SyncScope, state: RegistrationState): P
 //
 // An incremental sync that moves an own spec's pattern union UPDATES
 // it, which puts it after every user script already registered. That
-// is tolerated rather than repaired: the bridge doesn't rest on order
+// is tolerated rather than repaired: a wrapper ahead of the bridge
+// sends its check-pending again when the bridge announces itself
 // (above), and a wrapper only decides whether it can use a hot-swapped
 // body once the body is about to run, by which point every
 // document_start registration has executed — see `needsRuntime` in

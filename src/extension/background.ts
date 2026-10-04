@@ -130,8 +130,11 @@ import {
 import type { ProbePolicy } from '../version-probe.js';
 import {
   getDirectoryListingFetches,
+  isScratchUrl,
   scratchRunOf,
+  scratchSourceKey,
   resetDirectoryListingFetches,
+  type ScratchSource,
 } from './directories.js';
 import {
   addCollection,
@@ -141,6 +144,7 @@ import {
   type RefreshBatch,
   getScript,
   getCollection,
+  getAllScripts,
   getCollections,
   getCollectionWithScripts,
   isFirstRunComplete,
@@ -207,7 +211,10 @@ import {
   staleRuns,
   setTabScriptsOff,
 } from './sm-dev-link.js';
-import { SKIP_REASON_SM_DEV, SM_DEV_PROTOCOL, type ProtocolVersion } from '../sm-dev-protocol.js';
+import {
+  SKIP_REASON_SM_DEV, SM_DEV_PROTOCOL, type ManagedCollection, type ManagedScript, type ProtocolVersion,
+} from '../sm-dev-protocol.js';
+import { managedCollection, managedScripts } from './managed-items.js';
 import {
   applyBatchValues,
   DELETED_SENTINEL,
@@ -312,6 +319,10 @@ interface SourceMonkeyApi {
   ping: (value?: string) => string;
   // Test/debug hook: force a tab badge refresh against an arbitrary URL.
   matchesFor: (url: string) => Promise<MatchedScript[]>;
+  // sm-dev's `collection list` and `script list` (protocol 1.2), numbered
+  // first so a collection or script added a moment ago has its number.
+  managedCollections: () => Promise<ManagedCollection[]>;
+  managedScripts: () => Promise<ManagedScript[]>;
   // ---- E2E test surface ----
   //
   // These methods exist so Playwright tests can drive the extension via
@@ -603,6 +614,22 @@ const api: SourceMonkeyApi = {
   matchesFor: async (url) => {
     await ensureLoaded();
     return findMatchesForUrl(url);
+  },
+  managedCollections: async () => {
+    const numbers = (await assignAllNumbers()).collections.byId;
+    return (await getCollections()).map((c) => managedCollection(c, numbers[c.id]));
+  },
+  managedScripts: async () => {
+    const numbers = (await assignAllNumbers()).scripts.byId;
+    const scripts = await getAllScripts();
+    // Where each run's script came from, by its scratch URL.
+    const scratch = scripts.map((s) => s.fileUrl).filter(isScratchUrl);
+    const got = await chrome.storage.local.get(scratch.map(scratchSourceKey));
+    const sources = Object.fromEntries(scratch.flatMap((url) => {
+      const source = got[scratchSourceKey(url)] as ScratchSource | undefined;
+      return source ? [[url, source]] : [];
+    }));
+    return managedScripts(await getCollections(), scripts, numbers, sources);
   },
   addCollection,
   createCollection,
