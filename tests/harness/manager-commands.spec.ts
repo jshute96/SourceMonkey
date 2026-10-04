@@ -47,6 +47,10 @@ function cli(...args: string[]): Promise<{ code: number | null; stdout: string; 
 }
 
 test('collection list and script list, with no run', async ({ scriptsDir }) => {
+  // Each sm-dev call below connects to the browser afresh, about a
+  // second apiece on a quiet machine, so they outlast the default 30s
+  // under load.
+  test.setTimeout(90_000);
   scriptsDir.write({ relativePath: 'a/one.user.js', meta: { name: 'One', match: ['https://example.com/*'], extra: ['// @version 1.2'] }, body: '' });
   scriptsDir.write({ relativePath: 'b/two.user.js', meta: { name: 'Two', match: ['https://example.com/*'] }, body: '' });
   await worker.evaluate((dir) => (self as unknown as Sm).SourceMonkey.addCollection(dir), path.join(scriptsDir.path, 'a'));

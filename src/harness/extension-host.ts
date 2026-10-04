@@ -325,7 +325,9 @@ export class ExtensionHost extends HarnessHost {
       // A tab with its scripts turned off (`--noscript`) skips them on
       // each load, as asked: nothing to say.
       if (event.reason === SKIP_REASON_SM_DEV) return;
-      this.recordSkip(state.page, { ...fields, reason: event.reason || 'skip' });
+      // With no decision, the why (`detail`, from protocol 1.4) rather
+      // than its token.
+      this.recordSkip(state.page, { ...fields, reason: event.detail?.replace(/\.+$/, '') || event.reason || 'skip' });
     }
   }
 

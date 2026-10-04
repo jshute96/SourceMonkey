@@ -23,7 +23,8 @@ export const SKIP_REASON_SM_DEV = 'tab controlled by sm-dev';
 // 1.2: `managedCollections` and `managedScripts`; `writeRunScript`
 //   takes the script's `source` file, which `managedScripts` gives back.
 // 1.3: permission prompts: `connect-prompt` events, `answerConnectPrompt`.
-export const SM_DEV_PROTOCOL = { major: 1, minor: 3 } as const;
+// 1.4: a report event can carry `detail`: why a script had no decision.
+export const SM_DEV_PROTOCOL = { major: 1, minor: 4 } as const;
 
 export interface ProtocolVersion {
   major: number;

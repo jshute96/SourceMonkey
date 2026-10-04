@@ -553,6 +553,11 @@ interface SourceMonkeyApi {
   // the tabs loading and the write" case without killing the worker
   // (which would also kill the test's handle on it).
   dropGmOpenersForTests: () => Promise<void>;
+  // Test-only: the "should I run?" decision for a request from a
+  // document Chrome gives no tab, whose sender carries only its URL.
+  // No real page reliably makes one, so this is how the tab-less path
+  // gets tested.
+  checkPendingWithoutTabForTests: (id: string, url: string, tld: boolean) => Promise<CheckPendingReply>;
   // Test-only fault injection: when true, `broadcastValueUpdate` sends
   // nothing, standing in for a broadcast that never reached the other
   // tab. Drives the resync-recovery test. No production caller flips it.
@@ -747,6 +752,7 @@ const api: SourceMonkeyApi = {
   },
   setDebugForceSnapshotFailure,
   dropGmOpenersForTests: resetGmOpenersState,
+  checkPendingWithoutTabForTests: (id, url, tld) => handleCheckPending({ url }, { id, url, tld }),
   setDebugSuppressGmBroadcast: (value: boolean) => { __debugSuppressGmBroadcast = !!value; },
   // The unthrottled sweep: a test drives it on demand, where the
   // once-a-minute rate limit on the startup path would just make the
@@ -1149,6 +1155,19 @@ const SKIP_REASON_RELOAD_WITHOUT_SCRIPTS = 'reload with no userscripts';
 // prelude treats it as its own matcher saying no and reports nothing,
 // so the literal there must stay the same.
 const SKIP_REASON_NO_MATCH = 'no-match';
+// The `skip` for a script whose decision couldn't be made: the wrapper's
+// own, when no answer came (`awaitDecision` in userscript-prelude.js),
+// and ours, when deciding threw. Its `detail` says why. The prelude
+// names it too.
+const SKIP_REASON_NO_DECISION = 'no-decision';
+
+// What a script with no decision says, in its Log and on the badge.
+// `detail` is the wrapper's why, which may carry Chrome's own message,
+// ending in a period or not.
+function noDecisionMessage(detail: string | undefined): string {
+  const why = (detail ?? '').trim().replace(/\.+$/, '');
+  return why ? `Did not run on this page. ${why}.` : 'Did not run on this page: SourceMonkey did not decide whether to run it';
+}
 
 // How long an armed tab waits for its reload to commit. Well past a
 // live page's commit time, short enough that a cancelled reload can't
@@ -1952,8 +1971,10 @@ function installNavigationListeners(): void {
     enqueueTabWork(d.tabId, () => updateTabMatches(d.tabId, d.url, d.documentId ?? null, 'navigation'));
   });
   // A grace period after the load, since a document-idle script may
-  // start only at the load and then waits on its check-pending reply
-  // (bounded at 2s by the wrapper).
+  // start only at the load and then waits on its check-pending reply,
+  // for up to the wrapper's decision timeout. Past that, it has either
+  // run, been told to skip, or reported no decision (which the badge
+  // and Log show as such, not as never started).
   wn.onCompleted.addListener((d) => {
     if (d.frameId !== 0 || !d.documentId) return;
     const documentId = d.documentId;
@@ -1963,7 +1984,10 @@ function installNavigationListeners(): void {
   });
 }
 
-const MISSING_SCRIPT_GRACE_MS = 3000;
+// `DECISION_TIMEOUT_MS` in userscript-prelude.js: how long a wrapper
+// waits for its check-pending reply before not running.
+const WRAPPER_DECISION_TIMEOUT_MS = 10_000;
+const MISSING_SCRIPT_GRACE_MS = WRAPPER_DECISION_TIMEOUT_MS + 1000;
 
 // Once per document: a Log warning for each script that matched it but
 // never reported, with what the document's other reports suggest about
@@ -2594,20 +2618,22 @@ type CheckPendingReply =
       needsRuntime?: boolean;
       gmValues?: Record<string, unknown>;
     }
-  | { action: 'skip'; reason: string };
+  | { action: 'skip'; reason: string; detail?: string };
 
 async function handleCheckPending(
   sender: chrome.runtime.MessageSender,
   payload: CheckPendingPayload,
 ): Promise<CheckPendingReply> {
+  // Outside a tab (a document Chrome gives no tab), the same checks
+  // run, less the tab's own: no claim, reload skip or reload swap can
+  // apply there. Every other check still does.
   const tabId = sender.tab?.id;
-  if (tabId == null) return { action: 'run' };
   // A tab an sm-dev run controls runs only the scripts its claim
   // allows (sm-dev-link.ts). First, and for every frame, like the skip
   // reload below. Waits for the claims to load, so a worker that just
   // started can't let a script through.
   await claimsReady();
-  const claim = activeClaim(tabId);
+  const claim = tabId == null ? undefined : activeClaim(tabId);
   // - Only for the extension's own scripts: an id it doesn't know
   //   (a page's forgery over the bridge) runs nothing either way.
   // - A scratch script is sm-dev's: it runs only in the tabs of the run
@@ -2620,7 +2646,7 @@ async function handleCheckPending(
   // "Reload page with no userscripts" — decided per tab, ahead of the
   // fast path, and for every frame: a subframe's documentId is its
   // own, so the tab-level marker is the only thing that covers it.
-  if (skipScriptsDocByTab.has(tabId)) {
+  if (tabId != null && skipScriptsDocByTab.has(tabId)) {
     return { action: 'skip', reason: SKIP_REASON_RELOAD_WITHOUT_SCRIPTS };
   }
   // The frame's own URL (sender.url), not the one in the payload.
@@ -2632,7 +2658,7 @@ async function handleCheckPending(
     }
   }
   const documentId = (sender as { documentId?: string }).documentId ?? '';
-  if (!documentId) return { action: 'run' };
+  if (!documentId || tabId == null) return { action: 'run' };
   const key = fastPathKey(tabId, documentId);
   const entry = fastPathByDoc.get(key);
   if (!entry) return { action: 'run' };
@@ -4050,8 +4076,9 @@ function installScriptMessageListener(): void {
   ev.addListener((msg, sender, sendResponse) => {
     if (!msg || typeof msg !== 'object') return;
     const tabId = sender.tab?.id;
-    if (tabId == null) return;
     const type = (msg as { type?: unknown }).type;
+    // Answered even with no tab: unanswered, the wrapper doesn't run
+    // (`handleCheckPending` decides what a tab-less one may do).
     if (type === SM_CHECK_PENDING_MSG) {
       // Async reply path. Return true keeps the message channel open
       // until sendResponse fires. Swallow any send failures — they
@@ -4078,8 +4105,15 @@ function installScriptMessageListener(): void {
             ? bridgeMayActAs(payload.id, sender, STORAGE_SUBSYSTEMS)
             : Promise.resolve(true))
         : Promise.resolve(false);
+      // A snapshot that can't be read is no snapshot: the decision still
+      // stands, and a storage script that would run aborts on its own,
+      // saying so (the prelude's hard abort), rather than this turning
+      // into a missing decision.
       const snapshotP: Promise<Record<string, unknown> | undefined> =
-        valueReadAllowed.then((ok) => (ok ? loadSnapshotForCheckPending(payload.id) : undefined));
+        valueReadAllowed.then((ok) => (ok ? loadSnapshotForCheckPending(payload.id) : undefined)).catch((err) => {
+          console.info('[SourceMonkey] check-pending storage snapshot failed:', err);
+          return undefined;
+        });
       Promise.all([decisionP, snapshotP]).then(
         ([reply, gmValues]) => {
           const enriched: CheckPendingReply =
@@ -4089,12 +4123,16 @@ function installScriptMessageListener(): void {
           try { sendResponse(enriched); } catch { /* gone */ }
         },
         (err) => {
+          // Not run: the decision is what keeps it out of an sm-dev
+          // run's tabs and honours a skip; see SKIP_REASON_NO_DECISION.
           console.info('[SourceMonkey] check-pending handler threw:', err);
-          try { sendResponse({ action: 'run' }); } catch { /* gone */ }
+          const detail = 'Internal error: SourceMonkey failed while deciding whether to run it. The details are in its service worker console';
+          try { sendResponse({ action: 'skip', reason: SKIP_REASON_NO_DECISION, detail }); } catch { /* gone */ }
         },
       );
       return true;
     }
+    if (tabId == null) return;
     if (type === SM_FOCUS_MSG) {
       // The page saying it just came to the front — the third of the
       // signals `installFocusRefresh` describes, and the only one that
@@ -4328,6 +4366,7 @@ function installScriptMessageListener(): void {
       loadedAt?: number;
       fromLoadedAt?: number;
       reason?: string;
+      detail?: string;
       opaqueOrigin?: boolean;
       __viaBridge?: boolean;
     };
@@ -4479,6 +4518,7 @@ async function recordScriptReport(
     loadedAt?: number;
     fromLoadedAt?: number;
     reason?: string;
+    detail?: string;
     opaqueOrigin?: boolean;
     __viaBridge?: boolean;
   },
@@ -4513,6 +4553,7 @@ async function recordScriptReport(
     ...(payload.message !== undefined ? { message: payload.message } : {}),
     ...(payload.stack !== undefined ? { stack: payload.stack } : {}),
     ...(payload.reason !== undefined ? { reason: payload.reason } : {}),
+    ...(payload.detail !== undefined ? { detail: payload.detail } : {}),
   });
   // GM_* cross-tab broadcast openers table: register the
   // (scriptId, tabId) pair on EITHER sm:start or sm:swapped. The
@@ -4550,27 +4591,29 @@ async function recordScriptReport(
       message: 'Page reloaded and swapped in the newer copy of this script',
     });
   } else if (type === SM_ABANDONED_MSG) {
-    // SW told the wrapper to skip. Warning, not error — a script that
-    // was asked not to run is worth surfacing, but nothing failed.
+    // The wrapper didn't run: told to skip, or with no decision.
     console.log(
       `[SourceMonkey] abandoned ${label}${tabPart} ${senderUrl} (reason=${payload.reason ?? '?'})`,
     );
     // Not in the script's Log for a tab sm-dev controls: it happens on
     // every load there, to scripts the person didn't ask anything of.
+    // - A skip the person asked for ("Reload page with no userscripts")
+    //   is information.
+    // - No decision is an error: the script should have been decided,
+    //   and wasn't, so it didn't run. Its message is a sentence, with
+    //   why (`noDecisionMessage`).
+    // - Any other reason (a token, from an older wrapper's bare `skip`)
+    //   is a warning, the token in parentheses as a detail.
     if (payload.reason !== SKIP_REASON_SM_DEV) logScriptEvent(id, {
       // The run hears this as a report, so not again as a Log entry.
       fromReport: true,
-      // A skip the user asked for is information, not a warning.
-      level: payload.reason === SKIP_REASON_RELOAD_WITHOUT_SCRIPTS ? 'info' : 'warning',
+      level: payload.reason === SKIP_REASON_NO_DECISION ? 'error'
+        : payload.reason === SKIP_REASON_RELOAD_WITHOUT_SCRIPTS ? 'info' : 'warning',
       source: 'script-wrapper',
       tabId,
-      // `reason` is a token from the skip decision, not a sentence, so
-      // it goes in parentheses as a detail rather than being read as
-      // the explanation. The values that get here are the user's
-      // "Reload page with no userscripts" and the wrapper's own
-      // fallback (`skip`) — see the `{action: 'skip'}` note on
-      // `CheckPendingReply`.
-      message: `Did not run on this page (${payload.reason ?? 'no reason given'})`,
+      message: payload.reason === SKIP_REASON_NO_DECISION
+        ? noDecisionMessage(payload.detail)
+        : `Did not run on this page (${payload.reason ?? 'no reason given'})`,
     });
   } else {
     // console.info (not console.warn / .error) so a userscript runtime
@@ -4602,10 +4645,12 @@ async function recordScriptReport(
   // sits above the early return below.
   noteReloadFlashReport(tabId, senderDocId, id);
 
-  // sm:abandoned is logging-only — there's no "actual" report to merge
-  // and no badge change. Returning here keeps the rest of the function
-  // focused on the run / error / swapped reports.
-  if (type === SM_ABANDONED_MSG) return;
+  // sm:abandoned is logging-only (no "actual" report to merge, no badge
+  // change), except for no decision: that's a failure, shown on the
+  // badge as an error, which also keeps it from being explained later
+  // as a script that never started.
+  const noDecision = type === SM_ABANDONED_MSG && payload.reason === SKIP_REASON_NO_DECISION;
+  if (type === SM_ABANDONED_MSG && !noDecision) return;
 
   // Closes the race where storage updates land BEFORE sm:start arrives.
   // See docs/matching.md#closing-the-report-after-change-race.
@@ -4653,9 +4698,11 @@ async function recordScriptReport(
       ...claimFields,
     };
   }
-  const report: ActualStatus = type === SM_ERROR_MSG
-    ? { state: 'error', name, message: String(payload.message ?? '') }
-    : { state: 'started', name };
+  const report: ActualStatus = noDecision
+    ? { state: 'error', name, message: noDecisionMessage(payload.detail) }
+    : type === SM_ERROR_MSG
+      ? { state: 'error', name, message: String(payload.message ?? '') }
+      : { state: 'started', name };
   let next = applyScriptReport(state, id, report);
   // What this report says about the document itself, for explaining
   // another script that never starts here (see missing-scripts.ts).

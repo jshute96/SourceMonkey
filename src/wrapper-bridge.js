@@ -55,10 +55,9 @@
    the page -> SW direction is now synchronous — a request dispatched
    before this IIFE ran finds no listener and is simply dropped. A sync
    that widens this spec's patterns re-registers it behind the
-   wrappers, so this happens. Lost, the wrapper would wait out its 2s
-   safety timer and run whatever the SW would have decided (a claim, a
-   skip), so it sends its check-pending again on our ready event
-   (READY_MARKER). The script's own GM_* calls
+   wrappers, so this happens. Lost, the wrapper would wait out its
+   timeout and not run, whatever the SW would have decided, so it sends
+   its check-pending again on our ready event (READY_MARKER). The script's own GM_* calls
    are not exposed to the same race: the body doesn't run until that
    handshake settles, and by then every document_start registration has
    executed. We still emit the bridge spec ahead of the wrapper specs
@@ -193,11 +192,11 @@
      call use it; anything else is fire-and-forget.
 
      We always reply, even on SW failure, so the awaiter settles
-     quickly rather than running out its own timeout. The fallback
-     reply is `{action:"run"}` because the only caller that acts on the
-     reply's SHAPE is the prelude's check-pending awaiter; GM_* callers
-     treat any reply without `ok:true` as a failure, which is the right
-     reading here. A payload that isn't on the allowlist gets no reply
+     quickly rather than running out its own timeout. A failure is
+     `{bridgeError}`: the prelude's check-pending awaiter takes it as no
+     decision (and so doesn't run), and GM_* callers treat any reply
+     without `ok:true` as a failure, which is the right reading here.
+     A payload that isn't on the allowlist gets no reply
      at all — it never reached the SW, and staying silent keeps a page
      from using the bridge as an "is this type relayed?" oracle. */
   function relay(payload, requestId) {
@@ -210,17 +209,20 @@
     }
     var post = function (reply) {
       try {
-        window.postMessage({ __sm: REPLY_MARKER, requestId: requestId, reply: reply || { action: "run" } }, "*");
+        window.postMessage({ __sm: REPLY_MARKER, requestId: requestId, reply: reply || { bridgeError: "SourceMonkey gave no answer" } }, "*");
       } catch (_e1) {}
+    };
+    var failed = function (err) {
+      post({ bridgeError: "Asking SourceMonkey failed: " + ((err && err.message) || String(err)) });
     };
     try {
       var pr = chrome.runtime.sendMessage(stamp(payload));
       if (pr && typeof pr.then === "function") {
-        pr.then(post, function () { post({ action: "run" }); });
+        pr.then(post, failed);
       } else {
-        post({ action: "run" });
+        post(null);
       }
-    } catch (_e2) { post({ action: "run" }); }
+    } catch (_e2) { failed(_e2); }
   }
 
   document.addEventListener(SYNC_MARKER, function (ev) {

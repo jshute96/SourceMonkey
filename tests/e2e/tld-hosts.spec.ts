@@ -68,4 +68,21 @@ test.describe('.tld hosts', () => {
     }
     await page.close();
   });
+
+  // A document Chrome gives no tab still asks, and gets the exact
+  // reading too: only the tab's own checks (claims, reloads) are left
+  // out there.
+  test('a request from outside a tab gets the exact reading too', async ({ sm }) => {
+    scriptsDir.write({
+      relativePath: 'tld.user.js',
+      meta: { name: 'TLD Hosts', match: ['https://www.smtest-include.tld/*'], grant: ['none'] },
+      body: '',
+    });
+    const collection = await sm.addCollection(scriptsDir.path);
+    const id = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].id;
+    expect(await sm.checkPendingWithoutTabForTests(id, 'https://www.smtest-include.co.uk/', true))
+      .toEqual({ action: 'run' });
+    expect(await sm.checkPendingWithoutTabForTests(id, 'https://www.smtest-include.evil.com/', true))
+      .toEqual({ action: 'skip', reason: 'no-match' });
+  });
 });

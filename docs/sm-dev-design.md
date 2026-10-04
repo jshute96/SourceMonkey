@@ -1086,12 +1086,13 @@ sm-dev knows a tab by its CDP target id; the extension knows it by its
 
 #### Failure modes
 
-- **The wrapper's 2-second timeout runs the script.** If the SW can't
-  answer `sm:check-pending` in time, the prelude runs the body anyway
-  (`userscript-prelude.js`).
-  - A claimed tab can then run an extension script. This is rare (a SW
-    starting takes well under a second).
-  - The run doesn't say when it happens yet (see TODO.md).
+- **No decision, no run.** If the SW can't answer `sm:check-pending`
+  within the wrapper's 10s timeout, or the call fails, the script
+  doesn't run (see [injection.md](injection.md#no-decision)).
+  - So a claimed tab never runs an extension script for want of an
+    answer, and a run's own script never runs outside its tabs.
+  - The run hears it as a skip, with why: `X skipped on <url>:
+    SourceMonkey did not answer whether to run it within 10 seconds`.
 - **A MAIN-world script** asks through the page bridge, which also ends
   at the SW, so the same rule covers it.
 - **An older SourceMonkey** without the claim calls: see

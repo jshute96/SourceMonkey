@@ -103,6 +103,9 @@ calling the main-body wrap function — so the GM prelude's
 
 ## Hard abort when the SW snapshot is missing
 
+(When the SW gives no decision at all, no script runs, storage or
+not: see [injection.md](injection.md#no-decision).)
+
 If `__smDecision.gmValues` is missing or falsy at prelude time,
 the script doesn't run. The prelude:
 
@@ -128,17 +131,9 @@ Why hard abort rather than degrading gracefully:
 
 When could this trigger:
 
-- The prelude's 2-second safety timeout in `awaitDecision` fires
-  because the SW didn't reply in time. MV3 SW wake-up is
-  typically well under 50 ms; 2 s leaves plenty of headroom for
-  cold-start under load (e.g. Chrome window restore with many
-  tabs warming up at once). If 2 s isn't enough, the user's
-  recovery is "reload the page."
-- `handleCheckPending` threw in the SW. Logged on the SW console;
-  rare in practice.
-- For MAIN-world scripts: the wrapper-bridge round-trip didn't
-  reply (page navigated away mid-handshake, bridge wasn't
-  installed yet, etc.).
+- The SW's snapshot read threw. Logged on the SW console; rare in
+  practice. The decision still stands, so a script told to run
+  aborts here instead.
 - For MAIN-world scripts: the SW's `bridgeMayActAs` gate refused
   to hand the values over the bridge. See
   [MAIN-world storage](#main-world-storage) below.

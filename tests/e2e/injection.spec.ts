@@ -11,7 +11,7 @@ import path from 'node:path';
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
-import { allScripts } from '../fixtures/sw-api';
+import { activeTabId, allScripts, waitForTabState } from '../fixtures/sw-api';
 
 test.describe('injection', () => {
   let scriptsDir: ScriptsDir;
@@ -365,6 +365,43 @@ test.describe('injection', () => {
     await expect.poll(() => page.evaluate(() => document.documentElement.dataset.ranAt ?? null)).not.toBeNull();
     // Well before the 2s timer.
     expect(Number(await page.evaluate(() => document.documentElement.dataset.ranAt))).toBeLessThan(1500);
+    await page.close();
+  });
+
+  // A wrapper with no decision doesn't run, and its report of that is an
+  // error: in the script's Log, with why, and on the badge, so it isn't
+  // later explained as a script the page kept from starting.
+  test('a script with no run decision shows as an error, with why', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'main.user.js',
+      meta: { name: 'Main', match: [`${fixtureServer.baseUrl}/*`], grant: ['none'] },
+      body: '',
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+    const id = (await allScripts(sm))[0].id;
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    const tabId = await activeTabId(getServiceWorker);
+    await waitForTabState(sm, tabId, (s) => s.title.includes('Main | OK'), 'Main OK');
+    // The report a wrapper sends with no decision, over the page bridge
+    // as a page-world one does. Chrome's own messages end in a period.
+    await page.evaluate((scriptId) => {
+      document.dispatchEvent(new CustomEvent('sourcemonkey-bridge-sync', {
+        detail: JSON.stringify({ payload: {
+          type: 'sm:abandoned', id: scriptId, name: 'Main', reason: 'no-decision',
+          detail: 'Asking SourceMonkey whether to run it failed: Receiving end does not exist.',
+        } }),
+      }));
+    }, id);
+    await waitForTabState(sm, tabId, (s) => s.title.includes('Main | ERROR'), 'Main ERROR');
+    const entry = (await sm.getScriptLog(id)).find((e) => e.message.startsWith('Did not run on this page.'));
+    expect(entry).toMatchObject({
+      level: 'error',
+      message: 'Did not run on this page. Asking SourceMonkey whether to run it failed: Receiving end does not exist.',
+    });
     await page.close();
   });
 });

@@ -306,9 +306,8 @@ set, *how* the calls are grouped decides the result.
     bridge that hasn't installed its listener yet misses it rather than
     picking it up from a queue.
   - The only request exposed is `sm:check-pending`. Lost, the wrapper
-    would wait out the prelude's 2s safety timer and then run, whatever
-    the SW would have decided: an sm-dev run's claim, a "reload with no
-    userscripts", or a skip.
+    would wait out its timeout and not run, whatever the SW would have
+    decided (see [No decision](#no-decision)).
   - So the bridge announces itself once its listener is in
     (`sourcemonkey-bridge-ready`), and a wrapper still waiting sends its
     request again, once. The bridge can land after the wrappers: an
@@ -1328,9 +1327,11 @@ listener that handles these wrapper-originated message types:
   this script id.
 - `sm:error` — synchronous or attributed-async throw.
 - `sm:abandoned` — the wrapper exited without running anything
-  (SW replied `skip`). Logged only; no badge change. Today `skip` comes
-  from "Reload page with no userscripts" — see
-  [matching.md](matching.md#reload-with-no-userscripts).
+  (SW replied `skip`, or no decision came). Logged only, with no
+  badge change, except no decision, which shows on the badge as an
+  error. `skip` comes from "Reload page with no userscripts" (see
+  [matching.md](matching.md#reload-with-no-userscripts)), an sm-dev
+  claim, or [No decision](#no-decision).
 - `sm:focus` — the document came to the front. Not per-script and not
   a report about one: one listener per world per document, and the SW
   answers it by checking this tab's local scripts for edits. See
@@ -1739,8 +1740,8 @@ script's initial GM_setValue cache contents:
   its initial storage state — there's no baked literal.
 - **On missing snapshot.** Prelude logs a console error, sends
   `sm:error`, and `return`s out before the body runs. Triggers
-  when the SW is unreachable past the wrapper's 2 s safety timer
-  or `handleCheckPending` errored.
+  when the SW's snapshot read failed, or the bridge gate refused
+  it. (No decision at all is [No decision](#no-decision).)
 - **Non-storage scripts.** Skip the snapshot read; the message
   handler short-circuits before `loadSnapshotForCheckPending`.
 - **Swap replies read the new row instead.** `handleCheckPending`
@@ -1801,9 +1802,42 @@ listeners, then arms **both** gates at once — see
     asked for a snapshot, so the SW loads one itself.
 - `skip` — sends `sm:abandoned` and exits without running anything.
 
-Prelude-side safety timeout (2s) protects against the SW vanishing
-mid-handshake; on hit it defaults to `run` so the baked-in body
-still executes.
+### No decision
+
+When the wrapper can't get a decision, the script does **not** run.
+
+- The decision is what keeps scripts out of an sm-dev run's tabs (and
+  a run's own scripts out of every other tab), honours "Reload page
+  with no userscripts", and checks a `.tld` rule exactly. Running
+  without it would undo each of those.
+- "No decision" covers:
+  - no answer within `DECISION_TIMEOUT_MS` (10s);
+  - the call failing, or an answer that isn't a decision;
+  - the bridge reporting a failed call (`bridgeError`), which it sends
+    rather than leaving the wrapper waiting;
+  - `handleCheckPending` throwing, which answers this skip itself.
+- The timeout: an answer normally takes milliseconds, and the slowest
+  one the SW means to give (a reload swap) is bounded at 500ms. 10s
+  leaves a cold or busy SW room to start, so failing closed doesn't
+  drop scripts on a slow start.
+- What it says:
+  - a `console.info` line in the page: `<name>: It did not run.
+    <why>.`;
+  - an `sm:abandoned` report with `reason: "no-decision"` and the why
+    as `detail`, when the SW is there to receive it. That's an error in
+    the script's Log, and on the badge (red, with the why in the
+    tooltip), and an sm-dev run prints it as a skip, with the why.
+  - The SW's "never started" check waits past the timeout, so a script
+    still waiting isn't explained as one the page blocked.
+- A snapshot read that fails is not "no decision": the decision
+  stands, and a storage script aborts as above.
+- Outside a tab (`sender.tab` missing), the SW makes the same
+  decision less the tab's own parts (a claim, a reload skip, a reload
+  swap): a run's own script still skips, and a `.tld` rule is still
+  checked exactly.
+- A page put in the back/forward cache while its question is in flight
+  gets the call rejected, so that script doesn't run there when the
+  page comes back.
 
 ### Concurrent gates
 
@@ -1831,7 +1865,7 @@ Why it matters:
 
 `document-start` gets no free wait — `waitForRunAt` calls back
 synchronously once `<html>` exists — so the decision is its only gate,
-and the 2s safety timeout remains the hard ceiling for every `@run-at`.
+and the decision timeout remains the hard ceiling for every `@run-at`.
 
 ### Caveats
 
