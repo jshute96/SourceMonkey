@@ -37,6 +37,7 @@ import { isJsonLine, jsonLayoutMistake, jsonResult, jsonResultData, STDERR_LINE,
 // Node built-ins only, so as cheap to load as the rest here.
 import { runIdOf, type CommandSource, type RunClient, type RunRecord } from './runs.js';
 import { runLogLabel } from './run-log.js';
+import { parseLogSources, type LogSource } from './run-logs.js';
 import { preparedScriptName, withDefaultScheme } from './prepare.js';
 import { pagesToOpen, type PageWord, type SavedPageStart } from './saved-pages.js';
 import {
@@ -67,7 +68,8 @@ interface Opts {
   values?: Record<string, unknown>;
   /** Which flag gave `values`, to name in messages. */
   valuesFlag?: string;
-  pageErrors: boolean;
+  /** `--log-source`: on start, what the run's stream shows; on attach, what this client shows of it. */
+  logSources?: ReadonlySet<LogSource>;
   seconds?: number;
   detach: boolean;
   /** `start --nowait`: ready once the scripts start, without settling. */
@@ -102,7 +104,7 @@ const OWN_VALUE_FLAGS = new Set([...OWN_COMMANDS].flatMap((name) => Object.entri
 function parseArgs(argv: string[]): Opts {
   const opts: Opts = {
     command: null, args: [],
-    all: false, noTab: false, watch: false, pageErrors: false, detach: false, newRun: false, noWait: false, fromSaved: false, offline: false,
+    all: false, noTab: false, watch: false, detach: false, newRun: false, noWait: false, fromSaved: false, offline: false,
   };
   // The command's name: the first word that is no flag, nor a flag's value.
   let at = 0;
@@ -164,7 +166,12 @@ function parseArgs(argv: string[]): Opts {
         opts.valuesFlag = flag;
         break;
       }
-      case '--page-errors': opts.pageErrors = true; break;
+      case '--log-source': {
+        const sources = parseLogSources(text);
+        if ('error' in sources) throw new UsageError(sources.error as string);
+        opts.logSources = sources;
+        break;
+      }
       case '--detach': opts.detach = true; break;
       case '--new': opts.newRun = true; break;
       case '--nowait': opts.noWait = true; break;
@@ -425,7 +432,7 @@ async function runHere(
       lang: opts.lang,
       watch: opts.watch,
       values: opts.values,
-      pageErrors: opts.pageErrors,
+      logSources: opts.logSources,
       collectionRoot: lineRoots.collectionRoot,
       localRoots: lineRoots.localRoots,
       out: writeOutputLine,
@@ -635,6 +642,8 @@ class Client {
   own = false;
   /** Set by `exit`: the commands after it aren't run. */
   exiting = false;
+  /** The log sources it shows of its run's stream (`attach --log-source`); the run's own when unset. */
+  logSources: ReadonlySet<LogSource> | undefined;
   private connection: RunClient | null = null;
   /** Runs it started without `--detach`, with their logs and exit codes. */
   private readonly owned = new Map<string, { log: string; exited: Promise<number>; hold?: () => void }>();
@@ -659,7 +668,7 @@ class Client {
     if (this.connection?.open && this.connection.id === (wanted ?? this.connection.id)) return this.connection;
     const target = await targetRun(wanted);
     const { RunClient } = await import('./runs.js');
-    const connection = await RunClient.open(target.id, print, { follow: this.follow });
+    const connection = await RunClient.open(target.id, print, { follow: this.follow, logSources: this.logSources });
     await this.disconnect();
     this.connection = connection;
     this.runId = target.id;
@@ -1272,6 +1281,11 @@ function checkAttach(opts: Opts): string | undefined {
  */
 async function attachCommand(opts: Opts, client: Client): Promise<number> {
   const named = checkAttach(opts);
+  // A new connection, whose hello asks for these.
+  if (opts.logSources) {
+    client.logSources = opts.logSources;
+    await client.disconnect();
+  }
   const { id } = await client.connect(named ?? globalRun);
   client.own = false;
   print(`[sm-dev] Attached to run ${id}`);

@@ -868,8 +868,9 @@ See [docs/harness-design.md](docs/harness-design.md).
 ## sm-dev runs: follow-ups
 
 - After SourceMonkey's worker restarts mid-run, the events from while it
-  was stopped are lost (the run says so). Catch up by reading each
-  pushed script's Log once after the restart. See
+  was stopped are lost (the run says so). The scripts' Log entries are
+  read back; the rest (starts, menu commands, values) could be caught
+  up from the host's own reads. See
   [docs/sm-dev-design.md](docs/sm-dev-design.md#when-the-sw-restarts).
 - A tab a run tab opens is set up after its scripts ran, so their
   console lines from that first load don't reach the run (the reports

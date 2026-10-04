@@ -219,7 +219,8 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | File | Description |
 |------|-------------|
 | `src/harness/index.ts` | Public entry of the harness package: re-exports the install pipeline, hosts, page watcher, and Playwright fixture |
-| `src/harness/page-output.ts` | Which page console lines and errors `sm-dev start` streams (the scripts'), and how logged DOM nodes read |
+| `src/harness/page-output.ts` | Whose a page's console lines and errors are (a run script's or the page's), and how logged DOM nodes read |
+| `src/harness/run-logs.ts` | A run's log: the sources, the run-wide buffer, `--log-source` / `--since` / `--tail` parsing, and how lines read |
 | `src/harness/prepare.ts` | Runs the real install pipeline over a file or text under Node and returns the stored row, its id, world, matching, and diagnostics; also how paths are shown |
 | `src/harness/parse-check-node.ts` | Node counterpart of the sandboxed parse check: `new Function` verdict plus `vm.Script` location probes |
 | `src/harness/host.ts` | What a run or fixture test knows of its scripts: their reports, a copy of their values, menus, and the waits on them |
@@ -234,10 +235,10 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/command-args.ts` | The one parser of every sm-dev command's words: quotes, flags, a leading tab, text, forms, blocks |
 | `src/harness/prompt-editor.ts` | Multi-line editing of `{{` blocks at the `--interactive` prompt, on top of readline |
 | `src/harness/prompt-history.ts` | The `--interactive` prompt's history file (`~/.sm-dev-history`), shared by parallel sessions |
-| `src/harness/console-commands.ts` | A run's commands across its tabs, the page-dialog tracker, and the client's `--interactive` prompt |
+| `src/harness/console-commands.ts` | A run's commands across its tabs (`logs` among them), the page-dialog tracker, and the client's `--interactive` prompt |
 | `src/harness/json-output.ts` | `--json` output: each command's result type, and the marks a result and a stderr note travel under |
 | `src/harness/input-file.ts` | Reads a file a command names for its contents (`eval`, `set`, `type` and `cdp`'s `--file`, `--values-file`) |
-| `src/harness/page-commands.ts` | The run commands that drive and read a tab's page, from `click` and `eval` to `snapshot`, `logs` and raw `cdp` calls |
+| `src/harness/page-commands.ts` | The run commands that drive and read a tab's page, from `click` and `eval` to `snapshot` and raw `cdp` calls |
 | `src/harness/snapshot.ts` | `snapshot`'s element refs, the parts it shows (on screen, a selector's matches, `--find`), and `probe --css`'s suggested CSS selectors |
 | `src/harness/browser-lang.ts` | `sm-dev start --lang`: checks the tags and sets them on tabs; builds GM requests' `Accept-Language` |
 | `src/harness/browser-launch.ts` | `sm-dev --open-browser`: starts a browser that stays open, on a kept profile per port, unless one is up |
@@ -493,7 +494,7 @@ unit tests.
 | `tests/unit/harness/wait.test.mjs` | Unit tests for `wait`'s delays and the message when a tab doesn't settle |
 | `tests/unit/harness/path-args.test.mjs` | Unit tests for sm-dev's glob matching and file argument expansion |
 | `tests/unit/harness/cli-args.test.mjs` | Unit tests for `sm-dev`'s command line: `start` flags, `match` output, scripts by URL, `--run`, `--` lines, misuse |
-| `tests/unit/harness/page-commands.test.mjs` | Unit tests for how the page commands name keys for `key`, read `click`'s flags and `cdp` calls, word errors, collapse `logs` repeats |
+| `tests/unit/harness/page-commands.test.mjs` | Unit tests for how the page commands name keys for `key`, read `click`'s flags and `cdp` calls, and word errors |
 | `tests/unit/harness/command-args.test.mjs` | Unit tests for the command parser: quotes, flags with `=` or not, tabs, text, forms, refused arguments |
 | `tests/unit/harness/snapshot.test.mjs` | Unit tests for `snapshot`: which words are refs, which lines `--visible`, selectors and `--find` keep, the whole page's tree |
 | `tests/unit/harness/protocol-version.test.mjs` | Unit tests for comparing the extension's sm-dev protocol version with sm-dev's |
@@ -502,7 +503,8 @@ unit tests.
 | `tests/unit/harness/prompt-history.test.mjs` | Unit tests for the prompt's history file: loading, appending, trimming |
 | `tests/unit/harness/json-output.test.mjs` | Unit tests for how `--json` results and stderr log messages are marked, and printed multi-line or on one line |
 | `tests/unit/harness/command-lines.test.mjs` | Unit tests for `{{ ... }}` blocks, comments, and lists of commands |
-| `tests/unit/harness/page-output.test.mjs` | Unit tests for which page console lines and errors `sm-dev start` shows |
+| `tests/unit/harness/page-output.test.mjs` | Unit tests for whose a page's console lines and errors are: a run script's or the page's |
+| `tests/unit/harness/run-logs.test.mjs` | Unit tests for a run's log: sources, IDs and the cap, `--since` / `--tail` parsing, and how lines read |
 | `tests/unit/harness/validate.test.mjs` | Runs `sm-dev validate` over the example suites: verdicts matching the browser's, and warnings |
 | `tests/unit/harness/prepare.test.mjs` | Unit tests for `prepareScript` and `explainMatch` over real files on disk |
 | `tests/unit/harness/saved-header.test.mjs` | Unit tests for writing and reading a saved page's header: its URL and the userscripts that were running |
@@ -606,5 +608,6 @@ For userscript repos to install, so their coding agents know how to use `sm-dev`
 | `docs/harness-design.md` | The harness other repos install: `sm-dev` and the Playwright fixture, running scripts in the real extension |
 | `docs/sm-dev-design.md` | Internals of `sm-dev`: runs and clients, command input, tabs and claims, page commands, waiting, the extension's events |
 | `docs/sm-dev-managers.md` | Design draft: sm-dev commands for managing installed scripts, collections and managers (SM, TM, VM) |
+| `docs/sm-dev-logs.md` | A run's logs: the sources, what the stream, `logs` and `wait log` show, positions, and attributing lines |
 | `docs/sm-dev-json.md` | sm-dev's `--json` output: how it prints, each command's result type, and examples |
 | `docs/harness-guide.md` | User-facing: what a userscript repo installs, the `sm-dev` commands, the Playwright fixture API, known limitations |

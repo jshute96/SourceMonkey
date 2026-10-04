@@ -35,7 +35,7 @@ test('frames in a @require and in the script name their own file and line', asyn
   const lines: string[] = [];
   let stop!: () => void;
   const until = new Promise<void>((resolve) => { stop = resolve; });
-  const wanted = ['Stacky threw: thrown', '[page error] Error: logged'];
+  const wanted = ['Stacky threw: thrown', '[script error] Error: logged'];
   const done = run({
     files: [file],
     urls: [`${fixtureServer.baseUrl}/target.html`],
@@ -58,7 +58,7 @@ test('frames in a @require and in the script name their own file and line', asyn
   const text = lines.join('\n');
   // The script's own console.error: the frame in the script, then the
   // library's.
-  const logged = lines.find((l) => l.startsWith('[page error] Error: logged'));
+  const logged = lines.find((l) => l.startsWith('[script error] Error: logged'));
   expect(logged, text).toBeDefined();
   expect(logged).toContain(`at logged (${ROOT}/stacky.user.js:7:`);
   expect(logged).toContain(`at libCall (${ROOT}/file/`);

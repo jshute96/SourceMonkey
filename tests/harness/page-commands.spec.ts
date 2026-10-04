@@ -8,7 +8,7 @@ import path from 'node:path';
 
 import { test, expect } from '../fixtures/harness.js';
 import { DialogTracker, runConsoleCommand, type ConsoleContext } from '../../lib/harness/console-commands.js';
-import { recordLog } from '../../lib/harness/page-commands.js';
+import { RunLog } from '../../lib/harness/run-logs.js';
 
 test('page commands drive the page and read it', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {
   const script = await loadScript({
@@ -34,13 +34,15 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
     `,
   });
   const lines: string[] = [];
-  page.on('console', (msg) => recordLog(page, `[${msg.type()}] ${msg.text()}`));
-  const dialogs = await DialogTracker.attach(page, (l) => lines.push(l), { visible: false, commandsComing: true });
+  // The run's log, as run.ts keeps it for `logs`.
+  const logs = new RunLog();
+  page.on('console', (msg) => logs.add({ source: 'script', kind: msg.type(), tab: 1, text: msg.text() }));
+  const dialogs = await DialogTracker.attach(page, (t) => lines.push(`[sm-dev] ${t}`), { visible: false, commandsComing: true });
   await page.goto(`${fixtureServer.baseUrl}/target.html`);
   await expect(page.locator('button')).toHaveText('Add one');
 
   const tabs = [{ n: 1, page, link: attachment, dialogs, targetId: 'ABCDEF0123456789' }];
-  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(l), stop: () => undefined };
+  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(l), stop: () => undefined, logs };
   const run = async (line: string, cwd?: string) => {
     lines.length = 0;
     await runConsoleCommand(line, ctx, { cwd });
@@ -184,7 +186,7 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   await page.evaluate(() => document.querySelectorAll('i').forEach((i) => i.remove()));
   // Quotes inside a selector are its own.
   expect(await run('probe css=main[id="target"] main[id=\'target\']')).toEqual(['found    css=main[id="target"]  (1)', 'found    main[id=\'target\']  (1)']);
-  expect(await run('logs')).toContain('[log] [widget] hovered');
+  expect(await run('logs')).toContainEqual(expect.stringMatching(/^\d\d:\d\d:\d\d\.\d{3} T1 \[script log\] \[widget\] hovered$/));
   expect(await run('probe \'a[b\'')).toEqual(['invalid  a[b  (It isn\'t a valid selector)']);
 
   // A click that opens a dialog returns once it's up, so accept can
@@ -591,7 +593,7 @@ test('click and hover say when the mouse can\'t reach the point', async ({ page,
     `,
   });
   const lines: string[] = [];
-  const dialogs = await DialogTracker.attach(page, (l) => lines.push(l), { visible: false, commandsComing: true });
+  const dialogs = await DialogTracker.attach(page, (t) => lines.push(`[sm-dev] ${t}`), { visible: false, commandsComing: true });
   await page.setViewportSize({ width: 800, height: 600 });
   await page.goto(`${fixtureServer.baseUrl}/target.html`);
   await expect(page.locator('#panel')).toHaveCount(1);

@@ -360,7 +360,7 @@ test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
   assert.deepEqual(cli('status', '--bad'), { code: 2, out: 'ERROR: The status command has no --bad flag. It takes --json, --nojson.' });
   for (const name of ['open', 'reload', 'newtab']) assert.match(cli(name, '--bogus').out, new RegExp(`^ERROR: The ${name} command has no --bogus flag\\. It takes --noscript, --script, `));
   // The flags it does take, for a near miss.
-  assert.deepEqual(cli('wait', '--timeout', '9'), { code: 2, out: 'ERROR: The wait command has no --timeout flag. It takes --timeout-seconds.' });
+  assert.deepEqual(cli('wait', '--timeout', '9'), { code: 2, out: 'ERROR: The wait command has no --timeout flag. It takes --timeout-seconds, --log-source, --find, --since.' });
   assert.deepEqual(cli('snapshot --out f --bad'), { code: 2, out: 'ERROR: The snapshot command has no --bad flag. It takes --visible, --out, --find, --up, --context, --limit.' });
   // In free text, -- is content: eval's JavaScript here.
   assert.deepEqual(cli('eval', 'T2', '--x'), { code: 2, out: 'ERROR: The eval command has no --x flag. It takes --page, --script, --file, --out.' });
@@ -428,6 +428,8 @@ test('--help lists every command, in sections, and how to name things', () => {
   assert.match(r.stdout, /^Global options:$/m);
   assert.match(r.stdout, /^Concurrent runs:$/m);
   assert.match(r.stdout, /^ {2}Checking scripts:$/m);
+  // A section's own help command, as a hint.
+  assert.match(r.stdout, /^Logs \[help logs\]:$/m);
   assert.match(r.stdout, /^ {2}click \[tab\] <selector>\n {20}Click an element\.$/m);
   assert.match(r.stdout, /^ {4}menu \[what\] /m);
   // Unindented, beside the commands.
@@ -453,6 +455,11 @@ test('help for one command shows its entry and only its flags', () => {
   // A section's options, only for the commands that take them.
   assert.match(help('help', 'click').out, /^Common options:\n {2}--nowait /m);
   assert.doesNotMatch(help('help', 'eval').out, /--nowait/);
+  // wait log is listed under Logs too, but wait's help shows it once,
+  // with the Logs section's options for it.
+  const wait = help('help', 'wait').out;
+  assert.equal(wait.match(/^ {7}sm-dev wait log /gm)?.length, 1);
+  assert.match(wait, /^Logs:\n {2}--log-source SOURCE/m);
   // start's own groups, then the ones it shares.
   const start = help('help', 'start').out;
   assert.ok(start.indexOf('Lifetime:') < start.indexOf('Browser selection'));
@@ -490,7 +497,7 @@ test('each run command takes the flags its help lists, and no others', async () 
     closetab: ['--force'], cdp: ['--file'],
     click: ['--at', '--button', '--count', '--modifiers', '--nowait'], hover: ['--at', '--modifiers', '--nowait'], type: ['--nowait', '--file'], key: ['--nowait'],
     eval: ['--page', '--script', '--file', '--out'], snapshot: ['--visible', '--out', '--find', '--up', '--context', '--limit'], screenshot: ['--full'], probe: ['--css', '--html', ...json],
-    wait: ['--timeout-seconds'], status: json, values: json, set: ['--file', '--force'], menu: json, tabs: json, focus: [],
+    wait: ['--timeout-seconds', '--log-source', '--find', '--since'], logs: ['--tail', '--log-source', '--find', '--since', ...json], status: json, values: json, set: ['--file', '--force'], menu: json, tabs: json, focus: [],
   };
   for (const [name, flags] of Object.entries(expected)) assert.deepEqual(commandFlags(name).sort(), [...flags].sort(), name);
 });

@@ -69,7 +69,7 @@ test('a temp browser runs the script in the real extension', async ({ fixtureSer
   expect(text).toContain('has SourceMonkey');
   for (const w of wanted) expect(text).toContain(w);
   // No tab closing as the browser went.
-  expect(text).not.toContain('Tab T1 closed');
+  expect(text).not.toContain('[event] Tab closed');
 });
 
 test('an extension run seeds --values, pushes local @require and @resource files, and reports requests', async ({ fixtureServer, scriptsDir }) => {
@@ -149,8 +149,8 @@ test('an extension run takes the run commands: status, values, set, menu, eval, 
     ['"function"', 'eval --script GM_getValue("count") + "!"'],
     ['"11!"', 'menu Open'],
     // Followed into the tab it opens, which runs the run's script.
-    ['[T2] [sm-dev] Cmds started on', 'newtab'],
-    ['Tab T3 opened', 'stop'],
+    ['[T2] [event] Cmds started on', 'newtab'],
+    ['[T3] [event] Tab opened', 'stop'],
   ];
   const { lines, left } = await driveCli(['--temp-browser', 'start', file, `${fixtureServer.baseUrl}/target.html`], steps);
   const text = lines.join('\n');
@@ -247,7 +247,7 @@ test('a run keeps SourceMonkey-managed scripts out of its tabs, and runs its pag
     });
     const { lines, left } = await driveCli(['--browser', launched.endpoint, 'start', file, main, `${fixtureServer.baseUrl}/target.html`], [
       // The opened tab's first load prints no console lines (see TODO.md).
-      ['[T2] [sm-dev] Mine started on', 'stop'],
+      ['[T2] [event] Mine started on', 'stop'],
     ]);
     const text = lines.join('\n');
     expect(left, text).toEqual([]);
@@ -354,11 +354,11 @@ test('a run follows the tabs its scripts open, each by its own tab', async ({ sc
   // Each opened tab is announced with the page it shows, and that tab's
   // own lines are tagged with its number.
   for (const page of ['/a.html', '/b.html', '/landing.html']) {
-    const announced = text.match(new RegExp(`Tab (T\\d+) opened at \\S*${page.replace('.', '\\.')}`));
+    const announced = text.match(new RegExp(`\\[(T\\d+)\\] \\[event\\] Tab opened at \\S*${page.replace('.', '\\.')}`));
     expect(announced, text).not.toBeNull();
     // (Console lines from an opened tab's first load don't reach the
     // run yet: see TODO.md.)
-    expect(text).toMatch(new RegExp(`\\[${announced![1]}\\] \\[sm-dev\\] Pop started on \\S*${page.replace('.', '\\.')}`));
+    expect(text).toMatch(new RegExp(`\\[${announced![1]}\\] \\[event\\] Pop started on \\S*${page.replace('.', '\\.')}`));
   }
   expect(text).not.toContain('couldn\'t follow');
 });

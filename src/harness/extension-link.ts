@@ -385,6 +385,11 @@ export class ExtensionLink {
     return this.call((id) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.getGmValues(id), scriptId);
   }
 
+  /** A script's Log entries, oldest first, as its Log tab shows them. */
+  async scriptLog(scriptId: string): Promise<LogEntry[]> {
+    return this.call((id) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.getScriptLog(id), scriptId);
+  }
+
   /** Writes values (wire form) as another tab of the script would. */
   async writeValues(scriptId: string, writes: { key: string; value?: unknown; deleted?: boolean }[]): Promise<void> {
     await this.call(({ id, w }) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.writeGmValues(id, w), { id: scriptId, w: writes });
@@ -454,6 +459,7 @@ interface Api {
   tabDocument(tabId: number): Promise<{ url: string; timeOrigin: number } | null>;
   getStackLayout(scriptId: string): Promise<StackLayout | null>;
   getGmValues(scriptId: string): Promise<Record<string, unknown>>;
+  getScriptLog(scriptId: string): Promise<LogEntry[]>;
   writeGmValues(scriptId: string, writes: { key: string; value?: unknown; deleted?: boolean }[]): Promise<void>;
   fireActionContextMenuItem(tabId: number, scriptId: string, commandId: string): Promise<{ ok: boolean }>;
   scriptsOnTab(tabId: number): Promise<{ id: string; name: string; status: string; collection: string; number?: number }[]>;

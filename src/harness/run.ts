@@ -14,21 +14,22 @@ import type { Browser, BrowserContext, ConsoleMessage, Page } from '@playwright/
 
 import { shellWord } from './command-lines.js';
 import {
-  commandOutput, commandRunner, DialogTracker, gotoInTab, inCommand, leaveDialogsOpen, onlyInspects, reloadTab, reloadable, serveSavedPage, setCommandsListening, skippedScriptLine, targetIdSuffix,
-  type CommandRunner, type ConsoleContext, type ControlledTab, type OutputHistory,
+  commandOutput, commandRunner, DialogTracker, gotoInTab, leaveDialogsOpen, onlyInspects, reloadTab, reloadable, serveSavedPage, setCommandsListening, skippedScriptLine, targetIdSuffix,
+  type CommandRunner, type ConsoleContext, type ControlledTab,
 } from './console-commands.js';
 import { applyLang, langLaunchArgs } from './browser-lang.js';
 import { extensionLabel, sourceMonkeyState, type ExtensionState } from './extension-backend.js';
 import { ExtensionHost } from './extension-host.js';
 import { launchExtensionBrowser } from './extension-launch.js';
 import { ExtensionLink, linkRunId, type ExtensionEvent } from './extension-link.js';
-import type { ErrorReport, SkipReport, StartReport } from './host.js';
+import type { ErrorReport, PageLink, SkipReport, StartReport } from './host.js';
 import { attachPage, targetIdOf, type AttachOptions, type PageAttachment } from './page-watch.js';
-import { pageSays, recordLog } from './page-commands.js';
-import { consoleText, decodeOwnRefs, formatConsoleArgs, hostReportedError, isPreludeLine, shortConsoleText, showConsoleLine, showPageError } from './page-output.js';
+import { pageSays } from './page-commands.js';
+import { consoleSource, consoleText, decodeOwnRefs, formatConsoleArgs, isPreludeLine, pageErrorSource } from './page-output.js';
 import {
   defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, preparedScriptPath, prepareScript, pushedFiles, shownPath, warningLines, type PreparedScript,
 } from './prepare.js';
+import { DEFAULT_LOG_SOURCES, inSources, RunLog, streamText, type LogFields, type LogSource } from './run-logs.js';
 import { comparableUrl, openingSavedLine, type SavedPageStart } from './saved-pages.js';
 import { browserSentence, checkRunsDir, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentCommand, type SentLineHandler } from './runs.js';
 import { cspBlocksPageScripts, sandboxedPageWarning } from '../sandboxed-page.js';
@@ -69,19 +70,17 @@ export interface RunOptions extends ConnectOptions {
   watch?: boolean;
   /** Seed `GM_*` storage for every script before it runs. */
   values?: Record<string, unknown>;
-  /** Also stream the page's own errors, not just ones from the scripts. */
-  pageErrors?: boolean;
+  /** The log sources the run's stream and log file show (`start --log-source`). */
+  logSources?: ReadonlySet<LogSource>;
   collectionRoot: string;
   localRoots: string[];
   /** Where the stream goes. */
   out: (line: string) => void;
-  /** Where a line goes that `wait log` can match but the stream leaves out. */
-  hear?: (line: string) => void;
   /**
-   * `out`, for a line the stream shows cut (a long console line), with
-   * the whole line for `wait log` to match. Without it, `out` the cut one.
+   * Logs a line of one of the log sources (see run-logs.ts), which the
+   * stream shows when its source is one it shows. Set by `run`.
    */
-  outCut?: (shown: string, whole: string) => void;
+  emit?: (fields: LogFields) => void;
   /** Resolves when the run should end (stop, a signal, --seconds). Omit to return after the first load. */
   until?: Promise<void>;
   /** Called when a client's `stop` asks for the run to end. */
@@ -521,9 +520,9 @@ function printSkipped(opts: RunOptions, start: StartPages): void {
 }
 
 export async function run(opts: RunOptions): Promise<number> {
-  const remote = new Remote(opts.out, opts.onStop, opts.onActivity, opts.primaryPid);
+  const remote = new Remote(opts.out, opts.logSources ?? DEFAULT_LOG_SOURCES, opts.onStop, opts.onActivity, opts.primaryPid);
   // Every line also goes to whoever sent the command running now.
-  opts = { ...opts, out: remote.out, hear: remote.hear, outCut: remote.outCut, typed: new Map(opts.files.map((file, i) => [file, opts.given?.[i] ?? file])) };
+  opts = { ...opts, out: remote.out, emit: remote.emit, typed: new Map(opts.files.map((file, i) => [file, opts.given?.[i] ?? file])) };
   const session = await openBrowser(opts, opts.out, { runTab: true, openTab: !opts.noTab });
   if (!session) return 1;
   // Which browser, for the stream and the log.
@@ -591,9 +590,6 @@ export function commandMark(sent: Pick<SentCommand, 'pid' | 'source'>, primaryPi
   return `${who}:${sent.source} >`;
 }
 
-// How many lines of output `wait log` can look back over.
-const HISTORY_LINES = 5000;
-
 /**
  * A run's side of `sm-dev <command>` and `sm-dev stop`: runs each sent line
  * as a typed command, and answers the sender with the output while it
@@ -610,28 +606,21 @@ class Remote {
   private ending = false;
   private ready!: () => void;
   private readonly armed = new Promise<void>((resolve) => { this.ready = resolve; });
-  private readonly listeners = new Set<(line: string) => void>();
-  // The run's recent output, numbered, for `wait log`; the oldest go
-  // past a cap.
-  private readonly history: string[] = [];
-  private historyStart = 0;
-  private readonly watchers = new Set<(line: string) => void>();
-  readonly output: OutputHistory = {
-    mark: () => this.historyStart + this.history.length,
-    since: (from) => this.history.slice(Math.max(0, from - this.historyStart)),
-    watch: (listener) => {
-      this.watchers.add(listener);
-      return () => { this.watchers.delete(listener); };
-    },
-  };
+  // Who gets the stream, each with the log sources it shows; undefined
+  // for the run's own.
+  private readonly listeners = new Map<(line: string) => void, ReadonlySet<LogSource> | undefined>();
+  /** The run's log lines, for `logs` and `wait log`. */
+  readonly logs = new RunLog();
 
   // The run's stream is its log, and every command comes from a
   // client, so a command that changes something is marked there as
   // `> command`, for where it happened among what the page printed.
-  // `primaryPid`: the client that started the run, whose commands are
-  // marked as the primary's.
+  // `sources`: the log sources the log file shows, and the clients
+  // that didn't ask for others. `primaryPid`: the client that started
+  // the run, whose commands are marked as the primary's.
   constructor(
     private readonly print: (line: string) => void,
+    private readonly sources: ReadonlySet<LogSource>,
     private readonly onStop?: () => void,
     private readonly onActivity?: (watched: boolean) => void,
     private readonly primaryPid?: number,
@@ -642,35 +631,27 @@ class Remote {
    * inspecting sent command's own lines go to its sender alone.
    */
   readonly out = (line: string): void => {
-    this.outCut(line, line);
-  };
-
-  /** `out`, with `whole` kept for `wait log` in place of the printed line. */
-  readonly outCut = (line: string, whole: string): void => {
     const answer = commandOutput.getStore();
     if (answer?.live) {
       answer.line(line);
       return;
     }
     this.print(line);
-    for (const listener of this.listeners) listener(line);
-    this.hear(whole);
+    for (const listener of this.listeners.keys()) listener(line);
   };
 
   /**
-   * Keeps a line for `wait log` without printing it: a page console
-   * line the stream leaves out, which `logs` still shows.
+   * Logs a line of one of the log sources, and prints it where its
+   * source is shown: the log file, and each listener, by the sources
+   * it asked for.
    */
-  readonly hear = (line: string): void => {
-    // Only what the page and scripts printed on their own: not a
-    // command's own reply (see inCommand).
-    if (inCommand.getStore()) return;
-    this.history.push(line);
-    if (this.history.length > HISTORY_LINES) {
-      this.history.shift();
-      this.historyStart++;
-    }
-    for (const watcher of [...this.watchers]) watcher(line);
+  readonly emit = (fields: LogFields): void => {
+    const record = this.logs.add(fields);
+    if (record.streamed === false) return;
+    const line = streamText(record);
+    const shows = (sources: ReadonlySet<LogSource>): boolean => record.always === true || inSources(record, sources);
+    if (shows(this.sources)) this.print(line);
+    for (const [listener, sources] of this.listeners) if (shows(sources ?? this.sources)) listener(line);
   };
 
   /** The run's id, once other shells can reach it. */
@@ -729,8 +710,8 @@ class Remote {
   // The connections following the run's stream.
   private readonly followers = new Set<(line: string) => void>();
 
-  private readonly follow = (reply: (line: string) => void): (() => void) => {
-    this.listeners.add(reply);
+  private readonly follow = (reply: (line: string) => void, sources?: ReadonlySet<LogSource>): (() => void) => {
+    this.listeners.set(reply, sources);
     this.followers.add(reply);
     this.onActivity?.(true);
     return () => {
@@ -777,7 +758,7 @@ class Remote {
       // First, so `sm-dev stop` knows it was heard, and waits for the
       // teardown rather than taking the wait for no answer.
       reply(`[sm-dev] Stopping run ${this.id}`);
-      if (!sent.follows) this.listeners.add(reply);
+      if (!sent.follows) this.listeners.set(reply, undefined);
       this.onStop?.();
       return 'hold';
     }
@@ -793,7 +774,7 @@ class Remote {
     // anyway; another gets it while the command runs.
     return this.runner(line, inspects ? { ...hooks, answer: reply }
       : sent.follows ? hooks
-        : { ...hooks, start: () => this.listeners.add(reply), end: () => this.listeners.delete(reply) });
+        : { ...hooks, start: () => this.listeners.set(reply, undefined), end: () => this.listeners.delete(reply) });
   };
 }
 
@@ -825,24 +806,30 @@ async function runInBrowser(
   }
   held.extension = link;
   if (link.versionNote) opts.out(`[sm-dev] ${link.versionNote}`);
-  const host = new ExtensionHost(link, (name, level, message) => opts.out(`[sm-dev] ${name} ${level}: ${message}`));
-  link.onRestart((restored) => opts.out('[sm-dev] SourceMonkey\'s background script restarted, so what the scripts did meanwhile may be missing here.'
-    + (restored > 0 ? ` It had lost its hold on ${restored === 1 ? 'one of the run\'s tabs' : `${restored} of the run's tabs`}, which it has again.` : '')));
+  // `tabs` is set before any entry can come in: nothing awaits between.
+  const host = new ExtensionHost(link, ({ scriptId, name, level, message, page }) => opts.emit!({
+    source: 'sm', kind: level, scriptId, tab: page && tabs.numberOf(page), text: `${name}: ${message}`,
+  }));
+  link.onRestart((restored) => {
+    opts.out('[sm-dev] SourceMonkey\'s background script restarted, so what the scripts did meanwhile may be missing here, apart from their Log entries, which are read back.'
+      + (restored > 0 ? ` It had lost its hold on ${restored === 1 ? 'one of the run\'s tabs' : `${restored} of the run's tabs`}, which it has again.` : ''));
+    void host.catchUpLogs();
+  });
   // Commands are only read once the page has loaded, but a prompt
   // opened before then can still wait for a typed or sent accept.
   const commandsComing = opts.until !== undefined && remote.reachable;
   const tabs = new FollowedTabs(host, opts, session.context, commandsComing, link, () => remote.setTabs(tabs.list().length));
   held.tabs = tabs;
-  wireHostOutput(host, opts.out, (record) => tabs.prefixOf(record));
+  wireHostOutput(host, opts.emit!, (record) => tabs.tabOf(record));
   // T1, unless `--notab`; then the first tab `newtab` opens is T1.
   if (page) {
     // Claimed first, before it loads the run's page; the run can't do
     // without it.
     const tabId = await claimTab(link, page, opts.out);
     if (tabId === undefined) return 1;
-    wirePageOutput(page, opts, true, (text) => host.remapStack(text));
+    wirePageOutput(page, 1, opts.emit!, host, link.origin);
     wireSandboxCheck(page, () => tabs.firstTabScripts, opts.out);
-    const dialogs = await DialogTracker.attach(page, opts.out, {
+    const dialogs = await DialogTracker.attach(page, tabEvent(opts.emit!, 1, 'dialog'), {
       visible: browserVisible(opts), commandsComing, tabRef: () => (tabs.list().length > 1 ? 'T1' : undefined),
     });
     await applyLang(page, opts.lang, opts.out);
@@ -1062,7 +1049,7 @@ async function runInBrowser(
           : `SourceMonkey extension, run ${link.runId}, with no test collection until a script is pushed`),
         // A throwaway browser's data is the run's own.
         others: host.otherScripts(!session.launched),
-        output: remote.output,
+        logs: remote.logs,
         roots: { collectionRoot: opts.collectionRoot, localRoots: opts.localRoots },
       };
       commands = ctx;
@@ -1172,7 +1159,7 @@ class FollowedTabs {
     this.numbers.set(attachment, 1);
     page.on('close', () => {
       if (this.disposed) return;
-      this.opts.out('[sm-dev] Tab T1 closed');
+      tabEvent(this.opts.emit!, 1, 'tab-closed')('Tab closed');
       this.onTabsChanged();
     });
     this.onTabsChanged();
@@ -1185,14 +1172,15 @@ class FollowedTabs {
     return all.filter((t) => !t.page.isClosed()).sort((a, b) => a.n - b.n);
   }
 
-  /**
-   * `[T2] ` for a host report from a followed tab, so its lines say
-   * where they came from as its page output does; empty for T1's.
-   */
-  prefixOf(record: object): string {
+  /** The number of the tab a host report came from, if known. */
+  tabOf(record: object): number | undefined {
     const link = this.host.pageOf(record);
-    const n = link && this.numbers.get(link);
-    return n && n > 1 ? `[T${n}] ` : '';
+    return link ? this.numberOf(link) : undefined;
+  }
+
+  /** The number of the tab a page link (its attachment) is, if known. */
+  numberOf(link: PageLink): number | undefined {
+    return this.numbers.get(link);
   }
 
   /** The scripts to start with, before T1 has loaded anything. */
@@ -1316,12 +1304,18 @@ class FollowedTabs {
     return entry.tab;
   }
 
-  /** The line a tab the run opens gets: where it's going, and its id. */
+  /**
+   * The line a tab the run opens gets: where it's going, and its id; an
+   * event for a blank one, as for a tab a page opens.
+   */
   announce(tab: ControlledTab, url?: string): void {
     const saved = url && tab.saved && comparableUrl(url) === comparableUrl(tab.saved.url) ? tab.saved : undefined;
-    this.opts.out(saved ? `${openingSavedLine(saved.given, url!, `T${tab.n}`)}${targetIdSuffix(tab.targetId)}`
-      : url ? `[sm-dev] Opening ${url} in T${tab.n}${targetIdSuffix(tab.targetId)}`
-      : `[sm-dev] Tab T${tab.n} opened${targetIdSuffix(tab.targetId)}`);
+    if (!url) {
+      tabEvent(this.opts.emit!, tab.n, 'tab-opened')(`Tab opened${targetIdSuffix(tab.targetId)}`);
+      return;
+    }
+    this.opts.out(saved ? `${openingSavedLine(saved.given, url, `T${tab.n}`)}${targetIdSuffix(tab.targetId)}`
+      : `[sm-dev] Opening ${url} in T${tab.n}${targetIdSuffix(tab.targetId)}`);
   }
 
   async navigate(tab: ControlledTab, url: string): Promise<void> {
@@ -1340,22 +1334,22 @@ class FollowedTabs {
   private async setUp(page: Page, n: number, opener: number | undefined, announce: boolean, noScript: boolean, tabId: number): Promise<void> {
     // T1 goes unprefixed, as the run's own does, when `--notab` makes
     // the first tab opened T1.
-    const { out, hear, outCut } = tabOutput(this.opts, n);
+    const out = tabOutput(this.opts.out, n);
     // First, so a tab that closes during the awaits below is still
     // noticed.
     let announced = false;
     page.on('close', () => {
       this.tabs.delete(page);
       if (!announced || this.disposed) return;
-      this.opts.out(`[sm-dev] Tab T${n} closed`);
+      tabEvent(this.opts.emit!, n, 'tab-closed')('Tab closed');
       this.onTabsChanged();
     });
-    wirePageOutput(page, { ...this.opts, out, hear, outCut }, true, (text) => this.host.remapStack(text));
+    wirePageOutput(page, n, this.opts.emit!, this.host, this.link.origin);
     // Not for a tab with no scripts, which gets none either way. Read
     // from the tab once it exists, since `open --script` switches it.
     let tabNow: ControlledTab | null = null;
     wireSandboxCheck(page, () => ((tabNow?.noScript ?? noScript) ? [] : this.scripts), out);
-    const dialogs = await DialogTracker.attach(page, out, {
+    const dialogs = await DialogTracker.attach(page, tabEvent(this.opts.emit!, n, 'dialog'), {
       visible: browserVisible(this.opts),
       commandsComing: this.commandsComing,
       // T2 on is named even while it is set up, before list() has it.
@@ -1381,7 +1375,7 @@ class FollowedTabs {
     const url = page.url();
     const loaded = url !== '' && url !== 'about:blank';
     announced = true;
-    if (announce) this.opts.out(`[sm-dev] Tab T${n} opened${loaded ? ` at ${url}` : ''}${noScript ? ' (no scripts)' : ''}${opener ? `, from T${opener}` : ''}${targetIdSuffix(targetId)}`);
+    if (announce) tabEvent(this.opts.emit!, n, 'tab-opened')(`Tab opened${loaded ? ` at ${url}` : ''}${noScript ? ' (no scripts)' : ''}${opener ? `, from T${opener}` : ''}${targetIdSuffix(targetId)}`);
     // After it's announced, so the events it had waiting print under it.
     this.host.addTab(attachment, tabId, opener !== undefined && shown !== '' && shown !== 'about:blank', noScript);
     if (noScript) {
@@ -1462,7 +1456,7 @@ class FollowedTabs {
     }
     // Still the run's (its claim came from its opener), but unseen here.
     if (!this.disposed && opener) {
-      this.opts.out(`[sm-dev] T${opener.n} opened a tab sm-dev couldn't follow (${event.url}). Only the run's scripts run in it, but their output there isn't shown.`);
+      tabEvent(this.opts.emit!, opener.n, 'tab-opened')(`Opened a tab sm-dev couldn't follow (${event.url}). Only the run's scripts run in it, but their output there isn't shown.`);
     }
   }
 
@@ -1543,24 +1537,28 @@ async function prepareAll(opts: RunOptions, files = opts.files): Promise<Prepare
 }
 
 // `prefix` tags each report with the tab it came from.
-function wireHostOutput(host: ExtensionHost, print: (line: string) => void, prefix: (record: object) => string): void {
-  const out = (record: object, line: string): void => print(prefix(record) + line);
-  host.on('start', (r: StartReport) => out(r, `[sm-dev] ${r.name} started on ${r.url}`));
-  host.on('skip', (r: SkipReport) => out(r, `[sm-dev] ${r.name} skipped on ${r.url}: ${r.reason}`));
+function wireHostOutput(host: ExtensionHost, emit: (fields: LogFields) => void, tabOf: (record: object) => number | undefined): void {
+  const event = (record: { scriptId?: string }, kind: string, text: string, also?: LogSource[]): void => emit({ source: 'event', kind, tab: tabOf(record), scriptId: record.scriptId, text, ...(also ? { also } : {}) });
+  // SourceMonkey's Log has an entry for each of these, logged as the
+  // report rather than twice; not for a rule miss, which only the run
+  // finds. A throw is the script's own error too, and the page's console
+  // shows it.
+  host.on('start', (r: StartReport) => event(r, 'started', `${r.name} started on ${r.url}`, ['sm']));
+  host.on('skip', (r: SkipReport) => event(r, 'skipped', `${r.name} skipped on ${r.url}: ${r.reason}`, r.ruleMiss ? undefined : ['sm']));
   host.on('script-error', (r: ErrorReport) => {
-    out(r, `[sm-dev] ${r.name} threw: ${decodeOwnRefs(r.message)}`);
-    if (r.stack) for (const line of r.stack.split('\n').slice(1, 4)) out(r, `    ${decodeOwnRefs(line.trim())}`);
+    const frames = r.stack ? r.stack.split('\n').slice(1, 4).map((line) => `\n    ${decodeOwnRefs(line.trim())}`).join('') : '';
+    event(r, 'threw', `${r.name} threw: ${decodeOwnRefs(r.message)}${frames}`, ['sm', 'script', 'page']);
   });
-  host.on('request', (r) => out(r, `[sm-dev] GM_xmlhttpRequest ${r.method} ${r.url}: ${r.outcome}${r.status ? ' ' + r.status : ''}${r.error ? ' ' + r.error : ''}`));
-  host.on('tab', (r) => out(r, `[sm-dev] GM_openInTab ${r.url}`));
-  host.on('menu-command', (r) => out(r, `[sm-dev] GM_registerMenuCommand "${r.name}"`));
-  host.on('notification', (r) => out(r, `[sm-dev] GM_notification "${r.title || r.text}"`));
-  host.on('download', (r) => out(r, `[sm-dev] GM_download ${r.url}: ${r.outcome}${r.filename ? ' -> ' + r.filename : ''}${r.error ? ' ' + r.error : ''}`));
+  host.on('request', (r) => event(r, 'request', `GM_xmlhttpRequest ${r.method} ${r.url}: ${r.outcome}${r.status ? ' ' + r.status : ''}${r.error ? ' ' + r.error : ''}`));
+  host.on('tab', (r) => event(r, 'open-tab', `GM_openInTab ${r.url}`));
+  host.on('menu-command', (r) => event(r, 'menu-command', `GM_registerMenuCommand "${r.name}"`));
+  host.on('notification', (r) => event(r, 'notification', `GM_notification "${r.title || r.text}"`));
+  host.on('download', (r) => event(r, 'download', `GM_download ${r.url}: ${r.outcome}${r.filename ? ' -> ' + r.filename : ''}${r.error ? ' ' + r.error : ''}`));
   host.on('value-write', (r) => {
     for (const w of r.writes) {
-      out(r, w.deleted
-        ? `[sm-dev] GM_deleteValue ${w.key}`
-        : `[sm-dev] GM_setValue ${w.key} = ${shortValue(w.value)}`);
+      event(r, 'value', w.deleted
+        ? `GM_deleteValue ${w.key}`
+        : `GM_setValue ${w.key} = ${shortValue(w.value)}`);
     }
   });
 }
@@ -1603,82 +1601,173 @@ function wireSandboxCheck(page: Page, scripts: () => readonly PreparedScript[], 
   });
 }
 
-// A tab's lines are tagged `[T<n>]`, except T1's, as the run's own are.
-function tabOutput(opts: Pick<RunOptions, 'out' | 'hear' | 'outCut'>, n: number): Pick<RunOptions, 'out' | 'hear' | 'outCut'> {
-  if (n === 1) return { out: opts.out, hear: opts.hear, outCut: opts.outCut };
-  return {
-    out: (line) => opts.out(`[T${n}] ${line}`),
-    hear: opts.hear && ((line) => opts.hear!(`[T${n}] ${line}`)),
-    outCut: opts.outCut && ((line, whole) => opts.outCut!(`[T${n}] ${line}`, `[T${n}] ${whole}`)),
-  };
+// `page` is everything the page's console shows, so a script's console
+// line or uncaught error is the page's too.
+const SCRIPT_IN_PAGE: Record<'script' | 'page', Partial<LogFields>> = { script: { also: ['page'] }, page: {} };
+
+// What happened in tab `n`, said as an `event` line of `kind`. A dialog
+// box is streamed whatever the sources, as the page waits on an answer.
+function tabEvent(emit: (fields: LogFields) => void, n: number, kind: string): (text: string) => void {
+  return (text) => emit({ source: 'event', kind, tab: n, text, ...(kind === 'dialog' ? { always: true } : {}) });
 }
 
-// `hostReports`: the host already prints a script's own throws,
-// so the page's copy of those is skipped. See page-output.ts.
-// `remapStack` points stack frames in a logged line (`console.error(err)`
-// prints the stack) at the `@require` or script line they came from;
-// see `ExtensionHost.remapStack`. It runs before `decodeOwnRefs`, since it
-// matches the scripts' URLs as the page wrote them (still encoded).
-function wirePageOutput(
-  page: Page,
-  opts: Pick<RunOptions, 'out' | 'hear' | 'outCut' | 'pageErrors'>,
-  hostReports: boolean,
-  remapStack: (text: string) => string,
-): void {
-  const pageErrors = opts.pageErrors ?? false;
-  const show = (msg: ConsoleMessage, text: string): void => {
-    const line = { type: msg.type(), text: decodeOwnRefs(remapStack(text)), url: msg.location().url, argCount: msg.args().length };
-    // Every line, for `logs`; the stream shows the script's. `wait log`
-    // sees them all but the prelude's repeats, in the stream's form.
-    recordLog(page, `[${line.type}] ${line.text}`);
-    // Cut when long, for the stream only: `wait log` matches it whole.
-    const whole = `[page ${line.type}] ${line.text}`;
-    const shown = `[page ${line.type}] ${shortConsoleText(line.text)}`;
-    if (showConsoleLine(line, pageErrors)) {
-      if (opts.outCut) opts.outCut(shown, whole);
-      else opts.out(shown);
-    } else if (!isPreludeLine(line.text)) opts.hear?.(whole);
-  };
-  // Never throws, as the queue below has no one to report to.
-  const showSafely = (msg: ConsoleMessage, text: string): void => {
-    try {
-      show(msg, text);
-    } catch {
-      // Nothing to do: the line is lost.
-    }
-  };
-  // A line that logs a DOM node is described from the page, which
-  // takes a round trip; the lines after it wait, to stay in order.
-  let pending: Promise<void> | null = null;
-  page.on('console', (msg) => {
-    if (!pending && !msg.args().some((arg) => arg.asElement())) {
-      // `%c` styling and the like applied; Playwright's text has them raw.
-      show(msg, msg.args().length > 1 ? formatConsoleArgs(msg.args().map((arg) => arg.toString())) : msg.text());
+// A tab's lines are tagged `[T<n>]`, except T1's, as the run's own are.
+function tabOutput(out: (line: string) => void, n: number): (line: string) => void {
+  return n === 1 ? out : (line) => out(`[T${n}] ${line}`);
+}
+
+// Logs tab `n`'s console lines and uncaught errors, each as the run's
+// scripts' (`script`) or the page's own (`page`), and its page loads
+// (`event`, for `logs` only). Whose a line is goes by its whole stack,
+// read from the protocol's own copy of the call (`ConsoleStacks`), so a
+// script logging through a page helper still counts as the script's.
+// `host.remapStack` points stack frames in a logged line
+// (`console.error(err)` prints the stack) at the `@require` or script
+// line they came from. It runs before `decodeOwnRefs`, since it matches
+// the scripts' URLs as the page wrote them (still encoded).
+function wirePageOutput(page: Page, n: number, emit: (fields: LogFields) => void, host: ExtensionHost, extensionOrigin: string): void {
+  // Given up on after a while, so a session that never opens (a hung tab,
+  // a slow remote browser) can't hold up the tab's lines for good.
+  const stacks = Promise.race([ConsoleStacks.attach(page, extensionOrigin), sleep(STACKS_ATTACH_MS).then(() => null)]);
+  const log = (msg: ConsoleMessage, text: string, call: ConsoleCall | null): void => {
+    const body = decodeOwnRefs(host.remapStack(text));
+    // SourceMonkey's own console lines repeat what the run logs from its
+    // reports, so they're only part of the page's whole console.
+    if (isPreludeLine(body)) {
+      emit({ source: 'page', kind: msg.type(), tab: n, text: body });
       return;
     }
-    const next: Promise<void> = (pending ?? Promise.resolve())
-      .then(() => consoleText(msg))
-      .then((text) => showSafely(msg, text), () => showSafely(msg, msg.text()))
-      .finally(() => { if (pending === next) pending = null; });
-    pending = next;
+    const url = msg.location().url;
+    const frames = call?.frames ?? [];
+    const source = consoleSource({ type: msg.type(), text: body, url, frames, extensionWorld: call?.extensionWorld, argCount: msg.args().length });
+    emit({ source, ...SCRIPT_IN_PAGE[source], kind: msg.type(), tab: n, scriptId: source === 'script' ? host.scriptOf([url, ...frames]) : undefined, text: body });
+  };
+  // In order: a line that logs a DOM node is described from the page,
+  // which takes a round trip, and each waits for its stack.
+  let pending: Promise<void> = Promise.resolve();
+  page.on('console', (msg) => {
+    const args = msg.args();
+    // `%c` styling and the like applied; Playwright's text has them raw.
+    const text = args.some((arg) => arg.asElement())
+      ? consoleText(msg).catch(() => msg.text())
+      : Promise.resolve(args.length > 1 ? formatConsoleArgs(args.map((arg) => arg.toString())) : msg.text());
+    // The browser's own entries (no values) are never a console call.
+    // An older Playwright has no `timestamp()`, and a failure here must
+    // not lose the line: the line then goes by its call site.
+    const call = args.length === 0 || typeof msg.timestamp !== 'function' ? Promise.resolve(null)
+      : stacks.then((s) => s?.call(msg.timestamp()) ?? null).catch(() => null);
+    // Never rejects, as the queue has no one to report to: a line that
+    // fails is lost.
+    pending = pending.then(async () => log(msg, await text, await call)).catch(() => undefined);
   });
-  // Which page load each line came from.
+  // Which page load the lines after it came from.
   page.on('framenavigated', (frame) => {
     if (frame !== page.mainFrame()) return;
-    recordLog(page, `--- ${frame.url()}`);
+    emit({ source: 'event', kind: 'load', tab: n, text: `Loaded ${frame.url()}`, streamed: false });
   });
   // The uncaught error's stack is not mapped, and must not be:
-  // `showPageError` drops a script's throw the host already reported by
+  // `pageErrorSource` drops a script's throw the host already reported by
   // finding the script's `.user.js` URL in it (`SCRIPT_BODY_FRAME`), and
   // a throw inside a `@require` carries that URL only unmapped. Only the
   // message is printed anyway.
   page.on('pageerror', (err) => {
-    const message = decodeOwnRefs(err.message);
     const stack = err.stack ?? err.message;
-    recordLog(page, `[error] ${message}`);
-    if (showPageError(stack, { pageErrors, hostReports })) opts.out(`[page error] ${message}`);
-    else if (!hostReportedError(stack, hostReports)) opts.hear?.(`[page error] ${message}`);
+    const source = pageErrorSource(stack, true);
+    if (!source) return;
+    emit({ source, ...SCRIPT_IN_PAGE[source], kind: 'error', tab: n, scriptId: source === 'script' ? host.scriptOf([stack]) : undefined, text: decodeOwnRefs(err.message) });
   });
+}
+
+/** A console call as the protocol reports it: its stack's URLs, and the world it ran in. */
+interface ConsoleCall {
+  frames: string[];
+  extensionWorld: boolean;
+}
+
+// How long a console line waits for the protocol's copy of its call,
+// and how many unclaimed copies are kept.
+const CALL_WAIT_MS = 250;
+// How long the tab's protocol session has to open before lines stop
+// waiting for it.
+const STACKS_ATTACH_MS = 3000;
+const CALLS_KEPT = 500;
+
+type ConsoleApiCalled = {
+  executionContextId: number;
+  timestamp: number;
+  stackTrace?: StackTrace;
+};
+type StackTrace = { callFrames: { url: string }[]; parent?: StackTrace };
+
+/**
+ * A tab's console calls as the protocol (CDP) reports them on a session
+ * of the run's own, for what Playwright's console event leaves out: the
+ * whole stack, and the JavaScript world the call ran in. Paired with
+ * Playwright's event by the call's timestamp, which both carry.
+ */
+class ConsoleStacks {
+  // Copies not yet claimed, and lines waiting for theirs, by timestamp.
+  private readonly calls = new Map<number, ConsoleCall[]>();
+  private readonly waiting = new Map<number, ((call: ConsoleCall) => void)[]>();
+  // The tab's JavaScript worlds that are SourceMonkey's (`USER_SCRIPT`).
+  private readonly extensionWorlds = new Set<number>();
+
+  /** Null when the tab can't be read so (closed already). */
+  static async attach(page: Page, extensionOrigin: string): Promise<ConsoleStacks | null> {
+    try {
+      const session = await page.context().newCDPSession(page);
+      const stacks = new ConsoleStacks();
+      session.on('Runtime.executionContextCreated', ({ context }) => {
+        if (context.origin === extensionOrigin) stacks.extensionWorlds.add(context.id);
+      });
+      session.on('Runtime.executionContextDestroyed', ({ executionContextId }) => stacks.extensionWorlds.delete(executionContextId));
+      session.on('Runtime.executionContextsCleared', () => stacks.extensionWorlds.clear());
+      session.on('Runtime.consoleAPICalled', (event) => stacks.heard(event as ConsoleApiCalled));
+      await session.send('Runtime.enable');
+      return stacks;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The call Playwright reported at `timestamp`; null when its copy doesn't come in time. */
+  call(timestamp: number): Promise<ConsoleCall | null> {
+    const known = this.calls.get(timestamp);
+    if (known) {
+      const call = known.shift()!;
+      if (known.length === 0) this.calls.delete(timestamp);
+      return Promise.resolve(call);
+    }
+    return new Promise((resolve) => {
+      const take = (call: ConsoleCall): void => {
+        clearTimeout(timer);
+        resolve(call);
+      };
+      const timer = setTimeout(() => {
+        const list = this.waiting.get(timestamp);
+        list?.splice(list.indexOf(take), 1);
+        if (list?.length === 0) this.waiting.delete(timestamp);
+        resolve(null);
+      }, CALL_WAIT_MS);
+      this.waiting.set(timestamp, [...this.waiting.get(timestamp) ?? [], take]);
+    });
+  }
+
+  private heard(event: ConsoleApiCalled): void {
+    const frames: string[] = [];
+    for (let trace = event.stackTrace; trace; trace = trace.parent) frames.push(...trace.callFrames.map((f) => f.url));
+    const call = { frames, extensionWorld: this.extensionWorlds.has(event.executionContextId) };
+    const waiter = this.waiting.get(event.timestamp)?.shift();
+    if (waiter) {
+      if (this.waiting.get(event.timestamp)?.length === 0) this.waiting.delete(event.timestamp);
+      waiter(call);
+      return;
+    }
+    // Enabling the protocol's console replays the calls before it,
+    // which no line will claim: the oldest go past a cap.
+    this.calls.set(event.timestamp, [...this.calls.get(event.timestamp) ?? [], call]);
+    if (this.calls.size > CALLS_KEPT) this.calls.delete(this.calls.keys().next().value!);
+  }
 }
 
 // Re-prepare and re-push on any change to a script or a file it

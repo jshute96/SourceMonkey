@@ -30,6 +30,7 @@ import {
   HarnessHost, valueCodec, type DownloadRecord, type MenuCommandRecord, type NotificationRecord, type PageLink, type TabRecord, type XhrRecord,
 } from './host.js';
 import type { ConsoleContext, OtherScript } from './console-commands.js';
+import type { LogEntry } from './extension-backend.js';
 import type { ExtensionEvent, ExtensionLink } from './extension-link.js';
 
 /** What the host needs of a tab's attachment, to order its events. */
@@ -71,14 +72,22 @@ export class ExtensionHost extends HarnessHost {
   // each one's label by its id, kept for the run.
   private readonly others = new Map<string, OtherScript>();
   private readonly otherLabels = new Map<string, string>();
+  // The newest Log entry's time seen for each pushed script, by the
+  // extension's id, so catching up after a restart prints only the rest.
+  private readonly logSeen = new Map<string, number>();
+  // While catchUpLogs reads a Log back: the first entry heard live since.
+  private readonly liveFrom = new Map<string, number>();
   // The extension's notification id for each shown one, by request id,
   // to click or close it.
   private readonly notificationIds = new Map<string, string>();
 
   constructor(
     private readonly link: ExtensionLink,
-    /** Prints a Log entry of one of the run's scripts. */
-    private readonly printLog: (name: string, level: string, message: string) => void,
+    /**
+     * Logs a Log entry of one of the run's scripts (`scriptId`: the
+     * run's id), with the tab it was made in, if any.
+     */
+    private readonly printLog: (entry: { scriptId: string; name: string; level: string; message: string; page?: PageLink }) => void,
   ) {
     super();
     link.onEvent((event) => this.ingest(event));
@@ -93,6 +102,36 @@ export class ExtensionHost extends HarnessHost {
     }
     this.extensionIds.set(runId, extensionId);
     this.runIds.set(extensionId, runId);
+    // Entries from before the push (a replaced copy's) are no part of the run.
+    this.logSeen.set(extensionId, Math.max(this.logSeen.get(extensionId) ?? 0, Date.now()));
+  }
+
+  /**
+   * After the extension's worker restarted, logs the Log entries of the
+   * run's scripts made meanwhile, whose events were lost.
+   */
+  async catchUpLogs(): Promise<void> {
+    for (const [extensionId, runId] of [...this.runIds]) {
+      // The gap is from the last entry seen to the first the new worker
+      // sends live while the Log is read, which is logged already.
+      const seen = this.logSeen.get(extensionId) ?? 0;
+      this.liveFrom.set(extensionId, Infinity);
+      const entries = await this.link.scriptLog(extensionId).catch(() => []);
+      const live = this.liveFrom.get(extensionId) ?? Infinity;
+      this.liveFrom.delete(extensionId);
+      for (const entry of entries) if (entry.timestamp > seen && entry.timestamp < live) this.logEntry(extensionId, runId, entry);
+    }
+  }
+
+  // A Log entry of one of the run's scripts: logged when it was made in
+  // one of the run's tabs, or outside any (a `@require` that failed to
+  // load).
+  private logEntry(extensionId: string, runId: string, entry: LogEntry): void {
+    this.logSeen.set(extensionId, Math.max(this.logSeen.get(extensionId) ?? 0, entry.timestamp));
+    const tabId = entry.tabId;
+    if (tabId !== undefined && !this.tabs.has(tabId) && !this.early.has(tabId)) return;
+    const page = tabId === undefined ? undefined : this.tabs.get(tabId)?.page;
+    this.printLog({ scriptId: runId, name: this.nameOf(runId), level: entry.level, message: decodeOwnRefs(this.remapStack(entry.message)), page });
   }
 
   /** How the extension's script `extensionId` maps back to its files, if known. */
@@ -105,6 +144,19 @@ export class ExtensionHost extends HarnessHost {
   // stack lines map by the layouts it reports (`setLayout`).
   override remapStack(text: string): string {
     return remapStackText(text, this.layouts.values());
+  }
+
+  /**
+   * The run's script whose code one of `urls` is (a stack frame's, or
+   * a stack's text), by the entry URLs the extension runs them under.
+   */
+  scriptOf(urls: string[]): string | undefined {
+    for (const url of urls) {
+      for (const [extensionId, layout] of this.layouts) {
+        if (url.includes(layout.entryUrl)) return this.runIds.get(extensionId);
+      }
+    }
+    return undefined;
   }
 
   /**
@@ -232,13 +284,16 @@ export class ExtensionHost extends HarnessHost {
   private ingest(event: ExtensionEvent): void {
     if (event.kind === 'log') {
       const runId = this.runIds.get(event.scriptId);
-      // A report's own entry (started, threw, skipped) prints as the report.
-      if (!runId || event.fromReport) return;
-      // One made in a tab only if it's the run's; one of the extension's
-      // own (a `@require` that failed to load) always.
-      const tabId = event.entry.tabId;
-      if (tabId !== undefined && !this.tabs.has(tabId) && !this.early.has(tabId)) return;
-      this.printLog(this.nameOf(runId), event.entry.level, decodeOwnRefs(this.remapStack(event.entry.message)));
+      if (!runId) return;
+      const live = this.liveFrom.get(event.scriptId);
+      if (live !== undefined) this.liveFrom.set(event.scriptId, Math.min(live, event.entry.timestamp));
+      // A report's own entry (started, threw, skipped) prints as the
+      // report, but counts as seen.
+      if (event.fromReport) {
+        this.logSeen.set(event.scriptId, Math.max(this.logSeen.get(event.scriptId) ?? 0, event.entry.timestamp));
+        return;
+      }
+      this.logEntry(event.scriptId, runId, event.entry);
       return;
     }
     if (event.kind === 'tab-opened') {

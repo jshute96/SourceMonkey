@@ -23,7 +23,8 @@ const RUN_DEADLINE_MS = 25_000;
 
 async function runUntil(
   opts: Omit<RunOptions, 'out' | 'until' | 'tempBrowser' | 'localRoots'>,
-  wanted: string[],
+  // Each a line's part, or a whole line's pattern.
+  wanted: (string | RegExp)[],
 ): Promise<{ code: number; lines: string[] }> {
   const lines: string[] = [];
   let stop!: () => void;
@@ -34,7 +35,7 @@ async function runUntil(
     localRoots: [],
     out: (line) => {
       lines.push(line);
-      if (wanted.every((w) => lines.some((l) => l.includes(w)))) stop();
+      if (wanted.every((w) => lines.some((l) => (typeof w === 'string' ? l.includes(w) : w.test(l))))) stop();
     },
     until,
   });
@@ -84,12 +85,12 @@ test('scripts run in the tabs the run tab opens', async ({ fixtureServer, script
     clearTimeout(timer);
   }
 
-  expect(lines).toContain('[page log] [opener] on /target.html');
+  expect(lines).toContain('[script log] [opener] on /target.html');
   // Numbered in the order they appear, which the two opens don't fix.
-  const tabLine = (w: string) => lines.find((l) => /^\[T\d+\] \[sm-dev\] Opener /.test(l) && l.endsWith(w));
+  const tabLine = (w: string) => lines.find((l) => /^\[T\d+\] \[event\] Opener /.test(l) && l.endsWith(w));
   expect(tabLine(wanted[0])).toBeDefined();
   expect(tabLine(wanted[1])).toBeDefined();
-  expect(lines.filter((l) => /^\[sm-dev\] Tab T\d+ opened at .*, from T1 \[targetId=[0-9A-F]{32}\]$/.test(l))).toHaveLength(2);
+  expect(lines.filter((l) => /^\[T\d+\] \[event\] Tab opened at .*, from T1 \[targetId=[0-9A-F]{32}\]$/.test(l))).toHaveLength(2);
 });
 
 test('--all opens a tab per script page, numbered in order, and lists the skipped ones last', async ({ fixtureServer, scriptsDir }) => {
@@ -101,7 +102,7 @@ test('--all opens a tab per script page, numbered in order, and lists the skippe
   });
   const files = [write('A', `${base}/target.html`), write('B', `${base}/other.html`), write('C', '*://*/*'), write('D', `${base}/other.html`)];
   const { lines } = await runUntil({ files, all: true, collectionRoot: scriptsDir.path }, [
-    '[page log] [A] on /target.html', '[T2] [page log] [B] on /other.html', '[T2] [page log] [D] on /other.html',
+    '[script log] [A] on /target.html', '[T2] [script log] [B] on /other.html', '[T2] [script log] [D] on /other.html',
     `Skipped script 3, C (${scriptsDir.path}/c.user.js): Its @match names no page to open`,
   ]);
   // Each with the id a CDP session alongside can name the tab by.
@@ -110,7 +111,7 @@ test('--all opens a tab per script page, numbered in order, and lists the skippe
   const opening = lines.filter((l) => l.startsWith('[sm-dev] Opening'));
   expect(opening).toHaveLength(2);
   expect(opening[1]).toMatch(new RegExp(`^\\[sm-dev\\] Opening ${base}/other\\.html in T2 \\[targetId=[0-9A-F]{32}\\]$`));
-  expect(lines.filter((l) => /Tab T\d+ opened/.test(l))).toEqual([]);
+  expect(lines.filter((l) => /Tab opened/.test(l))).toEqual([]);
   const skipped = lines.indexOf(`[sm-dev] Skipped script 3, C (${scriptsDir.path}/c.user.js): Its @match names no page to open`);
   expect(skipped).toBeGreaterThan(lines.indexOf(opening[1]));
 });
@@ -123,11 +124,11 @@ test('run takes URLs among its scripts and flags, in any order, one tab each', a
     body: `console.log('[both] on ' + location.pathname);`,
   });
   const lines = await driveCli([`${base}/target.html`, '--root', scriptsDir.path, file, `${base}/other.html`], [
-    ['[T2] [page log] [both] on /other.html', 'exit'],
+    ['[T2] [script log] [both] on /other.html', 'exit'],
   ]);
   expect(lines.some((l) => l.startsWith(`[sm-dev] Opening ${base}/target.html in T1 `))).toBe(true);
   expect(lines.some((l) => l.startsWith(`[sm-dev] Opening ${base}/other.html in T2 `))).toBe(true);
-  expect(lines).toContain('[page log] [both] on /target.html');
+  expect(lines).toContain('[script log] [both] on /target.html');
 });
 
 test('start with no scripts opens each URL given once, however often it is given', async ({ fixtureServer }) => {
@@ -158,10 +159,10 @@ test('closing a followed tab and T1 is noticed, and the run carries on', async (
   });
   const { code, lines } = await runUntil({
     files: [file], urls: [`${fixtureServer.baseUrl}/target.html`], collectionRoot: scriptsDir.path,
-  }, ['[sm-dev] Tab T1 closed']);
+  }, [/^\[event\] Tab closed$/]);
   // T2 or T3, whichever opened first.
-  expect(lines.filter((l) => /^\[sm-dev\] Tab T[23] closed$/.test(l)), lines.join('\n')).toHaveLength(1);
-  expect(lines, lines.join('\n')).toContain('[sm-dev] Tab T1 closed');
+  expect(lines.filter((l) => /^\[T[23]\] \[event\] Tab closed$/.test(l)), lines.join('\n')).toHaveLength(1);
+  expect(lines, lines.join('\n')).toContain('[event] Tab closed');
   expect(code).toBe(0);
 });
 
@@ -187,8 +188,8 @@ test('a page sandboxed by its CSP header gets a warning naming the page-context 
     `instead, unless it needs the page's own variables.`,
   );
   // The page-context one is blocked, the isolated one runs.
-  expect(lines).toContain('[page log] [content-world] ran');
-  expect(lines).not.toContain('[page log] [page-world] ran');
+  expect(lines).toContain('[script log] [content-world] ran');
+  expect(lines).not.toContain('[script log] [page-world] ran');
 });
 
 test('--notab opens no tab, and no scripts open a blank page or the URL given', async ({ fixtureServer, scriptsDir }) => {
@@ -265,13 +266,13 @@ test('--notab: the first tab opened is T1, unprefixed like a normal run\'s', asy
   const lines = await driveCli([file, '--notab'], [
     ['Started as run', 'status'],
     ['1: Hello (', `newtab ${target}`],
-    ['[page log] [hello] on /target.html', 'exit'],
+    ['[script log] [hello] on /target.html', 'exit'],
   ]);
   expect(lines).toContain('[sm-dev] No tabs are active. Use newtab to open one.');
   expect(lines.some((l) => l.startsWith(`[sm-dev] Opening ${target} in T1 [targetId=`))).toBe(true);
   // Both the page's lines and the harness's own, without a [T1] prefix.
-  expect(lines).toContain('[page log] [hello] on /target.html');
-  expect(lines).toContain(`[sm-dev] Hello started on ${target}`);
+  expect(lines).toContain('[script log] [hello] on /target.html');
+  expect(lines).toContain(`[event] Hello started on ${target}`);
   expect(lines.some((l) => l.startsWith('[T1]'))).toBe(false);
 });
 
@@ -285,11 +286,11 @@ test('a followed tab keeps its menu commands, and menu fires them there', async 
     `,
   });
   const lines = await driveCli([file, `${fixtureServer.baseUrl}/target.html`], [
-    ['[T2] [sm-dev] Menu started on', 'menu T2.Only here'],
-    ['[T2] [page log] [menu] fired on /other.html', 'exit'],
+    ['[T2] [event] Menu started on', 'menu T2.Only here'],
+    ['[T2] [script log] [menu] fired on /other.html', 'exit'],
   ]);
   expect(lines).toContain('[sm-dev] Fired "Only here"');
-  expect(lines).toContain('[T2] [page log] [menu] fired on /other.html');
+  expect(lines).toContain('[T2] [script log] [menu] fired on /other.html');
 });
 
 test('start with no scripts: a blank page, and the lists say there are no scripts', async () => {
@@ -298,7 +299,7 @@ test('start with no scripts: a blank page, and the lists say there are no script
     ['No scripts are loaded', 'exit'],
   ]);
   // The tab as it opened, blank: nothing to open.
-  expect(lines.some((l) => l.startsWith('[sm-dev] Tab T1 opened [targetId='))).toBe(true);
+  expect(lines.some((l) => l.startsWith('[event] Tab opened [targetId='))).toBe(true);
   expect(lines.some((l) => l.startsWith('[sm-dev] Opening'))).toBe(false);
   expect(lines.some((l) => /^\* T1: about:blank \[targetId=/.test(l))).toBe(true);
   expect(lines).toContain('  No scripts are loaded');
@@ -317,12 +318,12 @@ test('load, update and reload all reload just the tabs they affect', async ({ fi
     ['Started as run', `newtab ${base}/other.html`],
     ['The page commands now act on T2', `load ${b}`],
     // B matches only T2's page.
-    ['[T2] [page log] [B] on /other.html', 'scripts 2'],
+    ['[T2] [script log] [B] on /other.html', 'scripts 2'],
     ['Selected B', 'set k 1'],
     ['Set k', 'update 1'],
     // Untouched, so nothing to do; touched, only A's tab reloads.
     ["hasn't changed on disk", () => { touch(a); return 'update all'; }],
-    ['[page log] [A] on /target.html', 'scripts'],
+    ['[script log] [A] on /target.html', 'scripts'],
     ['Loaded scripts (', 'get k'],
     ['k = 1', `load ${b}`],
     // A directory: its scripts, both loaded already.
@@ -330,7 +331,7 @@ test('load, update and reload all reload just the tabs they affect', async ({ fi
     ['already loaded, as script 1', 'load nothing.user.js'],
     ['No such file or directory', () => { write('B', 'other.html', 'syntax error here('); return 'update 2'; }],
     ['INVALID', 'reload all'],
-    ['[page log] [A] on /target.html', 'exit'],
+    ['[script log] [A] on /target.html', 'exit'],
   ]);
   expect(lines).toContain(`[sm-dev] Loaded ${b} as script 2`);
   expect(lines).toContain('[sm-dev] Reloading T2');
@@ -350,8 +351,8 @@ test('load, update and reload all reload just the tabs they affect', async ({ fi
   const invalid = lines.findIndex((l) => l.startsWith('INVALID'));
   expect(lines.slice(invalid).filter((l) => l.startsWith('[sm-dev] Reloading'))).toEqual([]);
   // `reload all` reloaded both tabs.
-  expect(lines.slice(invalid).filter((l) => l.endsWith('[page log] [A] on /target.html'))).toHaveLength(1);
-  expect(lines.slice(invalid).filter((l) => l.endsWith('[T2] [page log] [B] on /other.html'))).toHaveLength(1);
+  expect(lines.slice(invalid).filter((l) => l.endsWith('[script log] [A] on /target.html'))).toHaveLength(1);
+  expect(lines.slice(invalid).filter((l) => l.endsWith('[T2] [script log] [B] on /other.html'))).toHaveLength(1);
 });
 
 test('a tab without scripts gets none, nor do its tabs, and load and savehtml leave it be', async ({ fixtureServer, scriptsDir }) => {
@@ -368,12 +369,12 @@ test('a tab without scripts gets none, nor do its tabs, and load and savehtml le
     ['Started as run', `newtab --noscript ${base}/target.html`],
     ['The page commands now act on T2', 'eval T2 window.open("other.html"), "opened"'],
     // Its popup is a tab without scripts too.
-    ['Tab T3 opened', `load ${b}`],
+    ['[T3] [event] Tab opened', `load ${b}`],
     // Only T1 runs scripts, so only it reloads.
-    ['[page log] [B] on /target.html', `savehtml T2 ${saved}`],
+    ['[script log] [B] on /target.html', `savehtml T2 ${saved}`],
     ['Wrote', 'exit'],
   ]);
-  expect(lines.some((l) => /^\[sm-dev\] Tab T3 opened at .*other\.html \(no scripts\), from T2 /.test(l))).toBe(true);
+  expect(lines.some((l) => /^\[T3\] \[event\] Tab opened at .*other\.html \(no scripts\), from T2 /.test(l))).toBe(true);
   expect(lines).toContain('[sm-dev] Reloading T1');
   expect(lines.some((l) => /Reloading .*T[23]/.test(l))).toBe(false);
   // Nothing ran in T2 or T3, and savehtml there has no scripts' changes
@@ -392,7 +393,7 @@ test('open --noscript switches a tab to no scripts for good, and --script back',
     body: `console.log('[A] on ' + location.pathname);`,
   });
   const lines = await driveCli([a, `${base}/target.html`], [
-    ['[page log] [A] on /target.html', 'open --noscript'],
+    ['[script log] [A] on /target.html', 'open --noscript'],
     ['runs no scripts from now on', 'tabs'],
     // The script stays out: a reload loads without it. (Through eval,
     // for a line to wait on: a reload with no scripts prints nothing.)
@@ -408,10 +409,10 @@ test('open --noscript switches a tab to no scripts for good, and --script back',
     ['The page commands now act on T3', 'tabs'],
     // reload switches too: every tab back to scripts, then T1 off.
     ['Tabs:', 'reload all --script'],
-    ['[T3] [page log] [A] on /target.html', 'reload T1 --noscript'],
+    ['[T3] [script log] [A] on /target.html', 'reload T1 --noscript'],
     // newtab takes --script too: a new tab's usual mode, said out.
     ['T1 runs no scripts from now on', `newtab --script ${base}/target.html`],
-    ['[T4] [page log] [A] on /target.html', 'newtab --script --noscript'],
+    ['[T4] [script log] [A] on /target.html', 'newtab --script --noscript'],
     ['not both', 'exit'],
   ]);
   const at = (text: string) => lines.findIndex((l) => l.includes(text));
@@ -419,7 +420,7 @@ test('open --noscript switches a tab to no scripts for good, and --script back',
   const off = at('runs no scripts from now on');
   const on = at('runs the scripts again');
   expect(lines.slice(off, on).filter((l) => l.includes('[A] on'))).toEqual([]);
-  expect(lines.slice(on).filter((l) => l === '[page log] [A] on /target.html').length).toBeGreaterThan(0);
+  expect(lines.slice(on).filter((l) => l === '[script log] [A] on /target.html').length).toBeGreaterThan(0);
   const row = lines.findIndex((l) => /^\* T1: .*target\.html \(no scripts\)/.test(l));
   expect(row).toBeGreaterThan(0);
   // And lists no script as running there.
@@ -435,8 +436,8 @@ test('open --noscript switches a tab to no scripts for good, and --script back',
   const back = at('reload') >= 0 ? lines.findIndex((l) => l === '[sm-dev] T2 runs the scripts again') : -1;
   expect(back).toBeGreaterThan(0);
   expect(lines.slice(back)).toContain('[sm-dev] T3 runs the scripts again');
-  expect(lines.slice(back)).toContain('[T2] [page log] [A] on /target.html');
-  expect(lines).toContain('[T4] [page log] [A] on /target.html');
+  expect(lines.slice(back)).toContain('[T2] [script log] [A] on /target.html');
+  expect(lines).toContain('[T4] [script log] [A] on /target.html');
   expect(lines).toContain('[sm-dev] ERROR: The newtab command takes --noscript or --script, not both');
 });
 
@@ -449,12 +450,12 @@ test('open and reload switch the tab they name, or the current one, and say when
   });
   const lines = await driveCli([a, `${base}/target.html`], [
     // Switched, and somewhere else.
-    ['[page log] [A] on /target.html', `open --noscript ${base}/other.html`],
+    ['[script log] [A] on /target.html', `open --noscript ${base}/other.html`],
     ['T1 runs no scripts from now on', 'eval location.pathname'],
     ['"/other.html"', 'open --noscript'],
     ['T1 already runs no scripts', `newtab ${base}/target.html`],
     // A tab named, no page: its own page, back with the scripts.
-    ['[T2] [page log] [A] on /target.html', 'open T1 --script'],
+    ['[T2] [script log] [A] on /target.html', 'open T1 --script'],
     ['T1 runs the scripts again', 'eval T1 location.pathname'],
     // A tab named, then a page.
     ['"/other.html"', `open T1 ${base}/target.html#t1`],
@@ -495,7 +496,7 @@ test('a tab waiting on a dialog is left out of reload all, and blocks update', a
     ['Started as run', `newtab ${base}/other.html`],
     ['opened an alert dialog', 'reload all'],
     // T1 still reloads; then update, which would reach T2, refuses.
-    ['[sm-dev] A started on', () => { touch(b); return 'update 2'; }],
+    ['[event] A started on', () => { touch(b); return 'update 2'; }],
     ['is waiting on an alert dialog', 'exit'],
   ]);
   expect(lines).toContain('[sm-dev] T2 is waiting on a dialog, so it was not reloaded');
@@ -516,8 +517,8 @@ test('--watch follows a loaded script, and a save reloads only its tabs', async 
   const lines = await driveCli([a, `${base}/target.html`, '--watch'], [
     ['Started as run', `newtab ${base}/other.html`],
     ['The page commands now act on T2', `load ${b}`],
-    ['[T2] [page log] [B] one', () => { write('B', 'other.html', 'two'); return ''; }],
-    ['[T2] [page log] [B] two', 'exit'],
+    ['[T2] [script log] [B] one', () => { write('B', 'other.html', 'two'); return ''; }],
+    ['[T2] [script log] [B] two', 'exit'],
   ]);
   const saved = lines.indexOf('[sm-dev] Change detected, re-pushing');
   expect(saved).toBeGreaterThan(-1);
@@ -552,14 +553,14 @@ test('--watch re-pushes on a save and reloads the tab it runs in', async ({ fixt
       lines.push(line);
       // Once the watcher is up; the page can log before it is.
       if (line.startsWith('[sm-dev] Watching')) scriptsDir.write(spec('after'));
-      if (line === '[page log] [saved] after') stop();
+      if (line === '[script log] [saved] after') stop();
     },
   });
   const timer = setTimeout(stop, RUN_DEADLINE_MS);
   await done.finally(() => clearTimeout(timer));
   expect(lines).toContain('[sm-dev] Change detected, re-pushing');
   expect(lines).toContain('[sm-dev] Reloading T1');
-  expect(lines).toContain('[page log] [saved] after');
+  expect(lines).toContain('[script log] [saved] after');
 });
 
 test('--from-saved serves a saved page at its URL, and the scripts match it', async ({ fixtureServer, scriptsDir }) => {
@@ -578,7 +579,7 @@ test('--from-saved serves a saved page at its URL, and the scripts match it', as
     ['"as saved"', `savehtml ${plain}`],
     ['Wrote', `newtab --from-saved ${plain}`],
     // The scripts match it by its URL, and run on the saved copy.
-    ['[T3] [page log] [A] on /target.html titled as saved', 'tabs'],
+    ['[T3] [script log] [A] on /target.html titled as saved', 'tabs'],
     ['Tabs:', 'status'],
     ['Scripts (with status on active tab T3)', () => {
       writeFileSync(plain, readFileSync(plain, 'utf8').replace('as saved', 'edited'));
@@ -587,7 +588,7 @@ test('--from-saved serves a saved page at its URL, and the scripts match it', as
     // Read again from disk on each load.
     ['titled edited', 'tab T1'],
     ['now act on T1', `open ${scripted} --from-saved`],
-    ['[page log] [A] on /target.html titled target', 'exit'],
+    ['[script log] [A] on /target.html titled target', 'exit'],
   ]);
   const header = readFileSync(scripted, 'utf8').split('\n').slice(0, 3);
   expect(header).toEqual([
@@ -615,7 +616,7 @@ test('start --from-saved opens T1 on the saved page, and --offline blocks the re
   const file = path.join(scriptsDir.path, 'chrome.html');
   writeFileSync(file, `<!DOCTYPE html>\n<!-- saved from url=(${String(url.length).padStart(4, '0')})${url} -->\n<html><head><title>from chrome</title></head><body></body></html>`);
   const lines = await driveCli([a, '--from-saved', file, '--offline'], [
-    ['[page log] [A] on /target.html titled from chrome', 'eval fetch("other.html").then(() => "fetched", () => "blocked")'],
+    ['[script log] [A] on /target.html titled from chrome', 'eval fetch("other.html").then(() => "fetched", () => "blocked")'],
     ['"blocked"', 'exit'],
   ]);
   expect(lines.some((l) => /Opening .*chrome\.html as .*\/target\.html in T1/.test(l))).toBe(true);
@@ -643,7 +644,7 @@ test('--from-saved lasts for its URL only, --offline lets links out, and a missi
     ['[A] on /target.html titled saved', 'eval window.open("target.html"), "opened"'],
     // A tab it opens gets the live page. (Its first load's console
     // lines aren't shown, so its title is asked.)
-    ['[T2] [sm-dev] A started on', 'eval T2 document.title'],
+    ['[T2] [event] A started on', 'eval T2 document.title'],
     ['"target"', () => {
       unlinkSync(file);
       return 'reload T1';
@@ -674,12 +675,12 @@ test('--from-saved opens every .html file a glob matches, beside live URLs, and 
   const lines = await driveCli([a, '--notab'], [
     ['Started as run', `newtab '${scriptsDir.path}/multi*.html' ${base}/target.html --from-saved`],
     // Each in a tab of its own, in order: the two files, then the live page.
-    ['[T3] [page log] [A] on /target.html titled target', 'tabs'],
+    ['[T3] [script log] [A] on /target.html titled target', 'tabs'],
     ['Tabs:', `newtab ${bare} --from-saved --url ${base}/other.html`],
-    ['[T4] [page log] [A] on /other.html titled bare', 'exit'],
+    ['[T4] [script log] [A] on /other.html titled bare', 'exit'],
   ]);
-  expect(lines).toContain('[page log] [A] on /target.html titled one');
-  expect(lines).toContain('[T2] [page log] [A] on /other.html titled two');
+  expect(lines).toContain('[script log] [A] on /target.html titled one');
+  expect(lines).toContain('[T2] [script log] [A] on /other.html titled two');
   expect(lines.filter((l) => /^ {2}T\d: .*\(from saved: /.test(l) || /^\* T\d: .*\(from saved: /.test(l))).toHaveLength(2);
 });
 
@@ -703,7 +704,7 @@ test('newtab of several saved pages picks the first, serves their _files folders
   save('x two', `${base}/other.html`);
   const lines = await driveCli([a, `${base}/target.html`], [
     ['Started as run', `newtab '${scriptsDir.path}/x *.html' --from-saved --offline`],
-    ['[T3] [page log] [A] on /other.html titled x two', 'status'],
+    ['[T3] [script log] [A] on /other.html titled x two', 'status'],
     // The first new tab is the current one.
     ['Scripts (with status on active tab T2)', 'eval T2 getComputedStyle(document.body).color'],
     // Served from the folder beside the file, though offline.

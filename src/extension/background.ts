@@ -616,6 +616,8 @@ const api: SourceMonkeyApi = {
   // so `updateCollection()` can resolve before the entry it just
   // produced has landed. A test that reads straight after would be
   // asserting on a log that is still being written.
+  // sm-dev reads it too, to catch up on entries made while the worker
+  // restarted: part of what SM_DEV_PROTOCOL versions.
   getScriptLog: async (scriptId: string) => {
     await _flushScriptLogQueueForTests(scriptId);
     return getScriptLog(scriptId);

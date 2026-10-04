@@ -270,9 +270,29 @@ export interface MenuData {
 }
 
 export interface LogsData {
-  tab: string;
-  /** Each page load in the tab, oldest first. */
-  pages: { url?: string; lines: string[] }[];
+  /** The tab asked for; absent for `all`. */
+  tab?: string;
+  /** The script asked for. */
+  script?: string;
+  lines: LogLine[];
+  /** The position reached, as a log ID, for the next `--since`. */
+  until: number;
+}
+
+/** A log line (see docs/sm-dev-logs.md). */
+export interface LogLine {
+  /** Its log ID: when it arrived, in microseconds since the epoch. */
+  id: number;
+  /** ISO 8601. */
+  time: string;
+  tab?: string;
+  script?: string;
+  source: 'sm' | 'event' | 'script' | 'page';
+  /** Other sources it belongs to: a script's throw is `event`, also `sm` and `script`. */
+  also?: ('sm' | 'event' | 'script' | 'page')[];
+  /** The console type, the Log entry's level, or the event's name. */
+  kind: string;
+  text: string;
 }
 
 export interface ProbeData {

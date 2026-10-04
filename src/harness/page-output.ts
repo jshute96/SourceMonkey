@@ -1,7 +1,8 @@
-// Which of the page's console lines and uncaught errors `sm-dev start`
-// streams. A busy site logs plenty of its own errors (blocked
-// trackers, failed ads) that would bury the script's lines, so by
-// default only what can be tied to a script is shown.
+// Whose the page's console lines and uncaught errors are: the run's
+// scripts' (the `script` log source) or the page's own (`page`). A
+// busy site logs plenty of its own (blocked trackers, failed ads) that
+// would bury the scripts' lines, so the stream shows only `script`
+// unless asked. See docs/sm-dev-logs.md.
 // Also how a console line reads when it logs a DOM node.
 
 import type { ConsoleMessage } from '@playwright/test';
@@ -24,6 +25,13 @@ export interface ConsoleLine {
   /** Where the line was logged from, `''` when unknown. */
   url: string;
   /**
+   * The URLs of the call's stack frames, innermost first, async parents
+   * included; empty when not known.
+   */
+  frames: string[];
+  /** Logged from SourceMonkey's own JavaScript world (`USER_SCRIPT`), where only its code runs. */
+  extensionWorld?: boolean;
+  /**
    * How many values were passed. Zero for the browser's own entries
    * (a blocked request, a policy violation), which are not console
    * calls at all.
@@ -33,30 +41,22 @@ export interface ConsoleLine {
 
 /**
  * A line the prelude logs, which repeats a report the host already
- * printed. Never shown, nor matched by `wait log`.
+ * printed, so it's only `page`.
  */
 export function isPreludeLine(text: string): boolean {
   return text.startsWith('[SourceMonkey]');
 }
 
-export function showConsoleLine(line: ConsoleLine, pageErrors: boolean): boolean {
-  if (isPreludeLine(line.text)) return false;
-  if (line.url.startsWith(OURS)) return true;
-  if (pageErrors && line.type === 'error') return true;
-  // A `[name]`-prefixed console call passes too, for a script that
-  // logs through a page-world helper. Only a real call: Chrome's own
-  // entries use brackets as well (`[Report Only]`, `[Violation]`).
-  return line.argCount > 0 && /^\[[^\]]+\]/.test(line.text);
-}
-
-export interface PageErrorOptions {
-  pageErrors: boolean;
-  /**
-   * Whether the host already reports errors a script body threw (as
-   * `<name> threw:`, from the extension's events), so the page's copy
-   * isn't shown again.
-   */
-  hostReports: boolean;
+/**
+ * Whose a console line is: the scripts', when it was logged from
+ * SourceMonkey's world or any frame of its stack is SourceMonkey's
+ * code (a script calling a page helper that logs), else the page's.
+ * The browser's own entries are always the page's.
+ */
+export function consoleSource(line: ConsoleLine): 'script' | 'page' {
+  if (line.argCount === 0) return 'page';
+  if (line.extensionWorld) return 'script';
+  return [line.url, ...line.frames].some((url) => url.startsWith(OURS)) ? 'script' : 'page';
 }
 
 /** `stack` is Playwright's for the error: the message, then its frames. */
@@ -65,14 +65,17 @@ export function hostReportedError(stack: string, hostReports: boolean): boolean 
   return hostReports && SCRIPT_BODY_FRAME.test(stack);
 }
 
-export function showPageError(stack: string, opts: PageErrorOptions): boolean {
-  if (hostReportedError(stack, opts.hostReports)) return false;
-  if (opts.pageErrors) return true;
+/**
+ * Whose an uncaught error is (`stack`: the message, then its frames),
+ * or null for a script body's throw the host printed already.
+ */
+export function pageErrorSource(stack: string, hostReports: boolean): 'script' | 'page' | null {
+  if (hostReportedError(stack, hostReports)) return null;
   // A thrown or rejected non-Error value (`Promise.reject('nope')`)
   // has no frames, so there's no telling whose it was. Rare enough
   // that showing it beats losing a script's.
-  if (!/\n\s+at /.test(stack)) return true;
-  return stack.includes(OURS);
+  if (!/\n\s+at /.test(stack)) return 'script';
+  return stack.includes(OURS) ? 'script' : 'page';
 }
 
 // How a node logged to the console reads: its opening tag, as in
@@ -128,17 +131,6 @@ export function formatConsoleArgs(parts: string[]): string {
     return value;
   });
   return [first, ...parts.slice(next)].join(' ');
-}
-
-// Longer console lines are cut in the stream, so one huge value (a
-// fetched page, a cache) doesn't bury the rest. `logs` shows them whole.
-const CONSOLE_SHOWN_CHARS = 1000;
-
-/** A console line as the stream shows it: cut past CONSOLE_SHOWN_CHARS. */
-export function shortConsoleText(text: string): string {
-  if (text.length <= CONSOLE_SHOWN_CHARS) return text;
-  // By code point, so an emoji isn't cut in half.
-  return `${Array.from(text).slice(0, CONSOLE_SHOWN_CHARS).join('')}... (${text.length} chars; logs shows it all)`;
 }
 
 // Runs in the page.

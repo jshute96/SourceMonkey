@@ -125,7 +125,7 @@ test.describe('sm-dev typed commands', () => {
       });`,
     });
     const lines: string[] = [];
-    const dialogs = await DialogTracker.attach(page, (l) => lines.push(l), { visible: false, commandsComing: true });
+    const dialogs = await DialogTracker.attach(page, (t) => lines.push(`[sm-dev] ${t}`), { visible: false, commandsComing: true });
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect.poll(() => host.reports.menuCommands.length).toBe(1);
 
@@ -315,7 +315,7 @@ test.describe('sm-dev typed commands', () => {
   test('closetab runs beforeunload, so a page that asks first waits on accept or dismiss', async ({ page, fixtureServer, host, attachment }) => {
     const lines: string[] = [];
     const asker = await page.context().newPage();
-    const dialogs = await DialogTracker.attach(asker, (l) => lines.push(l), { visible: false, commandsComing: true });
+    const dialogs = await DialogTracker.attach(asker, (t) => lines.push(`[sm-dev] ${t}`), { visible: false, commandsComing: true });
     await asker.goto(`${fixtureServer.baseUrl}/target.html`);
     await asker.evaluate(() => window.addEventListener('beforeunload', (e) => e.preventDefault()));
     // Chrome asks only on a page the person has used. Waited for, since
@@ -348,7 +348,7 @@ test.describe('sm-dev typed commands', () => {
   test('closetab --force closes a tab whose dialog waits', async ({ page, fixtureServer, host, attachment }) => {
     const lines: string[] = [];
     const asker = await page.context().newPage();
-    const dialogs = await DialogTracker.attach(asker, (l) => lines.push(l), { visible: false, commandsComing: true });
+    const dialogs = await DialogTracker.attach(asker, (t) => lines.push(`[sm-dev] ${t}`), { visible: false, commandsComing: true });
     await asker.goto(`${fixtureServer.baseUrl}/target.html`);
     await asker.evaluate(() => window.addEventListener('beforeunload', (e) => e.preventDefault()));
     await asker.mouse.click(5, 5);
@@ -479,7 +479,7 @@ test.describe('sm-dev typed commands', () => {
     try {
       await attachment2.inject(script);
       const lines: string[] = [];
-      const dialogs2 = await DialogTracker.attach(page2, (l) => lines.push(l), { visible: false, commandsComing: true, tabRef: () => 'T2' });
+      const dialogs2 = await DialogTracker.attach(page2, (t) => lines.push(`[sm-dev] ${t}`), { visible: false, commandsComing: true, tabRef: () => 'T2' });
       await page2.goto(`${fixtureServer.baseUrl}/other.html`);
       const tabs = [{ n: 1, page, link: attachment }, { n: 2, page: page2, link: attachment2, dialogs: dialogs2, openedBy: 1 }];
       const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(l), stop: () => undefined };
