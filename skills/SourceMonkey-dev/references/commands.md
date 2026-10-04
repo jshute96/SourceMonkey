@@ -17,7 +17,8 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 - Add `--json` when you'll parse the output, with `jq` or a script:
   `$R --json scripts | jq -r '.scripts[] | select(.status == "invalid") | .name'`.
   - `--json` works for `list`, `status`, `scripts`, `tabs`, `values`,
-    `get`, `match`, `validate`, `menu`, `logs` and `probe`. Each prints
+    `get`, `match`, `validate`, `menu`, `logs`, `probe`, `collection
+    list` and `script list`. Each prints
     one JSON object; other commands print text as usual.
   - Other messages and failures stay text, on stderr, with the usual
     exit code.
@@ -49,6 +50,8 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | Run | `D1`, or `Dname` from `--run` | `list` shows them |
 | Script | `1`, its path, file name, `@name`, or a unique piece | `T2.3`: script 3 on tab T2 |
 | Tab | `T1`, `targetId=<id>` (or 6+ chars of it) | Page commands take one first: `click T2 .x` |
+| Installed script | `E1` | SourceMonkey's own number, the same in every run |
+| Collection | `C1`, its name or a unique piece, `id=<id>` | A run's test collection: its run, `D1` |
 | Menu command | `M1`, `T2.M1`, or its label | |
 | Element | CSS or Playwright selector, or a ref (`e4`, `f2e6`) | Refs from the latest `snapshot` |
 | Page | URL, file, glob, or script number (its default page) | Scheme optional for hosts |
@@ -93,9 +96,11 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `validate <path>...` | Header, `@require` and syntax checks, plus warnings (files, dirs, globs) |
 | `match <script>... <url>...` | Would it run there; which rule decided |
 | `match`, `match all` | In a run: the selected script on the current tab; all scripts on all tabs |
-| `scripts`, `script <script>` | List; pick the one `get`/`set`/`match` use. It also lists SourceMonkey-managed scripts on the tab as E1, ...; `scripts E1` picks one for `get`/`set` (`set key --force <json>` outside a `--temp-browser`) |
+| `scripts`, `script <script>` | List; pick the one `get`/`set`/`match` use. It also lists SourceMonkey-managed scripts on the tab as E1, ...; `scripts E1` picks one for `get`/`set`, any installed script (`script list` lists them), on the tab or not (`set key --force <json>` outside a `--temp-browser`) |
 | `load <script>...` | Add scripts to the run |
 | `update [script]` | Re-read changed scripts and reload affected tabs |
+| `collection list` (or `collections`) | SourceMonkey's collections (C1, ...), with kind, script count, enabled. No run needed |
+| `script list [collection]` | Every installed script (E1, ...) under its collection, or one collection's. No run needed |
 
 ## Tabs
 

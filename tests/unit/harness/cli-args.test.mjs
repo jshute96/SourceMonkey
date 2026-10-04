@@ -499,7 +499,9 @@ test('help covers a run\'s commands and aliases, and refuses unknown names', () 
   const typed = help('help', 'status', 'script', 'get');
   assert.equal(typed.code, 0);
   assert.match(typed.out, /^Usage: sm-dev status \[options\]$/m);
-  assert.match(typed.out, /^Usage: sm-dev script <script>$/m);
+  // `script` is `scripts`'s singular, so its help is the same.
+  assert.match(typed.out, /^Usage: sm-dev scripts\n {7}sm-dev script <script>$/m);
+  assert.equal(help('help', 'script').out, help('help', 'scripts').out);
   assert.match(typed.out, /^Usage: sm-dev get <key> \[options\]$/m);
   assert.doesNotMatch(typed.out, /menu \[what\]/);
   // Every form of a command of several.

@@ -190,6 +190,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/refresh-error.ts` | Session-storage map of collections whose last refresh was read but could not be saved, plus its shared message |
 | `src/extension/sw-teardown.ts` | Marks `No SW` rejections (chrome.* calls cut off by service-worker shutdown) handled so they stay out of the Errors panel |
 | `src/extension/script-log-id.ts` | Computes each script's "log ID" (`foo.user.js#E4`: basename and script number) used in every log line and the viewer |
+| `src/extension/managed-items.ts` | The collections and installed scripts in the shapes sm-dev's `collection list` and `script list` read |
 | `src/extension/sticky-numbers.ts` | Script and collection numbers (sm-dev's `E4`, `C3`): handing them out, and holding removed ones back before reuse |
 | `src/extension/script-log.ts` | Per-script event log store: chrome.storage.session keyed by script ID, serialized appends with a fixed cap, a sibling `loglevel:` sentinel, and the page→worker write relay |
 | `src/extension/log-format.ts` | Log cell formatting (time, status/level, source, message) shared by the viewer's table and its CSV export, plus the export's filename |
@@ -245,7 +246,8 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/stuck-tabs.ts` | Before `sm-dev start` connects, names the tabs that don't answer (a dialog, say), and waits for them |
 | `src/harness/run.ts` | The run process `sm-dev start` spawns: open a browser, push the scripts into SourceMonkey, follow tabs, serve clients |
 | `src/harness/extension-launch.ts` | Launches Chromium with the built extension on a temp profile: `--temp-browser`, and the e2e suites' browser |
-| `src/harness/extension-link.ts` | A run's or fixture test's connection to the real extension: version check, worker calls, pushes, claims and lease, events |
+| `src/harness/extension-link.ts` | A run's or fixture test's connection to the real extension: version check, worker calls, pushes, claims and lease, events; and a run-less one for listing |
+| `src/harness/manager-commands.ts` | `collection list` and `script list`: SourceMonkey's collections and installed scripts as text or JSON, and naming a collection |
 | `src/harness/extension-host.ts` | Fills a run's or fixture test's host (reports, values, menus) from the extension's events, and answers its commands |
 | `src/harness/extension-backend.ts` | Finds SourceMonkey in a browser: its id, whether it's installed and on, and its service worker |
 | `src/harness/run-log.ts` | A run's log file: timestamped names in `/tmp/sm-dev-logs-<user>`, stamped lines, per-run links |
@@ -361,6 +363,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/script-viewer-links.spec.ts` | E2E tests for the viewer's link rendering: Match-row anchors, Location anchor, body header `@match` / URL linkification |
 | `tests/unit/sw-teardown.test.mjs` | Unit tests for the `No SW` recognizer and the unhandledrejection handler that marks it handled |
 | `tests/unit/script-log-id.test.mjs` | Unit tests for `computeLogIds`: `#E<n>` for numbered scripts, the basename or `#N` for unnumbered ones |
+| `tests/unit/manager-commands.test.mjs` | Unit tests for `collection list` and `script list`: output, collection naming, what the extension lists |
 | `tests/unit/sticky-numbers.test.mjs` | Unit tests for sticky numbers: lowest free first, the 7-day hold, shared numbers, which items get none |
 | `tests/unit/script-log.test.mjs` | Unit tests for the per-script log store: append/get/clear, concurrent appends, LOG_CAP rotation |
 | `tests/unit/match-index.test.mjs` | `onlyProbesChanged` — which `script:*` writes may skip a re-registration, and the many that may not |
@@ -518,6 +521,7 @@ built extension loaded; fixtures in `tests/fixtures/harness.ts`.
 | `tests/harness/stack-lines.spec.ts` | sm-dev's `threw` reports and console lines name the `@require` or script line a stack frame came from |
 | `tests/harness/wait.spec.ts` | `wait` in its forms, the actions settling on their own, `--nowait`, and what a busy page reports |
 | `tests/harness/browser-launch.spec.ts` | `sm-dev --open-browser`: a browser that outlives sm-dev, started once, and its profile's lock |
+| `tests/harness/manager-commands.spec.ts` | `collection list` and `script list` from the command line, with no run and in a run, text and `--json` |
 | `tests/harness/run-remote.spec.ts` | `sm-dev start` driven from other shells: `--detach`, `--run`, `--` lines, sent commands, logs, stuck tabs, `--json` |
 | `tests/harness/temp-extension.spec.ts` | `--temp-browser` runs: the launched extension, `--values` and local files, run commands, managed scripts (E1) kept out |
 | `tests/harness/extension-state.spec.ts` | Whether sm-dev sees SourceMonkey in a browser: loaded unpacked, absent, or no browser to ask |

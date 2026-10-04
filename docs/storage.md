@@ -28,6 +28,7 @@ Key spaces in `chrome.storage.local`:
 | `"smLocalFileRoots"`   | `string[]`          | Canonical `file://` directory URLs searched for local stand-ins, in order (see [local-file-overrides.md](local-file-overrides.md)). |
 | `"scratch:<url>"`      | `string`            | The text of a scratch script, keyed by its `scratch:///…` location (see [Container collections](#container-collections)). |
 | `"scratchFiles:<url>"` | `Record<ref, PushedFile>` | The `@require` / `@resource` bodies sm-dev pushed with a scratch script, by ref; absent when none were. |
+| `"scratchSource:<url>"` | `ScratchSource` | The file a scratch script was read from (its `file://` URL, and its path as the run was given it), for sm-dev's `script list`; absent from an sm-dev before protocol 1.2. |
 | `"scriptNumbers"`      | `StickyNumbers`     | Each script's number, and the removed scripts' numbers held back from reuse (see [Sticky numbers](#sticky-numbers)). |
 | `"collectionNumbers"`  | `StickyNumbers`     | Each collection's number, and the removed collections' numbers held back from reuse (see [Sticky numbers](#sticky-numbers)). |
 

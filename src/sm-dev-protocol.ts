@@ -20,9 +20,56 @@ export const SKIP_REASON_SM_DEV = 'tab controlled by sm-dev';
  *     (`ExtensionLink.requireMinor`).
  */
 // 1.1: `scriptsOnTab` rows carry the script's number.
-export const SM_DEV_PROTOCOL = { major: 1, minor: 1 } as const;
+// 1.2: `managedCollections` and `managedScripts`; `writeRunScript`
+//   takes the script's `source` file, which `managedScripts` gives back.
+export const SM_DEV_PROTOCOL = { major: 1, minor: 2 } as const;
 
 export interface ProtocolVersion {
   major: number;
   minor: number;
+}
+
+/** A collection, as the extension's `managedCollections` lists it. */
+export interface ManagedCollection {
+  /** The extension's own id for it. */
+  id: string;
+  /** Its number (sm-dev's `C3`); absent for a run's test collection. */
+  number?: number;
+  name: string;
+  kind: 'container' | 'directory' | 'manifest';
+  /** A directory's or manifest's location; none for a container. */
+  location?: string;
+  /** A run's test collection: the run's id in the extension (`D1-ab12`). */
+  run?: string;
+  enabled: boolean;
+  /** Why its last scan failed. */
+  error?: string;
+  scriptCount: number;
+}
+
+/** An installed script, as the extension's `managedScripts` lists it. */
+export interface ManagedScript {
+  /** The extension's own id for it. */
+  id: string;
+  /**
+   * Its number (sm-dev's `E12`); absent in a run's test collection, and
+   * until the worker gives it one.
+   */
+  number?: number;
+  name: string;
+  namespace?: string;
+  version?: string;
+  /** Where it is loaded from: for a run's script, its `scratch:` URL. */
+  location: string;
+  /** A run's script: the file it was read from, as a `file://` URL. */
+  sourceFile?: string;
+  /** A run's script: its path as the run was given it, often relative. */
+  loadedAs?: string;
+  collectionId: string;
+  enabled: boolean;
+  status: 'ok' | 'invalid';
+  /** Why it is invalid. */
+  error?: string;
+  /** Why its last refresh failed, while its last good copy still runs. */
+  refreshError?: string;
 }

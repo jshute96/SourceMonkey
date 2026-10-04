@@ -101,6 +101,11 @@ test('text is the rest of the line, its --words its own', () => {
   assert.equal(typed('set', 'k "metric"').text, '"metric"');
   assert.deepEqual(typed('set', 'k --file v.json'), { flags: { '--file': 'v.json' }, words: ['k'], text: '' });
   assert.equal(typed('set', 'k --flie v.json').error, 'The set command has no --flie flag. It takes --file, --force.');
+  // set's flags can also end its JSON, which can't end with one.
+  for (const line of ['k "def" --force', '--force k "def"', 'k --force "def"']) {
+    assert.deepEqual(typed('set', line), { flags: { '--force': true }, words: ['k'], text: '"def"' }, line);
+  }
+  assert.deepEqual(typed('set', 'k "x --force"'), { flags: {}, words: ['k'], text: '"x --force"' });
   // A menu label is unquoted by menu itself, after any T2. before it.
   assert.equal(typed('menu', `T2.'Toggle dark'`).text, `T2.'Toggle dark'`);
   assert.equal(typed('type', `'#x' 'Test User'`).text, 'Test User');

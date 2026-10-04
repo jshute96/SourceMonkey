@@ -815,7 +815,9 @@ User-facing behavior is in [harness-guide.md](harness-guide.md).
   `src/harness/extension-link.ts`).
 - What sm-dev uses:
   - the run's scripts: `writeRunScript` (see
-    [Test collections](#test-collections)), `getScriptLog`;
+    [Test collections](#test-collections)), `getScriptLog`. From 1.2,
+    a push also names the script's file (`source`), which `script list`
+    shows;
   - notifications: `clickNotification(id)`, which runs the script's
     `onclick` as a click would;
   - values and menus: `getGmValues`, `writeGmValues`,
@@ -826,6 +828,10 @@ User-facing behavior is in [harness-guide.md](harness-guide.md).
     also removes the run's test collection.
   - SourceMonkey-managed scripts: `scriptsOnTab(tabId)`, the rows the
     toolbar badge shows for a tab, with each one's collection;
+  - what's installed: `managedCollections` and `managedScripts`, for
+    `collection list` and `script list` (see
+    [sm-dev-managers.md](sm-dev-managers.md)). These also work with no
+    run, over a connection of their own (`openManagerLink`);
   - tabs: `tabDocument(tabId)`, which document a tab shows, to tell
     which page an opened tab is.
 - Scripts are named by the extension's script id, a UUID kept stable
@@ -1262,9 +1268,12 @@ Terms used below:
     is "Kept out of the run's tabs".
   - `values E1` shows one's values; `scripts E1` picks it for `get`
     and `set`, and it's marked `*` in the list.
-  - `set` on one needs `--force` after the key outside a
-    `--temp-browser`, since it changes the person's real data:
-    `set key --force <json>`.
+    - Any installed script can be picked, by its number from `script
+      list`: its values don't depend on a tab. One not on the tab's
+      page is still listed, as `Not on this page`.
+  - `set` on one needs `--force` outside a `--temp-browser`, since it
+    changes the person's real data: `set key --force <json>`. Like
+    `set`'s other flags, it can also go after the JSON.
   - `menu` and `logs` don't take them: they never run in the run's
     tabs. `load`, `update` and `--watch` don't apply either: the run
     didn't push them.

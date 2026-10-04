@@ -49,14 +49,21 @@ export function withLayout(line: string, layout: JsonLayout): string {
 export const STDERR_LINE = '\u0000sm-dev:stderr ';
 
 /**
- * The commands with a JSON form. `scripts`, `tabs` and `menu` only
- * when they list (see `onlyInspects`), not when they pick or fire.
+ * The commands with a JSON form, by name. `scripts`, `tabs` and `menu`
+ * only when they list (see `onlyInspects`), not when they pick or fire;
+ * `collection` and `script` only as `collection list` and `script list`.
  */
-export const JSON_COMMANDS = ['list', 'status', 'scripts', 'tabs', 'values', 'get', 'match', 'validate', 'menu', 'logs', 'probe'];
+export const JSON_COMMANDS = [
+  'list', 'status', 'scripts', 'tabs', 'values', 'get', 'match', 'validate', 'menu', 'logs', 'probe', 'collection', 'script',
+];
 
-/** `JSON_COMMANDS` as help lists them: `a, b and c`. */
+/**
+ * `JSON_COMMANDS` as help lists them: `a, b and c`, by the forms that
+ * have one (`script list`, not `script`).
+ */
 export function jsonCommandList(): string {
-  return `${JSON_COMMANDS.slice(0, -1).join(', ')} and ${JSON_COMMANDS.at(-1)}`;
+  const forms = JSON_COMMANDS.map((c) => (c === 'collection' || c === 'script' ? `${c} list` : c));
+  return `${forms.slice(0, -1).join(', ')} and ${forms.at(-1)}`;
 }
 
 /** The line carrying `command`'s result, `data`'s fields after `command`. */
@@ -86,9 +93,28 @@ export function markedLine(line: string, layout: JsonLayout): { stderr: boolean;
 
 /** Short form of a collection, inside other objects. */
 export interface CollectionRef {
-  /** `C2`, once collections have ids. */
+  /** `C2`, or a run's test collection's run (`D1`). */
   id?: string;
   name: string;
+}
+
+/** A collection in the manager. */
+export interface Collection {
+  /** `C2`, or a run's test collection's run (`D1`). */
+  id?: string;
+  /** Its id inside the manager (a UUID in SourceMonkey), not the extension's. */
+  internalId: string;
+  name: string;
+  kind: 'container' | 'directory' | 'manifest';
+  /** A directory's or manifest's location; none for a container. */
+  location?: string;
+  /** A run's test collection: the run's id (`D1`). */
+  runCollection?: string;
+  enabled: boolean;
+  status: 'ok' | 'load-failed';
+  /** Why it failed to load. */
+  error?: string;
+  scriptCount: number;
 }
 
 export interface Tab {
@@ -137,17 +163,27 @@ export interface TabActivity {
 
 /** A script: one the run loaded (`1`), or one installed in SourceMonkey (`E1`). */
 export interface Script {
-  id: string;
+  /** Absent in `script list` for a run's script: only its run knows its number. */
+  id?: string;
   kind: 'run' | 'installed';
   name: string;
   /** The run's scripts: the path it was loaded from. */
   file?: string;
   /** Installed scripts: the collection holding it. */
   collection?: CollectionRef;
-  /** The run's scripts. */
+  /** Installed scripts, in `script list`: its id inside the manager (a UUID in SourceMonkey). */
+  internalId?: string;
+  namespace?: string;
+  version?: string;
+  /** Installed scripts, in `script list`: where it is loaded from. */
+  location?: string;
+  enabled?: boolean;
+  /** The run's scripts, and installed ones in `script list`. */
   status?: ScriptStatus;
   /** Why it is invalid. */
   error?: string;
+  /** Why its last refresh failed, while its last good copy still runs. */
+  refreshError?: string;
   /** The script `get` and `set` act on. */
   selected?: boolean;
   /** In `scripts` and `status`: what it is doing on each tab. */
@@ -288,4 +324,14 @@ export interface ProbeData {
     /** With --css or --html: the first matches. */
     matches?: { css?: string; html?: string }[];
   }[];
+}
+
+export interface CollectionListData {
+  collections: Collection[];
+}
+
+export interface ScriptListData {
+  /** When one was named. */
+  collection?: CollectionRef;
+  scripts: Script[];
 }

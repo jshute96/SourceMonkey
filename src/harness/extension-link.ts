@@ -20,12 +20,15 @@ import { randomBytes } from 'node:crypto';
 
 import type { BrowserContext, Page, Worker } from '@playwright/test';
 
-import { SM_DEV_EVENT, SM_DEV_PROTOCOL, type ProtocolVersion } from '../sm-dev-protocol.js';
+import {
+  SM_DEV_EVENT, SM_DEV_PROTOCOL, type ManagedCollection, type ManagedScript, type ProtocolVersion,
+} from '../sm-dev-protocol.js';
 import type { StackLayout } from '../composed-source.js';
 import type { PushedFile } from '../external-files.js';
 import {
   findExtensionWorker, isSourceMonkeyWorker, sourceMonkeyExtensionId, sourceMonkeyOrigin, type LogEntry, type PushResult,
 } from './extension-backend.js';
+import type { ManagerControl } from './manager-commands.js';
 import { rebuildAdvice } from './rebuild-advice.js';
 
 // How long a claim lasts unrenewed, and how often it's renewed. A killed
@@ -41,7 +44,7 @@ const UPDATE_EXTENSION = 'Update it: rebuild it and reload it in chrome://extens
 const updateSmDev = (): string => `Update sm-dev: ${rebuildAdvice()} Or use --temp-browser, which loads this sm-dev's copy of SourceMonkey.`;
 
 /** Said when the extension in the browser has an older protocol major, or none. */
-const EXTENSION_TOO_OLD = `SourceMonkey in this browser is older than this sm-dev, so it can't run sm-dev's scripts. ${UPDATE_EXTENSION}`;
+const EXTENSION_TOO_OLD = `SourceMonkey in this browser is older than this sm-dev, so the two can't work together. ${UPDATE_EXTENSION}`;
 
 /**
  * How the extension's protocol version compares with sm-dev's
@@ -55,7 +58,7 @@ export function compareProtocol(
   // Built before the version existed.
   if (!extension || extension.major < ours.major) return { error: EXTENSION_TOO_OLD };
   if (extension.major > ours.major) {
-    return { error: `This sm-dev is older than SourceMonkey in this browser, so it can't run scripts there. ${updateSmDev()}` };
+    return { error: `This sm-dev is older than SourceMonkey in this browser, so the two can't work together. ${updateSmDev()}` };
   }
   if (extension.minor < ours.minor) {
     return { note: `SourceMonkey in this browser is older than this sm-dev, so some of sm-dev's newer features won't work there. ${UPDATE_EXTENSION}` };
@@ -65,6 +68,32 @@ export function compareProtocol(
   }
   return null;
 }
+
+/**
+ * The worker's protocol version, compared with sm-dev's: throws for a
+ * major that differs, and gives the note for a minor that does.
+ */
+async function checkedProtocol(worker: Worker): Promise<{ protocol: ProtocolVersion | undefined; note: string | null }> {
+  const protocol = await worker.evaluate(
+    () => (self as unknown as { SourceMonkey?: { smDevProtocol?: ProtocolVersion } }).SourceMonkey?.smDevProtocol,
+  );
+  const compared = compareProtocol(protocol);
+  if (compared?.error) throw new Error(compared.error);
+  return { protocol, note: compared?.note ?? null };
+}
+
+/**
+ * Throws, naming `feature`, when the extension's protocol minor is older
+ * than `minor`.
+ */
+function requireMinorOf(extension: ProtocolVersion | undefined, minor: number, feature: string): void {
+  if ((extension?.minor ?? 0) < minor) {
+    throw new Error(`${feature} needs a newer SourceMonkey in this browser. ${UPDATE_EXTENSION}`);
+  }
+}
+
+// What the collection and script commands say an older extension lacks.
+const MANAGING = 'Listing collections and scripts';
 
 /** Said when Chrome won't let the extension register user scripts. */
 function userScriptsOff(extensionId: string): string {
@@ -152,9 +181,7 @@ export class ExtensionLink {
    * using it.
    */
   requireMinor(minor: number, feature: string): void {
-    if ((this.extensionProtocol?.minor ?? 0) < minor) {
-      throw new Error(`${feature} needs a newer SourceMonkey in this browser. ${UPDATE_EXTENSION}`);
-    }
+    requireMinorOf(this.extensionProtocol, minor, feature);
   }
 
   private constructor(
@@ -180,12 +207,9 @@ export class ExtensionLink {
   static async open(context: BrowserContext, runId: string): Promise<ExtensionLink> {
     const worker = await findExtensionWorker(context);
     const link = new ExtensionLink(context, runId, worker.url(), await sourceMonkeyOrigin());
-    link.extensionProtocol = await worker.evaluate(
-      () => (self as unknown as { SourceMonkey?: { smDevProtocol?: ProtocolVersion } }).SourceMonkey?.smDevProtocol,
-    );
-    const compared = compareProtocol(link.extensionProtocol);
-    if (compared?.error) throw new Error(compared.error);
-    link.versionNote = compared?.note ?? null;
+    const checked = await checkedProtocol(worker);
+    link.extensionProtocol = checked.protocol;
+    link.versionNote = checked.note;
     // Chrome lists `chrome.userScripts` once the manifest asks for it,
     // but every call fails until the user turns on "Allow User
     // Scripts", which would leave the run's scripts silently unrun.
@@ -365,9 +389,13 @@ export class ExtensionLink {
    * Installs or replaces one of the run's scripts in its test collection,
    * with the dependency bodies read from disk (`pushedFiles`).
    */
-  async push(text: string, name: string, files: Record<string, PushedFile> = {}): Promise<PushResult> {
-    return this.call(({ run, t, n, f }) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.writeRunScript({ run, text: t, name: n, files: f }),
-      { run: this.runId, t: text, n: name, f: files });
+  /**
+   * `source`: the file's `file://` URL, which `script list` shows. An
+   * extension before protocol 1.2 ignores it.
+   */
+  async push(text: string, name: string, files: Record<string, PushedFile> = {}, source?: string): Promise<PushResult> {
+    return this.call(({ run, t, n, f, s }) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.writeRunScript({ run, text: t, name: n, files: f, ...(s ? { source: s } : {}) }),
+      { run: this.runId, t: text, n: name, f: files, s: source });
   }
 
   /** Which document `tabId` shows (see the worker's `tabDocument`), or null if it can't be read. */
@@ -402,6 +430,18 @@ export class ExtensionLink {
     { t: tabId, s: scriptId, c: commandId });
     return result.ok;
   }
+
+  /** The collections and installed scripts, for `collection list` and `script list`. */
+  readonly manager: ManagerControl = {
+    collections: async () => {
+      this.requireMinor(2, MANAGING);
+      return this.call(() => (self as unknown as { SourceMonkey: Api }).SourceMonkey.managedCollections(), undefined);
+    },
+    scripts: async () => {
+      this.requireMinor(2, MANAGING);
+      return this.call(() => (self as unknown as { SourceMonkey: Api }).SourceMonkey.managedScripts(), undefined);
+    },
+  };
 
   /** Clicks a shown notification, as the person would. False when it isn't showing. */
   async clickNotification(notificationId: string): Promise<boolean> {
@@ -442,6 +482,27 @@ export function firstLine(err: unknown): string {
   return line.charAt(0).toUpperCase() + line.slice(1);
 }
 
+/**
+ * The collection and script commands' connection to SourceMonkey, with
+ * no run: no tabs claimed, no events heard. For one command, made just
+ * after the worker is found, so it doesn't look for a new one.
+ * - Throws as `ExtensionLink.open` does for a protocol major that
+ *   differs, or when the extension is too old for these calls.
+ * - Doesn't need "Allow User Scripts", since nothing here runs a script.
+ */
+export async function openManagerLink(context: BrowserContext): Promise<{ manager: ManagerControl; versionNote: string | null }> {
+  const worker = await findExtensionWorker(context);
+  const { protocol, note } = await checkedProtocol(worker);
+  requireMinorOf(protocol, 2, MANAGING);
+  return {
+    versionNote: note,
+    manager: {
+      collections: () => worker.evaluate(() => (self as unknown as { SourceMonkey: Api }).SourceMonkey.managedCollections()),
+      scripts: () => worker.evaluate(() => (self as unknown as { SourceMonkey: Api }).SourceMonkey.managedScripts()),
+    },
+  };
+}
+
 // The part of the worker's `self.SourceMonkey` this file calls.
 interface Api {
   claimTab(tabId: number, runId: string, ttlMs: number): Promise<void>;
@@ -450,7 +511,7 @@ interface Api {
   renewRun(runId: string, ttlMs: number, tabs: { tabId: number; scriptsOff?: boolean }[]): Promise<number>;
   releaseRun(runId: string): Promise<void>;
   setTabScriptsOff(tabId: number, off: boolean): Promise<void>;
-  writeRunScript(args: { run: string; text: string; name?: string; files?: Record<string, PushedFile> }): Promise<PushResult>;
+  writeRunScript(args: { run: string; text: string; name?: string; files?: Record<string, PushedFile>; source?: string }): Promise<PushResult>;
   tabDocument(tabId: number): Promise<{ url: string; timeOrigin: number } | null>;
   getStackLayout(scriptId: string): Promise<StackLayout | null>;
   getGmValues(scriptId: string): Promise<Record<string, unknown>>;
@@ -458,4 +519,6 @@ interface Api {
   fireActionContextMenuItem(tabId: number, scriptId: string, commandId: string): Promise<{ ok: boolean }>;
   scriptsOnTab(tabId: number): Promise<{ id: string; name: string; status: string; collection: string; number?: number }[]>;
   clickNotification(notificationId: string): boolean;
+  managedCollections(): Promise<ManagedCollection[]>;
+  managedScripts(): Promise<ManagedScript[]>;
 }

@@ -92,8 +92,22 @@ Schema. `?` marks a field that can be left out. The source is
 ```ts
 // Short form of a collection, inside other objects.
 interface CollectionRef {
-  id?: string;           // "C2", once collections have ids
+  id?: string;           // "C2", or a run's test collection's run ("D1")
   name: string;
+}
+
+// A collection in the manager.
+interface Collection {
+  id?: string;           // "C2", or a run's test collection's run ("D1")
+  internalId: string;    // its id inside the manager (a UUID in SourceMonkey)
+  name: string;
+  kind: "container" | "directory" | "manifest";
+  location?: string;     // directory or manifest; none for a container
+  runCollection?: string; // the run id, for a run's test collection
+  enabled: boolean;
+  status: "ok" | "load-failed";
+  error?: string;        // why it failed to load
+  scriptCount: number;
 }
 
 interface Tab {
@@ -112,13 +126,20 @@ interface Tab {
 // A script: one the run loaded ("1"), or one installed in
 // SourceMonkey ("E1").
 interface Script {
-  id: string;
+  id?: string;           // none in script list for another run's script
   kind: "run" | "installed";
   name: string;
   file?: string;         // run's scripts: the path it was loaded from
   collection?: CollectionRef; // installed: the collection holding it
-  status?: "ok" | "invalid"; // run's scripts
+  // Installed scripts, in `script list`:
+  internalId?: string;   // its id inside the manager (a UUID in SourceMonkey)
+  namespace?: string;
+  version?: string;
+  location?: string;     // where it is loaded from
+  enabled?: boolean;
+  status?: "ok" | "invalid"; // run's scripts, and in `script list`
   error?: string;        // why it is invalid
+  refreshError?: string; // why its last refresh failed; its last good copy still runs
   selected?: boolean;    // the script get and set act on
   tabs?: TabActivity[];  // in scripts and status
 }
@@ -131,8 +152,9 @@ interface TabActivity {
 
 type TabState =
   | "running"
-  | "not-running"        // a run's script that isn't running there
-  // An installed script, as the toolbar badge says:
+  | "not-running"        // a run's script that isn't running there, or a
+                         // picked installed one that isn't on the page
+  // An installed script, as the toolbar badge shows it:
   | "error"              // started, then threw
   | "refused"            // Chrome refused to run it
   | "not-started"        // it matches, but hasn't started
@@ -418,6 +440,20 @@ JSON:
       ]
     },
     {
+      "id": "E2",
+      "kind": "installed",
+      "internalId": "9b2d4e61-7c3a-4b1f-8d5e-2a6f0c9e4b73",
+      "name": "Broken",
+      "location": "file:///home/me/scripts/broken.user.js",
+      "collection": {
+        "id": "C1",
+        "name": "Scripts from local disk"
+      },
+      "enabled": true,
+      "status": "invalid",
+      "error": "The script has a syntax error: Unexpected end of input (in broken.user.js, line 12)"
+    },
+    {
       "id": "E1",
       "kind": "installed",
       "name": "Dark mode",
@@ -561,7 +597,7 @@ JSON:
 }
 ```
 
-- The exit code still says whether every page matched.
+- The exit code still shows whether every page matched.
 
 ### `validate`
 
@@ -729,75 +765,73 @@ JSON:
 }
 ```
 
-### Saying what a result covers
+### `collection list`
 
-- A list of things usually not there (`validate`'s `warnings`,
-  `match`'s `excludedBy`) is left out when empty, as an `error` is, so
-  the output is easier to scan.
-- Any other list is kept when empty: `[]` says there are none (a menu's
-  `commands`, `match`'s `matchedBy`).
-
-- A result focused on one thing names it, so an empty list still says
-  where nothing was found: `menu` and `logs` give their `tab`, `values
-  T2` its `tab`, `get` its `script` and `key`, `probe` its `tab` and
-  `url`.
-- New commands follow the same rule: `script list C2` names its
-  `collection`.
-
-### Commands without a JSON form
-
-- `snapshot`, `eval` and `cdp` already print their own formats, and
-  keep them under `--json`. `eval` and `cdp` print JSON values already.
-  - An `eval` result over 10,000 characters is cut, so it no longer
-    parses. Use `eval --out FILE` for those.
-- `set`, the commands that pick (`tab T2`, `script 2`) and the ones that
-  act on the page (`click`, `open`, `wait`, ...) print what they print
-  now.
-- A program mixing these with JSON commands reads each command's output
-  knowing which command it sent.
-
-## Planned commands
-
-These come with [sm-dev-managers.md](sm-dev-managers.md). For them,
-`Script` gains the fields an installed script has: `managerId` (the
-manager's own id), `namespace`, `version`, `location`, and `enabled`,
-with `"load-failed"` and `"not-loaded"` added to its `status`.
-
-### Collection
+Also `collection`, `collections` and `collections list`.
 
 ```ts
-interface Collection {
-  id: string;            // "C2"
-  managerId?: string;
-  name: string;
-  kind: "container" | "directory" | "manifest" | "all-scripts";
-  location?: string;     // directory or manifest; none for a container
-  runCollection?: string; // the run id, for a run's test collection
-  enabled: boolean;
-  status: "ok" | "load-failed" | "not-loaded";
-  error?: string;
-  scriptCount: number;
-  scripts?: Script[];    // in `collection show`
+interface CollectionListData {
+  collections: Collection[];
 }
 ```
 
-- `all-scripts` is the one collection TM and VM show.
+- Numbered collections first, by number, then runs' test collections.
 
-### Manager
+Text:
 
-```ts
-interface Manager {
-  name: "sourcemonkey" | "tampermonkey" | "violentmonkey";
-  extensionId: string;
-  version: string;
-  enabled: boolean;
-  userScriptsAllowed: boolean;
-  chosen: boolean;       // the one --manager picks
-  source: "unpacked" | "store" | "fetched"; // how it got into the browser
+```text
+Collections in SourceMonkey:
+  C1: Scripts from local disk (container): 3 scripts
+  C2: Scripts from web (container): 1 script
+  C3: My scripts (directory): 7 scripts, disabled
+      file:///home/me/scripts/
+  D1: sm-dev test collection (run D1-3fa2) (container): 2 scripts
+```
+
+- A location is shown under the name, unless it is the name.
+
+JSON:
+
+```json
+{
+  "command": "collection list",
+  "collections": [
+    {
+      "id": "C1",
+      "internalId": "6b1e2f0a-4c3d-4e5f-8a9b-0c1d2e3f4a5b",
+      "name": "Scripts from local disk",
+      "kind": "container",
+      "enabled": true,
+      "status": "ok",
+      "scriptCount": 3
+    },
+    {
+      "id": "C3",
+      "internalId": "0f9e8d7c-6b5a-4c3d-2e1f-0a9b8c7d6e5f",
+      "name": "My scripts",
+      "kind": "directory",
+      "location": "file:///home/me/scripts/",
+      "enabled": false,
+      "status": "ok",
+      "scriptCount": 7
+    },
+    {
+      "id": "D1",
+      "internalId": "9a8b7c6d-5e4f-4a3b-2c1d-0e9f8a7b6c5d",
+      "name": "sm-dev test collection (run D1-3fa2)",
+      "kind": "container",
+      "runCollection": "D1",
+      "enabled": true,
+      "status": "ok",
+      "scriptCount": 2
+    }
+  ]
 }
 ```
 
-### `script list [C]`
+(`C2` left out here.)
+
+### `script list [collection]`
 
 ```ts
 interface ScriptListData {
@@ -809,7 +843,16 @@ interface ScriptListData {
 - The JSON is a flat list, each script naming its collection, so it has
   the same `Script` shape as every other listing. The text groups the
   scripts under their collections, for reading.
-- `collection show <C>` gives one collection with its scripts nested.
+- `collection show <C>` (planned) will give one collection with its
+  scripts nested.
+- Runs' test collections' scripts are listed too, with `kind: "run"`.
+  - In its own run, a script has its number there (`"1"`).
+  - Elsewhere, it has no `id`, since only its run knows its number.
+  - `file` is its path as the run was given it (often relative to where
+    the run started), and the text shows that. `location` is its
+    file's `file://` URL.
+- In a run, the selected script has `selected: true`, and `*` in the
+  text.
 
 Text:
 
@@ -830,23 +873,9 @@ JSON:
   "command": "script list",
   "scripts": [
     {
-      "id": "E1",
-      "kind": "installed",
-      "managerId": "3f6c0a52-0d4e-4f8e-9a8e-6f1c2b7d9e10",
-      "name": "Dark mode",
-      "version": "2.1",
-      "location": "https://example.org/dark-mode.user.js",
-      "collection": {
-        "id": "C2",
-        "name": "Scripts from web"
-      },
-      "enabled": true,
-      "status": "ok"
-    },
-    {
       "id": "E2",
       "kind": "installed",
-      "managerId": "9b2d4e61-7c3a-4b1f-8d5e-2a6f0c9e4b73",
+      "internalId": "9b2d4e61-7c3a-4b1f-8d5e-2a6f0c9e4b73",
       "name": "Broken",
       "location": "file:///home/me/scripts/broken.user.js",
       "collection": {
@@ -856,8 +885,67 @@ JSON:
       "enabled": true,
       "status": "invalid",
       "error": "The script has a syntax error: Unexpected end of input (in broken.user.js, line 12)"
+    },
+    {
+      "id": "E1",
+      "kind": "installed",
+      "internalId": "3f6c0a52-0d4e-4f8e-9a8e-6f1c2b7d9e10",
+      "name": "Dark mode",
+      "version": "2.1",
+      "location": "https://example.org/dark-mode.user.js",
+      "collection": {
+        "id": "C2",
+        "name": "Scripts from web"
+      },
+      "enabled": true,
+      "status": "ok"
     }
   ]
+}
+```
+
+### What a result covers
+
+- A list of things usually not there (`validate`'s `warnings`,
+  `match`'s `excludedBy`) is left out when empty, as an `error` is, so
+  the output is easier to scan.
+- Any other list is kept when empty: `[]` means there are none (a menu's
+  `commands`, `match`'s `matchedBy`).
+
+- A result focused on one thing names it, so an empty list still shows
+  where nothing was found: `menu` and `logs` give their `tab`, `values
+  T2` its `tab`, `get` its `script` and `key`, `probe` its `tab` and
+  `url`.
+- New commands follow the same rule: `script list C2` names its
+  `collection`.
+
+### Commands without a JSON form
+
+- `snapshot`, `eval` and `cdp` already print their own formats, and
+  keep them under `--json`. `eval` and `cdp` print JSON values already.
+  - An `eval` result over 10,000 characters is cut, so it no longer
+    parses. Use `eval --out FILE` for those.
+- `set`, the commands that pick (`tab T2`, `script 2`) and the ones that
+  act on the page (`click`, `open`, `wait`, ...) print what they print
+  now.
+- A program mixing these with JSON commands reads each command's output
+  knowing which command it sent.
+
+## Planned commands
+
+These come with [sm-dev-managers.md](sm-dev-managers.md).
+
+### Manager
+
+```ts
+interface Manager {
+  name: "sourcemonkey" | "tampermonkey" | "violentmonkey";
+  extensionId: string;
+  version: string;
+  enabled: boolean;
+  userScriptsAllowed: boolean;
+  chosen: boolean;       // the one --manager picks
+  source: "unpacked" | "store" | "fetched"; // how it got into the browser
 }
 ```
 
@@ -921,7 +1009,7 @@ JSON:
   "script": {
     "id": "E1",
     "kind": "installed",
-    "managerId": "3f6c0a52-0d4e-4f8e-9a8e-6f1c2b7d9e10",
+    "internalId": "3f6c0a52-0d4e-4f8e-9a8e-6f1c2b7d9e10",
     "name": "Dark mode",
     "namespace": "https://example.org",
     "version": "2.1",
@@ -976,78 +1064,11 @@ interface ScriptPrintData {
 }
 ```
 
-### `collection list`
-
-```ts
-interface CollectionListData {
-  collections: Collection[];  // without `scripts`
-}
-```
-
-Text:
-
-```text
-Collections in SourceMonkey:
-  C1: Scripts from local disk (container): 3 scripts
-  C2: Scripts from web (container): 1 script
-  C3: scripts (directory): 7 scripts, disabled
-      file:///home/me/scripts/
-  C4: sm-dev test collection (run D1) (container): 2 scripts, run D1
-```
-
-JSON:
-
-```json
-{
-  "command": "collection list",
-  "collections": [
-    {
-      "id": "C1",
-      "managerId": "container:file",
-      "name": "Scripts from local disk",
-      "kind": "container",
-      "enabled": true,
-      "status": "ok",
-      "scriptCount": 3
-    },
-    {
-      "id": "C2",
-      "managerId": "container:http",
-      "name": "Scripts from web",
-      "kind": "container",
-      "enabled": true,
-      "status": "ok",
-      "scriptCount": 1
-    },
-    {
-      "id": "C3",
-      "managerId": "file:///home/me/scripts/",
-      "name": "scripts",
-      "kind": "directory",
-      "location": "file:///home/me/scripts/",
-      "enabled": false,
-      "status": "ok",
-      "scriptCount": 7
-    },
-    {
-      "id": "C4",
-      "managerId": "container:sm-dev:D1",
-      "name": "sm-dev test collection (run D1)",
-      "kind": "container",
-      "runCollection": "D1",
-      "enabled": true,
-      "status": "ok",
-      "scriptCount": 2
-    }
-  ]
-}
-```
-
 ### `collection show <C>`
 
 ```ts
 interface CollectionShowData {
-  collection: Collection;     // with `scripts`
+  collection: Collection & { scripts: Script[] };
 }
 ```
 

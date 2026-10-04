@@ -1,7 +1,10 @@
 # sm-dev: managing userscript managers (design draft)
 
-Status: proposal. Only `--json` on the existing commands is built (see
-[sm-dev-json.md](sm-dev-json.md)).
+Status: proposal, partly built. Built so far:
+
+- `--json` on the existing commands (see [sm-dev-json.md](sm-dev-json.md));
+- script and collection numbers;
+- `collection list` (`collections`) and `script list`, for SourceMonkey.
 
 sm-dev today runs scripts *through* SourceMonkey in a run's own test
 collection. This adds commands to look at and change what a userscript
@@ -41,10 +44,18 @@ itself. They target SourceMonkey first, and are shaped so Tampermonkey
 
 ## Where the commands run
 
-- **No run needed.** They need a browser, not a run. Without a run,
-  sm-dev connects to `--browser`, runs the command, and disconnects,
-  the same way `match` and `validate` work without one.
-- **In a run.** They talk to the run's browser.
+- **No run needed.** They need a browser, not a run. With no run to
+  use, sm-dev connects to `--browser`, runs the command, and
+  disconnects (`openManagerLink` in `extension-link.ts`).
+  - That connection claims no tabs and hears no events.
+  - It doesn't need "Allow User Scripts", since nothing it does runs
+    a script.
+- **In a run.** When there is a run to use (`--run`, or the only one
+  going), the command goes to it, as the run's other commands do, and
+  the run asks SourceMonkey through its own connection.
+  - A `--browser` that names a browser no run is in lists that browser,
+    with no run. One naming another run's browser than the run picked
+    is refused, as for any command sent to a run.
 - **`--temp-browser` with no run** would make a browser and drop it
   straight away, so it's only useful inside a run (`start --notab`, then
   the commands).
@@ -54,10 +65,13 @@ itself. They target SourceMonkey first, and are shaped so Tampermonkey
 - **Noun, then verb:** `manager <verb>`, `collection <verb>`,
   `script <verb>`. `help collection` lists everything you can do to a
   collection.
-- **The plural lists:** `managers` and `collections` are short for
-  `<noun> list`. `scripts` keeps what it shows now: the run's scripts
-  and the installed scripts on the current tab. `script list` lists the
-  whole manager.
+- **Singular and plural are the same command,** as `tab` and `tabs`
+  are: `collection list` and `collections list`, `script list` and
+  `scripts list`.
+  - `collection` (or `collections`) alone lists, as `tabs` does.
+  - `scripts` alone keeps what it shows now: the run's scripts and the
+    installed scripts on the current tab. `script list` lists every
+    installed script, runs' test collections' included.
 - **One `script` noun for both kinds of script:**
   - the run's own scripts, loaded from disk into its test collection;
   - every other script installed in the manager.
@@ -80,7 +94,7 @@ itself. They target SourceMonkey first, and are shaped so Tampermonkey
 - **`C1`, `C2`, ...**: collections, by the number SourceMonkey gives
   each one, the same way as scripts (see
   [Collection numbers](#collection-numbers)). Run test collections have
-  none.
+  none, and are named by their run (`D1`) instead.
 - **By name**: a collection or script can also be named by its name, or
   a unique part of it, as loaded scripts are now.
 - **By the manager's own id** (`id=<uuid>`), for scripts that share a
@@ -155,8 +169,8 @@ number (`C3`).
 - **Not shown** anywhere in the extension.
 - **Assigned at a sync:** adding a collection with no scripts doesn't
   start a registration sync, so it has no number until a later one.
-  The extension call behind `collection list` and `collection add`
-  should number first (`assignNumbers`), as the test API does.
+  So the extension's calls behind `collection list` and `script list`
+  number first (`assignNumbers`), and `collection add` will too.
 - **Other managers:** Tampermonkey and Violentmonkey show one virtual
   collection, so it needs no number.
 
@@ -230,7 +244,7 @@ added to or removed.
 
 | Command | What it does | Run's scripts | Other installed scripts |
 | --- | --- | --- | --- |
-| `script list [C]` | List every script in the manager, or one collection's: id, name, version, collection, enabled, status, location | yes | yes |
+| `script list [C]` | List every script in the manager, or one collection's: id, name, version, collection, enabled, status, location | yes: in its own run as `1`, `2`; another run's by name only | yes |
 | `scripts` | The run's scripts, then the installed scripts on the current tab, as now | yes | yes |
 | `script <id>` | Select the active script, as now | yes | yes |
 | `script show <id>` | Show one script's details (see [Script details](#script-details)) | yes | yes, fewer fields under TM / VM |
@@ -317,9 +331,14 @@ What `script show` shows, where the manager has it:
 
 1. `--json` on the existing commands (done).
 2. Script numbers in SourceMonkey, and E-ids taken from them (done).
-3. Collection numbers in SourceMonkey (done; nothing shows them yet).
+3. Collection numbers in SourceMonkey (done).
 4. SourceMonkey collections and installed scripts: the `collection`
-   and `script` verbs, with `--json`.
+   and `script` verbs, with `--json`. In slices:
+   - `collection list` and `script list`, with and without a run
+     (done);
+   - `enable`, `disable` and `refresh`;
+   - `collection add` / `drop` and `script install` / `uninstall` /
+     `move`.
 5. `ManagerBackend` around those, with SourceMonkey as its first
    implementation.
 6. `manager list`, `manager fetch`, `--manager` for `--temp-browser` and

@@ -486,11 +486,12 @@ export const HELP_SECTIONS: HelpSection[] = [
           { usage: 'get <key>', syntax: JSON_TEXT, about: 'Print one value for the selected script.', gap: true },
           {
             usage: 'set <key> <json>',
-            syntax: { args: 'text', before: 1, block: true, unquote: 'single' },
+            // JSON can't end with a `--flag`, so one there is a flag.
+            syntax: { args: 'text', before: 1, block: true, unquote: 'single', trailingFlags: true },
             about: ['Store a value for the selected script.', 'set <key> {{ starts a multi-line block of JSON, ended by }}.'],
             options: [
               { term: '--file <path>', about: 'Read the JSON from a file, in place of <json>.' },
-              { term: '--force', about: 'Needed, after the key, to change the real stored data of a SourceMonkey-managed script (E1, ...) outside a --temp-browser.' },
+              { term: '--force', about: 'Needed to change the real stored data of a SourceMonkey-managed script (E1, ...) outside a --temp-browser.' },
             ],
           },
         ],
@@ -501,6 +502,27 @@ export const HELP_SECTIONS: HelpSection[] = [
           { usage: 'accept [tab] [text]', syntax: { args: 'text', tab: true }, about: 'Answer an open dialog with OK, and a prompt with the text.' },
           { usage: 'dismiss [tab]', syntax: { args: 'none', tab: true }, about: 'Answer an open dialog with Cancel.' },
         ],
+      },
+    ],
+  },
+  {
+    title: 'Managing installed collections and scripts',
+    text: [
+      'What SourceMonkey has installed. Collections are named C1, C2, ... and scripts E1, E2, ..., by the numbers SourceMonkey keeps for them.',
+      'Without a run, these connect to the --browser browser. In a run, they use the run\'s browser.',
+      '',
+    ],
+    commands: [
+      {
+        usage: 'collection list',
+        syntax: NONE,
+        about: ['List the collections, with their kind, location, script count, and whether they are enabled.', 'collection, collections and collections list do the same.'],
+      },
+      {
+        usage: 'script list [collection]',
+        syntax: { args: 'words', max: 1 },
+        about: ['List the installed scripts, under their collections, or one collection\'s. scripts list does the same.', 'A run\'s own scripts show as 1, 2, ..., and another run\'s by name only. The selected script is marked *.'],
+        args: [{ term: '<collection>', about: 'A collection: C3, its name or a part of it, or id=<id>.' }],
       },
     ],
   },
@@ -600,10 +622,19 @@ export const HELP_SECTIONS: HelpSection[] = [
         items: [
           { term: '2', about: 'Script ID in the scripts list.' },
           { term: 'T2.3', about: 'Script 3, on tab T2.' },
-          { term: 'E1', about: 'A SourceMonkey-managed script.' },
+          { term: 'E1', about: 'An installed script, by its number in script list.' },
           { term: '<name>', about: ['Its name, file name or path, or a unique substring.', '(Only in commands that expect script names.)'] },
           { term: '<file>', about: 'A script file. (Ending with .user.js)' },
           { term: '<url>', about: 'A script file loaded from a URL. (Ending with .user.js)' },
+        ],
+      },
+      {
+        title: 'Collections (in SourceMonkey)',
+        items: [
+          { term: 'C3', about: 'Its number in collection list.' },
+          { term: 'D1', about: 'A run\'s test collection, by its run.' },
+          { term: '<name>', about: 'Its name, or a unique substring.' },
+          { term: 'id=<id>', about: 'SourceMonkey\'s own id for it.' },
         ],
       },
       {
@@ -790,7 +821,13 @@ export const OWN_COMMANDS = new Set([...CLIENT_COMMANDS, ...SHARED_COMMANDS]);
 export const RUN_COMMAND_NAMES = COMMAND_NAMES.filter((name) => !CLIENT_COMMANDS.has(name));
 
 /** The names a command also answers to, when run and in `help`. */
-export const ALIASES: Record<string, string> = { '?': 'help', keys: 'key' };
+export const ALIASES: Record<string, string> = { '?': 'help', keys: 'key', collections: 'collection' };
+
+/**
+ * Singular and plural names that are one command (`script 2` picks as
+ * `scripts 2` does), whose help is shown together, under the plural.
+ */
+export const SAME_COMMANDS: Record<string, string> = { script: 'scripts', tab: 'tabs' };
 
 /** A typed name as the command it is, aliases resolved; null for none. */
 export function commandNamed(typed: string): string | null {
@@ -892,9 +929,16 @@ export function noSuchFlag(command: string, flag: string, known: string[] = comm
 }
 
 // One command's help: its usage, what it does, its arguments and options.
+// With the forms of its singular too (`script` with `scripts`).
 function commandBlock(name: string): string[] {
-  const forms = formsOf(name);
-  const groups = optionGroupsOf(name);
+  const names = [name, ...Object.keys(SAME_COMMANDS).filter((single) => SAME_COMMANDS[single] === name)];
+  const forms = names.flatMap(formsOf);
+  const groups: { title: string; options: HelpItem[] }[] = [];
+  for (const group of names.flatMap(optionGroupsOf)) {
+    const same = groups.find((g) => g.title === group.title);
+    if (!same) groups.push({ title: group.title, options: [...group.options] });
+    else for (const item of group.options) if (!same.options.some((o) => o.term === item.term)) same.options.push(item);
+  }
   // Said once, for a command of one form; several list their options below.
   const options = groups.length > 0 && forms.length === 1 ? ' [options]' : '';
   const lines = forms.map(({ command }, i) => `${i === 0 ? 'Usage:' : '      '} sm-dev ${command.usage}${options}`);
@@ -916,7 +960,7 @@ function commandBlock(name: string): string[] {
  */
 export function commandsHelp(names: string[]): { text: string; unknown: string[] } {
   const unknown = names.filter((name) => !commandNamed(name));
-  const wanted = [...new Set(names.map(commandNamed).filter((name): name is string => name !== null))]
+  const wanted = [...new Set(names.map(commandNamed).filter((name): name is string => name !== null).map((name) => SAME_COMMANDS[name] ?? name))]
     .sort((a, b) => COMMAND_NAMES.indexOf(a) - COMMAND_NAMES.indexOf(b));
   return { text: wanted.map((name) => commandBlock(name).join('\n')).join('\n\n') + '\n', unknown };
 }

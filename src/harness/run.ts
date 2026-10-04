@@ -147,6 +147,16 @@ export function cdpEndpoint(value: string): string {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(v) ? v : `http://${v}`;
 }
 
+/**
+ * Whether two `--browser` values name the same browser: as
+ * `cdpEndpoint` writes them, with `localhost` and `[::1]` the same as
+ * `127.0.0.1`.
+ */
+export function sameBrowser(a: string, b: string): boolean {
+  const key = (value: string): string => cdpEndpoint(value.trim()).replace(/^(\w+:\/\/)(localhost|\[::1\])(?=[:/]|$)/i, '$1127.0.0.1');
+  return key(a) === key(b);
+}
+
 // `--browser`, else $SM_DEV_BROWSER, else port 9233. Empty counts as
 // unset, so an exported-but-blank variable doesn't become `http://`.
 function cdpSetting(opts: ConnectOptions): string {
@@ -197,6 +207,15 @@ export async function connectBrowser(
   const session = await openBrowser(opts, out, { reuseTab, openTab: true });
   session?.notes.forEach(out);
   return session;
+}
+
+/**
+ * The browser at `--browser` (`cdp`), with no run and no tab, for the
+ * commands that only talk to SourceMonkey (`collection list`). Null,
+ * having said why, when it couldn't connect.
+ */
+export function connectWithoutRun(cdp: string | undefined, out: (line: string) => void): Promise<Omit<BrowserSession, 'page'> | null> {
+  return openBrowser({ cdp }, out, { reuseTab: false, openTab: false });
 }
 
 // Whether a connected browser runs without a window: its user agent
@@ -878,7 +897,7 @@ async function runInBrowser(
       // typed to start or load, so files of the same name stay apart.
       const name = typedName(opts, file);
       const text = await readFile(file, 'utf8');
-      const result = await link.push(text, name, pushedFiles(script));
+      const result = await link.push(text, name, pushedFiles(script), script.script.fileUrl);
       pushedAny = true;
       if (result.status !== 'ok') {
         opts.out(`INVALID  ${typedName(opts, file)}\n    ${result.errorMessage ?? ''}`);
@@ -1050,6 +1069,8 @@ async function runInBrowser(
           : `SourceMonkey extension, run ${link.runId}, with no test collection until a script is pushed`),
         // A throwaway browser's data is the run's own.
         others: host.otherScripts(!session.launched),
+        manager: link.manager,
+        extensionIdOf: (script) => (script.id === undefined ? undefined : host.extensionIdOf(script.id)),
         output: remote.output,
         roots: { collectionRoot: opts.collectionRoot, localRoots: opts.localRoots },
       };

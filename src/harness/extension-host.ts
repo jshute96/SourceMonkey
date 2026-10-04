@@ -95,6 +95,11 @@ export class ExtensionHost extends HarnessHost {
     this.runIds.set(extensionId, runId);
   }
 
+  /** The extension's id for the run's script `runId`, once pushed. */
+  extensionIdOf(runId: string): string | undefined {
+    return this.extensionIds.get(runId);
+  }
+
   /** How the extension's script `extensionId` maps back to its files, if known. */
   setLayout(extensionId: string, layout: StackLayout | null): void {
     if (layout) this.layouts.set(extensionId, layout);
@@ -177,6 +182,19 @@ export class ExtensionHost extends HarnessHost {
       (v === undefined ? { key, deleted: true } : { key, value: encodeValue(v) })));
   }
 
+  // One object per script, brought up to date, so one picked earlier
+  // (`scripts E1`) shows what the latest listing found.
+  private other(id: string, label: string, facts: Partial<Pick<OtherScript, 'name' | 'collection' | 'status'>>): OtherScript {
+    const other = this.others.get(label) ?? {
+      label, name: '', collection: '', status: '',
+      values: () => this.extensionValues(id),
+      setValues: (values: Record<string, unknown>) => this.writeExtensionValues(id, values),
+    };
+    Object.assign(other, facts);
+    this.others.set(label, other);
+    return other;
+  }
+
   /**
    * The SourceMonkey-managed scripts, for the commands (`ConsoleContext.others`).
    * `guarded`: `set` on one changes the person's real data.
@@ -196,18 +214,10 @@ export class ExtensionHost extends HarnessHost {
           let label = row.number !== undefined ? `E${row.number}` : this.otherLabels.get(row.id);
           if (!label) label = `E${this.otherLabels.size + 1}`;
           this.otherLabels.set(row.id, label);
-          // One object per script, brought up to date, so one picked
-          // earlier (`scripts E1`) shows what the latest listing says.
-          const other = this.others.get(label) ?? {
-            label, name: '', collection: '', status: '',
-            values: () => this.extensionValues(row.id),
-            setValues: (values: Record<string, unknown>) => this.writeExtensionValues(row.id, values),
-          };
-          Object.assign(other, { name: row.name, collection: row.collection, status: row.status });
-          this.others.set(label, other);
-          return other;
+          return this.other(row.id, label, { name: row.name, collection: row.collection, status: row.status });
         });
       },
+      installed: (id, label, name, collection) => this.other(id, label, { name, collection }),
     };
   }
 
