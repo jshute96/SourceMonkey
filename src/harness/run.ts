@@ -217,7 +217,7 @@ export async function connectBrowser(
  * having said why, when it couldn't connect.
  */
 export function connectWithoutRun(cdp: string | undefined, out: (line: string) => void): Promise<Omit<BrowserSession, 'page'> | null> {
-  return openBrowser({ cdp }, out, { reuseTab: false, openTab: false });
+  return openBrowser({ cdp }, out, { runTab: false, openTab: false });
 }
 
 // Whether a connected browser runs without a window: its user agent
