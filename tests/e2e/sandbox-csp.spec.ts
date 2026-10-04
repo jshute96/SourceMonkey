@@ -66,13 +66,14 @@ function scriptIdsByName(snap: TabStateSnapshot): Record<string, string> {
   return Object.fromEntries(doc.matches.map((m) => [m.name, m.id]));
 }
 
-// The worker writes it a few seconds after the load (its grace period
-// for late starters).
+// The worker writes it 11s after the load: its grace period for late
+// starters (MISSING_SCRIPT_GRACE_MS) outlasts the wrapper's 10s wait
+// for a run decision.
 async function waitForWarning(sm: SmApi, scriptId: string): Promise<string> {
   const log = await waitFor(
     () => sm.getScriptLog(scriptId),
     (entries) => entries.some((e) => e.level === 'warning'),
-    { timeoutMs: 10_000, label: 'never-started warning' },
+    { timeoutMs: 20_000, label: 'never-started warning' },
   );
   return log.find((e) => e.level === 'warning')!.message;
 }
