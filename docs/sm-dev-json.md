@@ -182,6 +182,7 @@ interface StatusData {
     sourceMonkey?: "installed" | "disabled" | "absent"; // left out when not known
     testCollection?: string; // once a script was pushed
     log?: string;            // the run's log file
+    downloads?: string;      // where a --temp-browser saves downloads
   };
   tabs: Tab[];
   tab?: string;          // the selected tab
@@ -211,6 +212,7 @@ Text (with several runs, each run's in turn, a blank line between):
 Run: D1 (pid 4171043), connected to owned headless browser 127.0.0.1:38583 (has SourceMonkey)
 Backend: SourceMonkey extension, test collection D1-f691
 Log: /tmp/sm-dev-logs-me/sm-dev-20261003-085822-497.log (D1.log)
+Downloads: /tmp/sm-dev-logs-me/sm-dev-20261003-085822-497-downloads
 Tabs:
 * T1: file:///home/me/gm-menu/gm-menu.html [targetId=CB4200EEA6397DAC9E7BC5A3B995A3A5]
    * 1: Menu example
@@ -238,7 +240,8 @@ each element this without `command`):
     },
     "sourceMonkey": "installed",
     "testCollection": "D1-f691",
-    "log": "/tmp/sm-dev-logs-me/sm-dev-20261003-085822-497.log"
+    "log": "/tmp/sm-dev-logs-me/sm-dev-20261003-085822-497.log",
+    "downloads": "/tmp/sm-dev-logs-me/sm-dev-20261003-085822-497-downloads"
   },
   "tabs": [
     {
@@ -697,20 +700,38 @@ JSON:
 }
 ```
 
-### `logs [tab]`
+### `logs [tab|all] [script]`
 
 ```ts
 interface LogsData {
-  tab: string;
-  pages: { url?: string; lines: string[] }[]; // each page load, oldest first
+  tab?: string;    // the tab asked for; absent for `all`
+  script?: string; // the script asked for
+  lines: LogLine[];
+  until: number;   // the position reached, as a log ID, for --since
+}
+
+interface LogLine {
+  id: number;      // log ID: when it arrived, in microseconds since the epoch
+  time: string;    // ISO 8601
+  tab?: string;
+  script?: string;
+  source: "sm" | "event" | "script" | "page";
+  also?: ("sm" | "event" | "script" | "page")[]; // other sources it belongs to
+  kind: string;    // console type, Log entry level, or event name
+  text: string;
 }
 ```
+
+See [sm-dev-logs.md](sm-dev-logs.md) for the sources and positions.
+The `[sm-dev] Logs up to ...` line goes to stderr.
 
 Text:
 
 ```text
---- file:///home/me/gm-menu/gm-menu.html
-[log] [SourceMonkey] script Menu example running on file:///home/me/gm-menu/gm-menu.html
+08:58:22.904 T1 [event] Loaded file:///home/me/gm-menu/gm-menu.html
+08:58:22.961 T1 [event] Menu example started on file:///home/me/gm-menu/gm-menu.html
+08:58:22.963 T1 [event] GM_registerMenuCommand "Say hi"
+[sm-dev] Logs up to 1791043102963118 (08:58:22.963)
 ```
 
 JSON:
@@ -719,14 +740,35 @@ JSON:
 {
   "command": "logs",
   "tab": "T1",
-  "pages": [
+  "lines": [
     {
-      "url": "file:///home/me/gm-menu/gm-menu.html",
-      "lines": [
-        "[log] [SourceMonkey] script Menu example running on file:///home/me/gm-menu/gm-menu.html"
-      ]
+      "id": 1791043102904266,
+      "time": "2026-10-03T15:58:22.904Z",
+      "tab": "T1",
+      "source": "event",
+      "kind": "load",
+      "text": "Loaded file:///home/me/gm-menu/gm-menu.html"
+    },
+    {
+      "id": 1791043102961530,
+      "time": "2026-10-03T15:58:22.961Z",
+      "tab": "T1",
+      "script": "1",
+      "source": "event",
+      "kind": "started",
+      "text": "Menu example started on file:///home/me/gm-menu/gm-menu.html"
+    },
+    {
+      "id": 1791043102963118,
+      "time": "2026-10-03T15:58:22.963Z",
+      "tab": "T1",
+      "script": "1",
+      "source": "event",
+      "kind": "menu-command",
+      "text": "GM_registerMenuCommand \"Say hi\""
     }
-  ]
+  ],
+  "until": 1791043102963118
 }
 ```
 
@@ -1206,7 +1248,7 @@ JSON:
 ## Events
 
 A run reports things as they happen, between and during commands. In
-text mode these are the `[sm-dev] ... started on ...` lines and the
+text mode these are the `[event] ... started on ...` lines and the
 console lines.
 
 ```ts

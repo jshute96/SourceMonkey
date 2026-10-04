@@ -34,6 +34,7 @@ has them log where the tools got in the way.
 - [Working with tabs](#working-with-tabs)
 - [Driving and reading the page](#driving-and-reading-the-page)
 - [Saved pages](#saved-pages)
+- [Logs](#logs)
 - [Waiting](#waiting)
 - [Background runs and logs](#background-runs-and-logs)
 - [Writing specs: the Playwright fixture](#writing-specs-the-playwright-fixture)
@@ -185,9 +186,9 @@ What a run prints as it goes:
 ```
 [sm-dev] Pushed to SourceMonkey: sites/example.com/add-button.user.js
 [sm-dev] Opening https://example.com/items/42 in T1 [targetId=61023580282B1D684FAF4072C201AB51]
-[sm-dev] Add button started on https://example.com/items/42
-[page log] [add-button] toolbar found, button inserted
-[sm-dev] GM_setValue lastItem = "42"
+[event] Add button started on https://example.com/items/42
+[script log] [add-button] toolbar found, button inserted
+[event] GM_setValue lastItem = "42"
 ```
 
 - A page the header does not cover prints the rule that kept the
@@ -506,7 +507,7 @@ running, --seconds N to watch it for a while, or commands after --.`
 | `--from-saved` | Open `.html` files as saved pages, at their URLs |
 | `--values '<json>'` | Seed `GM_*` storage first |
 | `--values-file <path>` | Seed `GM_*` storage first, from a JSON file |
-| `--page-errors` | Also stream the page's own errors |
+| `--log-source <source>` | The log sources the stream shows (see [Logs](#logs)) |
 | `--lang zh-CN,en` | The languages the run's tabs prefer |
 | `--nowait` | Don't wait for the pages to settle |
 | `--seconds N` | Stop the run after N seconds |
@@ -594,7 +595,7 @@ The scripts:
 - `--values '{"key": 1}'` seeds `GM_*` storage before the script runs.
   `--values-file values.json` does the same from a file holding a JSON
   object.
-- `--page-errors` also shows the page's own errors (see
+- `--log-source all` also shows the page's own lines and errors (see
   [What the stream shows](#what-the-stream-shows)).
 
 The browser's language:
@@ -661,28 +662,33 @@ starts on a clean page.
 
 ### What the stream shows
 
-The page's own errors are left out, since a busy site logs enough of
-them (blocked trackers, failed ad requests) to bury the script's lines.
+Each line the page and scripts produce has a log source, shown in its
+prefix (see [Logs](#logs)). The stream shows all but the page's own
+lines, since a busy site logs enough (blocked trackers, failed ad
+requests) to bury the script's.
 
-- Shown:
-  - console lines from the script;
-  - `[name]`-prefixed console lines;
-  - errors whose stack runs through the script;
-  - a thrown value that isn't an `Error` (it has no stack, so it is
-    always shown).
+- Shown by default:
+  - `[sm level]`: SourceMonkey's Log entries for the scripts;
+  - `[event]`: what the scripts did (started, threw, `GM_*` calls);
+  - `[script log]`: console lines from the scripts, by any frame of
+    the call's stack, so a script logging through a page helper counts;
+  - errors whose stack runs through the scripts, and a thrown value
+    that isn't an `Error` (it has no stack, so it is always shown).
+- A line from a tab after T1 starts with its tab: `[T2] [script log] ...`.
 - A script's own throw prints once, as `<name> threw:`.
 - Stack lines name the file and line the code was written on, as the
   extension's Log tab does. A script's `@require`s run concatenated
   ahead of it, so the raw frames count from the top of the requires;
   sm-dev maps them back, and a frame in a require names the require.
-- `--page-errors` shows the rest too. Reach for it when the script may
-  be breaking the page, or when it runs code outside its own file:
+- `start --log-source all` shows the page's own lines too
+  (`[page log]`, `[page error]`). Reach for it when the script may be
+  breaking the page, or when it runs code outside its own file:
   - a `<script>` element it adds to the page;
   - code it `eval`s, whose console lines lose the script's location;
   - a throw deep inside page code (a framework's event dispatch) that
     the script's frame has scrolled off the stack.
-- `logs` shows everything the page logged, filtered or not. Identical
-  lines in a row show once, marked `(N times)`.
+- `attach --log-source ...` picks the sources for that sm-dev alone.
+- `logs` reads them back, the page's too with `--log-source all`.
 - A page whose `Content-Security-Policy` header sandboxes it without
   `allow-scripts` blocks scripts in the page's own context (`@grant
   none`, `@inject-into page`). On each load of such a page, the run
@@ -900,8 +906,8 @@ Some commands take several lines as a block, at the prompt or on stdin:
   - A quoted word is never a flag: `probe '--x'` looks for `--x`.
   - In free text (`eval`'s JavaScript, `type`'s text, a menu label), a
     `--word` is the text's own. Flags go before it.
-- Arguments a command doesn't take are refused: `status now`, `logs T2
-  x`, `stop D1 D2` (with its usage).
+- Arguments a command doesn't take are refused: `status now`, `focus T1
+  T2 T3`, `stop D1 D2` (with its usage).
 - An invalid command prints `ERROR:` and its message, not the help,
   and fails.
 
@@ -1289,7 +1295,7 @@ current one.
 | `screenshot [selector] [--full] <file>` | A PNG of what's showing, of the whole page (`--full`), or of one element |
 | `savehtml <file>` | The page's HTML, to replay later (see [Saved pages](#saved-pages)) |
 | `probe <selector>... [--html] [--css]` | Which selectors match, and how many |
-| `logs` | All console lines and errors the page has had, not only the ones the stream shows |
+| `logs [tab\|all] [script]` | The run's log lines, read back (see [Logs](#logs)) |
 | `cdp <Method> [params]` | Sends a raw CDP call to the tab and prints the result as JSON (see [`cdp`](#cdp)) |
 
 ### Actions
@@ -1482,6 +1488,59 @@ It's sticky, for that URL only:
   while it shows, or `(from saved: page.html, offline)` with
   `--offline`.
 
+## Logs
+
+A run logs every line the page and scripts produce, each with a source,
+from narrowest to broadest:
+
+- `sm`: SourceMonkey logs, as a script's Log tab shows them (reloads,
+  updates, errors its wrapper caught, `@require` failures).
+- `event`: script and tab events sm-dev sees: starts, page loads,
+  errors, menu commands, dialog boxes, tabs opened, requests, values.
+- `script`: Chrome console logs that came from the run's scripts.
+- `page`: full Chrome console logs. (Off by default, except for
+  `wait log`.)
+
+A line can be in several sources, and asking for any of them shows it:
+
+- A script's console line is `script`, and also `page`.
+- A script's throw is an `event`, and also `sm`, `script` and `page`.
+
+`logs` reads them back:
+
+```sh
+sm-dev logs                                  # this tab: its scripts' lines and events
+sm-dev logs 2 --log-source sm               # script 2's SourceMonkey Log
+sm-dev logs all --log-source all --find /error/i --tail 5m
+```
+
+```text
+14:05:12.345 T1 [event] Add button started on https://example.com/items/42
+14:05:12.351 T1 [script log] [add-button] toolbar found, button inserted
+14:05:13.118    [sm error] Add button: The @require https://x.test/lib.js could not be loaded
+[sm-dev] Logs up to 1759512345678901 (14:05:13.118)
+```
+
+- A tab (`T2`) or `all` picks the tabs; a script picks one script.
+  Without a tab, the current one, and the lines its scripts logged
+  outside any tab.
+- `--log-source <source>`: `sm`, `event`, `script`, `page` or `all`;
+  several can be given, separated by commas.
+- `--find <text>`: only lines with the text, or matching `/regex/`.
+- `--tail N` or `--tail 30s`: the last N lines, or those from the last
+  stretch of time.
+- `--since <position>`: only lines after it. A position is a log ID,
+  an ISO 8601 time (`2026-10-03T14:05:12Z`; local without a zone), or a
+  time of day today (`14:05:12`).
+- Each line's log ID is when it arrived, in microseconds since the
+  epoch. `logs` ends with the newest, `Logs up to ...`, to pass to the
+  next `--since`.
+- Identical lines in a row show once, marked `(N times)`.
+- The run keeps the last 5000 lines. A `--since` from before them says
+  `Lines before ... are no longer kept`.
+
+The design: [sm-dev-logs.md](sm-dev-logs.md).
+
 ## Waiting
 
 `wait` holds the next command until something has happened, in place
@@ -1559,13 +1618,18 @@ Limits of the heuristic:
   - Quotes around the whole text are removed first, so `wait log
     "/abc/"` is a regex too. For the literal characters, use
     `wait log /\/abc\//`.
-- It looks at lines the page and scripts printed since the previous
+- The text can also be given with `--find`: `wait log --find saved`.
+- It looks at log lines (see [Logs](#logs)) logged since the previous
   command began (not counting a `wait` or a command that only looks),
   so one a click set off while it settled counts. Then at new ones.
-- sm-dev's own replies aren't looked at.
-- It sees the lines the run's stream shows, and the page's other
-  console lines and errors that `logs` shows, matched in the form the
-  stream would print them (`[page log] KEYUP 143`).
+  - `--since <position>` looks from there instead.
+- It sees every source, the page's own lines too, unless
+  `--log-source` says otherwise. Each is matched in the form the
+  stream would print it, whole: `[page log] KEYUP 143`.
+- sm-dev's own replies and notices aren't looked at.
+- It ends with the line it matched, then where:
+  `[sm-dev] Found at 1759512345678901 (14:05:12.678)`. One that gives up
+  says where it searched to: `[sm-dev] Searched up to ...`.
 - A near miss of `--timeout-seconds` ending unquoted text (`--timeout
   40`) is refused, rather than looked for as text. Other `--words` in
   the text are text.
@@ -1603,7 +1667,7 @@ When a command's reply is complete:
   while it ran.
 - Output a script prints later, from a timer or event, goes to the
   run's log file and to the clients following the run. `sm-dev logs`
-  shows its console lines.
+  reads it back (see [Logs](#logs)).
 
 ### Managing runs
 

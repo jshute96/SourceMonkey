@@ -199,7 +199,7 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
     });
     const run = setup.startRun([file, `${fixtureServer.baseUrl}/target.html`, '--root', scriptsDir.path]);
     await run.waitFor(/^\[sm-dev\] Started as run D1\. /);
-    await run.waitFor(/^\[sm-dev\] Remote started on /);
+    await run.waitFor(/^\[event\] Remote started on /);
 
     const list = await setup.cli('list');
     expect(list[0]).toMatch(/^Run\s+PID\s+Uptime\s+Browser\s+Tabs\s+Scripts$/);
@@ -212,7 +212,7 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
     // The only run, so it needs no id. The command's own output, and
     // what it set off in the page, come back; the page's line can
     // arrive first.
-    expect((await setup.cli('menu', 'Say hi')).sort()).toEqual(['[page log] [remote] hi', '[sm-dev] Fired "Say hi"']);
+    expect((await setup.cli('menu', 'Say hi')).sort()).toEqual(['[script log] [remote] hi', '[sm-dev] Fired "Say hi"']);
     // The run's own stream, which the sm-dev that started it follows,
     // says what it was sent.
     await run.waitFor(/^remote:arg > menu 'Say hi'$/);
@@ -221,26 +221,27 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
     // A reload is done once the script has started again and its body
     // has run, so both come back without waiting on anything more.
     const reloaded = await setup.cli('reload');
-    expect(reloaded).toContain(`[sm-dev] Remote started on ${fixtureServer.baseUrl}/target.html`);
-    expect(reloaded).toContain('[page log] [remote] body ran');
+    expect(reloaded).toContain(`[event] Remote started on ${fixtureServer.baseUrl}/target.html`);
+    expect(reloaded).toContain('[script log] [remote] body ran');
     await run.waitFor(/^remote:arg > reload$/);
     // A load reloads the tab, and the new script's top-level throw comes
     // back with it.
     const thrower = scriptsDir.write({ relativePath: 'thrower.user.js', meta: { name: 'Thrower', match: ['*://*/target.html'] }, body: `throw new Error('boom');` });
     // The throw comes from the extension a moment after the load is done.
     await setup.cli('load', thrower);
-    await run.waitFor(/^\[sm-dev\] Thrower threw: boom$/);
+    await run.waitFor(/^\[event\] Thrower threw: boom$/);
 
     // A hash change loads no new document, so nothing waits on scripts.
     const started = Date.now();
     expect(await setup.cli('open', `${fixtureServer.baseUrl}/target.html#part`)).toEqual([]);
     expect(Date.now() - started).toBeLessThan(5000);
-    // Everything the page logged so far, not only the lines streamed,
-    // after the page load it came from.
+    // The run's log so far, after the page load it came from, and where
+    // it's up to.
     const logs = await setup.cli('logs');
-    expect(logs).toContain('[log] [remote] hi');
-    expect(logs.indexOf(`--- ${fixtureServer.baseUrl}/target.html`)).toBeLessThan(logs.indexOf('[log] [remote] hi'));
-    expect(logs.indexOf(`--- ${fixtureServer.baseUrl}/target.html`)).toBeGreaterThanOrEqual(0);
+    const load = logs.findIndex((l) => l.endsWith(` T1 [event] Loaded ${fixtureServer.baseUrl}/target.html`));
+    expect(load).toBeGreaterThanOrEqual(0);
+    expect(logs.findIndex((l) => l.endsWith(' T1 [script log] [remote] hi'))).toBeGreaterThan(load);
+    expect(logs.at(-1)).toMatch(/^\[sm-dev\] Logs up to \d{16} \(\d\d:\d\d:\d\d\.\d{3}\)$/);
 
     // Files a sent command names are the sender's, from its directory.
     const elsewhere = scriptsDir.path;
@@ -310,8 +311,8 @@ test('start --detach returns once started, is replaced by the next unless --new,
       setup.cli('--root', scriptsDir.path, 'start', '--browser', String(setup.port), '--detach', file, url, ...more);
     // Back once the script has started, with its startup output.
     const first = await detach();
-    expect(first).toContain(`[sm-dev] Detached started on ${url}`);
-    expect(first).toContain('[page log] [detached] body ran');
+    expect(first).toContain(`[event] Detached started on ${url}`);
+    expect(first).toContain('[script log] [detached] body ran');
     expect(first.at(-2)).toBe('[sm-dev] Run D1 now running detached, with idle timeout 30 minutes');
     const log = first.at(-1)!.match(/^\[sm-dev\] Output log: (\S+\.log) \(D1\.log\)$/)![1];
     expect(path.basename(log)).toMatch(/^sm-dev-\d{8}-\d{6}-\d{3}\.log$/);
@@ -429,7 +430,7 @@ test('a new run closes the last run\'s tab; nodes print as tags; own refs decode
       body: `setInterval(() => console.log('[ticker] tick'), 10);`,
     });
     const first = await setup.cli('--root', scriptsDir.path, 'start', '--browser', String(setup.port), ticker, url, '--', 'wait', 'log', 'tick');
-    expect(first).toContain('[page log] [ticker] tick');
+    expect(first).toContain('[script log] [ticker] tick');
     expect(first).toContain('[sm-dev] Run D1 ended');
 
     const nodes = scriptsDir.write({
@@ -451,8 +452,8 @@ test('a new run closes the last run\'s tab; nodes print as tags; own refs decode
     expect(second[closed]).toMatch(/^\[sm-dev\] Closed the selected tab \(http:.*target\.html\), which run D1 opened\. That run has ended\.$/);
     expect(second.findIndex((l) => l.startsWith('[sm-dev] Connected to'))).toBeLessThan(closed);
     expect(second.filter((l) => l.includes('[ticker]'))).toEqual([]);
-    expect(second).toContain('[page debug] <main id="target">');
-    expect(second).toContain('[page warning] [nodes] at <body> 2');
+    expect(second).toContain('[script debug] <main id="target">');
+    expect(second).toContain('[script warning] [nodes] at <body> 2');
     expect(second).toContain('[sm-dev] Wait matched log line: [page log] KEYUP 143');
     // Named as the file is, decoded once (own refs decode).
     expect(second.some((l) => l.includes('at boom (sourcemonkey://SourceMonkey/my%20nodes/my%20nodes.user.js:')), second.join('\n')).toBe(true);
@@ -482,7 +483,7 @@ test('a run logs its stream and the commands that change something', async ({ fi
     await exited(proc);
     const log = stdout.match(/^\[sm-dev\] Output log: (\S+) \(D1\.log\)$/m)![1];
     const lines = readFileSync(log, 'utf8').trim().split('\n').map((l) => l.replace(/^\d{8}-\d{6}-\d{3} /, ''));
-    expect(lines).toContain('[page log] [logged] body ran');
+    expect(lines).toContain('[script log] [logged] body ran');
     // A command that changes something, as written, with its reply.
     expect(lines.slice(lines.indexOf('primary:stdin > eval {{'), lines.indexOf('primary:stdin > eval {{') + 4)).toEqual(['primary:stdin > eval {{', '... 1 + 1', '... }}', '2']);
     // exit is this sm-dev's, and never reaches the run.
@@ -522,7 +523,7 @@ test('a tab stopped on a dialog is named, and waited for, before the run connect
     const tabs = await (await fetch(`http://127.0.0.1:${setup.port}/json`)).json() as { id: string; url: string }[];
     await fetch(`http://127.0.0.1:${setup.port}/json/close/${tabs.find((t) => t.url === stuckUrl)!.id}`, { method: 'PUT' });
     await run.waitFor(/^Every tab is responding now\. Connecting\.$/);
-    await run.waitFor(/^\[sm-dev\] Wait started on /);
+    await run.waitFor(/^\[event\] Wait started on /);
 
     // A dialog in a tab of the person's is left for them: not dismissed
     // (confirm would return false), and the run doesn't fall over.
@@ -587,7 +588,7 @@ test('several stuck tabs, a dialog and a busy page, are all named, over a ws:// 
     expect(run.lines).not.toContain('Every tab is responding now. Connecting.');
     await close(dialog);
     await run.waitFor(/^Every tab is responding now\. Connecting\.$/);
-    await run.waitFor(/^\[sm-dev\] Wait started on /);
+    await run.waitFor(/^\[event\] Wait started on /);
   } finally {
     await setup.cleanup();
   }
@@ -641,7 +642,11 @@ test('--json prints each result as one line of JSON on stdout, and other log mes
     // An empty detail list is left out.
     expect(match).toEqual({ command: 'match', results: [{ script: '1', name: 'Json', valid: true, pages: [{ url, matches: true, matchedBy: ['@match *://*/target.html'] }] }] });
     expect(probe).toEqual({ command: 'probe', tab: 'T1', url, selectors: [{ selector: 'body', count: 1 }, { selector: 'h1', count: 0 }] });
-    expect(logs).toMatchObject({ tab: 'T1', pages: [{ url, lines: expect.arrayContaining(['[log] [json] ran']) }] });
+    expect(logs).toMatchObject({
+      tab: 'T1',
+      lines: expect.arrayContaining([expect.objectContaining({ tab: 'T1', script: '1', source: 'script', kind: 'log', text: '[json] ran' })]),
+      until: expect.any(Number),
+    });
 
     // Commands from stdin are echoed to stderr, a block's lines too.
     const piped = await setup.pipedStreams('tabs\nset note {{\n"x"\n}}\nget units --json=multi\n', '--json', '--stdin');
@@ -659,6 +664,68 @@ test('--json prints each result as one line of JSON on stdout, and other log mes
 
     const list = await setup.cliStreams('list', '--json');
     expect(JSON.parse(list.stdout[0])).toMatchObject({ command: 'list', runs: [{ id: 'D1', tabCount: 1, scriptFiles: [file] }] });
+  } finally {
+    await setup.cli('stop', '--all');
+    await setup.cleanup();
+  }
+});
+
+test('logs reads the run\'s log by source, tab, text, tail and position; streams show the sources asked for', async ({ fixtureServer, scriptsDir }) => {
+  test.setTimeout(90_000);
+  const setup = await setUp();
+  try {
+    const url = `${fixtureServer.baseUrl}/target.html`;
+    const file = scriptsDir.write({
+      relativePath: 'logger.user.js',
+      // In its own world, calling a helper the page defines: the line
+      // is the script's by its stack, though the page's code logs it.
+      meta: { name: 'Logger', match: ['*://*/target.html'], grant: ['GM_registerMenuCommand'] },
+      body: `console.log('[logger] ran');\nGM_registerMenuCommand('Help', () => unsafeWindow.helper('from menu'));`,
+    });
+    const started = await setup.cli('--root', scriptsDir.path, 'start', '--browser', String(setup.port), '--detach', file, url);
+    expect(started).toContain('[script log] [logger] ran');
+    await setup.cli('eval', '--page', 'console.log("page says hi"); window.helper = (m) => console.log("helper: " + m); 0');
+    expect(await setup.cli('menu', 'Help')).toContain('[script log] helper: from menu');
+
+    // The tab's scripts' lines and events, timestamped, not the page's own.
+    const tail = /^\[sm-dev\] Logs up to (\d{16}) \(\d\d:\d\d:\d\d\.\d{3}\)$/;
+    const logs = await setup.cli('logs');
+    expect(logs).toContainEqual(expect.stringMatching(/^\d\d:\d\d:\d\d\.\d{3} T1 \[event\] Logger started on /));
+    expect(logs).toContainEqual(expect.stringMatching(/ T1 \[script log\] \[logger\] ran$/));
+    expect(logs).toContainEqual(expect.stringMatching(/ T1 \[script log\] helper: from menu$/));
+    expect(logs.some((l) => l.includes('page says hi'))).toBe(false);
+    const position = tail.exec(logs.at(-1)!)![1];
+    // The page's own, with the sources that include it.
+    // page is the whole of the page's console, the script's lines too.
+    const page = await setup.cli('logs', '--log-source', 'page');
+    expect(page).toContainEqual(expect.stringMatching(/ T1 \[page log\] page says hi$/));
+    expect(page).toContainEqual(expect.stringMatching(/ T1 \[script log\] \[logger\] ran$/));
+    expect(page.some((l) => l.includes('[event]'))).toBe(false);
+    expect(await setup.cli('logs', 'all', '1', '--find', '/HELPER/i', '--tail', '1')).toEqual([
+      expect.stringMatching(/ T1 \[script log\] helper: from menu$/), expect.stringMatching(tail),
+    ]);
+    // Only what came after a position.
+    await setup.cli('menu', 'Help');
+    const after = await setup.cli('logs', '--since', position);
+    expect(after.filter((l) => !tail.test(l))).toEqual([expect.stringMatching(/ T1 \[script log\] helper: from menu$/)]);
+    expect(await setup.cli('logs', '--since', String(Date.now() * 1000 + 60e6))).toEqual(['[sm-dev] No log lines match on tab T1', expect.stringMatching(tail)]);
+    expect((await setup.cli('logs', 'all', '--since', String(Date.now() * 1000 + 60e6)))[0]).toBe('[sm-dev] No log lines match on any tab');
+    // wait log sees every source, and says where it found the line.
+    expect(await setup.cli('wait', 'log', '--find', 'page says', '--since', '0')).toEqual([
+      '[sm-dev] Wait matched log line: [page log] page says hi', expect.stringMatching(/^\[sm-dev\] Found at \d{16} /),
+    ]);
+    expect((await setup.cli('wait', 'log', 'page says', '--log-source', 'script', '--since', '0', '--timeout-seconds', '0.2')).at(-1))
+      .toMatch(/^\[sm-dev\] Searched up to \d{16} /);
+    // Mistakes.
+    expect(await setup.cli('logs', '--log-source', 'pages')).toEqual(['[sm-dev] ERROR: The --log-source flag takes sm, event, script, page or all, or several separated by commas, not pages']);
+    expect(await setup.cli('logs', '--since', 'soon')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The --since flag takes a log ID, /)]);
+    expect(await setup.cli('wait', '2s', '--find', 'x')).toEqual(['[sm-dev] ERROR: The --find flag only applies to wait log']);
+
+    // A client following the run sees the sources it asked for. Logged
+    // later, as eval's own reply would show it either way.
+    const say = ['--', 'eval', '--page', 'setTimeout(() => console.log("seen by attach"), 200); 0', '--', 'wait', '1s'];
+    expect(await setup.cli('attach', '--log-source', 'page', ...say)).toContain('[page log] seen by attach');
+    expect(await setup.cli('attach', ...say)).not.toContain('[page log] seen by attach');
   } finally {
     await setup.cli('stop', '--all');
     await setup.cleanup();

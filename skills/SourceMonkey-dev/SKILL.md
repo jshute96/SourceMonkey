@@ -157,19 +157,33 @@ What the stream looks like:
 ```
 [sm-dev] Pushed to SourceMonkey: sites/x/y.user.js
 [sm-dev] Opening https://x.com/some/page in T1 [targetId=61023580282B1D684FAF4072C201AB51]
-[sm-dev] Y started on https://x.com/some/page
-[page log] [y] toolbar found, button inserted
-[sm-dev] GM_setValue lastItem = "42"
+[event] Y started on https://x.com/some/page
+[script log] [y] toolbar found, button inserted
+[event] GM_setValue lastItem = "42"
 ```
 
-- `[sm-dev]` lines are sm-dev's reports; `[page log]` lines are
-  console output from the script (or `[name]`-prefixed lines).
+- Each line's prefix is its log source, narrowest first:
+  - `[sm error]` (or `info`, `warning`): SourceMonkey logs, as the
+    script's Log tab shows them;
+  - `[event]`: script and tab events: started, threw, page loads (in
+    `logs`), tabs opened and closed, dialog boxes, and some `GM_*`
+    calls (requests, downloads, menu commands, notifications, values
+    set or deleted);
+  - `[script log]`: Chrome console logs from the script, by its stack,
+    so a page helper it calls counts;
+  - `[page log]`, `[page error]`: the rest of Chrome's console, hidden
+    by default.
+  - A line can be in several sources: `--log-source page` shows all
+    the page's console, the script's lines too, and `[event] X threw`
+    also counts as `sm`, `script` and `page`.
+- `[sm-dev]` lines are sm-dev's own notices.
 - Lines from other tabs are prefixed with `[T2]`.
 - A DOM node logged to the console prints as its opening tag,
   `<div id="x" class="a b">`, cut at 120 characters.
-- The site's own errors are hidden. Add `--page-errors` to `start` when
-  the script may be breaking the page, or runs code outside its file
-  (an added `<script>`, `eval`).
+- The site's own lines are hidden. Add `--log-source all` to `start`
+  when the script may be breaking the page, or runs code outside its
+  file (an added `<script>`, `eval`). `logs --log-source all` reads
+  them back afterwards.
 - For a script that acts on the site's or browser's language, add
   `--lang zh-CN` (or `--lang zh-CN,en`) to `start`: the run's tabs then
   report it in `navigator.language(s)`, `Accept-Language` and `Intl`.
@@ -314,8 +328,12 @@ $R screenshot shot.png               # then look at the PNG
   until then the page is frozen, and most commands refuse.
 - A `*PERMISSION PROMPT*` line needs an answer before that request
   goes on: see [Permission prompts](#permission-prompts).
-- `logs` prints everything the page logged, filtered or not, with
-  repeated lines in a row shown once, as `(N times)`.
+- `logs` reads the run's log back for the tab: its script's lines and
+  events, timestamped. `logs all`, `logs 2` (one script),
+  `--log-source all` (the site's own too), `--find <text|/re/>`,
+  `--tail 50` or `--tail 30s`.
+  - It ends with `Logs up to <log ID>`; pass that to `--since` next
+    time to read only what came after.
 - Quoting: quote selectors with spaces or `#` for the shell
   (`click '#submit'`).
 
@@ -374,9 +392,10 @@ $R wait log '/saved record \d+/'           # a regex
 
 - `wait log` also matches lines printed since the previous command
   began, so a line printed during the click counts.
-- It sees every console line and error from the run's tabs, as `logs`
-  does, including the site's own lines the stream leaves out. Each is
-  matched as the stream would print it: `[page log] KEYUP 143`.
+- It sees every log source, including the site's own lines the stream
+  leaves out. Each is matched as the stream would print it:
+  `[page log] KEYUP 143`. `--log-source script,event` narrows it.
+- It ends with `Found at <log ID>`, which `--since` takes.
 - So a loose pattern (`error`, `done`) can match the site's own lines;
   use the script's `[name]` prefix or a regex.
 - A command returns once the page settles, which can come before a
@@ -385,8 +404,11 @@ $R wait log '/saved record \d+/'           # a regex
 - Errors a script throws later, from events and timers, show in the
   output of whatever command was running, or only in `logs` if none
   was. Check `logs` before calling a script clean.
-- `GM_log` shows as `<name> GM_log: ...` in the output. In the
-  extension, it also goes to the page console and the script's Log tab.
+  - With several runs or long sessions, `logs --since <position>` from
+    the previous `Logs up to` reads only what's new.
+- `GM_log` goes to the page console and the script's Log tab, so it
+  shows twice: `[script log] [SourceMonkey:...] ...` and
+  `[sm info] <name>: ...`.
 - Async work fired from an event handler: have it log on completion
   and `wait log` for that, rather than polling the DOM for a state
   that may be intermediate.
@@ -661,6 +683,14 @@ and whatever the script does with its response wait.
   loaded, `script N` first.
 - When testing a script's real behavior, note which sites it asked
   about: its `@connect` lines may be missing some.
+
+### Downloads
+
+- Find a downloaded file at the path its `Download saved: <path>` line
+  names (for an http(s) `GM_download`, the `GM_download` line's
+  `-> <path>`).
+- With `--temp-browser`, `status` shows the folder as `Downloads:` once
+  something was downloaded.
 
 ### Turning it into a spec
 

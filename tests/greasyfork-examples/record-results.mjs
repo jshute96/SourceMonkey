@@ -61,6 +61,8 @@ const REASONS = [
   'requires-login',     // needs an account on the target site
   'paid',               // needs a paid subscription or purchase
   'geo-blocked',        // the site refuses our region
+  'bot-blocked',        // a bot check (captcha, Cloudflare, WAF) we can't get past, headed too
+  'unsafe',             // we chose not to run it: it harvests credentials, spams, or drives accounts or money
   'site-gone',          // the target site no longer exists or answers
   'needs-interaction',  // only does something after a manual flow we can't script
   'not-web',            // targets local files, browser pages, or no real site

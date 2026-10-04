@@ -113,6 +113,11 @@ export interface ErrorReport extends ScriptReport {
 export interface SkipReport extends ScriptReport {
   /** Why the script did not run: the header rule, or the extension's reason. */
   reason: string;
+  /**
+   * The host's own finding that the header's rules miss the URL, rather
+   * than the extension's report, so SourceMonkey's Log has no entry.
+   */
+  ruleMiss?: true;
 }
 
 export interface HostReports {
@@ -393,6 +398,7 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
         url,
         at: Date.now(),
         reason: verdict.rule ?? NO_RULE_COVERS_URL,
+        ruleMiss: true,
       };
       this.recordPages.set(report, page);
       this.reports.skipped.push(report);

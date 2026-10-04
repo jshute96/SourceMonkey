@@ -157,6 +157,8 @@ Serves `sm-dev list`, `stop`, `attach` and the commands sent to a run.
 - An optional first `{"hello": {"follow": true}}` asks for the run's
   whole stream from then on. `Remote.follow` in `run.ts` adds the
   connection as a listener; no history is replayed.
+  - `"logSources": [...]` in it (from `attach --log-source`) picks the
+    log sources that connection gets, in place of the run's.
 - Commands are `{"line", "cwd", "words", "interactive"}`, taken one at
   a time.
   - Each reply ends with a `COMMAND_DONE` line (`\u0000sm-dev:done
@@ -516,6 +518,40 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
   - `--open-browser` has sound unless the line has `--mute`, since
     it's the person's lasting browser.
 
+### Downloads (`download-watch.ts`)
+
+- A download from one of the run's tabs prints where it was saved as it
+  finishes (`Download saved: <path> (from <url>)`), or that it didn't
+  finish. A page's own downloads pass SourceMonkey by, so this is the
+  only record of them.
+  - An http(s) `GM_download` has its own line from the extension. A
+    `blob:` or `data:` one is an `<a download>` click in the page, so it
+    gets this line.
+- Chrome reports downloads over CDP only to a client that asks
+  (`Browser.setDownloadBehavior` with `eventsEnabled`), and to all such
+  clients for all tabs. So a download's frame is traced to a run tab:
+  - a tab's top frame has its target id;
+  - a new tab that became the download names the frame that opened it.
+    That tab closes at once, so the watcher records each target's opener
+    or parent as it's created (`Target.setDiscoverTargets`);
+  - a cross-site iframe is a target naming its parent frame, and a
+    same-site one is in its tab's frame tree.
+  - Another run's downloads in a shared browser aren't said.
+- What it asks Chrome to do with downloads:
+  - A connected browser gets `default`: its own setting, and its own
+    prompts (a dangerous file, Save As) for its person to answer.
+  - A `--temp-browser` gets `allow` into a folder in the logs folder,
+    named after the run's log (`sm-dev-<timestamp>-downloads`), kept
+    after the run as the log is. `allow` keeps the files' own names, and
+    skips Chrome's prompts, which nobody could answer in a hidden
+    browser. `status` names the folder once it exists.
+- The last client to set the behavior wins. Another Playwright client
+  connecting to the browser (another run, `collection list --browser`)
+  sets its own, which saves under GUID names in its temp folder, deleted
+  as it disconnects. Not handled.
+- Reporting downloads is a side feature: if Chrome refuses it, the run
+  says so and goes on.
+
 ### Languages (`--lang`, `browser-lang.ts`)
 
 - Each tab the run sets up gets a CDP session of its own, left open,
@@ -554,8 +590,9 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
   `--load-extension` pointing at the package's `dist/` (Google Chrome
   ignores that flag).
 - The same launch serves the repo's own e2e suites, which drive its
-  persistent context directly (with Chrome's own downloads, when a
-  suite asks for them).
+  persistent context directly.
+  - Downloads are left to Chrome, into a folder of the caller's, for a
+    run (see Downloads above) and for a suite that asks.
   - Hidden runs use `--headless=new`, the only headless mode that loads
     extensions.
 - Window sizes:
@@ -1218,9 +1255,11 @@ collection, which holds exactly the scripts the run pushed.
 - A new SW has no subscriptions. sm-dev watches for the new worker
   (Playwright's `serviceworker` event), listens to it, and subscribes
   again.
-- Events in the gap are lost, and the run says so. To do: read each
-  script's Log once after a restart, to catch up on its entries (see
-  TODO.md).
+- Events in the gap are lost, and the run says so.
+- The scripts' Log entries from the gap are read back
+  (`ExtensionHost.catchUpLogs`, through the worker's `getScriptLog`):
+  each newer than the last one seen is logged. See
+  [sm-dev-logs.md](sm-dev-logs.md#catching-up-after-a-service-worker-restart).
 
 #### Tabs a script opens
 
@@ -1416,8 +1455,9 @@ The run commands that drive and read a tab's page (`click`, `type`,
     one per line, so which calls share a session is always plain.
   - Typed calls are read from the raw text, not split into words,
     which would take the quotes out of their JSON.
-- Every console line and page error is kept per page (the newest
-  thousand) for `logs`, beside the filtered stream (`page-output.ts`).
+- Every console line and page error goes into the run's log, tagged
+  `script` or `page` by its stack (see [sm-dev-logs.md](sm-dev-logs.md)).
+  `logs` reads it back; the stream shows the sources asked for.
 - A console line that logs a DOM node is described from the page
   (`consoleText`: its opening tag), not Playwright's `JSHandle@node`.
   That takes a round trip, so the page's later console lines queue
@@ -1427,7 +1467,7 @@ The run commands that drive and read a tab's page (`click`, `type`,
   does (`formatConsoleArgs`): `%c` and its CSS drop out, `%s` and the
   like take the next value.
 - A stream line over a thousand characters is cut, with its length;
-  `logs` keeps it whole (`shortConsoleText`).
+  `logs` keeps it whole, up to 2000 (`shortConsoleText`).
 - Our own `sourcemonkey://` stack refs in stream lines are decoded once
   for display (`decodeOwnRefs`, sharing the viewer's `displayRefText`).
 - Keys sent over CDP go to the renderer, so Chrome's own shortcuts
@@ -1571,20 +1611,15 @@ where each comes from.
 
 `wait log`:
 
-- Reads the run's output history (`OutputHistory`, kept by `Remote` in
-  `run.ts`, the last few thousand lines).
-- Starts from where the previous command began (`previousStart`, kept
-  by `commandRunner`, and not moved by a command that only looks or
-  waits).
-- Page console lines and errors the stream filters out
-  (`page-output.ts`) go in too, through `Remote.hear`, in the form the
-  stream would print them. So `wait log` sees what `logs` shows, except
-  the prelude's `[SourceMonkey]` lines and page errors that repeat a
-  host report.
-- Only what the page and scripts printed goes in it. A command runs
-  inside `inCommand` (an `AsyncLocalStorage`, Node's per-call context),
-  and its own replies are kept out; page and script lines arrive
-  through events outside it.
+- Reads the run's log (`RunLog` in `run-logs.ts`, kept by `Remote` in
+  `run.ts`, the last 5000 lines), every source unless told otherwise.
+  See [sm-dev-logs.md](sm-dev-logs.md).
+- Starts from where the previous command began (`previousStart`, a log
+  position kept by `commandRunner`, and not moved by a command that
+  only looks or waits), or from `--since`.
+- Each line is matched in the form the stream would print it, whole.
+- Only the log sources go in the log: sm-dev's own replies and notices
+  never do.
 
 ### Saved pages
 

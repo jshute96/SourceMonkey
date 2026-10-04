@@ -78,7 +78,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `start ... --watch` | Re-push and reload on each save of a script or local `@require` |
 | `start ... --values '<json>'` | Seed GM storage first |
 | `start ... --values-file <path>` | Seed GM storage first, from a JSON file |
-| `start ... --page-errors` | Also stream the site's own errors |
+| `start ... --log-source all` | Also stream the site's own lines and errors (sources: `sm`, `event`, `script`, `page`) |
 | `start ... --lang zh-CN,en` | Tabs prefer these languages |
 | `start ... --all` | Open each script's default page, a tab each |
 | `start [url]...` | No scripts: just a browser to drive (`load` adds them later) |
@@ -164,7 +164,10 @@ own: change them only when asked to.
 | `cdp <Method> [json]` | A raw CDP call on the tab; the result as JSON. A `{{` block or `--file` holds several, one per line (see [cdp.md](cdp.md)) |
 | `screenshot [sel] [--full] <file>` | PNG of the view, the page, or an element |
 | `savehtml <file>` | Save the DOM for `--from-saved` / `serveHtml` |
-| `logs` | All console lines and errors so far, whole (the stream cuts a line past 1000 characters) |
+| `logs [T2\|all] [script]` | The run's log for the tab (its scripts' lines and events), timestamped and whole (the stream cuts a line past 1000 characters) |
+| `logs ... --log-source all` | The site's own lines too; or a list, e.g. `sm` for SourceMonkey's Log entries alone |
+| `logs ... --find <text\|/re/>`, `--tail 50`, `--tail 30s` | Only matching lines; the last N, or the last stretch of time |
+| `logs ... --since <position>` | Only lines after a log ID (`Logs up to` gives the last), an ISO 8601 time, or a time of day (`14:05:12`) |
 
 ## Driving the page
 
@@ -188,14 +191,16 @@ own: change them only when asked to.
 | --- | --- |
 | `wait [T2\|all]` | The tab to settle |
 | `wait selector <css>`, `wait selector-gone <css>` | An element to appear / disappear |
-| `wait log <text>`, `wait log /regex/` | A line printed since the previous command began |
+| `wait log <text>`, `wait log /regex/` | A log line since the previous command began (or `--since`). `--find <text>` works too |
 | `wait 500ms`, `wait 2s` | Time (last resort) |
 | `--timeout-seconds S` | Give up after S seconds (default 5). On `wait log`, put it after the text |
 
 - A tab goes before the form: `wait T2 selector '.x'`.
-- `wait log` sees the lines the run prints, and also the page's other
-  console lines and errors that `logs` shows. Those are matched in the
-  form the run would print them: `[page log] KEYUP 143`.
+- `wait log` sees every log source, the site's own lines too, unless
+  `--log-source` narrows it. Each is matched in the form the run
+  would print it: `[page log] KEYUP 143`.
+- It ends with `Found at <log ID>`, or `Searched up to <log ID>` when
+  it gives up.
 
 Settled means: loaded, scripts started, no requests (under 3 seconds
 old) or DOM changes for 200ms. Timers aren't waited for.

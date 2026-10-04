@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { parseCommandArgs } from '../../../lib/harness/command-args.js';
-import { cdpCallsTyped, clickOptions, collapseRepeats, keyName, plain } from '../../../lib/harness/page-commands.js';
+import { cdpCallsTyped, clickOptions, keyName, plain } from '../../../lib/harness/page-commands.js';
 
 // click's or hover's options, from a line as the command's syntax reads it.
 const clickLine = (line, command = 'click') => {
@@ -138,7 +138,3 @@ test('a timed-out action says which check its element kept failing', () => {
   assert.equal(plain(log()), 'The element wasn\'t ready (visible, stable, and not covered) within 5 seconds');
 });
 
-test('logs shows each run of identical lines once, with its count', () => {
-  assert.deepEqual(collapseRepeats(['a', 'a', 'a', 'b', 'a', 'c', 'c']), ['a (3 times)', 'b', 'a', 'c (2 times)']);
-  assert.deepEqual(collapseRepeats([]), []);
-});

@@ -165,6 +165,14 @@ export async function createFixtureServer(pagesDir: string, examplesDir: string)
         res.end();
         return;
       }
+      // `/__attachment/<name>` is a small text file the browser saves as
+      // `<name>` rather than showing, for download tests.
+      if (url.pathname.startsWith('/__attachment/')) {
+        const name = path.basename(url.pathname);
+        res.writeHead(200, { 'Content-Type': 'text/plain', 'Content-Disposition': `attachment; filename="${name}"` });
+        res.end(`attachment ${name}`);
+        return;
+      }
       // `/__slowbody/<page>?ms=N` sends the headers at once and the
       // page's bytes N ms later, so the browser has made the new
       // document well before the parser can create <html>. Clamped

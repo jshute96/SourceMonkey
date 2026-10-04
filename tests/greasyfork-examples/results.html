@@ -10,6 +10,7 @@
     corpus.json once and remembers the choice (see pickCorpus below).
   - Every link opens in a new tab, except the links between the table and
     the summary (?summary), which switch views in place (see route below).
+    Both views share one filter bar, and the links keep its settings.
   - Each script's "Code" button opens this page as a viewer (?view=<id>), which
     reads the downloaded copy (corpus.json's `file`) and shows it as text. A
     link straight to a .user.js file would be taken by a userscript manager as
@@ -124,25 +125,28 @@ code { font-size:.9em; background:var(--head); padding:0 .25rem; border-radius:3
   <pre id="source" hidden></pre>
 </div>
 
-<div id="summary-view" hidden>
-  <div class="controls"><a class="button" href="?" target="_self" data-nav title="All scripts, unfiltered">Full results</a></div>
-  <div class="summary-grid" id="summary-grid"></div>
-</div>
-
-<div id="view" hidden>
-<div class="controls">
+<!-- The filter bar, shared by the table and the summary. -->
+<div class="controls" id="controls" hidden>
   <input id="q" type="search" autocomplete="off" placeholder="Search name, id, site, tag, notes">
   <label>Validation <select id="valid" data-kind="valid" autocomplete="off"><option value="">all</option><option>ok</option><option value="(messages)">warnings or errors</option><option value="invalid">errors (invalid)</option><option>tool error</option></select></label>
   <label>Testing <select id="test" data-kind="test" autocomplete="off"></select></label>
   <label>Tag <select id="tag" data-kind="tag" autocomplete="off"></select></label>
-  <label title="How every row's notes show. Full lets the browser's find (Ctrl+F) see all of them.">Notes
+  <label title="Only scripts last updated on GreasyFork in this year or later">Min year <select id="minYear" data-kind="minYear" autocomplete="off"></select></label>
+  <label title="Only scripts last updated on GreasyFork in this year or earlier">Max year <select id="maxYear" data-kind="maxYear" autocomplete="off"></select></label>
+  <label id="notes-label" title="How every row's notes show. Full lets the browser's find (Ctrl+F) see all of them.">Notes
     <select id="notes-mode" autocomplete="off"><option value="hidden">hidden</option><option value="short" selected>short</option><option value="full">full</option></select></label>
   <button id="reload" title="Read corpus.json again">Reload</button>
   <button id="reset" title="Clear the filters and sorting, and show notes short">Reset</button>
-  <a class="button" href="?summary" target="_self" data-nav title="How many scripts are in each state">Summary</a>
+  <a class="button" id="switch-view" href="?summary" target="_self" data-nav></a>
   <span id="reload-status"></span>
   <span id="count"></span>
 </div>
+
+<div id="summary-view" hidden>
+  <div class="summary-grid" id="summary-grid"></div>
+</div>
+
+<div id="view" hidden>
 <table>
 <thead><tr>
   <th data-key="rank">#</th><th data-key="id">ID</th><th data-key="name">Name</th>
@@ -182,6 +186,8 @@ const HELP = {
     'requires-login': 'Needs an account on the target site',
     'paid': 'Needs a paid subscription or purchase',
     'geo-blocked': 'The site refuses our region',
+    'bot-blocked': 'A bot check (a captcha, Cloudflare or a firewall) stopped the test browser, visible ones too',
+    'unsafe': 'Not run on purpose: from its description or code it harvests credentials or private data, spams, or drives accounts or money',
     'site-gone': 'The target site no longer exists or answers',
     'needs-interaction': 'Only does something after a manual flow we can\'t script',
     'not-web': 'Targets local files, browser pages, or no real site',
@@ -218,6 +224,11 @@ const HELP = {
     'xhr-url-object': 'Passes a URL object as GM_xmlhttpRequest\'s url, which Violentmonkey converts to a string and SourceMonkey rejects',
     'needs-custom-elements': 'Uses customElements, which is null in Chrome\'s isolated world and works only in the page',
     'needs-gm-webrequest': 'Uses Tampermonkey\'s GM_webRequest (@webRequest), which SourceMonkey doesn\'t support',
+    'xhr-abort-readystate': 'Calls abort() on a GM_xmlhttpRequest from onreadystatechange, which SourceMonkey answers with another readyState 4 call carrying the original URL, and Tampermonkey doesn\'t',
+    'setclipboard-callback': 'Passes a callback as GM_setClipboard\'s third argument, which Tampermonkey calls once the copy is done and SourceMonkey ignores',
+    'sm-dev-late-start': 'Fails only because a live sm-dev run starts document-start code after the page\'s first scripts, and works injected at true document start',
+    'sends-browsing-data': 'Sends the URLs or contents of pages you visit to the author\'s server, beyond what its feature needs',
+    'needs-module-globals': 'Reads undeclared exports, module or define (as webpack and UMD bundles do), which are undefined in Tampermonkey and Violentmonkey but throw in SourceMonkey',
   },
 };
 
@@ -377,6 +388,8 @@ let sortKey = 'rank', sortDir = 1;
 const noteView = new Map();
 const viewOf = (id) => noteView.get(id) ?? $('notes-mode').value;
 const blank = (v) => v === '' || v === null || v === undefined;
+/** The year of a script's last GreasyFork update, or '' when it has none. */
+const yearOf = (d) => (d.updated ?? '').slice(0, 4);
 
 /** Replace a select's options, keeping the current choice when it still exists. */
 function setOptions(select, kind, fixed, values) {
@@ -408,6 +421,8 @@ function show(corpus, source) {
   setOptions($('test'), 'test', [['', 'all'], ['tested', 'tested'], ['untested', 'untested'], ['pass', 'pass'], ['fail', 'fail'], ['n/a', 'n/a']],
     [...new Set(data.filter((d) => d.detail).map((d) => d.test + ':' + d.detail))].sort());
   setOptions($('tag'), 'tag', [['', 'all'], ['(any)', '(any tag)']], [...new Set(data.flatMap((d) => d.tags))].sort());
+  const years = [...new Set(data.map(yearOf).filter(Boolean))].sort();
+  for (const id of ['minYear', 'maxYear']) setOptions($(id), id, [['', 'none']], years);
 
   $('loader').hidden = true;
   route();
@@ -419,31 +434,42 @@ function show(corpus, source) {
 // corpus isn't read again (from disk, that would need another file pick),
 // and Back and Forward move between them.
 
-/** Show whichever view the URL names. */
+/** Whether the summary is showing (the URL has ?summary). */
+const inSummary = () => new URLSearchParams(location.search).has('summary');
+
+/** Show whichever view the URL names, with the URL's filters applied. */
 function route() {
-  const summary = new URLSearchParams(location.search).has('summary');
+  const summary = inSummary();
+  $('controls').hidden = false;
   $('summary-view').hidden = !summary;
   $('view').hidden = summary;
-  if (summary) {
-    renderSummary();
-    return;
-  }
+  // Notes only affect the table.
+  $('notes-label').hidden = summary;
   restoreFromUrl();
   apply();
   setStickyOffset();
 }
 
-/** One block per filter: each choice it offers, with how many scripts it matches, linked to the table filtered that way. */
+/**
+ * One block per filter: each choice it offers, with how many of the filtered
+ * scripts it matches, linked to the table with the current filters plus that
+ * choice (it replaces the filter's own setting; "all" clears it).
+ */
 function renderSummary() {
+  const line = (label, count, choice, title = '') => '<tr><td><a href="?' + esc(viewParams(false, choice)) + '" target="_self" data-nav'
+    + title + '>' + esc(label) + '</a></td><td class="num">' + count.toLocaleString('en-US') + '</td></tr>';
+  const block = (title, lines) => '<section><h2>' + title + '</h2><table>' + lines.join('') + '</table></section>';
   const blocks = [['valid', 'Validation'], ['test', 'Testing'], ['tag', 'Tag']].map(([kind, title]) => {
     let choices = [...$(kind).options].map((o) => ({ value: o.value, label: o.textContent,
-      count: rows.filter(({ d }) => matches(kind, o.value, d)).length }));
+      count: shown.filter(({ d }) => matches(kind, o.value, d)).length }));
     // Tags have no natural order: most common first, after "all" and "(any tag)".
     if (kind === 'tag') choices = [...choices.slice(0, 2), ...choices.slice(2).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))];
-    const line = (c) => '<tr><td><a href="?' + esc(c.value ? new URLSearchParams({ [kind]: c.value }) : '') + '" target="_self" data-nav'
-      + titleAttr(kind, c.value) + '>' + esc(c.label) + '</a></td><td class="num">' + c.count.toLocaleString('en-US') + '</td></tr>';
-    return '<section><h2>' + title + '</h2><table>' + choices.map(line).join('') + '</table></section>';
+    return block(title, choices.map((c) => line(c.label, c.count, { [kind]: c.value }, titleAttr(kind, c.value))));
   });
+  // One line per year, oldest first, linked to the table with Min and Max year both set to it.
+  const years = [...$('minYear').options].map((o) => o.value).filter(Boolean);
+  blocks.push(block('Last update', [line('all', shown.length, { minYear: '', maxYear: '' }),
+    ...years.map((y) => line(y, shown.filter(({ d }) => yearOf(d) === y).length, { minYear: y, maxYear: y }))]));
   $('summary-grid').innerHTML = blocks.join('');
 }
 
@@ -467,8 +493,10 @@ window.addEventListener('popstate', () => { if (rows.length) route(); });
 // The filters, Notes setting and sort live in the query string, so a reload
 // keeps them and a link reproduces the view. Only non-default values appear.
 
-const URL_FIELDS = { q: 'q', valid: 'valid', test: 'test', tag: 'tag', notes: 'notes-mode' };
-const DEFAULTS = { q: '', valid: '', test: '', tag: '', notes: 'short' };
+const URL_FIELDS = { q: 'q', valid: 'valid', test: 'test', tag: 'tag', minYear: 'minYear', maxYear: 'maxYear', notes: 'notes-mode' };
+const DEFAULTS = { q: '', valid: '', test: '', tag: '', minYear: '', maxYear: '', notes: 'short' };
+// The filter selects, by id (each id is also its data-kind).
+const FILTERS = ['valid', 'test', 'tag', 'minYear', 'maxYear'];
 
 // Looked up by comparison, not a selector: the key can come from the URL.
 const sortHeader = (key) => [...document.querySelectorAll('th[data-key]')].find((th) => th.dataset.key === key);
@@ -500,13 +528,30 @@ function restoreFromUrl() {
   else setSort('rank', 1);
 }
 
-function saveToUrl() {
+/**
+ * The query string for a view (the summary, or the table) with the current
+ * filters, Notes setting and sort, so switching views keeps them. `choice`
+ * overrides some fields (by URL param); '' sets one back to its default.
+ */
+function viewParams(summary, choice = {}) {
   const params = new URLSearchParams();
+  if (summary) params.set('summary', '');
   for (const [param, id] of Object.entries(URL_FIELDS)) {
-    if ($(id).value !== DEFAULTS[param]) params.set(param, $(id).value);
+    const value = choice[param] ?? $(id).value;
+    if (value !== DEFAULTS[param]) params.set(param, value);
   }
   if (!(sortKey === 'rank' && sortDir === 1)) params.set('sort', (sortDir < 0 ? '-' : '') + sortKey);
-  const query = params.toString();
+  // A bare `summary=` would read oddly; `?summary` is the documented form.
+  return params.toString().replace(/^summary=(&|$)/, 'summary$1');
+}
+
+function saveToUrl() {
+  const summary = inSummary();
+  const query = viewParams(summary);
+  const other = $('switch-view');
+  other.href = '?' + viewParams(!summary);
+  other.textContent = summary ? 'Full results' : 'Summary';
+  other.title = summary ? 'The scripts these filters match' : 'How many of these scripts are in each state';
   try {
     history.replaceState(null, '', location.pathname + (query ? '?' + query : '') + location.hash);
   } catch {
@@ -516,24 +561,27 @@ function saveToUrl() {
 
 $('reset').addEventListener('click', () => {
   for (const [param, id] of Object.entries(URL_FIELDS)) $(id).value = DEFAULTS[param];
-  for (const id of ['valid', 'test', 'tag']) selectTitle($(id));
+  for (const id of FILTERS) selectTitle($(id));
   noteView.clear();
   setSort('rank', 1);
   apply();
 });
 
-/** Whether a script matches one filter's choice (`kind` is valid, test or tag; '' matches all). */
+/** Whether a script matches one filter's choice (`kind` is one of FILTERS; '' matches all). */
 function matches(kind, value, d) {
   if (!value) return true;
   if (kind === 'valid') return value === '(messages)' ? d.validMessages : d.valid === value;
   if (kind === 'test') return testMatches(value, d);
+  // Years compare as strings: they're all four digits. A script with no date matches no bound.
+  if (kind === 'minYear') return yearOf(d) !== '' && yearOf(d) >= value;
+  if (kind === 'maxYear') return yearOf(d) !== '' && yearOf(d) <= value;
   return value === '(any)' ? d.tags.length > 0 : d.tags.includes(value);
 }
 
 function apply() {
   const q = $('q').value.trim().toLowerCase();
   shown = rows.filter(({ d }) =>
-    (!q || d.search.includes(q)) && ['valid', 'test', 'tag'].every((kind) => matches(kind, $(kind).value, d)));
+    (!q || d.search.includes(q)) && FILTERS.every((kind) => matches(kind, $(kind).value, d)));
   shown.sort((a, b) => {
     let x = a.d[sortKey], y = b.d[sortKey];
     if (Array.isArray(x)) { x = x.join(','); y = y.join(','); }
@@ -541,7 +589,8 @@ function apply() {
     if (typeof x === 'number' && typeof y === 'number') return (x - y) * sortDir;
     return String(x).localeCompare(String(y)) * sortDir || (a.d.rank ?? Infinity) - (b.d.rank ?? Infinity);
   });
-  render();
+  if (inSummary()) renderSummary();
+  else render();
   $('count').textContent = shown.length + ' of ' + rows.length + ' scripts';
   saveToUrl();
 }
@@ -630,7 +679,7 @@ window.addEventListener('resize', () => {
 
 /** The table's sticky header sits under the sticky controls, which wrap onto more lines in a narrow window. */
 function setStickyOffset() {
-  const controls = document.querySelector('#view .controls');
+  const controls = $('controls');
   if (controls.offsetHeight) document.documentElement.style.setProperty('--controls-height', controls.offsetHeight + 'px');
 }
 
@@ -639,8 +688,8 @@ document.querySelectorAll('th[data-key]').forEach((th) => th.addEventListener('c
   setSort(key, sortKey === key ? -sortDir : (th.dataset.desc ? -1 : 1), true);
   apply();
 }));
-for (const id of ['q', 'valid', 'test', 'tag']) $(id).addEventListener('input', apply);
-for (const id of ['valid', 'test', 'tag']) $(id).addEventListener('input', () => selectTitle($(id)));
+for (const id of ['q', ...FILTERS]) $(id).addEventListener('input', apply);
+for (const id of FILTERS) $(id).addEventListener('input', () => selectTitle($(id)));
 // The Validation choices are fixed in the HTML; give them their tooltips here.
 for (const o of $('valid').options) o.title = helpFor('valid', o.value);
 

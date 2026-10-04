@@ -16,6 +16,8 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
+import { LOG_SOURCES, type LogSource } from './run-logs.js';
+
 /** What `sm-dev list` shows for a run, as its record file holds it. */
 export interface RunRecord {
   id: string;
@@ -188,9 +190,10 @@ export interface RunHandlers {
   /**
    * A connection that asked for the run's stream: `reply` receives each
    * line the run prints from now on, until the returned function is
-   * called.
+   * called. `logSources`: the log sources it asked to see, in place of
+   * the run's own.
    */
-  follow: (reply: (line: string) => void) => () => void;
+  follow: (reply: (line: string) => void, logSources?: ReadonlySet<LogSource>) => () => void;
 }
 
 // How long a sender gets to take the last of the output once the run
@@ -262,8 +265,9 @@ export class RunControl {
 
   /**
    * A client's connection: JSON messages, a line each. The first may be
-   * `{"hello": {"follow": true, "pid": 123}}`: the run's whole stream,
-   * and which client it is. Then commands, `{"line": ..., "cwd": ...,
+   * `{"hello": {"follow": true, "pid": 123, "logSources": ["sm", ...]}}`:
+   * the run's whole stream, of those log sources if given, and which
+   * client it is. Then commands, `{"line": ..., "cwd": ...,
    * "words": [...], "source": "arg"}`, each
    * answered with its output and then a `COMMAND_DONE` line with its
    * exit code before the next is taken.
@@ -292,7 +296,7 @@ export class RunControl {
       const lines = buffered.split('\n');
       buffered = lines.pop()!;
       for (const text of lines) {
-        let message: { hello?: { follow?: unknown; pid?: unknown }; line?: unknown; cwd?: unknown; words?: unknown; source?: unknown; json?: unknown };
+        let message: { hello?: { follow?: unknown; pid?: unknown; logSources?: unknown }; line?: unknown; cwd?: unknown; words?: unknown; source?: unknown; json?: unknown };
         try {
           message = JSON.parse(text.replace(/\r$/, '')) as typeof message;
         } catch {
@@ -301,7 +305,9 @@ export class RunControl {
         }
         if (message.hello) {
           if (typeof message.hello.pid === 'number') pid = message.hello.pid;
-          if (message.hello.follow === true && !unfollow) unfollow = handle.follow(reply);
+          const { logSources } = message.hello;
+          const sources = Array.isArray(logSources) ? new Set(logSources.filter((s): s is LogSource => LOG_SOURCES.includes(s as LogSource))) : undefined;
+          if (message.hello.follow === true && !unfollow) unfollow = handle.follow(reply, sources);
           continue;
         }
         if (typeof message.line !== 'string') continue;
@@ -524,7 +530,7 @@ export class RunClient {
     });
   }
 
-  static open(id: string, out: (line: string) => void, { follow = false } = {}): Promise<RunClient> {
+  static open(id: string, out: (line: string) => void, { follow = false, logSources }: { follow?: boolean; logSources?: ReadonlySet<LogSource> } = {}): Promise<RunClient> {
     return new Promise((resolve, reject) => {
       const socket = net.connect(socketPath(id));
       socket.setEncoding('utf8');
@@ -537,7 +543,7 @@ export class RunClient {
         // Lost later, it is said when a command was waiting on it.
         socket.on('error', () => undefined);
         // Which client this is, for the run to name where its commands came from.
-        socket.write(JSON.stringify({ hello: { follow, pid: process.pid } }) + '\n');
+        socket.write(JSON.stringify({ hello: { follow, pid: process.pid, ...(logSources ? { logSources: [...logSources] } : {}) } }) + '\n');
         resolve(new RunClient(id, socket, out));
       });
     });

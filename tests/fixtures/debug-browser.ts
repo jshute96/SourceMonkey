@@ -31,10 +31,14 @@ async function freePort(): Promise<number> {
   });
 }
 
-export async function launchDebugBrowser(): Promise<DebugBrowser> {
+/**
+ * `downloads`: save downloads in `dir/downloads`, as the browser's own
+ * setting, rather than the platform's Downloads folder.
+ */
+export async function launchDebugBrowser({ downloads = false }: { downloads?: boolean } = {}): Promise<DebugBrowser> {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'sm-dev-browser-'));
   const profile = path.join(dir, 'profile');
-  await prepareProfile(profile);
+  await prepareProfile(profile, downloads ? path.join(dir, 'downloads') : undefined);
   const port = await freePort();
   // In a process group of its own, so its helper processes can be
   // stopped with it.

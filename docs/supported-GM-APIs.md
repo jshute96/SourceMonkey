@@ -467,6 +467,10 @@ How this is done, and what it can't cover:
 - HTTP error statuses (404, 500, …) fire `onload` with the
   non-2xx status — matches XHR semantics. Only network-level
   failures (DNS, ECONNREFUSED, etc.) fire `onerror`.
+  - Their `error` is `Could not reach <host>. The name may not
+    resolve, or the connection was refused, failed or blocked.` rather than
+    the browser's bare `Failed to fetch`, which says the same for all
+    of these causes.
 - No upload progress (`upload.onprogress`).
 - Forbidden headers are per-request: overlapping requests to one URL,
   across scripts or within one, each carry only their own overrides.

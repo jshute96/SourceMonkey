@@ -81,6 +81,8 @@ export interface HelpCommand {
 
 export interface HelpSection {
   title: string;
+  /** The help command that shows just this section, shown after its title: `Logs [help logs]:`. */
+  helpHint?: string;
   /**
    * Lines before the rest, each wrapped to fit. '' is a blank line, and
    * one starting with two spaces is shown as is.
@@ -102,6 +104,9 @@ const TEXT: ArgSyntax = { args: 'text' };
 const JSON_TEXT: ArgSyntax = { args: 'text', trailingFlags: true };
 const TAB_LOADS = ['newtab', 'open', 'reload'];
 const SETTLING = ['start', ...TAB_LOADS, 'click', 'hover', 'type', 'key'];
+// wait log, listed under both Logs and Waiting.
+const WAIT_LOG: HelpCommand = { usage: 'wait log [--find=]<text>', syntax: { args: 'text', trailingFlags: true }, about: [] };
+const WAIT_LOG_ABOUT = ['Wait for a log line with the text, or matching /regex/, logged since the previous command began.'];
 
 export const HELP_SECTIONS: HelpSection[] = [
   {
@@ -198,7 +203,6 @@ export const HELP_SECTIONS: HelpSection[] = [
               { term: '--watch', about: 'Re-push and reload when a script or its files change.' },
               { term: '--values JSON', about: ['Seed GM_* storage before the scripts run,', 'e.g. --values \'{"units":"metric"}\'.'] },
               { term: '--values-file <path>', about: 'Seed GM_* storage from a file holding a JSON object.' },
-              { term: '--page-errors', about: 'Also show errors from the page (not just the script).' },
               { term: '--lang LIST', about: 'Set the languages the run\'s tabs prefer, e.g. --lang zh-CN or --lang zh-CN,en.' },
             ],
           },
@@ -362,7 +366,55 @@ export const HELP_SECTIONS: HelpSection[] = [
         ],
         gap: true,
       },
-      { usage: 'logs [tab]', syntax: { args: 'none', tab: true }, about: 'Print the page\'s console log and errors so far.', gap: true },
+    ],
+  },
+  {
+    title: 'Logs',
+    helpHint: 'help logs',
+    text: [
+      'A run tracks log lines from these sources, narrowest first:',
+      '  1) sm: SourceMonkey logs. (From a script\'s Log tab: reloads, updates,',
+      '     errors, etc.)',
+      '  2) event: sm-dev script and tab events. (Starting, page loads, errors,',
+      '     menu commands, dialog boxes, tabs opened, requests, etc.)',
+      '  3) script: Chrome console logs that came from the run\'s scripts.',
+      '  4) page: Full Chrome console logs.',
+      '',
+      'Some lines are in several sources: a script\'s console line is also page, and its throw is an event, and also sm, script and page.',
+      '',
+      'By default, sm-dev prints log lines from 1-3 as they arrive.',
+      '',
+      'Each line has a log ID: when it arrived, in microseconds since the epoch. logs and wait log end by saying the log ID they read up to. Later commands can resume from there using --since.',
+      '',
+    ],
+    commands: [
+      {
+        usage: 'logs [tab|all] [script]',
+        syntax: { args: 'words', max: 2, tab: true },
+        about: ['Print logs from one tab or all tabs (default: the current tab), from all scripts running on those tabs.', 'Optionally filter to logs from one script.'],
+        options: [
+          { term: '--tail N', about: 'Only the last N lines.' },
+          { term: '--tail PERIOD', about: 'Only the last time period, e.g. 30s or 5m.' },
+        ],
+      },
+      { ...WAIT_LOG, about: [...WAIT_LOG_ABOUT, 'Includes all log sources by default.'], pointer: true, gap: true },
+    ],
+    optionsTitle: 'Log selection options (on logs, wait log, start, attach)',
+    options: [
+      {
+        term: '--log-source SOURCE',
+        about: [
+          'The log source to show: sm, event, script, page, or all. Several can be given, separated by commas.',
+          'On start and attach, what logs that sm-dev session shows.',
+        ],
+        commands: ['start', 'attach', 'logs', 'wait'],
+      },
+      { term: '--find TEXT', about: 'Only log lines with the text, or matching /regex/.', commands: ['logs', 'wait'] },
+      {
+        term: '--since POSITION',
+        about: 'Only log lines after a log ID or a time (e.g. 2026-10-03T14:05:12Z or 14:05:12).',
+        commands: ['logs', 'wait'],
+      },
     ],
   },
   {
@@ -438,7 +490,7 @@ export const HELP_SECTIONS: HelpSection[] = [
           },
           { usage: 'wait selector <css>', syntax: { args: 'selector' }, about: 'Wait until an element matches.', gap: true },
           { usage: 'wait selector-gone <css>', syntax: { args: 'selector' }, about: 'Wait until no element matches.' },
-          { usage: 'wait log <text>', syntax: { args: 'text', trailingFlags: true }, about: 'Wait for an output line with the text, or matching /regex/, printed since the previous command began.', gap: true },
+          { ...WAIT_LOG, about: [...WAIT_LOG_ABOUT, 'See help logs for more options.'], gap: true },
           { usage: 'wait <time>', about: 'Wait that long, e.g. 500ms or 2s.', gap: true },
         ],
         options: [
@@ -836,7 +888,7 @@ function paragraphLines(texts: string[], indent: number): string[] {
 
 function sectionLines(section: HelpSection, indent: number): string[] {
   const inner = indent + 2;
-  const lines = [`${' '.repeat(indent)}${section.title}:`];
+  const lines = [`${' '.repeat(indent)}${section.title}${section.helpHint ? ` [${section.helpHint}]` : ''}:`];
   lines.push(...paragraphLines(section.text ?? [], inner));
   // Under the section's text, if any, as options are below.
   const itemIndent = section.text ? inner + 2 : inner;
@@ -997,7 +1049,8 @@ export function commandSyntax(name: string): CommandSyntax {
       if (!flag.startsWith('--')) continue;
       const name = flag.split(',')[0];
       syntax.flags[name] = value ? 'value' : 'bool';
-      if (value) syntax.values[name] = value;
+      // One listed twice (`--tail N`, `--tail PERIOD`) names both: N|PERIOD.
+      if (value) syntax.values[name] = syntax.values[name] && syntax.values[name] !== value ? `${syntax.values[name]}|${value}` : value;
     }
   }
   for (const { command } of forms) {

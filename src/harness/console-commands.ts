@@ -12,6 +12,7 @@
 // reading the stream) can skip the whole thing.
 
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -37,6 +38,9 @@ import { appendHistory, HISTORY_SIZE, historyFile, loadHistory } from './prompt-
 import { defaultPageUrl, NO_DEFAULT_PAGE, preparedScriptMatches, preparedScriptName, preparedScriptPath, shownPath, withDefaultScheme, type PreparedScript } from './prepare.js';
 import { currentTab, dialogKind, dialogWaitingMessage, NO_TABS, pickTab, TAB_ARG, tabName } from './tab-refs.js';
 import { runLogLabel } from './run-log.js';
+import {
+  DEFAULT_LOG_SOURCES, isoTime, linesLost, logsLines, logsUpTo, inSources, noLogLines, nowMicros, parseLogSources, parsePosition, parseTail, streamText, textMatcher, type LogRecord, type RunLog,
+} from './run-logs.js';
 import { loadPage, settleTabs, waitFor } from './wait.js';
 import { userscriptLabel, type SavedPageHeader } from './save-html.js';
 import {
@@ -153,6 +157,8 @@ export interface ConsoleContext {
   runId?: string;
   /** The run's log file (see run-log.ts), for `status`. */
   log?: string;
+  /** Where a `--temp-browser` saves downloads, for `status`. */
+  downloadsDir?: string;
   /** The run's browser, for `status`: `connected to browser 127.0.0.1:9233`. */
   browser?: string;
   /** The same, for `status --json`. */
@@ -166,12 +172,12 @@ export interface ConsoleContext {
   backend?: () => string;
   /** Whether SourceMonkey is there now, for `status`; null when unknown. */
   extension?: () => Promise<ExtensionState | null>;
-  /** The run's output so far, for `wait log`. */
-  output?: OutputHistory;
+  /** The run's log lines, for `logs` and `wait log` (see run-logs.ts). */
+  logs?: RunLog;
   /**
-   * Where `output` stood when the previous command (that wasn't only a
+   * The log's position when the previous command (that wasn't only a
    * look, like `status`) began, for `wait log`: a line the command set
-   * off, printed while it waited for the page to settle, still counts.
+   * off, logged while it waited for the page to settle, still counts.
    * Unset before the first.
    */
   previousStart?: number;
@@ -181,16 +187,6 @@ export interface ConsoleContext {
   extensionIdOf?: (script: PreparedScript) => string | undefined;
   /** Where `validate` and `match` find local copies of `@require`s: the run's own. */
   roots?: ScriptRoots;
-}
-
-/** The lines a run has printed, numbered, and a way to hear new ones. */
-export interface OutputHistory {
-  /** The number the next line will get. */
-  mark(): number;
-  /** The lines numbered `from` on, that are still kept. */
-  since(from: number): string[];
-  /** Calls `listener` with each new line, until the returned function is called. */
-  watch(listener: (line: string) => void): () => void;
 }
 
 // One wording for having none, whether as a reply or in a list.
@@ -656,6 +652,9 @@ export async function runConsoleCommand(
       }
       if (ctx.backend) ctx.out(`Backend: ${ctx.backend()}`);
       if (ctx.log) ctx.out(`Log: ${runLogLabel(ctx.log, ctx.runId)}`);
+      // Chrome makes the folder with the first download, so it's only
+      // worth a line once there is one.
+      if (ctx.downloadsDir && existsSync(ctx.downloadsDir)) ctx.out(`Downloads: ${ctx.downloadsDir}`);
       // The tabs first, each with its URL, ids and any dialog; then
       // the scripts on the current one, which is marked there. With no
       // tab, still the scripts and what they have stored.
@@ -907,6 +906,8 @@ export async function runConsoleCommand(
     }
     case 'wait':
       return waitFor(ctx, parsed);
+    case 'logs':
+      return logsCommand(ctx, parsed, picked);
     case 'focus': {
       const named = namedTab(ctx, 'focus', parsed);
       if (named === null) return false;
@@ -960,9 +961,8 @@ export async function runConsoleCommand(
         if (!named) return false;
         target = named;
       }
-      // `logs` only reads what was recorded; the rest reach into a page
-      // a dialog has stopped.
-      if (command !== 'logs' && blockedByDialog([target])) return false;
+      // They reach into a page, which a dialog has stopped.
+      if (blockedByDialog([target])) return false;
       let evalIn: EvalIn | undefined;
       if (command === 'eval') {
         // A tab that runs no scripts has no script to be in, so a bare
@@ -1656,6 +1656,7 @@ async function statusJson(ctx: ConsoleContext, tab: ControlledTab | undefined): 
       ...(extension ? { sourceMonkey: extension } : {}),
       ...(collection ? { testCollection: collection } : {}),
       ...(ctx.log ? { log: ctx.log } : {}),
+      ...(ctx.downloadsDir ? { downloads: ctx.downloadsDir } : {}),
     };
   }
   return {
@@ -1902,6 +1903,100 @@ function printPerTab(
 
 function runningOn(ctx: ConsoleContext, tab: ControlledTab): PreparedScript[] {
   return ctx.scripts.filter((script) => activeOn(ctx, tab, script.id));
+}
+
+// ---------- Logs ----------
+
+/**
+ * `logs [tab|all] [script]`: the run's log lines (see run-logs.ts), of
+ * the sources asked for (by default all but the page's own), on the
+ * current tab, the one named, or all of them, and for one script if
+ * named. Then the position reached, for the next `--since`.
+ */
+function logsCommand(ctx: ConsoleContext, parsed: ParsedArgs, current: ControlledTab | undefined): boolean | void {
+  const mistake = (text: string): false => {
+    ctx.out(`${MISTAKE_PREFIX}${text}`);
+    return false;
+  };
+  const logs = ctx.logs;
+  if (!logs) {
+    ctx.out('[sm-dev] Internal error: This run keeps no log');
+    return false;
+  }
+  let all = false;
+  let scriptWord: string | undefined;
+  for (const word of parsed.words) {
+    if (word === 'all' && !all && parsed.tab === undefined && scriptWord === undefined) all = true;
+    else if (scriptWord === undefined) scriptWord = word;
+    else return mistake('The logs command takes a tab or all, then a script, e.g. logs T2 1');
+  }
+  let tab: ControlledTab | undefined;
+  if (parsed.tab !== undefined) {
+    const named = pickTab(ctx, parsed.tab);
+    if (!named) return false;
+    tab = named;
+  } else if (!all) {
+    if (!current) {
+      ctx.out(NO_TABS);
+      return false;
+    }
+    tab = current;
+  }
+  const script = scriptWord === undefined ? undefined : pickScript(ctx, scriptWord);
+  if (script === null) return false;
+  const { flags } = parsed;
+  const sources = typeof flags['--log-source'] === 'string' ? parseLogSources(flags['--log-source']) : DEFAULT_LOG_SOURCES;
+  if ('error' in sources) return mistake(sources.error as string);
+  const find = typeof flags['--find'] === 'string' ? textMatcher(flags['--find']) : undefined;
+  if (find && 'error' in find) return mistake(find.error);
+  const since = typeof flags['--since'] === 'string' ? parsePosition(flags['--since']) : undefined;
+  if (typeof since === 'object') return mistake(since.error);
+  const tail = typeof flags['--tail'] === 'string' ? parseTail(flags['--tail']) : undefined;
+  if (tail && 'error' in tail) return mistake(tail.error);
+
+  const position = logs.position();
+  // A tab's lines, and the lines of the scripts running there made
+  // outside any tab (a refresh's, a failed @require's).
+  const onTab = new Set(tab ? runningOn(ctx, tab).map((s) => s.id) : []);
+  let records = (since === undefined ? [...logs.all()] : logs.since(since)).filter((r) => inSources(r, sources)
+    && (!tab || r.tab === tab.n || (r.tab === undefined && r.scriptId !== undefined && onTab.has(r.scriptId)))
+    && (!script || r.scriptId === script.id)
+    && (!find || find.matches(streamText(r, true))));
+  if (tail && 'lines' in tail) records = records.slice(-tail.lines);
+  else if (tail) {
+    const from = nowMicros() - tail.micros;
+    records = records.filter((r) => r.id > from);
+  }
+
+  const lost = since === undefined ? undefined : logs.lostAfter(since);
+  if (lost !== undefined) ctx.out(linesLost(lost));
+  if (ctx.json) {
+    ctx.out(jsonResult('logs', {
+      ...(tab ? { tab: tabName(tab) } : {}),
+      ...(script ? { script: scriptNumber(ctx, script) } : {}),
+      lines: records.map((r) => logLineJson(ctx, r)),
+      until: position,
+    } satisfies J.LogsData));
+  } else if (records.length === 0) {
+    ctx.out(noLogLines(tab ? tabName(tab) : undefined));
+  } else {
+    for (const line of logsLines(records)) ctx.out(line);
+  }
+  ctx.out(logsUpTo(position));
+}
+
+function logLineJson(ctx: ConsoleContext, record: LogRecord): J.LogLine {
+  const script = record.scriptId === undefined ? undefined : ctx.scripts.find((s) => s.id === record.scriptId);
+  return {
+    id: record.id,
+    time: isoTime(record.id),
+    ...(record.tab !== undefined ? { tab: `T${record.tab}` } : {}),
+    ...(script ? { script: scriptNumber(ctx, script) } : {}),
+    source: record.source,
+    ...(record.also ? { also: record.also } : {}),
+    kind: record.kind,
+    text: record.text,
+  };
 }
 
 
@@ -2238,7 +2333,7 @@ export class DialogTracker {
   private currentOrdinal = 0;
 
   private constructor(
-    private readonly out: (line: string) => void,
+    private readonly say: (text: string) => void,
     private readonly visible: boolean,
     commandsComing: boolean,
     private readonly tabRef: () => string | undefined,
@@ -2247,6 +2342,7 @@ export class DialogTracker {
   }
 
   /**
+   * `say`: where a dialog opening is told (a run logs it as an event).
    * `visible`: whether the browser is on screen, for a person to
    * answer. `commandsComing`: whether typed commands will be read.
    * `tabRef`: the tab's name for `accept` and `dismiss` to take, when
@@ -2254,10 +2350,10 @@ export class DialogTracker {
    */
   static async attach(
     page: Page,
-    out: (line: string) => void,
+    say: (text: string) => void,
     { visible, commandsComing = false, tabRef = () => undefined }: { visible: boolean; commandsComing?: boolean; tabRef?: () => string | undefined },
   ): Promise<DialogTracker> {
-    const tracker = new DialogTracker(out, visible, commandsComing, tabRef);
+    const tracker = new DialogTracker(say, visible, commandsComing, tabRef);
     page.on('dialog', (dialog) => tracker.opened(dialog));
     // Answered in the browser, a dialog closes without Playwright
     // saying so; the protocol's own event does.
@@ -2310,7 +2406,7 @@ export class DialogTracker {
     const message = dialog.message();
     const what = `The page opened ${dialogKind(dialog)} dialog${message ? `: ${JSON.stringify(message)}` : ''}`;
     if (!this.visible && !this.commandsListening) {
-      this.out(`[sm-dev] ${what}. Dismissed it, since nothing can answer it in a headless run that takes no commands.`);
+      this.say(`${what}. Dismissed it, since nothing can answer it in a headless run that takes no commands.`);
       void dialog.dismiss().catch(() => undefined);
       return;
     }
@@ -2324,7 +2420,7 @@ export class DialogTracker {
     const how = !this.visible ? `${answer[0].toUpperCase()}${answer.slice(1)}`
       : this.commandsListening ? `Answer it in the browser, or ${answer}`
         : 'Answer it in the browser';
-    this.out(`[sm-dev] ${what}. ${how}.`);
+    this.say(`${what}. ${how}.`);
   }
 }
 
@@ -2477,7 +2573,7 @@ export function commandRunner(ctx: ConsoleContext): CommandRunner {
       // Where this command began, for the next `wait log`. Not for one
       // that only looks or waits, or an empty line (a message's turn):
       // what the command before it set off still counts.
-      const began = ctx.output?.mark();
+      const began = ctx.logs?.position();
       const name = line.trim().split(/\s+/)[0];
       try {
         await inCommand.run({ inspects: onlyInspects(line) }, () => (answer ? commandOutput.run(answer, run) : run()));

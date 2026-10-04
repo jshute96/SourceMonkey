@@ -1,7 +1,7 @@
 // The typed commands that act on a tab's page directly: drive it
 // (click, hover, type, key, eval), look at it (snapshot, screenshot,
-// savehtml, probe, logs), and send it raw CDP calls (cdp). console-commands.ts picks the tab and hands
-// the rest of the line here.
+// savehtml, probe), and send it raw CDP calls (cdp). console-commands.ts
+// picks the tab and hands the rest of the line here.
 //
 // Built on the run's own Playwright connection to its tabs: real input
 // events (scrolled into view, the page sees them as a person's), key
@@ -18,14 +18,14 @@ import type { ParsedArgs } from './command-args.js';
 import { PART_LIMIT, PROBE_MAX } from './command-list.js';
 import type { ControlledTab } from './console-commands.js';
 import { NoDocument, NoEvalHook, ScriptThrew, type ScriptScope } from './page-watch.js';
-import { jsonResult, type LogsData, type ProbeData } from './json-output.js';
+import { jsonResult, type ProbeData } from './json-output.js';
 import { readInputFile, writeProblem } from './input-file.js';
 import { notSettledMessage, SETTLE_TIMEOUT_MS, settleTab } from './wait.js';
 import { savePageHtml } from './save-html.js';
 import { shownPath } from './prepare.js';
 import { documentOf, locate, named, noteRefs, onScreen, probeMatches, refOf, refProblem, refsOf, tidy, treeParts, withoutDocument } from './snapshot.js';
 
-export const PAGE_COMMANDS = new Set(['click', 'hover', 'type', 'key', 'eval', 'snapshot', 'screenshot', 'savehtml', 'probe', 'logs', 'cdp']);
+export const PAGE_COMMANDS = new Set(['click', 'hover', 'type', 'key', 'eval', 'snapshot', 'screenshot', 'savehtml', 'probe', 'cdp']);
 
 // How long an action waits for its element. Settling after it has its
 // own limit (wait.ts).
@@ -47,39 +47,6 @@ export function pageSays(page: Page, check: () => boolean): Promise<boolean> {
   const answer = page.evaluate(check).catch(() => false);
   const timeout = new Promise<boolean>((r) => setTimeout(() => r(false), CHECK_TIMEOUT_MS).unref());
   return Promise.race([answer, timeout]);
-}
-
-// The console lines and errors each page has had, for `logs`: all of
-// them, not only the ones the run's stream shows. The newest are kept,
-// each cut short past a length.
-const LOG_LIMIT = 1000;
-const LOG_LINE_LIMIT = 2000;
-const logs = new WeakMap<Page, string[]>();
-
-/** Records a console line or error of the page's, or a page it loaded, for `logs`. */
-export function recordLog(page: Page, line: string): void {
-  let lines = logs.get(page);
-  if (!lines) {
-    lines = [];
-    logs.set(page, lines);
-  }
-  lines.push(line.length > LOG_LINE_LIMIT ? `${line.slice(0, LOG_LINE_LIMIT)}…` : line);
-  if (lines.length > LOG_LIMIT) lines.splice(0, lines.length - LOG_LIMIT);
-}
-
-/**
- * Lines with each run of identical ones as one, marked `(N times)`, so a
- * page logging the same line in a loop doesn't bury the rest.
- */
-export function collapseRepeats(lines: readonly string[]): string[] {
-  const shown: string[] = [];
-  for (let i = 0; i < lines.length;) {
-    let end = i + 1;
-    while (end < lines.length && lines[end] === lines[i]) end++;
-    shown.push(end - i > 1 ? `${lines[i]} (${end - i} times)` : lines[i]);
-    i = end;
-  }
-  return shown;
 }
 
 // The keys `click --modifiers` can hold, as Playwright names them.
@@ -620,26 +587,6 @@ export async function runPageCommand(
           session.detach().catch(() => undefined);
           page.off('request', onRequest);
         }
-        return;
-      }
-      case 'logs': {
-        const lines = logs.get(page) ?? [];
-        if (input.json) {
-          // Each page load starts with a `--- <url>` line.
-          const pages: LogsData['pages'] = [];
-          for (const line of lines) {
-            const load = /^--- (.*)$/.exec(line);
-            if (load) pages.push({ url: load[1], lines: [] });
-            else {
-              if (pages.length === 0) pages.push({ lines: [] });
-              pages.at(-1)!.lines.push(line);
-            }
-          }
-          out(jsonResult('logs', { tab: `T${tab.n}`, pages } satisfies LogsData));
-          return;
-        }
-        if (lines.length === 0) say('No console lines or errors yet');
-        for (const line of collapseRepeats(lines)) out(line);
         return;
       }
     }

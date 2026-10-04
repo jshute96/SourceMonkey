@@ -26,6 +26,7 @@ import type { HarnessHost } from './host.js';
 import type { ParsedArgs } from './command-args.js';
 import { countOf } from './page-commands.js';
 import { explainMatch, preparedScriptName } from './prepare.js';
+import { ALL_LOG_SOURCES, foundAt, inSources, linesLost, parseLogSources, parsePosition, searchedUpTo, streamText, textMatcher, type LogRecord } from './run-logs.js';
 import { refProblem } from './snapshot.js';
 import { currentTab, dialogWaitingMessage, NO_TABS, pickTab, TAB_ARG, tabName } from './tab-refs.js';
 
@@ -59,6 +60,8 @@ const WAIT_DONE = '[sm-dev] Wait done: ';
 const TIMEOUT_NEEDS_SECONDS = `The --timeout-seconds flag needs a number of seconds, up to ${MAX_WAIT_SECONDS}`;
 const WAIT_FAILED = '[sm-dev] Wait failed: ';
 const LOG_MATCHED = '[sm-dev] Wait matched log line: ';
+// The flags only `wait log` takes.
+const LOG_FLAGS = ['--find', '--log-source', '--since'];
 
 // ---------- Settling ----------
 
@@ -224,8 +227,10 @@ export async function waitFor(ctx: ConsoleContext, parsed: ParsedArgs): Promise<
 
   if (parsed.form === 'log') {
     if (parsed.tab !== undefined) return mistake('The wait log command takes no tab, since it watches all of the run\'s output');
-    return waitForLog(ctx, parsed.text ?? '', timeoutMs);
+    return waitForLog(ctx, parsed, timeoutMs);
   }
+  const logFlag = LOG_FLAGS.find((flag) => parsed.flags[flag] !== undefined);
+  if (logFlag) return mistake(`The ${logFlag} flag only applies to wait log`);
 
   // A plain delay. A tab or `all` before it (`wait T2 3s`) is allowed
   // and has no effect: a delay waits the same whichever tab is named.
@@ -343,61 +348,63 @@ async function waitForSelector(
   }
 }
 
-// `wait log`: a line the page or scripts printed (see OutputHistory),
-// with the text or matching the /regex/, since the previous command
-// began or from now on.
-async function waitForLog(ctx: ConsoleContext, text: string, timeoutMs: number): Promise<boolean> {
-  if (!text) {
-    ctx.out('[sm-dev] ERROR: The wait log command needs the text to look for, e.g. wait log ready');
+// `wait log`: a log line (see run-logs.ts) of the sources asked for (by
+// default all of them), with the text or matching the /regex/, logged
+// since the previous command began (or since `--since`) or from now on.
+// Matched in the form the stream prints it, whole.
+async function waitForLog(ctx: ConsoleContext, parsed: ParsedArgs, timeoutMs: number): Promise<boolean> {
+  const mistake = (text: string): false => {
+    ctx.out(`[sm-dev] ERROR: ${text}`);
+    return false;
+  };
+  const { flags } = parsed;
+  const typed = parsed.text ?? '';
+  const flag = flags['--find'];
+  if (typed && typeof flag === 'string') return mistake('The wait log command takes its text either after log or with --find, not both');
+  const text = typeof flag === 'string' ? flag : typed;
+  if (!text) return mistake('The wait log command needs the text to look for, e.g. wait log ready');
+  const logs = ctx.logs;
+  if (!logs) {
+    ctx.out(`${WAIT_FAILED}This run cannot watch its log`);
     return false;
   }
-  const output = ctx.output;
-  if (!output) {
-    ctx.out(`${WAIT_FAILED}This run cannot watch its output`);
-    return false;
-  }
-  const regex = /^\/(.+)\/([a-z]*)$/.exec(text);
-  let matches: (line: string) => boolean;
-  if (regex) {
-    let pattern: RegExp;
-    try {
-      pattern = new RegExp(regex[1], regex[2]);
-    } catch (err) {
-      ctx.out(`[sm-dev] ERROR: ${text} is not a valid regular expression: ${(err as Error).message}`);
-      return false;
-    }
-    // Each line from its start: g and y otherwise carry on from where
-    // the last match ended, which would skip matches. So y anchors the
-    // match at the start of the line.
-    matches = (line) => {
-      pattern.lastIndex = 0;
-      return pattern.test(line);
-    };
-  } else {
-    matches = (line) => line.includes(text);
-  }
-  const earlier = output.since(ctx.previousStart ?? 0).find(matches);
-  if (earlier !== undefined) {
-    ctx.out(`${LOG_MATCHED}${earlier}`);
+  const matcher = textMatcher(text, '');
+  if ('error' in matcher) return mistake(matcher.error);
+  const sources = typeof flags['--log-source'] === 'string' ? parseLogSources(flags['--log-source']) : ALL_LOG_SOURCES;
+  if ('error' in sources) return mistake(sources.error as string);
+  const given = typeof flags['--since'] === 'string' ? parsePosition(flags['--since']) : undefined;
+  if (typeof given === 'object') return mistake(given.error);
+  const since = given ?? ctx.previousStart ?? 0;
+  const fits = (record: LogRecord): boolean => inSources(record, sources) && matcher.matches(streamText(record, true));
+  const found = (record: LogRecord): true => {
+    ctx.out(`${LOG_MATCHED}${streamText(record, true)}`);
+    ctx.out(foundAt(record.id));
     return true;
+  };
+  if (given !== undefined) {
+    const lost = logs.lostAfter(given);
+    if (lost !== undefined) ctx.out(linesLost(lost));
   }
-  const found = await new Promise<string | null>((resolve) => {
+  const earlier = logs.since(since).find(fits);
+  if (earlier) return found(earlier);
+  const later = await new Promise<LogRecord | null>((resolve) => {
     const timer = setTimeout(() => {
       stop();
       resolve(null);
     }, timeoutMs);
-    const stop = output.watch((line) => {
-      if (!matches(line)) return;
+    const stop = logs.watch((record) => {
+      if (!fits(record)) return;
       clearTimeout(timer);
       stop();
-      resolve(line);
+      resolve(record);
     });
   });
-  // Seen as it streamed; said again, so the reply says it was found.
-  // Plain text quoted, so its spaces show; a regex shows as its /.../.
-  const shown = regex ? text : JSON.stringify(text);
-  ctx.out(found !== null ? `${LOG_MATCHED}${found}` : `${WAIT_FAILED}No output line matched ${shown} within ${seconds(timeoutMs)}`);
-  return found !== null;
+  // Seen as it streamed, if its source streams; said again, so the
+  // reply says it was found.
+  if (later) return found(later);
+  ctx.out(`${WAIT_FAILED}No log line matched ${matcher.shown} within ${seconds(timeoutMs)}`);
+  ctx.out(searchedUpTo(logs.position()));
+  return false;
 }
 
 // ---------- Helpers ----------
