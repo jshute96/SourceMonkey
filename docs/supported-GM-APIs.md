@@ -298,7 +298,7 @@ copy inserted over the bridge).
 
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
-| `GM_xmlhttpRequest` / `GM.xmlHttpRequest` | ✅ | ✓ | ✓ | ✓ (`GM.xmlHttpRequest` only) | Returns `{abort}` synchronously. SW-side `fetch` with `AbortController`; events (`load`, `error`, `timeout`, `abort`) are shipped back to the originating tab. |
+| `GM_xmlhttpRequest` / `GM.xmlHttpRequest` | ✅ | ✓ | ✓ | ✓ (`GM.xmlHttpRequest` only) | Returns `{abort}` synchronously. SW-side `fetch` with `AbortController`; the body streams back to the originating tab in pieces, with progress events. No size cap. |
 
 ### XHR details object
 
@@ -307,14 +307,17 @@ copy inserted over the bridge).
 | Field | Notes |
 |-------|-------|
 | `method` | Default `GET`. Uppercased before send. |
-| `url` | Required. |
+| `url` | Required. A `URL` object works too. |
 | `headers` | Plain object. Any header, including ones the browser normally forbids a script to set — see [Forbidden headers](#forbidden-headers). |
 | `data` | Body. String only today; non-string falls through `String(...)`. |
 | `timeout` | Milliseconds. Aborts the request and fires `ontimeout`. |
-| `responseType` | `text` (default) / `json` / `blob` / `arraybuffer` / `document`. |
+| `responseType` | `text` (default) / `json` / `blob` / `arraybuffer` / `document` / `stream`. With `stream` (as in TM), `response` is a `ReadableStream` of the body's bytes from `onloadstart` on, fed as they arrive. |
 | `anonymous` | `true` sends the request without the user's cookies (and any cached HTTP-auth credentials). Default `false` — see [Credentials](#credentials). |
-| `onload`, `onerror`, `ontimeout`, `onabort` | Callbacks. Callbacks aren't serializable across the SW boundary so they stay on the page side keyed by request id. |
-| `onreadystatechange` | Called once, with `readyState: 4`, just before the terminal callback (`onload` / `onerror` / `ontimeout` / `onabort`), the order XMLHttpRequest uses. States 1-3 are not reported. |
+| `onload`, `onerror`, `ontimeout`, `onabort` | Terminal callbacks: exactly one fires. Callbacks aren't serializable across the SW boundary so they stay on the page side keyed by request id. |
+| `onloadstart` | Once the extension has taken the request, with `readyState: 1`. |
+| `onreadystatechange` | At `readyState` 2 (headers in), 3 (body arriving) and 4 (just before the terminal callback), the order XMLHttpRequest uses. |
+| `onprogress` | Per piece of the body, with `lengthComputable`, `loaded` and `total` beside the response fields. For text types, `responseText` is the text so far. |
+| `onloadend` | After the terminal callback, with the same object. |
 
 ### XHR response shape
 
@@ -328,13 +331,18 @@ For `responseType: 'text'` (default) and `'json'`:
 | `responseText` | Body as text. |
 | `response` | Same as `responseText` for `text`; parsed object for `json` (or `null` on parse failure). |
 | `responseHeaders` | Multi-line `Name: value\r\n…` (TM/VM convention; trailing CRLF). |
-| `readyState` | Always `4` (done): only the final state reaches the page. |
+| `readyState` | `4` (done) for the terminal callbacks; 1-3 in the earlier ones. |
 
 For `responseType: 'blob'` / `'arraybuffer'` / `'document'`: same
 shape, except `responseText` is empty (`document` populates it) and
 `response` is the reconstructed native object (`Blob`,
-`ArrayBuffer`, or `Document`). The SW serializes bytes as base64;
-the page-side runtime decodes and rebuilds.
+`ArrayBuffer`, or `Document`). The SW sends the bytes as base64
+pieces; the page-side runtime decodes and rebuilds.
+
+For `responseType: 'stream'`: `responseText` is empty and `response`
+is the `ReadableStream` in every callback. It closes on `load`, and
+on a failure rejects reads with the error (an `AbortError` or
+`TimeoutError` for those). Cancelling it aborts the request.
 
 `ontimeout` and `onabort` get the empty shape of a failed request:
 `readyState: 4`, `status: 0`, empty `statusText` / `responseText` /
@@ -440,8 +448,7 @@ How this is done, and what it can't cover:
 - HTTP error statuses (404, 500, …) fire `onload` with the
   non-2xx status — matches XHR semantics. Only network-level
   failures (DNS, ECONNREFUSED, etc.) fire `onerror`.
-- No `onprogress` events, and `onreadystatechange` fires only for
-  `readyState` 4: only the final terminal event lands.
+- No upload progress (`upload.onprogress`).
 - Forbidden headers are per-request: overlapping requests to one URL,
   across scripts or within one, each carry only their own overrides.
   SourceMonkey makes none of them wait for another. (Chrome itself

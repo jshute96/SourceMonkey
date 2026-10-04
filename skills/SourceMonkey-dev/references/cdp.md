@@ -242,12 +242,12 @@ $R wait -- eval '[innerWidth, innerHeight]'
 
 Screenshots are too slow to catch a flash, a gap or a jump. Record
 what's on top at chosen points on every frame, then trigger the
-change, then read the record. This is plain `eval`; change `points` to
-spots in the image or video:
+change, then read the record. This runs in the page (`eval --page`);
+change `points` to spots in the image or video:
 
 ```sh
 $R --stdin <<'EOF'
-eval {{
+eval --page {{
 window.smTrace = [];
 const points = [[400, 300], [20, 20]];
 const t0 = performance.now();
@@ -264,7 +264,7 @@ const name = (el) => !el ? 'nothing'
 }}
 key ArrowRight
 wait log '[trace] done' --timeout-seconds 10
-eval window.smTrace
+eval --page window.smTrace
 EOF
 ```
 

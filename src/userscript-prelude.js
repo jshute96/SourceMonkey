@@ -401,6 +401,11 @@
     } catch (_e) {}
   }
 
+  /* How long after DOMContentLoaded a document-idle script runs when
+     `load` hasn't fired by then. Chrome's own document_idle runs at
+     most about 200ms after it. */
+  var IDLE_AFTER_DCL_MS = 200;
+
   /* @run-at gating. Each script's entry drives its own deferral; the
      prelude calls back into runMain when the lifecycle event fires. */
   function waitForRunAt(declared, cb) {
@@ -437,21 +442,35 @@
        reaches "complete". On a normal page `load` follows the
        "complete" readystatechange in the same task, so that change only
        arms a zero-delay fallback: the body still runs after `load`
-       where there is one, and once either way. */
+       where there is one, and once either way.
+       A subresource that never finishes (a stalled third-party script)
+       holds `load` back forever, so the body also runs IDLE_AFTER_DCL_MS
+       after DOMContentLoaded, as Chrome's own document_idle does. */
     if (document.readyState === "complete") { cb(); return; }
     var idleDone = false;
+    var idleTimer = null;
     var runIdle = function () {
       if (idleDone) return;
       idleDone = true;
+      if (idleTimer !== null) clearTimeout(idleTimer);
       window.removeEventListener("load", runIdle);
       document.removeEventListener("readystatechange", onReadyState);
+      document.removeEventListener("DOMContentLoaded", onContentLoaded);
       cb();
     };
     var onReadyState = function () {
       if (document.readyState === "complete") setTimeout(runIdle, 0);
     };
+    var onContentLoaded = function () {
+      if (idleTimer === null) idleTimer = setTimeout(runIdle, IDLE_AFTER_DCL_MS);
+    };
     window.addEventListener("load", runIdle);
     document.addEventListener("readystatechange", onReadyState);
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", onContentLoaded);
+    } else {
+      onContentLoaded();
+    }
   }
 
   /* Calls `cb` (at most once) when `get()` returns a node. The wait

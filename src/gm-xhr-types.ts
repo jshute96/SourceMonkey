@@ -26,42 +26,60 @@ export interface GmXhrRequestPayload {
   // it; fetch() will reject and the page sees an error event.
 }
 
-// One serialized HTTP response. Field names roughly match TM/VM's
-// onload payload shape so userscripts that move between managers
-// don't have to learn three slightly different APIs.
+// One serialized HTTP response, as the terminal `load` event carries
+// it. Field names roughly match TM/VM's onload payload shape so
+// userscripts that move between managers don't have to learn three
+// slightly different APIs.
 //
-// For binary responseTypes (blob, arraybuffer, document) we send the
-// body as `responseBase64` (base64-encoded bytes) + `responseMimeType`
-// (Content-Type) and the page-side runtime reconstructs the Blob /
-// ArrayBuffer / Document. `responseText` stays empty for those types
-// — TM/VM behavior matches.
+// The worker never puts the body here: it streams it ahead of the
+// `load` as `progress` events (`GmXhrStreamEvent`), and the page-side
+// runtime fills `responseText` and `response` from those before
+// invoking onload. A harness request fake (`RequestInterceptor`) does
+// fill `responseText`: that answer is served at the network level, and
+// the body then streams like any other.
 export interface GmXhrResponse {
   status: number;
   statusText: string;
   responseURL: string;
-  // For text-based responseTypes ('text' default, 'json'),
-  // responseText is the raw body text. For binary responseTypes it
-  // is '' — the body comes through responseBase64 instead.
+  // The body as text, for the text-based responseTypes ('text'
+  // default, 'json', 'document'). '' for 'blob' and 'arraybuffer'.
   responseText: string;
-  // `response` is what the page-side runtime reconstructs and hands
-  // to the user. For text it's responseText; for json it's the
-  // parsed value; for blob/arraybuffer/document the SW sends null
-  // and the page-side fills in the right object before invoking
-  // onload.
+  // What the user gets: the text for 'text', the parsed value for
+  // 'json', and a Blob / ArrayBuffer / Document for the others.
   response: unknown;
-  // Binary transport. Populated when the requested responseType is
-  // 'blob', 'arraybuffer', or 'document'. The page-side decodes
-  // from base64 to bytes; for 'blob' it builds a `new Blob(...)`,
-  // for 'arraybuffer' an `ArrayBuffer`, for 'document' it parses
-  // the bytes-as-utf8 through DOMParser.
-  responseBase64?: string;
+  // Content-Type, for the Blob's type and the Document's parse mode.
   responseMimeType?: string;
   responseHeaders: string;  // RFC 2616-style multi-line "Name: value\r\n..."
   finalUrl: string;
 }
 
+// The terminal events: exactly one ends each request.
 export type GmXhrEvent =
   | { kind: 'load'; response: GmXhrResponse }
   | { kind: 'error'; message: string }
   | { kind: 'timeout' }
   | { kind: 'abort' };
+
+// The events before the terminal one, in order: `headers` once, when
+// the response headers are in, then a `progress` per piece of the body.
+// `total` is the body's length when it's known (a Content-Length on a
+// response with no Content-Encoding, since the bytes counted are the
+// decoded ones), else null.
+export type GmXhrStreamEvent =
+  | {
+    kind: 'headers';
+    status: number;
+    statusText: string;
+    finalUrl: string;
+    responseHeaders: string;
+    total: number | null;
+  }
+  | {
+    kind: 'progress';
+    // This piece of the body, base64: a message hop can't be trusted
+    // to carry an ArrayBuffer intact across worlds.
+    data: string;
+    // Bytes so far, this piece included.
+    loaded: number;
+    total: number | null;
+  };

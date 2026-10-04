@@ -47,15 +47,18 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
     return [...lines];
   };
 
-  // The page's world, and the scripts', where the script's state is.
+  // The selected script by default, where its state is, and the page's
+  // world with --page.
   expect(await run('eval document.title')).toEqual(['"target"']);
-  expect(await run('eval typeof widget')).toEqual(['"undefined"']);
+  expect(await run('eval widget')).toEqual(['{\n  "clicks": 0\n}']);
+  expect(await run('eval --page typeof widget')).toEqual(['"undefined"']);
   expect(await run('eval --script widget')).toEqual(['{\n  "clicks": 0\n}']);
+  expect(await run('eval --page --script 1')).toEqual(['[sm-dev] ERROR: The eval command takes --page or --script, not both']);
   // Inside the script: its GM_* bindings and top-level declarations.
-  expect(await run('eval --script GM_info.script.name')).toEqual(['"Widget"']);
+  expect(await run('eval GM_info.script.name')).toEqual(['"Widget"']);
   expect(await run('eval --script=Widget button.textContent')).toEqual(['"Add one"']);
   expect(await run('eval --script=1 typeof GM_log')).toEqual(['"function"']);
-  expect(await run('eval typeof button')).toEqual(['"undefined"']);
+  expect(await run('eval --page typeof button')).toEqual(['"undefined"']);
   // Function-body code (await, return) runs there too.
   expect(await run('eval --script await 0; return input.getAttribute("aria-label")')).toEqual(['"Note"']);
   // An awaited expression is the value, as in the console.
@@ -198,7 +201,7 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   // Every command, not only the ones with flags of their own; a quoted
   // selector with -- in it is one word, not a flag.
   expect(await run('status --bad')).toEqual(['[sm-dev] ERROR: The status command has no --bad flag. It takes --json, --nojson.']);
-  expect(await run('eval T1 --script --x')).toEqual(['[sm-dev] ERROR: The eval command has no --x flag. It takes --script, --file, --out.']);
+  expect(await run('eval T1 --script --x')).toEqual(['[sm-dev] ERROR: The eval command has no --x flag. It takes --page, --script, --file, --out.']);
   expect(await run(`probe '.a --b'`)).not.toContainEqual(expect.stringContaining('flag'));
 
   // A navigation an expression doesn't live through is said as such,
@@ -247,7 +250,7 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   // there, so the next command sees it.
   expect(await run('type \'input[name=q]\' kittens')).toEqual(['[sm-dev] Typed into input[name=q]']);
   expect(await run('key Enter')).toEqual(['[sm-dev] Pressed Enter']);
-  expect(await run('eval location.pathname + location.search')).toEqual(['"/other.html?q=kittens"']);
+  expect(await run('eval --page location.pathname + location.search')).toEqual(['"/other.html?q=kittens"']);
 });
 
 test('a tab closing mid-expression is said as such', async ({ page, fixtureServer, host, attachment, loadScript }) => {
@@ -256,7 +259,7 @@ test('a tab closing mid-expression is said as such', async ({ page, fixtureServe
   const lines: string[] = [];
   const tabs = [{ n: 1, page, link: attachment }];
   const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(l), stop: () => undefined };
-  const pending = runConsoleCommand('eval new Promise(() => {})', ctx);
+  const pending = runConsoleCommand('eval --page new Promise(() => {})', ctx);
   await new Promise((r) => setTimeout(r, 200));
   await page.close();
   await pending;
@@ -291,9 +294,13 @@ test('eval --script reaches a MAIN-world script and a script\'s IIFE, keeps stri
   expect(await run('eval --script count')).toEqual(['2']);
   // Inside the script's IIFE, with its GM_* bindings still in reach.
   expect(await run('eval --script=Iife hidden + " " + typeof GM_log')).toEqual(['"inside function"']);
-  // Other didn't match the page: selected, its code runs in the shared
-  // world as it always did; named, that's a failure.
+  // Other didn't match the page: selected, a bare eval runs in the
+  // page, and --script in the shared world; named, that's a failure.
   ctx.current = other;
+  expect(await run('eval typeof count')).toEqual([
+    '[sm-dev] Other hasn\'t run on this page, so this ran in the page',
+    '"undefined"',
+  ]);
   expect(await run('eval --script document.title')).toEqual([
     '[sm-dev] Other hasn\'t run on this page, so this ran in the scripts\' shared world',
     '"target"',

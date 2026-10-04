@@ -349,23 +349,6 @@ wasn't checked.
   - A per-host "allow this request" prompt (or a collections-page
     toggle) would cover it without dropping the check. Pairs with the
     `@connect *` warning under "`@connect` follow-ups".
-- **`GM_xmlhttpRequest` rejects a `URL` object** (`xhr-url-object`:
-  463326).
-  - `src/wrapper-gm-runtime.js` requires `typeof details.url ===
-    "string"` and throws "url required".
-  - VM converts a non-string `url` to a string
-    (`src/injected/web/requests.js`). A copy passing `.href` works.
-- **`document-idle` can wait forever** (seen on jianshu with 406337
-  and 40730).
-  - The wrapper waits for `load`. When one third-party script never
-    finishes loading, `load` never fires and idle scripts never run.
-  - VM runs idle scripts right after `DOMContentLoaded`, and Chrome's
-    own `document_idle` runs at most about 200ms after it. Fix: also
-    start the body after a short timeout once `DOMContentLoaded` has
-    fired.
-- **50 MB `GM_xmlhttpRequest` response cap** (`xhr-response-cap`:
-  445051) blocks video downloaders on ordinary few-minute videos.
-  Documented in `docs/GM-APIs.md`; worth revisiting.
 - **`GM_cookie`** (463802) is the whole failure for a Reddit script.
   See "GM_* APIs not yet in the catalog".
 
@@ -489,32 +472,6 @@ Adding any of these is a catalog entry + a body — nothing structural.
   `clipboardWrite` in the manifest and `CLIPBOARD` added to the
   `reasons` array in `parse-check.ts`, which is fixed at creation
   time.
-- **Binary XHR encoding monopolizes the SW loop.** `runXhr` buffers
-  the whole body and calls `bytesToBase64` once (`src/extension/gm-xhr.ts`),
-  bounded only by the 50 MB `MAX_RESPONSE_BYTES` cap.
-  `String.fromCharCode` is chunked at 32 KB but the closing `btoa` is
-  a single call over the whole string, and the worker holds the bytes
-  and the string at once.
-  - It matters because that same loop answers `sm:check-pending` on
-    the document-start critical path, so one script pulling a large
-    binary can delay injection in unrelated tabs.
-  - VM doesn't have the problem: its XHR and encoding run in the
-    offscreen document, chunked at 1 MB precisely so neither the
-    extension nor the page stops responding
-    (`src/offscreen/xhr.js`).
-  - Two ways out. Cheap: chunk the encode and yield between chunks,
-    which keeps it in the worker but stops the monopolization.
-    Thorough: move the binary path to our offscreen document, which
-    also gets us `xhr.upload` progress events — `fetch` can't report
-    upload progress at all, so that's the one part of the
-    `GM_xmlhttpRequest` surface the worker cannot reach.
-  - Either way, measure first: we have no data on real-world
-    response sizes, and most `GM_xmlhttpRequest` payloads are small
-    enough that this never fires.
-  - If it goes to the offscreen document, it shares the host with
-    the clipboard item above — `reasons` is fixed at creation time,
-    so both consumers' reasons (`BLOBS`, and `WORKERS` if the encode
-    moves to a worker) have to be added in the same change.
 - **`window.close` / `window.focus` failures are filed under the
   first granting script.** The override closes over the scriptId of
   whichever script installed it, so a sibling script's refused close
@@ -625,8 +582,18 @@ Adding any of these is a catalog entry + a body — nothing structural.
   fingerprint stays while `state.registered` lacks the id. Harmless
   while `alreadyPlaced` also requires presence, which is the clause
   carrying the invariant.
-- **XHR `onprogress` events.** Needs a streaming wire format from
-  the SW (chunked sends or a per-request port).
+- **XHR `arraybuffer` takes twice its size on the page while built.**
+  `finishXhrBody` (`src/wrapper-gm-runtime.js`) holds the pieces and
+  the joined copy at once. With `total` known it could fill one
+  `Uint8Array(total)` as pieces arrive. `blob` and `stream` don't copy.
+- **No backpressure for an unread XHR `stream`.** The pieces queue in
+  the `ReadableStream` however slowly the script reads. A `pull`-driven
+  source could pause the worker, which needs a page-to-worker "ready
+  for more" message.
+- **XHR upload progress** (`upload.onprogress`): `fetch` reports
+  nothing as it sends a body. VM runs its XHR in the offscreen
+  document, where `xhr.upload` works; that would mean moving requests
+  with a body there.
 - **`GM_download` follow-ups.**
   - **Make `downloads` an optional permission.** TM's `not_enabled` /
     `not_permitted` errors exist because its download support is
@@ -911,6 +878,19 @@ See [docs/harness-design.md](docs/harness-design.md).
   slow to start) and runs an extension script anyway, the run doesn't
   say so. The extension's `started` event could tell it: a script the
   run didn't push starting in its tab.
+- **A run's commands take turns across all its clients.**
+  `commandRunner` (`src/harness/console-commands.ts`) queues every
+  command, so one client's `wait 30s` holds up the others.
+  - Waits and commands that only look could run alongside others.
+  - Needs a per-command context: `ctx.out` and `ctx.json` are swapped
+    per command now.
+- **`click --at X,Y` in CSS pixels, and `click --force`** to skip the
+  covered-element check. Closed shadow roots and covering overlays
+  (cookie footers, login panels) defeat `click`/`hover`, and agents
+  fall back to raw CDP, dividing screenshot pixels by devicePixelRatio.
+- **An init script for the run's lifetime.** `cdp
+  Page.addScriptToEvaluateOnNewDocument` ends with that one call's
+  session, so an observer can't be put in place before a reload.
 
 ## Tabs that predate the first script install
 

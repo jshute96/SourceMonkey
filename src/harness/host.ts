@@ -318,7 +318,7 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
   }
 
   /**
-   * Where `eval --script` finds a script's eval hook in a page (see
+   * Where `eval` finds a script's eval hook in a page (see
    * src/eval-hook.ts): the key the hooks are kept under, and the id the
    * script has there. Null for a script that has none.
    */

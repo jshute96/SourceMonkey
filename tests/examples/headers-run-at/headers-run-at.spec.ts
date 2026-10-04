@@ -22,7 +22,8 @@ test.describe('examples / headers-run-at', () => {
     await expect(page.locator('#log li[data-script="idle"]')).toHaveCount(1);
 
     // The one cross-manager invariant we can rely on is the
-    // document-idle lifecycle contract: idle scripts run *after* the
+    // document-idle lifecycle contract: on this page, whose `load`
+    // follows DOMContentLoaded at once, idle scripts run *after* the
     // page's `load` event, so they observe readyState=complete.
     //
     // Cross-script ordering on tiny local pages is implementation-

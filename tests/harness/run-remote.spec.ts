@@ -418,7 +418,7 @@ test('one line starts a run, sends it commands, and stops it unless detached', a
   }
 });
 
-test('a reused tab drops the last run\'s scripts; nodes print as tags; own refs decode; wait log sees unstreamed lines', async ({ fixtureServer, scriptsDir }) => {
+test('a new run closes the last run\'s tab; nodes print as tags; own refs decode; wait log sees unstreamed lines', async ({ fixtureServer, scriptsDir }) => {
   test.setTimeout(60_000);
   const setup = await setUp();
   try {
@@ -447,9 +447,9 @@ test('a reused tab drops the last run\'s scripts; nodes print as tags; own refs 
       '--', 'wait', 'log', 'KEYUP',
     );
     // Named, and after the line naming the browser.
-    const reusing = second.findIndex((l) => l.startsWith('[sm-dev] Reusing the selected tab ('));
-    expect(second[reusing]).toMatch(/^\[sm-dev\] Reusing the selected tab \(http:.*target\.html\), which run D1 opened\. That run has ended\.$/);
-    expect(second.findIndex((l) => l.startsWith('[sm-dev] Connected to'))).toBeLessThan(reusing);
+    const closed = second.findIndex((l) => l.startsWith('[sm-dev] Closed the selected tab ('));
+    expect(second[closed]).toMatch(/^\[sm-dev\] Closed the selected tab \(http:.*target\.html\), which run D1 opened\. That run has ended\.$/);
+    expect(second.findIndex((l) => l.startsWith('[sm-dev] Connected to'))).toBeLessThan(closed);
     expect(second.filter((l) => l.includes('[ticker]'))).toEqual([]);
     expect(second).toContain('[page debug] <main id="target">');
     expect(second).toContain('[page warning] [nodes] at <body> 2');

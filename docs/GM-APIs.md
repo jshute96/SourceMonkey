@@ -205,7 +205,8 @@ output ships whether the script lands in USER_SCRIPT or MAIN.
   `waitForRunAt` gate resolves,
   `ready` flips later than it used to (after the declared `@run-at`
   lifecycle event). For `@run-at document-idle` the gap can stretch
-  to `window.load`. A sibling tab's `GM_setValue` that broadcasts
+  to `window.load`, or 200ms after `DOMContentLoaded` when `load` is
+  later. A sibling tab's `GM_setValue` that broadcasts
   during that window gets dropped on the floor by this document. In
   the common case the same write is already reflected in the
   check-pending snapshot the SW sent us (the SW persisted it before
@@ -284,23 +285,26 @@ that keep running and newly-starting documents up to date after a
 ## `GM_xmlhttpRequest`
 
 Cross-origin HTTP from the SW, fanned back to the originating tab.
-Phase 8 ships the **text path**: `responseType: 'text'` (default)
-and `'json'`. Binary types land in Phase 9; header surgery + `@connect`
-gating in Phase 10.
+Response types `text` (default), `json`, `blob`, `arraybuffer`,
+`document` and `stream`, with the body streamed to the page; header surgery and
+`@connect` gating are below.
 
 Architecture:
 
 - Page-side `GM_xmlhttpRequest(details)` returns `{abort}`
   synchronously. The runtime stores the callbacks
-  (`onload`/`onerror`/`ontimeout`/`onabort`/`onreadystatechange`)
-  keyed by a generated request id (callbacks aren't serializable
+  (`onloadstart`/`onprogress`/`onreadystatechange`/`onload`/
+  `onerror`/`ontimeout`/`onabort`/`onloadend`) keyed by a generated
+  request id (callbacks aren't serializable
   across the bridge), and ships a `sm:gm-xhr-start` envelope to the
   SW with the serializable request fields.
+  - A `URL` object as `url` is taken as its `href`, as in VM.
+    `GM_download` and `GM_openInTab` accept one too (`urlArg`).
 - SW (`src/extension/gm-xhr.ts`) runs `fetch(url, init)` against an
-  `AbortController`. On settle it ships a single `sm:gm-xhr-event`
-  back to the originating tab via `chrome.tabs.sendMessage`. The
-  page-side listener dispatches by request id and invokes the
-  stored callback.
+  `AbortController`, and sends `sm:gm-xhr-event`s back to the
+  originating frame via `chrome.tabs.sendMessage`. The page-side
+  listener dispatches them by request id. See
+  [Streaming the response](#streaming-the-response).
 - `abort()` fires `onabort` synchronously on the page side AND
   sends a `sm:gm-xhr-abort` to the SW (which `AbortController`s
   the fetch).
@@ -371,23 +375,21 @@ Response shape on `onload`:
 | `status`         | HTTP status number.                                |
 | `statusText`     | HTTP status text.                                  |
 | `responseURL`    | Final URL after redirects (`res.url`).             |
-| `responseText`   | Body as text. Always populated in Phase 8.         |
-| `response`       | `responseText` for `text`; parsed object for `json`. |
+| `responseText`   | Body as text, for `text`, `json` and `document`; `''` for `blob` and `arraybuffer`. |
+| `response`       | The text for `text`; parsed object for `json`; a `Blob`, `ArrayBuffer` or `Document` for the others. |
 | `responseHeaders`| Multi-line `Name: value\r\n…` (TM/VM convention).  |
 | `finalUrl`       | Same as `responseURL`.                             |
-| `readyState`     | `4`, set page-side on every terminal event; `onreadystatechange` gets it just before the terminal callback. |
+| `readyState`     | `4`, set page-side on every terminal event.        |
 
-Binary responseTypes (Phase 9): `blob`, `arraybuffer`, `document`.
-The SW reads `await res.arrayBuffer()` and ships the bytes back as
-base64 + `responseMimeType`. The page-side runtime decodes:
+Binary responseTypes are rebuilt page-side from the body's bytes and
+the `Content-Type` (`responseMimeType`):
 
-- `arraybuffer` → `Uint8Array.buffer` (plain `ArrayBuffer`).
-- `blob` → `new Blob([bytes], { type: responseMimeType })`.
-- `document` → bytes decoded as UTF-8 then `new DOMParser()
-  .parseFromString(text, parseMime)`, where `parseMime` is
-  `application/xml` if the MIME type contains "xml", otherwise
-  `text/html`. `responseText` is also populated so userscripts can
-  read the raw text.
+- `arraybuffer` → one `ArrayBuffer` of all the pieces.
+- `blob` → `new Blob(pieces, { type: responseMimeType })`.
+- `document` → the text, then `new DOMParser().parseFromString(text,
+  parseMime)`, where `parseMime` is `application/xml` if the MIME type
+  contains "xml", otherwise `text/html`. `responseText` is also
+  populated so userscripts can read the raw text.
 
 No offscreen document is involved — the SW serializes response bytes
 and the page rebuilds them.
@@ -400,6 +402,63 @@ and the page rebuilds them.
   directly.
 - The base64 round-trip costs ~33% wire overhead vs raw bytes but is
   robust across the SW/page boundary.
+
+### Streaming the response
+
+The body goes to the page in pieces as it arrives, never whole, so
+there's no size cap and the worker never holds much of it.
+
+- Events per request, in order (`GmXhrStreamEvent`, then `GmXhrEvent`
+  in `src/gm-xhr-types.ts`):
+  - `headers`: status, final URL, response headers, and the body's
+    length when known.
+  - `progress`, per piece: up to 1 MiB of the body, base64, with the
+    bytes so far.
+  - One terminal event: `load` (with no body of its own), `error`,
+    `timeout` or `abort`.
+- SW side (`streamBody` in `gm-xhr.ts`):
+  - Each event's `sendMessage` is awaited, so events arrive in order.
+  - A piece goes out as soon as the previous one is delivered,
+    holding what arrived meanwhile. A trickle reaches the page
+    promptly; a fast download goes in 1 MiB pieces.
+  - Reading waits only when a full piece is queued behind a send, so a
+    slow page holds back the download rather than the worker
+    buffering it.
+    - The brake works because a send resolves once the page's
+      listeners have run (none calls `sendResponse`).
+    - For a page-world script the listener is the bridge, which only
+      re-posts the piece, so there the page's own pace doesn't slow
+      the download.
+  - Sends are addressed to the requesting document (`documentId`), so
+    one fails once that page is closed or navigated away. A failed
+    send aborts the fetch.
+- The body's length (`total`, so `lengthComputable`) is the
+  `Content-Length`, except with a `Content-Encoding`: that header
+  counts the encoded bytes, and the reader gives decoded ones.
+- Page side (`wrapper-gm-runtime.js`):
+  - Text types go through a streaming `TextDecoder`, so `responseText`
+    grows during `onprogress` (a multi-byte character split across
+    pieces is joined). Binary types keep the byte pieces.
+  - `responseType: 'stream'` (TM's): `response` is a `ReadableStream`,
+    made with the request so `onloadstart` already has it, and each
+    piece is enqueued as it arrives.
+    - The runtime keeps no pieces; the stream's queue holds what the
+      script hasn't read. Nothing slows the worker for an unread one.
+    - `load` closes it. A failure errors it, as a fetch body's would:
+      with the error's message, or an `AbortError` / `TimeoutError`.
+    - Cancelling it gives up on the request: the worker stops, and the
+      request ends as aborted.
+  - Callbacks, in XMLHttpRequest's order: `onloadstart` when the SW
+    acks the start; `onreadystatechange` at 2 (headers) and 3 (first
+    piece); `onprogress` per piece (`lengthComputable`, `loaded`,
+    `total`); then `onreadystatechange` at 4, the terminal callback,
+    and `onloadend`.
+  - The page's 5-minute give-up timer is re-armed by every event, so
+    it times silence from the worker, not the whole transfer.
+  - A body too big for the page to hold (past a string's length limit,
+    say) ends the request with an `error` naming the cause and
+    suggesting `blob` or `stream`, and the worker is told to stop.
+  - A callback that aborts the request ends its callbacks there.
 
 ## `@connect` URL gating (Phase 10)
 
@@ -472,23 +531,19 @@ Known limitations (post-Phase 10):
   That hop carries the user's cookies, so what a script can provoke is
   a blind credentialed request — the response stays out of reach, the
   side effect on the target doesn't.
-- **Response size cap of 50 MB.** The body is streamed and the request
-  is aborted once it exceeds `MAX_RESPONSE_BYTES`, so a script can't
-  OOM the service worker with a huge fetch. The script sees an `error`
-  event. Raise the constant if a real payload needs more headroom.
-- **No `onprogress` events** — only the final `load`/`error`/
-  `timeout`/`abort` event lands on the page. Adding progress
-  would need a streaming wire format.
+- **No upload progress** (`upload.onprogress`): the request body goes
+  out in one `fetch`, which reports nothing as it sends.
 - **Abort-after-response-arrived narrow race.** If the page calls
   `handle.abort()` AFTER the SW has fired its load event but BEFORE
   the page processes it, the userscript sees `onabort` instead of
   `onload`. A real fix needs a SW round-trip on abort; for v1 the
   page-side abort is synchronous (TM/VM-matching) and the race
   window is small.
-- **Per-request TTL of 5 minutes on the page side.** If the SW
-  crashes and never sends a terminal event, the page eventually
-  synthesizes an `error` event so `activeRequests` doesn't leak
-  forever.
+- **A 5-minute silence timer on the page side.** If the SW crashes and
+  never sends a terminal event, the page synthesizes an `error` event
+  so `activeRequests` doesn't leak forever. Every event re-arms it, so
+  it times silence, not the transfer, and when it fires it tells the
+  SW to stop.
 
 ## Value-change listeners (`GM_addValueChangeListener` / `GM_removeValueChangeListener`)
 

@@ -123,6 +123,8 @@ export interface ConnectOptions {
    */
   tempBrowser?: boolean;
   headed?: boolean;
+  /** With `tempBrowser`: whether it has sound (false), or is muted (the default). */
+  muted?: boolean;
   /**
    * `--lang`: the languages the run's tabs prefer (see browser-lang.ts).
    * A `tempBrowser` is launched with them too.
@@ -195,16 +197,16 @@ export interface BrowserSession {
 }
 
 /**
- * `reuseTab`: in a connected browser, take over the selected tab when
- * it is one an earlier, finished run opened, rather than opening
- * another. See `openRunTab`.
+ * `runTab`: in a connected browser, open the run's tab with
+ * `openRunTab`, which closes the selected tab when an earlier,
+ * finished run opened it.
  */
 export async function connectBrowser(
   opts: ConnectOptions,
   out: (line: string) => void,
-  { reuseTab = false } = {},
+  { runTab = false } = {},
 ): Promise<BrowserSession | null> {
-  const session = await openBrowser(opts, out, { reuseTab, openTab: true });
+  const session = await openBrowser(opts, out, { runTab, openTab: true });
   session?.notes.forEach(out);
   return session;
 }
@@ -234,15 +236,15 @@ async function isHeadless(browser: Browser): Promise<boolean> {
 
 // `connectBrowser`, and for `start --notab`, the same with no tab.
 async function openBrowser(
-  opts: ConnectOptions, out: (line: string) => void, o: { reuseTab: boolean; openTab: true },
+  opts: ConnectOptions, out: (line: string) => void, o: { runTab: boolean; openTab: true },
 ): Promise<BrowserSession | null>;
 async function openBrowser(
-  opts: ConnectOptions, out: (line: string) => void, o: { reuseTab: boolean; openTab: boolean },
+  opts: ConnectOptions, out: (line: string) => void, o: { runTab: boolean; openTab: boolean },
 ): Promise<RunSession | null>;
 async function openBrowser(
   opts: ConnectOptions,
   out: (line: string) => void,
-  { reuseTab, openTab }: { reuseTab: boolean; openTab: boolean },
+  { runTab, openTab }: { runTab: boolean; openTab: boolean },
 ): Promise<RunSession | null> {
   const { chromium } = await import('@playwright/test');
   let browser: Browser;
@@ -257,7 +259,7 @@ async function openBrowser(
   if (opts.tempBrowser) {
     let launched;
     try {
-      launched = await launchExtensionBrowser({ headed: opts.headed === true, args: langLaunchArgs(opts.lang), connectedElsewhere: true });
+      launched = await launchExtensionBrowser({ headed: opts.headed === true, muted: opts.muted, args: langLaunchArgs(opts.lang), connectedElsewhere: true });
     } catch (err) {
       out(`Could not launch a browser with SourceMonkey: ${(err as Error).message}`);
       return null;
@@ -304,7 +306,7 @@ async function openBrowser(
   const page = !openTab ? null
     // The one blank tab a launch leaves for the run.
     : closeLaunched ? context.pages()[0] ?? await context.newPage()
-    : reuseTab && endpoint !== null
+    : runTab && endpoint !== null
       ? await openRunTab(browser, context, endpoint, (line) => notes.push(line)).catch(() => context.newPage())
       : await context.newPage();
   return {
@@ -336,7 +338,7 @@ interface ScriptChange {
 /** A `start` session, whose `--notab` form has no tab. */
 type RunSession = Omit<BrowserSession, 'page'> & { page: Page | null };
 
-// ---------- Reusing a run's tab ----------
+// ---------- A run's tab ----------
 
 // The tabs runs have opened, so a later one can recognize
 // them: a tab carries no mark of its own that a page couldn't also set.
@@ -348,16 +350,17 @@ interface RunTab {
   /** CDP's id for the tab, not the `chrome.tabs` id an extension sees. */
   tabTargetId: string;
   pid: number;
-  /** The run's name, once it has one (`nameRunTab`), for the next run's "Reusing" line. */
+  /** The run's name, once it has one (`nameRunTab`), for the next run's "Closed" line. */
   run?: string;
 }
 
 /**
- * The tab for a new run: the selected tab, when an earlier run opened
- * it and has since ended, so re-running from a terminal doesn't pile up
- * tabs; otherwise a new one. "Selected" is the tab showing in its
- * window: the terminal has the focus, so no tab would count as
- * focused. Records the tab for the next run either way.
+ * The tab for a new run: always a new one, so the run starts on a clean
+ * page. The selected tab is closed when an earlier run opened it and
+ * has since ended, so re-running from a terminal doesn't pile up tabs.
+ * "Selected" is the tab showing in its window: the terminal has the
+ * focus, so no tab would count as focused. Records the tab for the
+ * next run.
  */
 async function openRunTab(
   browser: Browser,
@@ -373,31 +376,37 @@ async function openRunTab(
   const free = new Set(records
     .filter((r) => r.endpoint === endpoint && live.has(r.tabTargetId) && !processAlive(r.pid))
     .map((r) => r.tabTargetId));
-  let page: Page | null = null;
+  let old: Page | null = null;
   // Only when one could be free, since reading a page's target id
   // means a protocol session per tab.
   if (free.size > 0) {
     for (const candidate of context.pages()) {
       const id = await targetIdOf(candidate);
       if (id && free.has(id) && await isSelected(candidate)) {
-        page = candidate;
+        old = candidate;
         break;
       }
     }
   }
-  if (page) {
-    const id = await targetIdOf(page);
-    const opener = records.find((r) => r.endpoint === endpoint && r.tabTargetId === id)?.run;
-    out(`[sm-dev] Reusing the selected tab (${page.url()}), which ${opener ? `run ${opener}` : 'an earlier run'} opened. That run has ended.`);
-    staleTabs.add(page);
+  const page = await context.newPage();
+  // Closed only when the new tab opened in its window, so the window
+  // isn't left empty (and closed with it). With several windows, the
+  // new tab opens in the last focused one, which may be another.
+  if (old && await sameWindow(browser, old, page)) {
+    const oldId = await targetIdOf(old);
+    const opener = records.find((r) => r.endpoint === endpoint && r.tabTargetId === oldId)?.run;
+    const url = old.url();
+    // Without its unload handlers, which could open a "leave site?"
+    // prompt nobody is there to answer.
+    await old.close({ runBeforeUnload: false }).then(
+      () => out(`[sm-dev] Closed the selected tab (${url}), which ${opener ? `run ${opener}` : 'an earlier run'} opened. That run has ended.`),
+      () => undefined,
+    );
   }
-  page ??= await context.newPage();
   const id = await targetIdOf(page);
   if (!id) return page;
   // Re-read just before writing, so a parallel run's entry written
-  // meanwhile survives. Two runs on one browser starting at the same
-  // moment could still both take the same free tab; that is left as
-  // too rare to lock against.
+  // meanwhile survives.
   const latest = await readRunTabs();
   // Drops this browser's closed tabs. Another browser's entries are
   // left as they are: a parallel session may be using that browser, and
@@ -408,8 +417,23 @@ async function openRunTab(
   return page;
 }
 
+// Whether two tabs are in one window. False when that can't be told.
+async function sameWindow(browser: Browser, a: Page, b: Page): Promise<boolean> {
+  const [idA, idB] = await Promise.all([targetIdOf(a), targetIdOf(b)]);
+  if (!idA || !idB) return false;
+  const cdp = await browser.newBrowserCDPSession();
+  try {
+    const [winA, winB] = await Promise.all([idA, idB].map((targetId) => cdp.send('Browser.getWindowForTarget', { targetId })));
+    return winA.windowId === winB.windowId;
+  } catch {
+    return false;
+  } finally {
+    await cdp.detach().catch(() => undefined);
+  }
+}
+
 // The run's name on the tab `openRunTab` recorded for it, which it
-// gets only once the run is open, after the tab was taken.
+// gets only once the run is open, after the tab was opened.
 async function nameRunTab(endpoint: string, page: Page, run: string): Promise<void> {
   const id = await targetIdOf(page);
   if (!id) return;
@@ -419,14 +443,6 @@ async function nameRunTab(endpoint: string, page: Page, run: string): Promise<vo
   mine.run = run;
   await writeRunTabs(tabs).catch(() => undefined);
 }
-
-// Reused tabs whose page is still the earlier run's, with its scripts
-// running. Their console lines and errors would show as this run's, so
-// they are dropped until the run's first navigation commits there. A
-// run with nothing to open there (no scripts, no URL) keeps the page as
-// it is, lines and all. The page is left alone otherwise, so a run that
-// fails before loading anything hasn't erased it.
-const staleTabs = new WeakSet<Page>();
 
 // Written whole and renamed into place, so a run reading it meanwhile
 // never sees half a file, which it would take for an empty one and
@@ -527,7 +543,7 @@ export async function run(opts: RunOptions): Promise<number> {
   const remote = new Remote(opts.out, opts.onStop, opts.onActivity, opts.primaryPid);
   // Every line also goes to whoever sent the command running now.
   opts = { ...opts, out: remote.out, hear: remote.hear, outCut: remote.outCut, typed: new Map(opts.files.map((file, i) => [file, opts.given?.[i] ?? file])) };
-  const session = await openBrowser(opts, opts.out, { reuseTab: true, openTab: !opts.noTab });
+  const session = await openBrowser(opts, opts.out, { runTab: true, openTab: !opts.noTab });
   if (!session) return 1;
   // Which browser, for the stream and the log.
   const browserIs = { browser: session.endpoint, owned: session.launched, headless: session.headless };
@@ -848,9 +864,6 @@ async function runInBrowser(
     const dialogs = await DialogTracker.attach(page, opts.out, {
       visible: browserVisible(opts), commandsComing, tabRef: () => (tabs.list().length > 1 ? 'T1' : undefined),
     });
-    // Attached before preparing, so a reused tab already on a secure
-    // page gives the scripts' GM_info the browser's userAgentData.
-    // Otherwise it stays null (see TODO.md).
     await applyLang(page, opts.lang, opts.out);
     const attachment = await attachPage(page, host, tabs.attachOptions);
     host.addTab(attachment, tabId);
@@ -862,7 +875,6 @@ async function runInBrowser(
   const start = startPages(opts, prepared);
   if (!start) return 2;
   const { urls } = start;
-  if (page && urls.length === 0) staleTabs.delete(page);
 
   // The loaded scripts, and the files they came from, in step: `load`
   // adds to both, `update` and `--watch` replace scripts in place.
@@ -1660,7 +1672,6 @@ function wirePageOutput(
   // takes a round trip; the lines after it wait, to stay in order.
   let pending: Promise<void> | null = null;
   page.on('console', (msg) => {
-    if (staleTabs.has(page)) return;
     if (!pending && !msg.args().some((arg) => arg.asElement())) {
       // `%c` styling and the like applied; Playwright's text has them raw.
       show(msg, msg.args().length > 1 ? formatConsoleArgs(msg.args().map((arg) => arg.toString())) : msg.text());
@@ -1675,7 +1686,6 @@ function wirePageOutput(
   // Which page load each line came from.
   page.on('framenavigated', (frame) => {
     if (frame !== page.mainFrame()) return;
-    staleTabs.delete(page);
     recordLog(page, `--- ${frame.url()}`);
   });
   // The uncaught error's stack is not mapped, and must not be:
@@ -1684,7 +1694,6 @@ function wirePageOutput(
   // a throw inside a `@require` carries that URL only unmapped. Only the
   // message is printed anyway.
   page.on('pageerror', (err) => {
-    if (staleTabs.has(page)) return;
     const message = decodeOwnRefs(err.message);
     const stack = err.stack ?? err.message;
     recordLog(page, `[error] ${message}`);

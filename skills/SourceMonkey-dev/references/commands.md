@@ -10,7 +10,8 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 ```
 
 - Global options go first: `--run ID`, `--browser URL|PORT`,
-  `--open-browser`, `--temp-browser`, `--stdin`, `--interactive`,
+  `--open-browser`, `--temp-browser`, `--headed`, `--mute`, `--nomute`,
+  `--stdin`, `--interactive`,
   `--root DIR`, `--local DIR`, `--json`.
 - Read the text output by default: it's shorter, and says what an
   empty answer means and where to look next.
@@ -62,6 +63,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | --- | --- |
 | `sm-dev --open-browser` | Start a lasting, visible browser on port 9233 (kept profile, so logins persist). A no-op if one is up |
 | `sm-dev --temp-browser start ...` | A hidden throwaway browser for this run, with SourceMonkey loaded. Good for pages with no login |
+| `--headed`, `--nomute` | With `--temp-browser`: a visible window; sound on (it's muted otherwise) |
 | `sm-dev --browser 9300 ...` | Use the browser on another port |
 
 - A run pushes its scripts into SourceMonkey in that browser. With
@@ -123,8 +125,9 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `snapshot [sel] --find <text>` | Only elements containing the text (case insensitive), within `sel`'s matches |
 | `snapshot ... [--up N] [--context] [--limit N]` | For each match of `sel` or `--find`: N levels up, or with wrapper divs and small containers; first 5 matches (0: all) |
 | `probe <sel>... [--css] [--html]` | Which match and how many; selector / HTML of the first 10 |
-| `eval <js>` | Evaluate in the page; prints JSON (promises awaited) |
-| `eval --script[=<script>] <js>` | Evaluate inside the selected (or named) script, where its `GM_*` APIs, `@require` libraries, top-level declarations and IIFE locals are visible |
+| `eval <js>` | Evaluate inside the selected script, where its `GM_*` APIs, `@require` libraries, top-level declarations and IIFE locals are visible; prints JSON (promises awaited). In the page when no script is selected or it hasn't run there |
+| `eval --page <js>` | Evaluate in the page, where the page's own globals are |
+| `eval --script=<script> <js>` | Evaluate inside the named script |
 | `eval --file <path>` | Evaluate a JavaScript file |
 | `eval --out FILE <js>` | Write the result to a file; printed results are cut past 10,000 characters |
 | `cdp <Method> [json]` | A raw CDP call on the tab; the result as JSON. A `{{` block or `--file` holds several, one per line (see [cdp.md](cdp.md)) |
@@ -188,7 +191,7 @@ old) or DOM changes for 200ms. Timers aren't waited for.
 - Several lines, on stdin or at a prompt:
 
   ```
-  eval --script {{
+  eval {{
   const rows = [...document.querySelectorAll('.row')];
   rows.map((r) => r.id)
   }}

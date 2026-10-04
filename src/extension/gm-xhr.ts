@@ -19,15 +19,18 @@
 //     { type, id }
 //
 //   SW → page: `sm:gm-xhr-event`
-//     { type, id, event: GmXhrEvent }
+//     { type, id, event: GmXhrStreamEvent | GmXhrEvent }
+//     The stream events (headers, then the body's pieces) first, then
+//     one terminal event.
 //
 // `id` is a per-request UUID-ish string the page generates. The SW
 // just round-trips it.
 //
-// Two safety limits live here:
-//   - Response size cap (MAX_RESPONSE_BYTES): the body is streamed and
-//     the request is aborted if it exceeds the cap, so a userscript
-//     fetching a multi-GB resource can't OOM the service worker.
+// The response body streams to the page in `progress` pieces ahead of
+// the terminal `load` (see `streamBody`), so the worker never holds the
+// whole of it and no size cap is needed.
+//
+// One safety limit lives here:
 //   - `@connect` redirect re-validation: `fetch` follows redirects by
 //     default, so an allowlisted host could 302 to a disallowed one.
 //     The caller passes `isFinalUrlAllowed`; if the response came back
@@ -57,7 +60,7 @@ import {
   whenStaleRulesCleared,
   type HeaderRuleSpec,
 } from './gm-xhr-headers.js';
-import type { GmXhrEvent, GmXhrRequestPayload } from '../gm-xhr-types.js';
+import type { GmXhrEvent, GmXhrRequestPayload, GmXhrStreamEvent } from '../gm-xhr-types.js';
 
 // Per-request abort handles. Key: request id. `tabId` is the tab that
 // asked, so closing it can cancel what it left running — see
@@ -91,53 +94,29 @@ const activeXhrs = new Map<string, ActiveXhr>();
 // see whichever won.
 const XHR_HEADER_STALL_MS = 2 * 60 * 1000;
 
-// Cap on the response body we'll buffer into the service worker. A
-// userscript that fetches a huge resource would otherwise OOM the SW
-// (we hold the whole body in memory, and base64 for binary adds ~33%).
-// 50 MB is comfortably above any realistic GM_xmlhttpRequest payload
-// (icons, JSON, small media) while bounding the blast radius.
-const MAX_RESPONSE_BYTES = 50 * 1024 * 1024;
+// How much of the body goes in one `progress` message, at most. Big
+// enough that a large download isn't thousands of messages, small
+// enough that the worker never holds much of it and a message stays far
+// under Chrome's 64 MiB limit (base64 adds a third).
+const MAX_PIECE_BYTES = 1024 * 1024;
 
-// Sentinel thrown by `readBodyCapped` when the body exceeds the cap, so
-// the catch in `runXhr` can map it to a clean error event.
-class ResponseTooLargeError extends Error {
-  constructor() {
-    super(`response exceeded ${MAX_RESPONSE_BYTES}-byte cap`);
-    this.name = 'ResponseTooLargeError';
-  }
-}
-
-// Stream the body into a single Uint8Array, aborting once the running
-// total exceeds the cap. Used for both the binary and text paths so the
-// cap applies uniformly. Reading the bytes ourselves (rather than
-// res.text() / res.arrayBuffer()) is what lets us bail mid-stream
-// instead of materializing an unbounded body first.
-async function readBodyCapped(res: Response, cap: number): Promise<Uint8Array> {
-  const reader = res.body?.getReader();
-  if (!reader) {
-    // No readable stream (e.g. empty body, 204, some HEADs). Fall back
-    // to arrayBuffer, still enforcing the cap after the fact.
-    const buf = new Uint8Array(await res.arrayBuffer());
-    if (buf.byteLength > cap) throw new ResponseTooLargeError();
-    return buf;
-  }
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (!value) continue;
-    total += value.byteLength;
-    if (total > cap) {
-      try { await reader.cancel(); } catch { /* already torn down */ }
-      throw new ResponseTooLargeError();
-    }
-    chunks.push(value);
-  }
+// One run of the body's pieces into a single array.
+function joinPieces(pieces: Uint8Array[], total: number): Uint8Array {
+  if (pieces.length === 1) return pieces[0];
   const out = new Uint8Array(total);
   let offset = 0;
-  for (const c of chunks) { out.set(c, offset); offset += c.byteLength; }
+  for (const p of pieces) { out.set(p, offset); offset += p.byteLength; }
   return out;
+}
+
+// The body's length when the response says it, for `lengthComputable`.
+// Not with a Content-Encoding: Content-Length then counts the encoded
+// bytes, and the reader hands over decoded ones.
+function bodyLength(headers: Headers): number | null {
+  const encoding = headers.get('content-encoding');
+  if (encoding && encoding.trim().toLowerCase() !== 'identity') return null;
+  const length = Number(headers.get('content-length'));
+  return headers.has('content-length') && Number.isFinite(length) && length >= 0 ? length : null;
 }
 
 // Render the response headers as a single newline-joined string —
@@ -155,10 +134,26 @@ function serializeHeaders(headers: Headers): string {
   return lines.length === 0 ? '' : lines.join('\r\n') + '\r\n';
 }
 
-// Run a fetch on behalf of the page. Always resolves to the event to
-// send back, including for aborts and timeouts — the page-side runtime
-// fires its own `onabort` immediately as well, so a script sees that
-// one first.
+// A stream event that couldn't be delivered: the page that asked is
+// gone (closed, or navigated away). Chrome's own error says so in its
+// terms; this says it in ours.
+class PageGoneError extends Error {
+  constructor() {
+    super('The page that made the request is gone, so the request was stopped');
+    this.name = 'PageGoneError';
+  }
+}
+
+// Run a fetch on behalf of the page. Always resolves to the terminal
+// event to send back, including for aborts and timeouts — the page-side
+// runtime fires its own `onabort` immediately as well, so a script sees
+// that one first.
+//
+// Before that, `push` delivers the stream events: the headers, then the
+// body in pieces as it arrives (`streamBody`). Each push is awaited, so
+// they arrive in order and a slow page holds back the reading rather
+// than letting the worker buffer the body. A push that throws (the tab
+// is gone) aborts the request.
 //
 // `isFinalUrlAllowed`, when supplied, re-checks the response's URL
 // against the script's `@connect` policy after redirects. A response
@@ -172,6 +167,7 @@ function serializeHeaders(headers: Headers): string {
 export async function runXhr(
   id: string,
   request: GmXhrRequestPayload,
+  push: (event: GmXhrStreamEvent) => Promise<void>,
   isFinalUrlAllowed?: (url: string) => boolean,
   tabId: number | null = null,
 ): Promise<GmXhrEvent> {
@@ -301,54 +297,26 @@ export async function runXhr(
         message: connectBlockedMessage(`redirect to ${host} not allowed`),
       };
     }
-    const rt = request.responseType ?? 'text';
-    const isBinary = rt === 'blob' || rt === 'arraybuffer' || rt === 'document';
-    const mimeType = res.headers.get('content-type') ?? '';
-    const bytes = await readBodyCapped(res, MAX_RESPONSE_BYTES);
-    if (isBinary) {
-      // Binary path: serialize the body as base64 + carry the MIME
-      // type. The page-side reconstructs Blob / ArrayBuffer /
-      // Document. We use base64 (text) rather than `Array<byte>` or
-      // raw bytes because chrome.tabs.sendMessage's structured-clone
-      // path through the event listener doesn't always preserve
-      // ArrayBuffer cleanly across worlds; base64 always works.
-      const base64 = bytesToBase64(bytes);
-      return {
-        kind: 'load',
-        response: {
-          status: res.status,
-          statusText: res.statusText,
-          responseURL: res.url,
-          responseText: '',
-          response: null,
-          responseBase64: base64,
-          responseMimeType: mimeType,
-          responseHeaders: serializeHeaders(res.headers),
-          finalUrl: res.url,
-        },
-      };
-    }
-    // Text path. Response.text() decodes as UTF-8 (ignoring the
-    // Content-Type charset) and strips a leading BOM; TextDecoder's
-    // default does the same, so decoding the capped bytes here matches
-    // the prior res.text() behavior exactly.
-    const responseText = new TextDecoder().decode(bytes);
-    let response: unknown = responseText;
-    if (rt === 'json') {
-      // Tolerate a malformed JSON body — return the raw text in
-      // `response` if parsing fails. The userscript can still read
-      // `responseText` to debug.
-      try { response = JSON.parse(responseText); } catch { response = null; }
-    }
+    const total = bodyLength(res.headers);
+    const responseHeaders = serializeHeaders(res.headers);
+    // A push that fails means the page is gone; said in our words.
+    const pushOrStop = (event: GmXhrStreamEvent): Promise<void> => push(event).catch(() => {
+      throw new PageGoneError();
+    });
+    await pushOrStop({ kind: 'headers', status: res.status, statusText: res.statusText, finalUrl: res.url, responseHeaders, total });
+    await streamBody(res, total, pushOrStop, controller);
+    // The body went ahead in `progress` events; the page-side runtime
+    // builds `responseText` and `response` from them.
     return {
       kind: 'load',
       response: {
         status: res.status,
         statusText: res.statusText,
         responseURL: res.url,
-        responseText,
-        response,
-        responseHeaders: serializeHeaders(res.headers),
+        responseText: '',
+        response: null,
+        responseMimeType: res.headers.get('content-type') ?? '',
+        responseHeaders,
         finalUrl: res.url,
       },
     };
@@ -358,13 +326,9 @@ export async function runXhr(
     // shadow flag set by the timeout handler to know which one.
     const isAbortError =
       err instanceof Error && (err.name === 'AbortError' || /aborted/i.test(err.message));
-    // Precedence, unchanged: the script's own timeout outranks
-    // everything, then the size cap (which aborts the controller itself,
-    // so it must be claimed before the abort ladder), then the aborts.
+    // The script's own timeout outranks everything, then the aborts.
     if (timeoutFired) return terminalAbortEvent();
-    if (err instanceof ResponseTooLargeError) {
-      return { kind: 'error', message: `[SourceMonkey] ${err.message}` };
-    }
+    if (err instanceof PageGoneError) return { kind: 'error', message: err.message };
     if (headerStallFired || isAbortError) return terminalAbortEvent();
     const message = err instanceof Error ? err.message : String(err);
     return { kind: 'error', message };
@@ -372,10 +336,107 @@ export async function runXhr(
     if (timeoutTimer != null) clearTimeout(timeoutTimer);
     clearHeaderStall();
     activeXhrs.delete(id);
+    // Ends a body nobody read (a redirect refused, a page gone before
+    // the headers went out), which would otherwise hold its connection.
+    // Nothing once the request is done.
+    controller.abort();
     // Backstop for the abort, timeout and error paths — the success
     // path already dropped it. `removeHeaderRule` swallows its own
     // failures, so this can't reject out of the `finally`.
     if (installedRuleId != null) await removeHeaderRule(installedRuleId);
+  }
+}
+
+// Read the body and push it in pieces. A piece goes out as soon as the
+// previous push is done, holding whatever arrived meanwhile (up to
+// MAX_PIECE_BYTES), so a trickle of small reads still reaches the page
+// promptly while a fast download goes out in large pieces. Reading
+// waits only when a full piece is already waiting behind a push, so the
+// worker holds at most about two pieces.
+//
+// A push resolves once the page's listeners have run (none of them
+// answers with `sendResponse`), which is what makes it a brake: an
+// isolated-world page takes each piece as it comes. A page-world
+// script's pieces go through the bridge, which only re-posts them, so
+// there the brake is the bridge, not the script.
+//
+// A failed push aborts `controller` at once, so a read still waiting on
+// the network ends now rather than with the next chunk.
+async function streamBody(
+  res: Response,
+  total: number | null,
+  push: (event: GmXhrStreamEvent) => Promise<void>,
+  controller: AbortController,
+): Promise<void> {
+  const reader = res.body?.getReader();
+  // No body at all (a 204, a HEAD).
+  if (!reader) return;
+  // In an object, as the push's callbacks change it.
+  const state = {
+    waiting: [] as Uint8Array[],
+    waitingBytes: 0,
+    loaded: 0,
+    sending: null as Promise<void> | null,
+    failed: null as { err: unknown } | null,
+  };
+  const send = (): void => {
+    const piece = joinPieces(state.waiting, state.waitingBytes);
+    state.waiting = [];
+    state.waitingBytes = 0;
+    state.loaded += piece.byteLength;
+    state.sending = push({ kind: 'progress', data: bytesToBase64(piece), loaded: state.loaded, total })
+      .then(() => {
+        state.sending = null;
+        // What arrived meanwhile goes now, not with the next read: on
+        // a trickle that could be a long way off.
+        if (state.waitingBytes > 0) send();
+      }, (err: unknown) => {
+        state.sending = null;
+        state.failed = { err };
+        controller.abort();
+      });
+  };
+  // The pushes in flight done, and a failed one thrown.
+  const settle = async (): Promise<void> => {
+    while (state.sending) await state.sending;
+    if (state.failed) throw state.failed.err;
+  };
+  try {
+    for (;;) {
+      let result: ReadableStreamReadResult<Uint8Array>;
+      try {
+        result = await reader.read();
+      } catch (err) {
+        // Our own abort, for a failed push: that failure is the cause.
+        if (state.failed) throw state.failed.err;
+        throw err;
+      }
+      const { done, value } = result;
+      if (done) break;
+      if (state.failed) throw state.failed.err;
+      if (!value) continue;
+      // A read bigger than a piece is split, so no message outgrows one.
+      for (let at = 0; at < value.byteLength; at += MAX_PIECE_BYTES) {
+        const part = value.subarray(at, at + MAX_PIECE_BYTES);
+        // A full piece waiting: it goes next, once the pushes ahead of
+        // it are done.
+        if (state.waitingBytes > 0 && state.waitingBytes + part.byteLength > MAX_PIECE_BYTES) {
+          await settle();
+          if (state.waitingBytes > 0) send();
+        }
+        state.waiting.push(part);
+        state.waitingBytes += part.byteLength;
+        if (!state.sending) send();
+      }
+    }
+    await settle();
+    if (state.waitingBytes > 0) {
+      send();
+      await settle();
+    }
+  } catch (err) {
+    try { await reader.cancel(); } catch { /* already torn down */ }
+    throw err;
   }
 }
 

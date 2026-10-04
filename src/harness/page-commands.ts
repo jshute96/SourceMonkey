@@ -93,19 +93,23 @@ const MODIFIERS = ['Alt', 'Control', 'ControlOrMeta', 'Meta', 'Shift'] as const;
  */
 export interface PageInput extends ParsedArgs {
   userscripts: string[];
-  /** Where `eval --script` runs, resolved from the flag (see `EvalIn`). */
+  /** Where `eval` runs, resolved from its flags (see `EvalIn`). */
   evalIn?: EvalIn;
   /** Print the result as JSON (`--json`), for the commands with a JSON form. */
   json?: boolean;
 }
 
 /**
- * Where `eval --script` runs: a script's own scope, with its name for
- * messages and whether it was named (`--script=<script>`) or is the
- * selected one; or the scripts' shared world, with no run script
- * selected.
+ * Where `eval` runs: a script's own scope, with its name for messages,
+ * whether it was named (`--script=<script>`) or is the selected one, and
+ * the world it runs in instead when the selected one has no scope here;
+ * or a world: the page's (`--page`, or no run script selected), or the
+ * scripts' shared one (`--script` with none selected).
  */
-export type EvalIn = { scope: ScriptScope | null; name: string; named: boolean } | 'scripts';
+export type EvalIn = { scope: ScriptScope | null; name: string; named: boolean; fallback: EvalWorld } | EvalWorld;
+type EvalWorld = 'page' | 'scripts';
+
+const WORLD_NAMES: Record<EvalWorld, string> = { page: 'the page', scripts: 'the scripts\' shared world' };
 
 // Image types `screenshot` can write, by the file's extension.
 const IMAGE_FILE = /\.(png|jpe?g)$/i;
@@ -175,7 +179,7 @@ export async function runPageCommand(
       case 'eval': {
         // Its JavaScript: the rest of the line as typed, its quotes its
         // own, or a block's lines, or a file's.
-        const evalIn = input.evalIn ?? (input.flags['--script'] ? 'scripts' : 'page');
+        const evalIn = input.evalIn ?? 'page';
         const from = input.flags['--file'];
         let expression = [input.text, input.block].filter((part) => part).join('\n');
         if (typeof from === 'string') {
@@ -200,8 +204,8 @@ export async function runPageCommand(
         const noScope = typeof evalIn === 'object'
           ? `${evalIn.name} ${evalIn.scope ? 'hasn\'t run on this page' : 'isn\'t installed in the extension'}`
           : '';
-        // A selected script with no scope runs its code where `--script`
-        // always did, as said. A named one was asked for, so that's a
+        // A selected script with no scope runs its code in its fallback
+        // world, as said. A named one was asked for, so that's a
         // failure.
         const evaluate = (): Promise<string> => {
           if (typeof evalIn === 'string') return tab.link.evaluate(expression, evalIn);
@@ -209,8 +213,8 @@ export async function runPageCommand(
           return inScript.catch((err: unknown) => {
             if (!(err instanceof NoEvalHook)) throw err;
             if (evalIn.named) throw err;
-            say(`${noScope}, so this ran in the scripts' shared world`);
-            return tab.link.evaluate(expression, 'scripts');
+            say(`${noScope}, so this ran in ${WORLD_NAMES[evalIn.fallback]}`);
+            return tab.link.evaluate(expression, evalIn.fallback);
           });
         };
         const evaluated = evaluate().then((r) => { result = r; });
