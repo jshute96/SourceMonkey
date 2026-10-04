@@ -1951,7 +1951,7 @@ const OTHER_STATUS: Record<string, string> = {
   MISSING: 'Not started',
   UNEXPECTED: 'Running, though it doesn\'t match',
   RELOAD: 'Changed since it started',
-  NOT_LOADED: 'Kept out of the run\'s tabs',
+  NOT_LOADED: 'SourceMonkey script not loaded in sm-dev tab',
 };
 
 // `E1: Name (Collection)`, without the parentheses for a script whose

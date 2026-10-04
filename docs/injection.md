@@ -289,10 +289,12 @@ set, *how* the calls are grouped decides the result.
   scripts.
 - **An incremental sync that moves an own spec's pattern union updates
   it**, which lands it after the user scripts already registered. Not
-  repaired: nothing rests on the order once a wrapper checks for the
-  runtime lazily (see the reload fast path's `needsRuntime`), and
-  re-placing the world's scripts behind it would cost each an injection
-  gap.
+  repaired, and re-placing the world's scripts behind it would cost
+  each an injection gap:
+  - the runtime: a wrapper checks for it lazily (see the reload fast
+    path's `needsRuntime`);
+  - the bridge: a wrapper ahead of it sends its check-pending again
+    when the bridge announces itself (below).
 - **User specs then go out as batches**, since the relative order of two
   user scripts is not something we promise anyway — see
   [`@run-at` gating](#run-at-gating).
@@ -303,11 +305,16 @@ set, *how* the calls are grouped decides the result.
   - The bridge does. A request is a synchronous event dispatch, so a
     bridge that hasn't installed its listener yet misses it rather than
     picking it up from a queue.
-  - Bounded: the only request exposed is `sm:check-pending`, and the
-    prelude's 2s safety timer seals it (the script runs, without the
-    reload fast-path swap).
-  - So keeping our specs first is load-bearing for the bridge, not just
-    belt-and-braces.
+  - The only request exposed is `sm:check-pending`. Lost, the wrapper
+    would wait out the prelude's 2s safety timer and then run, whatever
+    the SW would have decided: an sm-dev run's claim, a "reload with no
+    userscripts", or a skip.
+  - So the bridge announces itself once its listener is in
+    (`sourcemonkey-bridge-ready`), and a wrapper still waiting sends its
+    request again, once. The bridge can land after the wrappers: an
+    incremental sync that widens its patterns updates it, which Chrome
+    moves to the end.
+  - Keeping our specs first still saves that round trip.
 
 ### Update, never unregister-then-register
 
@@ -966,8 +973,8 @@ Mechanics:
   request path is synchronous now: an event dispatched before the
   bridge's listener exists is dropped, not queued. Only the
   `sm:check-pending` handshake is exposed to that race, and the
-  prelude's 2s safety timer covers it (the script runs, just without
-  the reload fast-path swap). The script's own `GM_*` calls aren't: the
+  wrapper sends it again when the bridge announces itself (see
+  [Ordering](#ordering)). The script's own `GM_*` calls aren't: the
   body doesn't run until the handshake settles, by which point every
   `document_start` registration has executed.
 - The bridge is scoped like the runtime: its patterns are the union of

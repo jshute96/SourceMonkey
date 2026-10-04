@@ -266,9 +266,7 @@
           seal(d.reply && typeof d.reply === "object" ? d.reply : fallback);
         } catch (_e) {}
       };
-      window.addEventListener("message", listener, true);
-      cleanup = function () { try { window.removeEventListener("message", listener, true); } catch (_e) {} };
-      var dispatched = bridgeDispatch({
+      var request = {
         type: "sm:check-pending",
         id: cfg.id,
         name: cfg.name,
@@ -276,7 +274,27 @@
         url: location.href,
         needsValues: !!cfg.needsGmValues,
         tld: tld
-      }, requestId);
+      };
+      /* The bridge can be injected after this wrapper: a sync that
+         widens its patterns re-registers it behind the scripts already
+         registered. Its request event, sent before the bridge listened,
+         is gone, so when the bridge announces itself the request is
+         sent again, once. Without this the wrapper would wait out the
+         2s timer and run, whatever the SW would have decided. */
+      var resent = false;
+      var onReady = function () {
+        if (resent) return;
+        resent = true;
+        bridgeDispatch(request, requestId);
+      };
+      window.addEventListener("message", listener, true);
+      /* READY_MARKER in wrapper-bridge.js. */
+      window.addEventListener("sourcemonkey-bridge-ready", onReady, true);
+      cleanup = function () {
+        try { window.removeEventListener("message", listener, true); } catch (_e) {}
+        try { window.removeEventListener("sourcemonkey-bridge-ready", onReady, true); } catch (_e2) {}
+      };
+      var dispatched = bridgeDispatch(request, requestId);
       /* Nothing left the page, so no reply is coming. Seal now rather
          than costing this script the full 2s safety timeout. */
       if (!dispatched) seal(fallback);

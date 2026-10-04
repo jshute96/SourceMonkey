@@ -1264,7 +1264,7 @@ Terms used below:
     - An extension before protocol 1.1 numbers none; then they are
       `E1`, `E2`, ... in the order the run first sees them.
   - The run's claim keeps them out of its tabs, so their status there
-    is "Kept out of the run's tabs".
+    is "SourceMonkey script not loaded in sm-dev tab".
   - `values E1` shows one's values; `scripts E1` picks it for `get`
     and `set`, and it's marked `*` in the list.
     - Any installed script can be picked, by its number from `script

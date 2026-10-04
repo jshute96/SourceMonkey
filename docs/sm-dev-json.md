@@ -402,7 +402,7 @@ Loaded scripts (with status on active tab T1):
   2: Log example (scripts/gm-log.user.js)
      Not active
 SourceMonkey-managed scripts on T1:
-  E1: Dark mode (Scripts from web): Kept out of the run's tabs
+  E1: Dark mode (Scripts from web): SourceMonkey script not loaded in sm-dev tab
 ```
 
 JSON:
@@ -997,7 +997,7 @@ E1: Dark mode 2.1
   @run-at:      document-start
   @grant:       GM_addStyle, GM_getValue, GM_setValue
   @require:     https://cdn.example.org/lib.js (ok)
-  Tabs:         T1: Kept out of the run's tabs
+  Tabs:         T1: SourceMonkey script not loaded in sm-dev tab
   Values:       2 stored (values E1 to see them)
 ```
 
