@@ -843,6 +843,9 @@ test.describe('other-versions panel', () => {
     await page.goto(`chrome-extension://${extensionId}/${viewer(middle)}`);
     await page.locator(`${PANEL} tr[data-script-id="${last}"]`).click();
     await page.waitForURL(`**/${viewer(last)}`);
+    // The swap moves the URL before it redraws the panel, so until the
+    // current row moves too, `tr.is-current` is still the middle copy.
+    await expect(page.locator(`${PANEL} tr.is-current`)).toHaveAttribute('data-script-id', last);
 
     await page.locator(`${PANEL} tr.is-current .versions-remove`).click();
     await page.waitForURL(`**/${viewer(first)}`);
