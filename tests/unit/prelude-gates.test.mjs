@@ -25,8 +25,12 @@ function makeEnv({ readyState = 'loading' } = {}) {
   const docListeners = new Map();
   const winListeners = new Map();
   const sent = [];
+  const infos = [];
   let replyResolve;
-  const reply = new Promise((res) => { replyResolve = res; });
+  let replyReject;
+  const reply = new Promise((res, rej) => { replyResolve = res; replyReject = rej; });
+  // The decision's timeout, held for the test to fire.
+  let decisionTimeout = null;
 
   const add = (map) => (type, fn) => {
     if (!map.has(type)) map.set(type, []);
@@ -34,9 +38,16 @@ function makeEnv({ readyState = 'loading' } = {}) {
   };
 
   const sandbox = {
-    setTimeout,
-    clearTimeout,
-    console: { log() {}, info() {} },
+    setTimeout: (fn, ms) => {
+      if (ms !== sandbox.__smPrelude?.decisionTimeoutMs) return setTimeout(fn, ms);
+      decisionTimeout = fn;
+      return -1;
+    },
+    clearTimeout: (id) => {
+      if (id === -1) decisionTimeout = null;
+      else clearTimeout(id);
+    },
+    console: { log() {}, info(...args) { infos.push(args.join(' ')); } },
     location: { href: 'https://example.com/page' },
     document: {
       readyState,
@@ -75,8 +86,13 @@ function makeEnv({ readyState = 'loading' } = {}) {
   return {
     sandbox,
     sent,
+    infos,
     // Settle the decision gate.
     decide(decision) { replyResolve(decision); },
+    // The SW call fails.
+    failCall(err) { replyReject(err); },
+    // The decision's timeout runs out, if it's still armed.
+    timeOut() { decisionTimeout?.(); },
     // Settle the @run-at gate for the non-start lifecycles.
     domContentLoaded() {
       sandbox.document.readyState = 'interactive';
@@ -252,3 +268,26 @@ test('run-new swaps the body, and not before the run-at gate', async () => {
   assert.equal(ran.count, 0, 'the baked-in body is replaced, not also run');
   assert.ok(env.sentTypes().includes('sm:swapped'));
 });
+
+// With no decision the script does NOT run: the decision is what keeps
+// it out of an sm-dev run's tabs and honours a skip. It says why, in the
+// page's console and in its report to the SW.
+for (const [what, cause, detail] of [
+  ['no answer in time', (env) => env.timeOut(), /did not answer whether to run it within 10 seconds/],
+  // Chrome's own messages end in a period, which isn't doubled.
+  ['a failed call', (env) => env.failCall(new Error('Receiving end does not exist.')), /Asking SourceMonkey whether to run it failed: Receiving end does not exist/],
+  ['an unreadable answer', (env) => env.decide(undefined), /answer whether to run it was unreadable/],
+  ['the bridge\'s failure', (env) => env.decide({ bridgeError: 'Asking SourceMonkey failed: gone' }), /Asking SourceMonkey failed: gone/],
+]) {
+  test(`no decision (${what}): the script doesn't run, and says why`, async () => {
+    const env = makeEnv({ readyState: 'complete' });
+    const ran = install(env, 'document-idle');
+    cause(env);
+    await settle();
+    assert.equal(ran.count, 0);
+    const abandoned = env.sent.find((m) => m.type === 'sm:abandoned');
+    assert.equal(abandoned?.reason, 'no-decision');
+    assert.match(abandoned.detail, detail);
+    assert.ok(env.infos.some((line) => /Demo: It did not run\. .*[^.]\.$/.test(line)), env.infos.join('\n'));
+  });
+}

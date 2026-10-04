@@ -29,11 +29,11 @@ Update this doc when a result changes.
 Specs that opt out of a manager via
 `test.skip(setup.manager === '<name>', '<reason>')`:
 
-- **`xmlhttp-denied/`** — skipped under **both** TM and VM. It asserts
-  SM's exact `"blocked by this script's @connect rules"` message. Each
-  of TM and VM has its own `@connect` UX (potentially prompting the
-  user) and its own denial message. Out of scope for cross-manager
-  comparison.
+- **`xmlhttp-denied/`** — skipped under **both** TM and VM. It answers
+  SM's own connection prompt window and asserts SM's exact `"was denied
+  for this script"` message. TM prompts in its own way, VM doesn't
+  check `@connect` at all, and each has its own messages. Out of scope
+  for cross-manager comparison.
 - **`gm-menu/`** (by-name test only) — skipped under **VM**. VM keys
   menu commands by `opts.id || caption`
   (`GM_registerMenuCommand` in its `src/injected/web/gm-api.js`), so

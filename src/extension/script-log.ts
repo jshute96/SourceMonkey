@@ -161,8 +161,9 @@ export interface AppendLogInput {
   // Optional override for the timestamp (tests use this to keep output
   // deterministic). Production callers omit it and get Date.now().
   timestamp?: number;
-  // The entry records a script's own report (started, threw, skipped),
-  // which sm-dev runs already hear as a report event. Not stored.
+  // The entry repeats something sm-dev runs already hear as an event of
+  // its own: a script's report (started, threw, skipped), or a
+  // connection prompt opening. The flag isn't stored; the entry is.
   fromReport?: boolean;
 }
 

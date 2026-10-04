@@ -27,7 +27,7 @@ import { remapStackText } from '../stack-link.js';
 import type { StackLayout } from '../composed-source.js';
 import { decodeOwnRefs } from './page-output.js';
 import {
-  HarnessHost, valueCodec, type DownloadRecord, type MenuCommandRecord, type NotificationRecord, type PageLink, type TabRecord, type XhrRecord,
+  HarnessHost, valueCodec, type ConnectChoice, type ConnectPromptRecord, type DownloadRecord, type MenuCommandRecord, type NotificationRecord, type PageLink, type TabRecord, type XhrRecord,
 } from './host.js';
 import type { ConsoleContext, OtherScript } from './console-commands.js';
 import type { LogEntry } from './extension-backend.js';
@@ -39,7 +39,7 @@ export interface WatchedPage extends PageLink {
   documentStart(): number;
 }
 
-type TabEvent = Extract<ExtensionEvent, { kind: 'report' | 'menu' | 'values' | 'request' | 'download' | 'notification' }>;
+type TabEvent = Extract<ExtensionEvent, { kind: 'report' | 'menu' | 'values' | 'request' | 'download' | 'notification' | 'connect-prompt' }>;
 
 // How long a tab's event waits for its document, or for the tab to be
 // set up, before it's handled anyway or dropped.
@@ -132,6 +132,11 @@ export class ExtensionHost extends HarnessHost {
     if (tabId !== undefined && !this.tabs.has(tabId) && !this.early.has(tabId)) return;
     const page = tabId === undefined ? undefined : this.tabs.get(tabId)?.page;
     this.printLog({ scriptId: runId, name: this.nameOf(runId), level: entry.level, message: decodeOwnRefs(this.remapStack(entry.message)), page });
+  }
+
+  /** The extension's id for the run's script `runId`, once pushed. */
+  extensionIdOf(runId: string): string | undefined {
+    return this.extensionIds.get(runId);
   }
 
   /** How the extension's script `extensionId` maps back to its files, if known. */
@@ -229,6 +234,19 @@ export class ExtensionHost extends HarnessHost {
       (v === undefined ? { key, deleted: true } : { key, value: encodeValue(v) })));
   }
 
+  // One object per script, brought up to date, so one picked earlier
+  // (`scripts E1`) shows what the latest listing found.
+  private other(id: string, label: string, facts: Partial<Pick<OtherScript, 'name' | 'collection' | 'status'>>): OtherScript {
+    const other = this.others.get(label) ?? {
+      label, name: '', collection: '', status: '',
+      values: () => this.extensionValues(id),
+      setValues: (values: Record<string, unknown>) => this.writeExtensionValues(id, values),
+    };
+    Object.assign(other, facts);
+    this.others.set(label, other);
+    return other;
+  }
+
   /**
    * The SourceMonkey-managed scripts, for the commands (`ConsoleContext.others`).
    * `guarded`: `set` on one changes the person's real data.
@@ -248,19 +266,15 @@ export class ExtensionHost extends HarnessHost {
           let label = row.number !== undefined ? `E${row.number}` : this.otherLabels.get(row.id);
           if (!label) label = `E${this.otherLabels.size + 1}`;
           this.otherLabels.set(row.id, label);
-          // One object per script, brought up to date, so one picked
-          // earlier (`scripts E1`) shows what the latest listing says.
-          const other = this.others.get(label) ?? {
-            label, name: '', collection: '', status: '',
-            values: () => this.extensionValues(row.id),
-            setValues: (values: Record<string, unknown>) => this.writeExtensionValues(row.id, values),
-          };
-          Object.assign(other, { name: row.name, collection: row.collection, status: row.status });
-          this.others.set(label, other);
-          return other;
+          return this.other(row.id, label, { name: row.name, collection: row.collection, status: row.status });
         });
       },
+      installed: (id, label, name, collection) => this.other(id, label, { name, collection }),
     };
+  }
+
+  override async answerConnectPrompt(promptId: string, choice: ConnectChoice): Promise<boolean> {
+    return this.link.answerConnectPrompt(promptId, choice);
   }
 
   override async clickNotification(requestId: string): Promise<boolean> {
@@ -344,6 +358,10 @@ export class ExtensionHost extends HarnessHost {
       this.recordActivity(runId, state.page, event);
       return;
     }
+    if (event.kind === 'connect-prompt') {
+      this.recordConnectPrompt(runId, state.page, event);
+      return;
+    }
     if (event.kind === 'values') {
       this.recordValueWrites(state.page, runId, event.writes);
       return;
@@ -362,7 +380,9 @@ export class ExtensionHost extends HarnessHost {
       // A tab with its scripts turned off (`--noscript`) skips them on
       // each load, as asked: nothing to say.
       if (event.reason === SKIP_REASON_SM_DEV) return;
-      this.recordSkip(state.page, { ...fields, reason: event.reason || 'skip' });
+      // With no decision, the why (`detail`, from protocol 1.4) rather
+      // than its token.
+      this.recordSkip(state.page, { ...fields, reason: event.detail?.replace(/\.+$/, '') || event.reason || 'skip' });
     }
   }
 
@@ -377,6 +397,31 @@ export class ExtensionHost extends HarnessHost {
     this.reports.tabs.push(record);
     this.recordPages.set(record, from);
     this.notify('tab', record);
+  }
+
+  // A connection prompt for one of the run's scripts: one record, which
+  // the answer fills in.
+  private recordConnectPrompt(runId: string, page: WatchedPage, event: Extract<TabEvent, { kind: 'connect-prompt' }>): void {
+    let record = this.reports.connectPrompts.find((r) => r.promptId === event.promptId);
+    if (event.op === 'shown') {
+      if (record) return;
+      record = {
+        scriptId: runId, name: this.nameOf(runId), promptId: event.promptId, host: event.host,
+        url: event.url ?? '', method: event.method ?? 'GET', at: event.at,
+      } satisfies ConnectPromptRecord;
+      this.reports.connectPrompts.push(record);
+      this.recordPages.set(record, page);
+      this.notify('connect-prompt', record);
+      return;
+    }
+    if (!record || record.answer || record.closed) return;
+    if (event.op === 'closed') {
+      record.closed = true;
+      return;
+    }
+    if (!event.answer) return;
+    record.answer = event.answer;
+    this.notify('connect-prompt', record);
   }
 
   // A request, download or notification, recorded as the harness host

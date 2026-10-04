@@ -44,7 +44,7 @@ A backlog of **candidates**, not a list of obligations.
     raise buys the slow case by delaying every fast one.
   - `runAt` is already on the wrapper's config blob, so adding it to
     the `sm:check-pending` payload is the whole plumbing cost.
-  - Hard ceiling either way: the prelude's own 2s `awaitDecision`
+  - Hard ceiling either way: the prelude's own 10s `awaitDecision`
     timeout, measured from when the wrapper asked. A window that
     outlives it gets a reply nobody is listening for, and the entry is
     already marked consumed. Leave real margin.
@@ -342,13 +342,6 @@ wasn't checked.
     its `@sandbox` default). Worth deciding whether to pick the page
     world automatically, rather than only for `@inject-into page` and
     `@grant unsafeWindow` (see docs/injection.md).
-- **Strict `@connect`** (`connect-undeclared`: 25068, 373252, 476943,
-  479460, 445051).
-  - With no `@connect`, every `GM_xmlhttpRequest` is refused. TM asks
-    the user at request time; VM allows the request.
-  - A per-host "allow this request" prompt (or a collections-page
-    toggle) would cover it without dropping the check. Pairs with the
-    `@connect *` warning under "`@connect` follow-ups".
 - **`GM_cookie`** (463802) is the whole failure for a Reddit script.
   See "GM_* APIs not yet in the catalog".
 
@@ -391,6 +384,16 @@ wasn't checked.
   [docs/supported-headers.md](docs/supported-headers.md).
 
 ## `GM_*` — deferred surface
+
+- **Say which network failure stopped a request.** `fetch` gives the
+  same bare "Failed to fetch" for a name that doesn't resolve, a refused
+  or dropped connection, a TLS failure, a request another extension
+  blocked, and an unsafe port, so `unreachableMessage` lists the causes.
+  - `chrome.webRequest.onErrorOccurred` has the real `net::ERR_*` per
+    request, but needs the `webRequest` permission, which the manifest
+    doesn't have.
+  - The message names the request's own host. When a redirect led to the
+    dead host, it should name that one.
 
 The Phase 1–10 work shipped the priority APIs; everything below is
 either a follow-up gap, a tractable second-tier API, or a research
@@ -783,6 +786,18 @@ Adding any of these is a catalog entry + a body — nothing structural.
 
 ## `@connect` follow-ups
 
+- **Connection policy and modes.** The prompt asks per request; the
+  wider policy is still open:
+  - What to do with the `@connect` hosts a script declares at install,
+    and with new ones an update adds. Accept them by default, show them
+    for review, let the user revoke one?
+  - A global strictness setting (ask / allow / deny undeclared hosts),
+    with care: TM's per-request prompting is a known annoyance.
+- **Several prompts at once.** A script that reaches several new hosts
+  together opens a window per host. One window listing them would be
+  kinder.
+- **An answer covers one exact host.** "Allow cdn.example.com" doesn't
+  cover `img.cdn.example.com`. Consider offering the parent domain.
 - **`self` subdomain handling.** TM/VM treat `self` as "the
   script's own origins OR their subdomains"; SourceMonkey matches
   `self` hosts exactly. See `src/gm-connect.ts#hostMatchesRule`. Fix:
@@ -875,10 +890,6 @@ See [docs/harness-design.md](docs/harness-design.md).
 - A tab a run tab opens is set up after its scripts ran, so their
   console lines from that first load don't reach the run (the reports
   do).
-- When a claimed tab's wrapper times out asking the worker (a worker
-  slow to start) and runs an extension script anyway, the run doesn't
-  say so. The extension's `started` event could tell it: a script the
-  run didn't push starting in its tab.
 - **A run's commands take turns across all its clients.**
   `commandRunner` (`src/harness/console-commands.ts`) queues every
   command, so one client's `wait 30s` holds up the others.
@@ -892,6 +903,21 @@ See [docs/harness-design.md](docs/harness-design.md).
 - **An init script for the run's lifetime.** `cdp
   Page.addScriptToEvaluateOnNewDocument` ends with that one call's
   session, so an observer can't be put in place before a reload.
+- **Browser-level prompts go unseen.** A page that opens a custom
+  scheme link (Douyin's `snssdk://`, say) gets Chrome's "Open
+  xdg-open?" external-protocol prompt. It isn't a page dialog, so
+  Playwright and the dialog tracker never see it, and nothing tells the
+  run a tab has one up.
+  - It doesn't block the page's JavaScript, but it covers the page in a
+    visible browser and may hold up a navigation.
+  - Options: turn external-protocol launches off in temp browsers (a
+    Chrome preference or policy, to find), and report a navigation to a
+    non-web scheme from a run's tab.
+- **`open` takes no `--timeout-seconds`**, unlike `start` and `wait`;
+  slow sites (Douyin) often pass its 30s load limit.
+- **`reload` of a `--noscript` tab printed a script's "no @connect
+  lines" note**, though that tab runs no scripts (corpus 518609). Seen
+  once; find which path printed it.
 
 ## Tabs that predate the first script install
 

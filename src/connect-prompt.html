@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>SourceMonkey | Network permission required</title>
+    <link rel="stylesheet" href="styles.css" />
+    <style>
+      body { font: 14px system-ui, sans-serif; margin: 0; color: #222; background: #fff; --page-width: 100%; }
+      .page-body { padding: 14px 16px; }
+      p { margin: 0 0 10px; line-height: 18px; }
+      .target { font-weight: 600; overflow-wrap: anywhere; }
+      .question { font-weight: 600; margin-top: 14px; }
+      .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 4px; }
+      .actions button { padding: 0 11px; }
+      .actions button.primary { font-weight: 600; }
+      #error { color: #b00020; }
+      a { color: #0b57d0; }
+    </style>
+  </head>
+  <body>
+    <header class="page-header">
+      <div class="page-header-inner">
+        <img class="page-icon" src="icons/icon-48.png" alt="" />
+        <h1><span class="brand">SourceMonkey |</span> Network permission required</h1>
+      </div>
+    </header>
+    <div class="page-body">
+      <p>Script <a id="script" class="target" href="#" target="_blank" rel="noopener"></a>
+        is requesting access to <a id="site" class="target" href="#" target="_blank" rel="noopener"></a>.</p>
+      <p>Granting this permission allows the script to act as you on the target page.</p>
+      <p>You can revoke permissions on the script's page.</p>
+      <p id="error" hidden></p>
+      <p class="question">Allow one time?</p>
+      <div class="actions">
+        <button id="once" type="button" title="Allow this request one time">Allow once</button>
+        <button id="cancel" type="button" title="Deny this request one time">Cancel</button>
+      </div>
+      <p class="question">Allow permanently?</p>
+      <div class="actions">
+        <button id="allow" type="button" class="primary" title="Allow access to this site every time">Allow</button>
+        <button id="deny" type="button" title="Deny access to this site every time">Deny</button>
+        <button id="allow-all" type="button" title="Allow this script all access to ALL sites">Allow all sites</button>
+      </div>
+    </div>
+    <script type="module" src="extension/connect-prompt-page.js"></script>
+  </body>
+</html>

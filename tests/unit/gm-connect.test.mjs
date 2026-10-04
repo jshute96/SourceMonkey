@@ -8,7 +8,7 @@ import {
   parseConnectRules,
   hostMatchesRule,
   extractSelfHosts,
-  isUrlConnectAllowed,
+  decideConnect,
 } from '../../dist/gm-connect.js';
 
 test('parseConnectEntry: lowercases + classifies wildcards / self', () => {
@@ -121,41 +121,65 @@ test('extractSelfHosts: pulls hostnames from @match and @include globs', () => {
   assert.deepEqual([...hosts].sort(), ['bar.com', 'example.com', 'foo.com']);
 });
 
-test('isUrlConnectAllowed: no @connect → block', () => {
-  const r = isUrlConnectAllowed('https://example.com/x', [], new Set());
-  assert.equal(r.allowed, false);
-  assert.match(r.reason, /@connect not declared/);
+const ALLOW = { verdict: 'allow' };
+const ask = (host) => ({ verdict: 'ask', host });
+
+test('decideConnect: no @connect asks about any http(s) host', () => {
+  assert.deepEqual(decideConnect('https://example.com/x', [], new Set()), ask('example.com'));
+  assert.deepEqual(decideConnect('http://API.Example.com:8080/x', [], new Set()), ask('api.example.com'));
 });
 
-test('isUrlConnectAllowed: wildcard allows everything', () => {
-  const r = isUrlConnectAllowed('https://anything.com/x', [{ kind: 'wildcard' }], new Set());
-  assert.equal(r.allowed, true);
+test('decideConnect: wildcard allows everything, host-less URLs included', () => {
+  assert.deepEqual(decideConnect('https://anything.com/x', [{ kind: 'wildcard' }], new Set()), ALLOW);
+  assert.deepEqual(decideConnect('data:text/plain,hi', [{ kind: 'wildcard' }], new Set()), ALLOW);
 });
 
-test('isUrlConnectAllowed: bare host matches it and its subdomains, others rejected', () => {
+test('decideConnect: bare host matches it and its subdomains, and asks about others', () => {
   const rules = [{ kind: 'host', host: 'example.com' }];
-  assert.equal(isUrlConnectAllowed('https://example.com/x', rules, new Set()).allowed, true);
-  assert.equal(isUrlConnectAllowed('https://api.example.com/x', rules, new Set()).allowed, true);
-  assert.equal(isUrlConnectAllowed('https://evilexample.com/x', rules, new Set()).allowed, false);
-  const r = isUrlConnectAllowed('https://other.com/x', rules, new Set());
-  assert.equal(r.allowed, false);
-  assert.match(r.reason, /not in @connect/);
+  assert.deepEqual(decideConnect('https://example.com/x', rules, new Set()), ALLOW);
+  assert.deepEqual(decideConnect('https://api.example.com/x', rules, new Set()), ALLOW);
+  assert.deepEqual(decideConnect('https://evilexample.com/x', rules, new Set()), ask('evilexample.com'));
 });
 
-test('isUrlConnectAllowed: invalid URL → block with reason', () => {
-  const r = isUrlConnectAllowed('not-a-url', [{ kind: 'wildcard' }], new Set());
-  assert.equal(r.allowed, false);
+test('decideConnect: an unparseable URL is invalid, not a denial', () => {
+  const r = decideConnect('not-a-url', [{ kind: 'wildcard' }], new Set());
+  assert.equal(r.verdict, 'invalid');
   assert.match(r.reason, /not a valid URL/);
 });
 
-test('isUrlConnectAllowed: self resolves against the script\'s self hosts', () => {
+test('decideConnect: a host-less URL is denied without a wildcard', () => {
+  const r = decideConnect('data:text/plain,hi', [{ kind: 'host', host: 'example.com' }], new Set());
+  assert.equal(r.verdict, 'deny');
+  assert.equal(r.reason, 'A data: URL has no host to allow, so only @connect * covers it.');
+  assert.equal(decideConnect('file:///etc/passwd', [], new Set()).verdict, 'deny');
+});
+
+test('decideConnect: a non-http(s) URL with a host is denied, not asked about', () => {
+  const r = decideConnect('ws://example.com/socket', [], new Set());
+  assert.equal(r.verdict, 'deny');
+  assert.equal(r.reason, 'Only http(s) sites can be allowed, so only @connect * covers a ws: URL.');
+});
+
+test('decideConnect: self covers the script\'s own hosts and the page\'s host', () => {
   const selfHosts = new Set(['example.com']);
-  assert.equal(
-    isUrlConnectAllowed('https://example.com/x', [{ kind: 'self' }], selfHosts).allowed,
-    true,
-  );
-  assert.equal(
-    isUrlConnectAllowed('https://other.com/x', [{ kind: 'self' }], selfHosts).allowed,
-    false,
-  );
+  const self = [{ kind: 'self' }];
+  assert.deepEqual(decideConnect('https://example.com/x', self, selfHosts), ALLOW);
+  assert.deepEqual(decideConnect('https://other.com/x', self, selfHosts), ask('other.com'));
+  // Another port of the page's host: not its origin, but `self`.
+  assert.deepEqual(decideConnect('https://page.org:444/x', self, selfHosts, 'https://page.org'), ALLOW);
+  assert.deepEqual(decideConnect('https://page.org:444/x', [], selfHosts, 'https://page.org'), ask('page.org'));
+});
+
+test('decideConnect: the page\'s own origin is allowed whatever the rules', () => {
+  const rules = [{ kind: 'host', host: 'api.example.com' }];
+  assert.deepEqual(decideConnect('https://site.org/data', rules, new Set(), 'https://site.org'), ALLOW);
+  assert.deepEqual(decideConnect('https://site.org/data', [], new Set(), 'https://site.org'), ALLOW);
+  // Exact origin: another scheme or port is cross-origin.
+  assert.deepEqual(decideConnect('http://site.org/data', [], new Set(), 'https://site.org'), ask('site.org'));
+  assert.deepEqual(decideConnect('https://site.org:8443/data', [], new Set(), 'https://site.org'), ask('site.org'));
+});
+
+test('decideConnect: a file: page has no origin to share', () => {
+  // Chrome gives every local file the bare `file://` origin.
+  assert.equal(decideConnect('file:///home/me/secret.txt', [], new Set(), 'file://').verdict, 'deny');
 });

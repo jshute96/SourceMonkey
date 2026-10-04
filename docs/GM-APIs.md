@@ -460,77 +460,17 @@ there's no size cap and the worker never holds much of it.
     suggesting `blob` or `stream`, and the worker is told to stop.
   - A callback that aborts the request ends its callbacks there.
 
-## `@connect` URL gating (Phase 10)
+## `@connect` URL gating
 
-Strict-by-default: a script with no `@connect` lines in its header
-is **blocked** from every `GM_xmlhttpRequest`. Scripts must declare
-the hosts they intend to reach.
+Which sites a script's `GM_xmlhttpRequest` may reach, and the prompt
+that asks about the rest: see
+[connect-permissions.md](connect-permissions.md).
 
-- A script that grants `GM_xmlhttpRequest` with no `@connect` gets a
-  parse-time warning (`extractStartupLogs` in `script-build.ts`), so
-  the block isn't silent.
-
-Stricter than either reference manager:
-
-- TM prompts the user when a script reaches an undeclared host.
-- VM doesn't enforce `@connect` at all — its install-confirm page
-  lists the declared hosts, and nothing checks them at request time.
-- The cost is that a VM script which omitted `@connect` has to gain
-  one here; the benefit is that the header means what it says.
-
-Grammar (lower-case before matching):
-
-- `*` — wildcard, allow any host.
-- `self` — allow the script's own `@match`/`@include` hosts (and
-  `*.host` subdomains in those globs contribute `host`).
-- `example.com` — that host **and** any subdomain, as TM documents
-  (`@connect example.com` covers `api.example.com`). Matched on whole
-  labels, so `evilexample.com` doesn't match.
-  - An IP address or single-label name (`127.0.0.1`, `localhost`,
-    `com`) matches only exactly, so a bare rule can't cover a TLD or
-    an IP range.
-  - Multi-label public suffixes aren't special-cased: `@connect co.uk`
-    covers all of `.co.uk`.
-- `*.example.com` — the same: `example.com` itself **and** any subdomain.
-- A scheme-prefixed URL like `https://example.com` is accepted and
-  normalized to its host.
-
-The check runs in `handleXhrStart` before `fetch`: the SW looks up
-the script's stored header, calls `parseConnectRules` +
-`extractSelfHosts`, and `isUrlConnectAllowed`. A denied request
-ships an `error` event back to the page with the policy reason as
-the message, so the userscript's `onerror` catches it.
-
-The policy is resolved once into a reusable predicate
-(`loadConnectPolicy`) that is applied to **both** the initial URL and
-the post-redirect URL. `fetch` follows redirects by default, so an
-allowlisted host could otherwise 302 to a disallowed one; `runXhr`
-re-checks `res.url` whenever the response was redirected and drops the
-body (returning an `error`) if the final host fails the policy. See
-the redirect note under "Known limitations".
-
-The same trust caveat as the other async-envelope handlers applies:
-the message-supplied `scriptId` is wrapper-supplied, so a sibling
-userscript that knows another script's id can spoof an XHR under
-that script's `@connect` allowlist. Same-extension userscripts are
-within the user's trust boundary. Documented limitation; revisit
-if real reports come in.
-
-Known limitations (post-Phase 10):
+## `GM_xmlhttpRequest` known limitations
 
 - **Header surgery has blind spots** — redirects lose the overrides.
   (Same-URL overlap is closed by the per-request URL tag.) Described in
   [xhr-header-surgery.md](xhr-header-surgery.md#blind-spots).
-- **Redirect re-check blocks reads, not the outbound hop.** The
-  post-redirect host check refuses to hand a script the response from
-  a non-allowlisted host, but `fetch` has already performed the
-  outbound request to the redirect target (it gives no per-hop hook,
-  and `redirect:'manual'` yields an opaque response with no readable
-  `Location`). So a redirect can still cause an outbound request to a
-  disallowed host; no disallowed-host data flows *back* to the script.
-  That hop carries the user's cookies, so what a script can provoke is
-  a blind credentialed request — the response stays out of reach, the
-  side effect on the target doesn't.
 - **No upload progress** (`upload.onprogress`): the request body goes
   out in one `fetch`, which reports nothing as it sends.
 - **Abort-after-response-arrived narrow race.** If the page calls

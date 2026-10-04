@@ -270,7 +270,7 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
     await page.close();
   });
 
-  test('network failure fires onerror', async ({
+  test('network failure fires onerror, in our words', async ({
     extensionContext,
     fixtureServer,
     sm,
@@ -293,7 +293,7 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
             document.body.dataset.smGotLoad = 'yes';
           },
           onerror: (e) => {
-            document.body.dataset.smGotError = 'yes';
+            document.body.dataset.smGotError = String(e.error);
           },
         });
       `,
@@ -303,7 +303,12 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
-    await expect(page.locator('body')).toHaveAttribute('data-sm-got-error', 'yes', { timeout: 6000 });
+    // The host named, not the browser's bare "Failed to fetch".
+    await expect(page.locator('body')).toHaveAttribute(
+      'data-sm-got-error',
+      '[SourceMonkey] GM_xmlhttpRequest: Could not reach 127.0.0.1:1. The name may not resolve, or the connection was refused, failed or blocked.',
+      { timeout: 6000 },
+    );
     const gotLoad = await page.locator('body').getAttribute('data-sm-got-load');
     expect(gotLoad).toBeNull();
     await page.close();

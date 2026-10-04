@@ -78,8 +78,9 @@ shows the line, once, under its first source's prefix:
   Two clients following one run can see different sources.
   - Sent in the connection's hello (`runs.ts`), so it lasts for the
     connection. There's no command to change them mid-session.
-- A dialog box's line is streamed whatever the sources, since the page
-  waits until it's answered.
+- A dialog box's line, and a permission prompt's, are streamed
+  whatever the sources, since the page or request waits until it's
+  answered.
 
 ## The `logs` command
 

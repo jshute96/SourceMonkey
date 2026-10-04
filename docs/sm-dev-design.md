@@ -518,6 +518,40 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
   - `--open-browser` has sound unless the line has `--mute`, since
     it's the person's lasting browser.
 
+### Downloads (`download-watch.ts`)
+
+- A download from one of the run's tabs prints where it was saved as it
+  finishes (`Download saved: <path> (from <url>)`), or that it didn't
+  finish. A page's own downloads pass SourceMonkey by, so this is the
+  only record of them.
+  - An http(s) `GM_download` has its own line from the extension. A
+    `blob:` or `data:` one is an `<a download>` click in the page, so it
+    gets this line.
+- Chrome reports downloads over CDP only to a client that asks
+  (`Browser.setDownloadBehavior` with `eventsEnabled`), and to all such
+  clients for all tabs. So a download's frame is traced to a run tab:
+  - a tab's top frame has its target id;
+  - a new tab that became the download names the frame that opened it.
+    That tab closes at once, so the watcher records each target's opener
+    or parent as it's created (`Target.setDiscoverTargets`);
+  - a cross-site iframe is a target naming its parent frame, and a
+    same-site one is in its tab's frame tree.
+  - Another run's downloads in a shared browser aren't said.
+- What it asks Chrome to do with downloads:
+  - A connected browser gets `default`: its own setting, and its own
+    prompts (a dangerous file, Save As) for its person to answer.
+  - A `--temp-browser` gets `allow` into a folder in the logs folder,
+    named after the run's log (`sm-dev-<timestamp>-downloads`), kept
+    after the run as the log is. `allow` keeps the files' own names, and
+    skips Chrome's prompts, which nobody could answer in a hidden
+    browser. `status` names the folder once it exists.
+- The last client to set the behavior wins. Another Playwright client
+  connecting to the browser (another run, `collection list --browser`)
+  sets its own, which saves under GUID names in its temp folder, deleted
+  as it disconnects. Not handled.
+- Reporting downloads is a side feature: if Chrome refuses it, the run
+  says so and goes on.
+
 ### Languages (`--lang`, `browser-lang.ts`)
 
 - Each tab the run sets up gets a CDP session of its own, left open,
@@ -556,10 +590,18 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
   `--load-extension` pointing at the package's `dist/` (Google Chrome
   ignores that flag).
 - The same launch serves the repo's own e2e suites, which drive its
-  persistent context directly (with Chrome's own downloads, when a
-  suite asks for them).
+  persistent context directly.
+  - Downloads are left to Chrome, into a folder of the caller's, for a
+    run (see Downloads above) and for a suite that asks.
   - Hidden runs use `--headless=new`, the only headless mode that loads
     extensions.
+- Window sizes:
+  - A visible browser has no emulated viewport, so its windows are sized
+    as in a browser a person runs. Playwright's default viewport would
+    resize every window to 1280x720, popups such as SourceMonkey's
+    connection prompt included.
+  - A hidden one keeps the 1280x720 viewport: nobody sees its windows,
+    and its pages keep the size they always had.
 - A persistent context on a temp profile, deleted when the browser is
   closed (for a run, as it ends).
   - Its Preferences grant "Allow User Scripts" and pin the extension to
@@ -650,6 +692,46 @@ and waits for them.
     leaves it, while the others close.
   - `--force` closes without the handlers. It answers an open dialog
     first (a page stopped on one never finishes closing).
+
+### Connection prompts
+
+- A run's script whose `GM_xmlhttpRequest` goes to a host its
+  `@connect` lines don't cover gets SourceMonkey's prompt window, as a
+  person's would ([connect-permissions.md](connect-permissions.md)).
+- An agent can't click it, so the extension sends a `connect-prompt`
+  event, and the run prints a line naming the script, host and request,
+  and the `connect` command to answer with.
+- `connect once|cancel|allow|deny|allow-all [host]` answers the
+  selected script's oldest waiting prompt, or its one for `host`,
+  through `answerConnectPrompt`.
+  - A prompt is per script and site: all of that script's requests
+    there, from any tab, wait on it.
+  - With none for the selected script, it names another script that
+    has one, and how to select it.
+  The window closes as if clicked.
+- A prompt that closes with nobody waiting (its requests timed out or
+  were aborted) sends a `closed` event, so `connect` skips it.
+- `status` lists a script's waiting prompts first under the script
+  (`permissionPrompts` in JSON).
+
+### Reminders of what's waiting
+
+A permission prompt or a page dialog leaves something stuck until it's
+answered, and the line announcing it may come between commands, where
+only the run's log sees it. So each command ends with a reminder of
+each one still waiting (`waitingReminders` in `console-commands.ts`):
+
+- `*PERMISSION PROMPT* still waiting: ...` and `*DIALOG* still
+  waiting: ...`, each saying how to answer it.
+- Only for what was already waiting as the command began: one that
+  opened during it was just announced in its output.
+- Not when the command's output already named that dialog (a command
+  refused for it), nor after `exit` or `stop`.
+- The answer prints as the script's Log entry (`gm-xhr`), so a prompt
+  answered in the window shows up too.
+- The answer is kept like any other: a run's scripts are removed with
+  its test collection, and their answers with them.
+- Needs protocol minor 3.
 
 ## Tabs
 
@@ -817,9 +899,12 @@ User-facing behavior is in [harness-guide.md](harness-guide.md).
   `src/harness/extension-link.ts`).
 - What sm-dev uses:
   - the run's scripts: `writeRunScript` (see
-    [Test collections](#test-collections)), `getScriptLog`;
+    [Test collections](#test-collections)), `getScriptLog`. From 1.2,
+    a push also names the script's file (`source`), which `script list`
+    shows;
   - notifications: `clickNotification(id)`, which runs the script's
     `onclick` as a click would;
+  - connection prompts: `answerConnectPrompt(id, choice)` (below);
   - values and menus: `getGmValues`, `writeGmValues`,
     `fireActionContextMenuItem`;
   - claims: `watchForNamingNavigation` and `namedTab` (which tab is
@@ -828,6 +913,10 @@ User-facing behavior is in [harness-guide.md](harness-guide.md).
     also removes the run's test collection.
   - SourceMonkey-managed scripts: `scriptsOnTab(tabId)`, the rows the
     toolbar badge shows for a tab, with each one's collection;
+  - what's installed: `managedCollections` and `managedScripts`, for
+    `collection list` and `script list` (see
+    [sm-dev-managers.md](sm-dev-managers.md)). These also work with no
+    run, over a connection of their own (`openManagerLink`);
   - tabs: `tabDocument(tabId)`, which document a tab shows, to tell
     which page an opened tab is.
 - Scripts are named by the extension's script id, a UUID kept stable
@@ -999,12 +1088,13 @@ sm-dev knows a tab by its CDP target id; the extension knows it by its
 
 #### Failure modes
 
-- **The wrapper's 2-second timeout runs the script.** If the SW can't
-  answer `sm:check-pending` in time, the prelude runs the body anyway
-  (`userscript-prelude.js`).
-  - A claimed tab can then run an extension script. This is rare (a SW
-    starting takes well under a second).
-  - The run doesn't say when it happens yet (see TODO.md).
+- **No decision, no run.** If the SW can't answer `sm:check-pending`
+  within the wrapper's 10s timeout, or the call fails, the script
+  doesn't run (see [injection.md](injection.md#no-decision)).
+  - So a claimed tab never runs an extension script for want of an
+    answer, and a run's own script never runs outside its tabs.
+  - The run hears it as a skip, with why: `X skipped on <url>:
+    SourceMonkey did not answer whether to run it within 10 seconds`.
 - **A MAIN-world script** asks through the page bridge, which also ends
   at the SW, so the same rule covers it.
 - **An older SourceMonkey** without the claim calls: see
@@ -1262,12 +1352,15 @@ Terms used below:
     - An extension before protocol 1.1 numbers none; then they are
       `E1`, `E2`, ... in the order the run first sees them.
   - The run's claim keeps them out of its tabs, so their status there
-    is "Kept out of the run's tabs".
+    is "SourceMonkey script not loaded in sm-dev tab".
   - `values E1` shows one's values; `scripts E1` picks it for `get`
     and `set`, and it's marked `*` in the list.
-  - `set` on one needs `--force` after the key outside a
-    `--temp-browser`, since it changes the person's real data:
-    `set key --force <json>`.
+    - Any installed script can be picked, by its number from `script
+      list`: its values don't depend on a tab. One not on the tab's
+      page is still listed, as `Not on this page`.
+  - `set` on one needs `--force` outside a `--temp-browser`, since it
+    changes the person's real data: `set key --force <json>`. Like
+    `set`'s other flags, it can also go after the JSON.
   - `menu` and `logs` don't take them: they never run in the run's
     tabs. `load`, `update` and `--watch` don't apply either: the run
     didn't push them.

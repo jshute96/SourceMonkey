@@ -623,8 +623,11 @@ test.describe('GM_download', () => {
     sm,
   }) => {
     // Deliberate cross-API contrast: the same script, with no @connect
-    // line at all, is blocked from GM_xmlhttpRequest but allowed to
-    // download. See docs/GM-APIs.md for why.
+    // line at all, has to ask before GM_xmlhttpRequest reaches another
+    // host, but downloads from it freely. See docs/GM-APIs.md for why.
+    // Another host name for the same server, so it isn't the page's
+    // own origin (which GM_xmlhttpRequest may always reach).
+    const other = fixtureServer.baseUrl.replace('127.0.0.1', 'localhost');
     scriptsDir.write({
       relativePath: 'a.user.js',
       meta: {
@@ -635,12 +638,12 @@ test.describe('GM_download', () => {
       },
       body: `${REPORTER}
         GM_xmlhttpRequest({
-          url: '${fixtureServer.baseUrl}/target.html',
+          url: '${other}/target.html',
           onload: () => { document.body.dataset.smXhr = 'load'; },
           onerror: (e) => { document.body.dataset.smXhr = 'error'; },
         });
         GM_download({
-          url: '${fixtureServer.baseUrl}/target.html',
+          url: '${other}/target.html',
           name: 'sm-no-connect.html',
           onload: () => report('load'),
           onerror: (e) => report('error:' + (e && e.error)),
@@ -652,10 +655,14 @@ test.describe('GM_download', () => {
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
-    await expect(page.locator('body')).toHaveAttribute('data-sm-xhr', 'error');
     await expect(page.locator('body')).toHaveAttribute('data-sm-download', 'load', {
       timeout: 15000,
     });
+    // The request waits on the user; the download didn't.
+    const prompts = await sm.pendingConnectPrompts();
+    expect(prompts.map((p) => p.host)).toEqual(['localhost']);
+    await sm.answerConnectPrompt(prompts[0].promptId, 'deny');
+    await expect(page.locator('body')).toHaveAttribute('data-sm-xhr', 'error');
     await page.close();
   });
 });

@@ -130,8 +130,11 @@ import {
 import type { ProbePolicy } from '../version-probe.js';
 import {
   getDirectoryListingFetches,
+  isScratchUrl,
   scratchRunOf,
+  scratchSourceKey,
   resetDirectoryListingFetches,
+  type ScratchSource,
 } from './directories.js';
 import {
   addCollection,
@@ -141,6 +144,7 @@ import {
   type RefreshBatch,
   getScript,
   getCollection,
+  getAllScripts,
   getCollections,
   getCollectionWithScripts,
   isFirstRunComplete,
@@ -207,7 +211,10 @@ import {
   staleRuns,
   setTabScriptsOff,
 } from './sm-dev-link.js';
-import { SKIP_REASON_SM_DEV, SM_DEV_PROTOCOL, type ProtocolVersion } from '../sm-dev-protocol.js';
+import {
+  SKIP_REASON_SM_DEV, SM_DEV_PROTOCOL, type ManagedCollection, type ManagedScript, type ProtocolVersion,
+} from '../sm-dev-protocol.js';
+import { managedCollection, managedScripts } from './managed-items.js';
 import {
   applyBatchValues,
   DELETED_SENTINEL,
@@ -218,17 +225,42 @@ import {
 import {
   abortXhr,
   abortXhrsForTab,
+  releaseXhr,
+  reserveXhr,
   runXhr,
 } from './gm-xhr.js';
 import type { GmXhrEvent, GmXhrRequestPayload, GmXhrStreamEvent } from '../gm-xhr-types.js';
 import { clearStaleHeaderRules } from './gm-xhr-headers.js';
 import {
   connectBlockedMessage,
+  connectCancelledMessage,
+  connectDeniedMessage,
+  connectPromptFailedMessage,
+  connectTooManyPromptsMessage,
+  connectUnansweredMessage,
+  decideConnect,
   extractSelfHosts,
   gmXhrError,
-  isUrlConnectAllowed,
   parseConnectRules,
 } from '../gm-connect.js';
+import { getValue } from '../userscript-header.js';
+import {
+  answerConnect,
+  answerConnectPrompt,
+  askConnect,
+  CONNECT_PROMPT_WAIT_MS,
+  MAX_PROMPTS_PER_SCRIPT,
+  onConnectPromptWindowRemoved,
+  resetConnectPromptsForTests,
+  pendingConnectPrompts,
+} from './connect-prompt.js';
+import {
+  CONNECT_ANSWER_MESSAGE,
+  CONNECT_PROMPT_ALIVE_MESSAGE,
+  CONNECT_PROMPT_PAGE,
+  type ConnectAnswerMessage,
+  type ConnectChoice,
+} from './connect-grants.js';
 import {
   closeGmTab,
   dropOriginator as dropOriginatorTabs,
@@ -287,6 +319,10 @@ interface SourceMonkeyApi {
   ping: (value?: string) => string;
   // Test/debug hook: force a tab badge refresh against an arbitrary URL.
   matchesFor: (url: string) => Promise<MatchedScript[]>;
+  // sm-dev's `collection list` and `script list` (protocol 1.2), numbered
+  // first so a collection or script added a moment ago has its number.
+  managedCollections: () => Promise<ManagedCollection[]>;
+  managedScripts: () => Promise<ManagedScript[]>;
   // ---- E2E test surface ----
   //
   // These methods exist so Playwright tests can drive the extension via
@@ -341,6 +377,12 @@ interface SourceMonkeyApi {
   // the person would: the script's `onclick` runs. False when it isn't
   // showing. sm-dev's fixture clicks one this way.
   clickNotification: (notificationId: string) => boolean;
+  // Answers a connection prompt (by the id its `connect-prompt` event
+  // carried), as the person would in its window. False when it isn't
+  // waiting. sm-dev's `connect` command answers this way.
+  answerConnectPrompt: (promptId: string, choice: ConnectChoice) => Promise<boolean>;
+  // The connection prompts waiting for an answer.
+  pendingConnectPrompts: () => { promptId: string; scriptId: string; tabId: number; host: string }[];
   // Which document a tab's top frame shows: its URL and
   // `performance.timeOrigin`, which sm-dev reads from its own pages to
   // tell which one a tab it heard of is. Null when the tab can't be
@@ -511,6 +553,11 @@ interface SourceMonkeyApi {
   // the tabs loading and the write" case without killing the worker
   // (which would also kill the test's handle on it).
   dropGmOpenersForTests: () => Promise<void>;
+  // Test-only: the "should I run?" decision for a request from a
+  // document Chrome gives no tab, whose sender carries only its URL.
+  // No real page reliably makes one, so this is how the tab-less path
+  // gets tested.
+  checkPendingWithoutTabForTests: (id: string, url: string, tld: boolean) => Promise<CheckPendingReply>;
   // Test-only fault injection: when true, `broadcastValueUpdate` sends
   // nothing, standing in for a broadcast that never reached the other
   // tab. Drives the resync-recovery test. No production caller flips it.
@@ -572,6 +619,22 @@ const api: SourceMonkeyApi = {
   matchesFor: async (url) => {
     await ensureLoaded();
     return findMatchesForUrl(url);
+  },
+  managedCollections: async () => {
+    const numbers = (await assignAllNumbers()).collections.byId;
+    return (await getCollections()).map((c) => managedCollection(c, numbers[c.id]));
+  },
+  managedScripts: async () => {
+    const numbers = (await assignAllNumbers()).scripts.byId;
+    const scripts = await getAllScripts();
+    // Where each run's script came from, by its scratch URL.
+    const scratch = scripts.map((s) => s.fileUrl).filter(isScratchUrl);
+    const got = await chrome.storage.local.get(scratch.map(scratchSourceKey));
+    const sources = Object.fromEntries(scratch.flatMap((url) => {
+      const source = got[scratchSourceKey(url)] as ScratchSource | undefined;
+      return source ? [[url, source]] : [];
+    }));
+    return managedScripts(await getCollections(), scripts, numbers, sources);
   },
   addCollection,
   createCollection,
@@ -691,6 +754,7 @@ const api: SourceMonkeyApi = {
   },
   setDebugForceSnapshotFailure,
   dropGmOpenersForTests: resetGmOpenersState,
+  checkPendingWithoutTabForTests: (id, url, tld) => handleCheckPending({ url }, { id, url, tld }),
   setDebugSuppressGmBroadcast: (value: boolean) => { __debugSuppressGmBroadcast = !!value; },
   // The unthrottled sweep: a test drives it on demand, where the
   // once-a-minute rate limit on the startup path would just make the
@@ -727,6 +791,8 @@ const api: SourceMonkeyApi = {
   },
   setTabScriptsOff,
   clickNotification: (notificationId) => deliverNotificationEvent(notificationId, 'clicked'),
+  answerConnectPrompt,
+  pendingConnectPrompts,
   scriptsOnTab: async (tabId) => {
     const state = getCurrentState(await getTabRecord(tabId));
     if (!state) return [];
@@ -791,6 +857,9 @@ const api: SourceMonkeyApi = {
     // all-collections entry would carry over and silently skip the next
     // test's first opportunistic check.
     _resetUpdaterStateForTests();
+    // The connection prompts' module state: a prompt a test left open
+    // would keep its window (and the worker) up into the next test.
+    resetConnectPromptsForTests();
     // Cancel any pending debounced sync first — clear() below will
     // schedule another one via onCacheChanged, so leaving the old
     // timer armed risks two syncs firing back-to-back and racing the
@@ -1088,6 +1157,19 @@ const SKIP_REASON_RELOAD_WITHOUT_SCRIPTS = 'reload with no userscripts';
 // prelude treats it as its own matcher saying no and reports nothing,
 // so the literal there must stay the same.
 const SKIP_REASON_NO_MATCH = 'no-match';
+// The `skip` for a script whose decision couldn't be made: the wrapper's
+// own, when no answer came (`awaitDecision` in userscript-prelude.js),
+// and ours, when deciding threw. Its `detail` says why. The prelude
+// names it too.
+const SKIP_REASON_NO_DECISION = 'no-decision';
+
+// What a script with no decision says, in its Log and on the badge.
+// `detail` is the wrapper's why, which may carry Chrome's own message,
+// ending in a period or not.
+function noDecisionMessage(detail: string | undefined): string {
+  const why = (detail ?? '').trim().replace(/\.+$/, '');
+  return why ? `Did not run on this page. ${why}.` : 'Did not run on this page: SourceMonkey did not decide whether to run it';
+}
 
 // How long an armed tab waits for its reload to commit. Well past a
 // live page's commit time, short enough that a cancelled reload can't
@@ -1891,8 +1973,10 @@ function installNavigationListeners(): void {
     enqueueTabWork(d.tabId, () => updateTabMatches(d.tabId, d.url, d.documentId ?? null, 'navigation'));
   });
   // A grace period after the load, since a document-idle script may
-  // start only at the load and then waits on its check-pending reply
-  // (bounded at 2s by the wrapper).
+  // start only at the load and then waits on its check-pending reply,
+  // for up to the wrapper's decision timeout. Past that, it has either
+  // run, been told to skip, or reported no decision (which the badge
+  // and Log show as such, not as never started).
   wn.onCompleted.addListener((d) => {
     if (d.frameId !== 0 || !d.documentId) return;
     const documentId = d.documentId;
@@ -1902,7 +1986,10 @@ function installNavigationListeners(): void {
   });
 }
 
-const MISSING_SCRIPT_GRACE_MS = 3000;
+// `DECISION_TIMEOUT_MS` in userscript-prelude.js: how long a wrapper
+// waits for its check-pending reply before not running.
+const WRAPPER_DECISION_TIMEOUT_MS = 10_000;
+const MISSING_SCRIPT_GRACE_MS = WRAPPER_DECISION_TIMEOUT_MS + 1000;
 
 // Once per document: a Log warning for each script that matched it but
 // never reported, with what the document's other reports suggest about
@@ -1923,6 +2010,9 @@ async function logMissingScripts(tabId: number, documentId: string): Promise<voi
   }
   await setTabRecord(tabId, writeDocState(record, documentId, { ...state, missingChecked: true }));
 }
+
+// A connection prompt closed without an answer is a denial.
+chrome.windows.onRemoved.addListener((windowId) => onConnectPromptWindowRemoved(windowId));
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   markedTabs.delete(tabId);
@@ -2530,20 +2620,22 @@ type CheckPendingReply =
       needsRuntime?: boolean;
       gmValues?: Record<string, unknown>;
     }
-  | { action: 'skip'; reason: string };
+  | { action: 'skip'; reason: string; detail?: string };
 
 async function handleCheckPending(
   sender: chrome.runtime.MessageSender,
   payload: CheckPendingPayload,
 ): Promise<CheckPendingReply> {
+  // Outside a tab (a document Chrome gives no tab), the same checks
+  // run, less the tab's own: no claim, reload skip or reload swap can
+  // apply there. Every other check still does.
   const tabId = sender.tab?.id;
-  if (tabId == null) return { action: 'run' };
   // A tab an sm-dev run controls runs only the scripts its claim
   // allows (sm-dev-link.ts). First, and for every frame, like the skip
   // reload below. Waits for the claims to load, so a worker that just
   // started can't let a script through.
   await claimsReady();
-  const claim = activeClaim(tabId);
+  const claim = tabId == null ? undefined : activeClaim(tabId);
   // - Only for the extension's own scripts: an id it doesn't know
   //   (a page's forgery over the bridge) runs nothing either way.
   // - A scratch script is sm-dev's: it runs only in the tabs of the run
@@ -2556,7 +2648,7 @@ async function handleCheckPending(
   // "Reload page with no userscripts" — decided per tab, ahead of the
   // fast path, and for every frame: a subframe's documentId is its
   // own, so the tab-level marker is the only thing that covers it.
-  if (skipScriptsDocByTab.has(tabId)) {
+  if (tabId != null && skipScriptsDocByTab.has(tabId)) {
     return { action: 'skip', reason: SKIP_REASON_RELOAD_WITHOUT_SCRIPTS };
   }
   // The frame's own URL (sender.url), not the one in the payload.
@@ -2568,7 +2660,7 @@ async function handleCheckPending(
     }
   }
   const documentId = (sender as { documentId?: string }).documentId ?? '';
-  if (!documentId) return { action: 'run' };
+  if (!documentId || tabId == null) return { action: 'run' };
   const key = fastPathKey(tabId, documentId);
   const entry = fastPathByDoc.get(key);
   if (!entry) return { action: 'run' };
@@ -2947,12 +3039,6 @@ async function handleXhrStart(
     console.info('[SourceMonkey] gm-xhr-start without tab id; ignoring');
     return;
   }
-  // @connect URL gating. Pull the script's stored header so we know
-  // which hosts it's allowed to talk to. A script that hasn't
-  // declared @connect is blocked from every cross-origin host —
-  // matches VM policy. The error event we ship back is the
-  // same shape as a network failure, so the userscript's onerror
-  // catches it.
   // For sm-dev (sm-dev-link.ts), which reports what a run's scripts
   // requested: once as it starts, and again with how it ended.
   const requestEvent = (event?: GmXhrEvent): void => emitSmDevEvent({
@@ -2963,24 +3049,44 @@ async function handleXhrStart(
     ...(event?.kind === 'error' ? { error: event.message } : {}),
   });
   requestEvent();
-  const policy = await loadConnectPolicy(payload.scriptId);
-  if ('reason' in policy) {
-    // Not `connectBlockedMessage`: we never got as far as reading the
-    // script's rules, so blaming them would be wrong.
-    const message = gmXhrError(policy.reason);
+  // @connect URL gating: the script's own rules, the page's own origin,
+  // and for any other http(s) host, the user's answer (asked for if
+  // need be; see connect-prompt.ts). A refusal ships back as an error
+  // event, the same shape as a network failure, so the userscript's
+  // onerror catches it.
+  const reserved = reserveXhr(payload.id, tabId);
+  const method = (payload.request.method ?? 'GET').toUpperCase();
+  let check: ConnectCheck | null = null;
+  let refusal: string | null;
+  // Caught here, not left to throw: the reserved entry must be released
+  // on every path that doesn't reach `runXhr`.
+  try {
+    const policy = await loadConnectPolicy(payload.scriptId, sender, tabId);
+    // Not `connectBlockedMessage` for a `reason`: we never got as far as
+    // reading the script's rules, so blaming them would be wrong.
+    if ('reason' in policy) {
+      refusal = gmXhrError(policy.reason);
+    } else {
+      check = policy.check;
+      refusal = await check(payload.request.url, method, reserved);
+    }
+  } catch (err) {
+    refusal = gmXhrError(`Internal error: could not check this script's @connect rules: ${describeError(err)}`);
+  }
+  // Aborted while it waited on the prompt: the page has settled it.
+  if (reserved.aborted) {
+    releaseXhr(payload.id);
+    requestEvent({ kind: 'abort' });
+    return;
+  }
+  if (refusal !== null || !check) {
+    releaseXhr(payload.id);
+    const message = refusal ?? gmXhrError('Internal error: no @connect check');
     requestEvent({ kind: 'error', message });
     await sendXhrError(sender, tabId, payload.scriptId, payload.id, message);
     return;
   }
-  const initial = policy.check(payload.request.url);
-  if (!initial.allowed) {
-    // `denied` separates "the header forbids this host" from "that URL
-    // never parsed" — only the first is the script's rules refusing.
-    const message = initial.denied ? connectBlockedMessage(initial.reason) : gmXhrError(initial.reason);
-    requestEvent({ kind: 'error', message });
-    await sendXhrError(sender, tabId, payload.scriptId, payload.id, message);
-    return;
-  }
+  const allowed = check;
   // Run the fetch and ship its events back to the sender's tab. Other
   // tabs do not get a copy — XHR is per-call, not broadcast. The same
   // policy predicate re-checks the post-redirect URL inside runXhr.
@@ -3002,7 +3108,7 @@ async function handleXhrStart(
     payload.id,
     payload.request,
     async (streamEvent) => { await deliver(streamEvent); },
-    (finalUrl) => policy.check(finalUrl).allowed,
+    (finalUrl, signal) => allowed(finalUrl, method, signal),
     tabId,
   );
   requestEvent(event);
@@ -3050,35 +3156,85 @@ function senderFrameOptions(
   };
 }
 
-// Load a script's `@connect` policy once and return a reusable
-// predicate. The predicate is evaluated against both the initial URL
-// and (inside runXhr) the post-redirect URL, so a single header read
-// covers every hop. Returns `{reason}` when the policy can't be
-// resolved (script gone, no header, parse error) — that's a hard deny.
-async function loadConnectPolicy(scriptId: string): Promise<
-  | { reason: string }
-  | { check: (url: string) => { allowed: true } | { allowed: false; denied: boolean; reason: string } }
-> {
+// Whether a request may go: null, or the error message the script gets.
+// `signal` ends a wait on the connection prompt.
+type ConnectCheck = (url: string, method: string, signal?: AbortSignal) => Promise<string | null>;
+
+// Load a script's `@connect` policy once and return a reusable check.
+// The check is run against both the initial URL and (inside runXhr) the
+// post-redirect URL, so a single header read covers every hop. It
+// resolves to null when the request may go, else the error message the
+// script gets. Returns `{reason}` when the policy can't be resolved
+// (script gone, no header, parse error), which is a hard deny.
+async function loadConnectPolicy(
+  scriptId: string,
+  sender: chrome.runtime.MessageSender,
+  tabId: number,
+): Promise<{ reason: string } | { check: ConnectCheck }> {
   try {
     const script = await getScript(scriptId);
     // Two different failures, and only the second is ours. A script
     // removed while a page it was running on is still open is a real
     // race the user can act on, so it says what happened and how to
-    // recover rather than hiding behind `internal error:`.
+    // recover rather than hiding behind `Internal error:`.
     if (!script) {
-      return { reason: 'this script is no longer installed; reload the page' };
+      return { reason: 'This script is no longer installed. Reload the page.' };
     }
     if (!script.header) {
-      return { reason: 'internal error: this script\'s header is not available, so @connect could not be checked' };
+      return { reason: 'Internal error: this script\'s header is not available, so @connect could not be checked' };
     }
-    const rules = parseConnectRules(script.header);
-    const selfHosts = extractSelfHosts(script.header);
-    return { check: (url: string) => isUrlConnectAllowed(url, rules, selfHosts) };
+    const header = script.header;
+    const rules = parseConnectRules(header);
+    const selfHosts = extractSelfHosts(header);
+    // `origin` over `url`: an about:blank or srcdoc frame has the
+    // origin of the page that made it, but no URL of its own.
+    const pageOrigin = sender.origin ?? originOf(sender.url);
+    const check: ConnectCheck = async (url, method, signal) => {
+      const decision = decideConnect(url, rules, selfHosts, pageOrigin);
+      switch (decision.verdict) {
+        case 'allow':
+          return null;
+        case 'invalid':
+          return gmXhrError(decision.reason);
+        case 'deny':
+          return connectBlockedMessage(decision.reason);
+        case 'ask': {
+          const outcome = await askConnect({
+            scriptId,
+            scriptName: getValue(header, 'name') ?? script.relativePath,
+            host: decision.host,
+            url,
+            method,
+            tabId,
+            ...(sender.documentId ? { documentId: sender.documentId } : {}),
+            ...(signal ? { signal } : {}),
+          });
+          if (outcome === 'allow') return null;
+          if (outcome === 'deny') return connectDeniedMessage(decision.host);
+          if (outcome === 'cancelled') return connectCancelledMessage(decision.host);
+          if (outcome === 'unanswered') return connectUnansweredMessage(decision.host, CONNECT_PROMPT_WAIT_MS);
+          // The caller sees the abort for itself and says nothing.
+          if (outcome === 'aborted') return gmXhrError('The request was aborted');
+          if (outcome === 'too-many') return connectTooManyPromptsMessage(decision.host, MAX_PROMPTS_PER_SCRIPT);
+          return connectPromptFailedMessage(decision.host, outcome.failed);
+        }
+      }
+    };
+    return { check };
   } catch (err) {
     return {
-      reason: `internal error: could not check this script's @connect rules: ${
+      reason: `Internal error: could not check this script's @connect rules: ${
         err instanceof Error ? err.message : String(err)}`,
     };
+  }
+}
+
+function originOf(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    return new URL(url).origin;
+  } catch {
+    return undefined;
   }
 }
 
@@ -3922,8 +4078,9 @@ function installScriptMessageListener(): void {
   ev.addListener((msg, sender, sendResponse) => {
     if (!msg || typeof msg !== 'object') return;
     const tabId = sender.tab?.id;
-    if (tabId == null) return;
     const type = (msg as { type?: unknown }).type;
+    // Answered even with no tab: unanswered, the wrapper doesn't run
+    // (`handleCheckPending` decides what a tab-less one may do).
     if (type === SM_CHECK_PENDING_MSG) {
       // Async reply path. Return true keeps the message channel open
       // until sendResponse fires. Swallow any send failures — they
@@ -3950,8 +4107,15 @@ function installScriptMessageListener(): void {
             ? bridgeMayActAs(payload.id, sender, STORAGE_SUBSYSTEMS)
             : Promise.resolve(true))
         : Promise.resolve(false);
+      // A snapshot that can't be read is no snapshot: the decision still
+      // stands, and a storage script that would run aborts on its own,
+      // saying so (the prelude's hard abort), rather than this turning
+      // into a missing decision.
       const snapshotP: Promise<Record<string, unknown> | undefined> =
-        valueReadAllowed.then((ok) => (ok ? loadSnapshotForCheckPending(payload.id) : undefined));
+        valueReadAllowed.then((ok) => (ok ? loadSnapshotForCheckPending(payload.id) : undefined)).catch((err) => {
+          console.info('[SourceMonkey] check-pending storage snapshot failed:', err);
+          return undefined;
+        });
       Promise.all([decisionP, snapshotP]).then(
         ([reply, gmValues]) => {
           const enriched: CheckPendingReply =
@@ -3961,12 +4125,16 @@ function installScriptMessageListener(): void {
           try { sendResponse(enriched); } catch { /* gone */ }
         },
         (err) => {
+          // Not run: the decision is what keeps it out of an sm-dev
+          // run's tabs and honours a skip; see SKIP_REASON_NO_DECISION.
           console.info('[SourceMonkey] check-pending handler threw:', err);
-          try { sendResponse({ action: 'run' }); } catch { /* gone */ }
+          const detail = 'Internal error: SourceMonkey failed while deciding whether to run it. The details are in its service worker console';
+          try { sendResponse({ action: 'skip', reason: SKIP_REASON_NO_DECISION, detail }); } catch { /* gone */ }
         },
       );
       return true;
     }
+    if (tabId == null) return;
     if (type === SM_FOCUS_MSG) {
       // The page saying it just came to the front — the third of the
       // signals `installFocusRefresh` describes, and the only one that
@@ -4200,6 +4368,7 @@ function installScriptMessageListener(): void {
       loadedAt?: number;
       fromLoadedAt?: number;
       reason?: string;
+      detail?: string;
       opaqueOrigin?: boolean;
       __viaBridge?: boolean;
     };
@@ -4273,6 +4442,45 @@ function installPageLogWriteListener(): void {
   });
 }
 
+// The connection prompt's answer (connect-prompt.ts). Only from the
+// prompt page itself: an answer is a grant of network reach, so nothing
+// a script can reach (a content script relaying for a page) may send
+// one.
+function installConnectAnswerListener(): void {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    const msg = message as (Omit<Partial<ConnectAnswerMessage>, 'type'> & { type?: unknown }) | null;
+    if (!msg || (msg.type !== CONNECT_ANSWER_MESSAGE && msg.type !== CONNECT_PROMPT_ALIVE_MESSAGE)) return undefined;
+    if (!fromExtensionPage(sender) || !sender.url?.startsWith(chrome.runtime.getURL(CONNECT_PROMPT_PAGE))) return undefined;
+    // Receiving it was the point: see CONNECT_PROMPT_ALIVE_MESSAGE.
+    if (msg.type === CONNECT_PROMPT_ALIVE_MESSAGE) {
+      sendResponse(true);
+      return undefined;
+    }
+    const { scriptId, host, choice } = msg;
+    if (typeof scriptId !== 'string' || typeof host !== 'string' || !host
+      || !['once', 'cancel', 'allow', 'allow-all', 'deny'].includes(choice as string)) {
+      return undefined;
+    }
+    // A plain host name, as the prompt was opened with: it becomes a
+    // storage value and part of a map key.
+    let plainHost: string;
+    try {
+      plainHost = new URL(`https://${host}`).hostname;
+    } catch {
+      return undefined;
+    }
+    if (plainHost !== host.toLowerCase()) return undefined;
+    void answerConnect(scriptId, plainHost, choice as ConnectChoice, 'prompt').then(
+      () => { try { sendResponse(true); } catch { /* page gone */ } },
+      (err) => {
+        console.info('[SourceMonkey] connection prompt answer failed:', describeError(err));
+        try { sendResponse(false); } catch { /* page gone */ }
+      },
+    );
+    return true;
+  });
+}
+
 // Combine the wrapper's message + stack into the multiline string that
 // goes into the per-script log. V8/SpiderMonkey both prepend the
 // message to the stack ("Error: foo\n    at …"), so the stack is the
@@ -4312,6 +4520,7 @@ async function recordScriptReport(
     loadedAt?: number;
     fromLoadedAt?: number;
     reason?: string;
+    detail?: string;
     opaqueOrigin?: boolean;
     __viaBridge?: boolean;
   },
@@ -4346,6 +4555,7 @@ async function recordScriptReport(
     ...(payload.message !== undefined ? { message: payload.message } : {}),
     ...(payload.stack !== undefined ? { stack: payload.stack } : {}),
     ...(payload.reason !== undefined ? { reason: payload.reason } : {}),
+    ...(payload.detail !== undefined ? { detail: payload.detail } : {}),
   });
   // GM_* cross-tab broadcast openers table: register the
   // (scriptId, tabId) pair on EITHER sm:start or sm:swapped. The
@@ -4383,27 +4593,29 @@ async function recordScriptReport(
       message: 'Page reloaded and swapped in the newer copy of this script',
     });
   } else if (type === SM_ABANDONED_MSG) {
-    // SW told the wrapper to skip. Warning, not error — a script that
-    // was asked not to run is worth surfacing, but nothing failed.
+    // The wrapper didn't run: told to skip, or with no decision.
     console.log(
       `[SourceMonkey] abandoned ${label}${tabPart} ${senderUrl} (reason=${payload.reason ?? '?'})`,
     );
     // Not in the script's Log for a tab sm-dev controls: it happens on
     // every load there, to scripts the person didn't ask anything of.
+    // - A skip the person asked for ("Reload page with no userscripts")
+    //   is information.
+    // - No decision is an error: the script should have been decided,
+    //   and wasn't, so it didn't run. Its message is a sentence, with
+    //   why (`noDecisionMessage`).
+    // - Any other reason (a token, from an older wrapper's bare `skip`)
+    //   is a warning, the token in parentheses as a detail.
     if (payload.reason !== SKIP_REASON_SM_DEV) logScriptEvent(id, {
       // The run hears this as a report, so not again as a Log entry.
       fromReport: true,
-      // A skip the user asked for is information, not a warning.
-      level: payload.reason === SKIP_REASON_RELOAD_WITHOUT_SCRIPTS ? 'info' : 'warning',
+      level: payload.reason === SKIP_REASON_NO_DECISION ? 'error'
+        : payload.reason === SKIP_REASON_RELOAD_WITHOUT_SCRIPTS ? 'info' : 'warning',
       source: 'script-wrapper',
       tabId,
-      // `reason` is a token from the skip decision, not a sentence, so
-      // it goes in parentheses as a detail rather than being read as
-      // the explanation. The values that get here are the user's
-      // "Reload page with no userscripts" and the wrapper's own
-      // fallback (`skip`) — see the `{action: 'skip'}` note on
-      // `CheckPendingReply`.
-      message: `Did not run on this page (${payload.reason ?? 'no reason given'})`,
+      message: payload.reason === SKIP_REASON_NO_DECISION
+        ? noDecisionMessage(payload.detail)
+        : `Did not run on this page (${payload.reason ?? 'no reason given'})`,
     });
   } else {
     // console.info (not console.warn / .error) so a userscript runtime
@@ -4435,10 +4647,12 @@ async function recordScriptReport(
   // sits above the early return below.
   noteReloadFlashReport(tabId, senderDocId, id);
 
-  // sm:abandoned is logging-only — there's no "actual" report to merge
-  // and no badge change. Returning here keeps the rest of the function
-  // focused on the run / error / swapped reports.
-  if (type === SM_ABANDONED_MSG) return;
+  // sm:abandoned is logging-only (no "actual" report to merge, no badge
+  // change), except for no decision: that's a failure, shown on the
+  // badge as an error, which also keeps it from being explained later
+  // as a script that never started.
+  const noDecision = type === SM_ABANDONED_MSG && payload.reason === SKIP_REASON_NO_DECISION;
+  if (type === SM_ABANDONED_MSG && !noDecision) return;
 
   // Closes the race where storage updates land BEFORE sm:start arrives.
   // See docs/matching.md#closing-the-report-after-change-race.
@@ -4486,9 +4700,11 @@ async function recordScriptReport(
       ...claimFields,
     };
   }
-  const report: ActualStatus = type === SM_ERROR_MSG
-    ? { state: 'error', name, message: String(payload.message ?? '') }
-    : { state: 'started', name };
+  const report: ActualStatus = noDecision
+    ? { state: 'error', name, message: noDecisionMessage(payload.detail) }
+    : type === SM_ERROR_MSG
+      ? { state: 'error', name, message: String(payload.message ?? '') }
+      : { state: 'started', name };
   let next = applyScriptReport(state, id, report);
   // What this report says about the document itself, for explaining
   // another script that never starts here (see missing-scripts.ts).
@@ -4574,6 +4790,7 @@ void clearStaleHeaderRules();
 installScriptMessageListener();
 installPageFetchListener();
 installPageLogWriteListener();
+installConnectAnswerListener();
 installDebugLoggingListener();
 installLocalRootsListener();
 installGithubAuthListener();

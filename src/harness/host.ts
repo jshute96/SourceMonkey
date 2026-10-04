@@ -76,6 +76,26 @@ export interface XhrRecord {
   error?: string;
 }
 
+/**
+ * SourceMonkey asking whether a script may connect to a host its
+ * `@connect` lines don't cover, and the answer once given.
+ */
+export interface ConnectPromptRecord {
+  scriptId: string;
+  /** The script's name. */
+  name: string;
+  promptId: string;
+  host: string;
+  url: string;
+  method: string;
+  at: number;
+  answer?: ConnectChoice;
+  /** Closed without an answer: its requests timed out or were aborted. */
+  closed?: boolean;
+}
+
+export type ConnectChoice = 'once' | 'cancel' | 'allow' | 'allow-all' | 'deny';
+
 export interface ScriptReport {
   scriptId: string;
   name: string;
@@ -114,6 +134,8 @@ export interface HostReports {
   notifications: NotificationRecord[];
   /** Every `GM_download` the extension handled. */
   downloads: DownloadRecord[];
+  /** Every connection prompt, with its answer once given. */
+  connectPrompts: ConnectPromptRecord[];
 }
 
 export interface WireWrite {
@@ -135,6 +157,8 @@ export interface HostEventMap {
   'menu-command': [MenuCommandRecord];
   notification: [NotificationRecord];
   download: [DownloadRecord];
+  /** A connection prompt opened, or was answered (`answer` set). */
+  'connect-prompt': [ConnectPromptRecord];
 }
 
 // The runtime's own stored-value codec, loaded once under Node the way
@@ -175,7 +199,7 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
   // Node's listener limit, which prints a warning.
   private readonly reportWaiters = new Set<() => void>();
   readonly reports: HostReports = {
-    started: [], errors: [], skipped: [], requests: [], tabs: [], menuCommands: [], notifications: [], downloads: [],
+    started: [], errors: [], skipped: [], requests: [], tabs: [], menuCommands: [], notifications: [], downloads: [], connectPrompts: [],
   };
   // Each menu command's page; dropped when that page loads a new
   // document or goes away.
@@ -466,6 +490,9 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
 
   /** Close a shown notification, which fires the script's `ondone`. */
   abstract closeNotification(requestId: string): Promise<boolean>;
+
+  /** Answer a waiting connection prompt. False when it isn't waiting. */
+  abstract answerConnectPrompt(promptId: string, choice: ConnectChoice): Promise<boolean>;
 
   // ---------- Helpers ----------
 

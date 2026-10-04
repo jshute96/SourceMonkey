@@ -104,7 +104,7 @@ and `lib/`.
 | `src/gm-api-catalog.ts` | Catalog of supported `GM_*` / `GM.*` APIs: name, async/sync kind, subsystem; helpers for resolving `@grant` lines |
 | `src/source-map.ts` | Source Map v3 generator for the concatenated injection entry, plus the reverse lookup the Log tab maps stack refs with |
 | `src/gm-xhr-types.ts` | The `GM_xmlhttpRequest` request and event types passed between page and service worker |
-| `src/gm-connect.ts` | `@connect` URL-gating helpers — parse rules, extract self hosts from `@match`/`@include`, check URL, phrase `GM_xmlhttpRequest`'s errors |
+| `src/gm-connect.ts` | `@connect` URL-gating helpers — parse rules, extract self hosts, decide allow/ask/deny for a URL, phrase `GM_xmlhttpRequest`'s errors |
 | `src/sm-dev-protocol.ts` | What the extension and sm-dev share: the protocol version, the event line tag, the sm-dev skip reason |
 
 ### Pages and assets (`src/`)
@@ -121,6 +121,7 @@ stay directly in `src/` so the extension's URLs have no folder in them.
 | `src/options.html` | Options page markup: header bar with the Collections link, settings list (link-capture toggle, debug-logging toggle), local search-roots box + file-access banner slot, Downloads-folder field, GitHub auth token |
 | `src/userscript.html` | Userscript viewer markup: header bar, status box (banner + versions panel), controls row, install callout + preview actions, details panel, tab strip, code box, log pane |
 | `src/compare.html` | Compare page markup: header bar, the fields table slot, view controls, tab strip, diff box |
+| `src/connect-prompt.html` | Connection prompt window markup: the standard header bar, the script and site, and the one-time and kept choices |
 | `src/debug/icons.html` | Debug icons page markup: common header bar with Delete All action and cached-icons inspection table |
 | `src/glyph-sprite.svg` | The one copy of every inline SVG glyph, inlined into each page at `<!--#include glyph-sprite-->` by the build |
 | `src/styles.css` | Cross-page shared stylesheet linked by every extension page: the header bar and page column, the button surface, collection bubble + scheme chip, display-name, warning banner, modal dialog shell, install-target select, tab strip, site favicons |
@@ -187,9 +188,13 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/missing-scripts.ts` | Log warnings for scripts that matched a page but never started |
 | `src/extension/storage-scan.ts` | Wrapper for every full-namespace `storage.local.get(null)`, naming each scan and its cost under debug logging |
 | `src/extension/concurrency.ts` | Bounded fan-out helper plus the nested per-collection / per-script, probe, and directory-scan limits |
+| `src/extension/connect-grants.ts` | The user's answers about a script's undeclared `@connect` hosts: allowed (local storage) and denied (session) |
+| `src/extension/connect-prompt.ts` | Connection prompt, worker side: opens the window, holds requests on its answer, saves it, reports to sm-dev |
+| `src/extension/connect-prompt-page.ts` | Connection prompt window controller: fills it from the query string and sends the answer to the worker |
 | `src/extension/refresh-error.ts` | Session-storage map of collections whose last refresh was read but could not be saved, plus its shared message |
 | `src/extension/sw-teardown.ts` | Marks `No SW` rejections (chrome.* calls cut off by service-worker shutdown) handled so they stay out of the Errors panel |
 | `src/extension/script-log-id.ts` | Computes each script's "log ID" (`foo.user.js#E4`: basename and script number) used in every log line and the viewer |
+| `src/extension/managed-items.ts` | The collections and installed scripts in the shapes sm-dev's `collection list` and `script list` read |
 | `src/extension/sticky-numbers.ts` | Script and collection numbers (sm-dev's `E4`, `C3`): handing them out, and holding removed ones back before reuse |
 | `src/extension/script-log.ts` | Per-script event log store: chrome.storage.session keyed by script ID, serialized appends with a fixed cap, a sibling `loglevel:` sentinel, and the page→worker write relay |
 | `src/extension/log-format.ts` | Log cell formatting (time, status/level, source, message) shared by the viewer's table and its CSV export, plus the export's filename |
@@ -246,10 +251,12 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/stuck-tabs.ts` | Before `sm-dev start` connects, names the tabs that don't answer (a dialog, say), and waits for them |
 | `src/harness/run.ts` | The run process `sm-dev start` spawns: open a browser, push the scripts into SourceMonkey, follow tabs, serve clients |
 | `src/harness/extension-launch.ts` | Launches Chromium with the built extension on a temp profile: `--temp-browser`, and the e2e suites' browser |
-| `src/harness/extension-link.ts` | A run's or fixture test's connection to the real extension: version check, worker calls, pushes, claims and lease, events |
+| `src/harness/extension-link.ts` | A run's or fixture test's connection to the real extension: version check, worker calls, pushes, claims and lease, events; and a run-less one for listing |
+| `src/harness/manager-commands.ts` | `collection list` and `script list`: SourceMonkey's collections and installed scripts as text or JSON, and naming a collection |
 | `src/harness/extension-host.ts` | Fills a run's or fixture test's host (reports, values, menus) from the extension's events, and answers its commands |
 | `src/harness/extension-backend.ts` | Finds SourceMonkey in a browser: its id, whether it's installed and on, and its service worker |
-| `src/harness/run-log.ts` | A run's log file: timestamped names in `/tmp/sm-dev-logs-<user>`, stamped lines, per-run links |
+| `src/harness/run-log.ts` | A run's log file and `--temp-browser` downloads folder: timestamped names in `/tmp/sm-dev-logs-<user>`, stamped lines, per-run links |
+| `src/harness/download-watch.ts` | Prints where a download from one of the run's tabs was saved, from Chrome's CDP download events |
 | `src/harness/tab-refs.ts` | Naming and picking a run's tabs (`T2`, target ids), the current tab, the dialog message |
 | `src/harness/wait.ts` | The `wait` command, when a tab has settled (loaded, scripts started, quiet), and when a load is done |
 | `src/harness/runs.ts` | The runs on this machine: record files, control sockets, and the client connection (`RunClient`) to one |
@@ -363,6 +370,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/script-viewer-links.spec.ts` | E2E tests for the viewer's link rendering: Match-row anchors, Location anchor, body header `@match` / URL linkification |
 | `tests/unit/sw-teardown.test.mjs` | Unit tests for the `No SW` recognizer and the unhandledrejection handler that marks it handled |
 | `tests/unit/script-log-id.test.mjs` | Unit tests for `computeLogIds`: `#E<n>` for numbered scripts, the basename or `#N` for unnumbered ones |
+| `tests/unit/manager-commands.test.mjs` | Unit tests for `collection list` and `script list`: output, collection naming, what the extension lists |
 | `tests/unit/sticky-numbers.test.mjs` | Unit tests for sticky numbers: lowest free first, the 7-day hold, shared numbers, which items get none |
 | `tests/unit/script-log.test.mjs` | Unit tests for the per-script log store: append/get/clear, concurrent appends, LOG_CAP rotation |
 | `tests/unit/match-index.test.mjs` | `onlyProbesChanged` — which `script:*` writes may skip a re-registration, and the many that may not |
@@ -429,8 +437,8 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/gm-xhr-credentials.spec.ts` | E2E tests for `GM_xmlhttpRequest` cookies — credentialed by default, withheld by a truthy `anonymous` |
 | `tests/e2e/gm-xhr-headers.spec.ts` | E2E tests for `GM_xmlhttpRequest` header surgery — overrides reach the wire, URL tag stays inside the browser, rule torn down after |
 | `tests/e2e/gm-xhr-binary.spec.ts` | E2E tests for `GM_xmlhttpRequest` binary path — arraybuffer/blob/document via base64 wire reconstruction |
-| `tests/e2e/gm-connect.spec.ts` | E2E tests for `@connect` gating — no-connect blocked, matching host allowed, `*` wildcard, subdomain match, mismatched host blocked |
-| `tests/unit/gm-connect.test.mjs` | Unit tests for `@connect` parsing/matching — wildcard, self, bare host, subdomain, scheme-prefixed normalization, malformed entries |
+| `tests/e2e/gm-connect.spec.ts` | E2E tests for `@connect` gating — the connection prompt and its answers, own-origin and relative URLs, rules, redirects, revoking |
+| `tests/unit/gm-connect.test.mjs` | Unit tests for `@connect` parsing/matching and `decideConnect` — wildcard, self, bare host, subdomain, own origin, host-less URLs |
 | `tests/unit/gm-download.test.mjs` | Unit tests for the `GM_download` SW dispatcher (URL/name validation, terminal events, timeout, abort, progress polling) |
 | `tests/unit/gm-xhr-headers.test.mjs` | Unit tests for XHR header classification, DNR rule building, and per-request URL tagging |
 | `tests/unit/gm-tab.test.mjs` | Unit tests for the `GM_openInTab` SW dispatcher (mapping, close routing, originator cleanup) |
@@ -477,7 +485,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/examples/unsafe-window/` | `unsafeWindow` example: reading/calling/writing page globals, the isolated-world variant where it can't work, and the ungranted-reference variant |
 | `tests/examples/use-strict/` | Top-level `'use strict'` example: strict mode in both worlds, and which file's directive counts with a `@require` |
 | `tests/examples/require-scope/` | `@require` scope example: a shared lib's top-level class/const/function reaching both injection worlds |
-| `tests/examples/xmlhttp-denied/` | Negative cases for `@connect`: scripts with no `@connect`, mismatched host, and explicit allow show blocked-vs-allowed outcomes |
+| `tests/examples/xmlhttp-denied/` | Negative cases for `@connect`: no `@connect` and a mismatched host get the prompt and are denied; an explicit allow goes |
 | `tests/bad-examples/` | Deliberately broken `*.user.js` files (plus the `@require` libraries some of them need, and the ones that merely warn) for the SM-only spec; outside `tests/examples/` so the TM loader doesn't see them |
 | `tests/e2e/bad-scripts.spec.ts` | SM-only e2e: each bad script gets the expected status, error location, and byte-for-byte viewer render |
 | `tests/e2e/diagnostic-links.spec.ts` | Clicking a diagnostic's location jumps to the file and line, in the installed viewer and the install preview |
@@ -518,10 +526,12 @@ built extension loaded; fixtures in `tests/fixtures/harness.ts`.
 |------|-------------|
 | `tests/harness/console-commands.spec.ts` | The commands typed into `sm-dev start`: `scripts`, `values`, `menu` by M number, dialogs, several tabs, stopped loads |
 | `tests/harness/run-tabs.spec.ts` | `sm-dev start` end to end: followed tabs, `--all`, `--notab`, `load` / `update` / `--watch` reloads, `--from-saved`, sandboxed pages, `--lang` |
+| `tests/harness/run-downloads.spec.ts` | Download lines from a run's tabs: a `--temp-browser` saves beside the run log, a connected browser by its own setting |
 | `tests/harness/page-commands.spec.ts` | The run commands that drive and read a page, in both worlds, with dialogs, quoting, and files |
 | `tests/harness/stack-lines.spec.ts` | sm-dev's `threw` reports and console lines name the `@require` or script line a stack frame came from |
 | `tests/harness/wait.spec.ts` | `wait` in its forms, the actions settling on their own, `--nowait`, and what a busy page reports |
 | `tests/harness/browser-launch.spec.ts` | `sm-dev --open-browser`: a browser that outlives sm-dev, started once, and its profile's lock |
+| `tests/harness/manager-commands.spec.ts` | `collection list` and `script list` from the command line, with no run and in a run, text and `--json` |
 | `tests/harness/run-remote.spec.ts` | `sm-dev start` driven from other shells: `--detach`, `--run`, `--` lines, sent commands, logs, stuck tabs, `--json` |
 | `tests/harness/temp-extension.spec.ts` | `--temp-browser` runs: the launched extension, `--values` and local files, run commands, managed scripts (E1) kept out |
 | `tests/harness/extension-state.spec.ts` | Whether sm-dev sees SourceMonkey in a browser: loaded unpacked, absent, or no browser to ask |
@@ -590,6 +600,7 @@ For userscript repos to install, so their coding agents know how to use `sm-dev`
 | `docs/industry-research.md` | Survey of existing userscript managers and AI-assisted "vibe-coding" tools in the same space |
 | `docs/GM-API-strategy.md` | Decision doc comparing VM-embed vs own-impl for `GM_*` APIs; recommends own-impl with VM as reference |
 | `docs/GM-APIs.md` | `GM_*` / `GM.*` implementation status: catalog, bindings emitter, world gating, `@grant` resolution, GM4 alias namespace |
+| `docs/connect-permissions.md` | `@connect` gating for `GM_xmlhttpRequest`: rules, own origin, the connection prompt and its stored answers |
 | `docs/xhr-header-surgery.md` | How `GM_xmlhttpRequest` sets forbidden request headers via short-lived DNR rules — URL-tag targeting, defaults, blind spots |
 | `docs/GM-APIs-storage.md` | Storage subsystem in depth: why values live in-document, how the cache is seeded, freshness mechanisms after `GM_setValue`, wire format |
 | `docs/supported-GM-APIs.md` | User-facing per-API inventory: which `GM_*` names work, which are stubbed, and how they map to TM / VM / GM4 |

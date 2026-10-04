@@ -492,9 +492,13 @@ A MISSING row says a script matched but never reported. Once the page
 has loaded, the script's Log says so too, with what we can tell about
 why (`src/extension/missing-scripts.ts`):
 
-- **When**: `webNavigation.onCompleted` for the top frame, plus a 3s
-  grace period for document-idle scripts still waiting on their
-  check-pending reply. At most once per document (`missingChecked`).
+- **When**: `webNavigation.onCompleted` for the top frame, plus a
+  grace period (11s) past the wrapper's 10s decision timeout, for
+  scripts still waiting on their check-pending reply. At most once per
+  document (`missingChecked`).
+  - A script that got no decision reports so (an error, with why), and
+    so isn't listed here: see
+    [injection.md](injection.md#no-decision).
 - **Which scripts**: those that matched when the document was first
   seen (`loadMatchIds`), with no report, and not already explained by
   REJECTED or NOT LOADED.

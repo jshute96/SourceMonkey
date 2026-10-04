@@ -57,6 +57,7 @@ import {
   isSingleFileInput,
   isScratchUrl,
   scratchFilesKey,
+  scratchSourceKey,
   scratchTextKey,
   scratchUrl,
   isSmDevCollection,
@@ -78,6 +79,7 @@ import {
   statFromListing,
   hasCachedListing,
   type DirectoryListingCache,
+  type ScratchSource,
 } from './directories.js';
 import {
   getValue,
@@ -91,6 +93,7 @@ import {
 import { type LocalFileScope } from '../local-file-overrides.js';
 import { scanAllStorage } from './storage-scan.js';
 import { wipeScriptValues } from './gm-values.js';
+import { connectGrantsKey } from './connect-grants.js';
 import { sourceUsesUnsafeWindow } from '../unsafe-window-use.js';
 import type { VersionProbe } from '../version-probe.js';
 import {
@@ -150,7 +153,7 @@ export {
   ISOLATED_UNSAFE_WINDOW_WARNING,
   NO_MATCH_OR_INCLUDE,
   NO_NAME,
-  noConnectWarning,
+  noConnectInfo,
   setParseChecker,
   setScriptError,
   SYNTAX_ERROR_PREFIX,
@@ -1422,6 +1425,8 @@ export interface RunScriptArgs {
   name?: string;
   // The `@require` / `@resource` bodies it read from disk, by ref.
   files?: Record<string, PushedFile>;
+  // The file it was read from, as an absolute `file://` URL (sm-dev 1.2).
+  source?: string;
 }
 
 // Install or replace one of run `run`'s scripts, in its test collection.
@@ -1440,8 +1445,14 @@ export async function writeRunScript(args: RunScriptArgs): Promise<WriteRunScrip
   // without the other. Replaced whole, so a body the script no longer
   // reads from disk goes.
   const hasFiles = args.files !== undefined && Object.keys(args.files).length > 0;
-  await writeLocal({ [scratchTextKey(url)]: args.text, ...(hasFiles ? { [scratchFilesKey(url)]: args.files } : {}) });
-  if (!hasFiles) await chrome.storage.local.remove(scratchFilesKey(url));
+  const source: ScratchSource | undefined = args.source ? { fileUrl: args.source, given: name } : undefined;
+  await writeLocal({
+    [scratchTextKey(url)]: args.text,
+    ...(hasFiles ? { [scratchFilesKey(url)]: args.files } : {}),
+    ...(source ? { [scratchSourceKey(url)]: source } : {}),
+  });
+  const stale = [...(hasFiles ? [] : [scratchFilesKey(url)]), ...(source ? [] : [scratchSourceKey(url)])];
+  if (stale.length > 0) await chrome.storage.local.remove(stale);
   const container = (await getCollections()).find((c) => c.path === smDevContainerPath(args.run));
   let scriptId: string | undefined;
   let collectionId: string | undefined;
@@ -1463,7 +1474,7 @@ export async function writeRunScript(args: RunScriptArgs): Promise<WriteRunScrip
       result = await installScript(url, { smDevRun: args.run });
     } catch (err) {
       // The install took its seed back out; the text rows go with it.
-      await chrome.storage.local.remove([scratchTextKey(url), scratchFilesKey(url)]);
+      await chrome.storage.local.remove([scratchTextKey(url), scratchFilesKey(url), scratchSourceKey(url)]);
       throw err;
     }
     if (!result) throw new Error('Internal error: the scratch script was neither installed nor found');
@@ -1955,6 +1966,7 @@ export async function removeCollection(id: string): Promise<void> {
     const removeKeys = [
       collectionKey(id),
       ...scriptIds.map(scriptKey),
+      ...scriptIds.map(connectGrantsKey),
       ...await unreferencedScratchKeys(removed),
     ];
     await writeLocal({ [COLLECTIONS_INDEX_KEY]: next });
@@ -1987,7 +1999,9 @@ export async function removeScript(id: string): Promise<void> {
       }
     }
     if (Object.keys(toSet).length > 0) await writeLocal(toSet);
-    await chrome.storage.local.remove([scriptKey(id), ...await unreferencedScratchKeys([script])]);
+    await chrome.storage.local.remove([
+      scriptKey(id), connectGrantsKey(id), ...await unreferencedScratchKeys([script]),
+    ]);
   });
   // After the write, not inside it: the local write is the one that has
   // to be atomic, and a failure here must not undo a removal that
@@ -2018,7 +2032,7 @@ async function unreferencedScratchKeys(removed: readonly StoredScript[]): Promis
   for (const value of Object.values(rows)) {
     urls.delete((value as StoredScript).relativePath);
   }
-  return [...urls].flatMap((url) => [scratchTextKey(url), scratchFilesKey(url)]);
+  return [...urls].flatMap((url) => [scratchTextKey(url), scratchFilesKey(url), scratchSourceKey(url)]);
 }
 
 // ---------- Membership reconciliation ----------
@@ -2454,7 +2468,7 @@ export async function refreshCollection(
       }
       await writeLocal(toSet);
       if (droppedIds.length > 0) {
-        await chrome.storage.local.remove(droppedIds.map(scriptKey));
+        await chrome.storage.local.remove([...droppedIds.map(scriptKey), ...droppedIds.map(connectGrantsKey)]);
       }
 
       return { collection: nextCollection, scripts: finalScripts, droppedIds };

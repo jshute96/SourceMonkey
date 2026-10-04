@@ -33,9 +33,10 @@
 // One safety limit lives here:
 //   - `@connect` redirect re-validation: `fetch` follows redirects by
 //     default, so an allowlisted host could 302 to a disallowed one.
-//     The caller passes `isFinalUrlAllowed`; if the response came back
-//     from a redirected URL whose host fails the policy, we drop the
-//     body and return an error instead of handing it to the script.
+//     The caller passes `checkFinalUrl`; if the response came back
+//     from a redirected URL the policy refuses (the user can be asked
+//     about it, as for the first URL), we drop the body and return the
+//     policy's error instead of handing it to the script.
 //     This blocks *reading* responses from non-allowlisted hosts; it
 //     can't prevent the request reaching the redirect target (fetch
 //     gives no per-hop hook and `redirect:'manual'` yields an opaque
@@ -50,9 +51,9 @@
 
 import { bytesToBase64 } from '../bytes.js';
 import {
-  connectBlockedMessage,
   headerRuleFailedMessage,
   headerStallMessage,
+  unreachableMessage,
 } from '../gm-connect.js';
 import {
   buildHeaderRule,
@@ -144,6 +145,14 @@ class PageGoneError extends Error {
   }
 }
 
+// A request that got no response at all, said in our words.
+class UnreachableError extends Error {
+  constructor(url: string) {
+    super(unreachableMessage(URL.parse(url)?.host || url));
+    this.name = 'UnreachableError';
+  }
+}
+
 // Run a fetch on behalf of the page. Always resolves to the terminal
 // event to send back, including for aborts and timeouts — the page-side
 // runtime fires its own `onabort` immediately as well, so a script sees
@@ -155,10 +164,11 @@ class PageGoneError extends Error {
 // than letting the worker buffer the body. A push that throws (the tab
 // is gone) aborts the request.
 //
-// `isFinalUrlAllowed`, when supplied, re-checks the response's URL
-// against the script's `@connect` policy after redirects. A response
-// that landed on a disallowed host (via a redirect the initial check
-// couldn't see) is dropped with an error event rather than returned.
+// `checkFinalUrl`, when supplied, re-checks the response's URL against
+// the script's `@connect` policy after redirects, resolving to null when
+// allowed or else the error to report. A response that landed on a
+// refused host (via a redirect the initial check couldn't see) is
+// dropped with that error rather than returned.
 //
 // Request headers the browser's `fetch` refuses to send (`Origin`,
 // `Cookie`, `Sec-Fetch-*`) go out by a short-lived declarativeNetRequest
@@ -168,11 +178,17 @@ export async function runXhr(
   id: string,
   request: GmXhrRequestPayload,
   push: (event: GmXhrStreamEvent) => Promise<void>,
-  isFinalUrlAllowed?: (url: string) => boolean,
+  checkFinalUrl?: (url: string, signal: AbortSignal) => Promise<string | null>,
   tabId: number | null = null,
 ): Promise<GmXhrEvent> {
-  const controller = new AbortController();
+  // Taken over from `reserveXhr` when the caller made one, so an abort
+  // that came while the request waited on the policy counts.
+  const controller = activeXhrs.get(id)?.controller ?? new AbortController();
   activeXhrs.set(id, { controller, tabId });
+  if (controller.signal.aborted) {
+    activeXhrs.delete(id);
+    return { kind: 'abort' };
+  }
   // Timeout: setTimeout that aborts the controller. We track the
   // timer so we can clear it on completion.
   let timeoutFired = false;
@@ -270,7 +286,16 @@ export async function runXhr(
     // The tagged URL where there's a rule: the tag is what the rule
     // matches on, and it never leaves the browser (a fragment isn't
     // transmitted, and `res.url` comes back without it).
-    const res = await fetch(spec?.target ?? request.url, init);
+    //
+    // Chrome's message for a network failure is exactly "Failed to
+    // fetch"; other `TypeError`s (a header name `fetch` won't take)
+    // name their own problem and pass through.
+    const res = await fetch(spec?.target ?? request.url, init).catch((err: unknown) => {
+      if (!controller.signal.aborted && err instanceof TypeError && err.message === 'Failed to fetch') {
+        throw new UnreachableError(request.url);
+      }
+      throw err;
+    });
     // Headers are in, so the stall backstop has nothing left to guard —
     // whatever the body does from here is the download's business.
     clearHeaderStall();
@@ -289,14 +314,10 @@ export async function runXhr(
     // prevented here.) We only check on actual redirects — an
     // un-redirected response is on the host the initial check already
     // approved.
-    if (res.redirected && isFinalUrlAllowed && !isFinalUrlAllowed(res.url)) {
-      let host = res.url;
-      try { host = new URL(res.url).hostname; } catch { /* keep full url */ }
-      return {
-        kind: 'error',
-        message: connectBlockedMessage(`redirect to ${host} not allowed`),
-      };
-    }
+    const refusal = res.redirected && checkFinalUrl ? await checkFinalUrl(res.url, controller.signal) : null;
+    // Aborted (or timed out) while the check asked the user.
+    if (controller.signal.aborted) return terminalAbortEvent();
+    if (refusal !== null) return { kind: 'error', message: refusal };
     const total = bodyLength(res.headers);
     const responseHeaders = serializeHeaders(res.headers);
     // A push that fails means the page is gone; said in our words.
@@ -328,7 +349,9 @@ export async function runXhr(
       err instanceof Error && (err.name === 'AbortError' || /aborted/i.test(err.message));
     // The script's own timeout outranks everything, then the aborts.
     if (timeoutFired) return terminalAbortEvent();
-    if (err instanceof PageGoneError) return { kind: 'error', message: err.message };
+    if (err instanceof PageGoneError || err instanceof UnreachableError) {
+      return { kind: 'error', message: err.message };
+    }
     if (headerStallFired || isAbortError) return terminalAbortEvent();
     const message = err instanceof Error ? err.message : String(err);
     return { kind: 'error', message };
@@ -484,6 +507,20 @@ async function removeHeaderRule(ruleId: number): Promise<void> {
       }
     }
   }
+}
+
+// Make a request abortable before `runXhr` starts it: while it waits
+// on the user's answer to the connection prompt, the script may call
+// `abort()` or its tab may close. `runXhr` takes the entry over; a
+// caller that ends up not running the request calls `releaseXhr`.
+export function reserveXhr(id: string, tabId: number | null): AbortSignal {
+  const controller = new AbortController();
+  activeXhrs.set(id, { controller, tabId });
+  return controller.signal;
+}
+
+export function releaseXhr(id: string): void {
+  activeXhrs.delete(id);
 }
 
 // Cancel an in-flight request by id. Idempotent — calling abort on a

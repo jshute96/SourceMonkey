@@ -12,6 +12,7 @@
 // reading the stream) can skip the whole thing.
 
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -23,10 +24,11 @@ import { isJsonLine, jsonLayoutMistake, jsonResult, JSON_COMMANDS, markedLine, S
 import type * as J from './json-output.js';
 import { extensionLabel, type ExtensionState } from './extension-backend.js';
 import { firstLine } from './extension-link.js';
-import type { HarnessHost, MenuCommandRecord } from './host.js';
+import type { ConnectPromptRecord, HarnessHost, MenuCommandRecord } from './host.js';
 import type { PageAttachment } from './page-watch.js';
+import { collectionList, count, noSuchVerb, scriptList, type ManagerControl, type RunView } from './manager-commands.js';
 import { parseCommandArgs, splitWords, unquoteWhole, type ParsedArgs } from './command-args.js';
-import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, commandsHelp } from './command-list.js';
+import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, SAME_COMMANDS, commandsHelp } from './command-list.js';
 import { errorSentence, readJsonFile, writeProblem } from './input-file.js';
 import { PAGE_COMMANDS, runPageCommand, type EvalIn } from './page-commands.js';
 import { editMultiLine } from './prompt-editor.js';
@@ -122,6 +124,8 @@ export interface ConsoleContext {
     onTab(tab: ControlledTab): Promise<OtherScript[]>;
     /** One already listed, by its label (`E2`). */
     byLabel(label: string): OtherScript | undefined;
+    /** One installed anywhere, picked from `script list`'s rows, by the extension's id. */
+    installed(id: string, label: string, name: string, collection: string): OtherScript;
     /** `set` on one changes the person's own data, so needs `--force`. */
     guarded: boolean;
   };
@@ -151,6 +155,8 @@ export interface ConsoleContext {
   runId?: string;
   /** The run's log file (see run-log.ts), for `status`. */
   log?: string;
+  /** Where a `--temp-browser` saves downloads, for `status`. */
+  downloadsDir?: string;
   /** The run's browser, for `status`: `connected to browser 127.0.0.1:9233`. */
   browser?: string;
   /** The same, for `status --json`. */
@@ -173,6 +179,10 @@ export interface ConsoleContext {
    * Unset before the first.
    */
   previousStart?: number;
+  /** SourceMonkey's collections and installed scripts, for `collection list` and `script list`. */
+  manager?: ManagerControl;
+  /** The extension's id for one of `scripts`, once pushed, for `script list`. */
+  extensionIdOf?: (script: PreparedScript) => string | undefined;
   /** Where `validate` and `match` find local copies of `@require`s: the run's own. */
   roots?: ScriptRoots;
 }
@@ -186,7 +196,7 @@ const NEEDS_A_TAB = new Set(['menu', 'open', 'reload', 'focus', 'closetab', 'acc
 
 // `script` and `tab` pick one, as `scripts` and `tabs` do given one,
 // so each is run as its plural.
-const RUN_ALIASES: Record<string, string> = { ...ALIASES, script: 'scripts', tab: 'tabs' };
+const RUN_ALIASES: Record<string, string> = { ...ALIASES, ...SAME_COMMANDS };
 
 /**
  * What's wrong with a run command's words, before it runs, or null (for
@@ -200,6 +210,108 @@ export function runCommandMistake(input: { line: string } | { words: string[] })
   if (!own) return null;
   const parsed = parseCommandArgs(own.command, own.rest);
   return 'error' in parsed ? parsed : null;
+}
+
+// The run's permission prompts still waiting for an answer, oldest
+// first.
+function waitingPrompts(ctx: ConsoleContext): ConnectPromptRecord[] {
+  return ctx.host.reports.connectPrompts.filter((r) => !r.answer && !r.closed);
+}
+
+// A request URL without its query string or fragment: those can be
+// long (signed CDN links) and hold keys, and the host and path are what
+// the question is about.
+export function withoutQuery(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return url;
+  }
+}
+
+// What is still waiting for an answer as a command ends: permission
+// prompts, and dialogs open on the run's tabs. Each is a stuck state
+// (a request, or the whole page, can't go on), and the line announcing
+// it may have come between commands, where only the run's log saw it.
+// So each command repeats them, after its own output, until answered.
+//
+// Only what was already waiting when the command began: one that opens
+// during the command has just been announced in its output. Nor a
+// dialog the command's output already named (a command refused for it).
+export function waitingReminders(ctx: ConsoleContext, before: WaitingState, said: readonly string[]): string[] {
+  const lines: string[] = [];
+  const selected = selectedScript(ctx);
+  for (const prompt of waitingPrompts(ctx)) {
+    if (!before.prompts.has(prompt.promptId)) continue;
+    const script = ctx.scripts.find((s) => s.id === prompt.scriptId);
+    const select = script && script !== selected && ctx.scripts.length > 1 ? ` (select it first with script ${ctx.scripts.indexOf(script) + 1})` : '';
+    lines.push(`[sm-dev] *PERMISSION PROMPT* still waiting: ${prompt.name} requests permission to connect to ${prompt.host}. Answer using connect once|cancel|allow|deny|allow-all${select}.`);
+  }
+  const current = currentTab(ctx);
+  for (const tab of ctx.tabs()) {
+    const dialog = tab.dialogs?.current;
+    if (!dialog || before.dialogs.get(tab) !== dialog) continue;
+    const refusal = dialogWaitingMessage(tab, current);
+    if (said.some((l) => l.includes(refusal))) continue;
+    const named = tab === current ? '' : ` ${tabName(tab)}`;
+    lines.push(`[sm-dev] *DIALOG* still waiting: ${tab === current ? 'The page' : tabName(tab)} is showing ${dialogKind(dialog)} dialog. Answer using accept${named} or dismiss${named}.`);
+  }
+  return lines;
+}
+
+// What `waitingReminders` compares against: the prompts and dialogs
+// waiting as a command began.
+export interface WaitingState {
+  prompts: Set<string>;
+  dialogs: Map<ControlledTab, unknown>;
+}
+
+export function waitingState(ctx: ConsoleContext): WaitingState {
+  return {
+    prompts: new Set(waitingPrompts(ctx).map((r) => r.promptId)),
+    dialogs: new Map(ctx.tabs().flatMap((t) => (t.dialogs?.current ? [[t, t.dialogs.current] as const] : []))),
+  };
+}
+
+// `connect once|cancel|allow|deny|allow-all [host]`: answers a connection prompt,
+// as the person would in its window.
+async function answerConnectCommand(ctx: ConsoleContext, args: string[]): Promise<false | void> {
+  const [choice, host] = args;
+  if (choice !== 'once' && choice !== 'cancel' && choice !== 'allow' && choice !== 'deny' && choice !== 'allow-all') {
+    ctx.out('[sm-dev] ERROR: The connect command takes once, cancel, allow, deny or allow-all, then optionally the host.');
+    return false;
+  }
+  // The selected script's, as for `get` and `set`. A prompt is per
+  // script and site, so with `host` there is at most one.
+  const script = selectedScript(ctx);
+  const waiting = waitingPrompts(ctx).filter((r) => host === undefined || r.host === host.toLowerCase());
+  const prompt = waiting.find((r) => r.scriptId === script?.id);
+  if (!prompt) {
+    const forHost = host === undefined ? '' : ` for ${host}`;
+    const name = script ? preparedScriptName(script) : 'the selected script';
+    const other = waiting.find((r) => r.scriptId !== script?.id);
+    const otherScript = other && ctx.scripts.find((s) => s.id === other.scriptId);
+    ctx.out(otherScript
+      ? `[sm-dev] No permission prompt${forHost} is waiting for ${name}. ${preparedScriptName(otherScript)} has one: select it with script ${ctx.scripts.indexOf(otherScript) + 1}, then use connect again.`
+      : `[sm-dev] No permission prompt${forHost} is waiting for ${name}`);
+    return;
+  }
+  let answered: boolean;
+  try {
+    answered = await ctx.host.answerConnectPrompt(prompt.promptId, choice);
+  } catch (err) {
+    ctx.out(`[sm-dev] ERROR: ${(err as Error).message}`);
+    return false;
+  }
+  if (!answered) {
+    ctx.out(`[sm-dev] The permission prompt for ${prompt.host} is no longer waiting`);
+    return;
+  }
+  const said = choice === 'allow' ? `Allowed ${prompt.host}` : choice === 'allow-all' ? 'Allowed all sites'
+    : choice === 'deny' ? `Denied ${prompt.host}` : choice === 'once' ? `Allowed ${prompt.host} once`
+      : `Cancelled the permission prompt about ${prompt.host}`;
+  ctx.out(`[sm-dev] ${said} for ${prompt.name}`);
 }
 
 /** The run command whose help `--help` asks for (`click --help`), or null. */
@@ -231,7 +343,26 @@ function ownWords(input: { line: string } | { words: string[] }): { command: str
     rest = { words: input.words.slice(1) };
   }
   if (!RUN_COMMAND_NAMES.includes(ALIASES[name] ?? name)) return null;
-  return { command: RUN_ALIASES[name] ?? name, rest };
+  return { command: listsInstalled(name, rest) ? 'script' : RUN_ALIASES[name] ?? name, rest };
+}
+
+/**
+ * Which listing of what's installed a command is (`collection list`,
+ * `script list`), in any spelling, or null for another command. These
+ * need SourceMonkey but no run.
+ */
+export function installedListing(words: string[]): 'collection' | 'script' | null {
+  const [name = '', ...rest] = words;
+  if ((ALIASES[name] ?? name) === 'collection') return 'collection';
+  return listsInstalled(name, { words: rest }) ? 'script' : null;
+}
+
+// `script list`, which lists the installed scripts rather than picking
+// one, as `script <id>` does. Its flags can come before `list`.
+function listsInstalled(name: string, rest: { line: string } | { words: string[] }): boolean {
+  if (name !== 'script' && name !== 'scripts') return false;
+  const words = 'line' in rest ? rest.line.trim().split(/\s+/) : rest.words;
+  return words.find((w) => !w.startsWith('--')) === 'list';
 }
 
 /**
@@ -246,7 +377,9 @@ export function commandWords(line: string): string[] {
 
 // Commands that only look: what they print answers whoever asked, and
 // is no part of the run's story.
-const INSPECTING = new Set(['help', 'status', 'values', 'get', 'snapshot', 'screenshot', 'savehtml', 'probe', 'logs', 'match', 'validate']);
+const INSPECTING = new Set([
+  'help', 'status', 'values', 'get', 'snapshot', 'screenshot', 'savehtml', 'probe', 'logs', 'match', 'validate', 'collection',
+]);
 
 /**
  * Whether a command line only inspects, so its output goes back to the
@@ -257,6 +390,7 @@ export function onlyInspects(line: string): boolean {
   const [typed = '', ...words] = line.trim().split(/\s+/);
   // `tabs --json` still lists.
   const rest = words.filter((word) => !/^--(no)?json(=|$)/.test(word));
+  if (listsInstalled(typed, { words: rest })) return true;
   const command = RUN_ALIASES[typed] ?? typed;
   if (INSPECTING.has(command)) return true;
   if (command === 'tabs' || command === 'scripts') return rest.length === 0;
@@ -270,6 +404,8 @@ export function onlyInspects(line: string): boolean {
  */
 export function hasJsonForm(line: string): boolean {
   const typed = line.trim().split(/\s+/)[0];
+  const words = line.trim().split(/\s+/).slice(1);
+  if (listsInstalled(typed, { words })) return true;
   return JSON_COMMANDS.includes(RUN_ALIASES[typed] ?? typed) && onlyInspects(line);
 }
 
@@ -373,6 +509,9 @@ export async function runConsoleCommand(
   };
 
   switch (command) {
+    case 'collection':
+    case 'script':
+      return managerCommand(ctx, command, parsed.form, args);
     case 'match':
       return matchCommand(ctx, args, cwd);
     case 'validate':
@@ -458,7 +597,8 @@ export async function runConsoleCommand(
         const found = await pickOther(ctx, text, picked);
         if (!found) return false;
         ctx.currentOther = found;
-        ctx.out(`[sm-dev] Selected ${found.label}: ${found.name}`);
+        const away = await otherOnTab(ctx, found, picked) ? '' : picked ? `. It isn't on ${tabName(picked)}'s page.` : '. No tab is open.';
+        ctx.out(`[sm-dev] Selected ${found.label}: ${found.name}${away}`);
         return;
       }
       const ref = tabRef(ctx, text, tab);
@@ -491,6 +631,9 @@ export async function runConsoleCommand(
       }
       if (ctx.backend) ctx.out(`Backend: ${ctx.backend()}`);
       if (ctx.log) ctx.out(`Log: ${runLogLabel(ctx.log, ctx.runId)}`);
+      // Chrome makes the folder with the first download, so it's only
+      // worth a line once there is one.
+      if (ctx.downloadsDir && existsSync(ctx.downloadsDir)) ctx.out(`Downloads: ${ctx.downloadsDir}`);
       // The tabs first, each with its URL, ids and any dialog; then
       // the scripts on the current one, which is marked there. With no
       // tab, still the scripts and what they have stored.
@@ -755,6 +898,8 @@ export async function runConsoleCommand(
         .catch((err) => ctx.out(`[sm-dev] Could not bring ${which} to the front: ${(err as Error).message}`));
       return;
     }
+    case 'connect':
+      return answerConnectCommand(ctx, args);
     case 'accept':
     case 'dismiss': {
       const target = parsed.tab !== undefined ? pickTab(ctx, parsed.tab) : tab;
@@ -909,6 +1054,49 @@ function rootsOf(ctx: ConsoleContext, cwd: string): ScriptRoots {
 // A loaded script's number and label, as the scripts list shows it.
 function numbered(ctx: ConsoleContext, script: PreparedScript): string {
   return `${ctx.scripts.indexOf(script) + 1}: ${scriptLabel(script)}`;
+}
+
+/**
+ * `collection list` (`collection`, `collections`) and `script list`. `form`: the
+ * keyword after the command's name (`list`); `args`: the words after it.
+ */
+export async function managerCommand(
+  ctx: Pick<ConsoleContext, 'manager' | 'out' | 'json'> & Partial<ConsoleContext>, command: string, form: string | undefined, args: string[],
+): Promise<boolean | void> {
+  // `collection` alone lists, as `tabs` does.
+  if (form !== 'list' && args.length > 0) {
+    ctx.out(`[sm-dev] ERROR: ${noSuchVerb(args[0])}`);
+    return false;
+  }
+  if (!ctx.manager) {
+    ctx.out('[sm-dev] This run has no SourceMonkey to list from');
+    return false;
+  }
+  try {
+    if (command === 'script') await scriptList(ctx.manager, args[0], ctx.out, ctx.json === true, runView(ctx));
+    else await collectionList(ctx.manager, ctx.out, ctx.json === true);
+  } catch (err) {
+    // What it named isn't there, or SourceMonkey failed: a failure, not
+    // a mistake in the command, as `pickScript` reports one.
+    ctx.out(`[sm-dev] ${firstLine(err)}`);
+    return false;
+  }
+}
+
+// In a run, how `script list` shows the run's own scripts: by their
+// numbers here (`2`), with the selected script (one of them, or an `E`
+// script picked) marked.
+function runView(ctx: Partial<ConsoleContext>): RunView | undefined {
+  if (!ctx.scripts) return undefined;
+  const own = new Map<string, string>();
+  ctx.scripts.forEach((script, i) => {
+    const id = ctx.extensionIdOf?.(script);
+    if (id) own.set(id, String(i + 1));
+  });
+  const selected = ctx.currentOther ? { label: ctx.currentOther.label } : undefined;
+  const mine = ctx.currentOther ? undefined : ctx.current ?? ctx.scripts[0];
+  const mineId = mine && ctx.extensionIdOf?.(mine);
+  return { own, selected: selected ?? (mineId ? { internalId: mineId } : undefined) };
 }
 
 /**
@@ -1338,7 +1526,9 @@ const OTHER_STATE: Record<string, J.TabState> = {
 // The SourceMonkey-managed scripts on `tab`, as JSON; null (said why)
 // when they couldn't be listed.
 async function otherScriptsJson(ctx: ConsoleContext, tab: ControlledTab | undefined): Promise<J.Script[] | null> {
-  if (!ctx.others || !tab) return [];
+  if (!ctx.others) return [];
+  // With no tab, only the picked one, which is on no page.
+  if (!tab) return ctx.currentOther ? [{ ...otherJson(ctx, ctx.currentOther), tabs: [] }] : [];
   let others: OtherScript[];
   try {
     others = await ctx.others.onTab(tab);
@@ -1346,14 +1536,21 @@ async function otherScriptsJson(ctx: ConsoleContext, tab: ControlledTab | undefi
     ctx.out(`[sm-dev] SourceMonkey-managed scripts on ${tabName(tab)} could not be listed: ${firstLine(err)}`);
     return null;
   }
-  return others.map((o) => ({
+  const away = ctx.currentOther && !others.includes(ctx.currentOther) ? [ctx.currentOther] : [];
+  return [...others, ...away].map((o) => ({
+    ...otherJson(ctx, o),
+    tabs: [{ tab: tabName(tab), state: away.includes(o) ? 'not-running' : OTHER_STATE[o.status] ?? 'running' }],
+  }));
+}
+
+function otherJson(ctx: ConsoleContext, o: OtherScript): J.Script {
+  return {
     id: o.label,
     kind: 'installed',
     name: o.name,
     ...(o.collection ? { collection: { name: o.collection } } : {}),
     ...(o.label === ctx.currentOther?.label ? { selected: true } : {}),
-    tabs: [{ tab: tabName(tab), state: OTHER_STATE[o.status] ?? 'running' }],
-  }));
+  };
 }
 
 async function statusJson(ctx: ConsoleContext, tab: ControlledTab | undefined): Promise<J.StatusData> {
@@ -1369,6 +1566,10 @@ async function statusJson(ctx: ConsoleContext, tab: ControlledTab | undefined): 
       errors: errors.length,
       ...(errors.length > 0 ? { lastError: errors.at(-1)!.message } : {}),
     });
+    const prompts = waitingPrompts(ctx).filter((r) => r.scriptId === id);
+    if (prompts.length > 0) {
+      scripts[scripts.length - 1].permissionPrompts = prompts.map((r) => ({ host: r.host, method: r.method, url: withoutQuery(r.url) }));
+    }
   }
   const others = await otherScriptsJson(ctx, tab) ?? [];
   let run: J.StatusData['run'];
@@ -1382,6 +1583,7 @@ async function statusJson(ctx: ConsoleContext, tab: ControlledTab | undefined): 
       ...(extension ? { sourceMonkey: extension } : {}),
       ...(collection ? { testCollection: collection } : {}),
       ...(ctx.log ? { log: ctx.log } : {}),
+      ...(ctx.downloadsDir ? { downloads: ctx.downloadsDir } : {}),
     };
   }
   return {
@@ -1835,6 +2037,11 @@ async function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined):
   for (const script of scripts) {
     const id = script.id;
     lines.push(scriptRow(ctx, script));
+    // First under the script, on any tab: the script is stuck until
+    // it's answered.
+    for (const prompt of waitingPrompts(ctx).filter((r) => r.scriptId === id)) {
+      lines.push(`${DETAIL}*PERMISSION PROMPT* waiting: ${prompt.host} (${prompt.method} ${withoutQuery(prompt.url)}). Answer using connect.`);
+    }
     if (!tab) {
       // Errors are the script's, from tabs since closed, so still told.
       const values = id ? Object.keys(await ctx.host.valuesOf(id)).length : 0;
@@ -1917,9 +2124,29 @@ async function pickOther(ctx: ConsoleContext, label: string, tab: ControlledTab 
       return null;
     }
   }
-  const found = ctx.others.byLabel(name);
-  if (!found) ctx.out(`[sm-dev] There is no script ${name}. Use scripts to list them.`);
-  return found ?? null;
+  // Not on the tab's page: any installed script can still be picked.
+  const found = ctx.others.byLabel(name) ?? await installedOther(ctx, name);
+  if (!found) ctx.out(`[sm-dev] There is no script ${name}. Use script list to list the installed scripts.`);
+  return found;
+}
+
+// An installed script anywhere, by its E-id, or null for none.
+async function installedOther(ctx: ConsoleContext, label: string): Promise<OtherScript | null> {
+  if (!ctx.manager || !ctx.others) return null;
+  // An extension too old to list them knows only those on the tab.
+  const listed = await Promise.all([ctx.manager.scripts(), ctx.manager.collections()]).catch(() => null);
+  if (!listed) return null;
+  const [scripts, collections] = listed;
+  const script = scripts.find((s) => `E${s.number}` === label);
+  if (!script) return null;
+  const collection = collections.find((c) => c.id === script.collectionId)?.name ?? '';
+  return ctx.others.installed(script.id, label, script.name, collection);
+}
+
+// Whether a picked installed script is among those on `tab`'s page.
+async function otherOnTab(ctx: ConsoleContext, other: OtherScript, tab: ControlledTab | undefined): Promise<boolean> {
+  if (!tab || !ctx.others) return false;
+  return (await ctx.others.onTab(tab).catch((): OtherScript[] => [])).includes(other);
 }
 
 // How `scripts` and `status` show an extension script's badge status.
@@ -1932,7 +2159,7 @@ const OTHER_STATUS: Record<string, string> = {
   MISSING: 'Not started',
   UNEXPECTED: 'Running, though it doesn\'t match',
   RELOAD: 'Changed since it started',
-  NOT_LOADED: 'Kept out of the run\'s tabs',
+  NOT_LOADED: 'SourceMonkey script not loaded in sm-dev tab',
 };
 
 // `E1: Name (Collection)`, without the parentheses for a script whose
@@ -1944,23 +2171,24 @@ function otherLabel(o: OtherScript): string {
 // SourceMonkey-managed scripts on `tab`, for `scripts` and `status`.
 // None when there are none.
 async function otherLines(ctx: ConsoleContext, tab: ControlledTab | undefined): Promise<string[]> {
-  if (!ctx.others || !tab) return [];
+  if (!ctx.others) return [];
+  // With no tab, only the picked one, which is on no page.
+  if (!tab) return ctx.currentOther ? ['SourceMonkey-managed scripts:', `* ${otherLabel(ctx.currentOther)}: No tab is open`] : [];
   let others: OtherScript[];
   try {
     others = await ctx.others.onTab(tab);
   } catch (err) {
     return [`[sm-dev] SourceMonkey-managed scripts on ${tabName(tab)} could not be listed: ${firstLine(err)}`];
   }
-  if (others.length === 0) return [];
+  // The picked one, when it isn't on this page.
+  const away = ctx.currentOther && !others.includes(ctx.currentOther) ? ctx.currentOther : undefined;
+  if (others.length === 0 && !away) return [];
   return [
     `SourceMonkey-managed scripts on ${tabName(tab)}:`,
     // By label: each listing gets the scripts afresh.
     ...others.map((o) => `${o.label === ctx.currentOther?.label ? '* ' : '  '}${otherLabel(o)}: ${OTHER_STATUS[o.status] ?? o.status}`),
+    ...(away ? [`* ${otherLabel(away)}: Not on this page`] : []),
   ];
-}
-
-function count(n: number, noun: string): string {
-  return `${n} ${noun}${n === 1 ? '' : 's'}`;
 }
 
 // Activates the tab, un-minimizing its window first, since activating
@@ -2213,6 +2441,9 @@ export type CommandRunner = (
 
 // `answer`: where the command's own output goes instead of `ctx.out`
 // (see commandOutput). Resolves to the command's exit code.
+// Commands after which nothing is left to remind about.
+const ENDS_RUN = new Set(['exit', 'stop']);
+
 export function commandRunner(ctx: ConsoleContext): CommandRunner {
   let queue: Promise<unknown> = Promise.resolve();
   return (line, hooks) => {
@@ -2234,11 +2465,23 @@ export function commandRunner(ctx: ConsoleContext): CommandRunner {
         else if (isJsonLine(l)) out(ctx.jsonLayout ? withLayout(l, ctx.jsonLayout) : l);
         else out(STDERR_LINE + l);
       };
+      const before = waitingState(ctx);
+      const said: string[] = [];
+      const shown = ctx.out;
+      ctx.out = (l) => {
+        said.push(l);
+        shown(l);
+      };
       try {
         // Typed at a person's prompt, `menu` needn't wait for a command
         // still to register: the person can see what there is.
         ctx.interactive = hooks?.interactive === true;
         const result = await runConsoleCommand(line, ctx, { cwd: hooks?.cwd, words: hooks?.words });
+        // Not after a command that ends the run, nor a line saying the
+        // same thing already (a command refused for an open dialog).
+        if (!ENDS_RUN.has(line.trim().split(/\s+/)[0])) {
+          for (const reminder of waitingReminders(ctx, before, said)) ctx.out(reminder);
+        }
         code = result === false ? 1 : typeof result === 'number' ? result : 0;
         // An invalid command is 2, even when it also said it failed.
         if (mistaken) code = 2;

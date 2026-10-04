@@ -12,7 +12,7 @@ import {
   backfillUsesUnsafeWindow,
   distillMatching,
   extractStartupLogs,
-  noConnectWarning,
+  noConnectInfo,
   unsupportedRunAtWarning,
   validateHeader,
   buildScriptFromText,
@@ -258,7 +258,7 @@ test('extractStartupLogs warns once per unusable @match, each on its own line', 
   ]);
 });
 
-test('extractStartupLogs warns when GM_xmlhttpRequest is granted with no @connect', () => {
+test('extractStartupLogs notes when GM_xmlhttpRequest is granted with no @connect', () => {
   // Both spellings are one API, so one row, on the first one's line.
   const header = parseHeader(`// ==UserScript==
 // @name X
@@ -269,18 +269,18 @@ test('extractStartupLogs warns when GM_xmlhttpRequest is granted with no @connec
 // ==/UserScript==
 `);
   assert.deepEqual(extractStartupLogs(header, 'x.user.js'), [
-    { level: 'warn', message: noConnectWarning('GM.xmlHttpRequest'), location: { file: 'x.user.js', line: 5 } },
+    { level: 'info', message: noConnectInfo('GM.xmlHttpRequest'), location: { file: 'x.user.js', line: 5 } },
   ]);
   assert.equal(
-    noConnectWarning('GM_xmlhttpRequest'),
-    'This script has no @connect lines, so all its GM_xmlhttpRequest requests are blocked. '
+    noConnectInfo('GM_xmlhttpRequest'),
+    'This script has no @connect lines, so SourceMonkey asks before its GM_xmlhttpRequest requests reach another site. '
       + 'Add @connect for each host it contacts, or @connect * to allow any host.',
   );
 });
 
-test('extractStartupLogs warns when no @connect line is usable', () => {
-  // `*.` parses to no rule, so enforcement blocks all requests: the
-  // warning has to agree.
+test('extractStartupLogs notes when no @connect line is usable', () => {
+  // `*.` parses to no rule, so enforcement asks about all hosts: the
+  // note has to agree.
   const header = parseHeader(`// ==UserScript==
 // @name X
 // @match https://e/*
@@ -289,7 +289,7 @@ test('extractStartupLogs warns when no @connect line is usable', () => {
 // ==/UserScript==
 `);
   assert.deepEqual(extractStartupLogs(header, 'x.user.js').map((l) => l.message), [
-    noConnectWarning('GM_xmlhttpRequest'),
+    noConnectInfo('GM_xmlhttpRequest'),
   ]);
 });
 
@@ -1385,7 +1385,7 @@ GM_xmlhttpRequest({ url: 'https://example.com/' });
     legacyRow({ id: 'broken', text, status: 'invalid', errorMessage: 'The file is empty' }),
   ]);
   assert.equal(await backfillStartupLogs(), 1);
-  assert.deepEqual(store['script:stale'].startupLogs.map((l) => l.message), [noConnectWarning('GM_xmlhttpRequest')]);
+  assert.deepEqual(store['script:stale'].startupLogs.map((l) => l.message), [noConnectInfo('GM_xmlhttpRequest')]);
   assert.equal(store['script:broken'].startupLogs, undefined);
   assert.equal(await backfillStartupLogs(), 0);
 });

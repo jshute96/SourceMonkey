@@ -14,10 +14,11 @@ import type { Browser, BrowserContext, ConsoleMessage, Page } from '@playwright/
 
 import { shellWord } from './command-lines.js';
 import {
-  commandOutput, commandRunner, DialogTracker, gotoInTab, leaveDialogsOpen, onlyInspects, reloadTab, reloadable, serveSavedPage, setCommandsListening, skippedScriptLine, targetIdSuffix,
+  commandOutput, commandRunner, DialogTracker, gotoInTab, leaveDialogsOpen, onlyInspects, reloadTab, reloadable, serveSavedPage, setCommandsListening, skippedScriptLine, targetIdSuffix, withoutQuery,
   type CommandRunner, type ConsoleContext, type ControlledTab,
 } from './console-commands.js';
 import { applyLang, langLaunchArgs } from './browser-lang.js';
+import { watchDownloads, type DownloadWatch } from './download-watch.js';
 import { extensionLabel, sourceMonkeyState, type ExtensionState } from './extension-backend.js';
 import { ExtensionHost } from './extension-host.js';
 import { launchExtensionBrowser } from './extension-launch.js';
@@ -30,6 +31,7 @@ import {
   defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, preparedScriptPath, prepareScript, pushedFiles, shownPath, warningLines, type PreparedScript,
 } from './prepare.js';
 import { DEFAULT_LOG_SOURCES, inSources, RunLog, streamText, type LogFields, type LogSource } from './run-logs.js';
+import { runDownloadsDir } from './run-log.js';
 import { comparableUrl, openingSavedLine, type SavedPageStart } from './saved-pages.js';
 import { browserSentence, checkRunsDir, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentCommand, type SentLineHandler } from './runs.js';
 import { cspBlocksPageScripts, sandboxedPageWarning } from '../sandboxed-page.js';
@@ -131,6 +133,8 @@ export interface ConnectOptions {
   lang?: string[];
   /** Resolves to give up connecting (--seconds): ends a wait for tabs that don't answer. */
   until?: Promise<void>;
+  /** The run's log file, which a `tempBrowser`'s downloads folder is named after. */
+  log?: string;
 }
 
 /**
@@ -146,6 +150,16 @@ export function cdpEndpoint(value: string): string {
   const port = /^:?(\d+)$/.exec(v);
   if (port) return `http://127.0.0.1:${port[1]}`;
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(v) ? v : `http://${v}`;
+}
+
+/**
+ * Whether two `--browser` values name the same browser: as
+ * `cdpEndpoint` writes them, with `localhost` and `[::1]` the same as
+ * `127.0.0.1`.
+ */
+export function sameBrowser(a: string, b: string): boolean {
+  const key = (value: string): string => cdpEndpoint(value.trim()).replace(/^(\w+:\/\/)(localhost|\[::1\])(?=[:/]|$)/i, '$1127.0.0.1');
+  return key(a) === key(b);
 }
 
 // `--browser`, else $SM_DEV_BROWSER, else port 9233. Empty counts as
@@ -171,6 +185,8 @@ export interface BrowserSession {
   launched: boolean;
   /** Running without a window. */
   headless: boolean;
+  /** Where a launched browser saves downloads. A connected one keeps its own setting. */
+  downloadsDir?: string;
   context: BrowserContext;
   page: Page;
   /**
@@ -198,6 +214,15 @@ export async function connectBrowser(
   const session = await openBrowser(opts, out, { runTab, openTab: true });
   session?.notes.forEach(out);
   return session;
+}
+
+/**
+ * The browser at `--browser` (`cdp`), with no run and no tab, for the
+ * commands that only talk to SourceMonkey (`collection list`). Null,
+ * having said why, when it couldn't connect.
+ */
+export function connectWithoutRun(cdp: string | undefined, out: (line: string) => void): Promise<Omit<BrowserSession, 'page'> | null> {
+  return openBrowser({ cdp }, out, { runTab: false, openTab: false });
 }
 
 // Whether a connected browser runs without a window: its user agent
@@ -236,10 +261,12 @@ async function openBrowser(
   // Closes a launched browser, which the run reaches over a CDP
   // connection of its own (see extension-launch.ts).
   let closeLaunched: (() => Promise<void>) | undefined;
+  let downloadsDir: string | undefined;
   if (opts.tempBrowser) {
     let launched;
+    downloadsDir = runDownloadsDir(opts.log);
     try {
-      launched = await launchExtensionBrowser({ headed: opts.headed === true, muted: opts.muted, args: langLaunchArgs(opts.lang), connectedElsewhere: true });
+      launched = await launchExtensionBrowser({ headed: opts.headed === true, muted: opts.muted, args: langLaunchArgs(opts.lang), connectedElsewhere: true, downloadsDir });
     } catch (err) {
       out(`Could not launch a browser with SourceMonkey: ${(err as Error).message}`);
       return null;
@@ -294,6 +321,7 @@ async function openBrowser(
     endpoint: endpoint ?? launchedAt!,
     launched: endpoint === null,
     headless: endpoint === null ? !opts.headed : await isHeadless(browser),
+    ...(downloadsDir ? { downloadsDir } : {}),
     context,
     page,
     notes,
@@ -564,6 +592,7 @@ export async function run(opts: RunOptions): Promise<number> {
     remote.disarm();
     // Also on a throw partway through, so a failed run leaves no
     // attachment behind in a browser the developer keeps using.
+    await held.downloads?.stop();
     await held.tabs?.dispose().catch(() => undefined);
     await held.attachment?.dispose().catch(() => undefined);
     // Its tabs run the extension's scripts again from their next load,
@@ -821,6 +850,7 @@ async function runInBrowser(
   const tabs = new FollowedTabs(host, opts, session.context, commandsComing, link, () => remote.setTabs(tabs.list().length));
   held.tabs = tabs;
   wireHostOutput(host, opts.emit!, (record) => tabs.tabOf(record));
+  held.downloads = await watchDownloads(session.browser, () => tabs.list(), (n, text) => tabEvent(opts.emit!, n, 'download')(text), opts.out, { downloadsDir: session.downloadsDir });
   // T1, unless `--notab`; then the first tab `newtab` opens is T1.
   if (page) {
     // Claimed first, before it loads the run's page; the run can't do
@@ -877,7 +907,7 @@ async function runInBrowser(
       // typed to start or load, so files of the same name stay apart.
       const name = typedName(opts, file);
       const text = await readFile(file, 'utf8');
-      const result = await link.push(text, name, pushedFiles(script));
+      const result = await link.push(text, name, pushedFiles(script), script.script.fileUrl);
       pushedAny = true;
       if (result.status !== 'ok') {
         opts.out(`INVALID  ${typedName(opts, file)}\n    ${result.errorMessage ?? ''}`);
@@ -1039,6 +1069,7 @@ async function runInBrowser(
         stop: () => opts.onStop?.(),
         runId: remote.id,
         ...(opts.log ? { log: opts.log } : {}),
+        ...(session.downloadsDir ? { downloadsDir: session.downloadsDir } : {}),
         browser: browserSentence({ browser: session.endpoint, owned: session.launched, headless: session.headless }),
         browserInfo: { address: session.endpoint.replace(/^https?:\/\//, ''), owned: session.launched === true, headless: session.headless === true },
         testCollection: () => (pushedAny ? link.runId : undefined),
@@ -1049,6 +1080,8 @@ async function runInBrowser(
           : `SourceMonkey extension, run ${link.runId}, with no test collection until a script is pushed`),
         // A throwaway browser's data is the run's own.
         others: host.otherScripts(!session.launched),
+        manager: link.manager,
+        extensionIdOf: (script) => (script.id === undefined ? undefined : host.extensionIdOf(script.id)),
         logs: remote.logs,
         roots: { collectionRoot: opts.collectionRoot, localRoots: opts.localRoots },
       };
@@ -1090,6 +1123,7 @@ async function claimTab(link: ExtensionLink, page: Page, out: (line: string) => 
 interface Held {
   attachment?: PageAttachment;
   tabs?: FollowedTabs;
+  downloads?: DownloadWatch;
   /** The run's connection to SourceMonkey, released at its end. */
   extension?: ExtensionLink;
 }
@@ -1553,6 +1587,16 @@ function wireHostOutput(host: ExtensionHost, emit: (fields: LogFields) => void, 
   host.on('tab', (r) => event(r, 'open-tab', `GM_openInTab ${r.url}`));
   host.on('menu-command', (r) => event(r, 'menu-command', `GM_registerMenuCommand "${r.name}"`));
   host.on('notification', (r) => event(r, 'notification', `GM_notification "${r.title || r.text}"`));
+  // Only the asking: the answer is the script's Log entry. Set apart and
+  // streamed whatever the sources: the run waits on an answer, and the
+  // line is easy to miss among the page's own output.
+  host.on('connect-prompt', (r) => {
+    if (r.answer) return;
+    emit({
+      source: 'event', kind: 'permission-prompt', tab: tabOf(r), scriptId: r.scriptId, always: true,
+      text: `*PERMISSION PROMPT*: ${r.name} requests permission to connect to ${r.host} (${r.method} ${withoutQuery(r.url)}). Answer using connect once|cancel|allow|deny|allow-all.`,
+    });
+  });
   host.on('download', (r) => event(r, 'download', `GM_download ${r.url}: ${r.outcome}${r.filename ? ' -> ' + r.filename : ''}${r.error ? ' ' + r.error : ''}`));
   host.on('value-write', (r) => {
     for (const w of r.writes) {

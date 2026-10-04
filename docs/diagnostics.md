@@ -371,7 +371,7 @@ constant, so the copies can't drift:
 | Helper | Covers |
 |--------|--------|
 | `gmXhrError` (`gm-connect.ts`) | every failure `GM_xmlhttpRequest` hands back to a script |
-| `connectBlockedMessage` (`gm-connect.ts`) | the pre-flight and post-redirect `@connect` denials |
+| `connectBlockedMessage`, `connectDeniedMessage`, `connectCancelledMessage`, `connectUnansweredMessage`, `connectPromptFailedMessage` (`gm-connect.ts`) | the pre-flight and post-redirect `@connect` refusals |
 | `NO_ORIGINATOR_TAB` (`background.ts`) | the GM handlers that reply when the calling tab can't be identified |
 | `NOTIFICATIONS_UNAVAILABLE` (`gm-notification.ts`) | both guards on `chrome.notifications` |
 | `LOCATION_SHAPES` (`file-locations.ts`) | the Add-field and preview validators' description of a valid location |
@@ -391,11 +391,12 @@ part the reader could act on.
 Sharper wording makes a wrong attribution worse, so a message that
 names a culprit has to be reachable only when that culprit is real:
 
-- `isUrlConnectAllowed` returns `denied` alongside `reason`. A URL that
-  wouldn't parse fails the check without the header having refused
-  anything, so only `denied: true` goes through
-  `connectBlockedMessage` — otherwise a script with `@connect *` would
-  be told its own rules blocked a relative URL.
+- `decideConnect` answers `invalid` for a URL that wouldn't parse,
+  apart from `deny`. The header refused nothing there, so only `deny`
+  goes through `connectBlockedMessage`. Otherwise a script with
+  `@connect *` would be told its own rules blocked a malformed URL.
+- A host the user denied says so (`connectDeniedMessage`), not that
+  the rules blocked it: the rules asked, and the user answered.
 - `loadConnectPolicy` splits "this script is gone" (a race the user
   fixes by reloading) from "its header is missing" (ours). The first
   must not carry the `internal error:` prefix.

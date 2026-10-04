@@ -148,6 +148,7 @@ Runtime — always carries a `tabId`, so these render as `tab 17 · …`:
 | `gm-log` | the `SM_GM_LOG_MSG` handler | A `GM_log()` call from the script itself. |
 | `gm-dom` | the `SM_GM_DOM_BLOCKED_MSG` handler | The page's CSP refused a style `GM_addStyle` / `GM_addElement` added — only possible for a script running in the page (MAIN world). Once per script per document. |
 | `gm-download` | `sendDownloadEvent` in `background.ts` | A `GM_download()` call that was refused, interrupted, or timed out. Successful downloads are not logged — a batch downloader would flood the capped log. |
+| `gm-xhr` | `connect-prompt.ts` | The connection prompt for a host the script's `@connect` lines don't cover: info as it opens; the answer (info for an allowance, a warning for Deny, Cancel or closing); and a warning when a kept denial blocks a request, once per site per page. |
 | `gm-window` | `handleWindowControl` in `background.ts` | A granted `window.close()` / `window.focus()` the browser refused. A successful close takes the page (and its console) with it, so only failures land here. |
 
 Two naming notes worth keeping:
@@ -555,7 +556,8 @@ tracked in `TODO.md`.
   - `sm:start` (info) — wrapper reached its body in a tab.
   - `sm:swapped` (info) — reload fast-path swapped in newer content.
   - `sm:abandoned` (warning) — wrapper skipped because the SW told it
-    to (rare).
+    to (rare). With no decision (`no-decision`) it's an error instead,
+    with why: see [injection.md](injection.md#no-decision).
   - `sm:error` (error) — runtime throw from the userscript itself.
     Details:
     - Wrapper captures `err.stack` on all three send-sites: sync-catch

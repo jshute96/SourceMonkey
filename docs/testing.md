@@ -348,8 +348,11 @@ fetch via the SW). Highlights:
 - `tests/e2e/gm-xhr.spec.ts` + `tests/e2e/gm-xhr-binary.spec.ts` —
   `GM_xmlhttpRequest` text + JSON, POST body, network failure,
   abort, timeout, binary types.
-- `tests/e2e/gm-connect.spec.ts` — `@connect` URL gating, including
-  the strict-by-default "no @connect → blocked" case.
+- `tests/e2e/gm-connect.spec.ts` — `@connect` URL gating: the
+  connection prompt (each answer, closing it, one prompt per host,
+  abort while it waits, its Log entries), the page's own origin and
+  relative URLs, redirects, and the Network access row's Reset
+  buttons.
 - `tests/e2e/gm-log.spec.ts` — `GM_log` prefixes log lines with the
   per-script id and forwards the rest verbatim; ungranted access is
   gated.

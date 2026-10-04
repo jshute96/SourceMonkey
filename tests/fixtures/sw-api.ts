@@ -174,6 +174,11 @@ export interface SmApi {
     scriptId: string,
     commandId: string,
   ): Promise<{ ok: boolean; error?: string }>;
+  // Answers a connection prompt by the id it was shown with. False when
+  // it isn't waiting.
+  answerConnectPrompt(promptId: string, choice: 'once' | 'cancel' | 'allow' | 'allow-all' | 'deny'): Promise<boolean>;
+  // The connection prompts waiting for an answer.
+  pendingConnectPrompts(): Promise<{ promptId: string; scriptId: string; tabId: number; host: string }[]>;
   // Stands in for a click on the menu's "Reload page with no
   // userscripts" row: reloads the tab with every wrapper told to skip.
   reloadWithoutScripts(tabId: number): Promise<void>;
@@ -190,6 +195,10 @@ export interface SmApi {
   // the cross-tab broadcast across a simulated worker restart without
   // killing the worker the test is talking to.
   dropGmOpenersForTests(): Promise<void>;
+  // The worker's "should I run?" decision for a request from a document
+  // with no tab (the sender has only its URL). Gives `action` and, for a
+  // skip, `reason`.
+  checkPendingWithoutTabForTests(id: string, url: string, tld: boolean): Promise<{ action: string; reason?: string }>;
   // Makes the SW drop every cross-tab value broadcast, standing in for
   // one that never arrives. Stays armed until cleared with false.
   setDebugSuppressGmBroadcast(value: boolean): Promise<void>;

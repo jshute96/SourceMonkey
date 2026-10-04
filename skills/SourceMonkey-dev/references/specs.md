@@ -31,6 +31,9 @@ test('adds the button', async ({ page, loadUserscript, gm, reports }) => {
   `await gm.interceptRequests(fn)`, or `await gm.failHosts('api.x.com')`
   for a 503 to exercise a fallback. Say at the top of a spec that depends on
   a live service.
+- A request to a host the script's `@connect` lines don't cover waits on
+  SourceMonkey's prompt: answer it with
+  `gm.answerConnectPrompt(gm.connectPrompts()[0].promptId, 'allow')`.
 - `page.route` can serve made-up URLs (`https://x.test/big.png`) for
   tests with no site behind them. `loadUserscript(path, { url })` alone
   tests matching with no page load at all.
