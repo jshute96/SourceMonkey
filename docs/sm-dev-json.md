@@ -177,6 +177,7 @@ interface StatusData {
     sourceMonkey?: "installed" | "disabled" | "absent"; // left out when not known
     testCollection?: string; // once a script was pushed
     log?: string;            // the run's log file
+    downloads?: string;      // where a --temp-browser saves downloads
   };
   tabs: Tab[];
   tab?: string;          // the selected tab
@@ -206,6 +207,7 @@ Text (with several runs, each run's in turn, a blank line between):
 Run: D1 (pid 4171043), connected to owned headless browser 127.0.0.1:38583 (has SourceMonkey)
 Backend: SourceMonkey extension, test collection D1-f691
 Log: /tmp/sm-dev-logs-me/sm-dev-20261003-085822-497.log (D1.log)
+Downloads: /tmp/sm-dev-logs-me/sm-dev-20261003-085822-497-downloads
 Tabs:
 * T1: file:///home/me/gm-menu/gm-menu.html [targetId=CB4200EEA6397DAC9E7BC5A3B995A3A5]
    * 1: Menu example
@@ -233,7 +235,8 @@ each element this without `command`):
     },
     "sourceMonkey": "installed",
     "testCollection": "D1-f691",
-    "log": "/tmp/sm-dev-logs-me/sm-dev-20261003-085822-497.log"
+    "log": "/tmp/sm-dev-logs-me/sm-dev-20261003-085822-497.log",
+    "downloads": "/tmp/sm-dev-logs-me/sm-dev-20261003-085822-497-downloads"
   },
   "tabs": [
     {

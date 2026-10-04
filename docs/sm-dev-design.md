@@ -516,6 +516,40 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
   - `--open-browser` has sound unless the line has `--mute`, since
     it's the person's lasting browser.
 
+### Downloads (`download-watch.ts`)
+
+- A download from one of the run's tabs prints where it was saved as it
+  finishes (`Download saved: <path> (from <url>)`), or that it didn't
+  finish. A page's own downloads pass SourceMonkey by, so this is the
+  only record of them.
+  - An http(s) `GM_download` has its own line from the extension. A
+    `blob:` or `data:` one is an `<a download>` click in the page, so it
+    gets this line.
+- Chrome reports downloads over CDP only to a client that asks
+  (`Browser.setDownloadBehavior` with `eventsEnabled`), and to all such
+  clients for all tabs. So a download's frame is traced to a run tab:
+  - a tab's top frame has its target id;
+  - a new tab that became the download names the frame that opened it.
+    That tab closes at once, so the watcher records each target's opener
+    or parent as it's created (`Target.setDiscoverTargets`);
+  - a cross-site iframe is a target naming its parent frame, and a
+    same-site one is in its tab's frame tree.
+  - Another run's downloads in a shared browser aren't said.
+- What it asks Chrome to do with downloads:
+  - A connected browser gets `default`: its own setting, and its own
+    prompts (a dangerous file, Save As) for its person to answer.
+  - A `--temp-browser` gets `allow` into a folder in the logs folder,
+    named after the run's log (`sm-dev-<timestamp>-downloads`), kept
+    after the run as the log is. `allow` keeps the files' own names, and
+    skips Chrome's prompts, which nobody could answer in a hidden
+    browser. `status` names the folder once it exists.
+- The last client to set the behavior wins. Another Playwright client
+  connecting to the browser (another run, `collection list --browser`)
+  sets its own, which saves under GUID names in its temp folder, deleted
+  as it disconnects. Not handled.
+- Reporting downloads is a side feature: if Chrome refuses it, the run
+  says so and goes on.
+
 ### Languages (`--lang`, `browser-lang.ts`)
 
 - Each tab the run sets up gets a CDP session of its own, left open,
@@ -554,8 +588,9 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
   `--load-extension` pointing at the package's `dist/` (Google Chrome
   ignores that flag).
 - The same launch serves the repo's own e2e suites, which drive its
-  persistent context directly (with Chrome's own downloads, when a
-  suite asks for them).
+  persistent context directly.
+  - Downloads are left to Chrome, into a folder of the caller's, for a
+    run (see Downloads above) and for a suite that asks.
   - Hidden runs use `--headless=new`, the only headless mode that loads
     extensions.
 - Window sizes:

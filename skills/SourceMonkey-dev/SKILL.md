@@ -662,6 +662,14 @@ and whatever the script does with its response wait.
 - When testing a script's real behavior, note which sites it asked
   about: its `@connect` lines may be missing some.
 
+### Downloads
+
+- Find a downloaded file at the path its `Download saved: <path>` line
+  names (for an http(s) `GM_download`, the `GM_download` line's
+  `-> <path>`).
+- With `--temp-browser`, `status` shows the folder as `Downloads:` once
+  something was downloaded.
+
 ### Turning it into a spec
 
 ```js

@@ -18,6 +18,7 @@ import {
   type CommandRunner, type ConsoleContext, type ControlledTab, type OutputHistory,
 } from './console-commands.js';
 import { applyLang, langLaunchArgs } from './browser-lang.js';
+import { watchDownloads, type DownloadWatch } from './download-watch.js';
 import { extensionLabel, sourceMonkeyState, type ExtensionState } from './extension-backend.js';
 import { ExtensionHost } from './extension-host.js';
 import { launchExtensionBrowser } from './extension-launch.js';
@@ -29,6 +30,7 @@ import { consoleText, decodeOwnRefs, formatConsoleArgs, hostReportedError, isPre
 import {
   defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, preparedScriptPath, prepareScript, pushedFiles, shownPath, warningLines, type PreparedScript,
 } from './prepare.js';
+import { runDownloadsDir } from './run-log.js';
 import { comparableUrl, openingSavedLine, type SavedPageStart } from './saved-pages.js';
 import { browserSentence, checkRunsDir, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentCommand, type SentLineHandler } from './runs.js';
 import { cspBlocksPageScripts, sandboxedPageWarning } from '../sandboxed-page.js';
@@ -132,6 +134,8 @@ export interface ConnectOptions {
   lang?: string[];
   /** Resolves to give up connecting (--seconds): ends a wait for tabs that don't answer. */
   until?: Promise<void>;
+  /** The run's log file, which a `tempBrowser`'s downloads folder is named after. */
+  log?: string;
 }
 
 /**
@@ -182,6 +186,8 @@ export interface BrowserSession {
   launched: boolean;
   /** Running without a window. */
   headless: boolean;
+  /** Where a launched browser saves downloads. A connected one keeps its own setting. */
+  downloadsDir?: string;
   context: BrowserContext;
   page: Page;
   /**
@@ -256,10 +262,12 @@ async function openBrowser(
   // Closes a launched browser, which the run reaches over a CDP
   // connection of its own (see extension-launch.ts).
   let closeLaunched: (() => Promise<void>) | undefined;
+  let downloadsDir: string | undefined;
   if (opts.tempBrowser) {
     let launched;
+    downloadsDir = runDownloadsDir(opts.log);
     try {
-      launched = await launchExtensionBrowser({ headed: opts.headed === true, muted: opts.muted, args: langLaunchArgs(opts.lang), connectedElsewhere: true });
+      launched = await launchExtensionBrowser({ headed: opts.headed === true, muted: opts.muted, args: langLaunchArgs(opts.lang), connectedElsewhere: true, downloadsDir });
     } catch (err) {
       out(`Could not launch a browser with SourceMonkey: ${(err as Error).message}`);
       return null;
@@ -314,6 +322,7 @@ async function openBrowser(
     endpoint: endpoint ?? launchedAt!,
     launched: endpoint === null,
     headless: endpoint === null ? !opts.headed : await isHeadless(browser),
+    ...(downloadsDir ? { downloadsDir } : {}),
     context,
     page,
     notes,
@@ -584,6 +593,7 @@ export async function run(opts: RunOptions): Promise<number> {
     remote.disarm();
     // Also on a throw partway through, so a failed run leaves no
     // attachment behind in a browser the developer keeps using.
+    await held.downloads?.stop();
     await held.tabs?.dispose().catch(() => undefined);
     await held.attachment?.dispose().catch(() => undefined);
     // Its tabs run the extension's scripts again from their next load,
@@ -853,6 +863,7 @@ async function runInBrowser(
   const tabs = new FollowedTabs(host, opts, session.context, commandsComing, link, () => remote.setTabs(tabs.list().length));
   held.tabs = tabs;
   wireHostOutput(host, opts.out, (record) => tabs.prefixOf(record));
+  held.downloads = await watchDownloads(session.browser, () => tabs.list(), opts.out, { downloadsDir: session.downloadsDir });
   // T1, unless `--notab`; then the first tab `newtab` opens is T1.
   if (page) {
     // Claimed first, before it loads the run's page; the run can't do
@@ -1071,6 +1082,7 @@ async function runInBrowser(
         stop: () => opts.onStop?.(),
         runId: remote.id,
         ...(opts.log ? { log: opts.log } : {}),
+        ...(session.downloadsDir ? { downloadsDir: session.downloadsDir } : {}),
         browser: browserSentence({ browser: session.endpoint, owned: session.launched, headless: session.headless }),
         browserInfo: { address: session.endpoint.replace(/^https?:\/\//, ''), owned: session.launched === true, headless: session.headless === true },
         testCollection: () => (pushedAny ? link.runId : undefined),
@@ -1124,6 +1136,7 @@ async function claimTab(link: ExtensionLink, page: Page, out: (line: string) => 
 interface Held {
   attachment?: PageAttachment;
   tabs?: FollowedTabs;
+  downloads?: DownloadWatch;
   /** The run's connection to SourceMonkey, released at its end. */
   extension?: ExtensionLink;
 }

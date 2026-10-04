@@ -53,6 +53,7 @@ import { bytesToBase64 } from '../bytes.js';
 import {
   headerRuleFailedMessage,
   headerStallMessage,
+  unreachableMessage,
 } from '../gm-connect.js';
 import {
   buildHeaderRule,
@@ -141,6 +142,14 @@ class PageGoneError extends Error {
   constructor() {
     super('The page that made the request is gone, so the request was stopped');
     this.name = 'PageGoneError';
+  }
+}
+
+// A request that got no response at all, said in our words.
+class UnreachableError extends Error {
+  constructor(url: string) {
+    super(unreachableMessage(URL.parse(url)?.host || url));
+    this.name = 'UnreachableError';
   }
 }
 
@@ -277,7 +286,16 @@ export async function runXhr(
     // The tagged URL where there's a rule: the tag is what the rule
     // matches on, and it never leaves the browser (a fragment isn't
     // transmitted, and `res.url` comes back without it).
-    const res = await fetch(spec?.target ?? request.url, init);
+    //
+    // Chrome's message for a network failure is exactly "Failed to
+    // fetch"; other `TypeError`s (a header name `fetch` won't take)
+    // name their own problem and pass through.
+    const res = await fetch(spec?.target ?? request.url, init).catch((err: unknown) => {
+      if (!controller.signal.aborted && err instanceof TypeError && err.message === 'Failed to fetch') {
+        throw new UnreachableError(request.url);
+      }
+      throw err;
+    });
     // Headers are in, so the stall backstop has nothing left to guard —
     // whatever the body does from here is the download's business.
     clearHeaderStall();
@@ -331,7 +349,9 @@ export async function runXhr(
       err instanceof Error && (err.name === 'AbortError' || /aborted/i.test(err.message));
     // The script's own timeout outranks everything, then the aborts.
     if (timeoutFired) return terminalAbortEvent();
-    if (err instanceof PageGoneError) return { kind: 'error', message: err.message };
+    if (err instanceof PageGoneError || err instanceof UnreachableError) {
+      return { kind: 'error', message: err.message };
+    }
     if (headerStallFired || isAbortError) return terminalAbortEvent();
     const message = err instanceof Error ? err.message : String(err);
     return { kind: 'error', message };

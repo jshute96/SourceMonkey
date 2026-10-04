@@ -254,6 +254,19 @@ export function headerStallMessage(stallMs: number): string {
   );
 }
 
+// For a request that never got a response: Chrome's `fetch` rejects
+// with a bare "Failed to fetch" for a name that doesn't resolve, a
+// refused or dropped connection, a failed TLS handshake, and a request
+// another extension blocked alike, so the causes are listed rather than
+// one guessed (see TODO.md for telling them apart). The host is the
+// request's own; a redirect `fetch` followed to a dead host lands here
+// too, with nothing to tell us which hop failed.
+export function unreachableMessage(host: string): string {
+  return gmXhrError(
+    `Could not reach ${host}. The name may not resolve, or the connection was refused, failed or blocked.`,
+  );
+}
+
 // The one phrasing for a request the script's own header forbids: it
 // names whose rules blocked the call rather than a "policy" object the
 // reader can't see. `reason` is a sentence of its own.

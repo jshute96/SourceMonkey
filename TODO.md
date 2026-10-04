@@ -385,11 +385,15 @@ wasn't checked.
 
 ## `GM_*` — deferred surface
 
-- **A request that can't reach its server says "Failed to fetch".**
-  A DNS or connection failure hands the script the browser's bare
-  `fetch` message (corpus 412498, 518609), against the error-wording
-  rules, where a header stall gets a SourceMonkey sentence. Wrap it in
-  `gm-xhr.ts` to name the host and that it couldn't be reached.
+- **Say which network failure stopped a request.** `fetch` gives the
+  same bare "Failed to fetch" for a name that doesn't resolve, a refused
+  or dropped connection, a TLS failure, a request another extension
+  blocked, and an unsafe port, so `unreachableMessage` lists the causes.
+  - `chrome.webRequest.onErrorOccurred` has the real `net::ERR_*` per
+    request, but needs the `webRequest` permission, which the manifest
+    doesn't have.
+  - The message names the request's own host. When a redirect led to the
+    dead host, it should name that one.
 
 The Phase 1–10 work shipped the priority APIs; everything below is
 either a follow-up gap, a tractable second-tier API, or a research
@@ -914,10 +918,6 @@ See [docs/harness-design.md](docs/harness-design.md).
     non-web scheme from a run's tab.
 - **`open` takes no `--timeout-seconds`**, unlike `start` and `wait`;
   slow sites (Douyin) often pass its 30s load limit.
-- **A `--temp-browser` download can't be found.** It lands in a
-  `/tmp/playwright-artifacts-*` folder that goes when the run stops, and
-  no command says where. Report the path with the `GM_download` line,
-  or keep downloads in a folder `status` names.
 - **`reload` of a `--noscript` tab printed a script's "no @connect
   lines" note**, though that tab runs no scripts (corpus 518609). Seen
   once; find which path printed it.

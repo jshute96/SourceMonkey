@@ -12,6 +12,7 @@
 // reading the stream) can skip the whole thing.
 
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -151,6 +152,8 @@ export interface ConsoleContext {
   runId?: string;
   /** The run's log file (see run-log.ts), for `status`. */
   log?: string;
+  /** Where a `--temp-browser` saves downloads, for `status`. */
+  downloadsDir?: string;
   /** The run's browser, for `status`: `connected to browser 127.0.0.1:9233`. */
   browser?: string;
   /** The same, for `status --json`. */
@@ -635,6 +638,9 @@ export async function runConsoleCommand(
       }
       if (ctx.backend) ctx.out(`Backend: ${ctx.backend()}`);
       if (ctx.log) ctx.out(`Log: ${runLogLabel(ctx.log, ctx.runId)}`);
+      // Chrome makes the folder with the first download, so it's only
+      // worth a line once there is one.
+      if (ctx.downloadsDir && existsSync(ctx.downloadsDir)) ctx.out(`Downloads: ${ctx.downloadsDir}`);
       // The tabs first, each with its URL, ids and any dialog; then
       // the scripts on the current one, which is marked there. With no
       // tab, still the scripts and what they have stored.
@@ -1583,6 +1589,7 @@ async function statusJson(ctx: ConsoleContext, tab: ControlledTab | undefined): 
       ...(extension ? { sourceMonkey: extension } : {}),
       ...(collection ? { testCollection: collection } : {}),
       ...(ctx.log ? { log: ctx.log } : {}),
+      ...(ctx.downloadsDir ? { downloads: ctx.downloadsDir } : {}),
     };
   }
   return {

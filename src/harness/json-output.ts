@@ -228,6 +228,8 @@ export interface StatusData {
     testCollection?: string;
     /** The run's log file. */
     log?: string;
+    /** Where a `--temp-browser` saves downloads. */
+    downloads?: string;
   };
   tabs: Tab[];
   /** The selected tab, whose states `scripts` gives first. */
