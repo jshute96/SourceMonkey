@@ -286,14 +286,12 @@ test.describe('GM_* storage freshness across documents', () => {
 
   // T4. SW-failure path. The wrapper expects the SW to attach a
   // gmValues snapshot to the sm:check-pending reply for any
-  // storage-granting script. When it's missing (SW unreachable past
-  // the 2 s safety timer, or the snapshot read threw on the SW
-  // side), the prelude must hard-abort rather than running the body
-  // with empty storage. The debug knob
+  // storage-granting script. When it's missing (the snapshot read
+  // threw on the SW side), the prelude must hard-abort rather than
+  // running the body with empty storage. The debug knob
   // `setDebugForceSnapshotFailure` makes `loadSnapshotForCheckPending`
-  // throw, which causes the message handler to reply
-  // `{action: "run"}` with no `gmValues` — exactly the failure
-  // shape we want to verify.
+  // throw, so the message handler replies with its decision (`run`)
+  // and no `gmValues`: exactly the failure shape we want to verify.
   test('SW snapshot unavailable: storage-granting script aborts cleanly', async ({
     extensionContext, fixtureServer, sm,
   }) => {

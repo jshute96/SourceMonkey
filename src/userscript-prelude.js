@@ -207,17 +207,38 @@
     try { return !!window.__SM_GM__; } catch (_e) { return false; }
   }
 
-  /* Round-trip sm:check-pending and hand the SW's decision (or a 2s
-     safety-timeout fallback) to cb. Same dual transport as `send`.
+  /* How long a wrapper waits for the SW's decision before giving up.
+     An answer normally takes milliseconds, and the slowest one the SW
+     means to give (a reload fast-path swap) is bounded at 500ms; this
+     leaves a cold or busy SW room to start. */
+  var DECISION_TIMEOUT_MS = 10000;
+  /* What a missing decision says (`detail`), and the skip it becomes. */
+  var NOT_ASKED = "SourceMonkey could not be asked whether to run it";
+  function noDecision(detail) { return { action: "skip", reason: "no-decision", detail: detail }; }
+  function askFailed(err) { return noDecision("Asking SourceMonkey whether to run it failed: " + ((err && err.message) || String(err))); }
+  /* A sentence, ending in one period: Chrome's own messages may already. */
+  function sentence(text) { return String(text).replace(/\.+\s*$/, "") + "."; }
 
-     A script with a `.tld` rule asks the SW to check it exactly (see the
-     `.tld` note in the matcher), and its fallback is `skip`, not `run`:
-     without the SW's answer this side only knows the loose reading,
-     which would also run it on hosts like www.google.evil.com. */
+  /* Round-trip sm:check-pending and hand the SW's decision to cb. Same
+     dual transport as `send`.
+
+     Without an answer the script does NOT run: the decision is what
+     keeps a script out of an sm-dev run's tabs (and a run's own scripts
+     out of every other tab), honours "Reload page with no userscripts",
+     and checks a `.tld` rule exactly. Running anyway would undo each of
+     those. The skip carries `reason: "no-decision"` and a `detail`
+     saying what went wrong, which the caller reports. */
   function awaitDecision(entry, cb) {
     var cfg = entry.cfg;
     var tld = !!(cfg.matching && hasTldRule(cfg.matching));
-    var fallback = tld ? { action: "skip", reason: "no-match" } : { action: "run" };
+    /* Only a decision the SW makes counts; anything else (the bridge's
+       `bridgeError`, a reply with no action) is no decision. */
+    var decided = function (reply) {
+      if (reply && typeof reply === "object" && (reply.action === "run" || reply.action === "run-new" || reply.action === "skip")) return reply;
+      if (reply && typeof reply === "object" && typeof reply.bridgeError === "string") return noDecision(reply.bridgeError);
+      return noDecision("SourceMonkey's answer whether to run it was unreadable");
+    };
+    var fallback = noDecision("SourceMonkey did not answer whether to run it within " + (DECISION_TIMEOUT_MS / 1000) + " seconds");
     var done = false;
     var finish = function (decision) {
       if (done) return;
@@ -225,7 +246,7 @@
       try { cb(decision); } catch (_e) {}
     };
     var cleanup = function () {};
-    var safetyTimer = setTimeout(function () { seal(fallback); }, 2000);
+    var safetyTimer = setTimeout(function () { seal(fallback); }, DECISION_TIMEOUT_MS);
     var seal = function (decision) {
       try { clearTimeout(safetyTimer); } catch (_e) {}
       try { cleanup(); } catch (_e2) {}
@@ -244,11 +265,11 @@
         });
         if (p && typeof p.then === "function") {
           p.then(
-            function (reply) { seal(reply && typeof reply === "object" ? reply : fallback); },
-            function () { seal(fallback); }
+            function (reply) { seal(decided(reply)); },
+            function (err) { seal(askFailed(err)); }
           );
         } else {
-          seal(fallback);
+          seal(noDecision(NOT_ASKED));
         }
         return;
       }
@@ -263,7 +284,7 @@
           var d = ev.data;
           if (!d || d.__sm !== "sourcemonkey-bridge-reply") return;
           if (d.requestId !== requestId) return;
-          seal(d.reply && typeof d.reply === "object" ? d.reply : fallback);
+          seal(decided(d.reply));
         } catch (_e) {}
       };
       var request = {
@@ -279,8 +300,8 @@
          widens its patterns re-registers it behind the scripts already
          registered. Its request event, sent before the bridge listened,
          is gone, so when the bridge announces itself the request is
-         sent again, once. Without this the wrapper would wait out the
-         2s timer and run, whatever the SW would have decided. */
+         sent again, once. Without this the wrapper would wait out its
+         timer and not run, whatever the SW would have decided. */
       var resent = false;
       var onReady = function () {
         if (resent) return;
@@ -296,9 +317,9 @@
       };
       var dispatched = bridgeDispatch(request, requestId);
       /* Nothing left the page, so no reply is coming. Seal now rather
-         than costing this script the full 2s safety timeout. */
-      if (!dispatched) seal(fallback);
-    } catch (_e3) { seal(fallback); }
+         than costing this script the full timeout. */
+      if (!dispatched) seal(noDecision(NOT_ASKED));
+    } catch (_e3) { seal(askFailed(_e3)); }
   }
 
   /* Async-error attribution. Every piece of a script's code — its
@@ -727,7 +748,7 @@
          against the wrapper.
        - Arming the gate up front also means it no longer depends on the
          decision callback running at all: a service worker that never
-         answers is bounded by `awaitDecision`'s own 2s safety timeout,
+         answers is bounded by `awaitDecision`'s own timeout,
          not by the lifecycle listener never getting installed.
 
        For `document-start`, once <html> exists (always, in the
@@ -745,7 +766,7 @@
       return entry;
     }
     awaitDecision(entry, function (decision) {
-      entry.decision = decision || { action: "run" };
+      entry.decision = decision;
       if (entry.decision.action === "skip") {
         /* The @run-at gate may already have fired; `flushPending`
            re-checks `skip` so a queued body can't slip through, and
@@ -758,13 +779,19 @@
           entry.pendingRun = null;
           return;
         }
+        if (entry.decision.reason === "no-decision") {
+          /* Said here too: the report below goes the way the question
+             did, so it may not get through either. */
+          try { console.info("[SourceMonkey] " + cfg.name + ": It did not run. " + sentence(entry.decision.detail)); } catch (_ce) {}
+        }
         send({
           type: "sm:abandoned",
           id: cfg.id,
           name: cfg.name,
           loadedAt: cfg.loadedAt,
           url: location.href,
-          reason: entry.decision.reason || "skip"
+          reason: entry.decision.reason || "skip",
+          detail: entry.decision.detail
         });
         entry.pendingRun = null;
         return;
@@ -1022,6 +1049,8 @@
   self.__smPrelude = {
     scripts: scripts,
     init: initScript,
+    /* For tests that run the decision's timer themselves. */
+    decisionTimeoutMs: DECISION_TIMEOUT_MS,
     send: send,
   };
 

@@ -44,7 +44,7 @@ A backlog of **candidates**, not a list of obligations.
     raise buys the slow case by delaying every fast one.
   - `runAt` is already on the wrapper's config blob, so adding it to
     the `sm:check-pending` payload is the whole plumbing cost.
-  - Hard ceiling either way: the prelude's own 2s `awaitDecision`
+  - Hard ceiling either way: the prelude's own 10s `awaitDecision`
     timeout, measured from when the wrapper asked. A window that
     outlives it gets a reply nobody is listening for, and the entry is
     already marked consumed. Leave real margin.
@@ -885,10 +885,6 @@ See [docs/harness-design.md](docs/harness-design.md).
 - A tab a run tab opens is set up after its scripts ran, so their
   console lines from that first load don't reach the run (the reports
   do).
-- When a claimed tab's wrapper times out asking the worker (a worker
-  slow to start) and runs an extension script anyway, the run doesn't
-  say so. The extension's `started` event could tell it: a script the
-  run didn't push starting in its tab.
 - **A run's commands take turns across all its clients.**
   `commandRunner` (`src/harness/console-commands.ts`) queues every
   command, so one client's `wait 30s` holds up the others.

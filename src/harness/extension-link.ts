@@ -105,7 +105,7 @@ function userScriptsOff(extensionId: string): string {
 export type ExtensionEvent =
   | {
     kind: 'report'; type: string; tabId: number; documentId: string; topFrame?: boolean; scriptId: string; name: string; url: string;
-    message?: string; stack?: string; reason?: string; at: number;
+    message?: string; stack?: string; reason?: string; detail?: string; at: number;
   }
   | { kind: 'log'; scriptId: string; entry: LogEntry; fromReport?: boolean; at: number }
   | {

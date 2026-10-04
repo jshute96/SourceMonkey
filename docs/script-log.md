@@ -556,7 +556,8 @@ tracked in `TODO.md`.
   - `sm:start` (info) — wrapper reached its body in a tab.
   - `sm:swapped` (info) — reload fast-path swapped in newer content.
   - `sm:abandoned` (warning) — wrapper skipped because the SW told it
-    to (rare).
+    to (rare). With no decision (`no-decision`) it's an error instead,
+    with why: see [injection.md](injection.md#no-decision).
   - `sm:error` (error) — runtime throw from the userscript itself.
     Details:
     - Wrapper captures `err.stack` on all three send-sites: sync-catch

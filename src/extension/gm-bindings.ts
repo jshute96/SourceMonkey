@@ -591,11 +591,12 @@ export function emitGmBindings(
     // @run-at callback so the user body never runs. The user can
     // recover by reloading.
     //
-    // Several ways to get here, which is why the message doesn't assert
-    // one cause: the SW was unreachable past the wrapper's safety
-    // timeout, `handleCheckPending` errored, or — for a MAIN-world
+    // Two ways to get here, which is why the message doesn't assert
+    // one cause: the SW's snapshot read failed, or — for a MAIN-world
     // script only — the SW's `bridgeMayActAs` gate refused to hand the
     // values over the bridge (see docs/injection.md#gm_-in-main-world).
+    // No decision at all never gets here: the script is skipped
+    // (docs/injection.md#no-decision).
     //
     // One string in both places. As two literals they had already
     // drifted — the Log copy lost the "reload" half, which is the only

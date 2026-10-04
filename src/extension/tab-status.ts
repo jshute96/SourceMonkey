@@ -131,7 +131,8 @@ const NOT_LOADED_LABEL = 'NOT LOADED';
 // Rules:
 //   - Per script, status is one of:
 //       OK         — expected AND actually started (no error reported)
-//       ERROR      — actual reported `error` (regardless of expected)
+//       ERROR      — actual reported `error` (regardless of expected),
+//                    including a script that got no run decision
 //       REJECTED   — expected, never started, and Chrome is refusing to
 //                    register it (so it never will) — see
 //                    src/extension/script-rejection.ts

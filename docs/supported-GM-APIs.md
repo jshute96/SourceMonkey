@@ -246,9 +246,10 @@ VM](GM-APIs-storage.md#compared-with-violentmonkey).
   get lost is a delay rather than a permanent desync.
 - A write made in the last ~150 ms before tab close may be lost if
   the SW is idle/suspended and the page goes into bfcache.
-- If the SW is unreachable past the wrapper's 2 s safety timeout,
-  storage-granting scripts log a console error and refuse to run
-  (no silent stale-data). Reload to retry.
+- If the SW doesn't answer whether to run within the wrapper's 10 s
+  timeout, no script runs, and each says why in the page console. A
+  storage-granting script also refuses to run when its stored values
+  can't be read (no silent stale data). Reload to retry.
 - Same-extension userscripts share the trust boundary —
   technically, userscript A can impersonate userscript B's
   `scriptId` in the storage envelope and corrupt B's keys. This is

@@ -1876,8 +1876,9 @@ test("wrapper-bridge: the reply is keyed on the envelope's id, not the payload's
 });
 
 test('wrapper-bridge: a failed SW call still answers the requestId', async () => {
-  // The awaiter has to settle on something; `{action:"run"}` is the
-  // reading every caller wants (run normally / treat as not-ok).
+  // The awaiter has to settle on something, and it says the call
+  // failed: never `{action:"run"}`, which a waiting sm:check-pending
+  // would take as leave to run.
   const { posted, dispatch } = setupBridgeHarness({
     sendMessage: () => Promise.reject(new Error('worker gone')),
   });
@@ -1886,7 +1887,7 @@ test('wrapper-bridge: a failed SW call still answers the requestId', async () =>
   await Promise.resolve();
   assert.equal(posted.length, 1);
   assert.equal(posted[0].requestId, 'req-8');
-  assert.deepEqual(posted[0].reply, { action: 'run' });
+  assert.deepEqual(posted[0].reply, { bridgeError: 'Asking SourceMonkey failed: worker gone' });
 });
 
 test('wrapper-bridge: a sendMessage that throws still answers the requestId', async () => {
@@ -1895,7 +1896,7 @@ test('wrapper-bridge: a sendMessage that throws still answers the requestId', as
   });
   dispatch({ type: 'sm:gm-batch-write', scriptId: 's1', writes: [] }, 'req-9');
   assert.equal(posted.length, 1, 'replied synchronously');
-  assert.deepEqual(posted[0].reply, { action: 'run' });
+  assert.deepEqual(posted[0].reply, { bridgeError: 'Asking SourceMonkey failed: extension context invalidated' });
 });
 
 test('wrapper-bridge: fire-and-forget swallows a rejected sendMessage', async () => {
