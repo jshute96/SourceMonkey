@@ -23,12 +23,20 @@ with its script IDs and a run name prefix.
 2. **Run it on the live site** with `start <file> <url> --detach`.
    - Use `--temp-browser` (headless, muted), a browser of the run's own.
      Don't use the shared browser on port 9233: one agent's busy tab
-     there stalls every other agent's `start`.
+     there stalls every other agent's `start`. It also keeps a persistent
+     profile (`sm-dev --open-browser`), which is riskier for an untrusted
+     script than a throwaway one (see [Untrusted scripts](#untrusted-scripts)).
+     - It's a fallback only when a site blocks temp browsers and not this
+       one (Google's `/sorry`), only for a script that looks low-risk.
    - Many big sites block headless: Google (`/sorry`), Reddit, Amazon,
      IMDb (403), Codeforces and other Cloudflare sites, DuckDuckGo (empty
      results), Metacritic (its `GM_xmlhttpRequest` too), YouTube live chat
      and captions. Use `--temp-browser --headed` for those, a visible
      browser of your own (muted too).
+   - A bot check that stops the headed browser too (a captcha, a
+     Cloudflare checkbox, a firewall's "Access Blocked") makes the script
+     `n/a --reason bot-blocked`, unless the script can still be judged
+     elsewhere. Don't solve captchas.
    - Headless also has overlay scrollbars, no clipboard access, and
      background tabs that stay visible and focused. A `--headed` browser's
      background tabs are throttled: if a script's timers seem stalled or a
@@ -38,6 +46,37 @@ with its script IDs and a run name prefix.
    threw. Errors from later events show up only in `logs`, and "settled"
    can come before a script's delayed setup; `wait log` for its own ready
    line.
+
+### Untrusted scripts
+
+Corpus scripts are strangers' code. We don't trust them, and we don't run
+one that looks risky.
+
+- We're mostly safe because the test browser holds no real credentials:
+  it's a throwaway profile, signed in to nothing. Keep it that way, and
+  never test a script as a real user.
+  - The shared browser on port 9233 is reasonably clean but persistent:
+    what a script stores or changes there stays for later runs. Prefer
+    `--temp-browser`, and never sign in to anything there either.
+- No deep audit is needed before a run. But if the name, the description,
+  or the read you do to learn what the script promises looks dangerous,
+  don't run it. For example, a script that:
+  - collects cookies, tokens, passwords or form input and sends them
+    somewhere;
+  - posts page contents or browsing data to a third-party server, beyond
+    what its feature plainly needs;
+  - downloads and runs code from an unexpected host, or obfuscates what
+    it does;
+  - mines, spams, or drives accounts or payments.
+- Stay alert while testing and debugging too. If a script starts doing
+  something strange (requests to unexpected hosts, reading storage it has
+  no use for), stop the run.
+- Record a script you won't run as `n/a --reason unsafe`, with a note
+  saying what looked dangerous, so nobody picks it up later. It's the one
+  `n/a` that needs no run.
+- A script you already ran that turns out to send private data (page URLs
+  or contents to its author's server, say) keeps its result; add the
+  `sends-browsing-data` tag and say what it sends in a note.
 
 ### No side effects
 

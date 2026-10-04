@@ -329,8 +329,10 @@ Beside `listing`, a record can hold:
   - `fail`: it doesn't. `--blame` says whose fault: `sourcemonkey`, `script`
     (broken or out of date against the site), or `unknown`.
   - `n/a`: we couldn't meaningfully try it. `--reason` is one of
-    `requires-login`, `paid`, `geo-blocked`, `site-gone`,
-    `needs-interaction`, `not-web`, `other-browser`, `other`.
+    `requires-login`, `paid`, `geo-blocked`, `bot-blocked`, `site-gone`,
+    `needs-interaction`, `not-web`, `other-browser`, `unsafe`, `other`.
+  - `unsafe` is the one `n/a` recorded without a run: a script we chose not
+    to run because it looked dangerous. Say why in the note.
   - `other-browser` is for a script that relies on another browser's
     features. It's `n/a`, not a failure, since no Chrome extension could run
     it. Say in the note what it relies on.
@@ -356,11 +358,18 @@ node tests/greasyfork-examples/serve-results.mjs   # then open http://localhost:
   it asks you to choose `corpus.json`. You navigate to it once; after that the
   page offers to reopen the same file with one click.
 - Every link opens in a new tab, except the Summary ones below.
+- Min year and Max year limit the scripts to those last updated on GreasyFork
+  in that range; "none" leaves that end open.
 - Summary shows each filter's choices (Validation, Testing, Tag) with how many
   scripts are in each; tags are listed most common first.
-  - Each line links to the table filtered that way, and Full results goes
-    back to the whole table.
-  - These switch views in the same tab, so Back and Forward move between
+  - It has the same filter bar as the table, and counts only the scripts the
+    filters match ("1500 of 2000 scripts").
+  - Last update counts the scripts by the year of their last update, oldest
+    first; each year links to the table with Min and Max year set to it.
+  - Each line links to the table with the current filters plus that choice
+    (replacing that filter's own setting).
+  - Summary and Full results switch between the two views, keeping the
+    filters. They switch in the same tab, so Back and Forward move between
     them; middle-click opens a new tab as usual.
 - Under each name:
   - "Code" opens the downloaded copy in a viewer tab (this page with

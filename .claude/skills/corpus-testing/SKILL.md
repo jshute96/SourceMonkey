@@ -55,6 +55,11 @@ untested, sort by Updated) or in `corpus.db` (`Scripts.updated_date`, after
   and bots, login-only sites, social and dating apps, course and exam sites,
   shopping flows, paid features. Leave these untested rather than
   recording `n/a`: `n/a` is for a script you tried and couldn't judge.
+- Don't run scripts that look risky, for example ones that look like
+  they'd collect or send out private data; record them as `n/a --reason
+  unsafe` instead. Corpus scripts are untrusted; see "Untrusted scripts" in
+  [references/testing-a-script.md](references/testing-a-script.md).
+  Having a result, they drop out of `list --untested`.
 - Group a batch by site (YouTube, search engines, scripts that run on every
   site...), so each agent learns one site.
 

@@ -316,7 +316,8 @@ wasn't checked.
     which breaks the Proxy invariant for a frozen target and throws.
   - VM builds `GM` as a plain writable object. Fix: drop the freeze,
     or freeze only the API properties and leave the object extensible.
-- **Granted `GM_*` names are `const`** (`gm-reassign`: 2129, 2128).
+- **Granted `GM_*` names are `const`** (`gm-reassign`: 2129, 2128,
+  419798, 438053).
   - A shim like `GM_xmlhttpRequest = GM.xmlHttpRequest;` throws
     "Assignment to constant variable" at startup.
   - VM resolves names through `with(this)` over a wrapper, so the
@@ -328,12 +329,13 @@ wasn't checked.
     `cloneInto is not defined`.
   - VM defines pass-through stand-ins on Chrome (`makeComponentUtils`
     in `src/injected/web/util.js`). Cheap to copy.
-- **Scripts never run in iframes** (`needs-iframes`: 461650, 382039, 492877).
+- **Scripts never run in iframes** (`needs-iframes`: 461650, 382039, 492877,
+  382285).
   - reCAPTCHA helpers must run inside Google's frames, and Sketchfab
     downloaders inside the same-origin viewer frame. See the
     `allFrames` item under "Skeleton" for what blocks it.
 - **Granted scripts run in the isolated world** (`needs-page-globals`:
-  561432, 382030, 485608, 395461, and earlier ones;
+  561432, 382030, 485608, 395461, 37314, 382359, and earlier ones;
   `needs-custom-elements`: 397848).
   - Scripts that read the page's globals without `unsafeWindow` (the
     YouTube player API, the page's `$`, `customElements`, which is null
@@ -344,6 +346,48 @@ wasn't checked.
     `@grant unsafeWindow` (see docs/injection.md).
 - **`GM_cookie`** (463802) is the whole failure for a Reddit script.
   See "GM_* APIs not yet in the catalog".
+
+The next items were checked against Tampermonkey 5.5.0 and
+Violentmonkey 2.49.0 with a throwaway `tests/examples/` probe script
+(2026-10-04).
+
+- **`abort()` re-fires `onreadystatechange`** (`xhr-abort-readystate`:
+  32891).
+  - `abort()` in `src/wrapper-gm-runtime.js` dispatches the terminal
+    event synchronously, so `onreadystatechange` runs again before
+    `abort()` returns, with `readyState` 4, `status` 0, and
+    `emptyXhrResponse`'s `finalUrl`, which is the original request URL.
+  - 32891 stores `finalUrl` at readyState 3 and then aborts; the extra
+    call puts the pre-redirect URL back.
+  - TM fires no `onreadystatechange` after `abort()`. VM fires one with
+    `readyState` 0 and the redirected `finalUrl`. Both deliver
+    `onabort` / `onloadend` asynchronously.
+  - Fix: skip `onreadystatechange` for a script-initiated abort; keep
+    the last reported `finalUrl` on `entry` for non-load events (it's
+    also wrong after a redirect for error and timeout); consider
+    delivering `onabort` asynchronously, which contradicts the comment
+    at the local abort dispatch.
+- **Undeclared `exports`, `module` and `define` throw**
+  (`needs-module-globals`: 30954).
+  - Webpack and UMD bundles pass or test these names; in SourceMonkey
+    that's `ReferenceError: exports is not defined` before anything
+    runs.
+  - TM and VM both give `undefined` for these three names only (other
+    undeclared names still throw). VM wraps each script in
+    `(define,module,exports)=>{...}` called with no arguments
+    (`background/utils/preinject-prepare.js`).
+  - Fix: declare them as undefined parameters or locals in the script
+    wrapper.
+- **`GM_setClipboard` ignores its callback** (`setclipboard-callback`:
+  483847).
+  - TM documents `GM_setClipboard(data, info, cb)`; the binding in
+    `src/extension/gm-bindings.ts` takes `(text, type)`, so the
+    script's "copied" toast never shows. Fix: call `cb` when the copy
+    finishes.
+- **`GM_xmlhttpRequest` with no `url` always throws** (seen in 30954).
+  - VM calls `onerror` with the error when one is given, and throws
+    otherwise; TM returns `{abort}` and silently does nothing.
+    SourceMonkey throws even when `onerror` is given. Fix: follow VM.
 
 ## Cross-manager coverage
 
@@ -918,6 +962,12 @@ See [docs/harness-design.md](docs/harness-design.md).
 - **`reload` of a `--noscript` tab printed a script's "no @connect
   lines" note**, though that tab runs no scripts (corpus 518609). Seen
   once; find which path printed it.
+- **Downloads leak to `~/Downloads` after a second `start`.** In a
+  `--temp-browser` run, the first `start`'s downloads go to the run's
+  `...-downloads/` folder beside its log; after another `start` in the
+  same run, they land in the person's real `~/Downloads`. Reproduced
+  in a corpus run (2026-10-04). The download behavior is probably set
+  up only for the first start's browser context or tab.
 
 ## Tabs that predate the first script install
 
