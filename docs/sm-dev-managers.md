@@ -4,7 +4,8 @@ Status: proposal, partly built. Built so far:
 
 - `--json` on the existing commands (see [sm-dev-json.md](sm-dev-json.md));
 - script and collection numbers;
-- `collection list` (`collections`) and `script list`, for SourceMonkey.
+- for SourceMonkey: `collection list|show|enable|disable|refresh|rename`
+  and `script list|show|print|enable|disable|refresh|install|uninstall|move`.
 
 sm-dev today runs scripts *through* SourceMonkey in a run's own test
 collection. This adds commands to look at and change what a userscript
@@ -62,9 +63,17 @@ itself. They target SourceMonkey first, and are shaped so Tampermonkey
 
 ## Command form
 
-- **Noun, then verb:** `manager <verb>`, `collection <verb>`,
-  `script <verb>`. `help collection` lists everything you can do to a
-  collection.
+- **Noun, then what it acts on, then verb:** `manager tm enable`,
+  `collection C3 refresh`, `script E4 move C2`. `help collection` lists
+  everything you can do to a collection.
+  - Several commands on one script differ only at the end of the line.
+  - A script left out is the run's selected one (`script enable`),
+    except for `uninstall`. A collection is always named.
+  - A name of several words is quoted: `script "Dark mode" enable`.
+  - The old order (`script enable E4`) is refused, showing the new
+    one.
+  - `list` and `install` act on no one thing, so their verb comes
+    first: `script list C3`, `script install x.user.js`.
 - **Singular and plural are the same command,** as `tab` and `tabs`
   are: `collection list` and `collections list`, `script list` and
   `scripts list`.
@@ -169,8 +178,8 @@ number (`C3`).
 - **Not shown** anywhere in the extension.
 - **Assigned at a sync:** adding a collection with no scripts doesn't
   start a registration sync, so it has no number until a later one.
-  So the extension's calls behind `collection list` and `script list`
-  number first (`assignNumbers`), and `collection add` will too.
+  So the extension's calls behind the `collection` and `script`
+  commands number first (`assignNumbers`), and `collection add` will too.
 - **Other managers:** Tampermonkey and Violentmonkey show one virtual
   collection, so it needs no number.
 
@@ -183,7 +192,7 @@ number (`C3`).
 | `manager list` | List the userscript managers in the browser: name, version, extension id, enabled, user scripts allowed | yes | yes |
 | `manager fetch <tm\|vm>` | Download the manager from the Chrome Web Store into a cache under `~/.cache/sm-dev/`, unpacked | n/a: built from `dist/` | yes |
 | `manager update <tm\|vm>` | Re-download if the store has a newer version | n/a | yes |
-| `manager enable <name>` / `manager disable <name>` | Turn the extension itself on or off in the browser | yes, not during a run | yes |
+| `manager <name> enable` / `manager <name> disable` | Turn the extension itself on or off in the browser | yes, not during a run | yes |
 
 - The temp browser loads the chosen manager from `dist/` (SourceMonkey)
   or the fetch cache (TM, VM), and runs `manager fetch` first if the
@@ -218,12 +227,12 @@ added to or removed.
 | Command | What it does | sm | tm / vm |
 | --- | --- | --- | --- |
 | `collection list` | List collections: id, name, kind, location, script count, enabled, status | yes | one `All scripts` row |
-| `collection show <C>` | Show one collection's details and its scripts | yes | yes |
+| `collection <C> show` | Show one collection's details and its scripts | yes | yes |
 | `collection add [location] [--name N]` | Add a collection, the same as the Add dialog: the kind comes from the location. With no location, an empty container collection to install scripts into | yes | refused |
-| `collection drop <C>` | Remove a collection and its scripts | yes | refused |
-| `collection rename <C> <name>` | Rename a collection | yes | refused |
-| `collection enable <C>` / `collection disable <C>` | Turn a whole collection on or off | yes | refused |
-| `collection refresh <C>` | Re-read a collection from its location (rescan a directory, re-fetch a manifest, re-fetch each container script) | yes | checks each script for updates |
+| `collection <C> drop` | Remove a collection and its scripts | yes | refused |
+| `collection <C> rename <name>` | Rename a collection | yes | refused |
+| `collection <C> enable` / `collection <C> disable` | Turn a whole collection on or off | yes | refused |
+| `collection <C> refresh` | Re-read a collection from its location (rescan a directory, re-fetch a manifest, re-fetch each container script) | yes | checks each script for updates |
 
 - The location takes the same shapes as the Add dialog:
   - a local directory path or `file://` URL: a directory collection;
@@ -247,42 +256,75 @@ added to or removed.
 | `script list [C]` | List every script in the manager, or one collection's: id, name, version, collection, enabled, status, location | yes: in its own run as `1`, `2`; another run's by name only | yes |
 | `scripts` | The run's scripts, then the installed scripts on the current tab, as now | yes | yes |
 | `script <id>` | Select the active script, as now | yes | yes |
-| `script show <id>` | Show one script's details (see [Script details](#script-details)) | yes | yes, fewer fields under TM / VM |
-| `script print <id>` | Print the script's installed text | yes | yes |
-| `script enable <id>` / `script disable <id>` | Turn a script on or off | yes, in the run's tabs | yes |
-| `script refresh <id>` | Re-read it: from disk for the run's scripts (as `update` does), from its location under SourceMonkey, or an update check under TM / VM | yes | yes |
+| `script [id] show` | Show one script's details (see [Script details](#script-details)) | yes | yes, fewer fields under TM / VM |
+| `script [id] print` | Print the script's installed text | yes | yes |
+| `script [id] enable` / `script [id] disable` | Turn a script on or off | yes, in the run's tabs | yes |
+| `script [id] refresh` | Re-read it: from disk for the run's scripts (as `update` does), from its location under SourceMonkey, or an update check under TM / VM | yes | yes |
 | `script install <file\|url>` | Install a script in the manager, for every tab, to stay | n/a | yes |
-| `script install --text {{` | Install from text (block, `--file`, or stdin) | n/a | see below |
-| `script uninstall <id>` | Remove a script | removes it from the run | yes |
-| `script move <id> <C>` | Move a script to another container collection | refused | SourceMonkey only |
+| `script install --text {{` | Install from text (block, `--file`, or stdin) (not built) | n/a | see below |
+| `script <id> uninstall` | Remove a script | refused: they go when the run ends | yes, from a container collection |
+| `script [id] move <C>` | Move a script to another container collection | refused | SourceMonkey only, between container collections |
 
-- **`script install` options:**
-  - `--collection <C>`: the container collection to add it to. Default: the
-    built-in one for its scheme ("Scripts from local disk", "from
-    web", "from GitHub"), as the Add dialog does.
-  - `--disabled`: install it turned off.
+- **`script install --collection <C>`:** the container collection to
+  add it to. Default: the built-in one for its scheme ("Scripts from
+  local disk", "from web", "from GitHub"), as the Add dialog does.
 - **Install from text under SourceMonkey: not supported.** SourceMonkey
   installs scripts by location, and has no user-visible "pasted text"
   script outside sm-dev's test collections, so it is refused, asking
   for a file. TM and VM take text.
+- **Another run's scripts** can be listed and shown, but every change
+  to them is refused: only their own run changes them.
+- **Which scripts can be uninstalled or moved:** only one in a
+  container collection. A directory or manifest collection lists its
+  own scripts, from its files, so one of those is refused, and a move
+  into one is too.
+- **Turning one copy on turns the others off.** `script enable`,
+  `install` and `move` turn off the script's other running copies, as
+  the viewer does (`turnOffOtherCopies`, see
+  [script-identity.md](script-identity.md)).
+  - Each one turned off gets a line: `Another version of this script
+    was disabled: Version 1.0 (E7) in collection C3: Mine`.
+  - Not when the copy itself won't run: it is invalid, or its
+    collection is disabled.
+  - A run's test collection is left out both ways.
+- **An enabled script in a disabled collection** gets a line too, after
+  `script enable`, `install` or `move`: `E4: Dark mode is enabled, but
+  won't run because it's inside disabled collection C3: Mine`.
 - **`load` vs `script install`.** `load` adds a script to the run's
   test collection, for the run's tabs only, and it goes away with the
   run. `script install` puts it in the manager for every tab, and it
   stays. `load` and `update` keep their names.
+
+### Changes on disk
+
+What the collections page's chips show, from the same code
+(`file-changes.ts`, see [file-changes.md](file-changes.md)), through
+`managed.onDisk`:
+
+- **A script's local file**, modified or deleted since it loaded:
+  `(modified on disk)` in `script list` and `collection show`, in
+  `script show`'s Status, and `onDisk` in JSON.
+- **A local collection's "refresh pending"**: files modified, deleted
+  or new, or its manifest changed. `Refresh pending: 1 file modified on
+  disk` in `collection list`, an `On disk` row in `collection show`, and
+  `onDisk` counts in JSON.
+- With an extension older than 1.5 the listings leave it out.
 
 ### Script details
 
 What `script show` shows, where the manager has it:
 
 - Name, namespace, version, description, author.
-- Collection, location (file, URL, or `scratch`), and whether it's a
-  local file override.
-- Enabled, status (ok, invalid, failed to load, not loaded) and the
-  error message.
-- Last refreshed and last changed times.
-- `@match` / `@include` / `@exclude` rules, `@run-at`, `@grant`s,
-  `@require`s and `@resource`s with each one's status.
-- The tabs it is running on now.
+- Collection, and location (file or URL; a run's script by its file).
+- Enabled, status (ok or invalid), the error message, and why its last
+  refresh failed.
+- Whether its local file was modified or deleted since it loaded, as
+  the collections page's chip shows it.
+- When its current text was loaded (`Updated`).
+- `@match` / `@include` / `@exclude` / `@exclude-match` rules,
+  `@run-at`, `@grant`s, and `@require`s and `@resource`s, each loaded
+  or not, with the local file read in its place.
+- In a run, what it does on each of the run's tabs.
 - Values: the count, with `values <id>` for the values themselves.
 
 ### Existing commands that change
@@ -336,9 +378,9 @@ What `script show` shows, where the manager has it:
    and `script` verbs, with `--json`. In slices:
    - `collection list` and `script list`, with and without a run
      (done);
-   - `enable`, `disable` and `refresh`;
-   - `collection add` / `drop` and `script install` / `uninstall` /
-     `move`.
+   - `show`, `print`, `enable`, `disable`, `refresh`, `rename`, and
+     `script install` / `uninstall` / `move` (done);
+   - `collection add` / `drop`, and `script install --text`.
 5. `ManagerBackend` around those, with SourceMonkey as its first
    implementation.
 6. `manager list`, `manager fetch`, `--manager` for `--temp-browser` and
@@ -349,12 +391,12 @@ What `script show` shows, where the manager has it:
 ## Changing the person's real scripts
 
 - Outside a `--temp-browser`, the scripts and collections are the
-  person's own. The commands that take something away need `--force`
-  there, as `set` on an E-script does now:
-  - `script uninstall`, `script disable`;
-  - `collection drop`, `collection disable`.
-- Adding things (`script install`, `collection add`) and refreshing
-  don't.
+  person's own. The commands that remove something need `--force`
+  there, as `set` on an E-script does now: `script uninstall`, and
+  `collection drop`.
+- Enabling and disabling are easily undone, so they don't need it.
+  Nor do adding things (`script install`, `collection add`) and
+  refreshing.
 
 ## Open questions
 

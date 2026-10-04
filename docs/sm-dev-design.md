@@ -877,7 +877,9 @@ User-facing behavior is in [harness-guide.md](harness-guide.md).
   - SourceMonkey-managed scripts: `scriptsOnTab(tabId)`, the rows the
     toolbar badge shows for a tab, with each one's collection;
   - what's installed: `managedCollections` and `managedScripts`, for
-    `collection list` and `script list` (see
+    `collection list` and `script list`, and from 1.5 the calls on
+    `managed` (`src/extension/managed-changes.ts`) for the other
+    `collection` and `script` verbs (see
     [sm-dev-managers.md](sm-dev-managers.md)). These also work with no
     run, over a connection of their own (`openManagerLink`);
   - tabs: `tabDocument(tabId)`, which document a tab shows, to tell

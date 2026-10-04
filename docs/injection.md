@@ -1675,6 +1675,9 @@ out while the check is still to come.
   regardless of which arrives first, so a split rule would let the
   opportunistic call decide for the fast path. Install, the Refresh
   buttons, Refresh All and `sm-dev validate` all wait for the verdict.
+  - sm-dev's `script refresh` waits too, but runs in the worker, so it
+    can join a navigation's deferring check already running. It then
+    reports the row before the verdict lands.
 - Content that didn't move still costs nothing either way — the
   `parseCheckedHash` short-circuit is applied before the mode is
   consulted.

@@ -148,3 +148,16 @@ test('sm-dev\'s own commands read the same way', () => {
   assert.equal(sent('stop', '--watch').error, 'The stop command has no --watch flag. It takes --all.');
   assert.equal(sent('list', 'x').error, 'The list command takes no arguments');
 });
+
+test('a form can name what it acts on before its keyword, or leave it out', () => {
+  assert.deepEqual(typed('script', 'E4 move C2'), { flags: {}, form: 'move', subject: 'E4', words: ['C2'] });
+  assert.deepEqual(typed('script', 'move C2'), { flags: {}, form: 'move', words: ['C2'] });
+  assert.deepEqual(typed('script', '"Dark mode" enable --json'), { flags: { '--json': true }, form: 'enable', subject: 'Dark mode', words: [] });
+  assert.deepEqual(sent('collection', 'C3', 'rename', 'My', 'scripts'), { flags: {}, form: 'rename', subject: 'C3', words: ['My', 'scripts'] });
+  // Not for a form that takes none: list's argument comes after it.
+  assert.deepEqual(typed('script', 'list C3'), { flags: {}, form: 'list', words: ['C3'] });
+  assert.equal(typed('script', 'C3 list').form, undefined);
+  // The old order says the new one.
+  assert.deepEqual(typed('script', 'enable E4'), { error: 'Name the script before the verb: script E4 enable' });
+  assert.deepEqual(typed('script', 'move E4 C2'), { error: 'Name the script before the verb: script E4 move C2' });
+});

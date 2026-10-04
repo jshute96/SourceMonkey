@@ -25,9 +25,11 @@ import { extensionLabel, type ExtensionState } from './extension-backend.js';
 import { firstLine } from './extension-link.js';
 import type { ConnectPromptRecord, HarnessHost, MenuCommandRecord } from './host.js';
 import type { PageAttachment } from './page-watch.js';
-import { collectionList, count, noSuchVerb, scriptList, type ManagerControl, type RunView } from './manager-commands.js';
+import {
+  collectionList, count, managerVerb, noSuchScript, noSuchVerb, scriptList, type ManagerControl, type ManagerRun, type RunView,
+} from './manager-commands.js';
 import { parseCommandArgs, splitWords, unquoteWhole, type ParsedArgs } from './command-args.js';
-import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, SAME_COMMANDS, commandsHelp } from './command-list.js';
+import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, SAME_COMMANDS, commandSyntax, commandsHelp } from './command-list.js';
 import { errorSentence, readJsonFile, writeProblem } from './input-file.js';
 import { PAGE_COMMANDS, runPageCommand, type EvalIn } from './page-commands.js';
 import { editMultiLine } from './prompt-editor.js';
@@ -347,27 +349,44 @@ function ownWords(input: { line: string } | { words: string[] }): { command: str
     rest = { words: input.words.slice(1) };
   }
   if (!RUN_COMMAND_NAMES.includes(ALIASES[name] ?? name)) return null;
-  return { command: listsInstalled(name, rest) ? 'script' : RUN_ALIASES[name] ?? name, rest };
+  // `scripts E4 enable` is the script command; `scripts E4` picks one.
+  const isScriptVerb = (name === 'script' || name === 'scripts') && managedVerb(name, rest) !== null;
+  return { command: isScriptVerb ? 'script' : RUN_ALIASES[name] ?? name, rest };
 }
 
 /**
- * Which listing of what's installed a command is (`collection list`,
- * `script list`), in any spelling, or null for another command. These
- * need SourceMonkey but no run.
+ * Which of the commands for what's installed a command is (`collection
+ * C3 show`, `script list`), in any spelling, with its verb, or null for
+ * another command. These need SourceMonkey but no run.
  */
-export function installedListing(words: string[]): 'collection' | 'script' | null {
+export function managerCommandOf(words: string[]): { command: 'collection' | 'script'; verb: string | undefined } | null {
   const [name = '', ...rest] = words;
-  if ((ALIASES[name] ?? name) === 'collection') return 'collection';
-  return listsInstalled(name, { words: rest }) ? 'script' : null;
+  if ((ALIASES[name] ?? name) === 'collection') {
+    // Alone, or with flags only, it lists.
+    const verb = rest.every((w) => w.startsWith('--')) ? 'list' : managedVerb('collection', { words: rest }) ?? undefined;
+    return { command: 'collection', verb };
+  }
+  const verb = managedVerb(name, { words: rest });
+  return verb !== null ? { command: 'script', verb } : null;
 }
 
-// `script list`, which lists the installed scripts rather than picking
-// one, as `script <id>` does. Its flags can come before `list`.
-function listsInstalled(name: string, rest: { line: string } | { words: string[] }): boolean {
-  if (name !== 'script' && name !== 'scripts') return false;
-  const words = 'line' in rest ? rest.line.trim().split(/\s+/) : rest.words;
-  return words.find((w) => !w.startsWith('--')) === 'list';
+// The verb of `script list`, `script E4 show`, `collection C3 refresh`
+// and the rest, as command-args.ts reads it, or null: for `script`,
+// picking a script instead (`script E4`). A line that doesn't parse is
+// still the verb's when a word of it is one, so the verb's own message
+// says what's wrong (`script enable E4`).
+function managedVerb(name: string, rest: { line: string } | { words: string[] }): string | null {
+  const command = name === 'script' || name === 'scripts' ? 'script' : name === 'collection' ? 'collection' : null;
+  if (command === null) return null;
+  const parsed = parseCommandArgs(command, 'line' in rest ? { line: rest.line.split('\n')[0] } : rest);
+  if (!('error' in parsed)) return parsed.form ?? null;
+  const all = 'line' in rest ? splitWords(rest.line.split('\n')[0]).map((w) => w.text) : rest.words;
+  const verbs = commandSyntax(command).forms;
+  return all.find((w) => !w.startsWith('--') && Object.hasOwn(verbs, w)) ?? null;
 }
+
+// The verbs that only look.
+const LOOKING_VERBS = new Set(['list', 'show', 'print']);
 
 /**
  * A command line's words, as the prompt splits them (quotes kept
@@ -382,7 +401,7 @@ export function commandWords(line: string): string[] {
 // Commands that only look: what they print answers whoever asked, and
 // is no part of the run's story.
 const INSPECTING = new Set([
-  'help', 'status', 'values', 'get', 'snapshot', 'screenshot', 'savehtml', 'probe', 'logs', 'match', 'validate', 'collection',
+  'help', 'status', 'values', 'get', 'snapshot', 'screenshot', 'savehtml', 'probe', 'logs', 'match', 'validate',
 ]);
 
 /**
@@ -394,7 +413,9 @@ export function onlyInspects(line: string): boolean {
   const [typed = '', ...words] = line.trim().split(/\s+/);
   // `tabs --json` still lists.
   const rest = words.filter((word) => !/^--(no)?json(=|$)/.test(word));
-  if (listsInstalled(typed, { words: rest })) return true;
+  // A script or collection named in quotes is one word.
+  const managing = managerCommandOf(commandWords(line));
+  if (managing) return managing.verb !== undefined && LOOKING_VERBS.has(managing.verb);
   const command = RUN_ALIASES[typed] ?? typed;
   if (INSPECTING.has(command)) return true;
   if (command === 'tabs' || command === 'scripts') return rest.length === 0;
@@ -407,9 +428,9 @@ export function onlyInspects(line: string): boolean {
  * `JSON_COMMANDS`, in a form that only looks (`tabs`, not `tabs T2`).
  */
 export function hasJsonForm(line: string): boolean {
-  const typed = line.trim().split(/\s+/)[0];
-  const words = line.trim().split(/\s+/).slice(1);
-  if (listsInstalled(typed, { words })) return true;
+  const [typed = '', ...words] = commandWords(line);
+  // Each collection and script verb has one, the changing ones too.
+  if (managerCommandOf([typed, ...words])) return true;
   return JSON_COMMANDS.includes(RUN_ALIASES[typed] ?? typed) && onlyInspects(line);
 }
 
@@ -515,7 +536,7 @@ export async function runConsoleCommand(
   switch (command) {
     case 'collection':
     case 'script':
-      return managerCommand(ctx, command, parsed.form, args);
+      return managerCommand(ctx, command, parsed, cwd);
     case 'match':
       return matchCommand(ctx, args, cwd);
     case 'validate':
@@ -1057,23 +1078,40 @@ function numbered(ctx: ConsoleContext, script: PreparedScript): string {
 }
 
 /**
- * `collection list` (`collection`, `collections`) and `script list`. `form`: the
- * keyword after the command's name (`list`); `args`: the words after it.
+ * The `collection` and `script` commands for what's installed (`collection`
+ * alone lists). `parsed`: its words as command-args.ts reads them, the
+ * verb as `form` (`list`), what it acts on as `subject` (`C3` in
+ * `collection C3 show`). `cwd`: where a path `script install` is given
+ * is from.
  */
 export async function managerCommand(
-  ctx: Pick<ConsoleContext, 'manager' | 'out' | 'json'> & Partial<ConsoleContext>, command: string, form: string | undefined, args: string[],
+  ctx: Pick<ConsoleContext, 'manager' | 'out' | 'json'> & Partial<ConsoleContext>, command: string,
+  parsed: Pick<ParsedArgs, 'form' | 'subject' | 'words' | 'flags'>, cwd = process.cwd(),
 ): Promise<boolean | void> {
-  // `collection` alone lists, as `tabs` does.
-  if (form !== 'list' && args.length > 0) {
-    ctx.out(`[sm-dev] ERROR: ${noSuchVerb(args[0])}`);
+  const { form, subject, words: args, flags } = parsed;
+  if (form === undefined && args.length > 0) {
+    ctx.out(`[sm-dev] ERROR: ${noSuchVerb(args)}`);
     return false;
   }
   if (!ctx.manager) {
-    ctx.out('[sm-dev] This run has no SourceMonkey to list from');
+    ctx.out('[sm-dev] This run has no SourceMonkey to manage');
     return false;
   }
+  const kind = command === 'script' ? 'script' : 'collection';
+  if (form !== undefined && form !== 'list') {
+    return managerVerb({
+      manager: ctx.manager,
+      out: ctx.out,
+      json: ctx.json === true,
+      ...(ctx.scripts ? { run: managerRun(ctx as ConsoleContext) } : {}),
+      // A throwaway browser's data is the run's own, as for `set`; with
+      // no run, the browser is always the person's.
+      guarded: ctx.others?.guarded ?? true,
+      cwd,
+    }, kind, form, subject, args, flags);
+  }
   try {
-    if (command === 'script') await scriptList(ctx.manager, args[0], ctx.out, ctx.json === true, runView(ctx));
+    if (kind === 'script') await scriptList(ctx.manager, args[0], ctx.out, ctx.json === true, runView(ctx));
     else await collectionList(ctx.manager, ctx.out, ctx.json === true);
   } catch (err) {
     // What it named isn't there, or SourceMonkey failed: a failure, not
@@ -1081,6 +1119,41 @@ export async function managerCommand(
     ctx.out(`[sm-dev] ${firstLine(err)}`);
     return false;
   }
+}
+
+// In a run, what the commands that show and change things need of it.
+function managerRun(ctx: ConsoleContext): ManagerRun {
+  const ownScript = (internalId: string): PreparedScript | undefined =>
+    ctx.scripts.find((script) => ctx.extensionIdOf?.(script) === internalId);
+  return {
+    ...runView(ctx)!,
+    updateOwn: async (internalId) => {
+      const script = ownScript(internalId);
+      if (!script || !ctx.updateScripts) throw new Error('This run cannot update scripts');
+      // It reloads the tabs the script runs in, as `update` does, which
+      // an open dialog would hold up.
+      const waiting = ctx.tabs().find((t) => t.dialogs?.current);
+      if (waiting) throw new Error(dialogWaitingMessage(waiting, currentTab(ctx)));
+      await ctx.updateScripts([script]);
+    },
+    tabsOf: async (managed, label) => {
+      const script = ownScript(managed.id);
+      const out: Awaited<ReturnType<ManagerRun['tabsOf']>> = [];
+      for (const tab of ctx.tabs()) {
+        const name = tabName(tab);
+        if (script) {
+          const running = activeOn(ctx, tab, script.id);
+          out.push({ activity: { tab: name, state: running ? 'running' : 'not-running' }, text: running ? 'Running' : 'Not running' });
+          continue;
+        }
+        const other = label === undefined ? undefined : (await ctx.others?.onTab(tab).catch((): OtherScript[] => []))?.find((o) => o.label === label);
+        out.push(other
+          ? { activity: { tab: name, state: OTHER_STATE[other.status] ?? 'running' }, text: OTHER_STATUS[other.status] ?? other.status }
+          : { activity: { tab: name, state: 'not-running' }, text: 'Not on this page' });
+      }
+      return out;
+    },
+  };
 }
 
 // In a run, how `script list` shows the run's own scripts: by their
@@ -2031,7 +2104,7 @@ async function pickOther(ctx: ConsoleContext, label: string, tab: ControlledTab 
   }
   // Not on the tab's page: any installed script can still be picked.
   const found = ctx.others.byLabel(name) ?? await installedOther(ctx, name);
-  if (!found) ctx.out(`[sm-dev] There is no script ${name}. Use script list to list the installed scripts.`);
+  if (!found) ctx.out(`[sm-dev] ${noSuchScript(name)}`);
   return found;
 }
 

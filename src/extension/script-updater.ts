@@ -184,12 +184,14 @@ const ALL_COLLECTIONS_KEY = '*';
 // idle gap, which is the ordinary edit-save-reload loop.
 //
 // The same coalescing would let a user-initiated check inherit a
-// verdict-less row. What stops it today is context, not the gate:
-// every user-initiated single-script check runs in the page that
-// clicked (see docs/parse-check.md on where checkers are installed),
-// and that page has its own `scriptState` map. Add an SW-side Refresh
-// entry point and this stops being true — a caller that must have the
-// verdict would then need it enforced here rather than assumed.
+// verdict-less row. For the pages' Refresh buttons, context stops it,
+// not the gate: they check in the page that clicked (see
+// docs/parse-check.md on where checkers are installed), and that page
+// has its own `scriptState` map. sm-dev's `script refresh` is the one
+// user-initiated check in the worker, so it can inherit one: the
+// verdict still lands on the row a moment later, and sm-dev reports
+// the row as it was. A caller that must have the verdict would need it
+// enforced here rather than assumed.
 // `batch` shares the reads a group of checks started together would
 // otherwise each do (see `RefreshBatch`). Every navigation-triggered
 // fan-out passes one — the reload fast path and the opportunistic

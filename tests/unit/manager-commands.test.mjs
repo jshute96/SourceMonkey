@@ -1,12 +1,13 @@
-// Unit tests for `collection list` and `script list`'s output and
-// collection naming (src/harness/manager-commands.ts), against a stand-in
+// Unit tests for `collection list` and `script list`'s output, how
+// collections and scripts are named, and the changing verbs' checks
+// (src/harness/manager-commands.ts), against a stand-in
 // for SourceMonkey, and for the extension's side of them
 // (src/extension/managed-items.ts).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { collectionList, pickCollection, runOfLinkId, scriptList } from '../../lib/harness/manager-commands.js';
+import { collectionList, managerVerb, pickCollection, pickManagedScript, runOfLinkId, scriptList } from '../../lib/harness/manager-commands.js';
 import { linkRunId } from '../../lib/harness/extension-link.js';
 import { managedCollection, managedScripts } from '../../dist/extension/managed-items.js';
 
@@ -22,7 +23,7 @@ const scripts = [
     collectionId: 'run', enabled: true, status: 'ok',
   },
 ];
-const manager = { collections: async () => collections, scripts: async () => scripts };
+const manager = { collections: async () => collections, scripts: async () => scripts, onDisk: async () => null };
 
 async function lines(fn) {
   const out = [];
@@ -104,4 +105,98 @@ test('the extension lists a test collection by its run, with no location, and it
   const dir = { id: 'd', path: 'file:///a/', scriptIds: ['y'], enabled: true, lastRefreshedAt: 0 };
   const script = (id, collectionId) => ({ id, collectionId, relativePath: `${id}.user.js`, fileUrl: `file:///a/${id}.user.js`, status: 'ok', enabled: true, header: null });
   assert.deepEqual(managedScripts([stored, dir], [script('x', 'r'), script('y', 'd')], { y: 3 }).map((s) => [s.id, s.number]), [['x', undefined], ['y', 3]]);
+});
+
+test('a script is named by its run number in its run, E-id, id, whole name, or a part only it has', () => {
+  const own = new Map([['s2', '1']]);
+  assert.equal(pickManagedScript(scripts, '1', { own }).id, 's2');
+  assert.throws(() => pickManagedScript(scripts, '1'), /A number names one of a run's scripts, in that run/);
+  assert.equal(pickManagedScript(scripts, 'e4').id, 's1');
+  assert.equal(pickManagedScript(scripts, 'id=s2').id, 's2');
+  assert.equal(pickManagedScript(scripts, 'dark').id, 's1');
+  assert.throws(() => pickManagedScript(scripts, 'r'), /^Error: r names more than one script: E4: Dark mode, Run script\. /);
+  assert.throws(() => pickManagedScript(scripts, 'E9'), /There is no script E9/);
+});
+
+test('a change to another run\'s script, or one that takes something away, is refused before SourceMonkey is asked', async () => {
+  const asked = [];
+  const changing = {
+    ...manager,
+    setScriptEnabled: async (id, enabled) => { asked.push([id, enabled]); return { script: { ...scripts[0], enabled }, turnedOff: [] }; },
+    uninstallScript: async (id) => { asked.push([id]); return scripts[0]; },
+  };
+  const run = async (verb, args, guarded = true) => {
+    const out = [];
+    const ok = await managerVerb({ manager: changing, out: (l) => out.push(l), json: false, guarded, cwd: '/' }, 'script', verb, args[0], [], {});
+    return { ok, out };
+  };
+  assert.deepEqual(await run('disable', ['Run script']), { ok: false, out: ['[sm-dev] Run script is a script of run D1, which only that run changes'] });
+  assert.deepEqual(await run('uninstall', ['E4']), {
+    ok: false, out: ['[sm-dev] ERROR: E4: Dark mode is installed in SourceMonkey in this browser, so this would remove it for real. Use --force to continue.'],
+  });
+  assert.deepEqual(asked, []);
+  // Turning one off is easily undone, so needs no --force.
+  assert.deepEqual(await run('disable', ['E4']), { ok: true, out: ['Disabled E4: Dark mode'] });
+  // A --temp-browser's scripts are the run's own.
+  assert.deepEqual(await run('uninstall', ['E4'], false), { ok: true, out: ['Uninstalled E4: Dark mode from C2: Scripts from web'] });
+  assert.deepEqual(asked, [['s1', false], ['s1']]);
+});
+
+test('turning a script on lists the copies it turned off, and says when its collection is disabled', async () => {
+  const inDir = { ...scripts[0], collectionId: 'dir' };
+  const off = { ...scripts[0], id: 'o1', number: 7, version: '1.0', collectionId: 'dir', enabled: false };
+  const changing = {
+    ...manager,
+    scripts: async () => [inDir, scripts[1]],
+    setScriptEnabled: async (_id, enabled) => ({ script: { ...inDir, enabled }, turnedOff: [off] }),
+  };
+  const run = async (json) => {
+    const out = [];
+    await managerVerb({ manager: changing, out: (l) => out.push(l), json, guarded: true, cwd: '/' }, 'script', 'enable', 'E4', [], {});
+    return out;
+  };
+  assert.deepEqual(await run(false), [
+    'Enabled E4: Dark mode',
+    '  Another version of this script was disabled: Version 1.0 (E7) in collection C1: mine',
+    '  E4: Dark mode is enabled, but won\'t run because it\'s inside disabled collection C1: mine',
+  ]);
+  const [line] = await run(true);
+  const result = JSON.parse(line.slice(line.indexOf('{')));
+  assert.deepEqual(result.turnedOff.map((s) => [s.id, s.enabled]), [['E7', false]]);
+  assert.equal(result.collectionDisabled, true);
+});
+
+test('the listings mark local files changed on disk, as the collections page does', async () => {
+  const onDisk = { ...manager, onDisk: async () => ({ scripts: { s1: 'modified' }, collections: { dir: { modified: 1, deleted: 0, added: 2 } } }) };
+  const listed = await lines((out) => collectionList(onDisk, out, false));
+  assert.ok(listed.includes('      Refresh pending: 1 file modified, 2 new files on disk'), listed.join('\n'));
+  assert.ok((await lines((out) => scriptList(onDisk, undefined, out, false))).includes('  E4: Dark mode 2.1 (modified on disk)'));
+  const [json] = await lines((out) => scriptList(onDisk, undefined, out, true));
+  assert.equal(JSON.parse(json.slice(json.indexOf('{'))).scripts.find((s) => s.id === 'E4').onDisk, 'modified');
+});
+
+test('the script or collection comes before its verb, and a missing one is said', async () => {
+  const { managerCommandOf } = await import('../../lib/harness/console-commands.js');
+  assert.deepEqual(managerCommandOf(['script', 'E4', 'enable']), { command: 'script', verb: 'enable' });
+  assert.deepEqual(managerCommandOf(['script', 'install', 'x.user.js']), { command: 'script', verb: 'install' });
+  // Picks the script, as before.
+  assert.equal(managerCommandOf(['script', 'E4']), null);
+  assert.deepEqual(managerCommandOf(['collection', 'C3', 'show']), { command: 'collection', verb: 'show' });
+  // A flag's value before the verb isn't taken for the script.
+  assert.deepEqual(managerCommandOf(['script', '--collection', 'C2', 'install', 'x.user.js']), { command: 'script', verb: 'install' });
+  // The old order is still the verb's, which says the new one.
+  assert.deepEqual(managerCommandOf(['script', 'enable', 'E4']), { command: 'script', verb: 'enable' });
+  const { onlyInspects } = await import('../../lib/harness/console-commands.js');
+  assert.equal(onlyInspects('script "Dark mode" show'), true);
+  assert.equal(onlyInspects('script "Dark mode" disable'), false);
+  const out = [];
+  const ok = await managerVerb({ manager, out: (l) => out.push(l), json: false, guarded: true, cwd: '/' }, 'collection', 'show', undefined, [], {});
+  assert.equal(ok, false);
+  assert.deepEqual(out, ['[sm-dev] ERROR: The collection show command needs a collection: collection <collection> show']);
+  out.length = 0;
+  await managerVerb({ manager, out: (l) => out.push(l), json: false, guarded: true, cwd: '/' }, 'collection', 'rename', undefined, ['C3', 'New', 'name'], {});
+  assert.deepEqual(out, ['[sm-dev] ERROR: Name the collection before the verb: collection C3 rename New name']);
+  out.length = 0;
+  await managerVerb({ manager, out: (l) => out.push(l), json: false, guarded: true, cwd: '/' }, 'script', 'enable', undefined, [], {});
+  assert.deepEqual(out, ['[sm-dev] ERROR: The script enable command needs a script: script <script> enable. There is no selected script outside a run.']);
 });

@@ -51,20 +51,12 @@ export const STDERR_LINE = '\u0000sm-dev:stderr ';
 /**
  * The commands with a JSON form, by name. `scripts`, `tabs` and `menu`
  * only when they list (see `onlyInspects`), not when they pick or fire;
- * `collection` and `script` only as `collection list` and `script list`.
+ * `collection` and `script` with each verb, not `script <script>`
+ * (`hasJsonForm`).
  */
 export const JSON_COMMANDS = [
   'list', 'status', 'scripts', 'tabs', 'values', 'get', 'match', 'validate', 'menu', 'logs', 'probe', 'collection', 'script',
 ];
-
-/**
- * `JSON_COMMANDS` as help lists them: `a, b and c`, by the forms that
- * have one (`script list`, not `script`).
- */
-export function jsonCommandList(): string {
-  const forms = JSON_COMMANDS.map((c) => (c === 'collection' || c === 'script' ? `${c} list` : c));
-  return `${forms.slice(0, -1).join(', ')} and ${forms.at(-1)}`;
-}
 
 /** The line carrying `command`'s result, `data`'s fields after `command`. */
 export function jsonResult(command: string, data: object): string {
@@ -115,6 +107,12 @@ export interface Collection {
   /** Why it failed to load. */
   error?: string;
   scriptCount: number;
+  /**
+   * In `collection list` and `show`: a local collection's files that
+   * differ from what it loaded, so a refresh would load them. Absent
+   * when none do.
+   */
+  onDisk?: { modified: number; deleted: number; added: number; manifest?: true };
 }
 
 export interface Tab {
@@ -184,6 +182,11 @@ export interface Script {
   error?: string;
   /** Why its last refresh failed, while its last good copy still runs. */
   refreshError?: string;
+  /**
+   * Installed scripts, in `script list` and `show`: its local file
+   * changed or went since it was loaded, so a refresh would load that.
+   */
+  onDisk?: 'modified' | 'deleted';
   /** The script `get` and `set` act on. */
   selected?: boolean;
   /** In `scripts` and `status`: what it is doing on each tab. */
@@ -336,4 +339,88 @@ export interface ScriptListData {
   /** When one was named. */
   collection?: CollectionRef;
   scripts: Script[];
+}
+
+/** `collection show`: the collection with its scripts. */
+export interface CollectionShowData {
+  collection: Collection & { scripts: Script[] };
+}
+
+/** `collection enable`, `disable` and `rename`: the collection after. */
+export interface CollectionChangeData {
+  collection: Collection;
+}
+
+export interface CollectionRefreshData {
+  /** As it is after. */
+  collection: Collection;
+  /** Its scripts that were added or loaded different text. */
+  updated: Script[];
+  /** How many loaded the same text. */
+  unchanged: number;
+  /** Its scripts that are gone, as they were. */
+  removed: Script[];
+}
+
+/** `script enable`, `disable`, `move` and `uninstall`: the script after (or as it was, `removed`). */
+export interface ScriptChangeData {
+  script: Script;
+  /** `script uninstall`: it is gone. */
+  removed?: true;
+  /**
+   * `script enable`, `move` and `install`: its other copies that were
+   * running, turned off, as the viewer does.
+   */
+  turnedOff?: Script[];
+  /** It is enabled, but its collection is disabled, so it doesn't run. */
+  collectionDisabled?: true;
+}
+
+export interface ScriptRefreshData {
+  script: Script;
+  /** It loaded different text. */
+  updated: boolean;
+}
+
+export interface ScriptInstallData extends Pick<ScriptChangeData, 'turnedOff' | 'collectionDisabled'> {
+  script: Script;
+  /** It was already installed there, so nothing changed. */
+  already?: true;
+}
+
+export interface ScriptPrintData {
+  /** Its id, absent for another run's script. */
+  script?: string;
+  name: string;
+  /** The installed text. */
+  text: string;
+}
+
+/** A `@require` or `@resource`. */
+export interface FileStatus {
+  /** As the header gives it. */
+  url: string;
+  /** `not-loaded` when the script failed to load. */
+  status: 'ok' | 'not-loaded';
+  /** The local file read in its place. */
+  local?: string;
+}
+
+/** A script in full, for `script show`. */
+export interface ScriptDetails extends Script {
+  description?: string;
+  author?: string;
+  /** When its current text was loaded, ISO 8601. */
+  updatedAt?: string;
+  matching: { match: string[]; include: string[]; exclude: string[]; excludeMatch: string[] };
+  /** `document-idle` when the header gives none. */
+  runAt: string;
+  grants: string[];
+  requires: FileStatus[];
+  resources: (FileStatus & { name: string })[];
+  valueCount: number;
+}
+
+export interface ScriptShowData {
+  script: ScriptDetails;
 }

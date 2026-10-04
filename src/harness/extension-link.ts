@@ -21,7 +21,7 @@ import { randomBytes } from 'node:crypto';
 import type { BrowserContext, Page, Worker } from '@playwright/test';
 
 import {
-  SM_DEV_EVENT, SM_DEV_PROTOCOL, type ManagedCollection, type ManagedScript, type ProtocolVersion,
+  SM_DEV_EVENT, SM_DEV_PROTOCOL, type ManagedCollection, type ManagedOnDisk, type ManagedScript, type ProtocolVersion,
 } from '../sm-dev-protocol.js';
 import type { StackLayout } from '../composed-source.js';
 import type { PushedFile } from '../external-files.js';
@@ -437,17 +437,11 @@ export class ExtensionLink {
     return result.ok;
   }
 
-  /** The collections and installed scripts, for `collection list` and `script list`. */
-  readonly manager: ManagerControl = {
-    collections: async () => {
-      this.requireMinor(2, MANAGING);
-      return this.call(() => (self as unknown as { SourceMonkey: Api }).SourceMonkey.managedCollections(), undefined);
-    },
-    scripts: async () => {
-      this.requireMinor(2, MANAGING);
-      return this.call(() => (self as unknown as { SourceMonkey: Api }).SourceMonkey.managedScripts(), undefined);
-    },
-  };
+  /** The collections and installed scripts, for the `collection` and `script` commands. */
+  readonly manager: ManagerControl = managerControl(
+    (fn, arg) => this.call(fn, arg),
+    (minor, feature) => this.requireMinor(minor, feature),
+  );
 
   /** Clicks a shown notification, as the person would. False when it isn't showing. */
   async clickNotification(notificationId: string): Promise<boolean> {
@@ -511,10 +505,67 @@ export async function openManagerLink(context: BrowserContext): Promise<{ manage
   requireMinorOf(protocol, 2, MANAGING);
   return {
     versionNote: note,
-    manager: {
-      collections: () => worker.evaluate(() => (self as unknown as { SourceMonkey: Api }).SourceMonkey.managedCollections()),
-      scripts: () => worker.evaluate(() => (self as unknown as { SourceMonkey: Api }).SourceMonkey.managedScripts()),
+    manager: managerControl(
+      // Playwright's argument types don't follow a generic through.
+      (fn, arg) => worker.evaluate(fn as never, arg as never),
+      (minor, feature) => requireMinorOf(protocol, minor, feature),
+    ),
+  };
+}
+
+// What the changing calls, and `script show` / `print`, say an older
+// extension lacks.
+const CHANGING = 'Changing collections and scripts';
+const SHOWING = 'Showing a script\'s details and text';
+
+// The manager calls, made with `invoke` (in the worker), each checking
+// first that the extension has it.
+function managerControl(
+  invoke: <A, R>(fn: (arg: A) => R | Promise<R>, arg: A) => Promise<R>,
+  requireMinor: (minor: number, feature: string) => void,
+): ManagerControl {
+  // `self.SourceMonkey.managed`'s calls, after checking for minor 5. A
+  // change it refuses fails with its message alone, without the
+  // `worker.evaluate: Error: ` Playwright puts before it.
+  const managed = async <A, R>(feature: string, fn: (arg: A) => R | Promise<R>, arg: A): Promise<R> => {
+    requireMinor(5, feature);
+    try {
+      return await invoke(fn, arg);
+    } catch (err) {
+      throw new Error(firstLine(err).replace(/^Error: /, ''), { cause: err });
+    }
+  };
+  type Sm = { SourceMonkey: Api };
+  return {
+    collections: async () => {
+      requireMinor(2, MANAGING);
+      return invoke(() => (self as unknown as Sm).SourceMonkey.managedCollections(), undefined);
     },
+    scripts: async () => {
+      requireMinor(2, MANAGING);
+      return invoke(() => (self as unknown as Sm).SourceMonkey.managedScripts(), undefined);
+    },
+    onDisk: async () => {
+      // Extra to what the listings show, so an older extension lists
+      // without it rather than failing.
+      try {
+        requireMinor(5, CHANGING);
+      } catch {
+        return null;
+      }
+      return invoke(() => (self as unknown as Sm).SourceMonkey.managed.onDisk(), undefined);
+    },
+    setScriptEnabled: (id, enabled) => managed(CHANGING, ({ i, e }) => (self as unknown as Sm).SourceMonkey.managed.setScriptEnabled(i, e), { i: id, e: enabled }),
+    setCollectionEnabled: (id, enabled) => managed(CHANGING, ({ i, e }) => (self as unknown as Sm).SourceMonkey.managed.setCollectionEnabled(i, e), { i: id, e: enabled }),
+    refreshScript: (id) => managed(CHANGING, (i) => (self as unknown as Sm).SourceMonkey.managed.refreshScript(i), id),
+    refreshCollection: (id) => managed(CHANGING, (i) => (self as unknown as Sm).SourceMonkey.managed.refreshCollection(i), id),
+    installScript: (location, collectionId) => managed(CHANGING, ({ l, c }) =>
+      (self as unknown as Sm).SourceMonkey.managed.installScript(l, c), { l: location, c: collectionId }),
+    uninstallScript: (id) => managed(CHANGING, (i) => (self as unknown as Sm).SourceMonkey.managed.uninstallScript(i), id),
+    moveScript: (id, collectionId) => managed(CHANGING, ({ i, c }) => (self as unknown as Sm).SourceMonkey.managed.moveScript(i, c), { i: id, c: collectionId }),
+    renameCollection: (id, name) => managed(CHANGING, ({ i, n }) => (self as unknown as Sm).SourceMonkey.managed.renameCollection(i, n), { i: id, n: name }),
+    scriptDetails: (id) => managed(SHOWING, (i) => (self as unknown as Sm).SourceMonkey.managed.scriptDetails(i), id),
+    scriptText: (id) => managed(SHOWING, (i) => (self as unknown as Sm).SourceMonkey.managed.scriptText(i), id),
   };
 }
 
@@ -537,4 +588,5 @@ interface Api {
   answerConnectPrompt(promptId: string, choice: 'once' | 'cancel' | 'allow' | 'allow-all' | 'deny'): Promise<boolean>;
   managedCollections(): Promise<ManagedCollection[]>;
   managedScripts(): Promise<ManagedScript[]>;
+  managed: Omit<ManagerControl, 'collections' | 'scripts' | 'onDisk'> & { onDisk(): Promise<ManagedOnDisk> };
 }

@@ -128,22 +128,17 @@ import {
 } from './refresh-targets.js';
 import {
   canonicalCollectionInput,
-  collectionCanonicalUrl,
   isContainerCollection,
   isSmDevCollection,
-  isFileUrl,
-  isManifestCollection,
   isValidLocationShape,
   LOCATION_SHAPES,
   isSingleFileInput,
-  isLocalDirectoryCollection,
-  locationFsPath,
   normalizeCollectionInput,
 } from './directories.js';
 import {
   markFileChanges,
-  newScriptFiles,
-  probeFiles,
+  manifestToProbe,
+  pendingOnDisk,
   refreshPendingHint,
   scriptFileTag,
   syncRefreshPendingChip,
@@ -586,32 +581,19 @@ function markDiskChanges(): void {
     for (const section of collectionsEl.querySelectorAll<HTMLElement>('section.collection')) {
       const collectionPath = section.dataset.collectionPath;
       if (!collectionPath) continue;
-      const isDirectory = isLocalDirectoryCollection(collectionPath);
-      const isFileManifest = isManifestCollection(collectionPath) && section.dataset.manifestFsPath;
-      if (!isDirectory && !isFileManifest) continue;
       const rows = [...section.querySelectorAll<HTMLElement>('tr[data-script-id] [data-fs-path]')];
-      const counts = { modified: 0, deleted: 0, added: 0, manifest: false };
-      for (const el of rows) {
-        const state = states.get(el);
-        if (state === 'missing') counts.deleted += 1;
-        else if (state === 'modified') counts.modified += 1;
-      }
-      if (isDirectory) {
-        const root = locationFsPath(collectionPath).replace(/\/+$/, '');
-        const known = rows.map((el) => el.dataset.fsPath!.slice(root.length + 1));
-        counts.added = (await newScriptFiles(collectionPath, known, DISK_LISTING_MAX_AGE_MS)).length;
-      } else {
-        // The manifest file itself, against the stat its last scan
-        // recorded (`manifestSize` / `manifestMtime`).
-        const { manifestFsPath, manifestSize, manifestMtime } = section.dataset;
-        const probe = {
-          path: manifestFsPath!,
-          size: manifestSize === undefined ? undefined : Number(manifestSize),
-          mtime: manifestMtime === undefined ? undefined : Number(manifestMtime),
-        };
-        const [state] = await probeFiles([probe], DISK_LISTING_MAX_AGE_MS);
-        counts.manifest = state === 'modified';
-      }
+      // The manifest file itself, against the stat its last scan
+      // recorded (`manifestSize` / `manifestMtime`).
+      const { manifestFsPath, manifestSize, manifestMtime } = section.dataset;
+      const manifest = manifestFsPath === undefined ? null : {
+        path: manifestFsPath,
+        size: manifestSize === undefined ? undefined : Number(manifestSize),
+        mtime: manifestMtime === undefined ? undefined : Number(manifestMtime),
+      };
+      const counts = await pendingOnDisk(
+        collectionPath, manifest, rows.map((el) => ({ fsPath: el.dataset.fsPath!, state: states.get(el) })), DISK_LISTING_MAX_AGE_MS,
+      );
+      if (!counts) continue;
       const nameEl = section.querySelector<HTMLElement>('.collection-header .collection-display-name');
       if (nameEl) syncRefreshPendingChip(nameEl, refreshPendingHint(counts));
     }
@@ -624,11 +606,10 @@ const DISK_LISTING_MAX_AGE_MS = 5000;
 // the stat, and the chip has to compare against the new one.
 function syncManifestStatDataset(section: HTMLElement, collection: StoredCollection): void {
   const ds = section.dataset;
-  if (isManifestCollection(collection.path) && isFileUrl(collectionCanonicalUrl(collection.path))) {
-    ds.manifestFsPath = locationFsPath(collection.path);
-  } else {
-    delete ds.manifestFsPath;
-  }
+  // The same manifest sm-dev's `onDisk` probes.
+  const probe = manifestToProbe(collection);
+  if (probe) ds.manifestFsPath = probe.path;
+  else delete ds.manifestFsPath;
   if (collection.manifestSize !== undefined) ds.manifestSize = String(collection.manifestSize);
   else delete ds.manifestSize;
   if (collection.manifestMtime !== undefined) ds.manifestMtime = String(collection.manifestMtime);

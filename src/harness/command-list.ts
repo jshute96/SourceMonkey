@@ -6,14 +6,21 @@
 //
 // It imports only json-output.ts, which imports nothing, so cli.ts can
 // load it for help without the run's code.
-import { JSON_COMMANDS, jsonCommandList } from './json-output.js';
+import { JSON_COMMANDS } from './json-output.js';
 
 // How many of a selector's matches `probe --css` and `--html` show.
 export const PROBE_MAX = 10;
+
 // How many matches `snapshot` shows by default, of a selector or --find.
 export const PART_LIMIT = 5;
 // How many lines `snapshot --context` lets a match's shown part grow by.
 export const CONTEXT_LINES = 10;
+
+// How the collection and script commands name a collection.
+const COLLECTION_ARG: HelpItem = { term: '<collection>', about: 'A collection: C3, its name or a part of it, or id=<id>. A run\'s test collection is D1, by its run.' };
+
+// Said of `script uninstall`, which removes one of the person's own scripts.
+const FORCE_NOTE = 'Outside a --temp-browser the scripts are your own, so this needs --force.';
 
 /**
  * A term and what it means: an argument, an option, a way to name
@@ -522,19 +529,81 @@ export const HELP_SECTIONS: HelpSection[] = [
     text: [
       'What SourceMonkey has installed. Collections are named C1, C2, ... and scripts E1, E2, ..., by the numbers SourceMonkey keeps for them.',
       'Without a run, these connect to the --browser browser. In a run, they use the run\'s browser.',
-      '',
     ],
-    commands: [
+    subsections: [
       {
-        usage: 'collection list',
-        syntax: NONE,
-        about: ['List the collections, with their kind, location, script count, and whether they are enabled.', 'collection, collections and collections list do the same.'],
+        title: 'Collections',
+        commands: [
+          {
+            usage: 'collection list',
+            syntax: NONE,
+            about: [
+              'List the collections, with their kind, location, script count, and whether they are enabled.',
+              'A local collection with files changed on disk since it loaded shows Refresh pending, as the collections page does.',
+              'collection, collections and collections list do the same.',
+            ],
+          },
+          { usage: 'collection <collection> show', syntax: NONE, about: 'Show one collection, and list its scripts.', args: [COLLECTION_ARG] },
+          { usage: 'collection <collection> enable', syntax: NONE, about: 'Turn a collection back on: its scripts run again, except ones turned off on their own.' },
+          { usage: 'collection <collection> disable', syntax: NONE, about: 'Turn all of a collection\'s scripts off.' },
+          {
+            usage: 'collection <collection> refresh',
+            syntax: NONE,
+            about: 'Re-read a collection from its location: rescan a directory, re-read a manifest, or re-read each script of a container collection.',
+          },
+          { usage: 'collection <collection> rename <name>', syntax: { args: 'words' }, about: 'Rename a collection.' },
+        ],
       },
       {
-        usage: 'script list [collection]',
-        syntax: { args: 'words', max: 1 },
-        about: ['List the installed scripts, under their collections, or one collection\'s. scripts list does the same.', 'A run\'s own scripts show as 1, 2, ..., and another run\'s by name only. The selected script is marked *.'],
-        args: [{ term: '<collection>', about: 'A collection: C3, its name or a part of it, or id=<id>.' }],
+        title: 'Scripts',
+        text: [
+          'The script comes before the verb: script E4 enable. Left out, it is the selected script (not for uninstall).',
+          'Turning a script on, by enable, install or move, turns off its other copies that were running, as SourceMonkey\'s script page does. Each one turned off is listed.',
+          '',
+        ],
+        commands: [
+          {
+            usage: 'script list [collection]',
+            syntax: { args: 'words', max: 1 },
+            about: ['List the installed scripts, under their collections, or one collection\'s. scripts list does the same.', 'A run\'s own scripts show as 1, 2, ..., and another run\'s by name only. The selected script is marked *.', 'A local file changed or deleted since it loaded shows as modified or deleted on disk.'],
+            args: [COLLECTION_ARG],
+          },
+          {
+            usage: 'script [script] show',
+            syntax: NONE,
+            about: 'Show one script in full: its header, status, files, and in a run, what it does on each tab.',
+            args: [{
+              term: '[script]',
+              about: ['A script: E12, its name or a part of it, or id=<id>. In a run, one of its own scripts by its number (2).', 'Without one, the selected script.'],
+            }],
+          },
+          { usage: 'script [script] print', syntax: NONE, about: 'Print a script\'s installed text.' },
+          { usage: 'script [script] enable', syntax: NONE, about: 'Turn a script on. In a run, one of its own scripts too, in the run\'s tabs.' },
+          { usage: 'script [script] disable', syntax: NONE, about: 'Turn a script off. In a run, one of its own scripts too, in the run\'s tabs.' },
+          {
+            usage: 'script [script] refresh',
+            syntax: NONE,
+            about: ['Re-read a script from its location, as its Refresh button does.', 'One of the run\'s own scripts is re-read from disk, as update does.'],
+          },
+          {
+            usage: 'script install <file|url> [--collection <collection>]',
+            syntax: { args: 'words', max: 1 },
+            about: [
+              'Install a .user.js file or URL in SourceMonkey, for every tab, to stay. (load adds one to the run instead, for its tabs only.)',
+              'It goes into the container collection named, or the one SourceMonkey keeps for its kind: Scripts from local disk, from web, or from GitHub.',
+            ],
+          },
+          {
+            usage: 'script <script> uninstall [--force]',
+            syntax: NONE,
+            about: ['Remove a script from its container collection. A directory or manifest collection\'s scripts come from its files, so they can\'t be.', FORCE_NOTE],
+          },
+          {
+            usage: 'script [script] move <collection>',
+            syntax: { args: 'words', max: 1 },
+            about: 'Move a script from one container collection to another.',
+          },
+        ],
       },
     ],
   },
@@ -574,10 +643,10 @@ export const HELP_SECTIONS: HelpSection[] = [
           {
             term: '--json[=single|multi]',
             about: [
-              `Print results as JSON, for the commands that can: ${jsonCommandList()}.`,
-              'Other log messages go to stderr.',
+              'Print results as JSON. (Supported for most commands.)',
               'Each result is on one line (single), or multi-line (multi).',
               '(Default: multi at a terminal, single when piped)',
+              'Error and status messages go to stderr.',
             ],
           },
         ],
@@ -888,6 +957,8 @@ export interface CommandSyntax {
   base: ArgSyntax;
   /** Each form's, by its keyword (`wait log`). */
   forms: Record<string, ArgSyntax>;
+  /** The forms that name what they act on before their keyword (`script <script> show`). */
+  subjectForms: Set<string>;
   /** Its flags: each takes a value, none, or one only as `--name=value`. */
   flags: Record<string, FlagKind>;
   /** What a value flag's value is, as its help names it (`<path>`, `FILE`). */
@@ -899,12 +970,18 @@ export interface CommandSyntax {
 /** A command's syntax, from its help; `words` and no flags for a name that is none. */
 export function commandSyntax(name: string): CommandSyntax {
   const forms = formsOf(name);
-  const syntax: CommandSyntax = { base: WORDS, forms: {}, flags: {}, values: {}, usage: forms.map(({ command }) => command.usage) };
+  const syntax: CommandSyntax = {
+    base: WORDS, forms: {}, subjectForms: new Set(), flags: {}, values: {}, usage: forms.map(({ command }) => command.usage),
+  };
   for (const { command } of forms) {
-    // A form named by a keyword (`wait log <text>`), or the command's own.
-    const keyword = /^\S+ ([a-z][a-z-]*)(\s|$)/.exec(command.usage)?.[1];
-    if (keyword && command.syntax) syntax.forms[keyword] = command.syntax;
-    else if (command.syntax) syntax.base = command.syntax;
+    // A form named by a keyword (`wait log <text>`), perhaps after what
+    // it acts on (`script [script] enable`), or the command's own.
+    const named = /^\S+ (?:(<[^>]+>|\[[^\]]+\]) )?([a-z][a-z-]*)(\s|$)/.exec(command.usage);
+    const keyword = named?.[2];
+    if (keyword && command.syntax) {
+      syntax.forms[keyword] = command.syntax;
+      if (named![1] !== undefined) syntax.subjectForms.add(keyword);
+    } else if (command.syntax) syntax.base = command.syntax;
   }
   // `--out FILE`: a value; `--visible`: none; `--script[=<script>]`: an
   // optional one.

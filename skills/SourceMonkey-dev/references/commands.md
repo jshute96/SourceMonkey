@@ -18,9 +18,9 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 - Add `--json` when you'll parse the output, with `jq` or a script:
   `$R --json scripts | jq -r '.scripts[] | select(.status == "invalid") | .name'`.
   - `--json` works for `list`, `status`, `scripts`, `tabs`, `values`,
-    `get`, `match`, `validate`, `menu`, `logs`, `probe`, `collection
-    list` and `script list`. Each prints
-    one JSON object; other commands print text as usual.
+    `get`, `match`, `validate`, `menu`, `logs`, `probe`, and every
+    `collection` and `script` verb (`script list`, `script show`, ...).
+    Each prints one JSON object; other commands print text as usual.
   - Other messages and failures stay text, on stderr, with the usual
     exit code.
   - An empty list means nothing was found.
@@ -103,6 +103,37 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `update [script]` | Re-read changed scripts and reload affected tabs |
 | `collection list` (or `collections`) | SourceMonkey's collections (C1, ...), with kind, script count, enabled. No run needed |
 | `script list [collection]` | Every installed script (E1, ...) under its collection, or one collection's. No run needed |
+| `script [script] show`, `script [script] print` | One script in full (rules, status, files, values count, and in a run its state on each tab); its installed text. No run needed |
+| `collection <collection> show` | One collection and its scripts. No run needed |
+
+### Changing what's installed
+
+The script or collection comes before the verb: `script E4 disable`,
+`collection C3 refresh`; quote a name of several words. In a run, a
+script left out is the selected one, except for `uninstall`.
+
+These change SourceMonkey's real collections and scripts, as its pages
+do, and need no run. Outside a `--temp-browser` they're the person's
+own: change them only when asked to.
+
+| Command | What it does |
+| --- | --- |
+| `script [script] enable` / `disable` | Turn one on or off. In a run, one of its own too |
+| `script [script] refresh` | Re-read it from its location; a run's own from disk, as `update` does |
+| `script install <file\|url>` | Install for every tab, to stay (`load` is for the run only). `--collection <C>` |
+| `script <script> uninstall`, `script [script] move <C>` | Remove one from, or move it between, container collections |
+| `collection <C> enable` / `disable` / `refresh`, `collection <C> rename <name>` | The same for a whole collection |
+
+- `script uninstall` needs `--force` outside a `--temp-browser`.
+- A run's test collection and other runs' scripts are refused, as is
+  uninstalling or moving a script that a directory or manifest
+  collection lists.
+- The listings mark a local file changed since it loaded: `(modified
+  on disk)`, and a collection's `Refresh pending: ...`. `script
+  refresh` / `collection refresh` load it.
+- Installing, moving or enabling a script turns off its other running
+  copies, as SourceMonkey's viewer does, and lists each one. An
+  enabled script in a disabled collection is said not to run.
 
 ## Tabs
 

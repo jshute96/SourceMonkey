@@ -54,9 +54,9 @@ import {
   enableChanges,
   findRelatedVersions,
   installOptionsFor,
-  isRunning,
   locationKey,
   otherRunningCopies,
+  turnOffOtherCopies,
   type InstallOption,
   type RelatedScript,
   type RelatedVersions,
@@ -3126,51 +3126,16 @@ function makeMoveControl(
 const MOVE_NOT_AVAILABLE =
   'Internal error: this script has no single-file location to move';
 
-// A copy that just started running follows the same exclusive rule as
-// the panel's checkboxes: it is the one the user wants running, and
-// leaving an older copy of the same script on means both register and
-// both run on every page they match.
-//
-// Two callers, because both produce a copy that is newly running: a
-// fresh install, and a move INTO an enabled collection from a disabled
-// one. A move that changes nothing about whether the script runs finds
-// the sweep already done and is a no-op.
-//
-// Skipped whenever the copy won't itself run — it landed `invalid`, or
-// its container collection is disabled. Switching a working copy off in
-// favour of one that can't run would leave nothing running at all.
+// The exclusive-enable sweep for a copy that just started running (see
+// `turnOffOtherCopies`): after an install, and after a move into an
+// enabled collection.
 //
 // Fails open and never blocks the navigation to the new script's page.
 // The install itself succeeded; if the sweep didn't, the panel on that
 // page is right there to fix the enable state by hand.
 async function soloRunningCopy(scriptId: string): Promise<void> {
   try {
-    const snapshot = await readStoreSnapshot();
-    const copy = snapshot.scripts.find((s) => s.id === scriptId);
-    if (!copy || copy.status !== 'ok') return;
-    // Read the location and header off the STORED row rather than the
-    // preview's: they are what the rest of the store will be compared
-    // against from now on, and for a github blob URL the stored
-    // `fileUrl` is the resolved raw one.
-    const related = findRelatedVersions({
-      ...snapshot,
-      location: copy.fileUrl,
-      header: copy.header ?? null,
-    });
-    const rows = allRelatedRows(related);
-    // The other half of the "will it run" test: the row lands
-    // `enabled`, but its container collection may be disabled, and
-    // installing into a collection the user has turned off must not
-    // leave every copy of the script dark. `isRunning` is the same
-    // predicate the sweep applies to the rows it switches off.
-    //
-    // `own` can't actually be missing — the lookup ran on this row's
-    // own `fileUrl`, so it always matches itself — but a partially
-    // written store must not take the install's navigation down with
-    // it.
-    const own = rows.find((r) => r.script.id === scriptId);
-    if (!own || !isRunning(own)) return;
-    await applyEnableChanges(enableChanges(scriptId, true, rows));
+    await turnOffOtherCopies(scriptId);
   } catch (err) {
     dlog(`[SourceMonkey] exclusive-enable sweep skipped: ${describeError(err)}`);
   }

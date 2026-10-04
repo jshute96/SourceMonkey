@@ -125,6 +125,9 @@ chip is absent when nothing differs.
   says why.
 - Not for http(s) collections or manifests: telling whether those
   changed means fetching them, which is a refresh, not a listing.
+- The counting is `pendingOnDisk`, and the words `pendingSummary`
+  (`script-display.ts`). sm-dev's listings use both, through the
+  worker's `managed.onDisk` ([sm-dev-managers.md](sm-dev-managers.md#changes-on-disk)).
 
 ### What the tooltips say
 

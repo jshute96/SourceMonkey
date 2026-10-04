@@ -413,8 +413,10 @@ For a browser that keeps the extension (and your logins):
   takes no `--browser` of its own.
 - A command sent to a run acts in the run's browser. A `--browser` that
   names another one is refused, rather than passed over.
-  - `collection list` and `script list` are the exception: they need
-    no run, so with a `--browser` no run is in, they list that browser.
+  - The `collection` and `script` commands for what's installed
+    (`collection list`, `script show`, ...) are the exception: they
+    need no run, so with a `--browser` no run is in, they act on that
+    browser.
 
 ## How scripts run
 
@@ -938,10 +940,10 @@ For a program reading sm-dev's answers rather than a person.
 
 - `--json`, first on the line, makes the commands that have a JSON form
   print it: `list`, `status`, `scripts`, `tabs`, `values`, `get`,
-  `match`, `validate`, `menu`, `logs`, `probe`, `collection list` and
-  `script list`.
-  - The listing forms only: `tabs`, `scripts` and `menu T2`, not
-    `tab T2`, `script 2` or a menu command fired.
+  `match`, `validate`, `menu`, `logs`, `probe`, and each `collection`
+  and `script` verb (`script list`, `script disable`, ...).
+  - The listing forms only of the others: `tabs`, `scripts` and
+    `menu T2`, not `tab T2`, `script 2` or a menu command fired.
   - The rest print text as usual.
 - `--json` or `--nojson` after one command turns it on or off for that
   command alone (`sm-dev scripts --json`).
@@ -1029,6 +1031,52 @@ The shapes of every command's result, with examples:
   followed by `values` prints what the command just stored rather than
   what was there before it.
 - Stored values belong to the script, so all tabs see the same ones.
+
+### Managing what's installed
+
+These change SourceMonkey's own collections and scripts, as its pages
+do. Like the listings, they work with no run too, against `--browser`.
+
+- **The script or collection comes first**, then the verb:
+  `script E4 enable`, `collection C3 refresh`.
+  - In a run, a script left out is the selected one, except for
+    `uninstall`.
+  - Quote a name of several words: `script "Dark mode" enable`.
+
+| Command | What it does |
+| --- | --- |
+| `collection <collection> show` | One collection's kind, location and status, and its scripts |
+| `collection <collection> enable` / `disable` | Turns a whole collection on or off |
+| `collection <collection> refresh` | Re-reads it from its location, and says which scripts it updated |
+| `collection <collection> rename <name>` | Renames it |
+| `script [script] show` | One script in full: header rules, status, files, values count, and in a run, what it does on each tab |
+| `script [script] print` | Its installed text |
+| `script [script] enable` / `disable` | Turns a script on or off; in a run, one of its own too |
+| `script [script] refresh` | Re-reads it from its location; one of the run's own from disk, as `update` does |
+| `script install <file\|url>` | Installs a `.user.js` file or URL for every tab, to stay. `--collection <collection>` picks the container collection |
+| `script <script> uninstall` | Removes a script from its container collection |
+| `script [script] move <collection>` | Moves a script to another container collection |
+
+- **`--force`:** outside a `--temp-browser` the scripts are the
+  person's own, so `script uninstall` needs `--force`. Enabling and
+  disabling are easily undone, so they don't need it.
+- **What's refused:**
+  - every change to a run's test collection, and to another run's
+    scripts;
+  - uninstalling or moving a script a directory or manifest collection
+    lists, since it comes from that collection's files;
+  - uninstalling the run's own scripts: they go when the run ends.
+- **One copy runs.** Installing, moving or enabling a script turns off
+  its other running copies, as the viewer does, with a line for each:
+  `Another version of this script was disabled: Version 1.0 (E7) in
+  collection C3: Mine`.
+- **Changed on disk.** A local script file modified or deleted since
+  it loaded, and a local collection a refresh would change, are marked
+  as on the collections page: `(modified on disk)`, `Refresh pending:
+  1 file modified on disk`.
+- **A disabled collection** keeps an enabled script from running, so
+  that gets a line too: `E4: Dark mode is enabled, but won't run
+  because it's inside disabled collection C3: Mine`.
 
 ### Checking scripts: `match` and `validate`
 

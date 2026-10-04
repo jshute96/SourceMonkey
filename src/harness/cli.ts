@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 
 import { CommandAssembler, NONE_RUN, echoCommand, parseCommandList, shellWord, unclosedBlockMessage, type AssembledCommand } from './command-lines.js';
 import {
-  commandWords, installedListing, managerCommand, onlyInspects, readPromptCommands, runCommandHelp, runCommandMistake, setJsonOutput, writeOutputLine,
+  commandWords, managerCommandOf, managerCommand, onlyInspects, readPromptCommands, runCommandHelp, runCommandMistake, setJsonOutput, writeOutputLine,
 } from './console-commands.js';
 import { parseLang } from './browser-lang.js';
 import { parseCommandArgs } from './command-args.js';
@@ -1210,12 +1210,13 @@ function promptCommands(client: Client): Promise<number> {
 }
 
 /**
- * Whether `collection list` or `script list` runs here rather than in a
- * run: when no run is picked and none is going, or `--browser` names a
- * browser no run is in. They need SourceMonkey, not a run.
+ * Whether a `collection` or `script` command for what's installed runs
+ * here rather than in a run: when no run is picked and none is going, or
+ * `--browser` names a browser no run is in. They need SourceMonkey, not
+ * a run.
  */
 async function listsHere(words: string[], client: Client): Promise<boolean> {
-  if (!installedListing(words) || client.runId !== undefined) return false;
+  if (!managerCommandOf(words) || client.runId !== undefined) return false;
   const { liveRuns } = await import('./runs.js');
   const runs = await liveRuns();
   if (runs.length === 0) return true;
@@ -1225,12 +1226,12 @@ async function listsHere(words: string[], client: Client): Promise<boolean> {
 }
 
 /**
- * `collection list` or `script list` with no run: connects to the --browser
- * browser for it, and disconnects after.
+ * A `collection` or `script` command with no run: connects to the
+ * --browser browser for it, and disconnects after.
  */
 async function managerHere(words: string[]): Promise<number> {
   const [, ...rest] = words;
-  const name = installedListing(words)!;
+  const name = managerCommandOf(words)!.command;
   const parsed = parseCommandArgs(name, { words: rest });
   if ('error' in parsed) throw new UsageError(parsed.error);
   if (parsed.help) {
@@ -1238,7 +1239,7 @@ async function managerHere(words: string[]): Promise<number> {
     return 0;
   }
   const { noSuchVerb } = await import('./manager-commands.js');
-  if (parsed.form !== 'list' && parsed.words.length > 0) throw new UsageError(noSuchVerb(parsed.words[0]));
+  if (parsed.form === undefined && parsed.words.length > 0) throw new UsageError(noSuchVerb(parsed.words));
   const own = parsed.flags['--json'];
   if (typeof own === 'string') {
     const mistake = jsonLayoutMistake(own);
@@ -1259,7 +1260,7 @@ async function managerHere(words: string[]): Promise<number> {
       if (line.startsWith('[sm-dev] ')) process.stderr.write(`${line.slice('[sm-dev] '.length)}\n`);
       else out(line);
     };
-    return await managerCommand({ manager, out: said, json }, name, parsed.form, parsed.words) === false ? 1 : 0;
+    return await managerCommand({ manager, out: said, json }, name, parsed) === false ? 1 : 0;
   } catch (err) {
     process.stderr.write(`${firstLine(err)}\n`);
     return 1;

@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 
-const { findRelatedVersions, identityKey, installOptionsFor, locationKey } = await import(
+const { enableChanges, findRelatedVersions, identityKey, installOptionsFor, locationKey } = await import(
   '../../dist/extension/script-identity.js'
 );
 
@@ -422,4 +422,16 @@ test('sm-dev test collections are never install or move targets, and a run\'s sc
   ];
   assert.deepEqual(installOptionsFor('https://origin.example/a.user.js', [], collections).map((o) => o.path), ['container:http']);
   assert.equal(installOptionsFor('scratch:///D2-a3f9/a.user.js', [], collections, 'run'), undefined);
+});
+
+// ---------- the exclusive enable ----------
+
+test('enabling turns other running copies off, but never an sm-dev run\'s, nor for one', () => {
+  const mine = collection({ id: 'mine', path: 'container:local' });
+  const run = collection({ id: 'run', path: 'container:sm-dev:D1-ab12' });
+  const row = (id, c) => ({ script: script({ id, collectionId: c.id }), collection: c, sameLocation: true, sameIdentity: false });
+  const rows = [row('a', mine), row('b', mine), row('r', run)];
+  assert.deepEqual(enableChanges('a', true, rows), [{ scriptId: 'a', enabled: true }, { scriptId: 'b', enabled: false }]);
+  assert.deepEqual(enableChanges('r', true, rows), [{ scriptId: 'r', enabled: true }]);
+  assert.deepEqual(enableChanges('a', false, rows), [{ scriptId: 'a', enabled: false }]);
 });

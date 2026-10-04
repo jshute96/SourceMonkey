@@ -561,9 +561,9 @@ Most commands that report state can print JSON instead of text, with
 - **Don't use it when you're reading the answer yourself.** The text is
   shorter, and says what an empty answer means and where to look next.
 - **Which commands:** `list`, `status`, `scripts`, `tabs`, `values`,
-  `get`, `match`, `validate`, `menu`, `logs`, `probe`, `collection
-  list` and `script list`. The rest
-  print text as usual.
+  `get`, `match`, `validate`, `menu`, `logs`, `probe`, and every
+  `collection` and `script` verb (`script list`, `script show`, ...).
+  The rest print text as usual.
 - **Output:** one JSON object per command on stdout. Other messages
   and failures stay text, on stderr, with the usual exit code.
 - **The fields**, and what each script `state` means:

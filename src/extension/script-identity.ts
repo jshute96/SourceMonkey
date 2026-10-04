@@ -48,7 +48,9 @@ import {
   isSmDevCollection,
   isSingleFileInput,
 } from './directories.js';
-import { isScriptEnabled, isCollectionEnabled, type StoredScript, type StoredCollection } from './script-store.js';
+import {
+  getAllScripts, getCollections, isScriptEnabled, isCollectionEnabled, setScriptsEnabled, type StoredScript, type StoredCollection,
+} from './script-store.js';
 import { CONTAINER_DISPLAY_NAMES, effectiveDisplayName } from './collection-display.js';
 import { getValue, getValues, type ParsedHeader } from '../userscript-header.js';
 
@@ -276,6 +278,9 @@ export interface ScriptEnableChange {
 // Disabling is never exclusive: it leaves none running, which is an
 // ordinary thing to want, and there is no other copy that should be
 // promoted in its place.
+//
+// Nor is enabling one of an sm-dev run's scripts: the run keeps its
+// scripts off other tabs itself, so they don't compete.
 export function enableChanges(
   scriptId: string,
   enabled: boolean,
@@ -283,6 +288,8 @@ export function enableChanges(
 ): ScriptEnableChange[] {
   const changes: ScriptEnableChange[] = [{ scriptId, enabled }];
   if (!enabled) return changes;
+  const own = rows.find((r) => r.script.id === scriptId);
+  if (own && inRunCollection(own)) return changes;
   for (const other of otherRunningCopies(rows, scriptId)) {
     changes.push({ scriptId: other.script.id, enabled: false });
   }
@@ -290,11 +297,8 @@ export function enableChanges(
 }
 
 // Whether a row is actually running: its own flag AND its collection's.
-//
-// Exported because the sweep has a second question to ask with it: a
-// copy that is about to be enabled has to be running itself before it
-// is worth switching the others off (see `soloRunningCopy` in
-// userscript.ts).
+// `turnOffOtherCopies` asks it of the copy being enabled too: that copy
+// has to be running itself before it is worth switching the others off.
 export function isRunning(rel: RelatedScript): boolean {
   if (!isScriptEnabled(rel.script)) return false;
   return rel.collection ? isCollectionEnabled(rel.collection) : true;
@@ -307,7 +311,7 @@ export function isRunning(rel: RelatedScript): boolean {
 // and the controls row's — so "enabling one copy turns the rest off"
 // means the same thing wherever it is clicked.
 //
-// Two exclusions, both deliberate:
+// The exclusions, all deliberate:
 //   - **Rows that aren't running already.** Nothing to gain by
 //     rewriting a value they effectively hold.
 //   - **Rows under a disabled collection.** Not competing with the copy
@@ -315,11 +319,46 @@ export function isRunning(rel: RelatedScript): boolean {
 //     flip made here could not be undone from the panel at all, and
 //     would silently destroy the user's stored intent for whenever
 //     they re-enable that collection.
+//   - **An sm-dev run's scripts.** Only their run changes them, and it
+//     keeps them off other tabs itself.
 export function otherRunningCopies(
   rows: readonly RelatedScript[],
   keepId: string,
 ): RelatedScript[] {
-  return rows.filter((r) => r.script.id !== keepId && isRunning(r));
+  return rows.filter((r) => r.script.id !== keepId && isRunning(r) && !inRunCollection(r));
+}
+
+function inRunCollection(rel: RelatedScript): boolean {
+  return rel.collection !== null && isSmDevCollection(rel.collection.path);
+}
+
+// A copy that just started running follows the same exclusive rule as
+// the panel's checkboxes: it is the one wanted running, and leaving an
+// older copy of the same script on means both register and both run on
+// every page they match. Returns the copies it turned off.
+//
+// For a copy that is newly running: an install, a move into an enabled
+// collection, and sm-dev's `script enable`. With no other copy running,
+// it does nothing.
+//
+// Skipped whenever the copy won't itself run: it is `invalid`, or its
+// collection is disabled. Switching a working copy off in favour of one
+// that can't run would leave nothing running at all.
+//
+// A run's test collection is left out both ways, as by `enableChanges`.
+export async function turnOffOtherCopies(scriptId: string): Promise<StoredScript[]> {
+  const [scripts, collections] = await Promise.all([getAllScripts(), getCollections()]);
+  const copy = scripts.find((s) => s.id === scriptId);
+  if (!copy || copy.status !== 'ok') return [];
+  // The STORED row's location and header: what the rest of the store is
+  // compared against, and for a github blob URL the resolved raw one.
+  const related = findRelatedVersions({ scripts, collections, location: copy.fileUrl, header: copy.header ?? null });
+  const rows = allRelatedRows(related);
+  const own = rows.find((r) => r.script.id === scriptId);
+  if (!own || !isRunning(own)) return [];
+  const off = new Set(enableChanges(scriptId, true, rows).slice(1).map((c) => c.scriptId));
+  await setScriptsEnabled([...off].map((id) => ({ id, enabled: false })));
+  return rows.filter((r) => off.has(r.script.id)).map((r) => r.script);
 }
 
 // Every related row in one list, in the order the panel draws them.
