@@ -197,7 +197,7 @@ const HELP = {
     'ignored-match': 'A @match Chrome would refuse, which SourceMonkey drops. Found by validation.',
     'trusted-types': 'Fails where the site enforces Trusted Types, e.g. by assigning innerHTML in the page world',
     'needs-page-globals': 'Reads the page\'s own globals (like its jQuery) without unsafeWindow, which works in Tampermonkey but not in SourceMonkey\'s isolated world',
-    'connect-undeclared': 'Uses GM_xmlhttpRequest with no @connect, so SourceMonkey blocks every request. Tampermonkey asks the user and Violentmonkey allows them.',
+    'connect-undeclared': 'Uses GM_xmlhttpRequest with no @connect rule for a host it requests, which SourceMonkey blocked until it got a prompt asking the user, as Tampermonkey has',
     'needs-onreadystatechange': 'Waits for GM_xmlhttpRequest\'s onreadystatechange, which SourceMonkey never fires',
     'mutation-events': 'Relies on mutation events like DOMNodeInserted, which Chrome removed in 2024',
     'run-at-context-menu': 'Uses @run-at context-menu (run from the right-click menu), which SourceMonkey doesn\'t support, so it refuses the script',

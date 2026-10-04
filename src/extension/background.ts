@@ -218,17 +218,42 @@ import {
 import {
   abortXhr,
   abortXhrsForTab,
+  releaseXhr,
+  reserveXhr,
   runXhr,
 } from './gm-xhr.js';
 import type { GmXhrEvent, GmXhrRequestPayload, GmXhrStreamEvent } from '../gm-xhr-types.js';
 import { clearStaleHeaderRules } from './gm-xhr-headers.js';
 import {
   connectBlockedMessage,
+  connectCancelledMessage,
+  connectDeniedMessage,
+  connectPromptFailedMessage,
+  connectTooManyPromptsMessage,
+  connectUnansweredMessage,
+  decideConnect,
   extractSelfHosts,
   gmXhrError,
-  isUrlConnectAllowed,
   parseConnectRules,
 } from '../gm-connect.js';
+import { getValue } from '../userscript-header.js';
+import {
+  answerConnect,
+  answerConnectPrompt,
+  askConnect,
+  CONNECT_PROMPT_WAIT_MS,
+  MAX_PROMPTS_PER_SCRIPT,
+  onConnectPromptWindowRemoved,
+  resetConnectPromptsForTests,
+  pendingConnectPrompts,
+} from './connect-prompt.js';
+import {
+  CONNECT_ANSWER_MESSAGE,
+  CONNECT_PROMPT_ALIVE_MESSAGE,
+  CONNECT_PROMPT_PAGE,
+  type ConnectAnswerMessage,
+  type ConnectChoice,
+} from './connect-grants.js';
 import {
   closeGmTab,
   dropOriginator as dropOriginatorTabs,
@@ -341,6 +366,12 @@ interface SourceMonkeyApi {
   // the person would: the script's `onclick` runs. False when it isn't
   // showing. sm-dev's fixture clicks one this way.
   clickNotification: (notificationId: string) => boolean;
+  // Answers a connection prompt (by the id its `connect-prompt` event
+  // carried), as the person would in its window. False when it isn't
+  // waiting. sm-dev's `connect` command answers this way.
+  answerConnectPrompt: (promptId: string, choice: ConnectChoice) => Promise<boolean>;
+  // The connection prompts waiting for an answer.
+  pendingConnectPrompts: () => { promptId: string; scriptId: string; tabId: number; host: string }[];
   // Which document a tab's top frame shows: its URL and
   // `performance.timeOrigin`, which sm-dev reads from its own pages to
   // tell which one a tab it heard of is. Null when the tab can't be
@@ -725,6 +756,8 @@ const api: SourceMonkeyApi = {
   },
   setTabScriptsOff,
   clickNotification: (notificationId) => deliverNotificationEvent(notificationId, 'clicked'),
+  answerConnectPrompt,
+  pendingConnectPrompts,
   scriptsOnTab: async (tabId) => {
     const state = getCurrentState(await getTabRecord(tabId));
     if (!state) return [];
@@ -789,6 +822,9 @@ const api: SourceMonkeyApi = {
     // all-collections entry would carry over and silently skip the next
     // test's first opportunistic check.
     _resetUpdaterStateForTests();
+    // The connection prompts' module state: a prompt a test left open
+    // would keep its window (and the worker) up into the next test.
+    resetConnectPromptsForTests();
     // Cancel any pending debounced sync first — clear() below will
     // schedule another one via onCacheChanged, so leaving the old
     // timer armed risks two syncs firing back-to-back and racing the
@@ -1922,6 +1958,9 @@ async function logMissingScripts(tabId: number, documentId: string): Promise<voi
   await setTabRecord(tabId, writeDocState(record, documentId, { ...state, missingChecked: true }));
 }
 
+// A connection prompt closed without an answer is a denial.
+chrome.windows.onRemoved.addListener((windowId) => onConnectPromptWindowRemoved(windowId));
+
 chrome.tabs.onRemoved.addListener((tabId) => {
   markedTabs.delete(tabId);
   markCheckedTabs.delete(tabId);
@@ -2945,12 +2984,6 @@ async function handleXhrStart(
     console.info('[SourceMonkey] gm-xhr-start without tab id; ignoring');
     return;
   }
-  // @connect URL gating. Pull the script's stored header so we know
-  // which hosts it's allowed to talk to. A script that hasn't
-  // declared @connect is blocked from every cross-origin host —
-  // matches VM policy. The error event we ship back is the
-  // same shape as a network failure, so the userscript's onerror
-  // catches it.
   // For sm-dev (sm-dev-link.ts), which reports what a run's scripts
   // requested: once as it starts, and again with how it ended.
   const requestEvent = (event?: GmXhrEvent): void => emitSmDevEvent({
@@ -2961,24 +2994,44 @@ async function handleXhrStart(
     ...(event?.kind === 'error' ? { error: event.message } : {}),
   });
   requestEvent();
-  const policy = await loadConnectPolicy(payload.scriptId);
-  if ('reason' in policy) {
-    // Not `connectBlockedMessage`: we never got as far as reading the
-    // script's rules, so blaming them would be wrong.
-    const message = gmXhrError(policy.reason);
+  // @connect URL gating: the script's own rules, the page's own origin,
+  // and for any other http(s) host, the user's answer (asked for if
+  // need be; see connect-prompt.ts). A refusal ships back as an error
+  // event, the same shape as a network failure, so the userscript's
+  // onerror catches it.
+  const reserved = reserveXhr(payload.id, tabId);
+  const method = (payload.request.method ?? 'GET').toUpperCase();
+  let check: ConnectCheck | null = null;
+  let refusal: string | null;
+  // Caught here, not left to throw: the reserved entry must be released
+  // on every path that doesn't reach `runXhr`.
+  try {
+    const policy = await loadConnectPolicy(payload.scriptId, sender, tabId);
+    // Not `connectBlockedMessage` for a `reason`: we never got as far as
+    // reading the script's rules, so blaming them would be wrong.
+    if ('reason' in policy) {
+      refusal = gmXhrError(policy.reason);
+    } else {
+      check = policy.check;
+      refusal = await check(payload.request.url, method, reserved);
+    }
+  } catch (err) {
+    refusal = gmXhrError(`Internal error: could not check this script's @connect rules: ${describeError(err)}`);
+  }
+  // Aborted while it waited on the prompt: the page has settled it.
+  if (reserved.aborted) {
+    releaseXhr(payload.id);
+    requestEvent({ kind: 'abort' });
+    return;
+  }
+  if (refusal !== null || !check) {
+    releaseXhr(payload.id);
+    const message = refusal ?? gmXhrError('Internal error: no @connect check');
     requestEvent({ kind: 'error', message });
     await sendXhrError(sender, tabId, payload.scriptId, payload.id, message);
     return;
   }
-  const initial = policy.check(payload.request.url);
-  if (!initial.allowed) {
-    // `denied` separates "the header forbids this host" from "that URL
-    // never parsed" — only the first is the script's rules refusing.
-    const message = initial.denied ? connectBlockedMessage(initial.reason) : gmXhrError(initial.reason);
-    requestEvent({ kind: 'error', message });
-    await sendXhrError(sender, tabId, payload.scriptId, payload.id, message);
-    return;
-  }
+  const allowed = check;
   // Run the fetch and ship its events back to the sender's tab. Other
   // tabs do not get a copy — XHR is per-call, not broadcast. The same
   // policy predicate re-checks the post-redirect URL inside runXhr.
@@ -3000,7 +3053,7 @@ async function handleXhrStart(
     payload.id,
     payload.request,
     async (streamEvent) => { await deliver(streamEvent); },
-    (finalUrl) => policy.check(finalUrl).allowed,
+    (finalUrl, signal) => allowed(finalUrl, method, signal),
     tabId,
   );
   requestEvent(event);
@@ -3048,35 +3101,85 @@ function senderFrameOptions(
   };
 }
 
-// Load a script's `@connect` policy once and return a reusable
-// predicate. The predicate is evaluated against both the initial URL
-// and (inside runXhr) the post-redirect URL, so a single header read
-// covers every hop. Returns `{reason}` when the policy can't be
-// resolved (script gone, no header, parse error) — that's a hard deny.
-async function loadConnectPolicy(scriptId: string): Promise<
-  | { reason: string }
-  | { check: (url: string) => { allowed: true } | { allowed: false; denied: boolean; reason: string } }
-> {
+// Whether a request may go: null, or the error message the script gets.
+// `signal` ends a wait on the connection prompt.
+type ConnectCheck = (url: string, method: string, signal?: AbortSignal) => Promise<string | null>;
+
+// Load a script's `@connect` policy once and return a reusable check.
+// The check is run against both the initial URL and (inside runXhr) the
+// post-redirect URL, so a single header read covers every hop. It
+// resolves to null when the request may go, else the error message the
+// script gets. Returns `{reason}` when the policy can't be resolved
+// (script gone, no header, parse error), which is a hard deny.
+async function loadConnectPolicy(
+  scriptId: string,
+  sender: chrome.runtime.MessageSender,
+  tabId: number,
+): Promise<{ reason: string } | { check: ConnectCheck }> {
   try {
     const script = await getScript(scriptId);
     // Two different failures, and only the second is ours. A script
     // removed while a page it was running on is still open is a real
     // race the user can act on, so it says what happened and how to
-    // recover rather than hiding behind `internal error:`.
+    // recover rather than hiding behind `Internal error:`.
     if (!script) {
-      return { reason: 'this script is no longer installed; reload the page' };
+      return { reason: 'This script is no longer installed. Reload the page.' };
     }
     if (!script.header) {
-      return { reason: 'internal error: this script\'s header is not available, so @connect could not be checked' };
+      return { reason: 'Internal error: this script\'s header is not available, so @connect could not be checked' };
     }
-    const rules = parseConnectRules(script.header);
-    const selfHosts = extractSelfHosts(script.header);
-    return { check: (url: string) => isUrlConnectAllowed(url, rules, selfHosts) };
+    const header = script.header;
+    const rules = parseConnectRules(header);
+    const selfHosts = extractSelfHosts(header);
+    // `origin` over `url`: an about:blank or srcdoc frame has the
+    // origin of the page that made it, but no URL of its own.
+    const pageOrigin = sender.origin ?? originOf(sender.url);
+    const check: ConnectCheck = async (url, method, signal) => {
+      const decision = decideConnect(url, rules, selfHosts, pageOrigin);
+      switch (decision.verdict) {
+        case 'allow':
+          return null;
+        case 'invalid':
+          return gmXhrError(decision.reason);
+        case 'deny':
+          return connectBlockedMessage(decision.reason);
+        case 'ask': {
+          const outcome = await askConnect({
+            scriptId,
+            scriptName: getValue(header, 'name') ?? script.relativePath,
+            host: decision.host,
+            url,
+            method,
+            tabId,
+            ...(sender.documentId ? { documentId: sender.documentId } : {}),
+            ...(signal ? { signal } : {}),
+          });
+          if (outcome === 'allow') return null;
+          if (outcome === 'deny') return connectDeniedMessage(decision.host);
+          if (outcome === 'cancelled') return connectCancelledMessage(decision.host);
+          if (outcome === 'unanswered') return connectUnansweredMessage(decision.host, CONNECT_PROMPT_WAIT_MS);
+          // The caller sees the abort for itself and says nothing.
+          if (outcome === 'aborted') return gmXhrError('The request was aborted');
+          if (outcome === 'too-many') return connectTooManyPromptsMessage(decision.host, MAX_PROMPTS_PER_SCRIPT);
+          return connectPromptFailedMessage(decision.host, outcome.failed);
+        }
+      }
+    };
+    return { check };
   } catch (err) {
     return {
-      reason: `internal error: could not check this script's @connect rules: ${
+      reason: `Internal error: could not check this script's @connect rules: ${
         err instanceof Error ? err.message : String(err)}`,
     };
+  }
+}
+
+function originOf(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    return new URL(url).origin;
+  } catch {
+    return undefined;
   }
 }
 
@@ -4271,6 +4374,45 @@ function installPageLogWriteListener(): void {
   });
 }
 
+// The connection prompt's answer (connect-prompt.ts). Only from the
+// prompt page itself: an answer is a grant of network reach, so nothing
+// a script can reach (a content script relaying for a page) may send
+// one.
+function installConnectAnswerListener(): void {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    const msg = message as (Omit<Partial<ConnectAnswerMessage>, 'type'> & { type?: unknown }) | null;
+    if (!msg || (msg.type !== CONNECT_ANSWER_MESSAGE && msg.type !== CONNECT_PROMPT_ALIVE_MESSAGE)) return undefined;
+    if (!fromExtensionPage(sender) || !sender.url?.startsWith(chrome.runtime.getURL(CONNECT_PROMPT_PAGE))) return undefined;
+    // Receiving it was the point: see CONNECT_PROMPT_ALIVE_MESSAGE.
+    if (msg.type === CONNECT_PROMPT_ALIVE_MESSAGE) {
+      sendResponse(true);
+      return undefined;
+    }
+    const { scriptId, host, choice } = msg;
+    if (typeof scriptId !== 'string' || typeof host !== 'string' || !host
+      || !['once', 'cancel', 'allow', 'allow-all', 'deny'].includes(choice as string)) {
+      return undefined;
+    }
+    // A plain host name, as the prompt was opened with: it becomes a
+    // storage value and part of a map key.
+    let plainHost: string;
+    try {
+      plainHost = new URL(`https://${host}`).hostname;
+    } catch {
+      return undefined;
+    }
+    if (plainHost !== host.toLowerCase()) return undefined;
+    void answerConnect(scriptId, plainHost, choice as ConnectChoice, 'prompt').then(
+      () => { try { sendResponse(true); } catch { /* page gone */ } },
+      (err) => {
+        console.info('[SourceMonkey] connection prompt answer failed:', describeError(err));
+        try { sendResponse(false); } catch { /* page gone */ }
+      },
+    );
+    return true;
+  });
+}
+
 // Combine the wrapper's message + stack into the multiline string that
 // goes into the per-script log. V8/SpiderMonkey both prepend the
 // message to the stack ("Error: foo\n    at …"), so the stack is the
@@ -4572,6 +4714,7 @@ void clearStaleHeaderRules();
 installScriptMessageListener();
 installPageFetchListener();
 installPageLogWriteListener();
+installConnectAnswerListener();
 installDebugLoggingListener();
 installLocalRootsListener();
 installGithubAuthListener();

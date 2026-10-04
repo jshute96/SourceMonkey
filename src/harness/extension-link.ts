@@ -102,6 +102,12 @@ export type ExtensionEvent =
     outcome?: 'load' | 'error' | 'timeout' | 'abort'; filename?: string; error?: string; at: number;
   }
   | {
+    // A connection prompt opened (`shown`), got its answer, or closed
+    // with nobody left waiting on it.
+    kind: 'connect-prompt'; op: 'shown' | 'answered' | 'closed'; promptId: string; scriptId: string; tabId: number;
+    host: string; url?: string; method?: string; answer?: 'once' | 'cancel' | 'allow' | 'allow-all' | 'deny'; at: number;
+  }
+  | {
     kind: 'notification'; op: 'shown' | 'clicked' | 'closed'; scriptId: string; tabId: number; requestId: string;
     notificationId?: string; text?: string; title?: string; at: number;
   };
@@ -408,6 +414,15 @@ export class ExtensionLink {
     return this.call((id) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.clickNotification(id), notificationId);
   }
 
+  /**
+   * Answers a connection prompt, as the person would in its window.
+   * False when it isn't waiting.
+   */
+  async answerConnectPrompt(promptId: string, choice: 'once' | 'cancel' | 'allow' | 'allow-all' | 'deny'): Promise<boolean> {
+    this.requireMinor(2, 'Answering a permission prompt');
+    return this.call(({ p, c }) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.answerConnectPrompt(p, c), { p: promptId, c: choice });
+  }
+
   /** Closes a shown notification, as the person would. */
   async closeNotification(notificationId: string): Promise<boolean> {
     return this.call((id) => new Promise<boolean>((resolve) => chrome.notifications.clear(id, resolve)), notificationId);
@@ -458,4 +473,5 @@ interface Api {
   fireActionContextMenuItem(tabId: number, scriptId: string, commandId: string): Promise<{ ok: boolean }>;
   scriptsOnTab(tabId: number): Promise<{ id: string; name: string; status: string; collection: string; number?: number }[]>;
   clickNotification(notificationId: string): boolean;
+  answerConnectPrompt(promptId: string, choice: 'once' | 'cancel' | 'allow' | 'allow-all' | 'deny'): Promise<boolean>;
 }

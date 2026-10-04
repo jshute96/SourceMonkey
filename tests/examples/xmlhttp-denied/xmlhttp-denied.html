@@ -13,9 +13,9 @@
     <h2>Header</h2>
     <ul>
       <li><code>@connect &lt;host&gt;</code> &mdash; allowlist of
-        hosts <code>GM_xmlhttpRequest</code> may talk to. Strict by
-        default: a script with no <code>@connect</code> lines is
-        blocked from <em>every</em> cross-origin URL.</li>
+        hosts <code>GM_xmlhttpRequest</code> may talk to. For any other
+        site (except the page's own origin), SourceMonkey asks first,
+        in a prompt window, and keeps the answer for the script.</li>
       <li><code>@connect *</code> &mdash; wildcard. Allow all
         hosts.</li>
     </ul>
@@ -28,20 +28,20 @@
         the outcome below. Port 1 is a closed loopback port &mdash;
         connections refuse fast, so the test is reliable offline.</li>
       <li><strong>no-connect</strong> &mdash;
-        no <code>@connect</code>. Expected:
-        <em>blocked by this script&rsquo;s @connect rules</em>.</li>
+        no <code>@connect</code>. Expected: SourceMonkey&rsquo;s prompt;
+        answered with Deny, <em>was denied for this script</em>.</li>
       <li><strong>connect-mismatch</strong> &mdash;
         <code>@connect somewhere.else.example.org</code>. Host
-        doesn&rsquo;t cover <code>127.0.0.1</code>. Expected:
-        <em>blocked by this script&rsquo;s @connect rules</em>.</li>
+        doesn&rsquo;t cover <code>127.0.0.1</code>. Expected: the same
+        prompt, and the same message on Deny.</li>
       <li><strong>connect-allowed</strong> &mdash;
         <code>@connect 127.0.0.1</code>. Policy allows the
         request through; the network call itself fails with
         connection-refused because nothing is listening on port 1.
-        Expected: an <code>onerror</code> without the policy-block
-        substring.</li>
-      <li>The denial happens in the service worker before any
-        <code>fetch</code> is issued, so a blocked request never
+        Expected: an <code>onerror</code> without the denial
+        message.</li>
+      <li>The prompt and the denial happen in the service worker before
+        any <code>fetch</code> is issued, so a denied request never
         leaves the browser.</li>
     </ul>
 

@@ -91,6 +91,7 @@ import {
 import { type LocalFileScope } from '../local-file-overrides.js';
 import { scanAllStorage } from './storage-scan.js';
 import { wipeScriptValues } from './gm-values.js';
+import { connectGrantsKey } from './connect-grants.js';
 import { sourceUsesUnsafeWindow } from '../unsafe-window-use.js';
 import type { VersionProbe } from '../version-probe.js';
 import {
@@ -150,7 +151,7 @@ export {
   ISOLATED_UNSAFE_WINDOW_WARNING,
   NO_MATCH_OR_INCLUDE,
   NO_NAME,
-  noConnectWarning,
+  noConnectInfo,
   setParseChecker,
   setScriptError,
   SYNTAX_ERROR_PREFIX,
@@ -1955,6 +1956,7 @@ export async function removeCollection(id: string): Promise<void> {
     const removeKeys = [
       collectionKey(id),
       ...scriptIds.map(scriptKey),
+      ...scriptIds.map(connectGrantsKey),
       ...await unreferencedScratchKeys(removed),
     ];
     await writeLocal({ [COLLECTIONS_INDEX_KEY]: next });
@@ -1987,7 +1989,9 @@ export async function removeScript(id: string): Promise<void> {
       }
     }
     if (Object.keys(toSet).length > 0) await writeLocal(toSet);
-    await chrome.storage.local.remove([scriptKey(id), ...await unreferencedScratchKeys([script])]);
+    await chrome.storage.local.remove([
+      scriptKey(id), connectGrantsKey(id), ...await unreferencedScratchKeys([script]),
+    ]);
   });
   // After the write, not inside it: the local write is the one that has
   // to be atomic, and a failure here must not undo a removal that
@@ -2454,7 +2458,7 @@ export async function refreshCollection(
       }
       await writeLocal(toSet);
       if (droppedIds.length > 0) {
-        await chrome.storage.local.remove(droppedIds.map(scriptKey));
+        await chrome.storage.local.remove([...droppedIds.map(scriptKey), ...droppedIds.map(connectGrantsKey)]);
       }
 
       return { collection: nextCollection, scripts: finalScripts, droppedIds };

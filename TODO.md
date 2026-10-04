@@ -342,13 +342,6 @@ wasn't checked.
     its `@sandbox` default). Worth deciding whether to pick the page
     world automatically, rather than only for `@inject-into page` and
     `@grant unsafeWindow` (see docs/injection.md).
-- **Strict `@connect`** (`connect-undeclared`: 25068, 373252, 476943,
-  479460, 445051).
-  - With no `@connect`, every `GM_xmlhttpRequest` is refused. TM asks
-    the user at request time; VM allows the request.
-  - A per-host "allow this request" prompt (or a collections-page
-    toggle) would cover it without dropping the check. Pairs with the
-    `@connect *` warning under "`@connect` follow-ups".
 - **`GM_cookie`** (463802) is the whole failure for a Reddit script.
   See "GM_* APIs not yet in the catalog".
 
@@ -391,6 +384,12 @@ wasn't checked.
   [docs/supported-headers.md](docs/supported-headers.md).
 
 ## `GM_*` — deferred surface
+
+- **A request that can't reach its server says "Failed to fetch".**
+  A DNS or connection failure hands the script the browser's bare
+  `fetch` message (corpus 412498, 518609), against the error-wording
+  rules, where a header stall gets a SourceMonkey sentence. Wrap it in
+  `gm-xhr.ts` to name the host and that it couldn't be reached.
 
 The Phase 1–10 work shipped the priority APIs; everything below is
 either a follow-up gap, a tractable second-tier API, or a research
@@ -783,6 +782,18 @@ Adding any of these is a catalog entry + a body — nothing structural.
 
 ## `@connect` follow-ups
 
+- **Connection policy and modes.** The prompt asks per request; the
+  wider policy is still open:
+  - What to do with the `@connect` hosts a script declares at install,
+    and with new ones an update adds. Accept them by default, show them
+    for review, let the user revoke one?
+  - A global strictness setting (ask / allow / deny undeclared hosts),
+    with care: TM's per-request prompting is a known annoyance.
+- **Several prompts at once.** A script that reaches several new hosts
+  together opens a window per host. One window listing them would be
+  kinder.
+- **An answer covers one exact host.** "Allow cdn.example.com" doesn't
+  cover `img.cdn.example.com`. Consider offering the parent domain.
 - **`self` subdomain handling.** TM/VM treat `self` as "the
   script's own origins OR their subdomains"; SourceMonkey matches
   `self` hosts exactly. See `src/gm-connect.ts#hostMatchesRule`. Fix:
@@ -891,6 +902,25 @@ See [docs/harness-design.md](docs/harness-design.md).
 - **An init script for the run's lifetime.** `cdp
   Page.addScriptToEvaluateOnNewDocument` ends with that one call's
   session, so an observer can't be put in place before a reload.
+- **Browser-level prompts go unseen.** A page that opens a custom
+  scheme link (Douyin's `snssdk://`, say) gets Chrome's "Open
+  xdg-open?" external-protocol prompt. It isn't a page dialog, so
+  Playwright and the dialog tracker never see it, and nothing tells the
+  run a tab has one up.
+  - It doesn't block the page's JavaScript, but it covers the page in a
+    visible browser and may hold up a navigation.
+  - Options: turn external-protocol launches off in temp browsers (a
+    Chrome preference or policy, to find), and report a navigation to a
+    non-web scheme from a run's tab.
+- **`open` takes no `--timeout-seconds`**, unlike `start` and `wait`;
+  slow sites (Douyin) often pass its 30s load limit.
+- **A `--temp-browser` download can't be found.** It lands in a
+  `/tmp/playwright-artifacts-*` folder that goes when the run stops, and
+  no command says where. Report the path with the `GM_download` line,
+  or keep downloads in a folder `status` names.
+- **`reload` of a `--noscript` tab printed a script's "no @connect
+  lines" note**, though that tab runs no scripts (corpus 518609). Seen
+  once; find which path printed it.
 
 ## Tabs that predate the first script install
 

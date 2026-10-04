@@ -1826,6 +1826,7 @@
       if (typeof url !== "string" || !url) {
         throw new _Error("[SourceMonkey] GM_xmlhttpRequest: url required");
       }
+      url = resolvePageUrl(url);
       var id = "xhr-" + (_xhrNextId++) + "-" + Math.random().toString(36).slice(2, 10);
       var responseType = typeof details.responseType === "string" ? details.responseType : "";
       var entry = {
@@ -2233,7 +2234,7 @@
          normalizes the scheme's case and strips stray whitespace, which
          is what the transport check below keys off. An unparseable URL
          falls through unchanged and is refused SW-side. */
-      url: resolveDownloadUrl(url),
+      url: resolvePageUrl(url),
       name: d.name != null ? String(d.name) : "",
       headers: plainHeaders(d.headers),
       saveAs: !!d.saveAs,
@@ -2250,9 +2251,13 @@
     };
   }
 
-  function resolveDownloadUrl(url) {
+  /* A URL as the page would read it: a relative one against the
+     document's base (its <base href>, else its own URL), since the
+     worker that makes the request has no page to be relative to. One
+     that won't parse is left for the worker to refuse by name. */
+  function resolvePageUrl(url) {
     try {
-      return new URL(url, location.href).href;
+      return new URL(url, document.baseURI || location.href).href;
     } catch (_re) {
       return url;
     }

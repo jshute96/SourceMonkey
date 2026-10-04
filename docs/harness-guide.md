@@ -1074,6 +1074,7 @@ In a run, not given files, they act on the run's scripts and tabs:
 | `reload [tab\|all]` | Reloads the page, another tab's, or all tabs at once. `--noscript` / `--script` switch the tabs' scripts off or back on first |
 | `focus [tab]` | Brings the tab to the front, un-minimizing its window |
 | `accept [tab] [text]`, `dismiss [tab]` | Answers an open dialog (see [Page dialogs](#page-dialogs)) |
+| `connect once\|cancel\|allow\|deny\|allow-all [host]` | Answers SourceMonkey's prompt for a host the script's `@connect` lines don't cover: the selected script's oldest waiting, or its one for `host` |
 
 - A `[page]` is a URL, a file, a glob, or a script's number for its
   default page (the first page its `@match` names). Only a number
@@ -1742,6 +1743,10 @@ test('adds the button to the toolbar', async ({ page, loadUserscript, gm, report
 - Side effects: `openedTabs()`, `downloads()`, `requests()`,
   `notifications()`, `clickNotification(requestId)`,
   `closeNotification(requestId)`.
+- Connection prompts: `connectPrompts()`, and
+  `answerConnectPrompt(promptId, choice)` with `once`, `cancel`,
+  `allow`, `deny` or `allow-all`. A request to a host the script's `@connect` lines don't cover
+  waits on one.
 - Network control: `failHosts(...hosts)` gives a synthetic 503 for
   those hosts, to force a fallback path. `interceptRequests(fn)`
   answers any request from the test. Await either before the request

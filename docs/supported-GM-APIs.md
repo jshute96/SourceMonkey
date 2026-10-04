@@ -352,11 +352,21 @@ receives the same object as the terminal callback that follows it.
 
 ### `@connect` gating
 
-Strict-by-default. A script with **no** `@connect` lines is blocked
-from every `GM_xmlhttpRequest` call.
+A request goes when a `@connect` rule covers its host, or it goes to
+the page's own origin (scheme, host and port). For any other http(s)
+host, SourceMonkey asks the user, as TM does, and keeps the answer for
+the script. Design: [connect-permissions.md](connect-permissions.md).
 
-- Granting `GM_xmlhttpRequest` with no `@connect` is warned about at
+- **Allow once** or **Cancel** settles just the requests waiting, and
+  the next one asks again. Closing the prompt counts as Cancel.
+- **Allow** (that site) or **Allow all sites** lasts until reset under
+  Network access on the script's page, or the script is removed.
+- **Deny** lasts until reset, the same way.
+- A request whose prompt gets no answer in 4 minutes fails, and the
+  prompt closes. A script gets at most 3 prompts open at once.
+- Granting `GM_xmlhttpRequest` with no `@connect` gets an info note at
   install time (viewer Log tab, page console, `sm-dev validate`).
+- A relative URL resolves against the page, as in TM and VM.
 
 Grammar:
 
@@ -368,17 +378,23 @@ Grammar:
 | `@connect *.example.com` | The same: `example.com` itself AND any subdomain. |
 | `@connect https://example.com` | Same as `@connect example.com` (scheme stripped). |
 
-A denied request fires `onerror` with
-`"[SourceMonkey] GM_xmlhttpRequest: blocked by this script's @connect
-rules: …"` — built by `connectBlockedMessage` in `gm-connect.ts`, so
-the pre-flight check and the post-redirect re-check say the same thing.
+A refused request fires `onerror` with one of these, all from
+`gm-connect.ts`, so the pre-flight check and the post-redirect
+re-check say the same thing:
 
-Two near neighbours deliberately do *not* use that wording, because
-the script's header isn't what refused the call:
+- `connectDeniedMessage`: the user denied the host.
+- `connectCancelledMessage`: the user cancelled (or closed) the prompt.
+- `connectUnansweredMessage`: the prompt had no answer in time.
+- `connectPromptFailedMessage`: the prompt couldn't be opened.
+- `connectBlockedMessage`: the header can't cover it, only for a URL
+  with no host (`file:`, `data:`) under rules other than `@connect *`.
 
-- A URL that won't parse (a relative one, say) — the request fails for
-  a script with `@connect *` too.
-- A failure to evaluate the rules at all, which carries `internal
+Two near neighbours deliberately name no rule, because the script's
+header isn't what refused the call:
+
+- A URL that won't parse. The request fails for a script with
+  `@connect *` too.
+- A failure to evaluate the rules at all, which carries `Internal
   error:`.
 
 ### Credentials
@@ -437,7 +453,9 @@ How this is done, and what it can't cover:
 
 - `@connect <host>` lets the script *act as the user* on that host,
   not merely fetch a URL from it. `@connect *` says that about every
-  host. The script details' "Network access" tooltip spells this out.
+  host, and so does answering the prompt with Allow. The script
+  details' "Network access" tooltip spells this out, and the prompt
+  says so too.
 - A redirect off the allowlist still makes its outbound hop, and that
   hop is credentialed too. The script can't read the response (the
   post-redirect re-check drops it), but it can provoke a
@@ -585,8 +603,9 @@ Why `blob:` gets its own path:
 - That anchor click is exactly what the script could do with no
   `@grant` at all — the path grants nothing new.
 
-`details.url` is resolved against the page first, so relative URLs
-(`GM_download('/files/a.zip', …)`) work like they do in TM.
+`details.url` is resolved against the page first (its `<base href>`,
+else its own URL), so relative URLs (`GM_download('/files/a.zip', …)`)
+work like they do in TM.
 
 ### Download callbacks
 
@@ -627,8 +646,8 @@ Deliberate, and a divergence from how SourceMonkey treats
   file-extension allowlist.
 - Download URLs are runtime-discovered CDN hosts (`*.googlevideo.com`,
   `pbs.twimg.com`, per-object signed URLs) that a script can't
-  enumerate in its header. Strict-by-default `@connect` would break
-  essentially every script that grants `GM_download`.
+  enumerate in its header. Gating them on `@connect` would prompt for
+  nearly every download a script that grants `GM_download` makes.
 - The threat model differs: the bytes go to the user's disk, not back
   into the script, so the response-exfiltration risk `@connect` exists
   to contain doesn't apply.

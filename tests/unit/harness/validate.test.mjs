@@ -86,7 +86,7 @@ test('validate shows every warning, with the line it is about', () => {
   ]);
 });
 
-test('validate warns about GM_xmlhttpRequest with no @connect and an unsupported @run-at, and still passes', (t) => {
+test('validate notes GM_xmlhttpRequest with no @connect, warns about an unsupported @run-at, and still passes', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sm-validate-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'warns.user.js');
@@ -104,7 +104,7 @@ test('validate warns about GM_xmlhttpRequest with no @connect and an unsupported
   const s = scripts.get('warns.user.js');
   assert.equal(s?.status, 'ok');
   assert.equal(s.lines.length, 2);
-  assert.match(s.lines[0], /^warn: This script has no @connect lines, so all its GM_xmlhttpRequest requests are blocked\. .*, line 4\)$/);
+  assert.match(s.lines[0], /^info: This script has no @connect lines, so SourceMonkey asks before its GM_xmlhttpRequest requests reach another site\. .*, line 4\)$/);
   assert.match(s.lines[1], /^warn: @run-at document-ready is not supported\. The script runs at document-idle instead\. .*, line 5\)$/);
 });
 

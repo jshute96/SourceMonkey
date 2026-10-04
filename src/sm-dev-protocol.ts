@@ -20,7 +20,8 @@ export const SKIP_REASON_SM_DEV = 'tab controlled by sm-dev';
  *     (`ExtensionLink.requireMinor`).
  */
 // 1.1: `scriptsOnTab` rows carry the script's number.
-export const SM_DEV_PROTOCOL = { major: 1, minor: 1 } as const;
+// 1.2: connection prompts: `connect-prompt` events, `answerConnectPrompt`.
+export const SM_DEV_PROTOCOL = { major: 1, minor: 2 } as const;
 
 export interface ProtocolVersion {
   major: number;

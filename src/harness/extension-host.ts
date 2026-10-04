@@ -27,7 +27,7 @@ import { remapStackText } from '../stack-link.js';
 import type { StackLayout } from '../composed-source.js';
 import { decodeOwnRefs } from './page-output.js';
 import {
-  HarnessHost, valueCodec, type DownloadRecord, type MenuCommandRecord, type NotificationRecord, type PageLink, type TabRecord, type XhrRecord,
+  HarnessHost, valueCodec, type ConnectChoice, type ConnectPromptRecord, type DownloadRecord, type MenuCommandRecord, type NotificationRecord, type PageLink, type TabRecord, type XhrRecord,
 } from './host.js';
 import type { ConsoleContext, OtherScript } from './console-commands.js';
 import type { ExtensionEvent, ExtensionLink } from './extension-link.js';
@@ -38,7 +38,7 @@ export interface WatchedPage extends PageLink {
   documentStart(): number;
 }
 
-type TabEvent = Extract<ExtensionEvent, { kind: 'report' | 'menu' | 'values' | 'request' | 'download' | 'notification' }>;
+type TabEvent = Extract<ExtensionEvent, { kind: 'report' | 'menu' | 'values' | 'request' | 'download' | 'notification' | 'connect-prompt' }>;
 
 // How long a tab's event waits for its document, or for the tab to be
 // set up, before it's handled anyway or dropped.
@@ -211,6 +211,10 @@ export class ExtensionHost extends HarnessHost {
     };
   }
 
+  override async answerConnectPrompt(promptId: string, choice: ConnectChoice): Promise<boolean> {
+    return this.link.answerConnectPrompt(promptId, choice);
+  }
+
   override async clickNotification(requestId: string): Promise<boolean> {
     const id = this.notificationIds.get(requestId);
     return id ? this.link.clickNotification(id) : false;
@@ -289,6 +293,10 @@ export class ExtensionHost extends HarnessHost {
       this.recordActivity(runId, state.page, event);
       return;
     }
+    if (event.kind === 'connect-prompt') {
+      this.recordConnectPrompt(runId, state.page, event);
+      return;
+    }
     if (event.kind === 'values') {
       this.recordValueWrites(state.page, runId, event.writes);
       return;
@@ -322,6 +330,31 @@ export class ExtensionHost extends HarnessHost {
     this.reports.tabs.push(record);
     this.recordPages.set(record, from);
     this.notify('tab', record);
+  }
+
+  // A connection prompt for one of the run's scripts: one record, which
+  // the answer fills in.
+  private recordConnectPrompt(runId: string, page: WatchedPage, event: Extract<TabEvent, { kind: 'connect-prompt' }>): void {
+    let record = this.reports.connectPrompts.find((r) => r.promptId === event.promptId);
+    if (event.op === 'shown') {
+      if (record) return;
+      record = {
+        scriptId: runId, name: this.nameOf(runId), promptId: event.promptId, host: event.host,
+        url: event.url ?? '', method: event.method ?? 'GET', at: event.at,
+      } satisfies ConnectPromptRecord;
+      this.reports.connectPrompts.push(record);
+      this.recordPages.set(record, page);
+      this.notify('connect-prompt', record);
+      return;
+    }
+    if (!record || record.answer || record.closed) return;
+    if (event.op === 'closed') {
+      record.closed = true;
+      return;
+    }
+    if (!event.answer) return;
+    record.answer = event.answer;
+    this.notify('connect-prompt', record);
   }
 
   // A request, download or notification, recorded as the harness host

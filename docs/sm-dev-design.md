@@ -558,6 +558,13 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
   suite asks for them).
   - Hidden runs use `--headless=new`, the only headless mode that loads
     extensions.
+- Window sizes:
+  - A visible browser has no emulated viewport, so its windows are sized
+    as in a browser a person runs. Playwright's default viewport would
+    resize every window to 1280x720, popups such as SourceMonkey's
+    connection prompt included.
+  - A hidden one keeps the 1280x720 viewport: nobody sees its windows,
+    and its pages keep the size they always had.
 - A persistent context on a temp profile, deleted when the browser is
   closed (for a run, as it ends).
   - Its Preferences grant "Allow User Scripts" and pin the extension to
@@ -648,6 +655,46 @@ and waits for them.
     leaves it, while the others close.
   - `--force` closes without the handlers. It answers an open dialog
     first (a page stopped on one never finishes closing).
+
+### Connection prompts
+
+- A run's script whose `GM_xmlhttpRequest` goes to a host its
+  `@connect` lines don't cover gets SourceMonkey's prompt window, as a
+  person's would ([connect-permissions.md](connect-permissions.md)).
+- An agent can't click it, so the extension sends a `connect-prompt`
+  event, and the run prints a line naming the script, host and request,
+  and the `connect` command to answer with.
+- `connect once|cancel|allow|deny|allow-all [host]` answers the
+  selected script's oldest waiting prompt, or its one for `host`,
+  through `answerConnectPrompt`.
+  - A prompt is per script and site: all of that script's requests
+    there, from any tab, wait on it.
+  - With none for the selected script, it names another script that
+    has one, and how to select it.
+  The window closes as if clicked.
+- A prompt that closes with nobody waiting (its requests timed out or
+  were aborted) sends a `closed` event, so `connect` skips it.
+- `status` lists a script's waiting prompts first under the script
+  (`permissionPrompts` in JSON).
+
+### Reminders of what's waiting
+
+A permission prompt or a page dialog leaves something stuck until it's
+answered, and the line announcing it may come between commands, where
+only the run's log sees it. So each command ends with a reminder of
+each one still waiting (`waitingReminders` in `console-commands.ts`):
+
+- `*PERMISSION PROMPT* still waiting: ...` and `*DIALOG* still
+  waiting: ...`, each saying how to answer it.
+- Only for what was already waiting as the command began: one that
+  opened during it was just announced in its output.
+- Not when the command's output already named that dialog (a command
+  refused for it), nor after `exit` or `stop`.
+- The answer prints as the script's Log entry (`gm-xhr`), so a prompt
+  answered in the window shows up too.
+- The answer is kept like any other: a run's scripts are removed with
+  its test collection, and their answers with them.
+- Needs protocol minor 2.
 
 ## Tabs
 
@@ -818,6 +865,7 @@ User-facing behavior is in [harness-guide.md](harness-guide.md).
     [Test collections](#test-collections)), `getScriptLog`;
   - notifications: `clickNotification(id)`, which runs the script's
     `onclick` as a click would;
+  - connection prompts: `answerConnectPrompt(id, choice)` (below);
   - values and menus: `getGmValues`, `writeGmValues`,
     `fireActionContextMenuItem`;
   - claims: `watchForNamingNavigation` and `namedTab` (which tab is

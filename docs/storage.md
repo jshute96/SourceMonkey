@@ -29,6 +29,7 @@ Key spaces in `chrome.storage.local`:
 | `"scratch:<url>"`      | `string`            | The text of a scratch script, keyed by its `scratch:///…` location (see [Container collections](#container-collections)). |
 | `"scratchFiles:<url>"` | `Record<ref, PushedFile>` | The `@require` / `@resource` bodies sm-dev pushed with a scratch script, by ref; absent when none were. |
 | `"scriptNumbers"`      | `StickyNumbers`     | Each script's number, and the removed scripts' numbers held back from reuse (see [Sticky numbers](#sticky-numbers)). |
+| `"connectGrants:<scid>"` | `ConnectGrants` | The hosts the user allowed (or "all sites") or denied a script's `GM_xmlhttpRequest` beyond its `@connect` rules (see [connect-permissions.md](connect-permissions.md)). Removed with the script. |
 | `"collectionNumbers"`  | `StickyNumbers`     | Each collection's number, and the removed collections' numbers held back from reuse (see [Sticky numbers](#sticky-numbers)). |
 
 Key spaces in `chrome.storage.session` — everything here is dropped on

@@ -502,6 +502,10 @@ test('a tab waiting on a dialog is left out of reload all, and blocks update', a
   // T2 is the current tab, having just been opened.
   expect(lines).toContain('[sm-dev] The page is waiting on an alert dialog. Use accept or dismiss first.');
   expect(lines.filter((l) => l.startsWith('[sm-dev] Reloading'))).toEqual([]);
+  // `reload all` began with the dialog up, so it ends with a reminder;
+  // `update` named it already in refusing, so it doesn't repeat it.
+  expect(lines.filter((l) => l === '[sm-dev] *DIALOG* still waiting: The page is showing an alert dialog. Answer using accept or dismiss.'))
+    .toHaveLength(1);
 });
 
 test('--watch follows a loaded script, and a save reloads only its tabs', async ({ fixtureServer, scriptsDir }) => {
@@ -710,6 +714,36 @@ test('newtab of several saved pages picks the first, serves their _files folders
     ['"rgb(1, 2, 3)"', 'exit'],
   ]);
   expect(lines.some((l) => /^\* T2: \S*\/target\.html \(from saved: .*x one\.html, offline\)/.test(l))).toBe(true);
+});
+
+test('a request to an undeclared host reports SourceMonkey\'s prompt, and connect answers it', async ({ fixtureServer, scriptsDir }) => {
+  const base = fixtureServer.baseUrl;
+  // The same server under another host name: cross-origin, undeclared.
+  const other = base.replace('127.0.0.1', 'localhost');
+  const file = scriptsDir.write({
+    relativePath: 'asks.user.js',
+    meta: { name: 'Asks', match: ['*://*/target.html'], grant: ['GM_xmlhttpRequest'] },
+    body: `GM_xmlhttpRequest({ url: '${other}/other.html', onload: (r) => console.log('[asks] got ' + r.status) });`,
+  });
+  const lines = await driveCli([file, `${base}/target.html`], [
+    ['*PERMISSION PROMPT*', 'status'],
+    ['still waiting', 'connect allow'],
+    ['[page log] [asks] got 200', 'exit'],
+  ]);
+  expect(lines).toContain(
+    `[sm-dev] *PERMISSION PROMPT*: Asks requests permission to connect to localhost (GET ${other}/other.html). Answer using connect once|cancel|allow|deny|allow-all.`,
+  );
+  // `status` lists it under the script, and the command ends with a
+  // reminder, since it was waiting when the command began.
+  expect(lines.some((l) => l.includes(`*PERMISSION PROMPT* waiting: localhost (GET ${other}/other.html). Answer using connect.`))).toBe(true);
+  expect(lines).toContain(
+    '[sm-dev] *PERMISSION PROMPT* still waiting: Asks requests permission to connect to localhost. Answer using connect once|cancel|allow|deny|allow-all.',
+  );
+  expect(lines).toContain('[sm-dev] Allowed localhost for Asks');
+  // Answered: the reminder stops.
+  expect(lines.slice(lines.indexOf('[sm-dev] Allowed localhost for Asks')).some((l) => l.includes('still waiting'))).toBe(false);
+  // The prompt's own Log entry would only repeat the line above.
+  expect(lines.some((l) => l.includes('Opened permission request window'))).toBe(false);
 });
 
 test('--lang sets the languages of each tab, in a launched browser and in one connected to', async ({ fixtureServer, scriptsDir }) => {

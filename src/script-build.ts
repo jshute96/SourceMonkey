@@ -263,11 +263,12 @@ export const IMPLICIT_UNSAFE_WINDOW_INFO =
   + 'The script runs directly in the page, without isolation.';
 
 // Said when a script grants an API that `@connect` gates (today only
-// `GM_xmlhttpRequest`) but declares no `@connect` line: our strict
-// default blocks all its requests (see gm-connect.ts). `grant` is the
-// name as the script wrote it (`GM.xmlHttpRequest` or the legacy form).
-export function noConnectWarning(grant: string): string {
-  return `This script has no @connect lines, so all its ${grant} requests are blocked. `
+// `GM_xmlhttpRequest`) but declares no `@connect` line: each other site
+// it contacts needs the user's answer to a prompt (see gm-connect.ts).
+// `grant` is the name as the script wrote it (`GM.xmlHttpRequest` or the
+// legacy form).
+export function noConnectInfo(grant: string): string {
+  return `This script has no @connect lines, so SourceMonkey asks before its ${grant} requests reach another site. `
     + 'Add @connect for each host it contacts, or @connect * to allow any host.';
 }
 
@@ -369,7 +370,7 @@ export function extractStartupLogs(
           && (findApi(name)?.requires ?? []).includes('connect');
       });
     if (needsConnect) {
-      const log: StartupLog = { level: 'warn', message: noConnectWarning(needsConnect) };
+      const log: StartupLog = { level: 'info', message: noConnectInfo(needsConnect) };
       const line = headerTagLine(header, 'grant', needsConnect);
       if (line !== undefined) log.location = { file: relativePath, line };
       logs.push(log);

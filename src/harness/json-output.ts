@@ -162,6 +162,8 @@ export interface StatusScript extends Script {
   /** On the selected tab, or every tab when there is none. */
   errors?: number;
   lastError?: string;
+  /** Its permission prompts waiting for an answer (`connect`). */
+  permissionPrompts?: { host: string; method: string; url: string }[];
 }
 
 // ---------- Each command's result ----------

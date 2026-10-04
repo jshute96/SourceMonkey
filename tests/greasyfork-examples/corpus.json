@@ -10997,9 +10997,8 @@
       "version": "1.29"
     },
     "test": {
-      "status": "fail",
-      "blame": "script",
-      "date": "2026-09-29",
+      "status": "pass",
+      "date": "2026-10-03",
       "version": "1.29"
     },
     "tags": [
@@ -11010,6 +11009,11 @@
         "date": "2026-09-29",
         "version": "1.29",
         "text": "- Page: https://fr.wikipedia.org/wiki/Tunnel. Action: double-clicked the bold word \"Tunnel\", then hovered the lookup icon that appeared.\n- Result: the lookup icon and the tooltip (`#divDic`) appeared, but stayed at \"Loading...\".\n- SourceMonkey: both GM_xmlhttpRequest calls (translate.google.com `translate_a/element.js` and POST `translate_a/single`) were blocked: the script declares no @connect.\n- The endpoint itself still answers: a direct POST to `translate.google.com/translate_a/single` with the script's parameters returned 200, so with the request allowed (as Tampermonkey does after its @connect prompt) it would likely work."
+      },
+      {
+        "date": "2026-10-03",
+        "version": "1.29",
+        "text": "Re-tested after the @connect permission prompt fix (uncommitted): now passes.\n- fr.wikipedia.org/wiki/Tunnel (headless): double-clicked \"couverture\", hovered the lookup icon. The `#divDic` tooltip showed \"[fr] couverture / [auto] blanket\" (and \"tunnel\" for \"Tunnel\").\n- SourceMonkey asked permission for translate.google.com once; after `connect allow` both `translate_a/element.js` (GET) and `translate_a/single` (POST) returned 200, and later lookups didn't ask again.\n- Tag `connect-undeclared` kept: it passes only because of the prompt."
       }
     ]
   },
@@ -14745,9 +14749,8 @@
       "version": "2.8.3.19"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-02",
+      "status": "pass",
+      "date": "2026-10-03",
       "version": "2.8.3.19"
     },
     "tags": [
@@ -14763,6 +14766,11 @@
         "date": "2026-10-02",
         "version": "2.8.3.19",
         "text": "Blame changed to `sourcemonkey` when merging the batch: the missing `@connect` is the only cause (a copy with `@connect zh.wikisource.org` loaded all 121 chapters), and Tampermonkey asks the user while Violentmonkey allows the requests. This matches the skill's blame rule and 373252."
+      },
+      {
+        "date": "2026-10-03",
+        "version": "2.8.3.19",
+        "text": "Re-tested after the @connect permission prompt fix (uncommitted): now passes.\n- zh.wikisource.org 紅樓夢 index (headless), \"Download\" menu command: all 121 chapter requests returned 200 and the panel showed \"Completed! Get 121 pages in total\" with Save / Markdown / JSON buttons.\n- No permission prompt: the chapters are on the page's own origin, which SourceMonkey now always allows. Tag `connect-undeclared` kept: the script declares no `@connect` and passes only because of the fix."
       }
     ]
   },
@@ -20199,7 +20207,7 @@
     "test": {
       "status": "fail",
       "blame": "script",
-      "date": "2026-10-01",
+      "date": "2026-10-03",
       "version": "4.32"
     },
     "tags": [
@@ -20215,6 +20223,11 @@
         "date": "2026-10-01",
         "version": "4.32",
         "text": "Re-tested after #27 (GM_xmlhttpRequest calls onreadystatechange with readyState 4): the readystate gap is gone, but the script still fails for its own reasons.\n- Wikipedia 'Red panda' (headless), English UI (`translatorSettingLanguage = \"1\"`), double-click a word, hover the icon.\n- SourceMonkey (as documented, strict `@connect`): the original copy's `translate.google.com/translate_a/element.js` request is still blocked (\"@connect not declared\"). Tag `connect-undeclared` kept.\n- With `@connect *` added in a scratch copy: the request loads 200, `onreadystatechange` sees `readyState == 4`, and the script alerts \"Google token initialized failed, use youdao translator instead\". No translation popup appears after accepting it.\n- Script: blame stays `script`. The token marker `c._ctkk='` is no longer in Google's element.js, so it fails at that alert in any manager. Untagged `needs-onreadystatechange`: it is no longer a cause."
+      },
+      {
+        "date": "2026-10-03",
+        "version": "4.32",
+        "text": "Re-tested after the @connect permission prompt fix (uncommitted): still fails, for the script's own reason.\n- Wikipedia 'Red panda' (headless), English UI (`translatorSettingLanguage = \"1\"`), double-click a word, hover the icon.\n- SourceMonkey asked permission for translate.google.com; after `connect allow` `translate_a/element.js` loaded (200), and the script alerted \"Google token initialized failed, use youdao translator instead\". No translation appeared after accepting it.\n- Script: blame stays `script` (the `c._ctkk='` token marker is gone from element.js). The @connect gap is no longer a cause; tag `connect-undeclared` kept since the original copy needs the prompt to get that far."
       }
     ]
   },
@@ -24453,9 +24466,8 @@
       "version": "1.2.1"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-09-29",
+      "status": "pass",
+      "date": "2026-10-03",
       "version": "1.2.1"
     },
     "tags": [
@@ -24466,6 +24478,11 @@
         "date": "2026-09-29",
         "version": "1.2.1",
         "text": "Page: https://news.ycombinator.com/.\n- Script: the floating badge appeared with a count of 3; its panel listed the feeds (https://news.ycombinator.com/rss, plus two openai.com article links that the cloud rules returned).\n- SourceMonkey: every feed was shown struck-through as invalid. The script validates each candidate with GM_xmlhttpRequest HEAD/GET to the feed's own host, but @connect lists only its rssplus.* API hosts, so SM blocked all of them (`host news.ycombinator.com not in @connect allowlist`). Tampermonkey asks the user to allow an undeclared host instead.\n- The cloud lookup to rssplus.vercel.app (declared) returned 200.\n- Script: it runs in MAIN world (it grants unsafeWindow), so its local-rules `eval` hit the page CSP (no 'unsafe-eval'); it falls back to the cloud rules by design."
+      },
+      {
+        "date": "2026-10-03",
+        "version": "1.2.1",
+        "text": "Re-tested after the @connect permission prompt fix (uncommitted): now passes.\n- news.ycombinator.com (headless): the cloud lookup found https://news.ycombinator.com/rss, the HEAD (405) and GET (200) to it went through with no prompt (page's own origin), and the panel listed it as valid, not struck through.\n- github.com/torvalds/linux: the three github.com feeds validated (HEAD 200). SourceMonkey asked permission for rsshub.app; after `connect allow` the three rsshub.app feeds were requested but got 403 and were shown as invalid. curl gets the same 403 from rsshub.app, so that is the server, not SourceMonkey.\n- Tag `connect-undeclared` kept: it passes only because of the fix (its `@connect` lists only its API hosts)."
       }
     ]
   },
@@ -35641,6 +35658,11 @@
         "date": "2026-10-03",
         "version": "1.0.31",
         "text": "The script finds its Sci-Hub base URL by fetching the mirror list at `https://sci-hub.41610.org/` and only rewrites DOI links in that request's `onload` (no `onerror`, so `sci-hub.se` is never used as the fallback).\n- SourceMonkey: on PubMed 33301246 the request was blocked (`@connect not declared`).\n- Script: that host no longer resolves (curl: could not resolve host). A copy with `@connect *` on a Nature article (`s41586-020-2649-2`, many `https://doi.org/...` reference links) got `Failed to fetch`, and no link was rewritten (0 `.sci-hub-link`). So it does nothing in any manager."
+      },
+      {
+        "date": "2026-10-03",
+        "version": "1.0.31",
+        "text": "Re-tested after the @connect permission prompt fix (uncommitted): the `@connect` refusal is gone, but the script still does nothing because its mirror-list host is dead.\n\n- SourceMonkey: on PubMed 33301246 the downloaded copy (no `@connect`) raised one permission prompt, for `sci-hub.41610.org` (GET `https://sci-hub.41610.org/`). After `connect allow` the request went out and failed with `Failed to fetch`.\n- Script: `sci-hub.41610.org` still doesn't resolve (curl: could not resolve host). With no `onerror`, no link is rewritten: on a Nature article (`s41586-020-2649-2`, 50 `doi.org` links) there were 0 Sci-Hub links, and the allowed host was not asked about again.\n- Headless PubMed showed a reCAPTCHA \"Checking your browser\" page, so Nature was the content check."
       }
     ]
   },
@@ -40841,7 +40863,7 @@
     "test": {
       "status": "fail",
       "blame": "script",
-      "date": "2026-10-02",
+      "date": "2026-10-03",
       "version": "2.9"
     },
     "tags": [
@@ -40852,6 +40874,11 @@
         "date": "2026-10-02",
         "version": "2.9",
         "text": "Tested in sm-dev in the shared visible browser (TikTok's headless pages listed no videos), signed out, on a video page (`/@vyrmamusic/video/7684463830289861891`).\n\n- The script marked both videos `processed`, and hovering the player (a synthetic `mouseover`) added its 🎞️ button.\n- Script: out of date. The player's `src` is a `blob:` URL, so a click turned the button orange (⏳) and loaded the video page in a hidden iframe, then polls it for a `video source` element. That page also plays from `blob:` URLs with no `<source>`, so after 30 s the button was still ⏳ and nothing was requested.\n- Script: it has no `@connect`, so the download request it would make next would be blocked in SourceMonkey too (validation warns).\n- Slideshow (photo) posts were not tried: none were on the explore page."
+      },
+      {
+        "date": "2026-10-03",
+        "version": "2.9",
+        "text": "Re-tested after the @connect permission prompt fix (uncommitted): still fails, for the script's own reason, before any `GM_xmlhttpRequest`, so no permission prompt was raised.\n\n- `--temp-browser --headed`, signed out, on `/@vyrmamusic/video/7684463830289861891`. The page's one `video` was marked `processed`; a synthetic `mouseover` added the 🎞️ button (TikTok's card overlay covers the video, so a real hover can't reach it).\n- Script: clicking it turned the button ⏳ and loaded the video page in a hidden iframe. The iframe's `video` also plays from a `blob:` URL with no `<source>` (0 `video source`), so after 45 s it was still ⏳ and nothing was requested.\n- Slideshow posts were not tried: none showed on `/explore` or `/tag/photomode`.\n- `connect-undeclared` kept: the script has no `@connect`, so its download request would raise the prompt if it got that far."
       }
     ]
   },
@@ -45262,8 +45289,7 @@
       "version": "1.3.6"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
+      "status": "pass",
       "date": "2026-10-03",
       "version": "1.3.6"
     },
@@ -45280,6 +45306,11 @@
         "date": "2026-10-03",
         "version": "1.3.6",
         "text": "Re-tested after the streaming `GM_xmlhttpRequest` change (the body now reaches the page in pieces, with no size cap): the 50 MB failure is gone.\n\n- Temp browser, `--lang zh-CN`, the `@connect *` copy, on `/video/7686458088664206630` (now a 47-minute video).\n- Clicking the icon: HEAD 200, then the blob GET loaded with 200 in about 4.5 minutes. The body was 521 MB (Content-Length 521341038).\n- `GM_download` of the blob URL logged \"Blob 方式下载成功\" (blob download succeeded), and the saved file was exactly 521341038 bytes.\n- Still a fail as downloaded: with no `@connect`, its requests are refused (`connect-undeclared`), as before. Untagged `xhr-response-cap`."
+      },
+      {
+        "date": "2026-10-03",
+        "version": "1.3.6",
+        "text": "Re-tested after the @connect permission prompt fix (uncommitted): the downloaded copy (no `@connect`) now works, passing only because of the prompt, so `connect-undeclared` stays.\n\n- Headless (`--temp-browser --lang zh-CN`), all `/video/<id>` URLs tried redirected to `jingxuan?previous_page=web_video_404_link`, so this used `--temp-browser --headed`, where `/video/7686031550974686118` (a 9 s video) loaded.\n- Douyin's login dialog kept covering the player, so the icon was clicked from `eval` (`.btnClickDownload` `.click()`).\n- SourceMonkey: one permission prompt, for `v5-dy-ov-experiment.zjcdn.com` (the HEAD to the video file). After `connect allow`: HEAD 200, GET 200 as a blob with no second prompt, then `GM_download` logged \"Blob 方式下载成功\" (blob download succeeded). The saved file was a 636 KB MP4.\n- Douyin's CDN hostname varies by video (`v3-web.douyinvod.com` in the first test), so a user may be asked about a new host for other videos; `connect allow-all` avoids that."
       }
     ]
   },
@@ -46593,6 +46624,11 @@
         "date": "2026-10-03",
         "version": "0.0.13",
         "text": "Tested in the shared browser (curl gets 401 from cn.wsj.com) on a current article (`...-41d50d38`, bond selloff).\n- The script fetches the AMP copy at `/amp/articles/<slug>` with `GM.xmlHttpRequest`.\n- SourceMonkey: as shipped it has no `@connect`, so the request was blocked (`@connect not declared`) and the script logged `[]` from its catch.\n- Script: a copy with `@connect cn.wsj.com` got a 400 for the AMP URL, and a `fetch` of the same URL from the page also returns 400. WSJ no longer serves the AMP copy, so no full text in any manager. The copy even emptied the preview (article text 137 chars) by replacing it with nothing."
+      },
+      {
+        "date": "2026-10-03",
+        "version": "0.0.13",
+        "text": "Re-tested after the @connect permission prompt fix (uncommitted): SourceMonkey no longer blocks it, still fails because WSJ dropped its AMP pages.\n\n- Headless article pages get a DataDome block page, so tested with `--temp-browser --headed` on a current article (`...-db9b601c`, September jobs report).\n- No permission prompt: the request is to the page's own origin (`cn.wsj.com/amp/articles/<slug>`), which is now always allowed. It loaded with status 400, and a `fetch` of the same URL from the page also gets 400.\n- As before, the script then empties the preview: the article keeps only the byline and the copyright line.\n- Asked permission for: nothing.\n- `connect-undeclared` stays: without the same-origin allowance the request would still be refused."
       }
     ]
   },
@@ -53802,6 +53838,11 @@
         "date": "2026-10-03",
         "version": "4...2.8.4.3+",
         "text": "On a fanqienovel.com/reader/ chapter (#201 of book 7069948840148732967) the text stays the site's 177-character preview, same as a `--noscript` tab; the toolbar item turns pink and reads \"失败\" (failed).\n\n- SourceMonkey: its `GM_xmlhttpRequest` to `fq.travacocro.com` is blocked (no `@connect`).\n- Script: that proxy is dead anyway: `curl` to fq.travacocro.com times out (port 80 and 443), so no manager would get the text.\n- The book page (`/page/...`) part works: the download button becomes \"*下载全本\" and the charset `<select>` is added. Not clicked (it fetches every chapter from the same dead proxy).\n- Script: on the home page it throws (`location.href.match(...)` is null at line 58)."
+      },
+      {
+        "date": "2026-10-03",
+        "version": "4...2.8.4.3+",
+        "text": "Re-tested after the @connect permission prompt fix (uncommitted): SourceMonkey no longer blocks it, still fails because the proxy is dead.\n\n- On a reader chapter (`/reader/7154574713145164321`, ch. 200 of book 7069948840148732967) SourceMonkey prompted for `fq.travacocro.com`; after `connect allow` the request went out and failed: one gave up after 2 minutes with no response headers, the other ended \"Failed to fetch\". The toolbar item reads \"失败\" and the text stays the 192-char preview.\n- `curl` to fq.travacocro.com still times out, so no manager would get the text.\n- Asked permission for: `fq.travacocro.com` only.\n- `connect-undeclared` stays: the script needs the prompt to reach its proxy at all."
       }
     ]
   },
@@ -53909,8 +53950,7 @@
       "version": "0.6.1"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
+      "status": "pass",
       "date": "2026-10-03",
       "version": "0.6.1"
     },
@@ -53922,6 +53962,11 @@
         "date": "2026-10-03",
         "version": "0.6.1",
         "text": "Alone it adds nothing visible: it only defines `unsafeWindow.downloadAllContentSaveAsZip` for DownloadAllContent (25068) to call. Tested by calling that function directly on en.wikipedia.org/wiki/Red_panda with two chapters, one holding a markdown image link.\n- It built a 369-byte `application/zip` with `readme.txt`, `Chapter 1.md` and `Chapter 2.txt`, but the chapter image fetch was refused: `blocked by this script's @connect rules: @connect not declared`, so `imgs/0.jpg` was missing.\n- A copy with `@connect *` made the request (it reached the server) and the ZIP gained `imgs/0.jpg`.\n- SourceMonkey's strict `@connect` is deliberate; Tampermonkey would ask the user and Violentmonkey would allow it. Blamed `sourcemonkey` to match 25068."
+      },
+      {
+        "date": "2026-10-03",
+        "version": "0.6.1",
+        "text": "Re-tested after the @connect permission prompt fix (uncommitted): now passes.\n- Loaded with DownloadAllContent (25068) on en.wikipedia.org/wiki/Red_panda (headless), then called `downloadAllContentSaveAsZip` with two chapters, one holding a markdown link to the infobox image.\n- SourceMonkey asked permission for thumb.wikimedia.org; after `connect allow` the image loaded (200) and the 17965-byte ZIP held `readme.txt`, `imgs/0.jpg`, `Chapter 1.md` and `Chapter 2.txt`.\n- Tag `connect-undeclared` kept: it passes only because of the prompt."
       }
     ]
   },
@@ -54520,6 +54565,11 @@
         "date": "2026-10-03",
         "version": "1.1",
         "text": "On a workshop item (https://steamcommunity.com/sharedfiles/filedetails/?id=3808510434) the \"Download this\" button appears next to Add to Collection.\n\n- SourceMonkey: clicking it, the POST to `api.ggntw.com/steam.request` was blocked (the script has no `@connect`), and the script alerted \"error\".\n- Script: a copy with `@connect api.ggntw.com` got a 200, but the service answers `{\"result\":10,\"status\":3,\"error\":\"need login to account\"}` (same from curl), so `response.url` is undefined and the script opens an empty `about:blank` tab. No download link comes back."
+      },
+      {
+        "date": "2026-10-03",
+        "version": "1.1",
+        "text": "Re-tested after the @connect permission prompt fix (uncommitted): the `@connect` refusal is gone; it still fails because the download service needs a login.\n\n- SourceMonkey: on item 3808510434, clicking \"Download this\" raised one permission prompt, for `api.ggntw.com` (POST `https://api.ggntw.com/steam.request`). After `connect allow` the POST loaded with 200.\n- Script: the service still answers `{\"result\":10,\"status\":3,\"error\":\"need login to account\"}` (same from curl), so the script opened an empty `about:blank` tab and no download started."
       }
     ]
   },
@@ -54590,8 +54640,7 @@
       "version": "2.0.+n.3"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
+      "status": "pass",
       "date": "2026-10-03",
       "version": "2.0.+n.3"
     },
@@ -54603,6 +54652,11 @@
         "date": "2026-10-03",
         "version": "2.0.+n.3",
         "text": "On a qimao.com chapter page (`/shuku/1803283-48109823/`, ch. 2662, a members-only chapter) the article stayed empty (0 chars), as in a `--noscript` tab, which shows only the \"download the app / become a member\" notice.\n\n- SourceMonkey: its `GM_xmlhttpRequest` to `api-ks.wtzw.com` is blocked (no `@connect`); the `onerror` handler then throws the response as an error.\n- A copy with `@connect api-ks.wtzw.com` works: the API returned 200 and the chapter's full text (2100 chars, against 2018 字 stated on the page) filled the article. That missing `@connect` is the only cause; Tampermonkey asks the user and Violentmonkey allows the request.\n- On the book page the \"下载全本\" (download all) button is added next to 开始阅读. Not clicked (it fetches all 2664 chapters)."
+      },
+      {
+        "date": "2026-10-03",
+        "version": "2.0.+n.3",
+        "text": "Re-tested after the @connect permission prompt fix (uncommitted): now passes.\n\n- On the same members-only chapter (`/shuku/1803283-48109823/`) SourceMonkey prompted for `api-ks.wtzw.com`; after `connect allow` the API returned 200 and `.chapter-detail-article` filled with the chapter text (2100 chars). A `--noscript` tab has 0 chars there.\n- After a reload no new prompt: the allowed host was remembered and the request loaded (200) straight away.\n- Asked permission for: `api-ks.wtzw.com` only.\n- Passes only because of the prompt (no `@connect` in the script), so `connect-undeclared` stays."
       }
     ]
   },
@@ -60117,6 +60171,11 @@
         "date": "2026-10-03",
         "version": "6.0.1",
         "text": "On a fanqienovel.com/reader/ chapter (#201 of book 7069948840148732967) the text stays the site's 177-character preview, as in a `--noscript` tab; the toolbar item reads \"Failed\".\n\n- SourceMonkey: its `GM_xmlhttpRequest` to `fanqie.tutuxka.top` is blocked (no `@connect`).\n- Script: that API is gone anyway: `fanqie.tutuxka.top` no longer resolves in DNS, so no manager would get the text."
+      },
+      {
+        "date": "2026-10-03",
+        "version": "6.0.1",
+        "text": "Re-tested after the @connect permission prompt fix (uncommitted): SourceMonkey no longer blocks it, still fails because the API is gone.\n\n- On a reader chapter (`/reader/7154574713145164321`) SourceMonkey prompted for `fanqie.tutuxka.top`; after `connect allow` the request failed (\"Failed to fetch\"; the script logs `API request error: Failed to fetch`), the toolbar item reads \"Failed\" and the text stays the 192-char preview.\n- `fanqie.tutuxka.top` still doesn't resolve in DNS.\n- Asked permission for: `fanqie.tutuxka.top` only.\n- `connect-undeclared` stays: the script needs the prompt to reach its API at all."
       }
     ]
   },

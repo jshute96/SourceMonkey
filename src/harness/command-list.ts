@@ -503,6 +503,15 @@ export const HELP_SECTIONS: HelpSection[] = [
         commands: [
           { usage: 'accept [tab] [text]', syntax: { args: 'text', tab: true }, about: 'Answer an open dialog with OK, and a prompt with the text.' },
           { usage: 'dismiss [tab]', syntax: { args: 'none', tab: true }, about: 'Answer an open dialog with Cancel.' },
+          {
+            usage: 'connect once|cancel|allow|deny|allow-all [host]',
+            syntax: { args: 'words', max: 2 },
+            about: [
+              'Answer SourceMonkey\'s permission prompt for the selected script to connect to a host its @connect lines don\'t cover.',
+              'once or cancel are one-time answers. allow, deny or allow-all are persistent for the script.',
+              'Answers the script\'s oldest waiting permission prompt, or the one for host.',
+            ],
+          },
         ],
       },
     ],

@@ -14,7 +14,7 @@ import type { Browser, BrowserContext, ConsoleMessage, Page } from '@playwright/
 
 import { shellWord } from './command-lines.js';
 import {
-  commandOutput, commandRunner, DialogTracker, gotoInTab, inCommand, leaveDialogsOpen, onlyInspects, reloadTab, reloadable, serveSavedPage, setCommandsListening, skippedScriptLine, targetIdSuffix,
+  commandOutput, commandRunner, DialogTracker, gotoInTab, inCommand, leaveDialogsOpen, onlyInspects, reloadTab, reloadable, serveSavedPage, setCommandsListening, skippedScriptLine, targetIdSuffix, withoutQuery,
   type CommandRunner, type ConsoleContext, type ControlledTab, type OutputHistory,
 } from './console-commands.js';
 import { applyLang, langLaunchArgs } from './browser-lang.js';
@@ -1555,6 +1555,13 @@ function wireHostOutput(host: ExtensionHost, print: (line: string) => void, pref
   host.on('tab', (r) => out(r, `[sm-dev] GM_openInTab ${r.url}`));
   host.on('menu-command', (r) => out(r, `[sm-dev] GM_registerMenuCommand "${r.name}"`));
   host.on('notification', (r) => out(r, `[sm-dev] GM_notification "${r.title || r.text}"`));
+  // Only the asking: the answer prints as the script's Log entry.
+  host.on('connect-prompt', (r) => {
+    if (r.answer) return;
+    // Set apart: the run waits on an answer, and the line is easy to miss
+    // among the page's own output.
+    out(r, `[sm-dev] *PERMISSION PROMPT*: ${r.name} requests permission to connect to ${r.host} (${r.method} ${withoutQuery(r.url)}). Answer using connect once|cancel|allow|deny|allow-all.`);
+  });
   host.on('download', (r) => out(r, `[sm-dev] GM_download ${r.url}: ${r.outcome}${r.filename ? ' -> ' + r.filename : ''}${r.error ? ' ' + r.error : ''}`));
   host.on('value-write', (r) => {
     for (const w of r.writes) {

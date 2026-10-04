@@ -173,6 +173,8 @@ interface StatusScript extends Script {
   values?: number;
   errors?: number;       // on the selected tab, or every tab with none
   lastError?: string;
+  // Its permission prompts waiting for `connect`; the URL without its query.
+  permissionPrompts?: { host: string; method: string; url: string }[];
 }
 ```
 

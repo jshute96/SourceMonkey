@@ -23,7 +23,7 @@ import { isJsonLine, jsonLayoutMistake, jsonResult, JSON_COMMANDS, markedLine, S
 import type * as J from './json-output.js';
 import { extensionLabel, type ExtensionState } from './extension-backend.js';
 import { firstLine } from './extension-link.js';
-import type { HarnessHost, MenuCommandRecord } from './host.js';
+import type { ConnectPromptRecord, HarnessHost, MenuCommandRecord } from './host.js';
 import type { PageAttachment } from './page-watch.js';
 import { parseCommandArgs, splitWords, unquoteWhole, type ParsedArgs } from './command-args.js';
 import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, commandsHelp } from './command-list.js';
@@ -207,6 +207,108 @@ export function runCommandMistake(input: { line: string } | { words: string[] })
   if (!own) return null;
   const parsed = parseCommandArgs(own.command, own.rest);
   return 'error' in parsed ? parsed : null;
+}
+
+// The run's permission prompts still waiting for an answer, oldest
+// first.
+function waitingPrompts(ctx: ConsoleContext): ConnectPromptRecord[] {
+  return ctx.host.reports.connectPrompts.filter((r) => !r.answer && !r.closed);
+}
+
+// A request URL without its query string or fragment: those can be
+// long (signed CDN links) and hold keys, and the host and path are what
+// the question is about.
+export function withoutQuery(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return url;
+  }
+}
+
+// What is still waiting for an answer as a command ends: permission
+// prompts, and dialogs open on the run's tabs. Each is a stuck state
+// (a request, or the whole page, can't go on), and the line announcing
+// it may have come between commands, where only the run's log saw it.
+// So each command repeats them, after its own output, until answered.
+//
+// Only what was already waiting when the command began: one that opens
+// during the command has just been announced in its output. Nor a
+// dialog the command's output already named (a command refused for it).
+export function waitingReminders(ctx: ConsoleContext, before: WaitingState, said: readonly string[]): string[] {
+  const lines: string[] = [];
+  const selected = selectedScript(ctx);
+  for (const prompt of waitingPrompts(ctx)) {
+    if (!before.prompts.has(prompt.promptId)) continue;
+    const script = ctx.scripts.find((s) => s.id === prompt.scriptId);
+    const select = script && script !== selected && ctx.scripts.length > 1 ? ` (select it first with script ${ctx.scripts.indexOf(script) + 1})` : '';
+    lines.push(`[sm-dev] *PERMISSION PROMPT* still waiting: ${prompt.name} requests permission to connect to ${prompt.host}. Answer using connect once|cancel|allow|deny|allow-all${select}.`);
+  }
+  const current = currentTab(ctx);
+  for (const tab of ctx.tabs()) {
+    const dialog = tab.dialogs?.current;
+    if (!dialog || before.dialogs.get(tab) !== dialog) continue;
+    const refusal = dialogWaitingMessage(tab, current);
+    if (said.some((l) => l.includes(refusal))) continue;
+    const named = tab === current ? '' : ` ${tabName(tab)}`;
+    lines.push(`[sm-dev] *DIALOG* still waiting: ${tab === current ? 'The page' : tabName(tab)} is showing ${dialogKind(dialog)} dialog. Answer using accept${named} or dismiss${named}.`);
+  }
+  return lines;
+}
+
+// What `waitingReminders` compares against: the prompts and dialogs
+// waiting as a command began.
+export interface WaitingState {
+  prompts: Set<string>;
+  dialogs: Map<ControlledTab, unknown>;
+}
+
+export function waitingState(ctx: ConsoleContext): WaitingState {
+  return {
+    prompts: new Set(waitingPrompts(ctx).map((r) => r.promptId)),
+    dialogs: new Map(ctx.tabs().flatMap((t) => (t.dialogs?.current ? [[t, t.dialogs.current] as const] : []))),
+  };
+}
+
+// `connect once|cancel|allow|deny|allow-all [host]`: answers a connection prompt,
+// as the person would in its window.
+async function answerConnectCommand(ctx: ConsoleContext, args: string[]): Promise<false | void> {
+  const [choice, host] = args;
+  if (choice !== 'once' && choice !== 'cancel' && choice !== 'allow' && choice !== 'deny' && choice !== 'allow-all') {
+    ctx.out('[sm-dev] ERROR: The connect command takes once, cancel, allow, deny or allow-all, then optionally the host.');
+    return false;
+  }
+  // The selected script's, as for `get` and `set`. A prompt is per
+  // script and site, so with `host` there is at most one.
+  const script = selectedScript(ctx);
+  const waiting = waitingPrompts(ctx).filter((r) => host === undefined || r.host === host.toLowerCase());
+  const prompt = waiting.find((r) => r.scriptId === script?.id);
+  if (!prompt) {
+    const forHost = host === undefined ? '' : ` for ${host}`;
+    const name = script ? preparedScriptName(script) : 'the selected script';
+    const other = waiting.find((r) => r.scriptId !== script?.id);
+    const otherScript = other && ctx.scripts.find((s) => s.id === other.scriptId);
+    ctx.out(otherScript
+      ? `[sm-dev] No permission prompt${forHost} is waiting for ${name}. ${preparedScriptName(otherScript)} has one: select it with script ${ctx.scripts.indexOf(otherScript) + 1}, then use connect again.`
+      : `[sm-dev] No permission prompt${forHost} is waiting for ${name}`);
+    return;
+  }
+  let answered: boolean;
+  try {
+    answered = await ctx.host.answerConnectPrompt(prompt.promptId, choice);
+  } catch (err) {
+    ctx.out(`[sm-dev] ERROR: ${(err as Error).message}`);
+    return false;
+  }
+  if (!answered) {
+    ctx.out(`[sm-dev] The permission prompt for ${prompt.host} is no longer waiting`);
+    return;
+  }
+  const said = choice === 'allow' ? `Allowed ${prompt.host}` : choice === 'allow-all' ? 'Allowed all sites'
+    : choice === 'deny' ? `Denied ${prompt.host}` : choice === 'once' ? `Allowed ${prompt.host} once`
+      : `Cancelled the permission prompt about ${prompt.host}`;
+  ctx.out(`[sm-dev] ${said} for ${prompt.name}`);
 }
 
 /** The run command whose help `--help` asks for (`click --help`), or null. */
@@ -760,6 +862,8 @@ export async function runConsoleCommand(
         .catch((err) => ctx.out(`[sm-dev] Could not bring ${which} to the front: ${(err as Error).message}`));
       return;
     }
+    case 'connect':
+      return answerConnectCommand(ctx, args);
     case 'accept':
     case 'dismiss': {
       const target = parsed.tab !== undefined ? pickTab(ctx, parsed.tab) : tab;
@@ -1375,6 +1479,10 @@ async function statusJson(ctx: ConsoleContext, tab: ControlledTab | undefined): 
       errors: errors.length,
       ...(errors.length > 0 ? { lastError: errors.at(-1)!.message } : {}),
     });
+    const prompts = waitingPrompts(ctx).filter((r) => r.scriptId === id);
+    if (prompts.length > 0) {
+      scripts[scripts.length - 1].permissionPrompts = prompts.map((r) => ({ host: r.host, method: r.method, url: withoutQuery(r.url) }));
+    }
   }
   const others = await otherScriptsJson(ctx, tab) ?? [];
   let run: J.StatusData['run'];
@@ -1747,6 +1855,11 @@ async function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined):
   for (const script of scripts) {
     const id = script.id;
     lines.push(scriptRow(ctx, script));
+    // First under the script, on any tab: the script is stuck until
+    // it's answered.
+    for (const prompt of waitingPrompts(ctx).filter((r) => r.scriptId === id)) {
+      lines.push(`${DETAIL}*PERMISSION PROMPT* waiting: ${prompt.host} (${prompt.method} ${withoutQuery(prompt.url)}). Answer using connect.`);
+    }
     if (!tab) {
       // Errors are the script's, from tabs since closed, so still told.
       const values = id ? Object.keys(await ctx.host.valuesOf(id)).length : 0;
@@ -2124,6 +2237,9 @@ export type CommandRunner = (
 
 // `answer`: where the command's own output goes instead of `ctx.out`
 // (see commandOutput). Resolves to the command's exit code.
+// Commands after which nothing is left to remind about.
+const ENDS_RUN = new Set(['exit', 'stop']);
+
 export function commandRunner(ctx: ConsoleContext): CommandRunner {
   let queue: Promise<unknown> = Promise.resolve();
   return (line, hooks) => {
@@ -2145,11 +2261,23 @@ export function commandRunner(ctx: ConsoleContext): CommandRunner {
         else if (isJsonLine(l)) out(ctx.jsonLayout ? withLayout(l, ctx.jsonLayout) : l);
         else out(STDERR_LINE + l);
       };
+      const before = waitingState(ctx);
+      const said: string[] = [];
+      const shown = ctx.out;
+      ctx.out = (l) => {
+        said.push(l);
+        shown(l);
+      };
       try {
         // Typed at a person's prompt, `menu` needn't wait for a command
         // still to register: the person can see what there is.
         ctx.interactive = hooks?.interactive === true;
         const result = await runConsoleCommand(line, ctx, { cwd: hooks?.cwd, words: hooks?.words });
+        // Not after a command that ends the run, nor a line saying the
+        // same thing already (a command refused for an open dialog).
+        if (!ENDS_RUN.has(line.trim().split(/\s+/)[0])) {
+          for (const reminder of waitingReminders(ctx, before, said)) ctx.out(reminder);
+        }
         code = result === false ? 1 : typeof result === 'number' ? result : 0;
         // An invalid command is 2, even when it also said it failed.
         if (mistaken) code = 2;

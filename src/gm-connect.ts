@@ -17,11 +17,10 @@
 // lines, and rejects the request if the URL's host doesn't satisfy
 // any of them.
 //
-// Default policy: a script with NO `@connect` lines is BLOCKED from
-// all cross-origin requests. Both reference managers are more
-// lenient (TM asks the user; VM doesn't enforce @connect at all),
-// but the stricter posture is the right default for a userscript
-// manager that takes the trust model seriously.
+// A host no rule covers isn't refused outright: the extension asks the
+// user, as Tampermonkey does, and remembers the answer per script (see
+// `decideConnect` and docs/connect-permissions.md). Violentmonkey doesn't enforce
+// @connect at all.
 
 import { getValues, type ParsedHeader } from './userscript-header.js';
 
@@ -115,8 +114,9 @@ function isExactOnlyHost(host: string): boolean {
 }
 
 // True when the header has no usable `@connect` rule, so all its
-// `GM_xmlhttpRequest` calls are refused. The same parse enforcement
-// uses, so a header whose `@connect` lines are all malformed counts.
+// `GM_xmlhttpRequest` calls to other sites need the user's say-so. The
+// same parse enforcement uses, so a header whose `@connect` lines are
+// all malformed counts.
 export function hasNoConnectRules(header: ParsedHeader): boolean {
   return parseConnectRules(header).length === 0;
 }
@@ -151,43 +151,74 @@ function extractHostFromPattern(pat: string): string | null {
   return host;
 }
 
-// Check whether `url` is allowed under the script's @connect rules.
-// Reason is plain English so the SW can log it / surface to the
-// userscript via onerror.
+// What to do with a request to `url`, before any choice the user has
+// made about this script's hosts (those live in the extension, see
+// `connect-grants.ts`):
+//   - `allow`: a `@connect` rule covers the host, or the request goes to
+//     the requesting page's own origin.
+//   - `ask`: an http(s) host nothing covers. The caller looks up the
+//     user's earlier answer for it, or asks.
+//   - `deny`: a URL with no host to ask about (`file:`, `data:`), or not
+//     http(s) (`ws:`, `ftp:`), which only `@connect *` covers.
+//   - `invalid`: the URL didn't parse. Not a denial: no rule was even
+//     consulted, so `connectBlockedMessage` must not blame the rules.
 //
-// `denied` distinguishes "the header forbids this" from "we couldn't
-// even read the URL". Both stop the request, but only the first is the
-// script's `@connect` lines doing their job — see
-// `connectBlockedMessage`, which must not be told to blame them for a
-// URL that never parsed.
-export function isUrlConnectAllowed(
+// The page's own origin is allowed whatever the rules say, as
+// Tampermonkey 4 does: the page could already `fetch` it, so refusing
+// it protects nothing and breaks ordinary scripts. It is exact origin
+// equality (scheme, host and port), and http(s) only: Chrome gives every
+// local file the same bare `file://` origin, so for a `file:` page it
+// would mean the whole disk.
+//
+// `pageOrigin` also joins `self`, which in Tampermonkey means the page
+// the script runs on, as well as the script's @match / @include hosts.
+export type ConnectDecision =
+  | { verdict: 'allow' }
+  | { verdict: 'ask'; host: string }
+  | { verdict: 'deny'; reason: string }
+  | { verdict: 'invalid'; reason: string };
+
+export function decideConnect(
   url: string,
   rules: readonly ConnectRule[],
   selfHosts: ReadonlySet<string>,
-): { allowed: true } | { allowed: false; denied: boolean; reason: string } {
-  if (rules.length === 0) {
-    return { allowed: false, denied: true, reason: '@connect not declared' };
-  }
-  let host: string;
+  pageOrigin?: string,
+): ConnectDecision {
+  let parsed: URL;
   try {
-    host = new URL(url).hostname;
+    parsed = new URL(url);
   } catch {
-    // Not a denial: a relative URL (which TM resolves and we don't)
-    // lands here even for a script with `@connect *`.
-    return {
-      allowed: false,
-      denied: false,
-      reason: `${url} is not a valid URL; GM_xmlhttpRequest needs an absolute one`,
-    };
+    return { verdict: 'invalid', reason: `${url} is not a valid URL` };
   }
+  const web = parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  const page = webOrigin(pageOrigin);
+  if (web && page && parsed.origin === page.origin) return { verdict: 'allow' };
+  const host = parsed.hostname.toLowerCase();
+  const selfs = page ? new Set([...selfHosts, page.hostname]) : selfHosts;
   for (const rule of rules) {
-    if (hostMatchesRule(host, rule, selfHosts)) return { allowed: true };
+    // A host-less URL has nothing for a host rule to match, but `*`
+    // means any URL at all.
+    if (!host && rule.kind !== 'wildcard') continue;
+    if (hostMatchesRule(host, rule, selfs)) return { verdict: 'allow' };
   }
+  if (web && host) return { verdict: 'ask', host };
   return {
-    allowed: false,
-    denied: true,
-    reason: `host ${host} not in @connect allowlist`,
+    verdict: 'deny',
+    reason: host
+      ? `Only http(s) sites can be allowed, so only @connect * covers a ${parsed.protocol} URL.`
+      : `A ${parsed.protocol} URL has no host to allow, so only @connect * covers it.`,
   };
+}
+
+// The page's origin when it is an http(s) one, else null.
+function webOrigin(origin: string | undefined): URL | null {
+  if (!origin) return null;
+  try {
+    const u = new URL(origin);
+    return u.protocol === 'http:' || u.protocol === 'https:' ? u : null;
+  } catch {
+    return null;
+  }
 }
 
 // Every error `GM_xmlhttpRequest` hands back to a userscript starts
@@ -225,11 +256,56 @@ export function headerStallMessage(stallMs: number): string {
 
 // The one phrasing for a request the script's own header forbids: it
 // names whose rules blocked the call rather than a "policy" object the
-// reader can't see.
+// reader can't see. `reason` is a sentence of its own.
 //
-// Only for a real denial (`denied: true`). A URL we couldn't parse, or
-// a failure to *evaluate* the rules, is not the header's doing and
-// goes through `gmXhrError` directly.
+// Only for a real denial. A URL we couldn't parse, or a failure to
+// *evaluate* the rules, is not the header's doing and goes through
+// `gmXhrError` directly.
 export function connectBlockedMessage(reason: string): string {
-  return gmXhrError(`blocked by this script's @connect rules: ${reason}`);
+  return gmXhrError(`This script's @connect rules don't allow this request. ${reason}`);
+}
+
+// The one phrasing for a host the user refused this script in the
+// prompt. Says where the refusal can be undone, since it lasts until
+// reset.
+export function connectDeniedMessage(host: string): string {
+  return gmXhrError(
+    `Connecting to ${host} was denied for this script. `
+    + 'Manage permissions on the script\'s page in SourceMonkey.',
+  );
+}
+
+// The one phrasing for a request whose prompt the user cancelled (or
+// closed). Nothing is kept, so the next request asks again, which goes
+// without saying.
+export function connectCancelledMessage(host: string): string {
+  return gmXhrError(`SourceMonkey's permission prompt for connecting to ${host} was cancelled, so this request was blocked`);
+}
+
+// The one phrasing for a prompt that couldn't be shown. `cause` is
+// Chrome's reason.
+export function connectPromptFailedMessage(host: string, cause: string): string {
+  // Chrome's reason, capitalized as a tail after `: ` is.
+  const tail = cause.charAt(0).toUpperCase() + cause.slice(1);
+  return gmXhrError(`SourceMonkey could not open its permission prompt for connecting to ${host}: ${tail}`);
+}
+
+// The one phrasing for a request refused because the script already has
+// as many prompts open as it may (`MAX_PROMPTS_PER_SCRIPT`).
+export function connectTooManyPromptsMessage(host: string, open: number): string {
+  return gmXhrError(
+    `SourceMonkey is already asking about ${open} other sites for this script, so this request to ${host} was blocked. `
+    + 'Answer those permission prompts, then try again.',
+  );
+}
+
+// The one phrasing for a request whose prompt went unanswered too long.
+// The prompt closes with it, so the next request asks again.
+export function connectUnansweredMessage(host: string, waitMs: number): string {
+  const minutes = Math.round(waitMs / 60000);
+  const howLong = minutes === 1 ? '1 minute' : `${minutes} minutes`;
+  return gmXhrError(
+    `SourceMonkey's permission prompt for connecting to ${host} had no answer within ${howLong}, `
+    + 'so this request was stopped',
+  );
 }

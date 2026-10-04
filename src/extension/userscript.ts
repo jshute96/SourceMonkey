@@ -202,6 +202,13 @@ import { CodeTabsView, type CodeTab } from './code-tabs.js';
 import { makeCopyButton } from './copy-button.js';
 import { markFileChanges, missingFiles, scriptFileTag } from './file-changes.js';
 import { renderDetails } from './script-details.js';
+import {
+  connectGrantsKey,
+  forgetDeniedHost,
+  getConnectGrants,
+  revokeConnectHost,
+  type ConnectGrants,
+} from './connect-grants.js';
 import { installSelectAll } from './select-all.js';
 
 // Install and Refresh run the load pipeline here in the page, so this
@@ -351,7 +358,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     const collectionKey = currentScript ? `collection:${currentScript.collectionId}` : null;
     let touched = false;
     for (const key of Object.keys(changes)) {
-      if (key.startsWith('script:') || key === SCRIPT_NUMBERS_KEY) {
+      if (key.startsWith('script:') || key === SCRIPT_NUMBERS_KEY || key === connectGrantsKey(scriptId)) {
         touched = true;
         break;
       }
@@ -474,6 +481,7 @@ async function rehydrateAfterStorageChange(): Promise<void> {
   if (scriptId !== wanted) return;
   cacheCollection(collection);
   await refreshLogId(wanted);
+  await refreshConnectAnswers(wanted);
   if (scriptId !== wanted) return;
   render(script);
   // render() wipes the flash overlay via `textContent =` and may
@@ -567,6 +575,7 @@ async function loadStored(): Promise<void> {
   if (scriptId !== wanted) return;
   cacheCollection(collection);
   await refreshLogId(wanted);
+  await refreshConnectAnswers(wanted);
   if (scriptId !== wanted) return;
   // Hydrate the max log level and any registration rejection before
   // render() so the first paint of the Status row already reflects
@@ -580,6 +589,19 @@ async function loadStored(): Promise<void> {
   // first setTabs(); this applies the line highlight and normalizes
   // the URL.
   tabsView.applyHash(true);
+}
+
+// The user's answers to the connection prompt for the script shown,
+// for the Network access row. Read along with the Log ID, so `render`
+// stays synchronous.
+let currentConnectAnswers: ConnectGrants | null = null;
+
+async function refreshConnectAnswers(id: string): Promise<void> {
+  try {
+    currentConnectAnswers = await getConnectGrants(id);
+  } catch {
+    currentConnectAnswers = null;
+  }
 }
 
 // Takes the id rather than reading `scriptId`: the callers work on an
@@ -601,6 +623,7 @@ async function onRefresh(): Promise<void> {
     const next = await refreshShownScript(wanted);
     if (!next) return;
     await refreshLogId(wanted);
+    await refreshConnectAnswers(wanted);
     render(next);
     // Re-anchor highlight + URL after the repaint. Scroll skipped so
     // a Refresh doesn't yank the user's scroll position.
@@ -872,6 +895,14 @@ function render(script: StoredScript): void {
     size: formatScriptSize(script),
     status: buildStatusCell(script),
     versionProbes: script.versionProbes,
+    ...(currentConnectAnswers ? {
+      connect: {
+        grants: currentConnectAnswers,
+        // The storage change repaints the row.
+        revoke: (host: string | null) => void revokeConnectHost(script.id, host),
+        forgetDenied: (host: string) => void forgetDeniedHost(script.id, host),
+      },
+    } : {}),
   });
   // After the panel is on screen: a chip on the Location row or a Local
   // overrides entry whose file has gone or changed (file-changes.ts).

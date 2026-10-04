@@ -174,6 +174,11 @@ export interface SmApi {
     scriptId: string,
     commandId: string,
   ): Promise<{ ok: boolean; error?: string }>;
+  // Answers a connection prompt by the id it was shown with. False when
+  // it isn't waiting.
+  answerConnectPrompt(promptId: string, choice: 'once' | 'cancel' | 'allow' | 'allow-all' | 'deny'): Promise<boolean>;
+  // The connection prompts waiting for an answer.
+  pendingConnectPrompts(): Promise<{ promptId: string; scriptId: string; tabId: number; host: string }[]>;
   // Stands in for a click on the menu's "Reload page with no
   // userscripts" row: reloads the tab with every wrapper told to skip.
   reloadWithoutScripts(tabId: number): Promise<void>;

@@ -60,6 +60,10 @@ Every run runs the script in the real SourceMonkey:
   page's first inline scripts, where SourceMonkey alone would run it
   first. A script that hooks `fetch` or `XMLHttpRequest` early may miss
   page code for that reason; say so in the note.
+- A `*PERMISSION PROMPT*` line is SourceMonkey asking whether the script
+  may reach a site its `@connect` lines don't cover. Answer `connect
+  allow` (as a user trying the script would), and name the sites it
+  asked about in the note: Tampermonkey asks about the same ones.
 
 ## Blame
 
@@ -67,7 +71,7 @@ A `fail` needs `--blame`:
 
 - `sourcemonkey`: SourceMonkey's behavior is the cause, and Tampermonkey or
   Violentmonkey would work. Show the evidence: a copy changed to avoid the
-  gap (`@inject-into page`, an extra `@connect`) that then works, or the
+  gap (`@inject-into page`, say) that then works, or the
   source of the manager that differs.
 - `script`: broken or out of date against the current site, or broken in
   every manager. A `@grant none` (page-world) script blocked by the site's
@@ -78,7 +82,7 @@ A `fail` needs `--blame`:
   that waits for `load` is `unknown` until checked in Tampermonkey.
 
 Check SourceMonkey's intended behavior in `docs/` before blaming it; some
-differences are deliberate and documented (strict `@connect`, the idle
+differences are deliberate and documented (the idle
 timing, `@run-at context-menu` unsupported). A bare `@connect example.com`
 does cover its subdomains, as in Tampermonkey.
 
@@ -110,13 +114,12 @@ with numbers where there are any. Bullets for separate facts, prefixed
 
 Tags mark a reason that recurs across scripts. Reuse an existing one when
 it fits; the list, with descriptions, is `HELP.tag` in
-`tests/greasyfork-examples/results.html`. Common ones:
+`tests/greasyfork-examples/results.html`. For example:
 
 - `needs-page-globals`: a granted script reading the page's own globals
   (its jQuery, a player API on an element) without `unsafeWindow`.
-- `connect-undeclared`: no `@connect` rule for a host it requests.
 
-Some tags name gaps since fixed (`connect-subdomain`,
+Some tags name gaps since fixed (`connect-subdomain`, `connect-undeclared`,
 `xhr-response-readystate`, `needs-xhr-onprogress`, `shadows-window`). They stay on scripts that
 pass only because of the fix; don't use them for new failures.
 

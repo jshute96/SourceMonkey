@@ -23,11 +23,10 @@
 // `@grant` is the deliberate omission, and the reasoning is specific
 // to what our GM surface can actually do:
 //   - `GM_xmlhttpRequest` is the API that reaches other origins, and
-//     it is useless without `@connect` — a script with no `@connect`
-//     lines is blocked from every cross-origin request
-//     (`gm-connect.ts`), leaving it no further than the page's own
-//     `fetch`. So the Network access row already tells that story,
-//     and tells it more precisely than a grant name would.
+//     only the hosts its `@connect` lines name, or that the user allowed
+//     when asked (`connect-prompt.ts`), get past the page's own origin.
+//     The Network access row lists both, so it tells that story more
+//     precisely than a grant name would.
 //   - Most of the rest act within reach the page already has: styles,
 //     elements, menu commands, resources, per-script storage.
 //   - `GM_download` and `GM_openInTab` genuinely do reach outside the
@@ -35,6 +34,7 @@
 //     omission trades away; see the TODO note in docs/script-viewer.md.
 
 import { openInNewTabAnchor } from './code-links.js';
+import type { ConnectGrants } from './connect-grants.js';
 import { makeCopyButton } from './copy-button.js';
 import { standInTag, tagLocalFile, type LocalFileTag } from './file-changes.js';
 import { rowTooltip, type DetailsMode } from './details-tooltips.js';
@@ -129,6 +129,17 @@ export interface DetailsModel {
   // published" read together. A preview passes nothing — it hasn't been
   // probed, and inventing a row would imply we had checked.
   versionProbes?: readonly VersionProbe[];
+  // The user's answers to the connection prompt for this script, listed
+  // under Network access after the `@connect` values, each with a button
+  // that takes it back. Installed scripts only.
+  connect?: ConnectAnswersRow;
+}
+
+export interface ConnectAnswersRow {
+  grants: ConnectGrants;
+  // `host` null is "all sites".
+  revoke: (host: string | null) => void;
+  forgetDenied: (host: string) => void;
 }
 
 export function renderDetails(container: HTMLElement, model: DetailsModel): void {
@@ -198,7 +209,7 @@ export function renderDetails(container: HTMLElement, model: DetailsModel): void
     // the reach the page already has, so `@connect` is where the
     // interesting part of an install decision lives. See
     // `docs/script-viewer.md`.
-    addConnect(dl, getValues(h, 'connect'));
+    addConnect(dl, getValues(h, 'connect'), model.connect);
   }
 
   // Last of the "what does this actually pull in" group, under the
@@ -356,9 +367,52 @@ function addText(dl: HTMLDListElement, label: string, value: string | undefined)
 // `@connect` value is a matching rule (`self`, `*`, `*.example.com`),
 // not an address, and linkifying it would invite a click that means
 // nothing.
-function addConnect(dl: HTMLDListElement, values: string[]): void {
-  if (values.length === 0) return;
-  appendRow(dl, 'Network access', listNode(values, (v) => document.createTextNode(v)));
+//
+// The user's prompt answers follow, each with a Reset button: a grant
+// made in a hurry has to be as easy to find and undo as the header
+// lines are.
+function addConnect(dl: HTMLDListElement, values: string[], answers?: ConnectAnswersRow): void {
+  // An answer reads `host: Allowed [Reset]`; "All sites" is bold too,
+  // since it is a category rather than a host.
+  type Answer = { host: string | null; allowed: boolean; reset: () => void };
+  type Item = { text: string } | Answer;
+  const items: Item[] = values.map((v) => ({ text: v }));
+  if (answers) {
+    if (answers.grants.allHosts) items.push({ host: null, allowed: true, reset: () => answers.revoke(null) });
+    for (const host of answers.grants.hosts) items.push({ host, allowed: true, reset: () => answers.revoke(host) });
+    for (const host of answers.grants.denied ?? []) items.push({ host, allowed: false, reset: () => answers.forgetDenied(host) });
+  }
+  if (items.length === 0) return;
+  appendRow(dl, 'Network access', listNode(items, (item) => {
+    if ('text' in item) return document.createTextNode(item.text);
+    const span = document.createElement('span');
+    span.className = 'connect-answer';
+    // One element for the label and its colon: the span is a flex row,
+    // so separate pieces would each get the gap, putting a space before
+    // the colon.
+    const label = document.createElement('span');
+    if (item.host === null) {
+      const all = document.createElement('b');
+      all.textContent = 'All sites';
+      label.append(all, ':');
+    } else {
+      label.textContent = `${item.host}:`;
+    }
+    span.append(label);
+    const verdict = document.createElement('b');
+    verdict.textContent = item.allowed ? 'Allowed' : 'Denied';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = 'Reset';
+    btn.title = `Clear this ${item.allowed ? 'approval' : 'denial'}. The next request will prompt again.`;
+    const reset = item.reset;
+    btn.addEventListener('click', () => {
+      btn.disabled = true;
+      reset();
+    });
+    span.append(verdict, btn);
+    return span;
+  }));
 }
 
 function addLink(dl: HTMLDListElement, label: string, value: string | undefined): void {

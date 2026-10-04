@@ -312,6 +312,8 @@ $R screenshot shot.png               # then look at the PNG
 - A command that opens a dialog (`alert`, `confirm`, `prompt`) returns
   once it's up. Answer with `accept [tab] [text]` or `dismiss [tab]`;
   until then the page is frozen, and most commands refuse.
+- A `*PERMISSION PROMPT*` line needs an answer before that request
+  goes on: see [Permission prompts](#permission-prompts).
 - `logs` prints everything the page logged, filtered or not, with
   repeated lines in a row shown once, as `(N times)`.
 - Quoting: quote selectors with spaces or `#` for the shell
@@ -637,6 +639,28 @@ $R stop                  # also removes the run's test collection
   - A 403 the page can't reproduce often comes from the site's CDN
     edge, not its origin server.
 
+### Permission prompts
+
+A `GM_xmlhttpRequest` to a site the script's `@connect` lines don't
+cover waits on SourceMonkey's permission prompt, as it would for a
+user. Any script that uses `GM_xmlhttpRequest` can hit one, and one
+with no `@connect` lines likely will. Until it's answered, that request
+and whatever the script does with its response wait.
+
+- The run prints `*PERMISSION PROMPT*: <script> requests permission to
+  connect to <host> ...`. Answer it with `connect`:
+  - `connect allow` to test the script as a user who allowed it (the
+    usual case), or `connect allow-all` for one that reaches many sites;
+  - `connect deny` to test what the script does when refused;
+  - `connect once` or `connect cancel` for a one-time answer: the next
+    request asks again.
+- `allow`, `deny` and `allow-all` are kept for the run's copy of the
+  script, so later requests to that site don't ask again in the run.
+- `connect` answers the selected script's prompt; with several scripts
+  loaded, `script N` first.
+- When testing a script's real behavior, note which sites it asked
+  about: its `@connect` lines may be missing some.
+
 ### Turning it into a spec
 
 ```js
@@ -687,6 +711,9 @@ test('adds the button', async ({ page, loadUserscript, gm, reports }) => {
 - **`start` hangs connecting**: a tab in that browser is showing a
   dialog. The run names it; answer it or close the tab.
 - **Commands refuse with a dialog open**: `accept` or `dismiss` first.
+- **A `GM_xmlhttpRequest` never finishes, or the script stops after
+  one**: look for a `*PERMISSION PROMPT*` line; the request is waiting
+  for `connect` (see [Permission prompts](#permission-prompts)).
 - **A wait gave up**: its message says what was still busy (requests,
   DOM changes). A page with a slow API or a never-ending resource never
   settles; `wait selector` for the element you need instead.

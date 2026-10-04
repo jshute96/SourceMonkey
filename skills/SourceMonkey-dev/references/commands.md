@@ -143,6 +143,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `type <sel> --file <path>` | Type a file's text exactly, including a final line break |
 | `key <keys>...` | `key j Shift+ArrowRight ctrl+end esc` |
 | `accept [tab] [text]`, `dismiss [tab]` | Answer an open dialog |
+| `connect once\|cancel\|allow\|deny\|allow-all [host]` | Answer SourceMonkey's prompt for a host the selected script's `@connect` doesn't cover |
 | `--nowait` | On any of these: don't wait for the page to settle |
 
 ## Waiting

@@ -202,8 +202,13 @@ details live in the topic-specific docs linked below.
   See [xhr-header-surgery.md](xhr-header-surgery.md).
 - **@connect URL gating** (`src/gm-connect.ts`) — parses `@connect`
   lines into rules (`*`, `self`, host-and-subdomains), resolves `self`
-  against the script's `@match`/`@include` hosts, and gates
-  `GM_xmlhttpRequest` URLs before fetch.
+  against the script's `@match`/`@include` hosts and the page, and
+  gates `GM_xmlhttpRequest` URLs before fetch. The page's own origin is
+  always allowed.
+- **Connection prompt** (`src/extension/connect-prompt.ts`,
+  `connect-grants.ts`, `connect-prompt.html`) — asks the user, in a
+  popup window, about a host no rule covers, and keeps the answer per
+  script. See [connect-permissions.md](connect-permissions.md).
 - **GM_openInTab dispatcher** (`src/extension/gm-tab.ts`) — opens new tabs via
   `chrome.tabs.create` on behalf of userscripts; tracks the per-request
   (page-generated id ↔ assigned chrome tab id ↔ originator tab) mapping
@@ -457,8 +462,11 @@ takes effect:
 - [site-icons.md](site-icons.md) — origin extraction from `@match`,
   favicon fetch + cache, icon slot in the collections/viewer UI.
 - [GM-APIs.md](GM-APIs.md) — `GM_*` / `GM.*` implementation: the
-  catalog, page-side runtime, SW-side storage / XHR, `@connect`
-  gating, and the per-API surface SourceMonkey ships.
+  catalog, page-side runtime, SW-side storage / XHR, and the per-API
+  surface SourceMonkey ships.
+- [connect-permissions.md](connect-permissions.md) — which sites a
+  script's `GM_xmlhttpRequest` may reach: `@connect` rules, the page's
+  own origin, and the connection prompt with its stored answers.
 - [supported-GM-APIs.md](supported-GM-APIs.md) — user-facing
   inventory of which `GM_*` names work, which are stubbed, and how
   they map to TM / VM / GM4 behavior.

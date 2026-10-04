@@ -31,7 +31,7 @@ import type { GmXhrEvent, GmXhrRequestPayload } from '../gm-xhr-types.js';
 import { ExtensionHost } from './extension-host.js';
 import { launchExtensionBrowser } from './extension-launch.js';
 import { ExtensionLink, linkRunId } from './extension-link.js';
-import type { HostReports, SkipReport, ErrorReport, StartReport, RequestInterceptor } from './host.js';
+import type { ConnectChoice, HostReports, SkipReport, ErrorReport, StartReport, RequestInterceptor } from './host.js';
 import { attachPage, type PageAttachment } from './page-watch.js';
 import {
   prepareScript,
@@ -83,6 +83,10 @@ export interface GmApi {
   closeNotification(requestId: string): Promise<boolean>;
   downloads(): HostReports['downloads'];
   requests(): HostReports['requests'];
+  /** SourceMonkey's prompts to let a script connect to a host its `@connect` lines don't cover. */
+  connectPrompts(): HostReports['connectPrompts'];
+  /** Answer a waiting connection prompt. Resolves false if it isn't waiting. */
+  answerConnectPrompt(promptId: string, choice: ConnectChoice): Promise<boolean>;
   /**
    * Answer `GM_xmlhttpRequest`s from the test instead of the network:
    * return an event (`{ kind: 'error', message }` or
@@ -268,6 +272,8 @@ export const test = base.extend<HarnessFixtures & InternalFixtures>({
       closeNotification: (requestId) => host.closeNotification(requestId),
       downloads: () => host.reports.downloads,
       requests: () => host.reports.requests,
+      connectPrompts: () => host.reports.connectPrompts,
+      answerConnectPrompt: (promptId, choice) => host.answerConnectPrompt(promptId, choice),
       interceptRequests: (fn) => _smRequests.set(fn),
       failHosts: (...hosts) => {
         const set = new Set(hosts);

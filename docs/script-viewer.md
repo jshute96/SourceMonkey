@@ -244,13 +244,12 @@ Both name the script the same way, pivoted for where they're read.
      `@namespace`, `@run-at`, `@icon`, `@noframes`, and the rest.
    - **`@grant` gets no row**, which is a judgement about our GM
      surface rather than a general one:
-     - `GM_xmlhttpRequest` is the API that reaches other origins, and it
-       does nothing without `@connect`.
-       - A script declaring no `@connect` is blocked from every
-         cross-origin request (see [GM-APIs.md](GM-APIs.md)), leaving it
-         no further than the page's own `fetch`.
-       - So `Network access` already carries that story, and carries it
-         more precisely than a grant name would.
+     - `GM_xmlhttpRequest` is the API that reaches other origins. Past
+       the page's own origin, it reaches only the hosts `@connect`
+       names, or that the user allowed when asked (see
+       [connect-permissions.md](connect-permissions.md)).
+       - `Network access` lists both, so it carries that story more
+         precisely than a grant name would.
      - Most other grants act within reach the page already has:
        `GM_addStyle`, `GM_addElement`, `GM_registerMenuCommand`,
        `GM_getResourceText`, the value store.
@@ -342,6 +341,14 @@ Both name the script the same way, pivoted for where they're read.
        may send what it read. Same face as the rows around it, and
        deliberately unlinked — a `@connect` value is a matching rule
        (`self`, `*`, `*.example.com`), not an address.
+       - After the `@connect` values, the user's answers to the
+         connection prompt (installed scripts only), each as
+         `<host>: **Allowed**` or `<host>: **Denied**`, with "Allow all sites"
+         shown as `**All sites**: **Allowed**`.
+       - Each answer has a Reset button that clears it, so the next
+         request asks again. The row repaints from the storage change
+         (`connectGrants:<id>` in local storage).
+       - The row shows whenever there is a value or an answer.
    - `Local overrides` — every `@require` / `@resource` whose body was read
      from a local stand-in instead of the URL it declares, one entry per
      file. Shown in both modes; **absent whenever nothing was

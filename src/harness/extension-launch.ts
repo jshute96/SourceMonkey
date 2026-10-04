@@ -141,6 +141,13 @@ async function launch(profile: string, headed: boolean, args: string[] = []): Pr
       handleSIGINT: false,
       handleSIGTERM: false,
       handleSIGHUP: false,
+      // A visible browser gets no emulated viewport, so its windows are
+      // sized as in a browser a person runs. Playwright's default (a
+      // fixed 1280x720) resizes every window it sees in a visible browser
+      // to fit, popups such as SourceMonkey's connection prompt included.
+      // A hidden one keeps the default: nobody sees its windows, and its
+      // pages keep the size they always had.
+      ...(headed ? { viewport: null } : {}),
       args: [
         ...(headed ? [] : ['--headless=new']),
         ...(userAgent ? [`--user-agent=${userAgent}`] : []),
