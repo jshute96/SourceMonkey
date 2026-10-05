@@ -41,7 +41,7 @@ userscripts installs SourceMonkey as a package and gets two things:
   against a live page and watch what it does, re-pushing as you save.
   Check which selectors still resolve after a site changes. Save a page
   so a test can replay it without logging in. It also fetches and loads
-  Tampermonkey or Violentmonkey, to drive pages under them.
+  Tampermonkey or Violentmonkey, to run and manage scripts under them.
 
 See [docs/harness-guide.md](docs/harness-guide.md) to use it, and
 [docs/harness-design.md](docs/harness-design.md) for how it works.
@@ -465,6 +465,7 @@ pnpm run test:e2e      # Playwright with the extension loaded
 pnpm run test:headed   # e2e with a visible browser
 pnpm run test:sm-dev   # sm-dev and the harness fixture's own specs
 pnpm run test:vm-api   # whether the fetched Violentmonkey still answers sm-dev's calls
+pnpm run test:tm-api   # whether the fetched Tampermonkey still answers sm-dev's calls
 ```
 
 To narrow a run to one file:

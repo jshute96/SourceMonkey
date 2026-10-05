@@ -1,5 +1,5 @@
 // Whether the Violentmonkey `manager fetch` got still answers each call
-// sm-dev makes, as docs/sm-dev-external-managers.md lists them. Not a
+// sm-dev makes, as docs/sm-dev-violentmonkey.md lists them. Not a
 // published API, so a new Violentmonkey release can change any of them.
 //
 // - Run on demand, with `pnpm run test:vm-api`, after `sm-dev --manager

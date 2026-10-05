@@ -2,7 +2,7 @@
 // background: `{cmd, data}` through `chrome.runtime.sendMessage`, from
 // a hidden page of VM's own (its options page), since VM answers no
 // other sender. Not a published API: what each call takes and gives is
-// listed in docs/sm-dev-external-managers.md, which the version check
+// listed in docs/sm-dev-violentmonkey.md, which the version check
 // (tests/vm-api/vm-api.spec.ts) tries against a fetched VM.
 
 import { installedManagers, openHiddenPage, type HiddenPage } from './browser-extensions.js';

@@ -154,7 +154,7 @@ export type TabState =
   | 'changed'
   | 'kept-out'
   // Under another manager, which doesn't say what ran: its rules match
-  // the tab's page, or don't (see docs/sm-dev-external-managers.md).
+  // the tab's page, or don't (see docs/sm-dev-violentmonkey.md).
   | 'expected'
   | 'not-expected';
 

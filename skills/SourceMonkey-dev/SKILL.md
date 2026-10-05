@@ -24,8 +24,9 @@ description: Develop, debug and test userscripts with SourceMonkey's sm-dev tool
 - So header rules, `@grant`, `@require`, `@run-at`, worlds, `GM_*`
   storage and `GM_xmlhttpRequest` behave as they will for users (see
   [How a run uses the extension](#how-a-run-uses-the-extension)).
-- **A run can use Violentmonkey instead**, to check a script under an
-  alternate manager. See
+- **A run can use Tampermonkey or Violentmonkey instead**: to check a
+  script is portable across managers, or to debug something that works
+  in one but not another. sm-dev downloads either. See
   [Testing under other managers](#testing-under-other-managers).
 - **The browser's CDP port stays open** to you as well.
   - Anything sm-dev has no command for (back button, window size, mouse
@@ -723,14 +724,16 @@ test('adds the button', async ({ page, loadUserscript, gm, reports }) => {
 
 ## Testing under other managers
 
-A run can load its scripts into **Violentmonkey** instead of
-SourceMonkey, to check a script under a manager its users have.
-Tampermonkey runs only drive pages for now.
+A run can load its scripts into **Tampermonkey** (`--manager tm`) or
+**Violentmonkey** (`--manager vm`) instead of SourceMonkey: to check a
+script is portable, or to debug a difference between managers by
+running the same script and page under each.
 
 ```sh
-pnpm sm-dev --manager vm manager fetch     # once: download Violentmonkey
-R="pnpm sm-dev --manager vm --run Dvm"
-$R --temp-browser start sites/x/y.user.js https://x.com/ --detach
+pnpm sm-dev --manager tm manager fetch     # once each: download Tampermonkey,
+pnpm sm-dev --manager vm manager fetch     # and Violentmonkey
+pnpm sm-dev --manager tm --run Dtm --temp-browser start sites/x/y.user.js https://x.com/ --detach
+pnpm sm-dev --manager vm --run Dvm --temp-browser start sites/x/y.user.js https://x.com/ --detach
 ```
 
 It reports much less than SourceMonkey: which scripts a tab runs is

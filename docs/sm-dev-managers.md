@@ -6,17 +6,18 @@ Status: proposal, partly built. Built so far:
 - script and collection numbers;
 - for SourceMonkey: `collection list|show|enable|disable|refresh|rename`
   and `script list|show|print|enable|disable|refresh|install|uninstall|move`;
-- `--manager`, `manager fetch|install|enable|disable`, the managers in
-  `status`, and runs under TM that drive pages but load no scripts;
-- under VM, the `collection` and `script` commands, and runs that load
-  their scripts into it (see
-  [sm-dev-external-managers.md](sm-dev-external-managers.md)).
+- `--manager`, `manager fetch|install|enable|disable`, and the
+  managers in `status`;
+- under VM and TM, the `collection` and `script` commands, and runs
+  that load their scripts into it (see
+  [sm-dev-violentmonkey.md](sm-dev-violentmonkey.md) and
+  [sm-dev-tampermonkey.md](sm-dev-tampermonkey.md)).
 
 sm-dev today runs scripts *through* SourceMonkey in a run's own test
 collection. This adds commands to look at and change what a userscript
 manager has installed: its collections, its scripts, and the extension
-itself. They target SourceMonkey first, and are shaped so Tampermonkey
-(TM) and Violentmonkey (VM) can implement them later.
+itself. They target SourceMonkey first, and Tampermonkey (TM) and
+Violentmonkey (VM) implement them too.
 
 ## Goals
 
@@ -57,8 +58,7 @@ itself. They target SourceMonkey first, and are shaped so Tampermonkey
   SourceMonkey only, and this run uses Tampermonkey`.
   - Commands that only drive Chrome (`snapshot`, `click`, `newtab`,
     ...) work under every manager.
-  - Those that work through SourceMonkey list it alone, until TM and VM
-    get their own way to do them.
+  - Those that work through SourceMonkey alone list it alone.
 - A browser can have several managers at once. The commands only talk
   to the one chosen, so a kept browser can hold all three.
   - Each enabled manager but the chosen one runs its scripts too, so
@@ -187,9 +187,10 @@ and other scripts being added or removed.
     `sourcemonkey://SourceMonkey/foo.user.js%23E4/...`. That keeps the
     stack trace, the console and the viewer naming a script alike.
 - **Other managers:** Violentmonkey has numeric script ids of its own,
-  used the same way. Tampermonkey uses UUIDs, so under it E-ids follow
-  the stored order instead, and can shift when scripts are added or
-  removed.
+  used the same way. Tampermonkey uses uuids, so sm-dev numbers them
+  itself, in a file in its cache, holding each number 7 days after it
+  last saw the script (see
+  [sm-dev-tampermonkey.md](sm-dev-tampermonkey.md#ids)).
 
 ## Collection numbers
 
@@ -416,18 +417,18 @@ What `script show` shows, where the manager has it:
 
 ## What works under each manager
 
-| Feature | sm | vm | tm now | tm planned |
-| --- | --- | --- | --- | --- |
-| `manager` commands, `status` | yes | yes | yes | yes |
-| `start`, page commands, `eval --page`, `snapshot`, `logs` | yes | yes | yes, in a run with no scripts | yes |
-| `collection` and `script` verbs | yes | yes, with one collection, `C0` | refused | yes, with one collection, `C0` |
-| Run's scripts, `load`, `update`, `--watch` | yes, in a test collection | installed as normal scripts, removed at the end of the run | refused | as under VM |
-| `scripts`, `status`: scripts on a tab | reported by the extension | predicted by their match rules | refused | as under VM |
-| `eval` in a script | yes | no: a script's scope can't be reached. `eval --page` works | no scripts to eval in | as under VM |
-| Reports, `wait` for script starts | yes | no | refused | no |
-| `menu`, `get`/`set`, `values`, `--values` | yes | no; future work | refused | no; future work |
-| Tab claims (other scripts kept out of run tabs) | yes | no: all the manager's scripts run | no | no |
-| Following tabs a page opens | yes | no | no | no |
+| Feature | sm | vm | tm |
+| --- | --- | --- | --- |
+| `manager` commands, `status` | yes | yes | yes |
+| `start`, page commands, `eval --page`, `snapshot`, `logs` | yes | yes | yes |
+| `collection` and `script` verbs | yes | yes, with one collection, `C0` | yes, with one collection, `C0` |
+| Run's scripts, `load`, `update`, `--watch` | yes, in a test collection | installed as normal scripts, removed at the end of the run | as under VM |
+| `scripts`, `status`: scripts on a tab | reported by the extension | predicted by their match rules | as under VM, with TM's own matching for its other scripts |
+| `eval` in a script | yes | no: a script's scope can't be reached. `eval --page` works | as under VM |
+| Reports, `wait` for script starts | yes | no | no |
+| `menu`, `get`/`set`, `values`, `--values` | yes | no; future work | no; future work |
+| Tab claims (other scripts kept out of run tabs) | yes | no: all the manager's scripts run | no |
+| Following tabs a page opens | yes | no | no |
 
 - A run under TM or VM has no link to SourceMonkey:
   `ExtensionLink.without` stands in, claiming no tabs, hearing no
@@ -436,18 +437,17 @@ What `script show` shows, where the manager has it:
 ## How TM and VM are driven
 
 - Running scripts and the `collection` / `script` commands under them
-  are designed in
-  [sm-dev-external-managers.md](sm-dev-external-managers.md).
-- Neither has an API other extensions or CDP can call. sm-dev drives
-  their own pages over CDP, as the cross-manager e2e drivers already do
-  (`tests/fixtures/manager.ts`):
-  - VM: messages sent from its options page, the calls its own UI makes.
-  - TM: reading and clicking its dashboard. This breaks when TM changes
-    its pages, and the docs will say so.
+  are designed in [sm-dev-violentmonkey.md](sm-dev-violentmonkey.md)
+  and [sm-dev-tampermonkey.md](sm-dev-tampermonkey.md).
+- Neither has an API other extensions or CDP can call. sm-dev opens a
+  hidden page of the manager's own over CDP, and sends from there the
+  messages the manager's own pages send its background:
+  - VM: from its options page.
+  - TM: from its dashboard.
 - The `collection` and `script` commands call `ManagerControl`
   (`manager-commands.ts`): SourceMonkey's through its `ExtensionLink`,
   and another manager's through `ExternalManager`
-  (`external-manager.ts`), which VM implements and TM will. Commands a
+  (`external-manager.ts`), which VM and TM implement. Commands a
   manager can't do are refused by its per-command list
   (`unsupportedCommand`).
 
@@ -467,7 +467,7 @@ What `script show` shows, where the manager has it:
    implementation (done).
 6. `--manager`, `manager fetch|install|enable|disable`, the managers in
    `status`, and runs under TM or VM that drive pages (done).
-7. VM (done), then TM, behind the same commands.
+7. VM, then TM, behind the same commands (done).
 8. Separate: move the cross-manager e2e projects onto fetched copies.
 
 ## Changing the person's real scripts

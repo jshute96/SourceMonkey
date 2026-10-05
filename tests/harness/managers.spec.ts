@@ -145,9 +145,9 @@ test('manager install, enable and disable, with a warning for the other one enab
 test('a run under another manager drives its pages, and refuses what needs SourceMonkey', async () => {
   test.setTimeout(90_000);
   const page = pathToFileURL(path.join(dir, 'page.html')).href;
-  const withScript = await cli('--manager', 'tm', '--temp-browser', 'start', path.join(dir, 'x.user.js'));
-  expect(withScript.code).toBe(2);
-  expect(withScript.stderr).toContain('A run can\'t load scripts into Tampermonkey yet.');
+  const withValues = await cli('--manager', 'tm', '--temp-browser', 'start', '--values', '{"a":1}', path.join(dir, 'x.user.js'));
+  expect(withValues.code).toBe(2);
+  expect(withValues.stderr).toContain('The --values flag works with SourceMonkey only, and --manager names Tampermonkey');
 
   const run = await cli('--manager', 'vm', '--temp-browser', 'start', page, '--', 'status', '--', 'snapshot', '--', 'values');
   expect(run.stdout).toContain('(Chrome ');

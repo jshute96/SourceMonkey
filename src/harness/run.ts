@@ -25,8 +25,7 @@ import { launchExtensionBrowser } from './extension-launch.js';
 import { fetchManager, fetchedVersion } from './manager-fetch.js';
 import { DEFAULT_MANAGER, MANAGERS, managerFlag, type ManagerName } from './managers.js';
 import { ExtensionLink, linkRunId, type ExtensionEvent } from './extension-link.js';
-import { ExternalRunScripts, externalControl, externalOthers, type ExternalManager } from './external-manager.js';
-import { Violentmonkey } from './violentmonkey.js';
+import { ExternalRunScripts, externalControl, externalOthers, openExternalManager, type ExternalManager } from './external-manager.js';
 import type { ErrorReport, PageLink, SkipReport, StartReport } from './host.js';
 import { attachPage, targetIdOf, type AttachOptions, type PageAttachment } from './page-watch.js';
 import { pageSays } from './page-commands.js';
@@ -873,27 +872,27 @@ async function runInBrowser(
     return 1;
   }
   // Under another manager, the manager runs every script it has, and
-  // the run's tabs are plain browser tabs. Under Violentmonkey, the
-  // run's scripts go into it too (external-manager.ts).
+  // the run's tabs are plain browser tabs. The run's scripts go into
+  // it too (external-manager.ts).
   if (manager !== 'sourcemonkey' && managerNow !== 'installed' && managerNow !== null) {
     const fix = managerNow === 'disabled' ? 'manager enable' : 'manager install';
     opts.out(`[sm-dev] ${label} is ${managerNow === 'disabled' ? 'turned off' : 'not installed'} in this browser. Use sm-dev${browserArg(session.endpoint, session.launched)} ${managerFlag(manager)} ${fix}.`);
     if (opts.files.length > 0) return 1;
   }
-  if (manager === 'violentmonkey' && (managerNow === 'installed' || managerNow === null)) {
-    let vm: Violentmonkey;
+  if (manager !== 'sourcemonkey' && (managerNow === 'installed' || managerNow === null)) {
+    let opened: ExternalManager;
     try {
-      vm = await Violentmonkey.open(session.endpoint, browserArg(session.endpoint, session.launched));
+      opened = await openExternalManager(manager, session.endpoint, browserArg(session.endpoint, session.launched));
     } catch (err) {
       opts.out(`[sm-dev] ${(err as Error).message}`);
       return 1;
     }
-    const scripts = new ExternalRunScripts(vm, { id: remote.id ?? 'unnamed', started: new Date(remote.startedAt).toISOString() });
-    held.external = { manager: vm, scripts };
+    const scripts = new ExternalRunScripts(opened, { id: remote.id ?? 'unnamed', started: new Date(remote.startedAt).toISOString() });
+    held.external = { manager: opened, scripts };
     try {
       // A throwaway browser's settings are the run's own, so local
       // test pages run scripts, as under SourceMonkey.
-      if (session.launched) await vm.allowFilePages();
+      if (session.launched) await opened.allowFilePages();
       for (const line of await scripts.removeLeftovers()) opts.out(`[sm-dev] ${line}`);
     } catch (err) {
       opts.out(`[sm-dev] ${(err as Error).message}`);
@@ -922,6 +921,7 @@ async function runInBrowser(
         return id === undefined ? undefined : String(id);
       },
       prefix: external.manager.scriptUrlPrefix,
+      ...(external.manager.remapStack ? { remap: (text: string) => external.manager.remapStack!(text) } : {}),
     };
   }
   link.onRestart((restored) => {
@@ -992,7 +992,7 @@ async function runInBrowser(
       // typed to start or load, so files of the same name stay apart.
       const name = typedName(opts, file);
       const text = await readFile(file, 'utf8');
-      if (manager === 'violentmonkey' && !external) {
+      if (manager !== 'sourcemonkey' && !external) {
         opts.out(`[sm-dev] ${label} was not on in this browser when the run started, so the run can't load scripts into it. Start a new run once it's on.`);
         return false;
       }

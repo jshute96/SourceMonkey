@@ -2,8 +2,8 @@
 // installed, its collections and scripts, listed, shown and changed, as
 // text or JSON. The same in a run (through its ExtensionLink) and
 // without one (a connection of their own, see `openManagerLink`). See
-// docs/sm-dev-managers.md. Under Violentmonkey, the same commands over
-// `externalControl` (external-manager.ts).
+// docs/sm-dev-managers.md. Under Violentmonkey or Tampermonkey, the
+// same commands over `externalControl` (external-manager.ts).
 //
 // Collections are named `C3` and scripts `E12` by the numbers
 // SourceMonkey gives them (sticky-numbers.ts), so a name means the same

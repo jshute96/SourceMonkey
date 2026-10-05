@@ -471,22 +471,21 @@ sm-dev manager disable                             # turn SourceMonkey off there
     `get`, `set`, `menu`, `connect`, `--values`) are refused: `The
     values command works with SourceMonkey only, and this run uses
     Violentmonkey`.
-- **Under Violentmonkey**, a run loads its scripts too, as normal
-  scripts in it, and removes them when it ends.
-  - `scripts` shows each with its Violentmonkey id: `1: Hello
+- **Under either**, a run loads its scripts too, as normal scripts in
+  the manager, and removes them when it ends.
+  - `scripts` shows each with its E-id there: `1: Hello
     (hello.user.js), E6 in Violentmonkey`.
   - Whether a script is on a tab is predicted from its match rules,
-    since Violentmonkey doesn't say what ran. `scripts` and `status`
+    since the manager doesn't say what ran. `scripts` and `status`
     list them under `Expected on tab T1 using match rules:` and `Not
     expected on tab T1:`.
-  - A script Violentmonkey already has by the same name and namespace
+  - A script the manager already has by the same name and namespace
     is never replaced: `start` refuses, naming it.
   - The `collection` and `script` commands work on its scripts, in one
     collection, `C0`.
-  - Details: [sm-dev-external-managers.md](sm-dev-external-managers.md).
-- **Under Tampermonkey**, a run loads no scripts yet: `start` with a
-  script is refused, as are `scripts`, `load`, `update` and the
-  `collection` and `script` commands.
+  - Details: [sm-dev-violentmonkey.md](sm-dev-violentmonkey.md), and
+    for Tampermonkey's differences,
+    [sm-dev-tampermonkey.md](sm-dev-tampermonkey.md).
 - A browser can hold several managers. Each one enabled beside the
   chosen one runs its scripts too, so sm-dev warns when it connects,
   and in `status`: `Warning: Tampermonkey is also enabled in this

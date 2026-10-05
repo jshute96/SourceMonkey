@@ -1,7 +1,7 @@
 // sm-dev under the real Violentmonkey: the `collection` and `script`
 // commands, and a run's scripts installed into it and removed after.
 // Uses the copy `manager fetch` put in sm-dev's cache, and is skipped
-// without one. See docs/sm-dev-external-managers.md.
+// without one. See docs/sm-dev-violentmonkey.md.
 
 import { execFile } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';

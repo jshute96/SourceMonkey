@@ -254,8 +254,10 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/extension-launch.ts` | Launches Chromium with the built extension (or a fetched manager) on a temp profile: `--temp-browser`, and the e2e suites' browser |
 | `src/harness/extension-link.ts` | A run's or fixture test's connection to the real extension: version check, worker calls, pushes, claims and lease, events; the collection and script calls, also run-less |
 | `src/harness/manager-commands.ts` | The `collection` and `script` verbs: list, show and change a manager's collections and scripts, as text or JSON |
-| `src/harness/external-manager.ts` | Managers other than SourceMonkey: their `collection`/`script` calls, a run's scripts in them, and scripts on a tab |
+| `src/harness/external-manager.ts` | Violentmonkey and Tampermonkey: their `collection`/`script` calls, a run's scripts in them, and scripts on a tab |
 | `src/harness/violentmonkey.ts` | Violentmonkey, driven by the messages its own pages send, from a hidden options page |
+| `src/harness/tampermonkey.ts` | Tampermonkey, driven by the messages its dashboard sends, with local `@require`s rewritten and stack lines mapped back |
+| `src/harness/tm-ids.ts` | The E-numbers sm-dev keeps for Tampermonkey's script uuids, in a file in its cache |
 | `src/harness/script-mark.ts` | The comment sm-dev adds as a script's last line in another manager: its file, and for a run's, the run |
 | `src/harness/managers.ts` | The userscript managers `--manager` names (SourceMonkey, Tampermonkey, Violentmonkey), with their Web Store ids |
 | `src/harness/browser-extensions.ts` | The managers in a browser, over CDP and a hidden `chrome://extensions`: list, enable, load unpacked, Allow User Scripts; hidden pages kept open |
@@ -516,6 +518,7 @@ unit tests.
 | `tests/unit/harness/protocol-version.test.mjs` | Unit tests for comparing the extension's sm-dev protocol version with sm-dev's |
 | `tests/unit/harness/runs.test.mjs` | Unit tests for the run registry: a sent line's round trip, stale records, `stop`'s SIGTERM fallback |
 | `tests/unit/harness/script-mark.test.mjs` | Unit tests for sm-dev's comment on scripts in another manager, and where a local script is installed from |
+| `tests/unit/harness/tampermonkey.test.mjs` | Unit tests for the `@require` rewrite sm-dev makes for Tampermonkey, and its uuid numbering |
 | `tests/unit/harness/managers.test.mjs` | Unit tests for `--manager` names, which commands each manager allows, and reading a fetched CRX and its zip |
 | `tests/unit/harness/prompt-editor.test.mjs` | Unit tests for multi-line prompt editing: Enter in blocks, Up/Down, paste, line keys |
 | `tests/unit/harness/prompt-history.test.mjs` | Unit tests for the prompt's history file: loading, appending, trimming |
@@ -546,7 +549,9 @@ built extension loaded; fixtures in `tests/fixtures/harness.ts`.
 | `tests/harness/temp-extension.spec.ts` | `--temp-browser` runs: the launched extension, `--values` and local files, run commands, managed scripts (E1) kept out |
 | `tests/harness/managers.spec.ts` | Managers in a browser: `manager install`/`enable`/`disable`, the warnings, and a run under another manager |
 | `tests/harness/violentmonkey.spec.ts` | sm-dev under the fetched Violentmonkey: the collection and script commands, and a run's scripts in it |
+| `tests/harness/tampermonkey.spec.ts` | sm-dev under the fetched Tampermonkey: the collection and script commands, a run's scripts, and their stack lines |
 | `tests/vm-api/vm-api.spec.ts` | `test:vm-api`: whether the fetched Violentmonkey still answers each call sm-dev makes |
+| `tests/tm-api/tm-api.spec.ts` | `test:tm-api`: whether the fetched Tampermonkey still answers each call sm-dev makes |
 | `tests/harness/fixture.spec.ts` | The consumer fixture from `lib/`: a script against a served page, `gm` and `reports`, the up-front URL check, the explained miss |
 
 ## GreasyFork Corpus Tooling (`tests/greasyfork-examples/`)
@@ -631,7 +636,8 @@ For userscript repos to install, so their coding agents know how to use `sm-dev`
 | `docs/local-copy.md` | Local copies of a script: the Downloads collection, why `chrome.downloads`, the dialog, header rewriting, dependency layout, what's next |
 | `docs/harness-design.md` | The harness other repos install: `sm-dev` and the Playwright fixture, running scripts in the real extension |
 | `docs/sm-dev-design.md` | Internals of `sm-dev`: runs and clients, command input, tabs and claims, page commands, waiting, the extension's events |
-| `docs/sm-dev-external-managers.md` | Design draft: sm-dev's run scripts and collection/script commands under Violentmonkey and Tampermonkey |
+| `docs/sm-dev-violentmonkey.md` | Design: sm-dev's run scripts and collection/script commands under Violentmonkey, and what other managers share |
+| `docs/sm-dev-tampermonkey.md` | Design: sm-dev under Tampermonkey, as differences from Violentmonkey (dashboard messages, ids, `@require`s, line numbers) |
 | `docs/sm-dev-managers.md` | Design draft: sm-dev commands for managing installed scripts, collections and managers (SM, TM, VM) |
 | `docs/sm-dev-logs.md` | A run's logs: the sources, what the stream, `logs` and `wait log` show, positions, and attributing lines |
 | `docs/sm-dev-json.md` | sm-dev's `--json` output: how it prints, each command's result type, and examples |

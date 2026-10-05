@@ -75,7 +75,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 
 `--manager` picks SourceMonkey (`sm`, the default), Tampermonkey (`tm`)
 or Violentmonkey (`vm`). A run keeps the one it started with. How to
-test a script under VM:
+test a script under VM or TM:
 [other-managers.md](other-managers.md).
 
 | Command | Does |
@@ -83,18 +83,17 @@ test a script under VM:
 | `--manager tm manager fetch` | Download or update TM (or VM) from the Chrome Web Store into `~/.cache/sm-dev/managers` |
 | `[--manager tm] manager install` | Load the manager into the browser unpacked, with Allow User Scripts on. No run needed |
 | `[--manager tm] manager enable` / `disable` | Turn it on or off in the browser. Not SourceMonkey while a run uses it |
-| `--manager vm --temp-browser start <script> <url>` | A run under VM: its scripts are installed in VM, and removed when it ends. `values`, `get`, `set`, `menu`, `connect` and `--values` are refused |
-| `--manager vm script list`, `script E3 show`, ... | VM's scripts, by its ids, in one collection, `C0`. `collection C0 disable` is VM's switch for all scripts |
-| `--manager tm --temp-browser start <url>` | A run under TM: page commands work, no scripts load, and SourceMonkey-only commands (`scripts`, `values`, `menu`, `collection`, ...) are refused |
+| `--manager vm --temp-browser start <script> <url>` | A run under VM (or `tm`): its scripts are installed in the manager, and removed when it ends. `values`, `get`, `set`, `menu`, `connect` and `--values` are refused |
+| `--manager vm script list`, `script E3 show`, ... | The manager's scripts, by E-ids, in one collection, `C0`. `collection C0 disable` is its switch for all scripts |
 
 - A manager enabled beside the chosen one runs its scripts in the run's
   tabs too: the run's first lines and `status` warn of it.
-- Under VM, `scripts` and `status` show which scripts each tab is
-  expected to run, by their match rules (`Expected on tab T1 using match rules:`), not what
-  ran. A run's script shows its VM id too: `1: Hello (hello.user.js),
-  E6 in Violentmonkey`.
-- Under VM, a run never replaces a script VM already has by the same
-  name and namespace: `start` refuses, naming it.
+- Under VM or TM, `scripts` and `status` show which scripts each tab
+  is expected to run, by their match rules (`Expected on tab T1 using
+  match rules:`), not what ran. A run's script shows its E-id there
+  too: `1: Hello (hello.user.js), E6 in Violentmonkey`.
+- Under VM or TM, a run never replaces a script the manager already
+  has by the same name and namespace: `start` refuses, naming it.
 
 ## Runs
 

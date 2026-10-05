@@ -234,12 +234,18 @@ until the year 2255.
   names SourceMonkey's code, or has no frames at all (a thrown
   string). A script body's throw prints as its `threw` event instead.
 - The `[name]` rule is gone.
-- Under Violentmonkey, the same with its URLs
+- Under Violentmonkey or Tampermonkey, the same with its URLs
   (`ExtensionHost.external`): its worlds and its code
   (`chrome-extension://<its id>/`) are the scripts', and a script is
-  named by its code's URL, `<name>.user.js#<its id>`. It reports no
-  `threw` events, so a script's uncaught error is a `script` line. See
-  [sm-dev-external-managers.md](sm-dev-external-managers.md#logs-and-errors).
+  named by its code's URL.
+  - Violentmonkey's is `<name>.user.js#<its id>`, Tampermonkey's
+    `userscript.html?name=<name>.user.js&id=<uuid>`.
+  - Neither reports `threw` events, so a script's uncaught error is a
+    `script` line.
+  - Tampermonkey moves a script's lines; the manager maps the run's
+    scripts' back (`ExtensionHost.external.remap`).
+  - See [sm-dev-violentmonkey.md](sm-dev-violentmonkey.md#logs-and-errors)
+    and [sm-dev-tampermonkey.md](sm-dev-tampermonkey.md#logs-and-errors).
 
 ## Catching up after a service worker restart
 

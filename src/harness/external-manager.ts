@@ -1,7 +1,7 @@
 // sm-dev's `collection` and `script` commands, and a run's scripts,
-// under a manager other than SourceMonkey: Violentmonkey now, and
-// Tampermonkey later, behind `ExternalManager`. See
-// docs/sm-dev-external-managers.md.
+// under a manager other than SourceMonkey: Violentmonkey and
+// Tampermonkey, behind `ExternalManager`. See
+// docs/sm-dev-violentmonkey.md and docs/sm-dev-tampermonkey.md.
 //
 // - The manager has no collections, so one stands for all its scripts:
 //   `C0`, a number SourceMonkey never gives.
@@ -90,7 +90,19 @@ export interface ExternalManager {
   scriptIdOf(url: string): number | undefined;
   /** What every URL the manager runs code under starts with. */
   readonly scriptUrlPrefix: string;
+  /** The scripts the manager's own rules match to `url`, on or not, when it can say. */
+  matching?(url: string): Promise<number[]>;
+  /** Notes a run's script's `@require` files, in order, for `remapStack`. */
+  noteRequires?(id: number, requires: { url: string; source: string }[]): void;
+  /** `text` with stack lines the manager moved pointed back at the scripts' own lines. */
+  remapStack?(text: string): string;
   close(): Promise<void>;
+}
+
+/** Connects to `name` in the browser at `endpoint` (see `Violentmonkey.open`). */
+export async function openExternalManager(name: 'violentmonkey' | 'tampermonkey', endpoint: string, browserArg = ''): Promise<ExternalManager> {
+  if (name === 'tampermonkey') return (await import('./tampermonkey.js')).Tampermonkey.open(endpoint, browserArg);
+  return (await import('./violentmonkey.js')).Violentmonkey.open(endpoint, browserArg);
 }
 
 /** The internal id of `C0`, the collection standing for all the manager's scripts. */
@@ -401,6 +413,7 @@ export class ExternalRunScripts {
     const code = markedText(text, { run: this.run.id, started: this.run.started, file });
     const result = await this.manager.install(code, { ...(id !== undefined ? { id } : {}), url: installUrlOf(prepared.script.fileUrl), files: installFiles(prepared), local: true });
     this.ids.set(file, result.id);
+    this.manager.noteRequires?.(result.id, (prepared.script.requires ?? []).map((r) => ({ url: r.url, source: r.source })));
     return { id: result.id, replaced: before !== undefined || !result.isNew };
   }
 
@@ -413,8 +426,9 @@ export class ExternalRunScripts {
 
 /**
  * The manager's other scripts, for `scripts` and `status`
- * (`ConsoleContext.others`): those expected on a tab, by sm-dev's own
- * matching of their rules, since the manager doesn't say what ran.
+ * (`ConsoleContext.others`): those expected on a tab, by the manager's
+ * own matching where it gives it, else by sm-dev's, since the manager
+ * doesn't say what ran.
  * `runScripts`: the manager's ids of the run's own, which the run lists
  * apart.
  */
@@ -447,8 +461,12 @@ export function externalOthers(
       const url = tab.page.url();
       if (!await manager.applied()) return [];
       const own = runScripts();
-      return (await manager.scripts())
-        .filter((s) => s.enabled && !own.has(String(s.id)) && explainMatch(matchingOf(s), url).matches)
+      // Listed first, so the manager knows every script's id. Its
+      // matching doesn't leave out the scripts turned off.
+      const scripts = await manager.scripts();
+      const matched = manager.matching ? new Set(await manager.matching(url)) : null;
+      return scripts
+        .filter((s) => s.enabled && !own.has(String(s.id)) && (matched ? matched.has(s.id) : explainMatch(matchingOf(s), url).matches))
         .map((s) => other(s.id, s.name));
     },
     installed: (id, _label, name) => other(Number(id), name),

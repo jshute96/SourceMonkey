@@ -1,12 +1,12 @@
 // The comment sm-dev adds as the last line of a script it installs in
-// another manager (Violentmonkey, and later Tampermonkey), saying where
+// another manager (Violentmonkey, Tampermonkey), saying where
 // it came from, and for a run's script, which run:
 //
 //   // sm-dev: run=D1 started=2026-10-04T12:00:00.000Z file=/home/me/foo.user.js
 //
 // In the script's own text, since that's what every manager keeps as
 // given, so no manager's internals are relied on. Last, so it moves no
-// line numbers. See docs/sm-dev-external-managers.md.
+// line numbers. See docs/sm-dev-violentmonkey.md.
 
 /** What the comment says. */
 export interface ScriptMark {

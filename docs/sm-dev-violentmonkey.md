@@ -1,7 +1,12 @@
-# sm-dev under Violentmonkey and Tampermonkey
+# sm-dev under Violentmonkey
 
-Status: built for Violentmonkey (VM). Tampermonkey (TM) is next, and
-its parts here are still to study.
+Status: built.
+
+- This doc covers Violentmonkey (VM), and the parts every manager
+  other than SourceMonkey shares: the mark, the run's scripts, `C0`,
+  and the commands.
+- Tampermonkey (TM) works the same way, with the differences in
+  [sm-dev-tampermonkey.md](sm-dev-tampermonkey.md).
 
 [sm-dev-managers.md](sm-dev-managers.md) covers choosing a manager
 (`--manager`) and installing it. This doc covers what comes next:
@@ -94,7 +99,7 @@ manager about as well as under SourceMonkey (SM).
     live run from an old one with the same id.
 - Why a comment at the end:
   - It's in the script's text, which every manager keeps as given, so
-    it relies on no manager's internals, and TM can share it.
+    it relies on no manager's internals, and TM shares it.
   - Last, it shifts no line numbers in logs and errors. In the header
     it would, and would also look like a change to the script itself.
   - Someone looking at the script in VM's editor can see where it
@@ -163,7 +168,8 @@ manager about as well as under SourceMonkey (SM).
   - It's a prediction: VM's own rules can differ in edge cases, and its
     blacklist and the per-script overrides set in VM's editor aren't
     applied.
-  - The same works under TM, which has no call to ask.
+  - Under TM, the lists come from TM's own matching instead (see
+    [sm-dev-tampermonkey.md](sm-dev-tampermonkey.md#scripts-on-a-tab)).
 - What actually ran is possible later (see
   [Future and alternate work](#future-and-alternate-work)).
 
@@ -298,22 +304,21 @@ Where VM defines these (links are to v2.49.0, the version tried):
 | `match`, `validate` | sm-dev's own checks, as now |
 | `logs`, `wait log` | See [Logs and errors](#logs-and-errors) |
 | `values`, `get`, `set`, `--values`, `menu` | Refused (see [Future and alternate work](#future-and-alternate-work)) |
-| `start` under TM with scripts | Refused for now |
 | `eval` in a script, `connect` | Refused |
 
 ## Differences from SourceMonkey
 
 | | SourceMonkey | Violentmonkey | Tampermonkey |
 | --- | --- | --- | --- |
-| Driven by | `ExtensionLink` calls | Messages from its options page | To study |
-| Script ids | `E<n>`, kept 7 days after removal | `E<n>` from VM's id | To study (UUIDs) |
+| Driven by | `ExtensionLink` calls | Messages from its options page | Messages from its dashboard |
+| Script ids | `E<n>`, kept 7 days after removal | `E<n>` from VM's id | `E<n>` kept by sm-dev for TM's uuids |
 | Collections | Real, `C1`, ... | `C0` only | `C0` only |
-| Run's scripts | A test collection, removed at the end | Installed and marked as the run's, removed at the end; never over an installed script | To study |
+| Run's scripts | A test collection, removed at the end | Installed and marked as the run's, removed at the end; never over an installed script | As under VM |
 | Run's scripts kept to its tabs | Yes | No | No |
-| Scripts on a tab | Reported by the extension | Predicted by sm-dev's matching | Predicted by sm-dev's matching |
-| Script logs | `sm` source, and console lines | Console lines, by source URL | To study |
-| `file://` pages | Runs there | Blacklisted by default; cleared in a `--temp-browser` | To study |
-| Values, menus | Yes | No | To study |
+| Scripts on a tab | Reported by the extension | Predicted by sm-dev's matching | Predicted by TM's matching |
+| Script logs | `sm` source, and console lines | Console lines, by source URL | Console lines, by source URL |
+| `file://` pages | Runs there | Blacklisted by default; cleared in a `--temp-browser` | Needs Chrome's file access, on for an unpacked copy |
+| Values, menus | Yes | No | No |
 
 ## Code layout
 
@@ -331,19 +336,10 @@ Where VM defines these (links are to v2.49.0, the version tried):
   comment sm-dev adds.
 - In a run (`run.ts`), the host traces stack URLs to scripts
   (`ExtensionHost.external`), and expects no reports.
-- `unsupportedCommand` (`command-list.ts`) lists VM for the commands
-  it takes.
+- `unsupportedCommand` (`command-list.ts`) lists SM alone for the
+  commands that need it.
 - Tests: `tests/harness/violentmonkey.spec.ts` against the fetched VM
   (skipped without one), and the version check.
-
-## Build order
-
-1. The VM backend and its version check, and `collection` and
-   `script` commands under VM (done).
-2. The run's scripts: `start`, `load`, `update`, `--watch`, the clean
-   up when the run ends, `scripts` and `status` (done).
-3. Logs and errors by script (done).
-4. TM, in this doc or one of its own.
 
 ## Future and alternate work
 

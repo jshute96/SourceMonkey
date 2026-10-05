@@ -352,11 +352,7 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
     ] as [boolean, string][]).filter(([on]) => on).map(([, name]) => name);
     if (used.length > 0) throw new UsageError(`The start command was given no scripts, so it can't take ${used.join(' or ')}`);
   }
-  // A run loads its scripts into SourceMonkey or Violentmonkey.
-  if (lineManager === 'tampermonkey' && scripts.length > 0) {
-    throw new UsageError(`A run can't load scripts into ${MANAGERS[lineManager].label} yet. Start it without scripts, to drive its pages.`);
-  }
-  if (lineManager === 'violentmonkey' && opts.values) {
+  if (lineManager !== undefined && lineManager !== 'sourcemonkey' && opts.values) {
     throw new UsageError(`The ${opts.valuesFlag ?? '--values'} flag works with SourceMonkey only, and --manager names ${MANAGERS[lineManager].label}`);
   }
   if (lineTempBrowser && opts.cdp !== undefined) throw new UsageError('The --temp-browser flag can\'t be used with --browser');
@@ -1384,12 +1380,11 @@ async function managerHere(words: string[]): Promise<number> {
     const { browserArg } = await import('./run.js');
     for (const line of otherManagersWarning(await managersIn(session.endpoint) ?? [], chosen, browserArg(session.endpoint))) process.stderr.write(`${line}\n`);
     let manager: ManagerControl;
-    if (chosen === 'violentmonkey') {
-      const { Violentmonkey } = await import('./violentmonkey.js');
-      const { externalControl } = await import('./external-manager.js');
-      const vm = await Violentmonkey.open(session.endpoint, browserArg(session.endpoint));
-      closeManager = () => vm.close();
-      manager = externalControl(vm);
+    if (chosen !== 'sourcemonkey') {
+      const { externalControl, openExternalManager } = await import('./external-manager.js');
+      const external = await openExternalManager(chosen, session.endpoint, browserArg(session.endpoint));
+      closeManager = () => external.close();
+      manager = externalControl(external);
     } else {
       const link = await openManagerLink(session.context);
       if (link.versionNote) process.stderr.write(`${link.versionNote}\n`);
