@@ -1,6 +1,7 @@
 // A throwaway Chromium with the package's built SourceMonkey (dist/)
 // loaded: `sm-dev --temp-browser`'s browser, the `sourcemonkey/harness`
-// fixture's, and the repo's own e2e suites'.
+// fixture's, and the repo's own e2e suites'. With `--manager`, a
+// fetched Tampermonkey or Violentmonkey instead (manager-fetch.ts).
 //
 // - Playwright's Chromium, since Google Chrome (137+) ignores
 //   `--load-extension`. Hidden runs use Chrome's new headless mode
@@ -24,7 +25,9 @@ import { fileURLToPath } from 'node:url';
 import type { BrowserContext } from '@playwright/test';
 
 import { leaveDialogsOpen } from './console-commands.js';
-import { ExtensionMissingError, findExtensionWorker, sourceMonkeyExtensionId } from './extension-backend.js';
+import { ExtensionMissingError, extensionIdFromKey, findExtensionWorker, sourceMonkeyExtensionId } from './extension-backend.js';
+import { fetchedDir } from './manager-fetch.js';
+import { MANAGERS, managerFlag, type ManagerName } from './managers.js';
 import { rebuildAdvice } from './rebuild-advice.js';
 
 // dist/, beside lib/: in the checkout, and in an installed package,
@@ -50,6 +53,8 @@ export interface ExtensionLaunchOptions {
    * it would dismiss them first.
    */
   connectedElsewhere?: boolean;
+  /** The manager to load in place of SourceMonkey, already fetched. */
+  manager?: ManagerName;
 }
 
 export interface LaunchedExtensionBrowser {
@@ -64,13 +69,16 @@ export interface LaunchedExtensionBrowser {
 }
 
 /**
- * Launches Chromium with SourceMonkey loaded. Throws an error saying why
- * when it can't. It has one blank tab, opened after the warm-up (see
- * `warmUp`), for a run's first tab.
+ * Launches Chromium with SourceMonkey loaded, or `options.manager`.
+ * Throws an error saying why when it can't. It has one blank tab,
+ * opened after the warm-up (see `warmUp`), for a run's first tab.
  */
 export async function launchExtensionBrowser(options: ExtensionLaunchOptions = {}): Promise<LaunchedExtensionBrowser> {
-  if (!existsSync(path.join(EXTENSION_DIR, 'manifest.json'))) {
-    throw new Error(`The built extension is missing from ${EXTENSION_DIR}. ${rebuildAdvice()}`);
+  const manager = options.manager ?? 'sourcemonkey';
+  const dir = manager === 'sourcemonkey' ? EXTENSION_DIR : fetchedDir(manager);
+  if (!existsSync(path.join(dir, 'manifest.json'))) {
+    throw new Error(manager === 'sourcemonkey' ? `The built extension is missing from ${EXTENSION_DIR}. ${rebuildAdvice()}`
+      : `${MANAGERS[manager].label} isn't fetched. Fetch it with sm-dev ${managerFlag(manager)} manager fetch`);
   }
   const headed = options.headed === true;
   const profile = mkdtempSync(path.join(os.tmpdir(), 'sm-dev-extension-'));
@@ -80,15 +88,17 @@ export async function launchExtensionBrowser(options: ExtensionLaunchOptions = {
     try { rmSync(profile, { recursive: true, force: true }); } catch { /* Chrome may hold a file briefly */ }
   };
   try {
-    await prepareProfile(profile, options.downloadsDir);
+    if (manager === 'sourcemonkey') await prepareProfile(profile, options.downloadsDir);
+    else writePreferences(profile, fetchedId(dir, manager), options.downloadsDir);
     // Port 0 has Chrome pick a free port and write it to the profile.
     // A port picked here could be taken before Chrome binds it, and the
     // run would connect to whatever took it.
-    context = await launch(profile, headed, ['--remote-debugging-port=0', ...(options.muted === false ? [] : ['--mute-audio']), ...(options.args ?? [])]);
+    context = await launch(profile, headed, ['--remote-debugging-port=0', ...(options.muted === false ? [] : ['--mute-audio']), ...(options.args ?? [])], dir);
     const port = readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0].trim();
     if (options.connectedElsewhere) leaveDialogsOpen(context);
     if (options.downloadsDir) await chromeDownloads(context);
-    await warmUp(context);
+    if (manager === 'sourcemonkey') await warmUp(context);
+    else if (manager === 'tampermonkey') await quietTampermonkey(context, fetchedId(dir, manager));
     // The launch's first tab predates the warm-up, so scripts fail in
     // it. A new one replaces it (opened first: a headed browser with
     // no tab left would quit).
@@ -126,7 +136,31 @@ async function windowedUserAgent(executable: string): Promise<string | null> {
   return `Mozilla/5.0 (${platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`;
 }
 
-async function launch(profile: string, headed: boolean, args: string[] = []): Promise<BrowserContext> {
+/**
+ * Turns off Tampermonkey's "installed" page, which it opens in a new
+ * tab a second or so after each start of a copy loaded with
+ * `--load-extension` (Chrome installs it anew each time): its
+ * `notification_showUpdate` setting, set before it gets that far.
+ */
+async function quietTampermonkey(context: BrowserContext, id: string): Promise<void> {
+  const ours = (w: { url(): string }): boolean => w.url().startsWith(`chrome-extension://${id}/`);
+  const worker = context.serviceWorkers().find(ours) ?? await context.waitForEvent('serviceworker', { predicate: ours, timeout: 10_000 });
+  await worker.evaluate(async () => {
+    const key = '!extdb.#config';
+    const config = (await chrome.storage.local.get(key))[key] ?? { origin: 'normal', value: {} };
+    config.value.notification_showUpdate = 'off';
+    await chrome.storage.local.set({ [key]: config });
+  });
+}
+
+// The id of a fetched manager, from the key its manifest was given.
+function fetchedId(dir: string, manager: ManagerName): string {
+  const { key } = JSON.parse(readFileSync(path.join(dir, 'manifest.json'), 'utf8')) as { key?: unknown };
+  if (typeof key !== 'string') throw new Error(`The extension in ${dir} has no key in its manifest. Fetch it again with sm-dev --manager ${MANAGERS[manager].short} manager fetch`);
+  return extensionIdFromKey(key);
+}
+
+async function launch(profile: string, headed: boolean, args: string[] = [], dir = EXTENSION_DIR): Promise<BrowserContext> {
   const { chromium } = await import('@playwright/test');
   const userAgent = headed ? null : await windowedUserAgent(chromium.executablePath()).catch(() => null);
   try {
@@ -151,7 +185,7 @@ async function launch(profile: string, headed: boolean, args: string[] = []): Pr
       args: [
         ...(headed ? [] : ['--headless=new']),
         ...(userAgent ? [`--user-agent=${userAgent}`] : []),
-        ...extensionArgs(),
+        ...extensionArgs(dir),
         ...args,
       ],
     });
@@ -199,9 +233,9 @@ export async function prepareProfile(profile: string, downloadsDir?: string): Pr
   await primeFirstRun(profile);
 }
 
-/** The Chrome flags that load the package's SourceMonkey, and only it. */
-export function extensionArgs(): string[] {
-  return [`--disable-extensions-except=${EXTENSION_DIR}`, `--load-extension=${EXTENSION_DIR}`];
+/** The Chrome flags that load the package's SourceMonkey (or the extension in `dir`), and only it. */
+export function extensionArgs(dir = EXTENSION_DIR): string[] {
+  return [`--disable-extensions-except=${dir}`, `--load-extension=${dir}`];
 }
 
 // Grants the extension "Allow User Scripts" and pins it to the toolbar,

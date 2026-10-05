@@ -5,7 +5,10 @@ Status: proposal, partly built. Built so far:
 - `--json` on the existing commands (see [sm-dev-json.md](sm-dev-json.md));
 - script and collection numbers;
 - for SourceMonkey: `collection list|show|enable|disable|refresh|rename`
-  and `script list|show|print|enable|disable|refresh|install|uninstall|move`.
+  and `script list|show|print|enable|disable|refresh|install|uninstall|move`;
+- `--manager`, `manager fetch|install|enable|disable`, the managers in
+  `status`, and runs under TM or VM that drive pages but load no
+  scripts.
 
 sm-dev today runs scripts *through* SourceMonkey in a run's own test
 collection. This adds commands to look at and change what a userscript
@@ -37,11 +40,28 @@ itself. They target SourceMonkey first, and are shaped so Tampermonkey
   - The name is `sm`, `tm` or `vm`, or the full `sourcemonkey`,
     `tampermonkey` or `violentmonkey`, in any case (`SM`,
     `Tampermonkey`).
-  - Picks which extension the management commands talk to.
+  - Picks which extension the commands talk to, and the `manager`
+    verbs act on. They take the manager only from it.
   - With `--temp-browser`, also picks which extension the temp browser
     loads.
+- **A run works with one manager**, the one it started with, recorded
+  with the run. A later line's `--manager` has to match it, as its
+  `--browser` has to match the run's browser.
+  - Not for the `manager` verbs, which act on the browser's extensions
+    rather than the run: `--manager tm manager disable` beside a
+    SourceMonkey run turns Tampermonkey off in its browser.
+- **Each command lists the managers it works with**, in its help entry,
+  and is refused under another: `The values command works with
+  SourceMonkey only, and this run uses Tampermonkey`.
+  - Commands that only drive Chrome (`snapshot`, `click`, `newtab`,
+    ...) work under every manager.
+  - Those that work through SourceMonkey list it alone, until TM and VM
+    get their own way to do them.
 - A browser can have several managers at once. The commands only talk
   to the one chosen, so a kept browser can hold all three.
+  - Each enabled manager but the chosen one runs its scripts too, so
+    sm-dev warns of it when it connects to the browser, and in
+    `status`, with how to turn it off.
 
 ## Where the commands run
 
@@ -57,14 +77,19 @@ itself. They target SourceMonkey first, and are shaped so Tampermonkey
   - A `--browser` that names a browser no run is in lists that browser,
     with no run. One naming another run's browser than the run picked
     is refused, as for any command sent to a run.
+- **The `manager` verbs** run in sm-dev itself, never in a run. They act
+  on the `--browser` browser unless a run is picked (by `--run`,
+  `start` or `attach`), and then on its browser. An active run that
+  isn't picked is left alone, as `status` with no run shows.
 - **`--temp-browser` with no run** would make a browser and drop it
   straight away, so it's only useful inside a run (`start --notab`, then
   the commands).
 
 ## Command form
 
-- **Noun, then what it acts on, then verb:** `manager tm enable`,
-  `collection C3 refresh`, `script E4 move C2`. `help collection` lists
+- **Noun, then what it acts on, then verb:** `collection C3 refresh`,
+  `script E4 move C2`. The `manager` verbs act on `--manager`'s
+  manager: `sm-dev --manager tm manager enable`. `help collection` lists
   everything you can do to a collection.
   - Several commands on one script differ only at the end of the line.
   - A script left out is the run's selected one (`script enable`),
@@ -189,34 +214,74 @@ number (`C3`).
 
 | Command | What it does | sm | tm / vm |
 | --- | --- | --- | --- |
-| `manager list` | List the userscript managers in the browser: name, version, extension id, enabled, user scripts allowed | yes | yes |
-| `manager fetch <tm\|vm>` | Download the manager from the Chrome Web Store into a cache under `~/.cache/sm-dev/`, unpacked | n/a: built from `dist/` | yes |
-| `manager update <tm\|vm>` | Re-download if the store has a newer version | n/a | yes |
-| `manager <name> enable` / `manager <name> disable` | Turn the extension itself on or off in the browser | yes, not during a run | yes |
+| `manager fetch` | Download the manager from the Chrome Web Store into `~/.cache/sm-dev/managers/<name>`, unpacked, or update it there to the newest version | refused: it comes with sm-dev | yes |
+| `manager install` | Load it into the browser unpacked, with "Allow User Scripts" on | from sm-dev's `dist/` | from the fetch cache, fetched first if empty |
+| `manager enable` / `manager disable` | Turn the extension itself on or off in the browser | yes; not disabled while a run uses it | yes |
+| `status` | Lists the managers in the browser, with version, enabled, and "Allow User Scripts"; leaves out the ones not there | yes | yes |
 
-- The temp browser loads the chosen manager from `dist/` (SourceMonkey)
-  or the fetch cache (TM, VM), and runs `manager fetch` first if the
-  cache is empty.
-- `manager enable` / `disable`:
+- **Where it is:**
+  - [managers.ts](../src/harness/managers.ts): the managers, their
+    `--manager` names, and TM's and VM's Web Store ids.
+  - [manager-fetch.ts](../src/harness/manager-fetch.ts): `manager
+    fetch`, the CRX and zip reading.
+  - [browser-extensions.ts](../src/harness/browser-extensions.ts):
+    finding the managers in a browser, loading, enabling, "Allow User
+    Scripts".
+  - [manager-actions.ts](../src/harness/manager-actions.ts): the
+    `manager` verbs and their messages.
+  - [extension-launch.ts](../src/harness/extension-launch.ts): the
+    temp browser's launch with a fetched manager.
+- **Where it downloads from:** Chrome's own extension update service,
+  `https://clients2.google.com/service/update2/crx`, the one URL
+  written into the code. Asked with the store id, it gives the newest
+  version, its download URL and the file's SHA-256.
+- **The Web Store ids** (`dhdgffkkebhmkfjojejmpbldmpobfkfo` for TM,
+  `jinjaccalgkegednnccohejagnlnfdag` for VM) are in `managers.ts`, and
+  again in `tests/fixtures/managers.mjs` for the cross-manager e2e
+  suite, which has no build step to import them.
+- **The fetch cache:** one folder per manager, replaced whole by a newer
+  version.
+  - The Web Store's download is a CRX: signatures and public keys, then
+    a zip. The key whose hash is the store id goes into the unpacked
+    manifest as `key`, so the copy keeps the store's id, and with it
+    its storage across updates.
+  - `$XDG_CACHE_HOME` replaces `~/.cache` when set.
+- **`manager install`:**
+  - Done with CDP's `Extensions.loadUnpacked`, which works over a
+    debugging port in Chrome and Chromium alike. Tested in Google
+    Chrome 154 and Playwright's Chromium.
+  - "Allow User Scripts" is turned on through
+    `chrome.developerPrivate`, the call behind its toggle on the
+    extension's details page, from a hidden `chrome://extensions`
+    target.
+  - A copy already there is left as it is, but for turning that on.
+    One loaded from the fetch cache is reloaded when a newer version
+    was fetched since.
+- **The temp browser** loads the chosen manager from `dist/`
+  (SourceMonkey) or the fetch cache (TM, VM), and fetches it first if
+  the cache is empty.
+- **`manager enable` / `disable`:**
   - Lets one kept browser hold several managers and run a script under
     one at a time, rather than once in each.
   - Done by calling `chrome.management.setEnabled` from a hidden
     `chrome://extensions` target over CDP, the call behind that page's
     own toggle. CDP has no call of its own for it.
-  - Tested in Playwright's Chromium (headless and headed, launched or
-    connected over its port) and Google Chrome: no user gesture is
-    needed, and the worker is back within a second of enabling.
-  - A disabled manager has no service worker, so the other commands
-    refuse until it is enabled. `managers` still lists it, as disabled.
-  - Disabling SourceMonkey is refused while a run is using it.
-- "Allow User Scripts" has no command. A browser sm-dev launches gets it
-  turned on in its preferences before launch, as the temp browser does
-  for SourceMonkey now. In any other browser the user turns it on in
-  the extension's details page, and `managers` says when it is off.
-- Loading into a kept browser (`--open-browser`): Chrome only loads an
-  unpacked extension at launch, so `--open-browser` would take
-  `--manager` too and pass the cached copy. Adding one to a browser
-  already running isn't supported: relaunch it.
+  - No user gesture is needed, and the worker is back within a second
+    of enabling.
+  - Disabling SourceMonkey is refused while a run in that browser uses
+    it.
+- **The managers in a browser** come from
+  `chrome.developerPrivate.getExtensionsInfo()` on the same hidden
+  target: every extension, enabled or not. A manager is known by:
+  - SourceMonkey's id, which comes from the `key` in its own manifest,
+    so every unpacked load of it has the same id;
+  - a Web Store id: a store install's, or a fetched copy's, which keeps
+    it through the key put into its manifest;
+  - else its name (`Tampermonkey BETA`, or an unpacked copy without the
+    store's key, whose id comes from its folder).
+- **One id for both:** a fetched copy has its store install's id, so
+  the two can't sit side by side. `manager install` finds the store's
+  copy there and leaves it, saying so.
 
 ### Collections
 
@@ -331,8 +396,9 @@ What `script show` shows, where the manager has it:
 
 - **`scripts`**: unchanged, except that its E-ids come from the wider
   numbering.
-- **`status`**: gains a manager line (which manager, version, user
-  scripts allowed) and counts of collections and installed scripts.
+- **`status`**: gains a `Managers:` line (each manager's version,
+  whether it's enabled and in use, and "Allow User Scripts" when off;
+  done), and counts of collections and installed scripts.
 - **`values <E>`, `get`/`set` with an E-id**: unchanged, SourceMonkey
   only.
 
@@ -348,14 +414,20 @@ What `script show` shows, where the manager has it:
 
 ## What works under each manager
 
-| Feature | sm | tm / vm |
-| --- | --- | --- |
-| Management commands above | all | all but collections |
-| `start`, page commands, `eval`, `snapshot`, `logs` | yes | yes |
-| Run's scripts in a test collection, `load`, `update`, `--watch` | yes | installed as normal scripts and removed at the end of the run |
-| `eval` in a script | yes | yes, in the manager's world where it can be found |
-| Reports, `wait` for script starts, `menu`, `get`/`set` | yes | no |
-| Tab claims (other scripts kept out of run tabs) | yes | no: all the manager's scripts run |
+| Feature | sm | tm / vm now | tm / vm planned |
+| --- | --- | --- | --- |
+| `manager` commands, `status` | yes | yes | yes |
+| `start`, page commands, `eval --page`, `snapshot`, `logs` | yes | yes, in a run with no scripts | yes |
+| `collection` and `script` verbs | yes | refused | all but collections |
+| Run's scripts in a test collection, `load`, `update`, `--watch` | yes | refused | installed as normal scripts and removed at the end of the run |
+| `eval` in a script | yes | no scripts to eval in | yes, in the manager's world where it can be found |
+| Reports, `wait` for script starts, `menu`, `get`/`set`, `values` | yes | refused | no |
+| Tab claims (other scripts kept out of run tabs) | yes | no: all the manager's scripts run | no |
+| Following tabs a page opens | yes | no | no |
+
+- A run under TM or VM has no link to SourceMonkey:
+  `ExtensionLink.without` stands in, claiming no tabs, hearing no
+  events, and throwing on every call into the extension.
 
 ## How TM and VM are driven
 
@@ -365,7 +437,7 @@ What `script show` shows, where the manager has it:
   - VM: messages sent from its options page, the calls its own UI makes.
   - TM: reading and clicking its dashboard. This breaks when TM changes
     its pages, and the docs will say so.
-- One interface, `ManagerBackend` in `src/harness/managers/`, with one
+- One interface, `ManagerBackend` in `src/harness/manager-backends/`, with one
   implementation per manager. Commands call the interface and refuse
   with a clear message where a manager has no such feature.
 
@@ -383,8 +455,8 @@ What `script show` shows, where the manager has it:
    - `collection add` / `drop`, and `script install --text`.
 5. `ManagerBackend` around those, with SourceMonkey as its first
    implementation.
-6. `manager list`, `manager fetch`, `--manager` for `--temp-browser` and
-   `--open-browser`.
+6. `--manager`, `manager fetch|install|enable|disable`, the managers in
+   `status`, and runs under TM or VM that drive pages (done).
 7. VM, then TM, behind the same commands.
 8. Separate: move the cross-manager e2e projects onto fetched copies.
 

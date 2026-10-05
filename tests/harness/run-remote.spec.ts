@@ -202,13 +202,13 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
     await run.waitFor(/^\[event\] Remote started on /);
 
     const list = await setup.cli('list');
-    expect(list[0]).toMatch(/^Run\s+PID\s+Uptime\s+Browser\s+Tabs\s+Scripts$/);
-    expect(list[1]).toMatch(new RegExp(`^D1\\s+\\d+\\s+\\S+\\s+127\\.0\\.0\\.1:${setup.port} \\(headless\\)\\s+1\\s+remote\\.user\\.js$`));
+    expect(list[0]).toMatch(/^Run\s+PID\s+Uptime\s+Browser\s+Manager\s+Tabs\s+Scripts$/);
+    expect(list[1]).toMatch(new RegExp(`^D1\\s+\\d+\\s+\\S+\\s+127\\.0\\.0\\.1:${setup.port} \\(headless\\)\\s+SourceMonkey\\s+1\\s+remote\\.user\\.js$`));
     // Its own process, not this sm-dev's.
     const pid = Number(list[1].split(/\s+/)[1]);
     expect(pid).not.toBe(run.proc.pid);
 
-    expect((await setup.cli('--run', 'D1', 'status'))[0]).toBe(`Run: D1 (pid ${pid}), connected to headless browser 127.0.0.1:${setup.port} (has SourceMonkey)`);
+    expect((await setup.cli('--run', 'D1', 'status'))[0]).toBe(`Selected run: D1 (pid ${pid}), connected to headless browser 127.0.0.1:${setup.port} (has SourceMonkey)`);
     // The only run, so it needs no id. The command's own output, and
     // what it set off in the page, come back; the page's line can
     // arrive first.
@@ -334,14 +334,17 @@ test('start --detach returns once started, is replaced by the next unless --new,
     // Two going, so a command has to name one.
     const several = await setup.cli('eval', 'document.title');
     expect(several.slice(0, 2)).toEqual(['ERROR: Several runs are active. Pick one with --run, or attach to one:', expect.stringMatching(/^Run\s+PID/)]);
-    // Except status, which shows each, a blank line between.
+    // Except status, which shows the browser, then each run, a blank line between.
     const statuses = execFileSync(process.execPath, [CLI, 'status'], { env: setup.env, encoding: 'utf8' }).split('\n');
-    expect(statuses.filter((l) => l.startsWith('Run: '))).toEqual([expect.stringMatching(/^Run: D1 /), expect.stringMatching(/^Run: D2 /)]);
-    expect(statuses[statuses.findIndex((l) => l.startsWith('Run: D2 ')) - 1]).toBe('');
+    expect(statuses[0]).toBe('No current run. (Use start or attach to connect to one.)');
+    expect(statuses[1]).toMatch(/^Browser: /);
+    expect(statuses).toContain('Other active runs:');
+    expect(statuses.filter((l) => l.startsWith('Other run: '))).toEqual([expect.stringMatching(/^Other run: D1 /), expect.stringMatching(/^Other run: D2 /)]);
+    expect(statuses[statuses.findIndex((l) => l.startsWith('Other run: D2 ')) - 1]).toBe('');
     // Typed or piped too.
     const typed = await setup.piped('status\n');
     expect(typed[0]).toBe('stdin > status');
-    expect(typed.filter((l) => l.startsWith('Run: '))).toEqual([expect.stringMatching(/^Run: D1 /), expect.stringMatching(/^Run: D2 /)]);
+    expect(typed.filter((l) => l.startsWith('Other run: '))).toEqual([expect.stringMatching(/^Other run: D1 /), expect.stringMatching(/^Other run: D2 /)]);
     await expect.poll(ids, { timeout: 15_000 }).toEqual(['Run', 'D1']);
 
     // Without it, the next one stops the earlier one, and takes its id.
@@ -380,7 +383,7 @@ test('one line starts a run, sends it commands, and stops it unless detached', a
     const out = await setup.cli(...start, '--', 'eval', 'document.title', '--', 'status');
     expect(out).toContain('arg > eval document.title');
     expect(out[out.indexOf('arg > eval document.title') + 1]).toBe('"target"');
-    expect(out.some((l) => l.startsWith('Run: D1 (pid '))).toBe(true);
+    expect(out.some((l) => l.startsWith('Started run: D1 (pid '))).toBe(true);
     // The same log, and its link, as the last line names.
     const logLine = out.find((l) => l.startsWith('Log: '));
     expect(logLine).toBeDefined();
@@ -535,7 +538,7 @@ test('a tab stopped on a dialog is named, and waited for, before the run connect
     expect(await within(answered, 2000)).toBeUndefined();
     ws.close();
     expect(run.proc.exitCode).toBeNull();
-    expect((await setup.cli('--run', 'D1', 'status'))[0]).toMatch(/^Run: D1 /);
+    expect((await setup.cli('--run', 'D1', 'status'))[0]).toMatch(/^Selected run: D1 /);
   } finally {
     await setup.cleanup();
   }
@@ -620,15 +623,17 @@ test('--json prints each result as one line of JSON on stdout, and other log mes
     expect(results.map((r) => r.command)).toEqual(['status', 'tabs', 'scripts', 'values', 'get', 'menu', 'match', 'probe', 'logs']);
     expect(stderr).toContain('arg > status');
     const [status, tabs, scripts, values, get, menu, match, probe, logs] = results;
-    // No run picked: a layer holding each run's, even with one going.
-    expect(status).toMatchObject({ runs: [expect.anything()] });
+    // No run picked: the browser, and a layer holding each run's, even
+    // with one going.
+    expect(status).toMatchObject({ browser: { manager: 'sourcemonkey' }, runs: [expect.anything()] });
     expect((status.runs as unknown[]).length).toBe(1);
-    // Picked with --run: that run's alone.
+    // Picked with --run: that run's alone, said to be picked.
     const picked = JSON.parse((await setup.cliStreams('--run', 'D1', 'status', '--json=single')).stdout[0]) as Record<string, unknown>;
     expect(picked).not.toHaveProperty('runs');
-    expect(picked).toEqual({ command: 'status', ...(status.runs as object[])[0] });
+    const listed = (status.runs as { run: object }[])[0];
+    expect(picked).toEqual({ command: 'status', ...listed, run: { ...listed.run, connection: 'selected' } });
     expect(picked).toMatchObject({
-      run: { id: 'D1', browser: { owned: false }, sourceMonkey: 'installed' },
+      run: { id: 'D1', browser: { owned: false }, sourceMonkey: 'installed', connection: 'selected', detached: true },
       tab: 'T1',
       scripts: [{ id: '1', kind: 'run', name: 'Json', status: 'ok', values: 1, menuCommands: 1, errors: 0, tabs: [{ tab: 'T1', state: 'running' }] }],
     });

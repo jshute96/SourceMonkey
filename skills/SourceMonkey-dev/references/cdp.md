@@ -62,7 +62,7 @@ clients at the same time.
 
 - The port: 9233 by default, or the `--browser` / `$SM_DEV_BROWSER`
   sm-dev uses. A `--temp-browser` run picks a random one. `status`
-  shows it on its `Run:` line (`browser 127.0.0.1:9233`).
+  shows it on its first line (`browser 127.0.0.1:9233`).
 - The tab: its `targetId`. The run prints it when it opens the tab
   (`Opening <url> in T1 [targetId=...]`), and `tabs` lists them all.
   Never pick a tab by URL.

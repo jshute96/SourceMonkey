@@ -4,9 +4,10 @@
 // options. `help <command>` picks a command out of it, the prompt
 // completes its names, and the run takes each command's flags from it.
 //
-// It imports only json-output.ts, which imports nothing, so cli.ts can
-// load it for help without the run's code.
+// It imports only json-output.ts and managers.ts, which import nothing
+// else, so cli.ts can load it for help without the run's code.
 import { JSON_COMMANDS } from './json-output.js';
+import { MANAGERS, MANAGER_NAMES, type ManagerName } from './managers.js';
 
 // How many of a selector's matches `probe --css` and `--html` show.
 export const PROBE_MAX = 10;
@@ -77,6 +78,8 @@ export interface HelpCommand {
   pointer?: boolean;
   /** A blank line before it in the full help. */
   gap?: boolean;
+  /** The managers (`--manager`) it works with; every one when not given. */
+  managers?: ManagerName[];
 }
 
 export interface HelpSection {
@@ -107,6 +110,9 @@ const SETTLING = ['start', ...TAB_LOADS, 'click', 'hover', 'type', 'key'];
 // wait log, listed under both Logs and Waiting.
 const WAIT_LOG: HelpCommand = { usage: 'wait log [--find=]<text>', syntax: { args: 'text', trailingFlags: true }, about: [] };
 const WAIT_LOG_ABOUT = ['Wait for a log line with the text, or matching /regex/, logged since the previous command began.'];
+// The commands that work through SourceMonkey, which a run under
+// another manager doesn't have.
+const SM: ManagerName[] = ['sourcemonkey'];
 
 export const HELP_SECTIONS: HelpSection[] = [
   {
@@ -233,17 +239,20 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         usage: 'status',
         syntax: NONE,
-        about: 'Show overall status, script list, and tab list.',
+        about: [
+          'Show overall status, script list, and tab list.',
+          'With no run picked (by --run, start or attach): the --browser browser and its managers, then each active run\'s status.',
+        ],
       },
     ],
   },
   {
     title: 'Scripts',
     commands: [
-      { usage: 'scripts', syntax: JSON_TEXT, about: 'List the loaded scripts, and the SourceMonkey-managed scripts on the current tab.' },
-      { usage: 'script <script>', about: 'Select the active script by ID. With T2.3, pick tab T2 too.' },
-      { usage: 'load <script>...', syntax: WORDS, about: 'Load more scripts from disk: files, directories, or globs. See Files and file patterns.' },
-      { usage: 'update [script]', syntax: TEXT, about: 'Re-read one (or all) scripts from disk, and reload all affected tabs.' },
+      { managers: SM, usage: 'scripts', syntax: JSON_TEXT, about: 'List the loaded scripts, and the SourceMonkey-managed scripts on the current tab.' },
+      { managers: SM, usage: 'script <script>', about: 'Select the active script by ID. With T2.3, pick tab T2 too.' },
+      { managers: SM, usage: 'load <script>...', syntax: WORDS, about: 'Load more scripts from disk: files, directories, or globs. See Files and file patterns.' },
+      { managers: SM, usage: 'update [script]', syntax: TEXT, about: 'Re-read one (or all) scripts from disk, and reload all affected tabs.' },
     ],
     subsections: [
       {
@@ -520,6 +529,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         title: 'Menus',
         commands: [
           {
+            managers: SM,
             usage: 'menu [what]',
             syntax: { args: 'text', unquote: 'none', trailingFlags: true },
             about: 'List the tab\'s menu commands, or fire one.',
@@ -536,6 +546,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         title: 'Stored values',
         commands: [
           {
+            managers: SM,
             usage: 'values [what]',
             syntax: JSON_TEXT,
             about: 'Print values scripts have stored in GM Storage.',
@@ -545,8 +556,9 @@ export const HELP_SECTIONS: HelpSection[] = [
               { term: 'T2', about: 'Scripts running on a tab.' },
             ],
           },
-          { usage: 'get <key>', syntax: JSON_TEXT, about: 'Print one value for the selected script.', gap: true },
+          { managers: SM, usage: 'get <key>', syntax: JSON_TEXT, about: 'Print one value for the selected script.', gap: true },
           {
+            managers: SM,
             usage: 'set <key> <json>',
             // JSON can't end with a `--flag`, so one there is a flag.
             syntax: { args: 'text', before: 1, block: true, unquote: 'single', trailingFlags: true },
@@ -564,6 +576,7 @@ export const HELP_SECTIONS: HelpSection[] = [
           { usage: 'accept [tab] [text]', syntax: { args: 'text', tab: true }, about: 'Answer an open dialog with OK, and a prompt with the text.' },
           { usage: 'dismiss [tab]', syntax: { args: 'none', tab: true }, about: 'Answer an open dialog with Cancel.' },
           {
+            managers: SM,
             usage: 'connect once|cancel|allow|deny|allow-all [host]',
             syntax: { args: 'words', max: 2 },
             about: [
@@ -577,6 +590,34 @@ export const HELP_SECTIONS: HelpSection[] = [
     ],
   },
   {
+    title: 'Userscript managers',
+    text: [
+      'sm-dev works with one userscript manager, picked with --manager: SourceMonkey (the default), Tampermonkey or Violentmonkey. A run works with the one it started with.',
+      'Under Tampermonkey or Violentmonkey, a run drives its pages, but loads no scripts. The commands that work through SourceMonkey (scripts, load, values, menu, collection, ...) are refused.',
+      'A --temp-browser has the manager installed. Another browser gets it with manager install.',
+      'A manager enabled beside the chosen one runs its scripts too, so sm-dev warns of one when it connects, and in status.',
+      'These act on the --browser browser, or with a run picked (by --run, start or attach), the run\'s browser.',
+      '',
+    ],
+    commands: [
+      {
+        usage: 'manager fetch',
+        syntax: NONE,
+        about: 'Download Tampermonkey or Violentmonkey from the Chrome Web Store into ~/.cache/sm-dev/managers, or update it there to the newest version.',
+      },
+      {
+        usage: 'manager install',
+        syntax: NONE,
+        about: [
+          'Load the manager into the browser as an unpacked extension, with Allow User Scripts on: this sm-dev\'s SourceMonkey, or the fetched copy of another, fetched first if need be.',
+          'A copy installed from there before is updated to the version fetched since.',
+        ],
+      },
+      { usage: 'manager enable', syntax: NONE, about: 'Turn the manager on in the browser.' },
+      { usage: 'manager disable', syntax: NONE, about: 'Turn the manager off in the browser. Not SourceMonkey while a run uses it.' },
+    ],
+  },
+  {
     title: 'Managing installed collections and scripts',
     text: [
       'What SourceMonkey has installed. Collections are named C1, C2, ... and scripts E1, E2, ..., by the numbers SourceMonkey keeps for them.',
@@ -587,6 +628,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         title: 'Collections',
         commands: [
           {
+            managers: SM,
             usage: 'collection list',
             syntax: NONE,
             about: [
@@ -595,15 +637,16 @@ export const HELP_SECTIONS: HelpSection[] = [
               'collection, collections and collections list do the same.',
             ],
           },
-          { usage: 'collection <collection> show', syntax: NONE, about: 'Show one collection, and list its scripts.', args: [COLLECTION_ARG] },
-          { usage: 'collection <collection> enable', syntax: NONE, about: 'Turn a collection back on: its scripts run again, except ones turned off on their own.' },
-          { usage: 'collection <collection> disable', syntax: NONE, about: 'Turn all of a collection\'s scripts off.' },
+          { managers: SM, usage: 'collection <collection> show', syntax: NONE, about: 'Show one collection, and list its scripts.', args: [COLLECTION_ARG] },
+          { managers: SM, usage: 'collection <collection> enable', syntax: NONE, about: 'Turn a collection back on: its scripts run again, except ones turned off on their own.' },
+          { managers: SM, usage: 'collection <collection> disable', syntax: NONE, about: 'Turn all of a collection\'s scripts off.' },
           {
+            managers: SM,
             usage: 'collection <collection> refresh',
             syntax: NONE,
             about: 'Re-read a collection from its location: rescan a directory, re-read a manifest, or re-read each script of a container collection.',
           },
-          { usage: 'collection <collection> rename <name>', syntax: { args: 'words' }, about: 'Rename a collection.' },
+          { managers: SM, usage: 'collection <collection> rename <name>', syntax: { args: 'words' }, about: 'Rename a collection.' },
         ],
       },
       {
@@ -615,12 +658,14 @@ export const HELP_SECTIONS: HelpSection[] = [
         ],
         commands: [
           {
+            managers: SM,
             usage: 'script list [collection]',
             syntax: { args: 'words', max: 1 },
             about: ['List the installed scripts, under their collections, or one collection\'s. scripts list does the same.', 'A run\'s own scripts show as 1, 2, ..., and another run\'s by name only. The selected script is marked *.', 'A local file changed or deleted since it loaded shows as modified or deleted on disk.'],
             args: [COLLECTION_ARG],
           },
           {
+            managers: SM,
             usage: 'script [script] show',
             syntax: NONE,
             about: 'Show one script in full: its header, status, files, and in a run, what it does on each tab.',
@@ -629,15 +674,17 @@ export const HELP_SECTIONS: HelpSection[] = [
               about: ['A script: E12, its name or a part of it, or id=<id>. In a run, one of its own scripts by its number (2).', 'Without one, the selected script.'],
             }],
           },
-          { usage: 'script [script] print', syntax: NONE, about: 'Print a script\'s installed text.' },
-          { usage: 'script [script] enable', syntax: NONE, about: 'Turn a script on. In a run, one of its own scripts too, in the run\'s tabs.' },
-          { usage: 'script [script] disable', syntax: NONE, about: 'Turn a script off. In a run, one of its own scripts too, in the run\'s tabs.' },
+          { managers: SM, usage: 'script [script] print', syntax: NONE, about: 'Print a script\'s installed text.' },
+          { managers: SM, usage: 'script [script] enable', syntax: NONE, about: 'Turn a script on. In a run, one of its own scripts too, in the run\'s tabs.' },
+          { managers: SM, usage: 'script [script] disable', syntax: NONE, about: 'Turn a script off. In a run, one of its own scripts too, in the run\'s tabs.' },
           {
+            managers: SM,
             usage: 'script [script] refresh',
             syntax: NONE,
             about: ['Re-read a script from its location, as its Refresh button does.', 'One of the run\'s own scripts is re-read from disk, as update does.'],
           },
           {
+            managers: SM,
             usage: 'script install <file|url> [--collection <collection>]',
             syntax: { args: 'words', max: 1 },
             about: [
@@ -646,11 +693,13 @@ export const HELP_SECTIONS: HelpSection[] = [
             ],
           },
           {
+            managers: SM,
             usage: 'script <script> uninstall [--force]',
             syntax: NONE,
             about: ['Remove a script from its container collection. A directory or manifest collection\'s scripts come from its files, so they can\'t be.', FORCE_NOTE],
           },
           {
+            managers: SM,
             usage: 'script [script] move <collection>',
             syntax: { args: 'words', max: 1 },
             about: 'Move a script from one container collection to another.',
@@ -683,8 +732,15 @@ export const HELP_SECTIONS: HelpSection[] = [
               'Used alone (sm-dev --open-browser), just start the browser.',
             ],
           },
+          {
+            term: '--manager NAME',
+            about: [
+              'The userscript manager to work with: sm, tm or vm, or sourcemonkey, tampermonkey or violentmonkey. See Userscript managers.',
+              '(Default: sm, or a run\'s own)',
+            ],
+          },
           { term: '--profile DIR', about: ['With --open-browser: the browser profile, kept between launches.', '(Default: ~/.config/sm-dev/browser-profile-<port>)'] },
-          { term: '--temp-browser', about: 'Instead, launch a hidden, muted browser for each run, with an empty profile and SourceMonkey installed, and close it when the run ends.' },
+          { term: '--temp-browser', about: 'Instead, launch a hidden, muted browser for each run, with an empty profile and the --manager manager installed, and close it when the run ends.' },
           { term: '--headed', about: 'With --temp-browser: make its window visible.' },
           { term: '--mute, --nomute', about: ['When launching a browser: turn its sound off or on.', '(Default: muted for --temp-browser, sound on for --open-browser)'] },
         ],
@@ -934,6 +990,21 @@ function formsOf(name: string): { command: HelpCommand; section: HelpSection }[]
   // A pointer only when there is nothing else to show.
   const real = all.filter(({ command }) => !command.pointer);
   return real.length > 0 ? real : all;
+}
+
+/** The managers `name` works with: as its help says, else every one. */
+export function commandManagers(name: string): ManagerName[] {
+  return formsOf(name).map(({ command }) => command.managers).find((m) => m !== undefined) ?? MANAGER_NAMES;
+}
+
+/**
+ * Why `name` can't be used with `manager`, or null when it can. `whose`
+ * says where the manager came from: `this run uses`, `--manager names`.
+ */
+export function unsupportedCommand(name: string, manager: ManagerName, whose: string): string | null {
+  const managers = commandManagers(name);
+  if (managers.includes(manager)) return null;
+  return `The ${name} command works with ${managers.map((m) => MANAGERS[m].label).join(' or ')} only, and ${whose} ${MANAGERS[manager].label}`;
 }
 
 /** Every command's name, in the list's order; one with several forms once. */

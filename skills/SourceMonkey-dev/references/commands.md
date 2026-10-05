@@ -10,7 +10,8 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 ```
 
 - Global options go first: `--run ID`, `--browser URL|PORT`,
-  `--open-browser`, `--temp-browser`, `--headed`, `--mute`, `--nomute`,
+  `--manager sm|tm|vm`, `--open-browser`, `--temp-browser`, `--headed`,
+  `--mute`, `--nomute`,
   `--stdin`, `--interactive`,
   `--root DIR`, `--local DIR`, `--json`.
 - Read the text output by default: it's shorter, and says what an
@@ -68,7 +69,22 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 
 - A run pushes its scripts into SourceMonkey in that browser. With
   `--open-browser` or `--browser`, it must be loaded there with Allow
-  User Scripts on.
+  User Scripts on: `manager install` does both.
+
+### Managers
+
+`--manager` picks SourceMonkey (`sm`, the default), Tampermonkey (`tm`)
+or Violentmonkey (`vm`). A run keeps the one it started with.
+
+| Command | Does |
+| --- | --- |
+| `--manager tm manager fetch` | Download or update TM (or VM) from the Chrome Web Store into `~/.cache/sm-dev/managers` |
+| `[--manager tm] manager install` | Load the manager into the browser unpacked, with Allow User Scripts on. No run needed |
+| `[--manager tm] manager enable` / `disable` | Turn it on or off in the browser. Not SourceMonkey while a run uses it |
+| `--manager tm --temp-browser start <url>` | A run under TM: page commands work, no scripts load, and SourceMonkey-only commands (`scripts`, `values`, `menu`, `collection`, ...) are refused |
+
+- A manager enabled beside the chosen one runs its scripts in the run's
+  tabs too: the run's first lines and `status` warn of it.
 
 ## Runs
 
@@ -85,7 +101,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `start ... --notab` | No tab at first; `newtab` later |
 | `start ... --detach --new` | Start another detached run, keeping earlier ones |
 | `list` | The active runs |
-| `status` | The run, its log file, tabs, and each script's state |
+| `status` | The run, its log file, tabs, and each script's state. With no run picked: the `--browser` browser and its managers, then every active run |
 | `attach [ID]` | Follow a run's stream (Ctrl-C leaves it going) |
 | `stop [ID]`, `stop --all` | End a run |
 | `exit` | End this sm-dev (at a prompt or on stdin); runs it started without `--detach` stop |

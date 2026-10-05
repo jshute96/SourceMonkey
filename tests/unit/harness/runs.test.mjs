@@ -196,13 +196,13 @@ test('list prints a table', () => {
     run({ id: 'D2', pid: 4567, scripts: ['a.user.js', 'b.user.js', 'c.user.js', 'd.user.js', 'e.user.js'], tabs: 3 }),
     // No tab count where the run keeps none.
     run({ id: 'D3', pid: 7, started: now - 3_725_000, browser: 'http://127.0.0.1:41234', owned: true, headless: true, scripts: [] }),
-    run({ id: 'D4', pid: 8, headless: true, scripts: [] }),
+    run({ id: 'D4', pid: 8, headless: true, scripts: [], manager: 'tampermonkey' }),
   ], now), [
-    'Run  PID   Uptime  Browser                            Tabs  Scripts',
-    'D1   42    2m      127.0.0.1:9233                     1     y.user.js, z.user.js',
-    'D2   4567  2m      127.0.0.1:9233                     3     a.user.js, b.user.js, c.user.js, (2 more)',
-    'D3   7     1h02m   127.0.0.1:41234 (owned, headless)  -     -',
-    'D4   8     2m      127.0.0.1:9233 (headless)          -     -',
+    'Run  PID   Uptime  Browser                            Manager       Tabs  Scripts',
+    'D1   42    2m      127.0.0.1:9233                     SourceMonkey  1     y.user.js, z.user.js',
+    'D2   4567  2m      127.0.0.1:9233                     SourceMonkey  3     a.user.js, b.user.js, c.user.js, (2 more)',
+    'D3   7     1h02m   127.0.0.1:41234 (owned, headless)  SourceMonkey  -     -',
+    'D4   8     2m      127.0.0.1:9233 (headless)          Tampermonkey  -     -',
   ]);
 });
 

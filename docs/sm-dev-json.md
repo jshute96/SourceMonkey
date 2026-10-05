@@ -179,7 +179,13 @@ JSON for the same state.
 ```ts
 interface StatusData {
   run?: RunSummary & {
+    // How this sm-dev came to the run: it started it, attached to it, or
+    // picked it otherwise (--run, or an earlier command on the line);
+    // "other" for one listed with no run picked.
+    connection?: "started" | "attached" | "selected" | "other";
+    detached?: boolean;      // started with --detach
     sourceMonkey?: "installed" | "disabled" | "absent"; // left out when not known
+    managers?: BrowserManager[]; // the managers in the browser; left out when not known
     testCollection?: string; // once a script was pushed
     log?: string;            // the run's log file
     downloads?: string;      // where a --temp-browser saves downloads
@@ -189,10 +195,31 @@ interface StatusData {
   scripts: StatusScript[]; // the run's, then the installed ones on the tab
 }
 
+// A userscript manager extension in the browser, enabled or not.
+interface BrowserManager {
+  manager: ManagerName;
+  name: string;          // as the extension names itself: "Tampermonkey BETA"
+  version: string;
+  id: string;            // its extension id
+  enabled: boolean;
+  userScripts: boolean;  // "Allow User Scripts" is on, which it needs to run scripts
+}
+
 // With no run picked (no --run, and no start or attach earlier in the
-// line), every active run's, even when only one is going.
+// line): the browser the line would use, and every active run's status,
+// even when only one is going.
 interface StatusRunsData {
-  runs: StatusData[];
+  browser: BrowserStatus;
+  runs: StatusData[];    // each with connection: "other"
+}
+
+interface BrowserStatus {
+  address: string;       // --browser's, as host:port
+  answering: boolean;    // whether a browser answers there
+  version?: string;      // Chrome's, when it answers
+  headless?: boolean;
+  manager: ManagerName;  // the one --manager picks
+  managers?: BrowserManager[]; // left out when not known
 }
 
 // The counts are for the run's scripts; installed ones have none.
@@ -206,10 +233,13 @@ interface StatusScript extends Script {
 }
 ```
 
-Text (with several runs, each run's in turn, a blank line between):
+Text, with `--run D1`. The first line's heading says how this sm-dev
+came to the run: `Started run:`, `Started run (detached):`, `Attached
+run:` or `Selected run:`.
 
 ```text
-Run: D1 (pid 4171043), connected to owned headless browser 127.0.0.1:38583 (has SourceMonkey)
+Selected run: D1 (pid 4171043), connected to owned headless browser 127.0.0.1:38583 (has SourceMonkey)
+Managers: SourceMonkey 0.0.1 (in use)
 Backend: SourceMonkey extension, test collection D1-f691
 Log: /tmp/sm-dev-logs-me/sm-dev-20261003-085822-497.log (D1.log)
 Downloads: /tmp/sm-dev-logs-me/sm-dev-20261003-085822-497-downloads
@@ -224,8 +254,25 @@ Scripts (with status on active tab T1):
      Not active
 ```
 
-JSON, with `--run D1` (without it: `{"command": "status", "runs": [...]}`,
-each element this without `command`):
+With no run picked, the browser the line would use, then every run,
+each headed `Other run:`:
+
+```text
+No current run. (Use start or attach to connect to one.)
+Browser: 127.0.0.1:9233 (Chrome 154.0.8037.57)
+Managers: SourceMonkey 0.0.1 (chosen), Tampermonkey 5.5.1 (disabled)
+
+Other active runs:
+
+Other run: D1 (pid 4171043), connected to owned headless browser 127.0.0.1:38583 (has SourceMonkey)
+...
+```
+
+(or `No other active runs`.)
+
+JSON, with `--run D1` (without it: `{"command": "status", "browser":
+{...}, "runs": [...]}`, each element this without `command`, with
+`"connection": "other"`):
 
 ```json
 {
@@ -238,7 +285,19 @@ each element this without `command`):
       "owned": true,
       "headless": true
     },
+    "manager": "sourcemonkey",
+    "connection": "selected",
     "sourceMonkey": "installed",
+    "managers": [
+      {
+        "manager": "sourcemonkey",
+        "name": "SourceMonkey",
+        "version": "0.0.1",
+        "id": "bkgahdlbeddjginplgbipcefkefaflfa",
+        "enabled": true,
+        "userScripts": true
+      }
+    ],
     "testCollection": "D1-f691",
     "log": "/tmp/sm-dev-logs-me/sm-dev-20261003-085822-497.log",
     "downloads": "/tmp/sm-dev-logs-me/sm-dev-20261003-085822-497-downloads"
@@ -305,17 +364,20 @@ interface RunSummary {
   pid: number;
   started?: string;      // ISO 8601, in list
   browser: { address: string; owned: boolean; headless: boolean };
+  manager?: ManagerName; // the manager it works with (--manager)
   tabCount?: number;     // in list
   scriptFiles?: string[]; // in list: the loaded scripts' paths
 }
+
+type ManagerName = "sourcemonkey" | "tampermonkey" | "violentmonkey";
 ```
 
 Text:
 
 ```text
-Run  PID      Uptime  Browser                            Tabs  Scripts
-D3   3732823  3h52m   127.0.0.1:9233                     2     bold-on-hover.user.js, config-value.user.js
-D1   4161390  0s      127.0.0.1:41139 (owned, headless)  1     gm-menu.user.js
+Run  PID      Uptime  Browser                            Manager       Tabs  Scripts
+D3   3732823  3h52m   127.0.0.1:9233                     SourceMonkey  2     bold-on-hover.user.js, config-value.user.js
+D1   4161390  0s      127.0.0.1:41139 (owned, headless)  Tampermonkey  1     -
 ```
 
 JSON:
@@ -333,6 +395,7 @@ JSON:
         "owned": false,
         "headless": false
       },
+      "manager": "sourcemonkey",
       "tabCount": 2,
       "scriptFiles": [
         "/home/me/scripts/bold-on-hover.user.js",
@@ -348,10 +411,9 @@ JSON:
         "owned": true,
         "headless": true
       },
+      "manager": "tampermonkey",
       "tabCount": 1,
-      "scriptFiles": [
-        "/home/me/scripts/gm-menu.user.js"
-      ]
+      "scriptFiles": []
     }
   ]
 }
@@ -1180,70 +1242,10 @@ Refreshed C3: My scripts: 1 updated, 4 unchanged, 1 removed
 
 These come with [sm-dev-managers.md](sm-dev-managers.md).
 
-- `collection add`, `manager enable` and the rest give the object
-  after, as the [commands that change things](#commands-that-change-things)
-  do (`ManagerChangeData { manager: Manager }`).
+- `collection add` gives the collection after, as the
+  [commands that change things](#commands-that-change-things) do.
 - `collection drop` gives the collection as it was, with
   `removed: true`.
-- `manager fetch` / `update`: `{ name, version, path, updated: boolean }`.
-
-### Manager
-
-```ts
-interface Manager {
-  name: "sourcemonkey" | "tampermonkey" | "violentmonkey";
-  extensionId: string;
-  version: string;
-  enabled: boolean;
-  userScriptsAllowed: boolean;
-  chosen: boolean;       // the one --manager picks
-  source: "unpacked" | "store" | "fetched"; // how it got into the browser
-}
-```
-
-### `manager list`
-
-```ts
-interface ManagerListData {
-  managers: Manager[];
-}
-```
-
-Text:
-
-```text
-Userscript managers:
-* SourceMonkey 0.9.0 [abcdefghijklmnopabcdefghijklmnop] (unpacked)
-  Violentmonkey 2.31.0 [jinjaccalgkegednnccohejagnlnfdag] (fetched): disabled
-```
-
-JSON:
-
-```json
-{
-  "command": "manager list",
-  "managers": [
-    {
-      "name": "sourcemonkey",
-      "extensionId": "abcdefghijklmnopabcdefghijklmnop",
-      "version": "0.9.0",
-      "enabled": true,
-      "userScriptsAllowed": true,
-      "chosen": true,
-      "source": "unpacked"
-    },
-    {
-      "name": "violentmonkey",
-      "extensionId": "jinjaccalgkegednnccohejagnlnfdag",
-      "version": "2.31.0",
-      "enabled": false,
-      "userScriptsAllowed": true,
-      "chosen": false,
-      "source": "fetched"
-    }
-  ]
-}
-```
 
 ## Events
 

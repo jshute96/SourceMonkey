@@ -22,7 +22,8 @@ import type { BrowserContext, Dialog, Page } from '@playwright/test';
 import { CommandAssembler, endsOutsideBlock, listed } from './command-lines.js';
 import { isJsonLine, jsonLayoutMistake, jsonResult, JSON_COMMANDS, markedLine, STDERR_LINE, withLayout, type JsonLayout } from './json-output.js';
 import type * as J from './json-output.js';
-import { extensionLabel, type ExtensionState } from './extension-backend.js';
+import { managerState, managersText, otherManagersWarning, stateLabel, type InstalledManager } from './browser-extensions.js';
+import { DEFAULT_MANAGER, type ManagerName } from './managers.js';
 import { firstLine } from './extension-link.js';
 import type { ConnectPromptRecord, HarnessHost, MenuCommandRecord } from './host.js';
 import type { PageAttachment } from './page-watch.js';
@@ -30,7 +31,7 @@ import {
   collectionList, count, managerVerb, noSuchScript, noSuchVerb, scriptList, type ManagerControl, type ManagerRun, type RunView,
 } from './manager-commands.js';
 import { parseCommandArgs, splitWords, unquoteWhole, type ParsedArgs } from './command-args.js';
-import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, SAME_COMMANDS, commandSyntax, commandsHelp } from './command-list.js';
+import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, SAME_COMMANDS, commandSyntax, commandsHelp, unsupportedCommand } from './command-list.js';
 import { errorSentence, readJsonFile, writeProblem } from './input-file.js';
 import { PAGE_COMMANDS, runPageCommand, type EvalIn } from './page-commands.js';
 import { editMultiLine } from './prompt-editor.js';
@@ -170,8 +171,12 @@ export interface ConsoleContext {
    * collection D2-a3f9`. Read as `status` runs.
    */
   backend?: () => string;
-  /** Whether SourceMonkey is there now, for `status`; null when unknown. */
-  extension?: () => Promise<ExtensionState | null>;
+  /** The userscript manager the run works with (`--manager`); SourceMonkey when unset. */
+  managerName?: ManagerName;
+  /** ` --browser <address>` for advice to run sm-dev against the run's browser, when it isn't the default. */
+  browserArg?: string;
+  /** The managers in the browser now, for `status`; null when unknown. */
+  managers?: () => Promise<InstalledManager[] | null>;
   /** The run's log lines, for `logs` and `wait log` (see run-logs.ts). */
   logs?: RunLog;
   /**
@@ -499,6 +504,11 @@ export async function runConsoleCommand(
     for (const l of commandsHelp([command]).text.trimEnd().split('\n')) ctx.out(l);
     return;
   }
+  const unsupported = unsupportedCommand(command, ctx.managerName ?? DEFAULT_MANAGER, 'this run uses');
+  if (unsupported) {
+    ctx.out(`[sm-dev] ERROR: ${unsupported}`);
+    return false;
+  }
   // Its arguments, its text (the rest of its line, for the commands
   // that take one), and its flags.
   const args = parsed.words;
@@ -646,9 +656,15 @@ export async function runConsoleCommand(
         return;
       }
       if (ctx.runId) {
-        // Asked each time, since the person may install it mid-run.
-        const extension = ctx.browser ? extensionLabel(await ctx.extension?.() ?? null) : '';
+        // Asked each time, since the person may install one mid-run.
+        const chosen = ctx.managerName ?? DEFAULT_MANAGER;
+        const managers = ctx.browser ? await ctx.managers?.() ?? null : null;
+        const extension = managers ? stateLabel(managerState(managers, chosen), chosen) : '';
         ctx.out(`Run: ${ctx.runId} (pid ${process.pid})${ctx.browser ? `, ${ctx.browser}${extension ? ` (${extension})` : ''}` : ''}`);
+        if (managers) {
+          ctx.out(`Managers: ${managersText(managers, chosen)}`);
+          for (const line of otherManagersWarning(managers, chosen, ctx.browserArg)) ctx.out(line);
+        }
       }
       if (ctx.backend) ctx.out(`Backend: ${ctx.backend()}`);
       if (ctx.log) ctx.out(`Log: ${runLogLabel(ctx.log, ctx.runId)}`);
@@ -1647,13 +1663,18 @@ async function statusJson(ctx: ConsoleContext, tab: ControlledTab | undefined): 
   const others = await otherScriptsJson(ctx, tab) ?? [];
   let run: J.StatusData['run'];
   if (ctx.runId && ctx.browserInfo) {
-    const extension = await ctx.extension?.() ?? null;
+    const chosen = ctx.managerName ?? DEFAULT_MANAGER;
+    const managers = await ctx.managers?.() ?? null;
     const collection = ctx.testCollection?.();
     run = {
       id: ctx.runId,
       pid: process.pid,
       browser: ctx.browserInfo,
-      ...(extension ? { sourceMonkey: extension } : {}),
+      manager: chosen,
+      ...(managers ? {
+        sourceMonkey: managerState(managers, 'sourcemonkey'),
+        managers: managers.map((m) => ({ manager: m.manager, name: m.name, version: m.version, id: m.id, enabled: m.enabled, userScripts: m.userScripts })),
+      } : {}),
       ...(collection ? { testCollection: collection } : {}),
       ...(ctx.log ? { log: ctx.log } : {}),
       ...(ctx.downloadsDir ? { downloads: ctx.downloadsDir } : {}),

@@ -177,6 +177,12 @@ export class ExtensionLink {
   private extensionProtocol: ProtocolVersion | undefined;
   /** For the run to print: how the extension's protocol minor differs from sm-dev's, if it does. */
   versionNote: string | null = null;
+  // Set for a run without SourceMonkey (`without`): what every call
+  // into the extension throws.
+  private absent: string | null = null;
+  // The tab ids such a run makes up for its tabs, counting down from -1
+  // so they can't be taken for Chrome's.
+  private madeUpTabId = 0;
   private readonly onWorker = (worker: Worker): void => {
     if (isSourceMonkeyWorker(worker.url(), this.origin)) void this.adopt(worker).catch(() => undefined);
   };
@@ -232,6 +238,17 @@ export class ExtensionLink {
     await link.adopt(worker);
     context.on('serviceworker', link.onWorker);
     link.renewTimer = setInterval(() => { void link.renew().catch(() => undefined); }, RENEW_MS);
+    return link;
+  }
+
+  /**
+   * A link for a run whose manager isn't SourceMonkey: no extension to
+   * call, no tabs claimed, no events heard. Its tabs are plain browser
+   * tabs, and every call into the extension throws `reason`.
+   */
+  static without(context: BrowserContext, runId: string, reason: string): ExtensionLink {
+    const link = new ExtensionLink(context, runId, '', 'chrome-extension://none');
+    link.absent = reason;
     return link;
   }
 
@@ -296,6 +313,7 @@ export class ExtensionLink {
    * not repeated, since a call may not be safe to make twice.
    */
   async call<A, R>(fn: (arg: A) => R | Promise<R>, arg: A): Promise<R> {
+    if (this.absent !== null) throw new Error(this.absent);
     // Playwright's argument types don't follow a generic `A` through.
     const evaluate = (worker: Worker): Promise<R> => worker.evaluate(fn as never, arg as never) as Promise<R>;
     const worker = await this.current();
@@ -316,9 +334,11 @@ export class ExtensionLink {
    * `about:blank#<fragment>`, and the claim is recorded before this
    * returns. Leaves the tab on `about:blank`, for the run to load its
    * page in. Returns the tab's id. Throws an error naming the step that
-   * failed.
+   * failed. A link `without` SourceMonkey claims nothing, and makes up
+   * an id.
    */
   async claimPage(page: Page, scriptsOff = false): Promise<number> {
+    if (this.absent !== null) return --this.madeUpTabId;
     // Twice at most: the watch lives in the worker's memory, so a worker
     // Chrome restarted in between has none, and the next one watches anew.
     let tabId = await this.nameTab(page);

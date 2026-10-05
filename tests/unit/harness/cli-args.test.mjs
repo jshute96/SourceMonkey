@@ -263,7 +263,7 @@ test('piped stdin is commands with none on the line, or with --stdin, checked in
     ].join('\n'),
   });
   // Checked, then sent: here to no run.
-  assert.deepEqual(piped('status\n', '--stdin'), { code: 1, stdout: '', stderr: 'No sm-dev runs are active. Start one with sm-dev start.\n' });
+  assert.deepEqual(piped('tabs\n', '--stdin'), { code: 1, stdout: '', stderr: 'No sm-dev runs are active. Start one with sm-dev start.\n' });
   // Not read without --stdin once the line has a command.
   assert.deepEqual(piped('evel\n', 'list'), { code: 0, stdout: 'No sm-dev runs are active\n', stderr: '' });
   // A line of only --run names the run stdin's commands go to.
@@ -321,7 +321,17 @@ test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
     code: 2, out: 'ERROR: Line 1: Only the cdp, eval, set and type commands take a {{ block, so its lines up to }} are skipped. None of the commands were run.',
   });
   const none = { code: 1, out: 'No sm-dev runs are active. Start one with sm-dev start.' };
-  assert.deepEqual(cli('status'), none);
+  assert.deepEqual(cli('tabs'), none);
+  // status needs no run: it shows the browser, and says there are no runs.
+  const status = spawnSync(process.execPath, [CLI, '--browser', '1', 'status'], { encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
+  assert.equal(status.status, 0);
+  assert.equal(status.stdout, [
+    'No current run. (Use start or attach to connect to one.)',
+    'Browser: none answering at 127.0.0.1:1. Start one with sm-dev --open-browser --browser 127.0.0.1:1.',
+    '',
+    'No other active runs',
+    '',
+  ].join('\n'));
   const noD9 = { code: 1, out: 'There is no run D9. Use sm-dev list to see the runs.' };
   assert.deepEqual(cli('--run', 'D9', 'status'), noD9);
   assert.deepEqual(cli('--run=d9', 'status'), noD9);
@@ -386,10 +396,10 @@ test('several commands on a line are checked before any runs, then run in order,
     'None of the commands were run.',
     '',
   ].join('\n'));
-  // Checked, then run: status finds no run, so the list after it is not run.
-  const r = line('--', 'list', '--', 'status', '--', 'list');
+  // Checked, then run: tabs finds no run, so the list after it is not run.
+  const r = line('--', 'list', '--', 'tabs', '--', 'list');
   assert.equal(r.status, 1);
-  assert.equal(r.stdout, 'arg > list\nNo sm-dev runs are active\narg > status\n');
+  assert.equal(r.stdout, 'arg > list\nNo sm-dev runs are active\narg > tabs\n');
   assert.equal(r.stderr, 'No sm-dev runs are active. Start one with sm-dev start.\nThat command failed, so the commands after it were not run\n');
 });
 

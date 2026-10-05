@@ -105,14 +105,23 @@ none there, it says so: `Start one with sm-dev --open-browser, pass
 The run needs SourceMonkey in the browser, with "Allow User Scripts" on.
 
 - `--temp-browser` always has it. An `--open-browser` or `--browser`
-  browser needs it loaded once, by hand.
+  browser needs it loaded once: `pnpm sm-dev manager install` loads it,
+  with "Allow User Scripts" on.
 - The run's first line (`Connected to browser ... (Chrome ..., has
   SourceMonkey)`) and `status` say which: `has SourceMonkey`,
-  `SourceMonkey disabled` or `no extension`. They can't see "Allow
-  User Scripts".
-- When it is missing, use `--temp-browser` if no login is needed, or
-  ask the person to load it (see
-  [Setting it up](https://github.com/jshute96/SourceMonkey/blob/main/docs/harness-guide.md#setting-it-up)).
+  `SourceMonkey disabled` or `no SourceMonkey`. `status` also lists the
+  browser's managers, marking one whose "Allow User Scripts" is off.
+- When it is missing, use `--temp-browser` if no login is needed.
+  Otherwise ask the person whether to install it into their browser
+  with `manager install`, or `manager enable` if it's disabled.
+- Another manager enabled there (Tampermonkey, Violentmonkey) runs its
+  scripts in the run's tabs too. The run's first lines and `status`
+  warn of it: ask the person before turning it off with
+  `pnpm sm-dev --manager tm manager disable`.
+- `--manager tm` or `vm` works with Tampermonkey or Violentmonkey
+  instead, for driving pages under them: the run loads no scripts, and
+  the SourceMonkey-only commands are refused. See
+  [Other managers](https://github.com/jshute96/SourceMonkey/blob/main/docs/harness-guide.md#other-managers-tampermonkey-and-violentmonkey).
 
 The headless `--temp-browser` is often blocked by large sites (Reddit,
 Google, Amazon, Vimeo, IMDb, parts of YouTube).
@@ -723,7 +732,7 @@ test('adds the button', async ({ page, loadUserscript, gm, reports }) => {
   under sm-dev only**: during a run the script may run after the
   page's first inline scripts (see
   [How a run uses the extension](#how-a-run-uses-the-extension)).
-- **The run refuses to start, or says `no extension` / `SourceMonkey
+- **The run refuses to start, or says `no SourceMonkey` / `SourceMonkey
   disabled`**: see [Getting a browser](#getting-a-browser).
 - **A command these docs name is unknown**: sm-dev is older than the
   docs. Ask the person whether to update it: `pnpm run build` in the

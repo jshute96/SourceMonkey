@@ -251,11 +251,15 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/rebuild-advice.ts` | Says how to rebuild sm-dev, in the checkout or in the checkout an installed copy came from |
 | `src/harness/stuck-tabs.ts` | Before `sm-dev start` connects, names the tabs that don't answer (a dialog, say), and waits for them |
 | `src/harness/run.ts` | The run process `sm-dev start` spawns: open a browser, push the scripts into SourceMonkey, follow tabs, serve clients |
-| `src/harness/extension-launch.ts` | Launches Chromium with the built extension on a temp profile: `--temp-browser`, and the e2e suites' browser |
+| `src/harness/extension-launch.ts` | Launches Chromium with the built extension (or a fetched manager) on a temp profile: `--temp-browser`, and the e2e suites' browser |
 | `src/harness/extension-link.ts` | A run's or fixture test's connection to the real extension: version check, worker calls, pushes, claims and lease, events; the collection and script calls, also run-less |
 | `src/harness/manager-commands.ts` | The `collection` and `script` verbs: list, show and change SourceMonkey's collections and scripts, as text or JSON |
+| `src/harness/managers.ts` | The userscript managers `--manager` names (SourceMonkey, Tampermonkey, Violentmonkey), with their Web Store ids |
+| `src/harness/browser-extensions.ts` | The managers in a browser, over CDP and a hidden `chrome://extensions`: list, enable, load unpacked, Allow User Scripts |
+| `src/harness/manager-fetch.ts` | `manager fetch`: downloads TM or VM from the Chrome Web Store and unpacks its CRX into sm-dev's cache |
+| `src/harness/manager-actions.ts` | The `manager` verbs: fetch, install, enable and disable a manager, with their messages |
 | `src/harness/extension-host.ts` | Fills a run's or fixture test's host (reports, values, menus) from the extension's events, and answers its commands |
-| `src/harness/extension-backend.ts` | Finds SourceMonkey in a browser: its id, whether it's installed and on, and its service worker |
+| `src/harness/extension-backend.ts` | Finds SourceMonkey in a browser: its id and its service worker |
 | `src/harness/run-log.ts` | A run's log file and `--temp-browser` downloads folder: timestamped names in `/tmp/sm-dev-logs-<user>`, stamped lines, per-run links |
 | `src/harness/download-watch.ts` | Prints where a download from one of the run's tabs was saved, from Chrome's CDP download events |
 | `src/harness/tab-refs.ts` | Naming and picking a run's tabs (`T2`, target ids), the current tab, the dialog message |
@@ -508,6 +512,7 @@ unit tests.
 | `tests/unit/harness/snapshot.test.mjs` | Unit tests for `snapshot`: which words are refs, which lines `--visible`, selectors and `--find` keep, the whole page's tree |
 | `tests/unit/harness/protocol-version.test.mjs` | Unit tests for comparing the extension's sm-dev protocol version with sm-dev's |
 | `tests/unit/harness/runs.test.mjs` | Unit tests for the run registry: a sent line's round trip, stale records, `stop`'s SIGTERM fallback |
+| `tests/unit/harness/managers.test.mjs` | Unit tests for `--manager` names, which commands each manager allows, and reading a fetched CRX and its zip |
 | `tests/unit/harness/prompt-editor.test.mjs` | Unit tests for multi-line prompt editing: Enter in blocks, Up/Down, paste, line keys |
 | `tests/unit/harness/prompt-history.test.mjs` | Unit tests for the prompt's history file: loading, appending, trimming |
 | `tests/unit/harness/json-output.test.mjs` | Unit tests for how `--json` results and stderr log messages are marked, and printed multi-line or on one line |
@@ -535,7 +540,7 @@ built extension loaded; fixtures in `tests/fixtures/harness.ts`.
 | `tests/harness/manager-commands.spec.ts` | The `collection` and `script` verbs from the command line, with no run and in a run, text and `--json` |
 | `tests/harness/run-remote.spec.ts` | `sm-dev start` driven from other shells: `--detach`, `--run`, `--` lines, sent commands, logs, stuck tabs, `--json` |
 | `tests/harness/temp-extension.spec.ts` | `--temp-browser` runs: the launched extension, `--values` and local files, run commands, managed scripts (E1) kept out |
-| `tests/harness/extension-state.spec.ts` | Whether sm-dev sees SourceMonkey in a browser: loaded unpacked, absent, or no browser to ask |
+| `tests/harness/managers.spec.ts` | Managers in a browser: `manager install`/`enable`/`disable`, the warnings, and a run under another manager |
 | `tests/harness/fixture.spec.ts` | The consumer fixture from `lib/`: a script against a served page, `gm` and `reports`, the up-front URL check, the explained miss |
 
 ## GreasyFork Corpus Tooling (`tests/greasyfork-examples/`)

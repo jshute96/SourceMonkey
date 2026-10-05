@@ -207,6 +207,22 @@ export interface StatusScript extends Script {
 
 // ---------- Each command's result ----------
 
+/** A userscript manager, by `--manager`'s full name. */
+export type ManagerName = 'sourcemonkey' | 'tampermonkey' | 'violentmonkey';
+
+/** A manager extension in the browser, enabled or not. */
+export interface BrowserManager {
+  manager: ManagerName;
+  /** As the extension names itself (`Tampermonkey BETA`). */
+  name: string;
+  version: string;
+  /** Its extension id. */
+  id: string;
+  enabled: boolean;
+  /** Its "Allow User Scripts" is on, which it needs to run scripts. */
+  userScripts: boolean;
+}
+
 export interface RunSummary {
   /** `D1`. */
   id: string;
@@ -214,6 +230,8 @@ export interface RunSummary {
   /** ISO 8601. */
   started?: string;
   browser: { address: string; owned: boolean; headless: boolean };
+  /** The manager the run works with (`--manager`). */
+  manager?: ManagerName;
   tabCount?: number;
   /** The loaded scripts' paths. */
   scriptFiles?: string[];
@@ -223,10 +241,22 @@ export interface ListData {
   runs: RunSummary[];
 }
 
+/**
+ * How the client came to the run `status` shows: it started it, attached
+ * to it, or picked it some other way (`--run`, or an earlier command
+ * on the line); or, with none of its own, another active run.
+ */
+export type RunConnection = 'started' | 'attached' | 'selected' | 'other';
+
 export interface StatusData {
   run?: RunSummary & {
+    connection?: RunConnection;
+    /** Started with `--detach`, so it outlives the client that started it. */
+    detached?: boolean;
     /** Whether the browser has SourceMonkey; absent when it couldn't be told. */
     sourceMonkey?: 'installed' | 'disabled' | 'absent';
+    /** The managers in the browser; absent when they couldn't be told. */
+    managers?: BrowserManager[];
     /** The run's test collection, once a script was pushed. */
     testCollection?: string;
     /** The run's log file. */
@@ -240,8 +270,27 @@ export interface StatusData {
   scripts: StatusScript[];
 }
 
-/** `status` with no run picked (no --run, start or attach): every run's. */
+/** The browser `status` would use with no run: `--browser`'s, and its managers. */
+export interface BrowserStatus {
+  address: string;
+  /** Whether a browser answers there. */
+  answering: boolean;
+  /** Chrome's version, when it answers. */
+  version?: string;
+  headless?: boolean;
+  /** The manager `--manager` picks. */
+  manager: ManagerName;
+  /** The managers in it; absent when they couldn't be told. */
+  managers?: BrowserManager[];
+}
+
+/**
+ * `status` with no run picked (no --run, start or attach): the browser
+ * the line would use, and every active run's status, each with
+ * `connection: "other"`.
+ */
 export interface StatusRunsData {
+  browser: BrowserStatus;
   runs: StatusData[];
 }
 

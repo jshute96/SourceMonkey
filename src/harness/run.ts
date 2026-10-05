@@ -19,9 +19,11 @@ import {
 } from './console-commands.js';
 import { applyLang, langLaunchArgs } from './browser-lang.js';
 import { watchDownloads, type DownloadWatch } from './download-watch.js';
-import { extensionLabel, sourceMonkeyState, type ExtensionState } from './extension-backend.js';
+import { managerState, managersIn, otherManagersWarning, stateLabel, type ManagerState } from './browser-extensions.js';
 import { ExtensionHost } from './extension-host.js';
 import { launchExtensionBrowser } from './extension-launch.js';
+import { fetchManager, fetchedVersion } from './manager-fetch.js';
+import { DEFAULT_MANAGER, MANAGERS, managerFlag, type ManagerName } from './managers.js';
 import { ExtensionLink, linkRunId, type ExtensionEvent } from './extension-link.js';
 import type { ErrorReport, PageLink, SkipReport, StartReport } from './host.js';
 import { attachPage, targetIdOf, type AttachOptions, type PageAttachment } from './page-watch.js';
@@ -119,6 +121,11 @@ export interface RunOptions extends ConnectOptions {
 export interface ConnectOptions {
   cdp?: string;
   /**
+   * `--manager`: the userscript manager the run works with, and a
+   * `tempBrowser` loads. SourceMonkey when not given.
+   */
+  manager?: ManagerName;
+  /**
    * `--temp-browser`: launch a Chromium of the run's own instead, with
    * the package's own build of SourceMonkey loaded.
    */
@@ -162,10 +169,27 @@ export function sameBrowser(a: string, b: string): boolean {
   return key(a) === key(b);
 }
 
-// `--browser`, else $SM_DEV_BROWSER, else port 9233. Empty counts as
-// unset, so an exported-but-blank variable doesn't become `http://`.
+/**
+ * The browser to use: `--browser` (`given`), else $SM_DEV_BROWSER, else
+ * port 9233. Empty counts as unset, so an exported-but-blank variable
+ * doesn't become `http://`.
+ */
+export function browserSetting(given?: string): string {
+  return cdpEndpoint(given?.trim() || process.env.SM_DEV_BROWSER?.trim() || '9233');
+}
+
 function cdpSetting(opts: ConnectOptions): string {
-  return cdpEndpoint(opts.cdp?.trim() || process.env.SM_DEV_BROWSER?.trim() || '9233');
+  return browserSetting(opts.cdp);
+}
+
+/**
+ * ` --browser <address>`, for advice to run a command against the
+ * browser at `endpoint`, unless that's where commands go anyway. Empty
+ * for a launched one (`launched`), which closes with the run.
+ */
+export function browserArg(endpoint: string, launched = false): string {
+  if (launched || sameBrowser(endpoint, browserSetting())) return '';
+  return ` --browser ${endpoint.replace(/^https?:\/\//, '')}`;
 }
 
 /**
@@ -265,10 +289,14 @@ async function openBrowser(
   if (opts.tempBrowser) {
     let launched;
     downloadsDir = runDownloadsDir(opts.log);
+    const manager = opts.manager ?? DEFAULT_MANAGER;
+    const { label } = MANAGERS[manager];
     try {
-      launched = await launchExtensionBrowser({ headed: opts.headed === true, muted: opts.muted, args: langLaunchArgs(opts.lang), connectedElsewhere: true, downloadsDir });
+      // Fetched the first time it's wanted, as `manager fetch` would.
+      if (manager !== 'sourcemonkey' && fetchedVersion(manager) === null) await fetchManager(manager, out);
+      launched = await launchExtensionBrowser({ headed: opts.headed === true, muted: opts.muted, args: langLaunchArgs(opts.lang), connectedElsewhere: true, downloadsDir, manager });
     } catch (err) {
-      out(`Could not launch a browser with SourceMonkey: ${(err as Error).message}`);
+      out(`Could not launch a browser with ${label}: ${(err as Error).message}`);
       return null;
     }
     closeLaunched = launched.close;
@@ -276,7 +304,7 @@ async function openBrowser(
       browser = await chromium.connectOverCDP(launched.endpoint);
     } catch (err) {
       await launched.close();
-      out(`Could not connect to the browser launched with SourceMonkey: ${(err as Error).message}`);
+      out(`Could not connect to the browser launched with ${label}: ${(err as Error).message}`);
       return null;
     }
     launchedAt = launched.endpoint;
@@ -555,9 +583,12 @@ export async function run(opts: RunOptions): Promise<number> {
   if (!session) return 1;
   // Which browser, for the stream and the log.
   const browserIs = { browser: session.endpoint, owned: session.launched, headless: session.headless };
-  const extensionState = await sourceMonkeyState(session.endpoint);
-  const extension = extensionLabel(extensionState);
+  const manager = opts.manager ?? DEFAULT_MANAGER;
+  const managers = await managersIn(session.endpoint);
+  const state = managers ? managerState(managers, manager) : null;
+  const extension = state ? stateLabel(state, manager) : '';
   opts.out(`[sm-dev] ${capitalized(browserSentence(browserIs, session.launched ? 'launched' : 'connected to'))} (Chrome ${session.browser.version()}${extension ? `, ${extension}` : ''})`);
+  for (const line of otherManagersWarning(managers ?? [], manager, browserArg(session.endpoint, session.launched))) opts.out(`[sm-dev] ${line}`);
   session.notes.forEach(opts.out);
   opts.onConnected?.();
   // Only a run that waits for commands can be sent any.
@@ -569,6 +600,7 @@ export async function run(opts: RunOptions): Promise<number> {
       ...(session.launched ? { owned: true } : {}),
       ...(session.headless ? { headless: true } : {}),
       scripts: opts.files,
+      ...(manager !== DEFAULT_MANAGER ? { manager } : {}),
       ...(opts.detached ? { detached: true } : {}),
       ...(opts.log ? { log: opts.log } : {}),
     }, opts.runId);
@@ -585,7 +617,7 @@ export async function run(opts: RunOptions): Promise<number> {
   });
   const held: Held = {};
   try {
-    return await runInBrowser(opts, session, held, remote, extensionState);
+    return await runInBrowser(opts, session, held, remote, state);
   } finally {
     ending = true;
     // No sent command runs against tabs being let go.
@@ -812,8 +844,8 @@ async function runInBrowser(
   session: RunSession,
   held: Held,
   remote: Remote,
-  // Whether the browser has SourceMonkey, as the run's first line says.
-  extensionState: ExtensionState | null,
+  // Whether the browser has the run's manager, as the run's first line says.
+  managerNow: ManagerState | null,
 ): Promise<number> {
   const { page } = session;
   // The real extension runs the scripts: the run pushes them into it,
@@ -822,13 +854,22 @@ async function runInBrowser(
   // docs/sm-dev-design.md.
   // Told apart up front: its worker can't be found either, which would
   // read as not installed.
-  if (extensionState === 'disabled') {
-    opts.out('[sm-dev] SourceMonkey is turned off in this browser. Turn it on in chrome://extensions, or use --temp-browser, which loads it.');
+  const manager = opts.manager ?? DEFAULT_MANAGER;
+  const { label } = MANAGERS[manager];
+  if (manager === 'sourcemonkey' && managerNow === 'disabled') {
+    opts.out(`[sm-dev] SourceMonkey is turned off in this browser. Turn it on with sm-dev${browserArg(session.endpoint, session.launched)} manager enable, or use --temp-browser, which loads it.`);
     return 1;
+  }
+  // Under another manager, the run's tabs are plain browser tabs for
+  // now: it loads no scripts, and the manager runs its own.
+  if (manager !== 'sourcemonkey' && managerNow !== 'installed' && managerNow !== null) {
+    const fix = managerNow === 'disabled' ? 'manager enable' : 'manager install';
+    opts.out(`[sm-dev] ${label} is ${managerNow === 'disabled' ? 'turned off' : 'not installed'} in this browser. Use sm-dev${browserArg(session.endpoint, session.launched)} ${managerFlag(manager)} ${fix}.`);
   }
   let link: ExtensionLink;
   try {
-    link = await ExtensionLink.open(session.context, linkRunId(remote.id));
+    link = manager === 'sourcemonkey' ? await ExtensionLink.open(session.context, linkRunId(remote.id))
+      : ExtensionLink.without(session.context, linkRunId(remote.id), runUses(manager));
   } catch (err) {
     opts.out(`[sm-dev] ${(err as Error).message}`);
     return 1;
@@ -1073,14 +1114,17 @@ async function runInBrowser(
         browser: browserSentence({ browser: session.endpoint, owned: session.launched, headless: session.headless }),
         browserInfo: { address: session.endpoint.replace(/^https?:\/\//, ''), owned: session.launched === true, headless: session.headless === true },
         testCollection: () => (pushedAny ? link.runId : undefined),
-        extension: () => sourceMonkeyState(session.endpoint),
+        managerName: manager,
+        browserArg: browserArg(session.endpoint, session.launched),
+        managers: () => managersIn(session.endpoint),
         // The first push makes the test collection.
-        backend: () => (pushedAny
-          ? `SourceMonkey extension, test collection ${link.runId}`
-          : `SourceMonkey extension, run ${link.runId}, with no test collection until a script is pushed`),
-        // A throwaway browser's data is the run's own.
-        others: host.otherScripts(!session.launched),
-        manager: link.manager,
+        backend: () => (manager !== 'sourcemonkey' ? `${label}, which the run loads no scripts into`
+          : pushedAny
+            ? `SourceMonkey extension, test collection ${link.runId}`
+            : `SourceMonkey extension, run ${link.runId}, with no test collection until a script is pushed`),
+        // A throwaway browser's data is the run's own. Under another
+        // manager, there's no SourceMonkey to list.
+        ...(manager === 'sourcemonkey' ? { others: host.otherScripts(!session.launched), manager: link.manager } : {}),
         extensionIdOf: (script) => (script.id === undefined ? undefined : host.extensionIdOf(script.id)),
         logs: remote.logs,
         roots: { collectionRoot: opts.collectionRoot, localRoots: opts.localRoots },
@@ -1881,4 +1925,12 @@ function watchFiles(
   const count = watcher.watch(prepared);
   opts.out(`[sm-dev] Watching ${count} file(s). Press Ctrl-C to stop.`);
   return watcher;
+}
+
+/**
+ * What a call into SourceMonkey throws in a run under another manager,
+ * which has no SourceMonkey to call.
+ */
+export function runUses(manager: ManagerName): string {
+  return `This needs SourceMonkey, and the run uses ${MANAGERS[manager].label} (${managerFlag(manager)})`;
 }

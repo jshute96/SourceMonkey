@@ -314,7 +314,8 @@ sm-dev --open-browser --browser 9300            # another one, on port 9300
 - Google Chrome when it's installed (it handles Google sign-in), else
   Playwright's Chromium. `SM_DEV_BROWSER_BINARY` names another binary.
 - Google Chrome ignores the flag that would load SourceMonkey, so load
-  it there by hand once (see [Setting it up](#setting-it-up)).
+  it there once with `sm-dev manager install` (see
+  [Setting it up](#setting-it-up)).
 - Its profile is kept, so sign-ins and extensions carry over:
   `~/.config/sm-dev/browser-profile-<port>`, or `--profile DIR`.
   - One per port, since only one browser at a time can use a profile.
@@ -338,6 +339,8 @@ sm-dev --open-browser --browser 9300            # another one, on port 9300
   `dist/` beside sm-dev: the checkout's own build, or the copy
   `pnpm install` took in a repo of userscripts), with "Allow User
   Scripts" on and pinned to the toolbar.
+  - With `--manager tm` or `vm`, Tampermonkey or Violentmonkey instead
+    (see [Other managers](#other-managers-tampermonkey-and-violentmonkey)).
 - Starting it takes a few seconds, for the extension's first run in the
   new profile.
 - Hidden, it still sends a windowed Chrome's user agent, not
@@ -361,8 +364,13 @@ SourceMonkey installed works too, given that port.
   - Without it, with it turned off, or with "Allow User Scripts" off,
     the run refuses to start and says how to fix it.
   - `status` and the run's first line say which: `has SourceMonkey`,
-    `SourceMonkey disabled` or `no extension` (see
-    [Managing runs](#managing-runs)).
+    `SourceMonkey disabled` or `no SourceMonkey` (see
+    [Managing runs](#managing-runs)). `status` also lists the browser's
+    managers: `Managers: SourceMonkey 0.0.1 (in use), Tampermonkey
+    5.5.1 (disabled)`.
+  - Another manager enabled there runs its scripts in the run's tabs
+    too, so the run's first lines and `status` warn of it, with how to
+    turn it off.
 - The run's tabs (the ones it opens, and the tabs those open) run only
   the run's scripts: SourceMonkey keeps its own scripts out of them.
   - They run there again from the tab's next load after the run ends.
@@ -386,10 +394,14 @@ For a browser that keeps the extension (and your logins):
 1. Build SourceMonkey (`pnpm run build`), which writes the unpacked
    extension to its `dist/`. In a repo of userscripts, `pnpm install`
    already built it under `node_modules/sourcemonkey/dist/`.
-2. Load it into the browser sm-dev uses: in `chrome://extensions`, turn
-   on Developer mode, then "Load unpacked" and pick `dist/`. An
-   `--open-browser` profile keeps it from then on.
-3. On SourceMonkey's details page there, turn on "Allow User Scripts".
+2. With the browser open (`sm-dev --open-browser`), run
+   `sm-dev manager install`. It loads `dist/` as an unpacked extension,
+   with "Allow User Scripts" on. An `--open-browser` profile keeps it
+   from then on.
+
+By hand instead: in `chrome://extensions`, turn on Developer mode, then
+"Load unpacked" and pick `dist/`. Then on SourceMonkey's details page,
+turn on "Allow User Scripts".
 
 - A Chromium started with `--load-extension=<SourceMonkey dist>` works
   as well, though Google Chrome itself ignores that flag.
@@ -418,6 +430,53 @@ For a browser that keeps the extension (and your logins):
     (`collection list`, `script show`, ...) are the exception: they
     need no run, so with a `--browser` no run is in, they act on that
     browser.
+  - The `manager` commands act on the `--browser` browser unless a run
+    is picked (by `--run`, `start` or `attach`), and then on its
+    browser. An active run that isn't picked is left alone.
+
+### Other managers: Tampermonkey and Violentmonkey
+
+`--manager` picks the userscript manager sm-dev works with: `sm`, `tm`
+or `vm`, or `sourcemonkey`, `tampermonkey` or `violentmonkey`, in any
+case. SourceMonkey is the default.
+
+```sh
+sm-dev --manager tm manager fetch                  # download Tampermonkey
+sm-dev --manager tm --temp-browser start <url>     # a run in a browser with it
+sm-dev --manager tm manager install                # into the --browser browser
+sm-dev manager disable                             # turn SourceMonkey off there
+```
+
+| Command | What it does |
+| --- | --- |
+| `manager fetch` | Downloads Tampermonkey or Violentmonkey from the Chrome Web Store into `~/.cache/sm-dev/managers/<name>`, or updates it there to the newest version |
+| `manager install` | Loads the manager into the browser unpacked, with "Allow User Scripts" on: this sm-dev's SourceMonkey, or the fetched copy, fetched first if need be. Updates one installed from there to the version fetched since |
+| `manager enable` / `disable` | Turns it on or off in the browser. Not SourceMonkey while a run uses it |
+
+- A fetched copy keeps its Web Store id, so its storage and settings
+  carry over when it's updated.
+- `--temp-browser` loads the chosen manager, fetching it the first
+  time. Its Tampermonkey has its "installed" page turned off, which it
+  would otherwise open in a new tab at each start.
+- **A run works with one manager**, the one it started with. A later
+  line's `--manager` has to match it, or it's refused.
+  - Except for the `manager` commands, which act on the browser rather
+    than the run: `--manager tm manager disable` beside a SourceMonkey
+    run turns Tampermonkey off in its browser.
+- **Under Tampermonkey or Violentmonkey**, a run drives its pages:
+  `snapshot`, `click`, `newtab`, `eval --page`, `logs` and the rest.
+  - It loads no scripts: `start` with a script is refused.
+  - The manager runs its own installed scripts in the run's tabs.
+  - Tabs a page opens aren't followed.
+  - The commands that work through SourceMonkey (`scripts`, `load`,
+    `update`, `values`, `get`, `set`, `menu`, `connect`, and the
+    `collection` and `script` verbs) are refused: `The values command
+    works with SourceMonkey only, and this run uses Tampermonkey`.
+- A browser can hold several managers. Each one enabled beside the
+  chosen one runs its scripts too, so sm-dev warns when it connects,
+  and in `status`: `Warning: Tampermonkey is also enabled in this
+  browser, so its scripts run too. To turn it off, use sm-dev --manager
+  tm manager disable.`
 
 ## How scripts run
 
@@ -938,6 +997,8 @@ The options:
 - The browser options, `--browser`, `--open-browser`, `--profile`,
   `--temp-browser` and `--headed` (see
   [A browser to work in](#a-browser-to-work-in)).
+- `--manager NAME` picks the userscript manager (see
+  [Other managers](#other-managers-tampermonkey-and-violentmonkey)).
 - `--json` prints results as JSON (see [JSON output](#json-output)).
 
 ### JSON output
@@ -968,7 +1029,8 @@ For a program reading sm-dev's answers rather than a person.
     page's console lines on stdout.
 
 - `status` without `--run` (or a `start` / `attach` before it) shows
-  every run, so its result holds them in a `runs` array.
+  the `--browser` browser and every run, so its result holds them in
+  `browser` and a `runs` array.
 
 ```sh
 sm-dev --run D1 --json status | jq '.scripts[] | {name, values}'
@@ -1696,21 +1758,29 @@ sm-dev stop                               # or stop D1, or stop --all
 first few scripts' files and a count of the rest:
 
 ```
-Run  PID    Uptime  Browser                            Tabs  Scripts
-D1   81234  2m      127.0.0.1:9233                     2     a.user.js, b.user.js, c.user.js, (2 more)
-D2   81502  1m      127.0.0.1:41234 (owned, headless)  1     a.user.js
+Run  PID    Uptime  Browser                            Manager       Tabs  Scripts
+D1   81234  2m      127.0.0.1:9233                     SourceMonkey  2     a.user.js, b.user.js, c.user.js, (2 more)
+D2   81502  1m      127.0.0.1:41234 (owned, headless)  SourceMonkey  1     a.user.js
 ```
 
 - Browser is where the run's browser takes CDP connections.
+- Manager is the one the run works with (`--manager`).
 - `owned` marks one the run launched (`--temp-browser`), which closes
   when it ends; `headless`, one without a window.
-- `status` says the same on its `Run:` line:
-  `connected to owned headless browser 127.0.0.1:41234 (has SourceMonkey)`.
-  - `has SourceMonkey`, `SourceMonkey disabled` or `no extension`
-    says whether SourceMonkey is there. Checked each time. It doesn't
-    check "Allow User Scripts".
-  - A disabled copy installed from the Chrome Web Store shows as `no
-    extension`; one loaded unpacked shows as disabled.
+- `status` says the same on its first line:
+  `Attached run: D2 (pid 81502), connected to owned headless browser
+  127.0.0.1:41234 (has SourceMonkey)`.
+  - The heading says how this sm-dev came to the run: `Started run:`
+    (`Started run (detached):`), `Attached run:`, or `Selected run:`
+    (by `--run`, or an earlier command on the line).
+  - With no run picked, `status` says `No current run`, then shows the
+    browser commands with no run use (`--browser`'s) and its managers,
+    then every active run, each headed `Other run:`.
+  - `has SourceMonkey`, `SourceMonkey disabled` or `no SourceMonkey`
+    says whether the run's manager is there. Checked each time.
+  - The `Managers:` line after it lists every manager in the browser,
+    with its version, and whether it's in use, disabled, or has "Allow
+    User Scripts" off.
   - The run's first line says it too, after the Chrome version.
 
 ### How a run ends

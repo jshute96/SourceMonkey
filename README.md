@@ -40,7 +40,8 @@ userscripts installs SourceMonkey as a package and gets two things:
 - **`sm-dev`, a command-line tool.** Run a script in SourceMonkey
   against a live page and watch what it does, re-pushing as you save.
   Check which selectors still resolve after a site changes. Save a page
-  so a test can replay it without logging in.
+  so a test can replay it without logging in. It also fetches and loads
+  Tampermonkey or Violentmonkey, to drive pages under them.
 
 See [docs/harness-guide.md](docs/harness-guide.md) to use it, and
 [docs/harness-design.md](docs/harness-design.md) for how it works.

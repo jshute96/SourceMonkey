@@ -58,8 +58,8 @@ export function defaultProfile(port: number): string {
   return path.join(config, 'sm-dev', `browser-profile-${port}`);
 }
 
-// The path with the home directory as ~, for messages.
-function shown(file: string): string {
+/** The path with the home directory as ~, for messages. */
+export function withTilde(file: string): string {
   const home = os.homedir();
   return file === home || file.startsWith(home + path.sep) ? '~' + file.slice(home.length) : file;
 }
@@ -92,8 +92,8 @@ function profileInUse(dir: string): string | null {
   if (!match || match[1] !== os.hostname() || !processAlive(Number(match[2]))) return null;
   const port = debuggingPort(dir, Number(match[2]));
   return port
-    ? `The profile ${shown(dir)} is in use by the browser on port ${port}. Use --browser ${port}, or another --profile`
-    : `The profile ${shown(dir)} is in use by a browser without a debugging port (pid ${match[2]}). Close it, or use another --profile`;
+    ? `The profile ${withTilde(dir)} is in use by the browser on port ${port}. Use --browser ${port}, or another --profile`
+    : `The profile ${withTilde(dir)} is in use by a browser without a debugging port (pid ${match[2]}). Close it, or use another --profile`;
 }
 
 // Where the browser with this pid listens, if it does: the port in its
@@ -172,9 +172,9 @@ export async function launchBrowser(endpoint: string, profile: string | undefine
       if (ended === null) child.kill();
       const last = readFileSync(logFile, 'utf8').trim().split('\n').filter(Boolean).at(-1);
       const why = ended ?? `Its port didn't open within ${START_TIMEOUT_MS / 1000}s, so it was closed`;
-      throw new Error(`Could not launch ${name} at ${where}: ${why}${last ? `. Its log (${shown(logFile)}) ends with: ${last}` : ''}`);
+      throw new Error(`Could not launch ${name} at ${where}: ${why}${last ? `. Its log (${withTilde(logFile)}) ends with: ${last}` : ''}`);
     }
     await new Promise((r) => setTimeout(r, 100));
   }
-  out(`[sm-dev] Launched ${name} at ${where} (profile ${shown(dir)})`);
+  out(`[sm-dev] Launched ${name} at ${where} (profile ${withTilde(dir)})`);
 }
