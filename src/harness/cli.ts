@@ -30,11 +30,11 @@ import {
   commandWords, managerCommandOf, managerCommand, onlyInspects, readPromptCommands, runCommandHelp, runCommandMistake, setJsonOutput, writeOutputLine,
 } from './console-commands.js';
 import { parseLang } from './browser-lang.js';
-import { parseCommandArgs } from './command-args.js';
+import { parseCommandArgs, splitWords } from './command-args.js';
 import { DEFAULT_MANAGER, MANAGERS, managerMistake, managerNamed, type ManagerName } from './managers.js';
 import type { ManagerVerb } from './manager-actions.js';
 import type { ManagerControl } from './manager-commands.js';
-import { OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, commandNamed, commandSyntax, commandsHelp, fullHelp, unsupportedCommand } from './command-list.js';
+import { MAX_TIMER_SECONDS, OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, TIMEOUT_NEEDS_SECONDS, commandNamed, commandSyntax, commandsHelp, fullHelp, timeoutSecondsMs, unsupportedCommand } from './command-list.js';
 import { readJsonFile } from './input-file.js';
 import { isJsonLine, jsonLayoutMistake, jsonResult, jsonResultData, STDERR_LINE, withLayout, type JsonLayout, type BrowserStatus, type ListData, type MatchData, type RunConnection, type StatusData, type StatusRunsData } from './json-output.js';
 // Node built-ins only, so as cheap to load as the rest here.
@@ -77,9 +77,11 @@ interface Opts {
   detach: boolean;
   /** `start --nowait`: ready once the scripts start, without settling. */
   noWait: boolean;
+  /** `--timeout-seconds`, in ms: each of start's waits on its tabs. */
+  timeoutMs?: number;
   /** `--new`: start beside earlier detached runs, not in their place. */
   newRun: boolean;
-  /** `--idle-seconds`. */
+  /** `--stop-after-idle-seconds`. */
   idleSeconds?: number;
   /** `--from-saved`: the `.html` files among the pages are opened as saved pages. */
   fromSaved: boolean;
@@ -95,23 +97,26 @@ interface Opts {
   jsonLayout?: JsonLayout;
 }
 
-// The longest a Node timer waits: past it, it fires at once instead.
-const MAX_TIMER_SECONDS = Math.floor((2 ** 31 - 1) / 1000);
-
-// sm-dev's own commands' flags that take a value, for finding the
-// command's name past the flags that may come before it (`--detach
-// start`).
-const OWN_VALUE_FLAGS = new Set([...OWN_COMMANDS].flatMap((name) => Object.entries(commandSyntax(name).flags)
+// The commands' flags that take a value, for finding the command's
+// name past the flags that may come before it: sm-dev's own (`--detach
+// start`), and a run's, to say where one put first goes (`--find x logs`).
+const OWN_VALUE_FLAGS = new Set([...OWN_COMMANDS, ...RUN_COMMAND_NAMES].flatMap((name) => Object.entries(commandSyntax(name).flags)
   .filter(([, kind]) => kind === 'value').map(([flag]) => flag)));
+
+// Where the command's name is in `argv`: the first word that is no
+// flag, nor a flag's value. Past the end when there is none.
+function commandIndex(argv: string[]): number {
+  let at = 0;
+  while (at < argv.length && argv[at].startsWith('-')) at += OWN_VALUE_FLAGS.has(argv[at]) ? 2 : 1;
+  return at;
+}
 
 function parseArgs(argv: string[]): Opts {
   const opts: Opts = {
     command: null, args: [],
     all: false, noTab: false, watch: false, detach: false, newRun: false, noWait: false, fromSaved: false, offline: false,
   };
-  // The command's name: the first word that is no flag, nor a flag's value.
-  let at = 0;
-  while (at < argv.length && argv[at].startsWith('-')) at += OWN_VALUE_FLAGS.has(argv[at]) ? 2 : 1;
+  const at = commandIndex(argv);
   // None: said by the caller, as is a name that is no command of sm-dev's own.
   if (at >= argv.length) return opts;
   opts.command = argv[at];
@@ -178,6 +183,12 @@ function parseArgs(argv: string[]): Opts {
       case '--detach': opts.detach = true; break;
       case '--new': opts.newRun = true; break;
       case '--nowait': opts.noWait = true; break;
+      case '--timeout-seconds': {
+        const ms = timeoutSecondsMs(text);
+        if (ms === null) throw new UsageError(TIMEOUT_NEEDS_SECONDS);
+        opts.timeoutMs = ms;
+        break;
+      }
       case '--from-saved': opts.fromSaved = true; break;
       case '--url': opts.url = text; break;
       case '--offline': opts.offline = true; break;
@@ -197,17 +208,17 @@ function parseArgs(argv: string[]): Opts {
           throw new UsageError((err as Error).message);
         }
         break;
-      case '--idle-seconds': {
+      case '--stop-after-idle-seconds': {
         const v = Number(text);
-        if (!text || !Number.isFinite(v) || v < 0) throw new UsageError('The --idle-seconds flag needs a number of seconds');
-        if (v > MAX_TIMER_SECONDS) throw new UsageError(`The --idle-seconds flag can be at most ${MAX_TIMER_SECONDS}`);
+        if (!text || !Number.isFinite(v) || v < 0) throw new UsageError('The --stop-after-idle-seconds flag needs a number of seconds');
+        if (v > MAX_TIMER_SECONDS) throw new UsageError(`The --stop-after-idle-seconds flag can be at most ${MAX_TIMER_SECONDS}`);
         opts.idleSeconds = v;
         break;
       }
-      case '--seconds': {
+      case '--stop-after-seconds': {
         const v = Number(text);
-        if (!text || !Number.isFinite(v) || v < 0) throw new UsageError('The --seconds flag needs a number');
-        if (v > MAX_TIMER_SECONDS) throw new UsageError(`The --seconds flag can be at most ${MAX_TIMER_SECONDS}`);
+        if (!text || !Number.isFinite(v) || v < 0) throw new UsageError('The --stop-after-seconds flag needs a number');
+        if (v > MAX_TIMER_SECONDS) throw new UsageError(`The --stop-after-seconds flag can be at most ${MAX_TIMER_SECONDS}`);
         opts.seconds = v;
         break;
       }
@@ -366,7 +377,7 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
 }
 
 // The run, in the background process `start` began: until a client
-// sends `stop`, a signal, `--seconds`, or its idle timeout. Given the
+// sends `stop`, a signal, `--stop-after-seconds`, or its idle timeout. Given the
 // scripts' files (and each as typed), and the pages to open with the
 // saved page each serves, if any.
 async function runHere(
@@ -377,7 +388,7 @@ async function runHere(
   // The run has no input: commands come from its clients.
   process.stdin.destroy();
   const { run } = await import('./run.js');
-  // Ends on stop, a signal, or after --seconds. The timer is
+  // Ends on stop, a signal, or after --stop-after-seconds. The timer is
   // unreferenced so it can't hold the process open after an early
   // exit, and the listener comes off once the run has ended.
   let onSigint: (() => void) | null = null;
@@ -451,6 +462,7 @@ async function runHere(
       runId,
       primaryPid,
       noWait: opts.noWait,
+      timeoutMs: opts.timeoutMs,
       // Tells the client that started it, which then goes on. One that
       // has gone (killed, say) leaves the run going unannounced, rather
       // than crashing it on the closed channel.
@@ -489,7 +501,7 @@ if (detachedLog) {
   timestampOutputLines();
 }
 
-// `--idle-seconds` as the messages say it: whole minutes as minutes.
+// `--stop-after-idle-seconds` as the messages say it: whole minutes as minutes.
 function duration(seconds: number): string {
   const [n, unit] = seconds >= 60 && seconds % 60 === 0 ? [seconds / 60, 'minute'] : [seconds, 'second'];
   return `${n} ${unit}${n === 1 ? '' : 's'}`;
@@ -523,7 +535,7 @@ async function detachRun(words: string[], runId: string | undefined): Promise<{ 
   let ready: { id: string | null } | null = null;
   let exitCode: number | null = null;
   child.on('message', (m: { ready?: string | null }) => { if (m && 'ready' in m) ready = { id: m.ready ?? null }; });
-  // Its exit code, for a client that waits for it to end (--seconds),
+  // Its exit code, for a client that waits for it to end (--stop-after-seconds),
   // which keeps this process alive meanwhile.
   const exited = new Promise<number>((resolve) => {
     child.on('exit', (code) => {
@@ -578,7 +590,7 @@ async function detachRun(words: string[], runId: string | undefined): Promise<{ 
     for (const signal of STOP_SIGNALS) process.off(signal, interrupt);
   }
   if (interrupted && ready === null) return { code: 130, log, exited };
-  // Ended before it was ready, with nothing wrong: `--seconds 0`, say.
+  // Ended before it was ready, with nothing wrong: `--stop-after-seconds 0`, say.
   if (ready === null) return { code: exitCode || 1, log, exited };
   const { id } = ready as { id: string | null };
   if (id === null) {
@@ -657,7 +669,7 @@ class Client {
   private connection: RunClient | null = null;
   /** Runs it started without `--detach`, with their logs and exit codes. */
   private readonly owned = new Map<string, { log: string; exited: Promise<number>; hold?: () => void }>();
-  /** Set by a `start` with `--seconds`, whose run ends on its own. */
+  /** Set by a `start` with `--stop-after-seconds`, whose run ends on its own. */
   private lasting: string | undefined;
 
   /**
@@ -749,7 +761,7 @@ class Client {
   }
 
   /**
-   * Waits for a run started with `--seconds` to end on its own, as the
+   * Waits for a run started with `--stop-after-seconds` to end on its own, as the
    * line's last word: its exit code. 0 when there is none.
    */
   async outlast(): Promise<number> {
@@ -1003,9 +1015,28 @@ function commandMistake(input: { line: string } | { words: string[] }): string |
   if (first) return globalFlagMistake(first);
   if (!isTypedCommand(name)) return unknownRunCommand(name);
   const mistake = runCommandMistake(input);
-  if (!mistake) return null;
+  if (!mistake) return trailingGlobalFlag(input, commandNamed(name)!);
   const flag = lineFlag(mistake.flag);
   return flag ? globalFlagMistake(flag) : mistake.error;
+}
+
+// A global flag ending a command whose text would otherwise take it
+// (`eval 1 --run D1`): said, not run as part of the JS. One the command
+// takes itself (`logs --json`) was taken already. A word quoted, or
+// inside a quoted argument, is text.
+function trailingGlobalFlag(input: { line: string } | { words: string[] }, command: string): string | null {
+  const own = commandSyntax(command).flags;
+  const words = 'line' in input ? splitWords(input.line) : input.words.map((text) => ({ text, quoted: false }));
+  const flagAt = (i: number): string | undefined => {
+    const word = words.at(i);
+    const flag = word && !word.quoted ? word.text.split('=')[0] : undefined;
+    return flag !== undefined && GLOBAL_FLAGS.includes(flag) && !Object.hasOwn(own, flag) ? flag : undefined;
+  };
+  const last = flagAt(-1);
+  if (last) return globalFlagMistake(last);
+  const before = flagAt(-2);
+  if (before && VALUE_GLOBALS.has(before)) return globalFlagMistake(before);
+  return null;
 }
 
 // The list in one argument of several lines, checked; null for a
@@ -1751,6 +1782,17 @@ function parseCommand(words: string[]): ParsedCommand {
     // A run's ID where the command goes: the old `sm-dev D1 status`.
     const run = runIdOf(opts.command);
     if (run) throw new UsageError(`Name the run with --run, before the command: sm-dev --run ${run} ${words.slice(1).map(shellWord).join(' ')}`.trimEnd());
+    // A run's command after one of its flags: only the line's own flags go first.
+    if (isTypedCommand(opts.command) && words[0].startsWith('-')) {
+      const at = commandIndex(words);
+      // One the command doesn't take either is said as such, checked
+      // alone, since after a command's text it would be text.
+      const own = commandSyntax(commandNamed(opts.command)!).flags;
+      const unknown = words.slice(0, at).find((w) => w.startsWith('-') && !Object.hasOwn(own, w.split('=')[0]));
+      if (unknown) throw new UsageError(commandMistake({ words: [opts.command, unknown] }) ?? `Unknown option: ${unknown}`);
+      const moved = [opts.command, ...words.slice(at + 1), ...words.slice(0, at)];
+      throw new UsageError(`The ${words[0]} flag goes after the command: ${moved.map(shellWord).join(' ')}`);
+    }
     throw new UsageError(`Unknown command: ${opts.command}. ${LIST_COMMANDS}`);
   }
   return { kind: 'cli', opts, words };
@@ -1818,7 +1860,7 @@ function atTerminal(): boolean {
   return Boolean(process.stdin.isTTY && process.stdout.isTTY);
 }
 
-const START_ALONE = 'The start command with nothing after it would stop the run as soon as it started. Add --interactive for a prompt, --detach to leave it running, --seconds N to watch it for a while, or commands after --.';
+const START_ALONE = 'The start command with nothing after it would stop the run as soon as it started. Add --interactive for a prompt, --detach to leave it running, --stop-after-seconds N to watch it for a while, or commands after --.';
 
 async function main(): Promise<void> {
   // Output piped into something that stops reading early (`| head`)
@@ -1975,7 +2017,7 @@ async function main(): Promise<void> {
       } else if (watching) {
         await client.watch();
       } else {
-        // A run started with --seconds, left to end on its own.
+        // A run started with --stop-after-seconds, left to end on its own.
         const lasted = await client.outlast();
         if (code === 0) code = lasted;
       }

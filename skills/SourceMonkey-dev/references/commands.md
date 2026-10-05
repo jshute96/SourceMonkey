@@ -114,7 +114,7 @@ test a script under VM or TM:
 | `attach [ID]` | Follow a run's stream (Ctrl-C leaves it going) |
 | `stop [ID]`, `stop --all` | End a run |
 | `exit` | End this sm-dev (at a prompt or on stdin); runs it started without `--detach` stop |
-| `start --idle-seconds N` | Idle timeout (default 30 minutes; `0` never) |
+| `start --stop-after-idle-seconds N` | Idle timeout (default 30 minutes; `0` never) |
 
 ## Scripts
 
@@ -172,6 +172,7 @@ own: change them only when asked to.
 | `reload [T2\|all]` | Reload |
 | `focus [tab]` | Bring to the front |
 | `--from-saved [--offline] [--url U]` | On `newtab`/`open`/`start`: serve `.html` files at their recorded URL |
+| `--timeout-seconds S` | On `newtab`/`open`/`reload`: give a slow page S seconds to load (default 30) and settle (default 5) |
 
 ## Reading the page
 
@@ -205,10 +206,12 @@ own: change them only when asked to.
 | `type <sel> <text>` | Type key by key |
 | `type <sel> {{` | Type several lines exactly (line breaks are Enter; the final one before `}}` isn't typed) |
 | `type <sel> --file <path>` | Type a file's text exactly, including a final line break |
+| `type <sel> --clear [text]` | Empty the field first, then type the text if given |
 | `key <keys>...` | `key j Shift+ArrowRight ctrl+end esc` |
 | `accept [tab] [text]`, `dismiss [tab]` | Answer an open dialog |
 | `connect once\|cancel\|allow\|deny\|allow-all [host]` | Answer SourceMonkey's prompt for a host the selected script's `@connect` doesn't cover |
 | `--nowait` | On any of these: don't wait for the page to settle |
+| `--timeout-seconds S` | On any command that waits (these, `start`, `eval`, `snapshot`, `probe`, `screenshot`, `closetab`, `load`, `update`): S seconds for each wait, in place of its default. On `cdp`, for each call (default 10) |
 
 ## Waiting
 
@@ -218,7 +221,7 @@ own: change them only when asked to.
 | `wait selector <css>`, `wait selector-gone <css>` | An element to appear / disappear |
 | `wait log <text>`, `wait log /regex/` | A log line since the previous command began (or `--since`). `--find <text>` works too |
 | `wait 500ms`, `wait 2s` | Time (last resort) |
-| `--timeout-seconds S` | Give up after S seconds (default 5). On `wait log`, put it after the text |
+| `--timeout-seconds S` | Give up after S seconds (default 5). On `wait log`, put it after the text. On a delay, it may be given if not shorter |
 
 - A tab goes before the form: `wait T2 selector '.x'`.
 - `wait log` sees every log source, the site's own lines too, unless

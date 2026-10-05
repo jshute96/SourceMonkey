@@ -316,7 +316,7 @@ Command marks:
 - With no commands, input comes from stdin when it's piped, and the
   `--interactive` prompt when stdin and stdout are a terminal.
 - Every command is checked before any runs.
-  - A lone `start` with no `--detach`, `--seconds`, `--stdin`,
+  - A lone `start` with no `--detach`, `--stop-after-seconds`, `--stdin`,
     `--interactive`, or commands after it would stop its run at once.
     At a terminal it opens the prompt instead; elsewhere it is refused.
 - A name that isn't an `sm-dev` command but is a run command goes to
@@ -378,6 +378,12 @@ sm-dev's up-front check runs it too.
   - The global options (`--run`, `--root`, `--local`, which can repeat,
     ...) go before any command, and `takeGlobalFlags` in `cli.ts` reads
     them.
+    - One later on the line is refused, ending a command's text too
+      (`eval 1 --run D1`), unless the command takes it itself.
+    - A command's own flag put before it (`--nowait open <url>`) is
+      refused with the line as it should be. One it doesn't take is
+      named as unknown, checked alone, since after a command's text it
+      would be text.
 - Arguments, by the command's syntax:
   - `none`, or `words` (at most `max`).
   - `selector`: the rest of the line as typed, less its flags, which
@@ -387,7 +393,7 @@ sm-dev's up-front check runs it too.
     it's JavaScript or JSON.
 - Also declared: a leading tab (`tab`), a `{{` block (`block`), and
   flags that may end unquoted text, with a near miss there refused
-  (`trailingFlags`, for `wait log`).
+  (`trailingFlags`: `wait log`, `type`, `update`, `cdp`, `menu`, ...).
 - A form named by a keyword has its own syntax (`wait log <text>`).
 - Every command carries sm-dev's directory, for relative paths.
 
@@ -747,8 +753,8 @@ and waits for them.
   - A page that asks first opens a `beforeunload` dialog, which the
     tracker reports like any other: `accept` leaves, `dismiss` stays.
   - Playwright doesn't wait for such a close, so `closetab` races the
-    close against the tracker for 5 seconds, and names a tab that did
-    neither.
+    close against the tracker for 5 seconds (or `--timeout-seconds`),
+    and names a tab that did neither.
   - A tab already on a dialog is left open and named, as `reload all`
     leaves it, while the others close.
   - `--force` closes without the handlers. It answers an open dialog

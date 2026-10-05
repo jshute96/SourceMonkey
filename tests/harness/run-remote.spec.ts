@@ -48,7 +48,7 @@ interface Setup {
   pipedStreams: (input: string, ...args: string[]) => Promise<{ code: number | null; stdout: string[]; stderr: string[] }>;
   /**
    * `sm-dev start` in the background, its stdin closed, showing what the
-   * run prints until it is stopped (`--seconds`, long). `cdp`: the
+   * run prints until it is stopped (`--stop-after-seconds`, long). `cdp`: the
    * browser to connect to, if not the port. A `--root` among `args` goes
    * first, as the line's.
    */
@@ -112,7 +112,7 @@ async function setUp(): Promise<Setup> {
     startRun: (args, cdp = String(port)) => {
       const at = args.indexOf('--root');
       const root = at >= 0 ? args.splice(at, 2) : [];
-      const proc = spawn(process.execPath, [CLI, ...root, 'start', '--browser', cdp, '--seconds', '600', ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+      const proc = spawn(process.execPath, [CLI, ...root, 'start', '--browser', cdp, '--stop-after-seconds', '600', ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
       runs.push(proc);
       const lines: string[] = [];
       const waiters = new Set<() => void>();
@@ -327,7 +327,7 @@ test('start --detach returns once started, is replaced by the next unless --new,
 
     // With --new, another beside it. Six seconds with nothing sent,
     // and that one ends.
-    const beside = await detach('--new', '--idle-seconds', '6');
+    const beside = await detach('--new', '--stop-after-idle-seconds', '6');
     expect(beside.at(-2)).toBe('[sm-dev] Run D2 now running detached, with idle timeout 6 seconds');
     const ids = async (): Promise<string[]> => (await setup.cli('list')).map((l) => l.split(/\s+/)[0]);
     expect(await ids()).toEqual(['Run', 'D1', 'D2']);

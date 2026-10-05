@@ -24,6 +24,7 @@ import type { Page } from '@playwright/test';
 import type { ConsoleContext, ControlledTab } from './console-commands.js';
 import type { HarnessHost } from './host.js';
 import type { ParsedArgs } from './command-args.js';
+import { MAX_TIMER_SECONDS, TIMEOUT_NEEDS_SECONDS, timeoutSecondsMs } from './command-list.js';
 import { countOf } from './page-commands.js';
 import { explainMatch, preparedScriptName } from './prepare.js';
 import { ALL_LOG_SOURCES, foundAt, inSources, linesLost, parseLogSources, parsePosition, searchedUpTo, streamText, textMatcher, type LogRecord } from './run-logs.js';
@@ -45,9 +46,6 @@ const LOOK_MS = 1000;
 
 const POLL_MS = 50;
 
-// The longest a Node timer can wait, in seconds.
-const MAX_WAIT_SECONDS = Math.floor((2 ** 31 - 1) / 1000);
-
 // How often `wait selector` looks again, and the longest one look may
 // take: a page busy in a long script, or stopped on a dialog, doesn't
 // answer.
@@ -57,7 +55,6 @@ const SELECTOR_LOOK_MS = 1000;
 // How the replies of the waits with something to match start, so each
 // says plainly whether it got it.
 const WAIT_DONE = '[sm-dev] Wait done: ';
-const TIMEOUT_NEEDS_SECONDS = `The --timeout-seconds flag needs a number of seconds, up to ${MAX_WAIT_SECONDS}`;
 const WAIT_FAILED = '[sm-dev] Wait failed: ';
 const LOG_MATCHED = '[sm-dev] Wait matched log line: ';
 // The flags only `wait log` takes.
@@ -146,16 +143,29 @@ async function busyWith(tab: ControlledTab, host: HarnessHost, lookMs: number, s
  * and a tab whose load already gave up (`stalled`) isn't waited on
  * again.
  */
-export async function settleTabs(host: HarnessHost, tabs: ControlledTab[], out: (line: string) => void): Promise<void> {
+export async function settleTabs(host: HarnessHost, tabs: ControlledTab[], out: (line: string) => void, timeoutMs = SETTLE_TIMEOUT_MS): Promise<void> {
   // Only real tabs: a caller's `newTab` (a test's) may return none.
   await Promise.all(tabs.filter((t) => t?.page && !t.stalled).map(async (t) => {
-    const outcome = await settleTab(t, host);
-    if (!outcome.settled && 'busy' in outcome) out(`[sm-dev] ${notSettledMessage(t, SETTLE_TIMEOUT_MS, outcome.busy)}`);
+    const outcome = await settleTab(t, host, timeoutMs);
+    if (!outcome.settled && 'busy' in outcome) out(`[sm-dev] ${notSettledMessage(t, timeoutMs, outcome.busy)}`);
   }));
 }
 
 /** How long a load (`open`, `reload`, the tabs `start` opens) may take. */
 export const LOAD_TIMEOUT_MS = 30_000;
+
+/**
+ * A command's `--timeout-seconds` in ms, for each wait it does in place
+ * of that wait's default: undefined when not given, null (said why)
+ * when not a number of seconds.
+ */
+export function timeoutFlagMs(flags: Record<string, string | true>, out: (line: string) => void): number | undefined | null {
+  const timeout = flags['--timeout-seconds'];
+  if (timeout === undefined) return undefined;
+  const ms = timeoutSecondsMs(timeout);
+  if (ms === null) out(`[sm-dev] ERROR: ${TIMEOUT_NEEDS_SECONDS}`);
+  return ms;
+}
 
 // How often a load looks for a page that stopped itself.
 const STOPPED_POLL_MS = 100;
@@ -217,13 +227,10 @@ export async function waitFor(ctx: ConsoleContext, parsed: ParsedArgs): Promise<
     ctx.out(`[sm-dev] ERROR: ${text}`);
     return false;
   };
-  let timeoutMs = SETTLE_TIMEOUT_MS;
   const timeout = parsed.flags['--timeout-seconds'];
-  if (timeout !== undefined) {
-    const value = Number(timeout);
-    if (!(value > 0) || value > MAX_WAIT_SECONDS) return mistake(TIMEOUT_NEEDS_SECONDS);
-    timeoutMs = value * 1000;
-  }
+  const given = timeoutFlagMs(parsed.flags, ctx.out);
+  if (given === null) return false;
+  const timeoutMs = given ?? SETTLE_TIMEOUT_MS;
 
   if (parsed.form === 'log') {
     if (parsed.tab !== undefined) return mistake('The wait log command takes no tab, since it watches all of the run\'s output');
@@ -234,13 +241,15 @@ export async function waitFor(ctx: ConsoleContext, parsed: ParsedArgs): Promise<
 
   // A plain delay. A tab or `all` before it (`wait T2 3s`) is allowed
   // and has no effect: a delay waits the same whichever tab is named.
+  // So is --timeout-seconds, which a long delay gets out of habit, as
+  // long as it doesn't cut the delay short.
   // A named tab must still exist, so a mistyped one is said.
   const delayWord = parsed.words.length === 2 && parsed.words[0] === 'all' && parsed.tab === undefined
     ? parsed.words[1] : parsed.words.length === 1 ? parsed.words[0] : undefined;
   const delay = delayWord !== undefined ? parseDelay(delayWord) : null;
   if (delay !== null) {
-    if (timeout !== undefined) return mistake('A delay takes no --timeout-seconds');
-    if (delay > MAX_WAIT_SECONDS * 1000) return mistake(`A delay can be at most ${MAX_WAIT_SECONDS}s`);
+    if (delay > MAX_TIMER_SECONDS * 1000) return mistake(`A delay can be at most ${MAX_TIMER_SECONDS}s`);
+    if (timeout !== undefined && delay > timeoutMs) return mistake(`The delay ${delayWord} is longer than --timeout-seconds ${timeout}. Give a timeout at least as long, or none.`);
     if (parsed.tab !== undefined && !pickTab(ctx, parsed.tab)) return false;
     await new Promise((resolve) => setTimeout(resolve, delay));
     return true;

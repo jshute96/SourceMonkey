@@ -343,6 +343,16 @@ test.describe('sm-dev typed commands', () => {
     expect(await run('closetab')).toEqual(asks);
     await run('accept');
     await expect.poll(() => asker.isClosed()).toBe(true);
+
+    // A page whose beforeunload handler takes longer than --timeout-seconds.
+    const slow = await page.context().newPage();
+    await slow.evaluate(() => window.addEventListener('beforeunload', () => {
+      const until = Date.now() + 2000;
+      while (Date.now() < until);
+    }));
+    tabs.push({ n: 4, page: slow, link: attachment });
+    expect(await run('closetab T4 --timeout-seconds 0.3')).toContain('[sm-dev] T4 didn\'t close within 0.3s. Use closetab --force to close it without running its beforeunload handlers.');
+    await expect.poll(() => slow.isClosed()).toBe(true);
   });
 
   test('closetab --force closes a tab whose dialog waits', async ({ page, fixtureServer, host, attachment }) => {
@@ -434,6 +444,17 @@ test.describe('sm-dev typed commands', () => {
     await run('script 2');
     expect(await run('open')).toEqual([noPage]);
     expect(await run('open 3')).toEqual(['[sm-dev] There is no script 3. Use scripts to list them.']);
+
+    // --timeout-seconds: how long a page may take to load. This one's
+    // image never comes, so it never fires load.
+    await page.route('**/never.png', () => undefined);
+    await page.route('**/stuck.html', (route) => route.fulfill({ contentType: 'text/html', body: '<img src="never.png">' }));
+    expect(await run(`open ${fixtureServer.baseUrl}/stuck.html --nowait --timeout-seconds 0.5`)).toEqual([
+      '[sm-dev] Navigation failed: The page did not finish loading within 0.5s',
+    ]);
+    expect(await run('reload --timeout-seconds 0')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The --timeout-seconds flag needs a number of seconds/)]);
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+    await page.goto(target);
 
     expect(await run('newtab 1')).toEqual([`[sm-dev] The page commands now act on T1 (${target})`]);
     expect(opened).toEqual([target]);

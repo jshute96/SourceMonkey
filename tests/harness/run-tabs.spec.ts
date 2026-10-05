@@ -225,7 +225,7 @@ async function driveCli(args: string[], steps: Step[]): Promise<string[]> {
   // The line's own flags go first.
   const at = args.indexOf('--root');
   const root = at >= 0 ? args.splice(at, 2) : [];
-  const child = spawn(process.execPath, [cli, '--stdin', ...root, '--temp-browser', 'start', ...args, '--seconds', '25'], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [cli, '--stdin', ...root, '--temp-browser', 'start', ...args, '--stop-after-seconds', '25'], { stdio: ['pipe', 'pipe', 'pipe'] });
   const lines: string[] = [];
   let pending = [...steps];
   let since = 0;
@@ -303,6 +303,25 @@ test('start with no scripts: a blank page, and the lists say there are no script
   expect(lines.some((l) => l.startsWith('[sm-dev] Opening'))).toBe(false);
   expect(lines.some((l) => /^\* T1: about:blank \[targetId=/.test(l))).toBe(true);
   expect(lines).toContain('  No scripts are loaded');
+});
+
+test('start, update and load give a page --timeout-seconds to load', async ({ fixtureServer, scriptsDir }) => {
+  // Its image holds load back for 5 seconds.
+  const page = `${fixtureServer.baseUrl}/stalled-load.html`;
+  const write = (name: string) => scriptsDir.write({
+    relativePath: `${name.toLowerCase()}.user.js`,
+    meta: { name, match: [page] },
+    body: `console.log('[${name}] on');`,
+  });
+  const a = write('A');
+  const b = write('B');
+  const lines = await driveCli([a, page, '--timeout-seconds', '1'], [
+    ['did not finish loading within 1s', () => { touch(a); return 'update --timeout-seconds 1'; }],
+    ['T1 could not be reloaded', `load ${b} --timeout-seconds 1`],
+    ['T1 could not be reloaded', 'exit'],
+  ]);
+  expect(lines).toContain('[sm-dev] Navigation failed: The page did not finish loading within 1s');
+  expect(lines.filter((l) => l === '[sm-dev] T1 could not be reloaded: The page did not finish loading within 1s')).toHaveLength(2);
 });
 
 test('load, update and reload all reload just the tabs they affect', async ({ fixtureServer, scriptsDir }) => {
@@ -465,7 +484,7 @@ test('open and reload switch the tab they name, or the current one, and say when
     // A mistake, found before it is sent, stops the piped commands.
     ['T2 runs no scripts from now on', 'open --bogus'],
   ]);
-  expect(lines).toContain('ERROR: The open command has no --bogus flag. It takes --noscript, --script, --from-saved, --url, --offline, --nowait.');
+  expect(lines).toContain('ERROR: The open command has no --bogus flag. It takes --noscript, --script, --timeout-seconds, --from-saved, --url, --offline, --nowait.');
   expect(lines).toContain('That command failed, so the commands after it were not run');
   // T1 stayed on its page when switched back.
   expect(lines.filter((l) => l === '"/other.html"')).toHaveLength(2);

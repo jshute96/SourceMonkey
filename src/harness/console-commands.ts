@@ -43,7 +43,7 @@ import { runLogLabel } from './run-log.js';
 import {
   DEFAULT_LOG_SOURCES, isoTime, linesLost, logsLines, logsUpTo, inSources, noLogLines, nowMicros, parseLogSources, parsePosition, parseTail, streamText, textMatcher, type LogRecord, type RunLog,
 } from './run-logs.js';
-import { loadPage, settleTabs, waitFor } from './wait.js';
+import { loadPage, seconds, settleTabs, timeoutFlagMs, waitFor } from './wait.js';
 import { userscriptLabel, type SavedPageHeader } from './save-html.js';
 import {
   comparableUrl, openingSavedLine, pagesToOpen, routeSavedPage, savedPageServe,
@@ -113,13 +113,13 @@ export interface ConsoleContext {
    * Open a new controlled tab, at `url` or blank, for `newtab`.
    * Absent where the caller can't open one.
    */
-  newTab?: (url?: string, options?: { noScript?: boolean; saved?: SavedPageStart }) => Promise<ControlledTab>;
+  newTab?: (url?: string, options?: { noScript?: boolean; saved?: SavedPageStart; timeoutMs?: number }) => Promise<ControlledTab>;
   /** Switch a tab to running no scripts, or back, for `open --noscript` / `--script`. */
   setTabScripts?: (tab: ControlledTab, noScript: boolean) => Promise<void>;
   /** Load another script from disk, for `load`. */
-  loadScript?: (file: string) => Promise<void>;
+  loadScript?: (file: string, timeoutMs?: number) => Promise<void>;
   /** Re-read scripts from disk (all, when none are named), for `update`. */
-  updateScripts?: (scripts?: PreparedScript[]) => Promise<void>;
+  updateScripts?: (scripts?: PreparedScript[], timeoutMs?: number) => Promise<void>;
   /** The scripts this run pushed, in load order. */
   scripts: PreparedScript[];
   /** SourceMonkey-managed scripts (see `OtherScript`), or another manager's. */
@@ -591,8 +591,11 @@ export async function runConsoleCommand(
     }
     case 'newtab':
       return openNewTab(ctx, args, flags, cwd);
-    case 'closetab':
-      return closeTabs(ctx, args, flags['--force'] === true, tab);
+    case 'closetab': {
+      const timeoutMs = timeoutFlagMs(flags, ctx.out);
+      if (timeoutMs === null) return false;
+      return closeTabs(ctx, args, flags['--force'] === true, tab, timeoutMs);
+    }
     case 'tabs': {
       const named = namedTab(ctx, 'tabs', parsed);
       if (named === null) return false;
@@ -834,6 +837,8 @@ export async function runConsoleCommand(
     }
     case 'reload': {
       const noWait = flags['--nowait'] === true;
+      const timeoutMs = timeoutFlagMs(flags, ctx.out);
+      if (timeoutMs === null) return false;
       const mode = scriptsMode(ctx, 'reload', flags);
       if (mode === null) return false;
       const named = namedTab(ctx, 'reload', parsed);
@@ -842,14 +847,14 @@ export async function runConsoleCommand(
         // All at once, so one slow page holds up no other.
         const all = reloadable(ctx.tabs(), ctx.out);
         for (const t of all) if (!await switchScripts(ctx, t, mode)) return false;
-        const loaded = await Promise.all(all.map((t) => reloadTab(t, ctx.host, ctx.out)));
-        if (!noWait) await settleTabs(ctx.host, all.filter((_, i) => loaded[i]), ctx.out);
+        const loaded = await Promise.all(all.map((t) => reloadTab(t, ctx.host, ctx.out, timeoutMs)));
+        if (!noWait) await settleTabs(ctx.host, all.filter((_, i) => loaded[i]), ctx.out, timeoutMs);
         return;
       }
       const target = named !== undefined ? pickTab(ctx, named) : tab;
       if (!target || blockedByDialog([target])) return false;
       if (!await switchScripts(ctx, target, mode)) return false;
-      if (await reloadTab(target, ctx.host, ctx.out) && !noWait) await settleTabs(ctx.host, [target], ctx.out);
+      if (await reloadTab(target, ctx.host, ctx.out, timeoutMs) && !noWait) await settleTabs(ctx.host, [target], ctx.out, timeoutMs);
       return;
     }
     case 'load': {
@@ -861,12 +866,14 @@ export async function runConsoleCommand(
         ctx.out('[sm-dev] This run cannot load scripts');
         return;
       }
+      const timeoutMs = timeoutFlagMs(flags, ctx.out);
+      if (timeoutMs === null) return false;
       // It reloads every tab it affects, so any tab's dialog blocks it.
       if (blockedByDialog(ctx.tabs())) return;
       // All expanded first, so a glob matching nothing loads none.
       for (const file of expandPathArgs(args, cwd, { scripts: true })) {
         // A relative path sent from another directory is the sender's.
-        await ctx.loadScript(cwd !== process.cwd() && !path.isAbsolute(file) ? path.resolve(cwd, file) : file);
+        await ctx.loadScript(cwd !== process.cwd() && !path.isAbsolute(file) ? path.resolve(cwd, file) : file, timeoutMs);
       }
       return;
     }
@@ -879,14 +886,16 @@ export async function runConsoleCommand(
         ctx.out(`[sm-dev] ${NO_SCRIPTS}`);
         return;
       }
+      const timeoutMs = timeoutFlagMs(flags, ctx.out);
+      if (timeoutMs === null) return false;
       if (blockedByDialog(ctx.tabs())) return;
       if (!text || text === 'all') {
-        await ctx.updateScripts();
+        await ctx.updateScripts(undefined, timeoutMs);
         return;
       }
       const script = pickScript(ctx, text);
       if (!script) return false;
-      await ctx.updateScripts([script]);
+      await ctx.updateScripts([script], timeoutMs);
       return;
     }
     case 'open': {
@@ -895,6 +904,8 @@ export async function runConsoleCommand(
       const saved = savedFlags(ctx, flags);
       if (!saved) return false;
       const noWait = flags['--nowait'] === true;
+      const timeoutMs = timeoutFlagMs(flags, ctx.out);
+      if (timeoutMs === null) return false;
       const mode = scriptsMode(ctx, 'open', flags);
       if (mode === null) return false;
       // A glob stands for the files it matches, of which it takes one.
@@ -937,8 +948,8 @@ export async function runConsoleCommand(
         await serveSavedPage(target.tab, opening.saved, ctx.out, target.tab.noScript === true || ctx.scripts.length === 0);
         ctx.out(openingSavedLine(opening.saved.given, url, tabName(target.tab)));
       }
-      if (!await gotoInTab(target.tab, ctx.host, url, ctx.out)) return false;
-      if (!noWait) await settleTabs(ctx.host, [target.tab], ctx.out);
+      if (!await gotoInTab(target.tab, ctx.host, url, ctx.out, timeoutMs)) return false;
+      if (!noWait) await settleTabs(ctx.host, [target.tab], ctx.out, timeoutMs);
       return;
     }
     case 'wait':
@@ -1079,7 +1090,10 @@ function evalScope(ctx: ConsoleContext, flag: string | true | undefined, page: b
   if (!script) return typeof flag === 'string' ? null : fallback;
   // No hook: not pushed into the extension, so it hasn't run anywhere.
   const hook = script.id ? ctx.host.evalHook(script.id) : null;
-  return { scope: hook && { world: script.world, ...hook }, name: preparedScriptName(script), named: typeof flag === 'string', fallback };
+  // Another manager reports nothing, so a missed scope there says
+  // nothing about whether the script ran.
+  const manager = ctx.managerName && ctx.managerName !== DEFAULT_MANAGER ? MANAGERS[ctx.managerName].label : undefined;
+  return { scope: hook && { world: script.world, ...hook }, name: preparedScriptName(script), named: typeof flag === 'string', fallback, manager };
 }
 
 /**
@@ -1511,13 +1525,13 @@ export function reloadable(tabs: ControlledTab[], out: (line: string) => void): 
  * Reload one tab, saying so if it fails. False when it failed, or its
  * scripts never reported (said already), so nothing waits on it more.
  */
-export function reloadTab(tab: ControlledTab, host: HarnessHost, out: (line: string) => void): Promise<boolean> {
-  return loadInTab(tab, host, () => loadPage(tab.page, (o) => tab.page.reload(o)), `[sm-dev] ${tabName(tab)} could not be reloaded`, out);
+export function reloadTab(tab: ControlledTab, host: HarnessHost, out: (line: string) => void, timeoutMs?: number): Promise<boolean> {
+  return loadInTab(tab, host, () => loadPage(tab.page, (o) => tab.page.reload(o), timeoutMs), `[sm-dev] ${tabName(tab)} could not be reloaded`, out);
 }
 
 /** Navigate one tab to `url`, as `reloadTab` reloads it. */
-export function gotoInTab(tab: ControlledTab, host: HarnessHost, url: string, out: (line: string) => void): Promise<boolean> {
-  return loadInTab(tab, host, () => loadPage(tab.page, (o) => tab.page.goto(url, o)), '[sm-dev] Navigation failed', out);
+export function gotoInTab(tab: ControlledTab, host: HarnessHost, url: string, out: (line: string) => void, timeoutMs?: number): Promise<boolean> {
+  return loadInTab(tab, host, () => loadPage(tab.page, (o) => tab.page.goto(url, o), timeoutMs), '[sm-dev] Navigation failed', out);
 }
 
 // A backstop for a script that never reports, not a guess at when the
@@ -1761,7 +1775,7 @@ const CLOSE_TIMEOUT_MS = 5000;
 // so a page that asks first ("Leave site?") shows its dialog, which the
 // dialog tracker reports for `accept` (leave) or `dismiss` (stay).
 // `--force` skips them.
-async function closeTabs(ctx: ConsoleContext, words: string[], force: boolean, current: ControlledTab): Promise<void | false> {
+async function closeTabs(ctx: ConsoleContext, words: string[], force: boolean, current: ControlledTab, timeoutMs = CLOSE_TIMEOUT_MS): Promise<void | false> {
   let tabs: ControlledTab[];
   if (words.length === 1 && words[0] === 'all') {
     tabs = ctx.tabs();
@@ -1785,7 +1799,7 @@ async function closeTabs(ctx: ConsoleContext, words: string[], force: boolean, c
   for (const t of waiting) {
     ctx.out(`[sm-dev] ${tabName(t)} is waiting on ${dialogKind(t.dialogs!.current!)} dialog, so it was not closed. Answer it, or use closetab ${tabName(t)} --force.`);
   }
-  await Promise.all(tabs.filter((t) => !waiting.includes(t)).map((t) => closeTab(ctx, t, force)));
+  await Promise.all(tabs.filter((t) => !waiting.includes(t)).map((t) => closeTab(ctx, t, force, timeoutMs)));
   // Says where the page commands act now, if their tab closed.
   currentTab(ctx);
 }
@@ -1793,7 +1807,7 @@ async function closeTabs(ctx: ConsoleContext, words: string[], force: boolean, c
 // Closes one tab for `closetab`, and says if it didn't close: it asked
 // first (its dialog, reported by the tracker, is waiting on an answer),
 // or it didn't close in time.
-async function closeTab(ctx: ConsoleContext, tab: ControlledTab, force: boolean): Promise<void> {
+async function closeTab(ctx: ConsoleContext, tab: ControlledTab, force: boolean, timeoutMs: number): Promise<void> {
   const { page } = tab;
   if (force) {
     // A page stopped on a dialog never finishes closing, so the dialog
@@ -1809,7 +1823,7 @@ async function closeTab(ctx: ConsoleContext, tab: ControlledTab, force: boolean)
   const closedOrLate = new Promise<void>((resolve) => {
     onClose = resolve;
     page.once('close', onClose);
-    timer = setTimeout(resolve, CLOSE_TIMEOUT_MS);
+    timer = setTimeout(resolve, timeoutMs);
   });
   // Watched from before the close, which may open it at once. Its
   // dialog, if it asks, is said by the tracker, along with what accept
@@ -1821,7 +1835,7 @@ async function closeTab(ctx: ConsoleContext, tab: ControlledTab, force: boolean)
   clearTimeout(timer);
   page.off('close', onClose);
   if (!asked && !page.isClosed()) {
-    ctx.out(`[sm-dev] ${tabName(tab)} didn't close within ${CLOSE_TIMEOUT_MS / 1000} seconds. Use closetab --force to close it without running its beforeunload handlers.`);
+    ctx.out(`[sm-dev] ${tabName(tab)} didn't close within ${seconds(timeoutMs)}. Use closetab --force to close it without running its beforeunload handlers.`);
   }
 }
 
@@ -1836,6 +1850,8 @@ async function openNewTab(ctx: ConsoleContext, rest: string[], given: Record<str
   // `--noscript`: a tab the scripts stay out of. `--script` is what a
   // new tab gets anyway.
   const noWait = given['--nowait'] === true;
+  const timeoutMs = timeoutFlagMs(given, ctx.out);
+  if (timeoutMs === null) return false;
   const mode = scriptsMode(ctx, 'newtab', given);
   if (mode === null) return false;
   const noScript = mode === true;
@@ -1848,7 +1864,7 @@ async function openNewTab(ctx: ConsoleContext, rest: string[], given: Record<str
       ctx.out('[sm-dev] ERROR: The newtab command takes all by itself, to open each script\'s page');
       return false;
     }
-    return openScriptPages(ctx, noScript, noWait);
+    return openScriptPages(ctx, noScript, noWait, timeoutMs);
   }
   const tabRef = rest.find((w) => TAB_REF.test(w));
   if (tabRef) {
@@ -1864,7 +1880,7 @@ async function openNewTab(ctx: ConsoleContext, rest: string[], given: Record<str
   const pages = await pagesToOpen(named, flags, cwd);
   const open = async (page?: PageToOpen): Promise<ControlledTab | null> => {
     try {
-      return await ctx.newTab!(page?.url, { noScript, saved: page?.saved });
+      return await ctx.newTab!(page?.url, { noScript, saved: page?.saved, timeoutMs });
     } catch (err) {
       ctx.out(`[sm-dev] The new tab could not be opened: ${(err as Error).message}`);
       return null;
@@ -1876,14 +1892,14 @@ async function openNewTab(ctx: ConsoleContext, rest: string[], given: Record<str
   if (!tab) return;
   ctx.tab = tab;
   await focusTab(tab.page).catch(() => undefined);
-  if (!noWait) await settleTabs(ctx.host, opened, ctx.out);
+  if (!noWait) await settleTabs(ctx.host, opened, ctx.out, timeoutMs);
   ctx.out(`[sm-dev] The page commands now act on ${tabName(tab)} (${tab.page.url()})`);
 }
 
 // `newtab all`: one tab per distinct script page; the scripts with
 // none, or whose tab failed, are listed at the end, after the tabs'
 // own output.
-async function openScriptPages(ctx: ConsoleContext, noScript: boolean, noWait: boolean): Promise<void> {
+async function openScriptPages(ctx: ConsoleContext, noScript: boolean, noWait: boolean, timeoutMs: number | undefined): Promise<void> {
   const pages = new Map<string, PreparedScript[]>();
   const skipped: string[] = [];
   if (ctx.scripts.length === 0) {
@@ -1903,7 +1919,7 @@ async function openScriptPages(ctx: ConsoleContext, noScript: boolean, noWait: b
   const opened: ControlledTab[] = [];
   await Promise.all([...pages].map(async ([url, scripts]) => {
     try {
-      opened.push(await ctx.newTab!(url, { noScript }));
+      opened.push(await ctx.newTab!(url, { noScript, timeoutMs }));
     } catch (err) {
       for (const script of scripts) {
         const i = ctx.scripts.indexOf(script);
@@ -1911,7 +1927,7 @@ async function openScriptPages(ctx: ConsoleContext, noScript: boolean, noWait: b
       }
     }
   }));
-  if (!noWait) await settleTabs(ctx.host, opened, ctx.out);
+  if (!noWait) await settleTabs(ctx.host, opened, ctx.out, timeoutMs);
   for (const line of skipped) if (line) ctx.out(line);
 }
 
