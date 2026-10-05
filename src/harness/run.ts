@@ -25,6 +25,8 @@ import { launchExtensionBrowser } from './extension-launch.js';
 import { fetchManager, fetchedVersion } from './manager-fetch.js';
 import { DEFAULT_MANAGER, MANAGERS, managerFlag, type ManagerName } from './managers.js';
 import { ExtensionLink, linkRunId, type ExtensionEvent } from './extension-link.js';
+import { ExternalRunScripts, externalControl, externalOthers, type ExternalManager } from './external-manager.js';
+import { Violentmonkey } from './violentmonkey.js';
 import type { ErrorReport, PageLink, SkipReport, StartReport } from './host.js';
 import { attachPage, targetIdOf, type AttachOptions, type PageAttachment } from './page-watch.js';
 import { pageSays } from './page-commands.js';
@@ -595,7 +597,7 @@ export async function run(opts: RunOptions): Promise<number> {
   if (opts.until) {
     await remote.open({
       pid: process.pid,
-      started: Date.now(),
+      started: remote.startedAt,
       browser: session.endpoint,
       ...(session.launched ? { owned: true } : {}),
       ...(session.headless ? { headless: true } : {}),
@@ -630,6 +632,14 @@ export async function run(opts: RunOptions): Promise<number> {
     // Its tabs run the extension's scripts again from their next load,
     // and the extension removes its test collection.
     await held.extension?.close();
+    if (held.external) {
+      // Not from a browser that's gone: a throwaway one takes them with
+      // it, and the next run in a person's own removes them as it starts.
+      if (!session.launched && session.browser.isConnected()) {
+        await held.external.scripts.removeAll().catch((err) => opts.out(`[sm-dev] The run's scripts could not be removed from ${held.external!.manager.label}: ${(err as Error).message}`));
+      }
+      await held.external.manager.close().catch(() => undefined);
+    }
     await session.done().catch(() => undefined);
     // On every way out, so a page tested after this is never taken
     // for one the run still controls. Its registrations are gone, but
@@ -672,6 +682,8 @@ class Remote {
   private readonly listeners = new Map<(line: string) => void, ReadonlySet<LogSource> | undefined>();
   /** The run's log lines, for `logs` and `wait log`. */
   readonly logs = new RunLog();
+  /** When the run started, in epoch ms, as its record says. */
+  readonly startedAt = Date.now();
 
   // The run's stream is its log, and every command comes from a
   // client, so a command that changes something is marked there as
@@ -860,12 +872,35 @@ async function runInBrowser(
     opts.out(`[sm-dev] SourceMonkey is turned off in this browser. Turn it on with sm-dev${browserArg(session.endpoint, session.launched)} manager enable, or use --temp-browser, which loads it.`);
     return 1;
   }
-  // Under another manager, the run's tabs are plain browser tabs for
-  // now: it loads no scripts, and the manager runs its own.
+  // Under another manager, the manager runs every script it has, and
+  // the run's tabs are plain browser tabs. Under Violentmonkey, the
+  // run's scripts go into it too (external-manager.ts).
   if (manager !== 'sourcemonkey' && managerNow !== 'installed' && managerNow !== null) {
     const fix = managerNow === 'disabled' ? 'manager enable' : 'manager install';
     opts.out(`[sm-dev] ${label} is ${managerNow === 'disabled' ? 'turned off' : 'not installed'} in this browser. Use sm-dev${browserArg(session.endpoint, session.launched)} ${managerFlag(manager)} ${fix}.`);
+    if (opts.files.length > 0) return 1;
   }
+  if (manager === 'violentmonkey' && (managerNow === 'installed' || managerNow === null)) {
+    let vm: Violentmonkey;
+    try {
+      vm = await Violentmonkey.open(session.endpoint, browserArg(session.endpoint, session.launched));
+    } catch (err) {
+      opts.out(`[sm-dev] ${(err as Error).message}`);
+      return 1;
+    }
+    const scripts = new ExternalRunScripts(vm, { id: remote.id ?? 'unnamed', started: new Date(remote.startedAt).toISOString() });
+    held.external = { manager: vm, scripts };
+    try {
+      // A throwaway browser's settings are the run's own, so local
+      // test pages run scripts, as under SourceMonkey.
+      if (session.launched) await vm.allowFilePages();
+      for (const line of await scripts.removeLeftovers()) opts.out(`[sm-dev] ${line}`);
+    } catch (err) {
+      opts.out(`[sm-dev] ${(err as Error).message}`);
+      return 1;
+    }
+  }
+  const external = held.external;
   let link: ExtensionLink;
   try {
     link = manager === 'sourcemonkey' ? await ExtensionLink.open(session.context, linkRunId(remote.id))
@@ -880,6 +915,15 @@ async function runInBrowser(
   const host = new ExtensionHost(link, ({ scriptId, name, level, message, page }) => opts.emit!({
     source: 'sm', kind: level, scriptId, tab: page && tabs.numberOf(page), text: `${name}: ${message}`,
   }));
+  if (external) {
+    host.external = {
+      idOf: (url) => {
+        const id = external.manager.scriptIdOf(url);
+        return id === undefined ? undefined : String(id);
+      },
+      prefix: external.manager.scriptUrlPrefix,
+    };
+  }
   link.onRestart((restored) => {
     opts.out('[sm-dev] SourceMonkey\'s background script restarted, so what the scripts did meanwhile may be missing here, apart from their Log entries, which are read back.'
       + (restored > 0 ? ` It had lost its hold on ${restored === 1 ? 'one of the run\'s tabs' : `${restored} of the run's tabs`}, which it has again.` : ''));
@@ -948,6 +992,23 @@ async function runInBrowser(
       // typed to start or load, so files of the same name stay apart.
       const name = typedName(opts, file);
       const text = await readFile(file, 'utf8');
+      if (manager === 'violentmonkey' && !external) {
+        opts.out(`[sm-dev] ${label} was not on in this browser when the run started, so the run can't load scripts into it. Start a new run once it's on.`);
+        return false;
+      }
+      if (external) {
+        let installed: { id: number; replaced: boolean };
+        try {
+          installed = await external.scripts.push(script, text);
+        } catch (err) {
+          opts.out(`[sm-dev] ${name} could not be loaded into ${label}: ${(err as Error).message}`);
+          return false;
+        }
+        pushedAny = true;
+        host.setPushed(script.id!, String(installed.id));
+        opts.out(`[sm-dev] Installed in ${label} as E${installed.id}: ${preparedScriptPath(script)}${installed.replaced ? ' (replaced)' : ''}`);
+        continue;
+      }
       const result = await link.push(text, name, pushedFiles(script), script.script.fileUrl);
       pushedAny = true;
       if (result.status !== 'ok') {
@@ -1113,18 +1174,25 @@ async function runInBrowser(
         ...(session.downloadsDir ? { downloadsDir: session.downloadsDir } : {}),
         browser: browserSentence({ browser: session.endpoint, owned: session.launched, headless: session.headless }),
         browserInfo: { address: session.endpoint.replace(/^https?:\/\//, ''), owned: session.launched === true, headless: session.headless === true },
-        testCollection: () => (pushedAny ? link.runId : undefined),
+        testCollection: () => (pushedAny && !external ? link.runId : undefined),
         managerName: manager,
         browserArg: browserArg(session.endpoint, session.launched),
         managers: () => managersIn(session.endpoint),
         // The first push makes the test collection.
-        backend: () => (manager !== 'sourcemonkey' ? `${label}, which the run loads no scripts into`
+        backend: () => (external ? `${label} ${external.manager.version}, with the run's scripts installed in it until the run ends`
+          : manager !== 'sourcemonkey' ? `${label}, which the run loads no scripts into`
           : pushedAny
             ? `SourceMonkey extension, test collection ${link.runId}`
             : `SourceMonkey extension, run ${link.runId}, with no test collection until a script is pushed`),
         // A throwaway browser's data is the run's own. Under another
         // manager, there's no SourceMonkey to list.
-        ...(manager === 'sourcemonkey' ? { others: host.otherScripts(!session.launched), manager: link.manager } : {}),
+        ...(manager === 'sourcemonkey' ? { others: host.otherScripts(!session.launched), manager: link.manager }
+          : external ? {
+            others: externalOthers(external.manager, () => new Set(scripts.flatMap((p) => (p.id ? [host.extensionIdOf(p.id)] : []))), !session.launched),
+            manager: externalControl(external.manager),
+            // Nothing reports what ran, so the run's scripts' rules say.
+            predicted: true,
+          } : {}),
         extensionIdOf: (script) => (script.id === undefined ? undefined : host.extensionIdOf(script.id)),
         logs: remote.logs,
         roots: { collectionRoot: opts.collectionRoot, localRoots: opts.localRoots },
@@ -1170,6 +1238,8 @@ interface Held {
   downloads?: DownloadWatch;
   /** The run's connection to SourceMonkey, released at its end. */
   extension?: ExtensionLink;
+  /** Under another manager: the manager, and the run's scripts in it, removed at its end. */
+  external?: { manager: ExternalManager; scripts: ExternalRunScripts };
 }
 
 // The run's tabs: T1, the tabs `newtab` and `--all` open, and the tabs
@@ -1716,7 +1786,9 @@ function tabOutput(out: (line: string) => void, n: number): (line: string) => vo
 function wirePageOutput(page: Page, n: number, emit: (fields: LogFields) => void, host: ExtensionHost, extensionOrigin: string): void {
   // Given up on after a while, so a session that never opens (a hung tab,
   // a slow remote browser) can't hold up the tab's lines for good.
-  const stacks = Promise.race([ConsoleStacks.attach(page, extensionOrigin), sleep(STACKS_ATTACH_MS).then(() => null)]);
+  // Under another manager, its worlds are the scripts'.
+  const origin = host.external ? host.external.prefix.replace(/\/$/, '') : extensionOrigin;
+  const stacks = Promise.race([ConsoleStacks.attach(page, origin), sleep(STACKS_ATTACH_MS).then(() => null)]);
   const log = (msg: ConsoleMessage, text: string, call: ConsoleCall | null): void => {
     const body = decodeOwnRefs(host.remapStack(text));
     // SourceMonkey's own console lines repeat what the run logs from its
@@ -1727,7 +1799,7 @@ function wirePageOutput(page: Page, n: number, emit: (fields: LogFields) => void
     }
     const url = msg.location().url;
     const frames = call?.frames ?? [];
-    const source = consoleSource({ type: msg.type(), text: body, url, frames, extensionWorld: call?.extensionWorld, argCount: msg.args().length });
+    const source = consoleSource({ type: msg.type(), text: body, url, frames, extensionWorld: call?.extensionWorld, argCount: msg.args().length }, host.external?.prefix);
     emit({ source, ...SCRIPT_IN_PAGE[source], kind: msg.type(), tab: n, scriptId: source === 'script' ? host.scriptOf([url, ...frames]) : undefined, text: body });
   };
   // In order: a line that logs a DOM node is described from the page,
@@ -1760,7 +1832,8 @@ function wirePageOutput(page: Page, n: number, emit: (fields: LogFields) => void
   // message is printed anyway.
   page.on('pageerror', (err) => {
     const stack = err.stack ?? err.message;
-    const source = pageErrorSource(stack, true);
+    // Another manager reports no errors, so each is the page's to show.
+    const source = pageErrorSource(stack, !host.external, host.external?.prefix);
     if (!source) return;
     emit({ source, ...SCRIPT_IN_PAGE[source], kind: 'error', tab: n, scriptId: source === 'script' ? host.scriptOf([stack]) : undefined, text: decodeOwnRefs(err.message) });
   });

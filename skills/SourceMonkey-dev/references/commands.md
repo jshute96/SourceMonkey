@@ -74,17 +74,27 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 ### Managers
 
 `--manager` picks SourceMonkey (`sm`, the default), Tampermonkey (`tm`)
-or Violentmonkey (`vm`). A run keeps the one it started with.
+or Violentmonkey (`vm`). A run keeps the one it started with. How to
+test a script under VM:
+[other-managers.md](other-managers.md).
 
 | Command | Does |
 | --- | --- |
 | `--manager tm manager fetch` | Download or update TM (or VM) from the Chrome Web Store into `~/.cache/sm-dev/managers` |
 | `[--manager tm] manager install` | Load the manager into the browser unpacked, with Allow User Scripts on. No run needed |
 | `[--manager tm] manager enable` / `disable` | Turn it on or off in the browser. Not SourceMonkey while a run uses it |
+| `--manager vm --temp-browser start <script> <url>` | A run under VM: its scripts are installed in VM, and removed when it ends. `values`, `get`, `set`, `menu`, `connect` and `--values` are refused |
+| `--manager vm script list`, `script E3 show`, ... | VM's scripts, by its ids, in one collection, `C0`. `collection C0 disable` is VM's switch for all scripts |
 | `--manager tm --temp-browser start <url>` | A run under TM: page commands work, no scripts load, and SourceMonkey-only commands (`scripts`, `values`, `menu`, `collection`, ...) are refused |
 
 - A manager enabled beside the chosen one runs its scripts in the run's
   tabs too: the run's first lines and `status` warn of it.
+- Under VM, `scripts` and `status` show which scripts each tab is
+  expected to run, by their match rules (`Expected on tab T1 using match rules:`), not what
+  ran. A run's script shows its VM id too: `1: Hello (hello.user.js),
+  E6 in Violentmonkey`.
+- Under VM, a run never replaces a script VM already has by the same
+  name and namespace: `start` refuses, naming it.
 
 ## Runs
 
@@ -136,7 +146,7 @@ own: change them only when asked to.
 | --- | --- |
 | `script [script] enable` / `disable` | Turn one on or off. In a run, one of its own too |
 | `script [script] refresh` | Re-read it from its location; a run's own from disk, as `update` does |
-| `script install <file\|url>` | Install for every tab, to stay (`load` is for the run only). `--collection <C>` |
+| `script install <file\|url>` | Install for every tab, to stay (`load` is for the run only). `--collection <C>`. Under VM, replacing the person's script of the same name needs `--force`: ask first |
 | `script <script> uninstall`, `script [script] move <C>` | Remove one from, or move it between, container collections |
 | `collection <C> enable` / `disable` / `refresh`, `collection <C> rename <name>` | The same for a whole collection |
 

@@ -88,6 +88,13 @@ export interface ManagedScript {
   error?: string;
   /** Why its last refresh failed, while its last good copy still runs. */
   refreshError?: string;
+  /**
+   * Set by sm-dev, under another manager (external-manager.ts): a
+   * run's script, whose run is live (`D1`).
+   */
+  run?: string;
+  /** Set by sm-dev, under another manager: a run's script, left by that run when it ended (`D1`). */
+  leftBy?: string;
 }
 
 /** A `@require` or `@resource`, as `managed.scriptDetails` gives it. */
@@ -96,8 +103,8 @@ export interface ManagedFile {
   url: string;
   /** `@resource`'s name. */
   name?: string;
-  /** Loaded, or not: a script that failed to load has none. */
-  loaded: boolean;
+  /** Loaded, or not: a script that failed to load has none. Absent when the manager doesn't say. */
+  loaded?: boolean;
   /** The local file read in its place. */
   local?: string;
 }
@@ -117,7 +124,8 @@ export interface ManagedScriptDetails extends ManagedScript {
   grants: string[];
   requires: ManagedFile[];
   resources: ManagedFile[];
-  valueCount: number;
+  /** Absent when the manager doesn't say. */
+  valueCount?: number;
 }
 
 /** What `managed.refreshScript` did. */
@@ -162,4 +170,6 @@ export interface ScriptEnable {
 export interface ScriptInstall extends ScriptEnable {
   /** It was already installed in that collection, so nothing changed. */
   already?: true;
+  /** Set by sm-dev, under another manager: it replaced the script with the same name and namespace. */
+  replaced?: true;
 }

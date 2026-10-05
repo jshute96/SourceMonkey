@@ -1,12 +1,14 @@
-// The `collection` and `script` commands: what SourceMonkey has
+// The `collection` and `script` commands: what the manager has
 // installed, its collections and scripts, listed, shown and changed, as
 // text or JSON. The same in a run (through its ExtensionLink) and
 // without one (a connection of their own, see `openManagerLink`). See
-// docs/sm-dev-managers.md.
+// docs/sm-dev-managers.md. Under Violentmonkey, the same commands over
+// `externalControl` (external-manager.ts).
 //
 // Collections are named `C3` and scripts `E12` by the numbers
 // SourceMonkey gives them (sticky-numbers.ts), so a name means the same
-// thing in every run and every command.
+// thing in every run and every command. Another manager's scripts go
+// by its own numbers, in one collection, `C0`.
 
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -23,8 +25,13 @@ import {
 import type * as J from './json-output.js';
 import { commandSyntax } from './command-list.js';
 
-/** The calls these commands make into SourceMonkey (managed-changes.ts). */
+/**
+ * The calls these commands make into the manager: SourceMonkey's
+ * (managed-changes.ts), or another's (external-manager.ts).
+ */
 export interface ManagerControl {
+  /** The manager's name, for what the commands say (`SourceMonkey`). */
+  readonly label: string;
   collections(): Promise<ManagedCollection[]>;
   scripts(): Promise<ManagedScript[]>;
   /** What the disk says of local scripts and collections; null for an extension older than 1.5. */
@@ -33,7 +40,11 @@ export interface ManagerControl {
   setCollectionEnabled(id: string, enabled: boolean): Promise<ManagedCollection>;
   refreshScript(id: string): Promise<ScriptRefresh>;
   refreshCollection(id: string): Promise<CollectionRefresh>;
-  installScript(location: string, collectionId: string | null): Promise<ScriptInstall>;
+  /**
+   * `replace`: another manager may replace a script of the person's own
+   * with the same name and namespace; else it refuses (`ReplaceRefused`).
+   */
+  installScript(location: string, collectionId: string | null, replace?: boolean): Promise<ScriptInstall>;
   uninstallScript(id: string): Promise<ManagedScript>;
   moveScript(id: string, collectionId: string): Promise<ScriptEnable>;
   renameCollection(id: string, name: string): Promise<ManagedCollection>;
@@ -64,9 +75,10 @@ export interface RunView {
 }
 
 // A script in a run's test collection has no E-id: only its run knows
-// its number (`1`), so another run's is shown by name alone.
+// its number (`1`), so another run's is shown by name alone. Under
+// another manager, a run's scripts are its scripts too, with E-ids.
 function scriptLabel(s: ManagedScript, view: RunView | undefined): string | undefined {
-  return view?.own.get(s.id) ?? (s.number !== undefined ? `E${s.number}` : undefined);
+  return s.number !== undefined ? `E${s.number}` : view?.own.get(s.id);
 }
 
 function isSelected(s: ManagedScript, view: RunView | undefined): boolean {
@@ -117,7 +129,7 @@ function scriptJson(s: ManagedScript, collection: ManagedCollection | undefined,
   const id = scriptLabel(s, view);
   return {
     ...(id !== undefined ? { id } : {}),
-    kind: collection?.run !== undefined ? 'run' : 'installed',
+    kind: collection?.run !== undefined || s.run !== undefined ? 'run' : 'installed',
     internalId: s.id,
     name: s.name,
     ...(s.namespace !== undefined ? { namespace: s.namespace } : {}),
@@ -132,6 +144,8 @@ function scriptJson(s: ManagedScript, collection: ManagedCollection | undefined,
     ...(s.refreshError !== undefined ? { refreshError: s.refreshError } : {}),
     ...(disk?.scripts[s.id] ? { onDisk: disk.scripts[s.id] } : {}),
     ...(isSelected(s, view) ? { selected: true } : {}),
+    ...(s.run !== undefined ? { run: s.run } : {}),
+    ...(s.leftBy !== undefined ? { leftBy: s.leftBy } : {}),
   };
 }
 
@@ -156,7 +170,7 @@ export async function collectionList(manager: ManagerControl, out: (line: string
     out(jsonResult('collection list', { collections: collections.map((c) => collectionJson(c, disk)) } satisfies CollectionListData));
     return;
   }
-  out('Collections in SourceMonkey:');
+  out(`Collections in ${manager.label}:`);
   if (collections.length === 0) out('  None');
   for (const c of collections) {
     const notes = [count(c.scriptCount, 'script'), ...(c.enabled ? [] : ['disabled'])];
@@ -180,7 +194,13 @@ function scriptLine(s: ManagedScript, view: RunView | undefined, disk: ManagedOn
   const name = s.version ? `${s.name} ${s.version}` : s.name;
   const label = scriptLabel(s, view);
   const onDisk = disk?.scripts[s.id];
-  const notes = [...(s.enabled ? [] : ['disabled']), ...(onDisk ? [`${onDisk} on disk`] : [])];
+  const notes = [
+    ...(s.enabled ? [] : ['disabled']),
+    ...(onDisk ? [`${onDisk} on disk`] : []),
+    // Under another manager, where a run's scripts are among the rest.
+    ...(s.run !== undefined ? [`run ${s.run}'s${view?.own.has(s.id) ? ` script ${view.own.get(s.id)}` : ''}`] : []),
+    ...(s.leftBy !== undefined ? [`left by run ${s.leftBy}, which ended`] : []),
+  ];
   return `${isSelected(s, view) ? '* ' : '  '}${label !== undefined ? `${label}: ` : ''}${name}${notes.length > 0 ? ` (${notes.join(', ')})` : ''}${s.status === 'invalid' ? ': INVALID' : ''}`;
 }
 
@@ -235,7 +255,7 @@ export async function scriptList(
     return;
   }
   const listed = shown.filter((c) => picked || byCollection.get(c.id)!.length > 0);
-  if (listed.length === 0) out('No scripts are installed in SourceMonkey');
+  if (listed.length === 0) out(`No scripts are installed in ${manager.label}`);
   for (const c of listed) {
     out(`${collectionLabel(c)}: ${c.name}`);
     const these = byCollection.get(c.id)!;
@@ -244,7 +264,8 @@ export async function scriptList(
       out(scriptLine(s, view, disk));
       // A run's script by its path as the run was given it, rather than
       // its `scratch:` URL.
-      out(`      ${s.loadedAs ?? s.location}`);
+      const where = s.loadedAs ?? s.location;
+      if (where) out(`      ${where}`);
       if (s.error) out(`      ${s.error}`);
       if (s.refreshError) out(`      Its last refresh failed: ${s.refreshError}`);
     }
@@ -316,6 +337,13 @@ export function pickManagedScript(scripts: readonly ManagedScript[], name: strin
   throw new Error(`${name} names more than one script: ${which}. Name one by its number (E1), or id=<id>.`);
 }
 
+/** Another manager won't replace the person's own script `shown` (`E3: Name`) without `replace`. */
+export class ReplaceRefused extends Error {
+  constructor(readonly shown: string) {
+    super(`${shown} has the same name and namespace, and would be replaced`);
+  }
+}
+
 /** Said for a script name that names none. */
 export function noSuchScript(name: string): string {
   return `There is no script ${name}. Use script list to list the installed scripts.`;
@@ -382,7 +410,7 @@ export async function managerVerb(
   }
 }
 
-// A change SourceMonkey refused, said with what it was: `Could not
+// A change the manager refused, said with what it was: `Could not
 // disable E3: One: <why>`.
 async function attempt<T>(what: string, change: Promise<T>): Promise<T> {
   try {
@@ -395,7 +423,7 @@ async function attempt<T>(what: string, change: Promise<T>): Promise<T> {
 // Refused, saying why, when `--force` is needed and wasn't given.
 function forced(ctx: ManagerContext, flags: Record<string, string | true>, what: string, change: string): boolean {
   if (!ctx.guarded || flags['--force'] === true) return true;
-  ctx.out(`[sm-dev] ERROR: ${what} is installed in SourceMonkey in this browser, so this would ${change} for real. Use --force to continue.`);
+  ctx.out(`[sm-dev] ERROR: ${what} is installed in ${ctx.manager.label} in this browser, so this would ${change} for real. Use --force to continue.`);
   return false;
 }
 
@@ -485,8 +513,9 @@ async function scriptVerb(
   const collection = collections.find((c) => c.id === picked.collectionId);
   const shown = scriptShown(picked, view);
   const own = view?.own.has(picked.id) === true;
-  // Another run's script, or one left by a run that ended.
-  const othersRun = !own && collection?.run !== undefined ? runOfLinkId(collection.run) : undefined;
+  // Another run's script, or one left by a run that ended. Under
+  // another manager, only a live run's.
+  const othersRun = own ? undefined : collection?.run !== undefined ? runOfLinkId(collection.run) : picked.run;
   const changed = (s: ManagedScript, text: string, extra: object = {}): void => {
     const into = collections.find((c) => c.id === s.collectionId);
     if (ctx.json) ctx.out(jsonResult(`script ${verb}`, { script: scriptJson(s, into, view), ...extra } satisfies J.ScriptChangeData));
@@ -580,7 +609,17 @@ async function scriptInstall(ctx: ManagerContext, given: string, flags: Record<s
   }
   const collections = await ctx.manager.collections();
   const into = typeof flags['--collection'] === 'string' ? pickCollection(collections, flags['--collection']) : null;
-  const result = await attempt(`install ${given}`, ctx.manager.installScript(location, into?.id ?? null));
+  // A guarded one stops before it replaces the person's own script.
+  const replace = !ctx.guarded || flags['--force'] === true;
+  let result: ScriptInstall;
+  try {
+    result = await attempt(`install ${given}`, ctx.manager.installScript(location, into?.id ?? null, replace));
+  } catch (err) {
+    const refused = (err as Error).cause;
+    if (!(refused instanceof ReplaceRefused)) throw err;
+    forced(ctx, flags, refused.shown, 'replace it');
+    return false;
+  }
   const s = result.script;
   // The collection it went into, perhaps made just now.
   const holder = into ?? (await ctx.manager.collections()).find((c) => c.id === s.collectionId);
@@ -589,6 +628,7 @@ async function scriptInstall(ctx: ManagerContext, given: string, flags: Record<s
       script: scriptJson(s, holder, ctx.run),
       ...enableEffectsJson(result, holder, collections, ctx.run),
       ...(result.already ? { already: true } : {}),
+      ...(result.replaced ? { replaced: true } : {}),
     } satisfies J.ScriptInstallData));
     return true;
   }
@@ -597,7 +637,7 @@ async function scriptInstall(ctx: ManagerContext, given: string, flags: Record<s
     ctx.out(`${scriptShown(s, ctx.run)} is already installed${where}`);
     return true;
   }
-  ctx.out(`Installed ${scriptShown(s, ctx.run)}${where}${s.enabled ? '' : ', disabled'}${s.status === 'invalid' ? ', but it is INVALID' : ''}`);
+  ctx.out(`${result.replaced ? 'Replaced the script with the same name and namespace: ' : 'Installed '}${scriptShown(s, ctx.run)}${where}${s.enabled ? '' : ', disabled'}${s.status === 'invalid' ? ', but it is INVALID' : ''}`);
   if (s.error) ctx.out(`  ${s.error}`);
   for (const line of enableEffects(result, holder, collections, ctx.run)) ctx.out(`  ${line}`);
   return true;
@@ -644,13 +684,18 @@ function shortTime(ms: number): string {
 }
 
 function fileJson(f: ManagedFile): J.FileStatus {
-  return { url: f.url, status: f.loaded ? 'ok' : 'not-loaded', ...(f.local !== undefined ? { local: f.local } : {}) };
+  return {
+    url: f.url,
+    ...(f.loaded !== undefined ? { status: f.loaded ? 'ok' : 'not-loaded' } : {}),
+    ...(f.local !== undefined ? { local: f.local } : {}),
+  };
 }
 
-// `https://x/lib.js (ok)`, with its local stand-in.
+// `https://x/lib.js (ok)`, with its local stand-in. No status when the
+// manager doesn't say.
 function fileText(f: ManagedFile): string {
-  const status = f.loaded ? (f.local !== undefined ? `ok, read from ${f.local}` : 'ok') : 'not loaded';
-  return `${f.name !== undefined ? `${f.name} ` : ''}${f.url} (${status})`;
+  const status = f.loaded === undefined ? undefined : f.loaded ? (f.local !== undefined ? `ok, read from ${f.local}` : 'ok') : 'not loaded';
+  return `${f.name !== undefined ? `${f.name} ` : ''}${f.url}${status ? ` (${status})` : ''}`;
 }
 
 // `script show`: one script in full.
@@ -673,7 +718,7 @@ async function scriptShow(ctx: ManagerContext, picked: ManagedScript, collection
         requires: details.requires.map(fileJson),
         resources: details.resources.map((f) => ({ ...fileJson(f), name: f.name ?? '' })),
         ...(ctx.run ? { tabs: tabs.map((t) => t.activity) } : {}),
-        valueCount: details.valueCount,
+        ...(details.valueCount !== undefined ? { valueCount: details.valueCount } : {}),
       },
     } satisfies J.ScriptShowData));
     return;
@@ -687,6 +732,7 @@ async function scriptShow(ctx: ManagerContext, picked: ManagedScript, collection
   add('Description', details.description);
   add('Author', details.author);
   add('Collection', collection ? collectionShown(collection) : undefined);
+  add('Run', details.run !== undefined ? `A script of run ${details.run}` : details.leftBy !== undefined ? `Left by run ${details.leftBy}, which ended` : undefined);
   add('Location', details.loadedAs ?? details.location);
   add('Status', `${details.enabled ? 'Enabled' : 'Disabled'}, ${details.status === 'invalid' ? 'INVALID' : 'ok'}${onDisk ? `, ${onDisk} on disk` : ''}`);
   add('Error', details.error);
@@ -701,7 +747,9 @@ async function scriptShow(ctx: ManagerContext, picked: ManagedScript, collection
   add('@require', details.requires.map(fileText));
   add('@resource', details.resources.map(fileText));
   if (ctx.run) add('Tabs', tabs.length > 0 ? tabs.map((t) => `${t.activity.tab}: ${t.text}`) : 'None open');
-  add('Values', details.valueCount === 0 ? 'None' : `${details.valueCount} stored${ctx.run && label !== undefined ? ` (values ${label} to see them)` : ''}`);
+  if (details.valueCount !== undefined) {
+    add('Values', details.valueCount === 0 ? 'None' : `${details.valueCount} stored${ctx.run && label !== undefined ? ` (values ${label} to see them)` : ''}`);
+  }
   const width = Math.max(...rows.map(([name]) => name.length)) + 2;
   for (const [name, value] of rows) {
     const lines = typeof value === 'string' ? [value] : value;

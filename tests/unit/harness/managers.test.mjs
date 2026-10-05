@@ -24,11 +24,15 @@ test('--manager takes the short and full names, in any case', () => {
 
 test('commands that work through SourceMonkey say so; page commands work with any manager', () => {
   assert.deepEqual(commandManagers('values'), ['sourcemonkey']);
-  assert.deepEqual(commandManagers('collection'), ['sourcemonkey']);
+  assert.deepEqual(commandManagers('collection'), ['sourcemonkey', 'violentmonkey']);
+  assert.deepEqual(commandManagers('load'), ['sourcemonkey', 'violentmonkey']);
   assert.equal(commandManagers('click').length, 3);
   assert.equal(unsupportedCommand('click', 'tampermonkey', 'this run uses'), null);
-  assert.equal(unsupportedCommand('script', 'violentmonkey', 'this run uses'),
-    'The script command works with SourceMonkey only, and this run uses Violentmonkey');
+  assert.equal(unsupportedCommand('script', 'violentmonkey', 'this run uses'), null);
+  assert.equal(unsupportedCommand('script', 'tampermonkey', 'this run uses'),
+    'The script command works with SourceMonkey or Violentmonkey only, and this run uses Tampermonkey');
+  assert.equal(unsupportedCommand('values', 'violentmonkey', 'this run uses'),
+    'The values command works with SourceMonkey only, and this run uses Violentmonkey');
 });
 
 // A zip of `files`, deflated, as a CRX holds one.

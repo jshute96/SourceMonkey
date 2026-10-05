@@ -152,7 +152,11 @@ export type TabState =
   | 'not-started'
   | 'unexpected'
   | 'changed'
-  | 'kept-out';
+  | 'kept-out'
+  // Under another manager, which doesn't say what ran: its rules match
+  // the tab's page, or don't (see docs/sm-dev-external-managers.md).
+  | 'expected'
+  | 'not-expected';
 
 export interface TabActivity {
   tab: string;
@@ -163,6 +167,8 @@ export interface TabActivity {
 export interface Script {
   /** Absent in `script list` for a run's script: only its run knows its number. */
   id?: string;
+  /** Under another manager, a run's script in `scripts` and `status`: its E-id in the manager. */
+  installedAs?: string;
   kind: 'run' | 'installed';
   name: string;
   /** The run's scripts: the path it was loaded from. */
@@ -189,6 +195,10 @@ export interface Script {
   onDisk?: 'modified' | 'deleted';
   /** The script `get` and `set` act on. */
   selected?: boolean;
+  /** Under another manager, in `script list` and `show`: the live run whose script it is (`D1`). */
+  run?: string;
+  /** Under another manager: left by a run that ended (`D1`). */
+  leftBy?: string;
   /** In `scripts` and `status`: what it is doing on each tab. */
   tabs?: TabActivity[];
 }
@@ -457,6 +467,8 @@ export interface ScriptInstallData extends Pick<ScriptChangeData, 'turnedOff' | 
   script: Script;
   /** It was already installed there, so nothing changed. */
   already?: true;
+  /** Under another manager: it replaced the script with the same name and namespace. */
+  replaced?: true;
 }
 
 export interface ScriptPrintData {
@@ -471,8 +483,8 @@ export interface ScriptPrintData {
 export interface FileStatus {
   /** As the header gives it. */
   url: string;
-  /** `not-loaded` when the script failed to load. */
-  status: 'ok' | 'not-loaded';
+  /** `not-loaded` when the script failed to load. Absent when the manager doesn't say. */
+  status?: 'ok' | 'not-loaded';
   /** The local file read in its place. */
   local?: string;
 }
@@ -489,7 +501,8 @@ export interface ScriptDetails extends Script {
   grants: string[];
   requires: FileStatus[];
   resources: (FileStatus & { name: string })[];
-  valueCount: number;
+  /** Absent when the manager doesn't say. */
+  valueCount?: number;
 }
 
 export interface ScriptShowData {

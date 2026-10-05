@@ -33,6 +33,7 @@ import { parseLang } from './browser-lang.js';
 import { parseCommandArgs } from './command-args.js';
 import { DEFAULT_MANAGER, MANAGERS, managerMistake, managerNamed, type ManagerName } from './managers.js';
 import type { ManagerVerb } from './manager-actions.js';
+import type { ManagerControl } from './manager-commands.js';
 import { OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, commandNamed, commandSyntax, commandsHelp, fullHelp, unsupportedCommand } from './command-list.js';
 import { readJsonFile } from './input-file.js';
 import { isJsonLine, jsonLayoutMistake, jsonResult, jsonResultData, STDERR_LINE, withLayout, type JsonLayout, type BrowserStatus, type ListData, type MatchData, type RunConnection, type StatusData, type StatusRunsData } from './json-output.js';
@@ -351,8 +352,12 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
     ] as [boolean, string][]).filter(([on]) => on).map(([, name]) => name);
     if (used.length > 0) throw new UsageError(`The start command was given no scripts, so it can't take ${used.join(' or ')}`);
   }
-  if (lineManager && lineManager !== 'sourcemonkey' && scripts.length > 0) {
-    throw new UsageError(`A run loads its scripts into SourceMonkey, so it can't with --manager ${MANAGERS[lineManager].short}. Start it without scripts, to drive its pages.`);
+  // A run loads its scripts into SourceMonkey or Violentmonkey.
+  if (lineManager === 'tampermonkey' && scripts.length > 0) {
+    throw new UsageError(`A run can't load scripts into ${MANAGERS[lineManager].label} yet. Start it without scripts, to drive its pages.`);
+  }
+  if (lineManager === 'violentmonkey' && opts.values) {
+    throw new UsageError(`The ${opts.valuesFlag ?? '--values'} flag works with SourceMonkey only, and --manager names ${MANAGERS[lineManager].label}`);
   }
   if (lineTempBrowser && opts.cdp !== undefined) throw new UsageError('The --temp-browser flag can\'t be used with --browser');
   if (lineOpenBrowser && opts.cdp !== undefined) throw new UsageError('The start command connects to the browser --open-browser starts, so give --browser once, first: sm-dev --open-browser --browser ... start ...');
@@ -1356,7 +1361,8 @@ async function managerHere(words: string[]): Promise<number> {
     print(commandsHelp([name]).text.trimEnd());
     return 0;
   }
-  const unsupported = unsupportedCommand(name, lineManager ?? DEFAULT_MANAGER, '--manager names');
+  const chosen = lineManager ?? DEFAULT_MANAGER;
+  const unsupported = unsupportedCommand(name, chosen, '--manager names');
   if (unsupported) throw new UsageError(unsupported);
   const { noSuchVerb } = await import('./manager-commands.js');
   if (parsed.form === undefined && parsed.words.length > 0) throw new UsageError(noSuchVerb(parsed.words));
@@ -1372,12 +1378,23 @@ async function managerHere(words: string[]): Promise<number> {
   // What went wrong connecting goes to stderr, as other mistakes do.
   const session = await connectWithoutRun(lineCdp, (line) => process.stderr.write(`${line}\n`));
   if (!session) return 1;
+  let closeManager: (() => Promise<void>) | undefined;
   try {
     const { managersIn, otherManagersWarning } = await import('./browser-extensions.js');
     const { browserArg } = await import('./run.js');
-    for (const line of otherManagersWarning(await managersIn(session.endpoint) ?? [], DEFAULT_MANAGER, browserArg(session.endpoint))) process.stderr.write(`${line}\n`);
-    const { manager, versionNote } = await openManagerLink(session.context);
-    if (versionNote) process.stderr.write(`${versionNote}\n`);
+    for (const line of otherManagersWarning(await managersIn(session.endpoint) ?? [], chosen, browserArg(session.endpoint))) process.stderr.write(`${line}\n`);
+    let manager: ManagerControl;
+    if (chosen === 'violentmonkey') {
+      const { Violentmonkey } = await import('./violentmonkey.js');
+      const { externalControl } = await import('./external-manager.js');
+      const vm = await Violentmonkey.open(session.endpoint, browserArg(session.endpoint));
+      closeManager = () => vm.close();
+      manager = externalControl(vm);
+    } else {
+      const link = await openManagerLink(session.context);
+      if (link.versionNote) process.stderr.write(`${link.versionNote}\n`);
+      manager = link.manager;
+    }
     // Its failures go to stderr, as sm-dev's own commands' do.
     const said = (line: string): void => {
       if (line.startsWith('[sm-dev] ')) process.stderr.write(`${line.slice('[sm-dev] '.length)}\n`);
@@ -1388,6 +1405,7 @@ async function managerHere(words: string[]): Promise<number> {
     process.stderr.write(`${firstLine(err)}\n`);
     return 1;
   } finally {
+    await closeManager?.().catch(() => undefined);
     await session.done();
   }
 }

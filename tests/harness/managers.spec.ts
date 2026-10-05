@@ -4,7 +4,9 @@
 //
 // Violentmonkey is played by a stand-in: an extension of that name,
 // "fetched" into a cache folder of the test's own, so nothing is
-// downloaded. It is found by its name, as its id is its own key's.
+// downloaded. It is found by its name, as its id is its own key's. It
+// answers the calls a run makes with no scripts installed. The real
+// Violentmonkey's are tried in violentmonkey.spec.ts.
 
 import { execFile } from 'node:child_process';
 import { generateKeyPairSync } from 'node:crypto';
@@ -40,7 +42,14 @@ test.beforeEach(async () => {
   writeFileSync(path.join(vm, 'manifest.json'), JSON.stringify({
     manifest_version: 3, name: 'Violentmonkey', version: '9.9.9', key, background: { service_worker: 'bg.js' }, permissions: ['userScripts'],
   }));
-  writeFileSync(path.join(vm, 'bg.js'), '');
+  writeFileSync(path.join(vm, 'bg.js'), `
+    const answers = { GetData: { scripts: [] }, GetScriptCode: {}, GetAllOptions: { isApplied: true, blacklist: '' } };
+    chrome.runtime.onMessage.addListener((message, _sender, reply) => {
+      if (message.cmd in answers) reply(answers[message.cmd]);
+    });
+  `);
+  mkdirSync(path.join(vm, 'options'));
+  writeFileSync(path.join(vm, 'options', 'index.html'), '<title>Options</title>');
   writeFileSync(path.join(dir, 'page.html'), '<title>Page</title><p>Hello</p>');
 });
 
@@ -136,15 +145,15 @@ test('manager install, enable and disable, with a warning for the other one enab
 test('a run under another manager drives its pages, and refuses what needs SourceMonkey', async () => {
   test.setTimeout(90_000);
   const page = pathToFileURL(path.join(dir, 'page.html')).href;
-  const withScript = await cli('--manager', 'vm', '--temp-browser', 'start', path.join(dir, 'x.user.js'));
+  const withScript = await cli('--manager', 'tm', '--temp-browser', 'start', path.join(dir, 'x.user.js'));
   expect(withScript.code).toBe(2);
-  expect(withScript.stderr).toContain('A run loads its scripts into SourceMonkey, so it can\'t with --manager vm.');
+  expect(withScript.stderr).toContain('A run can\'t load scripts into Tampermonkey yet.');
 
   const run = await cli('--manager', 'vm', '--temp-browser', 'start', page, '--', 'status', '--', 'snapshot', '--', 'values');
   expect(run.stdout).toContain('(Chrome ');
   expect(run.stdout).toContain(', has Violentmonkey)');
   expect(run.stdout).toContain('Managers: Violentmonkey 9.9.9 (in use)\n');
-  expect(run.stdout).toContain('Backend: Violentmonkey, which the run loads no scripts into');
+  expect(run.stdout).toContain('Backend: Violentmonkey 9.9.9, with the run\'s scripts installed in it until the run ends');
   expect(run.stdout).toContain('paragraph [ref=');
   expect(run.stdout).toContain('[sm-dev] ERROR: The values command works with SourceMonkey only, and this run uses Violentmonkey');
   expect(run.code).toBe(2);

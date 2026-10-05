@@ -465,13 +465,28 @@ sm-dev manager disable                             # turn SourceMonkey off there
     run turns Tampermonkey off in its browser.
 - **Under Tampermonkey or Violentmonkey**, a run drives its pages:
   `snapshot`, `click`, `newtab`, `eval --page`, `logs` and the rest.
-  - It loads no scripts: `start` with a script is refused.
   - The manager runs its own installed scripts in the run's tabs.
   - Tabs a page opens aren't followed.
-  - The commands that work through SourceMonkey (`scripts`, `load`,
-    `update`, `values`, `get`, `set`, `menu`, `connect`, and the
-    `collection` and `script` verbs) are refused: `The values command
-    works with SourceMonkey only, and this run uses Tampermonkey`.
+  - The commands that work through SourceMonkey alone (`values`,
+    `get`, `set`, `menu`, `connect`, `--values`) are refused: `The
+    values command works with SourceMonkey only, and this run uses
+    Violentmonkey`.
+- **Under Violentmonkey**, a run loads its scripts too, as normal
+  scripts in it, and removes them when it ends.
+  - `scripts` shows each with its Violentmonkey id: `1: Hello
+    (hello.user.js), E6 in Violentmonkey`.
+  - Whether a script is on a tab is predicted from its match rules,
+    since Violentmonkey doesn't say what ran. `scripts` and `status`
+    list them under `Expected on tab T1 using match rules:` and `Not
+    expected on tab T1:`.
+  - A script Violentmonkey already has by the same name and namespace
+    is never replaced: `start` refuses, naming it.
+  - The `collection` and `script` commands work on its scripts, in one
+    collection, `C0`.
+  - Details: [sm-dev-external-managers.md](sm-dev-external-managers.md).
+- **Under Tampermonkey**, a run loads no scripts yet: `start` with a
+  script is refused, as are `scripts`, `load`, `update` and the
+  `collection` and `script` commands.
 - A browser can hold several managers. Each one enabled beside the
   chosen one runs its scripts too, so sm-dev warns when it connects,
   and in `status`: `Warning: Tampermonkey is also enabled in this
@@ -1121,7 +1136,7 @@ do. Like the listings, they work with no run too, against `--browser`.
 | `script [script] print` | Its installed text |
 | `script [script] enable` / `disable` | Turns a script on or off; in a run, one of its own too |
 | `script [script] refresh` | Re-reads it from its location; one of the run's own from disk, as `update` does |
-| `script install <file\|url>` | Installs a `.user.js` file or URL for every tab, to stay. `--collection <collection>` picks the container collection |
+| `script install <file\|url>` | Installs a `.user.js` file or URL for every tab, to stay. `--collection <collection>` picks the container collection. Under Violentmonkey, replacing your script with the same name and namespace needs `--force` |
 | `script <script> uninstall` | Removes a script from its container collection |
 | `script [script] move <collection>` | Moves a script to another container collection |
 

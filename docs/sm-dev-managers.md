@@ -7,8 +7,10 @@ Status: proposal, partly built. Built so far:
 - for SourceMonkey: `collection list|show|enable|disable|refresh|rename`
   and `script list|show|print|enable|disable|refresh|install|uninstall|move`;
 - `--manager`, `manager fetch|install|enable|disable`, the managers in
-  `status`, and runs under TM or VM that drive pages but load no
-  scripts.
+  `status`, and runs under TM that drive pages but load no scripts;
+- under VM, the `collection` and `script` commands, and runs that load
+  their scripts into it (see
+  [sm-dev-external-managers.md](sm-dev-external-managers.md)).
 
 sm-dev today runs scripts *through* SourceMonkey in a run's own test
 collection. This adds commands to look at and change what a userscript
@@ -414,16 +416,18 @@ What `script show` shows, where the manager has it:
 
 ## What works under each manager
 
-| Feature | sm | tm / vm now | tm / vm planned |
-| --- | --- | --- | --- |
-| `manager` commands, `status` | yes | yes | yes |
-| `start`, page commands, `eval --page`, `snapshot`, `logs` | yes | yes, in a run with no scripts | yes |
-| `collection` and `script` verbs | yes | refused | all but collections |
-| Run's scripts in a test collection, `load`, `update`, `--watch` | yes | refused | installed as normal scripts and removed at the end of the run |
-| `eval` in a script | yes | no scripts to eval in | yes, in the manager's world where it can be found |
-| Reports, `wait` for script starts, `menu`, `get`/`set`, `values` | yes | refused | no |
-| Tab claims (other scripts kept out of run tabs) | yes | no: all the manager's scripts run | no |
-| Following tabs a page opens | yes | no | no |
+| Feature | sm | vm | tm now | tm planned |
+| --- | --- | --- | --- | --- |
+| `manager` commands, `status` | yes | yes | yes | yes |
+| `start`, page commands, `eval --page`, `snapshot`, `logs` | yes | yes | yes, in a run with no scripts | yes |
+| `collection` and `script` verbs | yes | yes, with one collection, `C0` | refused | yes, with one collection, `C0` |
+| Run's scripts, `load`, `update`, `--watch` | yes, in a test collection | installed as normal scripts, removed at the end of the run | refused | as under VM |
+| `scripts`, `status`: scripts on a tab | reported by the extension | predicted by their match rules | refused | as under VM |
+| `eval` in a script | yes | no: a script's scope can't be reached. `eval --page` works | no scripts to eval in | as under VM |
+| Reports, `wait` for script starts | yes | no | refused | no |
+| `menu`, `get`/`set`, `values`, `--values` | yes | no; future work | refused | no; future work |
+| Tab claims (other scripts kept out of run tabs) | yes | no: all the manager's scripts run | no | no |
+| Following tabs a page opens | yes | no | no | no |
 
 - A run under TM or VM has no link to SourceMonkey:
   `ExtensionLink.without` stands in, claiming no tabs, hearing no
@@ -431,15 +435,21 @@ What `script show` shows, where the manager has it:
 
 ## How TM and VM are driven
 
+- Running scripts and the `collection` / `script` commands under them
+  are designed in
+  [sm-dev-external-managers.md](sm-dev-external-managers.md).
 - Neither has an API other extensions or CDP can call. sm-dev drives
   their own pages over CDP, as the cross-manager e2e drivers already do
   (`tests/fixtures/manager.ts`):
   - VM: messages sent from its options page, the calls its own UI makes.
   - TM: reading and clicking its dashboard. This breaks when TM changes
     its pages, and the docs will say so.
-- One interface, `ManagerBackend` in `src/harness/manager-backends/`, with one
-  implementation per manager. Commands call the interface and refuse
-  with a clear message where a manager has no such feature.
+- The `collection` and `script` commands call `ManagerControl`
+  (`manager-commands.ts`): SourceMonkey's through its `ExtensionLink`,
+  and another manager's through `ExternalManager`
+  (`external-manager.ts`), which VM implements and TM will. Commands a
+  manager can't do are refused by its per-command list
+  (`unsupportedCommand`).
 
 ## Build order
 
@@ -453,11 +463,11 @@ What `script show` shows, where the manager has it:
    - `show`, `print`, `enable`, `disable`, `refresh`, `rename`, and
      `script install` / `uninstall` / `move` (done);
    - `collection add` / `drop`, and `script install --text`.
-5. `ManagerBackend` around those, with SourceMonkey as its first
-   implementation.
+5. `ManagerControl` around those, with SourceMonkey as its first
+   implementation (done).
 6. `--manager`, `manager fetch|install|enable|disable`, the managers in
    `status`, and runs under TM or VM that drive pages (done).
-7. VM, then TM, behind the same commands.
+7. VM (done), then TM, behind the same commands.
 8. Separate: move the cross-manager e2e projects onto fetched copies.
 
 ## Changing the person's real scripts
@@ -469,6 +479,9 @@ What `script show` shows, where the manager has it:
 - Enabling and disabling are easily undone, so they don't need it.
   Nor do adding things (`script install`, `collection add`) and
   refreshing.
+- Except under Violentmonkey, where `script install` replaces the
+  script with the same name and namespace: replacing the person's own
+  needs `--force` too.
 
 ## Open questions
 

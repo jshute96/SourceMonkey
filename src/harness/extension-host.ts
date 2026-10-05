@@ -160,8 +160,21 @@ export class ExtensionHost extends HarnessHost {
       for (const [extensionId, layout] of this.layouts) {
         if (url.includes(layout.entryUrl)) return this.runIds.get(extensionId);
       }
+      const external = this.external?.idOf(url);
+      if (external !== undefined) return this.runIds.get(external);
     }
     return undefined;
+  }
+
+  /**
+   * Under another manager (Violentmonkey), which reports nothing: how
+   * its code's URLs name scripts, by the manager's id (`setPushed`),
+   * and what every URL it runs code under starts with.
+   */
+  external?: { idOf(url: string): string | undefined; prefix: string };
+
+  override get getsReports(): boolean {
+    return this.external === undefined;
   }
 
   /**

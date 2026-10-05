@@ -562,6 +562,7 @@ function managerControl(
   };
   type Sm = { SourceMonkey: Api };
   return {
+    label: 'SourceMonkey',
     collections: async () => {
       requireMinor(2, MANAGING);
       return invoke(() => (self as unknown as Sm).SourceMonkey.managedCollections(), undefined);
@@ -614,5 +615,5 @@ interface Api {
   answerConnectPrompt(promptId: string, choice: 'once' | 'cancel' | 'allow' | 'allow-all' | 'deny'): Promise<boolean>;
   managedCollections(): Promise<ManagedCollection[]>;
   managedScripts(): Promise<ManagedScript[]>;
-  managed: Omit<ManagerControl, 'collections' | 'scripts' | 'onDisk'> & { onDisk(): Promise<ManagedOnDisk> };
+  managed: Omit<ManagerControl, 'label' | 'collections' | 'scripts' | 'onDisk'> & { onDisk(): Promise<ManagedOnDisk> };
 }

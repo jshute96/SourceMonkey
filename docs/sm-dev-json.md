@@ -127,10 +127,12 @@ interface Tab {
   scripts: string[];     // the ids of the run's scripts running in it
 }
 
-// A script: one the run loaded ("1"), or one installed in
-// SourceMonkey ("E1").
+// A script: one the run loaded ("1"), or one installed in the
+// manager ("E1").
 interface Script {
   id?: string;           // none in script list for another run's script
+  installedAs?: string;  // under another manager, a run's script in scripts
+                         // and status: its id there ("E6")
   kind: "run" | "installed";
   name: string;
   file?: string;         // run's scripts: the path it was loaded from
@@ -146,6 +148,9 @@ interface Script {
   refreshError?: string; // why its last refresh failed; its last good copy still runs
   onDisk?: "modified" | "deleted"; // script list and show: its local file, since it loaded
   selected?: boolean;    // the script get and set act on
+  // Under another manager, in script list and show:
+  run?: string;          // a live run's script: the run ("D1")
+  leftBy?: string;       // left by a run that ended ("D1")
   tabs?: TabActivity[];  // in scripts and status
 }
 
@@ -165,7 +170,10 @@ type TabState =
   | "not-started"        // it matches, but hasn't started
   | "unexpected"         // running, though it doesn't match
   | "changed"            // changed since it started
-  | "kept-out";          // matches, but the run's claim keeps it out
+  | "kept-out"           // matches, but the run's claim keeps it out
+  // Under another manager, which doesn't say what ran: by its match rules.
+  | "expected"
+  | "not-expected";
 ```
 
 ## Commands
@@ -1036,12 +1044,13 @@ interface ScriptDetails extends Script {
   grants: string[];
   requires: FileStatus[];
   resources: (FileStatus & { name: string })[];
-  valueCount: number;
+  valueCount?: number;      // none when the manager doesn't say
 }
 
 interface FileStatus {
   url: string;              // as the header gives it
-  status: "ok" | "not-loaded"; // not-loaded when the script failed to load
+  status?: "ok" | "not-loaded"; // not-loaded when the script failed to load;
+                            // none when the manager doesn't say
   local?: string;           // the local file read instead, if any
 }
 ```
@@ -1172,6 +1181,8 @@ interface ScriptInstallData {
   turnedOff?: Script[];
   collectionDisabled?: true;
   already?: true;        // it was installed there already: nothing changed
+  replaced?: true;       // under another manager: it replaced the script
+                         // with the same name and namespace
 }
 ```
 

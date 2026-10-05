@@ -51,12 +51,13 @@ export function isPreludeLine(text: string): boolean {
  * Whose a console line is: the scripts', when it was logged from
  * SourceMonkey's world or any frame of its stack is SourceMonkey's
  * code (a script calling a page helper that logs), else the page's.
- * The browser's own entries are always the page's.
+ * The browser's own entries are always the page's. `ours`: what the
+ * manager's code URLs start with, when it isn't SourceMonkey.
  */
-export function consoleSource(line: ConsoleLine): 'script' | 'page' {
+export function consoleSource(line: ConsoleLine, ours = OURS): 'script' | 'page' {
   if (line.argCount === 0) return 'page';
   if (line.extensionWorld) return 'script';
-  return [line.url, ...line.frames].some((url) => url.startsWith(OURS)) ? 'script' : 'page';
+  return [line.url, ...line.frames].some((url) => url.startsWith(ours)) ? 'script' : 'page';
 }
 
 /** `stack` is Playwright's for the error: the message, then its frames. */
@@ -69,13 +70,13 @@ export function hostReportedError(stack: string, hostReports: boolean): boolean 
  * Whose an uncaught error is (`stack`: the message, then its frames),
  * or null for a script body's throw the host printed already.
  */
-export function pageErrorSource(stack: string, hostReports: boolean): 'script' | 'page' | null {
+export function pageErrorSource(stack: string, hostReports: boolean, ours = OURS): 'script' | 'page' | null {
   if (hostReportedError(stack, hostReports)) return null;
   // A thrown or rejected non-Error value (`Promise.reject('nope')`)
   // has no frames, so there's no telling whose it was. Rare enough
   // that showing it beats losing a script's.
   if (!/\n\s+at /.test(stack)) return 'script';
-  return stack.includes(OURS) ? 'script' : 'page';
+  return stack.includes(ours) ? 'script' : 'page';
 }
 
 // How a node logged to the console reads: its opening tag, as in

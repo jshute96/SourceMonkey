@@ -20,6 +20,13 @@ real-browser end-to-end suite for everything that touches the
     fixture do for users.
   - Fixtures in `tests/fixtures/harness.ts`, which extends the
     package's own fixture.
+  - `violentmonkey.spec.ts` runs against the Violentmonkey `sm-dev
+    --manager vm manager fetch` put in the cache, and is skipped
+    without one.
+- `tests/vm-api/vm-api.spec.ts` — the `vm-api` project, run on demand
+  (`pnpm run test:vm-api`): whether the fetched Violentmonkey still
+  answers each call sm-dev makes. See
+  [sm-dev-external-managers.md](sm-dev-external-managers.md#checking-a-vm-version).
 - `tests/greasyfork-examples/` — not a test suite: tooling that builds a
   corpus of the top 2000 real-world GreasyFork scripts, analyses it, and
   records per-script validation and test results in `corpus.json` (see

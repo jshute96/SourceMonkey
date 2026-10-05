@@ -24,6 +24,9 @@ description: Develop, debug and test userscripts with SourceMonkey's sm-dev tool
 - So header rules, `@grant`, `@require`, `@run-at`, worlds, `GM_*`
   storage and `GM_xmlhttpRequest` behave as they will for users (see
   [How a run uses the extension](#how-a-run-uses-the-extension)).
+- **A run can use Violentmonkey instead**, to check a script under an
+  alternate manager. See
+  [Testing under other managers](#testing-under-other-managers).
 - **The browser's CDP port stays open** to you as well.
   - Anything sm-dev has no command for (back button, window size, mouse
     wheel, drag), do over CDP directly, in the same tab, while
@@ -42,6 +45,8 @@ Where to look:
 - [references/cdp.md](references/cdp.md): raw CDP recipes.
 - [references/specs.md](references/specs.md): writing Playwright specs
   with the harness fixture.
+- [references/other-managers.md](references/other-managers.md): testing
+  under Violentmonkey.
 - `pnpm sm-dev --help`, or `pnpm sm-dev help <command>`: the
   authoritative, current reference.
 - The `SourceMonkey-friction` skill, when installed: log where these
@@ -118,10 +123,6 @@ The run needs SourceMonkey in the browser, with "Allow User Scripts" on.
   scripts in the run's tabs too. The run's first lines and `status`
   warn of it: ask the person before turning it off with
   `pnpm sm-dev --manager tm manager disable`.
-- `--manager tm` or `vm` works with Tampermonkey or Violentmonkey
-  instead, for driving pages under them: the run loads no scripts, and
-  the SourceMonkey-only commands are refused. See
-  [Other managers](https://github.com/jshute96/SourceMonkey/blob/main/docs/harness-guide.md#other-managers-tampermonkey-and-violentmonkey).
 
 The headless `--temp-browser` is often blocked by large sites (Reddit,
 Google, Amazon, Vimeo, IMDb, parts of YouTube).
@@ -719,6 +720,23 @@ test('adds the button', async ({ page, loadUserscript, gm, reports }) => {
 - [references/specs.md](references/specs.md) has the rest: mapping
   sm-dev commands to the fixture, network requests, and pages with no
   site behind them.
+
+## Testing under other managers
+
+A run can load its scripts into **Violentmonkey** instead of
+SourceMonkey, to check a script under a manager its users have.
+Tampermonkey runs only drive pages for now.
+
+```sh
+pnpm sm-dev --manager vm manager fetch     # once: download Violentmonkey
+R="pnpm sm-dev --manager vm --run Dvm"
+$R --temp-browser start sites/x/y.user.js https://x.com/ --detach
+```
+
+It reports much less than SourceMonkey: which scripts a tab runs is
+predicted from their match rules, and `values`, `menu` and the like are
+refused. How it works and what differs:
+[references/other-managers.md](references/other-managers.md).
 
 ## Troubleshooting
 

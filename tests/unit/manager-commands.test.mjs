@@ -23,7 +23,7 @@ const scripts = [
     collectionId: 'run', enabled: true, status: 'ok',
   },
 ];
-const manager = { collections: async () => collections, scripts: async () => scripts, onDisk: async () => null };
+const manager = { label: 'SourceMonkey', collections: async () => collections, scripts: async () => scripts, onDisk: async () => null };
 
 async function lines(fn) {
   const out = [];
@@ -199,4 +199,28 @@ test('the script or collection comes before its verb, and a missing one is said'
   out.length = 0;
   await managerVerb({ manager, out: (l) => out.push(l), json: false, guarded: true, cwd: '/' }, 'script', 'enable', undefined, [], {});
   assert.deepEqual(out, ['[sm-dev] ERROR: The script enable command needs a script: script <script> enable. There is no selected script outside a run.']);
+});
+
+test('another manager\'s scripts: one collection, C0, and a run\'s scripts by their E-ids', async () => {
+  const all = [{ id: 'all', number: 0, name: 'Violentmonkey', kind: 'container', enabled: true, scriptCount: 3 }];
+  const vmScripts = [
+    { id: '3', number: 3, name: 'Mine', location: 'https://example.org/mine.user.js', collectionId: 'all', enabled: true, status: 'ok' },
+    { id: '5', number: 5, name: 'Run one', location: 'file:///home/me/run.user.js', loadedAs: '/home/me/run.user.js', collectionId: 'all', enabled: true, status: 'ok', run: 'D1' },
+    { id: '6', number: 6, name: 'Left', location: '', collectionId: 'all', enabled: false, status: 'ok', leftBy: 'D2' },
+  ];
+  const vm = { label: 'Violentmonkey', collections: async () => all, scripts: async () => vmScripts, onDisk: async () => null };
+  const view = { own: new Map([['5', '1']]), selected: { internalId: '5' } };
+  assert.deepEqual(await lines((out) => scriptList(vm, undefined, out, false, view)), [
+    'C0: Violentmonkey',
+    '  E3: Mine',
+    '      https://example.org/mine.user.js',
+    '* E5: Run one (run D1\'s script 1)',
+    '      /home/me/run.user.js',
+    '  E6: Left (disabled, left by run D2, which ended)',
+  ]);
+  assert.equal(pickCollection(all, 'C0'), all[0]);
+  assert.equal(pickManagedScript(vmScripts, '1', view), vmScripts[1]);
+  const [json] = await lines((out) => scriptList(vm, undefined, out, true, view));
+  const result = JSON.parse(json.slice(json.indexOf('{')));
+  assert.deepEqual(result.scripts.map((s) => [s.id, s.kind, s.run, s.leftBy]), [['E3', 'installed', undefined, undefined], ['E5', 'run', 'D1', undefined], ['E6', 'installed', undefined, 'D2']]);
 });

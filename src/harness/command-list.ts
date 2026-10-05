@@ -113,6 +113,8 @@ const WAIT_LOG_ABOUT = ['Wait for a log line with the text, or matching /regex/,
 // The commands that work through SourceMonkey, which a run under
 // another manager doesn't have.
 const SM: ManagerName[] = ['sourcemonkey'];
+// SourceMonkey, and Violentmonkey through external-manager.ts.
+const SM_VM: ManagerName[] = ['sourcemonkey', 'violentmonkey'];
 
 export const HELP_SECTIONS: HelpSection[] = [
   {
@@ -249,10 +251,10 @@ export const HELP_SECTIONS: HelpSection[] = [
   {
     title: 'Scripts',
     commands: [
-      { managers: SM, usage: 'scripts', syntax: JSON_TEXT, about: 'List the loaded scripts, and the SourceMonkey-managed scripts on the current tab.' },
-      { managers: SM, usage: 'script <script>', about: 'Select the active script by ID. With T2.3, pick tab T2 too.' },
-      { managers: SM, usage: 'load <script>...', syntax: WORDS, about: 'Load more scripts from disk: files, directories, or globs. See Files and file patterns.' },
-      { managers: SM, usage: 'update [script]', syntax: TEXT, about: 'Re-read one (or all) scripts from disk, and reload all affected tabs.' },
+      { managers: SM_VM, usage: 'scripts', syntax: JSON_TEXT, about: 'List the loaded scripts, and the manager\'s other scripts on the current tab.' },
+      { managers: SM_VM, usage: 'script <script>', about: 'Select the active script by ID. With T2.3, pick tab T2 too.' },
+      { managers: SM_VM, usage: 'load <script>...', syntax: WORDS, about: 'Load more scripts from disk: files, directories, or globs. See Files and file patterns.' },
+      { managers: SM_VM, usage: 'update [script]', syntax: TEXT, about: 'Re-read one (or all) scripts from disk, and reload all affected tabs.' },
     ],
     subsections: [
       {
@@ -295,7 +297,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         args: [
           { term: '<url>', about: 'A URL.' },
           { term: '<file>', about: 'A file, or a glob matching one.' },
-          { term: '<script ID>', about: 'A script\'s default page.' },
+          { term: '<script ID>', about: 'A script\'s default page: a loaded one (2), or an installed one (E3).' },
           { term: '(default)', about: 'The selected script\'s default page.' },
         ],
         gap: true,
@@ -593,7 +595,9 @@ export const HELP_SECTIONS: HelpSection[] = [
     title: 'Userscript managers',
     text: [
       'sm-dev works with one userscript manager, picked with --manager: SourceMonkey (the default), Tampermonkey or Violentmonkey. A run works with the one it started with.',
-      'Under Tampermonkey or Violentmonkey, a run drives its pages, but loads no scripts. The commands that work through SourceMonkey (scripts, load, values, menu, collection, ...) are refused.',
+      'Under Violentmonkey, a run installs its scripts into it, marked as the run\'s, and removes them when it ends. The manager runs all its scripts in every tab, so scripts and status show the ones each tab is expected to run, by their match rules.',
+      'Under Tampermonkey, a run drives its pages, but loads no scripts.',
+      'The commands that work through SourceMonkey alone (values, menu, connect, ...) are refused under the others.',
       'A --temp-browser has the manager installed. Another browser gets it with manager install.',
       'A manager enabled beside the chosen one runs its scripts too, so sm-dev warns of one when it connects, and in status.',
       'These act on the --browser browser, or with a run picked (by --run, start or attach), the run\'s browser.',
@@ -621,6 +625,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     title: 'Managing installed collections and scripts',
     text: [
       'What SourceMonkey has installed. Collections are named C1, C2, ... and scripts E1, E2, ..., by the numbers SourceMonkey keeps for them.',
+      'Under Violentmonkey, its scripts are E1, E2, ... by its own numbers, in one collection, C0, whose enable and disable are its switch for all scripts.',
       'Without a run, these connect to the --browser browser. In a run, they use the run\'s browser.',
     ],
     subsections: [
@@ -628,7 +633,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         title: 'Collections',
         commands: [
           {
-            managers: SM,
+            managers: SM_VM,
             usage: 'collection list',
             syntax: NONE,
             about: [
@@ -637,16 +642,16 @@ export const HELP_SECTIONS: HelpSection[] = [
               'collection, collections and collections list do the same.',
             ],
           },
-          { managers: SM, usage: 'collection <collection> show', syntax: NONE, about: 'Show one collection, and list its scripts.', args: [COLLECTION_ARG] },
-          { managers: SM, usage: 'collection <collection> enable', syntax: NONE, about: 'Turn a collection back on: its scripts run again, except ones turned off on their own.' },
-          { managers: SM, usage: 'collection <collection> disable', syntax: NONE, about: 'Turn all of a collection\'s scripts off.' },
+          { managers: SM_VM, usage: 'collection <collection> show', syntax: NONE, about: 'Show one collection, and list its scripts.', args: [COLLECTION_ARG] },
+          { managers: SM_VM, usage: 'collection <collection> enable', syntax: NONE, about: 'Turn a collection back on: its scripts run again, except ones turned off on their own.' },
+          { managers: SM_VM, usage: 'collection <collection> disable', syntax: NONE, about: 'Turn all of a collection\'s scripts off.' },
           {
-            managers: SM,
+            managers: SM_VM,
             usage: 'collection <collection> refresh',
             syntax: NONE,
             about: 'Re-read a collection from its location: rescan a directory, re-read a manifest, or re-read each script of a container collection.',
           },
-          { managers: SM, usage: 'collection <collection> rename <name>', syntax: { args: 'words' }, about: 'Rename a collection.' },
+          { managers: SM_VM, usage: 'collection <collection> rename <name>', syntax: { args: 'words' }, about: 'Rename a collection.' },
         ],
       },
       {
@@ -658,14 +663,14 @@ export const HELP_SECTIONS: HelpSection[] = [
         ],
         commands: [
           {
-            managers: SM,
+            managers: SM_VM,
             usage: 'script list [collection]',
             syntax: { args: 'words', max: 1 },
-            about: ['List the installed scripts, under their collections, or one collection\'s. scripts list does the same.', 'A run\'s own scripts show as 1, 2, ..., and another run\'s by name only. The selected script is marked *.', 'A local file changed or deleted since it loaded shows as modified or deleted on disk.'],
+            about: ['List the installed scripts, under their collections, or one collection\'s. scripts list does the same.', 'A run\'s own scripts show as 1, 2, ..., and another run\'s by name only. Under Violentmonkey, a run\'s show by their E-ids, marked as the run\'s. The selected script is marked *.', 'A local file changed or deleted since it loaded shows as modified or deleted on disk.'],
             args: [COLLECTION_ARG],
           },
           {
-            managers: SM,
+            managers: SM_VM,
             usage: 'script [script] show',
             syntax: NONE,
             about: 'Show one script in full: its header, status, files, and in a run, what it does on each tab.',
@@ -674,32 +679,33 @@ export const HELP_SECTIONS: HelpSection[] = [
               about: ['A script: E12, its name or a part of it, or id=<id>. In a run, one of its own scripts by its number (2).', 'Without one, the selected script.'],
             }],
           },
-          { managers: SM, usage: 'script [script] print', syntax: NONE, about: 'Print a script\'s installed text.' },
-          { managers: SM, usage: 'script [script] enable', syntax: NONE, about: 'Turn a script on. In a run, one of its own scripts too, in the run\'s tabs.' },
-          { managers: SM, usage: 'script [script] disable', syntax: NONE, about: 'Turn a script off. In a run, one of its own scripts too, in the run\'s tabs.' },
+          { managers: SM_VM, usage: 'script [script] print', syntax: NONE, about: 'Print a script\'s installed text.' },
+          { managers: SM_VM, usage: 'script [script] enable', syntax: NONE, about: 'Turn a script on. In a run, one of its own scripts too, in the run\'s tabs.' },
+          { managers: SM_VM, usage: 'script [script] disable', syntax: NONE, about: 'Turn a script off. In a run, one of its own scripts too, in the run\'s tabs.' },
           {
-            managers: SM,
+            managers: SM_VM,
             usage: 'script [script] refresh',
             syntax: NONE,
             about: ['Re-read a script from its location, as its Refresh button does.', 'One of the run\'s own scripts is re-read from disk, as update does.'],
           },
           {
-            managers: SM,
-            usage: 'script install <file|url> [--collection <collection>]',
+            managers: SM_VM,
+            usage: 'script install <file|url> [--collection <collection>] [--force]',
             syntax: { args: 'words', max: 1 },
             about: [
               'Install a .user.js file or URL in SourceMonkey, for every tab, to stay. (load adds one to the run instead, for its tabs only.)',
               'It goes into the container collection named, or the one SourceMonkey keeps for its kind: Scripts from local disk, from web, or from GitHub.',
+              'Under Violentmonkey, it replaces the script with the same name and namespace, which outside a --temp-browser needs --force.',
             ],
           },
           {
-            managers: SM,
+            managers: SM_VM,
             usage: 'script <script> uninstall [--force]',
             syntax: NONE,
             about: ['Remove a script from its container collection. A directory or manifest collection\'s scripts come from its files, so they can\'t be.', FORCE_NOTE],
           },
           {
-            managers: SM,
+            managers: SM_VM,
             usage: 'script [script] move <collection>',
             syntax: { args: 'words', max: 1 },
             about: 'Move a script from one container collection to another.',

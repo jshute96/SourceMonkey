@@ -35,22 +35,26 @@ export interface InstalledManager {
 type CdpReply = { result?: Record<string, unknown>; error?: { message: string } };
 type Send = (method: string, params?: object, sessionId?: string) => Promise<Record<string, unknown>>;
 
-// The browser's own WebSocket, open for `fn`, closed after. Throws when
-// it can't be reached, or `fn` takes longer than `timeoutMs`.
-async function withBrowserSocket<T>(endpoint: string, timeoutMs: number, fn: (send: Send, signal: AbortSignal) => Promise<T>): Promise<T> {
-  const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), timeoutMs);
+// The browser's own WebSocket. Every send fails once `signal` aborts or
+// the socket closes, so nothing waits on a browser that's gone.
+async function openBrowserSocket(endpoint: string, signal: AbortSignal): Promise<{ send: Send; close(): void }> {
   const aborted = new Promise<never>((_, reject) => {
-    abort.signal.addEventListener('abort', () => reject(new Error('The browser took too long to answer')));
+    const fail = (): void => reject(new Error('The browser took too long to answer'));
+    if (signal.aborted) fail();
+    else signal.addEventListener('abort', fail);
   });
   aborted.catch(() => undefined);
-  let socket: WebSocket | undefined;
   const waiting = new Map<number, (reply: CdpReply) => void>();
+  const url = /^wss?:/.test(endpoint) ? endpoint
+    : ((await Promise.race([fetch(`${endpoint}/json/version`, { signal }).then((r) => r.json()), aborted])) as { webSocketDebuggerUrl: string }).webSocketDebuggerUrl;
+  const open = new WebSocket(url);
+  let closed = false;
+  const settleAll = (): void => {
+    closed = true;
+    for (const answer of waiting.values()) answer({ error: { message: 'The connection to the browser closed' } });
+    waiting.clear();
+  };
   try {
-    const url = /^wss?:/.test(endpoint) ? endpoint
-      : ((await (await fetch(`${endpoint}/json/version`, { signal: abort.signal })).json()) as { webSocketDebuggerUrl: string }).webSocketDebuggerUrl;
-    const open = new WebSocket(url);
-    socket = open;
     await Promise.race([
       new Promise((resolve, reject) => {
         open.onopen = resolve;
@@ -58,61 +62,147 @@ async function withBrowserSocket<T>(endpoint: string, timeoutMs: number, fn: (se
       }),
       aborted,
     ]);
-    let last = 0;
-    open.onmessage = (event) => {
-      const reply = JSON.parse(String(event.data));
-      waiting.get(reply.id)?.(reply);
-      waiting.delete(reply.id);
-    };
-    const send: Send = async (method, params = {}, sessionId) => {
-      const id = ++last;
-      const reply = await Promise.race([
-        new Promise<CdpReply>((resolve) => {
-          waiting.set(id, resolve);
-          open.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
-        }),
-        aborted,
-      ]);
-      if (reply.error) throw new Error(`${method} failed: ${reply.error.message}`);
-      return reply.result ?? {};
-    };
-    return await Promise.race([fn(send, abort.signal), aborted]);
+  } catch (err) {
+    open.close();
+    throw err;
+  }
+  open.onclose = settleAll;
+  let last = 0;
+  open.onmessage = (event) => {
+    const reply = JSON.parse(String(event.data));
+    waiting.get(reply.id)?.(reply);
+    waiting.delete(reply.id);
+  };
+  const send: Send = async (method, params = {}, sessionId) => {
+    if (closed) throw new Error(`${method} failed: The connection to the browser closed`);
+    const id = ++last;
+    const reply = await Promise.race([
+      new Promise<CdpReply>((resolve) => {
+        waiting.set(id, resolve);
+        open.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
+      }),
+      aborted,
+    ]);
+    if (reply.error) throw new Error(`${method} failed: ${reply.error.message}`);
+    return reply.result ?? {};
+  };
+  return {
+    send,
+    close: () => {
+      open.close();
+      settleAll();
+    },
+  };
+}
+
+// The browser's own WebSocket, open for `fn`, closed after. Throws when
+// it can't be reached, or `fn` takes longer than `timeoutMs`.
+async function withBrowserSocket<T>(endpoint: string, timeoutMs: number, fn: (send: Send, signal: AbortSignal) => Promise<T>): Promise<T> {
+  const signal = AbortSignal.timeout(timeoutMs);
+  const aborted = new Promise<never>((_, reject) => {
+    signal.addEventListener('abort', () => reject(new Error('The browser took too long to answer')));
+  });
+  aborted.catch(() => undefined);
+  const socket = await openBrowserSocket(endpoint, signal);
+  try {
+    return await Promise.race([fn(socket.send, signal), aborted]);
   } finally {
-    clearTimeout(timer);
-    socket?.close();
-    for (const answer of waiting.values()) answer({ error: { message: 'The connection closed' } });
+    socket.close();
   }
 }
 
-type Evaluate = <R>(expression: string) => Promise<R>;
+/** Runs JavaScript in a page, and gives back its value. */
+export type Evaluate = <R>(expression: string) => Promise<R>;
+
+// A hidden target (no tab in the tab strip) at `url`, attached, once
+// `ready` (an expression) is true there. Not past `signal`, when every
+// call fails at once. Returns its evaluate and its target id.
+async function hiddenTarget(send: Send, url: string, ready: string, signal: AbortSignal): Promise<{ evaluate: Evaluate; targetId: string }> {
+  const { targetId } = await send('Target.createTarget', { url, hidden: true }) as { targetId: string };
+  try {
+    const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true }) as { sessionId: string };
+    const evaluate: Evaluate = async <R>(expression: string): Promise<R> => {
+      const reply = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, sessionId) as {
+        result?: { value?: unknown }; exceptionDetails?: { exception?: { description?: string; value?: unknown }; text?: string };
+      };
+      if (reply.exceptionDetails) {
+        const { exception, text } = reply.exceptionDetails;
+        // A thrown string (as Violentmonkey's calls throw) has no description.
+        const why = exception?.description ?? (typeof exception?.value === 'string' ? exception.value : undefined) ?? text ?? 'It threw';
+        throw new Error(why.split('\n')[0]);
+      }
+      return reply.result?.value as R;
+    };
+    // The page's functions are there once it has loaded.
+    while (!await evaluate<boolean>(ready).catch(() => false)) {
+      signal.throwIfAborted();
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return { evaluate, targetId };
+  } catch (err) {
+    await send('Target.closeTarget', { targetId }).catch(() => undefined);
+    throw err;
+  }
+}
 
 // A hidden `chrome://extensions` target for `fn`'s calls, closed after.
 async function withExtensionsPage<T>(endpoint: string, timeoutMs: number, fn: (evaluate: Evaluate) => Promise<T>): Promise<T> {
   return withBrowserSocket(endpoint, timeoutMs, async (send, signal) => {
-    const { targetId } = await send('Target.createTarget', { url: 'chrome://extensions', hidden: true }) as { targetId: string };
+    const { evaluate, targetId } = await hiddenTarget(send, 'chrome://extensions', 'typeof chrome?.developerPrivate?.getExtensionsInfo === "function"', signal);
     try {
-      const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true }) as { sessionId: string };
-      const evaluate: Evaluate = async <R>(expression: string): Promise<R> => {
-        const reply = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, sessionId) as {
-          result?: { value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text?: string };
-        };
-        if (reply.exceptionDetails) {
-          const why = reply.exceptionDetails.exception?.description ?? reply.exceptionDetails.text ?? 'It threw';
-          throw new Error(why.split('\n')[0]);
-        }
-        return reply.result?.value as R;
-      };
-      // The page's functions are there once it has loaded. Not past the
-      // time limit, when every call fails at once.
-      while (!await evaluate<boolean>('typeof chrome?.developerPrivate?.getExtensionsInfo === "function"').catch(() => false)) {
-        signal.throwIfAborted();
-        await new Promise((r) => setTimeout(r, 50));
-      }
       return await fn(evaluate);
     } finally {
       await send('Target.closeTarget', { targetId }).catch(() => undefined);
     }
   });
+}
+
+/** A hidden page kept open over its own connection, until `close`. */
+export interface HiddenPage {
+  /** Fails when the page doesn't answer within `timeoutMs`. */
+  evaluate<R>(expression: string, timeoutMs?: number): Promise<R>;
+  close(): Promise<void>;
+}
+
+/**
+ * Opens a hidden page at `url` in the browser at `endpoint`, once
+ * `ready` (an expression) is true there, for several calls. Throws when
+ * it isn't ready within `timeoutMs`.
+ */
+export async function openHiddenPage(endpoint: string, url: string, ready: string, timeoutMs = 10_000): Promise<HiddenPage> {
+  const life = new AbortController();
+  const opening = AbortSignal.any([life.signal, AbortSignal.timeout(timeoutMs)]);
+  const socket = await openBrowserSocket(endpoint, life.signal);
+  let target: { evaluate: Evaluate; targetId: string };
+  try {
+    target = await Promise.race([
+      hiddenTarget(socket.send, url, ready, opening),
+      new Promise<never>((_, reject) => opening.addEventListener('abort', () => reject(new Error('The page took too long to open')))),
+    ]);
+  } catch (err) {
+    socket.close();
+    throw err;
+  }
+  return {
+    evaluate: async <R>(expression: string, callMs = 30_000): Promise<R> => {
+      let timer: NodeJS.Timeout | undefined;
+      try {
+        return await Promise.race([
+          target.evaluate<R>(expression),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error('The browser took too long to answer')), callMs);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    close: async () => {
+      await socket.send('Target.closeTarget', { targetId: target.targetId }).catch(() => undefined);
+      socket.close();
+      life.abort();
+    },
+  };
 }
 
 interface ExtensionInfo {
