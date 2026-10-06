@@ -70,6 +70,19 @@ export default defineConfig({
       retries: 1,
     },
     {
+      // Whether the Violentmonkey `manager fetch` got still answers the
+      // calls sm-dev makes. Run on demand (`pnpm run test:vm-api`). See
+      // docs/sm-dev-violentmonkey.md.
+      name: 'vm-api',
+      testMatch: ['vm-api/**/*.spec.ts'],
+    },
+    {
+      // The same for Tampermonkey (`pnpm run test:tm-api`). See
+      // docs/sm-dev-tampermonkey.md.
+      name: 'tm-api',
+      testMatch: ['tm-api/**/*.spec.ts'],
+    },
+    {
       name: 'tampermonkey',
       testMatch: ['examples/**/*.spec.ts'],
       metadata: { manager: 'tampermonkey' },

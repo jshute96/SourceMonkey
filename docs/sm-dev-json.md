@@ -1,6 +1,7 @@
 # sm-dev: JSON output
 
-Status: built for the existing commands. The
+Status: built for the existing commands, and SourceMonkey's
+`collection` and `script` commands. The
 [planned commands](#planned-commands), events and the schema file are
 not built yet; they come with [sm-dev-managers.md](sm-dev-managers.md).
 
@@ -108,6 +109,9 @@ interface Collection {
   status: "ok" | "load-failed";
   error?: string;        // why it failed to load
   scriptCount: number;
+  // collection list and show: a local collection's files that differ
+  // from what it loaded, as the collections page's "refresh pending" chip
+  onDisk?: { modified: number; deleted: number; added: number; manifest?: true };
 }
 
 interface Tab {
@@ -123,10 +127,12 @@ interface Tab {
   scripts: string[];     // the ids of the run's scripts running in it
 }
 
-// A script: one the run loaded ("1"), or one installed in
-// SourceMonkey ("E1").
+// A script: one the run loaded ("1"), or one installed in the
+// manager ("E1").
 interface Script {
   id?: string;           // none in script list for another run's script
+  installedAs?: string;  // under another manager, a run's script in scripts
+                         // and status: its id there ("E6")
   kind: "run" | "installed";
   name: string;
   file?: string;         // run's scripts: the path it was loaded from
@@ -140,7 +146,11 @@ interface Script {
   status?: "ok" | "invalid"; // run's scripts, and in `script list`
   error?: string;        // why it is invalid
   refreshError?: string; // why its last refresh failed; its last good copy still runs
+  onDisk?: "modified" | "deleted"; // script list and show: its local file, since it loaded
   selected?: boolean;    // the script get and set act on
+  // Under another manager, in script list and show:
+  run?: string;          // a live run's script: the run ("D1")
+  leftBy?: string;       // left by a run that ended ("D1")
   tabs?: TabActivity[];  // in scripts and status
 }
 
@@ -160,7 +170,10 @@ type TabState =
   | "not-started"        // it matches, but hasn't started
   | "unexpected"         // running, though it doesn't match
   | "changed"            // changed since it started
-  | "kept-out";          // matches, but the run's claim keeps it out
+  | "kept-out"           // matches, but the run's claim keeps it out
+  // Under another manager, which doesn't say what ran: by its match rules.
+  | "expected"
+  | "not-expected";
 ```
 
 ## Commands
@@ -174,7 +187,13 @@ JSON for the same state.
 ```ts
 interface StatusData {
   run?: RunSummary & {
+    // How this sm-dev came to the run: it started it, attached to it, or
+    // picked it otherwise (--run, or an earlier command on the line);
+    // "other" for one listed with no run picked.
+    connection?: "started" | "attached" | "selected" | "other";
+    detached?: boolean;      // started with --detach
     sourceMonkey?: "installed" | "disabled" | "absent"; // left out when not known
+    managers?: BrowserManager[]; // the managers in the browser; left out when not known
     testCollection?: string; // once a script was pushed
     log?: string;            // the run's log file
     downloads?: string;      // where a --temp-browser saves downloads
@@ -184,10 +203,31 @@ interface StatusData {
   scripts: StatusScript[]; // the run's, then the installed ones on the tab
 }
 
+// A userscript manager extension in the browser, enabled or not.
+interface BrowserManager {
+  manager: ManagerName;
+  name: string;          // as the extension names itself: "Tampermonkey BETA"
+  version: string;
+  id: string;            // its extension id
+  enabled: boolean;
+  userScripts: boolean;  // "Allow User Scripts" is on, which it needs to run scripts
+}
+
 // With no run picked (no --run, and no start or attach earlier in the
-// line), every active run's, even when only one is going.
+// line): the browser the line would use, and every active run's status,
+// even when only one is going.
 interface StatusRunsData {
-  runs: StatusData[];
+  browser: BrowserStatus;
+  runs: StatusData[];    // each with connection: "other"
+}
+
+interface BrowserStatus {
+  address: string;       // --browser's, as host:port
+  answering: boolean;    // whether a browser answers there
+  version?: string;      // Chrome's, when it answers
+  headless?: boolean;
+  manager: ManagerName;  // the one --manager picks
+  managers?: BrowserManager[]; // left out when not known
 }
 
 // The counts are for the run's scripts; installed ones have none.
@@ -201,10 +241,13 @@ interface StatusScript extends Script {
 }
 ```
 
-Text (with several runs, each run's in turn, a blank line between):
+Text, with `--run D1`. The first line's heading says how this sm-dev
+came to the run: `Started run:`, `Started run (detached):`, `Attached
+run:` or `Selected run:`.
 
 ```text
-Run: D1 (pid 4171043), connected to owned headless browser 127.0.0.1:38583 (has SourceMonkey)
+Selected run: D1 (pid 4171043), connected to owned headless browser 127.0.0.1:38583 (has SourceMonkey)
+Managers: SourceMonkey 0.0.1 (in use)
 Backend: SourceMonkey extension, test collection D1-f691
 Log: /tmp/sm-dev-logs-me/sm-dev-20261003-085822-497.log (D1.log)
 Downloads: /tmp/sm-dev-logs-me/sm-dev-20261003-085822-497-downloads
@@ -219,8 +262,25 @@ Scripts (with status on active tab T1):
      Not active
 ```
 
-JSON, with `--run D1` (without it: `{"command": "status", "runs": [...]}`,
-each element this without `command`):
+With no run picked, the browser the line would use, then every run,
+each headed `Other run:`:
+
+```text
+No current run. (Use start or attach to connect to one.)
+Browser: 127.0.0.1:9233 (Chrome 154.0.8037.57)
+Managers: SourceMonkey 0.0.1 (chosen), Tampermonkey 5.5.1 (disabled)
+
+Other active runs:
+
+Other run: D1 (pid 4171043), connected to owned headless browser 127.0.0.1:38583 (has SourceMonkey)
+...
+```
+
+(or `No other active runs`.)
+
+JSON, with `--run D1` (without it: `{"command": "status", "browser":
+{...}, "runs": [...]}`, each element this without `command`, with
+`"connection": "other"`):
 
 ```json
 {
@@ -233,7 +293,19 @@ each element this without `command`):
       "owned": true,
       "headless": true
     },
+    "manager": "sourcemonkey",
+    "connection": "selected",
     "sourceMonkey": "installed",
+    "managers": [
+      {
+        "manager": "sourcemonkey",
+        "name": "SourceMonkey",
+        "version": "0.0.1",
+        "id": "bkgahdlbeddjginplgbipcefkefaflfa",
+        "enabled": true,
+        "userScripts": true
+      }
+    ],
     "testCollection": "D1-f691",
     "log": "/tmp/sm-dev-logs-me/sm-dev-20261003-085822-497.log",
     "downloads": "/tmp/sm-dev-logs-me/sm-dev-20261003-085822-497-downloads"
@@ -300,17 +372,20 @@ interface RunSummary {
   pid: number;
   started?: string;      // ISO 8601, in list
   browser: { address: string; owned: boolean; headless: boolean };
+  manager?: ManagerName; // the manager it works with (--manager)
   tabCount?: number;     // in list
   scriptFiles?: string[]; // in list: the loaded scripts' paths
 }
+
+type ManagerName = "sourcemonkey" | "tampermonkey" | "violentmonkey";
 ```
 
 Text:
 
 ```text
-Run  PID      Uptime  Browser                            Tabs  Scripts
-D3   3732823  3h52m   127.0.0.1:9233                     2     bold-on-hover.user.js, config-value.user.js
-D1   4161390  0s      127.0.0.1:41139 (owned, headless)  1     gm-menu.user.js
+Run  PID      Uptime  Browser                            Manager       Tabs  Scripts
+D3   3732823  3h52m   127.0.0.1:9233                     SourceMonkey  2     bold-on-hover.user.js, config-value.user.js
+D1   4161390  0s      127.0.0.1:41139 (owned, headless)  Tampermonkey  1     -
 ```
 
 JSON:
@@ -328,6 +403,7 @@ JSON:
         "owned": false,
         "headless": false
       },
+      "manager": "sourcemonkey",
       "tabCount": 2,
       "scriptFiles": [
         "/home/me/scripts/bold-on-hover.user.js",
@@ -343,10 +419,9 @@ JSON:
         "owned": true,
         "headless": true
       },
+      "manager": "tampermonkey",
       "tabCount": 1,
-      "scriptFiles": [
-        "/home/me/scripts/gm-menu.user.js"
-      ]
+      "scriptFiles": []
     }
   ]
 }
@@ -887,8 +962,8 @@ interface ScriptListData {
 - The JSON is a flat list, each script naming its collection, so it has
   the same `Script` shape as every other listing. The text groups the
   scripts under their collections, for reading.
-- `collection show <C>` (planned) will give one collection with its
-  scripts nested.
+- `collection <collection> show` gives one collection with its scripts
+  nested.
 - Runs' test collections' scripts are listed too, with `kind: "run"`.
   - In its own run, a script has its number there (`"1"`).
   - Elsewhere, it has no `id`, since only its run knows its number.
@@ -948,52 +1023,7 @@ JSON:
 }
 ```
 
-### What a result covers
-
-- A list of things usually not there (`validate`'s `warnings`,
-  `match`'s `excludedBy`) is left out when empty, as an `error` is, so
-  the output is easier to scan.
-- Any other list is kept when empty: `[]` means there are none (a menu's
-  `commands`, `match`'s `matchedBy`).
-
-- A result focused on one thing names it, so an empty list still shows
-  where nothing was found: `menu` and `logs` give their `tab`, `values
-  T2` its `tab`, `get` its `script` and `key`, `probe` its `tab` and
-  `url`.
-- New commands follow the same rule: `script list C2` names its
-  `collection`.
-
-### Commands without a JSON form
-
-- `snapshot`, `eval` and `cdp` already print their own formats, and
-  keep them under `--json`. `eval` and `cdp` print JSON values already.
-  - An `eval` result over 10,000 characters is cut, so it no longer
-    parses. Use `eval --out FILE` for those.
-- `set`, the commands that pick (`tab T2`, `script 2`) and the ones that
-  act on the page (`click`, `open`, `wait`, ...) print what they print
-  now.
-- A program mixing these with JSON commands reads each command's output
-  knowing which command it sent.
-
-## Planned commands
-
-These come with [sm-dev-managers.md](sm-dev-managers.md).
-
-### Manager
-
-```ts
-interface Manager {
-  name: "sourcemonkey" | "tampermonkey" | "violentmonkey";
-  extensionId: string;
-  version: string;
-  enabled: boolean;
-  userScriptsAllowed: boolean;
-  chosen: boolean;       // the one --manager picks
-  source: "unpacked" | "store" | "fetched"; // how it got into the browser
-}
-```
-
-### `script show <id>`
+### `script [script] show`
 
 ```ts
 interface ScriptShowData {
@@ -1003,27 +1033,25 @@ interface ScriptShowData {
 interface ScriptDetails extends Script {
   description?: string;
   author?: string;
-  localOverride?: boolean;  // a local file stands in for its URL
-  refreshed?: string;       // ISO 8601 times
-  changed?: string;
+  updatedAt?: string;       // when its current text was loaded, ISO 8601
   matching: {
     match: string[];
     include: string[];
     exclude: string[];
     excludeMatch: string[];
   };
-  runAt: string;            // "document-idle"
+  runAt: string;            // "document-idle" when the header gives none
   grants: string[];
   requires: FileStatus[];
   resources: (FileStatus & { name: string })[];
-  valueCount: number;
+  valueCount?: number;      // none when the manager doesn't say
 }
 
 interface FileStatus {
-  url: string;
-  status: "ok" | "load-failed" | "not-loaded";
-  local?: string;           // the local file used instead, if any
-  error?: string;
+  url: string;              // as the header gives it
+  status?: "ok" | "not-loaded"; // not-loaded when the script failed to load;
+                            // none when the manager doesn't say
+  local?: string;           // the local file read instead, if any
 }
 ```
 
@@ -1036,7 +1064,7 @@ E1: Dark mode 2.1
   Collection:   C2: Scripts from web
   Location:     https://example.org/dark-mode.user.js
   Status:       Enabled, ok
-  Refreshed:    2026-10-03 08:12, changed 2026-09-28 19:03
+  Updated:      2026-09-28 19:03
   @match:       https://example.com/*
   @run-at:      document-start
   @grant:       GM_addStyle, GM_getValue, GM_setValue
@@ -1065,8 +1093,7 @@ JSON:
     },
     "enabled": true,
     "status": "ok",
-    "refreshed": "2026-10-03T08:12:40Z",
-    "changed": "2026-09-28T19:03:11Z",
+    "updatedAt": "2026-09-28T19:03:11Z",
     "matching": {
       "match": [
         "https://example.com/*"
@@ -1099,16 +1126,23 @@ JSON:
 }
 ```
 
-### `script print <id>`
+- `tabs` is there in a run only: what the script does on each of the
+  run's tabs.
+- The text leaves out a row with nothing in it.
+
+### `script [script] print`
 
 ```ts
 interface ScriptPrintData {
-  script: string;        // its id
+  script?: string;       // its id; none for another run's script
+  name: string;
   text: string;          // the installed text
 }
 ```
 
-### `collection show <C>`
+- The text form is the script's text alone.
+
+### `collection <collection> show`
 
 ```ts
 interface CollectionShowData {
@@ -1116,65 +1150,114 @@ interface CollectionShowData {
 }
 ```
 
-### `manager list`
+Text:
+
+```text
+C3: My scripts
+  Kind:       directory
+  Location:   file:///home/me/scripts/
+  Status:     Enabled
+  Scripts:    2 scripts
+  E4: Dark mode 2.1
+  E5: Broken: INVALID
+```
+
+### Commands that change things
+
+`collection enable`, `disable` and `rename`, and `script enable`,
+`disable`, `install` and `move`, give the object as it is after the
+change, and `script uninstall` as it was:
 
 ```ts
-interface ManagerListData {
-  managers: Manager[];
+interface CollectionChangeData { collection: Collection }
+interface ScriptChangeData {
+  script: Script;
+  removed?: true;        // script uninstall: the script as it was
+  turnedOff?: Script[];  // enable, move, install: its other running copies, now off
+  collectionDisabled?: true; // enabled, but its collection is disabled
+}
+interface ScriptInstallData {
+  script: Script;
+  turnedOff?: Script[];
+  collectionDisabled?: true;
+  already?: true;        // it was installed there already: nothing changed
+  replaced?: true;       // under another manager: it replaced the script
+                         // with the same name and namespace
+}
+```
+
+- The text form starts with one line: `Disabled E4: Dark mode`,
+  `Installed E6: Solo in C1: Scripts from local disk`.
+  - Then a line for each copy turned off, and one when its collection
+    is disabled (see [sm-dev-managers.md](sm-dev-managers.md)).
+- `turnedOff` and `collectionDisabled` are left out when they don't
+  apply.
+- A change sm-dev or SourceMonkey refuses is a failure, as text on
+  stderr, like any other.
+
+The refreshes say what they updated:
+
+```ts
+interface ScriptRefreshData {
+  script: Script;
+  updated: boolean;      // it loaded different text
+}
+interface CollectionRefreshData {
+  collection: Collection;
+  updated: Script[];     // added, or loaded different text
+  unchanged: number;
+  removed: Script[];     // gone, as they were
+  failed?: Script[];     // under TM or VM: couldn't be refreshed, each with refreshError
 }
 ```
 
 Text:
 
 ```text
-Userscript managers:
-* SourceMonkey 0.9.0 [abcdefghijklmnopabcdefghijklmnop] (unpacked)
-  Violentmonkey 2.31.0 [jinjaccalgkegednnccohejagnlnfdag] (fetched): disabled
+Refreshed C3: My scripts: 1 updated, 4 unchanged, 1 removed
+  Updated E7: New one
+  Removed E5: Broken
 ```
 
-JSON:
+- `script refresh` on one of the run's own scripts re-reads it from
+  disk, as `update` does: its text is what `update` prints, and its
+  JSON a `ScriptRefreshData`.
 
-```json
-{
-  "command": "manager list",
-  "managers": [
-    {
-      "name": "sourcemonkey",
-      "extensionId": "abcdefghijklmnopabcdefghijklmnop",
-      "version": "0.9.0",
-      "enabled": true,
-      "userScriptsAllowed": true,
-      "chosen": true,
-      "source": "unpacked"
-    },
-    {
-      "name": "violentmonkey",
-      "extensionId": "jinjaccalgkegednnccohejagnlnfdag",
-      "version": "2.31.0",
-      "enabled": false,
-      "userScriptsAllowed": true,
-      "chosen": false,
-      "source": "fetched"
-    }
-  ]
-}
-```
+### What a result covers
 
-### Commands that change things
+- A list of things usually not there (`validate`'s `warnings`,
+  `match`'s `excludedBy`) is left out when empty, as an `error` is, so
+  the output is easier to scan.
+- Any other list is kept when empty: `[]` means there are none (a menu's
+  `commands`, `match`'s `matchedBy`).
 
-`script install`, `script enable`, `collection add`, `collection
-rename` and the rest return the object as it is after the change:
+- A result focused on one thing names it, so an empty list still shows
+  where nothing was found: `menu` and `logs` give their `tab`, `values
+  T2` its `tab`, `get` its `script` and `key`, `probe` its `tab` and
+  `url`.
+- New commands follow the same rule: `script list C2` names its
+  `collection`.
 
-```ts
-interface ScriptChangeData { script: Script }
-interface CollectionChangeData { collection: Collection }
-interface ManagerChangeData { manager: Manager }
-```
+### Commands without a JSON form
 
-- `script uninstall`, `collection drop`: the object as it was, with
+- `snapshot`, `eval` and `cdp` already print their own formats, and
+  keep them under `--json`. `eval` and `cdp` print JSON values already.
+  - An `eval` result over 10,000 characters is cut, so it no longer
+    parses. Use `eval --out FILE` for those.
+- `set`, the commands that pick (`tab T2`, `script 2`) and the ones that
+  act on the page (`click`, `open`, `wait`, ...) print what they print
+  now.
+- A program mixing these with JSON commands reads each command's output
+  knowing which command it sent.
+
+## Planned commands
+
+These come with [sm-dev-managers.md](sm-dev-managers.md).
+
+- `collection add` gives the collection after, as the
+  [commands that change things](#commands-that-change-things) do.
+- `collection drop` gives the collection as it was, with
   `removed: true`.
-- `manager fetch` / `update`:
-  `{ name, version, path, updated: boolean }`.
 
 ## Events
 

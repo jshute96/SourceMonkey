@@ -4,16 +4,24 @@
 // options. `help <command>` picks a command out of it, the prompt
 // completes its names, and the run takes each command's flags from it.
 //
-// It imports only json-output.ts, which imports nothing, so cli.ts can
-// load it for help without the run's code.
-import { JSON_COMMANDS, jsonCommandList } from './json-output.js';
+// It imports only json-output.ts and managers.ts, which import nothing
+// else, so cli.ts can load it for help without the run's code.
+import { JSON_COMMANDS } from './json-output.js';
+import { MANAGERS, MANAGER_NAMES, type ManagerName } from './managers.js';
 
 // How many of a selector's matches `probe --css` and `--html` show.
 export const PROBE_MAX = 10;
+
 // How many matches `snapshot` shows by default, of a selector or --find.
 export const PART_LIMIT = 5;
 // How many lines `snapshot --context` lets a match's shown part grow by.
 export const CONTEXT_LINES = 10;
+
+// How the collection and script commands name a collection.
+const COLLECTION_ARG: HelpItem = { term: '<collection>', about: 'A collection: C3, its name or a part of it, or id=<id>. A run\'s test collection is D1, by its run.' };
+
+// Said of `script uninstall`, which removes one of the person's own scripts.
+const FORCE_NOTE = 'Outside a --temp-browser the scripts are your own, so this needs --force.';
 
 /**
  * A term and what it means: an argument, an option, a way to name
@@ -70,6 +78,8 @@ export interface HelpCommand {
   pointer?: boolean;
   /** A blank line before it in the full help. */
   gap?: boolean;
+  /** The managers (`--manager`) it works with; every one when not given. */
+  managers?: ManagerName[];
 }
 
 export interface HelpSection {
@@ -89,17 +99,34 @@ export interface HelpSection {
   subsections?: HelpSection[];
 }
 
+/** The longest a Node timer can wait, in seconds. */
+export const MAX_TIMER_SECONDS = Math.floor((2 ** 31 - 1) / 1000);
+
+/** A `--timeout-seconds` that isn't a number of seconds, on any command. */
+export const TIMEOUT_NEEDS_SECONDS = `The --timeout-seconds flag needs a number of seconds, up to ${MAX_TIMER_SECONDS}`;
+
+/** A `--timeout-seconds` value in ms, or null when it isn't a number of seconds (`TIMEOUT_NEEDS_SECONDS`). */
+export function timeoutSecondsMs(value: string | true): number | null {
+  const seconds = Number(value);
+  return seconds > 0 && seconds <= MAX_TIMER_SECONDS ? seconds * 1000 : null;
+}
+
 // The common syntaxes.
 const NONE: ArgSyntax = { args: 'none' };
 const WORDS: ArgSyntax = { args: 'words' };
-const TEXT: ArgSyntax = { args: 'text' };
 // Text that `--json` or `--nojson` can end (`values 2 --json`).
 const JSON_TEXT: ArgSyntax = { args: 'text', trailingFlags: true };
 const TAB_LOADS = ['newtab', 'open', 'reload'];
 const SETTLING = ['start', ...TAB_LOADS, 'click', 'hover', 'type', 'key'];
+// The commands that wait on the page, so take --timeout-seconds. Those
+// whose help lists it themselves (its default differs) aren't here.
+const TIMED = ['start', 'click', 'hover', 'type', 'key', 'eval', 'snapshot', 'probe', 'screenshot', 'closetab', 'load', 'update'];
 // wait log, listed under both Logs and Waiting.
 const WAIT_LOG: HelpCommand = { usage: 'wait log [--find=]<text>', syntax: { args: 'text', trailingFlags: true }, about: [] };
 const WAIT_LOG_ABOUT = ['Wait for a log line with the text, or matching /regex/, logged since the previous command began.'];
+// The commands that work through SourceMonkey, which a run under
+// another manager doesn't have.
+const SM: ManagerName[] = ['sourcemonkey'];
 
 export const HELP_SECTIONS: HelpSection[] = [
   {
@@ -184,10 +211,10 @@ export const HELP_SECTIONS: HelpSection[] = [
           {
             title: 'Lifetime',
             options: [
-              { term: '--seconds N', about: 'Stop the run after N seconds.' },
               { term: '--detach', about: 'Leave the run going when this sm-dev ends.' },
               { term: '--new', about: 'With --detach: Start a new run (don\'t stop old ones).' },
-              { term: '--idle-seconds N', about: ['Stop the run after N seconds with no activity.', '(Default: 1800; 0 never stops).'] },
+              { term: '--stop-after-seconds N', about: 'Stop the run after N seconds.' },
+              { term: '--stop-after-idle-seconds N', about: ['Stop the run after N seconds with no activity.', '(Default: 1800; 0 never stops).'] },
             ],
           },
           {
@@ -226,17 +253,20 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         usage: 'status',
         syntax: NONE,
-        about: 'Show overall status, script list, and tab list.',
+        about: [
+          'Show overall status, script list, and tab list.',
+          'With no run picked (by --run, start or attach): the --browser browser and its managers, then each active run\'s status.',
+        ],
       },
     ],
   },
   {
     title: 'Scripts',
     commands: [
-      { usage: 'scripts', syntax: JSON_TEXT, about: 'List the loaded scripts, and the SourceMonkey-managed scripts on the current tab.' },
+      { usage: 'scripts', syntax: JSON_TEXT, about: 'List the loaded scripts, and the manager\'s other scripts on the current tab.' },
       { usage: 'script <script>', about: 'Select the active script by ID. With T2.3, pick tab T2 too.' },
       { usage: 'load <script>...', syntax: WORDS, about: 'Load more scripts from disk: files, directories, or globs. See Files and file patterns.' },
-      { usage: 'update [script]', syntax: TEXT, about: 'Re-read one (or all) scripts from disk, and reload all affected tabs.' },
+      { usage: 'update [script]', syntax: { args: 'text', trailingFlags: true }, about: 'Re-read one (or all) scripts from disk, and reload all affected tabs.' },
     ],
     subsections: [
       {
@@ -279,7 +309,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         args: [
           { term: '<url>', about: 'A URL.' },
           { term: '<file>', about: 'A file, or a glob matching one.' },
-          { term: '<script ID>', about: 'A script\'s default page.' },
+          { term: '<script ID>', about: 'A script\'s default page: a loaded one (2), or an installed one (E3).' },
           { term: '(default)', about: 'The selected script\'s default page.' },
         ],
         gap: true,
@@ -309,6 +339,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     options: [
       { term: '--noscript', about: 'Run no scripts in the tab. (Sticky)', commands: TAB_LOADS },
       { term: '--script', about: 'Run the scripts in the tab again. (Undo --noscript.)', commands: TAB_LOADS },
+      { term: '--timeout-seconds S', about: 'Give up on the page loading after S seconds (default: 30), or settling (default: 5).', commands: TAB_LOADS },
       { term: '--from-saved', about: 'Serve .html files as saved page snapshots, at their embedded URLs by default.', commands: ['newtab', 'open'] },
       { term: '--url URL', about: 'With --from-saved and one .html file: The URL to serve it at.', commands: ['newtab', 'open'] },
       { term: '--offline', about: 'With --from-saved: Block network requests from the saved pages.', commands: ['newtab', 'open'] },
@@ -436,9 +467,12 @@ export const HELP_SECTIONS: HelpSection[] = [
       },
       {
         usage: 'type [tab] <selector> <text>',
-        syntax: { args: 'text', before: 1, tab: true, block: true, bracesInText: true },
+        syntax: { args: 'text', before: 1, tab: true, block: true, bracesInText: true, trailingFlags: true },
         about: ['Type text into an element. (Text box, etc.)', 'type <selector> {{ starts multi-line text, ended by }}.'],
-        options: [{ term: '--file <path>', about: 'Type a file\'s text, in place of <text>.' }],
+        options: [
+          { term: '--file <path>', about: 'Type a file\'s text, in place of <text>.' },
+          { term: '--clear', about: 'Empty the element first. With no text, only empty it.' },
+        ],
         gap: true,
       },
       { usage: 'key [tab] <keys>...', syntax: { args: 'words', tab: true }, about: ['Press keys in order, using common key names.', 'e.g. key j Shift+ArrowRight Escape'], gap: true },
@@ -502,17 +536,21 @@ export const HELP_SECTIONS: HelpSection[] = [
         commands: [
           {
             usage: 'cdp [tab] <Method> [params]',
-            syntax: { args: 'text', tab: true, block: true, unquote: 'none' },
+            syntax: { args: 'text', tab: true, block: true, unquote: 'none', trailingFlags: true },
             about: ['Make one Method call, and print the result as JSON.', 'e.g. cdp Input.insertText \'{"text": "hello"}\''],
           },
           { usage: 'cdp [tab] {{', about: 'Make multiple Method calls, one per line, ended by }}.', gap: true },
           { usage: 'cdp [tab] --file <path>', about: 'Make multiple Method calls from a file, one per line.', gap: true },
+        ],
+        options: [
+          { term: '--timeout-seconds S', about: 'Give up on each call after S seconds (default: 10).', commands: ['cdp'] },
         ],
       },
       {
         title: 'Menus',
         commands: [
           {
+            managers: SM,
             usage: 'menu [what]',
             syntax: { args: 'text', unquote: 'none', trailingFlags: true },
             about: 'List the tab\'s menu commands, or fire one.',
@@ -529,6 +567,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         title: 'Stored values',
         commands: [
           {
+            managers: SM,
             usage: 'values [what]',
             syntax: JSON_TEXT,
             about: 'Print values scripts have stored in GM Storage.',
@@ -538,8 +577,9 @@ export const HELP_SECTIONS: HelpSection[] = [
               { term: 'T2', about: 'Scripts running on a tab.' },
             ],
           },
-          { usage: 'get <key>', syntax: JSON_TEXT, about: 'Print one value for the selected script.', gap: true },
+          { managers: SM, usage: 'get <key>', syntax: JSON_TEXT, about: 'Print one value for the selected script.', gap: true },
           {
+            managers: SM,
             usage: 'set <key> <json>',
             // JSON can't end with a `--flag`, so one there is a flag.
             syntax: { args: 'text', before: 1, block: true, unquote: 'single', trailingFlags: true },
@@ -557,6 +597,7 @@ export const HELP_SECTIONS: HelpSection[] = [
           { usage: 'accept [tab] [text]', syntax: { args: 'text', tab: true }, about: 'Answer an open dialog with OK, and a prompt with the text.' },
           { usage: 'dismiss [tab]', syntax: { args: 'none', tab: true }, about: 'Answer an open dialog with Cancel.' },
           {
+            managers: SM,
             usage: 'connect once|cancel|allow|deny|allow-all [host]',
             syntax: { args: 'words', max: 2 },
             about: [
@@ -570,23 +611,116 @@ export const HELP_SECTIONS: HelpSection[] = [
     ],
   },
   {
-    title: 'Managing installed collections and scripts',
+    title: 'Userscript managers',
     text: [
-      'What SourceMonkey has installed. Collections are named C1, C2, ... and scripts E1, E2, ..., by the numbers SourceMonkey keeps for them.',
-      'Without a run, these connect to the --browser browser. In a run, they use the run\'s browser.',
+      'sm-dev works with one userscript manager, picked with --manager: SourceMonkey (the default), Tampermonkey or Violentmonkey. A run works with the one it started with.',
+      'Under Tampermonkey or Violentmonkey, a run installs its scripts into it, marked as the run\'s, and removes them when it ends. The manager runs all its scripts in every tab, so scripts and status show the ones each tab is expected to run, by their match rules.',
+      'The commands that work through SourceMonkey alone (values, menu, connect, ...) are refused under the others.',
+      'A --temp-browser has the manager installed. Another browser gets it with manager install.',
+      'A manager enabled beside the chosen one runs its scripts too, so sm-dev warns of one when it connects, and in status.',
+      'These act on the --browser browser, or with a run picked (by --run, start or attach), the run\'s browser.',
       '',
     ],
     commands: [
       {
-        usage: 'collection list',
+        usage: 'manager fetch',
         syntax: NONE,
-        about: ['List the collections, with their kind, location, script count, and whether they are enabled.', 'collection, collections and collections list do the same.'],
+        about: 'Download Tampermonkey or Violentmonkey from the Chrome Web Store into ~/.cache/sm-dev/managers, or update it there to the newest version.',
       },
       {
-        usage: 'script list [collection]',
-        syntax: { args: 'words', max: 1 },
-        about: ['List the installed scripts, under their collections, or one collection\'s. scripts list does the same.', 'A run\'s own scripts show as 1, 2, ..., and another run\'s by name only. The selected script is marked *.'],
-        args: [{ term: '<collection>', about: 'A collection: C3, its name or a part of it, or id=<id>.' }],
+        usage: 'manager install',
+        syntax: NONE,
+        about: [
+          'Load the manager into the browser as an unpacked extension, with Allow User Scripts on: this sm-dev\'s SourceMonkey, or the fetched copy of another, fetched first if need be.',
+          'A copy installed from there before is updated to the version fetched since.',
+        ],
+      },
+      { usage: 'manager enable', syntax: NONE, about: 'Turn the manager on in the browser.' },
+      { usage: 'manager disable', syntax: NONE, about: 'Turn the manager off in the browser. Not SourceMonkey while a run uses it.' },
+    ],
+  },
+  {
+    title: 'Managing installed collections and scripts',
+    text: [
+      'What SourceMonkey has installed. Collections are named C1, C2, ... and scripts E1, E2, ..., by the numbers SourceMonkey keeps for them.',
+      'Under Tampermonkey or Violentmonkey, its scripts are E1, E2, ..., in one collection, C0, whose enable and disable are its switch for all scripts. Violentmonkey\'s are its own numbers; Tampermonkey\'s are ones sm-dev keeps for it.',
+      'Without a run, these connect to the --browser browser. In a run, they use the run\'s browser.',
+    ],
+    subsections: [
+      {
+        title: 'Collections',
+        commands: [
+          {
+            usage: 'collection list',
+            syntax: NONE,
+            about: [
+              'List the collections, with their kind, location, script count, and whether they are enabled.',
+              'A local collection with files changed on disk since it loaded shows Refresh pending, as the collections page does.',
+              'collection, collections and collections list do the same.',
+            ],
+          },
+          { usage: 'collection <collection> show', syntax: NONE, about: 'Show one collection, and list its scripts.', args: [COLLECTION_ARG] },
+          { usage: 'collection <collection> enable', syntax: NONE, about: 'Turn a collection back on: its scripts run again, except ones turned off on their own.' },
+          { usage: 'collection <collection> disable', syntax: NONE, about: 'Turn all of a collection\'s scripts off.' },
+          {
+            usage: 'collection <collection> refresh',
+            syntax: NONE,
+            about: 'Re-read a collection from its location: rescan a directory, re-read a manifest, or re-read each script of a container collection.',
+          },
+          { usage: 'collection <collection> rename <name>', syntax: { args: 'words' }, about: 'Rename a collection.' },
+        ],
+      },
+      {
+        title: 'Scripts',
+        text: [
+          'The script comes before the verb: script E4 enable. Left out, it is the selected script (not for uninstall).',
+          'Turning a script on, by enable, install or move, turns off its other copies that were running, as SourceMonkey\'s script page does. Each one turned off is listed.',
+          '',
+        ],
+        commands: [
+          {
+            usage: 'script list [collection]',
+            syntax: { args: 'words', max: 1 },
+            about: ['List the installed scripts, under their collections, or one collection\'s. scripts list does the same.', 'A run\'s own scripts show as 1, 2, ..., and another run\'s by name only. Under Tampermonkey or Violentmonkey, a run\'s show by their E-ids, marked as the run\'s. The selected script is marked *.', 'A local file changed or deleted since it loaded shows as modified or deleted on disk.'],
+            args: [COLLECTION_ARG],
+          },
+          {
+            usage: 'script [script] show',
+            syntax: NONE,
+            about: 'Show one script in full: its header, status, files, and in a run, what it does on each tab.',
+            args: [{
+              term: '[script]',
+              about: ['A script: E12, its name or a part of it, or id=<id>. In a run, one of its own scripts by its number (2).', 'Without one, the selected script.'],
+            }],
+          },
+          { usage: 'script [script] print', syntax: NONE, about: 'Print a script\'s installed text.' },
+          { usage: 'script [script] enable', syntax: NONE, about: 'Turn a script on. In a run, one of its own scripts too, in the run\'s tabs.' },
+          { usage: 'script [script] disable', syntax: NONE, about: 'Turn a script off. In a run, one of its own scripts too, in the run\'s tabs.' },
+          {
+            usage: 'script [script] refresh',
+            syntax: NONE,
+            about: ['Re-read a script from its location, as its Refresh button does.', 'One of the run\'s own scripts is re-read from disk, as update does.'],
+          },
+          {
+            usage: 'script install <file|url> [--collection <collection>] [--force]',
+            syntax: { args: 'words', max: 1 },
+            about: [
+              'Install a .user.js file or URL in SourceMonkey, for every tab, to stay. (load adds one to the run instead, for its tabs only.)',
+              'It goes into the container collection named, or the one SourceMonkey keeps for its kind: Scripts from local disk, from web, or from GitHub.',
+              'Under Tampermonkey or Violentmonkey, it replaces the script with the same name and namespace, which outside a --temp-browser needs --force.',
+            ],
+          },
+          {
+            usage: 'script <script> uninstall [--force]',
+            syntax: NONE,
+            about: ['Remove a script from its container collection. A directory or manifest collection\'s scripts come from its files, so they can\'t be.', FORCE_NOTE],
+          },
+          {
+            usage: 'script [script] move <collection>',
+            syntax: { args: 'words', max: 1 },
+            about: 'Move a script from one container collection to another.',
+          },
+        ],
       },
     ],
   },
@@ -614,8 +748,15 @@ export const HELP_SECTIONS: HelpSection[] = [
               'Used alone (sm-dev --open-browser), just start the browser.',
             ],
           },
+          {
+            term: '--manager NAME',
+            about: [
+              'The userscript manager to work with: sm, tm or vm, or sourcemonkey, tampermonkey or violentmonkey. See Userscript managers.',
+              '(Default: sm, or a run\'s own)',
+            ],
+          },
           { term: '--profile DIR', about: ['With --open-browser: the browser profile, kept between launches.', '(Default: ~/.config/sm-dev/browser-profile-<port>)'] },
-          { term: '--temp-browser', about: 'Instead, launch a hidden, muted browser for each run, with an empty profile and SourceMonkey installed, and close it when the run ends.' },
+          { term: '--temp-browser', about: 'Instead, launch a hidden, muted browser for each run, with an empty profile and the --manager manager installed, and close it when the run ends.' },
           { term: '--headed', about: 'With --temp-browser: make its window visible.' },
           { term: '--mute, --nomute', about: ['When launching a browser: turn its sound off or on.', '(Default: muted for --temp-browser, sound on for --open-browser)'] },
         ],
@@ -626,10 +767,10 @@ export const HELP_SECTIONS: HelpSection[] = [
           {
             term: '--json[=single|multi]',
             about: [
-              `Print results as JSON, for the commands that can: ${jsonCommandList()}.`,
-              'Other log messages go to stderr.',
+              'Print results as JSON. (Supported for most commands.)',
               'Each result is on one line (single), or multi-line (multi).',
               '(Default: multi at a terminal, single when piped)',
+              'Error and status messages go to stderr.',
             ],
           },
         ],
@@ -651,7 +792,15 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         title: 'Search paths',
         options: [
-          { term: '--root DIR', about: ['The repo root, searched for local copies of @require URLs.', '(Default: the current directory)'] },
+          {
+            term: '--root DIR',
+            about: [
+              'The repo root, searched for local copies of @require URLs.',
+              '(Default: the current directory)',
+              'A script outside this repo uses its own collection\'s root, the nearest',
+              'directory above it with a script_manifest.json.',
+            ],
+          },
           { term: '--local DIR', about: 'Additional directory to search. Can repeat.' },
         ],
       },
@@ -665,6 +814,14 @@ export const HELP_SECTIONS: HelpSection[] = [
         term: '--nowait',
         about: ['Don\'t wait for the page to settle after the action.', 'By default, most page actions wait for the page to settle before continuing.'],
         commands: SETTLING,
+      },
+      {
+        term: '--timeout-seconds S',
+        about: [
+          'For all commands that wait: the longest each wait may take, in place of its default.',
+          'e.g. an element being ready to click (default: 5), a page loading (30) or settling (5), a screenshot (5).',
+        ],
+        commands: TIMED,
       },
       {
         term: '--json[=single|multi]',
@@ -867,6 +1024,21 @@ function formsOf(name: string): { command: HelpCommand; section: HelpSection }[]
   return real.length > 0 ? real : all;
 }
 
+/** The managers `name` works with: as its help says, else every one. */
+export function commandManagers(name: string): ManagerName[] {
+  return formsOf(name).map(({ command }) => command.managers).find((m) => m !== undefined) ?? MANAGER_NAMES;
+}
+
+/**
+ * Why `name` can't be used with `manager`, or null when it can. `whose`
+ * says where the manager came from: `this run uses`, `--manager names`.
+ */
+export function unsupportedCommand(name: string, manager: ManagerName, whose: string): string | null {
+  const managers = commandManagers(name);
+  if (managers.includes(manager)) return null;
+  return `The ${name} command works with ${managers.map((m) => MANAGERS[m].label).join(' or ')} only, and ${whose} ${MANAGERS[manager].label}`;
+}
+
 /** Every command's name, in the list's order; one with several forms once. */
 export const COMMAND_NAMES = [...new Set(allSections().flatMap((section) => (section.commands ?? []).map(nameOf)))];
 
@@ -940,6 +1112,8 @@ export interface CommandSyntax {
   base: ArgSyntax;
   /** Each form's, by its keyword (`wait log`). */
   forms: Record<string, ArgSyntax>;
+  /** The forms that name what they act on before their keyword (`script <script> show`). */
+  subjectForms: Set<string>;
   /** Its flags: each takes a value, none, or one only as `--name=value`. */
   flags: Record<string, FlagKind>;
   /** What a value flag's value is, as its help names it (`<path>`, `FILE`). */
@@ -951,12 +1125,18 @@ export interface CommandSyntax {
 /** A command's syntax, from its help; `words` and no flags for a name that is none. */
 export function commandSyntax(name: string): CommandSyntax {
   const forms = formsOf(name);
-  const syntax: CommandSyntax = { base: WORDS, forms: {}, flags: {}, values: {}, usage: forms.map(({ command }) => command.usage) };
+  const syntax: CommandSyntax = {
+    base: WORDS, forms: {}, subjectForms: new Set(), flags: {}, values: {}, usage: forms.map(({ command }) => command.usage),
+  };
   for (const { command } of forms) {
-    // A form named by a keyword (`wait log <text>`), or the command's own.
-    const keyword = /^\S+ ([a-z][a-z-]*)(\s|$)/.exec(command.usage)?.[1];
-    if (keyword && command.syntax) syntax.forms[keyword] = command.syntax;
-    else if (command.syntax) syntax.base = command.syntax;
+    // A form named by a keyword (`wait log <text>`), perhaps after what
+    // it acts on (`script [script] enable`), or the command's own.
+    const named = /^\S+ (?:(<[^>]+>|\[[^\]]+\]) )?([a-z][a-z-]*)(\s|$)/.exec(command.usage);
+    const keyword = named?.[2];
+    if (keyword && command.syntax) {
+      syntax.forms[keyword] = command.syntax;
+      if (named![1] !== undefined) syntax.subjectForms.add(keyword);
+    } else if (command.syntax) syntax.base = command.syntax;
   }
   // `--out FILE`: a value; `--visible`: none; `--script[=<script>]`: an
   // optional one.

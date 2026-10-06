@@ -97,6 +97,11 @@ export interface ParsedArgs {
   tab?: string;
   /** The keyword of the form it took (`wait log`), if any. */
   form?: string;
+  /**
+   * The word before the form's keyword, for a form that names what it
+   * acts on first (`script E4 enable`): absent when it was left out.
+   */
+  subject?: string;
   /** Its arguments: all of them, or for text, the ones before it. */
   words: string[];
   /** For a text or selector syntax: the rest of the line, as its syntax unquotes it. */
@@ -139,9 +144,10 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
   // Flags anywhere before the text starts; the rest are arguments.
   let shape: ArgSyntax = syntax.base;
   const args: Word[] = [];
-  // The arguments so far that are the command's own, past a tab and a
-  // form's keyword.
-  const ownCount = (): number => args.length - (parsed.tab !== undefined ? 1 : 0) - (parsed.form !== undefined ? 1 : 0);
+  // The arguments so far that are the command's own, past a tab, a
+  // form's keyword, and the subject before it.
+  const ownCount = (): number => args.length - (parsed.tab !== undefined ? 1 : 0) - (parsed.form !== undefined ? 1 : 0)
+    - (parsed.subject !== undefined ? 1 : 0);
   // Once the text has started (its first word after the ones before
   // it), the words are its own, `--words` included.
   let inText = false;
@@ -163,8 +169,11 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
       args.push(word);
       continue;
     }
-    // The form's keyword, first among the arguments after a tab.
-    if (ownCount() === 0 && parsed.form === undefined && !word.quoted && Object.hasOwn(syntax.forms, word.text)) {
+    // The form's keyword, first among the arguments after a tab, or
+    // second, after the subject, for a form that names one first.
+    if (parsed.form === undefined && !word.quoted && Object.hasOwn(syntax.forms, word.text)
+      && (ownCount() === 0 || (ownCount() === 1 && syntax.subjectForms.has(word.text)))) {
+      if (ownCount() === 1) parsed.subject = args[args.length - 1].text;
       parsed.form = word.text;
       shape = syntax.forms[word.text];
       args.push(word);
@@ -173,8 +182,15 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
     if (shape.args === 'text' && ownCount() >= (shape.before ?? 0)) inText = true;
     args.push(word);
   }
-  const own = args.slice((parsed.tab !== undefined ? 1 : 0) + (parsed.form !== undefined ? 1 : 0));
+  const own = args.slice((parsed.tab !== undefined ? 1 : 0) + (parsed.form !== undefined ? 1 : 0) + (parsed.subject !== undefined ? 1 : 0));
 
+  // The verb first and what it acts on after (`script enable E4`), the
+  // other way round from how a subject form is written.
+  const max = shape.args === 'none' ? 0 : shape.args === 'words' ? shape.max : undefined;
+  if (parsed.form !== undefined && parsed.subject === undefined && syntax.subjectForms.has(parsed.form) && max !== undefined && own.length > max) {
+    const rest = own.slice(1).map((w) => ` ${w.text}`).join('');
+    return { error: `Name the ${command} before the verb: ${command} ${own[0].text} ${parsed.form}${rest}` };
+  }
   switch (shape.args) {
     case 'none':
       if (own.length > 0) return { error: `The ${command} command takes ${shape.tab ? 'nothing besides a tab' : 'no arguments'}` };

@@ -1223,7 +1223,7 @@ export async function addCollection(rawPath: string): Promise<AddCollectionResul
 // keeps `/x/a.user.js` typed into the collections page and
 // `file:///x/a.user.js` arriving from a captured navigation from
 // becoming two rows for one file — see `canonicalCollectionInput`.
-async function canonicalLocation(rawPath: string): Promise<string> {
+export async function canonicalLocation(rawPath: string): Promise<string> {
   return canonicalCollectionInput(await normalizeCollectionInput(rawPath));
 }
 

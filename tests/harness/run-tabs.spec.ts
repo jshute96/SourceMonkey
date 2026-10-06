@@ -225,7 +225,7 @@ async function driveCli(args: string[], steps: Step[]): Promise<string[]> {
   // The line's own flags go first.
   const at = args.indexOf('--root');
   const root = at >= 0 ? args.splice(at, 2) : [];
-  const child = spawn(process.execPath, [cli, '--stdin', ...root, '--temp-browser', 'start', ...args, '--seconds', '25'], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [cli, '--stdin', ...root, '--temp-browser', 'start', ...args, '--stop-after-seconds', '25'], { stdio: ['pipe', 'pipe', 'pipe'] });
   const lines: string[] = [];
   let pending = [...steps];
   let since = 0;
@@ -303,6 +303,25 @@ test('start with no scripts: a blank page, and the lists say there are no script
   expect(lines.some((l) => l.startsWith('[sm-dev] Opening'))).toBe(false);
   expect(lines.some((l) => /^\* T1: about:blank \[targetId=/.test(l))).toBe(true);
   expect(lines).toContain('  No scripts are loaded');
+});
+
+test('start, update and load give a page --timeout-seconds to load', async ({ fixtureServer, scriptsDir }) => {
+  // Its image holds load back for 5 seconds.
+  const page = `${fixtureServer.baseUrl}/stalled-load.html`;
+  const write = (name: string) => scriptsDir.write({
+    relativePath: `${name.toLowerCase()}.user.js`,
+    meta: { name, match: [page] },
+    body: `console.log('[${name}] on');`,
+  });
+  const a = write('A');
+  const b = write('B');
+  const lines = await driveCli([a, page, '--timeout-seconds', '1'], [
+    ['did not finish loading within 1s', () => { touch(a); return 'update --timeout-seconds 1'; }],
+    ['T1 could not be reloaded', `load ${b} --timeout-seconds 1`],
+    ['T1 could not be reloaded', 'exit'],
+  ]);
+  expect(lines).toContain('[sm-dev] Navigation failed: The page did not finish loading within 1s');
+  expect(lines.filter((l) => l === '[sm-dev] T1 could not be reloaded: The page did not finish loading within 1s')).toHaveLength(2);
 });
 
 test('load, update and reload all reload just the tabs they affect', async ({ fixtureServer, scriptsDir }) => {
@@ -465,7 +484,7 @@ test('open and reload switch the tab they name, or the current one, and say when
     // A mistake, found before it is sent, stops the piped commands.
     ['T2 runs no scripts from now on', 'open --bogus'],
   ]);
-  expect(lines).toContain('ERROR: The open command has no --bogus flag. It takes --noscript, --script, --from-saved, --url, --offline, --nowait.');
+  expect(lines).toContain('ERROR: The open command has no --bogus flag. It takes --noscript, --script, --timeout-seconds, --from-saved, --url, --offline, --nowait.');
   expect(lines).toContain('That command failed, so the commands after it were not run');
   // T1 stayed on its page when switched back.
   expect(lines.filter((l) => l === '"/other.html"')).toHaveLength(2);
@@ -624,6 +643,21 @@ test('start --from-saved opens T1 on the saved page, and --offline blocks the re
     ['"blocked"', 'exit'],
   ]);
   expect(lines.some((l) => /Opening .*chrome\.html as .*\/target\.html in T1/.test(l))).toBe(true);
+});
+
+test('a saved page that times out on the live site\'s files suggests --offline', async ({ fixtureServer, scriptsDir }) => {
+  const base = fixtureServer.baseUrl;
+  const url = `${base}/target.html`;
+  const a = scriptsDir.write({ relativePath: 'a.user.js', meta: { name: 'A', match: ['*://*/target.html'] }, body: '' });
+  // Its script is a live-site file that answers too late.
+  const file = path.join(scriptsDir.path, 'slow.html');
+  writeFileSync(file, `<!DOCTYPE html>\n<!-- saved from url=(${String(url.length).padStart(4, '0')})${url} -->\n<html><head><script src="${base}/__slow/x.js?ms=3000"></script></head><body></body></html>`);
+  const lines = await driveCli([a, `${base}/target.html`], [
+    ['Started as run', `open --from-saved '${file}' --timeout-seconds 0.5`],
+    ['--from-saved --offline to block', 'exit'],
+  ]);
+  expect(lines).toContain('[sm-dev] Navigation failed: The page did not finish loading within 0.5s. '
+    + 'The saved page still loads its images, scripts and styles from the live site. Open it with --from-saved --offline to block those.');
 });
 
 test('--from-saved lasts for its URL only, --offline lets links out, and a missing file is said', async ({ fixtureServer, scriptsDir }) => {

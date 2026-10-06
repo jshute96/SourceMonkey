@@ -3,7 +3,7 @@
 // in a run, the run answers them. Text and --json.
 
 import { execFile } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -13,6 +13,7 @@ import type { Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/harness.js';
 import { findExtensionWorker } from '../../lib/harness/extension-backend.js';
 import { launchExtensionBrowser, type LaunchedExtensionBrowser } from '../../lib/harness/extension-launch.js';
+import { CONTAINER_TARGET_ONLY, LISTED_BY_LOCATION, RUN_COLLECTION_LOCKED } from '../../lib/sm-dev-protocol.js';
 
 const CLI = fileURLToPath(new URL('../../lib/harness/cli.js', import.meta.url));
 
@@ -143,8 +144,145 @@ test('an installed script not on the tab can be picked, and its values read and 
   expect(text).toContain('  k = 7');
   expect(text).toContain(`* ${e}: Away`);
   // `scripts` lists it too, with no tab open.
-  const listed = await cli('start', '--notab', file, '--', 'script', e, '--', 'scripts');
+  const listed = await cli('start', '--notab', file, '--', 'script', e, '--', 'scripts', '--', 'script', 'disable');
   expect(listed.stdout).toContain(`* ${e}: Away (`);
+  // A verb with no script acts on the selected one.
+  expect(listed.stdout).toContain(`Disabled ${e}: Away\n`);
   const missing = await cli('start', '--notab', file, '--', 'script', 'E99');
   expect(missing.stdout + missing.stderr).toContain('There is no script E99. Use script list to list the installed scripts.');
+});
+
+test('show, print, enable, disable and refresh, with no run', async ({ scriptsDir }) => {
+  test.setTimeout(120_000);
+  const file = scriptsDir.write({
+    relativePath: 'a/one.user.js',
+    meta: { name: 'One', match: ['https://example.com/*'], grant: ['GM_setValue'], extra: ['// @version 1.2', '// @description Does one thing'] },
+    body: '',
+  });
+  const dir = path.join(scriptsDir.path, 'a');
+  await worker.evaluate((d) => (self as unknown as Sm).SourceMonkey.addCollection(d), dir);
+
+  const shown = await cli('collection', 'C1', 'show');
+  expect(shown.stderr).toBe('');
+  expect(shown.stdout).toBe(`C1: ${dir}\n  Kind:       directory\n  Location:   ${dir}\n  Status:     Enabled\n  Scripts:    1 script\n  E1: One 1.2\n`);
+
+  const script = await cli('script', 'one', 'show');
+  expect(script.stdout).toMatch(/^E1: One 1\.2\n/);
+  expect(script.stdout).toMatch(/^ {2}Description: +Does one thing$/m);
+  expect(script.stdout).toMatch(/^ {2}Collection: +C1: /m);
+  expect(script.stdout).toMatch(/^ {2}Status: +Enabled, ok$/m);
+  expect(script.stdout).toMatch(/^ {2}@match: +https:\/\/example\.com\/\*$/m);
+  expect(script.stdout).toMatch(/^ {2}@grant: +GM_setValue$/m);
+  const json = JSON.parse((await cli('script', 'E1', 'show', '--json')).stdout);
+  expect(json).toMatchObject({
+    command: 'script show',
+    script: { id: 'E1', description: 'Does one thing', runAt: 'document-idle', grants: ['GM_setValue'], matching: { match: ['https://example.com/*'] }, valueCount: 0 },
+  });
+
+  const printed = await cli('script', 'E1', 'print');
+  expect(printed.stdout).toBe(readFileSync(file, 'utf8').replace(/\n?$/, '\n'));
+
+  // Easily undone, so no --force.
+  expect((await cli('script', 'E1', 'disable')).stdout).toBe('Disabled E1: One\n');
+  const enabled = JSON.parse((await cli('--json', 'script', 'E1', 'enable')).stdout);
+  expect(enabled).toMatchObject({ command: 'script enable', script: { id: 'E1', enabled: true } });
+
+  expect((await cli('script', 'E1', 'refresh')).stdout).toBe('Refreshed E1: One: no change\n');
+  // Marked as the collections page does, until a refresh loads it.
+  writeFileSync(file, readFileSync(file, 'utf8').replace('// @version 1.2', '// @version 1.3.0'));
+  expect((await cli('script', 'list')).stdout).toContain('  E1: One 1.2 (modified on disk)\n');
+  expect((await cli('collection', 'list')).stdout).toContain('      Refresh pending: 1 file modified on disk\n');
+  expect(JSON.parse((await cli('script', 'E1', 'show', '--json')).stdout).script.onDisk).toBe('modified');
+  expect((await cli('script', 'E1', 'refresh')).stdout).toBe('Refreshed E1: One: updated\n');
+  expect((await cli('script', 'list')).stdout).toContain('  E1: One 1.3.0\n');
+
+  const two = scriptsDir.write({ relativePath: 'a/two.user.js', meta: { name: 'Two', match: ['https://example.com/*'] }, body: '' });
+  const refreshed = await cli('collection', 'C1', 'refresh');
+  expect(refreshed.stdout).toBe(`Refreshed C1: ${dir}: 1 updated, 1 unchanged\n  Updated E2: Two\n`);
+  // A removed script keeps its number in what's said of it.
+  rmSync(two);
+  expect((await cli('collection', 'C1', 'refresh')).stdout).toBe(`Refreshed C1: ${dir}: 0 updated, 1 unchanged, 1 removed\n  Removed E2: Two\n`);
+
+  expect((await cli('collection', 'C1', 'disable')).stdout).toBe(`Disabled C1: ${dir}\n`);
+  expect((await cli('script', 'E1', 'enable')).stdout)
+    .toBe(`Enabled E1: One\n  E1: One is enabled, but won't run because it's inside disabled collection C1: ${dir}\n`);
+  expect((await cli('collection', 'C1', 'rename', 'Mine')).stdout).toBe('Renamed C1 to Mine\n');
+  expect(JSON.parse((await cli('collection', 'list', '--json')).stdout).collections[0]).toMatchObject({ name: 'Mine', enabled: false });
+
+  const missing = await cli('script', 'show');
+  expect(missing.stderr).toContain('The script show command needs a script: script <script> show. There is no selected script outside a run.');
+  expect((await cli('script', 'enable', 'E1')).stderr).toContain('Name the script before the verb: script E1 enable');
+});
+
+test('install, uninstall and move', async ({ scriptsDir }) => {
+  test.setTimeout(120_000);
+  const file = scriptsDir.write({ relativePath: 'loose/solo.user.js', meta: { name: 'Solo', match: ['https://example.com/*'] }, body: '' });
+  scriptsDir.write({ relativePath: 'dir/listed.user.js', meta: { name: 'Listed', match: ['https://example.com/*'] }, body: '' });
+  await worker.evaluate((d) => (self as unknown as Sm).SourceMonkey.addCollection(d), path.join(scriptsDir.path, 'dir'));
+  await worker.evaluate(() => (self as unknown as { SourceMonkey: { createCollection(spec: unknown): Promise<unknown> } }).SourceMonkey.createCollection({ kind: 'scripts', name: 'Mine' }));
+
+  // A relative path is the sender's.
+  const installed = await cli('script', 'install', path.relative(process.cwd(), file));
+  expect(installed.stderr).toBe('');
+  expect(installed.stdout).toMatch(/^Installed E2: Solo in C3: Scripts from local disk\n$/);
+  expect((await cli('script', 'install', file)).stdout).toBe('E2: Solo is already installed in C3: Scripts from local disk\n');
+
+  const moved = JSON.parse((await cli('script', 'Solo', 'move', 'Mine', '--json')).stdout);
+  expect(moved).toMatchObject({ command: 'script move', script: { id: 'E2', collection: { id: 'C2', name: 'Mine' } } });
+  expect((await cli('script', 'E2', 'move', 'Mine')).stderr).toContain('E2: Solo is already in C2: Mine');
+
+  // A directory's scripts come from its files.
+  // Refused before --force is asked for.
+  expect((await cli('script', 'Listed', 'uninstall')).stderr).toBe(`Could not uninstall E1: Listed: ${LISTED_BY_LOCATION}\n`);
+  expect((await cli('script', 'E2', 'move', 'C1')).stderr).toContain(`Could not move E2: Solo to C1: ${path.join(scriptsDir.path, 'dir')}: ${CONTAINER_TARGET_ONLY}`);
+  expect((await cli('script', 'install', file, '--collection', 'C1')).stderr).toContain(CONTAINER_TARGET_ONLY);
+
+  expect((await cli('script', 'E2', 'uninstall')).code).toBe(1);
+  expect((await cli('script', 'E2', 'uninstall', '--force')).stdout).toBe('Uninstalled E2: Solo from C2: Mine\n');
+  expect((await cli('script', 'list', 'Mine')).stdout).toBe('C2: Mine\n  No scripts\n');
+
+  const again = JSON.parse((await cli('script', 'install', file, '--collection', 'Mine', '--json')).stdout);
+  expect(again).toMatchObject({ command: 'script install', script: { name: 'Solo', enabled: true, collection: { id: 'C2' } } });
+
+  // Another copy of a running script turns that one off, as the viewer does.
+  const listed = path.join(scriptsDir.path, 'dir', 'listed.user.js');
+  expect((await cli('script', 'install', listed, '--collection', 'Mine')).stdout).toBe(
+    `Installed E4: Listed in C2: Mine\n  Another version of this script was disabled: E1: Listed in collection C1: ${path.join(scriptsDir.path, 'dir')}\n`);
+  expect(JSON.parse((await cli('script', 'E1', 'enable', '--json')).stdout)).toMatchObject({ turnedOff: [{ id: 'E4', enabled: false }] });
+
+  // Moved into a disabled collection, it doesn't run, so turns nothing off.
+  await worker.evaluate(() => (self as unknown as { SourceMonkey: { createCollection(spec: unknown): Promise<unknown> } }).SourceMonkey.createCollection({ kind: 'scripts', name: 'Off' }));
+  expect((await cli('collection', 'Off', 'disable')).code).toBe(0);
+  expect((await cli('script', 'E4', 'enable')).stdout).toContain('Another version of this script was disabled: E1: Listed in collection C1: ');
+  expect((await cli('script', 'E4', 'move', 'Off')).stdout)
+    .toBe('Moved E4: Listed to C4: Off\n  E4: Listed is enabled, but won\'t run because it\'s inside disabled collection C4: Off\n');
+  expect((await cli('script', 'install', path.join(scriptsDir.path, 'dir'))).stderr).toContain('is not a .user.js file or URL');
+});
+
+test('in a run, its own scripts and its test collection', async ({ scriptsDir }) => {
+  const file = scriptsDir.write({ relativePath: 'run.user.js', meta: { name: 'Mine', match: ['https://example.com/*'] }, body: '' });
+  // With no script named, the selected one.
+  const result = await cli('start', '--notab', file, '--', 'script', 'disable', '--', 'script', '1', 'show', '--',
+    'script', '1', 'enable', '--', 'collection', 'D1', 'disable');
+  const text = result.stdout + result.stderr;
+  // Its own, so no --force.
+  expect(text).toContain('Disabled 1: Mine\n');
+  expect(text).toMatch(/^ {2}Status: +Disabled, ok$/m);
+  // By the path the run was given, as script list shows it.
+  expect(text).toMatch(new RegExp(`^ {2}Location: +${file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'));
+  expect(text).toContain('Enabled 1: Mine\n');
+  expect(text).toMatch(new RegExp(`\\n\\[sm-dev\\] Could not disable D1: sm-dev test collection \\(run D1-[0-9a-f]{4}\\): ${RUN_COLLECTION_LOCKED}\\n`));
+  // Re-read from disk, as update does; and on each tab, as scripts says.
+  const more = await cli('start', '--notab', file, '--', 'script', '1', 'refresh', '--', 'newtab', '--', 'script', '1', 'show', '--', 'script', '1', 'refresh', '--json');
+  expect(more.stdout + more.stderr).toContain('Script 1 hasn\'t changed on disk, so nothing was reloaded');
+  expect(more.stdout).toMatch(/^ {2}Tabs: +T1: Not running$/m);
+  const refreshJson = JSON.parse(more.stdout.split('\n').find((l) => l.startsWith('{"command":"script refresh"'))!);
+  expect(refreshJson).toMatchObject({ script: { id: '1', kind: 'run' }, updated: false });
+  const uninstall = await cli('start', '--notab', file, '--', 'script', '1', 'uninstall');
+  const moved = await cli('start', '--notab', file, '--', 'script', '1', 'move', 'C1');
+  expect(moved.stdout + moved.stderr).toContain('1: Mine is one of this run\'s own scripts, which stay in its test collection');
+  expect(uninstall.stdout + uninstall.stderr).toContain('1: Mine is one of this run\'s own scripts, which go when the run ends');
+  // Never the selected one by leaving it out.
+  const unnamed = await cli('start', '--notab', file, '--', 'script', 'uninstall');
+  expect(unnamed.stdout + unnamed.stderr).toContain('The script uninstall command needs a script: script <script> uninstall [--force]');
 });

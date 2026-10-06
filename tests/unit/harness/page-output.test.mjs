@@ -50,6 +50,16 @@ test("the page's own throws are the page's", () => {
   assert.equal(pageErrorSource('Error: nope\n    at h (https://site.test/app.js:9:9)', true), 'page');
 });
 
+test('under another manager, its code\'s URLs are the scripts\'', () => {
+  const vm = 'chrome-extension://jinjaccalgkegednnccohejagnlnfdag/';
+  const script = `${vm}Hello.user.js#3`;
+  assert.equal(consoleSource(call({ url: script }), vm), 'script');
+  assert.equal(consoleSource(call({ url: SCRIPT }), vm), 'page');
+  // Nothing reports its throws, so they're shown.
+  assert.equal(pageErrorSource(stack(script), false, vm), 'script');
+  assert.equal(pageErrorSource(stack(PAGE), false, vm), 'page');
+});
+
 test('a thrown non-Error value has no stack to judge by, so it counts as the scripts\'', () => {
   assert.equal(pageErrorSource('nope', true), 'script');
 });

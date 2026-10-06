@@ -153,8 +153,9 @@ test('wait and the actions settle the page, and say what kept it busy', async ({
   // Mistakes.
   expect(await run('wait sometime')).toEqual({ ok: false, lines: ['[sm-dev] ERROR: The wait command takes a tab, all, selector, selector-gone, log, or a delay such as 500ms or 2s, not sometime'] });
   expect((await run('wait selector')).lines).toEqual(['[sm-dev] ERROR: The wait selector command needs a selector, e.g. wait selector \'#results\'']);
-  expect((await run('wait 2s --timeout-seconds 1')).lines).toEqual(['[sm-dev] ERROR: A delay takes no --timeout-seconds']);
-  // A tab before a delay is allowed, and changes nothing.
+  expect((await run('wait 2s --timeout-seconds 1')).lines).toEqual(['[sm-dev] ERROR: The delay 2s is longer than --timeout-seconds 1. Give a timeout at least as long, or none.']);
+  // A tab before a delay, or a timeout at least as long, is allowed, and changes nothing.
+  expect(await run('wait 10ms --timeout-seconds 1')).toEqual({ ok: true, lines: [] });
   expect(await run('wait T1 10ms')).toEqual({ ok: true, lines: [] });
   expect(await run('wait all 10ms')).toEqual({ ok: true, lines: [] });
   expect((await run('wait T9 10ms')).ok).toBe(false);

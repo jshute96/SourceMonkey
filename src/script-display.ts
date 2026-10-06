@@ -427,3 +427,30 @@ export function requireBasename(url: string, ref: string): string {
   }
   return name ? decodeForDisplay(name) : ref;
 }
+
+// ---------- Changes on disk ----------
+
+// What a local collection's disk holds that its rows don't: what the
+// collections page's "refresh pending" chip counts, and sm-dev's
+// `onDisk` gives.
+export interface PendingOnDisk {
+  modified: number;
+  deleted: number;
+  added: number;
+  // The collection's manifest file itself has changed.
+  manifest?: true;
+}
+
+// The counts in words, per kind, since each is a different thing to go
+// and check: `1 file modified, 2 new files`. Empty when nothing differs.
+export function pendingSummary(counts: PendingOnDisk): string {
+  const files = (n: number) => `${n} ${n === 1 ? 'file' : 'files'}`;
+  const parts: string[] = [];
+  if (counts.manifest) parts.push('the manifest changed');
+  if (counts.modified > 0) parts.push(`${files(counts.modified)} modified`);
+  if (counts.deleted > 0) parts.push(`${files(counts.deleted)} deleted`);
+  if (counts.added > 0) parts.push(`${counts.added} new ${counts.added === 1 ? 'file' : 'files'}`);
+  if (parts.length === 0) return '';
+  const text = parts.join(', ');
+  return `${text[0].toUpperCase()}${text.slice(1)}`;
+}

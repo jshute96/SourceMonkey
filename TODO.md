@@ -968,6 +968,11 @@ See [docs/harness-design.md](docs/harness-design.md).
   same run, they land in the person's real `~/Downloads`. Reproduced
   in a corpus run (2026-10-04). The download behavior is probably set
   up only for the first start's browser context or tab.
+- **A way to trim a saved page.** A raw SeeWhatISee snapshot of Code
+  Search was 1.46 MB, mostly a file-tree subtree and inline `<svg>`
+  icons, and trimmed by hand to 34 KB. A `savehtml` option (or a
+  separate command) could drop given subtrees, inline SVGs and unused
+  `<style>` blocks.
 
 ## Tabs that predate the first script install
 

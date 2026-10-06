@@ -27,13 +27,16 @@ import { fileURLToPath } from 'node:url';
 
 import { CommandAssembler, NONE_RUN, echoCommand, parseCommandList, shellWord, unclosedBlockMessage, type AssembledCommand } from './command-lines.js';
 import {
-  commandWords, installedListing, managerCommand, onlyInspects, readPromptCommands, runCommandHelp, runCommandMistake, setJsonOutput, writeOutputLine,
+  commandWords, managerCommandOf, managerCommand, onlyInspects, readPromptCommands, runCommandHelp, runCommandMistake, setJsonOutput, writeOutputLine,
 } from './console-commands.js';
 import { parseLang } from './browser-lang.js';
-import { parseCommandArgs } from './command-args.js';
-import { OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, commandNamed, commandSyntax, commandsHelp, fullHelp } from './command-list.js';
+import { parseCommandArgs, splitWords } from './command-args.js';
+import { DEFAULT_MANAGER, MANAGERS, managerMistake, managerNamed, type ManagerName } from './managers.js';
+import type { ManagerVerb } from './manager-actions.js';
+import type { ManagerControl } from './manager-commands.js';
+import { MAX_TIMER_SECONDS, OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, TIMEOUT_NEEDS_SECONDS, commandNamed, commandSyntax, commandsHelp, fullHelp, timeoutSecondsMs, unsupportedCommand } from './command-list.js';
 import { readJsonFile } from './input-file.js';
-import { isJsonLine, jsonLayoutMistake, jsonResult, jsonResultData, STDERR_LINE, withLayout, type JsonLayout, type ListData, type MatchData, type StatusData, type StatusRunsData } from './json-output.js';
+import { isJsonLine, jsonLayoutMistake, jsonResult, jsonResultData, STDERR_LINE, withLayout, type JsonLayout, type BrowserStatus, type ListData, type MatchData, type RunConnection, type StatusData, type StatusRunsData } from './json-output.js';
 // Node built-ins only, so as cheap to load as the rest here.
 import { runIdOf, type CommandSource, type RunClient, type RunRecord } from './runs.js';
 import { runLogLabel } from './run-log.js';
@@ -74,9 +77,11 @@ interface Opts {
   detach: boolean;
   /** `start --nowait`: ready once the scripts start, without settling. */
   noWait: boolean;
+  /** `--timeout-seconds`, in ms: each of start's waits on its tabs. */
+  timeoutMs?: number;
   /** `--new`: start beside earlier detached runs, not in their place. */
   newRun: boolean;
-  /** `--idle-seconds`. */
+  /** `--stop-after-idle-seconds`. */
   idleSeconds?: number;
   /** `--from-saved`: the `.html` files among the pages are opened as saved pages. */
   fromSaved: boolean;
@@ -92,23 +97,26 @@ interface Opts {
   jsonLayout?: JsonLayout;
 }
 
-// The longest a Node timer waits: past it, it fires at once instead.
-const MAX_TIMER_SECONDS = Math.floor((2 ** 31 - 1) / 1000);
-
-// sm-dev's own commands' flags that take a value, for finding the
-// command's name past the flags that may come before it (`--detach
-// start`).
-const OWN_VALUE_FLAGS = new Set([...OWN_COMMANDS].flatMap((name) => Object.entries(commandSyntax(name).flags)
+// The commands' flags that take a value, for finding the command's
+// name past the flags that may come before it: sm-dev's own (`--detach
+// start`), and a run's, to say where one put first goes (`--find x logs`).
+const OWN_VALUE_FLAGS = new Set([...OWN_COMMANDS, ...RUN_COMMAND_NAMES].flatMap((name) => Object.entries(commandSyntax(name).flags)
   .filter(([, kind]) => kind === 'value').map(([flag]) => flag)));
+
+// Where the command's name is in `argv`: the first word that is no
+// flag, nor a flag's value. Past the end when there is none.
+function commandIndex(argv: string[]): number {
+  let at = 0;
+  while (at < argv.length && argv[at].startsWith('-')) at += OWN_VALUE_FLAGS.has(argv[at]) ? 2 : 1;
+  return at;
+}
 
 function parseArgs(argv: string[]): Opts {
   const opts: Opts = {
     command: null, args: [],
     all: false, noTab: false, watch: false, detach: false, newRun: false, noWait: false, fromSaved: false, offline: false,
   };
-  // The command's name: the first word that is no flag, nor a flag's value.
-  let at = 0;
-  while (at < argv.length && argv[at].startsWith('-')) at += OWN_VALUE_FLAGS.has(argv[at]) ? 2 : 1;
+  const at = commandIndex(argv);
   // None: said by the caller, as is a name that is no command of sm-dev's own.
   if (at >= argv.length) return opts;
   opts.command = argv[at];
@@ -175,6 +183,12 @@ function parseArgs(argv: string[]): Opts {
       case '--detach': opts.detach = true; break;
       case '--new': opts.newRun = true; break;
       case '--nowait': opts.noWait = true; break;
+      case '--timeout-seconds': {
+        const ms = timeoutSecondsMs(text);
+        if (ms === null) throw new UsageError(TIMEOUT_NEEDS_SECONDS);
+        opts.timeoutMs = ms;
+        break;
+      }
       case '--from-saved': opts.fromSaved = true; break;
       case '--url': opts.url = text; break;
       case '--offline': opts.offline = true; break;
@@ -194,17 +208,17 @@ function parseArgs(argv: string[]): Opts {
           throw new UsageError((err as Error).message);
         }
         break;
-      case '--idle-seconds': {
+      case '--stop-after-idle-seconds': {
         const v = Number(text);
-        if (!text || !Number.isFinite(v) || v < 0) throw new UsageError('The --idle-seconds flag needs a number of seconds');
-        if (v > MAX_TIMER_SECONDS) throw new UsageError(`The --idle-seconds flag can be at most ${MAX_TIMER_SECONDS}`);
+        if (!text || !Number.isFinite(v) || v < 0) throw new UsageError('The --stop-after-idle-seconds flag needs a number of seconds');
+        if (v > MAX_TIMER_SECONDS) throw new UsageError(`The --stop-after-idle-seconds flag can be at most ${MAX_TIMER_SECONDS}`);
         opts.idleSeconds = v;
         break;
       }
-      case '--seconds': {
+      case '--stop-after-seconds': {
         const v = Number(text);
-        if (!text || !Number.isFinite(v) || v < 0) throw new UsageError('The --seconds flag needs a number');
-        if (v > MAX_TIMER_SECONDS) throw new UsageError(`The --seconds flag can be at most ${MAX_TIMER_SECONDS}`);
+        if (!text || !Number.isFinite(v) || v < 0) throw new UsageError('The --stop-after-seconds flag needs a number');
+        if (v > MAX_TIMER_SECONDS) throw new UsageError(`The --stop-after-seconds flag can be at most ${MAX_TIMER_SECONDS}`);
         opts.seconds = v;
         break;
       }
@@ -349,6 +363,9 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
     ] as [boolean, string][]).filter(([on]) => on).map(([, name]) => name);
     if (used.length > 0) throw new UsageError(`The start command was given no scripts, so it can't take ${used.join(' or ')}`);
   }
+  if (lineManager !== undefined && lineManager !== 'sourcemonkey' && opts.values) {
+    throw new UsageError(`The ${opts.valuesFlag ?? '--values'} flag works with SourceMonkey only, and --manager names ${MANAGERS[lineManager].label}`);
+  }
   if (lineTempBrowser && opts.cdp !== undefined) throw new UsageError('The --temp-browser flag can\'t be used with --browser');
   if (lineOpenBrowser && opts.cdp !== undefined) throw new UsageError('The start command connects to the browser --open-browser starts, so give --browser once, first: sm-dev --open-browser --browser ... start ...');
   if (!opts.detach && !detachedLog && opts.newRun) throw new UsageError('The --new flag only applies with --detach');
@@ -360,7 +377,7 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
 }
 
 // The run, in the background process `start` began: until a client
-// sends `stop`, a signal, `--seconds`, or its idle timeout. Given the
+// sends `stop`, a signal, `--stop-after-seconds`, or its idle timeout. Given the
 // scripts' files (and each as typed), and the pages to open with the
 // saved page each serves, if any.
 async function runHere(
@@ -371,7 +388,7 @@ async function runHere(
   // The run has no input: commands come from its clients.
   process.stdin.destroy();
   const { run } = await import('./run.js');
-  // Ends on stop, a signal, or after --seconds. The timer is
+  // Ends on stop, a signal, or after --stop-after-seconds. The timer is
   // unreferenced so it can't hold the process open after an early
   // exit, and the listener comes off once the run has ended.
   let onSigint: (() => void) | null = null;
@@ -426,6 +443,7 @@ async function runHere(
       all: opts.all,
       noTab: opts.noTab,
       cdp: opts.cdp ?? lineCdp,
+      manager: lineManager,
       tempBrowser: lineTempBrowser,
       headed: lineHeaded,
       muted: lineMuted,
@@ -444,6 +462,7 @@ async function runHere(
       runId,
       primaryPid,
       noWait: opts.noWait,
+      timeoutMs: opts.timeoutMs,
       // Tells the client that started it, which then goes on. One that
       // has gone (killed, say) leaves the run going unannounced, rather
       // than crashing it on the closed channel.
@@ -482,7 +501,7 @@ if (detachedLog) {
   timestampOutputLines();
 }
 
-// `--idle-seconds` as the messages say it: whole minutes as minutes.
+// `--stop-after-idle-seconds` as the messages say it: whole minutes as minutes.
 function duration(seconds: number): string {
   const [n, unit] = seconds >= 60 && seconds % 60 === 0 ? [seconds / 60, 'minute'] : [seconds, 'second'];
   return `${n} ${unit}${n === 1 ? '' : 's'}`;
@@ -516,7 +535,7 @@ async function detachRun(words: string[], runId: string | undefined): Promise<{ 
   let ready: { id: string | null } | null = null;
   let exitCode: number | null = null;
   child.on('message', (m: { ready?: string | null }) => { if (m && 'ready' in m) ready = { id: m.ready ?? null }; });
-  // Its exit code, for a client that waits for it to end (--seconds),
+  // Its exit code, for a client that waits for it to end (--stop-after-seconds),
   // which keeps this process alive meanwhile.
   const exited = new Promise<number>((resolve) => {
     child.on('exit', (code) => {
@@ -571,7 +590,7 @@ async function detachRun(words: string[], runId: string | undefined): Promise<{ 
     for (const signal of STOP_SIGNALS) process.off(signal, interrupt);
   }
   if (interrupted && ready === null) return { code: 130, log, exited };
-  // Ended before it was ready, with nothing wrong: `--seconds 0`, say.
+  // Ended before it was ready, with nothing wrong: `--stop-after-seconds 0`, say.
   if (ready === null) return { code: exitCode || 1, log, exited };
   const { id } = ready as { id: string | null };
   if (id === null) {
@@ -615,6 +634,7 @@ async function listCommand(opts: Opts): Promise<number> {
         pid: r.pid,
         started: new Date(r.started).toISOString(),
         browser: { address: r.browser.replace(/^https?:\/\//, ''), owned: r.owned === true, headless: r.headless === true },
+        manager: r.manager ?? DEFAULT_MANAGER,
         ...(r.tabs === undefined ? {} : { tabCount: r.tabs }),
         scriptFiles: r.scripts,
       })),
@@ -640,6 +660,8 @@ class Client {
   runId: string | undefined;
   /** Whether it started the run it works with, which then has the line's `--root` and `--local`. */
   own = false;
+  /** The run `attach` attached it to, for `status` to say so. */
+  attachedTo: string | undefined;
   /** Set by `exit`: the commands after it aren't run. */
   exiting = false;
   /** The log sources it shows of its run's stream (`attach --log-source`); the run's own when unset. */
@@ -647,7 +669,7 @@ class Client {
   private connection: RunClient | null = null;
   /** Runs it started without `--detach`, with their logs and exit codes. */
   private readonly owned = new Map<string, { log: string; exited: Promise<number>; hold?: () => void }>();
-  /** Set by a `start` with `--seconds`, whose run ends on its own. */
+  /** Set by a `start` with `--stop-after-seconds`, whose run ends on its own. */
   private lasting: string | undefined;
 
   /**
@@ -668,6 +690,7 @@ class Client {
     if (this.connection?.open && this.connection.id === (wanted ?? this.connection.id)) return this.connection;
     const target = await targetRun(wanted);
     await checkRunBrowser(target);
+    checkRunManager(target);
     const { RunClient } = await import('./runs.js');
     const connection = await RunClient.open(target.id, print, { follow: this.follow, logSources: this.logSources });
     await this.disconnect();
@@ -684,17 +707,19 @@ class Client {
   /** Sends one of a run's commands, from `source`; its exit code. */
   async send(text: string, source: CommandSource, words?: string[]): Promise<number> {
     if (rootsGiven && !this.own) throw new UsageError(ROOTS_ARE_THE_RUNS);
-    if (this.toEveryRun(text)) {
-      const { liveRuns } = await import('./runs.js');
-      return statusOfRuns(await liveRuns(), words ?? commandWords(text), source);
-    }
+    if (this.toEveryRun(text)) return statusWithoutRun(words ?? commandWords(text), source);
     const connection = await this.connect();
-    return connection.send(text, { words, source, json: lineJson });
+    if (commandWords(text)[0] !== 'status') return connection.send(text, { words, source, json: lineJson });
+    // Headed by how this sm-dev came to the run.
+    const { liveRuns } = await import('./runs.js');
+    const detached = (await liveRuns()).find((r) => r.id === connection.id)?.detached === true;
+    const how: RunConnection = this.own ? 'started' : this.attachedTo === connection.id ? 'attached' : 'selected';
+    return connection.send(text, { words, source, json: lineJson, rewrite: statusHeading(how, detached) });
   }
 
   /**
-   * Whether a command goes to every run rather than one: `status`, with
-   * no run picked yet.
+   * Whether a command needs no run of its own: `status`, with no run
+   * picked yet, which shows the browser and every run.
    */
   toEveryRun(text: string): boolean {
     return this.runId === undefined && commandWords(text)[0] === 'status';
@@ -736,7 +761,7 @@ class Client {
   }
 
   /**
-   * Waits for a run started with `--seconds` to end on its own, as the
+   * Waits for a run started with `--stop-after-seconds` to end on its own, as the
    * line's last word: its exit code. 0 when there is none.
    */
   async outlast(): Promise<number> {
@@ -821,6 +846,7 @@ async function sendCommand(words: string[], client: Client): Promise<number> {
   await checkSend(words);
   // A list of several lines goes to a run whole, as before.
   const typed = words.length === 1 ? commandWords(words[0]) : words;
+  if (!sentList(words) && typed[0] === 'manager') return managerVerbHere(typed, client);
   if (!sentList(words) && await listsHere(typed, client)) return managerHere(typed);
   // With no run to work with, what the command needs instead.
   const needs = NEEDS_A_RUN[words[0]];
@@ -848,21 +874,48 @@ async function sendCommand(words: string[], client: Client): Promise<number> {
 }
 
 /**
- * `status` with no run picked: every run's, in turn, a blank line
- * between. Under --json, one result holding each run's, even when
- * there is only one, so its shape depends only on whether a run was
- * picked. 1 when one couldn't be read.
+ * `status` with no run picked: the browser the line would use, with its
+ * managers, then every active run's status, each headed `Other run:`.
+ * Under --json, one result holding them all, so its shape depends only
+ * on whether a run was picked. 1 when a run couldn't be read.
  */
-async function statusOfRuns(runs: RunRecord[], words: string[], source: CommandSource): Promise<number> {
-  if (runs.length === 0) throw new Error(NO_RUN_TO_USE);
-  const { RunClient } = await import('./runs.js');
-  const statuses: StatusData[] = [];
-  let layout: JsonLayout | undefined;
-  let code = 0;
+async function statusWithoutRun(words: string[], source: CommandSource): Promise<number> {
+  const { liveRuns, RunClient } = await import('./runs.js');
+  const { browserArg, browserSetting } = await import('./run.js');
+  const { browserVersion, managersIn, managersText, otherManagersWarning } = await import('./browser-extensions.js');
   // The command's own --json too, which the runs read.
   const json = lineJson || words.some((w) => /^--json(=|$)/.test(w));
-  for (const [i, run] of runs.entries()) {
-    if (i > 0 && !json) print('');
+  const endpoint = browserSetting(lineCdp);
+  const address = endpoint.replace(/^https?:\/\//, '');
+  const chosen = lineManager ?? DEFAULT_MANAGER;
+  const version = await browserVersion(endpoint);
+  const managers = version ? await managersIn(endpoint) : null;
+  const browser: BrowserStatus = {
+    address,
+    answering: version !== null,
+    ...(version ? { version: version.version, headless: version.headless } : {}),
+    manager: chosen,
+    ...(managers ? { managers: managers.map((m) => ({ manager: m.manager, name: m.name, version: m.version, id: m.id, enabled: m.enabled, userScripts: m.userScripts })) } : {}),
+  };
+  const runs = await liveRuns();
+  if (!json) {
+    print('No current run. (Use start or attach to connect to one.)');
+    print(version ? `Browser: ${address} (Chrome ${version.version}${version.headless ? ', headless' : ''})`
+      : `Browser: none answering at ${address}. Start one with sm-dev --open-browser${browserArg(endpoint)}.`);
+    if (managers) {
+      print(`Managers: ${managersText(managers, chosen, 'chosen')}`);
+      for (const line of otherManagersWarning(managers, chosen, browserArg(endpoint))) print(line);
+    }
+    print('');
+    print(runs.length === 0 ? 'No other active runs' : 'Other active runs:');
+  }
+  const statuses: StatusData[] = [];
+  // The command's own --json=, which the runs' results carry too, but
+  // there may be none.
+  let layout = words.map((w) => /^--json=(single|multi)$/.exec(w)?.[1]).find(Boolean) as JsonLayout | undefined;
+  let code = 0;
+  for (const run of runs) {
+    if (!json) print('');
     const out = (line: string): void => {
       const result = json ? jsonResultData(line) : null;
       if (!result) return print(line);
@@ -871,7 +924,7 @@ async function statusOfRuns(runs: RunRecord[], words: string[], source: CommandS
     };
     try {
       const connection = await RunClient.open(run.id, out);
-      code = Math.max(code, await connection.send(words.join(' '), { words, source, json: lineJson }));
+      code = Math.max(code, await connection.send(words.join(' '), { words, source, json: lineJson, rewrite: statusHeading('other', run.detached === true) }));
       await connection.close();
     } catch (err) {
       // Ended since it was listed, say.
@@ -880,10 +933,26 @@ async function statusOfRuns(runs: RunRecord[], words: string[], source: CommandS
     }
   }
   if (json) {
-    const line = jsonResult('status', { runs: statuses } satisfies StatusRunsData);
+    const line = jsonResult('status', { browser, runs: statuses } satisfies StatusRunsData);
     print(layout ? withLayout(line, layout) : line);
   }
   return code;
+}
+
+/**
+ * Heads a run's `status` by how this sm-dev came to it: its `Run:` line
+ * becomes `Attached run:` and the like, and its JSON gets `connection`.
+ */
+function statusHeading(how: RunConnection, detached: boolean): (line: string) => string {
+  const heading = { started: detached ? 'Started run (detached):' : 'Started run:', attached: 'Attached run:', selected: 'Selected run:', other: 'Other run:' }[how];
+  return (line) => {
+    if (line.startsWith('Run: ')) return `${heading} ${line.slice('Run: '.length)}`;
+    const result = jsonResultData(line);
+    const run = result?.data.run as Record<string, unknown> | undefined;
+    if (!result || !run) return line;
+    const marked = jsonResult('status', { ...result.data, run: { ...run, connection: how, ...(detached ? { detached: true } : {}) } });
+    return result.layout ? withLayout(marked, result.layout) : marked;
+  };
 }
 
 const MATCH_NEEDS = 'The match command needs a script (a .user.js file) and at least one URL, or a run to take them from';
@@ -946,9 +1015,28 @@ function commandMistake(input: { line: string } | { words: string[] }): string |
   if (first) return globalFlagMistake(first);
   if (!isTypedCommand(name)) return unknownRunCommand(name);
   const mistake = runCommandMistake(input);
-  if (!mistake) return null;
+  if (!mistake) return trailingGlobalFlag(input, commandNamed(name)!);
   const flag = lineFlag(mistake.flag);
   return flag ? globalFlagMistake(flag) : mistake.error;
+}
+
+// A global flag ending a command whose text would otherwise take it
+// (`eval 1 --run D1`): said, not run as part of the JS. One the command
+// takes itself (`logs --json`) was taken already. A word quoted, or
+// inside a quoted argument, is text.
+function trailingGlobalFlag(input: { line: string } | { words: string[] }, command: string): string | null {
+  const own = commandSyntax(command).flags;
+  const words = 'line' in input ? splitWords(input.line) : input.words.map((text) => ({ text, quoted: false }));
+  const flagAt = (i: number): string | undefined => {
+    const word = words.at(i);
+    const flag = word && !word.quoted ? word.text.split('=')[0] : undefined;
+    return flag !== undefined && GLOBAL_FLAGS.includes(flag) && !Object.hasOwn(own, flag) ? flag : undefined;
+  };
+  const last = flagAt(-1);
+  if (last) return globalFlagMistake(last);
+  const before = flagAt(-2);
+  if (before && VALUE_GLOBALS.has(before)) return globalFlagMistake(before);
+  return null;
 }
 
 // The list in one argument of several lines, checked; null for a
@@ -1021,12 +1109,15 @@ async function runTyped(command: { words: string[]; text: string }, client: Clie
     return runOne(command.words, client);
   }
   try {
+    if (command.words[0] === 'manager') {
+      echo();
+      return await managerVerbHere(command.words, client);
+    }
     if (await listsHere(command.words, client)) {
       echo();
       return await managerHere(command.words);
     }
     if (!client.toEveryRun(command.text)) await client.connect();
-    else if ((await import('./runs.js').then((m) => m.liveRuns())).length === 0) throw new Error(NO_RUN_TO_USE);
     echo();
     // As typed, for the run to split as its prompt would.
     return await client.send(command.text, source);
@@ -1219,12 +1310,20 @@ function promptCommands(client: Client): Promise<number> {
 }
 
 /**
- * Whether `collection list` or `script list` runs here rather than in a
- * run: when no run is picked and none is going, or `--browser` names a
- * browser no run is in. They need SourceMonkey, not a run.
+ * Whether a `collection` or `script` command for what's installed runs
+ * here rather than in a run: when no run is picked and none is going, or
+ * `--browser` names a browser no run is in. They need SourceMonkey, not
+ * a run.
  */
 async function listsHere(words: string[], client: Client): Promise<boolean> {
-  if (!installedListing(words) || client.runId !== undefined) return false;
+  return managerCommandOf(words) !== null && await noRunToUse(client);
+}
+
+// Whether a command for the browser itself, rather than a run's tabs,
+// has no run to go to: no run is picked and none is going, or
+// `--browser` names a browser no run is in.
+async function noRunToUse(client: Client): Promise<boolean> {
+  if (client.runId !== undefined) return false;
   const { liveRuns } = await import('./runs.js');
   const runs = await liveRuns();
   if (runs.length === 0) return true;
@@ -1234,20 +1333,66 @@ async function listsHere(words: string[], client: Client): Promise<boolean> {
 }
 
 /**
- * `collection list` or `script list` with no run: connects to the --browser
- * browser for it, and disconnects after.
+ * A `manager` command, which sm-dev does itself: in the browser of the
+ * run picked (by --run, start or attach), else the --browser one, as
+ * `status` shows it with no run. Never an active run that isn't picked.
+ * `fetch` needs no browser.
+ */
+async function managerVerbHere(words: string[], client: Client): Promise<number> {
+  const parsed = parseCommandArgs('manager', { words: words.slice(1) });
+  if ('error' in parsed) throw new UsageError(parsed.error);
+  if (parsed.help) {
+    print(commandsHelp(['manager']).text.trimEnd());
+    return 0;
+  }
+  const verb = parsed.form as ManagerVerb | undefined;
+  if (verb === undefined) {
+    throw new UsageError(parsed.words.length > 0 ? `The manager command has no ${parsed.words[0]} verb. It takes fetch, install, enable or disable.`
+      : 'The manager command needs a verb: fetch, install, enable or disable');
+  }
+  const { liveRuns } = await import('./runs.js');
+  const { browserArg, browserSetting, sameBrowser } = await import('./run.js');
+  // The run picked, if any.
+  const picked = client.runId ?? globalRun;
+  const run = picked ? await targetRun(picked) : null;
+  // Not checkRunManager: these act on the browser's extensions, not the
+  // run, so --manager can name another manager than the run's (to turn
+  // off one a warning names, say).
+  if (run) await checkRunBrowser(run);
+  const manager = lineManager ?? run?.manager ?? DEFAULT_MANAGER;
+  const endpoint = run?.browser ?? browserSetting(lineCdp);
+  const runsUsing = verb === 'disable' && manager === 'sourcemonkey'
+    ? (await liveRuns()).filter((r) => (r.manager ?? DEFAULT_MANAGER) === 'sourcemonkey' && sameBrowser(r.browser, endpoint)).map((r) => r.id)
+    : [];
+  const { ManagerUsageError, managerAction } = await import('./manager-actions.js');
+  try {
+    const done = await managerAction({ verb, manager, endpoint, browserArg: browserArg(endpoint), runsUsing, out: print, note: (line) => process.stderr.write(`${line}\n`) });
+    return done ? 0 : 1;
+  } catch (err) {
+    if (err instanceof ManagerUsageError) throw new UsageError(err.message);
+    process.stderr.write(`${(err as Error).message}\n`);
+    return 1;
+  }
+}
+
+/**
+ * A `collection` or `script` command with no run: connects to the
+ * --browser browser for it, and disconnects after.
  */
 async function managerHere(words: string[]): Promise<number> {
   const [, ...rest] = words;
-  const name = installedListing(words)!;
+  const name = managerCommandOf(words)!.command;
   const parsed = parseCommandArgs(name, { words: rest });
   if ('error' in parsed) throw new UsageError(parsed.error);
   if (parsed.help) {
     print(commandsHelp([name]).text.trimEnd());
     return 0;
   }
+  const chosen = lineManager ?? DEFAULT_MANAGER;
+  const unsupported = unsupportedCommand(name, chosen, '--manager names');
+  if (unsupported) throw new UsageError(unsupported);
   const { noSuchVerb } = await import('./manager-commands.js');
-  if (parsed.form !== 'list' && parsed.words.length > 0) throw new UsageError(noSuchVerb(parsed.words[0]));
+  if (parsed.form === undefined && parsed.words.length > 0) throw new UsageError(noSuchVerb(parsed.words));
   const own = parsed.flags['--json'];
   if (typeof own === 'string') {
     const mistake = jsonLayoutMistake(own);
@@ -1260,19 +1405,33 @@ async function managerHere(words: string[]): Promise<number> {
   // What went wrong connecting goes to stderr, as other mistakes do.
   const session = await connectWithoutRun(lineCdp, (line) => process.stderr.write(`${line}\n`));
   if (!session) return 1;
+  let closeManager: (() => Promise<void>) | undefined;
   try {
-    const { manager, versionNote } = await openManagerLink(session.context);
-    if (versionNote) process.stderr.write(`${versionNote}\n`);
+    const { managersIn, otherManagersWarning } = await import('./browser-extensions.js');
+    const { browserArg } = await import('./run.js');
+    for (const line of otherManagersWarning(await managersIn(session.endpoint) ?? [], chosen, browserArg(session.endpoint))) process.stderr.write(`${line}\n`);
+    let manager: ManagerControl;
+    if (chosen !== 'sourcemonkey') {
+      const { externalControl, openExternalManager } = await import('./external-manager.js');
+      const external = await openExternalManager(chosen, session.endpoint, browserArg(session.endpoint));
+      closeManager = () => external.close();
+      manager = externalControl(external);
+    } else {
+      const link = await openManagerLink(session.context);
+      if (link.versionNote) process.stderr.write(`${link.versionNote}\n`);
+      manager = link.manager;
+    }
     // Its failures go to stderr, as sm-dev's own commands' do.
     const said = (line: string): void => {
       if (line.startsWith('[sm-dev] ')) process.stderr.write(`${line.slice('[sm-dev] '.length)}\n`);
       else out(line);
     };
-    return await managerCommand({ manager, out: said, json }, name, parsed.form, parsed.words) === false ? 1 : 0;
+    return await managerCommand({ manager, out: said, json }, name, parsed) === false ? 1 : 0;
   } catch (err) {
     process.stderr.write(`${firstLine(err)}\n`);
     return 1;
   } finally {
+    await closeManager?.().catch(() => undefined);
     await session.done();
   }
 }
@@ -1355,6 +1514,7 @@ async function attachCommand(opts: Opts, client: Client): Promise<number> {
   }
   const { id } = await client.connect(named ?? globalRun);
   client.own = false;
+  client.attachedTo = id;
   print(`[sm-dev] Attached to run ${id}`);
   return 0;
 }
@@ -1415,6 +1575,19 @@ async function checkRunBrowser(run: RunRecord): Promise<void> {
   );
 }
 
+/**
+ * Throws when the line's `--manager` isn't the run's: the whole run
+ * works with the manager it started with.
+ */
+function checkRunManager(run: RunRecord): void {
+  const theirs = run.manager ?? DEFAULT_MANAGER;
+  if (lineManager === undefined || lineManager === theirs) return;
+  throw new UsageError(
+    `The --manager flag names ${MANAGERS[lineManager].label}, but run ${run.id} uses ${MANAGERS[theirs].label}. `
+    + `Leave out --manager to use run ${run.id}, or name a ${MANAGERS[lineManager].label} run with --run.`,
+  );
+}
+
 const ROOTS_ARE_THE_RUNS = 'The --root and --local flags are set when a run starts, and a command sent to a run uses the run\'s own';
 
 // `--root` and `--local`, for every command of the line: where the
@@ -1440,16 +1613,19 @@ let lineHeaded = false;
 let lineMuted: boolean | undefined;
 // `--json`: the commands with a JSON form print it (see json-output.ts).
 let lineJson = false;
+// `--manager`: the userscript manager the line works with. Unset is
+// SourceMonkey, or a run's own when sending to one.
+let lineManager: ManagerName | undefined;
 
 
 // The flags for the whole line, which go before any command.
-const GLOBAL_FLAGS = ['--run', '--root', '--local', '--stdin', '--interactive', '--browser', '--open-browser', '--profile', '--temp-browser', '--headed', '--mute', '--nomute', '--json'];
+const GLOBAL_FLAGS = ['--run', '--root', '--local', '--stdin', '--interactive', '--browser', '--manager', '--open-browser', '--profile', '--temp-browser', '--headed', '--mute', '--nomute', '--json'];
 
 function globalFlagMistake(flag: string): string {
   return `The ${flag} flag is for the whole command line, so it goes first, before any command: sm-dev ${flag}${VALUE_GLOBALS.has(flag) ? ' ...' : ''} <command>`;
 }
 
-const VALUE_GLOBALS = new Set(['--run', '--root', '--local', '--browser', '--profile']);
+const VALUE_GLOBALS = new Set(['--run', '--root', '--local', '--browser', '--manager', '--profile']);
 
 interface GlobalFlags {
   stdin: boolean;
@@ -1461,7 +1637,7 @@ interface GlobalFlags {
 /**
  * Takes the global options off the front of the line: `--run ID`,
  * `--root DIR`, `--local DIR` (repeatable), `--stdin`, `--interactive`
- * and the browser's: `--browser`, `--open-browser`, `--profile`,
+ * and the browser's: `--browser`, `--manager`, `--open-browser`, `--profile`,
  * `--temp-browser`, `--headed`, `--mute`, `--nomute`. One later on the line, among a
  * command's words, is said to go first.
  */
@@ -1497,6 +1673,11 @@ function takeGlobalFlags(argv: string[]): GlobalFlags {
       }
       if (word === '--run') globalRun = checkedRunId(value);
       else if (word === '--browser') lineCdp = value;
+      else if (word === '--manager') {
+        const named = managerNamed(value);
+        if (!named) throw new UsageError(managerMistake(value));
+        lineManager = named;
+      }
       else if (word === '--profile') lineProfile = path.resolve(value);
       else if (word === '--root') collectionRoot = path.resolve(value);
       else localRoots.push(path.resolve(value));
@@ -1544,6 +1725,7 @@ function globalWords(runId: string | undefined): string[] {
     ...(rootsGiven ? ['--root', lineRoots.collectionRoot, ...lineRoots.localRoots.flatMap((dir) => ['--local', dir])] : []),
     ...(runId ? ['--run', runId] : []),
     ...(lineCdp !== undefined ? ['--browser', lineCdp] : []),
+    ...(lineManager !== undefined ? ['--manager', lineManager] : []),
     ...(lineTempBrowser ? ['--temp-browser'] : []),
     ...(lineHeaded ? ['--headed'] : []),
     ...(lineTempBrowser && lineMuted !== undefined ? [lineMuted ? '--mute' : '--nomute'] : []),
@@ -1600,6 +1782,17 @@ function parseCommand(words: string[]): ParsedCommand {
     // A run's ID where the command goes: the old `sm-dev D1 status`.
     const run = runIdOf(opts.command);
     if (run) throw new UsageError(`Name the run with --run, before the command: sm-dev --run ${run} ${words.slice(1).map(shellWord).join(' ')}`.trimEnd());
+    // A run's command after one of its flags: only the line's own flags go first.
+    if (isTypedCommand(opts.command) && words[0].startsWith('-')) {
+      const at = commandIndex(words);
+      // One the command doesn't take either is said as such, checked
+      // alone, since after a command's text it would be text.
+      const own = commandSyntax(commandNamed(opts.command)!).flags;
+      const unknown = words.slice(0, at).find((w) => w.startsWith('-') && !Object.hasOwn(own, w.split('=')[0]));
+      if (unknown) throw new UsageError(commandMistake({ words: [opts.command, unknown] }) ?? `Unknown option: ${unknown}`);
+      const moved = [opts.command, ...words.slice(at + 1), ...words.slice(0, at)];
+      throw new UsageError(`The ${words[0]} flag goes after the command: ${moved.map(shellWord).join(' ')}`);
+    }
     throw new UsageError(`Unknown command: ${opts.command}. ${LIST_COMMANDS}`);
   }
   return { kind: 'cli', opts, words };
@@ -1667,7 +1860,7 @@ function atTerminal(): boolean {
   return Boolean(process.stdin.isTTY && process.stdout.isTTY);
 }
 
-const START_ALONE = 'The start command with nothing after it would stop the run as soon as it started. Add --interactive for a prompt, --detach to leave it running, --seconds N to watch it for a while, or commands after --.';
+const START_ALONE = 'The start command with nothing after it would stop the run as soon as it started. Add --interactive for a prompt, --detach to leave it running, --stop-after-seconds N to watch it for a while, or commands after --.';
 
 async function main(): Promise<void> {
   // Output piped into something that stops reading early (`| head`)
@@ -1762,9 +1955,9 @@ async function main(): Promise<void> {
   // The lasting browser first, for the commands to connect to.
   if (lineOpenBrowser) {
     const { launchBrowser, launchEndpointMistake } = await import('./browser-launch.js');
-    const { browserSettingName, cdpEndpoint } = await import('./run.js');
+    const { browserSetting, browserSettingName } = await import('./run.js');
     try {
-      const endpoint = cdpEndpoint(lineCdp?.trim() || process.env.SM_DEV_BROWSER?.trim() || '9233');
+      const endpoint = browserSetting(lineCdp);
       const mistake = launchEndpointMistake(endpoint, browserSettingName(lineCdp));
       if (mistake) throw new UsageError(mistake);
       await launchBrowser(endpoint, lineProfile, print, lineMuted === true);
@@ -1824,7 +2017,7 @@ async function main(): Promise<void> {
       } else if (watching) {
         await client.watch();
       } else {
-        // A run started with --seconds, left to end on its own.
+        // A run started with --stop-after-seconds, left to end on its own.
         const lasted = await client.outlast();
         if (code === 0) code = lasted;
       }

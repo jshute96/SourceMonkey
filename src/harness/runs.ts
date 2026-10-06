@@ -17,6 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { LOG_SOURCES, type LogSource } from './run-logs.js';
+import { DEFAULT_MANAGER, MANAGERS, type ManagerName } from './managers.js';
 
 /** What `sm-dev list` shows for a run, as its record file holds it. */
 export interface RunRecord {
@@ -38,6 +39,8 @@ export interface RunRecord {
   detached?: boolean;
   /** The run's log file (see run-log.ts). */
   log?: string;
+  /** The userscript manager it works with (`--manager`), when not SourceMonkey. */
+  manager?: ManagerName;
 }
 
 /**
@@ -494,7 +497,7 @@ export class RunGoneError extends Error {}
  */
 export class RunClient {
   private buffered = '';
-  private pending: { resolve: (code: number) => void; line: string } | null = null;
+  private pending: { resolve: (code: number) => void; line: string; rewrite?: (line: string) => string } | null = null;
   private closedBy: 'client' | 'run' | null = null;
   /** Settles once the connection has closed, from either end. */
   readonly ended: Promise<void>;
@@ -557,15 +560,16 @@ export class RunClient {
   /**
    * Sends one command (one line, or a {{ block's several), and
    * resolves to its exit code once it is done. `words`: the sender's own,
-   * as its shell gave them.
+   * as its shell gave them. `rewrite`: changes each line that arrives
+   * while it runs.
    */
-  send(line: string, { words, source = 'arg', json = false }: { words?: string[]; source?: CommandSource; json?: boolean } = {}): Promise<number> {
+  send(line: string, { words, source = 'arg', json = false, rewrite }: { words?: string[]; source?: CommandSource; json?: boolean; rewrite?: (line: string) => string } = {}): Promise<number> {
     if (!this.open) {
       this.out(`[sm-dev] Run ${this.id} has ended`);
       return Promise.resolve(1);
     }
     return new Promise((resolve) => {
-      this.pending = { resolve, line };
+      this.pending = { resolve, line, ...(rewrite ? { rewrite } : {}) };
       this.socket.write(JSON.stringify({ line, cwd: process.cwd(), words, source, ...(json ? { json } : {}) }) + '\n');
     });
   }
@@ -588,7 +592,7 @@ export class RunClient {
 
   private take(line: string): void {
     if (!line.startsWith(COMMAND_DONE)) {
-      this.out(line);
+      this.out(this.pending?.rewrite ? this.pending.rewrite(line) : line);
       return;
     }
     const pending = this.pending;
@@ -701,7 +705,7 @@ const LISTED_SCRIPTS = 3;
  */
 export function runTable(records: RunRecord[], now = Date.now()): string[] {
   const rows = [
-    ['Run', 'PID', 'Uptime', 'Browser', 'Tabs', 'Scripts'],
+    ['Run', 'PID', 'Uptime', 'Browser', 'Manager', 'Tabs', 'Scripts'],
     ...records.map((r) => {
       const names = r.scripts.map((s) => path.basename(s));
       const shown = names.length > LISTED_SCRIPTS
@@ -712,6 +716,7 @@ export function runTable(records: RunRecord[], now = Date.now()): string[] {
         String(r.pid),
         uptime(now - r.started),
         browserLabel(r),
+        MANAGERS[r.manager ?? DEFAULT_MANAGER].label,
         r.tabs === undefined ? '-' : String(r.tabs),
         shown.length > 0 ? shown.join(', ') : '-',
       ];

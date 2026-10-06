@@ -314,7 +314,8 @@ sm-dev --open-browser --browser 9300            # another one, on port 9300
 - Google Chrome when it's installed (it handles Google sign-in), else
   Playwright's Chromium. `SM_DEV_BROWSER_BINARY` names another binary.
 - Google Chrome ignores the flag that would load SourceMonkey, so load
-  it there by hand once (see [Setting it up](#setting-it-up)).
+  it there once with `sm-dev manager install` (see
+  [Setting it up](#setting-it-up)).
 - Its profile is kept, so sign-ins and extensions carry over:
   `~/.config/sm-dev/browser-profile-<port>`, or `--profile DIR`.
   - One per port, since only one browser at a time can use a profile.
@@ -338,6 +339,8 @@ sm-dev --open-browser --browser 9300            # another one, on port 9300
   `dist/` beside sm-dev: the checkout's own build, or the copy
   `pnpm install` took in a repo of userscripts), with "Allow User
   Scripts" on and pinned to the toolbar.
+  - With `--manager tm` or `vm`, Tampermonkey or Violentmonkey instead
+    (see [Other managers](#other-managers-tampermonkey-and-violentmonkey)).
 - Starting it takes a few seconds, for the extension's first run in the
   new profile.
 - Hidden, it still sends a windowed Chrome's user agent, not
@@ -361,8 +364,13 @@ SourceMonkey installed works too, given that port.
   - Without it, with it turned off, or with "Allow User Scripts" off,
     the run refuses to start and says how to fix it.
   - `status` and the run's first line say which: `has SourceMonkey`,
-    `SourceMonkey disabled` or `no extension` (see
-    [Managing runs](#managing-runs)).
+    `SourceMonkey disabled` or `no SourceMonkey` (see
+    [Managing runs](#managing-runs)). `status` also lists the browser's
+    managers: `Managers: SourceMonkey 0.0.1 (in use), Tampermonkey
+    5.5.1 (disabled)`.
+  - Another manager enabled there runs its scripts in the run's tabs
+    too, so the run's first lines and `status` warn of it, with how to
+    turn it off.
 - The run's tabs (the ones it opens, and the tabs those open) run only
   the run's scripts: SourceMonkey keeps its own scripts out of them.
   - They run there again from the tab's next load after the run ends.
@@ -386,10 +394,14 @@ For a browser that keeps the extension (and your logins):
 1. Build SourceMonkey (`pnpm run build`), which writes the unpacked
    extension to its `dist/`. In a repo of userscripts, `pnpm install`
    already built it under `node_modules/sourcemonkey/dist/`.
-2. Load it into the browser sm-dev uses: in `chrome://extensions`, turn
-   on Developer mode, then "Load unpacked" and pick `dist/`. An
-   `--open-browser` profile keeps it from then on.
-3. On SourceMonkey's details page there, turn on "Allow User Scripts".
+2. With the browser open (`sm-dev --open-browser`), run
+   `sm-dev manager install`. It loads `dist/` as an unpacked extension,
+   with "Allow User Scripts" on. An `--open-browser` profile keeps it
+   from then on.
+
+By hand instead: in `chrome://extensions`, turn on Developer mode, then
+"Load unpacked" and pick `dist/`. Then on SourceMonkey's details page,
+turn on "Allow User Scripts".
 
 - A Chromium started with `--load-extension=<SourceMonkey dist>` works
   as well, though Google Chrome itself ignores that flag.
@@ -414,8 +426,71 @@ For a browser that keeps the extension (and your logins):
   takes no `--browser` of its own.
 - A command sent to a run acts in the run's browser. A `--browser` that
   names another one is refused, rather than passed over.
-  - `collection list` and `script list` are the exception: they need
-    no run, so with a `--browser` no run is in, they list that browser.
+  - The `collection` and `script` commands for what's installed
+    (`collection list`, `script show`, ...) are the exception: they
+    need no run, so with a `--browser` no run is in, they act on that
+    browser.
+  - The `manager` commands act on the `--browser` browser unless a run
+    is picked (by `--run`, `start` or `attach`), and then on its
+    browser. An active run that isn't picked is left alone.
+
+### Other managers: Tampermonkey and Violentmonkey
+
+`--manager` picks the userscript manager sm-dev works with: `sm`, `tm`
+or `vm`, or `sourcemonkey`, `tampermonkey` or `violentmonkey`, in any
+case. SourceMonkey is the default.
+
+```sh
+sm-dev --manager tm manager fetch                  # download Tampermonkey
+sm-dev --manager tm --temp-browser start <url>     # a run in a browser with it
+sm-dev --manager tm manager install                # into the --browser browser
+sm-dev manager disable                             # turn SourceMonkey off there
+```
+
+| Command | What it does |
+| --- | --- |
+| `manager fetch` | Downloads Tampermonkey or Violentmonkey from the Chrome Web Store into `~/.cache/sm-dev/managers/<name>`, or updates it there to the newest version |
+| `manager install` | Loads the manager into the browser unpacked, with "Allow User Scripts" on: this sm-dev's SourceMonkey, or the fetched copy, fetched first if need be. Updates one installed from there to the version fetched since |
+| `manager enable` / `disable` | Turns it on or off in the browser. Not SourceMonkey while a run uses it |
+
+- A fetched copy keeps its Web Store id, so its storage and settings
+  carry over when it's updated.
+- `--temp-browser` loads the chosen manager, fetching it the first
+  time. Its Tampermonkey has its "installed" page turned off, which it
+  would otherwise open in a new tab at each start.
+- **A run works with one manager**, the one it started with. A later
+  line's `--manager` has to match it, or it's refused.
+  - Except for the `manager` commands, which act on the browser rather
+    than the run: `--manager tm manager disable` beside a SourceMonkey
+    run turns Tampermonkey off in its browser.
+- **Under Tampermonkey or Violentmonkey**, a run drives its pages:
+  `snapshot`, `click`, `newtab`, `eval --page`, `logs` and the rest.
+  - The manager runs its own installed scripts in the run's tabs.
+  - Tabs a page opens aren't followed.
+  - The commands that work through SourceMonkey alone (`values`,
+    `get`, `set`, `menu`, `connect`, `--values`) are refused: `The
+    values command works with SourceMonkey only, and this run uses
+    Violentmonkey`.
+- **Under either**, a run loads its scripts too, as normal scripts in
+  the manager, and removes them when it ends.
+  - `scripts` shows each with its E-id there: `1: Hello
+    (hello.user.js), E6 in Violentmonkey`.
+  - Whether a script is on a tab is predicted from its match rules,
+    since the manager doesn't say what ran. `scripts` and `status`
+    list them under `Expected on tab T1 using match rules:` and `Not
+    expected on tab T1:`.
+  - A script the manager already has by the same name and namespace
+    is never replaced: `start` refuses, naming it.
+  - The `collection` and `script` commands work on its scripts, in one
+    collection, `C0`.
+  - Details: [sm-dev-violentmonkey.md](sm-dev-violentmonkey.md), and
+    for Tampermonkey's differences,
+    [sm-dev-tampermonkey.md](sm-dev-tampermonkey.md).
+- A browser can hold several managers. Each one enabled beside the
+  chosen one runs its scripts too, so sm-dev warns when it connects,
+  and in `status`: `Warning: Tampermonkey is also enabled in this
+  browser, so its scripts run too. To turn it off, use sm-dev --manager
+  tm manager disable.`
 
 ## How scripts run
 
@@ -491,7 +566,7 @@ prompt at a terminal (stdin and stdout both), as `--interactive`
 would. Elsewhere it is refused:
 `The start command with nothing after it would stop the run as soon as
 it started. Add --interactive for a prompt, --detach to leave it
-running, --seconds N to watch it for a while, or commands after --.`
+running, --stop-after-seconds N to watch it for a while, or commands after --.`
 
 ### Options at a glance
 
@@ -508,8 +583,9 @@ running, --seconds N to watch it for a while, or commands after --.`
 | `--log-source <source>` | The log sources the stream shows (see [Logs](#logs)) |
 | `--lang zh-CN,en` | The languages the run's tabs prefer |
 | `--nowait` | Don't wait for the pages to settle |
-| `--seconds N` | Stop the run after N seconds |
-| `--idle-seconds N` | Stop after N idle seconds (default 30 minutes; `0` never) |
+| `--timeout-seconds S` | The longest the pages may take to load, and then to settle |
+| `--stop-after-seconds N` | Stop the run after N seconds |
+| `--stop-after-idle-seconds N` | Stop after N idle seconds (default 30 minutes; `0` never) |
 
 Details on each are in [`start` options in detail](#start-options-in-detail).
 
@@ -622,10 +698,10 @@ The browser's language:
 The run's lifetime:
 
 - `--detach` returns once the pages have settled, and leaves the run
-  going. `--new` and `--idle-seconds` go with it. See
+  going. `--new` and `--stop-after-idle-seconds` go with it. See
   [Detached runs](#detached-runs).
-- `--seconds N` stops the run after N seconds, as a safety limit.
-  - On its own (`sm-dev start x.user.js --seconds 30`), sm-dev shows
+- `--stop-after-seconds N` stops the run after N seconds, as a safety limit.
+  - On its own (`sm-dev start x.user.js --stop-after-seconds 30`), sm-dev shows
     what the run prints until then.
   - To wait for a page or a script, use `wait` (see
     [Waiting](#waiting)) rather than a guess at a time.
@@ -633,6 +709,8 @@ The run's lifetime:
     stop`, so it can't expire mid-test.
 - `--nowait`: don't wait for the pages to settle before continuing. It
   still waits for the scripts to start.
+- `--timeout-seconds S`: the longest each page may take to load
+  (default 30 seconds), and then to settle (default 5).
 
 ### Which tab `start` uses
 
@@ -918,6 +996,12 @@ Some commands take several lines as a block, at the prompt or on stdin:
 - Later on the line they are refused: `The --run flag is for the whole
   command line, so it goes first, before any command: sm-dev --run ...
   <command>`.
+  - That includes one ending a command's text (`eval 1 --run D1`),
+    unless the command takes the flag itself, or the text is quoted
+    as a whole.
+- A command's own flag goes after it. One put before it is refused
+  with the line as it should be: `The --nowait flag goes after the
+  command: open <url> --nowait`.
 
 The options:
 
@@ -929,6 +1013,10 @@ The options:
 - `--root DIR` names the repo root, searched for local copies of
   `@require` URLs the way the extension searches a collection's
   directory. Defaults to the current directory.
+  - A script outside it uses the nearest directory above it with a
+    `script_manifest.json` instead, its collection's root. `--root`
+    then joins the `--local` directories. So a sibling repo's script
+    needs no `--root`.
 - `--local DIR` adds another directory to that search; repeatable.
   - A run keeps the `--root` and `--local` it started with. A line that
     sends a command to a run it didn't start refuses them.
@@ -936,6 +1024,8 @@ The options:
 - The browser options, `--browser`, `--open-browser`, `--profile`,
   `--temp-browser` and `--headed` (see
   [A browser to work in](#a-browser-to-work-in)).
+- `--manager NAME` picks the userscript manager (see
+  [Other managers](#other-managers-tampermonkey-and-violentmonkey)).
 - `--json` prints results as JSON (see [JSON output](#json-output)).
 
 ### JSON output
@@ -944,10 +1034,10 @@ For a program reading sm-dev's answers rather than a person.
 
 - `--json`, first on the line, makes the commands that have a JSON form
   print it: `list`, `status`, `scripts`, `tabs`, `values`, `get`,
-  `match`, `validate`, `menu`, `logs`, `probe`, `collection list` and
-  `script list`.
-  - The listing forms only: `tabs`, `scripts` and `menu T2`, not
-    `tab T2`, `script 2` or a menu command fired.
+  `match`, `validate`, `menu`, `logs`, `probe`, and each `collection`
+  and `script` verb (`script list`, `script disable`, ...).
+  - The listing forms only of the others: `tabs`, `scripts` and
+    `menu T2`, not `tab T2`, `script 2` or a menu command fired.
   - The rest print text as usual.
 - `--json` or `--nojson` after one command turns it on or off for that
   command alone (`sm-dev scripts --json`).
@@ -966,7 +1056,8 @@ For a program reading sm-dev's answers rather than a person.
     page's console lines on stdout.
 
 - `status` without `--run` (or a `start` / `attach` before it) shows
-  every run, so its result holds them in a `runs` array.
+  the `--browser` browser and every run, so its result holds them in
+  `browser` and a `runs` array.
 
 ```sh
 sm-dev --run D1 --json status | jq '.scripts[] | {name, values}'
@@ -1035,6 +1126,52 @@ The shapes of every command's result, with examples:
   followed by `values` prints what the command just stored rather than
   what was there before it.
 - Stored values belong to the script, so all tabs see the same ones.
+
+### Managing what's installed
+
+These change SourceMonkey's own collections and scripts, as its pages
+do. Like the listings, they work with no run too, against `--browser`.
+
+- **The script or collection comes first**, then the verb:
+  `script E4 enable`, `collection C3 refresh`.
+  - In a run, a script left out is the selected one, except for
+    `uninstall`.
+  - Quote a name of several words: `script "Dark mode" enable`.
+
+| Command | What it does |
+| --- | --- |
+| `collection <collection> show` | One collection's kind, location and status, and its scripts |
+| `collection <collection> enable` / `disable` | Turns a whole collection on or off |
+| `collection <collection> refresh` | Re-reads it from its location, and says which scripts it updated |
+| `collection <collection> rename <name>` | Renames it |
+| `script [script] show` | One script in full: header rules, status, files, values count, and in a run, what it does on each tab |
+| `script [script] print` | Its installed text |
+| `script [script] enable` / `disable` | Turns a script on or off; in a run, one of its own too |
+| `script [script] refresh` | Re-reads it from its location; one of the run's own from disk, as `update` does |
+| `script install <file\|url>` | Installs a `.user.js` file or URL for every tab, to stay. `--collection <collection>` picks the container collection. Under Violentmonkey, replacing your script with the same name and namespace needs `--force` |
+| `script <script> uninstall` | Removes a script from its container collection |
+| `script [script] move <collection>` | Moves a script to another container collection |
+
+- **`--force`:** outside a `--temp-browser` the scripts are the
+  person's own, so `script uninstall` needs `--force`. Enabling and
+  disabling are easily undone, so they don't need it.
+- **What's refused:**
+  - every change to a run's test collection, and to another run's
+    scripts;
+  - uninstalling or moving a script a directory or manifest collection
+    lists, since it comes from that collection's files;
+  - uninstalling the run's own scripts: they go when the run ends.
+- **One copy runs.** Installing, moving or enabling a script turns off
+  its other running copies, as the viewer does, with a line for each:
+  `Another version of this script was disabled: Version 1.0 (E7) in
+  collection C3: Mine`.
+- **Changed on disk.** A local script file modified or deleted since
+  it loaded, and a local collection a refresh would change, are marked
+  as on the collections page: `(modified on disk)`, `Refresh pending:
+  1 file modified on disk`.
+- **A disabled collection** keeps an enabled script from running, so
+  that gets a line too: `E4: Dark mode is enabled, but won't run
+  because it's inside disabled collection C3: Mine`.
 
 ### Checking scripts: `match` and `validate`
 
@@ -1237,6 +1374,7 @@ current one.
 | `click <selector> --at 300,12`, `hover <selector> --modifiers Alt --at 4,4` | At a point in the element, in pixels from its top left corner, rather than its center. `hover` takes `--modifiers` too |
 | `type <selector> <text>` | Types into an element, key by key |
 | `type <selector> --file <path>` | Types a file's text into an element, a last line break included |
+| `type <selector> --clear [text]` | Empties the element first, then types the text if given |
 | `key <keys>...` | Presses keys in order: `key j Shift+ArrowRight Escape` (`keys` works too) |
 | `eval <js>` | Evaluates inside the selected script (or in the page, with none) and prints the result |
 | `eval --page <js>` | Evaluates in the page |
@@ -1257,9 +1395,9 @@ current one.
   they did. `--nowait` skips that.
 - One that opens a dialog returns once the dialog is up; answer it with
   `accept` or `dismiss`.
-- `click` and `hover` wait up to 5 seconds for their element to be
-  visible, not moving, and not covered by another element (`click`:
-  also enabled).
+- `click` and `hover` wait up to 5 seconds (or `--timeout-seconds S`)
+  for their element to be visible, not moving, and not covered by
+  another element (`click`: also enabled).
   - Failing, they say which check it kept failing, and name a covering
     element.
 - `key` takes the standard key names, case-insensitive (`home`,
@@ -1378,8 +1516,8 @@ sm-dev cdp Input.dispatchMouseEvent '{"type": "mouseWheel", "x": 400, "y": 300, 
 
 ### `screenshot`
 
-A whole-page `screenshot` gives up after 5 seconds if the browser
-hasn't captured the page.
+A whole-page `screenshot` gives up after 5 seconds (or
+`--timeout-seconds S`) if the browser hasn't captured the page.
 
 ## Saved pages
 
@@ -1419,6 +1557,8 @@ given as a saved page, one per tab: `open page.html --from-saved`,
 - `--from-saved` with no `.html` file is an error.
 - Its network requests (images, styles, fetches) go to the live site.
   `--offline` blocks them instead.
+  - One that never answers (a site that needs a login) can keep the
+    page from loading. The timeout then suggests `--offline`.
 - The file is only known by its URL: a page whose own JavaScript
   changes it (`history.pushState`) sends its requests live from then
   on, even with `--offline`.
@@ -1553,10 +1693,13 @@ Limits of the heuristic:
 
 ### Giving up
 
-- The waits other than a delay give up after 5 seconds, or
-  `--timeout-seconds S`, and say what was still busy:
+- The waits other than a delay give up after 5 seconds (a page load
+  after 30), or `--timeout-seconds S`, and say what was still busy:
   `T1 did not settle within 5s: 2 requests pending (/api/poll,
   /ads.js); the DOM is still changing (div#ticker)`.
+- `--timeout-seconds S` works on every command that waits, and sets
+  each of its waits (an element being ready, a load, settling).
+  - On `cdp`, it's each call's limit (default 10 seconds).
 - An explicit `wait` that gives up fails, so a line of several commands
   (or a list in one argument, or commands piped in) stops there, and
   says the rest weren't run.
@@ -1648,30 +1791,38 @@ sm-dev stop                               # or stop D1, or stop --all
 first few scripts' files and a count of the rest:
 
 ```
-Run  PID    Uptime  Browser                            Tabs  Scripts
-D1   81234  2m      127.0.0.1:9233                     2     a.user.js, b.user.js, c.user.js, (2 more)
-D2   81502  1m      127.0.0.1:41234 (owned, headless)  1     a.user.js
+Run  PID    Uptime  Browser                            Manager       Tabs  Scripts
+D1   81234  2m      127.0.0.1:9233                     SourceMonkey  2     a.user.js, b.user.js, c.user.js, (2 more)
+D2   81502  1m      127.0.0.1:41234 (owned, headless)  SourceMonkey  1     a.user.js
 ```
 
 - Browser is where the run's browser takes CDP connections.
+- Manager is the one the run works with (`--manager`).
 - `owned` marks one the run launched (`--temp-browser`), which closes
   when it ends; `headless`, one without a window.
-- `status` says the same on its `Run:` line:
-  `connected to owned headless browser 127.0.0.1:41234 (has SourceMonkey)`.
-  - `has SourceMonkey`, `SourceMonkey disabled` or `no extension`
-    says whether SourceMonkey is there. Checked each time. It doesn't
-    check "Allow User Scripts".
-  - A disabled copy installed from the Chrome Web Store shows as `no
-    extension`; one loaded unpacked shows as disabled.
+- `status` says the same on its first line:
+  `Attached run: D2 (pid 81502), connected to owned headless browser
+  127.0.0.1:41234 (has SourceMonkey)`.
+  - The heading says how this sm-dev came to the run: `Started run:`
+    (`Started run (detached):`), `Attached run:`, or `Selected run:`
+    (by `--run`, or an earlier command on the line).
+  - With no run picked, `status` says `No current run`, then shows the
+    browser commands with no run use (`--browser`'s) and its managers,
+    then every active run, each headed `Other run:`.
+  - `has SourceMonkey`, `SourceMonkey disabled` or `no SourceMonkey`
+    says whether the run's manager is there. Checked each time.
+  - The `Managers:` line after it lists every manager in the browser,
+    with its version, and whether it's in use, disabled, or has "Allow
+    User Scripts" off.
   - The run's first line says it too, after the Chrome version.
 
 ### How a run ends
 
-- Prefer `stop` to `--seconds` for a background run, so the run can't
+- Prefer `stop` to `--stop-after-seconds` for a background run, so the run can't
   expire while you're still testing.
 - Every run stops itself after 30 minutes with no command sent, unless
-  a client is following it. `start --idle-seconds N` changes that, and
-  `--idle-seconds 0` turns it off.
+  a client is following it. `start --stop-after-idle-seconds N` changes that, and
+  `--stop-after-idle-seconds 0` turns it off.
 - Piping sm-dev's output into something that stops reading (`| head`)
   ends sm-dev.
 - Every run's last line says it has ended. Its test collection is
@@ -1807,6 +1958,8 @@ test('adds the button to the toolbar', async ({ page, loadUserscript, gm, report
   - `collectionRoot` and `localRoots` set the `@require` lookups
     (default: the config's root). Files read from disk are pushed with
     the script.
+    - A script outside `collectionRoot` uses its own collection's root,
+      as `sm-dev`'s `--root` does.
 
 `gm`:
 

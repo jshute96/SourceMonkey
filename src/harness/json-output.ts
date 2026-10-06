@@ -51,20 +51,12 @@ export const STDERR_LINE = '\u0000sm-dev:stderr ';
 /**
  * The commands with a JSON form, by name. `scripts`, `tabs` and `menu`
  * only when they list (see `onlyInspects`), not when they pick or fire;
- * `collection` and `script` only as `collection list` and `script list`.
+ * `collection` and `script` with each verb, not `script <script>`
+ * (`hasJsonForm`).
  */
 export const JSON_COMMANDS = [
   'list', 'status', 'scripts', 'tabs', 'values', 'get', 'match', 'validate', 'menu', 'logs', 'probe', 'collection', 'script',
 ];
-
-/**
- * `JSON_COMMANDS` as help lists them: `a, b and c`, by the forms that
- * have one (`script list`, not `script`).
- */
-export function jsonCommandList(): string {
-  const forms = JSON_COMMANDS.map((c) => (c === 'collection' || c === 'script' ? `${c} list` : c));
-  return `${forms.slice(0, -1).join(', ')} and ${forms.at(-1)}`;
-}
 
 /** The line carrying `command`'s result, `data`'s fields after `command`. */
 export function jsonResult(command: string, data: object): string {
@@ -115,6 +107,12 @@ export interface Collection {
   /** Why it failed to load. */
   error?: string;
   scriptCount: number;
+  /**
+   * In `collection list` and `show`: a local collection's files that
+   * differ from what it loaded, so a refresh would load them. Absent
+   * when none do.
+   */
+  onDisk?: { modified: number; deleted: number; added: number; manifest?: true };
 }
 
 export interface Tab {
@@ -154,7 +152,11 @@ export type TabState =
   | 'not-started'
   | 'unexpected'
   | 'changed'
-  | 'kept-out';
+  | 'kept-out'
+  // Under another manager, which doesn't say what ran: its rules match
+  // the tab's page, or don't (see docs/sm-dev-violentmonkey.md).
+  | 'expected'
+  | 'not-expected';
 
 export interface TabActivity {
   tab: string;
@@ -165,6 +167,8 @@ export interface TabActivity {
 export interface Script {
   /** Absent in `script list` for a run's script: only its run knows its number. */
   id?: string;
+  /** Under another manager, a run's script in `scripts` and `status`: its E-id in the manager. */
+  installedAs?: string;
   kind: 'run' | 'installed';
   name: string;
   /** The run's scripts: the path it was loaded from. */
@@ -184,8 +188,17 @@ export interface Script {
   error?: string;
   /** Why its last refresh failed, while its last good copy still runs. */
   refreshError?: string;
+  /**
+   * Installed scripts, in `script list` and `show`: its local file
+   * changed or went since it was loaded, so a refresh would load that.
+   */
+  onDisk?: 'modified' | 'deleted';
   /** The script `get` and `set` act on. */
   selected?: boolean;
+  /** Under another manager, in `script list` and `show`: the live run whose script it is (`D1`). */
+  run?: string;
+  /** Under another manager: left by a run that ended (`D1`). */
+  leftBy?: string;
   /** In `scripts` and `status`: what it is doing on each tab. */
   tabs?: TabActivity[];
 }
@@ -204,6 +217,22 @@ export interface StatusScript extends Script {
 
 // ---------- Each command's result ----------
 
+/** A userscript manager, by `--manager`'s full name. */
+export type ManagerName = 'sourcemonkey' | 'tampermonkey' | 'violentmonkey';
+
+/** A manager extension in the browser, enabled or not. */
+export interface BrowserManager {
+  manager: ManagerName;
+  /** As the extension names itself (`Tampermonkey BETA`). */
+  name: string;
+  version: string;
+  /** Its extension id. */
+  id: string;
+  enabled: boolean;
+  /** Its "Allow User Scripts" is on, which it needs to run scripts. */
+  userScripts: boolean;
+}
+
 export interface RunSummary {
   /** `D1`. */
   id: string;
@@ -211,6 +240,8 @@ export interface RunSummary {
   /** ISO 8601. */
   started?: string;
   browser: { address: string; owned: boolean; headless: boolean };
+  /** The manager the run works with (`--manager`). */
+  manager?: ManagerName;
   tabCount?: number;
   /** The loaded scripts' paths. */
   scriptFiles?: string[];
@@ -220,10 +251,22 @@ export interface ListData {
   runs: RunSummary[];
 }
 
+/**
+ * How the client came to the run `status` shows: it started it, attached
+ * to it, or picked it some other way (`--run`, or an earlier command
+ * on the line); or, with none of its own, another active run.
+ */
+export type RunConnection = 'started' | 'attached' | 'selected' | 'other';
+
 export interface StatusData {
   run?: RunSummary & {
+    connection?: RunConnection;
+    /** Started with `--detach`, so it outlives the client that started it. */
+    detached?: boolean;
     /** Whether the browser has SourceMonkey; absent when it couldn't be told. */
     sourceMonkey?: 'installed' | 'disabled' | 'absent';
+    /** The managers in the browser; absent when they couldn't be told. */
+    managers?: BrowserManager[];
     /** The run's test collection, once a script was pushed. */
     testCollection?: string;
     /** The run's log file. */
@@ -237,8 +280,27 @@ export interface StatusData {
   scripts: StatusScript[];
 }
 
-/** `status` with no run picked (no --run, start or attach): every run's. */
+/** The browser `status` would use with no run: `--browser`'s, and its managers. */
+export interface BrowserStatus {
+  address: string;
+  /** Whether a browser answers there. */
+  answering: boolean;
+  /** Chrome's version, when it answers. */
+  version?: string;
+  headless?: boolean;
+  /** The manager `--manager` picks. */
+  manager: ManagerName;
+  /** The managers in it; absent when they couldn't be told. */
+  managers?: BrowserManager[];
+}
+
+/**
+ * `status` with no run picked (no --run, start or attach): the browser
+ * the line would use, and every active run's status, each with
+ * `connection: "other"`.
+ */
 export interface StatusRunsData {
+  browser: BrowserStatus;
   runs: StatusData[];
 }
 
@@ -358,4 +420,93 @@ export interface ScriptListData {
   /** When one was named. */
   collection?: CollectionRef;
   scripts: Script[];
+}
+
+/** `collection show`: the collection with its scripts. */
+export interface CollectionShowData {
+  collection: Collection & { scripts: Script[] };
+}
+
+/** `collection enable`, `disable` and `rename`: the collection after. */
+export interface CollectionChangeData {
+  collection: Collection;
+}
+
+export interface CollectionRefreshData {
+  /** As it is after. */
+  collection: Collection;
+  /** Its scripts that were added or loaded different text. */
+  updated: Script[];
+  /** How many loaded the same text. */
+  unchanged: number;
+  /** Its scripts that are gone, as they were. */
+  removed: Script[];
+  /** Under another manager: its scripts that couldn't be refreshed, each with `refreshError`. */
+  failed?: Script[];
+}
+
+/** `script enable`, `disable`, `move` and `uninstall`: the script after (or as it was, `removed`). */
+export interface ScriptChangeData {
+  script: Script;
+  /** `script uninstall`: it is gone. */
+  removed?: true;
+  /**
+   * `script enable`, `move` and `install`: its other copies that were
+   * running, turned off, as the viewer does.
+   */
+  turnedOff?: Script[];
+  /** It is enabled, but its collection is disabled, so it doesn't run. */
+  collectionDisabled?: true;
+}
+
+export interface ScriptRefreshData {
+  script: Script;
+  /** It loaded different text. */
+  updated: boolean;
+}
+
+export interface ScriptInstallData extends Pick<ScriptChangeData, 'turnedOff' | 'collectionDisabled'> {
+  script: Script;
+  /** It was already installed there, so nothing changed. */
+  already?: true;
+  /** Under another manager: it replaced the script with the same name and namespace. */
+  replaced?: true;
+}
+
+export interface ScriptPrintData {
+  /** Its id, absent for another run's script. */
+  script?: string;
+  name: string;
+  /** The installed text. */
+  text: string;
+}
+
+/** A `@require` or `@resource`. */
+export interface FileStatus {
+  /** As the header gives it. */
+  url: string;
+  /** `not-loaded` when the script failed to load. Absent when the manager doesn't say. */
+  status?: 'ok' | 'not-loaded';
+  /** The local file read in its place. */
+  local?: string;
+}
+
+/** A script in full, for `script show`. */
+export interface ScriptDetails extends Script {
+  description?: string;
+  author?: string;
+  /** When its current text was loaded, ISO 8601. */
+  updatedAt?: string;
+  matching: { match: string[]; include: string[]; exclude: string[]; excludeMatch: string[] };
+  /** `document-idle` when the header gives none. */
+  runAt: string;
+  grants: string[];
+  requires: FileStatus[];
+  resources: (FileStatus & { name: string })[];
+  /** Absent when the manager doesn't say. */
+  valueCount?: number;
+}
+
+export interface ScriptShowData {
+  script: ScriptDetails;
 }

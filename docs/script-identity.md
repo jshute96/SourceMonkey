@@ -198,6 +198,12 @@ the *other* rows.
     where the sweep is the whole effect of the click. Two copies that
     really are meant to run together are one checkbox away on the page
     Install lands on.
+- **One sweep for a copy newly running.** Install, local copy, a move
+  into an enabled collection, and sm-dev's `script enable`, `install`
+  and `move` ([sm-dev-managers.md](sm-dev-managers.md)) all call
+  `turnOffOtherCopies` (`script-identity.ts`).
+  - A run's test collection is left out both ways: the run keeps its
+    scripts off other tabs itself, and only the run changes them.
 - **A copy under a disabled collection is spared.** It isn't running, so it
   isn't competing — and its own checkbox is rendered disabled, so a
   flip made here could not be undone from this panel at all. Turning it

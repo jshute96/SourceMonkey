@@ -24,6 +24,10 @@ description: Develop, debug and test userscripts with SourceMonkey's sm-dev tool
 - So header rules, `@grant`, `@require`, `@run-at`, worlds, `GM_*`
   storage and `GM_xmlhttpRequest` behave as they will for users (see
   [How a run uses the extension](#how-a-run-uses-the-extension)).
+- **A run can use Tampermonkey or Violentmonkey instead**: to check a
+  script is portable across managers, or to debug something that works
+  in one but not another. sm-dev downloads either. See
+  [Testing under other managers](#testing-under-other-managers).
 - **The browser's CDP port stays open** to you as well.
   - Anything sm-dev has no command for (back button, window size, mouse
     wheel, drag), do over CDP directly, in the same tab, while
@@ -42,6 +46,8 @@ Where to look:
 - [references/cdp.md](references/cdp.md): raw CDP recipes.
 - [references/specs.md](references/specs.md): writing Playwright specs
   with the harness fixture.
+- [references/other-managers.md](references/other-managers.md): testing
+  under Violentmonkey.
 - `pnpm sm-dev --help`, or `pnpm sm-dev help <command>`: the
   authoritative, current reference.
 - The `SourceMonkey-friction` skill, when installed: log where these
@@ -57,15 +63,16 @@ Where to look:
   loaded, scripts started, no requests or DOM changes for a moment.
   For anything later, wait for the signal itself: `wait log <text>`,
   `wait selector <css>`, `wait selector-gone <css>`.
-  - Waits give up after 5 seconds. Pass `--timeout-seconds S` for a
-    slow site, and keep S under your shell tool's own time limit.
+  - Waits give up after 5 seconds (page loads: 30). Pass
+    `--timeout-seconds S` to any command that waits, for a slow site,
+    and keep S under your shell tool's own time limit.
   - With no signal to wait for (sampling something over time), use
     `wait 2s`, not `sleep`.
-- **Don't use `--seconds`.** A run that expires mid-test leaves pages
+- **Don't use `--stop-after-seconds`.** A run that expires mid-test leaves pages
   with no script, and results that look like bugs. Use `--detach`, and
   `stop` when done.
 - **Name your run**: `pnpm sm-dev --run Dagent start ... --detach`,
-  then `--run Dagent` on each command.
+  then `--run Dagent` on each command. Run IDs start with `D`.
   - The person may have runs of their own. `start --detach` without
     `--run` stops earlier detached runs, and with several runs active,
     commands without `--run` are refused (`status` and `list` show them all).
@@ -105,14 +112,19 @@ none there, it says so: `Start one with sm-dev --open-browser, pass
 The run needs SourceMonkey in the browser, with "Allow User Scripts" on.
 
 - `--temp-browser` always has it. An `--open-browser` or `--browser`
-  browser needs it loaded once, by hand.
+  browser needs it loaded once: `pnpm sm-dev manager install` loads it,
+  with "Allow User Scripts" on.
 - The run's first line (`Connected to browser ... (Chrome ..., has
   SourceMonkey)`) and `status` say which: `has SourceMonkey`,
-  `SourceMonkey disabled` or `no extension`. They can't see "Allow
-  User Scripts".
-- When it is missing, use `--temp-browser` if no login is needed, or
-  ask the person to load it (see
-  [Setting it up](https://github.com/jshute96/SourceMonkey/blob/main/docs/harness-guide.md#setting-it-up)).
+  `SourceMonkey disabled` or `no SourceMonkey`. `status` also lists the
+  browser's managers, marking one whose "Allow User Scripts" is off.
+- When it is missing, use `--temp-browser` if no login is needed.
+  Otherwise ask the person whether to install it into their browser
+  with `manager install`, or `manager enable` if it's disabled.
+- Another manager enabled there (Tampermonkey, Violentmonkey) runs its
+  scripts in the run's tabs too. The run's first lines and `status`
+  warn of it: ask the person before turning it off with
+  `pnpm sm-dev --manager tm manager disable`.
 
 The headless `--temp-browser` is often blocked by large sites (Reddit,
 Google, Amazon, Vimeo, IMDb, parts of YouTube).
@@ -583,9 +595,9 @@ Most commands that report state can print JSON instead of text, with
 - **Don't use it when you're reading the answer yourself.** The text is
   shorter, and says what an empty answer means and where to look next.
 - **Which commands:** `list`, `status`, `scripts`, `tabs`, `values`,
-  `get`, `match`, `validate`, `menu`, `logs`, `probe`, `collection
-  list` and `script list`. The rest
-  print text as usual.
+  `get`, `match`, `validate`, `menu`, `logs`, `probe`, and every
+  `collection` and `script` verb (`script list`, `script show`, ...).
+  The rest print text as usual.
 - **Output:** one JSON object per command on stdout. Other messages
   and failures stay text, on stderr, with the usual exit code.
 - **The fields**, and what each script `state` means:
@@ -711,6 +723,25 @@ test('adds the button', async ({ page, loadUserscript, gm, reports }) => {
   sm-dev commands to the fixture, network requests, and pages with no
   site behind them.
 
+## Testing under other managers
+
+A run can load its scripts into **Tampermonkey** (`--manager tm`) or
+**Violentmonkey** (`--manager vm`) instead of SourceMonkey: to check a
+script is portable, or to debug a difference between managers by
+running the same script and page under each.
+
+```sh
+pnpm sm-dev --manager tm manager fetch     # once each: download Tampermonkey,
+pnpm sm-dev --manager vm manager fetch     # and Violentmonkey
+pnpm sm-dev --manager tm --run Dtm --temp-browser start sites/x/y.user.js https://x.com/ --detach
+pnpm sm-dev --manager vm --run Dvm --temp-browser start sites/x/y.user.js https://x.com/ --detach
+```
+
+It reports much less than SourceMonkey: which scripts a tab runs is
+predicted from their match rules, and `values`, `menu` and the like are
+refused. How it works and what differs:
+[references/other-managers.md](references/other-managers.md).
+
 ## Troubleshooting
 
 - **`skipped on <url>: ...`**: the header doesn't cover the page; the
@@ -723,7 +754,7 @@ test('adds the button', async ({ page, loadUserscript, gm, reports }) => {
   under sm-dev only**: during a run the script may run after the
   page's first inline scripts (see
   [How a run uses the extension](#how-a-run-uses-the-extension)).
-- **The run refuses to start, or says `no extension` / `SourceMonkey
+- **The run refuses to start, or says `no SourceMonkey` / `SourceMonkey
   disabled`**: see [Getting a browser](#getting-a-browser).
 - **A command these docs name is unknown**: sm-dev is older than the
   docs. Ask the person whether to update it: `pnpm run build` in the

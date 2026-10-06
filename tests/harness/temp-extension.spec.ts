@@ -463,7 +463,7 @@ async function installScript(context: BrowserContext, text: string): Promise<voi
 async function driveCli(args: string[], steps: [string, string][]): Promise<{ lines: string[]; left: [string, string][] }> {
   const { spawn } = await import('node:child_process');
   const cli = new URL('../../lib/harness/cli.js', import.meta.url).pathname;
-  const child = spawn(process.execPath, [cli, '--stdin', ...args, '--seconds', '70'], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [cli, '--stdin', ...args, '--stop-after-seconds', '70'], { stdio: ['pipe', 'pipe', 'pipe'] });
   const left = [...steps];
   const lines: string[] = [];
   let buffer = '';

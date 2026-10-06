@@ -10,7 +10,8 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 ```
 
 - Global options go first: `--run ID`, `--browser URL|PORT`,
-  `--open-browser`, `--temp-browser`, `--headed`, `--mute`, `--nomute`,
+  `--manager sm|tm|vm`, `--open-browser`, `--temp-browser`, `--headed`,
+  `--mute`, `--nomute`,
   `--stdin`, `--interactive`,
   `--root DIR`, `--local DIR`, `--json`.
 - Read the text output by default: it's shorter, and says what an
@@ -18,9 +19,9 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 - Add `--json` when you'll parse the output, with `jq` or a script:
   `$R --json scripts | jq -r '.scripts[] | select(.status == "invalid") | .name'`.
   - `--json` works for `list`, `status`, `scripts`, `tabs`, `values`,
-    `get`, `match`, `validate`, `menu`, `logs`, `probe`, `collection
-    list` and `script list`. Each prints
-    one JSON object; other commands print text as usual.
+    `get`, `match`, `validate`, `menu`, `logs`, `probe`, and every
+    `collection` and `script` verb (`script list`, `script show`, ...).
+    Each prints one JSON object; other commands print text as usual.
   - Other messages and failures stay text, on stderr, with the usual
     exit code.
   - An empty list means nothing was found.
@@ -68,7 +69,31 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 
 - A run pushes its scripts into SourceMonkey in that browser. With
   `--open-browser` or `--browser`, it must be loaded there with Allow
-  User Scripts on.
+  User Scripts on: `manager install` does both.
+
+### Managers
+
+`--manager` picks SourceMonkey (`sm`, the default), Tampermonkey (`tm`)
+or Violentmonkey (`vm`). A run keeps the one it started with. How to
+test a script under VM or TM:
+[other-managers.md](other-managers.md).
+
+| Command | Does |
+| --- | --- |
+| `--manager tm manager fetch` | Download or update TM (or VM) from the Chrome Web Store into `~/.cache/sm-dev/managers` |
+| `[--manager tm] manager install` | Load the manager into the browser unpacked, with Allow User Scripts on. No run needed |
+| `[--manager tm] manager enable` / `disable` | Turn it on or off in the browser. Not SourceMonkey while a run uses it |
+| `--manager vm --temp-browser start <script> <url>` | A run under VM (or `tm`): its scripts are installed in the manager, and removed when it ends. `values`, `get`, `set`, `menu`, `connect` and `--values` are refused |
+| `--manager vm script list`, `script E3 show`, ... | The manager's scripts, by E-ids, in one collection, `C0`. `collection C0 disable` is its switch for all scripts |
+
+- A manager enabled beside the chosen one runs its scripts in the run's
+  tabs too: the run's first lines and `status` warn of it.
+- Under VM or TM, `scripts` and `status` show which scripts each tab
+  is expected to run, by their match rules (`Expected on tab T1 using
+  match rules:`), not what ran. A run's script shows its E-id there
+  too: `1: Hello (hello.user.js), E6 in Violentmonkey`.
+- Under VM or TM, a run never replaces a script the manager already
+  has by the same name and namespace: `start` refuses, naming it.
 
 ## Runs
 
@@ -85,11 +110,11 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `start ... --notab` | No tab at first; `newtab` later |
 | `start ... --detach --new` | Start another detached run, keeping earlier ones |
 | `list` | The active runs |
-| `status` | The run, its log file, tabs, and each script's state |
+| `status` | The run, its log file, tabs, and each script's state. With no run picked: the `--browser` browser and its managers, then every active run |
 | `attach [ID]` | Follow a run's stream (Ctrl-C leaves it going) |
 | `stop [ID]`, `stop --all` | End a run |
 | `exit` | End this sm-dev (at a prompt or on stdin); runs it started without `--detach` stop |
-| `start --idle-seconds N` | Idle timeout (default 30 minutes; `0` never) |
+| `start --stop-after-idle-seconds N` | Idle timeout (default 30 minutes; `0` never) |
 
 ## Scripts
 
@@ -103,6 +128,37 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `update [script]` | Re-read changed scripts and reload affected tabs |
 | `collection list` (or `collections`) | SourceMonkey's collections (C1, ...), with kind, script count, enabled. No run needed |
 | `script list [collection]` | Every installed script (E1, ...) under its collection, or one collection's. No run needed |
+| `script [script] show`, `script [script] print` | One script in full (rules, status, files, values count, and in a run its state on each tab); its installed text. No run needed |
+| `collection <collection> show` | One collection and its scripts. No run needed |
+
+### Changing what's installed
+
+The script or collection comes before the verb: `script E4 disable`,
+`collection C3 refresh`; quote a name of several words. In a run, a
+script left out is the selected one, except for `uninstall`.
+
+These change SourceMonkey's real collections and scripts, as its pages
+do, and need no run. Outside a `--temp-browser` they're the person's
+own: change them only when asked to.
+
+| Command | What it does |
+| --- | --- |
+| `script [script] enable` / `disable` | Turn one on or off. In a run, one of its own too |
+| `script [script] refresh` | Re-read it from its location; a run's own from disk, as `update` does |
+| `script install <file\|url>` | Install for every tab, to stay (`load` is for the run only). `--collection <C>`. Under VM, replacing the person's script of the same name needs `--force`: ask first |
+| `script <script> uninstall`, `script [script] move <C>` | Remove one from, or move it between, container collections |
+| `collection <C> enable` / `disable` / `refresh`, `collection <C> rename <name>` | The same for a whole collection |
+
+- `script uninstall` needs `--force` outside a `--temp-browser`.
+- A run's test collection and other runs' scripts are refused, as is
+  uninstalling or moving a script that a directory or manifest
+  collection lists.
+- The listings mark a local file changed since it loaded: `(modified
+  on disk)`, and a collection's `Refresh pending: ...`. `script
+  refresh` / `collection refresh` load it.
+- Installing, moving or enabling a script turns off its other running
+  copies, as SourceMonkey's viewer does, and lists each one. An
+  enabled script in a disabled collection is said not to run.
 
 ## Tabs
 
@@ -116,6 +172,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `reload [T2\|all]` | Reload |
 | `focus [tab]` | Bring to the front |
 | `--from-saved [--offline] [--url U]` | On `newtab`/`open`/`start`: serve `.html` files at their recorded URL |
+| `--timeout-seconds S` | On `newtab`/`open`/`reload`: give a slow page S seconds to load (default 30) and settle (default 5) |
 
 ## Reading the page
 
@@ -149,10 +206,12 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `type <sel> <text>` | Type key by key |
 | `type <sel> {{` | Type several lines exactly (line breaks are Enter; the final one before `}}` isn't typed) |
 | `type <sel> --file <path>` | Type a file's text exactly, including a final line break |
+| `type <sel> --clear [text]` | Empty the field first, then type the text if given |
 | `key <keys>...` | `key j Shift+ArrowRight ctrl+end esc` |
 | `accept [tab] [text]`, `dismiss [tab]` | Answer an open dialog |
 | `connect once\|cancel\|allow\|deny\|allow-all [host]` | Answer SourceMonkey's prompt for a host the selected script's `@connect` doesn't cover |
 | `--nowait` | On any of these: don't wait for the page to settle |
+| `--timeout-seconds S` | On any command that waits (these, `start`, `eval`, `snapshot`, `probe`, `screenshot`, `closetab`, `load`, `update`): S seconds for each wait, in place of its default. On `cdp`, for each call (default 10) |
 
 ## Waiting
 
@@ -162,7 +221,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `wait selector <css>`, `wait selector-gone <css>` | An element to appear / disappear |
 | `wait log <text>`, `wait log /regex/` | A log line since the previous command began (or `--since`). `--find <text>` works too |
 | `wait 500ms`, `wait 2s` | Time (last resort) |
-| `--timeout-seconds S` | Give up after S seconds (default 5). On `wait log`, put it after the text |
+| `--timeout-seconds S` | Give up after S seconds (default 5). On `wait log`, put it after the text. On a delay, it may be given if not shorter |
 
 - A tab goes before the form: `wait T2 selector '.x'`.
 - `wait log` sees every log source, the site's own lines too, unless

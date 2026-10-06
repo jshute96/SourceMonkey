@@ -78,7 +78,7 @@ test('a --temp-browser download is saved beside the run log, and status names th
       ['Download saved', 'status'],
       ['Tabs:', 'exit'],
     ];
-    const child = spawn(process.execPath, [CLI, '--stdin', '--temp-browser', 'start', file, `${fixtureServer.baseUrl}/target.html`, '--seconds', '25'], {
+    const child = spawn(process.execPath, [CLI, '--stdin', '--temp-browser', 'start', file, `${fixtureServer.baseUrl}/target.html`, '--stop-after-seconds', '25'], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, SM_DEV_LOGS_DIR: logs },
     });

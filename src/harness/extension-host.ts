@@ -146,8 +146,10 @@ export class ExtensionHost extends HarnessHost {
   }
 
   // The extension runs the scripts under its own entry URLs, so their
-  // stack lines map by the layouts it reports (`setLayout`).
+  // stack lines map by the layouts it reports (`setLayout`). Another
+  // manager maps its own.
   override remapStack(text: string): string {
+    if (this.external) return this.external.remap?.(text) ?? text;
     return remapStackText(text, this.layouts.values());
   }
 
@@ -160,8 +162,22 @@ export class ExtensionHost extends HarnessHost {
       for (const [extensionId, layout] of this.layouts) {
         if (url.includes(layout.entryUrl)) return this.runIds.get(extensionId);
       }
+      const external = this.external?.idOf(url);
+      if (external !== undefined) return this.runIds.get(external);
     }
     return undefined;
+  }
+
+  /**
+   * Under another manager (Violentmonkey, Tampermonkey), which reports
+   * nothing: how its code's URLs name scripts, by the manager's id
+   * (`setPushed`), what every URL it runs code under starts with, and
+   * how it maps stack lines it moved.
+   */
+  external?: { idOf(url: string): string | undefined; prefix: string; remap?(text: string): string };
+
+  override get getsReports(): boolean {
+    return this.external === undefined;
   }
 
   /**

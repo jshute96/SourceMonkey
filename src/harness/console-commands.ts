@@ -22,24 +22,28 @@ import type { BrowserContext, Dialog, Page } from '@playwright/test';
 import { CommandAssembler, endsOutsideBlock, listed } from './command-lines.js';
 import { isJsonLine, jsonLayoutMistake, jsonResult, JSON_COMMANDS, markedLine, STDERR_LINE, withLayout, type JsonLayout } from './json-output.js';
 import type * as J from './json-output.js';
-import { extensionLabel, type ExtensionState } from './extension-backend.js';
+import { managerState, managersText, otherManagersWarning, stateLabel, type InstalledManager } from './browser-extensions.js';
+import { DEFAULT_MANAGER, MANAGERS, type ManagerName } from './managers.js';
 import { firstLine } from './extension-link.js';
 import type { ConnectPromptRecord, HarnessHost, MenuCommandRecord } from './host.js';
 import type { PageAttachment } from './page-watch.js';
-import { collectionList, count, noSuchVerb, scriptList, type ManagerControl, type RunView } from './manager-commands.js';
+import {
+  collectionList, count, managerVerb, noSuchScript, noSuchVerb, scriptList, type ManagerControl, type ManagerRun, type RunView,
+} from './manager-commands.js';
 import { parseCommandArgs, splitWords, unquoteWhole, type ParsedArgs } from './command-args.js';
-import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, SAME_COMMANDS, commandsHelp } from './command-list.js';
+import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, SAME_COMMANDS, commandSyntax, commandsHelp, unsupportedCommand } from './command-list.js';
 import { errorSentence, readJsonFile, writeProblem } from './input-file.js';
 import { PAGE_COMMANDS, runPageCommand, type EvalIn } from './page-commands.js';
 import { editMultiLine } from './prompt-editor.js';
 import { appendHistory, HISTORY_SIZE, historyFile, loadHistory } from './prompt-history.js';
-import { defaultPageUrl, NO_DEFAULT_PAGE, preparedScriptMatches, preparedScriptName, preparedScriptPath, shownPath, withDefaultScheme, type PreparedScript } from './prepare.js';
+import { defaultPageUrl, explainMatch, NO_DEFAULT_PAGE, preparedScriptMatches, preparedScriptName, preparedScriptPath, shownPath, withDefaultScheme, type PreparedScript } from './prepare.js';
+import { representativeMatch } from '../match-targets.js';
 import { currentTab, dialogKind, dialogWaitingMessage, NO_TABS, pickTab, TAB_ARG, tabName } from './tab-refs.js';
 import { runLogLabel } from './run-log.js';
 import {
   DEFAULT_LOG_SOURCES, isoTime, linesLost, logsLines, logsUpTo, inSources, noLogLines, nowMicros, parseLogSources, parsePosition, parseTail, streamText, textMatcher, type LogRecord, type RunLog,
 } from './run-logs.js';
-import { loadPage, settleTabs, waitFor } from './wait.js';
+import { loadPage, PageNotLoaded, seconds, settleTabs, timeoutFlagMs, waitFor } from './wait.js';
 import { userscriptLabel, type SavedPageHeader } from './save-html.js';
 import {
   comparableUrl, openingSavedLine, pagesToOpen, routeSavedPage, savedPageServe,
@@ -109,17 +113,19 @@ export interface ConsoleContext {
    * Open a new controlled tab, at `url` or blank, for `newtab`.
    * Absent where the caller can't open one.
    */
-  newTab?: (url?: string, options?: { noScript?: boolean; saved?: SavedPageStart }) => Promise<ControlledTab>;
+  newTab?: (url?: string, options?: { noScript?: boolean; saved?: SavedPageStart; timeoutMs?: number }) => Promise<ControlledTab>;
   /** Switch a tab to running no scripts, or back, for `open --noscript` / `--script`. */
   setTabScripts?: (tab: ControlledTab, noScript: boolean) => Promise<void>;
   /** Load another script from disk, for `load`. */
-  loadScript?: (file: string) => Promise<void>;
+  loadScript?: (file: string, timeoutMs?: number) => Promise<void>;
   /** Re-read scripts from disk (all, when none are named), for `update`. */
-  updateScripts?: (scripts?: PreparedScript[]) => Promise<void>;
+  updateScripts?: (scripts?: PreparedScript[], timeoutMs?: number) => Promise<void>;
   /** The scripts this run pushed, in load order. */
   scripts: PreparedScript[];
-  /** SourceMonkey-managed scripts (see `OtherScript`). */
+  /** SourceMonkey-managed scripts (see `OtherScript`), or another manager's. */
   others?: {
+    /** How their list is headed, before ` on T1`: `SourceMonkey-managed scripts`. */
+    kind?: string;
     /** Those on the tab's page, as its toolbar badge lists them. */
     onTab(tab: ControlledTab): Promise<OtherScript[]>;
     /** One already listed, by its label (`E2`). */
@@ -129,6 +135,17 @@ export interface ConsoleContext {
     /** `set` on one changes the person's own data, so needs `--force`. */
     guarded: boolean;
   };
+  /**
+   * Under another manager, which reports nothing: whether a script is
+   * active on a tab is predicted from its rules.
+   */
+  predicted?: boolean;
+  /**
+   * Under another manager: which of the run's scripts are off there, by
+   * the manager's id, all of them while its switch is off. Read again
+   * (`refresh`) before each command that shows what a tab runs.
+   */
+  predictedOff?: { refresh(): Promise<void>; has(extensionId: string | undefined): boolean };
   /** One of `others` picked for `get` and `set` (`scripts E1`), in place of `current`. */
   currentOther?: OtherScript;
   /**
@@ -168,8 +185,12 @@ export interface ConsoleContext {
    * collection D2-a3f9`. Read as `status` runs.
    */
   backend?: () => string;
-  /** Whether SourceMonkey is there now, for `status`; null when unknown. */
-  extension?: () => Promise<ExtensionState | null>;
+  /** The userscript manager the run works with (`--manager`); SourceMonkey when unset. */
+  managerName?: ManagerName;
+  /** ` --browser <address>` for advice to run sm-dev against the run's browser, when it isn't the default. */
+  browserArg?: string;
+  /** The managers in the browser now, for `status`; null when unknown. */
+  managers?: () => Promise<InstalledManager[] | null>;
   /** The run's log lines, for `logs` and `wait log` (see run-logs.ts). */
   logs?: RunLog;
   /**
@@ -343,27 +364,44 @@ function ownWords(input: { line: string } | { words: string[] }): { command: str
     rest = { words: input.words.slice(1) };
   }
   if (!RUN_COMMAND_NAMES.includes(ALIASES[name] ?? name)) return null;
-  return { command: listsInstalled(name, rest) ? 'script' : RUN_ALIASES[name] ?? name, rest };
+  // `scripts E4 enable` is the script command; `scripts E4` picks one.
+  const isScriptVerb = (name === 'script' || name === 'scripts') && managedVerb(name, rest) !== null;
+  return { command: isScriptVerb ? 'script' : RUN_ALIASES[name] ?? name, rest };
 }
 
 /**
- * Which listing of what's installed a command is (`collection list`,
- * `script list`), in any spelling, or null for another command. These
- * need SourceMonkey but no run.
+ * Which of the commands for what's installed a command is (`collection
+ * C3 show`, `script list`), in any spelling, with its verb, or null for
+ * another command. These need SourceMonkey but no run.
  */
-export function installedListing(words: string[]): 'collection' | 'script' | null {
+export function managerCommandOf(words: string[]): { command: 'collection' | 'script'; verb: string | undefined } | null {
   const [name = '', ...rest] = words;
-  if ((ALIASES[name] ?? name) === 'collection') return 'collection';
-  return listsInstalled(name, { words: rest }) ? 'script' : null;
+  if ((ALIASES[name] ?? name) === 'collection') {
+    // Alone, or with flags only, it lists.
+    const verb = rest.every((w) => w.startsWith('--')) ? 'list' : managedVerb('collection', { words: rest }) ?? undefined;
+    return { command: 'collection', verb };
+  }
+  const verb = managedVerb(name, { words: rest });
+  return verb !== null ? { command: 'script', verb } : null;
 }
 
-// `script list`, which lists the installed scripts rather than picking
-// one, as `script <id>` does. Its flags can come before `list`.
-function listsInstalled(name: string, rest: { line: string } | { words: string[] }): boolean {
-  if (name !== 'script' && name !== 'scripts') return false;
-  const words = 'line' in rest ? rest.line.trim().split(/\s+/) : rest.words;
-  return words.find((w) => !w.startsWith('--')) === 'list';
+// The verb of `script list`, `script E4 show`, `collection C3 refresh`
+// and the rest, as command-args.ts reads it, or null: for `script`,
+// picking a script instead (`script E4`). A line that doesn't parse is
+// still the verb's when a word of it is one, so the verb's own message
+// says what's wrong (`script enable E4`).
+function managedVerb(name: string, rest: { line: string } | { words: string[] }): string | null {
+  const command = name === 'script' || name === 'scripts' ? 'script' : name === 'collection' ? 'collection' : null;
+  if (command === null) return null;
+  const parsed = parseCommandArgs(command, 'line' in rest ? { line: rest.line.split('\n')[0] } : rest);
+  if (!('error' in parsed)) return parsed.form ?? null;
+  const all = 'line' in rest ? splitWords(rest.line.split('\n')[0]).map((w) => w.text) : rest.words;
+  const verbs = commandSyntax(command).forms;
+  return all.find((w) => !w.startsWith('--') && Object.hasOwn(verbs, w)) ?? null;
 }
+
+// The verbs that only look.
+const LOOKING_VERBS = new Set(['list', 'show', 'print']);
 
 /**
  * A command line's words, as the prompt splits them (quotes kept
@@ -378,7 +416,7 @@ export function commandWords(line: string): string[] {
 // Commands that only look: what they print answers whoever asked, and
 // is no part of the run's story.
 const INSPECTING = new Set([
-  'help', 'status', 'values', 'get', 'snapshot', 'screenshot', 'savehtml', 'probe', 'logs', 'match', 'validate', 'collection',
+  'help', 'status', 'values', 'get', 'snapshot', 'screenshot', 'savehtml', 'probe', 'logs', 'match', 'validate',
 ]);
 
 /**
@@ -390,7 +428,9 @@ export function onlyInspects(line: string): boolean {
   const [typed = '', ...words] = line.trim().split(/\s+/);
   // `tabs --json` still lists.
   const rest = words.filter((word) => !/^--(no)?json(=|$)/.test(word));
-  if (listsInstalled(typed, { words: rest })) return true;
+  // A script or collection named in quotes is one word.
+  const managing = managerCommandOf(commandWords(line));
+  if (managing) return managing.verb !== undefined && LOOKING_VERBS.has(managing.verb);
   const command = RUN_ALIASES[typed] ?? typed;
   if (INSPECTING.has(command)) return true;
   if (command === 'tabs' || command === 'scripts') return rest.length === 0;
@@ -403,9 +443,9 @@ export function onlyInspects(line: string): boolean {
  * `JSON_COMMANDS`, in a form that only looks (`tabs`, not `tabs T2`).
  */
 export function hasJsonForm(line: string): boolean {
-  const typed = line.trim().split(/\s+/)[0];
-  const words = line.trim().split(/\s+/).slice(1);
-  if (listsInstalled(typed, { words })) return true;
+  const [typed = '', ...words] = commandWords(line);
+  // Each collection and script verb has one, the changing ones too.
+  if (managerCommandOf([typed, ...words])) return true;
   return JSON_COMMANDS.includes(RUN_ALIASES[typed] ?? typed) && onlyInspects(line);
 }
 
@@ -430,6 +470,10 @@ export const MISTAKE_PREFIX = '[sm-dev] ERROR: ';
  * its reply is no part of the run's log either.
  */
 export const inCommand = new AsyncLocalStorage<{ inspects: boolean }>();
+
+// The commands that say which scripts a tab runs, or act on the ones
+// it does (`save` lists them in the saved page, `values T1` reads them).
+const SHOWS_ACTIVITY = new Set(['scripts', 'script', 'status', 'tabs', 'logs', 'save', 'values']);
 
 /**
  * Run one typed line. Returns once its effect has been applied, so an
@@ -461,6 +505,9 @@ export async function runConsoleCommand(
     ctx.out(`[sm-dev] ERROR: ${parsed.error}`);
     return false;
   }
+  // What the manager has turned off, for the commands that show what
+  // the tabs are expected to run.
+  if (ctx.predictedOff && SHOWS_ACTIVITY.has(command)) await ctx.predictedOff.refresh();
   // The command's own --json or --nojson over the sender's global one,
   // and its own layout over the client's. Its help is text either way.
   const ownJson = parsed.flags['--json'];
@@ -477,6 +524,11 @@ export async function runConsoleCommand(
   if (parsed.help) {
     for (const l of commandsHelp([command]).text.trimEnd().split('\n')) ctx.out(l);
     return;
+  }
+  const unsupported = unsupportedCommand(command, ctx.managerName ?? DEFAULT_MANAGER, 'this run uses');
+  if (unsupported) {
+    ctx.out(`[sm-dev] ERROR: ${unsupported}`);
+    return false;
   }
   // Its arguments, its text (the rest of its line, for the commands
   // that take one), and its flags.
@@ -511,7 +563,7 @@ export async function runConsoleCommand(
   switch (command) {
     case 'collection':
     case 'script':
-      return managerCommand(ctx, command, parsed.form, args);
+      return managerCommand(ctx, command, parsed, cwd);
     case 'match':
       return matchCommand(ctx, args, cwd);
     case 'validate':
@@ -552,8 +604,11 @@ export async function runConsoleCommand(
     }
     case 'newtab':
       return openNewTab(ctx, args, flags, cwd);
-    case 'closetab':
-      return closeTabs(ctx, args, flags['--force'] === true, tab);
+    case 'closetab': {
+      const timeoutMs = timeoutFlagMs(flags, ctx.out);
+      if (timeoutMs === null) return false;
+      return closeTabs(ctx, args, flags['--force'] === true, tab, timeoutMs);
+    }
     case 'tabs': {
       const named = namedTab(ctx, 'tabs', parsed);
       if (named === null) return false;
@@ -583,6 +638,11 @@ export async function runConsoleCommand(
         } satisfies J.ScriptsData));
         return;
       }
+      if (!text && ctx.predicted && picked && ctx.scripts.length > 0) {
+        for (const l of predictedLines(ctx, picked, 'Loaded scripts')) ctx.out(l);
+        for (const l of await otherLines(ctx, picked)) ctx.out(l);
+        return;
+      }
       if (!text) {
         ctx.out(`Loaded scripts${activityHeading(picked)}:`);
         if (ctx.scripts.length === 0) ctx.out(`  ${NO_SCRIPTS}`);
@@ -591,6 +651,14 @@ export async function runConsoleCommand(
           if (picked) ctx.out(activityLine(ctx, picked, script.id));
         }
         for (const l of await otherLines(ctx, picked)) ctx.out(l);
+        return;
+      }
+      // Under another manager, one of the run's own by its E-id.
+      const own = OTHER_LABEL.test(text) ? ownByLabel(ctx, text) : undefined;
+      if (own) {
+        ctx.current = own;
+        ctx.currentOther = undefined;
+        ctx.out(`[sm-dev] Selected ${scriptLabel(own)}`);
         return;
       }
       if (OTHER_LABEL.test(text)) {
@@ -625,9 +693,15 @@ export async function runConsoleCommand(
         return;
       }
       if (ctx.runId) {
-        // Asked each time, since the person may install it mid-run.
-        const extension = ctx.browser ? extensionLabel(await ctx.extension?.() ?? null) : '';
+        // Asked each time, since the person may install one mid-run.
+        const chosen = ctx.managerName ?? DEFAULT_MANAGER;
+        const managers = ctx.browser ? await ctx.managers?.() ?? null : null;
+        const extension = managers ? stateLabel(managerState(managers, chosen), chosen) : '';
         ctx.out(`Run: ${ctx.runId} (pid ${process.pid})${ctx.browser ? `, ${ctx.browser}${extension ? ` (${extension})` : ''}` : ''}`);
+        if (managers) {
+          ctx.out(`Managers: ${managersText(managers, chosen)}`);
+          for (const line of otherManagersWarning(managers, chosen, ctx.browserArg)) ctx.out(line);
+        }
       }
       if (ctx.backend) ctx.out(`Backend: ${ctx.backend()}`);
       if (ctx.log) ctx.out(`Log: ${runLogLabel(ctx.log, ctx.runId)}`);
@@ -776,6 +850,8 @@ export async function runConsoleCommand(
     }
     case 'reload': {
       const noWait = flags['--nowait'] === true;
+      const timeoutMs = timeoutFlagMs(flags, ctx.out);
+      if (timeoutMs === null) return false;
       const mode = scriptsMode(ctx, 'reload', flags);
       if (mode === null) return false;
       const named = namedTab(ctx, 'reload', parsed);
@@ -784,14 +860,14 @@ export async function runConsoleCommand(
         // All at once, so one slow page holds up no other.
         const all = reloadable(ctx.tabs(), ctx.out);
         for (const t of all) if (!await switchScripts(ctx, t, mode)) return false;
-        const loaded = await Promise.all(all.map((t) => reloadTab(t, ctx.host, ctx.out)));
-        if (!noWait) await settleTabs(ctx.host, all.filter((_, i) => loaded[i]), ctx.out);
+        const loaded = await Promise.all(all.map((t) => reloadTab(t, ctx.host, ctx.out, timeoutMs)));
+        if (!noWait) await settleTabs(ctx.host, all.filter((_, i) => loaded[i]), ctx.out, timeoutMs);
         return;
       }
       const target = named !== undefined ? pickTab(ctx, named) : tab;
       if (!target || blockedByDialog([target])) return false;
       if (!await switchScripts(ctx, target, mode)) return false;
-      if (await reloadTab(target, ctx.host, ctx.out) && !noWait) await settleTabs(ctx.host, [target], ctx.out);
+      if (await reloadTab(target, ctx.host, ctx.out, timeoutMs) && !noWait) await settleTabs(ctx.host, [target], ctx.out, timeoutMs);
       return;
     }
     case 'load': {
@@ -803,12 +879,14 @@ export async function runConsoleCommand(
         ctx.out('[sm-dev] This run cannot load scripts');
         return;
       }
+      const timeoutMs = timeoutFlagMs(flags, ctx.out);
+      if (timeoutMs === null) return false;
       // It reloads every tab it affects, so any tab's dialog blocks it.
       if (blockedByDialog(ctx.tabs())) return;
       // All expanded first, so a glob matching nothing loads none.
       for (const file of expandPathArgs(args, cwd, { scripts: true })) {
         // A relative path sent from another directory is the sender's.
-        await ctx.loadScript(cwd !== process.cwd() && !path.isAbsolute(file) ? path.resolve(cwd, file) : file);
+        await ctx.loadScript(cwd !== process.cwd() && !path.isAbsolute(file) ? path.resolve(cwd, file) : file, timeoutMs);
       }
       return;
     }
@@ -821,14 +899,16 @@ export async function runConsoleCommand(
         ctx.out(`[sm-dev] ${NO_SCRIPTS}`);
         return;
       }
+      const timeoutMs = timeoutFlagMs(flags, ctx.out);
+      if (timeoutMs === null) return false;
       if (blockedByDialog(ctx.tabs())) return;
       if (!text || text === 'all') {
-        await ctx.updateScripts();
+        await ctx.updateScripts(undefined, timeoutMs);
         return;
       }
       const script = pickScript(ctx, text);
       if (!script) return false;
-      await ctx.updateScripts([script]);
+      await ctx.updateScripts([script], timeoutMs);
       return;
     }
     case 'open': {
@@ -837,6 +917,8 @@ export async function runConsoleCommand(
       const saved = savedFlags(ctx, flags);
       if (!saved) return false;
       const noWait = flags['--nowait'] === true;
+      const timeoutMs = timeoutFlagMs(flags, ctx.out);
+      if (timeoutMs === null) return false;
       const mode = scriptsMode(ctx, 'open', flags);
       if (mode === null) return false;
       // A glob stands for the files it matches, of which it takes one.
@@ -863,7 +945,7 @@ export async function runConsoleCommand(
       // those shapes, so a host like `t2.example.com` stays a URL.
       const target = inTab ? { tab: inTab, rest: where } : TAB_REF.test(where) ? tabRef(ctx, where, tab) : { tab, rest: where };
       if (!target) return false;
-      const named = target.rest ? pageFor(ctx, target.rest, cwd) : undefined;
+      const named = target.rest ? await pageFor(ctx, target.rest, cwd) : undefined;
       if (named === null) return false;
       const [opening] = await pagesToOpen(named ? [{ word: target.rest, url: named }] : [], saved, cwd);
       // With the mode switched and no page named, the page it's on.
@@ -879,8 +961,8 @@ export async function runConsoleCommand(
         await serveSavedPage(target.tab, opening.saved, ctx.out, target.tab.noScript === true || ctx.scripts.length === 0);
         ctx.out(openingSavedLine(opening.saved.given, url, tabName(target.tab)));
       }
-      if (!await gotoInTab(target.tab, ctx.host, url, ctx.out)) return false;
-      if (!noWait) await settleTabs(ctx.host, [target.tab], ctx.out);
+      if (!await gotoInTab(target.tab, ctx.host, url, ctx.out, timeoutMs)) return false;
+      if (!noWait) await settleTabs(ctx.host, [target.tab], ctx.out, timeoutMs);
       return;
     }
     case 'wait':
@@ -980,9 +1062,18 @@ function scriptLabel(script: PreparedScript): string {
 }
 
 // One script's row in any list of them: its number in the `scripts` list,
-// with `*` on the one `get` and `set` act on.
+// with `*` on the one `get` and `set` act on. Under another manager,
+// with its E-id there.
 function scriptRow(ctx: ConsoleContext, script: PreparedScript): string {
-  return `${script === selectedScript(ctx) ? '* ' : '  '}${ctx.scripts.indexOf(script) + 1}: ${scriptLabel(script)}`;
+  const id = ctx.predicted ? ctx.extensionIdOf?.(script) : undefined;
+  const there = id !== undefined ? `, E${id} in ${MANAGERS[ctx.managerName ?? DEFAULT_MANAGER].label}` : '';
+  return `${script === selectedScript(ctx) ? '* ' : '  '}${ctx.scripts.indexOf(script) + 1}: ${scriptLabel(script)}${there}`;
+}
+
+// Under another manager, the run's own script with E-id `label`.
+function ownByLabel(ctx: ConsoleContext, label: string): PreparedScript | undefined {
+  if (!ctx.predicted) return undefined;
+  return ctx.scripts.find((script) => `E${ctx.extensionIdOf?.(script)}` === label.toUpperCase());
 }
 
 // The run's script `get` and `set` act on, marked `*` in the lists:
@@ -1012,7 +1103,10 @@ function evalScope(ctx: ConsoleContext, flag: string | true | undefined, page: b
   if (!script) return typeof flag === 'string' ? null : fallback;
   // No hook: not pushed into the extension, so it hasn't run anywhere.
   const hook = script.id ? ctx.host.evalHook(script.id) : null;
-  return { scope: hook && { world: script.world, ...hook }, name: preparedScriptName(script), named: typeof flag === 'string', fallback };
+  // Another manager reports nothing, so a missed scope there says
+  // nothing about whether the script ran.
+  const manager = ctx.managerName && ctx.managerName !== DEFAULT_MANAGER ? MANAGERS[ctx.managerName].label : undefined;
+  return { scope: hook && { world: script.world, ...hook }, name: preparedScriptName(script), named: typeof flag === 'string', fallback, manager };
 }
 
 /**
@@ -1022,6 +1116,8 @@ function evalScope(ctx: ConsoleContext, flag: string | true | undefined, page: b
  * there is no single answer.
  */
 function pickScript(ctx: ConsoleContext, arg: string): PreparedScript | null {
+  const own = ownByLabel(ctx, arg);
+  if (own) return own;
   if (/^\d+$/.test(arg)) {
     const script = ctx.scripts[Number(arg) - 1];
     if (!script) ctx.out(`[sm-dev] There is no script ${arg}. Use scripts to list them.`);
@@ -1057,23 +1153,40 @@ function numbered(ctx: ConsoleContext, script: PreparedScript): string {
 }
 
 /**
- * `collection list` (`collection`, `collections`) and `script list`. `form`: the
- * keyword after the command's name (`list`); `args`: the words after it.
+ * The `collection` and `script` commands for what's installed (`collection`
+ * alone lists). `parsed`: its words as command-args.ts reads them, the
+ * verb as `form` (`list`), what it acts on as `subject` (`C3` in
+ * `collection C3 show`). `cwd`: where a path `script install` is given
+ * is from.
  */
 export async function managerCommand(
-  ctx: Pick<ConsoleContext, 'manager' | 'out' | 'json'> & Partial<ConsoleContext>, command: string, form: string | undefined, args: string[],
+  ctx: Pick<ConsoleContext, 'manager' | 'out' | 'json'> & Partial<ConsoleContext>, command: string,
+  parsed: Pick<ParsedArgs, 'form' | 'subject' | 'words' | 'flags'>, cwd = process.cwd(),
 ): Promise<boolean | void> {
-  // `collection` alone lists, as `tabs` does.
-  if (form !== 'list' && args.length > 0) {
-    ctx.out(`[sm-dev] ERROR: ${noSuchVerb(args[0])}`);
+  const { form, subject, words: args, flags } = parsed;
+  if (form === undefined && args.length > 0) {
+    ctx.out(`[sm-dev] ERROR: ${noSuchVerb(args)}`);
     return false;
   }
   if (!ctx.manager) {
-    ctx.out('[sm-dev] This run has no SourceMonkey to list from');
+    ctx.out('[sm-dev] This run has no SourceMonkey to manage');
     return false;
   }
+  const kind = command === 'script' ? 'script' : 'collection';
+  if (form !== undefined && form !== 'list') {
+    return managerVerb({
+      manager: ctx.manager,
+      out: ctx.out,
+      json: ctx.json === true,
+      ...(ctx.scripts ? { run: managerRun(ctx as ConsoleContext) } : {}),
+      // A throwaway browser's data is the run's own, as for `set`; with
+      // no run, the browser is always the person's.
+      guarded: ctx.others?.guarded ?? true,
+      cwd,
+    }, kind, form, subject, args, flags);
+  }
   try {
-    if (command === 'script') await scriptList(ctx.manager, args[0], ctx.out, ctx.json === true, runView(ctx));
+    if (kind === 'script') await scriptList(ctx.manager, args[0], ctx.out, ctx.json === true, runView(ctx));
     else await collectionList(ctx.manager, ctx.out, ctx.json === true);
   } catch (err) {
     // What it named isn't there, or SourceMonkey failed: a failure, not
@@ -1081,6 +1194,41 @@ export async function managerCommand(
     ctx.out(`[sm-dev] ${firstLine(err)}`);
     return false;
   }
+}
+
+// In a run, what the commands that show and change things need of it.
+function managerRun(ctx: ConsoleContext): ManagerRun {
+  const ownScript = (internalId: string): PreparedScript | undefined =>
+    ctx.scripts.find((script) => ctx.extensionIdOf?.(script) === internalId);
+  return {
+    ...runView(ctx)!,
+    updateOwn: async (internalId) => {
+      const script = ownScript(internalId);
+      if (!script || !ctx.updateScripts) throw new Error('This run cannot update scripts');
+      // It reloads the tabs the script runs in, as `update` does, which
+      // an open dialog would hold up.
+      const waiting = ctx.tabs().find((t) => t.dialogs?.current);
+      if (waiting) throw new Error(dialogWaitingMessage(waiting, currentTab(ctx)));
+      await ctx.updateScripts([script]);
+    },
+    tabsOf: async (managed, label) => {
+      const script = ownScript(managed.id);
+      const out: Awaited<ReturnType<ManagerRun['tabsOf']>> = [];
+      for (const tab of ctx.tabs()) {
+        const name = tabName(tab);
+        if (script) {
+          const running = activeOn(ctx, tab, script.id);
+          out.push({ activity: { tab: name, state: activityState(ctx, running) }, text: activityWord(ctx, running) });
+          continue;
+        }
+        const other = label === undefined ? undefined : (await ctx.others?.onTab(tab).catch((): OtherScript[] => []))?.find((o) => o.label === label);
+        out.push(other
+          ? { activity: { tab: name, state: OTHER_STATE[other.status] ?? 'running' }, text: OTHER_STATUS[other.status] ?? other.status }
+          : { activity: { tab: name, state: activityState(ctx, false) }, text: ctx.predicted ? 'Not expected using match rules' : 'Not on this page' });
+      }
+      return out;
+    },
+  };
 }
 
 // In a run, how `script list` shows the run's own scripts: by their
@@ -1351,11 +1499,30 @@ function fromTab<T extends object>(ctx: ConsoleContext, tab: ControlledTab, reco
 }
 
 // Whether a script is running on a tab's current document.
+// Under another manager (`predicted`), whether its rules cover the
+// tab's page, since nothing reports what ran.
 function activeOn(ctx: ConsoleContext, tab: ControlledTab, scriptId: string | undefined): boolean {
   // Switched to run no scripts: the host's last word from it can still
   // be a start from before, since a load with none says nothing.
   if (tab.noScript) return false;
+  if (ctx.predicted) {
+    const script = ctx.scripts.find((s) => s.id === scriptId);
+    if (script === undefined || ctx.predictedOff?.has(ctx.extensionIdOf?.(script))) return false;
+    return explainMatch(script.matching, tab.page.url()).matches;
+  }
   return scriptId !== undefined && ctx.host.isRunning(tab.link, scriptId);
+}
+
+// `activeOn`'s answer, as JSON.
+function activityState(ctx: ConsoleContext, active: boolean): J.TabState {
+  if (ctx.predicted) return active ? 'expected' : 'not-expected';
+  return active ? 'running' : 'not-running';
+}
+
+// `activeOn`'s answer, in words.
+function activityWord(ctx: ConsoleContext, active: boolean): string {
+  if (ctx.predicted) return active ? 'Expected using match rules' : 'Not expected using match rules';
+  return active ? 'Running' : 'Not running';
 }
 
 /**
@@ -1372,13 +1539,32 @@ export function reloadable(tabs: ControlledTab[], out: (line: string) => void): 
  * Reload one tab, saying so if it fails. False when it failed, or its
  * scripts never reported (said already), so nothing waits on it more.
  */
-export function reloadTab(tab: ControlledTab, host: HarnessHost, out: (line: string) => void): Promise<boolean> {
-  return loadInTab(tab, host, () => loadPage(tab.page, (o) => tab.page.reload(o)), `[sm-dev] ${tabName(tab)} could not be reloaded`, out);
+export function reloadTab(tab: ControlledTab, host: HarnessHost, out: (line: string) => void, timeoutMs?: number): Promise<boolean> {
+  const saved = showingSaved(tab);
+  const load = (): Promise<void> => loadPage(tab.page, (o) => tab.page.reload(o), timeoutMs);
+  return loadInTab(tab, host, () => withOfflineHint(tab, saved, load), `[sm-dev] ${tabName(tab)} could not be reloaded`, out);
 }
 
 /** Navigate one tab to `url`, as `reloadTab` reloads it. */
-export function gotoInTab(tab: ControlledTab, host: HarnessHost, url: string, out: (line: string) => void): Promise<boolean> {
-  return loadInTab(tab, host, () => loadPage(tab.page, (o) => tab.page.goto(url, o)), '[sm-dev] Navigation failed', out);
+export function gotoInTab(tab: ControlledTab, host: HarnessHost, url: string, out: (line: string) => void, timeoutMs?: number): Promise<boolean> {
+  const saved = tab.saved !== undefined && comparableUrl(url) === comparableUrl(tab.saved.url);
+  const load = (): Promise<void> => loadPage(tab.page, (o) => tab.page.goto(url, o), timeoutMs);
+  return loadInTab(tab, host, () => withOfflineHint(tab, saved, load), '[sm-dev] Navigation failed', out);
+}
+
+// A saved page without --offline still loads its images, scripts and
+// styles from the live site, and one that never answers holds up its load
+// (as a site that needs a login does). So a load of one that timed
+// out says how to stop that.
+async function withOfflineHint(tab: ControlledTab, saved: boolean, load: () => Promise<void>): Promise<void> {
+  try {
+    await load();
+  } catch (err) {
+    if (err instanceof PageNotLoaded && saved && !tab.saved?.offline) {
+      throw new PageNotLoaded(`${err.message}. The saved page still loads its images, scripts and styles from the live site. Open it with --from-saved --offline to block those.`);
+    }
+    throw err;
+  }
 }
 
 // A backstop for a script that never reports, not a guess at when the
@@ -1500,15 +1686,17 @@ function tabJson(ctx: ConsoleContext, tab: ControlledTab): J.Tab {
 }
 
 function scriptJson(ctx: ConsoleContext, script: PreparedScript): J.Script {
+  const installed = ctx.predicted ? ctx.extensionIdOf?.(script) : undefined;
   return {
     id: scriptNumber(ctx, script),
+    ...(installed !== undefined ? { installedAs: `E${installed}` } : {}),
     kind: 'run',
     name: preparedScriptName(script),
     file: preparedScriptPath(script),
     status: script.status,
     ...(script.diagnostic ? { error: script.diagnostic } : {}),
     ...(script === selectedScript(ctx) ? { selected: true } : {}),
-    tabs: ctx.tabs().map((tab) => ({ tab: tabName(tab), state: activeOn(ctx, tab, script.id) ? 'running' : 'not-running' })),
+    tabs: ctx.tabs().map((tab) => ({ tab: tabName(tab), state: activityState(ctx, activeOn(ctx, tab, script.id)) })),
   };
 }
 
@@ -1521,6 +1709,7 @@ const OTHER_STATE: Record<string, J.TabState> = {
   UNEXPECTED: 'unexpected',
   RELOAD: 'changed',
   NOT_LOADED: 'kept-out',
+  EXPECTED: 'expected',
 };
 
 // The SourceMonkey-managed scripts on `tab`, as JSON; null (said why)
@@ -1533,7 +1722,7 @@ async function otherScriptsJson(ctx: ConsoleContext, tab: ControlledTab | undefi
   try {
     others = await ctx.others.onTab(tab);
   } catch (err) {
-    ctx.out(`[sm-dev] SourceMonkey-managed scripts on ${tabName(tab)} could not be listed: ${firstLine(err)}`);
+    ctx.out(`[sm-dev] ${othersKind(ctx)} on ${tabName(tab)} could not be listed: ${firstLine(err)}`);
     return null;
   }
   const away = ctx.currentOther && !others.includes(ctx.currentOther) ? [ctx.currentOther] : [];
@@ -1562,7 +1751,8 @@ async function statusJson(ctx: ConsoleContext, tab: ControlledTab | undefined): 
     scripts.push({
       ...scriptJson(ctx, script),
       ...(tab ? { menuCommands: fromTab(ctx, tab, reports.menuCommands).filter((r) => r.scriptId === id).length } : {}),
-      values: id ? Object.keys(await ctx.host.valuesOf(id)).length : 0,
+      // Another manager's aren't readable.
+      ...(ctx.predicted ? {} : { values: id ? Object.keys(await ctx.host.valuesOf(id)).length : 0 }),
       errors: errors.length,
       ...(errors.length > 0 ? { lastError: errors.at(-1)!.message } : {}),
     });
@@ -1574,13 +1764,18 @@ async function statusJson(ctx: ConsoleContext, tab: ControlledTab | undefined): 
   const others = await otherScriptsJson(ctx, tab) ?? [];
   let run: J.StatusData['run'];
   if (ctx.runId && ctx.browserInfo) {
-    const extension = await ctx.extension?.() ?? null;
+    const chosen = ctx.managerName ?? DEFAULT_MANAGER;
+    const managers = await ctx.managers?.() ?? null;
     const collection = ctx.testCollection?.();
     run = {
       id: ctx.runId,
       pid: process.pid,
       browser: ctx.browserInfo,
-      ...(extension ? { sourceMonkey: extension } : {}),
+      manager: chosen,
+      ...(managers ? {
+        sourceMonkey: managerState(managers, 'sourcemonkey'),
+        managers: managers.map((m) => ({ manager: m.manager, name: m.name, version: m.version, id: m.id, enabled: m.enabled, userScripts: m.userScripts })),
+      } : {}),
       ...(collection ? { testCollection: collection } : {}),
       ...(ctx.log ? { log: ctx.log } : {}),
       ...(ctx.downloadsDir ? { downloads: ctx.downloadsDir } : {}),
@@ -1613,7 +1808,7 @@ const CLOSE_TIMEOUT_MS = 5000;
 // so a page that asks first ("Leave site?") shows its dialog, which the
 // dialog tracker reports for `accept` (leave) or `dismiss` (stay).
 // `--force` skips them.
-async function closeTabs(ctx: ConsoleContext, words: string[], force: boolean, current: ControlledTab): Promise<void | false> {
+async function closeTabs(ctx: ConsoleContext, words: string[], force: boolean, current: ControlledTab, timeoutMs = CLOSE_TIMEOUT_MS): Promise<void | false> {
   let tabs: ControlledTab[];
   if (words.length === 1 && words[0] === 'all') {
     tabs = ctx.tabs();
@@ -1637,7 +1832,7 @@ async function closeTabs(ctx: ConsoleContext, words: string[], force: boolean, c
   for (const t of waiting) {
     ctx.out(`[sm-dev] ${tabName(t)} is waiting on ${dialogKind(t.dialogs!.current!)} dialog, so it was not closed. Answer it, or use closetab ${tabName(t)} --force.`);
   }
-  await Promise.all(tabs.filter((t) => !waiting.includes(t)).map((t) => closeTab(ctx, t, force)));
+  await Promise.all(tabs.filter((t) => !waiting.includes(t)).map((t) => closeTab(ctx, t, force, timeoutMs)));
   // Says where the page commands act now, if their tab closed.
   currentTab(ctx);
 }
@@ -1645,7 +1840,7 @@ async function closeTabs(ctx: ConsoleContext, words: string[], force: boolean, c
 // Closes one tab for `closetab`, and says if it didn't close: it asked
 // first (its dialog, reported by the tracker, is waiting on an answer),
 // or it didn't close in time.
-async function closeTab(ctx: ConsoleContext, tab: ControlledTab, force: boolean): Promise<void> {
+async function closeTab(ctx: ConsoleContext, tab: ControlledTab, force: boolean, timeoutMs: number): Promise<void> {
   const { page } = tab;
   if (force) {
     // A page stopped on a dialog never finishes closing, so the dialog
@@ -1661,7 +1856,7 @@ async function closeTab(ctx: ConsoleContext, tab: ControlledTab, force: boolean)
   const closedOrLate = new Promise<void>((resolve) => {
     onClose = resolve;
     page.once('close', onClose);
-    timer = setTimeout(resolve, CLOSE_TIMEOUT_MS);
+    timer = setTimeout(resolve, timeoutMs);
   });
   // Watched from before the close, which may open it at once. Its
   // dialog, if it asks, is said by the tracker, along with what accept
@@ -1673,7 +1868,7 @@ async function closeTab(ctx: ConsoleContext, tab: ControlledTab, force: boolean)
   clearTimeout(timer);
   page.off('close', onClose);
   if (!asked && !page.isClosed()) {
-    ctx.out(`[sm-dev] ${tabName(tab)} didn't close within ${CLOSE_TIMEOUT_MS / 1000} seconds. Use closetab --force to close it without running its beforeunload handlers.`);
+    ctx.out(`[sm-dev] ${tabName(tab)} didn't close within ${seconds(timeoutMs)}. Use closetab --force to close it without running its beforeunload handlers.`);
   }
 }
 
@@ -1688,6 +1883,8 @@ async function openNewTab(ctx: ConsoleContext, rest: string[], given: Record<str
   // `--noscript`: a tab the scripts stay out of. `--script` is what a
   // new tab gets anyway.
   const noWait = given['--nowait'] === true;
+  const timeoutMs = timeoutFlagMs(given, ctx.out);
+  if (timeoutMs === null) return false;
   const mode = scriptsMode(ctx, 'newtab', given);
   if (mode === null) return false;
   const noScript = mode === true;
@@ -1700,7 +1897,7 @@ async function openNewTab(ctx: ConsoleContext, rest: string[], given: Record<str
       ctx.out('[sm-dev] ERROR: The newtab command takes all by itself, to open each script\'s page');
       return false;
     }
-    return openScriptPages(ctx, noScript, noWait);
+    return openScriptPages(ctx, noScript, noWait, timeoutMs);
   }
   const tabRef = rest.find((w) => TAB_REF.test(w));
   if (tabRef) {
@@ -1709,14 +1906,14 @@ async function openNewTab(ctx: ConsoleContext, rest: string[], given: Record<str
   }
   const named: PageWord[] = [];
   for (const word of rest.flatMap((w) => expandPathArg(w, cwd))) {
-    const url = pageFor(ctx, word, cwd);
+    const url = await pageFor(ctx, word, cwd);
     if (!url) return false;
     named.push({ word, url });
   }
   const pages = await pagesToOpen(named, flags, cwd);
   const open = async (page?: PageToOpen): Promise<ControlledTab | null> => {
     try {
-      return await ctx.newTab!(page?.url, { noScript, saved: page?.saved });
+      return await ctx.newTab!(page?.url, { noScript, saved: page?.saved, timeoutMs });
     } catch (err) {
       ctx.out(`[sm-dev] The new tab could not be opened: ${(err as Error).message}`);
       return null;
@@ -1728,14 +1925,14 @@ async function openNewTab(ctx: ConsoleContext, rest: string[], given: Record<str
   if (!tab) return;
   ctx.tab = tab;
   await focusTab(tab.page).catch(() => undefined);
-  if (!noWait) await settleTabs(ctx.host, opened, ctx.out);
+  if (!noWait) await settleTabs(ctx.host, opened, ctx.out, timeoutMs);
   ctx.out(`[sm-dev] The page commands now act on ${tabName(tab)} (${tab.page.url()})`);
 }
 
 // `newtab all`: one tab per distinct script page; the scripts with
 // none, or whose tab failed, are listed at the end, after the tabs'
 // own output.
-async function openScriptPages(ctx: ConsoleContext, noScript: boolean, noWait: boolean): Promise<void> {
+async function openScriptPages(ctx: ConsoleContext, noScript: boolean, noWait: boolean, timeoutMs: number | undefined): Promise<void> {
   const pages = new Map<string, PreparedScript[]>();
   const skipped: string[] = [];
   if (ctx.scripts.length === 0) {
@@ -1755,7 +1952,7 @@ async function openScriptPages(ctx: ConsoleContext, noScript: boolean, noWait: b
   const opened: ControlledTab[] = [];
   await Promise.all([...pages].map(async ([url, scripts]) => {
     try {
-      opened.push(await ctx.newTab!(url, { noScript }));
+      opened.push(await ctx.newTab!(url, { noScript, timeoutMs }));
     } catch (err) {
       for (const script of scripts) {
         const i = ctx.scripts.indexOf(script);
@@ -1763,18 +1960,42 @@ async function openScriptPages(ctx: ConsoleContext, noScript: boolean, noWait: b
       }
     }
   }));
-  if (!noWait) await settleTabs(ctx.host, opened, ctx.out);
+  if (!noWait) await settleTabs(ctx.host, opened, ctx.out, timeoutMs);
   for (const line of skipped) if (line) ctx.out(line);
 }
 
-// What `open` and `newtab` take: a script by its number, meaning its
-// default page, or else a URL. A bare number can't be a URL, so the
-// two never overlap.
+// What `open` and `newtab` take: a script by its number, or an
+// installed one by its E-id, meaning its default page, or else a URL. A
+// bare number or `E3` can't be a URL, so they never overlap.
 // `cwd`: where a relative path is, the sender's for a sent command.
-function pageFor(ctx: ConsoleContext, arg: string, cwd: string): string | null {
-  if (!/^\d+$/.test(arg)) return withDefaultScheme(arg, cwd);
+async function pageFor(ctx: ConsoleContext, arg: string, cwd: string): Promise<string | null> {
+  if (OTHER_LABEL.test(arg) && !ownByLabel(ctx, arg)) return installedPage(ctx, arg.toUpperCase());
+  if (!/^\d+$/.test(arg) && !OTHER_LABEL.test(arg)) return withDefaultScheme(arg, cwd);
   const script = pickScript(ctx, arg);
   return script ? scriptPage(ctx, script) : null;
+}
+
+// An installed script's default page, from its `@match`, or null
+// having said why.
+async function installedPage(ctx: ConsoleContext, label: string): Promise<string | null> {
+  if (!ctx.manager) {
+    ctx.out(`[sm-dev] ERROR: ${label} names an installed script, which this run can't look up`);
+    return null;
+  }
+  try {
+    const found = (await ctx.manager.scripts()).find((s) => `E${s.number}` === label);
+    const details = found && await ctx.manager.scriptDetails(found.id);
+    if (!details) {
+      ctx.out(`[sm-dev] ${noSuchScript(label)}`);
+      return null;
+    }
+    const url = representativeMatch({ matches: details.match })?.linkUrl ?? null;
+    if (!url) ctx.out(`[sm-dev] ${label}: ${details.name}: ${NO_DEFAULT_PAGE}. Give a URL instead.`);
+    return url;
+  } catch (err) {
+    ctx.out(`[sm-dev] ${label} could not be looked up: ${firstLine(err)}`);
+    return null;
+  }
 }
 
 function scriptPage(ctx: ConsoleContext, script: PreparedScript): string | null {
@@ -2031,6 +2252,9 @@ function fire(tab: ControlledTab, fired: Promise<boolean>): Promise<boolean> {
 async function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined): Promise<string[]> {
   const { scripts } = ctx;
   const { reports } = ctx.host;
+  // Another manager's say nothing per script, but whether each is
+  // expected on the tab.
+  if (ctx.predicted && tab && scripts.length > 0) return predictedLines(ctx, tab, 'Scripts');
   const lines: string[] = [];
   lines.push(`Scripts${activityHeading(tab)}:`);
   if (scripts.length === 0) lines.push(`  ${NO_SCRIPTS}`);
@@ -2044,7 +2268,7 @@ async function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined):
     }
     if (!tab) {
       // Errors are the script's, from tabs since closed, so still told.
-      const values = id ? Object.keys(await ctx.host.valuesOf(id)).length : 0;
+      const values = await valueCount(ctx, id);
       const errors = reports.errors.filter((r) => r.scriptId === id);
       const counts = [count(values, 'stored value'), count(errors.length, 'error')].filter((c) => !c.startsWith('0 '));
       if (counts.length > 0) lines.push(`${DETAIL}${counts.join(', ')}`);
@@ -2056,7 +2280,7 @@ async function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined):
     const errors = fromTab(ctx, tab, reports.errors).filter((r) => r.scriptId === id);
     const menus = fromTab(ctx, tab, reports.menuCommands).filter((r) => r.scriptId === id).length;
     // Stored values are the script's, shared by every tab.
-    const values = id ? Object.keys(await ctx.host.valuesOf(id)).length : 0;
+    const values = await valueCount(ctx, id);
     // Only the counts that aren't zero, and no line when none is.
     const counts = [count(menus, 'menu command'), count(values, 'stored value'), count(errors.length, 'error')]
       .filter((c) => !c.startsWith('0 '));
@@ -2065,6 +2289,25 @@ async function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined):
     if (last) lines.push(`${DETAIL}Last error: ${last.message}`);
   }
   return lines;
+}
+
+// How many values a run's script has stored: none to count under
+// another manager, which doesn't say.
+async function valueCount(ctx: ConsoleContext, id: string | undefined): Promise<number> {
+  return id && !ctx.predicted ? Object.keys(await ctx.host.valuesOf(id)).length : 0;
+}
+
+// Under another manager, the scripts as two lists: those whose match
+// rules cover `tab`'s page, and the rest. Each list only when it has
+// any.
+function predictedLines(ctx: ConsoleContext, tab: ControlledTab, heading: string): string[] {
+  const expected = ctx.scripts.filter((s) => activeOn(ctx, tab, s.id));
+  const rest = ctx.scripts.filter((s) => !expected.includes(s));
+  return [
+    `${heading}:`,
+    ...(expected.length > 0 ? [`  Expected on tab ${tabName(tab)} using match rules:`, ...expected.map((s) => `  ${scriptRow(ctx, s)}`)] : []),
+    ...(rest.length > 0 ? [`  Not expected on tab ${tabName(tab)}:`, ...rest.map((s) => `  ${scriptRow(ctx, s)}`)] : []),
+  ];
 }
 
 // Under a `scriptRow`, lined up with the script's name (`* 1: `) when
@@ -2120,13 +2363,13 @@ async function pickOther(ctx: ConsoleContext, label: string, tab: ControlledTab 
     try {
       await ctx.others.onTab(tab);
     } catch (err) {
-      ctx.out(`[sm-dev] SourceMonkey-managed scripts on ${tabName(tab)} could not be listed: ${firstLine(err)}`);
+      ctx.out(`[sm-dev] ${othersKind(ctx)} on ${tabName(tab)} could not be listed: ${firstLine(err)}`);
       return null;
     }
   }
   // Not on the tab's page: any installed script can still be picked.
   const found = ctx.others.byLabel(name) ?? await installedOther(ctx, name);
-  if (!found) ctx.out(`[sm-dev] There is no script ${name}. Use script list to list the installed scripts.`);
+  if (!found) ctx.out(`[sm-dev] ${noSuchScript(name)}`);
   return found;
 }
 
@@ -2160,6 +2403,8 @@ const OTHER_STATUS: Record<string, string> = {
   UNEXPECTED: 'Running, though it doesn\'t match',
   RELOAD: 'Changed since it started',
   NOT_LOADED: 'SourceMonkey script not loaded in sm-dev tab',
+  // Another manager's, by its match rules (`predicted`).
+  EXPECTED: 'Expected using match rules',
 };
 
 // `E1: Name (Collection)`, without the parentheses for a script whose
@@ -2168,23 +2413,28 @@ function otherLabel(o: OtherScript): string {
   return `${o.label}: ${o.name}${o.collection ? ` (${o.collection})` : ''}`;
 }
 
-// SourceMonkey-managed scripts on `tab`, for `scripts` and `status`.
-// None when there are none.
+// How the other scripts' list is headed.
+function othersKind(ctx: ConsoleContext): string {
+  return ctx.others?.kind ?? 'SourceMonkey-managed scripts';
+}
+
+// SourceMonkey-managed scripts on `tab`, for `scripts` and `status`, or
+// another manager's. None when there are none.
 async function otherLines(ctx: ConsoleContext, tab: ControlledTab | undefined): Promise<string[]> {
   if (!ctx.others) return [];
   // With no tab, only the picked one, which is on no page.
-  if (!tab) return ctx.currentOther ? ['SourceMonkey-managed scripts:', `* ${otherLabel(ctx.currentOther)}: No tab is open`] : [];
+  if (!tab) return ctx.currentOther ? [`${othersKind(ctx)}:`, `* ${otherLabel(ctx.currentOther)}: No tab is open`] : [];
   let others: OtherScript[];
   try {
     others = await ctx.others.onTab(tab);
   } catch (err) {
-    return [`[sm-dev] SourceMonkey-managed scripts on ${tabName(tab)} could not be listed: ${firstLine(err)}`];
+    return [`[sm-dev] ${othersKind(ctx)} on ${tabName(tab)} could not be listed: ${firstLine(err)}`];
   }
   // The picked one, when it isn't on this page.
   const away = ctx.currentOther && !others.includes(ctx.currentOther) ? ctx.currentOther : undefined;
   if (others.length === 0 && !away) return [];
   return [
-    `SourceMonkey-managed scripts on ${tabName(tab)}:`,
+    `${othersKind(ctx)} on ${tabName(tab)}:`,
     // By label: each listing gets the scripts afresh.
     ...others.map((o) => `${o.label === ctx.currentOther?.label ? '* ' : '  '}${otherLabel(o)}: ${OTHER_STATUS[o.status] ?? o.status}`),
     ...(away ? [`* ${otherLabel(away)}: Not on this page`] : []),

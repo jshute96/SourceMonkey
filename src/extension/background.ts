@@ -214,6 +214,7 @@ import {
 import {
   SKIP_REASON_SM_DEV, SM_DEV_PROTOCOL, type ManagedCollection, type ManagedScript, type ProtocolVersion,
 } from '../sm-dev-protocol.js';
+import { managedChanges } from './managed-changes.js';
 import { managedCollection, managedScripts } from './managed-items.js';
 import {
   applyBatchValues,
@@ -323,6 +324,9 @@ interface SourceMonkeyApi {
   // first so a collection or script added a moment ago has its number.
   managedCollections: () => Promise<ManagedCollection[]>;
   managedScripts: () => Promise<ManagedScript[]>;
+  // sm-dev's changes to collections and installed scripts, and `script
+  // show` / `script print` (protocol 1.5, managed-changes.ts).
+  managed: ReturnType<typeof managedChanges>;
   // ---- E2E test surface ----
   //
   // These methods exist so Playwright tests can drive the extension via
@@ -636,6 +640,10 @@ const api: SourceMonkeyApi = {
     }));
     return managedScripts(await getCollections(), scripts, numbers, sources);
   },
+  managed: managedChanges(async () => {
+    const numbers = await assignAllNumbers();
+    return { scripts: numbers.scripts.byId, collections: numbers.collections.byId };
+  }),
   addCollection,
   createCollection,
   installScript,

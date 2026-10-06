@@ -122,7 +122,7 @@ test('click and hover take --at, and hover --modifiers but no click-only flags',
     selector: 'img', click: { modifiers: ['Alt'], position: { x: 4, y: 4 } }, how: ['Alt held', 'the mouse at 4,4 in it'],
   });
   assert.equal(hover('img --count 2'),
-    'The hover command has no --count flag. It takes --modifiers, --at, --nowait.');
+    'The hover command has no --count flag. It takes --modifiers, --at, --nowait, --timeout-seconds.');
 });
 
 test('a timed-out action says which check its element kept failing', () => {

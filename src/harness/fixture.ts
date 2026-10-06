@@ -35,6 +35,7 @@ import type { ConnectChoice, HostReports, SkipReport, ErrorReport, StartReport, 
 import { attachPage, type PageAttachment } from './page-watch.js';
 import {
   prepareScript,
+  scriptRoots,
   pushedFiles,
   NO_RULE_COVERS_URL,
   explainMatch,
@@ -217,8 +218,8 @@ export const test = base.extend<HarnessFixtures & InternalFixtures>({
     await use(async (file, options = {}) => {
       const { values, url, ...prepareOptions } = options;
       const abs = path.isAbsolute(file) ? file : path.resolve(testInfo.config.rootDir, file);
-      const collectionRoot = prepareOptions.collectionRoot ?? testInfo.config.rootDir;
-      const prepared = await prepareScript({ ...prepareOptions, file: abs, collectionRoot });
+      const { collectionRoot, localRoots } = scriptRoots(abs, prepareOptions.collectionRoot ?? testInfo.config.rootDir, prepareOptions.localRoots);
+      const prepared = await prepareScript({ ...prepareOptions, file: abs, collectionRoot, localRoots });
       if (prepared.status !== 'ok' || !prepared.id) {
         throw new Error(`This file cannot be loaded: ${prepared.diagnostic}`);
       }

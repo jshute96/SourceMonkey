@@ -19,10 +19,13 @@ import {
 } from './console-commands.js';
 import { applyLang, langLaunchArgs } from './browser-lang.js';
 import { watchDownloads, type DownloadWatch } from './download-watch.js';
-import { extensionLabel, sourceMonkeyState, type ExtensionState } from './extension-backend.js';
+import { managerState, managersIn, otherManagersWarning, stateLabel, type ManagerState } from './browser-extensions.js';
 import { ExtensionHost } from './extension-host.js';
 import { launchExtensionBrowser } from './extension-launch.js';
+import { fetchManager, fetchedVersion } from './manager-fetch.js';
+import { DEFAULT_MANAGER, MANAGERS, managerFlag, type ManagerName } from './managers.js';
 import { ExtensionLink, linkRunId, type ExtensionEvent } from './extension-link.js';
+import { ExternalRunScripts, externalControl, externalOff, externalOthers, openExternalManager, type ExternalManager } from './external-manager.js';
 import type { ErrorReport, PageLink, SkipReport, StartReport } from './host.js';
 import { attachPage, targetIdOf, type AttachOptions, type PageAttachment } from './page-watch.js';
 import { pageSays } from './page-commands.js';
@@ -83,7 +86,7 @@ export interface RunOptions extends ConnectOptions {
    * stream shows when its source is one it shows. Set by `run`.
    */
   emit?: (fields: LogFields) => void;
-  /** Resolves when the run should end (stop, a signal, --seconds). Omit to return after the first load. */
+  /** Resolves when the run should end (stop, a signal, --stop-after-seconds). Omit to return after the first load. */
   until?: Promise<void>;
   /** Called when a client's `stop` asks for the run to end. */
   onStop?: () => void;
@@ -97,7 +100,7 @@ export interface RunOptions extends ConnectOptions {
   onReady?: (id: string | undefined) => void;
   /**
    * Called as each sent command starts and ends, and as clients start and
-   * stop following the run, for `--idle-seconds` to count from. `watched`:
+   * stop following the run, for `--stop-after-idle-seconds` to count from. `watched`:
    * whether a client follows the run now, which keeps it from going idle.
    */
   onActivity?: (watched: boolean) => void;
@@ -111,6 +114,8 @@ export interface RunOptions extends ConnectOptions {
   primaryPid?: number;
   /** Don't wait for the tabs to settle before taking commands (`--nowait`). */
   noWait?: boolean;
+  /** `start --timeout-seconds`, in ms: each first load, and the settling after. */
+  timeoutMs?: number;
 }
 
 // How the browser commands reach a browser: connect to one over CDP
@@ -118,6 +123,11 @@ export interface RunOptions extends ConnectOptions {
 // a fresh Chromium (`--temp-browser`).
 export interface ConnectOptions {
   cdp?: string;
+  /**
+   * `--manager`: the userscript manager the run works with, and a
+   * `tempBrowser` loads. SourceMonkey when not given.
+   */
+  manager?: ManagerName;
   /**
    * `--temp-browser`: launch a Chromium of the run's own instead, with
    * the package's own build of SourceMonkey loaded.
@@ -131,7 +141,7 @@ export interface ConnectOptions {
    * A `tempBrowser` is launched with them too.
    */
   lang?: string[];
-  /** Resolves to give up connecting (--seconds): ends a wait for tabs that don't answer. */
+  /** Resolves to give up connecting (--stop-after-seconds): ends a wait for tabs that don't answer. */
   until?: Promise<void>;
   /** The run's log file, which a `tempBrowser`'s downloads folder is named after. */
   log?: string;
@@ -162,10 +172,27 @@ export function sameBrowser(a: string, b: string): boolean {
   return key(a) === key(b);
 }
 
-// `--browser`, else $SM_DEV_BROWSER, else port 9233. Empty counts as
-// unset, so an exported-but-blank variable doesn't become `http://`.
+/**
+ * The browser to use: `--browser` (`given`), else $SM_DEV_BROWSER, else
+ * port 9233. Empty counts as unset, so an exported-but-blank variable
+ * doesn't become `http://`.
+ */
+export function browserSetting(given?: string): string {
+  return cdpEndpoint(given?.trim() || process.env.SM_DEV_BROWSER?.trim() || '9233');
+}
+
 function cdpSetting(opts: ConnectOptions): string {
-  return cdpEndpoint(opts.cdp?.trim() || process.env.SM_DEV_BROWSER?.trim() || '9233');
+  return browserSetting(opts.cdp);
+}
+
+/**
+ * ` --browser <address>`, for advice to run a command against the
+ * browser at `endpoint`, unless that's where commands go anyway. Empty
+ * for a launched one (`launched`), which closes with the run.
+ */
+export function browserArg(endpoint: string, launched = false): string {
+  if (launched || sameBrowser(endpoint, browserSetting())) return '';
+  return ` --browser ${endpoint.replace(/^https?:\/\//, '')}`;
 }
 
 /**
@@ -265,10 +292,14 @@ async function openBrowser(
   if (opts.tempBrowser) {
     let launched;
     downloadsDir = runDownloadsDir(opts.log);
+    const manager = opts.manager ?? DEFAULT_MANAGER;
+    const { label } = MANAGERS[manager];
     try {
-      launched = await launchExtensionBrowser({ headed: opts.headed === true, muted: opts.muted, args: langLaunchArgs(opts.lang), connectedElsewhere: true, downloadsDir });
+      // Fetched the first time it's wanted, as `manager fetch` would.
+      if (manager !== 'sourcemonkey' && fetchedVersion(manager) === null) await fetchManager(manager, out);
+      launched = await launchExtensionBrowser({ headed: opts.headed === true, muted: opts.muted, args: langLaunchArgs(opts.lang), connectedElsewhere: true, downloadsDir, manager });
     } catch (err) {
-      out(`Could not launch a browser with SourceMonkey: ${(err as Error).message}`);
+      out(`Could not launch a browser with ${label}: ${(err as Error).message}`);
       return null;
     }
     closeLaunched = launched.close;
@@ -276,7 +307,7 @@ async function openBrowser(
       browser = await chromium.connectOverCDP(launched.endpoint);
     } catch (err) {
       await launched.close();
-      out(`Could not connect to the browser launched with SourceMonkey: ${(err as Error).message}`);
+      out(`Could not connect to the browser launched with ${label}: ${(err as Error).message}`);
       return null;
     }
     launchedAt = launched.endpoint;
@@ -555,20 +586,24 @@ export async function run(opts: RunOptions): Promise<number> {
   if (!session) return 1;
   // Which browser, for the stream and the log.
   const browserIs = { browser: session.endpoint, owned: session.launched, headless: session.headless };
-  const extensionState = await sourceMonkeyState(session.endpoint);
-  const extension = extensionLabel(extensionState);
+  const manager = opts.manager ?? DEFAULT_MANAGER;
+  const managers = await managersIn(session.endpoint);
+  const state = managers ? managerState(managers, manager) : null;
+  const extension = state ? stateLabel(state, manager) : '';
   opts.out(`[sm-dev] ${capitalized(browserSentence(browserIs, session.launched ? 'launched' : 'connected to'))} (Chrome ${session.browser.version()}${extension ? `, ${extension}` : ''})`);
+  for (const line of otherManagersWarning(managers ?? [], manager, browserArg(session.endpoint, session.launched))) opts.out(`[sm-dev] ${line}`);
   session.notes.forEach(opts.out);
   opts.onConnected?.();
   // Only a run that waits for commands can be sent any.
   if (opts.until) {
     await remote.open({
       pid: process.pid,
-      started: Date.now(),
+      started: remote.startedAt,
       browser: session.endpoint,
       ...(session.launched ? { owned: true } : {}),
       ...(session.headless ? { headless: true } : {}),
       scripts: opts.files,
+      ...(manager !== DEFAULT_MANAGER ? { manager } : {}),
       ...(opts.detached ? { detached: true } : {}),
       ...(opts.log ? { log: opts.log } : {}),
     }, opts.runId);
@@ -585,7 +620,7 @@ export async function run(opts: RunOptions): Promise<number> {
   });
   const held: Held = {};
   try {
-    return await runInBrowser(opts, session, held, remote, extensionState);
+    return await runInBrowser(opts, session, held, remote, state);
   } finally {
     ending = true;
     // No sent command runs against tabs being let go.
@@ -598,6 +633,14 @@ export async function run(opts: RunOptions): Promise<number> {
     // Its tabs run the extension's scripts again from their next load,
     // and the extension removes its test collection.
     await held.extension?.close();
+    if (held.external) {
+      // Not from a browser that's gone: a throwaway one takes them with
+      // it, and the next run in a person's own removes them as it starts.
+      if (!session.launched && session.browser.isConnected()) {
+        await held.external.scripts.removeAll().catch((err) => opts.out(`[sm-dev] The run's scripts could not be removed from ${held.external!.manager.label}: ${(err as Error).message}`));
+      }
+      await held.external.manager.close().catch(() => undefined);
+    }
     await session.done().catch(() => undefined);
     // On every way out, so a page tested after this is never taken
     // for one the run still controls. Its registrations are gone, but
@@ -640,6 +683,8 @@ class Remote {
   private readonly listeners = new Map<(line: string) => void, ReadonlySet<LogSource> | undefined>();
   /** The run's log lines, for `logs` and `wait log`. */
   readonly logs = new RunLog();
+  /** When the run started, in epoch ms, as its record says. */
+  readonly startedAt = Date.now();
 
   // The run's stream is its log, and every command comes from a
   // client, so a command that changes something is marked there as
@@ -812,8 +857,8 @@ async function runInBrowser(
   session: RunSession,
   held: Held,
   remote: Remote,
-  // Whether the browser has SourceMonkey, as the run's first line says.
-  extensionState: ExtensionState | null,
+  // Whether the browser has the run's manager, as the run's first line says.
+  managerNow: ManagerState | null,
 ): Promise<number> {
   const { page } = session;
   // The real extension runs the scripts: the run pushes them into it,
@@ -822,13 +867,45 @@ async function runInBrowser(
   // docs/sm-dev-design.md.
   // Told apart up front: its worker can't be found either, which would
   // read as not installed.
-  if (extensionState === 'disabled') {
-    opts.out('[sm-dev] SourceMonkey is turned off in this browser. Turn it on in chrome://extensions, or use --temp-browser, which loads it.');
+  const manager = opts.manager ?? DEFAULT_MANAGER;
+  const { label } = MANAGERS[manager];
+  if (manager === 'sourcemonkey' && managerNow === 'disabled') {
+    opts.out(`[sm-dev] SourceMonkey is turned off in this browser. Turn it on with sm-dev${browserArg(session.endpoint, session.launched)} manager enable, or use --temp-browser, which loads it.`);
     return 1;
   }
+  // Under another manager, the manager runs every script it has, and
+  // the run's tabs are plain browser tabs. The run's scripts go into
+  // it too (external-manager.ts).
+  if (manager !== 'sourcemonkey' && managerNow !== 'installed' && managerNow !== null) {
+    const fix = managerNow === 'disabled' ? 'manager enable' : 'manager install';
+    opts.out(`[sm-dev] ${label} is ${managerNow === 'disabled' ? 'turned off' : 'not installed'} in this browser. Use sm-dev${browserArg(session.endpoint, session.launched)} ${managerFlag(manager)} ${fix}.`);
+    if (opts.files.length > 0) return 1;
+  }
+  if (manager !== 'sourcemonkey' && (managerNow === 'installed' || managerNow === null)) {
+    let opened: ExternalManager;
+    try {
+      opened = await openExternalManager(manager, session.endpoint, browserArg(session.endpoint, session.launched));
+    } catch (err) {
+      opts.out(`[sm-dev] ${(err as Error).message}`);
+      return 1;
+    }
+    const scripts = new ExternalRunScripts(opened, { id: remote.id ?? 'unnamed', started: new Date(remote.startedAt).toISOString() });
+    held.external = { manager: opened, scripts };
+    try {
+      // A throwaway browser's settings are the run's own, so local
+      // test pages run scripts, as under SourceMonkey.
+      if (session.launched) await opened.allowFilePages();
+      for (const line of await scripts.removeLeftovers()) opts.out(`[sm-dev] ${line}`);
+    } catch (err) {
+      opts.out(`[sm-dev] ${(err as Error).message}`);
+      return 1;
+    }
+  }
+  const external = held.external;
   let link: ExtensionLink;
   try {
-    link = await ExtensionLink.open(session.context, linkRunId(remote.id));
+    link = manager === 'sourcemonkey' ? await ExtensionLink.open(session.context, linkRunId(remote.id))
+      : ExtensionLink.without(session.context, linkRunId(remote.id), runUses(manager));
   } catch (err) {
     opts.out(`[sm-dev] ${(err as Error).message}`);
     return 1;
@@ -839,6 +916,16 @@ async function runInBrowser(
   const host = new ExtensionHost(link, ({ scriptId, name, level, message, page }) => opts.emit!({
     source: 'sm', kind: level, scriptId, tab: page && tabs.numberOf(page), text: `${name}: ${message}`,
   }));
+  if (external) {
+    host.external = {
+      idOf: (url) => {
+        const id = external.manager.scriptIdOf(url);
+        return id === undefined ? undefined : String(id);
+      },
+      prefix: external.manager.scriptUrlPrefix,
+      ...(external.manager.remapStack ? { remap: (text: string) => external.manager.remapStack!(text) } : {}),
+    };
+  }
   link.onRestart((restored) => {
     opts.out('[sm-dev] SourceMonkey\'s background script restarted, so what the scripts did meanwhile may be missing here, apart from their Log entries, which are read back.'
       + (restored > 0 ? ` It had lost its hold on ${restored === 1 ? 'one of the run\'s tabs' : `${restored} of the run's tabs`}, which it has again.` : ''));
@@ -907,6 +994,23 @@ async function runInBrowser(
       // typed to start or load, so files of the same name stay apart.
       const name = typedName(opts, file);
       const text = await readFile(file, 'utf8');
+      if (manager !== 'sourcemonkey' && !external) {
+        opts.out(`[sm-dev] ${label} was not on in this browser when the run started, so the run can't load scripts into it. Start a new run once it's on.`);
+        return false;
+      }
+      if (external) {
+        let installed: { id: number; replaced: boolean };
+        try {
+          installed = await external.scripts.push(script, text);
+        } catch (err) {
+          opts.out(`[sm-dev] ${name} could not be loaded into ${label}: ${(err as Error).message}`);
+          return false;
+        }
+        pushedAny = true;
+        host.setPushed(script.id!, String(installed.id));
+        opts.out(`[sm-dev] Installed in ${label} as E${installed.id}: ${preparedScriptPath(script)}${installed.replaced ? ' (replaced)' : ''}`);
+        continue;
+      }
       const result = await link.push(text, name, pushedFiles(script), script.script.fileUrl);
       pushedAny = true;
       if (result.status !== 'ok') {
@@ -922,7 +1026,8 @@ async function runInBrowser(
     return true;
   };
   // Put `next` in place everywhere, and reload the tabs `changed` affects.
-  const apply = async (next: PreparedScript[], changed: ScriptChange[], none: string, pushed = false): Promise<void> => {
+  // `timeoutMs`: each reload's, from the command's --timeout-seconds.
+  const apply = async (next: PreparedScript[], changed: ScriptChange[], none: string, pushed = false, timeoutMs?: number): Promise<void> => {
     if (!pushed && !(await push(changed.map((c) => c.next)))) return;
     scripts = next;
     // The typed commands' list too, keeping the selected script by its place.
@@ -938,13 +1043,13 @@ async function runInBrowser(
     } catch (err) {
       opts.out(`[sm-dev] The files could not be watched: ${(err as Error).message}`);
     }
-    await tabs.apply(next, changed, none);
+    await tabs.apply(next, changed, none, timeoutMs);
   };
   // `update`, and a `--watch` save: re-read the scripts at `which`
   // (every one, when not given) whose files have been modified since
   // they were read; a touch counts. One that no longer prepares leaves
   // every one as it was.
-  const update = (which?: number[]): Promise<void> => serial(async () => {
+  const update = (which?: number[], timeoutMs?: number): Promise<void> => serial(async () => {
     const indices = which ?? scripts.map((_, i) => i);
     const next = [...scripts];
     const changed: ScriptChange[] = [];
@@ -964,9 +1069,9 @@ async function runInBrowser(
         : '[sm-dev] No script has changed on disk, so nothing was reloaded');
       return;
     }
-    await apply(next, changed, 'No open tab runs or matches the updated scripts, so none was reloaded');
+    await apply(next, changed, 'No open tab runs or matches the updated scripts, so none was reloaded', false, timeoutMs);
   });
-  const load = (input: string): Promise<void> => serial(async () => {
+  const load = (input: string, timeoutMs?: number): Promise<void> => serial(async () => {
     const file = path.resolve(input);
     const info = await stat(file).catch(() => null);
     if (!info) {
@@ -994,7 +1099,7 @@ async function runInBrowser(
     remote.setScripts(files);
     stamps.set(script, await filesStamp(script));
     opts.out(`[sm-dev] Loaded ${input} as script ${n}`);
-    await apply([...scripts, script], [{ next: script }], `No open tab matches it, so none was reloaded. Use open ${n} to open its page.`, true);
+    await apply([...scripts, script], [{ next: script }], `No open tab matches it, so none was reloaded. Use open ${n} to open its page.`, true, timeoutMs);
   });
   // Seeded once, as pushed. An update keeps the store, so values the
   // script wrote since survive it.
@@ -1023,8 +1128,8 @@ async function runInBrowser(
     if (t1) tabs.announce(t1, urls[0]);
     for (const { tab, url } of opened) tabs.announce(tab, url);
     await Promise.all([
-      ...(t1 && urls[0] ? [tabs.navigate(t1, urls[0])] : []),
-      ...opened.map(({ tab, url }) => tabs.navigate(tab, url)),
+      ...(t1 && urls[0] ? [tabs.navigate(t1, urls[0], opts.timeoutMs)] : []),
+      ...opened.map(({ tab, url }) => tabs.navigate(tab, url, opts.timeoutMs)),
     ]);
     printSkipped(opts, start);
   } else {
@@ -1051,7 +1156,7 @@ async function runInBrowser(
       if (prepared.length > 0 && page) await waitForReports(host, tabs.list());
       // Then for the tabs to settle (see wait.ts), so the first command,
       // or `--detach`'s return, sees the page as its scripts left it.
-      if (!opts.noWait) await settleTabs(host, tabs.list(), opts.out);
+      if (!opts.noWait) await settleTabs(host, tabs.list(), opts.out, opts.timeoutMs);
       const ctx: ConsoleContext = {
         host,
         tabs: () => tabs.list(),
@@ -1063,7 +1168,7 @@ async function runInBrowser(
         setTabScripts: (tab, noScript) => serial(() => tabs.setNoScript(tab, noScript)),
         loadScript: load,
         // By place, so an update queued behind another still finds them.
-        updateScripts: (which) => update(which?.map((s) => scripts.indexOf(s)).filter((i) => i >= 0)),
+        updateScripts: (which, timeoutMs) => update(which?.map((s) => scripts.indexOf(s)).filter((i) => i >= 0), timeoutMs),
         scripts,
         out: opts.out,
         stop: () => opts.onStop?.(),
@@ -1072,15 +1177,26 @@ async function runInBrowser(
         ...(session.downloadsDir ? { downloadsDir: session.downloadsDir } : {}),
         browser: browserSentence({ browser: session.endpoint, owned: session.launched, headless: session.headless }),
         browserInfo: { address: session.endpoint.replace(/^https?:\/\//, ''), owned: session.launched === true, headless: session.headless === true },
-        testCollection: () => (pushedAny ? link.runId : undefined),
-        extension: () => sourceMonkeyState(session.endpoint),
+        testCollection: () => (pushedAny && !external ? link.runId : undefined),
+        managerName: manager,
+        browserArg: browserArg(session.endpoint, session.launched),
+        managers: () => managersIn(session.endpoint),
         // The first push makes the test collection.
-        backend: () => (pushedAny
-          ? `SourceMonkey extension, test collection ${link.runId}`
-          : `SourceMonkey extension, run ${link.runId}, with no test collection until a script is pushed`),
-        // A throwaway browser's data is the run's own.
-        others: host.otherScripts(!session.launched),
-        manager: link.manager,
+        backend: () => (external ? `${label} ${external.manager.version}, with the run's scripts installed in it until the run ends`
+          : manager !== 'sourcemonkey' ? `${label}, which the run loads no scripts into`
+          : pushedAny
+            ? `SourceMonkey extension, test collection ${link.runId}`
+            : `SourceMonkey extension, run ${link.runId}, with no test collection until a script is pushed`),
+        // A throwaway browser's data is the run's own. Under another
+        // manager, there's no SourceMonkey to list.
+        ...(manager === 'sourcemonkey' ? { others: host.otherScripts(!session.launched), manager: link.manager }
+          : external ? {
+            others: externalOthers(external.manager, () => new Set(scripts.flatMap((p) => (p.id ? [host.extensionIdOf(p.id)] : []))), !session.launched),
+            manager: externalControl(external.manager),
+            // Nothing reports what ran, so the run's scripts' rules say.
+            predicted: true,
+            predictedOff: externalOff(external.manager),
+          } : {}),
         extensionIdOf: (script) => (script.id === undefined ? undefined : host.extensionIdOf(script.id)),
         logs: remote.logs,
         roots: { collectionRoot: opts.collectionRoot, localRoots: opts.localRoots },
@@ -1126,6 +1242,8 @@ interface Held {
   downloads?: DownloadWatch;
   /** The run's connection to SourceMonkey, released at its end. */
   extension?: ExtensionLink;
+  /** Under another manager: the manager, and the run's scripts in it, removed at its end. */
+  external?: { manager: ExternalManager; scripts: ExternalRunScripts };
 }
 
 // The run's tabs: T1, the tabs `newtab` and `--all` open, and the tabs
@@ -1230,7 +1348,7 @@ class FollowedTabs {
    * once, so one slow page holds up no other. `none` is what to say
    * when no tab is affected.
    */
-  async apply(next: PreparedScript[], changed: ScriptChange[], none: string): Promise<void> {
+  async apply(next: PreparedScript[], changed: ScriptChange[], none: string, timeoutMs?: number): Promise<void> {
     this.scripts = next;
     const open = this.open();
     const affected = open.filter(({ tab }) => changed.some((c) =>
@@ -1257,7 +1375,7 @@ class FollowedTabs {
         if (!tab.page.isClosed()) this.opts.out(`[sm-dev] T${tab.n} could not be updated: ${(err as Error).message}`);
         return;
       }
-      if (reload.includes(tab)) await reloadTab(tab, this.host, this.opts.out);
+      if (reload.includes(tab)) await reloadTab(tab, this.host, this.opts.out, timeoutMs);
     }));
   }
 
@@ -1303,11 +1421,11 @@ class FollowedTabs {
    * tabs the page opens. `noScript`: one the scripts stay out of, for
    * `newtab --noscript`.
    */
-  async newTab(url?: string, { noScript = false, saved }: { noScript?: boolean; saved?: SavedPageStart } = {}): Promise<ControlledTab> {
+  async newTab(url?: string, { noScript = false, saved, timeoutMs }: { noScript?: boolean; saved?: SavedPageStart; timeoutMs?: number } = {}): Promise<ControlledTab> {
     const tab = await this.createTab(noScript);
     if (saved) await serveSavedPage(tab, saved, this.opts.out, noScript || this.scripts.length === 0);
     this.announce(tab, url);
-    if (url) await this.navigate(tab, url);
+    if (url) await this.navigate(tab, url, timeoutMs);
     return tab;
   }
 
@@ -1352,8 +1470,8 @@ class FollowedTabs {
       : `[sm-dev] Opening ${url} in T${tab.n}${targetIdSuffix(tab.targetId)}`);
   }
 
-  async navigate(tab: ControlledTab, url: string): Promise<void> {
-    await gotoInTab(tab, this.host, url, this.opts.out);
+  async navigate(tab: ControlledTab, url: string, timeoutMs?: number): Promise<void> {
+    await gotoInTab(tab, this.host, url, this.opts.out, timeoutMs);
   }
 
   private track(work: Promise<unknown>): void {
@@ -1672,7 +1790,9 @@ function tabOutput(out: (line: string) => void, n: number): (line: string) => vo
 function wirePageOutput(page: Page, n: number, emit: (fields: LogFields) => void, host: ExtensionHost, extensionOrigin: string): void {
   // Given up on after a while, so a session that never opens (a hung tab,
   // a slow remote browser) can't hold up the tab's lines for good.
-  const stacks = Promise.race([ConsoleStacks.attach(page, extensionOrigin), sleep(STACKS_ATTACH_MS).then(() => null)]);
+  // Under another manager, its worlds are the scripts'.
+  const origin = host.external ? host.external.prefix.replace(/\/$/, '') : extensionOrigin;
+  const stacks = Promise.race([ConsoleStacks.attach(page, origin), sleep(STACKS_ATTACH_MS).then(() => null)]);
   const log = (msg: ConsoleMessage, text: string, call: ConsoleCall | null): void => {
     const body = decodeOwnRefs(host.remapStack(text));
     // SourceMonkey's own console lines repeat what the run logs from its
@@ -1683,7 +1803,7 @@ function wirePageOutput(page: Page, n: number, emit: (fields: LogFields) => void
     }
     const url = msg.location().url;
     const frames = call?.frames ?? [];
-    const source = consoleSource({ type: msg.type(), text: body, url, frames, extensionWorld: call?.extensionWorld, argCount: msg.args().length });
+    const source = consoleSource({ type: msg.type(), text: body, url, frames, extensionWorld: call?.extensionWorld, argCount: msg.args().length }, host.external?.prefix);
     emit({ source, ...SCRIPT_IN_PAGE[source], kind: msg.type(), tab: n, scriptId: source === 'script' ? host.scriptOf([url, ...frames]) : undefined, text: body });
   };
   // In order: a line that logs a DOM node is described from the page,
@@ -1716,7 +1836,8 @@ function wirePageOutput(page: Page, n: number, emit: (fields: LogFields) => void
   // message is printed anyway.
   page.on('pageerror', (err) => {
     const stack = err.stack ?? err.message;
-    const source = pageErrorSource(stack, true);
+    // Another manager reports no errors, so each is the page's to show.
+    const source = pageErrorSource(stack, !host.external, host.external?.prefix);
     if (!source) return;
     emit({ source, ...SCRIPT_IN_PAGE[source], kind: 'error', tab: n, scriptId: source === 'script' ? host.scriptOf([stack]) : undefined, text: decodeOwnRefs(err.message) });
   });
@@ -1881,4 +2002,12 @@ function watchFiles(
   const count = watcher.watch(prepared);
   opts.out(`[sm-dev] Watching ${count} file(s). Press Ctrl-C to stop.`);
   return watcher;
+}
+
+/**
+ * What a call into SourceMonkey throws in a run under another manager,
+ * which has no SourceMonkey to call.
+ */
+export function runUses(manager: ManagerName): string {
+  return `This needs SourceMonkey, and the run uses ${MANAGERS[manager].label} (${managerFlag(manager)})`;
 }

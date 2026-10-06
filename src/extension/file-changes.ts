@@ -17,6 +17,7 @@
 
 import {
   baseName,
+  collectionCanonicalUrl,
   isFileUrl,
   isLocalDirectoryCollection,
   isManifestCollection,
@@ -26,6 +27,7 @@ import {
   type DirectoryListingCache,
 } from '../file-locations.js';
 import { dlog } from '../debug-log.js';
+import { pendingSummary, type PendingOnDisk } from '../script-display.js';
 import type { StoredScript } from '../script-build.js';
 
 // What the disk says about a file the page names, against what the
@@ -362,26 +364,48 @@ export function standInTag(
   return tag;
 }
 
-// The tooltip of a collection's "refresh pending" chip: what its
-// directory holds that its rows don't, and what to do. Empty when
-// nothing differs. Counts per kind, because each is a different thing
-// for the user to go and check.
-export function refreshPendingHint(counts: {
-  modified: number;
-  deleted: number;
-  added: number;
-  // The collection's manifest file itself has changed.
-  manifest?: boolean;
-}): string {
-  const files = (n: number) => `${n} ${n === 1 ? 'file' : 'files'}`;
-  const parts: string[] = [];
-  if (counts.manifest) parts.push('the manifest changed');
-  if (counts.modified > 0) parts.push(`${files(counts.modified)} modified`);
-  if (counts.deleted > 0) parts.push(`${files(counts.deleted)} deleted`);
-  if (counts.added > 0) parts.push(`${counts.added} new ${counts.added === 1 ? 'file' : 'files'}`);
-  if (parts.length === 0) return '';
-  const text = parts.join(', ');
-  return `${text[0].toUpperCase()}${text.slice(1)} on disk. Refresh to load.`;
+// Counts a directory or `file://` manifest collection's changes on
+// disk: its rows' probed `files`, plus the new files a directory holds,
+// or whether the manifest file changed (`manifest`: its path and the
+// stat its last scan recorded). Null for any other collection.
+export async function pendingOnDisk(
+  collectionPath: string,
+  manifest: FileToProbe | null,
+  files: readonly { fsPath: string; state: FileState | undefined }[],
+  maxAgeMs = 0,
+): Promise<PendingOnDisk | null> {
+  const isDirectory = isLocalDirectoryCollection(collectionPath);
+  if (!isDirectory && !(isManifestCollection(collectionPath) && manifest)) return null;
+  const counts: PendingOnDisk = { modified: 0, deleted: 0, added: 0 };
+  for (const f of files) {
+    if (f.state === 'missing') counts.deleted += 1;
+    else if (f.state === 'modified') counts.modified += 1;
+  }
+  if (isDirectory) {
+    const root = locationFsPath(collectionPath).replace(/\/+$/, '');
+    const known = files.map((f) => f.fsPath.slice(root.length + 1));
+    counts.added = (await newScriptFiles(collectionPath, known, maxAgeMs)).length;
+  } else {
+    const [state] = await probeFiles([manifest!], maxAgeMs);
+    if (state === 'modified') counts.manifest = true;
+  }
+  return counts;
+}
+
+// The manifest file to probe for a `file://` manifest collection, with
+// the stat its last scan recorded; null for any other.
+export function manifestToProbe(
+  collection: { path: string; manifestSize?: number; manifestMtime?: number },
+): FileToProbe | null {
+  if (!isManifestCollection(collection.path) || !isFileUrl(collectionCanonicalUrl(collection.path))) return null;
+  return { path: locationFsPath(collection.path), size: collection.manifestSize, mtime: collection.manifestMtime };
+}
+
+// The tooltip of a collection's "refresh pending" chip: the summary, and
+// what to do. Empty when nothing differs.
+export function refreshPendingHint(counts: PendingOnDisk): string {
+  const summary = pendingSummary(counts);
+  return summary ? `${summary} on disk. Refresh to load.` : '';
 }
 
 export const REFRESH_PENDING_CHIP_CLASS = `${FILE_CHIP_CLASS} ${FILE_CHIP_CLASS}-pending`;

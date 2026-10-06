@@ -2,8 +2,19 @@
 // harness can name them without loading the claim code in
 // sm-dev-link.ts.
 
+import type { PendingOnDisk } from './script-display.js';
+
 /** The first argument of every event's console line. */
 export const SM_DEV_EVENT = 'sm-dev-event';
+
+/**
+ * Refusals of the `managed` calls (managed-changes.ts), which sm-dev
+ * also checks before asking for `--force`.
+ */
+export const RUN_COLLECTION_LOCKED = 'An sm-dev run\'s test collection is changed only by its run';
+export const LISTED_BY_LOCATION =
+  'This script is listed by a directory or manifest collection, so it stays there while its file does. Only a script in a container collection can be moved or uninstalled.';
+export const CONTAINER_TARGET_ONLY = 'Scripts can only be installed or moved into a container collection';
 
 /** The reason a skipped wrapper reports for a tab an sm-dev run controls. */
 export const SKIP_REASON_SM_DEV = 'tab controlled by sm-dev';
@@ -24,7 +35,10 @@ export const SKIP_REASON_SM_DEV = 'tab controlled by sm-dev';
 //   takes the script's `source` file, which `managedScripts` gives back.
 // 1.3: permission prompts: `connect-prompt` events, `answerConnectPrompt`.
 // 1.4: a report event can carry `detail`: why a script had no decision.
-export const SM_DEV_PROTOCOL = { major: 1, minor: 4 } as const;
+// 1.5: `managed`, the calls that change collections and installed
+//   scripts (`managed.setScriptEnabled` and the rest), and
+//   `managed.scriptDetails` / `managed.scriptText` (managed-changes.ts).
+export const SM_DEV_PROTOCOL = { major: 1, minor: 5 } as const;
 
 export interface ProtocolVersion {
   major: number;
@@ -74,4 +88,93 @@ export interface ManagedScript {
   error?: string;
   /** Why its last refresh failed, while its last good copy still runs. */
   refreshError?: string;
+  /**
+   * Set by sm-dev, under another manager (external-manager.ts): a
+   * run's script, whose run is live (`D1`).
+   */
+  run?: string;
+  /** Set by sm-dev, under another manager: a run's script, left by that run when it ended (`D1`). */
+  leftBy?: string;
+}
+
+/** A `@require` or `@resource`, as `managed.scriptDetails` gives it. */
+export interface ManagedFile {
+  /** As the header gives it. */
+  url: string;
+  /** `@resource`'s name. */
+  name?: string;
+  /** Loaded, or not: a script that failed to load has none. Absent when the manager doesn't say. */
+  loaded?: boolean;
+  /** The local file read in its place. */
+  local?: string;
+}
+
+/** An installed script in full, for `script show` (`managed.scriptDetails`). */
+export interface ManagedScriptDetails extends ManagedScript {
+  description?: string;
+  author?: string;
+  /** When its current text was loaded, in epoch ms; absent if never. */
+  updatedAt?: number;
+  match: string[];
+  include: string[];
+  exclude: string[];
+  excludeMatch: string[];
+  /** As the header gives it; absent for none (`document-idle`). */
+  runAt?: string;
+  grants: string[];
+  requires: ManagedFile[];
+  resources: ManagedFile[];
+  /** Absent when the manager doesn't say. */
+  valueCount?: number;
+}
+
+/** What `managed.refreshScript` did. */
+export interface ScriptRefresh {
+  script: ManagedScript;
+  /** It loaded different text. */
+  updated: boolean;
+}
+
+/**
+ * What the disk says of the local scripts and collections, as the
+ * collections page's chips show it: `managed.onDisk`. Only those that
+ * differ are listed.
+ */
+export interface ManagedOnDisk {
+  /** By script id: its file changed, or is gone, since it was loaded. */
+  scripts: Record<string, 'modified' | 'deleted'>;
+  /** By collection id: what a refresh would load (script-display.ts). */
+  collections: Record<string, PendingOnDisk>;
+}
+
+/** What `managed.refreshCollection` did. */
+export interface CollectionRefresh {
+  collection: ManagedCollection;
+  /** Its scripts after: added or with different text (`updated`), unchanged, and removed (as they were). */
+  updated: ManagedScript[];
+  unchanged: number;
+  removed: ManagedScript[];
+  /**
+   * Its scripts that couldn't be refreshed, each with `refreshError`.
+   * Set by sm-dev under another manager, never sent by the extension.
+   */
+  failed?: ManagedScript[];
+}
+
+/**
+ * What turning a script on did: `managed.setScriptEnabled`,
+ * `moveScript` and `installScript`.
+ */
+export interface ScriptEnable {
+  script: ManagedScript;
+  /** Its other copies that were running, turned off as the viewer does. */
+  turnedOff: ManagedScript[];
+}
+
+/** What `managed.installScript` did. */
+export interface ScriptInstall extends ScriptEnable {
+  /** It was already installed in that collection, so nothing changed. */
+  already?: true;
+  /** Set by sm-dev, under another manager: it replaced the script with the same name and namespace. */
+  replaced?: true;
 }

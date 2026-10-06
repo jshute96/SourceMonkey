@@ -62,8 +62,11 @@ flowchart LR
 | `extension-host.ts` | `ExtensionHost`: fills the records host from the extension's events, and answers commands from it |
 | `page-watch.ts` | Watch-only attachments: a tab's documents, activity for `wait`, and `eval` |
 | `extension-link.ts` | `ExtensionLink`: the calls into SourceMonkey's SW, tab claims, and its event stream |
-| `extension-backend.ts` | Whether SourceMonkey is installed and on, and finding its SW |
-| `extension-launch.ts` | `--temp-browser`: Chromium with SourceMonkey loaded |
+| `extension-backend.ts` | SourceMonkey's extension id, and finding its SW |
+| `extension-launch.ts` | `--temp-browser`: Chromium with SourceMonkey (or `--manager`'s manager) loaded |
+| `managers.ts` | The managers `--manager` names |
+| `browser-extensions.ts` | The managers in a browser, and turning them on, off and in |
+| `manager-fetch.ts`, `manager-actions.ts` | `manager fetch` from the Web Store; the `manager` verbs |
 
 ## Runs and clients
 
@@ -136,9 +139,17 @@ Serves `sm-dev list`, `stop`, `attach` and the commands sent to a run.
   command first needs it.
 - `start` and `attach` switch it to another run; `stop` leaves it with
   none.
-- `status` with no run shows all runs.
-  - Under `--json`, a `runs` layer holds each run's status, even with only
-    one going. The JSON shape depends only on whether a run was picked.
+- `status` with no run shows the browser the line would use
+  (`--browser`'s) and its managers, then every run's status, headed
+  `Other run:`.
+  - Under `--json`, `browser` and a `runs` layer holding each run's
+    status, even with only one going. The JSON shape depends only on
+    whether a run was picked.
+  - With a run, its status is headed by how the client came to it
+    (`Started run:`, `Attached run:`, `Selected run:`), and its JSON
+    gets `connection`. The client rewrites the run's `Run:` line and
+    result as they arrive (`rewrite` on `RunClient.send`), since only
+    it knows.
 - Remembers the runs it started without `--detach`. `finish()` stops
   them: on `exit`, at the end of the line or input, or on a signal. A
   second signal exits at once.
@@ -295,7 +306,7 @@ Command marks:
   command named, and nothing run or checked.
 - The global options are taken off the front of the line first:
   `--run`, `--root`, `--local`, `--stdin`, `--interactive`, and the
-  browser's `--browser`, `--open-browser`, `--profile`,
+  browser's `--browser`, `--manager`, `--open-browser`, `--profile`,
   `--temp-browser`, `--headed`, `--mute`, `--nomute`.
   - One later on the line is refused, and said to go first.
   - `--browser`, which `start` also takes, is excepted.
@@ -305,30 +316,33 @@ Command marks:
 - With no commands, input comes from stdin when it's piped, and the
   `--interactive` prompt when stdin and stdout are a terminal.
 - Every command is checked before any runs.
-  - A lone `start` with no `--detach`, `--seconds`, `--stdin`,
+  - A lone `start` with no `--detach`, `--stop-after-seconds`, `--stdin`,
     `--interactive`, or commands after it would stop its run at once.
     At a terminal it opens the prompt instead; elsewhere it is refused.
 - A name that isn't an `sm-dev` command but is a run command goes to
   the run. So does one argument of several lines, as a list.
 
-### Is SourceMonkey installed (`sourceMonkeyState`)
+### Which managers are installed ([browser-extensions.ts](../src/harness/browser-extensions.ts))
 
-- The run's first line and `status` say `has SourceMonkey`,
-  `SourceMonkey disabled` or `no extension`; `status` asks again each
-  time.
-- First `Extensions.getExtensions`, which lists unpacked extensions,
-  enabled or not: how SourceMonkey is usually loaded.
-- Otherwise (a Web Store install, or a Chrome without that call), a
-  hidden target (not in the tab strip) is sent to the extension's
-  `manifest.json`.
-  - It loads only when the extension is installed and enabled, and runs
-    none of the extension's code. So a disabled Web Store install reads
-    as absent.
-  - The target lasts only as long as the check's connection.
+- The run's first line says whether the browser has the run's manager:
+  `has SourceMonkey`, `SourceMonkey disabled` or `no SourceMonkey`.
+  `status` asks again each time, and lists every manager there on a
+  `Managers:` line.
+- Read from a hidden `chrome://extensions` target (not in the tab
+  strip), with `chrome.developerPrivate.getExtensionsInfo()`: every
+  extension, enabled or not, with its version, folder and "Allow User
+  Scripts".
+  - A manager is known by its id (SourceMonkey's, from its manifest's
+    `key`, or a Web Store id from
+    [managers.ts](../src/harness/managers.ts), which a fetched copy
+    keeps), else by its name. See
+    [sm-dev-managers.md](sm-dev-managers.md#managers).
 - It uses a WebSocket of its own to the browser, since Playwright's
-  browser session can't send to the new target. About 30ms.
-- A check that fails or takes over 3 seconds says nothing, and the
+  browser session can't send to the new target.
+- A check that fails or takes over 5 seconds says nothing, and the
   socket is closed however it ends.
+- Each manager enabled beside the run's gets a warning, since its
+  scripts run in the run's tabs too.
 
 ### Help and flags (`command-list.ts`)
 
@@ -364,6 +378,12 @@ sm-dev's up-front check runs it too.
   - The global options (`--run`, `--root`, `--local`, which can repeat,
     ...) go before any command, and `takeGlobalFlags` in `cli.ts` reads
     them.
+    - One later on the line is refused, ending a command's text too
+      (`eval 1 --run D1`), unless the command takes it itself.
+    - A command's own flag put before it (`--nowait open <url>`) is
+      refused with the line as it should be. One it doesn't take is
+      named as unknown, checked alone, since after a command's text it
+      would be text.
 - Arguments, by the command's syntax:
   - `none`, or `words` (at most `max`).
   - `selector`: the rest of the line as typed, less its flags, which
@@ -373,7 +393,7 @@ sm-dev's up-front check runs it too.
     it's JavaScript or JSON.
 - Also declared: a leading tab (`tab`), a `{{` block (`block`), and
   flags that may end unquoted text, with a near miss there refused
-  (`trailingFlags`, for `wait log`).
+  (`trailingFlags`: `wait log`, `type`, `update`, `cdp`, `menu`, ...).
 - A form named by a keyword has its own syntax (`wait log <text>`).
 - Every command carries sm-dev's directory, for relative paths.
 
@@ -586,9 +606,17 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
 
 ### `--temp-browser` (`extension-launch.ts`)
 
-- Always loads SourceMonkey: launches Playwright's Chromium with
+- Loads SourceMonkey: launches Playwright's Chromium with
   `--load-extension` pointing at the package's `dist/` (Google Chrome
   ignores that flag).
+  - With `--manager tm` or `vm`, the fetched copy instead (see
+    [Other managers](#other-managers)), fetched first if need be. Its
+    Preferences grant "Allow User Scripts" to the id its manifest's key
+    gives, and the SourceMonkey-only steps below are skipped.
+  - Tampermonkey opens its "installed" page in a new tab a second or so
+    after each start of a copy loaded with `--load-extension`. Its
+    `notification_showUpdate` setting is set to `off` in its storage as
+    soon as its worker starts, which is before it checks.
 - The same launch serves the repo's own e2e suites, which drive its
   persistent context directly.
   - Downloads are left to Chrome, into a folder of the caller's, for a
@@ -622,6 +650,45 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
   install can't message the extension (see TODO.md).
   - The launch's first tab predates that, so it is replaced by a new
     blank tab, which the run takes as T1.
+
+### Other managers
+
+`--manager` picks the manager the line works with. A run records its
+own, and a later line's `--manager` must match it, as `--browser` must
+match the run's browser.
+
+- **Fetching** ([manager-fetch.ts](../src/harness/manager-fetch.ts)):
+  Chrome's extension update service
+  (`https://clients2.google.com/service/update2/crx`), asked with the
+  store id from [managers.ts](../src/harness/managers.ts), gives the
+  newest version, its download URL and SHA-256.
+  - The download is a CRX3: a header of signatures and public keys,
+    then a zip.
+  - The zip is unpacked with Node's zlib, into a folder beside the old
+    copy, then swapped in.
+  - The key whose hash is the store id goes into the manifest as `key`,
+    so the copy keeps the store's id.
+  - The CRX's `_metadata` folder (the store's signature) is dropped:
+    Chrome refuses an unpacked extension with it.
+- **Installing**
+  ([browser-extensions.ts](../src/harness/browser-extensions.ts), and
+  [manager-actions.ts](../src/harness/manager-actions.ts) for the
+  verbs): CDP's `Extensions.loadUnpacked`, which works over a debugging
+  port in Chrome and Chromium, then "Allow User Scripts" through
+  `chrome.developerPrivate.updateExtensionConfiguration`.
+  - Enabling and disabling are `chrome.management.setEnabled`, from the
+    same hidden `chrome://extensions` target as the listing.
+- **Which commands work**: each command's help entry lists the managers
+  it works with (`managers` in `command-list.ts`), every one when it
+  lists none. The `manager` verbs take `--manager` even beside a run of
+  another manager, since they act on the browser, not the run. A command its manager isn't listed for is refused before
+  it runs.
+- **A run under another manager** drives its pages, with no scripts:
+  - `ExtensionLink.without` stands in for the link to SourceMonkey. It
+    claims no tabs and hears no events, and every call into the
+    extension throws.
+  - So the run's tabs are plain tabs: the manager runs its own scripts
+    in them, and tabs a page opens aren't followed.
 
 ### `--open-browser` (`browser-launch.ts`)
 
@@ -686,8 +753,8 @@ and waits for them.
   - A page that asks first opens a `beforeunload` dialog, which the
     tracker reports like any other: `accept` leaves, `dismiss` stays.
   - Playwright doesn't wait for such a close, so `closetab` races the
-    close against the tracker for 5 seconds, and names a tab that did
-    neither.
+    close against the tracker for 5 seconds (or `--timeout-seconds`),
+    and names a tab that did neither.
   - A tab already on a dialog is left open and named, as `reload all`
     leaves it, while the others close.
   - `--force` closes without the handlers. It answers an open dialog
@@ -914,7 +981,9 @@ User-facing behavior is in [harness-guide.md](harness-guide.md).
   - SourceMonkey-managed scripts: `scriptsOnTab(tabId)`, the rows the
     toolbar badge shows for a tab, with each one's collection;
   - what's installed: `managedCollections` and `managedScripts`, for
-    `collection list` and `script list` (see
+    `collection list` and `script list`, and from 1.5 the calls on
+    `managed` (`src/extension/managed-changes.ts`) for the other
+    `collection` and `script` verbs (see
     [sm-dev-managers.md](sm-dev-managers.md)). These also work with no
     run, over a connection of their own (`openManagerLink`);
   - tabs: `tabDocument(tabId)`, which document a tab shows, to tell

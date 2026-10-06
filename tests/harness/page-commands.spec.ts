@@ -97,6 +97,13 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
 
   expect(await run('type \'input[aria-label=Note]\' \'hello world\'')).toEqual(['[sm-dev] Typed into input[aria-label=Note]']);
   expect(await run('key Backspace Backspace')).toEqual(['[sm-dev] Pressed Backspace, Backspace']);
+  // --clear empties the field first, or only empties it.
+  expect(await run('type \'input[aria-label=Note]\' --clear bye')).toEqual(['[sm-dev] Cleared and typed into input[aria-label=Note]']);
+  expect(await page.inputValue('input[aria-label=Note]')).toBe('bye');
+  expect(await run('type \'input[aria-label=Note]\' --clear')).toEqual(['[sm-dev] Cleared input[aria-label=Note]']);
+  expect(await page.inputValue('input[aria-label=Note]')).toBe('');
+  expect(await run('type \'input[aria-label=Note]\' \'hello world\'')).toEqual(['[sm-dev] Typed into input[aria-label=Note]']);
+  await run('key Backspace Backspace');
   expect(await run('key Nope')).toEqual(['[sm-dev] The key command failed: Nope is not a key name. Keys are named as in Enter, ArrowLeft, Shift+Tab (case-insensitive), or a single character.']);
   expect(await run('key Shift+')).toEqual(['[sm-dev] ERROR: Shift+ has a + with no key on one side. Join keys with +, as in Shift+Tab.']);
   // Through the keys alias, case-insensitive.
@@ -199,11 +206,11 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('eval confirm("sure?")')).toContain('[sm-dev] The expression opened a dialog, which is waiting for an answer.');
   expect(await run('dismiss')).toEqual(['[sm-dev] Dismissed the dialog']);
   expect(await run('screenshot')).toEqual([expect.stringContaining('The screenshot command needs a file')]);
-  expect(await run('snapshot --deep')).toEqual(['[sm-dev] ERROR: The snapshot command has no --deep flag. It takes --visible, --out, --find, --up, --context, --limit.']);
+  expect(await run('snapshot --deep')).toEqual(['[sm-dev] ERROR: The snapshot command has no --deep flag. It takes --visible, --out, --find, --up, --context, --limit, --timeout-seconds.']);
   // Every command, not only the ones with flags of their own; a quoted
   // selector with -- in it is one word, not a flag.
   expect(await run('status --bad')).toEqual(['[sm-dev] ERROR: The status command has no --bad flag. It takes --json, --nojson.']);
-  expect(await run('eval T1 --script --x')).toEqual(['[sm-dev] ERROR: The eval command has no --x flag. It takes --page, --script, --file, --out.']);
+  expect(await run('eval T1 --script --x')).toEqual(['[sm-dev] ERROR: The eval command has no --x flag. It takes --page, --script, --file, --out, --timeout-seconds.']);
   expect(await run(`probe '.a --b'`)).not.toContainEqual(expect.stringContaining('flag'));
 
   // A navigation an expression doesn't live through is said as such,
@@ -360,6 +367,20 @@ test('click takes a button, modifiers and a count, and says which check its elem
   // Covered, it says by what, rather than listing what it might be.
   await page.evaluate(() => document.body.insertAdjacentHTML('beforeend', '<div id="over" style="position:fixed;inset:0"></div>'));
   expect(await run('click button')).toEqual(['[sm-dev] The click command failed: The element stayed covered for 5 seconds, by <div id="over"></div>']);
+  // --timeout-seconds in place of each wait's default.
+  expect(await run('click button --timeout-seconds 0.5')).toEqual(['[sm-dev] The click command failed: The element stayed covered for 0.5 seconds, by <div id="over"></div>']);
+  expect(await run('cdp Runtime.evaluate {"expression": "new Promise(() => {})", "awaitPromise": true} --timeout-seconds 0.5')).toEqual([
+    '[sm-dev] Runtime.evaluate got no answer within 0.5s. A paused page never answers.',
+  ]);
+  expect(await run('click button --timeout-seconds soon')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The --timeout-seconds flag needs a number of seconds/)]);
+  // A page too busy to be captured. (The file would be written, were it.)
+  await page.evaluate(() => setTimeout(() => {
+    const until = Date.now() + 3000;
+    while (Date.now() < until);
+  }, 0));
+  expect(await run(`screenshot ${path.join(test.info().outputDir, 'busy.png')} --timeout-seconds 0.5`)).toEqual([
+    '[sm-dev] Screenshot failed: Browser did not capture the page within 0.5s',
+  ]);
 });
 
 test('an Escape that leaves the page fullscreen says how to exit', async ({ page, fixtureServer, host, attachment, loadScript }) => {
@@ -455,7 +476,7 @@ test('snapshot refs name elements for the other commands, and it can show only t
   expect(await run(`probe --css ${save}`)).toEqual([`found    ${save}  (1)`, '    selector: button[data-testid="save"]']);
   expect(await selectorOf(refIn(scrolled, 'Far away'))).toBe('button.far');
   expect(await selectorOf('input[aria-label=Note]')).toBe('input');
-  expect(await run('snapshot --css')).toEqual(['[sm-dev] ERROR: The snapshot command has no --css flag. It takes --visible, --out, --find, --up, --context, --limit.']);
+  expect(await run('snapshot --css')).toEqual(['[sm-dev] ERROR: The snapshot command has no --css flag. It takes --visible, --out, --find, --up, --context, --limit, --timeout-seconds.']);
 
   // Refs reach into a frame and a shadow root, where selectors are
   // suggested for neither; and look-alike buttons get told apart.

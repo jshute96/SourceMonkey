@@ -243,10 +243,20 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
   }
 
   /**
+   * Whether the scripts' manager reports their starts, skips and
+   * errors. Another manager than SourceMonkey doesn't.
+   */
+  get getsReports(): boolean {
+    return true;
+  }
+
+  /**
    * Of `scriptIds`, the ones with no word from `page` since `since`:
    * not yet started, skipped or thrown there.
    */
   unreported(page: PageLink, scriptIds: readonly string[], since: number): string[] {
+    // Nothing to wait for from a manager that never reports.
+    if (!this.getsReports) return [];
     const reported = (id: string): boolean => [this.reports.started, this.reports.skipped, this.reports.errors]
       .some((records) => records.some((r) => r.scriptId === id && r.at >= since && this.recordPages.get(r) === page));
     return scriptIds.filter((id) => !reported(id));
