@@ -719,14 +719,14 @@ primitive, and any host that acts on a plain GET is reachable.
 
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
-| `GM_registerMenuCommand` / `GM.registerMenuCommand` | ✅ | ✓ | ✓ |   | Adds an entry indented under the script's row in SourceMonkey's toolbar-icon right-click menu. See below. |
+| `GM_registerMenuCommand` / `GM.registerMenuCommand` | ✅ | ✓ | ✓ |   | Adds an entry under the script's row in SourceMonkey's toolbar popup. See below. |
 | `GM_unregisterMenuCommand` / `GM.unregisterMenuCommand` | ✅ | ✓ | ✓ |   | Removes the entry. Unknown ids are silent. |
 
 ### Menu-command call shape
 
 - `GM_registerMenuCommand(name, callback, accessKeyOrOpts?)`:
-  - `name` — visible label rendered as `↳ <name>` under the script's
-    row in the action context menu.
+  - `name` — visible label, shown under the script's row in the
+    toolbar popup.
   - `callback` — invoked in the userscript's sandbox when the user
     picks the entry; required.
   - `accessKeyOrOpts.id` — pass a stable id to update an existing

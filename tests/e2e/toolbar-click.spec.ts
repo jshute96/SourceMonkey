@@ -1,6 +1,7 @@
-// Toolbar-icon click → collections page. Playwright can't click
+// Toolbar-icon double click → collections page. Playwright can't click
 // chrome.action, so these drive the same `openCollectionsPage` the
-// onClicked listener calls, through the SW test surface.
+// onClicked listener calls on a double click, through the SW test
+// surface. Single vs double click is covered in popup.spec.ts.
 //
 // What matters here is that a repeat click reuses the window's existing
 // collections tab: the reuse lookup can't use chrome.tabs.query({url})

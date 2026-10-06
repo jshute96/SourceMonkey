@@ -68,6 +68,7 @@ import {
   makeCollectionTypeBubble,
   makeSchemeChip,
   collectionAnchorId,
+  EDIT_COLLECTION_HASH_PREFIX,
 } from './collection-display.js';
 import { openCollectionDialog, type CollectionDialogRequest } from './collection-dialog.js';
 import { onNamedTabFocus, openExtensionTab, openNamedTab } from './page-links.js';
@@ -970,6 +971,7 @@ async function bootstrap(): Promise<void> {
   // every section is in the DOM and scroll the matching one into view.
   // Triggered for any hash matching the collection-anchor shape.
   scrollToHashCollectionIfPresent();
+  if (location.hash.startsWith(`#${EDIT_COLLECTION_HASH_PREFIX}`)) void focusHashTarget(location.hash.slice(1));
   const params = new URLSearchParams(location.search);
   // First-run seeding. The SW opens this page with `?first_run` once on
   // install (see background.ts); only that auto-opened page seeds, so an
@@ -1064,10 +1066,16 @@ async function focusHashTarget(hash: string): Promise<void> {
     scrollTo({ top: 0, behavior: 'smooth' });
     return;
   }
-  const section = document.getElementById(hash);
+  // `edit-collection-<id>` (the popup's "Collection options"): land on
+  // the collection and open its edit dialog. The URL keeps the plain
+  // collection anchor, so a reload doesn't reopen the dialog.
+  const editId = hash.startsWith(EDIT_COLLECTION_HASH_PREFIX) ? hash.slice(EDIT_COLLECTION_HASH_PREFIX.length) : null;
+  const anchor = editId !== null ? collectionAnchorId(editId) : hash;
+  const section = document.getElementById(anchor);
   if (!section) return;
-  history.replaceState(null, '', `#${hash}`);
+  history.replaceState(null, '', `#${anchor}`);
   section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (editId !== null) await onEditCollection(editId);
 }
 
 // If the URL hash points at a rendered collection section, scroll it

@@ -166,9 +166,8 @@ export interface SmApi {
     scriptId: string;
     commands: { commandId: string; name: string }[];
   }[]>;
-  // Returns the planned action context-menu layout for the tab,
-  // including the 6-item-cap overflow split into a "More" submenu.
-  getActionContextMenuPlan(tabId: number): Promise<ActionMenuPlanLike>;
+  // The toolbar popup's view of the tab: what popup.html renders.
+  getPopupView(tabId: number): Promise<PopupViewLike>;
   fireActionContextMenuItem(
     tabId: number,
     scriptId: string,
@@ -179,13 +178,16 @@ export interface SmApi {
   answerConnectPrompt(promptId: string, choice: 'once' | 'cancel' | 'allow' | 'allow-all' | 'deny'): Promise<boolean>;
   // The connection prompts waiting for an answer.
   pendingConnectPrompts(): Promise<{ promptId: string; scriptId: string; tabId: number; host: string }[]>;
-  // Stands in for a click on the menu's "Reload page with no
-  // userscripts" row: reloads the tab with every wrapper told to skip.
+  // Stands in for a click on the popup's "Reload page with no
+  // userscripts": reloads the tab with every wrapper told to skip.
   reloadWithoutScripts(tabId: number): Promise<void>;
   // Stands in for a toolbar-icon click in the given window (Playwright
   // can't click chrome.action). Pass null for the "no gesture window"
   // fallback path.
   openCollectionsPage(windowId: number | null): Promise<void>;
+  // Stands in for a toolbar-icon click on `tabId`: two inside the
+  // double-click window open the collections page, one opens the popup.
+  clickAction(tabId: number, windowId: number): Promise<void>;
   // Fault-injection knob used by gm-storage-freshness.spec.ts to
   // verify the wrapper hard-aborts when the SW can't supply a
   // gmValues snapshot.
@@ -223,17 +225,23 @@ export interface SmApi {
   resetCollectionRowReads(): Promise<void>;
 }
 
-export interface ActionMenuPlanLike {
-  top: ActionMenuScriptLike[];
-  more: ActionMenuScriptLike[];
-  reloadWithoutScripts: boolean;
-  smDevControl: boolean;
+// The parts of `PopupView` (src/extension/popup-view.ts) tests read.
+export interface PopupViewLike {
+  injectable: boolean;
+  smDev: boolean;
+  banner: string | null;
+  perScriptReload: boolean;
+  enabled: PopupGroupLike[];
+  disabled: PopupGroupLike[];
 }
 
-export interface ActionMenuScriptLike {
-  scriptId: string;
-  title: string;
-  commands: { commandId: string; title: string }[];
+export interface PopupGroupLike {
+  collection: { id: string; name: string; enabled: boolean };
+  rows: {
+    id: string; name: string; checked: boolean; active: boolean;
+    status: string | null; tooltip: string | null; versionLine: string | null;
+    commands: { commandId: string; name: string }[];
+  }[];
 }
 
 // Mirrors the fields of `StoredScript` (src/extension/script-store.ts) that specs

@@ -1130,6 +1130,14 @@ export async function getScript(scriptId: string): Promise<StoredScript | undefi
   return await getRaw<StoredScript>(scriptKey(scriptId));
 }
 
+// Read several scripts in one storage call. Missing ids are left out.
+export async function getScripts(scriptIds: readonly string[]): Promise<StoredScript[]> {
+  const got = await getMany(scriptIds.map(scriptKey));
+  return scriptIds
+    .map((id) => got[scriptKey(id)] as StoredScript | undefined)
+    .filter((s): s is StoredScript => s != null);
+}
+
 // Read every stored script (across all collections, regardless of
 // status). One `get(null)` scan rather than N per-collection reads;
 // used by the collections page + viewer to compute global log IDs in

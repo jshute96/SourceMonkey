@@ -290,6 +290,10 @@ export function collectionAnchorId(collectionId: string): string {
   return `collection-${collectionId}`;
 }
 
+// A collections-page fragment that opens a collection's edit dialog
+// (the popup's "Collection options"): this prefix + the collection id.
+export const EDIT_COLLECTION_HASH_PREFIX = 'edit-collection-';
+
 // Construct the colored type-bubble for a collection. Shared by the
 // collections page (heading) and the userscript viewer (Collection row)
 // so the markup, classes, tooltip, and anchor target all stay in

@@ -529,7 +529,7 @@ Adding any of these is a catalog entry + a body — nothing structural.
   registrations — and Chrome doesn't re-inject on back/forward, so
   nothing re-registers them. The restored page's callbacks are still
   alive in its document; only the SW-side mirror is gone, and its
-  action-menu rows stay missing until a real document load.
+  popup rows stay missing until a real document load.
   - Fix is a mirror per (tab, document) with an LRU like the one
     `updateTabMatches` already keeps for `TabMatchState` (see
     [docs/matching.md](docs/matching.md#per-tab-document-lru-bfcache-restore)),
@@ -1707,11 +1707,17 @@ they follow are in
 - collapse a collection
 - smoother add collection/script flow, maybe a dialog box
 
-### Page status menu / widget
+### Toolbar popup
 
-- status widget instead of context menu for running scripts
-- enable / disable a script on that page
-- choose which version of a script to use
+The popup shipped (see [docs/status-popup.md](docs/status-popup.md)).
+Left from its design:
+
+- **Version picker**: a small versions button on a row with other
+  copies, opening a list like the viewer's to switch which copy runs.
+  Needs the list UI designed first.
+- **A script's own `@icon`** on its row, maybe. Site icons were left
+  out: on one page they'd nearly all be that site's.
+- **More page actions**: Refresh All, disable everything on this site.
 
 ### Other
 

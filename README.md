@@ -103,7 +103,7 @@ load it.
    The permission toggles persist across browser restarts, and
    SourceMonkey shows a banner with a link to the toggle whenever one is
    missing.
-3. Click the SourceMonkey toolbar icon to open the **collections page**.
+3. Double-click the SourceMonkey toolbar icon to open the **collections page**.
    On first run it seeds a default collection of examples so the page isn't
    empty; remove it like any other collection.
 
@@ -356,20 +356,23 @@ scripts missing or unexpected, **purple** a newer version is available
 (reload the page to update), **red** a script errored or Chrome refused to
 register it.
 
-Hovering the icon lists each script and its status.  Right-clicking also lists
-scripts and statuses.  Click one to open it in the viewer — or straight to
-its log, if it errored.
+Hovering the icon lists each script and its status.
 
-When scripts register context menu commands (`GM_registerMenuCommand`),
-those also appear on the icon's right-click menu.
+Clicking the icon opens the **Active scripts** popup: the scripts that
+match the page, grouped by collection, with their status. From there
+you can:
 
-Chrome only shows six top-level entries in that menu.  Anything past
-that goes under a `More` submenu.
+- Turn scripts and collections on or off.
+- Run a script's own menu commands (`GM_registerMenuCommand`).
+- Open a script's page or its log.
+- Reload the page with no userscripts, with only one script, or
+  without one. Handy for finding which script is breaking a page; the
+  next ordinary reload runs them all again.
 
-The menu's last row, **Reload page with no userscripts**, reloads the
-page once with every script skipped — handy for checking whether a
-script is what's breaking a page.  The next ordinary reload runs them
-again.  Skipped scripts show as **NOT LOADED** with a **grey** badge.
+Double-clicking the icon opens the collections page, as does its
+right-click menu.
+
+Details: [docs/status-popup.md](docs/status-popup.md).
 
 ### Supported `GM_*` / `GM.*` APIs and headers
 

@@ -513,11 +513,9 @@ files into TM/VM, hit the same URLs, compare outcomes).
   resolution but Chrome's notification UI is suppressed in
   headless, so we can't drive a click; the unit test covers the
   page-side dispatcher logic instead.
-- Real Chrome action context menu click-through for
-  `GM_registerMenuCommand` — Playwright can't drive the toolbar
-  right-click menu, so the SW exposes
-  `getActionContextMenu` + `fireActionContextMenuItem` and
-  `tests/e2e/gm-menu.spec.ts` covers the round-trip through them.
-  The real UI render is exercised manually.
+- A real click on the toolbar icon — Playwright can't click it, so
+  the SW exposes `clickAction`, and `tests/e2e/popup.spec.ts` opens
+  `popup.html?tab=<id>` in a plain tab. That `openPopup` really opens
+  the popup is checked through `chrome.runtime.getContexts`.
 - `GM_cookie` and other catalog entries that remain stubbed as
   not-implemented.

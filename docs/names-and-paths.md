@@ -44,7 +44,7 @@ How a stored location becomes the text a user reads. Helpers live in
 ### The collections page shows `@name`
 
 - The Name column shows the script's own `@name` — what its author
-  calls it, and what every other surface (badge, action menu, match
+  calls it, and what every other surface (badge, toolbar popup, match
   listings) already calls it.
 - Falls back to the location when the `@name` is missing, blank, or the
   header never parsed. Whitespace-only counts as missing.
@@ -169,9 +169,6 @@ How a stored location becomes the text a user reads. Helpers live in
   requested. Display-only (the tooltip and copy button carry the raw
   form), and `scriptBasename` re-takes the leaf so a decoded `/`
   can't smuggle a path separator into a log ID.
-- **`&` in a context-menu title** is a mnemonic marker to Chrome, so
-  a decoded `%26` in a script's name renders as an underline in the
-  action menu. Already true for any `@name` containing `&`.
 - **A literal `#E4` at the end of a name collides with the number
   suffix.** `foo%23E4.user.js` and script 4 named `foo.user.js` both
   fold to the same `sourcemonkey://` folder. Cosmetic, devtools-only,

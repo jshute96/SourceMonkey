@@ -12,9 +12,8 @@ details live in the topic-specific docs linked below.
 > with `@connect` URL gating and the surgery that lets a script set
 > forbidden request headers like `Sec-Fetch-*`), `GM_download`,
 > `GM_notification`, `GM_openInTab`, `GM_log`, and
-> `GM_registerMenuCommand` / `GM_unregisterMenuCommand` (rendered as
-> indented entries under each script in the toolbar action's
-> right-click menu). Deferred: `GM_cookie` (bindings stubbed). See
+> `GM_registerMenuCommand` / `GM_unregisterMenuCommand` (listed
+> under each script in the toolbar popup). Deferred: `GM_cookie` (bindings stubbed). See
 > [GM-APIs.md](GM-APIs.md) and [TODO.md](../TODO.md).
 
 ## Components
@@ -34,9 +33,14 @@ details live in the topic-specific docs linked below.
 ```
 
 - **Service worker** (`src/extension/background.ts`) — central event handler.
-  Opens the collections page on toolbar click, watches tab navigation,
-  and surfaces per-tab match counts via the action badge. See
-  [matching.md](matching.md).
+  Opens the toolbar popup on a click and the collections page on a
+  double click, watches tab navigation, and surfaces per-tab match
+  counts via the action badge. See [matching.md](matching.md).
+- **Toolbar popup** (`src/popup.html` + `src/extension/popup.ts`, view
+  built by `src/extension/popup-view.ts`) — "Active scripts": the
+  scripts that match the current tab, by collection, with toggles,
+  statuses, menu commands and selective reloads. See
+  [status-popup.md](status-popup.md).
 - **Collections page** (`src/collections.html` + `src/extension/collections.ts`) — manage
   collections (directory, manifest, github-dir, or a "scripts"
   collection holding individually installed scripts — user-created, or
@@ -266,7 +270,7 @@ How one extension page opens another — the rules live in
   - A reused tab is told where to scroll: the linked collection's
     section, or the top for a link to the page as a whole. Options has
     no anchors, so every link to it means the top.
-  - The toolbar button is the exception: it activates a reused tab
+  - The toolbar button's double click is the exception: it activates a reused tab
     without moving it, because "show me SourceMonkey" should not cost
     the user their place.
 - **Links to a named page open a new tab, never the current one.**
@@ -296,7 +300,8 @@ How one extension page opens another — the rules live in
   `SourceMonkey | <page>` heading, and that page's cross-page
   navigation pushed to the right edge.
   - Collections carries Options and Refresh All; Options carries
-    Collections; the viewer carries none.
+    Collections; the toolbar popup carries Open and a ⋯ menu; the
+    viewer carries none.
   - The icon and the product name are a link home to the collections
     page on every page but Collections itself — see "Cross-page
     navigation" above.

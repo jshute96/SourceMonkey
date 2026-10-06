@@ -973,7 +973,8 @@ User-facing behavior is in [harness-guide.md](harness-guide.md).
     `onclick` as a click would;
   - connection prompts: `answerConnectPrompt(id, choice)` (below);
   - values and menus: `getGmValues`, `writeGmValues`,
-    `fireActionContextMenuItem`;
+    `fireActionContextMenuItem` (named for the context menu the
+    toolbar popup replaced);
   - claims: `watchForNamingNavigation` and `namedTab` (which tab is
     which, see [Naming the tab](#naming-the-tab)), `claimTab`,
     `renewRun`, `releaseRun`, `setTabScriptsOff` (below). `releaseRun`
@@ -1124,7 +1125,7 @@ sm-dev knows a tab by its CDP target id; the extension knows it by its
   `--temp-browser` included (another sm-dev can connect to its port
   too). They run whatever the extension has, as in normal browsing.
   - To bring one under the run, open it with `newtab` instead.
-  - Possible later: an action-menu row, "Put this tab under sm-dev
+  - Possible later: a popup menu item, "Put this tab under sm-dev
     control".
 
 #### Lifetime
@@ -1442,11 +1443,12 @@ Terms used below:
 - The count is of the scripts the claim let run (`computeBadge` in
   tab-status.ts). The badge stays green when the run's scripts ran,
   and is grey when nothing did (a tab with its scripts off included).
-- The action menu's first row says `Page under sm-dev control`
-  (disabled, a note). The icon's tooltip says it too, under
-  `SourceMonkey` (`titleHead` in tab-status.ts).
-- The menu has no "Reload page with no userscripts" row there: which
-  scripts run in the tab is the run's choice (`reload --noscript`).
+- The toolbar popup opens with a `Page under sm-dev control` banner.
+  The icon's tooltip says it too, under `SourceMonkey` (`titleHead` in
+  tab-status.ts).
+- The popup offers no "Reload page with no userscripts" there, nor its
+  per-script forms: which scripts run in the tab is the run's choice
+  (`reload --noscript`).
 - A cyan **T** drawn in a corner of the icon marks a claimed tab (see
   below). Cyan is used nowhere else in the badge colors.
 - All of these follow the document: a page loaded under a claim keeps

@@ -869,9 +869,9 @@ Why the split:
 
 ### Surface
 
-- Userscripts register entries that surface as indented rows in
-  SourceMonkey's toolbar-icon right-click menu, one row per
-  command, beneath the script's `name | status` line.
+- Userscripts register entries that surface as rows in SourceMonkey's
+  toolbar popup, under the script's row. A list longer than four
+  starts collapsed. See [status-popup.md](status-popup.md).
 - `register` returns an opaque id; pass it to `unregister` to
   remove the entry. Passing `{id: 'stable'}` as the third arg
   locks a stable id so a re-register updates the entry in place.
@@ -884,7 +884,7 @@ Why the split:
   `{scriptId, commandId, name}`; `unregister` drops the local
   entry and sends `sm:gm-menu-unregister`.
 - **SW side (`src/extension/gm-menu.ts`)** — mirrors the (tabId → scriptId →
-  commands[]) registry that the action menu renders from, tagged
+  commands[]) registry that the popup renders from, tagged
   with the `documentId` those commands came from. No callbacks live
   here — only the name + id needed to render the row and route a
   fire event back.
@@ -893,20 +893,14 @@ Why the split:
     can't reach into the current document's entries. That is
     reachable with an explicit `{id: '...'}`, where the same
     commandId legitimately exists in both documents.
-- **Action menu rebuild (`src/extension/background.ts`,
-  `doRebuildActionContextMenu`)** — folds the per-tab mirror into
-  the rebuild after the script rows: each script row gets its
-  registered commands appended as `↳ <name>` entries.
-- **Overflow planner (`src/extension/action-menu.ts`,
-  `planActionMenu`)** — caps the top level at Chrome's 6-item limit
-  by reserving one slot for the fixed "Reload page with no
-  userscripts" row and one more for a "More" submenu when the (script
-  row + N commands) totals would exceed it. Splits happen between groups,
-  never within one — see [matching.md](matching.md#per-tab-badge--tooltip) for the rules.
-- **Click routing** — `chrome.contextMenus.onClicked` for an
-  `sm-menucmd:<scriptId>:<commandId>` item sends `sm:gm-menu-fire`
-  to the active tab. The runtime listener invokes the matching
-  local callback.
+- **Popup (`src/extension/popup-view.ts`, `src/extension/popup.ts`)** —
+  the worker folds the per-tab mirror into the popup's view, listing
+  each running script's commands under its row, and tells an open
+  popup when the mirror changes (`sm:popup-changed`).
+- **Click routing** — a click in the popup sends `sm:popup-command`
+  to the worker, which checks the command is still registered and
+  sends `sm:gm-menu-fire` to the tab. The runtime listener invokes
+  the matching local callback.
 
 ### Lifecycle
 
@@ -954,20 +948,19 @@ Why the split:
 
 ### Test surface
 
+- These keep the names of the context menu the popup replaced.
 - `self.SourceMonkey.getActionContextMenu(tabId)` returns the
-  rendered (scriptId, commands[]) groups, used by
+  registered (scriptId, commands[]) groups, used by
   `tests/e2e/gm-menu.spec.ts` to assert on registration state
   without driving the real Chrome UI.
-- `self.SourceMonkey.getActionContextMenuPlan(tabId)` returns the
-  planned `{ top, more, reloadWithoutScripts }` layout the SW would hand to
-  `chrome.contextMenus`. Lets tests verify overflow packing without
-  inspecting the real Chrome menu (which Playwright can't reach).
+- `self.SourceMonkey.getPopupView(tabId)` returns the popup's view of
+  the tab, commands included.
 - `self.SourceMonkey.fireActionContextMenuItem(tabId, scriptId,
-  commandId)` synthesizes a click on a specific entry by sending
-  the same `sm:gm-menu-fire` message the real click handler does.
+  commandId)` fires a command through the same path as a click in the
+  popup. sm-dev calls it too, so its name stays.
   Returns `{ok:false}` for stale or unknown ids.
-- `self.SourceMonkey.reloadWithoutScripts(tabId)` stands in for a
-  click on the "Reload page with no userscripts" row — see
+- `self.SourceMonkey.reloadWithoutScripts(tabId)` stands in for the
+  popup's "Reload page with no userscripts" — see
   [matching.md](matching.md#reload-with-no-userscripts).
 
 ## `window.onurlchange`
@@ -1289,17 +1282,3 @@ to what they insert from that world:
 - `attrs` is a plain object of attribute names → string values. The
   pseudo-attribute `textContent` sets inner text directly (TM
   convention).
-
-## Phase status
-
-- ✅ **Phase 1** — catalog
-- ✅ **Phase 2** — compile-in surface (stubs throw "not implemented yet")
-- ✅ **Phase 3** — storage v1 (page-side cache, batched writes, persistence)
-- ✅ **Phase 4** — `GM_addStyle` / `GM_addElement` (in-page DOM injection)
-- ✅ **Phase 5** — `GM_setClipboard` (via `navigator.clipboard.writeText`)
-- ✅ **Phase 6** — cross-tab `GM_setValue` broadcast (openers table + tabs.sendMessage)
-- ✅ **Phase 7** — `GM_addValueChangeListener` / `GM_removeValueChangeListener`
-- ✅ **Phase 8** — `GM_xmlhttpRequest` text path (GET/POST, text + json, abort, timeout)
-- ✅ **Phase 9** — `GM_xmlhttpRequest` binary path (blob, arraybuffer, document; base64 wire, no offscreen doc)
-- ✅ **Phase 10** — `@connect` URL gating for `GM_xmlhttpRequest` (header surgery deferred to a future phase)
-- ✅ **Post-Phase 10 add-ons** — `GM_log` (page-side `console.log` wrapper), `GM_openInTab` (SW-side `chrome.tabs.create`), `GM_notification` (SW-side `chrome.notifications`), `GM_registerMenuCommand` / `GM_unregisterMenuCommand` (`chrome.contextMenus` entries indented under each script in the action's right-click menu), `GM_download` (SW-side `chrome.downloads` for http(s), in-page anchor for `blob:` / `data:`), `window.onurlchange` (SPA `urlchange` event fed by `chrome.webNavigation`'s same-document events, matching TM's own source), `window.close` / `window.focus` (SW-side `chrome.tabs.remove` / `chrome.windows.update`, replacing the methods the browser hobbles in the page)

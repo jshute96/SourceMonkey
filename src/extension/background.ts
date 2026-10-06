@@ -1,17 +1,16 @@
 // SourceMonkey MV3 service worker.
 //
 // Today the SW does these real jobs:
-//   - Opens the collections page on toolbar click (no popup configured).
+//   - Opens the "Active scripts" popup on a toolbar click, and the
+//     collections page on a double click.
 //   - Watches every tab navigation, finds matching userscripts via the
 //     in-memory match index, listens to sm:start / sm:error reports
 //     from injected wrappers, and surfaces the combined state as a
 //     per-tab badge + tooltip. Per-tab state is persisted to
 //     chrome.storage.session so it survives SW restarts but is dropped
 //     when Chrome shuts down.
-//   - Mirrors the badge's per-script status lines into the toolbar
-//     icon's right-click menu (chrome.contextMenus, action context),
-//     so users can jump to a script's viewer page without going
-//     through the collections page first.
+//   - Builds the popup's view of a tab (src/extension/popup-view.ts)
+//     and runs what the popup asks: menu commands, selective reloads.
 //
 // The `self.SourceMonkey` surface exists so e2e tests can drive the
 // extension via `serviceWorker.evaluate(...)` — MV3 service workers
@@ -20,6 +19,7 @@
 import {
   debugDumpCache,
   ensureLoaded,
+  findAllMatchingIds,
   findMatchesForUrl,
   hasLocalScripts,
   installStorageListener,
@@ -106,7 +106,6 @@ import {
   clearScriptStale,
   computeBadge,
   titleHead,
-  formatRowLabel,
   getCurrentState,
   getDocState,
   markScriptStale,
@@ -143,6 +142,9 @@ import {
   resetCollectionRowReads,
   type RefreshBatch,
   getScript,
+  getScripts,
+  isScriptEnabled,
+  isCollectionEnabled,
   getCollection,
   getAllScripts,
   getCollections,
@@ -303,13 +305,21 @@ import {
   type WindowControlResult,
 } from './gm-window-control.js';
 import {
-  ACTION_MENU_MORE_LABEL,
-  ACTION_MENU_RELOAD_LABEL,
-  ACTION_MENU_SM_DEV_LABEL,
-  planActionMenu,
-  type ActionMenuPlan,
-  type ActionMenuScript,
-} from './action-menu.js';
+  buildPopupView,
+  POPUP_CHANGED_MESSAGE,
+  POPUP_COMMAND_MESSAGE,
+  POPUP_PORT_PREFIX,
+  POPUP_RELOAD_MESSAGE,
+  POPUP_VIEW_MESSAGE,
+  type PopupChangedMessage,
+  type PopupCommandRequest,
+  type PopupReloadRequest,
+  type PopupView,
+  type PopupViewRequest,
+  type ReloadMode,
+} from './popup-view.js';
+import { identityKey } from './script-identity.js';
+import { scriptDisplayName } from '../script-display.js';
 
 interface SourceMonkeyApi {
   version: string;
@@ -513,33 +523,29 @@ interface SourceMonkeyApi {
   // console lines it prints. Segment contents are left out: only the
   // line numbers are needed. Null for a script that isn't stored.
   getStackLayout: (scriptId: string) => Promise<StackLayout | null>;
-  // GM_registerMenuCommand test surface. Playwright can't click the
-  // real Chrome action context menu, so tests need a way to (a) read
-  // back what we would have rendered for a tab and (b) synthesize the
-  // chrome.contextMenus.onClicked dispatch.
+  // GM_registerMenuCommand test surface: (a) read back the commands a
+  // tab has registered, and (b) fire one the way the popup does. The
+  // names predate the popup, from the context menu it replaced;
+  // `fireActionContextMenuItem` is kept because sm-dev calls it (see
+  // src/harness/extension-link.ts).
   getActionContextMenu: (tabId: number) => Promise<{
     scriptId: string;
     commands: MenuCommandEntry[];
   }[]>;
-  // Inspect the planned action context menu for `tabId`, including the
-  // overflow split into a "More" submenu. Tests use this to verify the
-  // 6-item-limit packing without driving the real Chrome menu UI.
-  // Reads the planner inputs directly — does NOT go through the
-  // serialized rebuild coalescer, so a value here reflects intent, not
-  // the chrome.contextMenus state mid-rebuild. Tests that race a
-  // register with this call should poll via `waitFor`. Also: the plan
-  // is computed for the given tab regardless of whether it's the
-  // currently-active one (production rendering only happens for the
-  // active tab — see `rebuildActionContextMenu`).
-  getActionContextMenuPlan: (tabId: number) => Promise<ActionMenuPlan>;
+  // The popup's view of `tabId`: what popup.html would render for it.
+  getPopupView: (tabId: number) => Promise<PopupView>;
   fireActionContextMenuItem: (
     tabId: number,
     scriptId: string,
     commandId: string,
   ) => Promise<{ ok: boolean; error?: string }>;
-  // Drives the "Reload page with no userscripts" menu row for `tabId`
+  // Drives the popup's "Reload page with no userscripts" for `tabId`
   // — the same handler the real click runs.
   reloadWithoutScripts: (tabId: number) => Promise<void>;
+  // Drives the toolbar-click handler for a click on `tabId`, which
+  // Playwright can't click. Two calls inside the double-click window
+  // are a double click.
+  clickAction: (tabId: number, windowId: number) => void;
   // Drives the toolbar-click handler for the given window, which
   // Playwright can't click (chrome.action has no test hook). Tests use
   // it to verify a second click reuses the window's collections tab
@@ -736,22 +742,19 @@ const api: SourceMonkeyApi = {
     }
     return out;
   },
-  getActionContextMenuPlan: async (tabId: number) => {
-    const record = await getTabRecord(tabId);
-    const state = getCurrentState(record);
-    return buildActionMenuPlan(state, tabId, await rejectedScriptIds());
-  },
+  getPopupView: (tabId) => popupViewForTab(tabId),
+  clickAction: (tabId, windowId) => handleActionClick({ id: tabId, windowId }),
   openCollectionsPage: async (windowId) => {
     await openCollectionsPage(windowId);
   },
   fireActionContextMenuItem: async (tabId, scriptId, commandId) => {
-    // Goes through the same dispatchActionMenuCommand helper the real
+    // Goes through the same dispatchMenuCommand helper the popup
     // click handler uses — same validation, same message shape. Test
     // assertions can rely on the result instead of polling page state.
-    return await dispatchActionMenuCommand(tabId, scriptId, commandId);
+    return await dispatchMenuCommand(tabId, scriptId, commandId);
   },
   reloadWithoutScripts: async (tabId) => {
-    await reloadTabWithoutScripts(tabId);
+    await reloadTabWithMode(tabId, { kind: 'none' });
   },
   debugMatchIndex: async (url: string) => {
     await ensureLoaded();
@@ -1035,9 +1038,7 @@ realSweep();
 // to do nothing. The click is the one reliable statement of "this
 // window", so reuse a collections tab only inside the clicked window,
 // and otherwise open a new one there.
-chrome.action.onClicked.addListener((tab) => {
-  void openCollectionsPage(tab?.windowId ?? null);
-});
+chrome.action.onClicked.addListener((tab) => handleActionClick(tab));
 
 async function openCollectionsPage(windowId: number | null): Promise<void> {
   try {
@@ -1124,8 +1125,10 @@ chrome.runtime.onInstalled.addListener((details) => {
 
 // ---------- Reload with no userscripts ----------
 //
-// The action menu's "Reload page with no userscripts" row: a one-time
-// reload during which every wrapper on the tab is told to skip. The
+// The popup's "Reload page with no userscripts": a one-time reload
+// during which every wrapper on the tab is told to skip. Its per-script
+// "with only this script" and "without this script" are the same
+// reload with a narrower skip (`ReloadMode`). The
 // registrations themselves are untouched — other tabs on the same site
 // keep running their scripts, and the tab's next ordinary navigation
 // runs them again.
@@ -1161,6 +1164,13 @@ chrome.runtime.onInstalled.addListener((details) => {
 // back verbatim on the wrapper's `sm:abandoned`, which is how the Log
 // entry tells this (expected) skip from any other.
 const SKIP_REASON_RELOAD_WITHOUT_SCRIPTS = 'reload with no userscripts';
+// The same for the per-script reloads.
+const SKIP_REASON_RELOAD_ONLY = 'reload with only another userscript';
+const SKIP_REASON_RELOAD_WITHOUT_THIS = 'reload without this userscript';
+// The skips a person asked for, which their Log records as information.
+const ASKED_SKIP_REASONS = new Set([
+  SKIP_REASON_RELOAD_WITHOUT_SCRIPTS, SKIP_REASON_RELOAD_ONLY, SKIP_REASON_RELOAD_WITHOUT_THIS,
+]);
 // The `skip` reason for a `.tld` script whose exact match failed. The
 // prelude treats it as its own matcher saying no and reports nothing,
 // so the literal there must stay the same.
@@ -1184,12 +1194,13 @@ function noDecisionMessage(detail: string | undefined): string {
 // poison a Ctrl-R the user makes later.
 const SKIP_SCRIPTS_ARM_TTL_MS = 10_000;
 
-// tabId → when it was armed.
-const skipScriptsArmed = new Map<number, number>();
-const skipScriptsDocByTab = new Map<number, string>();
+// tabId → when it was armed, and for which reload.
+const skipScriptsArmed = new Map<number, { at: number; mode: ReloadMode }>();
+// tabId → the skip reload's document, and its mode.
+const skipScriptsDocByTab = new Map<number, { documentId: string; mode: ReloadMode }>();
 
-async function reloadTabWithoutScripts(tabId: number): Promise<void> {
-  skipScriptsArmed.set(tabId, Date.now());
+async function reloadTabWithMode(tabId: number, mode: ReloadMode): Promise<void> {
+  skipScriptsArmed.set(tabId, { at: Date.now(), mode });
   try {
     await chrome.tabs.reload(tabId);
   } catch (err) {
@@ -1209,23 +1220,33 @@ function noteCommitForSkipScripts(
   documentId: string,
   transitionType: string,
 ): boolean {
-  const armedAt = skipScriptsArmed.get(tabId);
+  const armed = skipScriptsArmed.get(tabId);
   // Any commit disarms; only a timely reload commit becomes a skip.
   skipScriptsArmed.delete(tabId);
   if (
-    armedAt != null
+    armed != null
     && transitionType === 'reload'
-    && Date.now() - armedAt <= SKIP_SCRIPTS_ARM_TTL_MS
+    && Date.now() - armed.at <= SKIP_SCRIPTS_ARM_TTL_MS
   ) {
-    skipScriptsDocByTab.set(tabId, documentId);
+    skipScriptsDocByTab.set(tabId, { documentId, mode: armed.mode });
     return true;
   }
   skipScriptsDocByTab.delete(tabId);
   return false;
 }
 
-function isSkippingScripts(tabId: number, documentId: string): boolean {
-  return skipScriptsDocByTab.get(tabId) === documentId;
+// The skip reload's mode, when `documentId` is that reload's document.
+function skipModeFor(tabId: number, documentId: string): ReloadMode | null {
+  const entry = skipScriptsDocByTab.get(tabId);
+  return entry && entry.documentId === documentId ? entry.mode : null;
+}
+
+// Whether a skip reload in `mode` keeps `scriptId` out, and the reason
+// its `skip` reply carries.
+function skipReasonFor(mode: ReloadMode, scriptId: string): string | null {
+  if (mode.kind === 'none') return SKIP_REASON_RELOAD_WITHOUT_SCRIPTS;
+  if (mode.kind === 'only') return scriptId === mode.scriptId ? null : SKIP_REASON_RELOAD_ONLY;
+  return scriptId === mode.scriptId ? SKIP_REASON_RELOAD_WITHOUT_THIS : null;
 }
 
 function clearSkipScripts(tabId: number): void {
@@ -1341,13 +1362,8 @@ async function updateTabMatches(
   // whatever the flash state is by then.
   clearReloadFlashForOtherDoc(tabId, documentId ?? '');
   if (!url || !INJECTABLE_SCHEME.test(url)) {
-    // Drop menu commands BEFORE renderBadge: the rebuild that
-    // renderBadge schedules reads getMenuCommandsForTab() at flush
-    // time, so clearing first guarantees the same flush sees an empty
-    // mirror. The renderBadge rebuild with state=null produces zero
-    // script rows (and therefore zero indented command rows) anyway,
-    // but the order keeps the SW's `getMenuCommandsForTab(tabId)`
-    // test-surface read consistent with what the menu shows.
+    // Drop menu commands BEFORE renderBadge, whose popup notice has
+    // an open popup read them back.
     clearMenuCommandsForTab(tabId);
     await renderBadge(tabId, null);
     await clearTabState(tabId);
@@ -1399,10 +1415,8 @@ async function updateTabMatches(
   if (trigger === 'navigation') {
     clearMenuCommandsForTab(tabId, documentId ?? '');
     // The new document's wrapper will resend sm:gm-menu-register from
-    // scratch; until then the active tab's menu should reflect the
-    // cleared mirror. renderBadge at the end of this function takes
-    // care of the rebuild when tabId is the active one — we don't
-    // need a separate refresh here.
+    // scratch. renderBadge at the end of this function tells an open
+    // popup, which then shows the cleared list.
   }
   // A refresh-driven re-evaluation must NOT silently drop staleScriptIds —
   // those are kept across navigation events anyway, but extra-explicit
@@ -1414,8 +1428,15 @@ async function updateTabMatches(
   // A restored document keeps whatever it had — a bfcache return to a
   // skipped document is still that document, with nothing running.
   // A fresh one asks the in-memory marker the commit listener set.
-  if (restored ? prev.scriptsSkipped : isSkippingScripts(tabId, docId)) {
-    state.scriptsSkipped = true;
+  if (restored) {
+    if (prev.scriptsSkipped) state.scriptsSkipped = true;
+    if (prev.skipOnly !== undefined) state.skipOnly = prev.skipOnly;
+    if (prev.skipWithout !== undefined) state.skipWithout = prev.skipWithout;
+  } else {
+    const mode = skipModeFor(tabId, docId);
+    if (mode?.kind === 'none') state.scriptsSkipped = true;
+    if (mode?.kind === 'only') state.skipOnly = mode.scriptId;
+    if (mode?.kind === 'without') state.skipWithout = mode.scriptId;
   }
   // Likewise what an sm-dev run's claim on the tab let run.
   if (restored) {
@@ -1432,8 +1453,10 @@ async function updateTabMatches(
     if (prev.opaqueOrigin) state.opaqueOrigin = true;
     if (prev.missingChecked) state.missingChecked = true;
     if (prev.loadMatchIds) state.loadMatchIds = prev.loadMatchIds;
+    if (prev.loadUrl) state.loadUrl = prev.loadUrl;
   } else {
     state.loadMatchIds = incoming.map((m) => m.id);
+    state.loadUrl = url;
   }
   const nextRecord = setCurrentDoc(record, docId, state);
   await setTabRecord(tabId, nextRecord);
@@ -1489,13 +1512,7 @@ async function renderBadge(tabId: number, state: TabMatchState | null): Promise<
     /* tab probably closed; nothing useful to do */
   }
   await markSmDevTab(tabId, state?.smDevAllow !== undefined);
-  // Action context-menu items are a global property of the action, not
-  // per-tab — so we only rebuild them when this tab is the one the user
-  // is currently looking at. Out-of-band updates (background tabs
-  // reporting sm:start, refresh fan-outs) skip the rebuild.
-  if (tabId === activeTabId) {
-    rebuildActionContextMenu(state);
-  }
+  notifyPopup(tabId);
 }
 
 // ---------- The sm-dev marker on the icon ----------
@@ -1579,319 +1596,260 @@ async function markSmDevTab(tabId: number, on: boolean): Promise<void> {
   }
 }
 
-// ---------- Action context-menu (per active tab) ----------
+// ---------- Toolbar popup ("Active scripts") ----------
 //
-// Right-clicking the SourceMonkey toolbar icon should list the scripts
-// that apply to the current tab, mirroring the badge tooltip's
-// "{name} | {status}" lines. Clicking one opens that script's viewer
-// page in a new tab.
+// A click on the toolbar icon opens the popup (popup.html); a double
+// click opens the collections page. See docs/status-popup.md.
 //
-// chrome.contextMenus items with `contexts: ['action']` are global —
-// they apply to whatever tab is active when the user right-clicks. So
-// we keep them in sync with the active tab: rebuild on tab activation,
-// window focus change, and any renderBadge() for the active tab.
+// Chrome can't report a second click while a popup is set: one set
+// opens on the first click, and `action.onClicked` never fires. So none
+// is set. A click waits DOUBLE_CLICK_MS for a second one; if none comes,
+// the popup is set on that tab just long enough for `action.openPopup`
+// to open it, then cleared so the next click reaches onClicked again.
 
-let activeTabId: number | null = null;
-const ACTION_MENU_PREFIX = 'sm-script:';
-const ACTION_MENU_CMD_PREFIX = 'sm-menucmd:';
-// chrome.contextMenus.create id for the overflow parent. Fixed (rather
-// than generated per rebuild) so `createScriptGroupMenuItems` can
-// reference it as `parentId` without threading a value through.
-const ACTION_MENU_MORE_ID = 'sm-more';
-// chrome.contextMenus.create id for the fixed "Reload page with no
-// userscripts" row. See `reloadTabWithoutScripts`.
-const ACTION_MENU_RELOAD_ID = 'sm-reload-without-scripts';
-// The "Page under sm-dev control" row: a note, not clickable.
-const ACTION_MENU_SM_DEV_ID = 'sm-dev-control';
-// Indent + glyph for nested menu-command rows. Chrome preserves the
-// leading whitespace in context-menu titles; four spaces + ↳ reads as
-// "indented under the row above" at typical zoom rather than as a
-// top-level entry. Applied at every level (top + inside More) because
-// the submenu nesting only shows "this lives under More" — it does
-// NOT visually distinguish a script row from its command rows, so the
-// ↳ prefix is what tells the user which commands belong to which
-// script inside the submenu too.
-const ACTION_MENU_CMD_INDENT = '    ↳ ';
+const POPUP_PAGE = 'popup.html';
+// How long a click waits for a second one. SeeWhatISee's value, tuned
+// by hand there: long enough for a deliberate double click, short
+// enough that the popup doesn't feel slow.
+const DOUBLE_CLICK_MS = 250;
+// Per window: two quick clicks in different windows are two clicks.
+const pendingActionClicks = new Map<number, ReturnType<typeof setTimeout>>();
 
-function viewerUrlForScript(scriptId: string, tab?: 'log'): string {
-  const url = new URL(chrome.runtime.getURL('userscript.html'));
-  url.searchParams.set('script', scriptId);
-  // `#Log` is parsed by src/extension/script-url-hash.ts and lands the viewer on
-  // the Log pane. Used when the user clicks a context-menu row that's
-  // currently reporting a per-tab injection ERROR so they go straight
-  // to the failure details.
-  if (tab === 'log') url.hash = 'Log';
-  return url.toString();
-}
-
-// Maps a menu item's id (which is what chrome.contextMenus.onClicked
-// hands us) back to the (scriptId, commandId) it was created for. We
-// can't stash that on the menu item itself — chrome.contextMenus has
-// no custom-data field — so we keep our own mapping and refresh it
-// every rebuild.
-const menuItemToCommand = new Map<string, { scriptId: string; commandId: string }>();
-
-// Script IDs whose action-menu row was rendered with the per-tab
-// injection ERROR status (per `formatRowLabel`/`computeBadge`). When
-// the user clicks one of these the dispatcher routes them to the
-// viewer's Log tab instead of the main script tab so the failure
-// reason is immediately on screen. Rebuilt on every menu rebuild so
-// stale entries can't outlive their row.
-const erroredScriptRows = new Set<string>();
-
-// Rebuilds are serialized AND coalesced. Two concurrent rebuilds would
-// race: removeAll/create is async-via-callback, and once both callbacks
-// are queued, the second `create` loop can collide with the first
-// rebuild's same-ID items (chrome.contextMenus.create reports
-// duplicate-id via runtime.lastError, silently). Bursts (Ctrl-Tab spam,
-// rapid sm:* fan-out) collapse to one trailing rebuild — only the
-// most-recently-requested state is applied after the in-flight one
-// finishes.
-let menuRebuildRunning = false;
-let menuRebuildPending: { state: TabMatchState | null; tabId: number | null } | null = null;
-
-function rebuildActionContextMenu(state: TabMatchState | null): void {
-  // Snapshot the active tab at request time. The rebuild reads
-  // per-tab menu commands from gm-menu.ts, so it has to know which
-  // tab the state belongs to — using a fresh `activeTabId` at flush
-  // time could pull commands from a tab that's no longer current.
-  menuRebuildPending = { state, tabId: activeTabId };
-  if (menuRebuildRunning) return;
-  void runMenuRebuildLoop();
-}
-
-async function runMenuRebuildLoop(): Promise<void> {
-  menuRebuildRunning = true;
-  try {
-    while (menuRebuildPending) {
-      const target = menuRebuildPending;
-      menuRebuildPending = null;
-      await doRebuildActionContextMenu(target.state, target.tabId);
-    }
-  } finally {
-    menuRebuildRunning = false;
-  }
-}
-
-// Build the planned action menu for `state` + `tabId`. Pure aside
-// from the gm-menu lookup; shared by the live rebuild path and the
-// `getActionContextMenuPlan` test surface so both see the same packing.
-function buildActionMenuPlan(
-  state: TabMatchState | null,
-  tabId: number | null,
-  rejected: ReadonlySet<string>,
-): ActionMenuPlan {
-  const rows = state ? computeBadge(state, rejected).rows : [];
-  const cmdsByScript: ReadonlyMap<string, readonly MenuCommandEntry[]> =
-    tabId != null ? getMenuCommandsForTab(tabId) : new Map();
-  const groups: ActionMenuScript[] = rows.map((row) => ({
-    scriptId: row.id,
-    title: formatRowLabel(row),
-    errored: row.status === 'ERROR',
-    commands: (cmdsByScript.get(row.id) ?? []).map((cmd) => ({
-      commandId: cmd.commandId,
-      title: cmd.name,
-    })),
-  }));
-  const plan = planActionMenu(groups, state?.smDevAllow !== undefined);
-  // The skip marker is driven by main-frame commits, which only
-  // `chrome.webNavigation` reports; without it the row would be a
-  // plain reload. (The slot it reserved stays reserved — not worth a
-  // second planner mode for a Chrome that lacks the API.)
-  if (!chrome.webNavigation) plan.reloadWithoutScripts = false;
-  return plan;
-}
-
-async function doRebuildActionContextMenu(
-  state: TabMatchState | null,
-  tabId: number | null,
-): Promise<void> {
-  if (!chrome.contextMenus) return;
-  const plan = buildActionMenuPlan(state, tabId, await rejectedScriptIds());
-  await new Promise<void>((resolve) => chrome.contextMenus.removeAll(() => resolve()));
-  menuItemToCommand.clear();
-  erroredScriptRows.clear();
-  if (plan.smDevControl) {
-    chrome.contextMenus.create({
-      id: ACTION_MENU_SM_DEV_ID,
-      title: ACTION_MENU_SM_DEV_LABEL,
-      contexts: ['action'],
-      enabled: false,
-    });
-  }
-  // Top-level script groups. Each script row is followed by its
-  // indented menu-command rows in registration order.
-  for (const group of plan.top) {
-    createScriptGroupMenuItems(group, undefined);
-  }
-  // Overflow: a single "More" parent, then every overflowed group
-  // nested beneath it. Commands keep the same "↳" indent inside the
-  // submenu — the submenu nesting only shows "lives under More," not
-  // which commands belong to which script row.
-  if (plan.more.length > 0) {
-    chrome.contextMenus.create({
-      id: ACTION_MENU_MORE_ID,
-      title: ACTION_MENU_MORE_LABEL,
-      contexts: ['action'],
-    });
-    for (const group of plan.more) {
-      createScriptGroupMenuItems(group, ACTION_MENU_MORE_ID);
-    }
-  }
-  // Always last, always top-level: the row is about the page, not
-  // about any one script, so it doesn't belong inside More.
-  if (plan.reloadWithoutScripts) {
-    chrome.contextMenus.create({
-      id: ACTION_MENU_RELOAD_ID,
-      title: ACTION_MENU_RELOAD_LABEL,
-      contexts: ['action'],
-    });
-  }
-}
-
-function createScriptGroupMenuItems(
-  group: ActionMenuScript,
-  parentId: string | undefined,
-): void {
-  const scriptItem: chrome.contextMenus.CreateProperties = {
-    id: ACTION_MENU_PREFIX + group.scriptId,
-    title: group.title,
-    contexts: ['action'],
-  };
-  if (parentId) scriptItem.parentId = parentId;
-  chrome.contextMenus.create(scriptItem);
-  if (group.errored) erroredScriptRows.add(group.scriptId);
-  for (const cmd of group.commands) {
-    const menuItemId = `${ACTION_MENU_CMD_PREFIX}${group.scriptId}:${cmd.commandId}`;
-    menuItemToCommand.set(menuItemId, { scriptId: group.scriptId, commandId: cmd.commandId });
-    const cmdItem: chrome.contextMenus.CreateProperties = {
-      id: menuItemId,
-      title: ACTION_MENU_CMD_INDENT + cmd.title,
-      contexts: ['action'],
-    };
-    if (parentId) cmdItem.parentId = parentId;
-    chrome.contextMenus.create(cmdItem);
-  }
-}
-
-async function refreshActiveTabMenu(): Promise<void> {
-  if (activeTabId == null) {
-    rebuildActionContextMenu(null);
+function handleActionClick(tab: Pick<chrome.tabs.Tab, 'id' | 'windowId'> | undefined): void {
+  const windowId = tab?.windowId ?? chrome.windows.WINDOW_ID_NONE;
+  const pending = pendingActionClicks.get(windowId);
+  if (pending !== undefined) {
+    clearTimeout(pending);
+    pendingActionClicks.delete(windowId);
+    void openCollectionsPage(tab?.windowId ?? null);
     return;
   }
-  const record = await getTabRecord(activeTabId);
-  rebuildActionContextMenu(getCurrentState(record));
+  pendingActionClicks.set(windowId, setTimeout(() => {
+    pendingActionClicks.delete(windowId);
+    void openActionPopup(tab);
+  }, DOUBLE_CLICK_MS));
 }
 
-function installActionContextMenu(): void {
-  if (!chrome.contextMenus) return;
-  // The `tab` argument names the tab the right-click happened on. We
-  // prefer it over our own `activeTabId` bookkeeping and over Chrome's
-  // "current window" default for tabs.create: both are derived from
-  // focus events, which can be stale when several windows (or virtual
-  // desktops) are in play, and acting on the wrong window is invisible
-  // to the user. See the action.onClicked comment above.
-  chrome.contextMenus.onClicked.addListener((info, tab) => {
-    const id = typeof info.menuItemId === 'string' ? info.menuItemId : '';
-    if (id === ACTION_MENU_RELOAD_ID) {
-      // Reloads the tab under the right-click for the same reason the
-      // viewer opens in its window: `activeTabId` can be stale.
-      if (tab?.id != null) void reloadTabWithoutScripts(tab.id);
-      return;
-    }
-    if (id.startsWith(ACTION_MENU_CMD_PREFIX)) {
-      handleActionMenuCommandClick(id, tab?.id ?? null);
-      return;
-    }
-    if (id.startsWith(ACTION_MENU_PREFIX)) {
-      const scriptId = id.slice(ACTION_MENU_PREFIX.length);
-      // Rows currently reporting per-tab injection ERROR land on the
-      // Log tab so the user sees why; everything else opens on the
-      // default (main script) view.
-      const viewerTab = erroredScriptRows.has(scriptId) ? 'log' : undefined;
-      // Caught rather than dropped: an unhandled rejection in the SW
-      // lands in chrome://extensions/?errors the same as one in a page.
-      // The target is our own viewer page, so a failure here is not
-      // something the user can act on — hence info, not a surface.
-      chrome.tabs.create({
-        url: viewerUrlForScript(scriptId, viewerTab),
-        ...(tab?.windowId != null ? { windowId: tab.windowId } : {}),
-      })
-        .catch((err) => console.info('[SourceMonkey] could not open the viewer:', describeError(err)));
-      return;
-    }
-  });
-  chrome.tabs.onActivated.addListener((info) => {
-    activeTabId = info.tabId;
-    void refreshActiveTabMenu();
-  });
-  if (chrome.windows && chrome.windows.onFocusChanged) {
-    chrome.windows.onFocusChanged.addListener(async (windowId) => {
-      if (windowId === chrome.windows.WINDOW_ID_NONE) return;
-      try {
-        const [tab] = await chrome.tabs.query({ active: true, windowId });
-        activeTabId = tab?.id ?? null;
-      } catch {
-        activeTabId = null;
-      }
-      void refreshActiveTabMenu();
-    });
-  }
-  // Seed the active-tab id on SW startup so the very first right-click
-  // (before any tab event fires) gets the right menu.
-  void (async () => {
-    try {
-      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-      activeTabId = tab?.id ?? null;
-    } catch {
-      activeTabId = null;
-    }
-    void refreshActiveTabMenu();
-  })();
-}
-
-// User clicked a "↳ <name>" sub-entry. Resolve which (scriptId,
-// commandId) it belongs to and route through the shared
-// dispatchActionMenuCommand so the real-click path and the test
-// surface (`fireActionContextMenuItem`) validate and message
-// identically.
-function handleActionMenuCommandClick(menuItemId: string, gestureTabId: number | null): void {
-  const mapping = menuItemToCommand.get(menuItemId);
-  if (!mapping) return;
-  // The tab under the right-click wins; `activeTabId` (focus-event
-  // bookkeeping) is only the fallback for callers without one.
-  const tabId = gestureTabId ?? activeTabId;
+async function openActionPopup(tab: Pick<chrome.tabs.Tab, 'id' | 'windowId'> | undefined): Promise<void> {
+  const tabId = tab?.id;
   if (tabId == null) return;
-  void dispatchActionMenuCommand(tabId, mapping.scriptId, mapping.commandId).then((result) => {
-    // The rows are built for `activeTabId` but the click is dispatched
-    // to the tab Chrome named. When those disagree (stale focus
-    // bookkeeping) the command isn't registered on the clicked tab and
-    // this is a no-op, which is otherwise invisible — so say so in the
-    // SW console.
-    if (!result.ok) {
-      console.info(
-        `[SourceMonkey] menu command ${mapping.commandId} did not fire on tab ${tabId}: ${result.error}`,
-      );
+  try {
+    await chrome.action.setPopup({ tabId, popup: POPUP_PAGE });
+    await chrome.action.openPopup(tab?.windowId != null ? { windowId: tab.windowId } : {});
+  } catch (err) {
+    // Chrome refuses when the window lost focus during the wait, or
+    // the tab closed. Nothing the user can act on.
+    console.info('[SourceMonkey] could not open the popup:', describeError(err));
+  } finally {
+    await chrome.action.setPopup({ tabId, popup: '' }).catch(() => { /* tab closed */ });
+  }
+}
+
+// What the popup shows for `tabId`. Gathers the inputs and leaves the
+// rules to `buildPopupView`.
+async function popupViewForTab(
+  tabId: number,
+  keepIds: readonly string[] = [],
+  // The URL the popup placed `keepIds` for. On another URL they're a
+  // previous page's rows, so they're dropped.
+  keepUrl?: string,
+): Promise<PopupView> {
+  await ensureLoaded();
+  let url = '';
+  try {
+    url = (await chrome.tabs.get(tabId)).url ?? '';
+  } catch {
+    // The tab closed; shown as a page nothing runs on.
+  }
+  const injectable = INJECTABLE_SCHEME.test(url);
+  if (keepUrl !== url) keepIds = [];
+  const state = injectable ? getCurrentState(await getTabRecord(tabId)) : null;
+  const rejected = await readRejections();
+  const badgeRows = state ? computeBadge(state, new Set(Object.keys(rejected))).rows : [];
+  const matching = injectable ? findAllMatchingIds(url) : [];
+  // After an in-place URL change (pushState), what matched the URL the
+  // document loaded at tells "enabled since" from "matches only the new
+  // URL" (`buildPopupView`).
+  const loadUrl = state?.loadUrl;
+  const loadUrlMatchingIds = loadUrl && loadUrl !== url ? new Set(findAllMatchingIds(loadUrl)) : undefined;
+  const ids = [...new Set([...matching, ...badgeRows.map((r) => r.id), ...keepIds])];
+  const [stored, collections] = await Promise.all([getScripts(ids), getCollections()]);
+  // A scratch script runs only in its own run's tabs, so elsewhere it
+  // isn't listed, as on the badge (`expectedMatches`).
+  const listed = stored.filter((s) => {
+    const run = scratchRunOf(s.fileUrl);
+    return run === null || run === state?.smDevRun;
+  });
+  return buildPopupView({
+    url,
+    injectable,
+    state,
+    badgeRows,
+    rejected,
+    matchingIds: new Set(matching),
+    scripts: listed.map((s) => ({
+      id: s.id,
+      name: scriptDisplayName(s),
+      collectionId: s.collectionId,
+      enabled: isScriptEnabled(s),
+      identity: identityKey(s.header ?? null),
+      version: (s.header ? getValue(s.header, 'version')?.trim() : '') || null,
+    })),
+    collections: collections.map((c) => ({
+      id: c.id,
+      name: effectiveDisplayName(c),
+      path: c.path,
+      enabled: isCollectionEnabled(c),
+    })),
+    menuCommands: getMenuCommandsForTab(tabId),
+    keepIds: new Set(keepIds),
+    loadUrlMatchingIds,
+  });
+}
+
+// Open popups, by the tab they show. Each popup holds a port named for
+// its tab (`POPUP_PORT_PREFIX` + id) while it's open, so a change is
+// sent only where a popup is showing that tab, not broadcast to every
+// extension page on every badge paint.
+const popupPorts = new Map<number, Set<chrome.runtime.Port>>();
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (!port.name.startsWith(POPUP_PORT_PREFIX) || !port.sender || !fromExtensionPage(port.sender)) return;
+  const tabId = Number(port.name.slice(POPUP_PORT_PREFIX.length));
+  if (!Number.isInteger(tabId)) return;
+  let ports = popupPorts.get(tabId);
+  if (!ports) popupPorts.set(tabId, ports = new Set());
+  ports.add(port);
+  port.onDisconnect.addListener(() => {
+    ports.delete(port);
+    if (ports.size === 0) popupPorts.delete(tabId);
+  });
+});
+
+// Tell an open popup that what it shows for `tabId` changed.
+function notifyPopup(tabId: number): void {
+  const ports = popupPorts.get(tabId);
+  if (!ports) return;
+  const msg: PopupChangedMessage = { type: POPUP_CHANGED_MESSAGE, tabId };
+  for (const port of ports) {
+    try {
+      port.postMessage(msg);
+    } catch {
+      // Its popup just closed; the disconnect handler drops it.
     }
+  }
+}
+
+// A popup request's fields, checked rather than trusted: only our own
+// pages can send one, but a malformed `mode` would otherwise fall into
+// the last branch of `skipReasonFor`.
+function isReloadMode(value: unknown): value is ReloadMode {
+  const m = value as Partial<{ kind: string; scriptId: unknown }> | null;
+  if (!m || typeof m !== 'object') return false;
+  if (m.kind === 'none') return true;
+  return (m.kind === 'only' || m.kind === 'without') && typeof m.scriptId === 'string';
+}
+
+// ---------- The icon's right-click menu ----------
+//
+// One item: the double click's action, worded so it doubles as a hint
+// that the double click exists. The popup has everything else.
+//
+// Recreated every time the worker starts, not only on install: menu
+// items persist with the extension, but not necessarily through it
+// being disabled and re-enabled, which fires no `onInstalled`. Cheap.
+// `removeAll` first, as a duplicate id fails.
+
+const OPEN_COLLECTIONS_MENU_ID = 'sm-open-collections';
+const OPEN_COLLECTIONS_MENU_TITLE = 'Open Collections page (double-click)';
+
+function createActionMenu(): void {
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: OPEN_COLLECTIONS_MENU_ID,
+      title: OPEN_COLLECTIONS_MENU_TITLE,
+      contexts: ['action'],
+    }, () => {
+      // Read so Chrome doesn't report an unchecked error.
+      if (chrome.runtime.lastError) {
+        console.info('[SourceMonkey] could not create the icon menu:', chrome.runtime.lastError.message);
+      }
+    });
+  });
+}
+
+createActionMenu();
+// The window the right-click came from, as for a double click.
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId === OPEN_COLLECTIONS_MENU_ID) void openCollectionsPage(tab?.windowId ?? null);
+});
+
+// The popup's requests. Only from our own pages, like the other page
+// relays: a reload or a menu command is an action on a tab.
+function installPopupListener(): void {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    const msg = message as { type?: unknown } | null;
+    if (!msg || !fromExtensionPage(sender)) return undefined;
+    if (msg.type !== POPUP_VIEW_MESSAGE && msg.type !== POPUP_RELOAD_MESSAGE && msg.type !== POPUP_COMMAND_MESSAGE) {
+      return undefined;
+    }
+    const tabId = (msg as { tabId?: unknown }).tabId;
+    if (typeof tabId !== 'number') {
+      sendResponse(null);
+      return undefined;
+    }
+    let work: Promise<unknown>;
+    if (msg.type === POPUP_VIEW_MESSAGE) {
+      const req = msg as Partial<PopupViewRequest>;
+      const keepIds = Array.isArray(req.keepIds) ? req.keepIds.filter((id): id is string => typeof id === 'string') : [];
+      work = popupViewForTab(tabId, keepIds, typeof req.keepUrl === 'string' ? req.keepUrl : undefined);
+    } else if (msg.type === POPUP_RELOAD_MESSAGE) {
+      const req = msg as Partial<PopupReloadRequest>;
+      if (!isReloadMode(req.mode)) {
+        sendResponse(null);
+        return undefined;
+      }
+      work = reloadTabWithMode(tabId, req.mode);
+    } else {
+      const req = msg as PopupCommandRequest;
+      if (typeof req.scriptId !== 'string' || typeof req.commandId !== 'string') {
+        sendResponse(null);
+        return undefined;
+      }
+      work = dispatchMenuCommand(req.tabId, req.scriptId, req.commandId).then((result) => {
+        // The command was unregistered between the popup drawing it and
+        // the click. The popup redraws without it.
+        if (!result.ok) console.info(`[SourceMonkey] menu command ${req.commandId} did not fire on tab ${req.tabId}: ${result.error}`);
+        return result;
+      });
+    }
+    work.then(
+      (reply) => { try { sendResponse(reply ?? null); } catch { /* popup gone */ } },
+      (err) => {
+        console.info('[SourceMonkey] popup request failed:', describeError(err));
+        try { sendResponse(null); } catch { /* popup gone */ }
+      },
+    );
+    // Keep the message channel open for the async reply.
+    return true;
   });
 }
 
 // Single source of truth for "fire this menu command on this tab".
 // Validates the entry is still registered (script may have called
-// unregister between the menu showing and the click firing) and sends
-// the wrapper-side sm:gm-menu-fire message. Both the real-click path
-// and the test surface call this — divergence between them would let
-// tests claim coverage they don't actually have.
-async function dispatchActionMenuCommand(
+// unregister between the popup showing and the click firing) and sends
+// the wrapper-side sm:gm-menu-fire message. Both the popup and the
+// test surface call this — divergence between them would let tests
+// claim coverage they don't actually have.
+async function dispatchMenuCommand(
   tabId: number,
   scriptId: string,
   commandId: string,
 ): Promise<{ ok: boolean; error?: string }> {
   if (!findMenuCommand(tabId, scriptId, commandId)) {
-    // Not user-facing today, so not recased: the real click path
-    // (`dispatchActionMenuCommand` in the context-menu handler) discards
-    // this reply, and only the test surface reads it. If it ever reaches
-    // a person, it takes a capital like any other message.
+    // Not user-facing today, so not recased: the popup discards this
+    // reply, and only the test surface reads it. If it ever reaches a
+    // person, it takes a capital like any other message.
     return { ok: false, error: 'this menu command is no longer registered' };
   }
   try {
@@ -2029,18 +1987,8 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   clearSkipScripts(tabId);
   dropClaim(tabId);
   // GM_registerMenuCommand: the page-side callbacks are gone with the
-  // document, so the SW-side mapping is dead weight after close. Drop
-  // before the menu rebuild below so a stale list can't reappear.
+  // document, so the SW-side mapping is dead weight after close.
   clearMenuCommandsForTab(tabId);
-  // Drop the active-tab reference if it was this one. chrome.tabs.onActivated
-  // normally fires immediately for the new active tab and overwrites this,
-  // but during window-close paths Chrome can remove a tab without a paired
-  // activation event; null'ing here keeps the next right-click from
-  // resolving against a dead tabId.
-  if (tabId === activeTabId) {
-    activeTabId = null;
-    void refreshActiveTabMenu();
-  }
   // GM_* cross-tab broadcast: drop this tab from every scriptId's
   // openers set so future writes don't try to deliver to a closed
   // tab (broadcast() catches the "Receiving end does not exist"
@@ -2653,12 +2601,13 @@ async function handleCheckPending(
   if (script && (claim ? !claimAllows(claim, scriptRun) : scriptRun !== null)) {
     return { action: 'skip', reason: SKIP_REASON_SM_DEV };
   }
-  // "Reload page with no userscripts" — decided per tab, ahead of the
-  // fast path, and for every frame: a subframe's documentId is its
-  // own, so the tab-level marker is the only thing that covers it.
-  if (tabId != null && skipScriptsDocByTab.has(tabId)) {
-    return { action: 'skip', reason: SKIP_REASON_RELOAD_WITHOUT_SCRIPTS };
-  }
+  // "Reload page with no userscripts", and the per-script reloads —
+  // decided per tab, ahead of the fast path, and for every frame: a
+  // subframe's documentId is its own, so the tab-level marker is the
+  // only thing that covers it.
+  const skip = tabId == null ? undefined : skipScriptsDocByTab.get(tabId);
+  const skipReason = skip ? skipReasonFor(skip.mode, payload.id) : null;
+  if (skipReason) return { action: 'skip', reason: skipReason };
   // The frame's own URL (sender.url), not the one in the payload.
   if (payload.tld === true) {
     const script = await getScript(payload.id);
@@ -4274,7 +4223,7 @@ function installScriptMessageListener(): void {
     const menuDocId = (sender as { documentId?: string }).documentId ?? '';
     if (type === 'sm:gm-menu-register') {
       // Page side has stashed the callback locally; we just track the
-      // (commandId, name) so the action context menu can render it.
+      // (commandId, name) so the toolbar popup can list it.
       //
       // Lifecycle window: a register queued just before chrome.tabs.onRemoved
       // fires can land here AFTER clearMenuCommandsForTab(tabId) has
@@ -4295,7 +4244,7 @@ function installScriptMessageListener(): void {
           typeof payload.name === 'string'
         ) {
           const changed = registerMenuCommand(tabId, menuDocId, payload.scriptId, payload.commandId, payload.name);
-          if (changed && tabId === activeTabId) void refreshActiveTabMenu();
+          if (changed) notifyPopup(tabId);
           if (changed) {
             emitSmDevEvent({
               kind: 'menu', op: 'add', tabId, documentId: menuDocId, topFrame: sender.frameId === 0,
@@ -4311,9 +4260,8 @@ function installScriptMessageListener(): void {
         if (typeof payload.scriptId === 'string' && typeof payload.commandId === 'string') {
           const changed = unregisterMenuCommand(tabId, menuDocId, payload.scriptId, payload.commandId);
           // Unknown ids (silent no-op contract) don't change visible
-          // state; skip the rebuild so a noisy unregister loop doesn't
-          // churn chrome.contextMenus.
-          if (changed && tabId === activeTabId) void refreshActiveTabMenu();
+          // state, so an open popup isn't told.
+          if (changed) notifyPopup(tabId);
           if (changed) {
             emitSmDevEvent({
               kind: 'menu', op: 'remove', tabId, documentId: menuDocId, topFrame: sender.frameId === 0,
@@ -4607,8 +4555,8 @@ async function recordScriptReport(
     );
     // Not in the script's Log for a tab sm-dev controls: it happens on
     // every load there, to scripts the person didn't ask anything of.
-    // - A skip the person asked for ("Reload page with no userscripts")
-    //   is information.
+    // - A skip the person asked for ("Reload page with no userscripts",
+    //   or one of the per-script reloads) is information.
     // - No decision is an error: the script should have been decided,
     //   and wasn't, so it didn't run. Its message is a sentence, with
     //   why (`noDecisionMessage`).
@@ -4618,7 +4566,7 @@ async function recordScriptReport(
       // The run hears this as a report, so not again as a Log entry.
       fromReport: true,
       level: payload.reason === SKIP_REASON_NO_DECISION ? 'error'
-        : payload.reason === SKIP_REASON_RELOAD_WITHOUT_SCRIPTS ? 'info' : 'warning',
+        : ASKED_SKIP_REASONS.has(payload.reason ?? '') ? 'info' : 'warning',
       source: 'script-wrapper',
       tabId,
       message: payload.reason === SKIP_REASON_NO_DECISION
@@ -4804,7 +4752,7 @@ installLocalRootsListener();
 installGithubAuthListener();
 installNotificationListeners();
 installDownloadListeners();
-installActionContextMenu();
+installPopupListener();
 // Kick off the initial cache load so the very first navigation doesn't
 // pay the read-everything cost on the critical path. The injector sync
 // runs in parallel so registrations are in place ASAP after SW startup.

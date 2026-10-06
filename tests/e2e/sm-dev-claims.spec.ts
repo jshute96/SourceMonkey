@@ -103,20 +103,20 @@ test.describe('sm-dev tab claims', () => {
     await sm.claimTab(tabId, 'R1', 60_000);
     await page.reload();
     await waitForTabState(sm, tabId, (s) => s.title.includes('Kept | NOT LOADED') && hasBadgeColor(s, GREEN), 'green with Kept not loaded');
-    // Counted: only the script the claim let run. And the menu and
+    // Counted: only the script the claim let run. And the popup and
     // tooltip say whose tab it is.
     expect((await sm.getTabState(tabId)).badgeText).toBe('1');
-    expect((await sm.getActionContextMenuPlan(tabId)).smDevControl).toBe(true);
-    // Which scripts run there is the run's choice, not the menu's.
-    expect((await sm.getActionContextMenuPlan(tabId)).reloadWithoutScripts).toBe(false);
+    expect((await sm.getPopupView(tabId)).smDev).toBe(true);
+    // Which scripts run there is the run's choice, not the popup's.
+    expect((await sm.getPopupView(tabId)).perScriptReload).toBe(false);
     expect((await sm.getTabState(tabId)).title).toContain('SourceMonkey\nPage under sm-dev control');
     // Released and reloaded, it's an ordinary tab again, and the run's
     // script is gone with its test collection.
     await sm.releaseRun('R1');
     await page.reload();
     await waitForTabState(sm, tabId, (s) => s.title.includes('Kept | OK') && s.badgeText === '1', 'Kept counted');
-    expect((await sm.getActionContextMenuPlan(tabId)).smDevControl).toBe(false);
-    expect((await sm.getActionContextMenuPlan(tabId)).reloadWithoutScripts).toBe(true);
+    expect((await sm.getPopupView(tabId)).smDev).toBe(false);
+    expect((await sm.getPopupView(tabId)).perScriptReload).toBe(true);
     expect((await sm.getTabState(tabId)).title).not.toContain('sm-dev');
   });
 

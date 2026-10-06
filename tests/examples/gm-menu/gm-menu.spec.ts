@@ -4,7 +4,7 @@
 // `#registered` <ul>) the userscript maintains for the page itself.
 // The cross-manager part — that TM and SM both call the registered
 // callback — needs a manager-specific test (Playwright can't drive
-// either toolbar's right-click menu). The SourceMonkey-side fire path
+// either manager's toolbar popup). The SourceMonkey-side fire path
 // is covered separately in `tests/e2e/gm-menu.spec.ts`.
 
 import path from 'node:path';

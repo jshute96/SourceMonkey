@@ -301,6 +301,17 @@ export function findMatchesForUrl(url: string): MatchedScript[] {
   return out;
 }
 
+// Every script whose rules match `url`, enabled or not — the popup
+// lists the disabled ones too, so they can be turned on from there.
+// Ids only: the popup reads the rows it needs from storage.
+export function findAllMatchingIds(url: string): string[] {
+  const out: string[] = [];
+  for (const entry of cache.values()) {
+    if (urlMatchesScript(url, entry.matching)) out.push(entry.id);
+  }
+  return out;
+}
+
 // Narrow a set of script ids to the ones loaded from `file://`.
 //
 // Keyed on each script's own `fileUrl`, not on its collection's

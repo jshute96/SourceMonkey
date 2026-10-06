@@ -3,7 +3,7 @@
 // Per-tab, per-script registry of menu commands a userscript has asked
 // us to expose. The wrapper holds the actual callback locally (callbacks
 // aren't serializable across worlds); we only track enough to render
-// the action context menu and route a click event back to the right tab.
+// the toolbar popup's command rows and route a click back to the right tab.
 //
 // Lifecycle:
 //   - Registered by the wrapper after `sm:start` via `sm:gm-menu-register`.
@@ -21,7 +21,7 @@
 // scripts run in the top frame only — we never set `allFrames`. If
 // that changes, subframe and top-frame wrappers will name different
 // documents and replace each other's commands here; this needs to be
-// re-keyed by (tabId, documentId) first, with the menu render merging
+// re-keyed by (tabId, documentId) first, with the popup merging
 // across a tab's live documents.
 
 
@@ -77,7 +77,7 @@ function ensureTab(tabId: number, docId: string): Map<string, MenuCommandEntry[]
 //
 // Returns true iff the visible state changed (new entry, or an update
 // that changed `name`). Callers gate menu rebuilds on this so a noisy
-// no-op register doesn't drive a chrome.contextMenus rebuild.
+// no-op register doesn't send an open popup a redraw.
 export function registerMenuCommand(
   tabId: number,
   docId: string,
@@ -140,7 +140,7 @@ export function getMenuCommandsForTab(
   return byTab.get(tabId)?.scripts ?? new Map();
 }
 
-// Look up a single command — used by the action-menu click handler to
+// Look up a single command — used by the popup's command handler to
 // resolve a clicked menuItemId back to the originating script.
 export function findMenuCommand(
   tabId: number,
