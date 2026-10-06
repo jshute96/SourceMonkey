@@ -16,7 +16,7 @@
 // storage.
 
 import { isFileUrl, scratchRunOf } from './directories.js';
-import { scriptDisplayName } from '../script-display.js';
+import { compareScriptNames, scriptDisplayName } from '../script-display.js';
 import { scanAllStorage } from './storage-scan.js';
 import {
   ensureCollectionKeysMigrated,
@@ -297,7 +297,7 @@ export function findMatchesForUrl(url: string): MatchedScript[] {
     }
   }
   // Stable display order for the tooltip.
-  out.sort((a, b) => a.name.localeCompare(b.name));
+  out.sort((a, b) => compareScriptNames(a.name, b.name));
   return out;
 }
 

@@ -4,6 +4,7 @@ import type { DirectoryListingCache } from '../file-locations.js';
 import { MAX_SITE_ICONS, representativeMatches, type MatchTarget } from '../match-targets.js';
 import { renderGlyph } from './glyph.js';
 import { getValue } from '../userscript-header.js';
+import { iconRefFromHeader, isIconContentType, MAX_ICON_BYTES } from '../script-icon.js';
 
 // Site-icon (favicon) extraction + cache. Used by the collections page
 // and userscript viewer to show a 16x16 icon per targeted site (up to
@@ -71,7 +72,6 @@ const urlIconKey = (url: string): string => `${URL_ICON_KEY_PREFIX}${url}`;
 
 const SUCCESS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const NULL_TTL_MS = 24 * 60 * 60 * 1000;
-const MAX_ICON_BYTES = 128 * 1024;
 const MAX_HTML_BYTES = 1024 * 1024;
 // Cap on inline-`data:`-URL icons declared in `<link href="data:...">`.
 // Base64 inflates by ~4/3 and the `data:image/...;base64,` prefix adds
@@ -121,35 +121,6 @@ function paintableIcon(dataUrl: string): boolean {
 function emptyDataHref(href: string): boolean {
   const h = href.trim();
   return isDataUrl(h) && !dataUrlHasPayload(h);
-}
-
-// ---------- Header-icon extraction ----------
-
-// Tag priority for a script-declared icon. `@icon` is the only form
-// documented by all three managers (TM/VM/GM); the rest are TM-only
-// aliases. The smaller variants come first so a script that declares
-// both a regular and a 64×64 icon picks the one closer to our 16×16
-// display size.
-const ICON_HEADER_TAGS = ['icon', 'iconurl', 'defaulticon', 'icon64url', 'icon64'];
-
-// Read the highest-priority icon reference declared in the parsed
-// metadata, or null when none is set. The reference comes back raw
-// (just trimmed + non-empty); resolving it into an absolute URL —
-// including the relative-path-against-script-parent rules and `..`
-// rejection — is the file-loader's job and happens at render time
-// when the script's `fileUrl` is in scope.
-export function iconRefFromHeader(
-  header: { tags: { tag: string; locale?: string; value: string }[] } | null,
-): string | null {
-  if (!header) return null;
-  for (const tag of ICON_HEADER_TAGS) {
-    for (const e of header.tags) {
-      if (e.tag !== tag || e.locale !== undefined) continue;
-      const trimmed = e.value.trim();
-      if (trimmed) return trimmed;
-    }
-  }
-  return null;
 }
 
 // ---------- Storage I/O ----------
@@ -564,7 +535,7 @@ async function fetchIconAt(
 ): Promise<string | null> {
   const res = await fetchResourceBytes(url, {
     maxBytes: MAX_ICON_BYTES,
-    acceptContentType: (ct) => ct.startsWith('image/'),
+    acceptContentType: isIconContentType,
   });
   // Icons fail quietly — a missing favicon is cosmetic, and there is
   // no surface that would show a reason.
@@ -605,17 +576,37 @@ function arrayBufferToDataUrl(buffer: ArrayBuffer, mime: string): string {
 // two icon-collection paths don't collide.
 const inflight = new Map<string, Promise<string | null>>();
 
+// Answers already known on this page, by the same storage keys: a
+// usable cache row read here, or a fetch finished here. Lets a slot
+// whose icons are all known be drawn finished, with no globe first;
+// see `renderSiteIconInto`. Page-lifetime, like the cache rows it
+// mirrors, which last days.
+const settled = new Map<string, string | null>();
+
+function remember(key: string, pending: Promise<string | null>): Promise<string | null> {
+  return pending.then((dataUrl) => {
+    settled.set(key, dataUrl);
+    return dataUrl;
+  });
+}
+
+// The page URL `ensureSiteIcon` probes before falling back to the
+// origin, or null when it goes straight to the origin. The path-scoped
+// layer only earns its keep when the probe is deeper than the origin
+// root — otherwise it would just duplicate the origin-root HTML fetch
+// the fallback chain already does.
+function pathProbeUrl(origin: string, pageUrl: string | undefined): string | null {
+  if (pageUrl === undefined || pageUrl === origin + '/' || pageUrl === origin) return null;
+  return pageUrl;
+}
+
 export async function ensureSiteIcon(
   origin: string,
   pageUrl?: string,
 ): Promise<string | null> {
-  const rootUrl = origin + '/';
-  // The path-scoped layer only earns its keep when the probe is deeper
-  // than the origin root — otherwise it would just duplicate the
-  // origin-root HTML fetch the fallback chain already does.
-  const usePath = pageUrl !== undefined && pageUrl !== rootUrl && pageUrl !== origin;
-  if (usePath) {
-    const pathHit = await ensurePathIcon(pageUrl!);
+  const probe = pathProbeUrl(origin, pageUrl);
+  if (probe) {
+    const pathHit = await ensurePathIcon(probe);
     if (pathHit !== null) return pathHit;
   }
   return ensureOriginIcon(origin);
@@ -627,14 +618,17 @@ async function ensurePathIcon(pageUrl: string): Promise<string | null> {
   if (pending) return pending;
 
   const cached = usableCacheHit(await loadPathIcon(pageUrl), DISCOVERED_ICON_CACHE_VERSION);
-  if (cached) return cached.dataUrl;
+  if (cached) {
+    settled.set(key, cached.dataUrl);
+    return cached.dataUrl;
+  }
 
   // Re-check after the storage await: another caller may have started
   // a fetch while we were reading.
   const racing = inflight.get(key);
   if (racing) return racing;
 
-  const p = fetchAndCachePathIcon(pageUrl).finally(() => {
+  const p = remember(key, fetchAndCachePathIcon(pageUrl)).finally(() => {
     inflight.delete(key);
   });
   inflight.set(key, p);
@@ -650,12 +644,15 @@ async function ensureOriginIcon(origin: string): Promise<string | null> {
     (await loadSiteIcons([origin])).get(origin),
     DISCOVERED_ICON_CACHE_VERSION,
   );
-  if (cached) return cached.dataUrl;
+  if (cached) {
+    settled.set(key, cached.dataUrl);
+    return cached.dataUrl;
+  }
 
   const racing = inflight.get(key);
   if (racing) return racing;
 
-  const p = fetchAndCacheOriginIcon(origin).finally(() => {
+  const p = remember(key, fetchAndCacheOriginIcon(origin)).finally(() => {
     inflight.delete(key);
   });
   inflight.set(key, p);
@@ -720,16 +717,84 @@ async function ensureIconAt(url: string): Promise<string | null> {
   if (pending) return pending;
 
   const cached = usableCacheHit(await loadUrlIcon(url));
-  if (cached) return cached.dataUrl;
+  if (cached) {
+    settled.set(key, cached.dataUrl);
+    return cached.dataUrl;
+  }
 
   const racing = inflight.get(key);
   if (racing) return racing;
 
-  const p = fetchAndCacheUrlIcon(url).finally(() => {
+  const p = remember(key, fetchAndCacheUrlIcon(url)).finally(() => {
     inflight.delete(key);
   });
   inflight.set(key, p);
   return p;
+}
+
+// ---------- Known answers ----------
+
+// The icon `ensureSiteIcon` would give for a site, when it is already
+// known on this page; undefined when it has to be looked up.
+function settledSiteIcon(t: MatchTarget): string | null | undefined {
+  const probe = pathProbeUrl(t.origin, t.linkUrl);
+  if (probe) {
+    const pathHit = settled.get(pathIconKey(probe));
+    if (pathHit === undefined) return undefined;
+    if (pathHit !== null) return pathHit;
+  }
+  return settled.get(siteIconKey(t.origin));
+}
+
+// Same for `ensureIconForUrl`. Never known up front with local roots:
+// a stand-in on disk is looked for first, and that is a read.
+function settledUrlIcon(url: string, localRoots: readonly string[]): string | null | undefined {
+  if (url.startsWith('data:')) return usableDataUrl(url);
+  if (localRoots.length > 0) return undefined;
+  return settled.get(urlIconKey(url));
+}
+
+// The script's declared icon, resolved against its own URL, or null.
+// The header value is raw (URL, data:, or relative path). Resolving it
+// against the script's own URL lets `@icon foo.png` reach the sibling
+// file alongside the script. A ref that climbs out of a LOCAL script's
+// folder is rejected and drops back to origin discovery; from a remote
+// script it resolves like any other URL.
+function declaredIconUrl(script: ScriptWithMatching): string | null {
+  const iconRef = iconRefFromHeader(script.header ?? null);
+  return iconRef ? resolveScriptResource(iconRef, script.fileUrl)?.url ?? null : null;
+}
+
+// Read every cached icon these scripts' slots will ask for, in one
+// storage read, so the slots drawn next can show them straight away
+// instead of a globe that changes a moment later. Only reads: a miss
+// is left for the slot to fetch.
+export async function preloadSiteIcons(
+  scripts: readonly ScriptWithMatching[],
+  limit: number = MAX_SITE_ICONS,
+): Promise<void> {
+  const discovered = new Set<string>();
+  const declared = new Set<string>();
+  for (const script of scripts) {
+    const url = declaredIconUrl(script);
+    if (url) {
+      if (!url.startsWith('data:')) declared.add(urlIconKey(url));
+      continue;
+    }
+    for (const t of representativeMatches(script.matching, limit)) {
+      const probe = pathProbeUrl(t.origin, t.linkUrl);
+      if (probe) discovered.add(pathIconKey(probe));
+      discovered.add(siteIconKey(t.origin));
+    }
+  }
+  const keys = [...discovered, ...declared].filter((k) => !settled.has(k));
+  if (keys.length === 0) return;
+  const got = await chrome.storage.local.get(keys);
+  for (const key of keys) {
+    const entry = got[key] as SiteIconEntry | undefined;
+    const hit = usableCacheHit(entry, discovered.has(key) ? DISCOVERED_ICON_CACHE_VERSION : undefined);
+    if (hit) settled.set(key, hit.dataUrl);
+  }
 }
 
 // ---------- DOM rendering ----------
@@ -760,7 +825,9 @@ export const HEADING_SITE_ICONS = 10;
 // a heading), or a single inert `<span>` when no pattern yields a
 // usable origin (file:// scripts, `<all_urls>`, etc.). Every wrapper
 // starts with a globe placeholder, swapped for the real favicon once
-// it loads.
+// it loads. Until every site's icon has loaded, only the first site's
+// wrapper is in the slot. When every icon is already known on this
+// page (`preloadSiteIcons`), the finished slot is drawn at once.
 //
 // Two sites that turn out to share one favicon image (maps.google.com
 // and www.google.com, say) — or that both came up empty and show the
@@ -789,15 +856,7 @@ export async function renderSiteIconInto(
   limit: number = MAX_SITE_ICONS,
 ): Promise<number> {
   const targets = representativeMatches(script.matching, limit);
-  // The header value is raw (URL, data:, or relative path). Resolve it
-  // against the script's own URL so `@icon foo.png` reaches the
-  // sibling file alongside the script. A ref that climbs out of a
-  // LOCAL script's folder is rejected and drops back to origin
-  // discovery; from a remote script it resolves like any other URL.
-  const iconRef = iconRefFromHeader(script.header ?? null);
-  const resolvedIcon = iconRef
-    ? resolveScriptResource(iconRef, script.fileUrl)
-    : null;
+  const iconUrl = declaredIconUrl(script);
 
   if (targets.length === 0) {
     // No usable target URL for this script's @match set (file://,
@@ -805,11 +864,11 @@ export async function renderSiteIconInto(
     // hovering the inert globe isn't silent.
     const inner = buildInner(slot, null);
     slot.replaceChildren(inner);
-    if (resolvedIcon) await paintIcon(inner, ensureIconForUrl(resolvedIcon.url, localRoots));
+    if (iconUrl) await paintDeclaredIcon(inner, iconUrl, localRoots);
     return 1;
   }
 
-  if (resolvedIcon) {
+  if (iconUrl) {
     // This is the script's own icon, not a site's, so the tooltip leads
     // with the script's name; every site it names follows — all of
     // them, not just the `limit` a row would show.
@@ -818,29 +877,68 @@ export async function renderSiteIconInto(
     const name = script.header ? getValue(script.header, 'name')?.trim() : undefined;
     inner.title = name ? `${name}\n${sitesTooltip(sites)}` : sitesTooltip(sites);
     slot.replaceChildren(inner);
-    await paintIcon(inner, ensureIconForUrl(resolvedIcon.url, localRoots));
+    await paintDeclaredIcon(inner, iconUrl, localRoots);
     return 1;
   }
 
   const inners = targets.map((t) => buildInner(slot, t));
-  slot.replaceChildren(...inners);
+  // Every icon already known on this page (`preloadSiteIcons`): draw
+  // the finished slot now, so it never changes width after it appears.
+  const known = targets.map(settledSiteIcon);
+  if (known.every((icon) => icon !== undefined)) {
+    const painted = known.map((icon, i) => showIcon(inners[i], icon ?? null));
+    return fillMergedSlot(slot, targets, inners, painted);
+  }
+
+  // Otherwise only the first site's placeholder is shown while the
+  // icons load: the others are globes too until then, and a row of
+  // identical globes that later collapses to one makes the layout
+  // jump. The slot widens once the icons turn out to differ.
+  slot.replaceChildren(inners[0]);
   const painted = await Promise.all(
     targets.map((t, i) => paintIcon(inners[i], ensureSiteIcon(t.origin, t.linkUrl))),
   );
+  // Skipped when a newer render has replaced the slot's contents, so a
+  // stale pass can't put its icons back.
+  if (inners[0].parentNode !== slot) return slot.childElementCount;
+  return fillMergedSlot(slot, targets, inners, painted);
+}
 
-  // Collapse sites whose favicon came back byte-identical — and sites
-  // that all ended on the globe, which look identical too; a row of
-  // three globes says nothing three times.
+// Paint a declared `@icon` into `inner`: at once when this page already
+// knows it, otherwise once it loads.
+async function paintDeclaredIcon(
+  inner: HTMLElement,
+  url: string,
+  localRoots: readonly string[],
+): Promise<void> {
+  const known = settledUrlIcon(url, localRoots);
+  if (known !== undefined) showIcon(inner, known);
+  else await paintIcon(inner, ensureIconForUrl(url, localRoots));
+}
+
+// Fill `slot` with one icon per distinct picture among the sites'
+// painted icons, and return how many that is.
+//
+// Collapses sites whose favicon came back byte-identical — and sites
+// that all ended on the globe, which look identical too; a row of
+// three globes says nothing three times.
+function fillMergedSlot(
+  slot: HTMLElement,
+  targets: readonly MatchTarget[],
+  inners: readonly HTMLElement[],
+  painted: readonly (string | null)[],
+): number {
   const firstByIcon = new Map<string, number>();
   const mergedInto: string[][] = targets.map((t) => [t.linkUrl]);
+  const kept: number[] = [];
   for (let i = 0; i < inners.length; i++) {
     const icon = painted[i] ?? '';
     const first = firstByIcon.get(icon);
     if (first === undefined) {
       firstByIcon.set(icon, i);
+      kept.push(i);
       continue;
     }
-    inners[i].remove();
     mergedInto[first].push(targets[i].linkUrl);
     inners[first].title = sitesTooltip(mergedInto[first]);
   }
@@ -848,10 +946,12 @@ export async function renderSiteIconInto(
   // goes last where it isn't in the way. The first site stays first
   // even as a globe — it is the script's primary site, and the header
   // order is what the reader expects to find there.
-  for (let i = 1; i < inners.length; i++) {
-    if (inners[i].isConnected && painted[i] === null) slot.appendChild(inners[i]);
-  }
-  return slot.childElementCount;
+  const ordered = [
+    ...kept.filter((i) => i === 0 || painted[i] !== null),
+    ...kept.filter((i) => i !== 0 && painted[i] === null),
+  ];
+  slot.replaceChildren(...ordered.map((i) => inners[i]));
+  return ordered.length;
 }
 
 // Lines a merged icon's tooltip can show before it turns into a count.
@@ -921,6 +1021,12 @@ async function paintIcon(
   } catch {
     return null;
   }
+  return showIcon(inner, dataUrl);
+}
+
+// Swap the globe inside `inner` for `dataUrl`'s picture, if there is
+// one, and hand `dataUrl` back.
+function showIcon(inner: HTMLElement, dataUrl: string | null): string | null {
   if (!dataUrl) return null;
   const img = inner.ownerDocument.createElement('img');
   img.src = iconImgSrc(dataUrl);

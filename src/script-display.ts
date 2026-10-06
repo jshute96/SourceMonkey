@@ -115,6 +115,15 @@ export function scriptDisplayName(
   return headerDisplayName(script.header) || fallback || displayLocation(script.relativePath);
 }
 
+// The order scripts are listed in wherever names are shown in a list:
+// case-insensitive, with numbers compared by value ("Item 9" before
+// "Item 10"). Shared so every list orders the same scripts alike.
+const nameCollator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
+
+export function compareScriptNames(a: string, b: string): number {
+  return nameCollator.compare(a, b);
+}
+
 // The `@name` a header declares, or '' when it declares none usable.
 // Split out so the viewer's heading label and every other surface agree
 // on what counts as a name — a future change to the rule (a localized

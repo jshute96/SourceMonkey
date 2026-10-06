@@ -197,6 +197,11 @@ still drives the Log-tab mirror.
   `extractStartupLogs(header)` (`src/script-build.ts`). The resulting
   list is stored on `StoredScript.startupLogs` and persisted to
   `chrome.storage.local` alongside the rest of the script row.
+- The one exception is an `@icon` that can't be shown, which needs a
+  download to find out (see
+  [site-icons.md](site-icons.md#load-time-check)). It is added when the
+  icon is checked, and carried over by the backfills that rebuild a
+  row's logs from its header (`rederivedStartupLogs`).
 - The injector reads `script.startupLogs` straight off the stored row
   and bakes it into the per-script config blob (`buildConfigBlob`,
   entry 0), which the prelude reads back as `cfg.startupLogs`. No
