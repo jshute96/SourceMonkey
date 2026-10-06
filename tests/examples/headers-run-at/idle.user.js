@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name        SourceMonkey example: @run-at document-idle
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.1.0
-// @description Demonstrates @run-at document-idle (default; after load).
+// @version     1.2.0
+// @description Demonstrates @run-at document-idle (default; once readyState is complete, just before load).
 // @match       *://*/headers-run-at/headers-run-at.html
 // @match       file:///*/headers-run-at/headers-run-at.html
 // @run-at      document-idle
@@ -26,6 +26,17 @@
   // Sorted-insert so the row lands in chronological position rather
   // than at the tail — see the page's __SM_LOG_INSERT__ helper.
   window.__SM_LOG_INSERT__(log, li, t);
+
+  // Old scripts often set themselves up in a load listener. This row
+  // shows whether it fired: it does in SourceMonkey, but not in every
+  // manager (Tampermonkey and Violentmonkey run this @grant none script
+  // after `load` here).
+  window.addEventListener('load', () => {
+    const seen = document.createElement('li');
+    seen.dataset.script = 'idle-load';
+    seen.textContent = '[document-idle] its load listener ran';
+    log.appendChild(seen);
+  });
 
   const status = document.getElementById('runStatus');
   if (status) {

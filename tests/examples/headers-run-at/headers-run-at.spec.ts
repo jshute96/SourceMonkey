@@ -37,6 +37,13 @@ test.describe('examples / headers-run-at', () => {
     await expect(page.locator('#log li[data-script="idle"]'))
       .toContainText('readyState=complete');
 
+    // Whether a load listener the idle script adds fires differs by
+    // manager: TM and VM run this @grant none script after `load` here.
+    // SM runs it just before `load`, or replays `load` to it.
+    if (setup.manager === 'sourcemonkey') {
+      await expect(page.locator('#log li[data-script="idle-load"]')).toHaveCount(1);
+    }
+
     await page.close();
   });
 });

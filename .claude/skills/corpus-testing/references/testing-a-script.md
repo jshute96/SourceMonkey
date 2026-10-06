@@ -112,11 +112,6 @@ A `fail` needs `--blame`:
   Violentmonkey would work. Show the evidence: a copy changed to avoid the
   gap (`@inject-into page`, say) that then works, or the
   source of the manager that differs.
-  - A script that sets itself up in a `window` load handler is an
-    example. SourceMonkey runs `document-idle` after `load`, so the
-    handler never fires. Tampermonkey runs it just before `load`
-    (`readyState` already `complete`), so the handler does fire (tag
-    `idle-after-load`; TODO.md has the gap).
 - `script`: broken or out of date against the current site, or broken in
   every manager. A `@grant none` (page-world) script blocked by the site's
   Trusted Types is the script's fault: every manager runs it there.
@@ -167,7 +162,8 @@ it fits; the list, with descriptions, is `HELP.tag` in
   (its jQuery, a player API on an element) without `unsafeWindow`.
 
 Some tags name gaps since fixed (`connect-subdomain`, `connect-undeclared`,
-`xhr-response-readystate`, `needs-xhr-onprogress`, `shadows-window`). They stay on scripts that
+`xhr-response-readystate`, `needs-xhr-onprogress`, `shadows-window`,
+`idle-after-load`). They stay on scripts that
 pass only because of the fix; don't use them for new failures.
 
 A new tag is fine when nothing fits. Keep it short and kebab-case, and

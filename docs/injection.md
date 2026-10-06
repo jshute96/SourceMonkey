@@ -575,18 +575,19 @@ the user body. This is the TM/VM pattern.
     on every later DOM change.
 - `document-end` — wrapper waits for `DOMContentLoaded`.
 - `document-idle` (default / unknown values) — wrapper waits for
-  `window`'s `load` event.
-  - A page that calls `window.stop()` never fires `load`, but its
-    `readyState` still reaches `complete`. That change arms a
-    zero-delay fallback, so the body runs there too.
-  - On a normal page `load` comes in the same task as that change, so
-    the body still runs after `load`, and only once.
+  `readyState` to reach `complete`, just before `load`.
   - A subresource that never finishes (a stalled third-party script)
-    holds `load` back forever. So the body runs at `load` or 200ms
-    after `DOMContentLoaded` (`IDLE_AFTER_DCL_MS`), whichever comes
-    first, about when Chrome's own `document_idle` would.
-  - A page with slow images or ads thus runs it before `load`, while
-    `readyState` is still `interactive`.
+    holds `load` back forever. So the gate also opens 200ms after
+    `DOMContentLoaded` (`IDLE_AFTER_DCL_MS`), whichever comes first,
+    about when Chrome's own `document_idle` would.
+  - A page with slow images or ads thus runs it while `readyState` is
+    still `interactive`.
+  - A page that calls `window.stop()` never fires `load`, but its
+    `readyState` still reaches `complete`, so the body runs there too.
+  - A script injected after the page has loaded (say, into a tab open
+    before the install) runs at once.
+  - Why `complete` and not `load`, and how a body held past `load`
+    still sees it: [`document-idle` and the `load` event](#document-idle-and-the-load-event).
   - An unknown value (a typo) gets a parse-time warning
     (`unsupportedRunAtWarning`): Log tab, `sm-dev validate`, and
     sm-dev's warning lines when it loads the script.
@@ -630,6 +631,113 @@ via the per-script config blob (`buildConfigBlob` in
 
 This wait runs alongside the `sm:check-pending` round-trip rather than
 after it — see [Concurrent gates](#concurrent-gates).
+
+#### `document-idle` and the `load` event
+
+Many old scripts do all their setup in a load listener:
+
+```js
+window.addEventListener('load', function () { /* everything */ });
+```
+
+That only works if the body runs before `load` fires. A listener added
+after `load` never runs, and nothing happens.
+
+**What other managers do** (sm-dev `--manager tm` / `vm` probes,
+2026-10-06, on example.com and the `headers-run-at` example page,
+whose `load` comes about 480ms in):
+
+- Tampermonkey, granted script (its sandbox): runs with `readyState`
+  already `complete`, and the load listener fires, on both pages. Also
+  seen on the live sites of five corpus scripts.
+- Tampermonkey, `@grant none` (page world): on the example page it
+  runs after `load`, and the listener doesn't fire.
+- Violentmonkey: at `interactive` on example.com, where the listener
+  fires; after `load` on the example page, where it doesn't.
+
+**What we do:** fire it in both worlds. Old load-listener scripts
+mostly grant something, so they match Tampermonkey's sandbox case. A
+page-world script gets the same timing rather than a different one:
+seeing `load` is never worse for it than missing it.
+
+**The timing we use.** On a normal page these happen in one task, with
+nothing able to run in between:
+
+```
+readyState → complete    readystatechange: the idle gate opens here
+load                     window load listeners run
+```
+
+- The gate opens synchronously in that `readystatechange` handler, so a
+  body that runs there adds its listener in time.
+- The body also needs the [run decision](#concurrent-gates), an async
+  round trip to the SW. Two cases follow.
+
+##### Decision first: the body runs before `load`
+
+- The usual case on a page that takes more than a few ms to load.
+- The body runs at `complete`; its load listeners fire natively.
+- The page's own `load` handlers haven't run yet, as in Tampermonkey.
+
+##### Decision after `load`: the replay
+
+- On a fast page (a small or cached one) `load` can fire before the SW
+  answers, so the body runs after `load`. Without help, its load
+  listener would never fire.
+- `entry.replayLoad` records that the gate opened before `load` was
+  over. When it's set and `load` has fired, `flushPending` runs the
+  body inside `runWithLoadReplay`.
+- The real load event is kept by a `once` listener the prelude adds at
+  `document_start`, in each world it runs in.
+
+What `runWithLoadReplay` does:
+
+1. Puts a stand-in `addEventListener` on `window`, as an own property,
+   for the body's synchronous run only.
+   - A `load` listener for `window` is queued, not added. A bare
+     `addEventListener(...)` from strict code counts as `window`.
+   - Every other call goes to the real method.
+2. Notes `window.onload` before the run.
+3. Runs the body.
+4. Restores `addEventListener`: puts back an own property the page had,
+   or deletes ours. Then, if the body set a new `window.onload`, queues
+   that too.
+5. Calls each queued listener on its own task (`setTimeout`), with the
+   real load event and `this` as `window` (or the object, for a
+   `handleEvent` listener).
+   - Separate tasks make an error in one listener an ordinary uncaught
+     error, attributed to the script, without stopping the rest.
+
+Who sees the stand-in:
+
+- Only code the body runs synchronously.
+- In the isolated (USER_SCRIPT) world, `window` is that world's own, so
+  the page never sees it.
+- In MAIN world, page code the body triggers synchronously (a
+  dispatched event's handler) shares it, so a load listener that code
+  adds gets replayed too.
+
+##### Limits
+
+- No replay for a listener added after the synchronous run (after an
+  `await`, or in a timer).
+- No replay for one added by a page `<script>` that an isolated-world
+  body injects: that code runs in the page's world, without the
+  stand-in.
+- Replayed listeners don't follow every native rule: one added twice is
+  called twice, `removeEventListener` doesn't cancel a queued one, and
+  `onload` is called last.
+- Which case happens depends on the race, so the page's own `load`
+  handlers may or may not have run when the body starts.
+- No replay for a script injected after the page had loaded (the gate
+  opened at `complete` with `load` long over), as in any manager.
+
+##### Tests
+
+- `tests/e2e/injection.spec.ts`: "document-idle runs before load, so a
+  load listener it adds fires" (both worlds, and `window.onload`). Its
+  fast fixture page mostly takes the replay path.
+- `tests/examples/headers-run-at/`: the same check under every manager.
 
 ### Execution world
 
@@ -1865,6 +1973,9 @@ Why it matters:
   than the page".
 - Arming the lifecycle listener up front also decouples it from the
   decision callback running at all.
+- A decision that lands after `load` would make an idle body miss its
+  own load listener; see
+  [`document-idle` and the `load` event](#document-idle-and-the-load-event).
 
 `document-start` gets no free wait — `waitForRunAt` calls back
 synchronously once `<html>` exists — so the decision is its only gate,

@@ -205,8 +205,8 @@ output ships whether the script lands in USER_SCRIPT or MAIN.
   `waitForRunAt` gate resolves,
   `ready` flips later than it used to (after the declared `@run-at`
   lifecycle event). For `@run-at document-idle` the gap can stretch
-  to `window.load`, or 200ms after `DOMContentLoaded` when `load` is
-  later. A sibling tab's `GM_setValue` that broadcasts
+  to `readyState` `complete`, or 200ms after `DOMContentLoaded` when
+  `load` is later. A sibling tab's `GM_setValue` that broadcasts
   during that window gets dropped on the floor by this document. In
   the common case the same write is already reflected in the
   check-pending snapshot the SW sent us (the SW persisted it before

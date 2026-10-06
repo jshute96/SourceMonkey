@@ -214,7 +214,7 @@ const HELP = {
     'connect-subdomain': 'Declares a bare @connect domain and needs its subdomains, which Tampermonkey allows but SourceMonkey doesn\'t',
     'shadows-window': 'Declares a top-level const window, which breaks SourceMonkey\'s own unsafeWindow binding in the same scope',
     'gm-on-window': 'Reads GM_* functions as window properties (window.GM_xmlhttpRequest), which Violentmonkey provides and SourceMonkey doesn\'t',
-    'idle-after-load': 'Sets itself up in a window load handler, which never runs when the script starts after load, as SourceMonkey\'s document-idle does',
+    'idle-after-load': 'Sets itself up in a window load handler, which SourceMonkey\'s document-idle missed until it ran idle bodies before load (fixed)',
     'contextmenu-on-mousedown': 'Expects the contextmenu event after mouseup, as on Windows. On Linux and macOS Chrome it comes on mousedown.',
     'gm-frozen': 'Adds properties to the GM object (like a GM_config polyfill setting GM.getValue) or wraps it in a Proxy whose get returns new values, which breaks on SourceMonkey\'s frozen GM but not Violentmonkey\'s writable one',
     'gm-reassign': 'Assigns to a granted GM_* name (GM_xmlhttpRequest = GM.xmlHttpRequest), which throws because SourceMonkey declares those names const',

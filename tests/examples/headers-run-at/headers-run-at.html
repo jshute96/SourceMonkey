@@ -126,8 +126,10 @@
         <code>DOMContentLoaded</code>, before subresources finish.
         <code>readyState</code> is <em>interactive</em>.</li>
       <li><code>@run-at document-idle</code> &mdash; default. Runs
-        after <code>load</code>. <code>readyState</code> is
-        <em>complete</em>.</li>
+        around <code>load</code>. <code>readyState</code> is
+        <em>complete</em>. It also adds a <code>load</code> listener,
+        which logs a row if it fires: SourceMonkey fires it, while some
+        managers run the script after <code>load</code>.</li>
     </ul>
 
     <h2>Details</h2>
@@ -160,8 +162,9 @@
         SourceMonkey registers every userscript at Chrome&rsquo;s
         <code>document_start</code> and the wrapper itself awaits
         <code>DOMContentLoaded</code> (for <em>document-end</em>) or
-        <code>load</code> (for <em>document-idle</em>, or 200ms after
-        <code>DOMContentLoaded</code> if <code>load</code> is later) before
+        <code>readyState</code> <em>complete</em> (for <em>document-idle</em>,
+        or 200ms after <code>DOMContentLoaded</code> if <code>load</code> is
+        later) before
         invoking the body &mdash; same pattern Tampermonkey uses.
         Without that gating Chrome&rsquo;s <code>chrome.userScripts</code>
         scheduler batches <em>document_end</em> and

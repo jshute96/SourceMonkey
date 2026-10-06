@@ -392,22 +392,6 @@ Violentmonkey 2.49.0 with a throwaway `tests/examples/` probe script
 The next items came from testing the oldest corpus scripts, checked
 against Tampermonkey with `sm-dev --manager tm` probes (2026-10-05).
 
-- **`document-idle` runs after `load`, so a script's load handler never
-  fires** (`idle-after-load`: 722, 483563, 30839, 440350, 387937,
-  30339).
-  - Many old scripts do all their setup in
-    `window.addEventListener("load", ...)`. On a page whose `load` is
-    already over when the body runs, nothing happens.
-  - A probe logging `readyState` and adding a load listener: TM saw
-    `complete` and then the load listener fired, 4 of 4 runs on
-    example.com. SourceMonkey saw `complete` and no `load`.
-  - So TM runs idle scripts from the `complete` readystatechange,
-    before `load` is dispatched. The gate in `waitForRunAt`
-    (`src/userscript-prelude.js`) defers past `load` on purpose.
-  - Fix: run the body from the `complete` readystatechange itself
-    (keeping the `window.stop()` and stalled-`load` fallbacks), and
-    correct `docs/cross-manager-test-results.md` and the
-    `idle-after-load` notes in the corpus-testing skill.
 - **`GM_xmlhttpRequest` ignores `overrideMimeType`**
   (`xhr-override-mimetype`: 16385).
   - Old scripts read binary data by passing
