@@ -51,7 +51,7 @@ buttons in an inline `<script>` and the userscript only observes.
 ### Multi-script directories
 
 Header-variation pages (`headers-run-at/`, `headers-inject-into/`)
-and negative-case pages (`xmlhttp-denied/`) follow a small variant
+and the `@connect` page (`xmlhttp-connect/`) follow a small variant
 of the layout above:
 
 - Still **one** `<dir>.html` and **one** `<dir>.spec.ts`.
@@ -61,7 +61,7 @@ of the layout above:
   `<ul id="log">` on the page, typically tagged with a
   `data-script="<variant>"` attribute the spec can target.
 - Variant files are named by what they vary (`start.user.js`,
-  `end.user.js`, `no-connect.user.js`, …), not by the directory
+  `end.user.js`, `connect-none.user.js`, …), not by the directory
   stem.
 - Variants a manager can't install go in a subdirectory the spec
   installs separately, so it can skip them there: `use-strict/with-require/`
@@ -143,7 +143,7 @@ events.
 | `headers-include-regex/`   | Regex `@include` / `@exclude`: slashes, flags, case, per manager   | multi-script  |
 | `require-scope/`           | `@require` scope in both worlds (SM-only: relative ref)            | multi-script  |
 | `use-strict/`              | Top-level `'use strict'`, in both worlds and with a `@require`     | multi-script  |
-| `xmlhttp-denied/`          | `GM_xmlhttpRequest` + `@connect` denial vs allow                  | multi-script  |
+| `xmlhttp-connect/`         | `GM_xmlhttpRequest` + `@connect`: declared, undeclared, prompt     | multi-script  |
 
 ## Page conventions
 

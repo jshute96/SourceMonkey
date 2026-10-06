@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Userscript examples for @connect</title>
+  <link rel="stylesheet" href="../examples.css" />
+  <style>
+    table.expect { border-collapse: collapse; font-size: 0.9em; }
+    table.expect th, table.expect td { border: 1px solid #ddd; padding: 0.3em 0.6em; text-align: left; }
+    table.expect thead th { background: #f0f0f0; }
+    table.expect .asks { color: #b67200; font-weight: 600; }
+    #scripts h3 { margin: 1em 0 0; font-size: 1em; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Userscript examples for <code>@connect</code></h1>
+  </header>
+  <main>
+    <h2>What <code>@connect</code> does</h2>
+    <ul>
+      <li><code>GM_xmlhttpRequest</code> can send requests to other
+        sites, which the page itself can&rsquo;t.</li>
+      <li>A script&rsquo;s <code>@connect</code> lines name the sites it
+        may send to without asking:
+        <ul>
+          <li><code>@connect example.com</code>: that site and its
+            subdomains.</li>
+          <li><code>@connect *</code>: any site.</li>
+          <li><code>@connect self</code>: the sites the script runs
+            on.</li>
+        </ul>
+      </li>
+      <li>Requests to the page&rsquo;s own site never need
+        <code>@connect</code>.</li>
+      <li>For any other site, SourceMonkey opens a window asking
+        whether to allow it. A denied request never leaves the
+        browser.</li>
+    </ul>
+
+    <h2>The scripts</h2>
+    <p>Three scripts run on this page. Each one adds a row of buttons
+      below; a button sends a <code>GET</code> to that site and logs
+      what happened.</p>
+    <table class="expect">
+      <thead>
+        <tr>
+          <th>Script</th><th>Declares</th>
+          <th>This page</th><th>example.com</th><th>example.org</th><th>example.net</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><a href="connect-none.user.js">connect-none</a></td><td>No <code>@connect</code></td>
+          <td>Sent</td><td class="asks">Asks</td><td class="asks">Asks</td><td class="asks">Asks</td>
+        </tr>
+        <tr>
+          <td><a href="connect-example-com.user.js">connect-example-com</a></td><td><code>@connect example.com</code></td>
+          <td>Sent</td><td>Sent</td><td class="asks">Asks</td><td class="asks">Asks</td>
+        </tr>
+        <tr>
+          <td><a href="connect-any.user.js">connect-any</a></td><td><code>@connect *</code></td>
+          <td>Sent</td><td>Sent</td><td>Sent</td><td>Sent</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Answering the prompt</h2>
+    <ul>
+      <li><strong>Allow</strong> / <strong>Deny</strong>: for this
+        site, from now on.</li>
+      <li><strong>Allow once</strong>: sends this request; the next
+        one asks again.</li>
+      <li><strong>Cancel</strong>: blocks this request; the next one
+        asks again.</li>
+      <li><strong>Allow all sites</strong>: for every site, from now
+        on, like <code>@connect *</code>.</li>
+      <li>The prompt allows setting persistent approval states. To
+        reset, open the script&rsquo;s page in SourceMonkey and click Reset on the
+        sites listed in <strong>Network access</strong>.</li>
+    </ul>
+
+    <h2>Try it</h2>
+    <p class="hint">The example sites need a network connection. Denied
+      requests fail straight away without one.</p>
+    <div id="scripts">
+      <p id="waiting" class="status">Waiting for userscripts&hellip;</p>
+    </div>
+
+    <h2>Log</h2>
+    <ul id="log"></ul>
+  </main>
+  <footer>
+    <a href="../index.html">&larr; all examples</a>
+    &nbsp;|&nbsp;
+    <a href="connect-none.user.js">connect-none.user.js</a>
+    &nbsp;|&nbsp;
+    <a href="connect-example-com.user.js">connect-example-com.user.js</a>
+    &nbsp;|&nbsp;
+    <a href="connect-any.user.js">connect-any.user.js</a>
+  </footer>
+</body>
+</html>

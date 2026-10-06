@@ -72,7 +72,7 @@ test.describe('userscript viewer details panel', () => {
         name: 'Talker',
         match: ['https://example.com/*'],
         grant: ['GM_xmlhttpRequest'],
-        connect: ['api.example.org', '*.cdn.example.net', 'self'],
+        connect: ['api.example.org', '*.cdn.example.net', 'self', '*', 'foo*.com'],
       },
       body: '',
     });
@@ -85,11 +85,29 @@ test.describe('userscript viewer details panel', () => {
     const row = page.locator('#header-summary dt', { hasText: 'Network access' })
       .locator('+ dd');
     await expect(row.locator('li')).toHaveText([
-      'api.example.org', '*.cdn.example.net', 'self',
+      'api.example.org', '*.cdn.example.net', 'self', 'All sites', 'foo*.com',
     ]);
-    // Plain text, not links — a @connect value is a matching rule, not
-    // an address.
-    await expect(row.locator('a')).toHaveCount(0);
+    await expect(row.locator('li b')).toHaveText('All sites');
+    await expect(row.locator('li b')).toHaveAttribute('title', 'The script can access any site and act as you.');
+    // No prompt answers yet, so only the declared list has a heading.
+    await expect(row.locator('.list-heading')).toHaveText(['Declared in @connect:']);
+    // Each host links to its site, like a Match pattern, with an icon
+    // beside it. `*` reads "All sites", with no icon. The rest name no
+    // single site, so they stay plain text, and the globe's tooltip says
+    // what `self` covers.
+    await expect(row.locator('.pattern-icon')).toHaveCount(4);
+    await expect(row.locator('a.site-icon-inner')).toHaveCount(2);
+    await expect(row.locator('li a:not(.site-icon-inner)')).toHaveText([
+      'api.example.org', '*.cdn.example.net',
+    ]);
+    await expect(row.getByRole('link', { name: '*.cdn.example.net' }))
+      .toHaveAttribute('href', 'https://cdn.example.net/');
+    const globeTitles = await row.locator('span.site-icon-inner').evaluateAll(
+      (els) => els.map((el) => el.getAttribute('title')));
+    expect(globeTitles).toEqual([
+      'The sites in this script\'s @match and @include rules, and the page it is running on',
+      'Unable to extract link to target site',
+    ]);
 
     // It sits after the match targets, not before them. Both rows are
     // asserted present first — `indexOf` returns -1 for a row that

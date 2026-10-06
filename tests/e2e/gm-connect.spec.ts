@@ -369,6 +369,14 @@ test.describe('GM_xmlhttpRequest @connect gating', () => {
   }) => {
     await install(sm, 'https://example.com', '', ['api.example.com']);
     const scriptId = (await allScripts(sm))[0].id;
+    // Favicon lookups: one for the allowed host, as a control that the
+    // route sees them, and none for the denied one. The regex covers a
+    // lookup that only names the host in its query, too.
+    const contacted: string[] = [];
+    await extensionContext.route(/cdn\.example\.net|tracker\.example\.org/, (route) => {
+      contacted.push(route.request().url());
+      return route.abort();
+    });
     expect(await sm.answerConnectPrompt('none', 'allow')).toBe(false);
     await extensionContext.serviceWorkers()[0].evaluate(async ({ id }) => {
       await chrome.storage.local.set({
@@ -381,9 +389,15 @@ test.describe('GM_xmlhttpRequest @connect gating', () => {
     const row = viewer.locator('#header-summary dt:text-is("Network access") + dd');
     await expect(row).toContainText('api.example.com');
     const answer = (text: string) => row.locator('.connect-answer', { hasText: text });
+    await expect(row.locator('.list-heading')).toHaveText(['Declared in @connect:', 'Undeclared in @connect:']);
     await expect(answer('All sites')).toHaveText('All sites:AllowedReset');
     await expect(answer('cdn.example.net')).toHaveText('cdn.example.net:AllowedReset');
     await expect(answer('tracker.example.org')).toHaveText('tracker.example.org:DeniedReset');
+    // The denied host is still linked, but keeps the globe.
+    await expect(answer('tracker.example.org').locator('a.site-icon-inner'))
+      .toHaveAttribute('href', 'https://tracker.example.org/');
+    await expect.poll(() => contacted.some((u) => u.includes('cdn.example.net'))).toBe(true);
+    expect(contacted.filter((u) => u.includes('tracker.example.org'))).toEqual([]);
     const allowReset = answer('cdn.example.net').getByRole('button', { name: 'Reset' });
     await expect(allowReset).toHaveAttribute('title', 'Clear this approval. The next request will prompt again.');
     await allowReset.click();

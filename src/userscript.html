@@ -281,14 +281,17 @@
       }
       .list-fold-toggle:hover { text-decoration: underline; }
       .list-fold-toggle:focus-visible { outline: 2px solid #4a90e2; outline-offset: 1px; }
+      /* Network access: the "Declared / Undeclared in @connect:" line
+         above each of its lists, muted like the row labels. */
+      .list-heading { color: #555; }
       /* Network access: a prompt answer and its Reset button
          (`addConnect` in script-details.ts). A short button, so the row
          keeps the height of its neighbours. */
       .connect-answer { display: inline-flex; align-items: center; gap: 0.25em; }
       .connect-answer button { height: 20px; padding: 0 7px; margin-left: 0.4em; font-size: 0.9em; }
-      /* Match row: each pattern is led by its site's favicon (a globe
-         when the pattern names no site), between the bullet and the
-         URL. The slot is a flex item so a wrapping pattern's
+      /* Match and Network access rows: each value is led by its
+         site's favicon (a globe when it names no site), between the
+         bullet and the URL. The slot is a flex item so a wrapping pattern's
          continuation lines don't tuck under the icon. */
       .pattern-cell {
         display: inline-flex;

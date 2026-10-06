@@ -495,7 +495,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/examples/unsafe-window/` | `unsafeWindow` example: reading/calling/writing page globals, the isolated-world variant where it can't work, and the ungranted-reference variant |
 | `tests/examples/use-strict/` | Top-level `'use strict'` example: strict mode in both worlds, and which file's directive counts with a `@require` |
 | `tests/examples/require-scope/` | `@require` scope example: a shared lib's top-level class/const/function reaching both injection worlds |
-| `tests/examples/xmlhttp-denied/` | Negative cases for `@connect`: no `@connect` and a mismatched host get the prompt and are denied; an explicit allow goes |
+| `tests/examples/xmlhttp-connect/` | `@connect` example: scripts declaring none, one site, and `*`, with buttons to try each site and prompt answer |
 | `tests/bad-examples/` | Deliberately broken `*.user.js` files (plus the `@require` libraries some of them need, and the ones that merely warn) for the SM-only spec; outside `tests/examples/` so the TM loader doesn't see them |
 | `tests/e2e/bad-scripts.spec.ts` | SM-only e2e: each bad script gets the expected status, error location, and byte-for-byte viewer render |
 | `tests/e2e/diagnostic-links.spec.ts` | Clicking a diagnostic's location jumps to the file and line, in the installed viewer and the install preview |

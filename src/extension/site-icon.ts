@@ -871,19 +871,25 @@ export function sitesTooltip(urls: readonly string[]): string {
 // (the site, or the same-directory fallback for a site-less pattern),
 // inert otherwise. The favicon comes from `target`'s site; a linkable
 // pattern that names no site (`*://*/x/page.html`) keeps the globe.
+// `noLinkTitle` replaces the inert globe's default tooltip.
 export function renderPatternIconInto(
   slot: HTMLElement,
   target: MatchTarget | null,
   linkUrl: string | null,
+  noLinkTitle?: string,
 ): void {
-  const inner = buildInner(slot, linkUrl);
+  const inner = buildInner(slot, linkUrl, noLinkTitle);
   slot.replaceChildren(inner);
   if (target) void paintIcon(inner, ensureSiteIcon(target.origin, target.linkUrl));
 }
 
 // One icon's wrapper: a link when there is a URL to open, an inert
 // span otherwise. Starts out holding the globe placeholder.
-function buildInner(slot: HTMLElement, target: MatchTarget | string | null): HTMLElement {
+function buildInner(
+  slot: HTMLElement,
+  target: MatchTarget | string | null,
+  noLinkTitle = 'Unable to extract link to target site',
+): HTMLElement {
   const linkUrl = typeof target === 'string' ? target : target?.linkUrl ?? null;
   const inner = slot.ownerDocument.createElement(linkUrl ? 'a' : 'span');
   inner.className = 'site-icon-inner';
@@ -895,7 +901,7 @@ function buildInner(slot: HTMLElement, target: MatchTarget | string | null): HTM
     a.rel = 'noopener noreferrer';
     a.title = linkUrl;
   } else {
-    inner.title = 'Unable to extract link to target site';
+    inner.title = noLinkTitle;
   }
   return inner;
 }

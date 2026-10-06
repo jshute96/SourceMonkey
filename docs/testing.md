@@ -479,7 +479,7 @@ files into TM/VM, hit the same URLs, compare outcomes).
   by a developer's local `http-server`.
 - A directory may also hold **multiple** sibling userscripts for
   header-variation pages (`headers-run-at/` runs one per value;
-  `xmlhttp-denied/` runs one per `@connect` configuration). All
+  `xmlhttp-connect/` runs one per `@connect` configuration). All
   variants share the same `<dir>.html` and the spec asserts on the
   cross-variant outcomes side-by-side.
 
