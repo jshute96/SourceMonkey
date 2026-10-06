@@ -125,12 +125,12 @@ import {
   buildInitialInvalidEntry,
   buildScriptFromText,
   describeError,
-  extractStartupLogs,
   type FetchResult,
   locationIn,
   parseChecker,
   parseCheckKey,
   type ParseCheckMode,
+  rederivedStartupLogs,
   type ScriptStatus,
   setScriptError,
   type StoredScript,
@@ -1864,7 +1864,7 @@ export async function backfillUsesUnsafeWindow(): Promise<number> {
     if (script.status !== 'ok' || script.usesUnsafeWindow === true) continue;
     if (!sourceUsesUnsafeWindow(script.bodyText)) continue;
     const next: StoredScript = { ...script, usesUnsafeWindow: true };
-    const logs = extractStartupLogs(script.header, script.relativePath, true);
+    const logs = rederivedStartupLogs(script, true);
     if (logs.length > 0) next.startupLogs = logs;
     else delete next.startupLogs;
     toSet[scriptKey(script.id)] = next;
@@ -1884,7 +1884,7 @@ export async function backfillStartupLogs(): Promise<number> {
   const toSet: Record<string, unknown> = {};
   for (const script of scripts) {
     if (script.status !== 'ok') continue;
-    const logs = extractStartupLogs(script.header, script.relativePath, script.usesUnsafeWindow === true);
+    const logs = rederivedStartupLogs(script, script.usesUnsafeWindow === true);
     if (JSON.stringify(logs) === JSON.stringify(script.startupLogs ?? [])) continue;
     const next: StoredScript = { ...script };
     if (logs.length > 0) next.startupLogs = logs;

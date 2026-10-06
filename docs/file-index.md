@@ -78,6 +78,7 @@ and `lib/`.
 | `src/collection-scan.ts` | Cycle-neutral scan primitives shared by `directories.ts` and `github-provider.ts` |
 | `src/script-build.ts` | Builds a script row from text: header parse and validation, matching, startup logs, `@require` loading, parse check |
 | `src/script-display.ts` | Pure display helpers: size/status formatting, the shared status view + viewer / preview / compare URLs, the script label and full source, slash-aware wrapping, name/path decoding, SRI-fragment strip, enable-toggle tooltip, pending-on-disk summary |
+| `src/script-icon.ts` | A script's own `@icon`: which header tag declares it, and the size and type rules an icon file must meet |
 | `src/version-compare.ts` | Pure `@version` ordering (dotted segments, numeric-aware, prerelease tails) + the newer/older/same/edited verdict and the `-local` suffix |
 | `src/version-probe.ts` | Pure probe logic: pick the `@updateURL`/`@downloadURL` targets we don't load from, judge staleness + outdated verdict |
 | `src/script-links.ts` | Pure helpers for the viewer's link rendering: URL/text tokenizer, header-tag classifier sets, `// @tag value` line parser |
@@ -99,7 +100,7 @@ and `lib/`.
 | `src/file-loader.ts` | Resolves header refs (`@icon`, `@require`, `@resource`) against the script's own URL, containing a local script to its folder; scheme-aware byte + text fetcher reporting why it failed; `.js` suffix gate |
 | `src/run-context.ts` | The page-vs-service-worker test (`isPageContext`) the modules shared by both branch on |
 | `src/http-read.ts` | One http(s) read, made in the service worker when a page asks — a document fetch acts on the response's `Link: rel=preload` headers |
-| `src/external-files.ts` | `@require` + `@resource` orchestrator: resolve, fetch, dedup (cross-script + cross-kind), attach typed entries, word the failures |
+| `src/external-files.ts` | `@require` + `@resource` orchestrator: resolve, fetch, dedup (cross-script + cross-kind), attach typed entries, word the failures; the `@icon` check |
 | `src/local-file-overrides.ts` | Local stand-ins for `@require` / `@resource` / `@icon` declared by absolute URL: search roots (script folder, collection root, configured), host/path suffix candidates, listing-gated probing, containment |
 | `src/gm-api-catalog.ts` | Catalog of supported `GM_*` / `GM.*` APIs: name, async/sync kind, subsystem; helpers for resolving `@grant` lines |
 | `src/source-map.ts` | Source Map v3 generator for the concatenated injection entry, plus the reverse lookup the Log tab maps stack refs with |
@@ -338,7 +339,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/manifest.spec.ts` | Manifest collection refresh: vanished-entry deletion, unreadable-manifest preservation |
 | `tests/e2e/options.spec.ts` | Options-page UI flows: add-directory form, collection removal, per-script toggle |
 | `tests/e2e/page-links.spec.ts` | E2E for cross-page links: new-tab-ness, named-tab reuse, and the header bar's home link |
-| `tests/e2e/site-icons.spec.ts` | E2E tests for the favicon slot: DOM contract, one icon per site + collapse + column fit, `@icon` override, relative paths, two-tier cache, blob-URL de-dup, cross-host redirect rejection, schema self-heal, Chrome `_favicon` DB |
+| `tests/e2e/site-icons.spec.ts` | E2E tests for the favicon slot: DOM contract, one icon per site + collapse + column fit, cached icons drawn at once, `@icon` override and its load-time warning, relative paths, two-tier cache, blob-URL de-dup, cross-host redirect rejection, schema self-heal, Chrome `_favicon` DB |
 | `tests/e2e/debug-icons.spec.ts` | E2E test for `/debug/icons.html`: header bar, cached-icon rows, per-row refresh + delete, and Delete All |
 | `tests/e2e/viewer-layout.spec.ts` | E2E tests for the viewer's height: the code box / Log pane fill the viewport, keep a 20-line minimum, and let the page scroll past a tall details panel |
 | `tests/e2e/viewer-select-all.spec.ts` | E2E for the viewer's Ctrl-A: selects exactly the file text from anywhere on the page, or the Log table without its toolbar |
@@ -396,7 +397,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/file-loader.test.mjs` | Unit tests for ref resolution (schemes, relative paths, traversal) and for the reason each resolve/fetch failure reports |
 | `tests/unit/refresh-error.test.mjs` | Unit tests for the refresh-error message wording and the storage-value coercion |
 | `tests/unit/concurrency.test.mjs` | Unit tests for `mapWithConcurrency`: result ordering, the in-flight cap, edge limits, and what a rejection does to the rest |
-| `tests/unit/external-files.test.mjs` | Unit tests for `distillRequires`/`distillResources` + `attachFiles` (cache hits, preserve, dedup, UTF-8, cross-kind) and the failure wording |
+| `tests/unit/external-files.test.mjs` | Unit tests for `distillRequires`/`distillResources` + `attachFiles` (cache hits, preserve, dedup, UTF-8, cross-kind), the `@icon` check, and the failure wording |
 | `tests/unit/local-file-overrides.test.mjs` | Unit tests for local stand-in search roots, host/path-suffix candidates, containment, and the `attachFiles` `localRoots` leg |
 | `tests/e2e/parse-check.spec.ts` | The parse-check mechanism: compiles without executing, judges as a function body, catches join-only conflicts |
 | `tests/e2e/parse-check-install.spec.ts` | Install/refresh-time parse failures surface as `invalid`, healthy scripts stay `ok`, and an unverified row is caught before it registers |

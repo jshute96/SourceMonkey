@@ -19,14 +19,17 @@ import {
 } from './userscript-header.js';
 import {
   attachFiles,
+  checkScriptIcon,
   distillRequires,
   distillResources,
   type FileFetchCache,
+  type IconCheck,
   type PushedFile,
   type StoredRequire,
   type StoredResource,
 } from './external-files.js';
 import { localSearchRoots, localRootsReady, type LocalFileScope } from './local-file-overrides.js';
+import { iconDeclFromHeader } from './script-icon.js';
 import { canonicalizeGrant, findApi, resolveGrants } from './gm-api-catalog.js';
 import { hasNoConnectRules } from './gm-connect.js';
 import { sourceUsesUnsafeWindow } from './unsafe-window-use.js';
@@ -66,7 +69,8 @@ export interface ScriptMatching {
 //      load (see buildStartupLogsSnippet in injector.ts), and
 //   2. emitted as a Log-tab entry once per content version (see
 //      emitScriptOutcomeLog in script-updater.ts).
-// The producers are the header checks in extractStartupLogs.
+// The producers are the header checks in extractStartupLogs, and the
+// `@icon` check (`applyIconCheck`), which needs a download.
 export interface StartupLog {
   level: 'log' | 'info' | 'warn' | 'error';
   message: string;
@@ -170,7 +174,12 @@ export interface StoredScript {
   // but carry raw bytes (base64) rather than decoded text — so they
   // can serve images, fonts, JSON, CSS, etc. via GM_getResource*.
   resources?: StoredResource[];
-  // Parse-time diagnostics (today: unknown @grant names). Only
+  // What the last check of the script's `@icon` found; see
+  // `checkScriptIcon`. A problem is also on `startupLogs` as a warning.
+  // Kept so a background refresh needn't download the icon again.
+  iconCheck?: IconCheck;
+  // Parse-time diagnostics from the header checks, plus an `@icon` that
+  // can't be shown (see `iconCheck`). Only
   // populated for `status === 'ok'` rows; error rows don't run so the
   // diagnostics would be dead bytes, and applyFetchError inherits
   // whatever the prior `ok` row had (correct because it also
@@ -743,6 +752,11 @@ export async function applyFiles(
   // resolve as if none were set and persist that.
   if (localFiles.enabled) await localRootsReady();
   const localRoots = localSearchRoots(built.fileUrl, localFiles);
+  // Before the shortcut below, which returns early: the icon has its
+  // own rule for when to look again. Not for a scratch script: sm-dev
+  // pushes its `@require` / `@resource` files but not its icon, and
+  // has already checked the icon on disk itself.
+  if (!pushedFiles) await applyIconCheck(built, prior, recheck, fetchCache, localRoots);
   // `recheck: 'preserve'` short-circuits when both lists are identical
   // to the prior's: no resolve work, no fetch, just keep what we had.
   // This is the hot path on opportunistic refresh.
@@ -825,6 +839,69 @@ export async function applyFiles(
   if (result.resources.length > 0) built.resources = result.resources;
   else delete built.resources;
   return timePhase('parse-check', () => applyParseCheck(built, prior, parseCheck));
+}
+
+// Record the `@icon` check on `built`, and a problem it found as a
+// load-time warning on the `@icon` line.
+async function applyIconCheck(
+  built: StoredScript,
+  prior: StoredScript | undefined,
+  recheck: 'all' | 'preserve',
+  fetchCache: FileFetchCache,
+  localRoots: readonly string[],
+): Promise<void> {
+  // A row reused whole (the "unchanged" refresh path starts from a copy
+  // of the prior) already carries the last check's warning, so drop it
+  // before adding this one.
+  const stale = iconCheckLog(built);
+  if (stale && built.startupLogs) {
+    const kept = built.startupLogs.filter((l) => l.message !== stale.message);
+    if (kept.length > 0) built.startupLogs = kept;
+    else delete built.startupLogs;
+  }
+  delete built.iconCheck;
+  // Invalid rows don't run and carry no startup logs; see `startupLogs`.
+  if (built.status !== 'ok') return;
+  const check = await timePhase('icon-check', () => checkScriptIcon({
+    header: built.header,
+    scriptFileUrl: built.fileUrl,
+    prior: prior?.iconCheck,
+    recheck,
+    fetchCache,
+    localRoots,
+  }));
+  if (!check) return;
+  built.iconCheck = check;
+  const log = iconCheckLog(built);
+  if (log) built.startupLogs = [...(built.startupLogs ?? []), log];
+}
+
+// A stored row's startup logs, derived again: the header checks, plus
+// the stored `@icon` warning. That one comes from a download, not the
+// header, so it is carried over rather than re-derived. For the
+// backfills that rebuild a row's logs without rebuilding the row.
+export function rederivedStartupLogs(
+  script: Pick<StoredScript, 'iconCheck' | 'header' | 'relativePath'>,
+  usesUnsafeWindow: boolean,
+): StartupLog[] {
+  const logs = [...extractStartupLogs(script.header, script.relativePath, usesUnsafeWindow)];
+  const iconLog = iconCheckLog(script);
+  if (iconLog) logs.push(iconLog);
+  return logs;
+}
+
+// The load-time warning for a stored `@icon` problem, or null when
+// there is none.
+function iconCheckLog(
+  script: Pick<StoredScript, 'iconCheck' | 'header' | 'relativePath'>,
+): StartupLog | null {
+  const message = script.iconCheck?.message;
+  if (!message) return null;
+  return {
+    level: 'warn',
+    message,
+    location: locationIn(script.relativePath, iconDeclFromHeader(script.header)?.line),
+  };
 }
 
 // ---------- Parse check hook ----------

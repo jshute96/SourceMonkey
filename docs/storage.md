@@ -151,7 +151,8 @@ keys would look like a wiped profile.
     `backfillHeaderProblems` re-runs all of `validateHeader` on `ok`
     rows on each `onInstalled`, so a script a newer check refuses (e.g.
     `@run-at context-menu`) stops running, with its error in the Log.
-  - `startupLogs` (the parse-time warnings, which the boot replay
+  - `startupLogs` (the parse-time warnings, plus a stored `@icon`
+    warning carried over from `iconCheck`, which the boot replay
     re-emits verbatim) are different: `backfillStartupLogs` re-derives
     them for all `ok` rows on each `onInstalled`, so a new or reworded
     check reaches installed scripts after an extension update.
@@ -201,6 +202,10 @@ keys would look like a wiped profile.
   loadedAt, httpEtag?, httpLastModified?}`) in declaration order,
   deduped by canonical URL. Absent when the script declares no
   `@require`. See [requires.md](requires.md).
+- `iconCheck?` — what the last check of the script's `@icon` found:
+  `{ref, local?, message?}`, with `message` set when the icon can't be
+  shown. Kept so a background refresh needn't download the icon again.
+  See [site-icons.md](site-icons.md#load-time-check).
 - `usesUnsafeWindow?` — the body names `unsafeWindow`, derived from
   `bodyText` alone with no regard to `@grant`. When there is no grant
   line for it, that is what resolves the script to MAIN world and emits

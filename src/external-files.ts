@@ -53,6 +53,7 @@ import { splitResourceValue } from './script-links.js';
 import { sha256Hex, bytesToBase64, base64ToBytes } from './bytes.js';
 import { timePhase } from './phase-timing.js';
 import { getValues, type ParsedHeader } from './userscript-header.js';
+import { iconDeclFromHeader, isIconContentType, MAX_ICON_BYTES } from './script-icon.js';
 import {
   isMarkupContentType,
   looksLikeMarkup,
@@ -67,9 +68,11 @@ export const MAX_FILE_BYTES = 1024 * 1024;
 
 // Rendered in whole MB when the cap divides evenly, so messages say
 // "1 MB" rather than "1024 KB".
-export const CAP_TEXT = MAX_FILE_BYTES % (1024 * 1024) === 0
-  ? `${MAX_FILE_BYTES / (1024 * 1024)} MB`
-  : `${Math.round(MAX_FILE_BYTES / 1024)} KB`;
+function byteLimitText(maxBytes: number): string {
+  return maxBytes % (1024 * 1024) === 0
+    ? `${maxBytes / (1024 * 1024)} MB`
+    : `${Math.round(maxBytes / 1024)} KB`;
+}
 
 // Split out so `isFetchFailureMessage` can recognize the one message
 // whose text isn't fixed at module load, without either side spelling
@@ -93,7 +96,10 @@ const HTTP_STATUS_PREFIX = 'The server returned HTTP ';
 // error", and "over the limit" at once — and the corpus validator
 // reconstructed the real cause from a fetch log to make its report
 // useful.
-export function describeFetchFailure(failure: FetchFailure): string {
+//
+// `maxBytes` is the limit the fetch was made with, for the oversize
+// message: `@require` / `@resource` by default, smaller for an `@icon`.
+export function describeFetchFailure(failure: FetchFailure, maxBytes = MAX_FILE_BYTES): string {
   switch (failure.reason) {
     case 'unsupported-scheme':
       // Unreachable for a dependency — resolution rejects anything
@@ -113,13 +119,12 @@ export function describeFetchFailure(failure: FetchFailure): string {
     case 'http-error':
       return `${HTTP_STATUS_PREFIX}${failure.status}`;
     case 'wrong-content-type':
-      // Only reachable through the icon fetcher, which discards the
-      // reason — no user reads this today.
-      return 'The response was the wrong content type';
+      // Only the icon fetches ask for a content type.
+      return 'The file is not an image';
     case 'empty':
       return 'The file is empty';
     case 'oversize':
-      return `The file is larger than the ${CAP_TEXT} limit`;
+      return `The file is larger than the ${byteLimitText(maxBytes)} limit`;
   }
 }
 
@@ -499,6 +504,91 @@ export async function attachFiles(args: AttachFilesArgs): Promise<AttachFilesRes
     if (res.entry) resources.push(res.entry);
   }
   return { requires, resources };
+}
+
+// ---------- @icon check ----------
+
+// What the last `@icon` check found. Stored on the script row so a
+// background refresh can keep it rather than download the icon again.
+export interface IconCheck {
+  // The declared reference that was checked, and the URL it resolved
+  // to. Both are compared before a stored answer is kept: a relative
+  // ref resolves elsewhere once the script's own URL changes.
+  ref: string;
+  url?: string;
+  // Set when a local stand-in was checked rather than the declared URL.
+  local?: true;
+  // Why the icon can't be shown, as a load-time warning. Absent when
+  // it can.
+  message?: string;
+  // Set when the failure may pass on its own (no response, a timeout),
+  // so a background refresh looks again rather than keeping it.
+  retry?: true;
+}
+
+export interface CheckIconArgs {
+  header: ParsedHeader | null;
+  scriptFileUrl: string;
+  prior: IconCheck | undefined;
+  recheck: 'all' | 'preserve';
+  fetchCache: FileFetchCache;
+  localRoots: readonly string[];
+}
+
+// Check that the script's `@icon` can be shown: that it resolves,
+// downloads, is an image, and is within `MAX_ICON_BYTES`. The pages
+// that paint icons apply the same rules and just show a globe when one
+// fails, so this is the only place the reason is reported.
+//
+// Never makes the script invalid: the icon is cosmetic. Downloads on
+// the same terms as `@require`:
+// - `recheck: 'preserve'` keeps the prior answer for an unchanged
+//   reference, so a background refresh doesn't download it again.
+//   Not one that may pass on its own (no response, a timeout).
+// - A local stand-in is re-read every pass, like a `@require`'s.
+//
+// Returns null when there is nothing to check: no `@icon`, or an inline
+// `data:` icon, which has nothing to download.
+export async function checkScriptIcon(args: CheckIconArgs): Promise<IconCheck | null> {
+  const decl = iconDeclFromHeader(args.header);
+  if (!decl || decl.ref.startsWith('data:')) return null;
+  const { ref } = decl;
+  const problem = (reason: string): IconCheck => ({ ref, message: `@icon ${ref}: ${reason}` });
+
+  const resolved = resolveScriptResourceDetailed(ref, args.scriptFileUrl);
+  if ('failed' in resolved) return problem(describeResolveFailure(resolved));
+  const { url } = resolved;
+
+  // A stand-in the page could show wins. One it couldn't (too big, not
+  // an image) is skipped, as the page skips it for the declared URL.
+  // Read through the shared fetch, which has no icon rules, so they
+  // are applied to the bytes here.
+  const local = await readLocalStandIn(url, args.localRoots, args.fetchCache);
+  if (
+    local && !isFailure(local.got) &&
+    local.got.bytes.byteLength <= MAX_ICON_BYTES &&
+    (!local.got.contentType || isIconContentType(local.got.contentType))
+  ) {
+    return { ref, url, local: true };
+  }
+  const prior = args.prior;
+  if (
+    args.recheck === 'preserve' && prior?.ref === ref && prior.url === url &&
+    !prior.local && !prior.retry
+  ) {
+    return prior;
+  }
+  // Not through the shared fetch cache: that one fetches up to the
+  // `@require` limit, and an icon has its own limit and type rule.
+  const res = await fetchResourceBytes(url, {
+    maxBytes: MAX_ICON_BYTES,
+    acceptContentType: isIconContentType,
+  });
+  if ('failed' in res) {
+    const transient = res.reason === 'no-response' || res.reason === 'timeout';
+    return { ...problem(describeFetchFailure(res, MAX_ICON_BYTES)), url, ...(transient ? { retry: true as const } : {}) };
+  }
+  return { ref, url };
 }
 
 // Fetch a single `@require` the way `attachFiles` would, for one

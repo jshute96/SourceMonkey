@@ -79,6 +79,41 @@
 - The click-through link is *always* the `@match`-derived `linkUrl`.
   `@icon` is purely a visual override — it doesn't change which site
   the favicon links to.
+- The icon rules (tags, the 128 KB limit, `image/*` only) live in
+  [`src/script-icon.ts`](../src/script-icon.ts), shared with the
+  load-time check below.
+
+### Load-time check
+
+A slot whose `@icon` can't be shown just keeps its globe, so the reason
+is reported when the script loads instead (`checkScriptIcon` in
+[`src/external-files.ts`](../src/external-files.ts)).
+
+- Checks the icon resolves, downloads, is an image, and is within
+  the limit.
+- A problem is a load-time warning on the `@icon` line, e.g.
+  `@icon big.png: The file is larger than the 128 KB limit`.
+  - It goes in the Log tab and is printed by `sm-dev validate`, like
+    the other load-time notes.
+  - Like them, it also gives the script a WARNING status once it runs,
+    and a console line on each page it runs on.
+  - It never makes the script invalid, and an invalid script isn't
+    checked.
+- Downloaded on the same terms as `@require`, never when the script
+  runs:
+  - An explicit Refresh looks again.
+  - A background refresh keeps the stored answer (`iconCheck` on the
+    script row) unless the `@icon` line or the URL it resolves to
+    changed.
+  - Except a failure that may pass on its own (no response, a
+    timeout), which the next refresh looks at again.
+  - A local stand-in is re-read every pass, like a `@require`'s. One
+    the page couldn't show (too large, not an image) is skipped for the
+    declared URL, as the page skips it.
+- Not checked:
+  - an inline `data:` icon, which has nothing to download;
+  - a script sm-dev pushes, which doesn't carry its icon file; sm-dev
+    checks the icon on disk itself.
 
 ## Multiple sites
 
@@ -119,6 +154,17 @@
 - Only the resolved bytes can tell — the hosts differ — so this
   happens after the fetches, not at first paint. `renderSiteIconInto`
   resolves with the final icon count for callers that care.
+- Until then the slot shows only the first site's globe. Showing one
+  per site would draw a row of identical globes that then collapses,
+  shifting the layout; this way the slot only widens, once the icons
+  turn out to differ.
+- Icons already cached skip all of that. The collections page reads
+  every cached icon its rows will need in one storage read
+  (`preloadSiteIcons`) before drawing them.
+  - A slot whose icons are all known is drawn finished: real icons,
+    already merged, with no globe first and no change of width.
+  - Answers are also remembered for the life of the page, so a repaint
+    reuses them.
 
 ### Layout
 
@@ -128,10 +174,9 @@
   x position. `collections.ts` sets `--icon-cols` on the `<table>`
   (`fitIconColumns`) and the stylesheet derives the slot width and the
   name cell's hanging indent from it.
-  - Fitted from the slots on screen: first from the header-derived
-    estimates (every site starts as a globe), then again once the
-    rebuilt slots' favicons have settled and identical ones collapsed
-    — one shift per pass, not one per row.
+  - Fitted from the slots on screen: first with one globe per slot,
+    then again once the rebuilt slots' favicons have settled and
+    identical ones collapsed — one shift per pass, not one per row.
   - Every live sync (a refresh that changed `@match`, a script that
     arrived or left) runs the same fit, so the column narrows as well
     as widens.
@@ -357,7 +402,8 @@ just trigger a fresh fetch if the user re-adds the collection.
   `ensureSiteIcon` runs the origin-discovery pipeline once per icon.
   The resolved icon is wrapped in an `<img>` that replaces the globe
   inside its inner element. No `isConnected` guard — orphan paints
-  from re-renders are cheap and unobservable.
+  from re-renders are cheap and unobservable. Only the final step that
+  fills the slot with the merged icons checks it still owns the slot.
 
 ### Keeping the rendered page small
 
