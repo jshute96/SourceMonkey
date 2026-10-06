@@ -968,19 +968,6 @@ See [docs/harness-design.md](docs/harness-design.md).
   same run, they land in the person's real `~/Downloads`. Reproduced
   in a corpus run (2026-10-04). The download behavior is probably set
   up only for the first start's browser context or tab.
-- **Loads stall on sites with a service worker in a long-lived test
-  browser.** In userscripts' shared 9233 browser, after a full
-  `pnpm test` run, every navigation to nytimes.com or youtube.com
-  stalled before committing, with or without Playwright.
-  - Disabling SourceMonkey (no scripts installed, no registrations or
-    DNR rules) fixed it; re-enabling brought it back at once.
-  - Stopping the site's service workers also fixed it, for a while.
-  - Not reproduced in a fresh profile (old or current build), nor in a
-    copy of the same profile, headless or headed, so the state is in
-    the running browser. Site isolation on or off made no difference.
-  - Next: restart the browser, run the suite in slices until it
-    appears, then inspect SourceMonkey's worker and the site's service
-    workers at that point.
 - **A way to trim a saved page.** A raw SeeWhatISee snapshot of Code
   Search was 1.46 MB, mostly a file-tree subtree and inline `<svg>`
   icons, and trimmed by hand to 34 KB. A `savehtml` option (or a
