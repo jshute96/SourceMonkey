@@ -99,14 +99,28 @@ export interface HelpSection {
   subsections?: HelpSection[];
 }
 
+/** The longest a Node timer can wait, in seconds. */
+export const MAX_TIMER_SECONDS = Math.floor((2 ** 31 - 1) / 1000);
+
+/** A `--timeout-seconds` that isn't a number of seconds, on any command. */
+export const TIMEOUT_NEEDS_SECONDS = `The --timeout-seconds flag needs a number of seconds, up to ${MAX_TIMER_SECONDS}`;
+
+/** A `--timeout-seconds` value in ms, or null when it isn't a number of seconds (`TIMEOUT_NEEDS_SECONDS`). */
+export function timeoutSecondsMs(value: string | true): number | null {
+  const seconds = Number(value);
+  return seconds > 0 && seconds <= MAX_TIMER_SECONDS ? seconds * 1000 : null;
+}
+
 // The common syntaxes.
 const NONE: ArgSyntax = { args: 'none' };
 const WORDS: ArgSyntax = { args: 'words' };
-const TEXT: ArgSyntax = { args: 'text' };
 // Text that `--json` or `--nojson` can end (`values 2 --json`).
 const JSON_TEXT: ArgSyntax = { args: 'text', trailingFlags: true };
 const TAB_LOADS = ['newtab', 'open', 'reload'];
 const SETTLING = ['start', ...TAB_LOADS, 'click', 'hover', 'type', 'key'];
+// The commands that wait on the page, so take --timeout-seconds. Those
+// whose help lists it themselves (its default differs) aren't here.
+const TIMED = ['start', 'click', 'hover', 'type', 'key', 'eval', 'snapshot', 'probe', 'screenshot', 'closetab', 'load', 'update'];
 // wait log, listed under both Logs and Waiting.
 const WAIT_LOG: HelpCommand = { usage: 'wait log [--find=]<text>', syntax: { args: 'text', trailingFlags: true }, about: [] };
 const WAIT_LOG_ABOUT = ['Wait for a log line with the text, or matching /regex/, logged since the previous command began.'];
@@ -197,10 +211,10 @@ export const HELP_SECTIONS: HelpSection[] = [
           {
             title: 'Lifetime',
             options: [
-              { term: '--seconds N', about: 'Stop the run after N seconds.' },
               { term: '--detach', about: 'Leave the run going when this sm-dev ends.' },
               { term: '--new', about: 'With --detach: Start a new run (don\'t stop old ones).' },
-              { term: '--idle-seconds N', about: ['Stop the run after N seconds with no activity.', '(Default: 1800; 0 never stops).'] },
+              { term: '--stop-after-seconds N', about: 'Stop the run after N seconds.' },
+              { term: '--stop-after-idle-seconds N', about: ['Stop the run after N seconds with no activity.', '(Default: 1800; 0 never stops).'] },
             ],
           },
           {
@@ -252,7 +266,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       { usage: 'scripts', syntax: JSON_TEXT, about: 'List the loaded scripts, and the manager\'s other scripts on the current tab.' },
       { usage: 'script <script>', about: 'Select the active script by ID. With T2.3, pick tab T2 too.' },
       { usage: 'load <script>...', syntax: WORDS, about: 'Load more scripts from disk: files, directories, or globs. See Files and file patterns.' },
-      { usage: 'update [script]', syntax: TEXT, about: 'Re-read one (or all) scripts from disk, and reload all affected tabs.' },
+      { usage: 'update [script]', syntax: { args: 'text', trailingFlags: true }, about: 'Re-read one (or all) scripts from disk, and reload all affected tabs.' },
     ],
     subsections: [
       {
@@ -325,6 +339,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     options: [
       { term: '--noscript', about: 'Run no scripts in the tab. (Sticky)', commands: TAB_LOADS },
       { term: '--script', about: 'Run the scripts in the tab again. (Undo --noscript.)', commands: TAB_LOADS },
+      { term: '--timeout-seconds S', about: 'Give up on the page loading after S seconds (default: 30), or settling (default: 5).', commands: TAB_LOADS },
       { term: '--from-saved', about: 'Serve .html files as saved page snapshots, at their embedded URLs by default.', commands: ['newtab', 'open'] },
       { term: '--url URL', about: 'With --from-saved and one .html file: The URL to serve it at.', commands: ['newtab', 'open'] },
       { term: '--offline', about: 'With --from-saved: Block network requests from the saved pages.', commands: ['newtab', 'open'] },
@@ -452,9 +467,12 @@ export const HELP_SECTIONS: HelpSection[] = [
       },
       {
         usage: 'type [tab] <selector> <text>',
-        syntax: { args: 'text', before: 1, tab: true, block: true, bracesInText: true },
+        syntax: { args: 'text', before: 1, tab: true, block: true, bracesInText: true, trailingFlags: true },
         about: ['Type text into an element. (Text box, etc.)', 'type <selector> {{ starts multi-line text, ended by }}.'],
-        options: [{ term: '--file <path>', about: 'Type a file\'s text, in place of <text>.' }],
+        options: [
+          { term: '--file <path>', about: 'Type a file\'s text, in place of <text>.' },
+          { term: '--clear', about: 'Empty the element first. With no text, only empty it.' },
+        ],
         gap: true,
       },
       { usage: 'key [tab] <keys>...', syntax: { args: 'words', tab: true }, about: ['Press keys in order, using common key names.', 'e.g. key j Shift+ArrowRight Escape'], gap: true },
@@ -518,11 +536,14 @@ export const HELP_SECTIONS: HelpSection[] = [
         commands: [
           {
             usage: 'cdp [tab] <Method> [params]',
-            syntax: { args: 'text', tab: true, block: true, unquote: 'none' },
+            syntax: { args: 'text', tab: true, block: true, unquote: 'none', trailingFlags: true },
             about: ['Make one Method call, and print the result as JSON.', 'e.g. cdp Input.insertText \'{"text": "hello"}\''],
           },
           { usage: 'cdp [tab] {{', about: 'Make multiple Method calls, one per line, ended by }}.', gap: true },
           { usage: 'cdp [tab] --file <path>', about: 'Make multiple Method calls from a file, one per line.', gap: true },
+        ],
+        options: [
+          { term: '--timeout-seconds S', about: 'Give up on each call after S seconds (default: 10).', commands: ['cdp'] },
         ],
       },
       {
@@ -771,7 +792,15 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         title: 'Search paths',
         options: [
-          { term: '--root DIR', about: ['The repo root, searched for local copies of @require URLs.', '(Default: the current directory)'] },
+          {
+            term: '--root DIR',
+            about: [
+              'The repo root, searched for local copies of @require URLs.',
+              '(Default: the current directory)',
+              'A script outside this repo uses its own collection\'s root, the nearest',
+              'directory above it with a script_manifest.json.',
+            ],
+          },
           { term: '--local DIR', about: 'Additional directory to search. Can repeat.' },
         ],
       },
@@ -785,6 +814,14 @@ export const HELP_SECTIONS: HelpSection[] = [
         term: '--nowait',
         about: ['Don\'t wait for the page to settle after the action.', 'By default, most page actions wait for the page to settle before continuing.'],
         commands: SETTLING,
+      },
+      {
+        term: '--timeout-seconds S',
+        about: [
+          'For all commands that wait: the longest each wait may take, in place of its default.',
+          'e.g. an element being ready to click (default: 5), a page loading (30) or settling (5), a screenshot (5).',
+        ],
+        commands: TIMED,
       },
       {
         term: '--json[=single|multi]',

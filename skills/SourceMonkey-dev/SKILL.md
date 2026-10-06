@@ -63,15 +63,16 @@ Where to look:
   loaded, scripts started, no requests or DOM changes for a moment.
   For anything later, wait for the signal itself: `wait log <text>`,
   `wait selector <css>`, `wait selector-gone <css>`.
-  - Waits give up after 5 seconds. Pass `--timeout-seconds S` for a
-    slow site, and keep S under your shell tool's own time limit.
+  - Waits give up after 5 seconds (page loads: 30). Pass
+    `--timeout-seconds S` to any command that waits, for a slow site,
+    and keep S under your shell tool's own time limit.
   - With no signal to wait for (sampling something over time), use
     `wait 2s`, not `sleep`.
-- **Don't use `--seconds`.** A run that expires mid-test leaves pages
+- **Don't use `--stop-after-seconds`.** A run that expires mid-test leaves pages
   with no script, and results that look like bugs. Use `--detach`, and
   `stop` when done.
 - **Name your run**: `pnpm sm-dev --run Dagent start ... --detach`,
-  then `--run Dagent` on each command.
+  then `--run Dagent` on each command. Run IDs start with `D`.
   - The person may have runs of their own. `start --detach` without
     `--run` stops earlier detached runs, and with several runs active,
     commands without `--run` are refused (`status` and `list` show them all).

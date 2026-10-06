@@ -20,7 +20,7 @@ import type { ControlledTab } from './console-commands.js';
 import { NoDocument, NoEvalHook, ScriptThrew, type ScriptScope } from './page-watch.js';
 import { jsonResult, type ProbeData } from './json-output.js';
 import { readInputFile, writeProblem } from './input-file.js';
-import { notSettledMessage, SETTLE_TIMEOUT_MS, settleTab } from './wait.js';
+import { notSettledMessage, seconds, SETTLE_TIMEOUT_MS, settleTab, timeoutFlagMs } from './wait.js';
 import { savePageHtml } from './save-html.js';
 import { shownPath } from './prepare.js';
 import { documentOf, locate, named, noteRefs, onScreen, probeMatches, refOf, refProblem, refsOf, tidy, treeParts, withoutDocument } from './snapshot.js';
@@ -73,7 +73,7 @@ export interface PageInput extends ParsedArgs {
  * or a world: the page's (`--page`, or no run script selected), or the
  * scripts' shared one (`--script` with none selected).
  */
-export type EvalIn = { scope: ScriptScope | null; name: string; named: boolean; fallback: EvalWorld } | EvalWorld;
+export type EvalIn = { scope: ScriptScope | null; name: string; named: boolean; fallback: EvalWorld; manager?: string } | EvalWorld;
 type EvalWorld = 'page' | 'scripts';
 
 const WORLD_NAMES: Record<EvalWorld, string> = { page: 'the page', scripts: 'the scripts\' shared world' };
@@ -108,6 +108,12 @@ export async function runPageCommand(
 ): Promise<boolean | void> {
   const say = (line: string): void => out(`[sm-dev] ${line}`);
   const { page } = tab;
+  // `--timeout-seconds`: each wait the command does, in place of that
+  // wait's default.
+  const given = timeoutFlagMs(input.flags, out);
+  if (given === null) return false;
+  const within = (defaultMs: number): number => given ?? defaultMs;
+  const actionMs = within(ACTION_TIMEOUT_MS);
   // A file it names, from `cwd`, and as said back.
   const file = (name: string): string => path.resolve(cwd, name);
   const shown = (name: string): string => shownPath(file(name), cwd);
@@ -133,13 +139,13 @@ export async function runPageCommand(
       say(what);
       return;
     }
-    const settled = await settleTab(tab, tab.link.host);
+    const settled = await settleTab(tab, tab.link.host, within(SETTLE_TIMEOUT_MS));
     if (!settled.settled && 'dialog' in settled) {
       say(`${what}. The page opened a dialog, which is waiting for an answer.`);
       return;
     }
     say(what);
-    if (!settled.settled && 'busy' in settled) say(notSettledMessage(tab, SETTLE_TIMEOUT_MS, settled.busy));
+    if (!settled.settled && 'busy' in settled) say(notSettledMessage(tab, within(SETTLE_TIMEOUT_MS), settled.busy));
   };
   try {
     switch (command) {
@@ -168,20 +174,24 @@ export async function runPageCommand(
         let result = '';
         // Why a script has no scope to reach here: not in the extension
         // at all (it failed to install), or not run in this document.
-        const noScope = typeof evalIn === 'object'
-          ? `${evalIn.name} ${evalIn.scope ? 'hasn\'t run on this page' : 'isn\'t installed in the extension'}`
-          : '';
+        // Under another manager (`manager`, its label), which reports
+        // nothing, sm-dev can't tell which.
+        const noScope = typeof evalIn !== 'object' ? ''
+          : evalIn.manager && evalIn.scope ? `sm-dev couldn't reach the scope of ${evalIn.name} under ${evalIn.manager}`
+          : `${evalIn.name} ${evalIn.scope ? 'hasn\'t run on this page' : 'isn\'t installed in the extension'}`;
         // A selected script with no scope runs its code in its fallback
         // world, as said. A named one was asked for, so that's a
         // failure.
         const evaluate = (): Promise<string> => {
-          if (typeof evalIn === 'string') return tab.link.evaluate(expression, evalIn);
-          const inScript = evalIn.scope ? tab.link.evaluate(expression, evalIn.scope) : Promise.reject(new NoEvalHook());
+          // --timeout-seconds (`given`): how long to wait for a document,
+          // on a page between them.
+          if (typeof evalIn === 'string') return tab.link.evaluate(expression, evalIn, given);
+          const inScript = evalIn.scope ? tab.link.evaluate(expression, evalIn.scope, given) : Promise.reject(new NoEvalHook());
           return inScript.catch((err: unknown) => {
             if (!(err instanceof NoEvalHook)) throw err;
             if (evalIn.named) throw err;
             say(`${noScope}, so this ran in ${WORLD_NAMES[evalIn.fallback]}`);
-            return tab.link.evaluate(expression, evalIn.fallback);
+            return tab.link.evaluate(expression, evalIn.fallback, given);
           });
         };
         const evaluated = evaluate().then((r) => { result = r; });
@@ -197,8 +207,9 @@ export async function runPageCommand(
           else if (CUT_OFF_BY_NAVIGATION.test((err as Error).message)) say('The page navigated away before the expression finished');
           else {
             if (err instanceof NoEvalHook && typeof evalIn === 'object') {
-              say(evalIn.scope
-                ? `${noScope}, so its scope can't be reached. Load a page it matches, or reload this one.`
+              // Under another manager, the cause isn't known, so no fix is offered.
+              say(evalIn.manager && evalIn.scope ? noScope
+                : evalIn.scope ? `${noScope}, so its scope can't be reached. Load a page it matches, or reload this one.`
                 : `${noScope}, so its scope can't be reached`);
             } else if (err instanceof ScriptThrew) say(`The expression threw: ${err.message}`);
             else if (err instanceof NoDocument) say(err.message);
@@ -234,15 +245,15 @@ export async function runPageCommand(
         if (count === null) return false;
         const target = locate(page, selector).first();
         const action = (command === 'click'
-          ? target.click({ ...options.click, timeout: ACTION_TIMEOUT_MS })
-          : target.hover({ modifiers: options.click.modifiers, position: options.click.position, timeout: ACTION_TIMEOUT_MS }))
+          ? target.click({ ...options.click, timeout: actionMs })
+          : target.hover({ modifiers: options.click.modifiers, position: options.click.position, timeout: actionMs }))
           // A point it can't reach says so, rather than that the element
           // was covered (by whatever is at that point) or not ready.
           .catch(async (err: Error) => {
             if (!/Timeout \d+ms exceeded/.test(err.message)) throw err;
             const why = plain(err);
             // The call log's own reasons (hidden, disabled, moving) stand.
-            if (why !== notReadyGeneral(ACTION_TIMEOUT_MS / 1000) && !why.startsWith(COVERED)) throw err;
+            if (why !== notReadyGeneral(actionMs / 1000) && !why.startsWith(COVERED)) throw err;
             throw new Error(await placeProblem(page, target, options.click.position) ?? err.message);
           });
         const how = options.how.length > 0 ? ` with ${options.how.join(', ')}` : '';
@@ -283,14 +294,21 @@ export async function runPageCommand(
         } else {
           text = input.text ?? '';
         }
-        if (!selector || !text) {
-          say('ERROR: The type command needs a selector and the text, e.g. type \'input[name=q]\' \'hello world\'');
+        // `--clear`: emptied first, so the text is optional.
+        const clear = input.flags['--clear'] === true;
+        if (!selector || (!text && !clear)) {
+          say('ERROR: The type command needs a selector and the text (or --clear), e.g. type \'input[name=q]\' \'hello world\'');
           return;
         }
         const count = await matches(page, selector, say);
         if (count === null) return false;
-        const typing = locate(page, selector).first().pressSequentially(text, { timeout: ACTION_TIMEOUT_MS });
-        await act(typing, `Typed into ${named(page, selector)}${count > 1 ? ` (the first of ${count} matches)` : ''}`);
+        const element = locate(page, selector).first();
+        const typing = (async () => {
+          if (clear) await element.clear({ timeout: actionMs });
+          if (text) await element.pressSequentially(text, { timeout: actionMs });
+        })();
+        const done = !text ? 'Cleared' : clear ? 'Cleared and typed into' : 'Typed into';
+        await act(typing, `${done} ${named(page, selector)}${count > 1 ? ` (the first of ${count} matches)` : ''}`);
         return;
       }
       case 'key': {
@@ -337,7 +355,7 @@ export async function runPageCommand(
           // The whole page is `:root`, not `body`: scripts often add their
           // panels to <html>, after <body>.
           const whole = page.locator(':root');
-          tree = await whole.ariaSnapshot({ mode: 'ai', boxes: visible, timeout: ACTION_TIMEOUT_MS });
+          tree = await whole.ariaSnapshot({ mode: 'ai', boxes: visible, timeout: actionMs });
           noteRefs(page, tree, doc);
           if (visible) {
             const [width, height] = await page.evaluate(() => [window.innerWidth, window.innerHeight]);
@@ -354,7 +372,7 @@ export async function runPageCommand(
           const tops: string[][] = [];
           let rest: { total?: number; unsearched?: number } = {};
           for (let i = 0; found && i < count; i++) {
-            tops.push(await refsOf(found.nth(i), ACTION_TIMEOUT_MS));
+            tops.push(await refsOf(found.nth(i), actionMs));
             if (parts.limit > 0 && i + 1 < count && treeParts(tree, { ...parts, matches: tops }).length >= parts.limit) {
               // The selector's count is the total, but --find's hits in
               // the matches not looked at are unknown.
@@ -365,7 +383,7 @@ export async function runPageCommand(
           // Refs resolve against the latest snapshot only, so the whole
           // is taken again, after the matches'. Failing, it costs only the
           // refs outside the last match.
-          if (found) await whole.ariaSnapshot({ mode: 'ai', timeout: ACTION_TIMEOUT_MS }).catch(() => null);
+          if (found) await whole.ariaSnapshot({ mode: 'ai', timeout: actionMs }).catch(() => null);
           // A part can be the whole, however named (`:root`, `html`).
           const shown = treeParts(tree, { ...parts, matches: found ? tops : undefined }).map((part) => tidy(withoutDocument(part)));
           tree = shown.length === 0 ? '' : partsText(shown, parts.limit, rest);
@@ -408,13 +426,13 @@ export async function runPageCommand(
             return;
           }
           if (await matches(page, selector, say) === null) return false;
-          await write(image, () => locate(page, selector).first().screenshot({ path: file(image), timeout: ACTION_TIMEOUT_MS }));
+          await write(image, () => locate(page, selector).first().screenshot({ path: file(image), timeout: actionMs }));
         } else {
           try {
-            await write(image, () => page.screenshot({ path: file(image), fullPage: input.flags['--full'] === true, timeout: SCREENSHOT_TIMEOUT_MS }));
+            await write(image, () => page.screenshot({ path: file(image), fullPage: input.flags['--full'] === true, timeout: within(SCREENSHOT_TIMEOUT_MS) }));
           } catch (err) {
             if ((err as Error).name !== 'TimeoutError' || page.isClosed()) throw err;
-            say(`Screenshot failed: Browser did not capture the page within ${SCREENSHOT_TIMEOUT_MS / 1000} seconds`);
+            say(`Screenshot failed: Browser did not capture the page within ${seconds(within(SCREENSHOT_TIMEOUT_MS))}`);
             return false;
           }
         }
@@ -452,7 +470,7 @@ export async function runPageCommand(
               }
               entry.count = count;
               if (count === 0 || (!css && !html)) return;
-              const found = await probeMatches(page, selector, PROBE_MAX, ACTION_TIMEOUT_MS).catch((err: Error) => plain(err));
+              const found = await probeMatches(page, selector, PROBE_MAX, actionMs).catch((err: Error) => plain(err));
               if (typeof found === 'string') {
                 say(`The matches of ${selector} could not be read: ${found}`);
                 return;
@@ -480,7 +498,7 @@ export async function runPageCommand(
             else {
               lines.push(`found    ${selector}  (${count})`);
               if (!css && !html) return;
-              const found = await probeMatches(page, selector, PROBE_MAX, ACTION_TIMEOUT_MS).catch((err: Error) => plain(err));
+              const found = await probeMatches(page, selector, PROBE_MAX, actionMs).catch((err: Error) => plain(err));
               if (typeof found === 'string') {
                 lines.push(`    The matches could not be read: ${found}`);
                 return;
@@ -552,7 +570,7 @@ export async function runPageCommand(
             const sent = session.send(method as never, params as never).then((r) => { result = r; });
             // A reply may never come: a Runtime.evaluate that navigates
             // the page, a page paused in the debugger.
-            const timeout = new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), CDP_TIMEOUT_MS).unref());
+            const timeout = new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), within(CDP_TIMEOUT_MS)).unref());
             let outcome: boolean | 'timeout';
             try {
               outcome = await Promise.race([done(sent), timeout]);
@@ -571,7 +589,7 @@ export async function runPageCommand(
                 say(`${method} got no answer, since the page navigated`);
                 return;
               }
-              say(`${method} got no answer within ${CDP_TIMEOUT_MS / 1000} seconds. A paused page never answers.`);
+              say(`${method} got no answer within ${seconds(within(CDP_TIMEOUT_MS))}. A paused page never answers.`);
               return false;
             }
             if (!outcome) {

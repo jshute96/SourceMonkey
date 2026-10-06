@@ -1304,6 +1304,10 @@ line:
 - Anything resolving to bare `/`, which would sweep every local
   collection. The Add field refuses `/` for the same reason.
 
+Paths are compared as written: the page can't resolve symlinks. So a
+path through a symlink matches nothing when the collection was added
+under the symlink's target (or the reverse).
+
 ```
 google-chrome chrome-extension://<extension-id>/collections.html?refresh_local
 google-chrome 'chrome-extension://<extension-id>/collections.html?refresh_file=/home/me/scripts/a.user.js'

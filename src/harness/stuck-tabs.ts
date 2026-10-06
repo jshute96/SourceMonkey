@@ -112,7 +112,7 @@ export async function stuckTabs(endpoint: string, only?: Set<string>): Promise<S
  * Waits until every tab's page answers, saying which don't and why they
  * might not. True at once when they all do, and when the browser can't
  * be reached (the connect that follows says so). False when `until`
- * resolves first (--seconds, or the run's output closing).
+ * resolves first (--stop-after-seconds, or the run's output closing).
  */
 export async function waitForStuckTabs(endpoint: string, out: (line: string) => void, until?: Promise<void>): Promise<boolean> {
   let stuck: StuckTab[];

@@ -50,7 +50,7 @@ test('flags take a value after them or after =, and are checked', () => {
   // A value only after =.
   assert.deepEqual(typed('status', '--json=multi').flags, { '--json': 'multi' });
   assert.deepEqual(typed('values', '2 --json').flags, { '--json': true });
-  assert.deepEqual(typed('snapshot', '--deep'), { error: 'The snapshot command has no --deep flag. It takes --visible, --out, --find, --up, --context, --limit.', flag: '--deep' });
+  assert.deepEqual(typed('snapshot', '--deep'), { error: 'The snapshot command has no --deep flag. It takes --visible, --out, --find, --up, --context, --limit, --timeout-seconds.', flag: '--deep' });
   // A quoted word is never a flag.
   assert.deepEqual(typed('probe', `'--x' .y`).words, ['--x', '.y']);
   // Also on a command that takes few.

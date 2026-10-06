@@ -47,6 +47,7 @@ import type { PushedFile } from '../external-files.js';
 import { buildParseCheckSource } from '../composed-source.js';
 import { resolveScriptWorld, type InjectionWorld } from '../script-world.js';
 import { checkParseNode } from './parse-check-node.js';
+import { MANIFEST_FILENAME } from '../collection-scan.js';
 
 export type { InjectionWorld };
 
@@ -205,7 +206,30 @@ export function prepareScript(opts: PrepareOptions): Promise<PreparedScript> {
   return run;
 }
 
-async function prepareScriptNow(opts: PrepareOptions): Promise<PreparedScript> {
+/**
+ * The roots to prepare `file` with, given `collectionRoot` and
+ * `localRoots`. A script outside the root it was given (sm-dev run in
+ * one repo on another's script, or a shared fixture's root) belongs to
+ * the collection whose `script_manifest.json` is nearest above it, as
+ * it would be installed. The given root then joins the local roots, so
+ * its `lib/` still stands in for the `@require`s that name it.
+ */
+export function scriptRoots(file: string, collectionRoot: string, localRoots: string[] = []): { collectionRoot: string; localRoots: string[] } {
+  const abs = path.resolve(file);
+  const root = path.resolve(collectionRoot);
+  if (isUnder(abs, root)) return { collectionRoot, localRoots };
+  for (let dir = path.dirname(abs); dir !== path.dirname(dir); dir = path.dirname(dir)) {
+    if (statSync(path.join(dir, MANIFEST_FILENAME), { throwIfNoEntry: false })?.isFile()) {
+      return { collectionRoot: dir, localRoots: [...localRoots, root] };
+    }
+  }
+  return { collectionRoot, localRoots };
+}
+
+async function prepareScriptNow(given: PrepareOptions): Promise<PreparedScript> {
+  const opts = given.file && given.collectionRoot
+    ? { ...given, ...scriptRoots(given.file, given.collectionRoot, given.localRoots) }
+    : given;
   installNodeSeams();
   if (!opts.file && opts.text === undefined) {
     throw new Error('Pass prepareScript a file or text');
@@ -267,10 +291,17 @@ function relativePathFor(opts: PrepareOptions, sourceUrl: string): string {
   if (!opts.file) return scriptBasename(sourceUrl);
   const file = path.resolve(opts.file);
   if (opts.collectionRoot) {
-    const rel = path.relative(path.resolve(opts.collectionRoot), file);
-    if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) return rel.split(path.sep).join('/');
+    const root = path.resolve(opts.collectionRoot);
+    if (file !== root && isUnder(file, root)) return path.relative(root, file).split(path.sep).join('/');
   }
   return path.basename(file);
+}
+
+// Whether `file` is `dir` or inside it. Not by a `..` prefix alone,
+// which a child named `..cache` also has.
+function isUnder(file: string, dir: string): boolean {
+  const rel = path.relative(dir, file);
+  return rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
 }
 
 // A directory as the `file://` URL the override resolver wants, with

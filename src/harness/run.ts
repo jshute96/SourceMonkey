@@ -86,7 +86,7 @@ export interface RunOptions extends ConnectOptions {
    * stream shows when its source is one it shows. Set by `run`.
    */
   emit?: (fields: LogFields) => void;
-  /** Resolves when the run should end (stop, a signal, --seconds). Omit to return after the first load. */
+  /** Resolves when the run should end (stop, a signal, --stop-after-seconds). Omit to return after the first load. */
   until?: Promise<void>;
   /** Called when a client's `stop` asks for the run to end. */
   onStop?: () => void;
@@ -100,7 +100,7 @@ export interface RunOptions extends ConnectOptions {
   onReady?: (id: string | undefined) => void;
   /**
    * Called as each sent command starts and ends, and as clients start and
-   * stop following the run, for `--idle-seconds` to count from. `watched`:
+   * stop following the run, for `--stop-after-idle-seconds` to count from. `watched`:
    * whether a client follows the run now, which keeps it from going idle.
    */
   onActivity?: (watched: boolean) => void;
@@ -114,6 +114,8 @@ export interface RunOptions extends ConnectOptions {
   primaryPid?: number;
   /** Don't wait for the tabs to settle before taking commands (`--nowait`). */
   noWait?: boolean;
+  /** `start --timeout-seconds`, in ms: each first load, and the settling after. */
+  timeoutMs?: number;
 }
 
 // How the browser commands reach a browser: connect to one over CDP
@@ -139,7 +141,7 @@ export interface ConnectOptions {
    * A `tempBrowser` is launched with them too.
    */
   lang?: string[];
-  /** Resolves to give up connecting (--seconds): ends a wait for tabs that don't answer. */
+  /** Resolves to give up connecting (--stop-after-seconds): ends a wait for tabs that don't answer. */
   until?: Promise<void>;
   /** The run's log file, which a `tempBrowser`'s downloads folder is named after. */
   log?: string;
@@ -1024,7 +1026,8 @@ async function runInBrowser(
     return true;
   };
   // Put `next` in place everywhere, and reload the tabs `changed` affects.
-  const apply = async (next: PreparedScript[], changed: ScriptChange[], none: string, pushed = false): Promise<void> => {
+  // `timeoutMs`: each reload's, from the command's --timeout-seconds.
+  const apply = async (next: PreparedScript[], changed: ScriptChange[], none: string, pushed = false, timeoutMs?: number): Promise<void> => {
     if (!pushed && !(await push(changed.map((c) => c.next)))) return;
     scripts = next;
     // The typed commands' list too, keeping the selected script by its place.
@@ -1040,13 +1043,13 @@ async function runInBrowser(
     } catch (err) {
       opts.out(`[sm-dev] The files could not be watched: ${(err as Error).message}`);
     }
-    await tabs.apply(next, changed, none);
+    await tabs.apply(next, changed, none, timeoutMs);
   };
   // `update`, and a `--watch` save: re-read the scripts at `which`
   // (every one, when not given) whose files have been modified since
   // they were read; a touch counts. One that no longer prepares leaves
   // every one as it was.
-  const update = (which?: number[]): Promise<void> => serial(async () => {
+  const update = (which?: number[], timeoutMs?: number): Promise<void> => serial(async () => {
     const indices = which ?? scripts.map((_, i) => i);
     const next = [...scripts];
     const changed: ScriptChange[] = [];
@@ -1066,9 +1069,9 @@ async function runInBrowser(
         : '[sm-dev] No script has changed on disk, so nothing was reloaded');
       return;
     }
-    await apply(next, changed, 'No open tab runs or matches the updated scripts, so none was reloaded');
+    await apply(next, changed, 'No open tab runs or matches the updated scripts, so none was reloaded', false, timeoutMs);
   });
-  const load = (input: string): Promise<void> => serial(async () => {
+  const load = (input: string, timeoutMs?: number): Promise<void> => serial(async () => {
     const file = path.resolve(input);
     const info = await stat(file).catch(() => null);
     if (!info) {
@@ -1096,7 +1099,7 @@ async function runInBrowser(
     remote.setScripts(files);
     stamps.set(script, await filesStamp(script));
     opts.out(`[sm-dev] Loaded ${input} as script ${n}`);
-    await apply([...scripts, script], [{ next: script }], `No open tab matches it, so none was reloaded. Use open ${n} to open its page.`, true);
+    await apply([...scripts, script], [{ next: script }], `No open tab matches it, so none was reloaded. Use open ${n} to open its page.`, true, timeoutMs);
   });
   // Seeded once, as pushed. An update keeps the store, so values the
   // script wrote since survive it.
@@ -1125,8 +1128,8 @@ async function runInBrowser(
     if (t1) tabs.announce(t1, urls[0]);
     for (const { tab, url } of opened) tabs.announce(tab, url);
     await Promise.all([
-      ...(t1 && urls[0] ? [tabs.navigate(t1, urls[0])] : []),
-      ...opened.map(({ tab, url }) => tabs.navigate(tab, url)),
+      ...(t1 && urls[0] ? [tabs.navigate(t1, urls[0], opts.timeoutMs)] : []),
+      ...opened.map(({ tab, url }) => tabs.navigate(tab, url, opts.timeoutMs)),
     ]);
     printSkipped(opts, start);
   } else {
@@ -1153,7 +1156,7 @@ async function runInBrowser(
       if (prepared.length > 0 && page) await waitForReports(host, tabs.list());
       // Then for the tabs to settle (see wait.ts), so the first command,
       // or `--detach`'s return, sees the page as its scripts left it.
-      if (!opts.noWait) await settleTabs(host, tabs.list(), opts.out);
+      if (!opts.noWait) await settleTabs(host, tabs.list(), opts.out, opts.timeoutMs);
       const ctx: ConsoleContext = {
         host,
         tabs: () => tabs.list(),
@@ -1165,7 +1168,7 @@ async function runInBrowser(
         setTabScripts: (tab, noScript) => serial(() => tabs.setNoScript(tab, noScript)),
         loadScript: load,
         // By place, so an update queued behind another still finds them.
-        updateScripts: (which) => update(which?.map((s) => scripts.indexOf(s)).filter((i) => i >= 0)),
+        updateScripts: (which, timeoutMs) => update(which?.map((s) => scripts.indexOf(s)).filter((i) => i >= 0), timeoutMs),
         scripts,
         out: opts.out,
         stop: () => opts.onStop?.(),
@@ -1345,7 +1348,7 @@ class FollowedTabs {
    * once, so one slow page holds up no other. `none` is what to say
    * when no tab is affected.
    */
-  async apply(next: PreparedScript[], changed: ScriptChange[], none: string): Promise<void> {
+  async apply(next: PreparedScript[], changed: ScriptChange[], none: string, timeoutMs?: number): Promise<void> {
     this.scripts = next;
     const open = this.open();
     const affected = open.filter(({ tab }) => changed.some((c) =>
@@ -1372,7 +1375,7 @@ class FollowedTabs {
         if (!tab.page.isClosed()) this.opts.out(`[sm-dev] T${tab.n} could not be updated: ${(err as Error).message}`);
         return;
       }
-      if (reload.includes(tab)) await reloadTab(tab, this.host, this.opts.out);
+      if (reload.includes(tab)) await reloadTab(tab, this.host, this.opts.out, timeoutMs);
     }));
   }
 
@@ -1418,11 +1421,11 @@ class FollowedTabs {
    * tabs the page opens. `noScript`: one the scripts stay out of, for
    * `newtab --noscript`.
    */
-  async newTab(url?: string, { noScript = false, saved }: { noScript?: boolean; saved?: SavedPageStart } = {}): Promise<ControlledTab> {
+  async newTab(url?: string, { noScript = false, saved, timeoutMs }: { noScript?: boolean; saved?: SavedPageStart; timeoutMs?: number } = {}): Promise<ControlledTab> {
     const tab = await this.createTab(noScript);
     if (saved) await serveSavedPage(tab, saved, this.opts.out, noScript || this.scripts.length === 0);
     this.announce(tab, url);
-    if (url) await this.navigate(tab, url);
+    if (url) await this.navigate(tab, url, timeoutMs);
     return tab;
   }
 
@@ -1467,8 +1470,8 @@ class FollowedTabs {
       : `[sm-dev] Opening ${url} in T${tab.n}${targetIdSuffix(tab.targetId)}`);
   }
 
-  async navigate(tab: ControlledTab, url: string): Promise<void> {
-    await gotoInTab(tab, this.host, url, this.opts.out);
+  async navigate(tab: ControlledTab, url: string, timeoutMs?: number): Promise<void> {
+    await gotoInTab(tab, this.host, url, this.opts.out, timeoutMs);
   }
 
   private track(work: Promise<unknown>): void {

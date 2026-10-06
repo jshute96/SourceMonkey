@@ -566,7 +566,7 @@ prompt at a terminal (stdin and stdout both), as `--interactive`
 would. Elsewhere it is refused:
 `The start command with nothing after it would stop the run as soon as
 it started. Add --interactive for a prompt, --detach to leave it
-running, --seconds N to watch it for a while, or commands after --.`
+running, --stop-after-seconds N to watch it for a while, or commands after --.`
 
 ### Options at a glance
 
@@ -583,8 +583,9 @@ running, --seconds N to watch it for a while, or commands after --.`
 | `--log-source <source>` | The log sources the stream shows (see [Logs](#logs)) |
 | `--lang zh-CN,en` | The languages the run's tabs prefer |
 | `--nowait` | Don't wait for the pages to settle |
-| `--seconds N` | Stop the run after N seconds |
-| `--idle-seconds N` | Stop after N idle seconds (default 30 minutes; `0` never) |
+| `--timeout-seconds S` | The longest the pages may take to load, and then to settle |
+| `--stop-after-seconds N` | Stop the run after N seconds |
+| `--stop-after-idle-seconds N` | Stop after N idle seconds (default 30 minutes; `0` never) |
 
 Details on each are in [`start` options in detail](#start-options-in-detail).
 
@@ -697,10 +698,10 @@ The browser's language:
 The run's lifetime:
 
 - `--detach` returns once the pages have settled, and leaves the run
-  going. `--new` and `--idle-seconds` go with it. See
+  going. `--new` and `--stop-after-idle-seconds` go with it. See
   [Detached runs](#detached-runs).
-- `--seconds N` stops the run after N seconds, as a safety limit.
-  - On its own (`sm-dev start x.user.js --seconds 30`), sm-dev shows
+- `--stop-after-seconds N` stops the run after N seconds, as a safety limit.
+  - On its own (`sm-dev start x.user.js --stop-after-seconds 30`), sm-dev shows
     what the run prints until then.
   - To wait for a page or a script, use `wait` (see
     [Waiting](#waiting)) rather than a guess at a time.
@@ -708,6 +709,8 @@ The run's lifetime:
     stop`, so it can't expire mid-test.
 - `--nowait`: don't wait for the pages to settle before continuing. It
   still waits for the scripts to start.
+- `--timeout-seconds S`: the longest each page may take to load
+  (default 30 seconds), and then to settle (default 5).
 
 ### Which tab `start` uses
 
@@ -993,6 +996,12 @@ Some commands take several lines as a block, at the prompt or on stdin:
 - Later on the line they are refused: `The --run flag is for the whole
   command line, so it goes first, before any command: sm-dev --run ...
   <command>`.
+  - That includes one ending a command's text (`eval 1 --run D1`),
+    unless the command takes the flag itself, or the text is quoted
+    as a whole.
+- A command's own flag goes after it. One put before it is refused
+  with the line as it should be: `The --nowait flag goes after the
+  command: open <url> --nowait`.
 
 The options:
 
@@ -1004,6 +1013,10 @@ The options:
 - `--root DIR` names the repo root, searched for local copies of
   `@require` URLs the way the extension searches a collection's
   directory. Defaults to the current directory.
+  - A script outside it uses the nearest directory above it with a
+    `script_manifest.json` instead, its collection's root. `--root`
+    then joins the `--local` directories. So a sibling repo's script
+    needs no `--root`.
 - `--local DIR` adds another directory to that search; repeatable.
   - A run keeps the `--root` and `--local` it started with. A line that
     sends a command to a run it didn't start refuses them.
@@ -1361,6 +1374,7 @@ current one.
 | `click <selector> --at 300,12`, `hover <selector> --modifiers Alt --at 4,4` | At a point in the element, in pixels from its top left corner, rather than its center. `hover` takes `--modifiers` too |
 | `type <selector> <text>` | Types into an element, key by key |
 | `type <selector> --file <path>` | Types a file's text into an element, a last line break included |
+| `type <selector> --clear [text]` | Empties the element first, then types the text if given |
 | `key <keys>...` | Presses keys in order: `key j Shift+ArrowRight Escape` (`keys` works too) |
 | `eval <js>` | Evaluates inside the selected script (or in the page, with none) and prints the result |
 | `eval --page <js>` | Evaluates in the page |
@@ -1381,9 +1395,9 @@ current one.
   they did. `--nowait` skips that.
 - One that opens a dialog returns once the dialog is up; answer it with
   `accept` or `dismiss`.
-- `click` and `hover` wait up to 5 seconds for their element to be
-  visible, not moving, and not covered by another element (`click`:
-  also enabled).
+- `click` and `hover` wait up to 5 seconds (or `--timeout-seconds S`)
+  for their element to be visible, not moving, and not covered by
+  another element (`click`: also enabled).
   - Failing, they say which check it kept failing, and name a covering
     element.
 - `key` takes the standard key names, case-insensitive (`home`,
@@ -1502,8 +1516,8 @@ sm-dev cdp Input.dispatchMouseEvent '{"type": "mouseWheel", "x": 400, "y": 300, 
 
 ### `screenshot`
 
-A whole-page `screenshot` gives up after 5 seconds if the browser
-hasn't captured the page.
+A whole-page `screenshot` gives up after 5 seconds (or
+`--timeout-seconds S`) if the browser hasn't captured the page.
 
 ## Saved pages
 
@@ -1543,6 +1557,8 @@ given as a saved page, one per tab: `open page.html --from-saved`,
 - `--from-saved` with no `.html` file is an error.
 - Its network requests (images, styles, fetches) go to the live site.
   `--offline` blocks them instead.
+  - One that never answers (a site that needs a login) can keep the
+    page from loading. The timeout then suggests `--offline`.
 - The file is only known by its URL: a page whose own JavaScript
   changes it (`history.pushState`) sends its requests live from then
   on, even with `--offline`.
@@ -1677,10 +1693,13 @@ Limits of the heuristic:
 
 ### Giving up
 
-- The waits other than a delay give up after 5 seconds, or
-  `--timeout-seconds S`, and say what was still busy:
+- The waits other than a delay give up after 5 seconds (a page load
+  after 30), or `--timeout-seconds S`, and say what was still busy:
   `T1 did not settle within 5s: 2 requests pending (/api/poll,
   /ads.js); the DOM is still changing (div#ticker)`.
+- `--timeout-seconds S` works on every command that waits, and sets
+  each of its waits (an element being ready, a load, settling).
+  - On `cdp`, it's each call's limit (default 10 seconds).
 - An explicit `wait` that gives up fails, so a line of several commands
   (or a list in one argument, or commands piped in) stops there, and
   says the rest weren't run.
@@ -1799,11 +1818,11 @@ D2   81502  1m      127.0.0.1:41234 (owned, headless)  SourceMonkey  1     a.use
 
 ### How a run ends
 
-- Prefer `stop` to `--seconds` for a background run, so the run can't
+- Prefer `stop` to `--stop-after-seconds` for a background run, so the run can't
   expire while you're still testing.
 - Every run stops itself after 30 minutes with no command sent, unless
-  a client is following it. `start --idle-seconds N` changes that, and
-  `--idle-seconds 0` turns it off.
+  a client is following it. `start --stop-after-idle-seconds N` changes that, and
+  `--stop-after-idle-seconds 0` turns it off.
 - Piping sm-dev's output into something that stops reading (`| head`)
   ends sm-dev.
 - Every run's last line says it has ended. Its test collection is
@@ -1939,6 +1958,8 @@ test('adds the button to the toolbar', async ({ page, loadUserscript, gm, report
   - `collectionRoot` and `localRoots` set the `@require` lookups
     (default: the config's root). Files read from disk are pushed with
     the script.
+    - A script outside `collectionRoot` uses its own collection's root,
+      as `sm-dev`'s `--root` does.
 
 `gm`:
 

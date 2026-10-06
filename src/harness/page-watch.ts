@@ -381,8 +381,8 @@ export class PageAttachment implements PageLink {
    * the expression threw, a `NoEvalHook` for a script that hasn't run
    * here, or an error of the evaluation's own (the page gone, say).
    */
-  async evaluate(expression: string, world: 'page' | 'scripts' | ScriptScope): Promise<string> {
-    await this.documentReady();
+  async evaluate(expression: string, world: 'page' | 'scripts' | ScriptScope, documentWaitMs = DOCUMENT_WAIT_MS): Promise<string> {
+    await this.documentReady(documentWaitMs);
     if (typeof world === 'object') return this.evaluateInScript(expression, world);
     const contextId = world === 'page' ? this.contextFor('') : this.scriptsContext();
     // The page context can go again between the wait and here.
@@ -407,10 +407,10 @@ export class PageAttachment implements PageLink {
   // next one, and throws `NoDocument` if none comes. The new document's
   // scripts may not have run yet; a world or hook they set up is looked
   // for after this.
-  private async documentReady(): Promise<void> {
+  private async documentReady(waitMs: number): Promise<void> {
     if (this.contextFor('') !== null) return;
     const ready = await new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => finish(false), DOCUMENT_WAIT_MS);
+      const timer = setTimeout(() => finish(false), waitMs);
       const created = (): void => {
         if (this.contextFor('') !== null) finish(true);
       };
@@ -426,7 +426,7 @@ export class PageAttachment implements PageLink {
       this.cdp.on('Runtime.executionContextCreated', created);
       this.page.once('close', closed);
     });
-    if (!ready) throw new NoDocument(`${BETWEEN_DOCUMENTS}. No new one loaded within ${DOCUMENT_WAIT_MS / 1000} seconds.`);
+    if (!ready) throw new NoDocument(`${BETWEEN_DOCUMENTS}. No new one loaded within ${Number((waitMs / 1000).toFixed(1))} seconds.`);
   }
 
   // Through the script's eval hook, a direct `eval` in its scope. That

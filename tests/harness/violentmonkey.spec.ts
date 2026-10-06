@@ -159,6 +159,6 @@ test('a run doesn\'t replace a script installed apart from it', async () => {
 
 test('in a --temp-browser, scripts run on local pages', async () => {
   writeFileSync(path.join(dir, 'file.user.js'), script('On files', 'file:///*/page.html', "console.log('on a file page');"));
-  const run = await vm('--temp-browser', 'start', '--seconds', '3', 'file.user.js', 'page.html');
+  const run = await vm('--temp-browser', 'start', '--stop-after-seconds', '3', 'file.user.js', 'page.html');
   expect(run.stdout).toContain('[script log] on a file page\n');
 });
