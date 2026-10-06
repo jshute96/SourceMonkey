@@ -17,8 +17,10 @@ interface Saved {
   ids: Record<string, { n: number; seen: number }>;
 }
 
+// `SM_DEV_TM_IDS` moves it, as the tests do, to keep their scripts'
+// numbers out of the person's own file.
 function file(): string {
-  return path.join(path.dirname(managerCacheDir()), 'tampermonkey-ids.json');
+  return process.env.SM_DEV_TM_IDS?.trim() || path.join(path.dirname(managerCacheDir()), 'tampermonkey-ids.json');
 }
 
 function load(): Saved {

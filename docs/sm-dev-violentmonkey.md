@@ -137,7 +137,9 @@ manager about as well as under SourceMonkey (SM).
     it, and saying to uninstall it first (with `--force`);
   - a live run's script is refused, naming the run. Two runs can't
     share one: both runs' tabs would run whichever was loaded last;
-  - an ended run's script, left by one that crashed, is replaced.
+  - an ended run's script, left by one that crashed, is replaced;
+  - another of the run's own files with the same name and namespace is
+    refused, naming the file loaded first, since VM can keep only one.
 - Different scripts in two runs are fine, but every script runs in
   every run's tabs, unlike under SM.
 
@@ -165,6 +167,10 @@ manager about as well as under SourceMonkey (SM).
     `Violentmonkey scripts expected on T1`.
   - The JSON says `expected` and `not-expected` for them, where SM's
     say `running` and `not-running`.
+  - A script turned off in VM, or all of them while VM's switch is
+    off, isn't expected. The run reads that from VM again before each
+    command that lists or acts on what a tab runs (`scripts`, `script`,
+    `status`, `tabs`, `logs`, `save`, `values`).
   - It's a prediction: VM's own rules can differ in edge cases, and its
     blacklist and the per-script overrides set in VM's editor aren't
     applied.
@@ -276,7 +282,7 @@ Where VM defines these (links are to v2.49.0, the version tried):
 | --- | --- |
 | `collection list`, `C0 show` | `C0` only, with its script count and whether VM's switch is on |
 | `C0 enable`, `C0 disable` | VM's on/off switch (`isApplied`) |
-| `C0 refresh` | Refreshes each script with a source, as a container collection's refresh does |
+| `C0 refresh` | Refreshes each script with a source, as a container collection's refresh does. One that fails is listed with why (`Failed to refresh E3: ...`), and the rest go on |
 | `rename` | Refused: `C0` has no name of its own |
 | `--collection` | Only `C0` |
 

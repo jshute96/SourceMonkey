@@ -154,6 +154,11 @@ export interface CollectionRefresh {
   updated: ManagedScript[];
   unchanged: number;
   removed: ManagedScript[];
+  /**
+   * Its scripts that couldn't be refreshed, each with `refreshError`.
+   * Set by sm-dev under another manager, never sent by the extension.
+   */
+  failed?: ManagedScript[];
 }
 
 /**

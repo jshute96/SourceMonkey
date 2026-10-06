@@ -298,16 +298,22 @@ export function externalControl(manager: ExternalManager): ManagerControl {
     refreshCollection: async (): Promise<CollectionRefresh> => {
       const all = await listAll(manager);
       const updated: number[] = [];
+      const failed: ManagedScript[] = [];
       let unchanged = 0;
       // Not a live run's scripts, which only their run changes; nor
-      // those with nowhere to read from.
+      // those with nowhere to read from. One that fails is said, and
+      // the rest go on.
       for (const listed of all) {
         if (listed.liveRun !== undefined || !sourceOf(listed)) {
           unchanged++;
           continue;
         }
-        if (await refresh(listed)) updated.push(listed.script.id);
-        else unchanged++;
+        try {
+          if (await refresh(listed)) updated.push(listed.script.id);
+          else unchanged++;
+        } catch (err) {
+          failed.push({ ...managedOf(listed), refreshError: (err as Error).message });
+        }
       }
       const after = await listAll(manager);
       return {
@@ -315,6 +321,7 @@ export function externalControl(manager: ExternalManager): ManagerControl {
         updated: after.filter((l) => updated.includes(l.script.id)).map(managedOf),
         unchanged,
         removed: [],
+        ...(failed.length > 0 ? { failed } : {}),
       };
     },
     installScript: async (location, _collection, replace = false): Promise<ScriptInstall> => {
@@ -401,6 +408,11 @@ export class ExternalRunScripts {
     let id = before;
     if (clash) {
       const { label } = this.manager;
+      // Another of this run's files: the manager keeps one script by
+      // a name and namespace, so loading this would replace that one.
+      if (this.isOwn(clash.mark) && clash.mark?.file !== undefined && clash.mark.file !== file) {
+        throw new Error(`This run loaded ${clash.mark.file} as ${shown(clash.script)}, with the same name and namespace. ${label} keeps one script by a name and namespace, so the run can't load both. Give one of them another @name or @namespace.`);
+      }
       if (clash.liveRun !== undefined && !this.isOwn(clash.mark)) {
         throw new Error(`${label} has ${shown(clash.script)} with the same name and namespace, loaded by run ${clash.liveRun}. Two runs can't both load one script.`);
       }
@@ -470,6 +482,28 @@ export function externalOthers(
         .map((s) => other(s.id, s.name));
     },
     installed: (id, _label, name) => other(Number(id), name),
+  };
+}
+
+/**
+ * Which scripts the manager has off, all of them while its own switch
+ * is (`ConsoleContext.predictedOff`), as of the last `refresh`. A
+ * failed refresh keeps what was known before.
+ */
+export function externalOff(manager: ExternalManager): NonNullable<ConsoleContext['predictedOff']> {
+  let off = new Set<string>();
+  let applied = true;
+  return {
+    refresh: async () => {
+      try {
+        const [scripts, on] = await Promise.all([manager.scripts(), manager.applied()]);
+        off = new Set(scripts.filter((s) => !s.enabled).map((s) => String(s.id)));
+        applied = on;
+      } catch {
+        // The lists then go by what was read last.
+      }
+    },
+    has: (id) => !applied || (id !== undefined && off.has(id)),
   };
 }
 

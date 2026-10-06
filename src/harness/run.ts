@@ -25,7 +25,7 @@ import { launchExtensionBrowser } from './extension-launch.js';
 import { fetchManager, fetchedVersion } from './manager-fetch.js';
 import { DEFAULT_MANAGER, MANAGERS, managerFlag, type ManagerName } from './managers.js';
 import { ExtensionLink, linkRunId, type ExtensionEvent } from './extension-link.js';
-import { ExternalRunScripts, externalControl, externalOthers, openExternalManager, type ExternalManager } from './external-manager.js';
+import { ExternalRunScripts, externalControl, externalOff, externalOthers, openExternalManager, type ExternalManager } from './external-manager.js';
 import type { ErrorReport, PageLink, SkipReport, StartReport } from './host.js';
 import { attachPage, targetIdOf, type AttachOptions, type PageAttachment } from './page-watch.js';
 import { pageSays } from './page-commands.js';
@@ -1192,6 +1192,7 @@ async function runInBrowser(
             manager: externalControl(external.manager),
             // Nothing reports what ran, so the run's scripts' rules say.
             predicted: true,
+            predictedOff: externalOff(external.manager),
           } : {}),
         extensionIdOf: (script) => (script.id === undefined ? undefined : host.extensionIdOf(script.id)),
         logs: remote.logs,

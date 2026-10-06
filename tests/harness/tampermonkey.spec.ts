@@ -50,7 +50,7 @@ function script(name: string, match: string, body: string, extra = ''): string {
 // An `sm-dev` command line against the browser, with the test's own
 // runs, from the test's folder.
 function cli(...words: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  const env = { ...process.env, SM_DEV_RUNS_DIR: dir, SM_DEV_LOGS_DIR: dir, SM_DEV_BROWSER: endpoint };
+  const env = { ...process.env, SM_DEV_RUNS_DIR: dir, SM_DEV_LOGS_DIR: dir, SM_DEV_BROWSER: endpoint, SM_DEV_TM_IDS: path.join(dir, 'tm-ids.json') };
   return new Promise((resolve) => {
     const child = execFile(process.execPath, [CLI, ...words], { env, cwd: dir, timeout: 90_000 }, (_err, stdout, stderr) => {
       resolve({ code: child.exitCode, stdout, stderr });
