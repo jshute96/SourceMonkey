@@ -91,7 +91,9 @@ keys would look like a wiped profile.
     `scriptIds` list is the source of truth. See
     [Container collections](#container-collections).
 - `lastRefreshedAt` — epoch ms of the most recent refresh.
-- `scriptIds` — child script IDs in display order.
+- `scriptIds` — child script IDs in scan order (a directory by path, a
+  manifest as listed), or install order for a container. The
+  collections page lists them by name instead.
 - `scanError?` — set when the directory listing itself failed.
 - `manifestSize?` / `manifestMtime?` — a `file://` manifest's own
   listing stat at its last successful scan, for the collections page's
@@ -1119,8 +1121,10 @@ collection**:
   - The name's tooltip is the whole location (never the shortened
     form the column may fall back to), a blank line, then the
     `@description` (or `No description`).
-  - Rows stay in stored scan order, which is by location — so the Name
-    column does not read alphabetically.
+  - Rows are sorted by the name the column shows (case-insensitive,
+    numbers in numeric order), then by location for duplicate names.
+    Stored order (scan or install order) isn't visible, so it isn't
+    used.
   - Size shows the UTF-8 byte count of the cached content — including
     a `"0 B"` for an empty file, and the prior size for `invalid` rows
     that retain their last-read body. Only rows that have
@@ -1494,7 +1498,7 @@ have to be.
   - The exception is a collection crossing between "has scripts" and "has
     none", since a table and the empty message are different elements.
     That swap discards the block wholesale.
-- **Re-seating** into stored order happens only when the order actually
+- **Re-seating** into name order happens only when the order actually
   differs — moving an attached node detaches it first, and Chrome blurs
   anything focused inside it.
 - **The Name and Status cells** are rebuilt only when one of their

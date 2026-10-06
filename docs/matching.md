@@ -361,8 +361,8 @@ For each tab we:
   - **GREEN** (`#2e7d32`) — expected and actual line up exactly with
     no errors.
 - **Tooltip** — `"SourceMonkey"` followed by one line per script,
-  formatted `"<name> | <STATUS>"`, sorted by name. `<STATUS>` is one
-  of:
+  formatted `"<name> | <STATUS>"`, sorted by name the same way as the
+  collections page (`compareScriptNames`). `<STATUS>` is one of:
   - `OK` — expected and the wrapper sent `sm:start` with no error.
   - `ERROR` — wrapper sent `sm:error` (regardless of expected).
   - `REJECTED` — expected by the matcher, no `sm:start`, and Chrome

@@ -256,6 +256,24 @@ test('computeBadge: rows sorted by name; tooltip is "NAME | STATUS" per row', ()
   ]);
 });
 
+test('computeBadge: names sort like the collections page (case-blind, numeric)', () => {
+  const view = computeBadge({
+    documentId: DOC, url: 'https://x',
+    matches: [expected('a', 'Item 10'), expected('b', 'beta'), expected('c', 'Item 9')],
+    actual: {
+      a: { state: 'started', name: 'Item 10' },
+      b: { state: 'started', name: 'beta' },
+      c: { state: 'started', name: 'Item 9' },
+    },
+  });
+  assert.deepEqual(view.title.split('\n'), [
+    'SourceMonkey',
+    'beta | OK',
+    'Item 9 | OK',
+    'Item 10 | OK',
+  ]);
+});
+
 test('computeBadge: prefers actual-side name over expected-side', () => {
   // The wrapper's reported name reflects what's actually running; use
   // it in preference to a possibly-stale name from the cache.

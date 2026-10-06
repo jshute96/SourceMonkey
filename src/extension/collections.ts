@@ -81,6 +81,7 @@ import {
 } from './script-updater.js';
 import {
   appendWithSlashBreaks,
+  compareScriptNames,
   displayLocation,
   effectiveScriptStatus,
   ENABLE_TITLE,
@@ -696,7 +697,7 @@ function syncSectionMessage(
 
 // Update the section's script list in place: reuse the `<tr>` for a
 // script that is still there, build one for a script that appeared, drop
-// the rows whose scripts are gone, and re-seat into stored order.
+// the rows whose scripts are gone, and re-seat into name order.
 async function syncScriptRowsFromStorage(
   section: HTMLElement,
   collection: StoredCollection,
@@ -704,6 +705,7 @@ async function syncScriptRowsFromStorage(
   scripts: readonly StoredScript[],
 ): Promise<void> {
   const localFiles = localFileScope(collection);
+  scripts = sortedByShownName(scripts, isContainerCollection(collection.path));
   const block = section.querySelector<HTMLElement>(':scope > .script-block');
   const tbody = block?.querySelector('tbody');
 
@@ -1362,8 +1364,8 @@ async function renderScriptBlock(
 
 async function renderScriptTable(collection: StoredCollection, collectionOn: boolean): Promise<HTMLElement> {
   const data = await getCollectionWithScripts(collection.id);
-  const scripts = data?.scripts ?? [];
   const inContainer = isContainerCollection(collection.path);
+  const scripts = sortedByShownName(data?.scripts ?? [], inContainer);
   const localFiles = localFileScope(collection);
 
   if (scripts.length === 0) {
@@ -1623,6 +1625,18 @@ function nameCellText(script: StoredScript, inContainer: boolean): string {
     ? scriptBasename(script.relativePath)
     : displayLocation(script.relativePath);
   return scriptDisplayName(script, location);
+}
+
+// A collection's rows are listed by the name they show, not stored
+// order: that order is scan or install order, which nothing on the page
+// reveals. Ties (two scripts with the same `@name`) fall back to the
+// location so the order stays stable across repaints.
+function sortedByShownName(scripts: readonly StoredScript[], inContainer: boolean): StoredScript[] {
+  return scripts
+    .map((script) => ({ script, name: nameCellText(script, inContainer) }))
+    .sort((a, b) => compareScriptNames(a.name, b.name)
+      || compareScriptNames(a.script.relativePath, b.script.relativePath))
+    .map(({ script }) => script);
 }
 
 // Tooltip on the name link: the whole location first — the column no
@@ -2277,7 +2291,9 @@ function addTombstones(
   const inContainer = !!section.querySelector('thead th[aria-label="Source"]');
   const withActions = !!section.querySelector('thead th[aria-label="Actions"]');
   let anchorId = '';
-  for (const script of prior) {
+  // Walked in the order the rows were shown, so each ghost is anchored
+  // below the row it sat under.
+  for (const script of sortedByShownName(prior, inContainer)) {
     if (survivingIds.has(script.id)) {
       anchorId = script.id;
       continue;

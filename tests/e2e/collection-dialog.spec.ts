@@ -524,7 +524,8 @@ test.describe('collection dialog', () => {
       await openCollectionsPage(page, extensionId);
       const section = page.locator(`section.collection[data-collection-id="${mine!.id}"]`);
       await expect(section.locator('tbody tr')).toHaveCount(2);
-      await expect(section.locator('tbody tr .scheme-chip')).toHaveText(['http', 'file']);
+      // Rows are by name: Local, then Web.
+      await expect(section.locator('tbody tr .scheme-chip')).toHaveText(['file', 'http']);
       await page.close();
     } finally {
       await server.stop();
