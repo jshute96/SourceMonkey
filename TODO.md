@@ -389,6 +389,39 @@ Violentmonkey 2.49.0 with a throwaway `tests/examples/` probe script
     otherwise; TM returns `{abort}` and silently does nothing.
     SourceMonkey throws even when `onerror` is given. Fix: follow VM.
 
+The next items came from testing the oldest corpus scripts, checked
+against Tampermonkey with `sm-dev --manager tm` probes (2026-10-05).
+
+- **`GM_xmlhttpRequest` ignores `overrideMimeType`**
+  (`xhr-override-mimetype`: 16385).
+  - Old scripts read binary data by passing
+    `overrideMimeType: 'text/plain; charset=x-user-defined'` and taking
+    `charCodeAt(i) & 255` from `responseText`.
+  - SourceMonkey decodes the body as UTF-8, so a 189,884-byte zip came
+    back as 180,053 characters (TM: 189,884) and the saved file was
+    corrupt.
+  - Fix: honor the option's charset when building `responseText` (for
+    `x-user-defined`, map each byte to one character).
+- **`@require` libraries land on the page's `window` in MAIN world**
+  (`require-clobbers-page`: 722).
+  - A script that names `unsafeWindow` runs in the page, so its
+    `@require`d jQuery 1.10.2 replaced ja.wikipedia's 3.7.1, and
+    Wikipedia's own code threw (`mwCollapsibleSetup`).
+  - Under TM the page kept 3.7.1: TM runs the require in its sandbox
+    and hands out a wrapper for `unsafeWindow`.
+  - Fix ideas: run requires with a scope object as `this`/`window`
+    for MAIN-world scripts, or snapshot and restore the page globals a
+    require overwrites. Both are partial; needs a design.
+- **`window.unsafeWindow` / `this.unsafeWindow` are undefined**
+  (`unsafewindow-on-window`: 593).
+  - Greasemonkey-era scripts test `if (this.unsafeWindow)` to pick
+    their GM code path. TM and VM: `true`; SourceMonkey: `false`,
+    since `unsafeWindow` is a local binding and `window` is the page's
+    own.
+  - Only one script seen, and it fails for other reasons. Fixing it
+    means setting a property on the page's real `window`, which the
+    page can see. Probably leave it unless more scripts turn up.
+
 ## Cross-manager coverage
 
 - **No `tests/examples/` script exercises `@require` under

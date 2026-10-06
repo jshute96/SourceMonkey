@@ -1,4 +1,5 @@
-// Tests for src/extension/site-icon.ts (compiled to dist/extension/site-icon.js).
+// Tests for src/extension/site-icon.ts (compiled to dist/extension/site-icon.js)
+// and the `@icon`-header helpers in src/script-icon.ts.
 //
 // Covers the icon-specific pure helpers: `@icon`-header URL
 // extraction, icon-link parsing + scoring, and cache-freshness rules.
@@ -12,7 +13,6 @@ import assert from 'node:assert/strict';
 import {
   dataUrlToBlob,
   ensureIconForUrl,
-  iconRefFromHeader,
   isCacheFresh,
   isIconCacheKey,
   isSameHostRedirect,
@@ -23,6 +23,7 @@ import {
   maxDeclaredSize,
   usableCacheHit,
 } from '../../dist/extension/site-icon.js';
+import { iconRefFromHeader } from '../../dist/script-icon.js';
 
 // ---------- iconRefFromHeader ----------
 //

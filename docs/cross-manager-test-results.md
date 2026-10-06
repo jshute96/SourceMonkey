@@ -202,9 +202,14 @@ stays enforced in an SM-only spec.
   shape (cross-manager test results varied). SM does guarantee it
   (the wrapper gates on the right lifecycle event; see
   `docs/injection.md`). Cross-manager assertion: all three scripts
-  ran and document-idle observes `readyState=complete`. SM strict
-  ordering: `tests/e2e/injection.spec.ts` ("document-start,
-  document-end, document-idle inject in @run-at order").
+  ran and document-idle observes `readyState=complete`.
+  - The idle script also logs a row from a `load` listener. Whether it
+    fires differs by manager and world (TM and VM run this `@grant
+    none` script after `load`), so only SM asserts it. See
+    [`document-idle` and the `load` event](injection.md#document-idle-and-the-load-event).
+  - SM strict ordering: `tests/e2e/injection.spec.ts`
+    ("document-start, document-end, document-idle inject in @run-at
+    order").
 
 ## Harness details worth knowing
 

@@ -188,12 +188,12 @@ test.describe('injection', () => {
 
   // SM registers every userscript at chrome's document_start and the
   // wrapper itself awaits the matching lifecycle event (DCL for
-  // document-end, load for document-idle). With the slow-blocker
-  // script holding the parser in `loading` for 250ms, the three
+  // document-end, readyState `complete` for document-idle). With the
+  // slow-blocker script holding the parser in `loading` for 250ms, the three
   // variants land in distinct readyState windows:
   //   document-start → readyState=loading (no wait)
   //   document-end   → readyState=interactive (after DCL)
-  //   document-idle  → readyState=complete (after load)
+  //   document-idle  → readyState=complete (just before load)
   // Without that gating Chrome's userScripts scheduler would batch
   // document_end into the post-load burst and document-end would
   // observe `complete`, matching document-idle.
@@ -274,14 +274,14 @@ test.describe('injection', () => {
     await expect(page.locator('#log li[data-script="end"]'))
       .toContainText('readyState=interactive');
 
-    // document-idle waits for load, so it observes complete.
+    // document-idle waits for readyState complete, just before load.
     await expect(page.locator('#log li[data-script="idle"]'))
       .toContainText('readyState=complete');
 
     const order = await page.locator('#log li').evaluateAll((els) =>
       els.map((el) => (el as HTMLElement).dataset.script),
     );
-    // `idle` waits for `load`, strictly after the other two, so its
+    // `idle` waits for readyState complete, strictly after the other two, so its
     // position is guaranteed. `start` and `end` both *append* on
     // DOMContentLoaded — start's body defers there because `#log`
     // doesn't exist at document_start, and end's wrapper gates on that
@@ -333,6 +333,48 @@ test.describe('injection', () => {
     // The image holds `load` for 5s; the fallback runs the body well
     // before that, while the page is still `interactive`.
     await expect(page.locator('#target')).toHaveText('idle ran: interactive', { timeout: 3000 });
+    await page.close();
+  });
+
+  // Many old scripts set themselves up in a `window` load listener.
+  // Tampermonkey runs idle scripts at the "complete" readystatechange,
+  // just before `load`, so that listener fires; so must ours, in both
+  // worlds. target.html is a fast page whose `load` usually beats the
+  // run decision, so this mostly exercises runWithLoadReplay.
+  test('document-idle runs before load, so a load listener it adds fires', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    const variants = [
+      ['page', 'none', 'addEventListener'],
+      ['isolated', 'GM_getValue', 'addEventListener'],
+      ['onload', 'none', 'onload'],
+    ] as const;
+    for (const [tag, grant, how] of variants) {
+      const setup = `() => {
+        document.getElementById('target').dataset.${tag} = startedAt + ' then load';
+      }`;
+      scriptsDir.write({
+        relativePath: `${tag}.user.js`,
+        meta: { name: `Idle Load ${tag}`, match: [`${fixtureServer.baseUrl}/target.html`], grant: [grant] },
+        body: `
+          const startedAt = document.readyState;
+          ${how === 'onload' ? `window.onload = ${setup};` : `window.addEventListener('load', ${setup});`}
+        `,
+      });
+    }
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    for (let i = 0; i < 3; i++) {
+      if (i === 0) await page.goto(`${fixtureServer.baseUrl}/target.html`);
+      else await page.reload();
+      await expect(page.locator('#target')).toHaveAttribute('data-page', 'complete then load');
+      await expect(page.locator('#target')).toHaveAttribute('data-isolated', 'complete then load');
+      await expect(page.locator('#target')).toHaveAttribute('data-onload', 'complete then load');
+    }
     await page.close();
   });
 

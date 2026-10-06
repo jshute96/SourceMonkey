@@ -94,7 +94,7 @@ import {
   emitGmBindings, GM_INFO_PASSTHROUGH_TAGS,
   type GmBindingEmit, type GmInfoInput, type GmInfoPassthroughTag, type UserAgentDataSnapshot,
 } from './gm-bindings.js';
-import { iconRefFromHeader } from './site-icon.js';
+import { iconRefFromHeader } from '../script-icon.js';
 import {
   buildSourceMap,
   inlineSourceMapComment,

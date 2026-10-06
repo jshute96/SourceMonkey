@@ -98,6 +98,8 @@
    *   decision     : null|run|run-new|skip — settled by check-pending,
    *                  or set to run at init by canSkipDecision.
    *   runAtFired   : true once the @run-at lifecycle event happened.
+   *   replayLoad   : an idle gate opened before `load` was over, so a
+   *                  body held past `load` gets it replayed.
    *   pendingRun   : the main-body fn passed to __smRun, queued until
    *                  (matched && decision !== 'skip' && runAtFired).
    *   runRegistered: did the combined user-program entry parse and
@@ -112,6 +114,7 @@
       matched: true,
       decision: null,
       runAtFired: false,
+      replayLoad: false,
       pendingRun: null,
       runRegistered: false,
       loadedAtRun: cfg.loadedAt,
@@ -445,8 +448,80 @@
      most about 200ms after it. */
   var IDLE_AFTER_DCL_MS = 200;
 
+  /* The page's `load` event once it has fired; null before that, and
+     on a page that never fires it. Recorded from the first prelude run
+     in this world (document_start) for runWithLoadReplay. */
+  var loadEvent = null;
+  try {
+    window.addEventListener("load", function (e) { loadEvent = e; }, { once: true });
+  } catch (_e) {}
+
+  /* Run an idle body that was due before `load` but was held past it
+     by the run decision (an async round trip that can lose to `load` on
+     a fast page). Old scripts set up in a `window` load listener, which
+     would then never fire; in Tampermonkey the body runs just before
+     `load`, so it does.
+     - For the body's synchronous run only, `window.addEventListener`
+       queues `load` listeners instead of adding them, and a
+       `window.onload` it sets is noticed afterwards.
+     - Each queued listener is then called with the real load event, on
+       its own task, so an error in one surfaces as an ordinary uncaught
+       error (attributed to the script) and doesn't stop the rest.
+     - Only code the body runs synchronously sees the stand-in. In
+       USER_SCRIPT world `window` isn't the page's, so the page never
+       does; in MAIN world, page code the body triggers synchronously
+       (a dispatched event's handler) would have its load listeners
+       replayed too.
+     - Not covered: a listener added later (after an `await`), and one
+       added by a page `<script>` that a USER_SCRIPT-world body
+       injects, since that runs in the page's world.
+     See docs/injection.md, "`document-idle` and the `load` event". */
+  function runWithLoadReplay(run) {
+    var w = window;
+    var queued = [];
+    var ownAdd = Object.getOwnPropertyDescriptor(w, "addEventListener");
+    var realAdd = w.addEventListener;
+    var onloadBefore = w.onload;
+    var patched = false;
+    try {
+      w.addEventListener = function (type, listener) {
+        /* A bare `addEventListener(...)` from strict code has no `this`;
+           natively that means the global, so it counts as window. */
+        var target = this == null ? w : this;
+        if (type === "load" && target === w && listener) {
+          queued.push(listener);
+          return;
+        }
+        return realAdd.apply(target, arguments);
+      };
+      patched = true;
+    } catch (_e) {}
+    try {
+      run();
+    } finally {
+      if (patched) {
+        try {
+          if (ownAdd) Object.defineProperty(w, "addEventListener", ownAdd);
+          else delete w.addEventListener;
+        } catch (_e2) {}
+      }
+      try {
+        if (w.onload !== onloadBefore && typeof w.onload === "function") queued.push(w.onload);
+      } catch (_e3) {}
+    }
+    var ev = loadEvent;
+    queued.forEach(function (listener) {
+      setTimeout(function () {
+        if (typeof listener === "function") listener.call(w, ev);
+        else if (listener && typeof listener.handleEvent === "function") listener.handleEvent(ev);
+      }, 0);
+    });
+  }
+
   /* @run-at gating. Each script's entry drives its own deferral; the
-     prelude calls back into runMain when the lifecycle event fires. */
+     prelude calls back into runMain when the lifecycle event fires.
+     `cb(true)` means an idle gate that opened before `load` was over,
+     so a body held past `load` should get it replayed. */
   function waitForRunAt(declared, cb) {
     /* `document-start` waits for <html> to exist; `document-body` for
        <body>. In the extension Chrome injects document_start scripts
@@ -476,12 +551,18 @@
       document.addEventListener("DOMContentLoaded", function () { cb(); }, { once: true });
       return;
     }
-    /* document-idle (default). `load` alone isn't enough: a page that
-       calls `window.stop()` never fires it, though readyState still
-       reaches "complete". On a normal page `load` follows the
-       "complete" readystatechange in the same task, so that change only
-       arms a zero-delay fallback: the body still runs after `load`
-       where there is one, and once either way.
+    /* document-idle (default). Runs at the "complete" readystatechange,
+       which on a normal page comes just before `load`, in the same task.
+       - A body that sets itself up in a `window` load listener (common in
+         old scripts) still sees `load` fire, as in Tampermonkey, which
+         also runs idle scripts at "complete" before `load` (measured).
+       - If the run decision holds the body past `load`, flushPending
+         replays `load` to it (runWithLoadReplay).
+       - A page that calls `window.stop()` never fires `load` but still
+         reaches "complete", so it's covered too. The `load` listener is
+         only a backstop.
+       - A script injected after the page is already complete runs at
+         once, with no replay: `load` was long over, as in any manager.
        A subresource that never finishes (a stalled third-party script)
        holds `load` back forever, so the body also runs IDLE_AFTER_DCL_MS
        after DOMContentLoaded, as Chrome's own document_idle does. */
@@ -495,10 +576,10 @@
       window.removeEventListener("load", runIdle);
       document.removeEventListener("readystatechange", onReadyState);
       document.removeEventListener("DOMContentLoaded", onContentLoaded);
-      cb();
+      cb(true);
     };
     var onReadyState = function () {
-      if (document.readyState === "complete") setTimeout(runIdle, 0);
+      if (document.readyState === "complete") runIdle();
     };
     var onContentLoaded = function () {
       if (idleTimer === null) idleTimer = setTimeout(runIdle, IDLE_AFTER_DCL_MS);
@@ -755,8 +836,9 @@
        extension) `waitForRunAt` calls back synchronously, so the
        decision is the only gate left. `canSkipDecision` settles it
        here, synchronously, where the answer can only be `run`. */
-    waitForRunAt(cfg.runAt, function () {
+    waitForRunAt(cfg.runAt, function (dueBeforeLoad) {
       entry.runAtFired = true;
+      entry.replayLoad = !!dueBeforeLoad;
       flushPending(entry);
     });
     if (canSkipDecision(cfg)) {
@@ -838,7 +920,11 @@
     var fn = entry.pendingRun;
     entry.pendingRun = null;
     if (typeof fn !== "function") return;
-    runMain(entry, fn);
+    if (entry.replayLoad && loadEvent) {
+      runWithLoadReplay(function () { runMain(entry, fn); });
+    } else {
+      runMain(entry, fn);
+    }
   }
 
   function runMain(entry, fn) {

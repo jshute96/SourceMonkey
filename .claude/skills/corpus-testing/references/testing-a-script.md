@@ -115,15 +115,18 @@ A `fail` needs `--blame`:
 - `script`: broken or out of date against the current site, or broken in
   every manager. A `@grant none` (page-world) script blocked by the site's
   Trusted Types is the script's fault: every manager runs it there.
-- `unknown`: can't tell. Say what's missing. For example, SourceMonkey runs
-  `document-idle` after the `load` event, and our cross-manager test finds
-  Tampermonkey's idle scripts also see `readyState=complete`, so a script
-  that waits for `load` is `unknown` until checked in Tampermonkey.
+- `unknown`: can't tell. Say what's missing.
 
-Check SourceMonkey's intended behavior in `docs/` before blaming it; some
-differences are deliberate and documented (the idle
-timing, `@run-at context-menu` unsupported). A bare `@connect example.com`
-does cover its subdomains, as in Tampermonkey.
+Blame follows the outcome, not the intent:
+
+- A limitation SourceMonkey documents or chose on purpose (`@run-at
+  context-menu` unsupported, say) is still a `sourcemonkey` failure when
+  another manager would run the script. Say in the note that it's a known
+  gap, and link the doc or TODO.md item, so nobody files it again.
+- It's `script` only when we've decided the script is what's wrong.
+- Read `docs/` to find the cause, not to excuse it. Some behavior is easy
+  to misread: a bare `@connect example.com` does cover its subdomains, as
+  in Tampermonkey, so a failed subdomain request has another cause.
 
 ## Recording
 
@@ -159,7 +162,8 @@ it fits; the list, with descriptions, is `HELP.tag` in
   (its jQuery, a player API on an element) without `unsafeWindow`.
 
 Some tags name gaps since fixed (`connect-subdomain`, `connect-undeclared`,
-`xhr-response-readystate`, `needs-xhr-onprogress`, `shadows-window`). They stay on scripts that
+`xhr-response-readystate`, `needs-xhr-onprogress`, `shadows-window`,
+`idle-after-load`). They stay on scripts that
 pass only because of the fix; don't use them for new failures.
 
 A new tag is fine when nothing fits. Keep it short and kebab-case, and

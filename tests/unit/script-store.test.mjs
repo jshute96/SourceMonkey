@@ -1389,3 +1389,21 @@ GM_xmlhttpRequest({ url: 'https://example.com/' });
   assert.equal(store['script:broken'].startupLogs, undefined);
   assert.equal(await backfillStartupLogs(), 0);
 });
+
+test('backfillStartupLogs keeps a stored @icon warning, which the header alone cannot give', async () => {
+  const text = `// ==UserScript==
+// @name        Iconic
+// @match       https://example.com/*
+// @icon        big.png
+// ==/UserScript==
+`;
+  const message = '@icon big.png: The file is larger than the 128 KB limit';
+  const store = stubStorage([
+    legacyRow({ id: 'iconic', text, iconCheck: { ref: 'big.png', message } }),
+  ]);
+  assert.equal(await backfillStartupLogs(), 1);
+  assert.deepEqual(store['script:iconic'].startupLogs, [
+    { level: 'warn', message, location: { file: 'a.user.js', line: 4 } },
+  ]);
+  assert.equal(await backfillStartupLogs(), 0);
+});

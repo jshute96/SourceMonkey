@@ -335,6 +335,39 @@ test.describe('collections', () => {
     await collections.close();
   });
 
+  test('the collections page lists scripts by shown name, not scan order', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // Scan order is by file path, which the page never shows, so the
+    // names here are chosen to disagree with it. Case is ignored and
+    // numbers compare numerically.
+    const names: Record<string, string> = {
+      'a.user.js': 'Zeta',
+      'b.user.js': 'Bravo',
+      'c.user.js': 'Item 10',
+      'd.user.js': 'Item 9',
+      // Code-unit order would put lowercase after every capital.
+      'e.user.js': 'alpha',
+    };
+    for (const [relativePath, name] of Object.entries(names)) {
+      scriptsDir.write({ relativePath, meta: { name, match: ['https://example.com/*'] }, body: '' });
+    }
+    const collection = await sm.addCollection(scriptsDir.path);
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const shown = page
+      .locator(`section.collection[data-collection-id="${collection!.id}"]`)
+      .locator('tbody tr[data-script-id] .name-cell a[href*="userscript.html"]');
+    await expect(shown).toHaveText(['alpha', 'Bravo', 'Item 9', 'Item 10', 'Zeta']);
+
+    // A rename lands through the in-place repaint, which re-sorts too.
+    scriptsDir.write({ relativePath: 'a.user.js', meta: { name: 'Charlie', match: ['https://example.com/*'] }, body: '' });
+    await sm.updateCollection(collection!.id, 'manual');
+    await expect(shown).toHaveText(['alpha', 'Bravo', 'Charlie', 'Item 9', 'Item 10']);
+    await page.close();
+  });
+
   test('a very long script name wraps inside its card instead of widening the table', async ({
     extensionContext, extensionId, sm,
   }) => {

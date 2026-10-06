@@ -81,6 +81,7 @@ import {
 } from './script-updater.js';
 import {
   appendWithSlashBreaks,
+  compareScriptNames,
   displayLocation,
   effectiveScriptStatus,
   ENABLE_TITLE,
@@ -112,7 +113,8 @@ import {
   readRefreshErrors,
   type RefreshErrorMap,
 } from './refresh-error.js';
-import { iconRefFromHeader, renderSiteIconInto } from './site-icon.js';
+import { iconRefFromHeader } from '../script-icon.js';
+import { preloadSiteIcons, renderSiteIconInto } from './site-icon.js';
 import {
   mapWithConcurrency,
   FETCH_COLLECTIONS_CONCURRENCY,
@@ -517,6 +519,10 @@ async function repaintFromStorage(): Promise<void> {
     scriptsByCollection.set(collection.id, (await getCollectionWithScripts(collection.id))?.scripts ?? []);
   }
   const allScripts = [...scriptsByCollection.values()].flat();
+  // Cached favicons first, so rows draw with their real icons rather
+  // than globes that are swapped (and the icon column re-fitted) a
+  // moment later.
+  await preloadSiteIcons(allScripts);
 
   // Forget the per-script bookkeeping of everything no longer stored,
   // in one place rather than at each of the several points a row can go
@@ -696,7 +702,7 @@ function syncSectionMessage(
 
 // Update the section's script list in place: reuse the `<tr>` for a
 // script that is still there, build one for a script that appeared, drop
-// the rows whose scripts are gone, and re-seat into stored order.
+// the rows whose scripts are gone, and re-seat into name order.
 async function syncScriptRowsFromStorage(
   section: HTMLElement,
   collection: StoredCollection,
@@ -704,6 +710,7 @@ async function syncScriptRowsFromStorage(
   scripts: readonly StoredScript[],
 ): Promise<void> {
   const localFiles = localFileScope(collection);
+  scripts = sortedByShownName(scripts, isContainerCollection(collection.path));
   const block = section.querySelector<HTMLElement>(':scope > .script-block');
   const tbody = block?.querySelector('tbody');
 
@@ -1215,6 +1222,8 @@ async function render(): Promise<void> {
     collectionsEl.appendChild(emptyPlaceholder());
     return;
   }
+  // See `repaintFromStorage`.
+  await preloadSiteIcons(allScripts);
   for (const collection of collections) {
     collectionsEl.appendChild(await renderCollectionSection(collection));
   }
@@ -1362,8 +1371,8 @@ async function renderScriptBlock(
 
 async function renderScriptTable(collection: StoredCollection, collectionOn: boolean): Promise<HTMLElement> {
   const data = await getCollectionWithScripts(collection.id);
-  const scripts = data?.scripts ?? [];
   const inContainer = isContainerCollection(collection.path);
+  const scripts = sortedByShownName(data?.scripts ?? [], inContainer);
   const localFiles = localFileScope(collection);
 
   if (scripts.length === 0) {
@@ -1573,9 +1582,9 @@ function fillNameCell(
   nameCell.textContent = '';
   // Slot for the favicons: a fixed-width container so the name
   // text always starts at the same x-position. renderSiteIconInto
-  // synchronously paints a globe placeholder per site (clickable when
-  // the script's @match yields a usable origin) and swaps each for the
-  // real favicon once its fetch resolves.
+  // synchronously paints one globe placeholder (clickable when the
+  // script's @match yields a usable origin), then fills in each site's
+  // favicon, with duplicates merged, once the fetches resolve.
   const iconSlot = document.createElement('span');
   iconSlot.className = 'site-icon';
   nameCell.appendChild(iconSlot);
@@ -1623,6 +1632,18 @@ function nameCellText(script: StoredScript, inContainer: boolean): string {
     ? scriptBasename(script.relativePath)
     : displayLocation(script.relativePath);
   return scriptDisplayName(script, location);
+}
+
+// A collection's rows are listed by the name they show, not stored
+// order: that order is scan or install order, which nothing on the page
+// reveals. Ties (two scripts with the same `@name`) fall back to the
+// location so the order stays stable across repaints.
+function sortedByShownName(scripts: readonly StoredScript[], inContainer: boolean): StoredScript[] {
+  return scripts
+    .map((script) => ({ script, name: nameCellText(script, inContainer) }))
+    .sort((a, b) => compareScriptNames(a.name, b.name)
+      || compareScriptNames(a.script.relativePath, b.script.relativePath))
+    .map(({ script }) => script);
 }
 
 // Tooltip on the name link: the whole location first — the column no
@@ -2277,7 +2298,9 @@ function addTombstones(
   const inContainer = !!section.querySelector('thead th[aria-label="Source"]');
   const withActions = !!section.querySelector('thead th[aria-label="Actions"]');
   let anchorId = '';
-  for (const script of prior) {
+  // Walked in the order the rows were shown, so each ghost is anchored
+  // below the row it sat under.
+  for (const script of sortedByShownName(prior, inContainer)) {
     if (survivingIds.has(script.id)) {
       anchorId = script.id;
       continue;
@@ -2339,17 +2362,24 @@ function renderTombstoneRow(
   const iconSlot = document.createElement('span');
   iconSlot.className = 'site-icon';
   nameCell.appendChild(iconSlot);
-  void renderSiteIconInto(iconSlot, script, localSearchRoots(script.fileUrl, localFiles));
+  const iconsDone = renderSiteIconInto(iconSlot, script, localSearchRoots(script.fileUrl, localFiles));
   // Drop the href in place rather than replacing the anchor: the icon
   // fetch resolves into the very element `renderSiteIconInto` built, so
   // swapping it out would leave the favicon painting into a detached
   // node. Without the href it is no longer a link or a tab stop, which
   // is what a row with nothing left to open should be.
-  for (const iconLink of iconSlot.querySelectorAll('a.site-icon-inner')) {
-    iconLink.removeAttribute('href');
-    iconLink.removeAttribute('target');
-    iconLink.removeAttribute('rel');
-  }
+  //
+  // Again once the icons have loaded: until then the slot may hold only
+  // the first site's icon, and the others arrive as links.
+  const unlinkIcons = (): void => {
+    for (const iconLink of iconSlot.querySelectorAll('a.site-icon-inner')) {
+      iconLink.removeAttribute('href');
+      iconLink.removeAttribute('target');
+      iconLink.removeAttribute('rel');
+    }
+  };
+  unlinkIcons();
+  void iconsDone.then(unlinkIcons);
   // Text, not a link: the viewer has nothing to open for a script whose
   // record is gone.
   const name = document.createElement('span');

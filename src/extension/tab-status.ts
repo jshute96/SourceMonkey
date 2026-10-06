@@ -14,6 +14,7 @@
 import { ACTION_MENU_SM_DEV_LABEL } from './action-menu.js';
 import type { MatchedScript } from './match-index.js';
 import type { InjectionWorld } from '../script-world.js';
+import { compareScriptNames } from '../script-display.js';
 
 export type ScriptRunState = 'started' | 'error';
 
@@ -223,7 +224,7 @@ export function computeBadge(
     }
     rows.push({ id, name, status, message });
   }
-  rows.sort((a, b) => a.name.localeCompare(b.name));
+  rows.sort((a, b) => compareScriptNames(a.name, b.name));
 
   let color = BADGE_GREEN;
   if (anyError) color = BADGE_RED;
@@ -369,7 +370,7 @@ export function mergeMatches(
   for (const m of existing) byId.set(m.id, m);
   // Incoming wins on name updates (the cache is fresher).
   for (const m of incoming) byId.set(m.id, m);
-  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+  return [...byId.values()].sort((a, b) => compareScriptNames(a.name, b.name));
 }
 
 // Pure: flag `scriptId` as stale. No-op when the wrapper hasn't

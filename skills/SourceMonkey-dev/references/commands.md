@@ -120,7 +120,7 @@ test a script under VM or TM:
 
 | Command | Does |
 | --- | --- |
-| `validate <path>...` | Header, `@require` and syntax checks, plus warnings (files, dirs, globs) |
+| `validate <path>...` | Header, `@require` and syntax checks, plus warnings, e.g. an `@icon` that can't be shown (files, dirs, globs) |
 | `match <script>... <url>...` | Would it run there; which rule decided |
 | `match`, `match all` | In a run: the selected script on the current tab; all scripts on all tabs |
 | `scripts`, `script <script>` | List; pick the one `get`/`set`/`match` use. It also lists SourceMonkey-managed scripts on the tab as E1, ...; `scripts E1` picks one for `get`/`set`, any installed script (`script list` lists them), on the tab or not (`set key --force <json>` outside a `--temp-browser`) |

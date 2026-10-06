@@ -409,7 +409,7 @@ test.describe('@require', () => {
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
-    // document-idle waits for `load`, so the require observed a
+    // document-idle waits for readyState complete, so the require observed a
     // fully-loaded document — not the `loading` it would have seen
     // firing at document_start.
     await expect(page.locator('#target')).toHaveText('complete');
