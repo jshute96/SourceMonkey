@@ -47,7 +47,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.0.1.20140630034959"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-05",
+      "version": "0.0.1.20140630034959"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.0.1.20140630034959",
+        "text": "On https://github.com/login, hovering `#password` turned its type to `text`; moving to the login field turned it back to `password`. SourceMonkey matched `@include *`."
+      }
+    ]
   },
   "90": {
     "listing": {
@@ -72,7 +84,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "8.5"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-05",
+      "version": "8.5"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "8.5",
+        "text": "On https://www.speedtest.net/ the script hid 22 elements (ad skyscraper/leaderboard divs), 6 images, 1 doubleclick iframe and 14 placeholders. The \"AdRemover Settings\" menu command opened its popup with those counts. `this.unsafeWindow` is undefined in SourceMonkey, so it falls back to `window` as its non-Firefox path expects. Matched `@match http://*/*`."
+      }
+    ]
   },
   "97": {
     "listing": {
@@ -184,7 +208,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.0"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "2.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2.0",
+        "text": "Opened https://greasyfork.org/scripts/173/code. Greasy Fork now redirects it to `/en/scripts/173-greasy-fork-more-install-button/code`, which none of the `@include`s (`https://greasyfork.org/scripts/*/code` etc.) cover, so the script is skipped.\n- Script: obsolete URL scheme. Greasy Fork's code page already shows its own `.install-link` button (1 on the page), so the feature is built in now."
+      }
+    ]
   },
   "184": {
     "listing": {
@@ -209,7 +246,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1",
+        "text": "The osu! forum moved: `https://osu.ppy.sh/forum/t/123` redirects to `https://osu.ppy.sh/community/forums/topics/123`, which `@include https://osu.ppy.sh/forum/*` does not cover, so the script never runs (SourceMonkey: \"skipped ... No @match or @include covers this URL\").\n- Script: it also relies on old phpBB `.codetitle` markup and the page's `jQuery`."
+      }
+    ]
   },
   "232": {
     "listing": {
@@ -234,7 +284,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.3.4"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.3.4"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.3.4",
+        "text": "- Script: its only `@include` is the old `/lesson/session` URL, which now 301s to `/subject-lessons/start` (itself a redirect to `/login` when signed out), so the script never runs, even for a signed-in user.\n- It also reorders the queue through `$.jStorage`, the old lesson app's storage, which today's lesson page no longer uses."
+      }
+    ]
   },
   "233": {
     "listing": {
@@ -284,7 +347,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.3.3"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "1.3.3"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.3.3",
+        "text": "- Runs on https://www.wanikani.com/level/1 (logged out): logs `checkLevel() start`, registers its two menu commands, then stops because there is no `.levels` navbar element to read the user's level from.\n- The user's level only appears when signed in: `/dashboard` and `/about` redirect to `/login`, and `/faq` moved to knowledge.wanikani.com."
+      }
+    ]
   },
   "354": {
     "listing": {
@@ -309,7 +385,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.8.0"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "0.8.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.8.0",
+        "text": "`lixian.qq.com` resolves to `0.0.0.1` and nothing answers. QQ Xuanfeng offline download was shut down years ago."
+      }
+    ]
   },
   "406": {
     "listing": {
@@ -335,7 +424,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.1.72"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.1.72"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.1.72",
+        "text": "Dawn of the Dragons on Kongregate is gone: the game page redirects to `https://www.kongregate.com/en` showing \"You do not have permission to view this game\". The script's backend hosts are dead too: `50.18.191.15` times out, `mutik.erley.org` has no DNS."
+      }
+    ]
   },
   "494": {
     "listing": {
@@ -363,7 +465,20 @@
       ],
       "date": "2026-10-01",
       "version": "1.2.88"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.2.88"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.2.88",
+        "text": "On a watch page the script started (menu command registered) and then threw in `main`: `Cannot read properties of null (reading 'replace')` at `setPref`.\n- Script: it decides Flash vs HTML5 from `ytplayer.config.html5`, which today's YouTube no longer sets, so it takes the Flash path and reads the player's `flashvars` attribute (null).\n- SourceMonkey: it uses `unsafeWindow` without granting it, so SourceMonkey runs it in the page world (documented); `GM_*` grants still worked."
+      }
+    ]
   },
   "593": {
     "listing": {
@@ -391,7 +506,24 @@
       ],
       "date": "2026-10-01",
       "version": "1.15.1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.15.1"
+    },
+    "tags": [
+      "trusted-types",
+      "unsafewindow-on-window"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.15.1",
+        "text": "- SourceMonkey: the script picks its path with `if (this.unsafeWindow)` at top level. Under SourceMonkey top-level `this` is the page `window` and `this.unsafeWindow` is undefined; a probe script on example.com (`@grant unsafeWindow`) logs `this.unsafeWindow` truthy under both Tampermonkey and Violentmonkey (their `this === window` is a sandbox wrapper carrying it), and falsy under SourceMonkey.\n- So under SourceMonkey it takes the Chrome fallback, setting `script.text` to inject itself, and throws at once: `This document requires 'TrustedScript' assignment` (line 1852). Nothing runs.\n- A copy with that test changed to `typeof unsafeWindow !== \"undefined\"` initializes (`[yays]Player ready`, `[yays]Initialization finished`), then throws the same Trusted Types error at line 1838 (its `onYouTubePlayerReady` hook), as it would in Tampermonkey.\n- Script: either way it shows no UI on a watch page: its buttons need `#watch8-secondary-actions` / `#watch-action-panels` (or `#channel-navigation-menu`), all gone. Its changelog check asks to connect to `eugenox.appspot.com`, which answers 404."
+      }
+    ]
   },
   "660": {
     "listing": {
@@ -480,7 +612,20 @@
       ],
       "date": "2026-10-01",
       "version": "1.7.7"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.7.7"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.7.7",
+        "text": "Command & Conquer Tiberium Alliances game servers are gone: `prodgame01`..`prodgame20.alliances.commandandconquer.com` have no DNS records. `tiberiumalliances.com` redirects to an EA product page, and `cncopt.com` is a parked \"domain may be for sale\" page."
+      }
+    ]
   },
   "722": {
     "listing": {
@@ -508,7 +653,24 @@
       ],
       "date": "2026-10-01",
       "version": "1.7.1.1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "sourcemonkey",
+      "date": "2026-10-05",
+      "version": "1.7.1.1"
+    },
+    "tags": [
+      "idle-after-load",
+      "require-clobbers-page"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.7.1.1",
+        "text": "ja.wikipedia.org/wiki/日本語: after its first-run alert and level prompt, the script highlights 31124 kanji spans (`wk_*` classes, rgba backgrounds) and registers its menu commands. But it breaks the page:\n- SourceMonkey: the body names `unsafeWindow`, so the script runs in the page world, and its `@require`d jQuery 1.10.2 replaces the page's own `window.$`/`jQuery` (3.7.1 in a `--noscript` tab, 1.10.2 with the script). Wikipedia's code then throws (`Cannot read properties of undefined (reading 'collapse')` in `mwCollapsibleSetup`, `experiment.getAssignedGroup is not a function`), reported as the script's errors.\n- Under Tampermonkey (`--manager tm`) on the same page the page keeps jQuery 3.7.1, 31125 spans are highlighted, and neither error appears.\n- SourceMonkey: on a small saved page (https://example.com/kj.html, 6 kanji) nothing is highlighted and no menu commands appear: all setup is in a `window` load handler, and the body runs after load. Tampermonkey highlights all 6 there. (Wikipedia worked only because its load event was late.)"
+      }
+    ]
   },
   "723": {
     "listing": {
@@ -562,7 +724,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "20140404a"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "20140404a"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "20140404a",
+        "text": "Kingdoms of Camelot is shut down.\n- `kingdomsofcamelot.com` and `www.kingdomsofcamelot.com` no longer resolve (DNS: could not resolve host).\n- `https://www.kabam.com/kingdoms-of-camelot/play` redirects (301) to `https://kabam.com/?src=kingdoms-of-camelot`, Kabam's mobile games home page."
+      }
+    ]
   },
   "745": {
     "listing": {
@@ -589,7 +764,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.9.7.4"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "0.9.7.4"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.9.7.4",
+        "text": "Kingdoms of Camelot is shut down.\n- `kingdomsofcamelot.com` and `www.kingdomsofcamelot.com` no longer resolve (DNS: could not resolve host).\n- `https://www.kabam.com/kingdoms-of-camelot/play` redirects (301) to `https://kabam.com/?src=kingdoms-of-camelot`, Kabam's mobile games home page.\n- The script's Facebook includes (`apps.facebook.com/kingdomsofcamelot`, `connect/uiserver.php`) were only the game's Facebook frame, which is gone with the game."
+      }
+    ]
   },
   "746": {
     "listing": {
@@ -618,7 +806,20 @@
       ],
       "date": "2026-10-01",
       "version": "20140209a"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "20140209a"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "20140209a",
+        "text": "Kingdoms of Camelot is shut down.\n- `kingdomsofcamelot.com` and `www.kingdomsofcamelot.com` no longer resolve (DNS: could not resolve host).\n- `https://www.kabam.com/kingdoms-of-camelot/play` redirects (301) to `https://kabam.com/?src=kingdoms-of-camelot`, Kabam's mobile games home page."
+      }
+    ]
   },
   "771": {
     "listing": {
@@ -785,7 +986,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.0.1"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.0.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.0.1",
+        "text": "The old MTurk worker pages this script matches (`www.mturk.com/mturk/*`) were retired:\n- curl: `www.mturk.com/mturk/dashboard` and `/mturk/findhits` 302 to `worker.mturk.com/mturk/...`, which redirects to the new app's paths (`/dashboard`, `/projects`); `/mturk/preview?groupId=...` there is a 404.\n- `worker.mturk.com` then redirects to an Amazon sign-in page. In a run (script 863, DoA1) `www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` \"Sign in\", and SourceMonkey skipped the script there (no match).\n- The new worker site is a different app on another host, so the script's pages and selectors no longer exist even with an account."
+      }
+    ]
   },
   "863": {
     "listing": {
@@ -810,7 +1024,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.5"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.5"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.5",
+        "text": "The old MTurk worker pages this script matches (`www.mturk.com/mturk/*`) were retired:\n- curl: `www.mturk.com/mturk/dashboard` and `/mturk/findhits` 302 to `worker.mturk.com/mturk/...`, which redirects to the new app's paths (`/dashboard`, `/projects`); `/mturk/preview?groupId=...` there is a 404.\n- `worker.mturk.com` then redirects to an Amazon sign-in page. In a run (script 863, DoA1) `www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` \"Sign in\", and SourceMonkey skipped the script there (no match).\n- The new worker site is a different app on another host, so the script's pages and selectors no longer exist even with an account."
+      }
+    ]
   },
   "864": {
     "listing": {
@@ -889,7 +1116,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.0"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.0",
+        "text": "- `work.crowdsource.com` (the CrowdSource HIT host it targets) has no DNS record (NXDOMAIN).\n- Its `*.mturk.com` match only acts inside iframes; `worker.mturk.com` redirects to an Amazon sign-in page, and the old `www.mturk.com/mturk/*` pages were retired (302 to `worker.mturk.com`)."
+      }
+    ]
   },
   "907": {
     "listing": {
@@ -914,7 +1154,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.9"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "0.9"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.9",
+        "text": "The old worker site at `www.mturk.com/mturk/*` was retired; none of the matched pages exist anymore, signed in or not.\n\n- `curl -sIL`: `/mturk/dashboard`, `/mturk/findhits`, `/mturk/preview?groupId=X` and `/mturk/myhits` all 302 to `worker.mturk.com/mturk/...`, which 301/302s to the new app's paths (`/dashboard`, `/projects`, `/projects/X/tasks`, `/tasks`), then to the Amazon sign-in.\n- A run of 3095 on `https://www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` (\"Sign in\"); SourceMonkey skipped the script there, as no `@match` covers it.\n- The new worker pages have no `/mturk/` in their paths and a different page structure, so a login would not bring the script back."
+      }
+    ]
   },
   "911": {
     "listing": {
@@ -939,7 +1192,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.28"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.28"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.28",
+        "text": "The old worker site at `www.mturk.com/mturk/*` was retired; none of the matched pages exist anymore, signed in or not.\n\n- `curl -sIL`: `/mturk/dashboard`, `/mturk/findhits`, `/mturk/preview?groupId=X` and `/mturk/myhits` all 302 to `worker.mturk.com/mturk/...`, which 301/302s to the new app's paths (`/dashboard`, `/projects`, `/projects/X/tasks`, `/tasks`), then to the Amazon sign-in.\n- A run of 3095 on `https://www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` (\"Sign in\"); SourceMonkey skipped the script there, as no `@match` covers it.\n- The new worker pages have no `/mturk/` in their paths and a different page structure, so a login would not bring the script back."
+      }
+    ]
   },
   "915": {
     "listing": {
@@ -968,7 +1234,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.0.5"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.0.5"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.0.5",
+        "text": "- Script: reads the worker ID from the old `www.mturk.com/mturk/dashboard` (XPath `span.orange_text_right`) and shows it in a box on survey sites. That dashboard is retired (302 to `worker.mturk.com`, then an Amazon sign-in), so the ID can never be captured and on survey sites the script just stores \"\" and shows nothing.\n- On `www.qualtrics.com` with no stored ID: no box, page `localStorage.workerID` set to \"\" (its `localStorage` fallback, since it has no `@grant`).\n- After seeding `localStorage.workerID = \"A1TESTWORKER\"` and reloading, `#workerIDDiv` appeared with the ID in a fixed green box at top 25px, right 5px (136x16). So SourceMonkey runs the survey half fine; only the capture half is dead."
+      }
+    ]
   },
   "943": {
     "listing": {
@@ -1148,7 +1427,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.0.4"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-05",
+      "version": "0.0.4"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.0.4",
+        "text": "Opened https://www.google.com/search?q=greasemonkey&client=firefox&oq=greas in a headed temp browser. The script started at document-start and replaced the URL with `search?q=greasemonkey&safe=off&newwindow=1&pws=0&complete=0&urlfixed=1`: `client` and `oq` dropped, its params added, as promised.\n- Google answered the rewritten URL with its /sorry bot check (a `--noscript` search tab got /sorry too), so the results page itself wasn't seen.\n- Script: its `*.google.*/search*` glob also matches the /sorry URL (its `continue=` holds `/search`), so it appends its params to the /sorry page too. Same glob reading as Tampermonkey.\n- SourceMonkey: the `https://*.google.*/search*` globs matched www.google.com and www.google.co.uk (`sm-dev match`), and the mail/play excludes applied."
+      }
+    ]
   },
   "1190": {
     "listing": {
@@ -1211,7 +1502,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "8"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-05",
+      "version": "8"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "8",
+        "text": "- Script: on `https://www.youtube.com/redirect?event=video_description&q=https%3A%2F%2Fexample.com%2F` it went straight to `https://example.com/`; a `--noscript` tab stayed on YouTube's redirect page.\n- Parameter removal (`&src_vid=`, `&annotation_id=`, `&hl=`, `&feature=`) is now done by YouTube itself: a `--noscript` tab also ends on the bare `watch?v=...` URL. The `yt-uix-redirect-link` class and SPF no longer exist, so those parts are no-ops; its one-shot link pass misses links YouTube renders later."
+      }
+    ]
   },
   "1196": {
     "listing": {
@@ -1236,7 +1539,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "5"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "5"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "5",
+        "text": "On a watch page (`jNQXAC9IVRw`), no Tags section appears and nothing is logged. `ytplayer.config.args` now has only `raw_player_response, video_id, title, length_seconds, ucid, author` (no `keywords`), and there is no `.watch-extras-section` element (pre-2017 layout)."
+      }
+    ]
   },
   "1203": {
     "listing": {
@@ -1342,7 +1658,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.5"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "1.5"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.5",
+        "text": "Every matched game page (`*.grepolis.*/game/*`) needs a logged-in game session.\n- `https://de.grepolis.com/game/index` redirects (307) to `https://de-play.grepolis.com/`, the login page (has a password field); the script doesn't match there.\n- A world host like `https://de140.grepolis.com/game/index` answers 400 without a session."
+      }
+    ]
   },
   "1275": {
     "listing": {
@@ -1400,7 +1729,20 @@
       ],
       "date": "2026-10-01",
       "version": "3.07"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "3.07"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "3.07",
+        "text": "No matched page is usable without an account.\n- Game: `http://de.grepolis.com/game` redirects to the login page `https://de-play.grepolis.com/`; world hosts answer 400 without a session.\n  - Script: its regex include `[a-z]{2}[0-9]{1,2}\\.grepolis\\.com/game` allows only 1-2 digit world numbers, so today's worlds like `de140` don't match anyway.\n- Forum: `forum.de.grepolis.com` now redirects (307) to `de.forum.grepolis.com`, which the include `https://*forum.*.grepolis.com/*.php*` doesn't cover (`sm-dev match`: no match).\n- `http://diotools.de/` is a parked \"This domain may be for sale\" page."
+      }
+    ]
   },
   "1319": {
     "listing": {
@@ -1582,7 +1924,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.4.4.1"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "1.4.4.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.4.4.1",
+        "text": "Every matched page (`*.the-west.*/game.php`) needs a logged-in game session.\n- `https://en1.the-west.net/game.php` redirects (302) to `https://www.the-west.net/index.php`, the login and sign-up page; the script is skipped there (its include doesn't cover it)."
+      }
+    ]
   },
   "1682": {
     "listing": {
@@ -1714,7 +2069,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.5.7"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "bot-blocked",
+      "date": "2026-10-05",
+      "version": "1.5.7"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.5.7",
+        "text": "Opened https://www.reddit.com/r/AskReddit/comments/1fz2l6y/ in a headed temp browser. Reddit showed \"Prove your humanity\" with a reCAPTCHA checkbox, so there was no thread to highlight.\n- The script started (its regex `@include` matched) and logged \"Not a comment thread. Aborting userscript...\" since the captcha page has no `[rel=\"shorturl\"]`.\n- old.reddit.com, which still has that markup, isn't covered by its regex (`(www|pay|[a-z]{2})\\.` allows no `old.`), and a `--noscript` old.reddit.com tab redirected to `/login/?reason=lor2`.\n- Script: likely broken anyway, since www.reddit.com no longer serves the old markup it reads (`[rel=shorturl]`, `.thing`), but that couldn't be checked behind the captcha."
+      }
+    ]
   },
   "1870": {
     "listing": {
@@ -1739,7 +2107,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1",
+        "text": "Not run beyond checks: it deletes every comment on the signed-in user's profile page, so it needs a Reddit login and acts on the account.\n- Its only `@include` is `http://www.reddit.com/user/*`; `curl` shows that URL now 301s to `https://`, which the include doesn't cover (`sm-dev match`), so it wouldn't run on today's Reddit in any manager.\n- A headed temp browser got a reCAPTCHA wall on www.reddit.com and a `/login/?reason=lor2` redirect on old.reddit.com."
+      }
+    ]
   },
   "1879": {
     "listing": {
@@ -1792,7 +2173,24 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.851"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "0.851"
+    },
+    "tags": [
+      "service-dead",
+      "trusted-types"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.851",
+        "text": "On a YouTube watch page (headless temp browser) the script threw at startup inside its `@require`d jQuery 1.x: `Failed to set the 'innerHTML' property on 'Element': This document requires 'TrustedHTML' assignment.`\n- Script: even with jQuery loading, its anchor `#watch7-subscription-container` (pre-Polymer layout) is gone, so no button would be added.\n- Script: its converter site `www.video2mp3.net` now 301-redirects to `stackpathcdn.com/en`; the service is gone."
+      }
+    ]
   },
   "1952": {
     "listing": {
@@ -1870,7 +2268,20 @@
       ],
       "date": "2026-10-01",
       "version": "2.4.9"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "2.4.9"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2.4.9",
+        "text": "The old worker site at `www.mturk.com/mturk/*` was retired; none of the matched pages exist anymore, signed in or not.\n\n- `curl -sIL`: `/mturk/dashboard`, `/mturk/findhits`, `/mturk/preview?groupId=X` and `/mturk/myhits` all 302 to `worker.mturk.com/mturk/...`, which 301/302s to the new app's paths (`/dashboard`, `/projects`, `/projects/X/tasks`, `/tasks`), then to the Amazon sign-in.\n- A run of 3095 on `https://www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` (\"Sign in\"); SourceMonkey skipped the script there, as no `@match` covers it.\n- The new worker pages have no `/mturk/` in their paths and a different page structure, so a login would not bring the script back."
+      }
+    ]
   },
   "2024": {
     "listing": {
@@ -1939,7 +2350,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.1"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-05",
+      "version": "0.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.1",
+        "text": "On https://httpbin.org/forms/post, clicking the already-checked \"medium\" radio unchecked it (`checked` false). In a `--noscript` tab the second click left it checked. SourceMonkey matched `@include *`."
+      }
+    ]
   },
   "2128": {
     "listing": {
@@ -2114,7 +2537,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.5"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "0.5"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.5",
+        "text": "Travian game pages need an account: `https://ts1.x1.international.travian.com/build.php` redirects to the server's sign-in page (password field present).\n- Script: its `@include`s are `http://` only, and Travian servers are https now."
+      }
+    ]
   },
   "2208": {
     "listing": {
@@ -2143,7 +2579,20 @@
       ],
       "date": "2026-10-01",
       "version": "20140327b"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "20140327b"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "20140327b",
+        "text": "Kingdoms of Camelot is shut down.\n- `kingdomsofcamelot.com` and `www.kingdomsofcamelot.com` no longer resolve (DNS: could not resolve host).\n- `https://www.kabam.com/kingdoms-of-camelot/play` redirects (301) to `https://kabam.com/?src=kingdoms-of-camelot`, Kabam's mobile games home page."
+      }
+    ]
   },
   "2214": {
     "listing": {
@@ -2172,7 +2621,20 @@
       ],
       "date": "2026-10-01",
       "version": "20140519a"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "20140519a"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "20140519a",
+        "text": "Kingdoms of Camelot is shut down.\n- `kingdomsofcamelot.com` and `www.kingdomsofcamelot.com` no longer resolve (DNS: could not resolve host).\n- `https://www.kabam.com/kingdoms-of-camelot/play` redirects (301) to `https://kabam.com/?src=kingdoms-of-camelot`, Kabam's mobile games home page."
+      }
+    ]
   },
   "2240": {
     "listing": {
@@ -2201,7 +2663,20 @@
       ],
       "date": "2026-10-01",
       "version": "0.40"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "0.40"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.40",
+        "text": "Account automation (bulk-deletes Facebook activity), not run. `https://m.facebook.com/me/allactivity` redirects (302) to `m.facebook.com/login/?next=...`, so every matched page needs an account."
+      }
+    ]
   },
   "2266": {
     "listing": {
@@ -2226,7 +2701,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.01"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.01"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.01",
+        "text": "The AdGuard forum is gone: `http://forum.adguard.com/` redirects to `https://adguard.com/en/discuss.html`, a page about AdGuard's discussion channels, which the `@include` doesn't cover. The chat widget the script embeds (`adguard.chatovod.ru`) was for that old forum."
+      }
+    ]
   },
   "2302": {
     "listing": {
@@ -2343,7 +2831,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "13.0"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "13.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "13.0",
+        "text": "The old MTurk worker pages this script matches (`www.mturk.com/mturk/*`) were retired:\n- curl: `www.mturk.com/mturk/dashboard` and `/mturk/findhits` 302 to `worker.mturk.com/mturk/...`, which redirects to the new app's paths (`/dashboard`, `/projects`); `/mturk/preview?groupId=...` there is a 404.\n- `worker.mturk.com` then redirects to an Amazon sign-in page. In a run (script 863, DoA1) `www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` \"Sign in\", and SourceMonkey skipped the script there (no match).\n- The new worker site is a different app on another host, so the script's pages and selectors no longer exist even with an account."
+      }
+    ]
   },
   "2586": {
     "listing": {
@@ -2368,7 +2869,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.1"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "0.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.1",
+        "text": "The old MTurk worker pages this script matches (`www.mturk.com/mturk/*`) were retired:\n- curl: `www.mturk.com/mturk/dashboard` and `/mturk/findhits` 302 to `worker.mturk.com/mturk/...`, which redirects to the new app's paths (`/dashboard`, `/projects`); `/mturk/preview?groupId=...` there is a 404.\n- `worker.mturk.com` then redirects to an Amazon sign-in page. In a run (script 863, DoA1) `www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` \"Sign in\", and SourceMonkey skipped the script there (no match).\n- The new worker site is a different app on another host, so the script's pages and selectors no longer exist even with an account."
+      }
+    ]
   },
   "2669": {
     "listing": {
@@ -2402,7 +2916,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.7"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.7"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.7",
+        "text": "Every shortener it bypasses is gone or out of its reach:\n- `adf.ly`, `q.gs`, `j.gs` redirect to linkvertise.com (curl, and a load ended on `https://linkvertise.com/`, script skipped).\n- `9.bb`, `u.bb`, `lienscash.com` don't resolve (DNS); `bc.vc` redirects to `bcvc.ink`; `sh.st` returns 403 \"The content of the page cannot be displayed\".\n- `adfoc.us` is still a live shortener, but only on https: `http://adfoc.us/` redirects to `https://adfoc.us/` and the run showed the script skipped there (\"No @match or @include covers this URL\"), since its `@include`s are all `http://`.\n- Script: the http-only `@include`s are the cause for the one live site; its adf.ly/bc.vc page-scraping logic also targets 2014 page code."
+      }
+    ]
   },
   "2709": {
     "listing": {
@@ -2427,7 +2957,22 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.1.4"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-05",
+      "version": "2.1.4"
+    },
+    "tags": [
+      "mutation-events"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2.1.4",
+        "text": "- On https://www.rfc-editor.org/rfc/rfc3986.txt the script made 90 `a.linkifyplus` links (http, file, ftp URLs) from the plain text. SourceMonkey matched `@include http*`.\n- Script: text added later is not linkified. It listens for `DOMNodeInserted`, which Chrome no longer fires; a div with a URL appended by the page stayed plain text."
+      }
+    ]
   },
   "2711": {
     "listing": {
@@ -2452,7 +2997,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.3.2"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "2.3.2"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2.3.2",
+        "text": "On a public page, `https://www.facebook.com/facebook` (logged out), it started and threw `Cannot read properties of undefined (reading 'Close')` at line 3343, before adding any UI or menu commands.\n- Script: it picks its UI language from a `locale_xx` class on `<body>`. Today's body (`_6s5d _71pn system-fonts--body`) has none, so the language falls back to the pref value `'auto'`, and `lang['auto']` is undefined.\n- Same code path logged in, so not a login issue."
+      }
+    ]
   },
   "2739": {
     "listing": {
@@ -2534,7 +3092,20 @@
       ],
       "date": "2026-10-01",
       "version": "1.6.0.0059"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.6.0.0059"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.6.0.0059",
+        "text": "osu! profiles moved: `https://osu.ppy.sh/u/2` redirects to `https://osu.ppy.sh/users/2`, which `@include .../u/*` does not cover, so the script never runs.\n- Script: the new page has no `var userId = ...` in its HTML, which the script parses, and its backend `osupd.og.gs` fails TLS and redirects to a safebrowse.io warning page over http."
+      }
+    ]
   },
   "2938": {
     "listing": {
@@ -2559,7 +3130,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.3.5"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "0.3.5"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.3.5",
+        "text": "The old MTurk worker pages this script matches (`www.mturk.com/mturk/*`) were retired:\n- curl: `www.mturk.com/mturk/dashboard` and `/mturk/findhits` 302 to `worker.mturk.com/mturk/...`, which redirects to the new app's paths (`/dashboard`, `/projects`); `/mturk/preview?groupId=...` there is a 404.\n- `worker.mturk.com` then redirects to an Amazon sign-in page. In a run (script 863, DoA1) `www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` \"Sign in\", and SourceMonkey skipped the script there (no match).\n- The new worker site is a different app on another host, so the script's pages and selectors no longer exist even with an account."
+      }
+    ]
   },
   "2983": {
     "listing": {
@@ -2716,7 +3300,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.00"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "2.00"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2.00",
+        "text": "The old worker site at `www.mturk.com/mturk/*` was retired; none of the matched pages exist anymore, signed in or not.\n\n- `curl -sIL`: `/mturk/dashboard`, `/mturk/findhits`, `/mturk/preview?groupId=X` and `/mturk/myhits` all 302 to `worker.mturk.com/mturk/...`, which 301/302s to the new app's paths (`/dashboard`, `/projects`, `/projects/X/tasks`, `/tasks`), then to the Amazon sign-in.\n- A run of 3095 on `https://www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` (\"Sign in\"); SourceMonkey skipped the script there, as no `@match` covers it.\n- The new worker pages have no `/mturk/` in their paths and a different page structure, so a login would not bring the script back."
+      }
+    ]
   },
   "3103": {
     "listing": {
@@ -2741,7 +3338,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.22"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "2.22"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2.22",
+        "text": "The old worker site at `www.mturk.com/mturk/*` was retired; none of the matched pages exist anymore, signed in or not.\n\n- `curl -sIL`: `/mturk/dashboard`, `/mturk/findhits`, `/mturk/preview?groupId=X` and `/mturk/myhits` all 302 to `worker.mturk.com/mturk/...`, which 301/302s to the new app's paths (`/dashboard`, `/projects`, `/projects/X/tasks`, `/tasks`), then to the Amazon sign-in.\n- A run of 3095 on `https://www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` (\"Sign in\"); SourceMonkey skipped the script there, as no `@match` covers it.\n- The new worker pages have no `/mturk/` in their paths and a different page structure, so a login would not bring the script back."
+      }
+    ]
   },
   "3105": {
     "listing": {
@@ -2766,7 +3376,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "3.08"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "3.08"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "3.08",
+        "text": "The old worker site at `www.mturk.com/mturk/*` was retired; none of the matched pages exist anymore, signed in or not.\n\n- `curl -sIL`: `/mturk/dashboard`, `/mturk/findhits`, `/mturk/preview?groupId=X` and `/mturk/myhits` all 302 to `worker.mturk.com/mturk/...`, which 301/302s to the new app's paths (`/dashboard`, `/projects`, `/projects/X/tasks`, `/tasks`), then to the Amazon sign-in.\n- A run of 3095 on `https://www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` (\"Sign in\"); SourceMonkey skipped the script there, as no `@match` covers it.\n- The new worker pages have no `/mturk/` in their paths and a different page structure, so a login would not bring the script back."
+      }
+    ]
   },
   "3106": {
     "listing": {
@@ -2791,7 +3414,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.54"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.54"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.54",
+        "text": "The old worker site at `www.mturk.com/mturk/*` was retired; none of the matched pages exist anymore, signed in or not.\n\n- `curl -sIL`: `/mturk/dashboard`, `/mturk/findhits`, `/mturk/preview?groupId=X` and `/mturk/myhits` all 302 to `worker.mturk.com/mturk/...`, which 301/302s to the new app's paths (`/dashboard`, `/projects`, `/projects/X/tasks`, `/tasks`), then to the Amazon sign-in.\n- A run of 3095 on `https://www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` (\"Sign in\"); SourceMonkey skipped the script there, as no `@match` covers it.\n- The new worker pages have no `/mturk/` in their paths and a different page structure, so a login would not bring the script back."
+      }
+    ]
   },
   "3113": {
     "listing": {
@@ -2816,7 +3452,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.1"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.1",
+        "text": "The old MTurk worker pages this script matches (`www.mturk.com/mturk/*`) were retired:\n- curl: `www.mturk.com/mturk/dashboard` and `/mturk/findhits` 302 to `worker.mturk.com/mturk/...`, which redirects to the new app's paths (`/dashboard`, `/projects`); `/mturk/preview?groupId=...` there is a 404.\n- `worker.mturk.com` then redirects to an Amazon sign-in page. In a run (script 863, DoA1) `www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` \"Sign in\", and SourceMonkey skipped the script there (no match).\n- The new worker site is a different app on another host, so the script's pages and selectors no longer exist even with an account."
+      }
+    ]
   },
   "3114": {
     "listing": {
@@ -2841,7 +3490,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.27"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.27"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.27",
+        "text": "The old worker site at `www.mturk.com/mturk/*` was retired; none of the matched pages exist anymore, signed in or not.\n\n- `curl -sIL`: `/mturk/dashboard`, `/mturk/findhits`, `/mturk/preview?groupId=X` and `/mturk/myhits` all 302 to `worker.mturk.com/mturk/...`, which 301/302s to the new app's paths (`/dashboard`, `/projects`, `/projects/X/tasks`, `/tasks`), then to the Amazon sign-in.\n- A run of 3095 on `https://www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` (\"Sign in\"); SourceMonkey skipped the script there, as no `@match` covers it.\n- The new worker pages have no `/mturk/` in their paths and a different page structure, so a login would not bring the script back."
+      }
+    ]
   },
   "3118": {
     "listing": {
@@ -2869,7 +3531,20 @@
       ],
       "date": "2026-10-01",
       "version": "3.21"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "3.21"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "3.21",
+        "text": "The old worker site at `www.mturk.com/mturk/*` was retired; none of the matched pages exist anymore, signed in or not.\n\n- `curl -sIL`: `/mturk/dashboard`, `/mturk/findhits`, `/mturk/preview?groupId=X` and `/mturk/myhits` all 302 to `worker.mturk.com/mturk/...`, which 301/302s to the new app's paths (`/dashboard`, `/projects`, `/projects/X/tasks`, `/tasks`), then to the Amazon sign-in.\n- A run of 3095 on `https://www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` (\"Sign in\"); SourceMonkey skipped the script there, as no `@match` covers it.\n- The new worker pages have no `/mturk/` in their paths and a different page structure, so a login would not bring the script back."
+      }
+    ]
   },
   "3144": {
     "listing": {
@@ -3010,7 +3685,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.7.5b"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "0.7.5b"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.7.5b",
+        "text": "The old MTurk worker pages this script matches (`www.mturk.com/mturk/*`) were retired:\n- curl: `www.mturk.com/mturk/dashboard` and `/mturk/findhits` 302 to `worker.mturk.com/mturk/...`, which redirects to the new app's paths (`/dashboard`, `/projects`); `/mturk/preview?groupId=...` there is a 404.\n- `worker.mturk.com` then redirects to an Amazon sign-in page. In a run (script 863, DoA1) `www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` \"Sign in\", and SourceMonkey skipped the script there (no match).\n- The new worker site is a different app on another host, so the script's pages and selectors no longer exist even with an account."
+      }
+    ]
   },
   "3251": {
     "listing": {
@@ -3035,7 +3723,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.9.3"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "0.9.3"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.9.3",
+        "text": "The old MTurk worker pages this script matches (`www.mturk.com/mturk/*`) were retired:\n- curl: `www.mturk.com/mturk/dashboard` and `/mturk/findhits` 302 to `worker.mturk.com/mturk/...`, which redirects to the new app's paths (`/dashboard`, `/projects`); `/mturk/preview?groupId=...` there is a 404.\n- `worker.mturk.com` then redirects to an Amazon sign-in page. In a run (script 863, DoA1) `www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` \"Sign in\", and SourceMonkey skipped the script there (no match).\n- The new worker site is a different app on another host, so the script's pages and selectors no longer exist even with an account."
+      }
+    ]
   },
   "3252": {
     "listing": {
@@ -3060,7 +3761,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.0.1"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "2.0.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2.0.1",
+        "text": "TrophyManager player pages need an account: `https://trophymanager.com/players/100000/` redirects to the landing page `https://trophymanager.com/` (\"Online Football Management Game\"). `ultra.trophymanager.com/players/` serves only a script redirecting to a Facebook OAuth sign-in."
+      }
+    ]
   },
   "3254": {
     "listing": {
@@ -3162,7 +3876,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.1.0"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.1.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.1.0",
+        "text": "Command & Conquer Tiberium Alliances game servers are gone: `prodgame01`..`prodgame20.alliances.commandandconquer.com` have no DNS records. `tiberiumalliances.com` redirects to an EA product page, and `cncopt.com` is a parked \"domain may be for sale\" page."
+      }
+    ]
   },
   "3402": {
     "listing": {
@@ -3195,7 +3922,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.6.2"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.6.2"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.6.2",
+        "text": "Every shortener it bypasses is gone or out of its reach:\n- `adf.ly`, `q.gs`, `j.gs` redirect to linkvertise.com (curl).\n- `9.bb`, `u.bb`, `lienscash.com` don't resolve (DNS); `bc.vc` redirects to `bcvc.ink`.\n- `adfoc.us` is still a live shortener, but only on https: `http://adfoc.us/` redirects to `https://adfoc.us/` and a run of 2669 (same `@include`s for these hosts) showed it skipped there (\"No @match or @include covers this URL\"), since its `@include`s are all `http://`.\n- Script: the http-only `@include`s are the cause for the one live site; its adf.ly/bc.vc page-scraping logic also targets 2014 page code."
+      }
+    ]
   },
   "3462": {
     "listing": {
@@ -3271,7 +4014,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.0"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-05",
+      "version": "1.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.0",
+        "text": "Saved test page at https://example.com/rc.html that sets `document.oncontextmenu = () => false`. With the script, `document.oncontextmenu` is null and a real right click is not default-prevented; a `--noscript` tab keeps the handler and the right click is prevented.\n- Script: only clears `document.oncontextmenu`, so sites blocking via `addEventListener` or `<body oncontextmenu>` are not covered.\n- SourceMonkey: no `@grant`, but the body names `unsafeWindow`, so it runs in the page world, as documented."
+      }
+    ]
   },
   "3527": {
     "listing": {
@@ -3299,7 +4054,20 @@
       ],
       "date": "2026-10-01",
       "version": "0.0.1.20140723004400"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "0.0.1.20140723004400"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.0.1.20140723004400",
+        "text": "Opened https://boards.4chan.org/g/ (headless). The script started, its `http://` jQuery 1.9.1 `@require` loaded, and it logged \"mGET loaded\", then threw `Cannot read properties of null (reading '0')` at line 149 while guessing the latest post number.\n- Script: it reads `span.postNum a:nth-child(2)` as the post number, but on today's board pages that anchor is the \"No.\" link in some posts (at least 5 of the 162 matches), so `.match(/(\\d+)/)[0]` throws.\n- Script: it also needs the 4chan X extension's Quick Reply events for its UI, auto-submits posts at a target number, and polls `sys.4chan.org/<board>/imgboard.php?res=<n>`, which now answers 404 even for existing posts (`curl -I`), so it would loop on HEAD requests."
+      }
+    ]
   },
   "3576": {
     "listing": {
@@ -3523,7 +4291,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.2.1"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.2.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.2.1",
+        "text": "All the matched hosts are gone (curl):\n- `gorillavid.in`, `daclips.in`, `movpod.in`: parked \"for sale\" pages.\n- `watchtvseries.to` redirects to an ad click tracker; `watchseries.ag` to a safebrowse.io warning page; `watchseries.lt` is now an unrelated Lithuanian WordPress site and `/open/cale/*` redirects to its home page.\n- `vodu.ch` doesn't resolve (DNS)."
+      }
+    ]
   },
   "3967": {
     "listing": {
@@ -3613,7 +4394,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.7"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.7"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.7",
+        "text": "On a watch page (`jNQXAC9IVRw`), the URL got no `&user=` and no `#abpfilter` menu was added. It looks for the channel in `#watch7-content link[href*=\"/user/\"]` and `.yt-user-info > a`, neither of which exists now; its `<menu type=\"context\">` also only ever worked in Firefox. Judged only by its own effect, not with Adblock Plus."
+      }
+    ]
   },
   "4188": {
     "listing": {
@@ -3702,7 +4496,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.0.0.5"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.0.0.5"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.0.0.5",
+        "text": "- Script: obsolete. It overrides Google's `rwt` link-rewriting function, which Google no longer uses. On a Google results page (shared browser; temp browsers, headed too, got /sorry) the override was in place (`rwt` getter defined), but result links already have direct `href`s with no `onmousedown`; tracking now goes through a `ping` attribute the script doesn't touch.\n- SourceMonkey: matched `@include http*` and `@match *://*/*`; the `@grant none` inline-script injection ran fine at document-start."
+      }
+    ]
   },
   "4348": {
     "listing": {
@@ -3730,7 +4537,20 @@
       ],
       "date": "2026-10-01",
       "version": "0.0.66"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "0.0.66"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.0.66",
+        "text": "- On https://greasyfork.org/en/scripts the script fetched its SITEINFO from wedata.net (still live, 200; prompted for wedata.net, allowed) and set up a pager for the greasyfork rule, but requested the current page instead of `?page=2`, so scrolling to the bottom added nothing (101 items before and after).\n- Script: `fixResolvePath` swaps in an `xml:base` workaround that Chrome no longer supports, so `resolvePath(\"/en/scripts?page=2\", base)` returns the document URL. Same in every manager on current Chrome.\n- SourceMonkey: matched `@include http://*` / `https://*`; GM_log, menu commands and the 815 KB `GM_setValue` worked."
+      }
+    ]
   },
   "4369": {
     "listing": {
@@ -3834,7 +4654,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.4"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "1.4"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.4",
+        "text": "Not run: on a Discuz thread whose hidden-content block mentions 回复可见/隐藏, it posts a canned reply through the fast-reply form (an account action). A plain load of a Discuz thread (bbs.kafan.cn/thread-2234356-1-1.html) has no `#fastpostmessage` form, only \"您需要登录后才可以回帖\" (log in to reply), so the script has nothing to act on without an account.\n- Script: `@include http://*/*` only, while most Discuz forums are now https."
+      }
+    ]
   },
   "4638": {
     "listing": {
@@ -3859,7 +4692,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2015.07.01"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "2015.07.01"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2015.07.01",
+        "text": "- Script: `@match https://play.spotify.com/*` only; play.spotify.com now 301s to https://open.spotify.com/, so the script is skipped there.\n- Its hooks belong to the 2015 Flash-era web player: `Spotify.Instances`, an `object[id*='SPFBIn_']`, and an `#app-player` iframe. Today's open.spotify.com has no `window.Spotify`."
+      }
+    ]
   },
   "4707": {
     "listing": {
@@ -3937,7 +4783,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.1.0"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "0.1.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.1.0",
+        "text": "- Script: its only `@include` is the old `/review/session` URL, which now 301s to `/subjects/review` (itself a redirect to `/login` when signed out), so the script never runs, even for a signed-in user.\n- It also hooks `$.jStorage`, the old review app's storage, which today's review page no longer uses."
+      }
+    ]
   },
   "4771": {
     "listing": {
@@ -4163,7 +5022,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.9.2"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "0.9.2"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.9.2",
+        "text": "Opened https://boards.4chan.org/g/ (headless). The script started and added its fixed box (`#getbox`, status \"Ready...\", number field, Post and Post Rate buttons). Its buttons weren't clicked: Post auto-submits a reply.\n- Script: it calls `GM_xmlhttpRequest` with no `@grant` line, so the name is undefined (`typeof GM_xmlhttpRequest` is `undefined` in its scope). Tampermonkey does the same: a no-grant probe script under `--manager tm` logged `xhr=undefined` and threw `GM_xmlhttpRequest is not defined`.\n- Script: the endpoint it polls, `sys.4chan.org/<board>/imgboard.php?res=<n>`, answers 404 even for an existing post (`curl -I` on /g/ thread 105076684), so with a grant it would loop on HEAD requests forever."
+      }
+    ]
   },
   "4892": {
     "listing": {
@@ -4188,7 +5060,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.1.1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.1.1"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.1.1",
+        "text": "- Script: matches only `http://*.115.com/*`. 115.com now redirects http to https (`http://115.com/` 302s to `https://115.com//index`), where `sm-dev match` gives no match, so the script never runs in any manager.\n- Playing videos also needs a 115 account."
+      }
+    ]
   },
   "4900": {
     "listing": {
@@ -4270,7 +5158,23 @@
       ],
       "date": "2026-10-01",
       "version": "1.1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.1"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.1",
+        "text": "dailymotion.com is now https-only: `http://www.dailymotion.com/` redirects to `https://www.dailymotion.com/us`, and the run showed the script skipped (\"No @match or @include covers this URL\"), since its only `@include` is `http://www.dailymotion.com/*`.\n- The home page had no `img.blurred` (or any `[class*=blur]`) element for it to fix anyway.\n- `@grant metadata` is not a real grant; SourceMonkey warns and ignores it, which doesn't matter as the script uses no `GM_*`."
+      }
+    ]
   },
   "4974": {
     "listing": {
@@ -4295,7 +5199,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-05",
+      "version": "1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1",
+        "text": "On https://example.com/ the page's `window.open` was the script's no-op and `window.open('https://example.org/')` opened no tab. A `--noscript` tab kept the native `open`. SourceMonkey matched `@include *`."
+      }
+    ]
   },
   "4992": {
     "listing": {
@@ -4320,7 +5236,24 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.1"
+    },
+    "tags": [
+      "service-dead",
+      "trusted-types"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.1",
+        "text": "On a YouTube watch page the script threw at startup inside its `@require`d jQuery 1.x: `This document requires 'TrustedHTML' assignment`.\n- Script: its anchor `#watch7-subscription-container` (pre-Polymer layout) is missing on today's YouTube, so no button either way.\n- Script: the `youtubeinmp3.com` service it links to does not answer (curl got no response)."
+      }
+    ]
   },
   "5014": {
     "listing": {
@@ -4345,7 +5278,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1",
+        "text": "`@include http://instagram.com/p/*` no longer matches: `http://instagram.com/p/<id>/` redirects (301) to `https://instagram.com/...` and then to `https://www.instagram.com/p/<id>/`, where the script is skipped (\"No @match or @include covers this URL\")."
+      }
+    ]
   },
   "5144": {
     "listing": {
@@ -4396,7 +5342,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.1"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "0.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.1",
+        "text": "- MTurk HIT helper: submits the HIT form after a math prompt. Only acts inside iframes (`window.location != window.parent.location`), i.e. HITs framed on worker.mturk.com.\n- `curl -sI https://worker.mturk.com/tasks` gives a 302 to the Amazon sign-in page. Not run."
+      }
+    ]
   },
   "5154": {
     "listing": {
@@ -4421,7 +5380,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2015.07.12"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "2015.07.12"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2015.07.12",
+        "text": "- Ran on `https://www.facebook.com/facebook` (logged out): started, and its `GM_addStyle` rule for `#pagelet_ego_pane` is in the page.\n- The recommendations panel it hides is on the logged-in feed only; logged out, `www.facebook.com/` shows the login form. `#pagelet_ego_pane` is a 2015 id, absent on the public page, so it likely hides nothing today either way."
+      }
+    ]
   },
   "5199": {
     "listing": {
@@ -4450,7 +5422,19 @@
       ],
       "date": "2026-10-01",
       "version": "2015.7.10.0"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-05",
+      "version": "2015.7.10.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2015.7.10.0",
+        "text": "Saved test page at https://example.com/pv.html with a 1280px image shown at 300px: hovering it shows the float bar, and its \"actual size\" button opens the viewer window with the full 1280px image and its toolbar (screenshot checked).\n- On en.wikipedia.org/wiki/Mount_Everest the float bar appears on the infobox image, but \"actual size\" logs `载入大图错误` (failed to load the large image): its Wikipedia rule turns the thumb URL into `https://thumb.wikimedia.org/...`, which no longer exists. Script: stale site rule."
+      }
+    ]
   },
   "5207": {
     "listing": {
@@ -4502,7 +5486,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "5.00.22y"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "5.00.22y"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "5.00.22y",
+        "text": "Checked the matched file hosts with curl:\n- No DNS: `dl.vmall.com`, `www.yimuhe.com`, `d.119g.com`, `gxp.so`, `u.xunzai.com`.\n- No answer: `www.yunfile.com`, `www.colafile.com`.\n- Parked or unrelated: `www.sufile.com` (parking \"/lander\" page), `www.vdisk.cn` (an unrelated management-software site), `www.namipan.cc` (redirects to a gambling-style register page), `www.dxrr.com` (511).\n- Moved to https: `www.rayfile.com`, `www.ctdisk.com` and `www.400gb.com` (both now 301 to `https://www.ctfile.com/`), `www.verycd.com/topics/*` (301 to https). The script matches only `http://`, so it doesn't run on those in any manager."
+      }
+    ]
   },
   "5224": {
     "listing": {
@@ -4553,7 +5553,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.6.2"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "2.6.2"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2.6.2",
+        "text": "Ikariam game servers need an account: `https://s301-en.ikariam.gameforge.com/index.php?view=city` redirects to the sign-in lobby `https://lobby.ikariam.gameforge.com/en_GB/`.\n- Script: its `@include`s are `http://` only; the servers now redirect http to https, so it would not match even when signed in."
+      }
+    ]
   },
   "5297": {
     "listing": {
@@ -4578,7 +5591,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.0.8"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "0.0.8"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.0.8",
+        "text": "albumfiend.com is gone: `http://www.albumfiend.com/` redirects to an ad click tracker (`torroclk.com/feed/click/...`)."
+      }
+    ]
   },
   "5305": {
     "listing": {
@@ -4629,7 +5655,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.0"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "2.0"
+    },
+    "tags": [
+      "mutation-events"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2.0",
+        "text": "The script started on https://www.google.com/search?q=greasemonkey (headed temp browser; Google showed its /sorry bot check, so no results page).\n- Script: it does all its work from a `DOMNodeInserted` listener. Chrome 153 no longer fires it: `typeof MutationEvent` is `undefined`, and a test listener counted 0 events after an `appendChild`. It would never run in any manager.\n- Script: it strips `onmousedown=\"return rwt(...)\"`, which Google's result links no longer use.\n- SourceMonkey: the `google.*` / `www.google.*` globs matched google.com, www.google.com and www.google.co.uk (`sm-dev match`)."
+      }
+    ]
   },
   "5359": {
     "listing": {
@@ -4657,7 +5699,23 @@
       ],
       "date": "2026-10-01",
       "version": "1.0.5"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.0.5"
+    },
+    "tags": [
+      "mutation-events"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.0.5",
+        "text": "- Script: does nothing on current Chrome. It only scans for short links in a `DOMNodeInserted` handler, which Chrome no longer fires (`MutationEvent` is undefined). On https://en.wikipedia.org/wiki/Bitly no [+] buttons appeared, also after the page appended a `bit.ly` link.\n- SourceMonkey: matched `@include *`; `GM_getValue`/`GM_setValue` worked. The update check only runs on Firefox."
+      }
+    ]
   },
   "5368": {
     "listing": {
@@ -4755,7 +5813,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.0"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.0",
+        "text": "The old MTurk worker pages this script matches (`www.mturk.com/mturk/*`) were retired:\n- curl: `www.mturk.com/mturk/dashboard` and `/mturk/findhits` 302 to `worker.mturk.com/mturk/...`, which redirects to the new app's paths (`/dashboard`, `/projects`); `/mturk/preview?groupId=...` there is a 404.\n- `worker.mturk.com` then redirects to an Amazon sign-in page. In a run (script 863, DoA1) `www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` \"Sign in\", and SourceMonkey skipped the script there (no match).\n- The new worker site is a different app on another host, so the script's pages and selectors no longer exist even with an account."
+      }
+    ]
   },
   "5478": {
     "listing": {
@@ -4783,7 +5854,20 @@
       ],
       "date": "2026-10-01",
       "version": "1.1.0"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "1.1.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.1.0",
+        "text": "Shows who unfollowed your Tumblr blog by reading your follower list. `https://www.tumblr.com/blog/staff` redirects to `/dashboard/blog/staff`, and logged out it lands on the public `https://www.tumblr.com/staff` page with Sign up / Log in. The follower list needs the blog owner's account."
+      }
+    ]
   },
   "5550": {
     "listing": {
@@ -4808,7 +5892,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1",
+        "text": "Not run: it overwrites and then deletes the signed-in user's own comments, so it needs a Reddit login (it reads the user name from `span.user > a:not(.login-required)` and returns without it) and acts on the account.\n- A headed temp browser got a reCAPTCHA wall on www.reddit.com and a `/login/?reason=lor2` redirect on old.reddit.com.\n- Script: its selectors (`a.author`, `form.del-button`, `ul.flat-list`) are old-Reddit markup."
+      }
+    ]
   },
   "5566": {
     "listing": {
@@ -4956,7 +6053,20 @@
       ],
       "date": "2026-10-01",
       "version": "1.12"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.12"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.12",
+        "text": "- On https://fr.wikipedia.org/wiki/Chat, double-clicking the heading showed the lookup icon, and hovering it opened the tooltip at \"Loading...\" and POSTed to `http://translate.google.fr/translate_a/t` (prompted for translate.google.fr, then www.google.com for the redirect to /sorry; allowed).\n- Script: the reply was 429 with an HTML page, and `extractResult` threw `SyntaxError: Unexpected token '<'`; the tooltip stayed at Loading. Same from the shared browser. A curl GET of the `client=t` endpoint gives 403 while `client=gtx` gives 429, so the old `client=t` API is refused, beyond this IP's rate limit.\n- SourceMonkey: matched `@include http*`; GM_log, GM_xmlhttpRequest POST and the UI worked."
+      }
+    ]
   },
   "5835": {
     "listing": {
@@ -5056,7 +6166,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.2"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "0.2"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.2",
+        "text": "- Script: it only adds CSS to show `#javascriptDependentFunctionality` on old `www.mturk.com/mturk/preview` HIT pages.\n- Those pages were retired: `www.mturk.com/mturk/*` 302s to `worker.mturk.com`, which redirects to an Amazon sign-in page (seen in a run as `amazon.com/ax/claim` \"Sign in\"). `www.mturk.com/` itself is now a marketing page without that element."
+      }
+    ]
   },
   "5983": {
     "listing": {
@@ -5081,7 +6204,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.2.0"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "1.2.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.2.0",
+        "text": "Account automation (unfriends all friends), not run. A plain load of `https://www.facebook.com/` shows the \"Log into Facebook\" form; the friends pages it works on need an account."
+      }
+    ]
   },
   "6019": {
     "listing": {
@@ -5194,7 +6330,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.0.0"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.0.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.0.0",
+        "text": "The old MTurk worker pages this script matches (`www.mturk.com/mturk/*`) were retired:\n- curl: `www.mturk.com/mturk/dashboard` and `/mturk/findhits` 302 to `worker.mturk.com/mturk/...`, which redirects to the new app's paths (`/dashboard`, `/projects`); `/mturk/preview?groupId=...` there is a 404.\n- `worker.mturk.com` then redirects to an Amazon sign-in page. In a run (script 863, DoA1) `www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` \"Sign in\", and SourceMonkey skipped the script there (no match).\n- The new worker site is a different app on another host, so the script's pages and selectors no longer exist even with an account."
+      }
+    ]
   },
   "6134": {
     "listing": {
@@ -5219,7 +6368,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1",
+        "text": "The old MTurk worker pages this script matches (`www.mturk.com/mturk/*`) were retired:\n- curl: `www.mturk.com/mturk/dashboard` and `/mturk/findhits` 302 to `worker.mturk.com/mturk/...`, which redirects to the new app's paths (`/dashboard`, `/projects`); `/mturk/preview?groupId=...` there is a 404.\n- `worker.mturk.com` then redirects to an Amazon sign-in page. In a run (script 863, DoA1) `www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` \"Sign in\", and SourceMonkey skipped the script there (no match).\n- The new worker site is a different app on another host, so the script's pages and selectors no longer exist even with an account."
+      }
+    ]
   },
   "6140": {
     "listing": {
@@ -5244,7 +6406,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.2"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "0.2"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.2",
+        "text": "The old MTurk worker pages this script matches (`www.mturk.com/mturk/*`) were retired:\n- curl: `www.mturk.com/mturk/dashboard` and `/mturk/findhits` 302 to `worker.mturk.com/mturk/...`, which redirects to the new app's paths (`/dashboard`, `/projects`); `/mturk/preview?groupId=...` there is a 404.\n- `worker.mturk.com` then redirects to an Amazon sign-in page. In a run (script 863, DoA1) `www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` \"Sign in\", and SourceMonkey skipped the script there (no match).\n- The new worker site is a different app on another host, so the script's pages and selectors no longer exist even with an account."
+      }
+    ]
   },
   "6147": {
     "listing": {
@@ -5269,7 +6444,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.1"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.1",
+        "text": "The old MTurk worker pages this script matches (`www.mturk.com/mturk/*`) were retired:\n- curl: `www.mturk.com/mturk/dashboard` and `/mturk/findhits` 302 to `worker.mturk.com/mturk/...`, which redirects to the new app's paths (`/dashboard`, `/projects`); `/mturk/preview?groupId=...` there is a 404.\n- `worker.mturk.com` then redirects to an Amazon sign-in page. In a run (script 863, DoA1) `www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` \"Sign in\", and SourceMonkey skipped the script there (no match).\n- The new worker site is a different app on another host, so the script's pages and selectors no longer exist even with an account."
+      }
+    ]
   },
   "6157": {
     "listing": {
@@ -5294,7 +6482,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.0"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.0",
+        "text": "The old MTurk worker pages this script matches (`www.mturk.com/mturk/*`) were retired:\n- curl: `www.mturk.com/mturk/dashboard` and `/mturk/findhits` 302 to `worker.mturk.com/mturk/...`, which redirects to the new app's paths (`/dashboard`, `/projects`); `/mturk/preview?groupId=...` there is a 404.\n- `worker.mturk.com` then redirects to an Amazon sign-in page. In a run (script 863, DoA1) `www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` \"Sign in\", and SourceMonkey skipped the script there (no match).\n- The new worker site is a different app on another host, so the script's pages and selectors no longer exist even with an account."
+      }
+    ]
   },
   "6294": {
     "listing": {
@@ -5435,7 +6636,20 @@
       ],
       "date": "2026-10-01",
       "version": "1.174"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "1.174"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.174",
+        "text": "Ikariam game servers need an account: `https://s301-en.ikariam.gameforge.com/index.php?view=city` redirects to the sign-in lobby `https://lobby.ikariam.gameforge.com/en_GB/`.\n- Script: its `@include`s are `http://` only; the servers now redirect http to https, so it would not match even when signed in."
+      }
+    ]
   },
   "6807": {
     "listing": {
@@ -5489,7 +6703,20 @@
       ],
       "date": "2026-10-01",
       "version": "1.0.7"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.0.7"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.0.7",
+        "text": "On a YouTube watch page the script started, logged its router lines, then threw: `document.location.href.contains is not a function` (`String.prototype.contains` was Firefox-only and removed).\n- Script: its YouTube path also calls `/get_video_info`, which YouTube removed.\n- Script: every Chinese-site `@include` is `http://` only; bilibili, youku, sohu, iqiyi, tudou and 56.com now 301/302 to `https://`, so `match` shows no match there (checked bilibili, youku)."
+      }
+    ]
   },
   "6884": {
     "listing": {
@@ -5514,7 +6741,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.1.5.1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "2.1.5.1"
+    },
+    "tags": [
+      "mutation-events"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2.1.5.1",
+        "text": "Saved test page at https://example.com/aab.html that inserts a \"Please disable your ad blocker\" div 1.5s after load: the script starts without errors but the div stays.\n- Script: its generic rule hooks `DOMNodeInserted`, which Chrome removed (2024), and its site rules hook `beforescriptexecute`, which only old Firefox fired (`onbeforescriptexecute` is not in Chrome's `document`). The remaining `DOMContentLoaded` rule looks for an IE-only `expression()` style.\n- Its site-specific targets are gone: skiplimite.tv is NXDOMAIN, uptobox.com (shut down in 2023) returns an empty response."
+      }
+    ]
   },
   "6918": {
     "listing": {
@@ -5542,7 +6785,23 @@
       ],
       "date": "2026-10-01",
       "version": "0.1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "0.1"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.1",
+        "text": "- Script: matches only `http://www.zhihu.com/question/*`. `http://www.zhihu.com/question/19550225` now 302s to https, where `sm-dev match` gives no match, so the script never runs in any manager.\n- Its target class `.fixed-summary` is from the 2014 site; logged-out question pages now get a \"请求存在异常\" error (code 40362)."
+      }
+    ]
   },
   "6920": {
     "listing": {
@@ -5569,7 +6828,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.0.0"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "2.0.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2.0.0",
+        "text": "TrophyManager player pages need an account: `https://trophymanager.com/players/100000/` redirects to the landing page `https://trophymanager.com/` (\"Online Football Management Game\"). `ultra.trophymanager.com/players/` serves only a script redirecting to a Facebook OAuth sign-in."
+      }
+    ]
   },
   "6949": {
     "listing": {
@@ -5704,7 +6976,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.7"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "0.7"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.7",
+        "text": "`waimai.baidu.com` no longer resolves (DNS lookup returns nothing; curl gets no connection). Baidu Waimai was sold to Ele.me in 2017."
+      }
+    ]
   },
   "7061": {
     "listing": {
@@ -5733,7 +7018,20 @@
       ],
       "date": "2026-10-01",
       "version": "1.10.07.06"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.10.07.06"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.10.07.06",
+        "text": "Neverwinter gateway is gone: `http://gateway.playneverwinter.com/` redirects to `https://www.crypticstudios.com`, and its https URL fails with a certificate error. Not run beyond that (profession automation bot)."
+      }
+    ]
   },
   "7076": {
     "listing": {
@@ -5758,7 +7056,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.0.5"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "0.0.5"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.0.5",
+        "text": "linkcrypt.ws is parked: `http://linkcrypt.ws/dir/` redirects to `https://ww17.linkcrypt.ws/dir/`, a domain-parking page."
+      }
+    ]
   },
   "7158": {
     "listing": {
@@ -5808,7 +7119,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.1"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "0.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.1",
+        "text": "studytonight.com is gone: `http://www.studytonight.com/` and `/java/` redirect to https and then to `https://www.guvi.in/` (HCL GUVI), where the run showed the script skipped."
+      }
+    ]
   },
   "7226": {
     "listing": {
@@ -5883,7 +7207,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.7.10"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.7.10"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.7.10",
+        "text": "KickassTorrents' `kat.cr` (seized in 2016) is now a parked \"for sale\" page (curl, abovedomains forsale script)."
+      }
+    ]
   },
   "7238": {
     "listing": {
@@ -6027,7 +7364,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.2"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "2.2"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2.2",
+        "text": "Every matched page (`*.the-west.*/game.php`) needs a logged-in game session.\n- `https://en1.the-west.net/game.php` redirects (302) to `https://www.the-west.net/index.php`, the login and sign-up page; the script is skipped there (its include doesn't cover it)."
+      }
+    ]
   },
   "7362": {
     "listing": {
@@ -6114,7 +7464,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.0.1.20150114051653"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "0.0.1.20150114051653"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.0.1.20150114051653",
+        "text": "Account automation (auto-likes the first 60 feed posts), not run. A plain load of `https://www.facebook.com/` shows the \"Log into Facebook\" form; the news feed needs an account."
+      }
+    ]
   },
   "7434": {
     "listing": {
@@ -6280,7 +7643,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.0"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.0",
+        "text": "The old MTurk worker pages this script matches (`www.mturk.com/mturk/*`) were retired:\n- curl: `www.mturk.com/mturk/dashboard` and `/mturk/findhits` 302 to `worker.mturk.com/mturk/...`, which redirects to the new app's paths (`/dashboard`, `/projects`); `/mturk/preview?groupId=...` there is a 404.\n- `worker.mturk.com` then redirects to an Amazon sign-in page. In a run (script 863, DoA1) `www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` \"Sign in\", and SourceMonkey skipped the script there (no match).\n- The new worker site is a different app on another host, so the script's pages and selectors no longer exist even with an account."
+      }
+    ]
   },
   "7664": {
     "listing": {
@@ -6397,7 +7773,23 @@
       ],
       "date": "2026-10-01",
       "version": "2016.02.20.0"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "2016.02.20.0"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2016.02.20.0",
+        "text": "- Script: matches only `http://115.com/?ct=*`. In a browser `http://115.com/?ct=file` redirects to `https://115.com//index?goto=...` (the logged-out home page), so the script never runs in any manager; `sm-dev match` on `https://115.com/?ct=file` gives no match.\n- The file pages it targets also need a 115 account."
+      }
+    ]
   },
   "7750": {
     "listing": {
@@ -6525,7 +7917,24 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.6"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.6"
+    },
+    "tags": [
+      "service-dead",
+      "trusted-types"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.6",
+        "text": "On a YouTube watch page the script threw at startup inside its `@require`d jQuery 1.11.2 (`@grant none`, page world): `This document requires 'TrustedHTML' assignment`.\n- Script: its anchor `#watch7-subscription-container` (pre-Polymer layout) is missing, so no button either way.\n- Script: the `youtubeinmp3.com` service it links to does not answer."
+      }
+    ]
   },
   "7829": {
     "listing": {
@@ -6550,7 +7959,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.1.3"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "2.1.3"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2.1.3",
+        "text": "Every matched page (`*.the-west.*/game.php`) needs a logged-in game session.\n- `https://en1.the-west.net/game.php` redirects (302) to `https://www.the-west.net/index.php`, the login and sign-up page; the script is skipped there (its include doesn't cover it)."
+      }
+    ]
   },
   "7857": {
     "listing": {
@@ -6575,7 +7997,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "3.0c"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "3.0c"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "3.0c",
+        "text": "The old worker site at `www.mturk.com/mturk/*` was retired; none of the matched pages exist anymore, signed in or not.\n\n- `curl -sIL`: `/mturk/dashboard`, `/mturk/findhits`, `/mturk/preview?groupId=X` and `/mturk/myhits` all 302 to `worker.mturk.com/mturk/...`, which 301/302s to the new app's paths (`/dashboard`, `/projects`, `/projects/X/tasks`, `/tasks`), then to the Amazon sign-in.\n- A run of 3095 on `https://www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` (\"Sign in\"); SourceMonkey skipped the script there, as no `@match` covers it.\n- The new worker pages have no `/mturk/` in their paths and a different page structure, so a login would not bring the script back."
+      }
+    ]
   },
   "7887": {
     "listing": {
@@ -6625,7 +8060,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.1"
+    },
+    "tags": [
+      "mutation-events"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.1",
+        "text": "On a watch page the script started with no error but did nothing: `#autoplay-checkbox` (pre-Polymer layout) is missing; today's toggle is `.ytp-autonav-toggle-button` in the player.\n- Script: it relies on the `DOMSubtreeModified` mutation event, which current Chrome no longer fires."
+      }
+    ]
   },
   "7921": {
     "listing": {
@@ -6701,7 +8152,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.2.0"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-05",
+      "version": "1.2.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.2.0",
+        "text": "Saved test page at https://example.com/ap.html with a muted `<video autoplay loop>` (MDN flower.mp4). With the script, after 3s the video is paused at 0s with `autoplay` false; in a `--noscript` tab it plays (currentTime 4.4s).\n- Script: only handles media present at document-end; players added later are not touched."
+      }
+    ]
   },
   "8128": {
     "listing": {
@@ -6727,7 +8190,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.1.2"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-05",
+      "version": "1.1.2"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.1.2",
+        "text": "On a watch page (dQw4w9WgXcQ) with the script, `MediaSource.isTypeSupported('video/webm; codecs=\"vp9\"')` is false in the page and the player's stats for nerds show `avc1.4d401f / mp4a.40.2` (H.264).\n- A `--noscript` tab on the same video: vp9 supported (true), and the player chose `av01` / `opus`."
+      }
+    ]
   },
   "8161": {
     "listing": {
@@ -6815,7 +8290,20 @@
       ],
       "date": "2026-10-01",
       "version": "1.08"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.08"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.08",
+        "text": "The old worker site at `www.mturk.com/mturk/*` was retired; none of the matched pages exist anymore, signed in or not.\n\n- `curl -sIL`: `/mturk/dashboard`, `/mturk/findhits`, `/mturk/preview?groupId=X` and `/mturk/myhits` all 302 to `worker.mturk.com/mturk/...`, which 301/302s to the new app's paths (`/dashboard`, `/projects`, `/projects/X/tasks`, `/tasks`), then to the Amazon sign-in.\n- A run of 3095 on `https://www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` (\"Sign in\"); SourceMonkey skipped the script there, as no `@match` covers it.\n- The new worker pages have no `/mturk/` in their paths and a different page structure, so a login would not bring the script back."
+      }
+    ]
   },
   "8349": {
     "listing": {
@@ -6843,7 +8331,20 @@
       ],
       "date": "2026-10-01",
       "version": "1.08"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.08"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.08",
+        "text": "The old worker site at `www.mturk.com/mturk/*` was retired; none of the matched pages exist anymore, signed in or not.\n\n- `curl -sIL`: `/mturk/dashboard`, `/mturk/findhits`, `/mturk/preview?groupId=X` and `/mturk/myhits` all 302 to `worker.mturk.com/mturk/...`, which 301/302s to the new app's paths (`/dashboard`, `/projects`, `/projects/X/tasks`, `/tasks`), then to the Amazon sign-in.\n- A run of 3095 on `https://www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` (\"Sign in\"); SourceMonkey skipped the script there, as no `@match` covers it.\n- The new worker pages have no `/mturk/` in their paths and a different page structure, so a login would not bring the script back."
+      }
+    ]
   },
   "8350": {
     "listing": {
@@ -6871,7 +8372,20 @@
       ],
       "date": "2026-10-01",
       "version": "1.06"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.06"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.06",
+        "text": "The old worker site at `www.mturk.com/mturk/*` was retired; none of the matched pages exist anymore, signed in or not.\n\n- `curl -sIL`: `/mturk/dashboard`, `/mturk/findhits`, `/mturk/preview?groupId=X` and `/mturk/myhits` all 302 to `worker.mturk.com/mturk/...`, which 301/302s to the new app's paths (`/dashboard`, `/projects`, `/projects/X/tasks`, `/tasks`), then to the Amazon sign-in.\n- A run of 3095 on `https://www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` (\"Sign in\"); SourceMonkey skipped the script there, as no `@match` covers it.\n- The new worker pages have no `/mturk/` in their paths and a different page structure, so a login would not bring the script back."
+      }
+    ]
   },
   "8351": {
     "listing": {
@@ -6899,7 +8413,20 @@
       ],
       "date": "2026-10-01",
       "version": "1.26"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.26"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.26",
+        "text": "The old worker site at `www.mturk.com/mturk/*` was retired; none of the matched pages exist anymore, signed in or not.\n\n- `curl -sIL`: `/mturk/dashboard`, `/mturk/findhits`, `/mturk/preview?groupId=X` and `/mturk/myhits` all 302 to `worker.mturk.com/mturk/...`, which 301/302s to the new app's paths (`/dashboard`, `/projects`, `/projects/X/tasks`, `/tasks`), then to the Amazon sign-in.\n- A run of 3095 on `https://www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` (\"Sign in\"); SourceMonkey skipped the script there, as no `@match` covers it.\n- The new worker pages have no `/mturk/` in their paths and a different page structure, so a login would not bring the script back."
+      }
+    ]
   },
   "8352": {
     "listing": {
@@ -6924,7 +8451,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.02"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.02"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.02",
+        "text": "The old MTurk worker pages this script matches (`www.mturk.com/mturk/*`) were retired:\n- curl: `www.mturk.com/mturk/dashboard` and `/mturk/findhits` 302 to `worker.mturk.com/mturk/...`, which redirects to the new app's paths (`/dashboard`, `/projects`); `/mturk/preview?groupId=...` there is a 404.\n- `worker.mturk.com` then redirects to an Amazon sign-in page. In a run (script 863, DoA1) `www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` \"Sign in\", and SourceMonkey skipped the script there (no match).\n- The new worker site is a different app on another host, so the script's pages and selectors no longer exist even with an account."
+      }
+    ]
   },
   "8416": {
     "listing": {
@@ -6949,7 +8489,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.3"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.3"
+    },
+    "tags": [
+      "mutation-events"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.3",
+        "text": "On a photo page (`https://500px.com/photo/7GwHTANwp19`) the script started but added no Download button:\n- It listens for `DOMAttrModified`, a mutation event Chrome never fired for attributes and removed with the rest in 2024, and its handler only acts when the event has Firefox's `attrChange` field.\n- Its target `.main_container .sidebar_region .photo_sidebar .actions_region` matches 0 elements on today's page, and there's no `img.photo` (0)."
+      }
+    ]
   },
   "8426": {
     "listing": {
@@ -7016,7 +8572,20 @@
       ],
       "date": "2026-10-01",
       "version": "0.35"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "0.35"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.35",
+        "text": "Ikariam game servers need an account: `https://s301-en.ikariam.gameforge.com/index.php?view=city` redirects to the sign-in lobby `https://lobby.ikariam.gameforge.com/en_GB/`."
+      }
+    ]
   },
   "8596": {
     "listing": {
@@ -7041,7 +8610,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.1.2"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "1.1.2"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.1.2",
+        "text": "Every matched page (`*.the-west.*/game.php`) needs a logged-in game session.\n- `https://en1.the-west.net/game.php` redirects (302) to `https://www.the-west.net/index.php`, the login and sign-up page; the script is skipped there (its include doesn't cover it)."
+      }
+    ]
   },
   "8600": {
     "listing": {
@@ -7066,7 +8648,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.1.4"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "0.1.4"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.1.4",
+        "text": "Every matched page (`*.the-west.*/game.php`) needs a logged-in game session.\n- `https://en1.the-west.net/game.php` redirects (302) to `https://www.the-west.net/index.php`, the login and sign-up page; the script is skipped there (its include doesn't cover it)."
+      }
+    ]
   },
   "8712": {
     "listing": {
@@ -7094,7 +8689,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.1.0.4"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.1.0.4"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.1.0.4",
+        "text": "- `fuli.ba` and `fuliba.mobi` no longer resolve (DNS).\n- `fuliba.asia` answers with an unrelated \"Jiathis Tools\" page.\n- `http://api.uyan.cc/v4/comment/?uid=1701916` (the old comment widget) returns nginx 404."
+      }
+    ]
   },
   "8731": {
     "listing": {
@@ -7145,7 +8753,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.0"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.0",
+        "text": "- `globalvideo.swagbucks.com`, where its channel and video pages lived, gives NXDOMAIN. Not run.\n- Script: a Swagbucks video-watching reward bot (auto-advances videos, OCRs captchas with GOCR, clicks \"Claim\"), so it would not be run against a live account anyway."
+      }
+    ]
   },
   "9014": {
     "listing": {
@@ -7233,7 +8854,24 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "4"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "4"
+    },
+    "tags": [
+      "mutation-events",
+      "trusted-types"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "4",
+        "text": "On a watch page the script threw at startup inside its `@require`d jQuery 2.1.3 (`@grant none`, page world): `This document requires 'TrustedHTML' assignment`.\n- Script: its anchor `#watch-header` (pre-Polymer layout) is missing, so no `#textId` field would be added either way.\n- Script: it watches for updates with `DOMNodeInserted`, a mutation event current Chrome no longer fires."
+      }
+    ]
   },
   "9099": {
     "listing": {
@@ -7295,7 +8933,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "3"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "3"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "3",
+        "text": "Account automation (deletes timeline posts), not run. A plain load of `https://www.facebook.com/` shows the \"Log into Facebook\" form; the activity log needs an account."
+      }
+    ]
   },
   "9134": {
     "listing": {
@@ -7453,7 +9104,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.1",
+        "text": "`http://live.chess.com/` now redirects to `https://www.chess.com/play/online`, which `@match http://live.chess.com/*` does not cover, so the script never runs.\n- Script: it also needs the page's `$` and the old `computer_analysis_redirect?live_id=` endpoint."
+      }
+    ]
   },
   "9510": {
     "listing": {
@@ -7541,7 +9205,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.0.0"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.0.0"
+    },
+    "tags": [
+      "idle-after-load"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.0.0",
+        "text": "Saved test page at https://example.com/rl/index.php shaped like a RapidLeech page (\"Rapidleech\" text, `form[name=transload]` with a submit button): the script starts but never replaces the button.\n- Script: its `@require`d jQuery 1.3.2 only fires `$(document).ready` from DOMContentLoaded or window load, both already past at document-idle (`$.isReady` false, readyState complete). A copy with a log line under Tampermonkey (`--manager tm`) ran with the same state and did nothing either."
+      }
+    ]
   },
   "9630": {
     "listing": {
@@ -7634,7 +9314,20 @@
       ],
       "date": "2026-10-01",
       "version": "4.9.7"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "4.9.7"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "4.9.7",
+        "text": "Neverwinter gateway is gone: `http://gateway.playneverwinter.com/` redirects to `https://www.crypticstudios.com`, and its https URL fails with a certificate error. Not run beyond that (profession automation bot)."
+      }
+    ]
   },
   "9867": {
     "listing": {
@@ -7659,7 +9352,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.1.3"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.1.3"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.1.3",
+        "text": "- Script: its only `@include` is the old `/review/session` URL, which now 301s to `/subjects/review` (itself a redirect to `/login` when signed out), so the script never runs, even for a signed-in user.\n- It also hooks `$.jStorage`, the old review app's storage, which today's review page no longer uses."
+      }
+    ]
   },
   "9876": {
     "listing": {
@@ -7684,7 +9390,24 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1"
+    },
+    "tags": [
+      "beforescriptexecute",
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1",
+        "text": "Loaded http://agar.io/ (redirects to https://agar.io/#ffa).\n- Site: http://agar.io/ still serves the page, but the client's `secureRedirect` (in bundle_start.js) sends it to https://agar.io/ within about a second. An http-only match runs only on that throwaway load and is skipped on https (a probe script setting a data attribute at http://agar.io/* left nothing on the https page). Same in every manager.\n- Script: it waits for the old `main_out.js` via Firefox's `beforescriptexecute` event, which Chrome never fires, and replaces it with an embedded 2015 client. The site no longer loads `main_out.js` (404); today's client is `agario.core.js` plus webpack bundles. Started on the http load with no output."
+      }
+    ]
   },
   "9922": {
     "listing": {
@@ -7709,7 +9432,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.1"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "bot-blocked",
+      "date": "2026-10-05",
+      "version": "0.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.1",
+        "text": "`http://tieba.baidu.com/f?kw=python` (still served over http) shows Baidu's \"百度安全验证\" slider-puzzle captcha in both headless and `--headed` temp browsers. The script's inline `<script>` did run there and threw `PageData is not defined`, since the captcha page has no `PageData`."
+      }
+    ]
   },
   "9968": {
     "listing": {
@@ -7784,7 +9520,25 @@
       ],
       "date": "2026-10-01",
       "version": "2.94"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "2.94"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2.94",
+        "text": "On `https://www.qualtrics.com/`, with `workerID` seeded as `A1TESTWORKER` (`--values`), the script added its fixed `#workerIDDiv` input at top right (189x38 at 1075,20) holding the ID; hovering it focused it and selected all 12 characters. No errors.\n\n- Script: it learns the worker ID only from `www.mturk.com/mturk/dashboard`, which now redirects to the Amazon sign-in, so a new install never gets an ID without seeding the stored value. The survey side works.\n- `$ = unsafeWindow.$` with no `@grant unsafeWindow` runs it in the page world (sm-dev info line), harmless here."
+      },
+      {
+        "date": "2026-10-05",
+        "version": "2.94",
+        "text": "Changed from pass to fail when reconciling with 915 (an earlier version of the same script): the ID box works only with a seeded ID, and the script can no longer capture one, since the retired dashboard was its only source. So it no longer does what it promises."
+      }
+    ]
   },
   "9969": {
     "listing": {
@@ -7809,7 +9563,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1",
+        "text": "- Not run: it is a Membean course auto-answer bot (clicks the answer, then \"Pass\" 93% of the time).\n- A plain `curl` of https://membean.com/training_sessions/new gives 302 to `/temp_login_redirector/...`, then 302 to https://membean.com/login."
+      }
+    ]
   },
   "10052": {
     "listing": {
@@ -7974,7 +9741,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "3.01"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "3.01"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "3.01",
+        "text": "Loaded http://agar.io/ (redirects to https://agar.io/#ffa).\n- Site: http://agar.io/ still serves the page, but the client's `secureRedirect` (in bundle_start.js) sends it to https://agar.io/ within about a second. An http-only match runs only on that throwaway load and is skipped on https (a probe script setting a data attribute at http://agar.io/* left nothing on the https page). Same in every manager.\n- Script: embeds a whole 2015 agar.io client (old `m.agar.io` server list, old WebSocket protocol, `#region`/`#helloDialog` DOM) plus bot connections. None of that exists now (`m.agar.io` does not answer). Started on the http load and did nothing visible."
+      }
+    ]
   },
   "10293": {
     "listing": {
@@ -7999,7 +9782,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.0"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-05",
+      "version": "1.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.0",
+        "text": "Match `*://agar.io/` covers https, so it runs on https://agar.io/ (hash ignored).\n- F (keypress 102) dispatched 7 synthetic W keydown/keyup pairs on document (counted with a capture listener).\n- Today's client still handles W through `window.onkeydown` (`core.eject`), installed by `window.addKeyListeners()` when a game starts. Without joining a game, I called `addKeyListeners()` and replaced `core.eject` with a counter: F gave 7 ejects.\n- Its `@require` of jquery-latest (1.11.1) replaces the page's jQuery 3.1.1 in the page world, as in any manager; the menu still loaded.\n- Not checked in a live game (no game server connection)."
+      }
+    ]
   },
   "10335": {
     "listing": {
@@ -8024,7 +9819,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "0.1"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.1",
+        "text": "Loaded http://agar.io/ (redirects to https://agar.io/#ffa).\n- Site: http://agar.io/ still serves the page, but the client's `secureRedirect` (in bundle_start.js) sends it to https://agar.io/ within about a second. An http-only match runs only on that throwaway load and is skipped on https (a probe script setting a data attribute at http://agar.io/* left nothing on the https page). Same in every manager.\n- Script: a MutationObserver waits for `http://agar.io/main_out.js` to be added, re-fetches and patches it to draw a minimap. The site no longer has `main_out.js` (404), so nothing happens. Started on the http load with no output."
+      }
+    ]
   },
   "10337": {
     "listing": {
@@ -8049,7 +9860,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "0.1"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.1",
+        "text": "Loaded http://agar.io/ (redirects to https://agar.io/#ffa).\n- Site: http://agar.io/ still serves the page, but the client's `secureRedirect` (in bundle_start.js) sends it to https://agar.io/ within about a second. An http-only match runs only on that throwaway load and is skipped on https (a probe script setting a data attribute at http://agar.io/* left nothing on the https page). Same in every manager.\n- Script: embeds a whole 2015 agar.io client (minimap, zoom, old WebSocket protocol, `#region` DOM). Today's client (`agario.core.js`, Vue UI) has none of the hooks it expects. Started on the http load with no output."
+      }
+    ]
   },
   "10360": {
     "listing": {
@@ -8074,7 +9901,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1",
+        "text": "On a watch page the script set its cookie: the page sees `VISITOR_INFO1_LIVE=oKckVSqvaGw`.\n- Script: the trick (a 2015 experiment cookie value for ad-free playback) no longer works: the page still renders `#player-ads` with a `ytd-player-legacy-desktop-watch-ads-renderer`. YouTube ignores or resets this visitor id today."
+      }
+    ]
   },
   "10362": {
     "listing": {
@@ -8099,7 +9939,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.3"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.3"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.3",
+        "text": "Loaded http://agar.io/ (redirects to https://agar.io/#ffa).\n- Site: http://agar.io/ still serves the page, but the client's `secureRedirect` (in bundle_start.js) sends it to https://agar.io/ within about a second. An http-only match runs only on that throwaway load and is skipped on https (a probe script setting a data attribute at http://agar.io/* left nothing on the https page). Same in every manager.\n- Script: on the http load it threw `setShowMass is not defined` (line 23). Today's client moved those settings to `core.setShowMass` etc.; `#region` and `#helloDialog` are gone too."
+      }
+    ]
   },
   "10395": {
     "listing": {
@@ -8124,7 +9980,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.9.1"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "1.9.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.9.1",
+        "text": "Answers specific requester HITs (task forms served on `mturkcontent.com` / S3 inside MTurk's worker pages); those only load for a signed-in worker with the task open.\n\n- `curl -sI https://www.mturkcontent.com/dynamic/hit`: 403. MTurk's worker pages (`worker.mturk.com`) all redirect to the Amazon sign-in.\n- Not run: it clicks answers in a paid task form, and the specific tasks it targets are long gone."
+      }
+    ]
   },
   "10523": {
     "listing": {
@@ -8186,7 +10055,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "V1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "V1"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "V1",
+        "text": "Matches `http://*/*` (every http page), so it also ran on the http://agar.io/ load; https://agar.io/ (where the redirect lands) is not covered.\n- Script: looks for a `//agar.io/main_out.js` script tag to re-fetch and patch. The site no longer has `main_out.js` (404), so it does nothing; other code (music from skins.agariomods.com) hangs off that patch.\n- Started with no error and no visible change."
+      }
+    ]
   },
   "10615": {
     "listing": {
@@ -8240,7 +10125,20 @@
       ],
       "date": "2026-10-01",
       "version": "1.4"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.4"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.4",
+        "text": "- On https://www.wanikani.com/kanji/%E4%B8%80 the script starts and registers its menu commands, but adds nothing: it inserts its \"Similar kanji\" section after `#information`, which today's kanji page doesn't have (its sections are Radical Combination, Meaning, Readings, Found In Vocabulary), so `#similar_kanji` is empty and no request is made.\n- Its data API, `wk-similarkanji.rhcloud.com` (OpenShift v2, shut down), gives NXDOMAIN."
+      }
+    ]
   },
   "10690": {
     "listing": {
@@ -8295,7 +10193,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.0"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.0",
+        "text": "Both sites are gone:\n- `kissanime.com` returns 403 \"The content of the page cannot be displayed\" (curl).\n- `kisscartoon.me` serves a \"Redirecting...\" page that sent the run's tab to `hppymel.com` (an ad host, which failed with ERR_SSL_PROTOCOL_ERROR). The script threw `$ is not defined` on that interstitial, which has no jQuery."
+      }
+    ]
   },
   "10815": {
     "listing": {
@@ -8451,7 +10362,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.03"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "0.03"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.03",
+        "text": "Loaded http://agar.io/ (redirects to https://agar.io/#ffa).\n- Site: http://agar.io/ still serves the page, but the client's `secureRedirect` (in bundle_start.js) sends it to https://agar.io/ within about a second. An http-only match runs only on that throwaway load and is skipped on https (a probe script setting a data attribute at http://agar.io/* left nothing on the https page). Same in every manager.\n- Script: the mechanism still works. A copy with `@match *://agar.io/*` ran on https; after calling `window.addKeyListeners()` (what a game start does) and replacing `core.eject` with a counter, pressing E gave 6 ejects. Only the http-only match breaks it."
+      }
+    ]
   },
   "10944": {
     "listing": {
@@ -8513,7 +10440,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "3.0"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "3.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "3.0",
+        "text": "Account automation (bulk-unfriends selected friends), not run. A plain load of `https://www.facebook.com/` shows the \"Log into Facebook\" form; the friends list needs an account."
+      }
+    ]
   },
   "10992": {
     "listing": {
@@ -8538,7 +10478,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "3.18"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "3.18"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "3.18",
+        "text": "- Script: `@include http://petridish.pw` has no path, so it can't match `http://petridish.pw/` (`match` says no), and the site now redirects to `https://petridish.pw/en/`, also unmatched. It never runs, in any manager.\n- Not run further. It would also fetch its bot code from a GitHub repo."
+      }
+    ]
   },
   "11057": {
     "listing": {
@@ -8603,7 +10556,24 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.0.1.20150803234200"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "0.0.1.20150803234200"
+    },
+    "tags": [
+      "http-only-match",
+      "service-dead"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.0.1.20150803234200",
+        "text": "- Script: it rewrites the download links to `www.flvcd.com/parse.php`, and `flvcd.com` / `www.flvcd.com` no longer resolve (DNS).\n- Its matched pages are all `http://` (youku, tudou, sohu), and those now 301 to https, so it never runs on today's pages (`sm-dev match` on `https://v.youku.com/v_show/...` and `https://tv.sohu.com/...`: no match). Same in every manager."
+      }
+    ]
   },
   "11244": {
     "listing": {
@@ -8691,7 +10661,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-05",
+      "version": "1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1",
+        "text": "Opened https://www.bing.com/search?q=hello+world&form=QBLH (headless). The script started at document-start and replaced the page with https://www.google.com/search?q=hello+world, keeping the query and dropping Bing's other params. Google then showed its headless /sorry page, which is Google's bot check, not the script."
+      }
+    ]
   },
   "11373": {
     "listing": {
@@ -8716,7 +10698,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.3.4e"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.3.4e"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.3.4e",
+        "text": "The old worker site at `www.mturk.com/mturk/*` was retired; none of the matched pages exist anymore, signed in or not.\n\n- `curl -sIL`: `/mturk/dashboard`, `/mturk/findhits`, `/mturk/preview?groupId=X` and `/mturk/myhits` all 302 to `worker.mturk.com/mturk/...`, which 301/302s to the new app's paths (`/dashboard`, `/projects`, `/projects/X/tasks`, `/tasks`), then to the Amazon sign-in.\n- A run of 3095 on `https://www.mturk.com/mturk/dashboard` ended on `amazon.com/ax/claim` (\"Sign in\"); SourceMonkey skipped the script there, as no `@match` covers it.\n- The new worker pages have no `/mturk/` in their paths and a different page structure, so a login would not bring the script back."
+      }
+    ]
   },
   "11379": {
     "listing": {
@@ -8834,7 +10829,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.46"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "0.46"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.46",
+        "text": "Loaded http://agar.io/ (redirects to https://agar.io/#ffa).\n- Site: http://agar.io/ still serves the page, but the client's `secureRedirect` (in bundle_start.js) sends it to https://agar.io/ within about a second. An http-only match runs only on that throwaway load and is skipped on https (a probe script setting a data attribute at http://agar.io/* left nothing on the https page). Same in every manager.\n- Script: wraps WebSocket to decode the 2015 game protocol and share positions through the author's minimap server, and reads `#region`/`#gamemode` options that no longer exist. The `@require` http://cdn.jsdelivr.net/msgpack/1.05/msgpack.js still loads (301 to https, 200)."
+      }
+    ]
   },
   "11638": {
     "listing": {
@@ -8901,7 +10912,20 @@
       ],
       "date": "2026-10-01",
       "version": "0.1"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "unsafe",
+      "date": "2026-10-05",
+      "version": "0.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.1",
+        "text": "Not run. On every http(s) page it polls for `#gkpluginsExtListReq` and passes any request object a page puts there straight to `GM_xmlhttpRequest`, writing the response (with headers) back into the page. Any site could use it to make cross-origin requests with the user's cookies and read the answers.\n- Its service is gone too: gkplugins.com gives NXDOMAIN."
+      }
+    ]
   },
   "11701": {
     "listing": {
@@ -8927,7 +10951,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.0.0"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "2.0.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2.0.0",
+        "text": "Answers specific requester HITs (task forms served on `mturkcontent.com` / S3 inside MTurk's worker pages); those only load for a signed-in worker with the task open.\n\n- `curl -sI https://www.mturkcontent.com/dynamic/hit`: 403. MTurk's worker pages (`worker.mturk.com`) all redirect to the Amazon sign-in.\n- Not run: it clicks answers in a paid task form, and the specific tasks it targets are long gone."
+      }
+    ]
   },
   "11733": {
     "listing": {
@@ -8977,7 +11014,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.4"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "0.4"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.4",
+        "text": "Every matched game page (`*.grepolis.*/game/*`) needs a logged-in game session.\n- `https://de.grepolis.com/game/index` redirects (307) to `https://de-play.grepolis.com/`, the login page (has a password field); the script doesn't match there.\n- A world host like `https://de140.grepolis.com/game/index` answers 400 without a session."
+      }
+    ]
   },
   "12056": {
     "listing": {
@@ -9068,7 +11118,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.0.1"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-05",
+      "version": "0.0.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.0.1",
+        "text": "On https://www.twitch.tv/directory the script's `<script src=\"//cdn.frankerfacez.com/script/script.min.js\">` was added and FFZ loaded: `window.ffz` is an object, `window.FrankerFaceZ` a function, `avalon.js` fetched, FFZ's console shows emote sets and badges loaded, and FFZ's top-nav button is present (`.ffz-top-nav`)."
+      }
+    ]
   },
   "12271": {
     "listing": {
@@ -9103,7 +11165,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "3.25"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-05",
+      "version": "3.25"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "3.25",
+        "text": "Opened https://www.google.com/ (headed temp browser). The script started and appended `<link type=\"image/x-icon\" rel=\"icon\" href=\"data:image/x-icon;base64,...\">` after Google's own `favicon.ico` link, so Chrome uses the old icon (the last matching link wins).\n- SourceMonkey: `sm-dev match` shows the `http*://www.google.*` and `http*://images.google.*` globs matching www.google.com, www.google.de/search and images.google.com, and the `www.google.com/maps*` exclude applying."
+      }
+    ]
   },
   "12353": {
     "listing": {
@@ -9128,7 +11202,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "OPENbeta-1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "OPENbeta-1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "OPENbeta-1",
+        "text": "Loaded http://agar.io/ (redirects to https://agar.io/#ffa); `*://agar.io/*` runs on both.\n- Script: hides `#adbg`, `.agario-promo`, `div#s300x250` and rewrites a `div.form-group div h2` title. On https: `#adbg` and the h2 do not exist; `.agario-promo` is still shown (display block, no inline style; the Vue UI renders it after the script). No title change.\n- It also adds jQuery 1.3.2 from http://ajax.googleapis.com, but calls `$` before that loads, so it uses the page's jQuery 3.1.1."
+      }
+    ]
   },
   "12499": {
     "listing": {
@@ -9276,7 +11363,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.0"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.0",
+        "text": "- Script: `@match` covers only `http://www.twitch.tv/*` and `http://player.twitch.tv/*`; Twitch now 301s http to https, so it never runs (`skipped on https://www.twitch.tv/directory`).\n- Its hooks are also gone from today's player: no `div.player[data-loading]`, `.js-quality` or `.player-livestatus__online`, and it drives a Flash backend (`div.player-video object`)."
+      }
+    ]
   },
   "12851": {
     "listing": {
@@ -9301,7 +11401,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.0.1.20151004003309"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "0.0.1.20151004003309"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.0.1.20151004003309",
+        "text": "Auto-farm bot that acts in the game for the user; not run beyond confirming the wall.\n- Its includes cover all of `*.grepolis.*/*`, but the game itself needs a login: `https://de.grepolis.com/game/index` redirects (307) to the login page `https://de-play.grepolis.com/` (password field present), and a world host (`de140.grepolis.com/game/index`) answers 400 without a session."
+      }
+    ]
   },
   "12853": {
     "listing": {
@@ -9695,7 +11808,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "3.71"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "3.71"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "3.71",
+        "text": "Loaded http://agar.io/ (redirects to https://agar.io/#ffa).\n- Site: http://agar.io/ still serves the page, but the client's `secureRedirect` (in bundle_start.js) sends it to https://agar.io/ within about a second. An http-only match runs only on that throwaway load and is skipped on https (a probe script setting a data attribute at http://agar.io/* left nothing on the https page). Same in every manager.\n- Script: on the http load it threw `window.jQuery.ajax is not a function` (line 32): the page's jQuery 3.1.1 is a build without ajax. It also needs AposLauncher's bot API and Parse.com (shut down 2017).\n- Its update check fetches GitHub (api.github.com, raw.githubusercontent.com) only."
+      }
+    ]
   },
   "13405": {
     "listing": {
@@ -9727,7 +11856,20 @@
       ],
       "date": "2026-10-01",
       "version": "2.2.1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "2.2.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2.2.1",
+        "text": "- On a watch page (`jNQXAC9IVRw`) the script started without errors, but no download button or container (`[id^=download-youtube]`: 0). `start()` returns at once because `#page-container` no longer exists; the rest targets `#watch7-*` and `ytplayer.config.args.url_encoded_fmt_stream_map`, also gone.\n- Its homepage, `www.youtubemp3script.com`, no longer resolves (NXDOMAIN).\n- Not tried further; no media downloaded."
+      }
+    ]
   },
   "13467": {
     "listing": {
@@ -9752,7 +11894,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.0.3.1"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "0.0.3.1"
+    },
+    "tags": [
+      "needs-flash"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.0.3.1",
+        "text": "- `@match //*.facebook.com/` (no scheme) matches only `https://www.facebook.com/` itself (the news feed), not `/watch/` or `/<page>/videos/<id>/`. Logged out, that URL shows the \"Log into Facebook\" form.\n- Script: it reads video URLs from `embed[flashvars]` (Flash player embeds), which Facebook no longer serves, so it would find nothing even logged in."
+      }
+    ]
   },
   "13475": {
     "listing": {
@@ -9803,7 +11961,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.6.1.4"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-05",
+      "version": "0.6.1.4"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.6.1.4",
+        "text": "Saved test page at https://example.com/pan.html with a Baidu pan link followed by `提取码: ab12` and a plain-text pan URL followed by `密码：cd34`. The script appends the codes to the links (`.../s/1abcDEFgh#ab12`) and turns the text URL into a link with its code (`.../s/1xyzUVWqr#cd34`), for a companion script to fill in on the share page. It does nothing on the share page itself, so none was loaded."
+      }
+    ]
   },
   "13713": {
     "listing": {
@@ -10209,7 +12379,20 @@
       ],
       "date": "2026-10-01",
       "version": "2.17"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "2.17"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2.17",
+        "text": "HeroesWM game pages need an account: `https://www.heroeswm.ru/home.php` redirects to `https://www.heroeswm.ru/?auth_error`. Not run (it walks the map and takes jobs for the player).\n- Script: its `@include`s are `http://` only; the site redirects http to https."
+      }
+    ]
   },
   "14044": {
     "listing": {
@@ -10363,7 +12546,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.1"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "0.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.1",
+        "text": "Imperia Online needs an account: `https://www.imperiaonline.org/imperia/game_v5/game/village.php` redirects to the sign-in front page `.../game_v6/game/frontpage.php`.\n- Script: the `@match` is `http://` and `game_v5`; the game is now https and `game_v6`, so it would not match even when signed in."
+      }
+    ]
   },
   "14289": {
     "listing": {
@@ -10388,7 +12584,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.3"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "0.3"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.3",
+        "text": "Script: matches only `http://jandan.net/*`. `http://jandan.net/` now 301s to `https://jandan.net/`, where `sm-dev match` gives no match, so the script never runs in any manager (in a live run it was skipped on the https page)."
+      }
+    ]
   },
   "14297": {
     "listing": {
@@ -10438,7 +12650,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.2"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "2.2"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2.2",
+        "text": "`vulcun.com` has no A record and `www.vulcun.com` gives NXDOMAIN (only MX records remain), so https://vulcun.com/user/lobby can't load. Not run."
+      }
+    ]
   },
   "14505": {
     "listing": {
@@ -10569,7 +12794,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1",
+        "text": "Not run: it hijacks the course video timeline on chaoxing (course-progress automation). `http://mooc1.chaoxing.com/knowledge/cards?clazzid=1` (curl) 302s to `passport2.chaoxing.com/login`, so the matched pages need an account."
+      }
+    ]
   },
   "14755": {
     "listing": {
@@ -10789,7 +13027,23 @@
       ],
       "date": "2026-10-01",
       "version": "1.9.9"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.9.9"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.9.9",
+        "text": "Loaded http://agar.io/ (redirects to https://agar.io/#ffa).\n- Site: http://agar.io/ still serves the page, but the client's `secureRedirect` (in bundle_start.js) sends it to https://agar.io/ within about a second. An http-only match runs only on that throwaway load and is skipped on https (a probe script setting a data attribute at http://agar.io/* left nothing on the https page). Same in every manager.\n- Script: its whole body loads https://raw.githubusercontent.com/kmakblob/KMaZ/master/KMaZ.js, which now returns 404."
+      }
+    ]
   },
   "14945": {
     "listing": {
@@ -10814,7 +13068,24 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.7"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "2.7"
+    },
+    "tags": [
+      "beforescriptexecute",
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2.7",
+        "text": "Loaded http://agar.io/ (redirects to https://agar.io/#ffa).\n- Site: http://agar.io/ still serves the page, but the client's `secureRedirect` (in bundle_start.js) sends it to https://agar.io/ within about a second. An http-only match runs only on that throwaway load and is skipped on https (a probe script setting a data attribute at http://agar.io/* left nothing on the https page). Same in every manager.\n- Script: it waits for the old `main_out.js` via Firefox's `beforescriptexecute` event, which Chrome never fires, and replaces it with an embedded 2015 client. The site no longer loads `main_out.js` (404); today's client is `agario.core.js` plus webpack bundles. Started on the http load with no output."
+      }
+    ]
   },
   "14954": {
     "listing": {
@@ -10839,7 +13110,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.6.1"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "2.6.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2.6.1",
+        "text": "Omegle shut down in Nov 2023. `https://www.omegle.com/` now shows an unrelated \"OMEGLE IS LAUNCHING SOON\" placeholder with no chat. `@include http://*.omegle.com/*` also no longer matches: `http://www.omegle.com/` redirects (301) to https."
+      }
+    ]
   },
   "14986": {
     "listing": {
@@ -10864,7 +13148,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.1.2"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.1.2"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.1.2",
+        "text": "Its only `@match` is `https://www.google.com/evaluation/endor/*`, an internal tool for Google search raters. `curl` shows that path now 302s to `https://www.raterhub.com/resource/legacy_context/endor/...`, then to a Google sign-in page. The tool moved to a host the script doesn't cover, and needs a rater account there."
+      }
+    ]
   },
   "15271": {
     "listing": {
@@ -10889,7 +13186,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.0.1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "2.0.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2.0.1",
+        "text": "- `https://twitter.com/NASA` redirects to `https://x.com/NASA`, where the script is skipped (`@include https://twitter.com/*` only).\n- Script: it also looks for `.ProfileTweet-actionList` and `.AdaptiveMedia-photoContainer` (2016 Twitter markup). On the x.com profile there are 0 of the former with 5 `<article>` tweets, so a host fix would not help."
+      }
+    ]
   },
   "15389": {
     "listing": {
@@ -11031,7 +13341,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.0.1"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "0.0.1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.0.1",
+        "text": "openload.co shut down in 2019: the domain still resolves but `http://` and `https://openload.co/` both time out (curl, 15s)."
+      }
+    ]
   },
   "15857": {
     "listing": {
@@ -11117,7 +13440,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "0.1"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.1",
+        "text": "Script: matches only `http://jandan.net/*/*/*/*.html`. jandan.net now 301s every http URL to https, where `sm-dev match` gives no match, so the script never runs in any manager."
+      }
+    ]
   },
   "15947": {
     "listing": {
@@ -11142,7 +13481,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "5"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-05",
+      "version": "5"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "5",
+        "text": "Saved test page at https://example.com/fab.html loading the real FuckAdBlock 3.2.1 (cdnjs) with CSS hiding its bait element, as an ad blocker would. With the script, the page's `onNotDetected` handler fires and `onDetected` does not; `window.fuckAdBlock` is the script's stub (non-writable). A `--noscript` tab reports \"detected\".\n- sm-dev: a slow `<script src>` ahead of fuckadblock.js gave the document-start script time to run first during the run."
+      }
+    ]
   },
   "16105": {
     "listing": {
@@ -11280,7 +13631,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "2"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2",
+        "text": "- Script: `@match http://agar.io/*` only. `http://agar.io/` redirects to `https://agar.io/#ffa`, where SourceMonkey skips it (`No @match or @include covers this URL`). Same in every manager.\n- A copy matched to https ran, and Q started its loop, but it fires jQuery `$.Event` triggers on `body`, which reach only jQuery handlers: a capture listener on `window` saw no native keydown for W (87) or Space (32). The game doesn't use jQuery handlers, so the macro does nothing even when it runs."
+      }
+    ]
   },
   "16299": {
     "listing": {
@@ -11396,7 +13763,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.40"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.40"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.40",
+        "text": "The script starts on `https://www.zhihu.com/explore` and `/signin` (its `@require` jQuery from `libs.baidu.com` loads; it logs \"Let's Take Over the World of 知乎 ！\"), but none of the 2016 classes it styles or moves exist on today's Zhihu: 0 matches for `.zu-main-content-inner`, `.zm-*`, `.zh-*`, `.question_link`, `.content_image` and the rest. Question pages (`/question/19550225`) answer logged-out headed and headless browsers with a JSON \"请求存在异常\" error (code 40362)."
+      }
+    ]
   },
   "16385": {
     "listing": {
@@ -11425,7 +13805,23 @@
       ],
       "date": "2026-10-01",
       "version": "0.1.2"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "sourcemonkey",
+      "date": "2026-10-05",
+      "version": "0.1.2"
+    },
+    "tags": [
+      "xhr-override-mimetype"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.1.2",
+        "text": "On the Steam workshop page of a Don't Starve mod (`?id=1608490902`, \"Simple Health Bar\") the script adds its three buttons after the Subscribe button. Its API lookup asked for `api.steampowered.com` (no `@connect`); allowed.\n- \"复制下载链接\" (copy link): alerts the mod's `cdn.steamusercontent.com` zip URL. Works.\n- \"重命名并下载\" (rename and download): asks for `cdn.steamusercontent.com`; allowed. It saved `Simple Health Bar.zip` at 180053 bytes, a corrupt zip. The file is 189884 bytes.\n- SourceMonkey: the script fetches with `overrideMimeType: 'text/plain; charset=x-user-defined'` and rebuilds bytes from `responseText` (`charCodeAt & 255`). SourceMonkey ignores `overrideMimeType` and decodes as UTF-8; the saved file equals the real bytes run through a lossy UTF-8 decode, byte for byte.\n- A 10-line probe doing the same request gave `responseText.length` 189884 under Tampermonkey (`--manager tm`) and 180053 under SourceMonkey.\n- Script: for Don't Starve Together mods (`?id=378160973`) the API now gives an empty `file_url`, so the script hides its buttons there. The tieba side (`http://tieba.baidu.com/p/*`) gets Baidu's slider captcha."
+      }
+    ]
   },
   "16403": {
     "listing": {
@@ -11475,7 +13871,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "0.1"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.1",
+        "text": "economist.com is https-only: `http://www.economist.com/` redirected to `https://www.economist.com/` and the run showed the script skipped (\"No @match or @include covers this URL\"), since its only `@include` is `http://*.economist.com/*`. So its `ec_limit=allow` cookie is never set; not checked further."
+      }
+    ]
   },
   "16466": {
     "listing": {
@@ -11684,7 +14096,23 @@
       ],
       "date": "2026-10-01",
       "version": "2.0.1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "2.0.1"
+    },
+    "tags": [
+      "ignored-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2.0.1",
+        "text": "- Script: `@match http*://agar.io` has no path, so it's dropped (also invalid in Chrome's match syntax). The remaining `@include http://*agar.io/agarplus.io` is an http page that doesn't exist: agar.io serves https only, and that path answers 403.\n- It never runs on today's site in any manager. Its selectors (`.side-container.left-side`, `h2.aTitle`) are from the 2016 client. Not run beyond `match`."
+      }
+    ]
   },
   "16877": {
     "listing": {
@@ -11709,7 +14137,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.02"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "0.02"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.02",
+        "text": "- Script: `@match http://agar.io/*` only; agar.io redirects to https, where SourceMonkey skips it. Same in every manager.\n- A copy matched to https started, and pressing Q threw `window.onkeydown is not a function` 6 times: today's agar.io client leaves `window.onkeydown` null (it uses listeners), so the macro can't work even with the match fixed."
+      }
+    ]
   },
   "16991": {
     "listing": {
@@ -11734,7 +14178,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.02"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "0.02"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.02",
+        "text": "- Script: `@match http://agar.io/*` only; agar.io redirects to https, where it's skipped (`match` confirms). Same in every manager.\n- Not run past that: it hooks `window.agar.hooks` and rewrites the 2016 `http://agar.io/main_out.js`, both gone, and it sends the game server and your position to a bot server at a raw IP (`ws://104.236.100.252:8081`)."
+      }
+    ]
   },
   "17112": {
     "listing": {
@@ -11821,7 +14281,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.01"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "0.01"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.01",
+        "text": "- Script: `@match http://agar.io/*` only; agar.io redirects to `https://agar.io/#ffa`, where it's skipped. Same in every manager.\n- Same code as script 16877 with Z and Space: it calls `window.onkeydown(...)`, which is null on today's agar.io (16877's https copy threw `window.onkeydown is not a function`)."
+      }
+    ]
   },
   "17389": {
     "listing": {
@@ -11846,7 +14322,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.4.0"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.4.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.4.0",
+        "text": "- On a watch page (`jNQXAC9IVRw`) the script started without errors, but no Download button appears (`input[name=INAU]`: 0). It attaches its button only under `#watch7-user-header`, which the current layout doesn't have.\n- Its converter, `http://www.mp3convert.me/`, now answers with a 302 to a `safebrowse.io` warning page."
+      }
+    ]
   },
   "17410": {
     "listing": {
@@ -11871,7 +14360,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.0.2"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "0.0.2"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.0.2",
+        "text": "Needs a selected chat on WhatsApp Web. A load of `https://web.whatsapp.com/` shows \"Scan to log in\" with the QR code."
+      }
+    ]
   },
   "17665": {
     "listing": {
@@ -12003,7 +14505,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "bot-blocked",
+      "date": "2026-10-05",
+      "version": "1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1",
+        "text": "Opened https://www.reddit.com/r/AskReddit/comments/1fz2l6y/ in a headed temp browser. The script started, but Reddit showed \"Prove your humanity\" with a reCAPTCHA checkbox, and a `--noscript` old.reddit.com tab redirected to `/login/?reason=lor2`.\n- Script: it only acts on `.twitter-tweet` nodes that the RES extension (Reddit Enhancement Suite) inserts in its expandos, so it also needs RES installed and an old-Reddit page with a tweet link."
+      }
+    ]
   },
   "18036": {
     "listing": {
@@ -12185,7 +14700,23 @@
       ],
       "date": "2026-10-01",
       "version": "0.0.1.20160327040752"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "0.0.1.20160327040752"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.0.1.20160327040752",
+        "text": "- Script: every `@include` and the URL regexes in its code are `http://` only. `http://item.jd.com/100012043978.html` 302s to https (where headless also got JD's \"PC频控页\" rate-limit page), and `sm-dev match` on the https URL gives no match, so it never runs in any manager.\n- Most other listed shops are gone (`www.newegg.com.cn` no answer; yixun, coo8, efeihu, ouku, redbaby long closed)."
+      }
+    ]
   },
   "18387": {
     "listing": {
@@ -12420,7 +14951,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.1.18"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-05",
+      "version": "0.1.18"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.1.18",
+        "text": "On `http://slither.io/` (the site still serves http) it started with no errors (`@run-at document-body`).\n- The login panel gained the mod's keys help, `MOD: SLITio by szymy | v0.1.18` and a server list; the HUD divs (`#position-hud`, `#fps-hud`, ...) were added.\n- Key handler works: with `gsc` set to 2, `z` reset it to 0.9.\n- Site: in later temp browsers `http://slither.io/` redirected to `http://slither.com/io` (same game), which `@match http://slither.io/*` doesn't cover. The first load stayed on slither.io."
+      }
+    ]
   },
   "18822": {
     "listing": {
@@ -12496,7 +15039,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.01"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-05",
+      "version": "1.01"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.01",
+        "text": "On `http://pan.baidu.com/` the script started and the tab moved to `https://pan.baidu.com/`. A `--noscript` tab on the same URL stayed on `http://pan.baidu.com/` (the site still serves http there without redirecting), so the redirect is the script's. Whether https still helps with large downloads wasn't checked (needs login)."
+      }
+    ]
   },
   "18991": {
     "listing": {
@@ -12691,7 +15246,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.6"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.6"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.6",
+        "text": "On `https://diep.io/` it ran at document-start: `window.stop()`, cleared the page, then fetched `http://diep.io/d.js` and `http://diep.io/` (both 200) and `document.write`s a rebuilt page.\n- The page stayed blank: empty title, no scripts, no `#textInput`.\n- `d.js` no longer exists: diep.io answers it with its HTML index page, so the inlined \"script\" is HTML.\n- `document.write` after `window.stop()` is a no-op in today's Chrome (an aborted parser makes `document.open` do nothing): even a plain `document.open(); document.write('<title>y</title>')` from the page world left the page empty there, while the same on example.com worked."
+      }
+    ]
   },
   "19806": {
     "listing": {
@@ -12716,7 +15284,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "3.0"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-05",
+      "version": "3.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "3.0",
+        "text": "On `http://slither.io/` it started with no errors: its overlay lines (`PRESS (1) TO TOGGLE: Auto Bot: ON`, ...) and `window.isBotRunning = true`.\n- Key 1 toggles the bot: the overlay went ON to OFF and back, `isBotRunning` true/false/true (with focus off the nick box, which it ignores keys in by design). Not played.\n- Site: later loads of `http://slither.io/` redirected to `http://slither.com/io`, which `@match http://slither.io/` doesn't cover; the toggle check used a copy that also matched that URL.\n- With script 18696 in the same tab, pressing 1 closed the tab and dropped the browser once; alone it worked. Not investigated."
+      }
+    ]
   },
   "19993": {
     "listing": {
@@ -12814,7 +15394,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "0.1"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.1",
+        "text": "- Script: `@match http://gota.io/web/*` only. `http://gota.io/web/` redirects (301) to `https://gota.io/web/`, where SourceMonkey skips both gota scripts. Same in every manager.\n- The headless browser also got Cloudflare's \"Just a moment...\" page there. Its second half calls `window.onkeydown(...)` as in 16877."
+      }
+    ]
   },
   "20077": {
     "listing": {
@@ -12890,7 +15486,24 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "2"
+    },
+    "tags": [
+      "http-only-match",
+      "mutation-events"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2",
+        "text": "- Script: `@match http://gota.io/web/` only. `http://gota.io/web/` redirects (301) to `https://gota.io/web/`, where it's skipped. Same in every manager.\n- It also relies on `DOMNodeInserted` on `#chat-body` (mutation events, removed from Chrome) and the 2016 client's `player.sendPacket`. The headless browser got Cloudflare's \"Just a moment...\" page."
+      }
+    ]
   },
   "20366": {
     "listing": {
@@ -13176,7 +15789,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.3"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.3"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.3",
+        "text": "On `https://www.youtube.com/@HatFilms/videos` (one of its two listed channels), 30 video tiles rendered and none was changed (no `[data-parsed]` elements; titles like \"What surgery would you pay for? (Worms W.M.D.)\" kept as is). None of its pre-2017 selectors (`.yt-lockup-content`, `.pl-video`, `.video-list-item`, `.section-list`, `.branded-page-v2-body`, ...) exist, and it listens for SPF's `spfdone`, which YouTube no longer fires."
+      }
+    ]
   },
   "20719": {
     "listing": {
@@ -13320,7 +15946,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.1"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "0.1"
+    },
+    "tags": [
+      "trusted-types"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.1",
+        "text": "- On a watch page the script threw in its `@require` jQuery (`code.jquery.com/jquery-latest.js`, frozen at 1.11.x): `This document requires 'TrustedHTML' assignment` at jQuery's startup support tests, since `@grant none` runs it in the page world, where YouTube enforces Trusted Types.\n- Even without that, `button.ytp-mute-button` matches nothing: `.ytp-mute-button` is no longer a `<button>` (the button is `.ytp-volume-icon` inside it). The volume control stayed visible."
+      }
+    ]
   },
   "20823": {
     "listing": {
@@ -13380,7 +16022,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "2.2"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "2.2"
+    },
+    "tags": [
+      "service-dead"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "2.2",
+        "text": "- Script: its whole body adds `<script src=\"//greasyfork.org/scripts/20966-slitheriomod/code/slitheriomod.js\">`. That script was deleted: the URL redirects to `update.greasyfork.org/...` which answers 410 Gone.\n- A copy matched to `http://slither.com/io` (where slither.io now redirects) ran and added the tag; nothing else happened."
+      }
+    ]
   },
   "20990": {
     "listing": {
@@ -13408,7 +16066,23 @@
       ],
       "date": "2026-10-01",
       "version": "0.1"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-05",
+      "version": "0.1"
+    },
+    "tags": [
+      "service-dead"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.1",
+        "text": "Chat bot that answers messages for the user, not run beyond one load. `https://web.whatsapp.com/` shows \"Scan to log in\" with the QR code.\n- Script: its commands call `http://api.icndb.com` and `http://api.apixu.com` (with a hard-coded key), both long gone."
+      }
+    ]
   },
   "21015": {
     "listing": {
@@ -13436,7 +16110,23 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "0.1.2"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "0.1.2"
+    },
+    "tags": [
+      "http-only-match"
+    ],
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "0.1.2",
+        "text": "- Script: matches only `http://` weibo hosts. `http://weibo.com/` 301s to https (then `weibo.com/newlogin`), and `http://s.weibo.com/weibo?q=test` ends at `passport.weibo.com/sso/signin`. `sm-dev match` on `https://weibo.com/` and `https://s.weibo.com/...` gives no match, so it never runs in any manager.\n- Logged-out visitors hit the login wall anyway."
+      }
+    ]
   },
   "21170": {
     "listing": {
@@ -13631,7 +16321,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.03"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "site-gone",
+      "date": "2026-10-05",
+      "version": "1.03"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.03",
+        "text": "`http://vertix.io/` answers 302 to `https://krunker.io` (a Namecheap URL forward): Vertix is gone."
+      }
+    ]
   },
   "21708": {
     "listing": {
@@ -13681,7 +16384,19 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1"
-    }
+    },
+    "test": {
+      "status": "pass",
+      "date": "2026-10-05",
+      "version": "1"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1",
+        "text": "Saved test page at https://example.com/hls.html with `<video src=\".../x36xhzz.m3u8\">` (Mux test stream): the script logs \"enabling M3U8 HLS shim\", swaps the src to a `blob:` MediaSource URL, and the video loads (readyState 4, 1280 wide, duration 634s). The `@require` (jsdelivr `hls.js/latest`) still serves hls.js 0.7.6.\n- On the script's own example page (walterebert.com/playground/video/hls/) it attaches to all 4 videos but they stay at readyState 0: the `.ts` segments have no CORS header, so hls.js's XHRs are blocked. A `--noscript` tab plays all 4 natively (Chrome now plays HLS itself, readyState 4). Same in any manager (`@grant none`, page XHR).\n- sm-dev: on a tiny page the script's `DOMContentLoaded` listener came too late (document-start runs late during a run); delaying DCL with a slow `<script src>` fixed it."
+      }
+    ]
   },
   "21866": {
     "listing": {
@@ -13706,7 +16421,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.0"
-    }
+    },
+    "test": {
+      "status": "n/a",
+      "reason": "other",
+      "date": "2026-10-05",
+      "version": "1.0"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.0",
+        "text": "- A client for a feeder bot server the user runs themselves: it connects socket.io to `ws://127.0.0.1:3000` and sends the game server and the snake's position there. No such server here, so its feature can't be judged.\n- With a copy also matching `http://slither.com/io` (where slither.io now redirects), it started and added its panel (`#mode` shows LOCAL). The socket polling to 127.0.0.1 was blocked by Chrome's private network rules from the insecure http page.\n- It also replaces `window.onkeydown` / `onkeyup` (game uses `document.onkeydown`, so not a conflict)."
+      }
+    ]
   },
   "21980": {
     "listing": {
@@ -13781,7 +16509,20 @@
       "status": "ok",
       "date": "2026-10-01",
       "version": "1.6"
-    }
+    },
+    "test": {
+      "status": "fail",
+      "blame": "script",
+      "date": "2026-10-05",
+      "version": "1.6"
+    },
+    "notes": [
+      {
+        "date": "2026-10-05",
+        "version": "1.6",
+        "text": "On a watch page (`jNQXAC9IVRw`), the URL stayed without `user=` after the page settled. The script reads the channel link from `[id=\"watch7-user-header\"] a[href^=\"/user/\"]` (or `/channel/`), and `#watch7-user-header` no longer exists, so it returns early. Judged only by its own effect (the URL parameter), not with uBlock Origin."
+      }
+    ]
   },
   "22329": {
     "listing": {
@@ -17460,8 +20201,8 @@
     },
     "test": {
       "status": "fail",
-      "blame": "unknown",
-      "date": "2026-10-03",
+      "blame": "sourcemonkey",
+      "date": "2026-10-06",
       "version": "0.3.2"
     },
     "tags": [
@@ -17472,6 +20213,11 @@
         "date": "2026-10-03",
         "version": "0.3.2",
         "text": "On en.wikipedia.org/wiki/Bubble, clicking the heading added no floating heart: the script assigns `window.onload`, but `@run-at document_start` (underscore) is unsupported, so it ran at document-idle after `load` and the handler never fired (`html.onclick` stayed null).\n- A copy with `@run-at document-start` worked: a click added a `<b>❤</b>` to the body that floated up and faded.\n- Blame unknown until checked in Tampermonkey: it depends on what Tampermonkey does with the misspelled `@run-at`, and its idle scripts also see `readyState=complete`."
+      },
+      {
+        "date": "2026-10-06",
+        "version": "0.3.2",
+        "text": "Re-checked under Tampermonkey: its `window.onload` handler runs there and clicks make hearts, so the failure is SourceMonkey's later `document-idle` timing.\n- Same page (en.wikipedia.org/wiki/Bubble), `--temp-browser` runs of each manager.\n- Tampermonkey: `<html>`'s `onclick` was set on 3 of 3 reloads; two clicks on the heading added two `<b>❤</b>` to the body. Not checked whether Tampermonkey reads `document_start` as start or idle; either way it starts before `load`.\n- SourceMonkey: `onclick` stayed null on 3 of 3 reloads and the same clicks added nothing."
       }
     ]
   },
@@ -17966,8 +20712,8 @@
     },
     "test": {
       "status": "fail",
-      "blame": "script",
-      "date": "2026-10-01",
+      "blame": "sourcemonkey",
+      "date": "2026-10-06",
       "version": "0.7.02"
     },
     "tags": [
@@ -17983,6 +20729,11 @@
         "date": "2026-10-01",
         "version": "0.7.02",
         "text": "Re-tested after #32 (document-idle runs after `window.stop()`; sm-dev start gates wait for `<html>`/`<body>`): still fails, nothing changed. sm-dev (headless), logged out, on `www.pinterest.com/pin/31806741114445347/`.\n- Script: it starts and logs its init and prefs, but `window.onload = ...` (line 486) is set after `load` has fired (`readyState` \"complete\"), so `#myBtn` and `#pp_divFullSize` never appear.\n- #32 only changes pages that call `window.stop()`, which this one doesn't. Kept `idle-after-load` and blame `script`."
+      },
+      {
+        "date": "2026-10-06",
+        "version": "0.7.02",
+        "text": "Re-checked under Tampermonkey: its `window.onload` handler runs there on some loads, so SourceMonkey's later `document-idle` timing is what stops it here. Blame changed from script to sourcemonkey.\n- Same pin page, logged out, `--temp-browser` runs of each manager.\n- Tampermonkey: `#myBtn` (\"Full Size\") and `#pp_divFullSize` were added on 4 of 10 loads. On this page `load` and Tampermonkey's idle start race, so the script is flaky there too.\n- SourceMonkey: neither element on 9 of 9 reloads (only the run's first load had them).\n- Logged out, the full-size image URL stays empty in either manager (as noted before)."
       }
     ]
   },
@@ -26074,19 +28825,20 @@
       "version": "3.1.9"
     },
     "test": {
-      "status": "fail",
-      "blame": "script",
-      "date": "2026-10-02",
+      "status": "pass",
+      "date": "2026-10-06",
       "version": "3.1.9"
     },
-    "tags": [
-      "idle-after-load"
-    ],
     "notes": [
       {
         "date": "2026-10-02",
         "version": "3.1.9",
         "text": "sm-dev (headless), logged out, on a live channel (twitch.tv/hjune).\n- Works: jQuery `@require` loads, the Enhance button is added to the top nav and opens its settings panel (14 toggles), its CSS rules (25) are added, and the chat observer attaches (`.enhanceAppended`).\n- Fails: \"Always source quality\" (on by default), plus hide-tags and hide-subscribe-text, are set up in `$(window).on(\"load\")` (line 181). The script runs at the default document-idle, after `load` has fired, so that handler never runs: `document.visibilityState` and `document.hidden` stay unpatched.\n- Firing a synthetic `load` from the page made the script lock `visibilityState` to `visible` and `hidden` to false.\n- Tampermonkey and Violentmonkey also run document-idle at `readyState=complete` (cross-manager `headers-run-at` test), so this is the script's bug, as for Pinterest Plus."
+      },
+      {
+        "date": "2026-10-06",
+        "version": "3.1.9",
+        "text": "Re-checked under Tampermonkey and SourceMonkey on twitch.tv/hjune: the `load` handler runs in both, so \"Always source quality\" now works. Untagged `idle-after-load`.\n- SourceMonkey: on this page `load` comes late, so the 200ms-after-`DOMContentLoaded` idle fallback starts the script first. A probe script saw `readyState` \"interactive\" at start, then `load fired`, on 4 of 4 loads.\n- Both managers, 4 of 4 loads each: `document.hidden` and `document.visibilityState` became own non-writable properties (false, \"visible\"); a `--noscript` tab had neither. The Enhance nav button was there too."
       }
     ]
   },
@@ -29134,8 +31886,8 @@
     },
     "test": {
       "status": "fail",
-      "blame": "unknown",
-      "date": "2026-10-01",
+      "blame": "sourcemonkey",
+      "date": "2026-10-06",
       "version": "4.1"
     },
     "tags": [
@@ -29156,6 +31908,11 @@
         "date": "2026-10-01",
         "version": "4.1",
         "text": "Re-tested after #32 (document-idle runs after `window.stop()`; sm-dev start gates wait for `<html>`/`<body>`): still fails, nothing changed. sm-dev (headless) on https://en.wikipedia.org/wiki/Pop-up_ad.\n- The script starts in MAIN world at `readyState` \"complete\" and registers its menu, but `window.addEventListener('load', ...)` (line 434) never fires, so `window.open` stays native. A page-world `window.open(\"https://example.org/\")` opened a real tab (T2).\n- #32 only changes pages that call `window.stop()`. Kept `idle-after-load` and blame `unknown`: whether the `load` listener fires in Tampermonkey or Violentmonkey is still untested."
+      },
+      {
+        "date": "2026-10-06",
+        "version": "4.1",
+        "text": "Re-checked under Tampermonkey: its `load` listener runs there and popups are blocked, so the failure is SourceMonkey's later `document-idle` timing.\n- Same page (en.wikipedia.org/wiki/Pop-up_ad), `--temp-browser` runs of each manager.\n- Tampermonkey: `window.open` was replaced on 3 of 3 reloads. A page-world `window.open(\"https://example.org/\")` logged \"[UPB] Popup blocked: https://example.org/\", `upbCounter` 1, no tab opened.\n- SourceMonkey: `window.open` stayed native on 3 of 3 reloads; the same call opened a real tab (T2), `upbCounter` 0."
       }
     ]
   },
@@ -46473,8 +49230,8 @@
     },
     "test": {
       "status": "fail",
-      "blame": "unknown",
-      "date": "2026-10-03",
+      "blame": "sourcemonkey",
+      "date": "2026-10-06",
       "version": "2.3"
     },
     "tags": [
@@ -46485,6 +49242,11 @@
         "date": "2026-10-03",
         "version": "2.3",
         "text": "On www.lemonde.fr/en/ (cookie banner with Accept/Refuse), the script started at document-idle with `readyState` already `complete`, so its `window.addEventListener('load', refuse)` never fired: no console output, no notification, banner untouched.\n- A copy with `@run-at document-end` worked: it logged its button lists, clicked the refuse button (\"cookie refused !\" toast) and the page then said cookies were refused.\n- Blame unknown until checked in Tampermonkey, whose idle scripts also see `readyState=complete`."
+      },
+      {
+        "date": "2026-10-06",
+        "version": "2.3",
+        "text": "Re-checked under Tampermonkey: its `load` listener runs there and the banner is refused, so the failure is SourceMonkey's later `document-idle` timing.\n- Same page (www.lemonde.fr/en/), `--temp-browser` runs of each manager, cookies and storage cleared before each of 3 reloads.\n- Tampermonkey: the script logged its button lists (`[Array(1), Array(1)]`) and the cookie banner was gone on 3 of 3 loads.\n- SourceMonkey: no output and the banner's Accept button still showing on 3 of 3 loads (only the run's first load ran the listener)."
       }
     ]
   },
@@ -58172,8 +60934,8 @@
     },
     "test": {
       "status": "fail",
-      "blame": "unknown",
-      "date": "2026-10-03",
+      "blame": "sourcemonkey",
+      "date": "2026-10-06",
       "version": "1.0.3"
     },
     "tags": [
@@ -58184,6 +60946,11 @@
         "date": "2026-10-03",
         "version": "1.0.3",
         "text": "On a workshop item (https://steamcommunity.com/sharedfiles/filedetails/?id=3808510434) no buttons appear, though `.workshopItemDescription` and `.game_area_purchase_margin` are there.\n\n- Script: it adds its buttons in a `window` `load` handler. SourceMonkey's `document-idle` runs after `load`, so the handler never fires.\n- A copy with `@run-at document-end` adds Repository, Download .MD and Download .BBCode under the description, and its Markdown conversion returns the description text (\"Ambulances, fire engines, ... # What it d...\").\n- Blame unknown until checked in Tampermonkey, whose idle scripts also see `readyState=complete`."
+      },
+      {
+        "date": "2026-10-06",
+        "version": "1.0.3",
+        "text": "Re-checked under Tampermonkey: its `load` handler runs there and the script works, so the failure is SourceMonkey's later `document-idle` timing.\n- Same workshop item (?id=3808510434), `--temp-browser` runs of each manager.\n- Tampermonkey: Repository, Download .MD and Download .BBCode buttons present on 5 of 5 loads. Clicking Download .MD saved WorkshopDownload.md (1836 bytes) starting \"Ambulances, fire engines, police cars ...\".\n- SourceMonkey: no buttons on 5 of 5 reloads. The run's very first load did show them, likely because sm-dev's start gate held the script back until before `load`."
       }
     ]
   },

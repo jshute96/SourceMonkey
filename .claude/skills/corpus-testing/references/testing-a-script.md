@@ -112,18 +112,26 @@ A `fail` needs `--blame`:
   Violentmonkey would work. Show the evidence: a copy changed to avoid the
   gap (`@inject-into page`, say) that then works, or the
   source of the manager that differs.
+  - A script that sets itself up in a `window` load handler is an
+    example. SourceMonkey runs `document-idle` after `load`, so the
+    handler never fires. Tampermonkey runs it just before `load`
+    (`readyState` already `complete`), so the handler does fire (tag
+    `idle-after-load`; TODO.md has the gap).
 - `script`: broken or out of date against the current site, or broken in
   every manager. A `@grant none` (page-world) script blocked by the site's
   Trusted Types is the script's fault: every manager runs it there.
-- `unknown`: can't tell. Say what's missing. For example, SourceMonkey runs
-  `document-idle` after the `load` event, and our cross-manager test finds
-  Tampermonkey's idle scripts also see `readyState=complete`, so a script
-  that waits for `load` is `unknown` until checked in Tampermonkey.
+- `unknown`: can't tell. Say what's missing.
 
-Check SourceMonkey's intended behavior in `docs/` before blaming it; some
-differences are deliberate and documented (the idle
-timing, `@run-at context-menu` unsupported). A bare `@connect example.com`
-does cover its subdomains, as in Tampermonkey.
+Blame follows the outcome, not the intent:
+
+- A limitation SourceMonkey documents or chose on purpose (`@run-at
+  context-menu` unsupported, say) is still a `sourcemonkey` failure when
+  another manager would run the script. Say in the note that it's a known
+  gap, and link the doc or TODO.md item, so nobody files it again.
+- It's `script` only when we've decided the script is what's wrong.
+- Read `docs/` to find the cause, not to excuse it. Some behavior is easy
+  to misread: a bare `@connect example.com` does cover its subdomains, as
+  in Tampermonkey, so a failed subdomain request has another cause.
 
 ## Recording
 
