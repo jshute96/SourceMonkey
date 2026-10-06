@@ -34,6 +34,15 @@ interface TmScript {
 
 const OPTIONS_PAGE = 'options.html';
 
+// How long one listing of every script, code included, answers again.
+// A command asks for the list, then the texts, then the count, so this
+// saves reading them all three times. Any call that changes something
+// drops it.
+const LIST_REUSE_MS = 1000;
+
+// The calls that only read, so keep the listing.
+const READS = new Set(['loadTree', 'determineScriptsToRun']);
+
 // The comment keeping a header line sm-dev rewrote, as it was, by its
 // line's index: `// sm-dev was: 5 // @require lib.js`. Written before
 // sm-dev's mark (script-mark.ts), at the end, so no line moves.
@@ -47,6 +56,7 @@ export class Tampermonkey implements ExternalManager {
   private readonly ids = new TmIds();
   // How far each of the run's scripts' lines are moved, by uuid (see `noteRequires`).
   private readonly layouts = new Map<string, { offset: number; requires: { url: string; lines: number }[] }>();
+  private listed?: { at: number; scripts: Promise<TmScript[]> };
 
   private constructor(private readonly page: HiddenPage, readonly extensionId: string, readonly version: string) {}
 
@@ -76,6 +86,7 @@ export class Tampermonkey implements ExternalManager {
    * one without an answer fails naming the call and TM's version.
    */
   async call<R>(method: string, fields: Record<string, unknown> = {}): Promise<R> {
+    if (!READS.has(method)) this.listed = undefined;
     let answer: R | undefined;
     try {
       answer = await this.page.evaluate<R | undefined>(`chrome.runtime.sendMessage(${JSON.stringify({ method, ...fields })})`);
@@ -91,7 +102,18 @@ export class Tampermonkey implements ExternalManager {
   }
 
   // Every installed script, with its text as TM keeps it.
-  private async list(): Promise<TmScript[]> {
+  private list(): Promise<TmScript[]> {
+    if (this.listed && Date.now() - this.listed.at < LIST_REUSE_MS) return this.listed.scripts;
+    const scripts = this.listAnew();
+    this.listed = { at: Date.now(), scripts };
+    // A failed listing isn't kept for the next.
+    scripts.catch(() => {
+      if (this.listed?.scripts === scripts) this.listed = undefined;
+    });
+    return scripts;
+  }
+
+  private async listAnew(): Promise<TmScript[]> {
     const tree = await this.call<{ items?: unknown[] }>('loadTree', { referrer: 'options.scripts.userscripts', complete: true });
     if (!Array.isArray(tree.items)) throw this.changed('loadTree', 'no script list');
     // The rest are the dashboard's own entries.

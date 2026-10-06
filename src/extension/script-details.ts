@@ -38,7 +38,8 @@ import type { ConnectGrants } from './connect-grants.js';
 import { makeCopyButton } from './copy-button.js';
 import { standInTag, tagLocalFile, type LocalFileTag } from './file-changes.js';
 import { rowTooltip, type DetailsMode } from './details-tooltips.js';
-import { matchTargetInfo, sameDirLinkUrl } from '../match-targets.js';
+import { matchTargetInfo, sameDirLinkUrl, type MatchTarget } from '../match-targets.js';
+import { connectLinkUrl } from '../script-links.js';
 import { renderPatternIconInto } from './site-icon.js';
 import type { StoredCollection } from './script-store.js';
 import type { StoredRequire, StoredResource } from '../external-files.js';
@@ -360,31 +361,42 @@ function addText(dl: HTMLDListElement, label: string, value: string | undefined)
   appendRow(dl, label, document.createTextNode(value));
 }
 
-// `@connect` row: hosts and the wildcard/`self` forms, in the same
-// face as the Match patterns above it — it was the panel's one
-// monospace row, and its bullets sat a different size from its
-// neighbours'. Rendered as plain text, deliberately unlinked: a
-// `@connect` value is a matching rule (`self`, `*`, `*.example.com`),
-// not an address, and linkifying it would invite a click that means
-// nothing.
+// `@connect` row: hosts and the wildcard/`self` forms, rendered like
+// the Match patterns above it (always bullets, each with its site's
+// icon and a link to it; see `connectValueNode`).
 //
-// The user's prompt answers follow, each with a Reset button: a grant
-// made in a hurry has to be as easy to find and undo as the header
-// lines are.
+// The user's prompt answers follow in their own list, each with a
+// Reset button: a grant made in a hurry has to be as easy to find and
+// undo as the header lines are.
 function addConnect(dl: HTMLDListElement, values: string[], answers?: ConnectAnswersRow): void {
   // An answer reads `host: Allowed [Reset]`; "All sites" is bold too,
   // since it is a category rather than a host.
   type Answer = { host: string | null; allowed: boolean; reset: () => void };
-  type Item = { text: string } | Answer;
-  const items: Item[] = values.map((v) => ({ text: v }));
+  const items: Answer[] = [];
   if (answers) {
     if (answers.grants.allHosts) items.push({ host: null, allowed: true, reset: () => answers.revoke(null) });
     for (const host of answers.grants.hosts) items.push({ host, allowed: true, reset: () => answers.revoke(host) });
     for (const host of answers.grants.denied ?? []) items.push({ host, allowed: false, reset: () => answers.forgetDenied(host) });
   }
-  if (items.length === 0) return;
-  appendRow(dl, 'Network access', listNode(items, (item) => {
-    if ('text' in item) return document.createTextNode(item.text);
+  if (values.length === 0 && items.length === 0) return;
+  // Two lists, each under a heading and present only when non-empty:
+  // what the header declares, then what the user answered at the
+  // prompt (which only asks about hosts `@connect` doesn't cover).
+  const cell = document.createElement('div');
+  const addGroup = <T>(heading: string, list: readonly T[], make: (v: T) => Node): void => {
+    if (list.length === 0) return;
+    const h = document.createElement('div');
+    h.className = 'list-heading';
+    h.textContent = heading;
+    cell.append(h, bulletList(list, make));
+  };
+  addGroup('Declared in @connect:', values, (v) => {
+    if (v.trim() !== '*') return connectValueNode(v);
+    // Worded like the "All sites" prompt answer below, rather than a
+    // bare `*` beside a globe.
+    return allSitesNode();
+  });
+  addGroup('Undeclared in @connect:', items, (item) => {
     const span = document.createElement('span');
     span.className = 'connect-answer';
     // One element for the label and its colon: the span is a flex row,
@@ -392,11 +404,11 @@ function addConnect(dl: HTMLDListElement, values: string[], answers?: ConnectAns
     // the colon.
     const label = document.createElement('span');
     if (item.host === null) {
-      const all = document.createElement('b');
-      all.textContent = 'All sites';
-      label.append(all, ':');
+      label.append(allSitesNode(), ':');
     } else {
-      label.textContent = `${item.host}:`;
+      // A denied host gets no favicon fetch: opening this page must not
+      // contact a site the user refused.
+      label.append(connectValueNode(item.host, item.allowed), ':');
     }
     span.append(label);
     const verdict = document.createElement('b');
@@ -412,7 +424,17 @@ function addConnect(dl: HTMLDListElement, values: string[], answers?: ConnectAns
     });
     span.append(verdict, btn);
     return span;
-  }));
+  });
+  appendRow(dl, 'Network access', cell);
+}
+
+// The bold "All sites" both lists use: for `@connect *`, and for the
+// "Allow all sites" prompt answer.
+function allSitesNode(): HTMLElement {
+  const all = document.createElement('b');
+  all.textContent = 'All sites';
+  all.title = 'The script can access any site and act as you.';
+  return all;
 }
 
 function addLink(dl: HTMLDListElement, label: string, value: string | undefined): void {
@@ -611,24 +633,59 @@ function bulletList<T>(values: readonly T[], make: (v: T) => Node): HTMLUListEle
 
 function patternValueNode(pattern: string, scriptUrl: string | undefined): Node {
   const target = matchTargetInfo(pattern);
-  const linkUrl = target?.linkUrl ?? sameDirLinkUrl(pattern, scriptUrl);
+  return siteCell(pattern, target, target?.linkUrl ?? sameDirLinkUrl(pattern, scriptUrl));
+}
+
+// A `@connect` value (or a prompt-answer host) in the same icon + link
+// cell as a Match pattern. `connectLinkUrl` picks the site: a host
+// links to its https root, `*.host` to the bare host, and `self` / `*`
+// name no single site, so they stay plain text beside the globe.
+// `fetchIcon` false keeps the globe (still linked) instead of looking
+// up the site's favicon.
+function connectValueNode(value: string, fetchIcon = true): Node {
+  const linkUrl = connectLinkUrl(value);
+  const target = linkUrl && fetchIcon ? { origin: new URL(linkUrl).origin, linkUrl } : null;
+  return siteCell(value, target, linkUrl, connectNoLinkTitle(value));
+}
+
+// The globe's tooltip for `self`, which names no single site to link
+// to. The icon's generic "Unable to extract link" would read as a
+// fault for it, when it is just a broader rule. Any other unlinked
+// value (`foo*.com`) is read as a literal host that matches nothing, so
+// it keeps the generic tooltip. (`*` shows as "All sites", with no
+// icon; see `addConnect`.)
+function connectNoLinkTitle(value: string): string | undefined {
+  const v = value.trim().toLowerCase();
+  if (v === 'self') return 'The sites in this script\'s @match and @include rules, and the page it is running on';
+  return undefined;
+}
+
+// One value with its site icon: a Match pattern or a `@connect` value.
+// `noLinkTitle` replaces the icon's default tooltip when there's no
+// link.
+function siteCell(
+  value: string,
+  target: MatchTarget | null,
+  linkUrl: string | null,
+  noLinkTitle?: string,
+): HTMLElement {
   let text: Node;
   if (!linkUrl) {
-    // Non-linkable pattern (`<all_urls>`, regex literal, etc.); render
-    // as plain text but still allow slash-aware wrapping in case the
-    // pattern is long.
+    // Non-linkable value (`<all_urls>`, regex literal, `*`, etc.);
+    // render as plain text but still allow slash-aware wrapping in case
+    // it is long.
     const span = document.createElement('span');
-    appendWithSlashBreaks(span, pattern);
+    appendWithSlashBreaks(span, value);
     text = span;
   } else {
-    text = openInNewTabAnchor(linkUrl, pattern);
+    text = openInNewTabAnchor(linkUrl, value);
   }
-  // Icon first, then the pattern; both open the same URL.
+  // Icon first, then the value; both open the same URL.
   const cell = document.createElement('span');
   cell.className = 'pattern-cell';
   const slot = document.createElement('span');
   slot.className = 'site-icon pattern-icon';
-  renderPatternIconInto(slot, target, linkUrl);
+  renderPatternIconInto(slot, target, linkUrl, noLinkTitle);
   cell.append(slot, text);
   return cell;
 }

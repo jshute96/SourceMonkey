@@ -338,13 +338,24 @@ Both name the script the same way, pivoted for where they're read.
      - `Network access` (`@connect`) — directly under the match
        targets, because it's the same question asked outward: those
        rows say which pages the script reads, this one says where it
-       may send what it read. Same face as the rows around it, and
-       deliberately unlinked — a `@connect` value is a matching rule
-       (`self`, `*`, `*.example.com`), not an address.
-       - After the `@connect` values, the user's answers to the
-         connection prompt (installed scripts only), each as
+       may send what it read.
+       - Rendered like Match: always bullets, each value with its
+         site's icon and a link to it (`connectLinkUrl`, see Link
+         rendering).
+       - `*` shows as **All sites**, like the prompt answer, with no
+         icon.
+       - `self` and other values that name no single site stay plain
+         text beside the globe. For `self` its tooltip says what it
+         covers.
+       - Split into two lists, each under a heading shown only when
+         its list is non-empty: `Declared in @connect:` for the header
+         values, `Undeclared in @connect:` for the prompt answers.
+       - The prompt answers (installed scripts only) read
          `<host>: **Allowed**` or `<host>: **Denied**`, with "Allow all sites"
          shown as `**All sites**: **Allowed**`.
+       - Each answer's host is linked like a header value. An allowed
+         host gets its favicon; a denied one keeps the globe, so
+         opening the page never contacts a site the user refused.
        - Each answer has a Reset button that clears it, so the next
          request asks again. The row repaints from the storage change
          (`connectGrants:<id>` in local storage).

@@ -441,6 +441,8 @@ export interface CollectionRefreshData {
   unchanged: number;
   /** Its scripts that are gone, as they were. */
   removed: Script[];
+  /** Under another manager: its scripts that couldn't be refreshed, each with `refreshError`. */
+  failed?: Script[];
 }
 
 /** `script enable`, `disable`, `move` and `uninstall`: the script after (or as it was, `removed`). */

@@ -300,7 +300,7 @@ added to or removed.
 | `collection <C> drop` | Remove a collection and its scripts | yes | refused |
 | `collection <C> rename <name>` | Rename a collection | yes | refused |
 | `collection <C> enable` / `collection <C> disable` | Turn a whole collection on or off | yes | refused |
-| `collection <C> refresh` | Re-read a collection from its location (rescan a directory, re-fetch a manifest, re-fetch each container script) | yes | checks each script for updates |
+| `collection <C> refresh` | Re-read a collection from its location (rescan a directory, re-fetch a manifest, re-fetch each container script) | yes | re-reads each script with a source, listing any that fail |
 
 - The location takes the same shapes as the Add dialog:
   - a local directory path or `file://` URL: a directory collection;

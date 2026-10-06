@@ -44,7 +44,7 @@ One-line descriptions of every source file, grouped by directory.
 | `scripts/open-test-browser.sh` | Launch Chromium with a named manager's persistent profile (TM or VM, installed manually) + its CDP port for that Playwright project |
 | `scripts/sync-manager-scripts.mjs` | Standalone CLI that connects to the running TM or VM browser via CDP and installs/updates every `*.user.js` under `tests/examples/` |
 | `scripts/update-public-suffixes.mjs` | Regenerates `src/public-suffixes.ts` from the ICANN section of the Public Suffix List (run by hand, output committed) |
-| `scripts/clean-stale-test-profiles.mjs` | Sweep, run before the e2e suite, of the `/tmp` browser profiles left by e2e runs and temp browsers that died before closing |
+| `scripts/clean-stale-test-profiles.mjs` | Sweep, run before the e2e suites, of `/tmp` profiles and data dirs left by test runs and temp browsers that died early |
 | `scripts/e2e-manager-preflight.mjs` | Gate before `test:e2e:tm` / `:vm`: probes the manager's CDP port, pre-grants TM's `downloads`, opens or asks to close the browser |
 | `scripts/inspect-tm-dashboard.mjs` | Diagnostic: dumps every visible row on the TM dashboard with cell classes — use when listInstalled selectors stop working |
 | `scripts/inspect-tm-install.mjs` | Diagnostic: drives one TM install and dumps the confirmation-page buttons — use when the Install-button selector stops working |
@@ -495,7 +495,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/examples/unsafe-window/` | `unsafeWindow` example: reading/calling/writing page globals, the isolated-world variant where it can't work, and the ungranted-reference variant |
 | `tests/examples/use-strict/` | Top-level `'use strict'` example: strict mode in both worlds, and which file's directive counts with a `@require` |
 | `tests/examples/require-scope/` | `@require` scope example: a shared lib's top-level class/const/function reaching both injection worlds |
-| `tests/examples/xmlhttp-denied/` | Negative cases for `@connect`: no `@connect` and a mismatched host get the prompt and are denied; an explicit allow goes |
+| `tests/examples/xmlhttp-connect/` | `@connect` example: scripts declaring none, one site, and `*`, with buttons to try each site and prompt answer |
 | `tests/bad-examples/` | Deliberately broken `*.user.js` files (plus the `@require` libraries some of them need, and the ones that merely warn) for the SM-only spec; outside `tests/examples/` so the TM loader doesn't see them |
 | `tests/e2e/bad-scripts.spec.ts` | SM-only e2e: each bad script gets the expected status, error location, and byte-for-byte viewer render |
 | `tests/e2e/diagnostic-links.spec.ts` | Clicking a diagnostic's location jumps to the file and line, in the installed viewer and the install preview |

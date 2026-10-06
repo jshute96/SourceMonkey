@@ -4,7 +4,7 @@
 // without one. See docs/sm-dev-violentmonkey.md.
 
 import { execFile } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -93,6 +93,14 @@ test('the collection and script commands, with no run', async () => {
   expect(replace.stderr).toBe(`ERROR: ${id}: Hello is installed in Violentmonkey in this browser, so this would replace it for real. Use --force to continue.\n`);
   expect((await vm('script', 'install', 'hello.user.js', '--force')).stdout).toBe(`Replaced the script with the same name and namespace: ${id}: Hello in C0: Violentmonkey\n`);
 
+  // A script whose file is gone is listed as failed, and the rest go on.
+  writeFileSync(path.join(dir, 'gone.user.js'), script('Gone', 'https://example.com/*', "console.log('gone');"));
+  const gone = /E\d+/.exec((await vm('script', 'install', 'gone.user.js')).stdout)![0];
+  rmSync(path.join(dir, 'gone.user.js'));
+  const refresh = await vm('collection', 'C0', 'refresh');
+  expect(refresh.stdout).toMatch(new RegExp(`^Refreshed C0: Violentmonkey: 0 updated, 1 unchanged, 1 failed\n  Failed to refresh ${gone}: Gone: .+\n$`));
+  expect((await vm('script', gone, 'uninstall', '--force')).code).toBe(0);
+
   const unforced = await vm('script', id, 'uninstall');
   expect(unforced.stderr).toBe(`ERROR: ${id}: Hello is installed in Violentmonkey in this browser, so this would remove it for real. Use --force to continue.\n`);
   expect((await vm('script', id, 'uninstall', '--force')).stdout).toBe(`Uninstalled ${id}: Hello from C0: Violentmonkey\n`);
@@ -115,6 +123,22 @@ test('a run installs its scripts, traces their logs, and removes them when it en
   expect(second.stdout).toContain(`[sm-dev] hello.user.js could not be loaded into Violentmonkey: Violentmonkey has ${id}: Hello with the same name and namespace, loaded by run DV1. Two runs can't both load one script.\n`);
   const over = await vm('script', 'install', 'hello.user.js');
   expect(over.stdout + over.stderr).toContain('is a script of run DV1, which only that run changes');
+
+  // Turned off in Violentmonkey, one by one or all at once, it isn't expected.
+  const notExpected = `Loaded scripts:\n  Not expected on tab T1:\n  * 1: Hello (hello.user.js), ${id} in Violentmonkey\n`;
+  expect((await vm('script', id, 'disable')).code).toBe(0);
+  expect((await cli('--run', 'DV1', 'scripts')).stdout).toBe(notExpected);
+  expect((await vm('script', id, 'enable')).code).toBe(0);
+  expect((await vm('collection', 'C0', 'disable')).code).toBe(0);
+  expect((await cli('--run', 'DV1', 'scripts')).stdout).toBe(notExpected);
+  expect((await vm('collection', 'C0', 'enable')).code).toBe(0);
+
+  // Another file of the run's own with the same name and namespace
+  // would replace it, so it's refused.
+  mkdirSync(path.join(dir, 'copy'));
+  writeFileSync(path.join(dir, 'copy', 'hello.user.js'), script('Hello', 'https://example.com/*', "console.log('copy');"));
+  const copy = await cli('--run', 'DV1', 'load', 'copy/hello.user.js');
+  expect(copy.stdout).toContain(`could not be loaded into Violentmonkey: This run loaded ${path.join(dir, 'hello.user.js')} as ${id}: Hello, with the same name and namespace. Violentmonkey keeps one script by a name and namespace, so the run can't load both. Give one of them another @name or @namespace.\n`);
 
   writeFileSync(path.join(dir, 'hello.user.js'), script('Hello', 'https://example.com/*', "console.log('updated', libValue);", '// @require     lib.js\n'));
   const update = await cli('--run', 'DV1', 'update');

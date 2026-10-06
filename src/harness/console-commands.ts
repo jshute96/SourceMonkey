@@ -140,6 +140,12 @@ export interface ConsoleContext {
    * active on a tab is predicted from its rules.
    */
   predicted?: boolean;
+  /**
+   * Under another manager: which of the run's scripts are off there, by
+   * the manager's id, all of them while its switch is off. Read again
+   * (`refresh`) before each command that shows what a tab runs.
+   */
+  predictedOff?: { refresh(): Promise<void>; has(extensionId: string | undefined): boolean };
   /** One of `others` picked for `get` and `set` (`scripts E1`), in place of `current`. */
   currentOther?: OtherScript;
   /**
@@ -465,6 +471,10 @@ export const MISTAKE_PREFIX = '[sm-dev] ERROR: ';
  */
 export const inCommand = new AsyncLocalStorage<{ inspects: boolean }>();
 
+// The commands that say which scripts a tab runs, or act on the ones
+// it does (`save` lists them in the saved page, `values T1` reads them).
+const SHOWS_ACTIVITY = new Set(['scripts', 'script', 'status', 'tabs', 'logs', 'save', 'values']);
+
 /**
  * Run one typed line. Returns once its effect has been applied, so an
  * agent driving this over a pipe can send the next line knowing the
@@ -495,6 +505,9 @@ export async function runConsoleCommand(
     ctx.out(`[sm-dev] ERROR: ${parsed.error}`);
     return false;
   }
+  // What the manager has turned off, for the commands that show what
+  // the tabs are expected to run.
+  if (ctx.predictedOff && SHOWS_ACTIVITY.has(command)) await ctx.predictedOff.refresh();
   // The command's own --json or --nojson over the sender's global one,
   // and its own layout over the client's. Its help is text either way.
   const ownJson = parsed.flags['--json'];
@@ -1494,7 +1507,8 @@ function activeOn(ctx: ConsoleContext, tab: ControlledTab, scriptId: string | un
   if (tab.noScript) return false;
   if (ctx.predicted) {
     const script = ctx.scripts.find((s) => s.id === scriptId);
-    return script !== undefined && explainMatch(script.matching, tab.page.url()).matches;
+    if (script === undefined || ctx.predictedOff?.has(ctx.extensionIdOf?.(script))) return false;
+    return explainMatch(script.matching, tab.page.url()).matches;
   }
   return scriptId !== undefined && ctx.host.isRunning(tab.link, scriptId);
 }

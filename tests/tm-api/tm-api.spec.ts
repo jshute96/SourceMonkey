@@ -26,6 +26,9 @@ test('Tampermonkey answers every call sm-dev makes', async () => {
   const version = fetchedVersion('tampermonkey');
   if (version === null) throw new Error('No Tampermonkey is fetched. Fetch it with sm-dev --manager tm manager fetch, then run this again.');
   const dir = mkdtempSync(path.join(os.tmpdir(), 'sm-dev-tm-api-'));
+  // Its scripts' numbers kept apart from the person's own.
+  const idsWas = process.env.SM_DEV_TM_IDS;
+  process.env.SM_DEV_TM_IDS = path.join(dir, 'tm-ids.json');
   const tmDir = fetchedDir('tampermonkey');
   // Extensions need Chrome's new headless mode (see src/harness/extension-launch.ts).
   const browser = await chromium.launchPersistentContext(path.join(dir, 'profile'), {
@@ -147,6 +150,8 @@ test('Tampermonkey answers every call sm-dev makes', async () => {
   } finally {
     await tm?.close().catch(() => undefined);
     await browser.close();
+    if (idsWas === undefined) delete process.env.SM_DEV_TM_IDS;
+    else process.env.SM_DEV_TM_IDS = idsWas;
     rmSync(dir, { recursive: true, force: true });
   }
   expect(failures, `Tampermonkey ${version} failed these of sm-dev's calls`).toEqual([]);

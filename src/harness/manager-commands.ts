@@ -462,10 +462,13 @@ async function collectionVerb(ctx: ManagerContext, verb: string, subject: string
           updated: result.updated.map((s) => scriptJson(s, result.collection, view)),
           unchanged: result.unchanged,
           removed: result.removed.map((s) => scriptJson(s, result.collection, view)),
+          ...(result.failed ? { failed: result.failed.map((s) => scriptJson(s, result.collection, view)) } : {}),
         } satisfies J.CollectionRefreshData));
         return true;
       }
-      const notes = [`${result.updated.length} updated`, `${result.unchanged} unchanged`, ...(result.removed.length > 0 ? [`${result.removed.length} removed`] : [])];
+      const failed = result.failed ?? [];
+      const notes = [`${result.updated.length} updated`, `${result.unchanged} unchanged`, ...(result.removed.length > 0 ? [`${result.removed.length} removed`] : []),
+        ...(failed.length > 0 ? [`${failed.length} failed`] : [])];
       ctx.out(`Refreshed ${collectionShown(result.collection)}: ${notes.join(', ')}`);
       if (result.collection.error) ctx.out(`  Failed to load: ${result.collection.error}`);
       for (const s of result.updated) {
@@ -474,6 +477,7 @@ async function collectionVerb(ctx: ManagerContext, verb: string, subject: string
         if (s.refreshError) ctx.out(`      Its last refresh failed: ${s.refreshError}`);
       }
       for (const s of result.removed) ctx.out(`  Removed ${scriptShown(s, view)}`);
+      for (const s of failed) ctx.out(`  Failed to refresh ${scriptShown(s, view)}: ${s.refreshError ?? ''}`);
       return true;
     }
   }

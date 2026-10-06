@@ -39,12 +39,11 @@ const FIXED: Readonly<Record<string, string>> = {
   Match: "Pages the script runs on, from its @match rules",
   Include: "Pages the script runs on, from its @include rules",
   Exclude: "Pages the script is blocked from, from its @exclude rules",
-  // Spell out the "as you" part — the grant is closer to "may act as
+  // Spell out the "as you" part: the grant is closer to "may act as
   // you there" than to "may fetch a URL".
   'Network access':
-    'Hosts the script may contact with GM_xmlhttpRequest, from its @connect rules.\n'
-    + 'Those requests carry your cookies, so the script can read these '
-    + 'sites while signed in as you.',
+    'Other sites the script may contact.\n'
+    + 'Warning: The requests carry your cookies, so the script can act as you on these sites.',
 
   'Local overrides':
     '@require / @resource files being read from your disk '

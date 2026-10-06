@@ -46,6 +46,10 @@ This doc covers only where TM differs.
   as its `autoReload` setting would. It also keeps the answer to the
   result, rather than the whole script list the dashboard redraws
   from.
+- One listing of every script, code included, is reused for up to one
+  second, so a command that reads the list, the texts and the count
+  reads TM once.
+  Any call that changes something drops it.
 
 ## Saving without a prompt
 
@@ -64,6 +68,8 @@ This doc covers only where TM differs.
     browser.
   - A number stays with its uuid for 7 days after sm-dev last saw it,
     as SM keeps its numbers after a removal.
+  - `SM_DEV_TM_IDS` moves the file, as the tests do, so their scripts'
+    numbers stay out of the person's own.
 - Otherwise, the same as under VM: run numbers, `C0`, names.
 
 ## Where scripts come from

@@ -1207,6 +1207,7 @@ interface CollectionRefreshData {
   updated: Script[];     // added, or loaded different text
   unchanged: number;
   removed: Script[];     // gone, as they were
+  failed?: Script[];     // under TM or VM: couldn't be refreshed, each with refreshError
 }
 ```
 

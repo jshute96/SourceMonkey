@@ -104,7 +104,8 @@ Worker side: `connect-prompt.ts`. Window: `connect-prompt.html` and
   - a warning when a kept denial blocks a request, once per site for
     each page the script runs on (keyed by the page's document), so a
     retrying script doesn't fill the log.
-- The script's page lists the answers under Network access, each with
+- The script's page lists the answers under Network access (as
+  `Undeclared in @connect:`), each with
   a Reset button that clears it (see
   [script-viewer.md](script-viewer.md)).
 - sm-dev reports each prompt and answers it with `connect` (see
