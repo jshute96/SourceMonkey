@@ -645,6 +645,21 @@ test('start --from-saved opens T1 on the saved page, and --offline blocks the re
   expect(lines.some((l) => /Opening .*chrome\.html as .*\/target\.html in T1/.test(l))).toBe(true);
 });
 
+test('a saved page that times out on the live site\'s files suggests --offline', async ({ fixtureServer, scriptsDir }) => {
+  const base = fixtureServer.baseUrl;
+  const url = `${base}/target.html`;
+  const a = scriptsDir.write({ relativePath: 'a.user.js', meta: { name: 'A', match: ['*://*/target.html'] }, body: '' });
+  // Its script is a live-site file that answers too late.
+  const file = path.join(scriptsDir.path, 'slow.html');
+  writeFileSync(file, `<!DOCTYPE html>\n<!-- saved from url=(${String(url.length).padStart(4, '0')})${url} -->\n<html><head><script src="${base}/__slow/x.js?ms=3000"></script></head><body></body></html>`);
+  const lines = await driveCli([a, `${base}/target.html`], [
+    ['Started as run', `open --from-saved '${file}' --timeout-seconds 0.5`],
+    ['--from-saved --offline to block', 'exit'],
+  ]);
+  expect(lines).toContain('[sm-dev] Navigation failed: The page did not finish loading within 0.5s. '
+    + 'The saved page still loads its images, scripts and styles from the live site. Open it with --from-saved --offline to block those.');
+});
+
 test('--from-saved lasts for its URL only, --offline lets links out, and a missing file is said', async ({ fixtureServer, scriptsDir }) => {
   const base = fixtureServer.baseUrl;
   const url = `${base}/target.html`;

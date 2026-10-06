@@ -43,7 +43,7 @@ import { runLogLabel } from './run-log.js';
 import {
   DEFAULT_LOG_SOURCES, isoTime, linesLost, logsLines, logsUpTo, inSources, noLogLines, nowMicros, parseLogSources, parsePosition, parseTail, streamText, textMatcher, type LogRecord, type RunLog,
 } from './run-logs.js';
-import { loadPage, seconds, settleTabs, timeoutFlagMs, waitFor } from './wait.js';
+import { loadPage, PageNotLoaded, seconds, settleTabs, timeoutFlagMs, waitFor } from './wait.js';
 import { userscriptLabel, type SavedPageHeader } from './save-html.js';
 import {
   comparableUrl, openingSavedLine, pagesToOpen, routeSavedPage, savedPageServe,
@@ -1526,12 +1526,31 @@ export function reloadable(tabs: ControlledTab[], out: (line: string) => void): 
  * scripts never reported (said already), so nothing waits on it more.
  */
 export function reloadTab(tab: ControlledTab, host: HarnessHost, out: (line: string) => void, timeoutMs?: number): Promise<boolean> {
-  return loadInTab(tab, host, () => loadPage(tab.page, (o) => tab.page.reload(o), timeoutMs), `[sm-dev] ${tabName(tab)} could not be reloaded`, out);
+  const saved = showingSaved(tab);
+  const load = (): Promise<void> => loadPage(tab.page, (o) => tab.page.reload(o), timeoutMs);
+  return loadInTab(tab, host, () => withOfflineHint(tab, saved, load), `[sm-dev] ${tabName(tab)} could not be reloaded`, out);
 }
 
 /** Navigate one tab to `url`, as `reloadTab` reloads it. */
 export function gotoInTab(tab: ControlledTab, host: HarnessHost, url: string, out: (line: string) => void, timeoutMs?: number): Promise<boolean> {
-  return loadInTab(tab, host, () => loadPage(tab.page, (o) => tab.page.goto(url, o), timeoutMs), '[sm-dev] Navigation failed', out);
+  const saved = tab.saved !== undefined && comparableUrl(url) === comparableUrl(tab.saved.url);
+  const load = (): Promise<void> => loadPage(tab.page, (o) => tab.page.goto(url, o), timeoutMs);
+  return loadInTab(tab, host, () => withOfflineHint(tab, saved, load), '[sm-dev] Navigation failed', out);
+}
+
+// A saved page without --offline still loads its images, scripts and
+// styles from the live site, and one that never answers holds up its load
+// (as a site that needs a login does). So a load of one that timed
+// out says how to stop that.
+async function withOfflineHint(tab: ControlledTab, saved: boolean, load: () => Promise<void>): Promise<void> {
+  try {
+    await load();
+  } catch (err) {
+    if (err instanceof PageNotLoaded && saved && !tab.saved?.offline) {
+      throw new PageNotLoaded(`${err.message}. The saved page still loads its images, scripts and styles from the live site. Open it with --from-saved --offline to block those.`);
+    }
+    throw err;
+  }
 }
 
 // A backstop for a script that never reports, not a guess at when the

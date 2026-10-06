@@ -13,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { explainMatch, prepareScript, withDefaultScheme } from '../../../lib/harness/prepare.js';
+import { explainMatch, prepareScript, scriptRoots, withDefaultScheme } from '../../../lib/harness/prepare.js';
 import { NO_NAME } from '../../../dist/extension/script-store.js';
 
 const HEADER = `// ==UserScript==
@@ -110,6 +110,48 @@ test('prepareScript: a GitHub @require reads the local lib/ copy under the repo 
     assert.equal(p.requires.length, 1);
     assert.equal(p.requires[0].localUrl, pathToFileURL(path.join(r.root, 'lib/helper.js')).toString());
     assert.match(p.script.requires[0].source, /function helper\(\)/);
+  } finally {
+    await r.cleanup();
+  }
+});
+
+test('prepareScript: a script outside the given root uses its own collection, and the given root is a local root', async () => {
+  // Two sibling repos: `public` (the root sm-dev or a fixture was
+  // given) and `other`, a collection of its own with a manifest.
+  const r = await repo();
+  try {
+    await mkdir(path.join(r.root, 'public', 'lib'), { recursive: true });
+    await mkdir(path.join(r.root, 'other', 'lib'), { recursive: true });
+    await mkdir(path.join(r.root, 'other', 'sites', 'example.com'), { recursive: true });
+    await r.write('other/script_manifest.json', '{"scripts": []}\n');
+    await r.write('other/lib/own.js', 'const OWN = 1;\n');
+    await r.write('public/lib/shared.js', 'const SHARED = 1;\n');
+    const file = await r.write('other/sites/example.com/a.user.js',
+      HEADER.replace('// ==/UserScript==',
+        '// @require      https://example.org/repo/lib/own.js\n'
+        + '// @require      https://raw.githubusercontent.com/me/public/main/lib/shared.js\n// ==/UserScript==')
+      + 'OWN + SHARED;\n');
+    const publicRoot = path.join(r.root, 'public');
+    assert.deepEqual(scriptRoots(file, publicRoot), { collectionRoot: path.join(r.root, 'other'), localRoots: [publicRoot] });
+    const p = await prepareScript({ file, collectionRoot: publicRoot });
+    assert.equal(p.status, 'ok', p.diagnostic);
+    assert.equal(p.script.relativePath, 'sites/example.com/a.user.js');
+    assert.deepEqual(p.requires.map((q) => q.localUrl), [
+      pathToFileURL(path.join(r.root, 'other/lib/own.js')).toString(),
+      pathToFileURL(path.join(r.root, 'public/lib/shared.js')).toString(),
+    ]);
+  } finally {
+    await r.cleanup();
+  }
+});
+
+test('scriptRoots: a script under the given root, or under no manifest, keeps the given roots', async () => {
+  const r = await repo();
+  try {
+    const inside = await r.write('sites/example.com/a.user.js', HEADER);
+    assert.deepEqual(scriptRoots(inside, r.root, ['/x']), { collectionRoot: r.root, localRoots: ['/x'] });
+    // Outside `lib`, with no script_manifest.json above it.
+    assert.deepEqual(scriptRoots(inside, path.join(r.root, 'lib')), { collectionRoot: path.join(r.root, 'lib'), localRoots: [] });
   } finally {
     await r.cleanup();
   }

@@ -792,7 +792,15 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         title: 'Search paths',
         options: [
-          { term: '--root DIR', about: ['The repo root, searched for local copies of @require URLs.', '(Default: the current directory)'] },
+          {
+            term: '--root DIR',
+            about: [
+              'The repo root, searched for local copies of @require URLs.',
+              '(Default: the current directory)',
+              'A script outside this repo uses its own collection\'s root, the nearest',
+              'directory above it with a script_manifest.json.',
+            ],
+          },
           { term: '--local DIR', about: 'Additional directory to search. Can repeat.' },
         ],
       },

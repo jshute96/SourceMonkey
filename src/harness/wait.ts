@@ -170,6 +170,9 @@ export function timeoutFlagMs(flags: Record<string, string | true>, out: (line: 
 // How often a load looks for a page that stopped itself.
 const STOPPED_POLL_MS = 100;
 
+/** A navigation whose page didn't finish loading in time. */
+export class PageNotLoaded extends Error {}
+
 /**
  * Runs a navigation (`page.goto`, `page.reload`) until the new page
  * has loaded. A page that stops its own load with `window.stop()`
@@ -201,7 +204,7 @@ export async function loadPage(
     return false;
   })();
   try {
-    if (!await Promise.race([load, stopped])) throw new Error(`The page did not finish loading within ${seconds(timeoutMs)}`);
+    if (!await Promise.race([load, stopped])) throw new PageNotLoaded(`The page did not finish loading within ${seconds(timeoutMs)}`);
   } finally {
     ended = true;
     load.catch(() => undefined);

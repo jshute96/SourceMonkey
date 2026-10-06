@@ -1013,6 +1013,10 @@ The options:
 - `--root DIR` names the repo root, searched for local copies of
   `@require` URLs the way the extension searches a collection's
   directory. Defaults to the current directory.
+  - A script outside it uses the nearest directory above it with a
+    `script_manifest.json` instead, its collection's root. `--root`
+    then joins the `--local` directories. So a sibling repo's script
+    needs no `--root`.
 - `--local DIR` adds another directory to that search; repeatable.
   - A run keeps the `--root` and `--local` it started with. A line that
     sends a command to a run it didn't start refuses them.
@@ -1553,6 +1557,8 @@ given as a saved page, one per tab: `open page.html --from-saved`,
 - `--from-saved` with no `.html` file is an error.
 - Its network requests (images, styles, fetches) go to the live site.
   `--offline` blocks them instead.
+  - One that never answers (a site that needs a login) can keep the
+    page from loading. The timeout then suggests `--offline`.
 - The file is only known by its URL: a page whose own JavaScript
   changes it (`history.pushState`) sends its requests live from then
   on, even with `--offline`.
@@ -1952,6 +1958,8 @@ test('adds the button to the toolbar', async ({ page, loadUserscript, gm, report
   - `collectionRoot` and `localRoots` set the `@require` lookups
     (default: the config's root). Files read from disk are pushed with
     the script.
+    - A script outside `collectionRoot` uses its own collection's root,
+      as `sm-dev`'s `--root` does.
 
 `gm`:
 
