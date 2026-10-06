@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 // A directory of the tests' own, so real runs never see these records.
-const RUNS_DIR = mkdtempSync(path.join(os.tmpdir(), 'sm-dev-runs-test-'));
+const RUNS_DIR = mkdtempSync(path.join(os.tmpdir(), 'sm-test-runs-'));
 process.env.SM_DEV_RUNS_DIR = RUNS_DIR;
 after(() => rmSync(RUNS_DIR, { recursive: true, force: true }));
 

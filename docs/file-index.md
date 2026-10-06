@@ -44,7 +44,7 @@ One-line descriptions of every source file, grouped by directory.
 | `scripts/open-test-browser.sh` | Launch Chromium with a named manager's persistent profile (TM or VM, installed manually) + its CDP port for that Playwright project |
 | `scripts/sync-manager-scripts.mjs` | Standalone CLI that connects to the running TM or VM browser via CDP and installs/updates every `*.user.js` under `tests/examples/` |
 | `scripts/update-public-suffixes.mjs` | Regenerates `src/public-suffixes.ts` from the ICANN section of the Public Suffix List (run by hand, output committed) |
-| `scripts/clean-stale-test-profiles.mjs` | Sweep, run before the e2e suite, of the `/tmp` browser profiles left by e2e runs and temp browsers that died before closing |
+| `scripts/clean-stale-test-profiles.mjs` | Sweep, run before the e2e suites, of `/tmp` profiles and data dirs left by test runs and temp browsers that died early |
 | `scripts/e2e-manager-preflight.mjs` | Gate before `test:e2e:tm` / `:vm`: probes the manager's CDP port, pre-grants TM's `downloads`, opens or asks to close the browser |
 | `scripts/inspect-tm-dashboard.mjs` | Diagnostic: dumps every visible row on the TM dashboard with cell classes — use when listInstalled selectors stop working |
 | `scripts/inspect-tm-install.mjs` | Diagnostic: drives one TM install and dumps the confirmation-page buttons — use when the Install-button selector stops working |

@@ -1,4 +1,4 @@
-// Remove temp dirs left behind by e2e runs that didn't shut down cleanly.
+// Remove temp dirs left behind by test runs that didn't shut down cleanly.
 //
 // The fixtures remove their own `mkdtemp` dirs on teardown, but a run
 // that is killed — or whose browser segfaults, which this suite still
@@ -14,11 +14,16 @@ import path from 'node:path';
 // Chromium profiles, checked for liveness before removal: the launcher's
 // (src/harness/extension-launch.ts, which an sm-dev run's temp browser
 // shares, kept while its browser is live) and the older e2e name. The
-// data prefixes are plain dirs (ScriptsDir and its `sm-parent-`
-// variants) with no process attached, where age alone is a sufficient
-// signal.
+// data prefixes are plain dirs with no process attached, where age alone
+// is a sufficient signal:
+// - ScriptsDir and its `sm-parent-` variants.
+// - The harness tests' runs dirs (`SM_DEV_RUNS_DIR`). Not under
+//   `sm-dev-runs-`, which the real `sm-dev-runs-<user>` would match.
+// - browser-launch.spec.ts's dirs. Its config dirs hold an
+//   --open-browser profile one level down, which `liveNestedProfile`
+//   checks, since a killed test leaves that browser running.
 const PROFILE_PREFIXES = ['sm-dev-extension-', 'sourcemonkey-test-'];
-const DATA_PREFIXES = ['sourcemonkey-scripts-', 'sm-parent-'];
+const DATA_PREFIXES = ['sourcemonkey-scripts-', 'sm-parent-', 'sm-test-runs-', 'sm-dev-launch-'];
 
 // Long enough that a dir belonging to a run starting right now in
 // another checkout is never a candidate, short enough to keep /tmp from
@@ -49,6 +54,18 @@ function isLiveProfile(dir) {
   }
 }
 
+// Is a Chromium still using an --open-browser profile in this config dir
+// (`<dir>/sm-dev/browser-profile-<port>`)?
+function liveNestedProfile(dir) {
+  let names;
+  try {
+    names = fs.readdirSync(path.join(dir, 'sm-dev'));
+  } catch {
+    return false;
+  }
+  return names.some((n) => n.startsWith('browser-profile-') && isLiveProfile(path.join(dir, 'sm-dev', n)));
+}
+
 function sweep() {
   const tmp = os.tmpdir();
   const now = Date.now();
@@ -69,6 +86,7 @@ function sweep() {
         continue;
       }
       if (isProfile && isLiveProfile(dir)) continue;
+      if (name.startsWith('sm-dev-launch-') && liveNestedProfile(dir)) continue;
       if (now - stat.mtimeMs < MAX_AGE_MS) continue;
       fs.rmSync(dir, { recursive: true, force: true });
       removed++;

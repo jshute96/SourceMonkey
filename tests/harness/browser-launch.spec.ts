@@ -30,6 +30,10 @@ test('--open-browser starts a lasting browser once, on a profile of its port', a
   const runs = mkdtempSync(path.join(os.tmpdir(), 'sm-dev-launch-runs-'));
   const env = {
     ...process.env, XDG_CONFIG_HOME: config, SM_DEV_RUNS_DIR: runs, SM_DEV_LOGS_DIR: runs,
+    // On Linux, Chrome puts a profile's disk cache in $XDG_CACHE_HOME at
+    // its path under $XDG_CONFIG_HOME, so this would otherwise leave a
+    // ~/.cache/sm-dev/browser-profile-<port> behind for every run.
+    XDG_CACHE_HOME: path.join(config, 'cache'),
     // With SourceMonkey, for the run below, which needs it.
     SM_DEV_BROWSER_BINARY: chromium.executablePath(), SM_DEV_BROWSER_ARGS: ['--headless=new', ...extensionArgs()].join(' '),
   };

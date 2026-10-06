@@ -227,7 +227,7 @@ test('--from-saved needs .html files it can read that name their URLs, and --url
 
 // An empty runs directory of its own, so runs active on this machine
 // don't change the answers.
-const RUNS_DIR = mkdtempSync(path.join(os.tmpdir(), 'sm-dev-runs-test-'));
+const RUNS_DIR = mkdtempSync(path.join(os.tmpdir(), 'sm-test-runs-'));
 after(() => rmSync(RUNS_DIR, { recursive: true, force: true }));
 
 function cli(...args) {
