@@ -1969,6 +1969,8 @@ test('adds the button to the toolbar', async ({ page, loadUserscript, gm, report
 - Side effects: `openedTabs()`, `downloads()`, `requests()`,
   `notifications()`, `clickNotification(requestId)`,
   `closeNotification(requestId)`.
+  - SourceMonkey reports each one a moment after the script's call, so
+    check them with `expect.poll`, not once.
 - Connection prompts: `connectPrompts()`, and
   `answerConnectPrompt(promptId, choice)` with `once`, `cancel`,
   `allow`, `deny` or `allow-all`. A request to a host the script's `@connect` lines don't cover

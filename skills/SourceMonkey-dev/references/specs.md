@@ -31,6 +31,9 @@ test('adds the button', async ({ page, loadUserscript, gm, reports }) => {
   `await gm.interceptRequests(fn)`, or `await gm.failHosts('api.x.com')`
   for a 503 to exercise a fallback. Say at the top of a spec that depends on
   a live service.
+- Check the script's side effects (`gm.openedTabs()`, `downloads()`,
+  `requests()`, `notifications()`) with `expect.poll`: they arrive a
+  moment after the call.
 - A request to a host the script's `@connect` lines don't cover waits on
   SourceMonkey's prompt: answer it with
   `gm.answerConnectPrompt(gm.connectPrompts()[0].promptId, 'allow')`.
