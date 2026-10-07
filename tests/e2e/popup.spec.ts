@@ -207,8 +207,15 @@ test.describe('toolbar popup', () => {
     // The collection's menu turns it back on.
     await head.locator('button.kebab').click();
     await popup.getByRole('menuitem', { name: 'Enable collection' }).click();
-    await expect(popup.locator('section[data-section="disabled"] .row', { hasText: 'Gamma' }).locator('.pill')).toHaveText('Reload to run');
+    const pill = popup.locator('section[data-section="disabled"] .row', { hasText: 'Gamma' }).locator('.pill');
+    await expect(pill).toHaveText('Reload to run');
     await expect(head.locator('.collection-off')).toHaveCount(0);
+
+    // Clicking Reload to run reloads the page, so Gamma runs.
+    await expect(pill).toHaveAttribute('title', /\nClick to reload the page\.$/);
+    await sm.syncNow();
+    await pill.click();
+    await expect(pill).toHaveText('Running');
     await popup.close();
     await page.close();
   });
@@ -376,15 +383,16 @@ test.describe('toolbar popup', () => {
     await page.close();
   });
 
-  test('the icon\'s right-click menu has the one item, naming the double click', async ({ getServiceWorker }) => {
+  test('the icon\'s right-click menu has its items', async ({ getServiceWorker }) => {
     const sw = await getServiceWorker();
     // No API reads a menu back; updating an id that doesn't exist fails.
-    const error = await sw.evaluate(() => new Promise<string | null>((resolve) => {
-      chrome.contextMenus.update('sm-open-collections', { title: 'Open Collections page (double-click)' }, () => {
-        resolve(chrome.runtime.lastError?.message ?? null);
-      });
-    }));
-    expect(error).toBeNull();
+    const errors = await sw.evaluate(() => Promise.all([
+      ['sm-open-collections', 'Open Collections page (double-click)'],
+      ['sm-reload-no-scripts', 'Reload page with no userscripts'],
+    ].map(([id, title]) => new Promise<string | null>((resolve) => {
+      chrome.contextMenus.update(id!, { title }, () => resolve(chrome.runtime.lastError?.message ?? null));
+    }))));
+    expect(errors).toEqual([null, null]);
   });
 
   test('a double click on the icon opens the collections page, and takes the popup back', async ({

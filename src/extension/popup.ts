@@ -24,6 +24,7 @@ import {
   POPUP_SET_ENABLED_MESSAGE,
   POPUP_STATUS_LABELS,
   POPUP_VIEW_MESSAGE,
+  RELOAD_NO_SCRIPTS_LABEL,
   type PopupChangedMessage,
   type PopupClosingMessage,
   type PopupCommandRequest,
@@ -82,7 +83,7 @@ pageMenuBtn.addEventListener('click', () => {
     // through it, as for the selective reloads, and redraws.
     { label: 'Reload page', run: () => reloadPlain(), hidden: tabId === null },
     {
-      label: 'Reload page with no userscripts',
+      label: RELOAD_NO_SCRIPTS_LABEL,
       run: () => reloadTab({ kind: 'none' }),
       // Nothing to keep out on a page no script matches.
       hidden: !view?.perScriptReload || (view.enabled.length === 0 && view.disabled.length === 0),
@@ -362,7 +363,17 @@ function scriptRow(row: PopupRow, group: PopupGroup): HTMLElement {
   name.addEventListener('click', (ev) => openPage(ev, viewerUrl(row.id)));
 
   const main = el('div', { class: 'row-main' }, box, name);
-  if (row.status) {
+  if (row.status === 'PENDING') {
+    // Reload to run: a click does just that, as the banner's Reload does.
+    const pill = el('button', {
+      type: 'button',
+      class: `pill ${PILL_CLASSES[row.status]}`,
+      title: row.tooltip ?? '',
+      'data-status': row.status,
+    }, POPUP_STATUS_LABELS[row.status]);
+    pill.addEventListener('click', () => quietly(reloadPlain()));
+    main.append(pill);
+  } else if (row.status) {
     const pill = el('a', {
       class: `pill ${PILL_CLASSES[row.status]}`,
       href: viewerUrl(row.id, 'log'),

@@ -111,6 +111,9 @@ test('toggles since load: Reload to run, Still running, and the banner', () => {
   assert.deepEqual(names(v.disabled), ['A: was=STILL_RUNNING']);
   assert.equal(v.banner, 'Reload required: Enabled scripts changed');
   assert.match(v.disabled[0].rows[0].tooltip, /^Disabled since this page loaded/);
+  // A click on Reload to run reloads; the other pills open the Log.
+  assert.match(v.enabled[0].rows[0].tooltip, /\nClick to reload the page\.$/);
+  assert.match(v.disabled[0].rows[0].tooltip, /\nClick to open the script log\.$/);
 });
 
 test('a running script whose collection was turned off says so', () => {

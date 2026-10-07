@@ -121,6 +121,9 @@
         border-radius: 8px; border: 1px solid transparent; color: #fff;
         text-decoration: none; white-space: nowrap;
       }
+      /* Reload to run is a button (it reloads): undo the shared button
+         height and padding, so it matches the link pills. */
+      button.pill { height: auto; padding: 0; }
       .pill:hover { filter: brightness(0.92); }
       .pill.ok { background: var(--green); }
       .pill.error, .pill.rejected { background: var(--red); }

@@ -144,7 +144,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/parse-sandbox-host.ts` | Drives a sandboxed parse frame over postMessage: readiness, timeouts, verdict validation, circuit breaker |
 | `src/extension/parse-sandbox.ts` | Sandboxed-page compile probe — `new Function` per source, plus the `<script>` probes that locate the error |
 | `src/extension/offscreen.ts` | Offscreen-document relay: the DOM the service worker lacks, hosting a sandboxed parse frame |
-| `src/extension/background.ts` | Service worker entrypoint; per-tab badge, toolbar click / double click / right-click item and the popup's view + requests, sm:* listener, focus-triggered local refresh, the pages' http-read and log-write relays, injector + match-index bootstrap, first-run collections-page open |
+| `src/extension/background.ts` | Service worker entrypoint; per-tab badge, toolbar click / double click / right-click items and the popup's view + requests, sm:* listener, focus-triggered local refresh, the pages' http-read and log-write relays, injector + match-index bootstrap, first-run collections-page open |
 | `src/extension/deep-link.ts` | `webNavigation` listener: rewrites the GitHub `redirect-page.md` URL to the matching `chrome-extension://…` page |
 | `src/extension/install-capture.ts` | Captures http(s) + file:// navigations to `*.user.js` and redirects them to the viewer's preview mode |
 | `src/extension/collections.ts` | Collections page controller — Add-field routing into the dialog, options gear, render, membership repair, in-place updates, refresh highlights + dropped-row ghosts, repaint-from-storage on change, `?refresh`/`?refresh_local`/`?refresh_file`/`?add`/`?first_run` triggers |

@@ -13,9 +13,14 @@ plain-text rows and was capped at six top-level items.
 
 - **Single click** opens the popup.
 - **Double click** opens the collections page.
-- **Right click** adds one item to Chrome's menu, `Open Collections
-  page (double-click)`: the double click's action, worded as a hint
-  that the double click exists.
+- **Right click** adds items to Chrome's menu:
+  - `Open Collections page (double-click)`: the double click's action,
+    worded as a hint that the double click exists.
+  - `Reload page with no userscripts`: as in the popup's page menu, one
+    click closer when a script is breaking the page.
+    - Always shown, as the menu is the same for every tab.
+    - Does nothing on a tab an sm-dev run controls, where the popup
+      leaves it out (see [sm-dev-design.md](sm-dev-design.md)).
   - Recreated whenever the worker starts: re-enabling the extension
     fires no `onInstalled`.
 
@@ -166,6 +171,8 @@ by shown name (`compareScriptNames`).
     - No site icon: on one page they'd nearly all be that site's icon.
       A script's own `@icon` might still be worth showing; undecided.
   - **Status pill**: opens the script's Log tab.
+    - Except **Reload to run**, which reloads the page, as the reload
+      banner's button does. Its tooltip says which.
   - **⋯ menu** for the script.
 
 ### Script ⋯ menu
@@ -231,7 +238,8 @@ Every pill has a tooltip:
     controlling the tab kept it out.
   - `Still running` says whether the script or its collection was
     disabled.
-- A last line, `Click to open the script log.`
+- A last line saying what a click does: `Click to reload the page.` on
+  Reload to run, `Click to open the script log.` on the rest.
 - The heading's `Collection off` badge gets one too: `This collection
   is disabled, so none of its scripts run`.
 

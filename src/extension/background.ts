@@ -314,6 +314,7 @@ import {
   POPUP_RELOAD_MESSAGE,
   POPUP_VIEW_MESSAGE,
   POPUP_SET_ENABLED_MESSAGE,
+  RELOAD_NO_SCRIPTS_LABEL,
   type PopupChangedMessage,
   type PopupCloseMessage,
   type PopupClosingMessage,
@@ -1965,8 +1966,11 @@ function isReloadMode(value: unknown): value is ReloadMode {
 
 // ---------- The icon's right-click menu ----------
 //
-// One item: the double click's action, worded so it doubles as a hint
-// that the double click exists. The popup has everything else.
+// - The double click's action, worded so it doubles as a hint that the
+//   double click exists.
+// - Reload with no userscripts, as in the popup's page menu: quicker
+//   there when a script is breaking the page.
+// The popup has everything else.
 //
 // Recreated every time the worker starts, not only on install: menu
 // items persist with the extension, but not necessarily through it
@@ -1975,27 +1979,52 @@ function isReloadMode(value: unknown): value is ReloadMode {
 
 const OPEN_COLLECTIONS_MENU_ID = 'sm-open-collections';
 const OPEN_COLLECTIONS_MENU_TITLE = 'Open Collections page (double-click)';
+const RELOAD_NO_SCRIPTS_MENU_ID = 'sm-reload-no-scripts';
 
 function createActionMenu(): void {
+  // Read so Chrome doesn't report an unchecked error.
+  const checkCreated = (): void => {
+    if (chrome.runtime.lastError) {
+      console.info('[SourceMonkey] could not create the icon menu:', chrome.runtime.lastError.message);
+    }
+  };
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: OPEN_COLLECTIONS_MENU_ID,
       title: OPEN_COLLECTIONS_MENU_TITLE,
       contexts: ['action'],
-    }, () => {
-      // Read so Chrome doesn't report an unchecked error.
-      if (chrome.runtime.lastError) {
-        console.info('[SourceMonkey] could not create the icon menu:', chrome.runtime.lastError.message);
-      }
-    });
+    }, checkCreated);
+    chrome.contextMenus.create({
+      id: RELOAD_NO_SCRIPTS_MENU_ID,
+      title: RELOAD_NO_SCRIPTS_LABEL,
+      contexts: ['action'],
+    }, checkCreated);
   });
 }
 
 createActionMenu();
-// The window the right-click came from, as for a double click.
+// The window and tab the right-click came from: the active tab as the
+// worker last saw it can be stale.
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === OPEN_COLLECTIONS_MENU_ID) void openCollectionsPage(tab?.windowId ?? null);
+  else if (info.menuItemId === RELOAD_NO_SCRIPTS_MENU_ID) void reloadNoScriptsFromMenu(tab?.id ?? null);
 });
+
+// The menu is the same on every tab, so the item shows on a tab an
+// sm-dev run controls too, where the popup leaves it out: there the run
+// chooses what runs, and skipping would drop its scripts as well.
+async function reloadNoScriptsFromMenu(tabId: number | null): Promise<void> {
+  if (tabId === null) {
+    console.info('[SourceMonkey] could not reload with no userscripts: Chrome did not say which tab');
+    return;
+  }
+  await claimsReady();
+  if (activeClaim(tabId)) {
+    console.info('[SourceMonkey] not reloading with no userscripts: an sm-dev run controls this tab');
+    return;
+  }
+  await reloadTabWithMode(tabId, { kind: 'none' });
+}
 
 // The popup's requests. Only from our own pages, like the other page
 // relays: a reload or a menu command is an action on a tab, and a

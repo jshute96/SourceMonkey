@@ -27,8 +27,13 @@ export const POPUP_STATUS_LABELS: Record<PopupStatus, string> = {
   STILL_RUNNING: 'Still running',
 };
 
-// Every pill's tooltip ends with this: the pill is a link to the Log.
+// Every pill's tooltip ends with what a click does: a Reload to run
+// pill reloads the page, as the banner's Reload does; the rest open
+// the Log.
 export const POPUP_PILL_CLICK_HINT = 'Click to open the script log.';
+export const POPUP_PILL_RELOAD_HINT = 'Click to reload the page.';
+// The page menu's item, and the icon's right-click item doing the same.
+export const RELOAD_NO_SCRIPTS_LABEL = 'Reload page with no userscripts';
 export const COLLECTION_OFF_LABEL = 'Collection off';
 export const COLLECTION_OFF_TOOLTIP = 'This collection is disabled, so none of its scripts run';
 export const POPUP_NO_SCRIPTS = 'No scripts match this page.';
@@ -325,7 +330,7 @@ export function buildPopupView(input: PopupViewInput): PopupView {
       if (status === 'STILL_RUNNING' && s.enabled) {
         text = 'Its collection was disabled since this page loaded. It keeps running until a reload.';
       }
-      tooltip = `${text}\n${POPUP_PILL_CLICK_HINT}`;
+      tooltip = `${text}\n${status === 'PENDING' ? POPUP_PILL_RELOAD_HINT : POPUP_PILL_CLICK_HINT}`;
     }
     const row: PopupRow = {
       id: s.id,
