@@ -35,6 +35,44 @@ async function sectionText(popup: Page, section: 'enabled' | 'disabled'): Promis
   }, section);
 }
 
+// The window shows the collections page: a double click opens it, or
+// brings forward one an earlier test left open.
+// The extension page showing in the window's active tab, or null for a
+// web page. The worker can't read a tab's URL; an extension page's
+// context carries it.
+async function activePagePath(sw: Worker, windowId: number): Promise<string | null> {
+  return await sw.evaluate(async (id) => {
+    const [active] = await chrome.tabs.query({ active: true, windowId: id });
+    const pages = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.TAB] });
+    const page = pages.find((c) => c.tabId === active?.id);
+    return page?.documentUrl ? new URL(page.documentUrl).pathname : null;
+  }, windowId);
+}
+
+// Collections-page tabs, closed by `closeCollectionsTabs` so a test can
+// tell whether it opened one. Earlier tests' tabs linger in the window.
+async function collectionsTabIds(sw: Worker): Promise<number[]> {
+  return await sw.evaluate(async () => (await chrome.runtime.getContexts({
+    contextTypes: [chrome.runtime.ContextType.TAB],
+  })).filter((c) => c.documentUrl && new URL(c.documentUrl).pathname === '/collections.html').map((c) => c.tabId));
+}
+
+async function closeCollectionsTabs(sw: Worker): Promise<void> {
+  const ids = await collectionsTabIds(sw);
+  if (ids.length) await sw.evaluate((list) => chrome.tabs.remove(list), ids);
+}
+
+async function expectCollectionsShown(getServiceWorker: () => Promise<Worker>, windowId: number): Promise<void> {
+  const sw = await getServiceWorker();
+  await expect.poll(() => activePagePath(sw, windowId)).toBe('/collections.html');
+}
+
+async function popupContexts(sw: Worker): Promise<number> {
+  return await sw.evaluate(async () => (await chrome.runtime.getContexts({
+    contextTypes: [chrome.runtime.ContextType.POPUP],
+  })).length);
+}
+
 async function windowOf(getServiceWorker: () => Promise<Worker>, tabId: number): Promise<number> {
   const sw = await getServiceWorker();
   return await sw.evaluate(async (id) => (await chrome.tabs.get(id)).windowId, tabId);
@@ -319,15 +357,22 @@ test.describe('toolbar popup', () => {
     await page.bringToFront();
     const tabId = await activeTabId(getServiceWorker);
     const windowId = await windowOf(getServiceWorker, tabId);
-    await sm.clickAction(tabId, windowId);
     const sw = await getServiceWorker();
-    // Opens after the double-click wait, as a real popup.
+    await closeCollectionsTabs(sw);
+    await sm.clickAction(tabId, windowId);
+    // Opens at once, as a real popup, without waiting out the
+    // double-click time.
     await expect.poll(() => sw.evaluate(async () => (await chrome.runtime.getContexts({
       contextTypes: [chrome.runtime.ContextType.POPUP],
-    })).map((c) => new URL(c.documentUrl ?? '').pathname))).toEqual(['/popup.html']);
+      // The address can lag the context by a moment.
+    })).map((c) => (c.documentUrl ? new URL(c.documentUrl).pathname : '')))).toEqual(['/popup.html']);
     // Cleared again, so the next click reaches the click handler rather
     // than Chrome opening the popup itself.
     await expect.poll(() => sw.evaluate((id) => chrome.action.getPopup({ tabId: id }), tabId)).toBe('');
+    // Left open past the double-click time, it was a single click: no
+    // collections page.
+    await page.waitForTimeout(600);
+    expect(await collectionsTabIds(sw)).toEqual([]);
     await page.close();
   });
 
@@ -342,17 +387,118 @@ test.describe('toolbar popup', () => {
     expect(error).toBeNull();
   });
 
-  test('a double click on the icon opens the collections page', async ({
+  test('a double click on the icon opens the collections page, and takes the popup back', async ({
     extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await page.bringToFront();
     const tabId = await activeTabId(getServiceWorker);
     const windowId = await windowOf(getServiceWorker, tabId);
-    const opened = extensionContext.waitForEvent('page', (p) => p.url().includes('/collections.html'));
+    const sw = await getServiceWorker();
+    // The second click lands while the first's popup is still opening,
+    // so it closes as soon as it connects.
     await sm.clickAction(tabId, windowId);
     await sm.clickAction(tabId, windowId);
-    await opened;
+    await expectCollectionsShown(getServiceWorker, windowId);
+    await expect.poll(() => popupContexts(sw)).toBe(0);
+    await page.close();
+  });
+
+  test('a second click once the popup shows closes it too', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await page.bringToFront();
+    const tabId = await activeTabId(getServiceWorker);
+    const windowId = await windowOf(getServiceWorker, tabId);
+    const sw = await getServiceWorker();
+    // Both clicks inside the worker, so the wait for the popup can't
+    // outlast the double-click time on a slow run.
+    const shown = await sw.evaluate(async ({ tabId, windowId }) => {
+      const api = (self as unknown as { SourceMonkey: { clickAction(t: number, w: number): void } }).SourceMonkey;
+      const start = Date.now();
+      api.clickAction(tabId, windowId);
+      while (Date.now() - start < 200) {
+        const n = (await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.POPUP] })).length;
+        if (n > 0) break;
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      // Give the popup a moment to connect, still inside the wait.
+      await new Promise((r) => setTimeout(r, 20));
+      const n = (await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.POPUP] })).length;
+      api.clickAction(tabId, windowId);
+      return n;
+    }, { tabId, windowId });
+    test.skip(shown === 0, 'The popup took longer than the double-click time to open');
+    await expectCollectionsShown(getServiceWorker, windowId);
+    await expect.poll(() => popupContexts(sw)).toBe(0);
+    await page.close();
+  });
+
+  test('a popup that closes within the double-click time counts as the second click', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await page.bringToFront();
+    const tabId = await activeTabId(getServiceWorker);
+    const windowId = await windowOf(getServiceWorker, tabId);
+    const sw = await getServiceWorker();
+    // Chrome takes a click on the icon while its popup shows: it closes
+    // the popup and reports nothing. Closing the popup from outside, as
+    // DevTools can, stands in for that. (Chrome dropping an open still
+    // under way, the other sign, can't be brought about from here.)
+    await sm.clickAction(tabId, windowId);
+    await expect.poll(() => popupContexts(sw)).toBe(1);
+    const cdp = await extensionContext.newCDPSession(page);
+    const { targetInfos } = await cdp.send('Target.getTargets');
+    const popup = targetInfos.find((t) => t.url.endsWith('/popup.html'));
+    expect(popup).toBeDefined();
+    await cdp.send('Target.closeTarget', { targetId: popup!.targetId });
+    await expect.poll(() => popupContexts(sw)).toBe(0);
+    await expectCollectionsShown(getServiceWorker, windowId);
+    await page.close();
+  });
+
+  test('closing the tab right after a click is no double click', async ({
+    fixtureServer, sm, getServiceWorker, extensionContext,
+  }) => {
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await page.bringToFront();
+    const tabId = await activeTabId(getServiceWorker);
+    const windowId = await windowOf(getServiceWorker, tabId);
+    const sw = await getServiceWorker();
+    await closeCollectionsTabs(sw);
+    await sm.clickAction(tabId, windowId);
+    await expect.poll(() => popupContexts(sw)).toBe(1);
+    // Ctrl+W: the popup closes with its tab.
+    await page.close();
+    await expect.poll(() => popupContexts(sw)).toBe(0);
+    await sw.evaluate(() => new Promise((r) => setTimeout(r, 700)));
+    expect(await collectionsTabIds(sw)).toEqual([]);
+  });
+
+  test('a popup closing itself after an action is no double click', async ({
+    fixtureServer, sm, getServiceWorker, extensionContext,
+  }) => {
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await page.bringToFront();
+    const tabId = await activeTabId(getServiceWorker);
+    const windowId = await windowOf(getServiceWorker, tabId);
+    const sw = await getServiceWorker();
+    await closeCollectionsTabs(sw);
+    await sm.clickAction(tabId, windowId);
+    await expect.poll(() => popupContexts(sw)).toBe(1);
+    // What a link or menu command does: say so, then close. A worker
+    // request to close goes the same way.
+    await sm.closePopup(tabId);
+    await expect.poll(() => popupContexts(sw)).toBe(0);
+    await page.waitForTimeout(600);
+    expect(await collectionsTabIds(sw)).toEqual([]);
     await page.close();
   });
 

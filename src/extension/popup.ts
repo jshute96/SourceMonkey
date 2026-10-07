@@ -14,6 +14,8 @@ import {
   COLLECTION_OFF_LABEL,
   COLLECTION_OFF_TOOLTIP,
   POPUP_CHANGED_MESSAGE,
+  POPUP_CLOSE_MESSAGE,
+  POPUP_CLOSING_MESSAGE,
   POPUP_COMMAND_MESSAGE,
   POPUP_NO_SCRIPTS,
   POPUP_NOT_INJECTABLE,
@@ -23,6 +25,7 @@ import {
   POPUP_STATUS_LABELS,
   POPUP_VIEW_MESSAGE,
   type PopupChangedMessage,
+  type PopupClosingMessage,
   type PopupCommandRequest,
   type PopupGroup,
   type PopupReloadRequest,
@@ -61,6 +64,8 @@ const scriptsEl = document.getElementById('scripts') as HTMLElement;
 const pageMenuBtn = document.getElementById('page-menu') as HTMLButtonElement;
 
 let tabId: number | null = null;
+// The current port to the worker (`connectToWorker`).
+let workerPort: chrome.runtime.Port | null = null;
 let view: PopupView | null = null;
 // Scripts whose command list the person opened or closed, overriding
 // the default (closed past COMMANDS_SHOWN_OPEN). For as long as the
@@ -103,8 +108,11 @@ async function start(): Promise<void> {
 // is reopened, with a refresh for whatever was missed meanwhile.
 function connectToWorker(id: number): void {
   const port = chrome.runtime.connect({ name: POPUP_PORT_PREFIX + id });
+  workerPort = port;
   port.onMessage.addListener((message) => {
-    if ((message as Partial<PopupChangedMessage> | null)?.type === POPUP_CHANGED_MESSAGE) scheduleRefresh();
+    const type = (message as Partial<PopupChangedMessage> | null)?.type;
+    if (type === POPUP_CHANGED_MESSAGE) scheduleRefresh();
+    else if (type === POPUP_CLOSE_MESSAGE) closeSoon();
   });
   port.onDisconnect.addListener(() => {
     // Read, so Chrome doesn't report it as unchecked.
@@ -162,7 +170,16 @@ async function refresh(): Promise<void> {
 }
 
 function closeSoon(): void {
-  if (inPopup) window.close();
+  if (!inPopup) return;
+  // So the worker doesn't take this close for the second click of a
+  // double click on the icon.
+  const msg: PopupClosingMessage = { type: POPUP_CLOSING_MESSAGE };
+  try {
+    workerPort?.postMessage(msg);
+  } catch {
+    // Disconnected; nothing is waiting on it.
+  }
+  window.close();
 }
 
 // Run a click's action, logging rather than dropping a failure (the tab

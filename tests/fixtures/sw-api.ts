@@ -188,6 +188,7 @@ export interface SmApi {
   // Stands in for a toolbar-icon click on `tabId`: two inside the
   // double-click window open the collections page, one opens the popup.
   clickAction(tabId: number, windowId: number): Promise<void>;
+  closePopup(tabId: number): Promise<void>;
   // Fault-injection knob used by gm-storage-freshness.spec.ts to
   // verify the wrapper hard-aborts when the SW can't supply a
   // gmValues snapshot.

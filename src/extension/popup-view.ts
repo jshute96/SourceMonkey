@@ -136,6 +136,12 @@ export const POPUP_SET_ENABLED_MESSAGE = 'sm:popup-set-enabled';
 // (badge state, menu commands). The popup asks for a fresh view. Sent
 // over the port an open popup holds, named this prefix + its tab id.
 export const POPUP_CHANGED_MESSAGE = 'sm:popup-changed';
+// Worker → popup, over the same port: close. The click that opened it
+// turned out to be the first of a double click.
+export const POPUP_CLOSE_MESSAGE = 'sm:popup-close';
+// Popup → worker, over the port: closing after an action (a link, a
+// menu command). Its close is then no double click's second click.
+export const POPUP_CLOSING_MESSAGE = 'sm:popup-closing';
 export const POPUP_PORT_PREFIX = 'sm-popup:';
 
 // Which scripts a popup-driven reload keeps out:
@@ -163,6 +169,8 @@ export interface PopupSetEnabledRequest {
   type: typeof POPUP_SET_ENABLED_MESSAGE; target: 'script' | 'collection'; id: string; enabled: boolean;
 }
 export interface PopupChangedMessage { type: typeof POPUP_CHANGED_MESSAGE; tabId: number }
+export interface PopupCloseMessage { type: typeof POPUP_CLOSE_MESSAGE }
+export interface PopupClosingMessage { type: typeof POPUP_CLOSING_MESSAGE }
 
 const DEFAULT_TOOLTIPS: Record<PopupStatus, string> = {
   OK: 'Running on this page',
