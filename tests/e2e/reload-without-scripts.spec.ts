@@ -1,8 +1,9 @@
-// "Reload page with no userscripts" — the action menu's closing row.
-// One reload during which every wrapper on the tab is told to skip;
-// the registrations stay put and the next ordinary reload runs them
-// again. Drives the SW's `reloadWithoutScripts` test surface in place
-// of the real chrome.contextMenus click, which Playwright can't make.
+// "Reload page with no userscripts", from the popup's page menu, and
+// its per-script forms "with only this script" / "without this script".
+// One reload during which some or all wrappers on the tab are told to
+// skip; the registrations stay put and the next ordinary reload runs
+// them again. Drives the SW's `reloadWithoutScripts` test surface, and
+// the popup's own reload message for the per-script forms.
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
@@ -44,8 +45,8 @@ test.describe('reload with no userscripts', () => {
       (s) => s.badgeText === '2' && hasBadgeColor(s, GREEN),
       'green before the skip reload',
     );
-    // The row is offered because the tab has script rows.
-    expect((await sm.getActionContextMenuPlan(tabId)).reloadWithoutScripts).toBe(true);
+    // The popup offers the reload on this tab.
+    expect((await sm.getPopupView(tabId)).perScriptReload).toBe(true);
 
     await sm.reloadWithoutScripts(tabId);
 
@@ -85,7 +86,64 @@ test.describe('reload with no userscripts', () => {
     await page.close();
   });
 
-  test('the row is absent on a page with no script rows', async ({
+  test('with only this script, and without it', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker, extensionId,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'one.user.js',
+      meta: { name: 'One', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
+      body: `document.documentElement.dataset.one = 'ran';`,
+    });
+    scriptsDir.write({
+      relativePath: 'two.user.js',
+      meta: { name: 'Two', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
+      body: `document.documentElement.dataset.two = 'ran';`,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+    const one = (await allScripts(sm)).find((s) => s.relativePath === 'one.user.js')!;
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    const tabId = await activeTabId(getServiceWorker);
+    await waitForTabState(sm, tabId, (s) => s.title.includes('One | OK') && s.title.includes('Two | OK'), 'both ran');
+    // Null while a reload is replacing the document, too.
+    const ran = (key: string) => page.evaluate((k) => document.documentElement.dataset[k] ?? null, key).catch(() => null);
+
+    // The popup page sends the reload, as a click in it would.
+    const popup = await extensionContext.newPage();
+    await popup.goto(`chrome-extension://${extensionId}/popup.html?tab=${tabId}`);
+    const reload = (mode: object) => popup.evaluate(
+      (m) => chrome.runtime.sendMessage({ type: 'sm:popup-reload', tabId: Number(new URLSearchParams(location.search).get('tab')), mode: m }),
+      mode,
+    );
+
+    await reload({ kind: 'only', scriptId: one.id });
+    await expect.poll(() => ran('one')).toBe('ran');
+    await waitForTabState(sm, tabId, (s) => s.title.includes('One | OK') && s.title.includes('Two | NOT LOADED'), 'only One');
+    expect(await ran('two')).toBeNull();
+    // The popup says why Two didn't run.
+    const kept = (await sm.getPopupView(tabId)).enabled.flatMap((g) => g.rows).find((r) => r.name === 'Two')!;
+    expect(kept.status).toBe('NOT_LOADED');
+    expect(kept.tooltip).toContain('Not run: the page was reloaded with only One');
+
+    await reload({ kind: 'without', scriptId: one.id });
+    await expect.poll(() => ran('two')).toBe('ran');
+    await waitForTabState(sm, tabId, (s) => s.title.includes('One | NOT LOADED') && s.title.includes('Two | OK'), 'all but One');
+    expect(await ran('one')).toBeNull();
+
+    // The skip is information in One's Log, as a skip asked for.
+    const entry = await waitFor(
+      async () => (await sm.getScriptLog(one.id)).find((e) => e.message.includes('reload without this userscript')),
+      (e) => e != null,
+      { label: 'without-this Log entry' },
+    );
+    expect(entry!.level).toBe('info');
+    await popup.close();
+    await page.close();
+  });
+
+  test('the popup lists nothing on a page no script matches', async ({
     extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {
     scriptsDir.write({
@@ -99,9 +157,9 @@ test.describe('reload with no userscripts', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
-    const plan = await sm.getActionContextMenuPlan(tabId);
-    expect(plan.top).toEqual([]);
-    expect(plan.reloadWithoutScripts).toBe(false);
+    const view = await sm.getPopupView(tabId);
+    expect(view.enabled).toEqual([]);
+    expect(view.disabled).toEqual([]);
     await page.close();
   });
 });

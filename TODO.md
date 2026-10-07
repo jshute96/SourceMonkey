@@ -597,7 +597,7 @@ Adding any of these is a catalog entry + a body — nothing structural.
   registrations — and Chrome doesn't re-inject on back/forward, so
   nothing re-registers them. The restored page's callbacks are still
   alive in its document; only the SW-side mirror is gone, and its
-  action-menu rows stay missing until a real document load.
+  popup rows stay missing until a real document load.
   - Fix is a mirror per (tab, document) with an LRU like the one
     `updateTabMatches` already keeps for `TabMatchState` (see
     [docs/matching.md](docs/matching.md#per-tab-document-lru-bfcache-restore)),
@@ -1160,6 +1160,18 @@ One thing does have a concrete fix we chose not to make:
     is a diagnostic message rather than any state. Worth doing if the
     banner ever becomes load-bearing, or alongside any other change to
     that module.
+- **Enable toggles plan their changes before taking the lock.**
+  `src/extension/script-enablement.ts` reads the store, works out which
+  copies to turn on and off, then calls `writeEnablement`, which takes
+  the lock. See [docs/script-enablement.md](docs/script-enablement.md).
+  - Two quick clicks on one page (A on, then B on) can each plan from a
+    store where neither is active, so both end up active.
+  - A collection removed between the read and the write still has its
+    displaced copies turned off, with nothing coming on.
+  - The fix: `writeEnablement` takes a planner callback and runs it on
+    a snapshot read inside the lock. It costs a full store read under
+    the lock per click, and touches every caller of the toggles.
+  - Left for its own change.
 
 ## Storage-key migration — remove after 2026-09-01
 
@@ -1767,11 +1779,17 @@ they follow are in
 - collapse a collection
 - smoother add collection/script flow, maybe a dialog box
 
-### Page status menu / widget
+### Toolbar popup
 
-- status widget instead of context menu for running scripts
-- enable / disable a script on that page
-- choose which version of a script to use
+The popup shipped (see [docs/status-popup.md](docs/status-popup.md)).
+Left from its design:
+
+- **Version picker**: a small versions button on a row with other
+  copies, opening a list like the viewer's to switch which copy runs.
+  Needs the list UI designed first.
+- **A script's own `@icon`** on its row, maybe. Site icons were left
+  out: on one page they'd nearly all be that site's.
+- **More page actions**: Refresh All, disable everything on this site.
 
 ### Other
 

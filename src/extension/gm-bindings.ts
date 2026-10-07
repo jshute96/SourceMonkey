@@ -354,7 +354,7 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   // Menu subsystem: register/unregister context-menu commands. The
   // runtime stashes the callback locally (callbacks aren't
   // serializable) and sends the SW a `{commandId, name}` envelope so
-  // the action context menu can render the entries. Returns the
+  // the toolbar popup can list the entries. Returns the
   // commandId the caller can later pass to GM_unregisterMenuCommand.
   if (spec.subsystem === 'menu') {
     switch (spec.name) {

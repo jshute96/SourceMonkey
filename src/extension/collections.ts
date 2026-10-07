@@ -47,15 +47,14 @@ import {
   readLocalStorageUsage,
   removeScript,
   removeCollection,
-  setScriptEnabled,
-  setScriptsEnabled,
-  setCollectionEnabled,
   localFileScope,
   STORAGE_NEARLY_FULL,
-  touchesStructuralRows,
   type StoredScript,
   type StoredCollection,
 } from './script-store.js';
+import { setAllScriptsEnabled, setCollectionEnabledExclusive, setScriptEnabledExclusive } from './script-enablement.js';
+import { identityKey } from './script-identity.js';
+import { watchSoloModifier } from './solo-click.js';
 import {
   installLocalRootsListener,
   localRootsReady,
@@ -68,7 +67,9 @@ import {
   makeCollectionTypeBubble,
   makeSchemeChip,
   collectionAnchorId,
+  EDIT_COLLECTION_HASH_PREFIX,
 } from './collection-display.js';
+import { touchesStructuralRows } from './structural-keys.js';
 import { openCollectionDialog, type CollectionDialogRequest } from './collection-dialog.js';
 import { onNamedTabFocus, openExtensionTab, openNamedTab } from './page-links.js';
 import { getValue } from '../userscript-header.js';
@@ -831,6 +832,8 @@ function syncScriptRow(
     repainted = fillNameCell(nameCell, script, collectionPath, localFiles);
   }
 
+  // A refresh can change `@name` / `@namespace`.
+  row.dataset.identity = rowIdentity(script);
   const scriptOn = isScriptEnabled(script);
   const label = row.querySelector<HTMLLabelElement>('.toggle');
   const cb = label?.querySelector<HTMLInputElement>('input[type="checkbox"]');
@@ -970,6 +973,7 @@ async function bootstrap(): Promise<void> {
   // every section is in the DOM and scroll the matching one into view.
   // Triggered for any hash matching the collection-anchor shape.
   scrollToHashCollectionIfPresent();
+  if (location.hash.startsWith(`#${EDIT_COLLECTION_HASH_PREFIX}`)) void focusHashTarget(location.hash.slice(1));
   const params = new URLSearchParams(location.search);
   // First-run seeding. The SW opens this page with `?first_run` once on
   // install (see background.ts); only that auto-opened page seeds, so an
@@ -1064,10 +1068,16 @@ async function focusHashTarget(hash: string): Promise<void> {
     scrollTo({ top: 0, behavior: 'smooth' });
     return;
   }
-  const section = document.getElementById(hash);
+  // `edit-collection-<id>` (the popup's "Collection options"): land on
+  // the collection and open its edit dialog. The URL keeps the plain
+  // collection anchor, so a reload doesn't reopen the dialog.
+  const editId = hash.startsWith(EDIT_COLLECTION_HASH_PREFIX) ? hash.slice(EDIT_COLLECTION_HASH_PREFIX.length) : null;
+  const anchor = editId !== null ? collectionAnchorId(editId) : hash;
+  const section = document.getElementById(anchor);
   if (!section) return;
-  history.replaceState(null, '', `#${hash}`);
+  history.replaceState(null, '', `#${anchor}`);
   section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (editId !== null) await onEditCollection(editId);
 }
 
 // If the URL hash points at a rendered collection section, scroll it
@@ -1263,7 +1273,7 @@ async function renderCollectionSection(collection: StoredCollection): Promise<HT
   const enableLabel = makeToggle(
     collectionOn,
     false,
-    (next, label) => void onToggleCollection(collection.id, next, label),
+    (next, label, solo) => void onToggleCollection(collection.id, next, label, solo),
     'Enable scripts under this collection',
   );
   enableLabel.classList.add('collection-toggle');
@@ -1384,7 +1394,7 @@ async function renderScriptTable(collection: StoredCollection, collectionOn: boo
     );
   }
 
-  const allOn = scripts.every(isScriptEnabled);
+  const allOn = allOnByIdentity(scripts.map((s) => ({ identity: rowIdentity(s), on: isScriptEnabled(s) })));
 
   const table = document.createElement('table');
   table.className = 'script-table';
@@ -1397,7 +1407,7 @@ async function renderScriptTable(collection: StoredCollection, collectionOn: boo
   const bulkBtn = makeBulkToggle(
     allOn,
     !collectionOn,
-    () => void onBulkToggleScripts(collection.id, bulkBtn),
+    (solo) => void onBulkToggleScripts(collection.id, bulkBtn, solo),
     bulkTitle(collectionOn, allOn),
   );
   bulkHead.appendChild(bulkBtn);
@@ -1455,6 +1465,7 @@ function renderScriptRow(
   const tr = document.createElement('tr');
   tr.dataset.scriptId = script.id;
   tr.dataset.collectionId = script.collectionId;
+  tr.dataset.identity = rowIdentity(script);
   // Stash the persisted status + errorMessage on the row so
   // `applyStatusCellsToDom` can repaint the Status cell after a
   // chrome.storage.session change without re-querying the store.
@@ -1466,7 +1477,7 @@ function renderScriptRow(
   toggleCell.appendChild(makeToggle(
     scriptOn,
     !collectionOn,    // disabled (greyed out) when the parent collection is off
-    (next, label) => void onToggleScript(script.id, next, label),
+    (next, label, solo) => void onToggleScript(script.id, next, label, solo),
     collectionOn ? ENABLE_TITLE : COLLECTION_OFF_TITLE,
   ));
   tr.appendChild(toggleCell);
@@ -2474,10 +2485,16 @@ function placeTombstones(tbody: Element): void {
   }
 }
 
-async function onToggleCollection(id: string, enabled: boolean, label: HTMLLabelElement): Promise<void> {
+// Turning a collection on turns off the other running copies of the
+// scripts it starts; turning it off brings back the copies they
+// displaced. Ctrl/Cmd-click (`solo`) flips only the collection. See
+// docs/script-enablement.md.
+async function onToggleCollection(
+  id: string, enabled: boolean, label: HTMLLabelElement, solo: boolean,
+): Promise<void> {
   setToggleBusy(label, true);
   try {
-    await setCollectionEnabled(id, enabled);
+    await setCollectionEnabledExclusive(id, enabled, solo);
     const section = findSection(id);
     if (section) applyCollectionEnabledToDom(section, enabled);
   } finally {
@@ -2485,10 +2502,14 @@ async function onToggleCollection(id: string, enabled: boolean, label: HTMLLabel
   }
 }
 
-async function onToggleScript(id: string, enabled: boolean, label: HTMLLabelElement): Promise<void> {
+// Turning a script on turns its other running copies off, unless
+// Ctrl/Cmd-clicked (`solo`). Their rows repaint from the storage event.
+async function onToggleScript(
+  id: string, enabled: boolean, label: HTMLLabelElement, solo: boolean,
+): Promise<void> {
   setToggleBusy(label, true);
   try {
-    await setScriptEnabled(id, enabled);
+    await setScriptEnabledExclusive(id, enabled, solo);
     const row = label.closest('tr') as HTMLTableRowElement | null;
     const section = label.closest('.collection') as HTMLElement | null;
     if (row && section) {
@@ -2501,7 +2522,11 @@ async function onToggleScript(id: string, enabled: boolean, label: HTMLLabelElem
   }
 }
 
-async function onBulkToggleScripts(collectionId: string, btn: HTMLButtonElement): Promise<void> {
+// "Enable all" turns on one copy of each script in the collection (see
+// `setAllScriptsEnabled`), and turns its other running copies off
+// elsewhere unless Ctrl/Cmd-clicked (`solo`). "Disable all" turns every
+// script off.
+async function onBulkToggleScripts(collectionId: string, btn: HTMLButtonElement, solo: boolean): Promise<void> {
   const section = findSection(collectionId);
   if (!section) return;
 
@@ -2509,8 +2534,7 @@ async function onBulkToggleScripts(collectionId: string, btn: HTMLButtonElement)
     section.querySelectorAll<HTMLInputElement>('tbody .toggle input[type="checkbox"]'),
   );
   if (checkboxes.length === 0) return;
-  const allOn = checkboxes.every((cb) => cb.checked);
-  const next = !allOn;
+  const next = !allScriptsOn(section);
 
   const labels = checkboxes.map((cb) => cb.closest('.toggle') as HTMLLabelElement);
   setBulkBusy(btn, true);
@@ -2521,24 +2545,47 @@ async function onBulkToggleScripts(collectionId: string, btn: HTMLButtonElement)
     // syncRegistrations in the background SW. The old code wrote each
     // script's row individually, so a 15-script flip kicked off 15
     // full re-syncs of chrome.userScripts (each O(N)).
+    await setAllScriptsEnabled(collectionId, next, solo);
+
+    // Reflect the stored state in every row: "Enable all" may leave a
+    // second copy of a script off.
     const collectionOn = !section.classList.contains('disabled');
     const data = await getCollectionWithScripts(collectionId);
-    const scripts = data?.scripts ?? [];
-    const toFlip = scripts
-      .filter((s) => isScriptEnabled(s) !== next)
-      .map((s) => ({ id: s.id, enabled: next }));
-    await setScriptsEnabled(toFlip);
-
-    // Reflect the new state in every row.
-    for (const cb of checkboxes) cb.checked = next;
+    const on = new Map((data?.scripts ?? []).map((s) => [s.id, isScriptEnabled(s)]));
     for (const row of sectionScriptRows(section)) {
-      row.classList.toggle('disabled', !collectionOn || !next);
+      const enabled = on.get(row.dataset.scriptId ?? '') ?? false;
+      const cb = row.querySelector<HTMLInputElement>('.toggle input[type="checkbox"]');
+      if (cb) cb.checked = enabled;
+      row.classList.toggle('disabled', !collectionOn || !enabled);
     }
   } finally {
     for (const lab of labels) setToggleBusy(lab, false);
     setBulkBusy(btn, false);
     refreshBulkToggle(section);
   }
+}
+
+// Whether every script in the collection has a copy on: what flips the
+// bulk toggle to "Disable all". Copies sharing `@namespace` + `@name`
+// count as one script, since "Enable all" turns on only one of them.
+function allOnByIdentity(rows: readonly { identity: string; on: boolean }[]): boolean {
+  if (rows.length === 0) return false;
+  const anyOn = new Map<string, boolean>();
+  for (const r of rows) anyOn.set(r.identity, (anyOn.get(r.identity) ?? false) || r.on);
+  return [...anyOn.values()].every(Boolean);
+}
+
+function allScriptsOn(section: HTMLElement): boolean {
+  return allOnByIdentity(sectionScriptRows(section).flatMap((row) => {
+    const cb = row.querySelector<HTMLInputElement>('.toggle input[type="checkbox"]');
+    return cb ? [{ identity: row.dataset.identity ?? '', on: cb.checked }] : [];
+  }));
+}
+
+// The identity a row is grouped by for `allOnByIdentity`: a script
+// without `@name` stands alone.
+function rowIdentity(script: StoredScript): string {
+  return identityKey(script.header ?? null) ?? `id:${script.id}`;
 }
 
 // ---------- In-place DOM mutators ----------
@@ -2599,10 +2646,7 @@ function refreshBulkToggle(section: HTMLElement): void {
   const btn = section.querySelector<HTMLButtonElement>('.bulk-toggle');
   if (!btn) return;
   const collectionOn = !section.classList.contains('disabled');
-  const checkboxes = Array.from(
-    section.querySelectorAll<HTMLInputElement>('tbody .toggle input[type="checkbox"]'),
-  );
-  const allOn = checkboxes.length > 0 && checkboxes.every((cb) => cb.checked);
+  const allOn = allScriptsOn(section);
   btn.title = bulkTitle(collectionOn, allOn);
   // The glyph can be written even while busy — `.bulk-toggle.busy`
   // paints it transparent under the spinner, and it needs to be correct
@@ -2620,7 +2664,7 @@ function bulkTitle(collectionOn: boolean, allOn: boolean): string {
   if (!collectionOn) return COLLECTION_OFF_TITLE;
   return allOn
     ? 'Disable all scripts in this collection'
-    : 'Enable all scripts in this collection';
+    : 'Enable all scripts in this collection (one copy of each)';
 }
 
 function removeEmptyPlaceholder(): void {
@@ -2699,7 +2743,8 @@ function setAddFormBusy(busy: boolean): void {
 function makeBulkToggle(
   allOn: boolean,
   disabled: boolean,
-  onClick: () => void,
+  // `solo`: Ctrl/Cmd was held.
+  onClick: (solo: boolean) => void,
   title: string,
 ): HTMLButtonElement {
   const btn = document.createElement('button');
@@ -2708,7 +2753,7 @@ function makeBulkToggle(
   btn.disabled = disabled;
   btn.title = title;
   btn.textContent = allOn ? '−' : '+';
-  btn.addEventListener('click', () => { if (!btn.disabled) onClick(); });
+  btn.addEventListener('click', (ev) => { if (!btn.disabled) onClick(ev.ctrlKey || ev.metaKey); });
   return btn;
 }
 
@@ -2719,7 +2764,8 @@ function makeBulkToggle(
 function makeToggle(
   checked: boolean,
   disabled: boolean,
-  onChange: (next: boolean, label: HTMLLabelElement) => void,
+  // `solo`: the click held Ctrl/Cmd (`watchSoloModifier`).
+  onChange: (next: boolean, label: HTMLLabelElement, solo: boolean) => void,
   title: string,
 ): HTMLLabelElement {
   const label = document.createElement('label');
@@ -2731,7 +2777,8 @@ function makeToggle(
   cb.type = 'checkbox';
   cb.checked = checked;
   cb.disabled = disabled;
-  cb.addEventListener('change', () => onChange(cb.checked, label));
+  const takeSolo = watchSoloModifier(cb);
+  cb.addEventListener('change', () => onChange(cb.checked, label, takeSolo()));
   label.appendChild(cb);
   return label;
 }

@@ -11,7 +11,6 @@
 // script's status. Keeping the computation here (pure) makes it easy
 // to unit test without the chrome.* surface.
 
-import { ACTION_MENU_SM_DEV_LABEL } from './action-menu.js';
 import type { MatchedScript } from './match-index.js';
 import type { InjectionWorld } from '../script-world.js';
 import { compareScriptNames } from '../script-display.js';
@@ -50,13 +49,19 @@ export interface TabMatchState {
   // implicitly when the document is replaced (new documentId → new
   // state). Optional so older persisted records still parse.
   staleScriptIds?: string[];
-  // True when this document was loaded via the action menu's "Reload
+  // True when this document was loaded via the popup's "Reload
   // page with no userscripts": the SW answered every wrapper's
   // check-pending with `skip`, so no `actual` report is coming. The
   // badge shows the expected scripts as NOT LOADED (grey) instead of
   // MISSING (orange) — nothing is wrong, the user asked for this.
   // Dies with the document like everything else on this state.
   scriptsSkipped?: boolean;
+  // The narrower forms, from the popup's per-script reloads: this
+  // document was loaded with only this script (`skipOnly`), or with
+  // every script but this one (`skipWithout`). The rest show as NOT
+  // LOADED, like a full skip.
+  skipOnly?: string;
+  skipWithout?: string;
   // Set when an sm-dev run controlled the tab as this document loaded
   // (sm-dev-link.ts): the script ids it let run, or null for none. The
   // rest were told to skip, so they show as NOT LOADED too.
@@ -80,6 +85,11 @@ export interface TabMatchState {
   // never going to be injected into it. Absent on records from before
   // the field existed, which check every match.
   loadMatchIds?: string[];
+  // The URL the document loaded at, which `url` leaves behind after an
+  // in-place change (pushState). The popup asks it whether a script
+  // not in `loadMatchIds` was enabled since, or matches only the new
+  // URL. Absent on records from before the field existed.
+  loadUrl?: string;
 }
 
 export type RowStatus =
@@ -115,6 +125,10 @@ export const BADGE_PURPLE = '#d500f9';
 // ran on purpose. Loses to every other color: an UNEXPECTED report on a
 // skipped document is still a disagreement worth orange.
 export const BADGE_GREY = '#757575';
+// The note a tab an sm-dev run controls carries, in the badge tooltip
+// and as the popup's banner.
+export const SM_DEV_CONTROL_LABEL = 'Page under sm-dev control';
+
 // Material cyan-600: the corner marker drawn on the icon in a tab an
 // sm-dev run controls. Used for nothing else, so it can't be read as a
 // status.
@@ -246,23 +260,25 @@ export function computeBadge(
 
 /**
  * The tooltip's first lines: the extension's name, and in a tab an
- * sm-dev run controls, the same note the action menu opens with.
+ * sm-dev run controls, the same note the popup's banner shows.
  */
 export function titleHead(state: TabMatchState | null): string {
-  return state?.smDevAllow === undefined ? 'SourceMonkey' : `SourceMonkey\n${ACTION_MENU_SM_DEV_LABEL}`;
+  return state?.smDevAllow === undefined ? 'SourceMonkey' : `SourceMonkey\n${SM_DEV_CONTROL_LABEL}`;
 }
 
 /**
  * Whether the worker told `id` to skip this document: a reload with no
- * userscripts, or a tab an sm-dev run controls that doesn't allow it.
+ * userscripts, with only another script, or without this one; or a tab
+ * an sm-dev run controls that doesn't allow it.
  */
 export function skippedOnDocument(state: TabMatchState, id: string): boolean {
   if (state.scriptsSkipped) return true;
+  if (state.skipOnly !== undefined && state.skipOnly !== id) return true;
+  if (state.skipWithout === id) return true;
   return state.smDevAllow !== undefined && !(state.smDevAllow?.includes(id) ?? false);
 }
 
-// Shared "{name} | {status}" formatter — same text the badge tooltip
-// uses, so the action context menu can mirror it byte-for-byte.
+// The badge tooltip's "{name} | {status}" line.
 export function formatRowLabel(row: BadgeRow): string {
   return `${row.name} | ${formatStatus(row.status)}`;
 }

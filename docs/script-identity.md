@@ -153,27 +153,32 @@ sweeping from the copy on **screen**. See
 
 ### Enabling is exclusive; disabling is not
 
+This section covers the viewer's checkboxes and installs. The rule as
+it applies everywhere (collections page, popup, collection toggles,
+"Enable all"), and the active times behind it, are in
+[script-enablement.md](script-enablement.md).
+
 The rule applies to **every** enable checkbox the viewer shows: each
 panel row, on the details page and the preview alike, and the
 controls-row toggle at the top of the details page. `enableChanges` +
-`otherRunningCopies` are shared by all of them, so they cannot drift.
+`otherActiveCopies` are shared by all of them, so they cannot drift.
 The controls-row toggle has no table around it to read the copies from,
 so it runs its own lookup; if that read fails it still writes the copy
 the user clicked rather than blocking on something it needs only for
 the *other* rows.
 
 - **Clicking an unchecked box enables that copy and disables every
-  other copy that is running** — across both sections, since the point
+  other copy that is active** — across both sections, since the point
   is that one copy of this script runs, not one per section. Two
   enabled copies at one URL both register and both run, which is almost
   never wanted.
-- **Clicking a checked box just disables it.** That leaves none running,
+- **Clicking a checked box just disables it.** That leaves none active,
   which is an ordinary thing to want, and there is no other copy that
   should be promoted in its place.
 - **Installing counts as enabling.** A fresh install lands enabled, so
-  it sweeps the other running copies off on its way to the new script's
+  it sweeps the other active copies off on its way to the new script's
   page. So does a **local copy** ([local-copy.md](local-copy.md)): the
-  copy the user just made for editing is the one they want running.
+  copy the user just made for editing is the one they want active.
   - Both Install controls do it — the preview's header button and the
     panel's offer section.
   - And so does the collections page's **Add** field, which previews any
@@ -182,10 +187,10 @@ the *other* rows.
   - **Single-file installs only.** The preview keeps an Install button
     for other shapes too, and those add a whole collection — no one
     script for the rule to be about.
-  - **Only when the new copy will actually run.** It must have landed
-    `ok` — a row stored `invalid` can't run — and its container
-    collection must be enabled. Switching a working copy off in favour
-    of one that can't run would leave nothing running at all.
+  - **Only when the new copy is active**: its container collection
+    must be enabled.
+  - **Even when the new copy landed `invalid`**: it is the one asked
+    for ([script-enablement.md](script-enablement.md#a-copy-that-cant-run)).
   - **A duplicate Install doesn't sweep.** Nothing new landed, so
     nothing was enabled; the message says the script is already
     installed and the panel in the same box is where to choose between
@@ -198,13 +203,13 @@ the *other* rows.
     where the sweep is the whole effect of the click. Two copies that
     really are meant to run together are one checkbox away on the page
     Install lands on.
-- **One sweep for a copy newly running.** Install, local copy, a move
+- **One sweep for a copy newly active.** Install, local copy, a move
   into an enabled collection, and sm-dev's `script enable`, `install`
   and `move` ([sm-dev-managers.md](sm-dev-managers.md)) all call
   `turnOffOtherCopies` (`script-identity.ts`).
   - A run's test collection is left out both ways: the run keeps its
     scripts off other tabs itself, and only the run changes them.
-- **A copy under a disabled collection is spared.** It isn't running, so it
+- **A copy under a disabled collection is spared.** It isn't active, so it
   isn't competing — and its own checkbox is rendered disabled, so a
   flip made here could not be undone from this panel at all. Turning it
   off would silently destroy the user's stored intent for whenever they

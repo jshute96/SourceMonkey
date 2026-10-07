@@ -588,9 +588,7 @@ test('formatRowLabel: OK / ERROR / MISSING / UNEXPECTED use the raw status enum'
 });
 
 test('formatRowLabel: RELOAD is rendered as the verbose "Reload to update" label', () => {
-  // The action context menu shares this helper, so the verbose label
-  // must come from formatRowLabel itself — otherwise the menu would
-  // show "RELOAD" while the tooltip says "Reload to update".
+  // The tooltip says what to do, so the enum's raw name never shows.
   assert.equal(formatRowLabel({ id: 'e', name: 'Echo', status: 'RELOAD' }), 'Echo | Reload to update');
 });
 

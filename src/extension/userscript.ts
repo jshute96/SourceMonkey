@@ -55,7 +55,7 @@ import {
   findRelatedVersions,
   installOptionsFor,
   locationKey,
-  otherRunningCopies,
+  otherActiveCopies,
   turnOffOtherCopies,
   type InstallOption,
   type RelatedScript,
@@ -64,14 +64,13 @@ import {
 } from './script-identity.js';
 import {
   buildInstallSelect,
-  enableTitle,
   installChoiceBlocked,
   renderRelatedVersions,
   selectedInstallChoice,
-  watchSoloModifier,
   type InstallChoice,
   type RelatedVersionsActions,
 } from './related-versions.js';
+import { enableTitle, watchSoloModifier } from './solo-click.js';
 import { openCollectionDialog } from './collection-dialog.js';
 import { openMoveDialog } from './move-dialog.js';
 import { openCopyDialog } from './copy-dialog.js';
@@ -1553,7 +1552,7 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
   // repaints that had no `render` in front of them to restore the
   // default, so a title left over from a previous state would stick.
   if (args.currentScriptId && collectionEnabled) {
-    const others = otherRunningCopies(allRelatedRows(displayed), args.currentScriptId);
+    const others = otherActiveCopies(allRelatedRows(displayed), args.currentScriptId);
     enableLabelEl.title = enableTitle(others.length > 0);
   }
 }

@@ -1437,7 +1437,8 @@ listener that handles these wrapper-originated message types:
 - `sm:abandoned` — the wrapper exited without running anything
   (SW replied `skip`, or no decision came). Logged only, with no
   badge change, except no decision, which shows on the badge as an
-  error. `skip` comes from "Reload page with no userscripts" (see
+  error. `skip` comes from "Reload page with no userscripts" or its
+  per-script forms (see
   [matching.md](matching.md#reload-with-no-userscripts)), an sm-dev
   claim, or [No decision](#no-decision).
 - `sm:focus` — the document came to the front. Not per-script and not
@@ -1573,7 +1574,8 @@ When a wrapper sends `sm:check-pending` with its own `id`, `loadedAt`
 Before any of this:
 
 - A tab marked for "Reload page with no userscripts" gets `skip`, for
-  every frame — see
+  every frame; one marked for a per-script form, only for the scripts
+  it keeps out — see
   [matching.md](matching.md#reload-with-no-userscripts).
 - A request with `tld: true` (a script with a `.tld` rule) is checked
   against the script's exact patterns, with the frame's URL, and gets

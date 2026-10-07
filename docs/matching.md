@@ -373,7 +373,8 @@ For each tab we:
     collections page and the viewer use for the row.
   - `NOT LOADED` — expected by the matcher, no `sm:start`, and none
     is coming because the document was loaded with "Reload page with
-    no userscripts" (`scriptsSkipped` on the document's state). Also
+    no userscripts" (`scriptsSkipped` on the document's state), or
+    with one of its per-script forms. Also
     a refinement of `MISSING`, settled by the user rather than by
     Chrome, so it outranks `REJECTED` for the row and takes grey.
   - `MISSING` — expected by the matcher but no `sm:start` yet.
@@ -383,67 +384,26 @@ For each tab we:
   - `Reload to update` — the script is running here but its collection
     on disk has changed since. The verbose label is rendered in place
     of the raw enum so the tooltip tells the user what to do.
-- **Action context menu** — same `"<name> | <STATUS>"` lines as
-  additional entries under the right-click menu on the toolbar icon
-  (below Chrome's built-in items). Clicking one opens that script's
-  viewer page in a new tab. Rows whose status is `ERROR` (the wrapper
-  sent `sm:error` for this document) open the viewer with `#Log` so
-  the user lands on the Log pane with the failure detail in view;
-  every other status routes to the default (main script) tab.
-  - `chrome.contextMenus` action items are global to the action, so
-    we keep them synced to the active tab.
-  - **Clicks act on the tab Chrome names in `onClicked`**, not on the
-    tracked active tab, and the viewer opens in that tab's window.
-    - The tracked id comes from focus events, which can name a window
-      the user left earlier when several windows (or virtual desktops)
-      are open. The click itself can't be stale.
-    - The menu *contents* are still built for the tracked active tab.
-      When the two disagree, a clicked command isn't registered on the
-      clicked tab and does nothing; the SW console says so.
-    - Same reason a toolbar click opens the collections page in the
-      clicked window instead of letting `openOptionsPage` focus a copy
-      in whatever window Chrome last recorded. The trade is one
-      collections tab per window rather than one overall.
-  - Rebuilt on `chrome.tabs.onActivated`,
-    `chrome.windows.onFocusChanged`, and any `renderBadge` for the
-    active tab. Also rebuilt when a userscript registers or
-    unregisters a menu command (see below).
-  - **Nested menu commands** — entries created via
-    `GM_registerMenuCommand` appear indented (`↳ <name>`) directly
-    under their script's row. Clicking one routes
-    `sm:gm-menu-fire` to that tab so the wrapper invokes
-    the registered callback. See [GM-APIs.md](GM-APIs.md) for the
-    full lifecycle.
-  - **"Reload page with no userscripts"** — the last row, present
-    whenever the menu has at least one script row, except in a tab an
-    sm-dev run controls (there it's the run's choice). See
-    [Reload with no userscripts](#reload-with-no-userscripts).
-  - **"Page under sm-dev control"** — a disabled first row, in a tab
-    whose page loaded under an sm-dev run's claim. It takes the reload
-    row's slot of the cap.
-  - **6-item cap + "More" submenu** — Chrome skips action
-    context menus after 6 top-level rows. We pre-empt that by capping
-    the top level ourselves:
-    - Total rows = sum over groups of `1 (script row) + N commands`.
-    - The reload row takes one of the 6 slots, so script groups get 5.
-    - If the total fits, everything renders top-level.
-    - Otherwise we reserve one more top slot for a "More" parent, pack
-      script groups into the remaining 4 in incoming order, and
-      push any group that doesn't fit (plus every later group, to
-      preserve visible order) into the submenu.
-    - A script's row and its menu commands always travel as a unit —
-      no group is split between the top level and "More".
-    - The layout decision lives in `src/extension/action-menu.ts` and is
-      reflected by the SW test surface `getActionContextMenuPlan(tabId)`.
+- **Toolbar popup** — a click on the icon opens the "Active scripts"
+  popup, which shows the same statuses as colored pills, plus the
+  toggles made since load. See [status-popup.md](status-popup.md).
 
 ### Reload with no userscripts
 
-The action menu's last row reloads the tab once with every script
-skipped.
+The popup's page menu, and the icon's right-click menu, reload the tab
+once with every script skipped.
+Its per-script menus have two narrower forms:
+
+- **With only this script**: every other script skips (`skipOnly`).
+- **Without this script**: just that one skips (`skipWithout`).
+- The armed marker carries which of the three (`ReloadMode` in
+  `src/extension/popup-view.ts`); the rest of this section applies to
+  all of them.
 
 - Registrations are untouched — other tabs on the same site keep
   running their scripts, and the tab's next navigation runs them again.
-- Needs `chrome.webNavigation`; the row is withheld without it.
+- Needs `chrome.webNavigation`: without it the reload runs every
+  script, since the skip is keyed on its commit.
 
 - **Mechanism** — on a reload, every wrapper asks the SW
   `sm:check-pending` before running its body, and `skip` is an answer
@@ -467,15 +427,14 @@ skipped.
   milliseconds between click and commit. A reload slow enough for the
   SW to idle out in between just runs scripts as usual; a SW restart
   mid-document only affects subframes injected afterwards.
-- **Badge** — `updateTabMatches` stamps `scriptsSkipped` on the fresh
-  document's `TabMatchState` (persisted, so the badge survives a SW
+- **Badge** — `updateTabMatches` stamps `scriptsSkipped` (or
+  `skipOnly` / `skipWithout`) on the fresh document's `TabMatchState` (persisted, so the badge survives a SW
   restart); a bfcache return keeps it while the document is still in
   the per-tab LRU. Rows render `NOT LOADED` in grey.
 - **Log** — each wrapper's `sm:abandoned` lands on its script's Log
   as `info` (not `warning`, the level for any other skip) with the
-  reason `reload with no userscripts`.
-- **Click target** — the tab Chrome names in `onClicked`, like the
-  other rows.
+  reason `reload with no userscripts`, `reload with only another
+  userscript`, or `reload without this userscript`.
 
 ### Actual reports from injected wrappers
 

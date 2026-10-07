@@ -380,7 +380,7 @@ SourceMonkey installed works too, given that port.
   them.
 - In the run's tabs, SourceMonkey's toolbar icon has a cyan **T** in
   its corner, its badge counts the run's scripts, and both its tooltip
-  and its right-click menu say "Page under sm-dev control".
+  and its popup say "Page under sm-dev control".
 - When SourceMonkey and sm-dev come from incompatible builds, the run
   is refused, saying which one to update and how. When one is older but
   still compatible, the run starts with a note saying which, and how
