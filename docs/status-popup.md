@@ -13,9 +13,14 @@ plain-text rows and was capped at six top-level items.
 
 - **Single click** opens the popup.
 - **Double click** opens the collections page.
-- **Right click** adds one item to Chrome's menu, `Open Collections
-  page (double-click)`: the double click's action, worded as a hint
-  that the double click exists.
+- **Right click** adds items to Chrome's menu:
+  - `Open Collections page (double-click)`: the double click's action,
+    worded as a hint that the double click exists.
+  - `Reload page with no userscripts`: as in the popup's page menu, one
+    click closer when a script is breaking the page.
+    - Always shown, as the menu is the same for every tab.
+    - Does nothing on a tab an sm-dev run controls, where the popup
+      leaves it out (see [sm-dev-design.md](sm-dev-design.md)).
   - Recreated whenever the worker starts: re-enabling the extension
     fires no `onInstalled`.
 
@@ -23,20 +28,64 @@ plain-text rows and was capped at six top-level items.
 
 A Chrome popup set with `default_popup` opens on the first click, and
 `chrome.action.onClicked` never fires, so a second click can't be seen.
-So no popup is set (`handleActionClick` in background.ts):
+So no popup is set (`handleActionClick` in background.ts).
 
-- A click waits 250ms (the value SeeWhatISee tuned by hand) for a
-  second one, in the same window.
-- A second click in that window opens the collections page.
-- Otherwise: `setPopup({tabId, popup})`, `chrome.action.openPopup()`,
-  then `setPopup({tabId, popup: ''})`, so the next click reaches
-  `onClicked` again.
-- Cost: the popup appears ~250ms after the click.
-- `openPopup` needs the window focused. When it refuses (focus moved
-  during the wait), nothing opens; the SW console says why.
-- The rejected alternative: keep `default_popup`, and treat the popup
-  closing within ~300ms of opening as a double click. No delay, but the
-  popup flashes before the collections page opens.
+- **Opening**: the first click opens the popup at once:
+  `setPopup({tabId, popup})`, `chrome.action.openPopup()`, then
+  `setPopup({tabId, popup: ''})`, so the next click reaches `onClicked`
+  again.
+  - The clear is sent right after the open request, not once the popup
+    shows, and the open still goes ahead. Even so the clear only takes
+    effect some 50-130ms after the click.
+  - `openPopup` needs the window focused. When it refuses, nothing
+    opens; the SW console says why.
+- **Double-click time**: 500ms, per window. Nothing waits on it, and a
+  second click often shows only after 250ms (see the popup closing,
+  below).
+- **Second click**: opens the collections page and takes the popup
+  back:
+  - an open popup is sent `sm:popup-close` over its port;
+  - one that hasn't connected yet is told to close when it does. A new
+    first click on the tab drops that.
+- **Chrome takes the second click itself**, mostly: it fires no
+  `onClicked`, so the click is read from what it does to the popup
+  (`popupClosedEarly`):
+  - **One still opening**: `openPopup` fails. Chrome's error doesn't
+    say why, so this goes by timing: counted from 50ms after the first
+    click; a failure sooner has another cause, such as focus.
+  - **One showing** (Chrome takes ~200ms to show it): it closes, often
+    after 250ms. Seen as either of:
+    - its port disconnecting, if the popup connected after this click;
+    - its context leaving `runtime.getContexts`, polled until the time
+      is up, for a popup closed before it connected. Chrome reports a
+      popup with window and tab -1, so it is followed by context id.
+  - Either sign is held 150ms, then counts only if the tab is still
+    there and active: closing or leaving the tab (Ctrl+W right after
+    the click) closes its popup too. The tab closing or another tab
+    coming forward also drops the pending click outright.
+  - So a popup dismissed within 500ms of the click opens the
+    collections page.
+- **Double click with the popup already open**: Chrome takes the first
+  click too, closing the popup, and reports the second to `onClicked`.
+  - So a toolbar popup closing with no click pending is noted per tab
+    (`closedPopups`), and a click on that tab within 500ms opens the
+    collections page rather than the popup.
+  - The close can't be told from any other dismissal (Escape, a click
+    on the page, leaving the tab), so one of those followed by a click
+    on the icon within 500ms does the same.
+- **Not a second click**:
+  - The popup closing itself after an action (a link, a menu
+    command): it sends `sm:popup-closing` over its port first, which
+    drops the pending click.
+  - `popup.html` open in an ordinary tab (tests): its port has a
+    sender tab, and a toolbar popup's doesn't.
+- **Debug log**: with debug logging on, each double click logs one line
+  saying how far apart the clicks were and what showed the second.
+- Cost: on a double click the popup can flash before the collections
+  page opens.
+- The earlier design waited out the double-click time (250ms, from
+  SeeWhatISee) before opening the popup, which held every single click
+  back by that much.
 
 ## Layout
 
@@ -144,6 +193,8 @@ by shown name (`compareScriptNames`).
     - No site icon: on one page they'd nearly all be that site's icon.
       A script's own `@icon` might still be worth showing; undecided.
   - **Status pill**: opens the script's Log tab.
+    - Except **Reload to run**, which reloads the page, as the reload
+      banner's button does. Its tooltip says which.
   - **⋯ menu** for the script.
 
 ### Script ⋯ menu
@@ -213,8 +264,9 @@ Every pill has a tooltip:
     controlling the tab kept it out.
   - `Still running` says whether the script or its collection was
     disabled.
-- A last line, `Click to open the script log.`
-  - Not on a removed script's row: there is no script page left to
+- A last line saying what a click does: `Click to reload the page.` on
+  Reload to run, `Click to open the script log.` on the rest.
+  - None on a removed script's row: there is no script page left to
     open, and its pill isn't a link.
 - The heading's `Collection off` badge gets one too: `This collection
   is disabled, so none of its scripts run`.
@@ -288,6 +340,13 @@ Within each section, scripts sit under a heading per collection.
   - `sm:popup-view` gets the `PopupView` for a tab.
   - `sm:popup-reload` reloads with a `ReloadMode`.
   - `sm:popup-command` runs a menu command.
+  - `sm:popup-set-enabled` ticks or unticks a script's or collection's
+    box, with `solo` for a Ctrl/Cmd-click (`setScriptEnabledExclusive`,
+    `setCollectionEnabledExclusive` in the worker; see
+    [script-enablement.md](script-enablement.md)).
+- **Closing**: over the port, the worker sends `sm:popup-close` when
+  a double click takes the popup back, and the popup sends
+  `sm:popup-closing` before it closes itself after an action.
 - **Live updates**:
   - An open popup holds a port named for its tab (`sm-popup:<id>`).
     The worker sends `sm:popup-changed` over it from `renderBadge` and
@@ -298,8 +357,6 @@ Within each section, scripts sit under a heading per collection.
   - Refreshes are debounced, only the latest reply is drawn, and a
     view equal to the one on screen isn't redrawn. A redraw keeps the
     scroll position.
-- **Toggles** write storage straight from the page (`setScriptEnabled`,
-  `setCollectionEnabled`), as the collections page does.
 - **Collection options** opens the collections page at
   `#edit-collection-<id>`, which scrolls to the collection and opens its
   edit dialog.
@@ -314,3 +371,19 @@ Within each section, scripts sit under a heading per collection.
   scripts on this page.`
 - **Not listed**: a script deleted since it ran here, and an sm-dev
   run's scratch script outside that run's tabs.
+
+## Load time
+
+- Chrome builds a fresh page every time the popup opens, and loads
+  each module the page imports as its own file before the script runs.
+- Measured in the e2e browser, with 20 scripts listed:
+  - The page starts about 10ms after `openPopup` is called.
+  - Its script starts some 30-60ms later.
+  - Fetching the view from the worker and drawing it takes about 10ms.
+- So the popup imports only light modules:
+  - Toggles go to the worker as a message rather than importing the
+    script store, which brings the script build and file loading.
+  - It reads the key layout from `structural-keys.ts`, and location
+    naming from `file-locations.ts` and `location-kinds.ts` (through
+    `collection-display.ts`), never `directories.ts`.
+  - `tests/unit/popup-imports.test.mjs` checks this.

@@ -49,7 +49,6 @@ import {
   removeCollection,
   localFileScope,
   STORAGE_NEARLY_FULL,
-  touchesStructuralRows,
   type StoredScript,
   type StoredCollection,
 } from './script-store.js';
@@ -70,6 +69,7 @@ import {
   collectionAnchorId,
   EDIT_COLLECTION_HASH_PREFIX,
 } from './collection-display.js';
+import { touchesStructuralRows } from './structural-keys.js';
 import { openCollectionDialog, type CollectionDialogRequest } from './collection-dialog.js';
 import { onNamedTabFocus, openExtensionTab, openNamedTab } from './page-links.js';
 import { getValue } from '../userscript-header.js';

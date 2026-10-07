@@ -373,8 +373,8 @@ you can:
   without one. Handy for finding which script is breaking a page; the
   next ordinary reload runs them all again.
 
-Double-clicking the icon opens the collections page, as does its
-right-click menu.
+Double-clicking the icon opens the collections page. Its right-click
+menu does too, and can reload the page with no userscripts.
 
 Details: [docs/status-popup.md](docs/status-popup.md).
 

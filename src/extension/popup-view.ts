@@ -30,8 +30,13 @@ export const POPUP_STATUS_LABELS: Record<PopupStatus, string> = {
   INVALID: 'Invalid',
 };
 
-// Every pill's tooltip ends with this: the pill is a link to the Log.
+// Every pill's tooltip ends with what a click does: a Reload to run
+// pill reloads the page, as the banner's Reload does; the rest open
+// the Log.
 export const POPUP_PILL_CLICK_HINT = 'Click to open the script log.';
+export const POPUP_PILL_RELOAD_HINT = 'Click to reload the page.';
+// The page menu's item, and the icon's right-click item doing the same.
+export const RELOAD_NO_SCRIPTS_LABEL = 'Reload page with no userscripts';
 export const COLLECTION_OFF_LABEL = 'Collection off';
 export const COLLECTION_OFF_TOOLTIP = 'This collection is disabled, so none of its scripts run';
 export const POPUP_NO_SCRIPTS = 'No scripts match this page.';
@@ -152,10 +157,19 @@ export const POPUP_VIEW_MESSAGE = 'sm:popup-view';
 export const POPUP_RELOAD_MESSAGE = 'sm:popup-reload';
 // Popup → worker: run one of a script's menu commands.
 export const POPUP_COMMAND_MESSAGE = 'sm:popup-command';
+// Popup → worker: tick or untick a script's or a collection's box. The
+// worker writes it, so the popup needn't load the script store.
+export const POPUP_SET_ENABLED_MESSAGE = 'sm:popup-set-enabled';
 // Worker → popup: something the view for `tabId` shows changed
 // (badge state, menu commands). The popup asks for a fresh view. Sent
 // over the port an open popup holds, named this prefix + its tab id.
 export const POPUP_CHANGED_MESSAGE = 'sm:popup-changed';
+// Worker → popup, over the same port: close. The click that opened it
+// turned out to be the first of a double click.
+export const POPUP_CLOSE_MESSAGE = 'sm:popup-close';
+// Popup → worker, over the port: closing after an action (a link, a
+// menu command). Its close is then no double click's second click.
+export const POPUP_CLOSING_MESSAGE = 'sm:popup-closing';
 export const POPUP_PORT_PREFIX = 'sm-popup:';
 
 // Which scripts a popup-driven reload keeps out:
@@ -179,7 +193,14 @@ export interface PopupReloadRequest { type: typeof POPUP_RELOAD_MESSAGE; tabId: 
 export interface PopupCommandRequest {
   type: typeof POPUP_COMMAND_MESSAGE; tabId: number; scriptId: string; commandId: string;
 }
+export interface PopupSetEnabledRequest {
+  type: typeof POPUP_SET_ENABLED_MESSAGE; target: 'script' | 'collection'; id: string; enabled: boolean;
+  // Ctrl/Cmd-clicked: change only this, leaving other copies alone.
+  solo?: boolean;
+}
 export interface PopupChangedMessage { type: typeof POPUP_CHANGED_MESSAGE; tabId: number }
+export interface PopupCloseMessage { type: typeof POPUP_CLOSE_MESSAGE }
+export interface PopupClosingMessage { type: typeof POPUP_CLOSING_MESSAGE }
 
 const DEFAULT_TOOLTIPS: Record<PopupStatus, string> = {
   OK: 'Running on this page',
@@ -362,7 +383,7 @@ export function buildPopupView(input: PopupViewInput): PopupView {
       if (status === 'STILL_RUNNING' && s.enabled) {
         text = 'Its collection was disabled since this page loaded. It keeps running until a reload.';
       }
-      tooltip = `${text}\n${POPUP_PILL_CLICK_HINT}`;
+      tooltip = `${text}\n${status === 'PENDING' ? POPUP_PILL_RELOAD_HINT : POPUP_PILL_CLICK_HINT}`;
     }
     const row: PopupRow = {
       id: s.id,

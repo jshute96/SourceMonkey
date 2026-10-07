@@ -309,18 +309,26 @@ import {
 import {
   buildPopupView,
   POPUP_CHANGED_MESSAGE,
+  POPUP_CLOSE_MESSAGE,
+  POPUP_CLOSING_MESSAGE,
   POPUP_COMMAND_MESSAGE,
   POPUP_PORT_PREFIX,
   POPUP_RELOAD_MESSAGE,
   POPUP_VIEW_MESSAGE,
+  POPUP_SET_ENABLED_MESSAGE,
+  RELOAD_NO_SCRIPTS_LABEL,
   type PopupChangedMessage,
+  type PopupCloseMessage,
+  type PopupClosingMessage,
   type PopupCommandRequest,
   type PopupReloadRequest,
+  type PopupSetEnabledRequest,
   type PopupView,
   type PopupViewRequest,
   type ReloadMode,
 } from './popup-view.js';
 import { identityKey } from './script-identity.js';
+import { setCollectionEnabledExclusive, setScriptEnabledExclusive } from './script-enablement.js';
 import { scriptDisplayName } from '../script-display.js';
 
 interface SourceMonkeyApi {
@@ -549,6 +557,10 @@ interface SourceMonkeyApi {
   // Playwright can't click. Two calls inside the double-click window
   // are a double click.
   clickAction: (tabId: number, windowId: number) => void;
+  // Asks the toolbar popups showing `tabId` to close, over their port.
+  // They close as after an action, saying so first. Returns how many
+  // were asked: none while a popup is still connecting.
+  closePopup: (tabId: number) => number;
   // Drives the toolbar-click handler for the given window, which
   // Playwright can't click (chrome.action has no test hook). Tests use
   // it to verify a second click reuses the window's collections tab
@@ -748,6 +760,11 @@ const api: SourceMonkeyApi = {
   },
   getPopupView: (tabId) => popupViewForTab(tabId),
   clickAction: (tabId, windowId) => handleActionClick({ id: tabId, windowId }),
+  closePopup: (tabId) => {
+    const ports = popupPorts.get(tabId) ?? new Set();
+    for (const port of ports) postPopupClose(port);
+    return ports.size;
+  },
   openCollectionsPage: async (windowId) => {
     await openCollectionsPage(windowId);
   },
@@ -1607,45 +1624,254 @@ async function markSmDevTab(tabId: number, on: boolean): Promise<void> {
 //
 // Chrome can't report a second click while a popup is set: one set
 // opens on the first click, and `action.onClicked` never fires. So none
-// is set. A click waits DOUBLE_CLICK_MS for a second one; if none comes,
-// the popup is set on that tab just long enough for `action.openPopup`
-// to open it, then cleared so the next click reaches onClicked again.
+// is set. A click sets the popup on its tab just long enough for
+// `action.openPopup` to open it, then clears it so the next click
+// reaches onClicked again.
+//
+// The popup opens on the first click, and a second within
+// DOUBLE_CLICK_MS takes it back and opens the collections page. Chrome
+// mostly takes that second click itself, so it is also read from what
+// it does to the popup (`popupClosedEarly`).
 
 const POPUP_PAGE = 'popup.html';
-// How long a click waits for a second one. SeeWhatISee's value, tuned
-// by hand there: long enough for a deliberate double click, short
-// enough that the popup doesn't feel slow.
-const DOUBLE_CLICK_MS = 250;
+// How long after a click a second one counts as a double click. Nothing
+// waits on it, so it can be as long as a desktop's usual double click.
+// It needs the room: Chrome takes ~200ms to show a popup, and a second
+// click shows up as the popup closing, often after 250ms.
+const DOUBLE_CLICK_MS = 500;
+// No second click comes sooner than this after the first.
+const MIN_SECOND_CLICK_MS = 50;
+// How long a popup's close is held before it counts as a second click,
+// for Chrome to report the tab closing or being left (Ctrl+W right
+// after the click closes the popup too).
+const CLOSE_SETTLE_MS = 150;
 // Per window: two quick clicks in different windows are two clicks.
-const pendingActionClicks = new Map<number, ReturnType<typeof setTimeout>>();
+interface PendingActionClick {
+  timer: ReturnType<typeof setTimeout>;
+  tabId: number | undefined;
+  at: number;
+  // Its tab closed or was left, so its popup's close is no second click.
+  dropped?: boolean;
+}
+const pendingActionClicks = new Map<number, PendingActionClick>();
+
+// Tabs whose popup a double click took back before it connected, by
+// when. A popup still opening then connects late, and is told to close
+// on arrival.
+const cancelledPopups = new Map<number, number>();
+const CANCELLED_POPUP_TTL_MS = 2000;
+
+// Tabs whose popup closed without counting as a second click, by when.
+// Chrome takes a click on the icon while the popup shows, closing it and
+// reporting nothing, so that close may be the first click of a double
+// click: a click within DOUBLE_CLICK_MS of it is the second.
+const closedPopups = new Map<number, number>();
+
+function noteClosedPopup(tabId: number): void {
+  const now = Date.now();
+  // Pruned here: a tab can close before its popup's port reports it,
+  // leaving an entry nothing would remove.
+  for (const [id, at] of closedPopups) {
+    if (now - at >= DOUBLE_CLICK_MS) closedPopups.delete(id);
+  }
+  closedPopups.set(tabId, now);
+}
 
 function handleActionClick(tab: Pick<chrome.tabs.Tab, 'id' | 'windowId'> | undefined): void {
   const windowId = tab?.windowId ?? chrome.windows.WINDOW_ID_NONE;
   const pending = pendingActionClicks.get(windowId);
   if (pending !== undefined) {
-    clearTimeout(pending);
-    pendingActionClicks.delete(windowId);
-    void openCollectionsPage(tab?.windowId ?? null);
+    actionDoubleClick(windowId, pending, 'second click');
     return;
   }
-  pendingActionClicks.set(windowId, setTimeout(() => {
+  const tabId = tab?.id;
+  const closedAt = tabId !== undefined ? closedPopups.get(tabId) : undefined;
+  if (tabId !== undefined) closedPopups.delete(tabId);
+  if (closedAt !== undefined && Date.now() - closedAt < DOUBLE_CLICK_MS) {
+    dlog(`[SourceMonkey] toolbar double click, ${Date.now() - closedAt}ms after the popup closed`);
+    void openCollectionsPage(windowId === chrome.windows.WINDOW_ID_NONE ? null : windowId);
+    return;
+  }
+  // A new popup, which an older double click must not close.
+  if (tabId !== undefined) cancelledPopups.delete(tabId);
+  pendingActionClicks.set(windowId, {
+    tabId,
+    at: Date.now(),
+    timer: setTimeout(() => {
+      pendingActionClicks.delete(windowId);
+    }, DOUBLE_CLICK_MS),
+  });
+  void openActionPopup(tab);
+}
+
+// `how` says what showed the second click, for the debug log.
+function actionDoubleClick(windowId: number, pending: PendingActionClick, how: string): void {
+  dlog(`[SourceMonkey] toolbar double click, ${Date.now() - pending.at}ms apart (${how})`);
+  clearTimeout(pending.timer);
+  pendingActionClicks.delete(windowId);
+  if (pending.tabId !== undefined) closeActionPopup(pending.tabId);
+  void openCollectionsPage(windowId === chrome.windows.WINDOW_ID_NONE ? null : windowId);
+}
+
+// Close the popup the first click of a double click opened, or is still
+// opening.
+function closeActionPopup(tabId: number): void {
+  const ports = popupPorts.get(tabId);
+  if (!ports?.size) {
+    cancelledPopups.set(tabId, Date.now());
+    return;
+  }
+  for (const port of ports) postPopupClose(port);
+}
+
+function postPopupClose(port: chrome.runtime.Port): void {
+  const msg: PopupCloseMessage = { type: POPUP_CLOSE_MESSAGE };
+  try {
+    port.postMessage(msg);
+  } catch {
+    // Already closed.
+  }
+}
+
+// The pending first click on `tabId`, if any.
+function pendingClickOnTab(tabId: number): [number, PendingActionClick] | null {
+  for (const entry of pendingActionClicks) {
+    if (entry[1].tabId === tabId) return entry;
+  }
+  return null;
+}
+
+// A popup that closed, or failed to open, within the double-click
+// time, without being told to. Chrome can take the second click itself
+// when it lands on the icon with the popup showing or opening: it
+// closes the popup, or drops the open, and never reports the click. So
+// that stands for the click, unless the tab went away or out of view
+// meanwhile, which closes the popup too.
+//   - `notBeforeMs`: ignored this soon after the first click.
+//   - `openedAt`: when the popup that closed connected. One from before
+//     the click is an older popup, not this click's.
+// True when it may count, decided after CLOSE_SETTLE_MS.
+function popupClosedEarly(tabId: number, how: string, opts: { notBeforeMs?: number; openedAt?: number } = {}): boolean {
+  const found = pendingClickOnTab(tabId);
+  if (!found) return false;
+  const [windowId, pending] = found;
+  if (Date.now() - pending.at < (opts.notBeforeMs ?? 0)) return false;
+  if (opts.openedAt !== undefined && opts.openedAt < pending.at) return false;
+  // Held, so it stops the double-click timer from expiring meanwhile.
+  clearTimeout(pending.timer);
+  setTimeout(() => void settleEarlyClose(windowId, tabId, pending, how), CLOSE_SETTLE_MS);
+  return true;
+}
+
+async function settleEarlyClose(windowId: number, tabId: number, pending: PendingActionClick, how: string): Promise<void> {
+  if (pending.dropped || pendingActionClicks.get(windowId) !== pending) return;
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (pending.dropped || pendingActionClicks.get(windowId) !== pending) return;
+  if (!tab?.active) {
     pendingActionClicks.delete(windowId);
-    void openActionPopup(tab);
-  }, DOUBLE_CLICK_MS));
+    return;
+  }
+  actionDoubleClick(windowId, pending, how);
+}
+
+// The tab a first click opened the popup on closed or was left: its
+// popup closes with it, which is no second click.
+function dropPendingClick(tabId: number): void {
+  const found = pendingClickOnTab(tabId);
+  if (!found) return;
+  found[1].dropped = true;
+  clearTimeout(found[1].timer);
+  pendingActionClicks.delete(found[0]);
+}
+chrome.tabs.onRemoved.addListener((tabId) => {
+  dropPendingClick(tabId);
+  closedPopups.delete(tabId);
+});
+// Another tab of the window came forward.
+chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
+  const pending = pendingActionClicks.get(windowId);
+  if (pending?.tabId !== undefined && pending.tabId !== tabId) dropPendingClick(pending.tabId);
+});
+
+// The popup closed itself after an action (a link, a menu command):
+// that close isn't a second click.
+function popupClosingOnPurpose(tabId: number): void {
+  dropPendingClick(tabId);
 }
 
 async function openActionPopup(tab: Pick<chrome.tabs.Tab, 'id' | 'windowId'> | undefined): Promise<void> {
   const tabId = tab?.id;
   if (tabId == null) return;
   try {
+    // Asked alongside the open rather than before it, so the open isn't
+    // held up. The new popup can't be listed before it is asked for.
+    const beforeOpen = popupContextIds();
     await chrome.action.setPopup({ tabId, popup: POPUP_PAGE });
-    await chrome.action.openPopup(tab?.windowId != null ? { windowId: tab.windowId } : {});
-  } catch (err) {
-    // Chrome refuses when the window lost focus during the wait, or
-    // the tab closed. Nothing the user can act on.
-    console.info('[SourceMonkey] could not open the popup:', describeError(err));
-  } finally {
+    // Cleared as soon as Chrome has the open request, not once the
+    // popup shows: while one is set, a click on the icon goes to Chrome
+    // rather than onClicked. The open still goes ahead. Even so the
+    // clear lands only some 50-130ms after the click, and a second click
+    // before then is Chrome's (see `popupClosedEarly`).
+    const opening = chrome.action.openPopup(tab?.windowId != null ? { windowId: tab.windowId } : {});
+    // Handled now: it can fail while the clear is still on its way, and
+    // an unhandled rejection lands in chrome://extensions errors.
+    opening.catch(() => { /* awaited below */ });
     await chrome.action.setPopup({ tabId, popup: '' }).catch(() => { /* tab closed */ });
+    await opening;
+    const before = await beforeOpen;
+    if (tab?.windowId != null) void watchForEarlyClose(tab.windowId, tabId, before);
+  } catch (err) {
+    await chrome.action.setPopup({ tabId, popup: '' }).catch(() => { /* tab closed */ });
+    // A second click while Chrome was still opening it: Chrome takes
+    // that click itself, dropping the open, and reports nothing else.
+    // Chrome's error doesn't say which cause it was, so this goes by
+    // timing alone: a failure sooner than MIN_SECOND_CLICK_MS can't be
+    // a second click, and a later one is taken for one.
+    if (popupClosedEarly(tabId, 'the popup failed to open', { notBeforeMs: MIN_SECOND_CLICK_MS })) return;
+    // Chrome refuses when the window lost focus, or the tab closed.
+    // Nothing the user can act on.
+    console.info('[SourceMonkey] could not open the popup:', describeError(err));
+  }
+}
+
+// How often `watchForEarlyClose` looks.
+const EARLY_CLOSE_POLL_MS = 15;
+
+// Popup contexts open now, by id. Chrome reports a popup with no window
+// or tab (both -1), so a popup is told apart only by its id.
+async function popupContextIds(): Promise<Set<string> | null> {
+  try {
+    const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.POPUP] });
+    return new Set(contexts.map((c) => c.contextId));
+  } catch {
+    return null;
+  }
+}
+
+// Watches the popup the first click opened until the double-click time
+// is up, and counts its closing meanwhile as the second click
+// (`popupClosedEarly`). The port's disconnect says the same, but a popup
+// Chrome closes while it is still loading never connects. `before` is
+// the popups open before this one, to tell which is new.
+async function watchForEarlyClose(windowId: number, tabId: number, before: Set<string> | null): Promise<void> {
+  const pending = pendingActionClicks.get(windowId);
+  if (pending?.tabId !== tabId || before === null) return;
+  const now = await popupContextIds();
+  if (now === null) return;
+  const ours = [...now].filter((id) => !before.has(id));
+  // Not listed yet, or already gone: the port's disconnect still tells.
+  // Contexts aren't per window, so a popup another window opened
+  // meanwhile is counted as ours too; that can only hide a close, never
+  // invent one.
+  if (ours.length === 0) return;
+  while (pendingActionClicks.get(windowId) === pending) {
+    const open = await popupContextIds();
+    if (open === null) return;
+    if (!ours.some((id) => open.has(id))) {
+      if (pendingActionClicks.get(windowId) === pending) popupClosedEarly(tabId, 'the popup closed');
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, EARLY_CLOSE_POLL_MS));
   }
 }
 
@@ -1731,9 +1957,29 @@ chrome.runtime.onConnect.addListener((port) => {
   let ports = popupPorts.get(tabId);
   if (!ports) popupPorts.set(tabId, ports = new Set());
   ports.add(port);
+  const connectedAt = Date.now();
+  // popup.html open in an ordinary tab (tests) is no toolbar popup.
+  const isToolbarPopup = port.sender.tab === undefined;
+  let closingOnPurpose = false;
+  port.onMessage.addListener((message) => {
+    if ((message as Partial<PopupClosingMessage> | null)?.type !== POPUP_CLOSING_MESSAGE) return;
+    closingOnPurpose = true;
+    popupClosingOnPurpose(tabId);
+  });
+  // A double click took this popup back while it was still opening.
+  const cancelledAt = cancelledPopups.get(tabId);
+  if (cancelledAt !== undefined) {
+    cancelledPopups.delete(tabId);
+    if (Date.now() - cancelledAt < CANCELLED_POPUP_TTL_MS) postPopupClose(port);
+  }
   port.onDisconnect.addListener(() => {
     ports.delete(port);
     if (ports.size === 0) popupPorts.delete(tabId);
+    if (isToolbarPopup && !closingOnPurpose
+      && !popupClosedEarly(tabId, 'the popup disconnected', { openedAt: connectedAt })) {
+      // Perhaps a click on the icon closed it (see `closedPopups`).
+      noteClosedPopup(tabId);
+    }
   });
 });
 
@@ -1763,8 +2009,11 @@ function isReloadMode(value: unknown): value is ReloadMode {
 
 // ---------- The icon's right-click menu ----------
 //
-// One item: the double click's action, worded so it doubles as a hint
-// that the double click exists. The popup has everything else.
+// - The double click's action, worded so it doubles as a hint that the
+//   double click exists.
+// - Reload with no userscripts, as in the popup's page menu: quicker
+//   there when a script is breaking the page.
+// The popup has everything else.
 //
 // Recreated every time the worker starts, not only on install: menu
 // items persist with the extension, but not necessarily through it
@@ -1773,34 +2022,82 @@ function isReloadMode(value: unknown): value is ReloadMode {
 
 const OPEN_COLLECTIONS_MENU_ID = 'sm-open-collections';
 const OPEN_COLLECTIONS_MENU_TITLE = 'Open Collections page (double-click)';
+const RELOAD_NO_SCRIPTS_MENU_ID = 'sm-reload-no-scripts';
 
 function createActionMenu(): void {
+  // Read so Chrome doesn't report an unchecked error.
+  const checkCreated = (): void => {
+    if (chrome.runtime.lastError) {
+      console.info('[SourceMonkey] could not create the icon menu:', chrome.runtime.lastError.message);
+    }
+  };
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: OPEN_COLLECTIONS_MENU_ID,
       title: OPEN_COLLECTIONS_MENU_TITLE,
       contexts: ['action'],
-    }, () => {
-      // Read so Chrome doesn't report an unchecked error.
-      if (chrome.runtime.lastError) {
-        console.info('[SourceMonkey] could not create the icon menu:', chrome.runtime.lastError.message);
-      }
-    });
+    }, checkCreated);
+    chrome.contextMenus.create({
+      id: RELOAD_NO_SCRIPTS_MENU_ID,
+      title: RELOAD_NO_SCRIPTS_LABEL,
+      contexts: ['action'],
+    }, checkCreated);
   });
 }
 
 createActionMenu();
-// The window the right-click came from, as for a double click.
+// The window and tab the right-click came from: the active tab as the
+// worker last saw it can be stale.
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === OPEN_COLLECTIONS_MENU_ID) void openCollectionsPage(tab?.windowId ?? null);
+  else if (info.menuItemId === RELOAD_NO_SCRIPTS_MENU_ID) void reloadNoScriptsFromMenu(tab?.id ?? null);
 });
 
+// The menu is the same on every tab, so the item shows on a tab an
+// sm-dev run controls too, where the popup leaves it out: there the run
+// chooses what runs, and skipping would drop its scripts as well.
+async function reloadNoScriptsFromMenu(tabId: number | null): Promise<void> {
+  if (tabId === null) {
+    console.info('[SourceMonkey] could not reload with no userscripts: Chrome did not say which tab');
+    return;
+  }
+  await claimsReady();
+  if (activeClaim(tabId)) {
+    console.info('[SourceMonkey] not reloading with no userscripts: an sm-dev run controls this tab');
+    return;
+  }
+  await reloadTabWithMode(tabId, { kind: 'none' });
+}
+
 // The popup's requests. Only from our own pages, like the other page
-// relays: a reload or a menu command is an action on a tab.
+// relays: a reload or a menu command is an action on a tab, and a
+// toggle changes what runs everywhere.
 function installPopupListener(): void {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const msg = message as { type?: unknown } | null;
     if (!msg || !fromExtensionPage(sender)) return undefined;
+    if (msg.type === POPUP_SET_ENABLED_MESSAGE) {
+      const req = msg as Partial<PopupSetEnabledRequest>;
+      if (typeof req.id !== 'string' || typeof req.enabled !== 'boolean'
+        || (req.target !== 'script' && req.target !== 'collection')) {
+        sendResponse(null);
+        return undefined;
+      }
+      // Exclusive, as every enable control is (docs/script-enablement.md).
+      const solo = req.solo === true;
+      const write = req.target === 'script'
+        ? setScriptEnabledExclusive(req.id, req.enabled, solo)
+        : setCollectionEnabledExclusive(req.id, req.enabled, solo);
+      // `ok` tells the popup whether to put the box back.
+      write.then(
+        () => { try { sendResponse({ ok: true }); } catch { /* popup gone */ } },
+        (err) => {
+          console.info('[SourceMonkey] popup could not change a checkbox:', describeError(err));
+          try { sendResponse({ ok: false }); } catch { /* popup gone */ }
+        },
+      );
+      return true;
+    }
     if (msg.type !== POPUP_VIEW_MESSAGE && msg.type !== POPUP_RELOAD_MESSAGE && msg.type !== POPUP_COMMAND_MESSAGE) {
       return undefined;
     }

@@ -390,7 +390,8 @@ For each tab we:
 
 ### Reload with no userscripts
 
-The popup's page menu reloads the tab once with every script skipped.
+The popup's page menu, and the icon's right-click menu, reload the tab
+once with every script skipped.
 Its per-script menus have two narrower forms:
 
 - **With only this script**: every other script skips (`skipOnly`).

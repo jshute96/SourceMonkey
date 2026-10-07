@@ -146,7 +146,12 @@ test('toggles since load: Reload to run, Still running, and the banner', () => {
   assert.deepEqual(names(v.enabled), ['A: now=PENDING, was=STILL_RUNNING']);
   assert.deepEqual(v.disabled, []);
   assert.equal(v.banner, 'Reload required: Enabled scripts changed');
-  assert.match(v.enabled[0].rows.find((r) => r.id === 'was').tooltip, /^Disabled since this page loaded/);
+  const was = v.enabled[0].rows.find((r) => r.id === 'was');
+  const now = v.enabled[0].rows.find((r) => r.id === 'now');
+  assert.match(was.tooltip, /^Disabled since this page loaded/);
+  // A click on Reload to run reloads; the other pills open the Log.
+  assert.match(now.tooltip, /\nClick to reload the page\.$/);
+  assert.match(was.tooltip, /\nClick to open the script log\.$/);
 });
 
 test('a running script whose collection was turned off says so', () => {

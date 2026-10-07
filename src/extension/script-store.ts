@@ -118,6 +118,7 @@ import {
   PARSE_RECHECK_CONCURRENCY,
 } from './concurrency.js';
 import { dlog } from '../debug-log.js';
+import { COLLECTIONS_INDEX_KEY, COLLECTION_PREFIX, SCRIPT_PREFIX, collectionKey, scriptKey } from './structural-keys.js';
 import { startPhaseTimer, timePhase, formatMs, timingNow } from '../phase-timing.js';
 import {
   applyFetchError,
@@ -859,30 +860,6 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
 }
 
 // ---------- chrome.storage.local I/O ----------
-
-const COLLECTIONS_INDEX_KEY = 'collections';
-const COLLECTION_PREFIX = 'collection:';
-const SCRIPT_PREFIX = 'script:';
-const collectionKey = (id: string) => `${COLLECTION_PREFIX}${id}`;
-const scriptKey = (id: string) => `${SCRIPT_PREFIX}${id}`;
-
-// Does a `chrome.storage.local` change touch the structural rows — the
-// collection index, a collection, or a script? Exported so pages
-// watching for "something I display moved" ask the module that owns the
-// key layout instead of re-deriving the prefixes, where a rename here
-// would leave them silently watching keys that no longer exist.
-export function touchesStructuralRows(keys: Iterable<string>): boolean {
-  for (const key of keys) {
-    if (
-      key === COLLECTIONS_INDEX_KEY ||
-      key.startsWith(collectionKey('')) ||
-      key.startsWith(scriptKey(''))
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
 
 // Serialize every read-modify-write of the structural rows (the
 // collection index, collection rows, script rows). chrome.storage.local

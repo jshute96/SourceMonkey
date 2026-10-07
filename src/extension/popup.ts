@@ -14,19 +14,25 @@ import {
   COLLECTION_OFF_LABEL,
   COLLECTION_OFF_TOOLTIP,
   POPUP_CHANGED_MESSAGE,
+  POPUP_CLOSE_MESSAGE,
+  POPUP_CLOSING_MESSAGE,
   POPUP_COMMAND_MESSAGE,
   POPUP_NO_SCRIPTS,
   POPUP_NOT_INJECTABLE,
   POPUP_PORT_PREFIX,
   POPUP_RELOAD_MESSAGE,
+  POPUP_SET_ENABLED_MESSAGE,
   POPUP_STATUS_LABELS,
   POPUP_VIEW_MESSAGE,
+  RELOAD_NO_SCRIPTS_LABEL,
   REMOVED_GROUP_ID,
   type PopupChangedMessage,
+  type PopupClosingMessage,
   type PopupCommandRequest,
   type PopupGroup,
   type PopupReloadRequest,
   type PopupRow,
+  type PopupSetEnabledRequest,
   type PopupStatus,
   type PopupView,
   type PopupViewRequest,
@@ -35,8 +41,7 @@ import {
 import { SM_DEV_CONTROL_LABEL } from './tab-status.js';
 import { collectionAnchorId, EDIT_COLLECTION_HASH_PREFIX, makeCollectionTypeBubble } from './collection-display.js';
 import { installHomeLinkHandler, namedPageUrl, openExtensionTab, openNamedTab } from './page-links.js';
-import { touchesStructuralRows } from './script-store.js';
-import { setCollectionEnabledExclusive, setScriptEnabledExclusive } from './script-enablement.js';
+import { touchesStructuralRows } from './structural-keys.js';
 import { enableTitle, watchSoloModifier } from './solo-click.js';
 import { ENABLE_TITLE, viewerUrl } from '../script-display.js';
 
@@ -62,6 +67,8 @@ const scriptsEl = document.getElementById('scripts') as HTMLElement;
 const pageMenuBtn = document.getElementById('page-menu') as HTMLButtonElement;
 
 let tabId: number | null = null;
+// The current port to the worker (`connectToWorker`).
+let workerPort: chrome.runtime.Port | null = null;
 let view: PopupView | null = null;
 // Scripts whose command list the person opened or closed, overriding
 // the default (closed past COMMANDS_SHOWN_OPEN). For as long as the
@@ -78,7 +85,7 @@ pageMenuBtn.addEventListener('click', () => {
     // through it, as for the selective reloads, and redraws.
     { label: 'Reload page', run: () => reloadPlain(), hidden: tabId === null },
     {
-      label: 'Reload page with no userscripts',
+      label: RELOAD_NO_SCRIPTS_LABEL,
       run: () => reloadTab({ kind: 'none' }),
       // Nothing to keep out on a page no script matches.
       hidden: !view?.perScriptReload || (view.enabled.length === 0 && view.disabled.length === 0),
@@ -104,8 +111,11 @@ async function start(): Promise<void> {
 // is reopened, with a refresh for whatever was missed meanwhile.
 function connectToWorker(id: number): void {
   const port = chrome.runtime.connect({ name: POPUP_PORT_PREFIX + id });
+  workerPort = port;
   port.onMessage.addListener((message) => {
-    if ((message as Partial<PopupChangedMessage> | null)?.type === POPUP_CHANGED_MESSAGE) scheduleRefresh();
+    const type = (message as Partial<PopupChangedMessage> | null)?.type;
+    if (type === POPUP_CHANGED_MESSAGE) scheduleRefresh();
+    else if (type === POPUP_CLOSE_MESSAGE) closeSoon();
   });
   port.onDisconnect.addListener(() => {
     // Read, so Chrome doesn't report it as unchecked.
@@ -163,7 +173,16 @@ async function refresh(): Promise<void> {
 }
 
 function closeSoon(): void {
-  if (inPopup) window.close();
+  if (!inPopup) return;
+  // So the worker doesn't take this close for the second click of a
+  // double click on the icon.
+  const msg: PopupClosingMessage = { type: POPUP_CLOSING_MESSAGE };
+  try {
+    workerPort?.postMessage(msg);
+  } catch {
+    // Disconnected; nothing is waiting on it.
+  }
+  window.close();
 }
 
 // Run a click's action, logging rather than dropping a failure (the tab
@@ -323,7 +342,7 @@ function groupHead(group: PopupGroup): HTMLElement {
     { label: 'Collection details', run: () => openNamedTab('collections', { hash }).then(closeSoon) },
     {
       label: off ? 'Enable collection' : 'Disable collection',
-      run: () => setCollectionEnabledExclusive(c.id, off).then(() => undefined),
+      run: () => setEnabled('collection', c.id, off),
     },
     {
       label: 'Collection options',
@@ -351,15 +370,25 @@ function scriptRow(row: PopupRow, group: PopupGroup): HTMLElement {
   const box = el('input', { type: 'checkbox', title: boxTitle }) as HTMLInputElement;
   box.checked = row.checked;
   // Exclusive, as everywhere: turning it on turns the script's other
-  // running copies off, unless Ctrl/Cmd-clicked.
+  // active copies off, unless Ctrl/Cmd-clicked.
   const takeSolo = watchSoloModifier(box);
-  box.addEventListener('change', () => quietly(setScriptEnabledExclusive(row.id, box.checked, takeSolo())));
+  box.addEventListener('change', () => quietly(setEnabled('script', row.id, box.checked, takeSolo())));
 
   const name = el('a', { class: 'script-name', href: viewerUrl(row.id), target: '_blank', title: 'Open the script page' }, row.name);
   name.addEventListener('click', (ev) => openPage(ev, viewerUrl(row.id)));
 
   const main = el('div', { class: 'row-main' }, box, name);
-  if (row.status) {
+  if (row.status === 'PENDING') {
+    // Reload to run: a click does just that, as the banner's Reload does.
+    const pill = el('button', {
+      type: 'button',
+      class: `pill ${PILL_CLASSES[row.status]}`,
+      title: row.tooltip ?? '',
+      'data-status': row.status,
+    }, POPUP_STATUS_LABELS[row.status]);
+    pill.addEventListener('click', () => quietly(reloadPlain()));
+    main.append(pill);
+  } else if (row.status) {
     const pill = el('a', {
       class: `pill ${PILL_CLASSES[row.status]}`,
       href: viewerUrl(row.id, 'log'),
@@ -460,6 +489,23 @@ async function runCommand(scriptId: string, commandId: string): Promise<void> {
   const req: PopupCommandRequest = { type: POPUP_COMMAND_MESSAGE, tabId, scriptId, commandId };
   await chrome.runtime.sendMessage(req);
   closeSoon();
+}
+
+// Ticks a script's or collection's box. The worker writes the row, and
+// the storage change redraws the popup. When the write fails nothing
+// changes, so the view would match the one drawn and be skipped: forget
+// it, so the redraw puts the box back as stored.
+// `solo`: Ctrl/Cmd-clicked, so other copies are left alone
+// (docs/script-enablement.md).
+async function setEnabled(
+  target: PopupSetEnabledRequest['target'], id: string, enabled: boolean, solo = false,
+): Promise<void> {
+  const req: PopupSetEnabledRequest = { type: POPUP_SET_ENABLED_MESSAGE, target, id, enabled, solo };
+  const reply = (await chrome.runtime.sendMessage(req)) as { ok?: boolean } | null;
+  if (reply?.ok !== true) {
+    drawnJson = null;
+    await refresh();
+  }
 }
 
 // ---------- Menus ----------

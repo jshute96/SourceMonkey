@@ -19,19 +19,20 @@
 // Inside a `scripts` collection each row wears its own scheme chip
 // (`makeSchemeChip`), since the collection itself has no single scheme.
 
+// The light location modules, not directories.ts: the toolbar popup
+// draws type bubbles and must not load the scanning and fetch code.
 import {
   containerKind,
   containerPath,
-  scriptSchemeKind,
-  githubRawToBlobUrl,
   isContainerCollection,
   isFileUrl,
   isHttpUrl,
-  isSmDevCollection,
   pathToFileUrl,
   isManifestCollection,
   type ContainerKind,
-} from './directories.js';
+} from '../file-locations.js';
+import { githubRawToBlobUrl } from '../github-urls.js';
+import { isSmDevCollection, scriptSchemeKind } from './location-kinds.js';
 import { MANIFEST_FILENAME } from '../collection-scan.js';
 import { decodeForDisplay } from '../script-display.js';
 import type { StoredCollection } from './script-store.js';

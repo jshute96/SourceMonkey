@@ -1449,6 +1449,8 @@ Terms used below:
 - The popup offers no "Reload page with no userscripts" there, nor its
   per-script forms: which scripts run in the tab is the run's choice
   (`reload --noscript`).
+  - The icon's right-click menu still shows that item (it is the same
+    on every tab), but it does nothing there.
 - A cyan **T** drawn in a corner of the icon marks a claimed tab (see
   below). Cyan is used nowhere else in the badge colors.
 - All of these follow the document: a page loaded under a claim keeps

@@ -960,8 +960,8 @@ Why the split:
   popup. sm-dev calls it too, so its name stays.
   Returns `{ok:false}` for stale or unknown ids.
 - `self.SourceMonkey.reloadWithoutScripts(tabId)` stands in for the
-  popup's "Reload page with no userscripts" — see
-  [matching.md](matching.md#reload-with-no-userscripts).
+  popup's and right-click menu's "Reload page with no userscripts" (see
+  [matching.md](matching.md#reload-with-no-userscripts)).
 
 ## `window.onurlchange`
 

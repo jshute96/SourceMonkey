@@ -318,6 +318,11 @@ same way for all kinds.
 
 ## Module surface
 
+The pure classifiers live in `src/file-locations.ts` and
+`src/extension/location-kinds.ts` (`containerKindForSingleFileInput`),
+re-exported through `directories.ts`. Pages that only label locations,
+like the toolbar popup, import them without the fetch and scan code.
+
 Collection-kind classifiers (all scheme-agnostic — they classify by the
 input's pathname suffix, regardless of `http://`, `file://`, or raw
 path form):
