@@ -19,6 +19,7 @@ import {
   POPUP_NOT_INJECTABLE,
   POPUP_PORT_PREFIX,
   POPUP_RELOAD_MESSAGE,
+  POPUP_SET_ENABLED_MESSAGE,
   POPUP_STATUS_LABELS,
   POPUP_VIEW_MESSAGE,
   type PopupChangedMessage,
@@ -26,6 +27,7 @@ import {
   type PopupGroup,
   type PopupReloadRequest,
   type PopupRow,
+  type PopupSetEnabledRequest,
   type PopupStatus,
   type PopupView,
   type PopupViewRequest,
@@ -34,7 +36,7 @@ import {
 import { SM_DEV_CONTROL_LABEL } from './tab-status.js';
 import { collectionAnchorId, EDIT_COLLECTION_HASH_PREFIX, makeCollectionTypeBubble } from './collection-display.js';
 import { installHomeLinkHandler, namedPageUrl, openExtensionTab, openNamedTab } from './page-links.js';
-import { setCollectionEnabled, setScriptEnabled, touchesStructuralRows } from './script-store.js';
+import { touchesStructuralRows } from './structural-keys.js';
 import { ENABLE_TITLE, viewerUrl } from '../script-display.js';
 
 // The checkbox tooltip's second line under a disabled collection: the
@@ -314,7 +316,7 @@ function groupHead(group: PopupGroup): HTMLElement {
     { label: 'Collection details', run: () => openNamedTab('collections', { hash }).then(closeSoon) },
     {
       label: off ? 'Enable collection' : 'Disable collection',
-      run: () => setCollectionEnabled(c.id, off).then(() => undefined),
+      run: () => setEnabled('collection', c.id, off),
     },
     {
       label: 'Collection options',
@@ -337,7 +339,7 @@ function scriptRow(row: PopupRow, group: PopupGroup): HTMLElement {
   const boxTitle = group.collection.enabled ? ENABLE_TITLE : `${ENABLE_TITLE}\n${SCRIPT_COLLECTION_OFF_HINT}`;
   const box = el('input', { type: 'checkbox', title: boxTitle }) as HTMLInputElement;
   box.checked = row.checked;
-  box.addEventListener('change', () => quietly(setScriptEnabled(row.id, box.checked)));
+  box.addEventListener('change', () => quietly(setEnabled('script', row.id, box.checked)));
 
   const name = el('a', { class: 'script-name', href: viewerUrl(row.id), target: '_blank', title: 'Open the script page' }, row.name);
   name.addEventListener('click', (ev) => openPage(ev, viewerUrl(row.id)));
@@ -430,6 +432,19 @@ async function runCommand(scriptId: string, commandId: string): Promise<void> {
   const req: PopupCommandRequest = { type: POPUP_COMMAND_MESSAGE, tabId, scriptId, commandId };
   await chrome.runtime.sendMessage(req);
   closeSoon();
+}
+
+// Ticks a script's or collection's box. The worker writes the row, and
+// the storage change redraws the popup. When the write fails nothing
+// changes, so the view would match the one drawn and be skipped: forget
+// it, so the redraw puts the box back as stored.
+async function setEnabled(target: PopupSetEnabledRequest['target'], id: string, enabled: boolean): Promise<void> {
+  const req: PopupSetEnabledRequest = { type: POPUP_SET_ENABLED_MESSAGE, target, id, enabled };
+  const reply = (await chrome.runtime.sendMessage(req)) as { ok?: boolean } | null;
+  if (reply?.ok !== true) {
+    drawnJson = null;
+    await refresh();
+  }
 }
 
 // ---------- Menus ----------

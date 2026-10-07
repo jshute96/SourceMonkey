@@ -1,0 +1,28 @@
+// The storage key layout of the structural rows (the collection index,
+// collection rows, script rows). Split from script-store.ts, which owns
+// those rows, so a page that only watches for changes to them (the
+// toolbar popup) doesn't load the store and everything it imports.
+
+export const COLLECTIONS_INDEX_KEY = 'collections';
+export const COLLECTION_PREFIX = 'collection:';
+export const SCRIPT_PREFIX = 'script:';
+export const collectionKey = (id: string) => `${COLLECTION_PREFIX}${id}`;
+export const scriptKey = (id: string) => `${SCRIPT_PREFIX}${id}`;
+
+// Does a `chrome.storage.local` change touch the structural rows — the
+// collection index, a collection, or a script? Pages watching for
+// "something I display moved" ask the module that owns the key layout
+// instead of re-deriving the prefixes, where a rename here would leave
+// them silently watching keys that no longer exist.
+export function touchesStructuralRows(keys: Iterable<string>): boolean {
+  for (const key of keys) {
+    if (
+      key === COLLECTIONS_INDEX_KEY ||
+      key.startsWith(collectionKey('')) ||
+      key.startsWith(scriptKey(''))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}

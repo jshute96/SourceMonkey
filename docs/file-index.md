@@ -176,9 +176,11 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/code-tabs.ts` | Tabbed code view: tab strip with per-tab URL tooltip + chip, Prism pane, lazy tab bodies, line highlight, gutter clicks, `#file:line:col` hash sync |
 | `src/extension/code-links.ts` | Linkifies a Prism-highlighted code block (header-tag values + bare URLs) and builds the shared open-in-new-tab anchor |
 | `src/extension/prism-userscript.ts` | Side-effect module: teaches Prism the `// ==UserScript== …` metadata block so it renders as a tinted band |
-| `src/extension/directories.ts` | Collection I/O: `classifyLocation`, input canonicalizer, script and http(s) fetch, recursive scanner, manifest parser, scratch rows |
+| `src/extension/directories.ts` | Collection I/O: `classifyLocation`, input canonicalizer, script and http(s) fetch, recursive scanner, manifest parser, scratch-script text reads |
+| `src/extension/location-kinds.ts` | Pure location naming: a script location's scheme kind, scratch-script URLs and keys, sm-dev collection paths |
 | `src/extension/file-access.ts` | "Allow access to file URLs" probe plus the shared "File access is disabled." banner and its chrome://extensions link |
 | `src/extension/github-provider.ts` | GitHub-only provider integration: URL parsing, default-branch resolution, blob→raw rewrite, Contents-API recursive dir scanner, per-script raw/display URL builders |
+| `src/extension/structural-keys.ts` | Storage key layout of the collection index, collection and script rows, and `touchesStructuralRows` |
 | `src/extension/script-store.ts` | Persistent userscript store (chrome.storage.local) plus load/refresh pipeline, addCollection / createCollection / installScript / moveScript / setCollectionOptions / probeCollectionLocation, refreshAllCollections, membership reconcile, first-run flag + DEFAULT_COLLECTIONS, legacy `source:*` key migration |
 | `src/extension/script-updater.ts` | Single entry point for refresh; rate-limits opportunistic background checks, and mirrors every load/refresh outcome into the per-script Log |
 | `src/extension/version-probe-fetch.ts` | Fetching half of update probes — reads a probe URL's `@version`, with bounded size, timeout, and fan-out |
@@ -460,6 +462,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/deep-link.test.mjs` | Unit tests for `buildDeepLinkTarget` — URL prefix match, allowlist, passthrough params, null on bad input |
 | `tests/unit/markup-response.test.mjs` | Unit tests for the markup guard: content-type families, leading-`<` body test, message wording |
 | `tests/unit/install-capture.test.mjs` | Unit tests for the `.user.js` capture helpers: URL predicate, forge page-view exclusion, install-page URL, one-shot bypass |
+| `tests/unit/popup-imports.test.mjs` | Keeps the toolbar popup's module graph small: no script store or location scanner |
 | `tests/unit/popup-view.test.mjs` | Unit tests for the popup's view: grouping, one row per script identity, statuses since load, tooltips, banner wording |
 | `tests/unit/gm-notification.test.mjs` | Unit tests for the `GM_notification` SW dispatcher (mapping, click/close terminality, timeout auto-clear) |
 | `tests/e2e/gm-log.spec.ts` | E2E tests for `GM_log` (per-script prefix, GM4 alias, gating) |

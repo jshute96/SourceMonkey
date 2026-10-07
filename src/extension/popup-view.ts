@@ -129,6 +129,9 @@ export const POPUP_VIEW_MESSAGE = 'sm:popup-view';
 export const POPUP_RELOAD_MESSAGE = 'sm:popup-reload';
 // Popup → worker: run one of a script's menu commands.
 export const POPUP_COMMAND_MESSAGE = 'sm:popup-command';
+// Popup → worker: tick or untick a script's or a collection's box. The
+// worker writes it, so the popup needn't load the script store.
+export const POPUP_SET_ENABLED_MESSAGE = 'sm:popup-set-enabled';
 // Worker → popup: something the view for `tabId` shows changed
 // (badge state, menu commands). The popup asks for a fresh view. Sent
 // over the port an open popup holds, named this prefix + its tab id.
@@ -155,6 +158,9 @@ export interface PopupViewRequest {
 export interface PopupReloadRequest { type: typeof POPUP_RELOAD_MESSAGE; tabId: number; mode: ReloadMode }
 export interface PopupCommandRequest {
   type: typeof POPUP_COMMAND_MESSAGE; tabId: number; scriptId: string; commandId: string;
+}
+export interface PopupSetEnabledRequest {
+  type: typeof POPUP_SET_ENABLED_MESSAGE; target: 'script' | 'collection'; id: string; enabled: boolean;
 }
 export interface PopupChangedMessage { type: typeof POPUP_CHANGED_MESSAGE; tabId: number }
 

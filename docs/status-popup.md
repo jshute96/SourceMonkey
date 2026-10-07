@@ -264,6 +264,8 @@ Within each section, scripts sit under a heading per collection.
   - `sm:popup-view` gets the `PopupView` for a tab.
   - `sm:popup-reload` reloads with a `ReloadMode`.
   - `sm:popup-command` runs a menu command.
+  - `sm:popup-set-enabled` ticks or unticks a script's or collection's
+    box (`setScriptEnabled`, `setCollectionEnabled` in the worker).
 - **Live updates**:
   - An open popup holds a port named for its tab (`sm-popup:<id>`).
     The worker sends `sm:popup-changed` over it from `renderBadge` and
@@ -274,8 +276,6 @@ Within each section, scripts sit under a heading per collection.
   - Refreshes are debounced, only the latest reply is drawn, and a
     view equal to the one on screen isn't redrawn. A redraw keeps the
     scroll position.
-- **Toggles** write storage straight from the page (`setScriptEnabled`,
-  `setCollectionEnabled`), as the collections page does.
 - **Collection options** opens the collections page at
   `#edit-collection-<id>`, which scrolls to the collection and opens its
   edit dialog.
@@ -290,3 +290,20 @@ Within each section, scripts sit under a heading per collection.
   scripts on this page.`
 - **Not listed**: a script deleted since it ran here, and an sm-dev
   run's scratch script outside that run's tabs.
+
+## Load time
+
+- A click opens the popup after the double-click wait (250ms). Chrome
+  then builds a fresh page every time, and loads each module the page
+  imports as its own file before the script runs.
+- Measured in the e2e browser, with 20 scripts listed:
+  - The page starts about 10ms after the wait ends.
+  - Its script starts some 30-60ms later.
+  - Fetching the view from the worker and drawing it takes about 10ms.
+- So the popup imports only light modules:
+  - Toggles go to the worker as a message rather than importing the
+    script store, which brings the script build and file loading.
+  - It reads the key layout from `structural-keys.ts`, and location
+    naming from `file-locations.ts` and `location-kinds.ts` (through
+    `collection-display.ts`), never `directories.ts`.
+  - `tests/unit/popup-imports.test.mjs` checks this.

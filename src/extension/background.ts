@@ -311,9 +311,11 @@ import {
   POPUP_PORT_PREFIX,
   POPUP_RELOAD_MESSAGE,
   POPUP_VIEW_MESSAGE,
+  POPUP_SET_ENABLED_MESSAGE,
   type PopupChangedMessage,
   type PopupCommandRequest,
   type PopupReloadRequest,
+  type PopupSetEnabledRequest,
   type PopupView,
   type PopupViewRequest,
   type ReloadMode,
@@ -1785,11 +1787,30 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 });
 
 // The popup's requests. Only from our own pages, like the other page
-// relays: a reload or a menu command is an action on a tab.
+// relays: a reload or a menu command is an action on a tab, and a
+// toggle changes what runs everywhere.
 function installPopupListener(): void {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const msg = message as { type?: unknown } | null;
     if (!msg || !fromExtensionPage(sender)) return undefined;
+    if (msg.type === POPUP_SET_ENABLED_MESSAGE) {
+      const req = msg as Partial<PopupSetEnabledRequest>;
+      if (typeof req.id !== 'string' || typeof req.enabled !== 'boolean'
+        || (req.target !== 'script' && req.target !== 'collection')) {
+        sendResponse(null);
+        return undefined;
+      }
+      const write = req.target === 'script' ? setScriptEnabled(req.id, req.enabled) : setCollectionEnabled(req.id, req.enabled);
+      // `ok` tells the popup whether to put the box back.
+      write.then(
+        () => { try { sendResponse({ ok: true }); } catch { /* popup gone */ } },
+        (err) => {
+          console.info('[SourceMonkey] popup could not change a checkbox:', describeError(err));
+          try { sendResponse({ ok: false }); } catch { /* popup gone */ }
+        },
+      );
+      return true;
+    }
     if (msg.type !== POPUP_VIEW_MESSAGE && msg.type !== POPUP_RELOAD_MESSAGE && msg.type !== POPUP_COMMAND_MESSAGE) {
       return undefined;
     }
