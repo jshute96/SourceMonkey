@@ -21,6 +21,7 @@ import {
   POPUP_RELOAD_MESSAGE,
   POPUP_STATUS_LABELS,
   POPUP_VIEW_MESSAGE,
+  REMOVED_GROUP_ID,
   type PopupChangedMessage,
   type PopupCommandRequest,
   type PopupGroup,
@@ -34,7 +35,9 @@ import {
 import { SM_DEV_CONTROL_LABEL } from './tab-status.js';
 import { collectionAnchorId, EDIT_COLLECTION_HASH_PREFIX, makeCollectionTypeBubble } from './collection-display.js';
 import { installHomeLinkHandler, namedPageUrl, openExtensionTab, openNamedTab } from './page-links.js';
-import { setCollectionEnabled, setScriptEnabled, touchesStructuralRows } from './script-store.js';
+import { touchesStructuralRows } from './script-store.js';
+import { setCollectionEnabledExclusive, setScriptEnabledExclusive } from './script-enablement.js';
+import { enableTitle, watchSoloModifier } from './solo-click.js';
 import { ENABLE_TITLE, viewerUrl } from '../script-display.js';
 
 // The checkbox tooltip's second line under a disabled collection: the
@@ -296,6 +299,12 @@ function renderSection(title: string, groups: PopupGroup[], emptyText: string): 
 
 function groupHead(group: PopupGroup): HTMLElement {
   const c = group.collection;
+  // Scripts removed since the page loaded: a plain heading, with no
+  // collection to open or toggle.
+  if (c.id === REMOVED_GROUP_ID) {
+    return el('div', { class: 'group-head', 'data-collection-id': c.id },
+      el('span', { class: 'collection-name' }, c.name));
+  }
   const hash = collectionAnchorId(c.id);
   const name = el('a', {
     class: 'collection-name', href: namedPageUrl('collections', hash), target: '_blank',
@@ -314,7 +323,7 @@ function groupHead(group: PopupGroup): HTMLElement {
     { label: 'Collection details', run: () => openNamedTab('collections', { hash }).then(closeSoon) },
     {
       label: off ? 'Enable collection' : 'Disable collection',
-      run: () => setCollectionEnabled(c.id, off).then(() => undefined),
+      run: () => setCollectionEnabledExclusive(c.id, off).then(() => undefined),
     },
     {
       label: 'Collection options',
@@ -331,13 +340,20 @@ function groupHead(group: PopupGroup): HTMLElement {
 const PILL_CLASSES: Record<PopupStatus, string> = {
   OK: 'ok', ERROR: 'error', REJECTED: 'rejected', RELOAD: 'reload', MISSING: 'missing',
   UNEXPECTED: 'unexpected', NOT_LOADED: 'not-loaded', PENDING: 'pending', STILL_RUNNING: 'still-running',
+  INVALID: 'invalid',
 };
 
 function scriptRow(row: PopupRow, group: PopupGroup): HTMLElement {
-  const boxTitle = group.collection.enabled ? ENABLE_TITLE : `${ENABLE_TITLE}\n${SCRIPT_COLLECTION_OFF_HINT}`;
+  if (group.collection.id === REMOVED_GROUP_ID) return removedRow(row);
+  const boxTitle = group.collection.enabled
+    ? enableTitle(row.otherCopies)
+    : `${ENABLE_TITLE}\n${SCRIPT_COLLECTION_OFF_HINT}`;
   const box = el('input', { type: 'checkbox', title: boxTitle }) as HTMLInputElement;
   box.checked = row.checked;
-  box.addEventListener('change', () => quietly(setScriptEnabled(row.id, box.checked)));
+  // Exclusive, as everywhere: turning it on turns the script's other
+  // running copies off, unless Ctrl/Cmd-clicked.
+  const takeSolo = watchSoloModifier(box);
+  box.addEventListener('change', () => quietly(setScriptEnabledExclusive(row.id, box.checked, takeSolo())));
 
   const name = el('a', { class: 'script-name', href: viewerUrl(row.id), target: '_blank', title: 'Open the script page' }, row.name);
   name.addEventListener('click', (ev) => openPage(ev, viewerUrl(row.id)));
@@ -375,6 +391,20 @@ function scriptRow(row: PopupRow, group: PopupGroup): HTMLElement {
   const cls = 'row' + (row.active ? '' : ' off') + (row.checked && !group.collection.enabled ? ' muted' : '');
   const out = el('div', { class: cls, 'data-script-id': row.id }, main);
   if (row.versionLine) out.append(el('div', { class: 'version-line' }, row.versionLine));
+  if (row.commands.length > 0) out.append(commandList(row));
+  return out;
+}
+
+// A script removed since the page loaded that still runs in it: its
+// name, status and menu commands, with nothing to toggle or open.
+function removedRow(row: PopupRow): HTMLElement {
+  const main = el('div', { class: 'row-main' }, el('span', { class: 'script-name' }, row.name));
+  if (row.status) {
+    main.append(el('span', {
+      class: `pill ${PILL_CLASSES[row.status]}`, title: row.tooltip ?? '', 'data-status': row.status,
+    }, POPUP_STATUS_LABELS[row.status]));
+  }
+  const out = el('div', { class: 'row off', 'data-script-id': row.id }, main);
   if (row.commands.length > 0) out.append(commandList(row));
   return out;
 }

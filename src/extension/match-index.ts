@@ -62,6 +62,10 @@ interface CacheEntry extends MatchedScript {
 }
 
 let cache = new Map<string, CacheEntry>();
+// The match rules of `invalid` scripts, which `cache` leaves out. Read
+// only by `findAllMatchingIds`, so the popup can list a script that
+// targets the page but failed to load. Never injected or registered.
+let invalidMatching = new Map<string, ScriptMatching>();
 let disabledCollections = new Set<string>();
 let loaded: Promise<void> | null = null;
 
@@ -88,17 +92,21 @@ async function loadAll(): Promise<void> {
   await ensureCollectionKeysMigrated();
   const all = await scanAllStorage('match index');
   const nextCache = new Map<string, CacheEntry>();
+  const nextInvalid = new Map<string, ScriptMatching>();
   const nextDisabled = new Set<string>();
   for (const [key, value] of Object.entries(all)) {
     if (key.startsWith(SCRIPT_PREFIX)) {
-      const entry = toEntry(value as StoredScript);
+      const script = value as StoredScript;
+      const entry = toEntry(script);
       if (entry) nextCache.set(entry.id, entry);
+      else if (script.status === 'invalid' && script.matching) nextInvalid.set(script.id, script.matching);
     } else if (key.startsWith(COLLECTION_PREFIX)) {
       const collection = value as StoredCollection;
       if (!isCollectionEnabled(collection)) nextDisabled.add(collection.id);
     }
   }
   cache = nextCache;
+  invalidMatching = nextInvalid;
   disabledCollections = nextDisabled;
   // Replay any changes that landed during the await on top of the
   // fresh snapshot, then stop buffering. A change for a key already in
@@ -185,13 +193,16 @@ function applyStorageChanges(changes: { [key: string]: chrome.storage.StorageCha
       }
       const id = key.slice(SCRIPT_PREFIX.length);
       scriptIds.push(id);
+      invalidMatching.delete(id);
       if (change.newValue === undefined) {
         cache.delete(id);
         continue;
       }
-      const entry = toEntry(change.newValue as StoredScript);
+      const script = change.newValue as StoredScript;
+      const entry = toEntry(script);
       if (entry) cache.set(id, entry);
       else cache.delete(id);
+      if (script.status === 'invalid' && script.matching) invalidMatching.set(id, script.matching);
     } else if (key.startsWith(COLLECTION_PREFIX)) {
       const id = key.slice(COLLECTION_PREFIX.length);
       const next = change.newValue as StoredCollection | undefined;
@@ -303,11 +314,16 @@ export function findMatchesForUrl(url: string): MatchedScript[] {
 
 // Every script whose rules match `url`, enabled or not — the popup
 // lists the disabled ones too, so they can be turned on from there.
-// Ids only: the popup reads the rows it needs from storage.
+// `invalid` ones as well: one that targets the page but failed to load
+// is listed as such. Ids only: the popup reads the rows it needs from
+// storage.
 export function findAllMatchingIds(url: string): string[] {
   const out: string[] = [];
   for (const entry of cache.values()) {
     if (urlMatchesScript(url, entry.matching)) out.push(entry.id);
+  }
+  for (const [id, matching] of invalidMatching) {
+    if (urlMatchesScript(url, matching)) out.push(id);
   }
   return out;
 }

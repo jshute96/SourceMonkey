@@ -299,8 +299,8 @@ added to or removed.
 | `collection add [location] [--name N]` | Add a collection, the same as the Add dialog: the kind comes from the location. With no location, an empty container collection to install scripts into | yes | refused |
 | `collection <C> drop` | Remove a collection and its scripts | yes | refused |
 | `collection <C> rename <name>` | Rename a collection | yes | refused |
-| `collection <C> enable` / `collection <C> disable` | Turn a whole collection on or off | yes | refused |
-| `collection <C> refresh` | Re-read a collection from its location (rescan a directory, re-fetch a manifest, re-fetch each container script) | yes | re-reads each script with a source, listing any that fail |
+| `collection <C> enable` / `collection <C> disable` | Turn a whole collection on or off, keeping one copy of each script running ([script-enablement.md](script-enablement.md)) | yes | refused |
+| `collection <C> refresh` | Re-read a collection from its location (rescan a directory, re-fetch a manifest, re-fetch each container script). A new file whose script already has an active copy lands disabled ([script-enablement.md](script-enablement.md#new-copies)) | yes | re-reads each script with a source, listing any that fail |
 
 - The location takes the same shapes as the Add dialog:
   - a local directory path or `file://` URL: a directory collection;

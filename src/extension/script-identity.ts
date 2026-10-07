@@ -40,7 +40,6 @@
 // See [docs/script-identity.md].
 
 import {
-  canonicalCollectionInput,
   containerKindForSingleFileInput,
   containerPath,
   isContainerCollection,
@@ -49,51 +48,15 @@ import {
   isSingleFileInput,
 } from './directories.js';
 import {
-  getAllScripts, getCollections, isScriptEnabled, isCollectionEnabled, setScriptsEnabled, type StoredScript, type StoredCollection,
+  getAllScripts, getCollections, isScriptEnabled, isCollectionEnabled, writeEnablement, type StoredScript, type StoredCollection,
 } from './script-store.js';
 import { CONTAINER_DISPLAY_NAMES, effectiveDisplayName } from './collection-display.js';
-import { getValue, getValues, type ParsedHeader } from '../userscript-header.js';
+import { getValues, type ParsedHeader } from '../userscript-header.js';
+import { identityKey, locationKey } from './script-keys.js';
 
-// The ecosystem identity key: `@namespace` and `@name`, trimmed and
-// joined by a separator that can't occur in either.
-//
-// `null` when there is no `@name` — with nothing to key on we decline
-// to match rather than fold every nameless script together. A missing
-// `@namespace` is NOT the same case: the empty namespace is a real
-// (if unwise) value, and two scripts that both omit it and share a
-// name are treated as the same script, which is exactly what TM and
-// VM do. That is the convention's known weak spot, not ours to fix
-// unilaterally.
-//
-// Comparison is exact after trimming — no case folding, no URL
-// normalization of the namespace. `HTTP://Example.com/` and
-// `http://example.com/` are different namespaces to every other
-// manager, and quietly disagreeing would make our "same script"
-// answer differ from the one the user sees in Tampermonkey.
-//
-// Spelled as an escape, never as a literal NUL byte: a raw NUL makes
-// grep treat the whole source file as binary and print nothing for
-// every match in it.
-const IDENTITY_SEP = '\u0000';
-
-export function identityKey(header: ParsedHeader | null): string | null {
-  if (!header) return null;
-  const name = getValue(header, 'name')?.trim();
-  if (!name) return null;
-  const namespace = getValue(header, 'namespace')?.trim() ?? '';
-  return `${namespace}${IDENTITY_SEP}${name}`;
-}
-
-// The location key: the one true spelling of an absolute script
-// location. `canonicalCollectionInput` is the same helper
-// `addCollection` uses, so a `file://` URL and the bare path spelling
-// of the same file collapse together — which is what lets a directory
-// collection's `fileUrl` (always a `file://` URL) match a container
-// row's bare path, and what makes a capture's URL match a row stored
-// before canonicalization existed.
-export function locationKey(absoluteUrl: string): string {
-  return canonicalCollectionInput(absoluteUrl);
-}
+// `identityKey` and `locationKey` live in script-keys.ts, so the store
+// can use them too; re-exported here, where the rest of the lookup is.
+export { identityKey, locationKey } from './script-keys.js';
 
 // One installed row that relates to the script being viewed, paired
 // with the collection that holds it so the UI can render both without a
@@ -273,9 +236,9 @@ export interface ScriptEnableChange {
 
 // One click's worth of enable/disable writes: the copy that was
 // clicked, plus — when it is being turned ON — every other copy that
-// is currently running. Pass an empty `rows` to opt out.
+// is currently active. Pass an empty `rows` to opt out.
 //
-// Disabling is never exclusive: it leaves none running, which is an
+// Disabling is never exclusive: it leaves none active, which is an
 // ordinary thing to want, and there is no other copy that should be
 // promoted in its place.
 //
@@ -290,29 +253,30 @@ export function enableChanges(
   if (!enabled) return changes;
   const own = rows.find((r) => r.script.id === scriptId);
   if (own && inRunCollection(own)) return changes;
-  for (const other of otherRunningCopies(rows, scriptId)) {
+  for (const other of otherActiveCopies(rows, scriptId)) {
     changes.push({ scriptId: other.script.id, enabled: false });
   }
   return changes;
 }
 
-// Whether a row is actually running: its own flag AND its collection's.
-// `turnOffOtherCopies` asks it of the copy being enabled too: that copy
-// has to be running itself before it is worth switching the others off.
-export function isRunning(rel: RelatedScript): boolean {
+// Whether a row is active: its own flag AND its collection's, so it
+// fires on the pages it matches. `turnOffOtherCopies` asks it of the
+// copy being enabled too: that copy has to be active itself before it
+// is worth switching the others off.
+export function isActive(rel: RelatedScript): boolean {
   if (!isScriptEnabled(rel.script)) return false;
   return rel.collection ? isCollectionEnabled(rel.collection) : true;
 }
 
 // The copies an exclusive enable of `keepId` has to switch off: every
-// OTHER row that is currently running.
+// OTHER row that is currently active.
 //
 // Shared by both checkboxes the viewer puts on screen — the panel row's
 // and the controls row's — so "enabling one copy turns the rest off"
 // means the same thing wherever it is clicked.
 //
 // The exclusions, all deliberate:
-//   - **Rows that aren't running already.** Nothing to gain by
+//   - **Rows that aren't active already.** Nothing to gain by
 //     rewriting a value they effectively hold.
 //   - **Rows under a disabled collection.** Not competing with the copy
 //     being enabled, and their own checkbox renders disabled — so a
@@ -321,43 +285,49 @@ export function isRunning(rel: RelatedScript): boolean {
 //     they re-enable that collection.
 //   - **An sm-dev run's scripts.** Only their run changes them, and it
 //     keeps them off other tabs itself.
-export function otherRunningCopies(
+export function otherActiveCopies(
   rows: readonly RelatedScript[],
   keepId: string,
 ): RelatedScript[] {
-  return rows.filter((r) => r.script.id !== keepId && isRunning(r) && !inRunCollection(r));
+  return rows.filter((r) => r.script.id !== keepId && isActive(r) && !inRunCollection(r));
 }
 
 function inRunCollection(rel: RelatedScript): boolean {
   return rel.collection !== null && isSmDevCollection(rel.collection.path);
 }
 
-// A copy that just started running follows the same exclusive rule as
-// the panel's checkboxes: it is the one wanted running, and leaving an
+// A copy that just became active follows the same exclusive rule as
+// the panel's checkboxes: it is the one wanted active, and leaving an
 // older copy of the same script on means both register and both run on
 // every page they match. Returns the copies it turned off.
 //
-// For a copy that is newly running: an install, a move into an enabled
-// collection, and sm-dev's `script enable`. With no other copy running,
-// it does nothing.
+// For a copy that is newly active: an install, a local copy, a move
+// into an enabled collection, and sm-dev's `script enable`. With no
+// other copy active, it does nothing. Skipped when the copy's
+// collection is disabled, so it isn't active itself.
 //
-// Skipped whenever the copy won't itself run: it is `invalid`, or its
-// collection is disabled. Switching a working copy off in favour of one
-// that can't run would leave nothing running at all.
+// A copy that landed `invalid` still takes over: it is the one asked
+// for, and leaving a working copy on beside it would make two enabled
+// copies. Nothing runs until it is fixed, and then it runs without
+// another click.
 //
 // A run's test collection is left out both ways, as by `enableChanges`.
 export async function turnOffOtherCopies(scriptId: string): Promise<StoredScript[]> {
   const [scripts, collections] = await Promise.all([getAllScripts(), getCollections()]);
   const copy = scripts.find((s) => s.id === scriptId);
-  if (!copy || copy.status !== 'ok') return [];
+  if (!copy) return [];
   // The STORED row's location and header: what the rest of the store is
   // compared against, and for a github blob URL the resolved raw one.
   const related = findRelatedVersions({ scripts, collections, location: copy.fileUrl, header: copy.header ?? null });
   const rows = allRelatedRows(related);
   const own = rows.find((r) => r.script.id === scriptId);
-  if (!own || !isRunning(own)) return [];
-  const off = new Set(enableChanges(scriptId, true, rows).slice(1).map((c) => c.scriptId));
-  await setScriptsEnabled([...off].map((id) => ({ id, enabled: false })));
+  if (!own || !isActive(own) || inRunCollection(own)) return [];
+  const off = new Set(otherActiveCopies(rows, scriptId).map((r) => r.script.id));
+  if (off.size === 0) return [];
+  // `started`: the copy became active in an earlier write, but it is
+  // stamped as becoming active now, the moment the copies it displaces
+  // go inactive (docs/script-enablement.md).
+  await writeEnablement({ scripts: [...off].map((id) => ({ id, enabled: false })), started: [scriptId] });
   return rows.filter((r) => off.has(r.script.id)).map((r) => r.script);
 }
 

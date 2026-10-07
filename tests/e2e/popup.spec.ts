@@ -69,6 +69,8 @@ test.describe('toolbar popup', () => {
     const id = (coll: string, file: string) => scripts.find((s) => s.collectionId === coll && s.relativePath === file)!.id;
     await sm.setScriptEnabled(id(ca.id, 'beta.user.js'), false);
     await sm.setScriptEnabled(id(cb.id, 'shared.user.js'), false);
+    // Adding B turned A's Shared off, as the newer copy took over.
+    await sm.setScriptEnabled(id(ca.id, 'shared.user.js'), true);
     await sm.syncNow();
     return { a: ca.id, b: cb.id };
   }
@@ -143,6 +145,96 @@ test.describe('toolbar popup', () => {
     await popup.reload();
     await expect(popup.locator('section[data-section="disabled"] .row', { hasText: 'Alpha' })).toBeVisible();
     await expect(popup.locator('section[data-section="enabled"] .row', { hasText: 'Beta' })).toBeVisible();
+    await popup.close();
+    await page.close();
+  });
+
+  test('the checkbox turns other copies off, and the copy last turned off stands for the script', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker, extensionId,
+  }) => {
+    const { a, b } = await twoCollections(sm, fixtureServer.baseUrl);
+    const scripts = await allScripts(sm);
+    const shared = (coll: string) => scripts.find((s) => s.collectionId === coll && s.relativePath === 'shared.user.js')!.id;
+    const enabledOf = async (id: string) => (await allScripts(sm)).find((s) => s.id === id)!.enabled;
+    // Both copies running (as a Ctrl-click leaves them), then B's
+    // turned off last: B's is the one to offer back, though A's comes
+    // first in collection order. Before the page loads, so neither
+    // is listed for still running in it.
+    await sm.setScriptEnabled(shared(b), true);
+    await sm.setScriptEnabled(shared(a), false);
+    await sm.setScriptEnabled(shared(b), false);
+    await sm.syncNow();
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    const tabId = await activeTabId(getServiceWorker);
+    await waitForTabState(sm, tabId, (s) => s.title.includes('Alpha | OK'), 'Alpha ran');
+    let popup = await openPopup(extensionContext, extensionId, tabId);
+    const disabledShared = popup.locator('section[data-section="disabled"] .row', { hasText: 'Shared' });
+    await expect(disabledShared).toHaveAttribute('data-script-id', shared(b));
+    await popup.close();
+
+    // Both running again, so both are listed. A's turned off and back
+    // on in the popup turns B's off.
+    await sm.setScriptEnabled(shared(a), true);
+    await sm.setScriptEnabled(shared(b), true);
+    await sm.syncNow();
+    popup = await openPopup(extensionContext, extensionId, tabId);
+    const boxA = popup.locator(`.row[data-script-id="${shared(a)}"] input[type="checkbox"]`);
+    await boxA.uncheck();
+    await expect.poll(() => enabledOf(shared(a))).toBe(false);
+    expect(await enabledOf(shared(b))).toBe(true);
+    await boxA.check();
+    await expect.poll(() => enabledOf(shared(b))).toBe(false);
+    expect(await enabledOf(shared(a))).toBe(true);
+    await popup.close();
+    await page.close();
+  });
+
+  test('an enabled script that failed to load but targets the page is listed as Invalid', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker, extensionId,
+  }) => {
+    const d = dir();
+    // Valid @match, but its @require isn't there, so it lands invalid.
+    d.write({
+      relativePath: 'broken.user.js',
+      meta: { name: 'Broken', match: [`${fixtureServer.baseUrl}/*`], extra: ['// @require     missing-lib.js'] },
+      body: ``,
+    });
+    await sm.addCollection(d.path);
+    expect((await allScripts(sm))[0]!.status).toBe('invalid');
+    await sm.syncNow();
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    const tabId = await activeTabId(getServiceWorker);
+
+    const popup = await openPopup(extensionContext, extensionId, tabId);
+    const row = popup.locator('section[data-section="enabled"] .row', { hasText: 'Broken' });
+    await expect(row.locator('.pill')).toHaveText('Invalid');
+    await expect(row.locator('.pill')).toHaveAttribute('title', /failed to load, so it can't run: .*missing-lib\.js/);
+    await expect(row.locator('input[type="checkbox"]')).toBeChecked();
+    await expect(popup.locator('.banner-row.reload')).toHaveCount(0);
+    await popup.close();
+    await page.close();
+  });
+
+  test('a script removed while it runs in the page stays listed, under Removed scripts', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker, extensionId,
+  }) => {
+    const { a } = await twoCollections(sm, fixtureServer.baseUrl);
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    const tabId = await activeTabId(getServiceWorker);
+    await waitForTabState(sm, tabId, (s) => s.title.includes('Alpha | OK'), 'Alpha ran');
+    await sm.removeCollection(a);
+    await sm.syncNow();
+
+    const popup = await openPopup(extensionContext, extensionId, tabId);
+    const group = popup.locator('section[data-section="enabled"] .group-head', { hasText: 'Removed scripts' });
+    await expect(group).toBeVisible();
+    const row = popup.locator('section[data-section="enabled"] .row', { hasText: 'Alpha' });
+    await expect(row.locator('.pill')).toHaveText('Still running');
+    await expect(row.locator('input[type="checkbox"]')).toHaveCount(0);
+    await expect(popup.locator('.banner-row.reload')).toContainText('Reload required: Scripts removed');
     await popup.close();
     await page.close();
   });

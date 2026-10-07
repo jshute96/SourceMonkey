@@ -92,6 +92,8 @@ import {
 } from '../external-files.js';
 import { type LocalFileScope } from '../local-file-overrides.js';
 import { scanAllStorage } from './storage-scan.js';
+import { sameScript } from './script-keys.js';
+import { compareInCollection, preferredCopy } from './copy-preference.js';
 import { wipeScriptValues } from './gm-values.js';
 import { connectGrantsKey } from './connect-grants.js';
 import { sourceUsesUnsafeWindow } from '../unsafe-window-use.js';
@@ -1339,7 +1341,7 @@ async function createLocationCollection(
   });
   if (!created) return null;
   const { id, seed } = created;
-  const refreshed = await refreshCollection(id);
+  const refreshed = await refreshCollection(id, { adding: true });
   // The updater-driven refresh paths already emit per-script Log
   // entries when a script's load state goes bad. This initial-add path
   // bypasses the updater, so anything that lands already broken would
@@ -1977,7 +1979,7 @@ export async function removeCollection(id: string): Promise<void> {
       ...scriptIds.map(connectGrantsKey),
       ...await unreferencedScratchKeys(removed),
     ];
-    await writeLocal({ [COLLECTIONS_INDEX_KEY]: next });
+    await writeLocal({ [COLLECTIONS_INDEX_KEY]: next, ...await withoutTimes(scriptIds) });
     await chrome.storage.local.remove(removeKeys);
     return next;
   });
@@ -1999,7 +2001,7 @@ export async function removeScript(id: string): Promise<void> {
     const script = await getRaw<StoredScript>(scriptKey(id));
     if (!script) return;
     const collection = await getRaw<StoredCollection>(collectionKey(script.collectionId));
-    const toSet: Record<string, unknown> = {};
+    const toSet: Record<string, unknown> = await withoutTimes([id]);
     if (collection) {
       const nextIds = collection.scriptIds.filter((sid) => sid !== id);
       if (nextIds.length !== collection.scriptIds.length) {
@@ -2155,6 +2157,7 @@ export async function reconcileScriptMembership(
       + 'existing collection; left in place',
     );
   }
+  await pruneEnablementTimes(new Set(rows.scripts.map((sc) => sc.id)));
   if (toAdd.size === 0 && toDrop.size === 0) return 0;
 
   // Re-read inside the lock: the scan is stale by now, and a concurrent
@@ -2229,6 +2232,10 @@ export interface RefreshOptions {
   // the same URL share one fetch. Single refreshCollection calls let it
   // default to an empty fresh map.
   fileFetchCache?: FileFetchCache;
+  // The collection was just added (`createLocationCollection`). Its new
+  // copies then win over other active copies, rather than defer to
+  // them (`settleNewCopies`).
+  adding?: boolean;
 }
 
 export async function refreshCollection(
@@ -2356,6 +2363,11 @@ export async function refreshCollection(
   // reads it. Every refresh path funnels through here, including the one
   // `addCollection` runs directly, so this is the only place that needs
   // to know. See src/extension/refresh-error.ts.
+  // Copies elsewhere that a new copy might meet (`settleNewCopies`):
+  // found with a full scan here, before the lock, so the write's window
+  // stays one round-trip. Inside the lock only these rows are re-read.
+  const scannedNew = scripts.filter((s) => !priorById.has(s.id));
+  const rivalIds = scannedNew.length > 0 ? await possibleRivals(id, scannedNew) : [];
   try {
     const written = await writeRefreshedCollection();
     timer.mark('write');
@@ -2465,6 +2477,17 @@ export async function refreshCollection(
       // script rows only go if they actually changed — see
       // `changedScriptRows`.
       const toSet: Record<string, unknown> = { [collectionKey(id)]: nextCollection };
+      // Scripts the scan found for the first time: one active copy per
+      // script, and their active times. Also drops the times of rows
+      // dropped below.
+      const newIds = new Set(finalScripts
+        .filter((s) => !priorIds.has(s.id) && !curScripts[scriptKey(s.id)])
+        .map((s) => s.id));
+      if (newIds.size > 0 || droppedIds.length > 0) {
+        Object.assign(toSet, await settleNewCopies(
+          nextCollection, finalScripts, newIds, droppedIds, rivalIds, opts.adding === true,
+        ));
+      }
       const changed = changedScriptRows(finalScripts, curScripts);
       for (const s of changed) toSet[scriptKey(s.id)] = s;
       timer.note(`rows written: ${changed.length}`);
@@ -2482,6 +2505,115 @@ export async function refreshCollection(
       return { collection: nextCollection, scripts: finalScripts, droppedIds };
     });
   }
+}
+
+// The ids of stored rows in other collections that are copies of one of
+// `newRows` (`sameScript`). One full scan, run before the refresh's lock.
+async function possibleRivals(collectionId: string, newRows: readonly StoredScript[]): Promise<string[]> {
+  const all = await scanAllStorage('new copies');
+  const out: string[] = [];
+  for (const [key, value] of Object.entries(all)) {
+    if (!key.startsWith(SCRIPT_PREFIX)) continue;
+    const row = value as StoredScript;
+    if (row.collectionId !== collectionId && newRows.some((n) => sameScript(n, row))) out.push(row.id);
+  }
+  return out;
+}
+
+// What a refresh does about copies it finds for the first time, inside
+// its write lock (docs/script-enablement.md#new-copies). Edits the new
+// rows in `finalScripts` in place, and returns the other writes: rows
+// it turned off elsewhere, and the active-times map.
+//
+//   - Two new copies of one script: only the first by
+//     `compareInCollection` (highest `@version`, then location) stays
+//     ticked.
+//   - `adding` (the collection was just added): it counts as turning
+//     the collection on, so each new active copy turns off the other
+//     active copies of its script elsewhere.
+//   - Otherwise (a later refresh found a new file): a new copy whose
+//     script already has an active copy lands unticked, and the active
+//     one stays active.
+//
+// `rivalIds` are the rows elsewhere that might be copies
+// (`possibleRivals`); only they are re-read here. An sm-dev run's
+// collection is left out both ways, as everywhere.
+async function settleNewCopies(
+  collection: StoredCollection,
+  finalScripts: StoredScript[],
+  newIds: ReadonlySet<string>,
+  droppedIds: readonly string[],
+  rivalIds: readonly string[],
+  adding: boolean,
+): Promise<Record<string, unknown>> {
+  const out: Record<string, unknown> = {};
+  const got = await getMany([...rivalIds.map(scriptKey), ENABLEMENT_TIMES_KEY]);
+  const times: EnablementTimesMap = { ...(got[ENABLEMENT_TIMES_KEY] as EnablementTimesMap | undefined) };
+  let timesChanged = false;
+  for (const sid of droppedIds) {
+    if (times[sid]) {
+      delete times[sid];
+      timesChanged = true;
+    }
+  }
+  // Re-read inside the lock: a rival moved into this collection since
+  // the scan is one of `finalScripts` now, or not listed at all.
+  const others = rivalIds
+    .map((sid) => got[scriptKey(sid)] as StoredScript | undefined)
+    .filter((r): r is StoredScript => r !== undefined && r.collectionId !== collection.id);
+  const collIds = [...new Set(others.map((r) => r.collectionId))];
+  const gotColls = await getMany(collIds.map(collectionKey));
+  const collections = new Map<string, StoredCollection>([[collection.id, collection]]);
+  for (const cid of collIds) {
+    const c = gotColls[collectionKey(cid)] as StoredCollection | undefined;
+    if (c) collections.set(cid, c);
+  }
+  const counts = (c: StoredCollection | undefined) => !c || !isSmDevCollection(c.path);
+  const isActive = (row: StoredScript) => {
+    const c = collections.get(row.collectionId);
+    return isScriptEnabled(row) && (c ? isCollectionEnabled(c) : true);
+  };
+  const newRows = finalScripts.filter((s) => newIds.has(s.id));
+  // Rows of this collection that were already there count as "already
+  // active" copies too, as their refreshed rows say.
+  const existing = finalScripts.filter((s) => !newIds.has(s.id));
+  const at = nextEnablementStamp();
+  if (counts(collection)) {
+    // One ticked copy among the new ones of each script.
+    const facts = (row: StoredScript) => ({
+      enabled: true, collectionOn: true, collectionName: '',
+      version: (row.header ? getValue(row.header, 'version')?.trim() : '') || null,
+      location: row.fileUrl,
+    });
+    for (const row of newRows) {
+      if (!isScriptEnabled(row)) continue;
+      const group = newRows.filter((o) => isScriptEnabled(o) && sameScript(o, row));
+      if (preferredCopy(group, facts, compareInCollection) !== row) row.enabled = false;
+    }
+    for (const row of newRows) {
+      if (!isScriptEnabled(row)) continue;
+      const rivals = [...others, ...existing].filter((o) =>
+        isActive(o) && counts(collections.get(o.collectionId)) && sameScript(o, row));
+      if (rivals.length === 0) continue;
+      if (!adding) {
+        row.enabled = false;
+        continue;
+      }
+      // Only a copy that is itself active displaces: one under a
+      // collection turned off mid-add doesn't.
+      if (!isActive(row)) continue;
+      for (const o of rivals) {
+        if (o.collectionId === collection.id) continue;
+        out[scriptKey(o.id)] = { ...o, enabled: false };
+        if (stampTimes(times, o.id, true, false, at)) timesChanged = true;
+      }
+    }
+  }
+  for (const row of newRows) {
+    if (isActive(row) && stampTimes(times, row.id, false, true, at)) timesChanged = true;
+  }
+  if (timesChanged) out[ENABLEMENT_TIMES_KEY] = times;
+  return out;
 }
 
 // ---------- Batched single-script refreshes ----------
@@ -3092,19 +3224,166 @@ function translateStorageError(err: unknown): unknown {
     : err;
 }
 
-// Flip a collection's enabled flag without touching anything else. The
-// match-index listens for `collection:<id>` changes and re-evaluates
-// the effective enabled state of every script under this collection.
+// Flip a collection's enabled flag. The match-index listens for
+// `collection:<id>` changes and re-evaluates the effective enabled state
+// of every script under this collection. Turning it on or off doesn't
+// touch other collections; `setCollectionEnabledExclusive`
+// (script-enablement.ts) is the toggle that keeps one copy active.
 export async function setCollectionEnabled(
   id: string,
   enabled: boolean,
 ): Promise<StoredCollection | null> {
+  return (await writeEnablement({ collection: { id, enabled } })).collection;
+}
+
+// One enable change: any of a collection's flag, scripts' flags, and
+// copies to stamp as starting now.
+export interface EnablementWrite {
+  collection?: { id: string; enabled: boolean };
+  scripts?: readonly { id: string; enabled: boolean }[];
+  // Copies already active to stamp as becoming active at this write,
+  // though no flag of theirs changes: one that became active in an
+  // earlier write (an install, a move) and only now displaces its other
+  // copies. Gives it the same time the copies it displaced go inactive.
+  started?: readonly string[];
+}
+
+// When each copy last became active and last went inactive, in epoch
+// ms. Active means its own flag and its collection's are both on, so it
+// fires on the pages it matches. One storage key holding every script's
+// times, rather than fields on the script rows: a collection toggle
+// changes the times of every copy under it, and stamping them on the
+// rows would rewrite each full row (bodies and all). See
+// [docs/script-enablement.md](../../docs/script-enablement.md#active-times).
+export const ENABLEMENT_TIMES_KEY = 'enablementTimes';
+
+export interface EnablementTimes {
+  activeSince?: number;
+  inactiveSince?: number;
+}
+export type EnablementTimesMap = Record<string, EnablementTimes>;
+
+export async function getEnablementTimes(): Promise<EnablementTimesMap> {
+  return (await getRaw<EnablementTimesMap>(ENABLEMENT_TIMES_KEY)) ?? {};
+}
+
+// The time for one enable change. Strictly later than this context's
+// previous one, so two writes in one millisecond can't look like one
+// change: the restore on collection-off (script-enablement.ts) matches
+// times exactly.
+let lastEnablementStamp = 0;
+function nextEnablementStamp(): number {
+  lastEnablementStamp = Math.max(Date.now(), lastEnablementStamp + 1);
+  return lastEnablementStamp;
+}
+
+// Record one copy's change in `times` (a copy the caller owns): became
+// active, went inactive, or (`restarted`) stays active but is stamped as
+// becoming active now. Returns whether anything changed.
+function stampTimes(
+  times: EnablementTimesMap,
+  id: string,
+  wasActive: boolean,
+  nowActive: boolean,
+  at: number,
+  restarted = false,
+): boolean {
+  if (nowActive && (!wasActive || restarted)) {
+    times[id] = { ...times[id], activeSince: at };
+    return true;
+  }
+  if (wasActive && !nowActive) {
+    times[id] = { ...times[id], inactiveSince: at };
+    return true;
+  }
+  return false;
+}
+
+// Drop active times kept for scripts that no longer exist: entries a
+// removal in another context raced back in (the key is shared by every
+// context, and each one's lock covers only itself). `live` is a scan of
+// the script rows; an id missing from it is re-checked inside the lock,
+// so a row added since the scan keeps its times.
+async function pruneEnablementTimes(live: ReadonlySet<string>): Promise<void> {
+  const stale = Object.keys(await getEnablementTimes()).filter((id) => !live.has(id));
+  if (stale.length === 0) return;
+  await mutate(async () => {
+    const got = await getMany([...stale.map(scriptKey), ENABLEMENT_TIMES_KEY]);
+    const times = { ...(got[ENABLEMENT_TIMES_KEY] as EnablementTimesMap | undefined) };
+    const gone = stale.filter((id) => !got[scriptKey(id)] && times[id]);
+    if (gone.length === 0) return;
+    for (const id of gone) delete times[id];
+    await writeLocal({ [ENABLEMENT_TIMES_KEY]: times });
+  });
+}
+
+// The active-times write that forgets `ids` (rows being removed), or
+// nothing when none of them has times. Called inside the removal's lock.
+async function withoutTimes(ids: readonly string[]): Promise<Record<string, unknown>> {
+  const times = await getEnablementTimes();
+  if (!ids.some((id) => times[id])) return {};
+  const next = { ...times };
+  for (const id of ids) delete next[id];
+  return { [ENABLEMENT_TIMES_KEY]: next };
+}
+
+// Every enable write goes through here: the flags and the active times
+// land together in ONE storage write, so one change fires one
+// `storage.onChanged` and one registration sync. Each copy whose active
+// state the change flips is stamped with the same time
+// (`nextEnablementStamp`); a copy whose state stays put is left alone.
+// Only script rows whose own flag changes are rewritten.
+//
+// Returns the collection as written (null when it's gone, or none was
+// asked for) and every script row whose flag it changed.
+export async function writeEnablement(
+  w: EnablementWrite,
+): Promise<{ collection: StoredCollection | null; scripts: StoredScript[] }> {
   return mutate(async () => {
-    const collection = await getRaw<StoredCollection>(collectionKey(id));
-    if (!collection) return null;
-    const next: StoredCollection = { ...collection, enabled };
-    await writeLocal({ [collectionKey(id)]: next });
-    return next;
+    const at = nextEnablementStamp();
+    const toSet: Record<string, unknown> = {};
+    let collection: StoredCollection | null = null;
+    const scriptIds = new Set<string>([...(w.scripts ?? []).map((u) => u.id), ...(w.started ?? [])]);
+    if (w.collection) {
+      collection = (await getRaw<StoredCollection>(collectionKey(w.collection.id))) ?? null;
+      if (collection) {
+        // Its scripts' active state follows its flag, so they may need
+        // stamping even though none of their own flags change.
+        for (const sid of collection.scriptIds) scriptIds.add(sid);
+        collection = { ...collection, enabled: w.collection.enabled };
+        toSet[collectionKey(collection.id)] = collection;
+      }
+    }
+    const got = await getMany([...[...scriptIds].map(scriptKey), ENABLEMENT_TIMES_KEY]);
+    const scripts = [...scriptIds]
+      .map((sid) => got[scriptKey(sid)] as StoredScript | undefined)
+      .filter((s): s is StoredScript => s != null);
+    const times: EnablementTimesMap = { ...(got[ENABLEMENT_TIMES_KEY] as EnablementTimesMap | undefined) };
+    // Each script's collection, before and after this write.
+    const collIds = [...new Set(scripts.map((s) => s.collectionId))];
+    const colls = await getMany(collIds.map(collectionKey));
+    const collOn = (cid: string, after: boolean): boolean => {
+      if (after && collection && cid === collection.id) return isCollectionEnabled(collection);
+      const c = colls[collectionKey(cid)] as StoredCollection | undefined;
+      return c ? isCollectionEnabled(c) : true;
+    };
+    const wanted = new Map((w.scripts ?? []).map((u) => [u.id, u.enabled]));
+    const started = new Set(w.started ?? []);
+    const written: StoredScript[] = [];
+    let timesChanged = false;
+    for (const script of scripts) {
+      const flag = wanted.get(script.id) ?? isScriptEnabled(script);
+      const wasActive = isScriptEnabled(script) && collOn(script.collectionId, false);
+      const nowActive = flag && collOn(script.collectionId, true);
+      if (stampTimes(times, script.id, wasActive, nowActive, at, started.has(script.id))) timesChanged = true;
+      if (script.enabled === flag) continue;
+      const next: StoredScript = { ...script, enabled: flag };
+      toSet[scriptKey(script.id)] = next;
+      written.push(next);
+    }
+    if (timesChanged) toSet[ENABLEMENT_TIMES_KEY] = times;
+    if (Object.keys(toSet).length > 0) await writeLocal(toSet);
+    return { collection, scripts: written };
   });
 }
 
@@ -3193,13 +3472,8 @@ export async function setScriptEnabled(
   id: string,
   enabled: boolean,
 ): Promise<StoredScript | null> {
-  return mutate(async () => {
-    const script = await getRaw<StoredScript>(scriptKey(id));
-    if (!script) return null;
-    const next: StoredScript = { ...script, enabled };
-    await writeLocal({ [scriptKey(id)]: next });
-    return next;
-  });
+  const { scripts } = await writeEnablement({ scripts: [{ id, enabled }] });
+  return scripts[0] ?? (await getScript(id)) ?? null;
 }
 
 // Flip many scripts' enabled flags in a single storage write. This is
@@ -3211,17 +3485,5 @@ export async function setScriptsEnabled(
   updates: { id: string; enabled: boolean }[],
 ): Promise<void> {
   if (updates.length === 0) return;
-  await mutate(async () => {
-    const keys = updates.map((u) => scriptKey(u.id));
-    const got = await getMany(keys);
-    const toSet: Record<string, unknown> = {};
-    for (const u of updates) {
-      const script = got[scriptKey(u.id)] as StoredScript | undefined;
-      if (!script) continue;          // row vanished; skip silently
-      if (script.enabled === u.enabled) continue;  // already in target state
-      toSet[scriptKey(u.id)] = { ...script, enabled: u.enabled };
-    }
-    if (Object.keys(toSet).length === 0) return;
-    await writeLocal(toSet);
-  });
+  await writeEnablement({ scripts: updates });
 }

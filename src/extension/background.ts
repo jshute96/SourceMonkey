@@ -16,6 +16,7 @@
 // extension via `serviceWorker.evaluate(...)` — MV3 service workers
 // can't be triggered from a Playwright toolbar click.
 
+import { describeDiagnostic } from '../diagnostic-location.js';
 import {
   debugDumpCache,
   ensureLoaded,
@@ -143,6 +144,7 @@ import {
   type RefreshBatch,
   getScript,
   getScripts,
+  getEnablementTimes,
   isScriptEnabled,
   isCollectionEnabled,
   getCollection,
@@ -420,6 +422,7 @@ interface SourceMonkeyApi {
   setCollectionLocalFiles: (id: string, localFiles: boolean) => Promise<StoredCollection | null>;
   setLocalRoots: (paths: string[]) => Promise<void>;
   setScriptEnabled: (id: string, enabled: boolean) => Promise<StoredScript | null>;
+  getEnablementTimes: () => Promise<Record<string, { activeSince?: number; inactiveSince?: number }>>;
   updateCollection: (id: string, mode: 'manual' | 'opportunistic') => Promise<unknown>;
   // `probe` mirrors the production signature: `'force'` is what a real
   // Refresh click passes, and several behaviors key off it (upstream
@@ -674,6 +677,7 @@ const api: SourceMonkeyApi = {
     _setLocalRootsForTests(roots);
   },
   setScriptEnabled,
+  getEnablementTimes,
   updateCollection,
   updateScript,
   updateAllCollections,
@@ -1673,7 +1677,7 @@ async function popupViewForTab(
   const loadUrl = state?.loadUrl;
   const loadUrlMatchingIds = loadUrl && loadUrl !== url ? new Set(findAllMatchingIds(loadUrl)) : undefined;
   const ids = [...new Set([...matching, ...badgeRows.map((r) => r.id), ...keepIds])];
-  const [stored, collections] = await Promise.all([getScripts(ids), getCollections()]);
+  const [stored, collections, times] = await Promise.all([getScripts(ids), getCollections(), getEnablementTimes()]);
   // A scratch script runs only in its own run's tabs, so elsewhere it
   // isn't listed, as on the badge (`expectedMatches`).
   const listed = stored.filter((s) => {
@@ -1694,6 +1698,12 @@ async function popupViewForTab(
       enabled: isScriptEnabled(s),
       identity: identityKey(s.header ?? null),
       version: (s.header ? getValue(s.header, 'version')?.trim() : '') || null,
+      location: s.fileUrl,
+      activeSince: times[s.id]?.activeSince,
+      inactiveSince: times[s.id]?.inactiveSince,
+      ...(s.status === 'invalid'
+        ? { invalid: s.errorMessage ? describeDiagnostic(s.errorMessage, s.errorLocation) : '' }
+        : {}),
     })),
     collections: collections.map((c) => ({
       id: c.id,
@@ -1704,6 +1714,7 @@ async function popupViewForTab(
     menuCommands: getMenuCommandsForTab(tabId),
     keepIds: new Set(keepIds),
     loadUrlMatchingIds,
+    hiddenIds: new Set(stored.filter((s) => !listed.includes(s)).map((s) => s.id)),
   });
 }
 

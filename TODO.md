@@ -1092,6 +1092,18 @@ One thing does have a concrete fix we chose not to make:
     is a diagnostic message rather than any state. Worth doing if the
     banner ever becomes load-bearing, or alongside any other change to
     that module.
+- **Enable toggles plan their changes before taking the lock.**
+  `src/extension/script-enablement.ts` reads the store, works out which
+  copies to turn on and off, then calls `writeEnablement`, which takes
+  the lock. See [docs/script-enablement.md](docs/script-enablement.md).
+  - Two quick clicks on one page (A on, then B on) can each plan from a
+    store where neither is active, so both end up active.
+  - A collection removed between the read and the write still has its
+    displaced copies turned off, with nothing coming on.
+  - The fix: `writeEnablement` takes a planner callback and runs it on
+    a snapshot read inside the lock. It costs a full store read under
+    the lock per click, and touches every caller of the toggles.
+  - Left for its own change.
 
 ## Storage-key migration — remove after 2026-09-01
 
