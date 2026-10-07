@@ -554,8 +554,9 @@ interface SourceMonkeyApi {
   // are a double click.
   clickAction: (tabId: number, windowId: number) => void;
   // Asks the toolbar popups showing `tabId` to close, over their port.
-  // They close as after an action, saying so first.
-  closePopup: (tabId: number) => void;
+  // They close as after an action, saying so first. Returns how many
+  // were asked: none while a popup is still connecting.
+  closePopup: (tabId: number) => number;
   // Drives the toolbar-click handler for the given window, which
   // Playwright can't click (chrome.action has no test hook). Tests use
   // it to verify a second click reuses the window's collections tab
@@ -755,7 +756,9 @@ const api: SourceMonkeyApi = {
   getPopupView: (tabId) => popupViewForTab(tabId),
   clickAction: (tabId, windowId) => handleActionClick({ id: tabId, windowId }),
   closePopup: (tabId) => {
-    for (const port of popupPorts.get(tabId) ?? []) postPopupClose(port);
+    const ports = popupPorts.get(tabId) ?? new Set();
+    for (const port of ports) postPopupClose(port);
+    return ports.size;
   },
   openCollectionsPage: async (windowId) => {
     await openCollectionsPage(windowId);
@@ -1653,6 +1656,22 @@ const pendingActionClicks = new Map<number, PendingActionClick>();
 const cancelledPopups = new Map<number, number>();
 const CANCELLED_POPUP_TTL_MS = 2000;
 
+// Tabs whose popup closed without counting as a second click, by when.
+// Chrome takes a click on the icon while the popup shows, closing it and
+// reporting nothing, so that close may be the first click of a double
+// click: a click within DOUBLE_CLICK_MS of it is the second.
+const closedPopups = new Map<number, number>();
+
+function noteClosedPopup(tabId: number): void {
+  const now = Date.now();
+  // Pruned here: a tab can close before its popup's port reports it,
+  // leaving an entry nothing would remove.
+  for (const [id, at] of closedPopups) {
+    if (now - at >= DOUBLE_CLICK_MS) closedPopups.delete(id);
+  }
+  closedPopups.set(tabId, now);
+}
+
 function handleActionClick(tab: Pick<chrome.tabs.Tab, 'id' | 'windowId'> | undefined): void {
   const windowId = tab?.windowId ?? chrome.windows.WINDOW_ID_NONE;
   const pending = pendingActionClicks.get(windowId);
@@ -1661,6 +1680,13 @@ function handleActionClick(tab: Pick<chrome.tabs.Tab, 'id' | 'windowId'> | undef
     return;
   }
   const tabId = tab?.id;
+  const closedAt = tabId !== undefined ? closedPopups.get(tabId) : undefined;
+  if (tabId !== undefined) closedPopups.delete(tabId);
+  if (closedAt !== undefined && Date.now() - closedAt < DOUBLE_CLICK_MS) {
+    dlog(`[SourceMonkey] toolbar double click, ${Date.now() - closedAt}ms after the popup closed`);
+    void openCollectionsPage(windowId === chrome.windows.WINDOW_ID_NONE ? null : windowId);
+    return;
+  }
   // A new popup, which an older double click must not close.
   if (tabId !== undefined) cancelledPopups.delete(tabId);
   pendingActionClicks.set(windowId, {
@@ -1752,7 +1778,10 @@ function dropPendingClick(tabId: number): void {
   clearTimeout(found[1].timer);
   pendingActionClicks.delete(found[0]);
 }
-chrome.tabs.onRemoved.addListener((tabId) => dropPendingClick(tabId));
+chrome.tabs.onRemoved.addListener((tabId) => {
+  dropPendingClick(tabId);
+  closedPopups.delete(tabId);
+});
 // Another tab of the window came forward.
 chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
   const pending = pendingActionClicks.get(windowId);
@@ -1934,8 +1963,10 @@ chrome.runtime.onConnect.addListener((port) => {
   port.onDisconnect.addListener(() => {
     ports.delete(port);
     if (ports.size === 0) popupPorts.delete(tabId);
-    if (isToolbarPopup && !closingOnPurpose) {
-      popupClosedEarly(tabId, 'the popup disconnected', { openedAt: connectedAt });
+    if (isToolbarPopup && !closingOnPurpose
+      && !popupClosedEarly(tabId, 'the popup disconnected', { openedAt: connectedAt })) {
+      // Perhaps a click on the icon closed it (see `closedPopups`).
+      noteClosedPopup(tabId);
     }
   });
 });

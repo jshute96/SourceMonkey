@@ -470,6 +470,37 @@ test.describe('toolbar popup', () => {
     await page.close();
   });
 
+  test('a click soon after an open popup closes counts as the second click', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await page.bringToFront();
+    const tabId = await activeTabId(getServiceWorker);
+    const windowId = await windowOf(getServiceWorker, tabId);
+    const sw = await getServiceWorker();
+    await closeCollectionsTabs(sw);
+    await sm.clickAction(tabId, windowId);
+    await expect.poll(() => popupContexts(sw)).toBe(1);
+    // Left open past the double-click time, then a double click: Chrome
+    // takes the first click, closing the popup (closed over CDP here, as
+    // above), and reports the second.
+    await page.waitForTimeout(600);
+    const cdp = await extensionContext.newCDPSession(page);
+    const { targetInfos } = await cdp.send('Target.getTargets');
+    const popup = targetInfos.find((t) => t.url.endsWith('/popup.html'));
+    await cdp.send('Target.closeTarget', { targetId: popup!.targetId });
+    // Polled closely: the second click has to land within the
+    // double-click time of the close.
+    await expect.poll(() => popupContexts(sw), { intervals: [10] }).toBe(0);
+    await sm.clickAction(tabId, windowId);
+    await expectCollectionsShown(getServiceWorker, windowId);
+    // Taken as the second click, it opens no popup.
+    await page.waitForTimeout(300);
+    expect(await popupContexts(sw)).toBe(0);
+    await page.close();
+  });
+
   test('closing the tab right after a click is no double click', async ({
     fixtureServer, sm, getServiceWorker, extensionContext,
   }) => {
@@ -503,7 +534,8 @@ test.describe('toolbar popup', () => {
     await expect.poll(() => popupContexts(sw)).toBe(1);
     // What a link or menu command does: say so, then close. A worker
     // request to close goes the same way.
-    await sm.closePopup(tabId);
+    // Retried until the popup's port has connected.
+    await expect.poll(() => sm.closePopup(tabId)).toBeGreaterThan(0);
     await expect.poll(() => popupContexts(sw)).toBe(0);
     await page.waitForTimeout(600);
     expect(await collectionsTabIds(sw)).toEqual([]);

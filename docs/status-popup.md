@@ -65,6 +65,14 @@ So no popup is set (`handleActionClick` in background.ts).
     coming forward also drops the pending click outright.
   - So a popup dismissed within 500ms of the click opens the
     collections page.
+- **Double click with the popup already open**: Chrome takes the first
+  click too, closing the popup, and reports the second to `onClicked`.
+  - So a toolbar popup closing with no click pending is noted per tab
+    (`closedPopups`), and a click on that tab within 500ms opens the
+    collections page rather than the popup.
+  - The close can't be told from any other dismissal (Escape, a click
+    on the page, leaving the tab), so one of those followed by a click
+    on the icon within 500ms does the same.
 - **Not a second click**:
   - The popup closing itself after an action (a link, a menu
     command): it sends `sm:popup-closing` over its port first, which
