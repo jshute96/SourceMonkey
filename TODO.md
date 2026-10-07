@@ -317,7 +317,7 @@ wasn't checked.
   - VM builds `GM` as a plain writable object. Fix: drop the freeze,
     or freeze only the API properties and leave the object extensible.
 - **Granted `GM_*` names are `const`** (`gm-reassign`: 2129, 2128,
-  419798, 438053).
+  419798, 438053, 2130).
   - A shim like `GM_xmlhttpRequest = GM.xmlHttpRequest;` throws
     "Assignment to constant variable" at startup.
   - VM resolves names through `with(this)` over a wrapper, so the
@@ -330,16 +330,30 @@ wasn't checked.
   - VM defines pass-through stand-ins on Chrome (`makeComponentUtils`
     in `src/injected/web/util.js`). Cheap to copy.
 - **Scripts never run in iframes** (`needs-iframes`: 461650, 382039, 492877,
-  382285).
-  - reCAPTCHA helpers must run inside Google's frames, and Sketchfab
-    downloaders inside the same-origin viewer frame. See the
-    `allFrames` item under "Skeleton" for what blocks it.
+  382285, 27481, 30482, 36904, 31088, 376404, 384610, 381868, 439388,
+  455610, 433861, 436028, 445583, 445584).
+  - reCAPTCHA and hCaptcha helpers must run inside the captcha frames,
+    and Sketchfab downloaders inside the same-origin viewer frame.
+    See the `allFrames` item under "Skeleton" for what blocks it.
+  - bonk.io's game and Nitro Type's whole race page now sit in
+    same-origin iframes, so scripts for those sites need it too.
+  - TM ran 36904, 439388, 455610, 445583 and 445584 in the frame and
+    they worked (`--manager tm`).
 - **Granted scripts run in the isolated world** (`needs-page-globals`:
-  561432, 382030, 485608, 395461, 37314, 382359, and earlier ones;
-  `needs-custom-elements`: 397848).
+  561432, 382030, 485608, 395461, 37314, 382359, 386908, 387955,
+  432423, and earlier ones; `needs-custom-elements`: 397848).
   - Scripts that read the page's globals without `unsafeWindow` (the
     YouTube player API, the page's `$`, `customElements`, which is null
     in the USER_SCRIPT world) fail. `@inject-into page` copies work.
+  - TM ran 386908 (which hooks the page's event APIs) in the page,
+    where SourceMonkey's isolated copy had no effect.
+  - The sharpest case: a script whose only `@grant` lines are unknown
+    names (27929's `@grant aoh72931`, 432423's `@grant Math.mod`,
+    437552's `@grant noneT`) gets no APIs at all, yet runs isolated
+    (`resolveWorld` in `src/script-world.ts`). TM gave 27929 the
+    page's globals, and `@grant none` copies of 27929 and 432423
+    work. Treating unknown-only grants like no grants would fix
+    these alone.
   - VM runs these in the page by default (TM reportedly too, through
     its `@sandbox` default). Worth deciding whether to pick the page
     world automatically, rather than only for `@inject-into page` and
@@ -393,7 +407,7 @@ The next items came from testing the oldest corpus scripts, checked
 against Tampermonkey with `sm-dev --manager tm` probes (2026-10-05).
 
 - **`GM_xmlhttpRequest` ignores `overrideMimeType`**
-  (`xhr-override-mimetype`: 16385).
+  (`xhr-override-mimetype`: 16385, 379049, 26727).
   - Old scripts read binary data by passing
     `overrideMimeType: 'text/plain; charset=x-user-defined'` and taking
     `charCodeAt(i) & 255` from `responseText`.
@@ -412,15 +426,69 @@ against Tampermonkey with `sm-dev --manager tm` probes (2026-10-05).
   - Fix ideas: run requires with a scope object as `this`/`window`
     for MAIN-world scripts, or snapshot and restore the page globals a
     require overwrites. Both are partial; needs a design.
-- **`window.unsafeWindow` / `this.unsafeWindow` are undefined**
-  (`unsafewindow-on-window`: 593).
+- **`unsafeWindow` and `GM_*` aren't properties of `window`/`self`**
+  (`unsafewindow-on-window`: 593, 4881, 4882, 455261, 455855;
+  `gm-on-window`: 456077, 455261, 455855).
   - Greasemonkey-era scripts test `if (this.unsafeWindow)` to pick
     their GM code path. TM and VM: `true`; SourceMonkey: `false`,
     since `unsafeWindow` is a local binding and `window` is the page's
-    own.
-  - Only one script seen, and it fails for other reasons. Fixing it
-    means setting a property on the page's real `window`, which the
-    page can see. Probably leave it unless more scripts turn up.
+    own. 4881 and 4882 fail on it; copies adding
+    `this.unsafeWindow = unsafeWindow;` work.
+  - Newer scripts test `!!self.GM_registerMenuCommand` (the Xbox Cloud
+    Gaming family, 455261 and 455855, which then skip their menus), and
+    vite-plugin-monkey builds read every grant off `window` (456077
+    throws `GM_getValue is not a function`). TM passes both checks
+    (`--manager tm`); a copy of 456077 reading from an object of the
+    granted functions works.
+  - Fixing it means setting properties on the `window` the script
+    sees. In the isolated world that's private to the script; in the
+    page world the page can see them, so it needs a design.
+
+The next items came from testing the 300 and then 400 oldest corpus
+scripts, checked against Tampermonkey 5.5 with `sm-dev --manager tm`
+(2026-10-06 and 2026-10-07).
+
+- **`GM_openInTab` refuses `data:` URLs** (`openintab-data-url`:
+  24924).
+  - 24924 renders the page with html2canvas and opens the PNG as a
+    `data:` URL. SourceMonkey logs "GM_openInTab: refusing non-http(s)
+    URL data:image/png..."; TM opens the tab.
+  - The refusal is deliberate (`isAllowedTabUrl` in
+    `src/extension/gm-tab.ts`, documented in docs/GM-APIs.md).
+    Possible fix: allow `data:` and `blob:` too, still refusing
+    `file:`, `chrome:` and `chrome-extension:`.
+- **`GM_xmlhttpRequest` drops the `context` option**
+  (`xhr-context`: 37466).
+  - TM and VM pass `details.context` back as `response.context`.
+    SourceMonkey doesn't, so 37466's `onload` throws reading
+    `xhr.context.index` and 0 of 42 images download (TM: 42 of 42).
+  - Fix: keep `context` in the page-side request entry and put it on
+    every response object.
+- **`GM_registerMenuCommand` without a callback throws**
+  (`menu-no-callback`: 406501).
+  - 406501 calls `GM.registerMenuCommand("===== START =====")` with
+    only a name, using the item as a visual divider.
+    `src/wrapper-gm-runtime.js` throws "callback must be a function",
+    which stops the whole script.
+  - TM documents the callback as required and has no divider form,
+    but it doesn't throw: under `--manager tm` the script ran past
+    those calls. What TM's menu shows for such an item, and what
+    clicking it does, wasn't checked.
+  - A copy with `function(){}` added works. Fix: accept a missing
+    callback and register an item that does nothing; probe TM's menu
+    first to match how it shows them.
+- **`@match https://site/X/*` also runs on `https://site/X`**
+  (seen on 410968).
+  - Chrome's match patterns treat a path ending in `/*` as also
+    matching the path without it. A script with only `@match` rules
+    goes to Chrome as-is and gets no recheck in the prelude
+    (`src/userscript-prelude.js`, the "matcher" block), so it runs
+    there. TM doesn't.
+  - Reproduced with a probe on `https://example.com/zzz`. sm-dev's
+    own matcher (`explainMatch`) prints "skipped" for the URL, then
+    the script starts anyway.
+  - Fix ideas: register `/X/*` with an `excludeGlobs` entry for
+    `/X`, or send these scripts through the prelude recheck.
 
 ## Cross-manager coverage
 
@@ -1573,6 +1641,11 @@ itself once a sync places it. What's missing:
       has no Chrome spelling as a match pattern. It can register as an
       `includeGlobs` entry instead and be decided in the prelude, as
       `.tld` hosts now are (see `tldCoarseGlob`).
+      - TM runs these: 445355 (`https://*fdownloader.net/*`) and
+        455327 (`https://*krunker.io/*`) ran under `--manager tm` and
+        fail in SourceMonkey only for this (corpus tag
+        `ignored-match`). A copy of 445355 with the `*` dropped
+        works.
   `pnpm run test:e2e:tm` drives a real TM, which is where "what does TM
   run for this" gets answered.
 - **The install preview doesn't show parse-time warnings.**

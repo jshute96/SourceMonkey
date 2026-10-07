@@ -66,7 +66,19 @@ untested, sort by Updated) or in `corpus.db` (`Scripts.updated_date`, after
 ## Running a batch with parallel agents
 
 For more than a handful of scripts, split them across background agents,
-about 6-10 scripts each. Each agent:
+about 6-10 scripts each.
+
+Limit how many run at once. Each agent drives its own browser, and
+browser games (WebGL, canvas) keep a CPU core busy.
+- Run about one agent per CPU core (`nproc`), and fewer for game-heavy
+  groups. Queue the rest, and start the next when one reports.
+- A run that dies or is force-stopped can leave its `--temp-browser`
+  Chrome behind, holding memory. Look for `chrome` processes with
+  `--user-data-dir=/tmp/sm-dev-extension-*` whose parent is init (PID
+  1). Nothing can reach them, and they ignore SIGTERM, so `kill -9`
+  them.
+
+Each agent:
 
 - Gets its script IDs, a run name prefix of its own (`DhA`, `DhB`, ...;
   never `D1`/`D2`, which are the person's), and
