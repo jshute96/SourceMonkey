@@ -168,11 +168,24 @@ async function refresh(): Promise<void> {
     next = null;
   }
   if (seq !== refreshSeq) return;
+  recheckBannerAt(next?.bannerRecheckAt ?? null);
   const json = JSON.stringify(next);
   if (json === drawnJson) return;
   drawnJson = json;
   view = next;
   render(view);
+}
+
+// A refresh for when the page stops settling, which nothing reports
+// should the worker's own post-load check not come first.
+let recheckTimer: ReturnType<typeof setTimeout> | null = null;
+
+function recheckBannerAt(at: number | null): void {
+  if (recheckTimer !== null) clearTimeout(recheckTimer);
+  recheckTimer = at === null ? null : setTimeout(() => {
+    recheckTimer = null;
+    scheduleRefresh();
+  }, Math.max(0, at - Date.now()) + 100);
 }
 
 function closeSoon(): void {

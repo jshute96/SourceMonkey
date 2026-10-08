@@ -1490,6 +1490,8 @@ async function updateTabMatches(
   // `refreshAllOpenTabs`), in which case the opportunistic fan-out
   // makes its own — so none of them runs unbatched.
   batch?: RefreshBatch,
+  // From `onCommitted`: a document load, with its load event to come.
+  commit = false,
 ): Promise<void> {
   // Above the non-injectable early return: leaving the flashing
   // document for a `chrome://` page is still leaving it. No repaint of
@@ -1591,6 +1593,7 @@ async function updateTabMatches(
     if (prev.reportedWorlds) state.reportedWorlds = prev.reportedWorlds;
     if (prev.opaqueOrigin) state.opaqueOrigin = true;
     if (prev.missingChecked) state.missingChecked = true;
+    if (prev.settleBy !== undefined) state.settleBy = prev.settleBy;
     if (prev.loadMatchIds) state.loadMatchIds = prev.loadMatchIds;
     if (prev.loadUrl) state.loadUrl = prev.loadUrl;
     if (prev.warnedIds) state.warnedIds = prev.warnedIds;
@@ -1600,6 +1603,9 @@ async function updateTabMatches(
     state.loadMatchIds = incoming.map((m) => m.id);
     state.loadUrl = url;
   }
+  // Restored too: a report can set up the document's state before its
+  // commit gets here.
+  if (commit && !state.missingChecked) state.settleBy = Date.now() + SETTLE_CAP_MS;
   const nextRecord = setCurrentDoc(record, docId, state);
   await setTabRecord(tabId, nextRecord);
   if (incoming.length > 0 && trigger === 'navigation') {
@@ -2645,7 +2651,7 @@ function installNavigationListeners(): void {
     }
     enqueueTabWork(
       d.tabId,
-      () => updateTabMatches(d.tabId, d.url, d.documentId ?? null, 'navigation', batch),
+      () => updateTabMatches(d.tabId, d.url, d.documentId ?? null, 'navigation', batch, !!d.documentId),
     );
   });
   wn.onHistoryStateUpdated.addListener((d) => {
@@ -2670,6 +2676,9 @@ function installNavigationListeners(): void {
 // waits for its check-pending reply before not running.
 const WRAPPER_DECISION_TIMEOUT_MS = 10_000;
 const MISSING_SCRIPT_GRACE_MS = WRAPPER_DECISION_TIMEOUT_MS + 1000;
+// The longest a page counts as settling (`settleBy`), from its commit,
+// should its load event, and so the check below, never come.
+const SETTLE_CAP_MS = 20_000;
 
 // Once per document: a Log warning for each script that matched it but
 // never reported, with what the document's other reports suggest about
@@ -2688,7 +2697,10 @@ async function logMissingScripts(tabId: number, documentId: string): Promise<voi
       message: describeMissingScript(script, state),
     });
   }
-  await setTabRecord(tabId, writeDocState(record, documentId, { ...state, missingChecked: true }));
+  const { settleBy, ...rest } = state;
+  await setTabRecord(tabId, writeDocState(record, documentId, { ...rest, missingChecked: true }));
+  // Settled: an open popup may now show the reload banner.
+  if (settleBy !== undefined && record?.currentDocId === documentId) notifyPopup(tabId);
 }
 
 // A connection prompt closed without an answer is a denial.
