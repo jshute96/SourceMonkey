@@ -69,12 +69,13 @@ import {
   collectionAnchorId,
   EDIT_COLLECTION_HASH_PREFIX,
 } from './collection-display.js';
-import { touchesStructuralRows } from './structural-keys.js';
+import { SCRIPT_PREFIX, touchesStructuralRows } from './structural-keys.js';
 import { openCollectionDialog, type CollectionDialogRequest } from './collection-dialog.js';
 import { onNamedTabFocus, openExtensionTab, openNamedTab } from './page-links.js';
 import { getValue } from '../userscript-header.js';
 import { describeDiagnostic } from '../diagnostic-location.js';
-import { installDebugLoggingListener, loadDebugLoggingFlag } from '../debug-log.js';
+import { installDebugLoggingListener, isDebugLoggingEnabled, loadDebugLoggingFlag } from '../debug-log.js';
+import { startPhaseTimer, type PhaseTimer } from '../phase-timing.js';
 import {
   updateAllCollections,
   updateCollection,
@@ -502,12 +503,20 @@ function repaintPage(): Promise<void> {
 // and re-seat them into index order. Existing elements are reused so
 // refresh highlights, in-flight spinners, and focus survive.
 async function repaintFromStorage(): Promise<void> {
+  const timer = startPhaseTimer('collections page repaint');
+  await repaintSections(timer);
+  timer.done();
+}
+
+async function repaintSections(timer: PhaseTimer): Promise<void> {
   const collections = await getCollections();
+  timer.mark('read collections');
   // Ahead of the sections, so a page that just failed to save shows the
   // explanation at the top by the time the reader's eye follows the
   // section messages down. Needs the collection list, hence after the
   // read rather than first.
   await syncStorageBanner(new Set(collections.map((s) => s.id)));
+  timer.mark('banner');
   // Read each collection's scripts ONCE, up front, and paint from that.
   // The obvious shape — `getAllScripts()` then render each section —
   // reads the whole store twice per pass: `getAllScripts` is a
@@ -520,10 +529,19 @@ async function repaintFromStorage(): Promise<void> {
     scriptsByCollection.set(collection.id, (await getCollectionWithScripts(collection.id))?.scripts ?? []);
   }
   const allScripts = [...scriptsByCollection.values()].flat();
+  timer.mark('read scripts', `${collections.length} reads, ${allScripts.length} scripts`);
+  // Their size from Chrome rather than by serializing them here, which
+  // on a store of several MB held this page's thread for tens of ms.
+  // Only with debug logging on, since it is an extra storage call.
+  if (isDebugLoggingEnabled()) {
+    const bytes = await chrome.storage.local.getBytesInUse(allScripts.map((s) => SCRIPT_PREFIX + s.id));
+    timer.mark('size', formatBytes(bytes));
+  }
   // Cached favicons first, so rows draw with their real icons rather
   // than globes that are swapped (and the icon column re-fitted) a
   // moment later.
   await preloadSiteIcons(allScripts);
+  timer.mark('icons');
 
   // Forget the per-script bookkeeping of everything no longer stored,
   // in one place rather than at each of the several points a row can go
@@ -545,6 +563,7 @@ async function repaintFromStorage(): Promise<void> {
       collectionsEl.appendChild(emptyPlaceholder());
     }
     refreshMoveButtons();
+    timer.mark('paint');
     return;
   }
   removeEmptyPlaceholder();
@@ -565,6 +584,7 @@ async function repaintFromStorage(): Promise<void> {
   }
   refreshMoveButtons();
   markDiskChanges();
+  timer.mark('paint');
 }
 
 // What the disk says that storage doesn't yet (file-changes.ts): a

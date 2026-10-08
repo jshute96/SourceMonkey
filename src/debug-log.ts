@@ -31,9 +31,9 @@ export async function loadDebugLoggingFlag(): Promise<void> {
   }
 }
 
-// Idempotent, matching `match-index.ts`'s storage listener. Three
-// contexts install this now (worker, collections page, options page)
-// and a context that called twice would double every flag update.
+// Idempotent, matching `match-index.ts`'s storage listener. Several
+// contexts install this (the worker and the extension pages), and a
+// context that called twice would double every flag update.
 let listenerInstalled = false;
 
 export function installDebugLoggingListener(): void {

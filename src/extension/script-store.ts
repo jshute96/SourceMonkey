@@ -119,7 +119,7 @@ import {
 } from './concurrency.js';
 import { dlog } from '../debug-log.js';
 import { COLLECTIONS_INDEX_KEY, COLLECTION_PREFIX, SCRIPT_PREFIX, collectionKey, scriptKey } from './structural-keys.js';
-import { startPhaseTimer, timePhase, formatMs, timingNow } from '../phase-timing.js';
+import { startPhaseTimer, storageSize, timePhase, formatMs, timingNow, type PhaseTimer } from '../phase-timing.js';
 import {
   applyFetchError,
   applyFiles,
@@ -3327,16 +3327,24 @@ async function withoutTimes(ids: readonly string[]): Promise<Record<string, unkn
 //
 // Returns the collection as written (null when it's gone, or none was
 // asked for) and every script row whose flag it changed.
+//
+// `timer` is the caller's, when it timed its own steps first; the
+// write's steps are added to it and the caller prints the line.
+// Otherwise the write prints its own `enablement write` line.
 export async function writeEnablement(
   w: EnablementWrite,
+  timer?: PhaseTimer,
 ): Promise<{ collection: StoredCollection | null; scripts: StoredScript[] }> {
-  return mutate(async () => {
+  const t = timer ?? startPhaseTimer('enablement write');
+  const result = await mutate(async () => {
+    t.mark('lock wait');
     const at = nextEnablementStamp();
     const toSet: Record<string, unknown> = {};
     let collection: StoredCollection | null = null;
     const scriptIds = new Set<string>([...(w.scripts ?? []).map((u) => u.id), ...(w.started ?? [])]);
     if (w.collection) {
       collection = (await getRaw<StoredCollection>(collectionKey(w.collection.id))) ?? null;
+      t.mark('read collection');
       if (collection) {
         // Its scripts' active state follows its flag, so they may need
         // stamping even though none of their own flags change.
@@ -3346,6 +3354,7 @@ export async function writeEnablement(
       }
     }
     const got = await getMany([...[...scriptIds].map(scriptKey), ENABLEMENT_TIMES_KEY]);
+    t.mark('read rows', () => storageSize(got));
     const scripts = [...scriptIds]
       .map((sid) => got[scriptKey(sid)] as StoredScript | undefined)
       .filter((s): s is StoredScript => s != null);
@@ -3353,6 +3362,7 @@ export async function writeEnablement(
     // Each script's collection, before and after this write.
     const collIds = [...new Set(scripts.map((s) => s.collectionId))];
     const colls = await getMany(collIds.map(collectionKey));
+    t.mark('read collections', () => storageSize(colls));
     const collOn = (cid: string, after: boolean): boolean => {
       if (after && collection && cid === collection.id) return isCollectionEnabled(collection);
       const c = colls[collectionKey(cid)] as StoredCollection | undefined;
@@ -3373,9 +3383,14 @@ export async function writeEnablement(
       written.push(next);
     }
     if (timesChanged) toSet[ENABLEMENT_TIMES_KEY] = times;
-    if (Object.keys(toSet).length > 0) await writeLocal(toSet);
+    if (Object.keys(toSet).length > 0) {
+      await writeLocal(toSet);
+      t.mark('write', () => storageSize(toSet));
+    }
     return { collection, scripts: written };
   });
+  if (!timer) t.done();
+  return result;
 }
 
 // The per-collection settings the collection dialog edits.
@@ -3474,7 +3489,8 @@ export async function setScriptEnabled(
 // quadratic-feeling into a single round-trip.
 export async function setScriptsEnabled(
   updates: { id: string; enabled: boolean }[],
+  timer?: PhaseTimer,
 ): Promise<void> {
   if (updates.length === 0) return;
-  await writeEnablement({ scripts: updates });
+  await writeEnablement({ scripts: updates }, timer);
 }

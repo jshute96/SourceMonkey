@@ -15,6 +15,7 @@ import {
   resetPhaseTotals,
   timePhase,
   reportPhaseTotals,
+  storageSize,
 } from '../../dist/phase-timing.js';
 import { _setDebugLoggingForTests } from '../../dist/debug-log.js';
 
@@ -115,4 +116,48 @@ test('a pass that recorded nothing does not leak into the next one', async () =>
   await timePhase('stray', async () => 1);
   const { lines } = capturingConsole(() => reportPhaseTotals('later pass'));
   assert.deepEqual(lines, []);
+});
+
+test('a mark prints its detail beside the phase', () => {
+  _setDebugLoggingForTests(true);
+  const { lines } = capturingConsole(() => {
+    const t = startPhaseTimer('enable');
+    t.mark('read', '2 keys, 1.0 KB');
+    t.mark('plan');
+    t.mark('write', () => 'computed');
+    t.done();
+  });
+  assert.match(lines[0], /read [\d.]+ \[2 keys, 1\.0 KB\], plan [\d.]+, write [\d.]+ \[computed\]/);
+});
+
+test('a disabled mark never evaluates its detail thunk', () => {
+  _setDebugLoggingForTests(false);
+  let called = false;
+  const t = startPhaseTimer('nothing');
+  t.mark('a', () => { called = true; return 'x'; });
+  t.done();
+  assert.equal(called, false);
+});
+
+test('time spent computing a detail is left out of the phases and the total', () => {
+  // A size detail can mean serializing several MB; charging that to the
+  // step being measured would make it look slower than it is.
+  _setDebugLoggingForTests(true);
+  const busy = (ms) => { const end = performance.now() + ms; while (performance.now() < end) { /* spin */ } };
+  const { lines } = capturingConsole(() => {
+    const t = startPhaseTimer('slow detail');
+    t.mark('read', () => { busy(50); return 'big'; });
+    t.mark('next');
+    t.done();
+  });
+  const total = Number(/total ([\d.]+)ms/.exec(lines[0])[1]);
+  const next = Number(/next ([\d.]+)/.exec(lines[0])[1]);
+  assert.ok(total < 25, lines[0]);
+  assert.ok(next < 25, lines[0]);
+});
+
+test('storageSize counts keys and their JSON size', () => {
+  assert.equal(storageSize({ a: 'x' }), '1 key, 9 B');
+  assert.equal(storageSize({}), '0 keys, 2 B');
+  assert.equal(storageSize({ a: 1, b: 2 }), '2 keys, 13 B');
 });

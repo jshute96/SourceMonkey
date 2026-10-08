@@ -32,6 +32,7 @@ import { compareInCollection, preferredCopy, type CopyFacts } from './copy-prefe
 import { sameScript } from './script-keys.js';
 import { effectiveDisplayName } from './collection-display.js';
 import { getValue } from '../userscript-header.js';
+import { startPhaseTimer, type PhaseTimer } from '../phase-timing.js';
 
 interface Snapshot {
   scripts: StoredScript[];
@@ -39,8 +40,11 @@ interface Snapshot {
   times: EnablementTimesMap;
 }
 
-async function snapshot(): Promise<Snapshot> {
+// Marked on `timer` as `read all`, with what it returned. No size: the
+// script rows come from a scan of all storage, whose own line has it.
+async function snapshot(timer: PhaseTimer): Promise<Snapshot> {
   const [scripts, collections, times] = await Promise.all([getAllScripts(), getCollections(), getEnablementTimes()]);
+  timer.mark('read all', `${scripts.length} scripts, ${collections.length} collections`);
   return { scripts, collections, times };
 }
 
@@ -78,17 +82,21 @@ export async function setScriptEnabledExclusive(
   enabled: boolean,
   solo = false,
 ): Promise<StoredScript | null> {
+  const timer = startPhaseTimer(enabled ? 'enable script' : 'disable script');
   let changes = [{ id, enabled }];
   if (enabled && !solo) {
-    const snap = await snapshot();
+    const snap = await snapshot(timer);
     const script = snap.scripts.find((s) => s.id === id);
     const collection = snap.collections.find((c) => c.id === script?.collectionId);
     if (script && (!collection || isCollectionEnabled(collection))) {
       changes = enableChanges(id, true, relatedRows(snap, script))
         .map((c) => ({ id: c.scriptId, enabled: c.enabled }));
     }
+    timer.mark('plan');
   }
-  const { scripts } = await writeEnablement({ scripts: changes });
+  const { scripts } = await writeEnablement({ scripts: changes }, timer);
+  timer.note(`${changes.length} change(s)`);
+  timer.done();
   // Nothing written when it was already in that state.
   return scripts.find((s) => s.id === id) ?? (await getScript(id)) ?? null;
 }
@@ -106,15 +114,20 @@ export async function setCollectionEnabledExclusive(
   enabled: boolean,
   solo = false,
 ): Promise<StoredCollection | null> {
-  const snap = await snapshot();
+  const timer = startPhaseTimer(enabled ? 'enable collection' : 'disable collection');
+  const snap = await snapshot(timer);
   const collection = snap.collections.find((c) => c.id === id);
-  if (!collection || solo || isSmDevCollection(collection.path)
-      || isCollectionEnabled(collection) === enabled) {
-    return (await writeEnablement({ collection: { id, enabled } })).collection;
+  let changes: { id: string; enabled: boolean }[] = [];
+  if (collection && !solo && !isSmDevCollection(collection.path)
+      && isCollectionEnabled(collection) !== enabled) {
+    const own = snap.scripts.filter((s) => s.collectionId === id && isScriptEnabled(s));
+    changes = enabled ? displacedBy(snap, own) : restoredFor(snap, id, own);
   }
-  const own = snap.scripts.filter((s) => s.collectionId === id && isScriptEnabled(s));
-  const changes = enabled ? displacedBy(snap, own) : restoredFor(snap, id, own);
-  return (await writeEnablement({ collection: { id, enabled }, scripts: changes })).collection;
+  timer.mark('plan');
+  const written = await writeEnablement({ collection: { id, enabled }, scripts: changes }, timer);
+  timer.note(`${changes.length} other cop${changes.length === 1 ? 'y' : 'ies'} changed`);
+  timer.done();
+  return written.collection;
 }
 
 // The copies outside the collection that `starting` (its copies about to
@@ -169,12 +182,19 @@ export async function setAllScriptsEnabled(
   enabled: boolean,
   solo = false,
 ): Promise<void> {
-  const snap = await snapshot();
+  const timer = startPhaseTimer(enabled ? 'enable all' : 'disable all');
+  const snap = await snapshot(timer);
   const collection = snap.collections.find((c) => c.id === collectionId);
-  if (!collection) return;
+  if (!collection) {
+    timer.note('collection gone');
+    timer.done();
+    return;
+  }
   const scripts = snap.scripts.filter((s) => s.collectionId === collectionId);
   if (!enabled || solo || isSmDevCollection(collection.path)) {
-    await writeEnablement({ scripts: scripts.map((s) => ({ id: s.id, enabled })) });
+    await writeEnablement({ scripts: scripts.map((s) => ({ id: s.id, enabled })) }, timer);
+    timer.note(`${scripts.length} script(s)`);
+    timer.done();
     return;
   }
   const picks = pickOnePerScript(scripts, collection, snap.times);
@@ -192,7 +212,10 @@ export async function setAllScriptsEnabled(
       changes.push(...off);
     }
   }
-  await writeEnablement({ scripts: changes, started });
+  timer.mark('plan');
+  await writeEnablement({ scripts: changes, started }, timer);
+  timer.note(`${changes.length} change(s)`);
+  timer.done();
 }
 
 // One id per script among `scripts` (all in `collection`): the first by

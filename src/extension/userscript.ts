@@ -192,11 +192,12 @@ import {
   type DiagnosticLocation,
 } from '../diagnostic-location.js';
 import { buildHash } from './script-url-hash.js';
-import { dlog } from '../debug-log.js';
+import { dlog, installDebugLoggingListener, loadDebugLoggingFlag } from '../debug-log.js';
 import { displayRefText, parseStackRefs } from '../stack-link.js';
 import { remapStackRef, type MappedSegment, type StackRef } from '../source-map.js';
 import { stackLayout } from '../composed-source.js';
 import { buildRequireSourceUrl, buildSourceUrl } from '../script-source-url.js';
+import { startPhaseTimer, type PhaseTimer } from '../phase-timing.js';
 import { CodeTabsView, type CodeTab } from './code-tabs.js';
 import { makeCopyButton } from './copy-button.js';
 import { markFileChanges, missingFiles, scriptFileTag } from './file-changes.js';
@@ -310,6 +311,10 @@ const fileAccessProbe = isFileSchemeAccessAllowed();
 let fileAccessAllowed = true;
 
 installLocalRootsListener();
+// Same as the collections page: without the flag, this page's `dlog`
+// and timing lines (an enable click's, a Refresh's) never print.
+installDebugLoggingListener();
+void loadDebugLoggingFlag();
 // The header bar's icon and product name are a link home. Delegated, so
 // it survives the heading repaints an in-place copy switch does.
 installHomeLinkHandler();
@@ -763,8 +768,8 @@ async function onToggleEnabled(enabled: boolean): Promise<void> {
 // rehydrated this page from a half-applied state — the user watched the
 // Enabled checkbox flip back and forth as the batch went through. It
 // also spares the background worker a registration sync per copy.
-async function applyEnableChanges(changes: readonly ScriptEnableChange[]): Promise<void> {
-  await setScriptsEnabled(changes.map((c) => ({ id: c.scriptId, enabled: c.enabled })));
+async function applyEnableChanges(changes: readonly ScriptEnableChange[], timer?: PhaseTimer): Promise<void> {
+  await setScriptsEnabled(changes.map((c) => ({ id: c.scriptId, enabled: c.enabled })), timer);
 }
 
 // One write, so one failure — there is no half-applied batch to
@@ -1313,11 +1318,15 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
       // rest of the batch — the other rows and the page's own toggle —
       // before the write, so the whole set moves at once.
       paintEnabledOptimistically(changes);
+      // The checkbox stays grey until the repaint below, so the line
+      // covers both.
+      const timer = startPhaseTimer('versions table enable');
       let failure: unknown;
       try {
-        await applyEnableChanges(changes);
+        await applyEnableChanges(changes, timer);
       } catch (err) {
         failure = err;
+        timer.mark('write failed');
         relatedVersionsMessage = describeEnableFailure(changes, snapshot.scripts, err);
       }
       // Repainted either way, and NOT left to the storage listener.
@@ -1334,6 +1343,9 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
       // which is a better answer than the renderer's own revert of the
       // one box that was clicked.
       await afterPanelAction(args);
+      timer.mark('repaint');
+      timer.note(`${changes.length} change(s)`);
+      timer.done();
       if (failure) throw new Error(relatedVersionsMessage);
     },
     remove: async (id) => {

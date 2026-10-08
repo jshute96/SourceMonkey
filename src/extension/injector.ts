@@ -90,7 +90,7 @@ import { isScratchUrl, scratchRunOf } from './directories.js';
 import { evalHookKey, withEvalHook } from '../eval-hook.js';
 import { canonicalMatchPatterns, hostEndsInTld, matchPatternProblem, tldCoarseGlob } from '../url-match.js';
 import { dlog } from '../debug-log.js';
-import { startPhaseTimer } from '../phase-timing.js';
+import { startPhaseTimer, type PhaseTimer } from '../phase-timing.js';
 import {
   emitGmBindings, GM_INFO_PASSTHROUGH_TAGS,
   type GmBindingEmit, type GmInfoInput, type GmInfoPassthroughTag, type UserAgentDataSnapshot,
@@ -2025,14 +2025,13 @@ async function runFullSync(): Promise<RegistrationState> {
     // flipped to INVALID stops being REJECTED instead of stranding a
     // badge nobody can clear.
     owned: 'all',
-  });
-  timer.mark('register');
+  }, timer);
   timer.note(`full; ${specs.length} specs, ${scripts.length} stored scripts`);
   timer.done();
   const registered = placementsOf(specs, applied, active.gmRuntime);
   const gmRuntimeScopes = ownFingerprints(specs);
   await retryRefusedOwnSpecs(applied, registered, gmRuntimeScopes, present);
-  reportSyncResult(applied.placed.length, specs.length);
+  reportSyncResult(specs, applied.placed);
   return {
     registered,
     gmRuntimeScopes,
@@ -2192,8 +2191,7 @@ async function runIncrementalSync(scope: SyncScope, state: RegistrationState): P
     // REJECTED badge for a script Chrome is still refusing, and
     // rewriting them wholesale would resurrect ones already cleared.
     owned: affected,
-  });
-  timer.mark('register');
+  }, timer);
   timer.note(`incremental; ${specs.length} specs, ${removeIds.length} dropped`);
   timer.done();
   for (const id of removeIds) state.registered.delete(id);
@@ -2203,7 +2201,7 @@ async function runIncrementalSync(scope: SyncScope, state: RegistrationState): P
   for (const id of applied.refused) state.registered.delete(id);
   await retryRefusedOwnSpecs(applied, state.registered, state.gmRuntimeScopes, present);
   state.labels = nextLabels;
-  reportSyncResult(applied.placed.length, specs.length);
+  reportSyncResult(specs, applied.placed);
 }
 
 // Prepend our own GM-runtime / bridge specs to the user specs, when
@@ -2321,18 +2319,46 @@ function placementsOf(
   return out;
 }
 
-function reportSyncResult(registered: number, offered: number): void {
+function reportSyncResult(specs: readonly RegistrationSpec[], placed: readonly string[]): void {
   // A sync whose scope turned out to hold nothing offered nothing, and
   // "registered 0 userscript(s)" would read as though it had emptied
   // the set. Say nothing instead.
-  if (offered === 0) return;
+  if (specs.length === 0) return;
+  // Counted apart from the user's scripts: a toggle that re-registers
+  // one script also re-registers each helper whose pattern union it
+  // moved, and a single total read as more scripts than the page has.
+  const offered = specs.filter((s) => isUserScriptId(s.id)).length;
+  const registered = placed.filter(isUserScriptId).length;
+  const helpers = placed.filter((id) => !isUserScriptId(id)).map(helperName);
+  // `placed` includes a helper `retryRefusedOwnSpecs` got in on its
+  // second try, so this is what Chrome is still refusing.
+  const refusedHelpers = specs
+    .filter((s) => !isUserScriptId(s.id) && !placed.includes(s.id))
+    .map((s) => helperName(s.id));
   const failed = offered - registered;
-  if (failed > 0) {
-    console.info(
-      `[SourceMonkey] registered ${registered}/${offered} userscript(s); ${failed} rejected by chrome.userScripts (see per-script errors)`,
-    );
+  const parts = [
+    ...(offered > 0 ? [`${failed > 0 ? `${registered}/${offered}` : registered} userscript(s)`] : []),
+    ...(helpers.length > 0 ? [`helper(s): ${helpers.join(', ')}`] : []),
+  ];
+  const what = parts.join(' and ') || 'nothing';
+  const problems = [
+    ...(failed > 0 ? [`${failed} userscript(s) rejected by chrome.userScripts (see per-script errors)`] : []),
+    ...(refusedHelpers.length > 0 ? [`helper(s) refused by chrome.userScripts: ${refusedHelpers.join(', ')}`] : []),
+  ];
+  if (problems.length > 0) {
+    console.info(`[SourceMonkey] registered ${what}; ${problems.join('; ')}`);
   } else {
-    console.log(`[SourceMonkey] registered ${registered} userscript(s) with chrome.userScripts`);
+    console.log(`[SourceMonkey] registered ${what} with chrome.userScripts`);
+  }
+}
+
+// How the sync log names one of our own registrations.
+function helperName(id: string): string {
+  switch (id) {
+    case BRIDGE_SCRIPT_ID: return 'bridge';
+    case GM_RUNTIME_MAIN_SCRIPT_ID: return 'GM runtime (MAIN world)';
+    case GM_RUNTIME_SCRIPT_ID: return 'GM runtime (USER_SCRIPT world)';
+    default: return id;
   }
 }
 
@@ -2689,9 +2715,13 @@ interface AppliedPlan {
   refused: Set<string>;
 }
 
-async function applyPlan(plan: RegistrationPlan): Promise<AppliedPlan> {
+// `timer`, when given, gets one mark per step: each is its own round
+// trip to Chrome, and a sync's register time is usually one of them.
+async function applyPlan(plan: RegistrationPlan, timer?: PhaseTimer): Promise<AppliedPlan> {
   const prior = await readRejections();
+  timer?.mark('read rejections');
   const { placed, refused } = await placeSpecs(plan.specs, plan.present);
+  timer?.mark('register');
   // A spec Chrome refuses for an id it already holds leaves the
   // PREVIOUS registration in place, so the script would keep injecting
   // stale code while its row read REJECTED — and REJECTED says the
@@ -2699,6 +2729,7 @@ async function applyPlan(plan: RegistrationPlan): Promise<AppliedPlan> {
   const drop = [...plan.removeIds];
   for (const id of refused.keys()) if (plan.present.has(id)) drop.push(id);
   await unregisterIds(drop);
+  timer?.mark('unregister');
 
   const next: RejectionMap = plan.owned === 'all' ? {} : { ...prior };
   if (plan.owned !== 'all') for (const id of plan.owned) delete next[id];
@@ -2720,6 +2751,7 @@ async function applyPlan(plan: RegistrationPlan): Promise<AppliedPlan> {
     logRejection(id, msg);
   }
   await writeRejections(prior, next);
+  timer?.mark('write rejections');
   logRecoveries(placed.filter((id) => prior[id] !== undefined));
   return { placed, refused: new Set(refused.keys()) };
 }

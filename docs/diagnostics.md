@@ -500,6 +500,66 @@ symptom that led to `onlyProbesChanged` (see
 row at a time, and each write used to schedule its own re-registration.
 If they come back, that suppression is the first place to look.
 
+## Measuring an enable click
+
+With **Options → Debug logging** on, each enable or disable prints one
+line in the console of the context that saved it: the page for the
+collections page and the viewer, the service worker for the popup and
+sm-dev. The service worker's `registration sync` line follows.
+
+| Line | Printed by |
+|------|------------|
+| `enable script` / `disable script` | a script checkbox (collections page, popup, sm-dev) |
+| `enable collection` / `disable collection` | a collection checkbox |
+| `enable all` / `disable all` | the collections page's bulk toggle |
+| `versions table enable` | a checkbox in the viewer's versions table |
+| `turn off other copies` | an install or move that displaces other copies |
+| `enablement write` | any other enable write (only the write's own steps) |
+
+The shape of a line (numbers illustrative):
+
+```
+timing: enable script: total 480ms (read all 410 [12 scripts,
+  3 collections], plan 0.4, lock wait 0.1, read rows 6.1
+  [3 keys, 41.0 KB], read collections 1.2 [1 key, 0.4 KB], write 9.8
+  [3 keys, 40.6 KB]); 2 change(s)
+```
+
+- **read all**: every script, collection and active time, which
+  enabling needs to find a script's other copies. The scripts come
+  from a full scan, whose `storage scan` line has the size.
+- **plan**: working out which copies to change.
+- **lock wait**: waiting behind other storage writes in the same page
+  or worker.
+- **read rows / read collections**: the rows the write changes,
+  re-read inside the lock. `read collection` is the toggled collection.
+- **write**: the one storage write. Every changed script row is
+  written whole, body included.
+- **repaint** (`versions table enable` only): the table redraw the
+  checkbox stays grey for.
+- Sizes are JSON lengths, roughly what Chrome stores and copies.
+  Computing them is left out of the step times.
+
+After any storage write, the collections page redraws and prints a
+`collections page repaint` line:
+
+- **read collections / banner**: the collection rows, and the "could
+  not save" banner's check.
+- **read scripts**: each collection's script rows, one read per
+  collection, bodies included.
+- **size**: asking Chrome how big those rows are.
+- **icons / paint**: cached favicons, then updating the rows.
+
+The `registration sync` line that follows has these steps:
+
+- **read / build-specs**: the changed rows, turned into what Chrome is
+  given to register.
+- **read rejections / write rejections**: the list of scripts Chrome
+  refused, which shows them as REJECTED.
+- **register / unregister**: the `chrome.userScripts` calls.
+- **list** (full syncs only): asking Chrome which registrations it
+  holds.
+
 ## Measuring a missed reload swap
 
 The [reload fast-path](injection.md#reload-fast-path) races a refresh
@@ -589,8 +649,11 @@ numbers anyway, both because the worker is single-threaded:
 ### Storage scans
 
 ```
-timing: storage scan (registration sync): 183ms, 266 row(s)
+timing: storage scan (registration sync): 183ms, 266 keys, 4.1 MB
 ```
+
+The size comes from Chrome (`getBytesInUse`), not from serializing the
+rows, so measuring it costs this thread nothing.
 
 - A `chrome.storage.local.get(null)` returns **every row the extension
   owns** — script bodies, `@require` / `@resource` payloads, favicons,

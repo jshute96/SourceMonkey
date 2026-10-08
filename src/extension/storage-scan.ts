@@ -26,6 +26,7 @@ import { isDebugLoggingEnabled } from '../debug-log.js';
 // against phase numbers on the same console, and two formats that
 // drift would make that comparison quietly wrong.
 import { formatMs } from '../phase-timing.js';
+import { formatBytes } from '../script-display.js';
 
 // Runs `chrome.storage.local.get(null)`, reporting what it cost and who
 // asked. `reason` should name the CALLER's purpose ("gm snapshot",
@@ -51,9 +52,16 @@ export async function timeStorageRead<T extends Record<string, unknown> | null>(
   const rows = await read();
   const ms = performance.now() - start;
   if (rows === null) return rows;
-  console.log(
-    `[SourceMonkey] timing: storage scan (${reason}): `
-    + `${formatMs(ms)}, ${Object.keys(rows).length} row(s)`,
+  const keys = Object.keys(rows);
+  const head = `[SourceMonkey] timing: storage scan (${reason}): ${formatMs(ms)}, ${keys.length} keys`;
+  // The size comes from Chrome, which keeps it for each stored value,
+  // rather than from serializing the rows here: on a store of several
+  // MB that took tens of ms on this thread, inside whatever phase the
+  // caller was timing. Not awaited, so the caller never waits on it;
+  // the line prints when the answer arrives.
+  chrome.storage.local.getBytesInUse(keys).then(
+    (bytes) => console.log(`${head}, ${formatBytes(bytes)}`),
+    () => console.log(head),
   );
   return rows;
 }

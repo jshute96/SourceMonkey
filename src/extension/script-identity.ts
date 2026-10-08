@@ -53,6 +53,7 @@ import {
 import { CONTAINER_DISPLAY_NAMES, effectiveDisplayName } from './collection-display.js';
 import { getValues, type ParsedHeader } from '../userscript-header.js';
 import { identityKey, locationKey } from './script-keys.js';
+import { startPhaseTimer, type PhaseTimer } from '../phase-timing.js';
 
 // `identityKey` and `locationKey` live in script-keys.ts, so the store
 // can use them too; re-exported here, where the rest of the lookup is.
@@ -313,7 +314,20 @@ function inRunCollection(rel: RelatedScript): boolean {
 //
 // A run's test collection is left out both ways, as by `enableChanges`.
 export async function turnOffOtherCopies(scriptId: string): Promise<StoredScript[]> {
+  const timer = startPhaseTimer('turn off other copies');
   const [scripts, collections] = await Promise.all([getAllScripts(), getCollections()]);
+  timer.mark('read all', `${scripts.length} scripts, ${collections.length} collections`);
+  const off = await planAndTurnOff(scriptId, scripts, collections, timer);
+  timer.done();
+  return off;
+}
+
+async function planAndTurnOff(
+  scriptId: string,
+  scripts: StoredScript[],
+  collections: StoredCollection[],
+  timer: PhaseTimer,
+): Promise<StoredScript[]> {
   const copy = scripts.find((s) => s.id === scriptId);
   if (!copy) return [];
   // The STORED row's location and header: what the rest of the store is
@@ -327,7 +341,9 @@ export async function turnOffOtherCopies(scriptId: string): Promise<StoredScript
   // `started`: the copy became active in an earlier write, but it is
   // stamped as becoming active now, the moment the copies it displaces
   // go inactive (docs/script-enablement.md).
-  await writeEnablement({ scripts: [...off].map((id) => ({ id, enabled: false })), started: [scriptId] });
+  timer.mark('plan');
+  await writeEnablement({ scripts: [...off].map((id) => ({ id, enabled: false })), started: [scriptId] }, timer);
+  timer.note(`${off.size} cop${off.size === 1 ? 'y' : 'ies'} turned off`);
   return rows.filter((r) => off.has(r.script.id)).map((r) => r.script);
 }
 
