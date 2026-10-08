@@ -132,13 +132,35 @@ registered is **updated in place**.
 2. `chrome.storage.local.get([...])` for just those rows. Not
    `get(null)`, which pulls every script body and the favicon cache.
 3. Rebuild specs for those scripts only.
-4. `chrome.userScripts.update([...])` for ids Chrome already holds,
+4. `unregister([...])` for scripts that left the set and that this
+   context believes Chrome holds.
+5. `chrome.userScripts.update([...])` for ids Chrome already holds,
    `register([...])` for genuinely new ones, and unregister+register for
    the narrow case `update` cannot express (see
    [What `update` cannot change](#what-update-cannot-change)). Chrome
    applies a batch all-or-nothing, so a rejected batch falls back to
    per-spec calls and one bad script can't take down every other one.
-5. `unregister([...])` for scripts that left the set.
+6. `unregister([...])` for the rest of the scripts that left the set,
+   which another context may have placed, and for any script Chrome
+   just refused that it already held (see
+   [Update, never unregister-then-register](#update-never-unregister-then-register)).
+   Usually Chrome holds none of the former, which fails the batch call
+   and falls back to one call per id, so they wait until after
+   registering.
+
+Removals go before registering. When a change swaps one copy of a
+script for another, a page loading in between then gets neither copy
+rather than both, so the script never runs twice. A reload fixes the
+missing one.
+
+Our own helpers (the GM runtime, the bridge) are updated **without
+their code** when only their patterns moved.
+
+- `update` keeps any property it isn't given, and the GM runtime's code
+  is over 100 KB.
+- Their code is fixed when the extension is built.
+- Each context's first sync is a full one, which places them with code
+  (see [Startup is a full reconcile](#startup-is-a-full-reconcile)).
 
 #### Why wipe-and-replace was wrong, not just slow
 

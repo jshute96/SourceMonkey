@@ -446,4 +446,42 @@ test.describe('injection', () => {
     });
     await page.close();
   });
+  test('a helper whose patterns move keeps its code', async ({
+    extensionContext,
+    fixtureServer,
+    getServiceWorker,
+    sm,
+  }) => {
+    // Turning a script on moves the GM runtime's patterns, and the update
+    // that follows leaves the runtime's code out (`withoutCode` in
+    // injector.ts): Chrome keeps what it isn't sent. Pinned here because
+    // if it didn't, GM_* would be gone from every page.
+    for (const [file, page] of [['a.user.js', 'target.html'], ['b.user.js', 'other.html']]) {
+      scriptsDir.write({
+        relativePath: file,
+        meta: { name: file, match: [`${fixtureServer.baseUrl}/${page}`], grant: ['GM_getValue'] },
+        body: `document.documentElement.dataset.gm = String(GM_getValue('k', 'from-runtime'));\n`,
+      });
+    }
+    await sm.addCollection(scriptsDir.path);
+    const b = (await allScripts(sm)).find((s) => s.relativePath === 'b.user.js')!;
+    await sm.setScriptEnabled(b.id, false);
+    await sm.syncNow();
+
+    await sm.setScriptEnabled(b.id, true);
+    // Incremental: the kind that leaves the code out. A full sync sends it.
+    expect((await sm.syncNow()).kind).toBe('incremental');
+
+    const runtime = await (await getServiceWorker()).evaluate(async () =>
+      (await chrome.userScripts.getScripts({ ids: ['sourcemonkey-gm-runtime'] }))
+        .map((r) => ({ matches: r.matches ?? [], code: r.js?.[0]?.code?.length ?? 0 })));
+    expect(runtime).toHaveLength(1);
+    expect(runtime[0].matches).toContain(`${fixtureServer.baseUrl}/other.html`);
+    expect(runtime[0].code).toBeGreaterThan(10_000);
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/other.html`);
+    await expect(page.locator('html')).toHaveAttribute('data-gm', 'from-runtime');
+    await page.close();
+  });
 });

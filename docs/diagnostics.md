@@ -554,11 +554,15 @@ The `registration sync` line that follows has these steps:
 
 - **read / build-specs**: the changed rows, turned into what Chrome is
   given to register.
-- **read rejections / write rejections**: the list of scripts Chrome
-  refused, which shows them as REJECTED.
-- **register / unregister**: the `chrome.userScripts` calls.
 - **list** (full syncs only): asking Chrome which registrations it
   holds.
+- **unregister / register**: the `chrome.userScripts` calls, removals
+  first.
+- **unregister after** (only when needed): removals Chrome may not hold,
+  and scripts it just refused that it already held.
+- **read rejections / write rejections**: the list of scripts Chrome
+  refused, which shows them as REJECTED. It is read alongside the
+  calls above, so `read rejections` is only the wait left after them.
 
 ## Measuring a missed reload swap
 

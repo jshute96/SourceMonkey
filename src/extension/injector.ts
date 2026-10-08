@@ -2186,6 +2186,11 @@ async function runIncrementalSync(scope: SyncScope, state: RegistrationState): P
     specs,
     removeIds,
     present,
+    // An own spec offered here that Chrome holds is one whose patterns
+    // moved. Its code is fixed when the extension is built, and this
+    // context's first sync was a full one, which placed it with this
+    // code. Only the specs being offered: the rest aren't sent at all.
+    codeInPlace: new Set(specs.filter((spec) => !isUserScriptId(spec.id) && present.has(spec.id)).map((spec) => spec.id)),
     // Only the rows this sync considered. An id it never looked at
     // keeps whatever the map already says: dropping those would clear a
     // REJECTED badge for a script Chrome is still refusing, and
@@ -2546,9 +2551,14 @@ export async function retryRejectedRegistrations(
 //
 // Shared by the retry path and the sync's per-spec fallback so the two
 // can't drift on this.
+//
+// `codeInPlace`: Chrome already holds this id with the same code, so the
+// update leaves the code out (`withoutCode`). The register and replace
+// fallbacks still send it, since they start from nothing.
 async function placeSpec(
   spec: RegistrationSpec,
   believed: PlacedPatterns | undefined,
+  codeInPlace = false,
 ): Promise<void> {
   if (believed) {
     // A spec whose pattern fields `update` won't apply — changed
@@ -2557,7 +2567,7 @@ async function placeSpec(
     if (needsReplace(believed, spec)) return await replaceRegistration(spec);
     let refusal: unknown;
     try {
-      await chrome.userScripts.update([spec]);
+      await chrome.userScripts.update([codeInPlace ? withoutCode(spec) : spec]);
       return;
     } catch (err) {
       refusal = err;
@@ -2593,6 +2603,18 @@ async function placeSpec(
   // whether an update would silently keep the pattern fields it holds.
   if (needsReplace(actual, spec)) return await replaceRegistration(spec);
   await chrome.userScripts.update([spec]);
+}
+
+// An update that changes only the patterns. `update` keeps any property
+// it isn't given, and our helpers' code (the GM runtime's is over
+// 100 KB) would otherwise go to Chrome again on a toggle that moved one
+// pattern. Chrome then stores it and sends it on to renderers, which
+// was most of the sync's register time.
+function withoutCode(spec: RegistrationSpec): RegistrationSpec {
+  const { js: _js, ...rest } = spec;
+  // `js` is required by the type, which describes a registration, not
+  // an update.
+  return rest as RegistrationSpec;
 }
 
 // The one place a live registration is deliberately dropped and put
@@ -2632,6 +2654,7 @@ async function replaceRegistration(spec: RegistrationSpec): Promise<void> {
 async function placeSpecs(
   specs: readonly RegistrationSpec[],
   present: ReadonlyMap<string, PlacedPatterns>,
+  codeInPlace: ReadonlySet<string> = new Set(),
 ): Promise<{ placed: string[]; refused: Map<string, string> }> {
   const placed: string[] = [];
   const refused = new Map<string, string>();
@@ -2640,7 +2663,7 @@ async function placeSpecs(
     beliefs: ReadonlyMap<string, PlacedPatterns> = present,
   ): Promise<void> => {
     try {
-      await placeSpec(spec, beliefs.get(spec.id));
+      await placeSpec(spec, beliefs.get(spec.id), codeInPlace.has(spec.id));
       placed.push(spec.id);
     } catch (err) {
       refused.set(spec.id, describeError(err));
@@ -2708,6 +2731,10 @@ interface RegistrationPlan {
   // whole map; a set of ids for an incremental one, which must leave
   // every other entry exactly as it found it.
   owned: 'all' | ReadonlySet<string>;
+  // Ids Chrome already holds with this same code, whose update can leave
+  // the code out: our own helpers when only their patterns moved (see
+  // `withoutCode`).
+  codeInPlace?: ReadonlySet<string>;
 }
 
 interface AppliedPlan {
@@ -2715,21 +2742,50 @@ interface AppliedPlan {
   refused: Set<string>;
 }
 
+// `items` split by `test`: those it holds for, then the rest.
+function partition<T>(items: readonly T[], test: (item: T) => boolean): [T[], T[]] {
+  const yes: T[] = [];
+  const no: T[] = [];
+  for (const item of items) (test(item) ? yes : no).push(item);
+  return [yes, no];
+}
+
 // `timer`, when given, gets one mark per step: each is its own round
 // trip to Chrome, and a sync's register time is usually one of them.
 async function applyPlan(plan: RegistrationPlan, timer?: PhaseTimer): Promise<AppliedPlan> {
-  const prior = await readRejections();
-  timer?.mark('read rejections');
-  const { placed, refused } = await placeSpecs(plan.specs, plan.present);
+  // Read alongside the Chrome calls below, which don't depend on it.
+  // Never rejects (`readRejections` answers {} on failure), so nothing
+  // is left unhandled if a call below throws first.
+  const priorRead = readRejections();
+  // Removals before registering. When a change swaps one copy of a
+  // script for another, registering first left a moment in which a page
+  // that loaded got both copies and ran the script twice. This order
+  // leaves a moment in which it gets neither, which a reload fixes. The
+  // two lists never share an id, so no registration is replaced this way
+  // (see `placeSpec` on why that would be wrong).
+  //
+  // Only the ids we believe Chrome holds, which covers the old copy in a
+  // swap. The rest are dropped in case another context placed them, and
+  // usually Chrome holds none of them: that fails the batch call, and
+  // the one-at-a-time fallback in `unregisterIds` would hold up the
+  // registering.
+  const [held, unsure] = partition(plan.removeIds, (id) => plan.present.has(id));
+  await unregisterIds(held);
+  timer?.mark('unregister');
+  const { placed, refused } = await placeSpecs(plan.specs, plan.present, plan.codeInPlace);
   timer?.mark('register');
   // A spec Chrome refuses for an id it already holds leaves the
   // PREVIOUS registration in place, so the script would keep injecting
   // stale code while its row read REJECTED — and REJECTED says the
-  // script will not run. Drop it, so the badge stays true.
-  const drop = [...plan.removeIds];
-  for (const id of refused.keys()) if (plan.present.has(id)) drop.push(id);
-  await unregisterIds(drop);
-  timer?.mark('unregister');
+  // script will not run. Drop it, so the badge stays true. Only known
+  // once the registering is done, so it comes after.
+  const after = [...unsure, ...[...refused.keys()].filter((id) => plan.present.has(id))];
+  if (after.length > 0) {
+    await unregisterIds(after);
+    timer?.mark('unregister after');
+  }
+  const prior = await priorRead;
+  timer?.mark('read rejections');
 
   const next: RejectionMap = plan.owned === 'all' ? {} : { ...prior };
   if (plan.owned !== 'all') for (const id of plan.owned) delete next[id];

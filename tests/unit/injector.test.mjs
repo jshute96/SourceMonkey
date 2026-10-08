@@ -2536,6 +2536,7 @@ function fakeRegistrationSet(initial = []) {
   const seed = { matches: ['https://seed/*'] };
   const held = new Map(initial.map((id) => [id, { id, ...seed }]));
   const calls = [];
+  const updates = new Map();
   const merge = (prior, spec) => {
     const next = { ...prior, ...spec };
     // An empty array is "unspecified" to Chrome, so the old value
@@ -2563,6 +2564,7 @@ function fakeRegistrationSet(initial = []) {
       if (!held.has(s.id)) throw new Error(`No script with ID '${s.id}' is registered`);
     }
     for (const s of batch) {
+      updates.set(s.id, s);
       const merged = merge(held.get(s.id), s);
       // Delete then set: a Map preserves insertion order, so this is
       // how the fake reproduces "an updated script moves to the end".
@@ -2584,7 +2586,10 @@ function fakeRegistrationSet(initial = []) {
     order: () => [...held.keys()],
     ids: () => [...held.keys()].sort(),
     spec: (id) => held.get(id),
-    reset: () => { calls.length = 0; },
+    // What the last `update` for `id` was sent, as opposed to what Chrome
+    // holds after merging it in.
+    sentUpdate: (id) => updates.get(id),
+    reset: () => { calls.length = 0; updates.clear(); },
   };
 }
 
@@ -2663,6 +2668,12 @@ test('syncRegistrations: a scoped sync re-offers the MAIN runtime and the bridge
   );
   assert.deepEqual(chrome_.spec(GM_RUNTIME_MAIN_SCRIPT_ID).matches.sort(), ['https://a.example/*', 'https://b.example/*']);
   assert.deepEqual(chrome_.spec(BRIDGE_SCRIPT_ID).matches.sort(), ['https://a.example/*', 'https://b.example/*']);
+  // Only the patterns moved, so their code isn't sent again, and what
+  // Chrome holds still has it.
+  for (const id of [GM_RUNTIME_MAIN_SCRIPT_ID, BRIDGE_SCRIPT_ID]) {
+    assert.equal('js' in chrome_.sentUpdate(id), false, `${id} update sent no code`);
+    assert.ok(chrome_.spec(id).js?.[0]?.code?.length > 0, `${id} still has its code`);
+  }
 
   // An edit that doesn't move the union re-offers neither.
   chrome_.reset();
@@ -2675,6 +2686,26 @@ test('syncRegistrations: a scoped sync re-offers the MAIN runtime and the bridge
   localStore.set('script:b', { ...localStore.get('script:b'), enabled: false });
   await syncRegistrations({ scriptIds: ['a', 'b'], collectionIds: [] });
   assert.deepEqual(chrome_.ids(), []);
+});
+
+test('syncRegistrations: swapping one copy for another drops the old one before registering the new', async (t) => {
+  // Registering first left a moment in which a page loading got both
+  // copies, and ran the script twice.
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a', { matches: ['https://a.example/*'] });
+  seedStore('b', { matches: ['https://a.example/*'] });
+  localStore.set('script:b', { ...localStore.get('script:b'), enabled: false });
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+  chrome_.reset();
+
+  localStore.set('script:a', { ...localStore.get('script:a'), enabled: false });
+  localStore.set('script:b', { ...localStore.get('script:b'), enabled: true });
+  await syncRegistrations({ scriptIds: ['a', 'b'], collectionIds: [] });
+  assert.deepEqual(chrome_.calls.filter((c) => c.endsWith(':a') || c.endsWith(':b')), ['unregister:a', 'register:b']);
 });
 
 test('syncRegistrations: a refused own spec is rebuilt from what Chrome accepted, and never filed as a script', async (t) => {
@@ -2965,8 +2996,8 @@ test('syncRegistrations: a scoped sync with no record of the set reconciles full
   assert.equal(reads.full, 1, 'with nothing to diff against, read everything');
   assert.deepEqual(chrome_.ids(), ['a', BRIDGE_SCRIPT_ID].sort(), 'the stray is dropped');
   assert.deepEqual(
-    chrome_.calls, [`register:${BRIDGE_SCRIPT_ID}`, 'update:a', 'unregister:gone'],
-    'our own registration goes first, a staying script is updated in place, removals last',
+    chrome_.calls, ['unregister:gone', `register:${BRIDGE_SCRIPT_ID}`, 'update:a'],
+    'removals first, then our own registration, and a staying script is updated in place',
   );
 });
 
