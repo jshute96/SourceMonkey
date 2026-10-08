@@ -80,6 +80,15 @@ export interface TabMatchState {
   // Set once the post-load check for scripts that never started has
   // run, so it logs at most once per document.
   missingChecked?: boolean;
+  // While the page is still settling, until this time (epoch ms): its
+  // scripts may still be on their way, so a MISSING one isn't yet a
+  // reason to reload (the popup's banner).
+  //   - Set at a navigation commit. Not where no load is coming (a
+  //     document first seen after an extension restart, or a pushState).
+  //   - Dropped by the post-load check above, usually well before.
+  //     A deadline rather than a flag, so a load event that never comes
+  //     (a page that never finishes loading) can't leave it on.
+  settleBy?: number;
   // The scripts that matched when the document was first seen. Only
   // these are checked for never starting: one that matched only a later
   // pushState URL, or was installed after the document committed, was
@@ -266,6 +275,11 @@ export function skippedOnDocument(state: TabMatchState, id: string): boolean {
   if (state.skipOnly !== undefined && state.skipOnly !== id) return true;
   if (state.skipWithout === id) return true;
   return state.smDevAllow !== undefined && !(state.smDevAllow?.includes(id) ?? false);
+}
+
+/** Whether the page is still settling (`settleBy`) at `now`. */
+export function isSettling(state: TabMatchState, now: number): boolean {
+  return state.settleBy !== undefined && now < state.settleBy;
 }
 
 // ---------- Per-tab document history ----------

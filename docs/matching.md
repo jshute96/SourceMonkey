@@ -537,6 +537,10 @@ why (`src/extension/missing-scripts.ts`):
   grace period (11s) past the wrapper's 10s decision timeout, for
   scripts still waiting on their check-pending reply. At most once per
   document (`missingChecked`).
+  - Until then the document is settling (`settleBy`, set at a
+    navigation commit), and the popup's reload banner leaves its
+    MISSING rows out. It's a deadline, 20s after the commit, so a load
+    event that never comes can't leave it on.
   - A script that got no decision reports so (an error, with why), and
     so isn't listed here: see
     [injection.md](injection.md#no-decision).

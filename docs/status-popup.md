@@ -137,6 +137,12 @@ From top to bottom:
       are running`, or `… Some scripts are missing or unexpected`, when
       nothing above applies.
       - A reload may well settle these.
+      - Missing doesn't count until shortly after the page loads, while
+        its scripts may still be on their way. The badge stays orange
+        meanwhile.
+        - That ends with the post-load check for scripts that never
+          started (see [matching.md](matching.md#scripts-that-never-start)),
+          or 20s after the page started loading, whichever comes first.
     - The first that applies wins, in that order.
   - Shows alongside the sm-dev banner only rarely: sm-dev reloads its
     tabs itself when its own scripts change.

@@ -22,12 +22,12 @@ function state(extra = {}) {
   return { documentId: 'd1', url: URL_, matches: [], actual: {}, loadMatchIds: [], ...extra };
 }
 
-function view({ st = state(), scripts, collections = COLLS, matching, commands = new Map(), rejected = {}, keepIds, loadUrlMatchingIds, deletedIds, runnable }) {
+function view({ st = state(), scripts, collections = COLLS, matching, commands = new Map(), rejected = {}, keepIds, loadUrlMatchingIds, deletedIds, runnable, now }) {
   const badgeRows = st ? computeBadge(st, new Set(Object.keys(rejected))).rows : [];
   return buildPopupView({
     url: URL_, injectable: true, state: st, badgeRows, rejected,
     matchingIds: new Set(matching ?? scripts.map((s) => s.id)),
-    scripts, collections, menuCommands: commands, keepIds, loadUrlMatchingIds, deletedIds,
+    scripts, collections, menuCommands: commands, keepIds, loadUrlMatchingIds, deletedIds, now,
     // By default, every manual script can run here.
     manualRunnableIds: new Set(runnable ?? scripts.filter((s) => s.manual).map((s) => s.id)),
   });
@@ -277,6 +277,27 @@ test('a missing script raises the banner', () => {
   });
   assert.equal(v.enabled[0].rows[0].status, 'MISSING');
   assert.equal(v.banner, 'Reload required: Some scripts are missing');
+});
+
+test('a missing script raises no banner while the page is still loading', () => {
+  const v = view({
+    st: state({ matches: [m('slow')], loadMatchIds: ['slow'], settleBy: 2000 }),
+    scripts: [script('slow', 'A')],
+    now: 1000,
+  });
+  assert.equal(v.enabled[0].rows[0].status, 'MISSING');
+  assert.equal(v.banner, null);
+  assert.equal(v.bannerRecheckAt, 2000);
+});
+
+test('a missing script raises the banner once the settling deadline passes', () => {
+  const v = view({
+    st: state({ matches: [m('slow')], loadMatchIds: ['slow'], settleBy: 2000 }),
+    scripts: [script('slow', 'A')],
+    now: 2000,
+  });
+  assert.equal(v.banner, 'Reload required: Some scripts are missing');
+  assert.equal(v.bannerRecheckAt, null);
 });
 
 test('a running script with a warning shows Warning; every other status outranks it', () => {

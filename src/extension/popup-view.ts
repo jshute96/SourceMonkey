@@ -8,7 +8,7 @@
 import { RUN_SCRIPT_LABEL } from '../userscript-header.js';
 import { compareScriptNames } from '../script-display.js';
 import { comparePreferred, preferredCopy } from './copy-preference.js';
-import { skippedOnDocument, type BadgeRow, type RowStatus, type TabMatchState } from './tab-status.js';
+import { isSettling, skippedOnDocument, type BadgeRow, type RowStatus, type TabMatchState } from './tab-status.js';
 
 // The badge's statuses, plus the ones only the popup shows:
 //   - PENDING: enabled since the page loaded; a reload would run it.
@@ -124,6 +124,8 @@ export interface PopupViewInput {
   // scripts, outside that run's tabs. Not taken for removed ones when
   // they show up in the tab's state.
   hiddenIds?: ReadonlySet<string>;
+  // The time to judge `state.settleBy` by. Defaults to now.
+  now?: number;
 }
 
 export interface PopupRow {
@@ -161,6 +163,9 @@ export interface PopupView {
   smDev: boolean;
   // `Reload required: …`, or null.
   banner: string | null;
+  // When the banner may change with nothing else changing: the page
+  // stops settling (`settleBy`) with Missing rows left out of it.
+  bannerRecheckAt: number | null;
   // The per-script "Reload page with only / without this script" items.
   // Not in a tab an sm-dev run controls: which scripts run there is the
   // run's choice.
@@ -316,6 +321,7 @@ export function buildPopupView(input: PopupViewInput): PopupView {
     injectable: input.injectable,
     smDev,
     banner: null,
+    bannerRecheckAt: null,
     perScriptReload: !smDev && state != null,
     enabled: [],
     manual: [],
@@ -330,6 +336,7 @@ export function buildPopupView(input: PopupViewInput): PopupView {
   const nameOf = (id: string) => scripts.get(id)?.name ?? badgeById.get(id)?.name ?? id;
   const isActive = (s: PopupScriptInput) => s.enabled && (collections.get(s.collectionId)?.enabled ?? false);
   const isRunning = (id: string) => state?.actual[id] != null;
+  const settling = state != null && isSettling(state, input.now ?? Date.now());
 
   // Every candidate, then one identity at a time: the copies that are
   // active or running here all show; with none of those, one copy
@@ -427,7 +434,11 @@ export function buildPopupView(input: PopupViewInput): PopupView {
       if (movedOnly) causes.notYetRun = true; else causes.enabled = true;
     }
     if (status === 'STILL_RUNNING') causes.disabled = true;
-    if (status === 'MISSING') causes.missing = true;
+    // Not while the page is still settling: its scripts may be on their way.
+    if (status === 'MISSING') {
+      if (settling) view.bannerRecheckAt = state!.settleBy!;
+      else causes.missing = true;
+    }
     if (status === 'UNEXPECTED') causes.unexpected = true;
     if (status === 'UNTRACKED') causes.loadedBefore = true;
 
