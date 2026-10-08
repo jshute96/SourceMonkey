@@ -1725,6 +1725,7 @@ const OTHER_STATE: Record<string, J.TabState> = {
   UNEXPECTED: 'unexpected',
   RELOAD: 'changed',
   NOT_LOADED: 'kept-out',
+  UNTRACKED: 'unknown',
   EXPECTED: 'expected',
 };
 
@@ -2457,6 +2458,7 @@ const OTHER_STATUS: Record<string, string> = {
   UNEXPECTED: 'Running, though it doesn\'t match',
   RELOAD: 'Changed since it started',
   NOT_LOADED: 'SourceMonkey script not loaded in sm-dev tab',
+  UNTRACKED: 'Unknown: the page loaded before SourceMonkey started',
   // Another manager's, by its match rules (`predicted`).
   EXPECTED: 'Expected using match rules',
 };

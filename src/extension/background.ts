@@ -473,6 +473,9 @@ interface SourceMonkeyApi {
   // navigating. Optimistically `true` until the startup read finishes,
   // so only a poll for `false` is meaningful.
   isCaptureEnabled: () => boolean;
+  // As after an extension reload: forget every tab's record, then
+  // mark the open pages as loaded before the extension started.
+  simulateExtensionStart: () => Promise<void>;
   // Wipe local + session storage and unregister every userscript so
   // each test starts clean.
   resetAllState: () => Promise<void>;
@@ -727,6 +730,11 @@ const api: SourceMonkeyApi = {
     return { badgeText, badgeColor, title, rows, record };
   },
   isCaptureEnabled,
+  simulateExtensionStart: async () => {
+    const all = await chrome.storage.session.get(null);
+    await chrome.storage.session.remove(Object.keys(all).filter((k) => k.startsWith('tab:')));
+    await markTabsLoadedBefore();
+  },
   // Drains this script's in-flight appends before reading. Production
   // log writes go through `logScriptEvent`, which is deliberately
   // fire-and-forget — a refresh must not wait on its own transcript —
@@ -1166,6 +1174,7 @@ chrome.runtime.onInstalled.addListener((details) => {
       console.info('[SourceMonkey] script row backfill failed:', err);
     }
   })();
+  if (details.reason === 'install' || details.reason === 'update') void markTabsLoadedBefore();
   if (details.reason !== 'install') return;
   void (async () => {
     if (await isFirstRunComplete()) {
@@ -1188,6 +1197,66 @@ chrome.runtime.onInstalled.addListener((details) => {
     }
   })();
 });
+
+// ---------- Pages open before the extension started ----------
+//
+// After an install, an update or a dev reload, every page already open
+// loaded before this copy of the extension, and the per-tab records
+// (chrome.storage.session) are gone. Whether a script runs in such a
+// page is unknown: a copy from the old extension may still run, cut off
+// from it, or none may. Each one gets a record
+// saying so (`loadedBefore`), so the badge and popup ask for a reload
+// (UNTRACKED) rather than staying blank. Not on browser startup
+// (`onInstalled` doesn't fire then): restored tabs load afterwards.
+async function markTabsLoadedBefore(): Promise<void> {
+  let tabs: chrome.tabs.Tab[] = [];
+  try {
+    tabs = await chrome.tabs.query({});
+  } catch {
+    return;
+  }
+  const done: Promise<void>[] = [];
+  for (const tab of tabs) {
+    const tabId = tab.id;
+    // A discarded tab loads afresh when shown.
+    if (tabId === undefined || !tab.url || !INJECTABLE_SCHEME.test(tab.url) || tab.discarded) continue;
+    done.push(new Promise((resolve) => enqueueTabWork(tabId, () => markLoadedBefore(tabId).finally(resolve))));
+  }
+  await Promise.all(done);
+}
+
+async function markLoadedBefore(tabId: number): Promise<void> {
+  if (await getTabRecord(tabId)) return;
+  // The URL and the document from one call: the tab may have moved on
+  // since the query, and a document that committed since is watched.
+  let frame: { url: string; documentId?: string } | null = null;
+  try {
+    frame = await chrome.webNavigation.getFrame({ tabId, frameId: 0 }) as { url: string; documentId?: string } | null;
+  } catch {
+    return;
+  }
+  const documentId = frame?.documentId;
+  const url = frame?.url;
+  if (!documentId || !url || !INJECTABLE_SCHEME.test(url)) return;
+  await ensureLoaded();
+  // Recorded even with nothing matching yet, so a script added later
+  // shows as Reload to run: a sync's refresh skips a tab with no record.
+  const matches = expectedMatches(findMatchesForUrl(url), undefined);
+  const state: TabMatchState = {
+    documentId,
+    url,
+    matches,
+    actual: {},
+    loadMatchIds: matches.map((m) => m.id),
+    loadUrl: url,
+    loadedBefore: true,
+    // Nothing can report from it, so there's nothing to log as
+    // never started.
+    missingChecked: true,
+  };
+  await setTabRecord(tabId, setCurrentDoc(null, documentId, state));
+  await renderBadge(tabId, state);
+}
 
 // ---------- Reload with no userscripts ----------
 //
@@ -1438,6 +1507,10 @@ async function updateTabMatches(
   await ensureLoaded();
   const incoming = findMatchesForUrl(url);
   const record = await getTabRecord(tabId);
+  // A refresh re-checks a document already tracked. One with no record
+  // loaded unseen (before the extension started): making one here
+  // would show all its scripts as missing, under no document id.
+  if (trigger === 'refresh' && !record) return;
   const docId = documentId ?? record?.currentDocId ?? '';
   // Look up whether we've already tracked this document. If yes:
   //   - normal in-doc URL change (script-set refresh, SPA pushState)
@@ -1522,6 +1595,7 @@ async function updateTabMatches(
     if (prev.loadUrl) state.loadUrl = prev.loadUrl;
     if (prev.warnedIds) state.warnedIds = prev.warnedIds;
     if (prev.manualRuns) state.manualRuns = prev.manualRuns;
+    if (prev.loadedBefore) state.loadedBefore = true;
   } else {
     state.loadMatchIds = incoming.map((m) => m.id);
     state.loadUrl = url;

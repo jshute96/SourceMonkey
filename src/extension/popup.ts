@@ -376,7 +376,7 @@ function groupHead(group: PopupGroup): HTMLElement {
 
 const PILL_CLASSES: Record<PopupStatus, string> = {
   OK: 'ok', ERROR: 'error', REJECTED: 'rejected', RELOAD: 'reload', MISSING: 'missing',
-  UNEXPECTED: 'unexpected', NOT_LOADED: 'not-loaded', PENDING: 'pending', STILL_RUNNING: 'still-running',
+  UNEXPECTED: 'unexpected', NOT_LOADED: 'not-loaded', UNTRACKED: 'untracked', PENDING: 'pending', STILL_RUNNING: 'still-running',
   WARNING: 'warning', INVALID: 'invalid', NOT_RUN: 'not-run',
 };
 
@@ -396,8 +396,8 @@ function scriptRow(row: PopupRow, group: PopupGroup): HTMLElement {
   name.addEventListener('click', (ev) => openPage(ev, viewerUrl(row.id)));
 
   const main = el('div', { class: 'row-main' }, box, name);
-  if (row.status === 'PENDING') {
-    // Reload to run: a click does just that.
+  if (row.status === 'PENDING' || row.status === 'UNTRACKED') {
+    // Reload to run, or Reload: a click does just that.
     main.append(reloadPill(row, row.status));
   } else if (row.status) {
     const pill = el('a', {

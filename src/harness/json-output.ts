@@ -156,6 +156,9 @@ export type TabState =
   | 'unexpected'
   | 'changed'
   | 'kept-out'
+  // Its page loaded before the extension started, so whether it runs
+  // there is unknown.
+  | 'unknown'
   // Under another manager, which doesn't say what ran: its rules match
   // the tab's page, or don't (see docs/sm-dev-violentmonkey.md).
   | 'expected'

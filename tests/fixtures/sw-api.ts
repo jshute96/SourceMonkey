@@ -90,6 +90,9 @@ export interface SmApi {
   // resolving is not the same as the SW's `storage.onChanged` listener
   // having run.
   isCaptureEnabled(): Promise<boolean>;
+  // As after an extension reload: forget every tab's record, then
+  // mark the open pages as loaded before the extension started.
+  simulateExtensionStart(): Promise<void>;
   resetAllState(): Promise<void>;
   // Forget when each script was last checked, so the next
   // opportunistic check isn't skipped by `UPDATE_MIN_INTERVAL_MS`.

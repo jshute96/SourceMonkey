@@ -166,3 +166,13 @@ test('a manual script not run yet gets no line and no badge; once run, it counts
   assert.equal(ran.color, BADGE_GREEN);
   assert.equal(ran.count, 1);
 });
+
+test('a page loaded before the extension started: purple, with its own line', () => {
+  const s = summary({
+    st: { documentId: 'd', url: URL_, matches: [m('a'), m('b')], actual: {}, loadMatchIds: ['a', 'b'], loadedBefore: true },
+    scripts: [script('a'), script('b')],
+  });
+  assert.deepEqual(lines(s), ['Page loaded before SourceMonkey started. Reload needed for 2 scripts.']);
+  assert.equal(s.color, BADGE_PURPLE);
+  assert.equal(s.count, 2);
+});

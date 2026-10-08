@@ -30,7 +30,8 @@ sm-dev [global options] <command> [args] [-- <command> ...]
     SourceMonkey-managed script (E1, ...) also `kept-out` (the run
     keeps it out of its tabs), `not-started`, `error` (it threw),
     `refused` (Chrome refused it), `unexpected` (running though it
-    doesn't match) and `changed` (changed since it started).
+    doesn't match), `changed` (changed since it started) and `unknown`
+    (the page loaded before SourceMonkey started).
   - Every field:
     https://github.com/jshute96/SourceMonkey/blob/main/docs/sm-dev-json.md
 - `--` separates commands. They run in order and stop at the first

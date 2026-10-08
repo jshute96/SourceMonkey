@@ -52,10 +52,12 @@ export function summarizeToolbar(view: PopupView, state: TabMatchState | null): 
   const invalid = withStatus('INVALID');
   // What a reload would change, each its own line: updated on disk,
   // enabled since the page loaded (or matching only the URL it moved
-  // to), disabled or removed since but still running.
+  // to), disabled or removed since but still running, or not known
+  // because the page loaded before the extension started.
   const updated = withStatus('RELOAD');
   const added = withStatus('PENDING');
   const removed = withStatus('STILL_RUNNING');
+  const untracked = withStatus('UNTRACKED');
   const missing = withStatus('MISSING');
   const unexpected = withStatus('UNEXPECTED');
   const warned = count((r) => r.warned);
@@ -78,6 +80,9 @@ export function summarizeToolbar(view: PopupView, state: TabMatchState | null): 
     if (updated > 0) lines.push(`Reload needed to update ${scripts(updated)}.`);
     if (added > 0) lines.push(`Reload needed to add ${scripts(added)}.`);
     if (removed > 0) lines.push(`Reload needed to remove ${scripts(removed)}.`);
+    if (untracked > 0) {
+      lines.push(`Page loaded before SourceMonkey started. Reload needed for ${scripts(untracked)}.`);
+    }
     if (missing > 0) lines.push(`${missing} expected ${noun(missing)} ${is(missing)} not running.`);
     if (unexpected > 0) lines.push(`${unexpected} unexpected ${noun(unexpected)} ${is(unexpected)} running.`);
     if (warned > 0) lines.push(`${scripts(warned)} ${has(warned)} warnings.`);
@@ -90,7 +95,7 @@ export function summarizeToolbar(view: PopupView, state: TabMatchState | null): 
   let color: string | null = null;
   if (anyBadged) {
     if (errors + rejected + invalid > 0) color = BADGE_RED;
-    else if (updated + added + removed > 0) color = BADGE_PURPLE;
+    else if (updated + added + removed + untracked > 0) color = BADGE_PURPLE;
     else if (missing + unexpected > 0) color = BADGE_ORANGE;
     // Grey says nothing ran: not for a tab where some scripts were kept
     // out (an sm-dev claim) and the rest ran.

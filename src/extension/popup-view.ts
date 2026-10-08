@@ -31,6 +31,7 @@ export const POPUP_STATUS_LABELS: Record<PopupStatus, string> = {
   MISSING: 'Missing',
   UNEXPECTED: 'Unexpected',
   NOT_LOADED: 'Not loaded',
+  UNTRACKED: 'Reload',
   PENDING: 'Reload to run',
   STILL_RUNNING: 'Still running',
   WARNING: 'Warning',
@@ -38,8 +39,8 @@ export const POPUP_STATUS_LABELS: Record<PopupStatus, string> = {
   NOT_RUN: 'Not run',
 };
 
-// Every pill's tooltip ends with what a click does: a Reload to run
-// pill reloads the page, as the banner's Reload does; the rest open
+// Every pill's tooltip ends with what a click does: a Reload to run or
+// Reload pill reloads the page, as the banner's Reload does; the rest open
 // the Log.
 export const POPUP_PILL_CLICK_HINT = 'Click to open the script log.';
 export const POPUP_PILL_RELOAD_HINT = 'Click to reload the page.';
@@ -240,6 +241,7 @@ const DEFAULT_TOOLTIPS: Record<PopupStatus, string> = {
   MISSING: 'Expected on this page, but it hasn\'t started',
   UNEXPECTED: 'Started on this page, but its rules don\'t match this page',
   NOT_LOADED: 'Not run on this page load',
+  UNTRACKED: 'This page loaded before SourceMonkey started, so its status is unknown. Reload to restart.',
   PENDING: 'Enabled since this page loaded. Reload to run it.',
   STILL_RUNNING: 'Disabled since this page loaded. It keeps running until a reload.',
   WARNING: 'Running on this page, with warnings',
@@ -279,18 +281,20 @@ export interface BannerCauses {
   disabled?: boolean;
   // A reload may well settle these too: a script that should be running
   // isn't (MISSING), or one is running that shouldn't be (UNEXPECTED).
-  // Both are common after the extension restarted under an open page,
-  // which loses what the worker knew about it.
   missing?: boolean;
   unexpected?: boolean;
   // A script matches only the URL the page moved to in place.
   notYetRun?: boolean;
   // A script removed since the page loaded still runs in it.
   removed?: boolean;
+  // The page loaded before the extension started (UNTRACKED).
+  loadedBefore?: boolean;
 }
 
 // The reload banner's text, naming the most specific cause.
 export function bannerText(c: BannerCauses): string | null {
+  // First: it explains every other cause there may be.
+  if (c.loadedBefore) return 'Reload required: Page loaded before SourceMonkey started';
   if (c.enabled && (c.disabled || c.removed)) return 'Reload required: Enabled scripts changed';
   if (c.enabled) return 'Reload required: Scripts enabled';
   if (c.disabled && c.removed) return 'Reload required: Scripts disabled and removed';
@@ -425,6 +429,7 @@ export function buildPopupView(input: PopupViewInput): PopupView {
     if (status === 'STILL_RUNNING') causes.disabled = true;
     if (status === 'MISSING') causes.missing = true;
     if (status === 'UNEXPECTED') causes.unexpected = true;
+    if (status === 'UNTRACKED') causes.loadedBefore = true;
 
     let tooltip: string | null = null;
     if (status) {
@@ -442,7 +447,8 @@ export function buildPopupView(input: PopupViewInput): PopupView {
       }
       const runs = state?.manualRuns?.[s.id];
       if (s.manual && status === 'OK' && runs) text = manualRunsText(runs);
-      tooltip = `${text}\n${status === 'PENDING' ? POPUP_PILL_RELOAD_HINT : POPUP_PILL_CLICK_HINT}`;
+      const reloads = status === 'PENDING' || status === 'UNTRACKED';
+      tooltip = `${text}\n${reloads ? POPUP_PILL_RELOAD_HINT : POPUP_PILL_CLICK_HINT}`;
     }
     const row: PopupRow = {
       id: s.id,

@@ -991,6 +991,11 @@ See [docs/harness-design.md](docs/harness-design.md).
   lease and grace period while the browser ran on) isn't told: its
   tabs then run nothing. `renewRun` could say the collection is gone,
   so the run pushes its scripts again or says so.
+- An sm-dev older than protocol 1.7 shows an extension script whose
+  page loaded before the extension started (`UNTRACKED`) as
+  `running` in its JSON: that's its fallback for a status it doesn't
+  know. Fall back to a neutral state instead (`not-started`, or a new
+  `unknown-status`), so a later new status reads as unknown too.
 - Publishing: the package is installed from a checkout or a git tag.
   `package.json` keeps `"private": true` until then; drop it to
   publish.

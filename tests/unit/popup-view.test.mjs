@@ -419,3 +419,18 @@ test('in a tab an sm-dev run controls, a manual script it keeps out is Not loade
   assert.match(v.manual[0].rows[0].tooltip, /^Not run: the sm-dev run controlling this tab kept it out\n/);
   assert.equal(v.manual[0].rows[0].runnable, undefined);
 });
+
+test('a page loaded before the extension started: Reload, with a reload banner', () => {
+  const v = view({
+    st: state({ matches: [m('a')], loadMatchIds: ['a'], loadedBefore: true }),
+    scripts: [script('a', 'A'), script('later', 'A')],
+    matching: ['a', 'later'],
+  });
+  // One enabled since the extension started was never going to run: Reload to run.
+  assert.deepEqual(names(v.enabled), ['A: a=UNTRACKED, later=PENDING']);
+  assert.equal(v.banner, 'Reload required: Page loaded before SourceMonkey started');
+  assert.equal(
+    v.enabled[0].rows[0].tooltip,
+    'This page loaded before SourceMonkey started, so its status is unknown. Reload to restart.\nClick to reload the page.',
+  );
+});

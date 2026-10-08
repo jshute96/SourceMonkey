@@ -365,6 +365,11 @@ From `computeBadge`:
   (`scriptsSkipped`), or one of its per-script forms.
   - Also a refinement of `MISSING`, settled by the user, so it
     outranks `REJECTED`.
+- `UNTRACKED` — expected, no `sm:start`, on a page that loaded before
+  this copy of the extension started (see
+  [Pages open before the extension started](#pages-open-before-the-extension-started)).
+  - Also a refinement of `MISSING`, but not provisional: no report is
+    coming. `REJECTED` outranks it, since a reload won't cure that.
 - `MISSING` — expected by the matcher but no `sm:start` yet.
 - `UNEXPECTED` — wrapper sent `sm:start` but the matcher didn't
   predict it (Chrome's matching disagrees with ours, or a race
@@ -420,6 +425,7 @@ Click for details. Double-click for collections.
 | `Reload needed to update N scripts.` | `RELOAD`: changed on disk since it ran | purple `#d500f9` |
 | `Reload needed to add N scripts.` | The popup's `PENDING`: enabled or installed since the page loaded, or matching only the URL it moved to | purple |
 | `Reload needed to remove N scripts.` | The popup's `STILL_RUNNING`: disabled or removed since the page loaded | purple |
+| `Page loaded before SourceMonkey started. Reload needed for N scripts.` | `UNTRACKED` | purple |
 | `N expected scripts are not running.` | `MISSING` | orange `#f57c00` |
 | `N unexpected scripts are running.` | `UNEXPECTED` | orange |
 | `N scripts have warnings.` | Running with a warning (see [status-popup.md](status-popup.md#warnings)) | none |
@@ -437,6 +443,32 @@ Click for details. Double-click for collections.
 - Purple also flashes briefly while an update lands (see
   [injection.md](injection.md#purple-flash-while-a-swap-lands)); the
   tooltip doesn't change for that.
+
+### Pages open before the extension started
+
+- An install, an update or a dev reload of the extension clears the
+  per-tab records (`chrome.storage.session`), and Chrome resets each
+  tab's badge and tooltip.
+- Pages already open loaded unseen. Whether their scripts run is
+  unknown:
+  - a copy from the old extension may still run, cut off from it (its
+    GM_* calls fail);
+  - or none may.
+- So `onInstalled` (reason `install` or `update`) gives each open,
+  non-discarded tab a record marked `loadedBefore`. Its matching
+  scripts show as `UNTRACKED`: a purple badge, and a Reload pill and
+  banner in the popup.
+  - Its URL and document come from one `webNavigation.getFrame` call,
+    so a page that committed since isn't marked.
+  - A script added or enabled after that shows as `PENDING`, as usual.
+    That's why a tab with nothing matching gets a record too.
+  - Not on browser startup, where `onInstalled` doesn't fire: restored
+    tabs load afterwards, so they're watched.
+  - Not when the extension is re-enabled, which fires no `onInstalled`
+    either. Such tabs keep no record, and no badge.
+- A sync's refresh of the open tabs (`refreshAllOpenTabs`) leaves a tab
+  with no record alone, rather than making one that would show every
+  script as `MISSING`.
 
 ### Reload with no userscripts
 

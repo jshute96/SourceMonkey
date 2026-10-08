@@ -173,6 +173,7 @@ type TabState =
   | "unexpected"         // running, though it doesn't match
   | "changed"            // changed since it started
   | "kept-out"           // matches, but the run's claim keeps it out
+  | "unknown"            // its page loaded before SourceMonkey started
   // Under another manager, which doesn't say what ran: by its match rules.
   | "expected"
   | "not-expected";

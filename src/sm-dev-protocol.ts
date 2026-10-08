@@ -56,7 +56,9 @@ export const SKIP_REASON_SM_DEV = 'tab controlled by sm-dev';
 //   `managed.scriptDetails` / `managed.scriptText` (managed-changes.ts).
 // 1.6: manual scripts (`@run-at context-menu`): `runManualScript`, and
 //   the `sm:manual` report for one waiting in a new document.
-export const SM_DEV_PROTOCOL = { major: 1, minor: 6 } as const;
+// 1.7: a script's badge status can be `UNTRACKED`: its page loaded
+//   before the extension started.
+export const SM_DEV_PROTOCOL = { major: 1, minor: 7 } as const;
 
 export interface ProtocolVersion {
   major: number;

@@ -624,3 +624,14 @@ test('applyScriptReport: a manual run\'s start replaces the last run\'s error', 
   assert.equal(applyScriptReport(errored, 'm', { state: 'started', name: 'Manual' }).actual.m.state, 'error');
   assert.equal(applyScriptReport(errored, 'm', { state: 'started', name: 'Manual' }, true).actual.m.state, 'started');
 });
+
+test('computeBadge: a document loaded before the extension started → UNTRACKED, unless Chrome refuses it', () => {
+  const st = {
+    documentId: DOC, url: 'https://x',
+    matches: [expected('a', 'Alpha'), expected('b', 'Beta')],
+    actual: {},
+    loadedBefore: true,
+  };
+  const view = computeBadge(st, new Set(['b']));
+  assert.deepEqual(view.rows.map((r) => [r.name, r.status]), [['Alpha', 'UNTRACKED'], ['Beta', 'REJECTED']]);
+});

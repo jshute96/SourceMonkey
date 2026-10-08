@@ -100,10 +100,15 @@ export interface TabMatchState {
   // since nothing expects them to run, so this is what keeps their
   // reports from reading as UNEXPECTED. See docs/manual-scripts.md.
   manualRuns?: Record<string, number>;
+  // Set on a document that was already open when this copy of the
+  // extension started (installed, updated or reloaded): nothing saw it
+  // load, so whether its scripts run is unknown. Any copy still running
+  // is the old extension's, cut off from it.
+  loadedBefore?: boolean;
 }
 
 export type RowStatus =
-  | 'OK' | 'ERROR' | 'REJECTED' | 'MISSING' | 'UNEXPECTED' | 'RELOAD' | 'NOT_LOADED';
+  | 'OK' | 'ERROR' | 'REJECTED' | 'MISSING' | 'UNEXPECTED' | 'RELOAD' | 'NOT_LOADED' | 'UNTRACKED';
 
 export interface BadgeRow {
   id: string;
@@ -125,9 +130,10 @@ export const BADGE_GREEN = '#2e7d32';
 export const BADGE_RED = '#d32f2f';
 // Purple = a reload would change what runs: a running script changed
 // on disk, or a script was enabled, disabled or removed since the page
-// loaded. Loses to RED (errors still matter most) but wins over ORANGE. Picked bright (≈ Material
-// purple-A400) so the badge reads as a vivid "something changed"
-// signal, not a muted/inactive color.
+// loaded, or the page loaded before the extension started. Loses to
+// RED (errors still matter most) but wins over ORANGE. Picked bright
+// (≈ Material purple-A400) so the badge reads as a vivid "something
+// changed" signal, not a muted/inactive color.
 export const BADGE_PURPLE = '#d500f9';
 // Grey = the user reloaded this page with no userscripts, so nothing
 // ran on purpose. Loses to every other color: an UNEXPECTED report on a
@@ -156,6 +162,8 @@ export const SM_DEV_MARKER_CYAN = '#00acc1';
 //                    src/extension/script-rejection.ts
 //       NOT_LOADED — expected, never started, on a document the user
 //                    loaded with "Reload page with no userscripts"
+//       UNTRACKED  — expected, never reported, on a document that
+//                    loaded before this copy of the extension started
 //       MISSING    — expected but no `actual` entry yet
 //       UNEXPECTED — actual `started` but not in our expected set
 //       RELOAD     — a script that's started here, but its on-disk
@@ -219,6 +227,10 @@ export function computeBadge(
       // Settled, not provisional: Chrome refused the registration, so
       // no wrapper is coming. Red, like an error.
       status = 'REJECTED';
+    } else if (expected && !actual && state.loadedBefore) {
+      // Not provisional like MISSING: no report is coming, and none
+      // would have reached this copy of the extension anyway.
+      status = 'UNTRACKED';
     } else if (expected && !actual) {
       status = 'MISSING';
     } else if (!expected && actual && !manual) {

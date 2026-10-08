@@ -107,6 +107,8 @@ From top to bottom:
 - **Banner slot** (only when something applies):
   - Purple **reload banner**, matching the purple badge, with a Reload
     button. Wording by cause:
+    - `Reload required: Page loaded before SourceMonkey started` (see
+      Reload below)
     - `Reload required: Enabled scripts changed` (enables, and disables
       or removals, since load)
     - `Reload required: Scripts enabled` (only enables)
@@ -119,10 +121,7 @@ From top to bottom:
     - `Reload required: Some scripts are missing`, `… Unexpected scripts
       are running`, or `… Some scripts are missing or unexpected`, when
       nothing above applies.
-      - A reload may well settle these. They're common after the
-        extension restarted under an open page, which loses what the
-        worker knew about it, so a script enabled since then reads as
-        Missing rather than Reload to run.
+      - A reload may well settle these.
     - The first that applies wins, in that order.
   - Cyan **sm-dev banner**, `Page under sm-dev control`, replacing the
     menu's row of that name.
@@ -235,6 +234,7 @@ colored pills, using the badge colors.
 | `MISSING` | Missing | Orange | Expected on this page, but it hasn't started |
 | `UNEXPECTED` | Unexpected | Orange | Started on this page, but its rules don't match this page |
 | `NOT_LOADED` | Not loaded | Grey | Why it was kept out (below) |
+| `UNTRACKED` | Reload | Purple outline | This page loaded before SourceMonkey started, so its status is unknown. Reload to restart. |
 | `WARNING` | Warning | Amber outline | Running on this page, with warnings |
 
 New ones the popup needs, since a toggle now happens in front of the
@@ -255,7 +255,12 @@ page it affects:
 - **Still running** (purple outline, Enabled section): disabled since
   load, by its own box or its collection's, but still running in this
   document.
-- Both turn the toolbar badge purple, as `Updated` does: a reload
+- **Reload** (purple outline): the page loaded before this copy of
+  the extension started, so whether the script runs is unknown
+  (`UNTRACKED`; see
+  [matching.md](matching.md#pages-open-before-the-extension-started)).
+  - A click reloads the page, as on Reload to run.
+- Each turns the toolbar badge purple, as `Updated` does: a reload
   would change what runs.
 - **Not run** (grey outline, Manual section): a manual script not run
   on this page yet.
@@ -293,7 +298,7 @@ Every pill has a tooltip:
   - `Still running` says whether the script or its collection was
     disabled.
 - A last line saying what a click does: `Click to reload the page.` on
-  Reload to run, `Click to open the script log.` on the rest.
+  Reload to run and Reload, `Click to open the script log.` on the rest.
   - None on a removed script's row: there is no script page left to
     open, and its pill isn't a link.
 - The heading's `Collection off` badge gets one too: `This collection

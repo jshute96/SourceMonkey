@@ -1,6 +1,7 @@
 // End-to-end badge state: matching → green, error → red, post-update
-// stale or disabled since load → purple, collection disabled → empty,
-// and warnings in the tooltip and popup rows. Exercises the real
+// stale, disabled since load or loaded before the extension started →
+// purple, collection disabled → empty, and warnings in the tooltip and
+// popup rows. Exercises the real
 // chrome.action surface, the chrome.webNavigation listener, and the
 // sm:start / sm:error pipeline from injected wrappers back to the SW.
 
@@ -270,6 +271,76 @@ test.describe('badge', () => {
       'green with a Warning row and tooltip line',
     );
     expect(snap.title).toContain('\n1 script has warnings.\n');
+    await page.close();
+  });
+
+  test('a page open before the extension started turns purple and asks for a reload', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'early.user.js',
+      meta: { name: 'Early', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
+      body: `void 0;`,
+    });
+    const collection = await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    const tabId = await activeTabId(getServiceWorker);
+    await waitForTabState(sm, tabId, (s) => hasBadgeColor(s, GREEN), 'green before');
+
+    await sm.simulateExtensionStart();
+    const snap = await waitForTabState(
+      sm, tabId,
+      (s) => hasBadgeColor(s, PURPLE) && s.rows.includes('Early | UNTRACKED'),
+      'purple with Early untracked',
+    );
+    expect(snap.badgeText).toBe('1');
+    expect(snap.title.split('\n').slice(1, -1)).toEqual([
+      'Page loaded before SourceMonkey started. Reload needed for 1 script.',
+    ]);
+
+    // A script added since is Reload to run, and the refresh that
+    // shows it keeps the rest unknown.
+    scriptsDir.write({
+      relativePath: 'late.user.js',
+      meta: { name: 'Late', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
+      body: `void 0;`,
+    });
+    await sm.updateCollection(collection!.id, 'manual');
+    await sm.syncNow();
+    await waitForTabState(
+      sm, tabId,
+      (s) => s.rows.includes('Late | PENDING') && s.rows.includes('Early | UNTRACKED') && s.badgeText === '2',
+      'Late to run, Early still unknown',
+    );
+
+    await page.reload();
+    await waitForTabState(sm, tabId, (s) => hasBadgeColor(s, GREEN) && s.rows.includes('Early | OK'), 'green after reload');
+    await page.close();
+  });
+
+  test('a page open before the extension started with nothing matching yet gets a badge once a script is added', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    const tabId = await activeTabId(getServiceWorker);
+    await sm.simulateExtensionStart();
+
+    scriptsDir.write({
+      relativePath: 'added.user.js',
+      meta: { name: 'Added', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
+      body: `void 0;`,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+    await waitForTabState(
+      sm, tabId,
+      (s) => hasBadgeColor(s, PURPLE) && s.rows.includes('Added | PENDING'),
+      'purple with Added to run',
+    );
     await page.close();
   });
 });
