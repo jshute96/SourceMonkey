@@ -141,3 +141,14 @@ export const test = makeTest(false);
 export const testWithBrowserDownloads = makeTest(true);
 
 export const expect = test.expect;
+
+// Close any collections tab left open, before a test that waits for a
+// link to open one. The link focuses an open collections tab rather
+// than opening another (src/extension/page-links.ts), and tests in one
+// worker share `extensionContext`, so a tab an earlier test left behind
+// (one opened by a link it clicked, say) means no new tab appears.
+export async function closeCollectionsTabs(context: BrowserContext): Promise<void> {
+  for (const page of context.pages()) {
+    if (page.url().includes('/collections.html')) await page.close();
+  }
+}

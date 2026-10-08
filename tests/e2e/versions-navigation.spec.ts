@@ -10,7 +10,7 @@
 // See docs/script-viewer.md, "Switching copies in place".
 
 import type { Page } from '@playwright/test';
-import { test, expect } from '../fixtures/extension';
+import { closeCollectionsTabs, test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 import { allScripts } from '../fixtures/sw-api';
 import { LOCATION_ROW } from '../fixtures/viewer-selectors';
@@ -171,6 +171,7 @@ test.describe('switching copies from the versions panel', () => {
     // That one opens the collections page's named tab beside this one
     // (src/extension/page-links.ts), so the viewer is left showing the copy it
     // was already showing rather than the row that was clicked.
+    await closeCollectionsTabs(extensionContext);
     const [collections] = await Promise.all([
       extensionContext.waitForEvent('page'),
       page.locator(`${other} .versions-collection-name`).click(),

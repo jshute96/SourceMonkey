@@ -129,6 +129,10 @@ It runs against real headless Chromium with `chrome.userScripts`,
     extension loaded and Preferences pre-seeded, launched by sm-dev's
     own launcher (`src/harness/extension-launch.ts`), so the suites and
     `sm-dev --temp-browser` run the same browser.
+    - Tabs a test leaves open stay for the worker's later tests. A
+      link to the collections page focuses an open one instead of
+      opening a tab, so a test that waits for that tab calls
+      `closeCollectionsTabs` first.
   - `fixtureServer` (worker-scoped) — local HTTP server serving
     `tests/fixtures/pages/` first, with `tests/examples/` mounted as
     a fallback root so example pages are reachable at
