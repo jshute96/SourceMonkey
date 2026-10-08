@@ -119,7 +119,7 @@ stay directly in `src/` so the extension's URLs have no folder in them.
 | `src/parse-sandbox.html` | Sandboxed page (manifest `sandbox.pages`) — the only context allowed `'unsafe-eval'` / `'unsafe-inline'` |
 | `src/offscreen.html` | Offscreen document markup — hosts the sandboxed parse iframe |
 | `src/collections.html` | Collections page markup: header bar with Options / Refresh All, Add field, file-access banner slot, collection list |
-| `src/popup.html` | Toolbar popup markup ("Active scripts"): header bar with Open and a ⋯ menu, banner slot, script area |
+| `src/popup.html` | Toolbar popup markup ("Active scripts"): header bar with Open and a ⋯ menu, sm-dev banner slot, script area, reload banner at the bottom |
 | `src/options.html` | Options page markup: header bar with the Collections link, settings list (link-capture toggle, debug-logging toggle), local search-roots box + file-access banner slot, Downloads-folder field, GitHub auth token, storage-usage table |
 | `src/userscript.html` | Userscript viewer markup: header bar, status box (banner + versions panel), controls row, install callout + preview actions, details panel, tab strip, code box, log pane |
 | `src/compare.html` | Compare page markup: header bar, the fields table slot, view controls, tab strip, diff box |

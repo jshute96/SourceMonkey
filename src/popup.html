@@ -58,7 +58,7 @@
         padding: 5px 8px 5px 10px; font-size: 12.5px; font-weight: 600;
       }
       .banner-row span { flex: 1; }
-      .banner-row.reload { background: var(--purple-tint); color: var(--purple-deep); border-bottom: 1px solid #e7b6f2; }
+      .banner-row.reload { background: var(--purple-tint); color: var(--purple-deep); border-top: 1px solid #e7b6f2; }
       .banner-row.reload::before {
         content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--purple); flex: none;
       }
@@ -66,6 +66,8 @@
       .banner-row.reload button:hover { background: #7b1fa2; }
       .banner-row.sm-dev { background: var(--cyan-tint); color: var(--cyan); border-bottom: 1px solid #a5dde3; }
 
+      /* Only the script list gives up height at the popup's cap. */
+      #banners, #reload-bar { flex: none; }
       .scripts { overflow-y: auto; min-height: 0; flex: 1 1 auto; }
       .section-head {
         position: sticky; top: 0; z-index: 2;
@@ -179,6 +181,10 @@
     </header>
     <div id="banners"></div>
     <div id="scripts" class="scripts"></div>
+    <!-- The reload banner sits BELOW the list: it appears when a toggle
+         here changes what's enabled, and at the top it would push down
+         the row just clicked. Down here the popup just grows. -->
+    <div id="reload-bar"></div>
     <script type="module" src="extension/popup.js"></script>
   </body>
 </html>
