@@ -88,7 +88,7 @@ and `lib/`.
 | `src/url-match.ts` | Pure URL-matching predicate for `@match` / `@include` / `@exclude` patterns (incl. `.tld` hosts), plus the `@match` grammar check and its lenient rewrites |
 | `src/public-suffixes.ts` | Generated: the ICANN public suffix rules that `.tld` host patterns match, one per line |
 | `src/unsafe-window-use.ts` | Text scan for an ungranted `unsafeWindow` reference, ignoring a source that declares the name itself |
-| `src/runtime-messages.ts` | The `sm:*` message types injected scripts send the service worker |
+| `src/runtime-messages.ts` | The `sm:*` report types injected scripts send the service worker, plus its `sm:manual` for sm-dev |
 | `src/script-world.ts` | Picks the injection world (page or isolated) from a script's `@grant` and `@inject-into` lines |
 | `src/eval-hook.ts` | The statement sm-dev's scripts get so `eval` runs in their scope (and their IIFE's), after any `"use strict"` |
 | `src/composed-source.ts` | Concatenates `@require` bodies ahead of the script body; owns the injected entry's line layout and the parse check's source, for stack and error mapping |
@@ -478,6 +478,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/gm-notification.spec.ts` | E2E tests for `GM_notification` (call shapes, Promise return, empty-text rejection, gating) |
 | `tests/e2e/toolbar-click.spec.ts` | Opening the collections page from the toolbar: a repeat open reuses the window's existing tab |
 | `tests/e2e/gm-menu.spec.ts` | SM-only E2E for `GM_registerMenuCommand` via the SW test surface, incl. the per-document clear rules |
+| `tests/e2e/manual-scripts.spec.ts` | Manual scripts (`@run-at context-menu`): never registered, run on request, refusals, the popup's Run item |
 | `tests/unit/window-onurlchange.test.mjs` | Unit tests for the SW-side `window.onurlchange` driver (document targeting, message shape, no-receiver rejection) |
 | `tests/e2e/window-onurlchange.spec.ts` | E2E for `@grant window.onurlchange` — pushState / replaceState / fragment / back delivery, payload shape, gating, assignment form |
 | `tests/unit/gm-window-control.test.mjs` | Unit tests for the SW-side `window.close` / `window.focus` driver (tab close, tab select + window raise, minimized restore, failures) |
@@ -504,6 +505,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/examples/window-onurlchange/` | `@grant window.onurlchange` example — page-wired pushState / replaceState / hash / back buttons with a urlchange log |
 | `tests/examples/window-close-focus/` | `@grant window.close` / `window.focus` example — buttons that close this tab and raise the browser window |
 | `tests/examples/headers-run-at/` | `@run-at` header example with one userscript per value (`document-start`/`-end`/`-idle`) on a shared page |
+| `tests/examples/run-at-context-menu/` | `@run-at context-menu` example: a manual script that adds a line and menu commands each run |
 | `tests/examples/headers-match-hash/` | How `@match`, `@include` and `@exclude` treat a URL's `#hash`, with each manager's observed results |
 | `tests/examples/headers-include-regex/` | How regex `@include` / `@exclude` treat slashes, flags and case, with each manager's results |
 | `tests/examples/headers-inject-into/` | `@inject-into` header example: MAIN-world (`page`) vs USER_SCRIPT-world (`content`) userscripts showing window-isolation |
@@ -512,6 +514,8 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/examples/require-scope/` | `@require` scope example: a shared lib's top-level class/const/function reaching both injection worlds |
 | `tests/examples/xmlhttp-connect/` | `@connect` example: scripts declaring none, one site, and `*`, with buttons to try each site and prompt answer |
 | `tests/bad-examples/` | Deliberately broken `*.user.js` files (plus the `@require` libraries some of them need, and the ones that merely warn) for the SM-only spec; outside `tests/examples/` so the TM loader doesn't see them |
+| `tests/userscripts/` | Userscripts for manual testing, not loaded by default |
+| `tests/userscripts/no-click-nav.user.js` | Follows links, goes back, or opens a URL after a delay, so it works with the popup open |
 | `tests/e2e/bad-scripts.spec.ts` | SM-only e2e: each bad script gets the expected status, error location, and byte-for-byte viewer render |
 | `tests/e2e/diagnostic-links.spec.ts` | Clicking a diagnostic's location jumps to the file and line, in the installed viewer and the install preview |
 
@@ -628,6 +632,7 @@ For userscript repos to install, so their coding agents know how to use `sm-dev`
 | `docs/diagnostics.md` | The shared location every content-derived verdict carries, who produces one, and how surfaces make it clickable |
 | `docs/site-icons.md` | Favicon fetch+cache + the icon slot rendered beside each script name; URL extraction lives in `match-targets.ts` |
 | `docs/status-popup.md` | The toolbar "Active scripts" popup: clicks, layout, rows by collection, statuses, banners, reload modes |
+| `docs/manual-scripts.md` | Manual scripts (`@run-at context-menu`): never registered, run from the popup or sm-dev, re-run rules |
 | `docs/requires.md` | `@require` pipeline: resolution, storage, refresh policy, cross-script dedup, failure handling, injection composition |
 | `docs/local-file-overrides.md` | Loading `@require` / `@resource` / `@icon` from local disk instead of the declared URL: suffix rule, safety gate, refresh + cache policy, UI |
 | `docs/resources.md` | `@resource` pipeline + GM_getResourceText / GM_getResourceURL plumbing: prefetch, base64 storage, blob URL minting, shared infra with @require |

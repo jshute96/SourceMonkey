@@ -31,6 +31,7 @@ import type { GmXhrEvent, GmXhrRequestPayload } from '../gm-xhr-types.js';
 import { ExtensionHost } from './extension-host.js';
 import { launchExtensionBrowser } from './extension-launch.js';
 import { ExtensionLink, linkRunId } from './extension-link.js';
+import { RUN_SCRIPT_LABEL } from '../userscript-header.js';
 import type { ConnectChoice, HostReports, SkipReport, ErrorReport, StartReport, RequestInterceptor } from './host.js';
 import { attachPage, type PageAttachment } from './page-watch.js';
 import {
@@ -75,9 +76,22 @@ export interface GmApi {
    */
   set(key: string, value: unknown, script?: string): Promise<void>;
   list(script?: string): Record<string, unknown>;
+  /**
+   * The menu commands' labels. A manual script (`@run-at context-menu`)
+   * that can run on the page lists "Run this script" first.
+   */
   menuCommands(script?: string): string[];
-  /** Fire a registered menu command by its label. Resolves false if none matches. */
+  /**
+   * Fire a menu command by its label. Resolves false if none matches.
+   * "Run this script" runs a manual script, as `runScript` does.
+   */
   fireMenu(label: string, script?: string): Promise<boolean>;
+  /**
+   * Run a manual script (`@run-at context-menu`) on the test's page, as
+   * its popup "Run this script" does. Each call is another run. Rejects
+   * with SourceMonkey's reason when it can't run there.
+   */
+  runScript(script?: string): Promise<void>;
   openedTabs(): HostReports['tabs'];
   notifications(): HostReports['notifications'];
   clickNotification(requestId: string): Promise<boolean>;
@@ -247,7 +261,7 @@ export const test = base.extend<HarnessFixtures & InternalFixtures>({
     });
   },
 
-  gm: async ({ host, _smLoaded, _smRequests }, use) => {
+  gm: async ({ host, attachment, _smLoaded, _smRequests }, use) => {
     const idOf = (script?: string): string => {
       if (_smLoaded.length === 0) throw new Error('No userscript is loaded');
       if (script === undefined) {
@@ -264,9 +278,24 @@ export const test = base.extend<HarnessFixtures & InternalFixtures>({
       list: (script) => host.getValues(idOf(script)),
       menuCommands: (script) => {
         const id = script === undefined ? undefined : idOf(script);
-        return host.reports.menuCommands.filter((m) => id === undefined || m.scriptId === id).map((m) => m.name);
+        const runnable = host.manualScripts(attachment).filter((m) => id === undefined || m === id);
+        return [
+          ...runnable.map(() => RUN_SCRIPT_LABEL),
+          ...host.reports.menuCommands.filter((m) => id === undefined || m.scriptId === id).map((m) => m.name),
+        ];
       },
-      fireMenu: (label, script) => host.fireMenuCommand(label, script === undefined ? undefined : idOf(script)),
+      fireMenu: async (label, script) => {
+        const id = script === undefined ? undefined : idOf(script);
+        if (label === RUN_SCRIPT_LABEL) {
+          const runnable = host.manualScripts(attachment).filter((m) => id === undefined || m === id);
+          if (runnable.length === 1) {
+            await host.runManualScript(attachment, runnable[0]);
+            return true;
+          }
+        }
+        return host.fireMenuCommand(label, id);
+      },
+      runScript: (script) => host.runManualScript(attachment, idOf(script)),
       openedTabs: () => host.reports.tabs,
       notifications: () => host.reports.notifications,
       clickNotification: (requestId) => host.clickNotification(requestId),

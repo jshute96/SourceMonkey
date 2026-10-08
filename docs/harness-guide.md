@@ -1966,6 +1966,9 @@ test('adds the button to the toolbar', async ({ page, loadUserscript, gm, report
 - Storage: `get(key)`, `set(key, value)` (reaches a running script like
   another tab's write), `list()`.
 - Menus: `menuCommands()`, `fireMenu(label)`.
+- Manual scripts (`@run-at context-menu`): `runScript()` runs one, as
+  the popup's "Run this script" does; `fireMenu('Run this script')`
+  does too, and `menuCommands()` lists it first.
 - Side effects: `openedTabs()`, `downloads()`, `requests()`,
   `notifications()`, `clickNotification(requestId)`,
   `closeNotification(requestId)`.
@@ -2022,6 +2025,7 @@ What `sm-dev` does by hand, a spec does through the fixture:
 | `start <script>` | `loadUserscript(path)` |
 | `--values '{…}'` | `loadUserscript(path, { values })` |
 | `menu`, `menu <label>` | `gm.menuCommands()`, `gm.fireMenu(label)` |
+| `menu 'Run this script'` | `gm.runScript()` |
 | `values`, `get <key>` | `gm.list()`, `gm.get(key)` |
 | `set <key> <json>` | `gm.set(key, value)` |
 | `reload`, `open <url>` | `page.reload()`, `page.goto(url)` |

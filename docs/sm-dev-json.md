@@ -164,6 +164,8 @@ type TabState =
   | "running"
   | "not-running"        // a run's script that isn't running there, or a
                          // picked installed one that isn't on the page
+  | "manual"             // a run's manual script (@run-at context-menu)
+                         // that matches, and hasn't been run there
   // An installed script, as the toolbar badge shows it:
   | "error"              // started, then threw
   | "refused"            // Chrome refused to run it
@@ -730,7 +732,9 @@ interface MenuData {
   tabs: {
     tab: string;
     url: string;
-    commands: { id: string; script: string; name: string }[];
+    // `builtin: "run"`: a manual script's "Run this script", listed
+    // first under it whether or not it has run.
+    commands: { id: string; script: string; name: string; builtin?: "run" }[];
   }[];
 }
 ```

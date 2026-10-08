@@ -171,6 +171,12 @@
      leaks nothing the page doesn't already have. */
   var PUSHED_ANY_WORLD = ["sm:gm-resync-hint", "sm:url-change"];
   if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.sendMessage) return;
+  /* Once per document. A manual script's run injects the bridge again
+     (docs/manual-scripts.md), and a second copy would forward every
+     message twice. This world's globals are out of the page's reach,
+     so the page can't set the flag to keep the bridge out. */
+  if (window.__smBridgeInstalled) return;
+  window.__smBridgeInstalled = true;
   /* Copy the page-supplied payload and stamp __viaBridge:true LAST so
      the page can't pre-set it false. The SW treats __viaBridge as
      "this request may be page-forged" and refuses to act on behalf of

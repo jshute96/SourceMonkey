@@ -26,6 +26,7 @@ function summary({ st, scripts, rejected = {}, injectable = true, deletedIds }) 
     url: URL_, injectable, state: st, badgeRows: badge?.rows ?? [], rejected,
     matchingIds: new Set(scripts.map((s) => s.id)),
     scripts, collections: COLLS, menuCommands: new Map(), deletedIds,
+    manualRunnableIds: new Set(scripts.filter((s) => s.manual).map((s) => s.id)),
   });
   return summarizeToolbar(view, st);
 }
@@ -148,4 +149,20 @@ test('a tab an sm-dev run controls says so under the name', () => {
     scripts: [script('a')],
   });
   assert.deepEqual(lines(s), ['Page under sm-dev control', '1 script running.']);
+});
+
+test('a manual script not run yet gets no line and no badge; once run, it counts like any other', () => {
+  const st = { documentId: 'd', url: URL_, matches: [], actual: {}, loadMatchIds: [] };
+  const notRun = summary({ st, scripts: [script('man', { manual: true })] });
+  assert.deepEqual(lines(notRun), []);
+  assert.equal(notRun.color, null);
+  assert.equal(notRun.count, 0);
+
+  const ran = summary({
+    st: { ...st, actual: { man: started('man') }, manualRuns: { man: 2 } },
+    scripts: [script('man', { manual: true })],
+  });
+  assert.deepEqual(lines(ran), ['1 script running.']);
+  assert.equal(ran.color, BADGE_GREEN);
+  assert.equal(ran.count, 1);
 });

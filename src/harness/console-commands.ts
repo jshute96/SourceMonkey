@@ -38,6 +38,7 @@ import { editMultiLine } from './prompt-editor.js';
 import { appendHistory, HISTORY_SIZE, historyFile, loadHistory } from './prompt-history.js';
 import { defaultPageUrl, explainMatch, NO_DEFAULT_PAGE, preparedScriptMatches, preparedScriptName, preparedScriptPath, shownPath, withDefaultScheme, type PreparedScript } from './prepare.js';
 import { representativeMatch } from '../match-targets.js';
+import { RUN_SCRIPT_LABEL } from '../userscript-header.js';
 import { currentTab, dialogKind, dialogWaitingMessage, NO_TABS, pickTab, TAB_ARG, tabName } from './tab-refs.js';
 import { runLogLabel } from './run-log.js';
 import {
@@ -1218,7 +1219,8 @@ function managerRun(ctx: ConsoleContext): ManagerRun {
         const name = tabName(tab);
         if (script) {
           const running = activeOn(ctx, tab, script.id);
-          out.push({ activity: { tab: name, state: activityState(ctx, running) }, text: activityWord(ctx, running) });
+          const waiting = waitingOn(ctx, tab, script.id, running);
+          out.push({ activity: { tab: name, state: activityState(ctx, running, waiting) }, text: activityWord(ctx, running, waiting) });
           continue;
         }
         const other = label === undefined ? undefined : (await ctx.others?.onTab(tab).catch((): OtherScript[] => []))?.find((o) => o.label === label);
@@ -1513,15 +1515,26 @@ function activeOn(ctx: ConsoleContext, tab: ControlledTab, scriptId: string | un
   return scriptId !== undefined && ctx.host.isRunning(tab.link, scriptId);
 }
 
+// What a manual script that hasn't run on a tab is doing there.
+const WAITING_FOR_MENU = 'Waiting for menu to run it (@run-at context-menu)';
+
+// Whether a manual script (`@run-at context-menu`) not running on a
+// tab could be run there.
+function waitingOn(ctx: ConsoleContext, tab: ControlledTab, scriptId: string | undefined, running: boolean): boolean {
+  return !running && !ctx.predicted && scriptId !== undefined && ctx.host.manualScripts(tab.link).includes(scriptId);
+}
+
 // `activeOn`'s answer, as JSON.
-function activityState(ctx: ConsoleContext, active: boolean): J.TabState {
+function activityState(ctx: ConsoleContext, active: boolean, waiting = false): J.TabState {
   if (ctx.predicted) return active ? 'expected' : 'not-expected';
+  if (waiting) return 'manual';
   return active ? 'running' : 'not-running';
 }
 
 // `activeOn`'s answer, in words.
-function activityWord(ctx: ConsoleContext, active: boolean): string {
+function activityWord(ctx: ConsoleContext, active: boolean, waiting = false): string {
   if (ctx.predicted) return active ? 'Expected using match rules' : 'Not expected using match rules';
+  if (waiting) return WAITING_FOR_MENU;
   return active ? 'Running' : 'Not running';
 }
 
@@ -1696,7 +1709,10 @@ function scriptJson(ctx: ConsoleContext, script: PreparedScript): J.Script {
     status: script.status,
     ...(script.diagnostic ? { error: script.diagnostic } : {}),
     ...(script === selectedScript(ctx) ? { selected: true } : {}),
-    tabs: ctx.tabs().map((tab) => ({ tab: tabName(tab), state: activityState(ctx, activeOn(ctx, tab, script.id)) })),
+    tabs: ctx.tabs().map((tab) => {
+      const running = activeOn(ctx, tab, script.id);
+      return { tab: tabName(tab), state: activityState(ctx, running, waitingOn(ctx, tab, script.id, running)) };
+    }),
   };
 }
 
@@ -1793,7 +1809,9 @@ async function statusJson(ctx: ConsoleContext, tab: ControlledTab | undefined): 
 function menuJson(ctx: ConsoleContext, tab: ControlledTab): J.MenuData['tabs'][number] {
   let n = 0;
   const commands = menuGroups(ctx, tab).flatMap(({ script, commands: registered }) => registered
-    .map((c) => ({ id: `M${++n}`, script: scriptNumber(ctx, script), name: c.name })));
+    .map((c) => ({
+      id: `M${++n}`, script: scriptNumber(ctx, script), name: c.name, ...('run' in c ? { builtin: 'run' as const } : {}),
+    })));
   return { tab: tabName(tab), url: tab.page.url(), commands };
 }
 
@@ -2150,17 +2168,27 @@ function logLineJson(ctx: ConsoleContext, record: LogRecord): J.LogLine {
 
 // ---------- Menu commands ----------
 
-// A tab's registered menu commands under the script that registered
-// each, in load order. The M numbers `menu` prints count through this,
-// so firing by number reads the same order.
-function menuGroups(ctx: ConsoleContext, tab: ControlledTab): { script: PreparedScript; label: string; commands: MenuCommandRecord[] }[] {
+// One entry `menu` lists: a command a script registered, or a manual
+// script's own "Run this script" (`run`).
+type MenuEntry = { name: string; scriptId: string } & ({ record: MenuCommandRecord } | { run: true });
+
+// A tab's menu commands under the script that registered each, in load
+// order. A manual script that can run on the tab's document (`@run-at
+// context-menu`) gets a group even before it has run, with "Run this
+// script" first. The M numbers `menu` prints count through this, so
+// firing by number reads the same order.
+function menuGroups(ctx: ConsoleContext, tab: ControlledTab): { script: PreparedScript; label: string; commands: MenuEntry[] }[] {
   const all = fromTab(ctx, tab, ctx.host.reports.menuCommands);
+  const manual = new Set(ctx.host.manualScripts(tab.link));
   return ctx.scripts
-    .map((script) => ({
-      script,
-      label: scriptRow(ctx, script),
-      commands: all.filter((c) => c.scriptId === script.id),
-    }))
+    .map((script) => {
+      const scriptId = script.id ?? '';
+      const commands: MenuEntry[] = all
+        .filter((c) => c.scriptId === script.id)
+        .map((record) => ({ name: record.name, scriptId, record }));
+      if (manual.has(scriptId)) commands.unshift({ name: RUN_SCRIPT_LABEL, scriptId, run: true });
+      return { script, label: scriptRow(ctx, script), commands };
+    })
     .filter((group) => group.commands.length > 0);
 }
 
@@ -2194,7 +2222,7 @@ const MENU_WAIT_MS = 5000;
 
 // False when nothing was fired.
 async function fireMenu(ctx: ConsoleContext, tab: ControlledTab, argument: string): Promise<boolean> {
-  const all = (): MenuCommandRecord[] => menuGroups(ctx, tab).flatMap((group) => group.commands);
+  const all = (): MenuEntry[] => menuGroups(ctx, tab).flatMap((group) => group.commands);
   const numbered = /^[Mm](\d+)$/.exec(argument);
   const deadline = Date.now() + MENU_WAIT_MS;
   for (;;) {
@@ -2203,10 +2231,18 @@ async function fireMenu(ctx: ConsoleContext, tab: ControlledTab, argument: strin
     const byName = [...commands].reverse().find((c) => c.name === argument);
     const byNumber = numbered ? commands[Number(numbered[1]) - 1] : undefined;
     const entry = byName ?? byNumber;
+    if (entry && 'run' in entry) {
+      // Each manual script has one, so the label alone may not say which.
+      if (!byNumber && commands.filter((c) => 'run' in c).length > 1) {
+        ctx.out(`[sm-dev] More than one script here has "${RUN_SCRIPT_LABEL}". Use menu to list them, and fire one by its M number.`);
+        return false;
+      }
+      return runManual(ctx, tab, entry.scriptId);
+    }
     if (entry) {
       // Listed but not fired: the page that registered it is going
       // away, as in the middle of a navigation.
-      if (!await fire(tab, ctx.host.fireMenuEntry(entry))) {
+      if (!await fire(tab, ctx.host.fireMenuEntry(entry.record))) {
         ctx.out(`[sm-dev] The menu command "${entry.name}" could not be fired, since the page that registered it has gone away`);
         return false;
       }
@@ -2230,6 +2266,24 @@ async function fireMenu(ctx: ConsoleContext, tab: ControlledTab, argument: strin
   else if (numbered) ctx.out(`[sm-dev] There is no menu command M${numbered[1]}${onTab(ctx, tab)}. Use menu to list them.`);
   else ctx.out(`[sm-dev] No menu command named "${argument}" is registered${onTab(ctx, tab)}. Use menu to list them.`);
   return false;
+}
+
+// Run a manual script on a tab: `menu`'s "Run this script". The run's
+// start (or error) prints as any script's does. False when it didn't run.
+async function runManual(ctx: ConsoleContext, tab: ControlledTab, scriptId: string): Promise<boolean> {
+  const script = ctx.scripts.find((sc) => sc.id === scriptId);
+  const name = script ? preparedScriptName(script) : scriptId;
+  // Settled here either way: when the run opens a dialog, `fire` stops
+  // waiting at the dialog, and a later failure has nobody else to catch it.
+  const run = ctx.host.runManualScript(tab.link, scriptId).then(() => null, (err: unknown) => err as Error);
+  const failed = await fire(tab, run.then((err) => err === null)) === false ? await run : null;
+  if (failed) {
+    ctx.out(`[sm-dev] ERROR: ${name} did not run: ${failed.message}`);
+    return false;
+  }
+  ctx.out(`[sm-dev] Ran ${name}`);
+  if (!tab.dialogs?.current) await fire(tab, tab.link.drain().then(() => true));
+  return true;
 }
 
 // The other tabs with a menu command of that label.
@@ -2324,7 +2378,7 @@ function activityHeading(tab: ControlledTab | undefined): string {
 // which others: `Not active (Active on T1,T2.)`.
 function activityLine(ctx: ConsoleContext, tab: ControlledTab, id: string | undefined): string {
   const active = activeOn(ctx, tab, id);
-  const here = active ? 'Active' : 'Not active';
+  const here = waitingOn(ctx, tab, id, active) ? WAITING_FOR_MENU : active ? 'Active' : 'Not active';
   const elsewhere = ctx.tabs().filter((t) => t !== tab && activeOn(ctx, t, id)).map(tabName);
   if (elsewhere.length === 0) return `${DETAIL}${here}`;
   return `${DETAIL}${here} (${active ? 'Also active' : 'Active'} on ${elsewhere.join(',')}.)`;

@@ -112,9 +112,11 @@ test('normalizeDeclaredRunAt: recognized values pass through (lowercased)', () =
 test('normalizeDeclaredRunAt: missing / unknown values default to document-idle', () => {
   assert.equal(normalizeDeclaredRunAt(undefined), 'document-idle');
   assert.equal(normalizeDeclaredRunAt(''), 'document-idle');
-  // Defensive only: validateHeader refuses context-menu scripts first.
-  assert.equal(normalizeDeclaredRunAt('context-menu'), 'document-idle');
   assert.equal(normalizeDeclaredRunAt('whatever'), 'document-idle');
+});
+
+test('normalizeDeclaredRunAt: context-menu passes through, for a manual run', () => {
+  assert.equal(normalizeDeclaredRunAt(' Context-Menu '), 'context-menu');
 });
 
 test('normalizeDeclaredRunAt: case-insensitive', () => {

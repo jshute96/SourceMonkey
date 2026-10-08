@@ -147,6 +147,9 @@ export type ScriptStatus = 'ok' | 'invalid';
 export type TabState =
   | 'running'
   | 'not-running'
+  // A manual script (`@run-at context-menu`) that matches the tab's
+  // page and hasn't been run there.
+  | 'manual'
   | 'error'
   | 'refused'
   | 'not-started'
@@ -367,7 +370,11 @@ export interface MenuData {
   tabs: {
     tab: string;
     url: string;
-    commands: { id: string; script: string; name: string }[];
+    /**
+     * `builtin: 'run'` marks a manual script's "Run this script", listed
+     * first under it whether or not it has run.
+     */
+    commands: { id: string; script: string; name: string; builtin?: 'run' }[];
   }[];
 }
 

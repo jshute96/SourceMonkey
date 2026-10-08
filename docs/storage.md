@@ -150,8 +150,11 @@ keys would look like a wiped profile.
     so the staleness is cosmetic.
   - Header checks themselves are re-applied, though:
     `backfillHeaderProblems` re-runs all of `validateHeader` on `ok`
-    rows on each `onInstalled`, so a script a newer check refuses (e.g.
-    `@run-at context-menu`) stops running, with its error in the Log.
+    rows on each `onInstalled`, so a script a newer check refuses stops
+    running, with its error in the Log.
+  - The reverse too: rows refused by a check that's gone are refreshed
+    (`retiredHeaderProblemIds`; see
+    [manual-scripts.md](manual-scripts.md#header-and-storage)).
   - `startupLogs` (the parse-time warnings, plus a stored `@icon`
     warning carried over from `iconCheck`, which the boot replay
     re-emits verbatim) are different: `backfillStartupLogs` re-derives
@@ -535,8 +538,7 @@ Every load path goes through the same pipeline:
 3. For each fetched file run, in order:
    - `splitHeaderBody` (see [script-viewer.md](script-viewer.md))
    - `parseHeader`
-   - `validateHeader` (`@name` + match/include present, no
-     `@run-at context-menu`)
+   - `validateHeader` (`@name` + match/include present)
    - `distillMatching` (extract `@match`/`@exclude`/`@include`)
    - `buildScriptFromText` (assemble the `StoredScript`). If the
      freshly fetched bytes hash to the prior row's `contentHash`,

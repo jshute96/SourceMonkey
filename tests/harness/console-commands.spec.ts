@@ -115,6 +115,43 @@ test.describe('sm-dev typed commands', () => {
     expect(await run('menu M3')).toEqual(['[sm-dev] There is no menu command M3. Use menu to list them.']);
   });
 
+  test('menu lists a manual script\'s Run this script before it has run, and runs it', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {
+    const script = await loadScript({
+      relativePath: 'manual.user.js',
+      meta: { name: 'Manual', match: ['*://*/target.html'], runAt: 'context-menu', grant: ['GM_registerMenuCommand', 'GM_setValue'] },
+      body: `GM_setValue('runs', (Number(document.body.dataset.runs) || 0) + 1);
+        document.body.dataset.runs = String((Number(document.body.dataset.runs) || 0) + 1);
+        GM_registerMenuCommand('Say hi', () => GM_setValue('said', 'hi'));`,
+    });
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    // Its word from the new document: waiting, not started.
+    await expect.poll(() => host.manualScripts(attachment)).toEqual([script.id]);
+    expect(host.isRunning(attachment, script.id!)).toBe(false);
+
+    const lines: string[] = [];
+    const tabs = [{ n: 1, page, link: attachment }];
+    const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(l), stop: () => undefined };
+    const run = async (line: string) => {
+      lines.length = 0;
+      await runConsoleCommand(line, ctx);
+      return [...lines];
+    };
+    const row = `* 1: Manual (${scriptsDir.path}/manual.user.js)`;
+
+    expect(await run('scripts')).toEqual([
+      'Loaded scripts (with status on active tab T1):', row, '     Waiting for menu to run it (@run-at context-menu)',
+    ]);
+    expect(await run('menu')).toEqual(['Menu commands:', row, '    M1: Run this script']);
+    expect(await run('menu M1')).toEqual(['[sm-dev] Ran Manual']);
+    await expect.poll(() => host.getValue(script.id!, 'runs')).toBe(1);
+    await expect.poll(() => host.reports.menuCommands.length).toBe(1);
+    expect(await run('menu')).toEqual(['Menu commands:', row, '    M1: Run this script', '    M2: Say hi']);
+    expect(await run('menu Run this script')).toEqual(['[sm-dev] Ran Manual']);
+    await expect.poll(() => page.evaluate(() => document.body.dataset.runs)).toBe('2');
+    expect(await run('menu M2')).toEqual(['[sm-dev] Fired "Say hi"']);
+    await expect.poll(() => host.getValue(script.id!, 'said')).toBe('hi');
+  });
+
   test('a dialog a menu command opens waits for accept, and blocks page commands meanwhile', async ({ page, fixtureServer, host, attachment, loadScript }) => {
     const script = await loadScript({
       relativePath: 'ask.user.js',

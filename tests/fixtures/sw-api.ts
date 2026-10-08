@@ -119,6 +119,8 @@ export interface SmApi {
   // overlay. The wrapper's write is batched, so this is what a test
   // waits on instead of pausing.
   getGmValues(scriptId: string): Promise<Record<string, unknown>>;
+  // Write values (wire form) as another tab of the script would.
+  writeGmValues(scriptId: string, writes: { key: string; value?: unknown; deleted?: boolean }[]): Promise<void>;
   // Seeds an entry directly. For tests that need a specific message,
   // level or timestamp without staging the event that would produce it.
   appendScriptLog(scriptId: string, input: {
@@ -180,6 +182,9 @@ export interface SmApi {
   answerConnectPrompt(promptId: string, choice: 'once' | 'cancel' | 'allow' | 'allow-all' | 'deny'): Promise<boolean>;
   // The connection prompts waiting for an answer.
   pendingConnectPrompts(): Promise<{ promptId: string; scriptId: string; tabId: number; host: string }[]>;
+  // Stands in for a popup "Run this script" click: runs a manual
+  // script (`@run-at context-menu`) on the tab now.
+  runManualScript(tabId: number, scriptId: string): Promise<{ ok: boolean; error?: string }>;
   // Stands in for a click on the popup's "Reload page with no
   // userscripts": reloads the tab with every wrapper told to skip.
   reloadWithoutScripts(tabId: number): Promise<void>;
@@ -235,6 +240,7 @@ export interface PopupViewLike {
   banner: string | null;
   perScriptReload: boolean;
   enabled: PopupGroupLike[];
+  manual: PopupGroupLike[];
   disabled: PopupGroupLike[];
 }
 
@@ -244,6 +250,7 @@ export interface PopupGroupLike {
     id: string; name: string; checked: boolean; active: boolean;
     status: string | null; tooltip: string | null; versionLine: string | null;
     commands: { commandId: string; name: string }[];
+    runnable?: boolean;
   }[];
 }
 

@@ -135,6 +135,8 @@ From top to bottom:
       tab, so a reload wouldn't run the newly enabled script.
 - **Script area**, one scroll region (see [Scrolling](#scrolling)):
   - **Enabled** section.
+  - **Manual** section, only when it has rows: scripts with `@run-at
+    context-menu` (see [manual-scripts.md](manual-scripts.md#popup)).
   - **Disabled** section.
   - Each section groups its scripts under collection headings (see
     [Collection groups](#collection-groups)).
@@ -162,7 +164,7 @@ by shown name (`compareScriptNames`).
     gets a row; the inactive ones are hidden.
   - **Anything running in the page is listed under Enabled**, even when
     it is disabled now (`Still running`) or wasn't expected
-    (`Unexpected`).
+    (`Unexpected`). Manual scripts go under Manual by the same rule.
   - A script **removed** since the page loaded that still runs in it is
     listed under Enabled, in a `Removed scripts` group of its own: it
     has no collection left.
@@ -255,6 +257,10 @@ page it affects:
   document.
 - Both turn the toolbar badge purple, as `Updated` does: a reload
   would change what runs.
+- **Not run** (grey outline, Manual section): a manual script not run
+  on this page yet.
+  - No reload banner: nothing expects it to run.
+  - Not on the toolbar badge or in its tooltip.
 - **Invalid** (red): its rules match, but it failed to load, so it
   can't run. Enabled or not, in either section.
   - Its tooltip gives the load error.
@@ -300,6 +306,8 @@ Every pill has a tooltip:
 - More than four commands: collapsed by default behind a disclosure row
   (`▸ 6 commands`). Fewer: shown open.
 - Commands keep their registration order.
+- A manual script's **Run this script** comes first, bold, and is never
+  collapsed. Unlike a command, it leaves the popup open.
 
 ## A layout that stays put
 

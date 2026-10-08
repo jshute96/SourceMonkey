@@ -18,6 +18,8 @@ import {
   POPUP_CLOSING_MESSAGE,
   POPUP_COMMAND_MESSAGE,
   POPUP_NO_SCRIPTS,
+  POPUP_RUN_SCRIPT_MESSAGE,
+  RUN_SCRIPT_LABEL,
   POPUP_NOT_INJECTABLE,
   POPUP_PORT_PREFIX,
   POPUP_RELOAD_MESSAGE,
@@ -29,6 +31,7 @@ import {
   type PopupChangedMessage,
   type PopupClosingMessage,
   type PopupCommandRequest,
+  type PopupRunScriptRequest,
   type PopupGroup,
   type PopupReloadRequest,
   type PopupRow,
@@ -222,12 +225,14 @@ function draw(v: PopupView | null): void {
     reload.addEventListener('click', () => quietly(reloadPlain()));
     bannersEl.append(el('div', { class: 'banner-row reload' }, el('span', {}, v.banner), reload));
   }
-  const { enabled, disabled } = arrange(v);
-  if (enabled.length === 0 && disabled.length === 0) {
+  const { enabled, manual, disabled } = arrange(v);
+  if (enabled.length === 0 && manual.length === 0 && disabled.length === 0) {
     scriptsEl.append(el('div', { class: 'empty-page' }, POPUP_NO_SCRIPTS));
     return;
   }
   renderSection('Enabled', enabled, 'No enabled scripts match this page.');
+  // Only when there are some: most pages have no manual scripts.
+  if (manual.length > 0) renderSection('Manual', manual, '');
   renderSection('Disabled', disabled, 'None');
 }
 
@@ -243,7 +248,8 @@ function draw(v: PopupView | null): void {
 // keeps being listed even when another copy of its script becomes the
 // one the identity rule would pick.
 
-type SectionKey = 'enabled' | 'disabled';
+type SectionKey = 'enabled' | 'manual' | 'disabled';
+const SECTION_KEYS: readonly SectionKey[] = ['enabled', 'manual', 'disabled'];
 interface PlacedGroup { collectionId: string; ids: string[] }
 let layout: Record<SectionKey, PlacedGroup[]> | null = null;
 // The URL the layout was placed for. On another URL (the page
@@ -252,13 +258,13 @@ let layoutUrl: string | null = null;
 
 function layoutIds(): string[] {
   if (!layout) return [];
-  return [...layout.enabled, ...layout.disabled].flatMap((g) => g.ids);
+  return SECTION_KEYS.flatMap((k) => layout![k]).flatMap((g) => g.ids);
 }
 
 function arrange(v: PopupView): Record<SectionKey, PopupGroup[]> {
   // Where the view would put each row now.
   const fresh = new Map<string, { row: PopupRow; collectionId: string; section: SectionKey }>();
-  for (const section of ['enabled', 'disabled'] as const) {
+  for (const section of SECTION_KEYS) {
     for (const g of v[section]) for (const row of g.rows) fresh.set(row.id, { row, collectionId: g.collection.id, section });
   }
   if (layoutUrl !== v.url) {
@@ -268,13 +274,13 @@ function arrange(v: PopupView): Record<SectionKey, PopupGroup[]> {
   if (!layout) {
     const place = (groups: PopupGroup[]): PlacedGroup[] =>
       groups.map((g) => ({ collectionId: g.collection.id, ids: g.rows.map((r) => r.id) }));
-    layout = { enabled: place(v.enabled), disabled: place(v.disabled) };
+    layout = { enabled: place(v.enabled), manual: place(v.manual), disabled: place(v.disabled) };
   } else {
     // A row whose collection changed (the script moved) leaves its old
     // group; then anything not placed yet goes at the end of its group,
     // or in a new group at the end of its section.
     const placed = new Set<string>();
-    for (const section of ['enabled', 'disabled'] as const) {
+    for (const section of SECTION_KEYS) {
       for (const g of layout[section]) {
         g.ids = g.ids.filter((id) => {
           const now = fresh.get(id);
@@ -302,7 +308,7 @@ function arrange(v: PopupView): Record<SectionKey, PopupGroup[]> {
       rows: g.ids.map((id) => fresh.get(id)?.row).filter((r): r is PopupRow => r !== undefined),
     }))
     .filter((g) => g.collection !== undefined && g.rows.length > 0);
-  return { enabled: build(layout.enabled), disabled: build(layout.disabled) };
+  return { enabled: build(layout.enabled), manual: build(layout.manual), disabled: build(layout.disabled) };
 }
 
 function renderSection(title: string, groups: PopupGroup[], emptyText: string): void {
@@ -371,7 +377,7 @@ function groupHead(group: PopupGroup): HTMLElement {
 const PILL_CLASSES: Record<PopupStatus, string> = {
   OK: 'ok', ERROR: 'error', REJECTED: 'rejected', RELOAD: 'reload', MISSING: 'missing',
   UNEXPECTED: 'unexpected', NOT_LOADED: 'not-loaded', PENDING: 'pending', STILL_RUNNING: 'still-running',
-  WARNING: 'warning', INVALID: 'invalid',
+  WARNING: 'warning', INVALID: 'invalid', NOT_RUN: 'not-run',
 };
 
 function scriptRow(row: PopupRow, group: PopupGroup): HTMLElement {
@@ -405,19 +411,22 @@ function scriptRow(row: PopupRow, group: PopupGroup): HTMLElement {
     main.append(pill);
   }
   const kebab = kebabButton('Script actions');
+  // Not for a manual script: no reload runs it, so running it alone or
+  // keeping it out is nothing.
+  const perScriptReload = view?.perScriptReload === true && !row.manual;
   kebab.addEventListener('click', () => openMenu(kebab, [
     { label: 'Script details', run: () => openExtensionTab(viewerUrl(row.id)).then(closeSoon) },
     { label: 'Script log', run: () => openExtensionTab(viewerUrl(row.id, 'log')).then(closeSoon) },
-    { separator: true, hidden: !view?.perScriptReload },
+    { separator: true, hidden: !perScriptReload },
     // Greyed for a script that won't run (its box or its collection is
     // off): running it alone or keeping it out would do nothing.
     {
       label: 'Reload page with only this script', run: () => reloadTab({ kind: 'only', scriptId: row.id }),
-      hidden: !view?.perScriptReload, disabled: !row.active, title: row.active ? undefined : INACTIVE_RELOAD_TITLE,
+      hidden: !perScriptReload, disabled: !row.active, title: row.active ? undefined : INACTIVE_RELOAD_TITLE,
     },
     {
       label: 'Reload page without this script', run: () => reloadTab({ kind: 'without', scriptId: row.id }),
-      hidden: !view?.perScriptReload, disabled: !row.active, title: row.active ? undefined : INACTIVE_RELOAD_TITLE,
+      hidden: !perScriptReload, disabled: !row.active, title: row.active ? undefined : INACTIVE_RELOAD_TITLE,
     },
   ]));
   main.append(kebab);
@@ -425,7 +434,7 @@ function scriptRow(row: PopupRow, group: PopupGroup): HTMLElement {
   const cls = 'row' + (row.active ? '' : ' off') + (row.checked && !group.collection.enabled ? ' muted' : '');
   const out = el('div', { class: cls, 'data-script-id': row.id }, main);
   if (row.versionLine) out.append(el('div', { class: 'version-line' }, row.versionLine));
-  if (row.commands.length > 0) out.append(commandList(row));
+  if (row.commands.length > 0 || row.runnable) out.append(commandList(row));
   return out;
 }
 
@@ -445,6 +454,14 @@ function removedRow(row: PopupRow): HTMLElement {
 
 function commandList(row: PopupRow): HTMLElement {
   const list = el('div', { class: 'commands' });
+  // A manual script's own item comes first, and never folds away with
+  // the script's commands.
+  if (row.runnable) {
+    const run = el('button', { type: 'button', class: 'command run-script' }, RUN_SCRIPT_LABEL);
+    run.addEventListener('click', () => quietly(runScript(row.id)));
+    list.append(run);
+  }
+  if (row.commands.length === 0) return list;
   const long = row.commands.length > COMMANDS_SHOWN_OPEN;
   const open = commandsOpen.get(row.id) ?? !long;
   if (long) {
@@ -494,6 +511,14 @@ async function runCommand(scriptId: string, commandId: string): Promise<void> {
   const req: PopupCommandRequest = { type: POPUP_COMMAND_MESSAGE, tabId, scriptId, commandId };
   await chrome.runtime.sendMessage(req);
   closeSoon();
+}
+
+// Run a manual script. The popup stays open, so the row's status and
+// any commands the run registers show up as they arrive.
+async function runScript(scriptId: string): Promise<void> {
+  if (tabId === null) return;
+  const req: PopupRunScriptRequest = { type: POPUP_RUN_SCRIPT_MESSAGE, tabId, scriptId };
+  await chrome.runtime.sendMessage(req);
 }
 
 // Ticks a script's or collection's box. The worker writes the row, and

@@ -289,16 +289,6 @@ gates, or the emitted wrap — the rate is the regression signal.
   (`data:application/javascript,%3Bwindow.Vue%3DVue%3B…`). Cheap to
   support for the `application/javascript` form, since the bytes are
   in the ref and no fetch is involved.
-- **`@run-at context-menu` scripts are refused** (2 in the corpus).
-  - Real support would be a `chrome.contextMenus` item that injects the
-    script once into the current tab.
-  - Until then, one rough edge: a script installed from a URL whose
-    upstream copy *adds* `@run-at context-menu` keeps its last good
-    copy running on page load, flagged REFRESH FAILED with "Fetched
-    copy is not a valid userscript". That rule exists for login or
-    error pages served in place of a script, and its wording is wrong
-    for a valid Tampermonkey script. Accepted for now: it's the last
-    good copy, and the case is rare.
 
 ## Corpus test findings — compatibility gaps
 
@@ -1236,6 +1226,31 @@ the items with a trade-off worth recording:
 - **The Downloads-folder field takes any absolute path**, with no
   readability probe — unlike the search-roots box above it, which
   checks. Same probe would do.
+
+## Manual scripts — follow-ups
+
+See [docs/manual-scripts.md](docs/manual-scripts.md).
+
+- **A retired row whose refresh fails keeps a false error.** A row an
+  older build refused for `@run-at context-menu` is refreshed on update
+  (`retiredHeaderProblemIds`). If that refresh fails (file gone, host
+  down), the row keeps "@run-at context-menu … is not supported", which
+  is no longer true. Rewrite it to a neutral "needs a refresh" message,
+  or log why the recheck failed.
+- **Two sources for "is this manual".** `recordScriptReport` asks the
+  match index (`isManualScriptId`); `computeBadge` asks the document's
+  `manualRuns`. They disagree only after a header edit adds or removes
+  `@run-at context-menu` while a page runs the old copy: a stale report
+  can then skip the stale check, or a manual-then-load script never
+  shows RELOAD there. Deciding from `manualRuns` in both would agree.
+- **Fixture `fireMenu('Run this script')` edge cases.** With no manual
+  script reported yet, or more than one and no `script` named, it falls
+  through to `fireMenuCommand` and returns false, rather than waiting or
+  saying which to pick.
+- **Pages open across an extension update** have the old bridge, without
+  the once-per-document guard, so a page-world manual run there injects
+  a second bridge and every message is forwarded twice. Gone with the
+  next load of the page.
 
 ## Changed files on disk — follow-ups
 

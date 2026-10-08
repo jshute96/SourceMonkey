@@ -101,13 +101,31 @@ Pattern forms beyond Chrome's own grammar:
 
 | Tag | SourceMonkey | TM | VM | GM | Notes |
 |-----|:----------:|:--:|:--:|:--:|-------|
-| `@run-at` | ✅ | ✓ | ✓ | ✓ (partial) | Every userscript registers with Chrome at `document_start`; the wrapper itself awaits the matching lifecycle event before running the body (`document-end` → `DOMContentLoaded`, `document-idle` → `readyState` `complete` (just before `load`, so a load listener the script adds still fires) or 200ms after `DOMContentLoaded` if `load` is late, `document-body` → `document.body` exists). This sidesteps Chrome's `chrome.userScripts` scheduler batching `document_end` and `document_idle` into a single post-`load` burst. See [docs/injection.md](injection.md#run-at-gating). **Not supported:** `context-menu` is an error, so the script doesn't run (running it on every page load instead of from the right-click menu would be worse; see [injection.md](injection.md#run-at-gating)). Any other value falls through to `document-idle`, with a parse-time warning (Log tab, `sm-dev validate`, and sm-dev's `Injected` line). GM4 docs warn only `document-end` is reliable there. |
-| `@inject-into` | ✅ |   | ✓ |   | VM-specific. `page` → MAIN world. `content` → USER_SCRIPT (isolated) world, and it beats a request for `unsafeWindow`, granted or merely used (which then warns — see below). `auto` / unset falls through to `@grant` (see [injection.md → Execution world](injection.md#execution-world)). TM uses `@sandbox` for the same purpose. |
+| `@run-at` | ✅ | ✓ | ✓ | ✓ (partial) | When the script runs: see [`@run-at` values](#run-at-values) below. |
+| `@inject-into` | ✅ |   | ✓ |   | VM-specific. `page` → MAIN world. `content` → USER_SCRIPT (isolated) world, even for a script that asks for `unsafeWindow` (by `@grant` or just by using it), which would otherwise run in MAIN: it stays isolated, and gets a warning that it can't reach the page's variables. `auto` / unset falls through to `@grant` (see [injection.md → Execution world](injection.md#execution-world)). TM uses `@sandbox` for the same purpose. |
 | `@noframes` | ⚪ | ✓ | ✓ | ✓ | Should map to Chrome's `allFrames: false`. Currently every script runs in the top frame only because we don't set `allFrames` at all, so this happens to be the right behavior *by accident* — but a script that wants the opposite (also run in frames) can't get it. Running in frames also needs the menu-command registry re-keyed first — see the frame-control note in [injection.md](injection.md#limitations--future-work). |
 | `@run-in` | ⚪ | ✓ (5.3+) |   |   | Normal vs incognito vs Firefox containers. TM-only. |
 | `@sandbox` | ⚪ | ✓ (4.18+) |   |   | TM's world-selector. SourceMonkey uses `@inject-into` instead, mirroring VM. |
 | `@unwrap` | ⚪ | ✓ | ✓ |   | Inject the body without our activation/error shim. We always wrap — see [injection.md](injection.md#the-activation--error-wrapper). |
 | `@top-level-await` | ⚪ | ✓ | ✓ |   | Allows `await` at the top level of the body. Chrome's userScripts API doesn't accept module mode, so this can't be honored without a bridge. |
+
+### `@run-at` values
+
+- `document-start`: as the page starts loading, before its DOM is
+  built.
+- `document-body`: once `document.body` exists.
+- `document-end`: at `DOMContentLoaded`.
+- `document-idle` (the default): when the page is about loaded (just
+  before `load`), or 200ms after `DOMContentLoaded` if `load` is slow.
+- `context-menu`: a manual script. It never runs on load; it runs each
+  time it's asked, from the popup's **Run this script** or sm-dev's
+  `menu`. Tampermonkey uses a right-click item instead. See
+  [manual-scripts.md](manual-scripts.md).
+- Any other value runs at `document-idle`, with a warning in the Log
+  tab and from `sm-dev validate`.
+- How the timing is done (every script registers at `document_start`
+  and waits in the page), and why: [injection.md](injection.md#run-at-gating).
+- In Greasemonkey 4, only `document-end` is reliable, by its own docs.
 
 ---
 

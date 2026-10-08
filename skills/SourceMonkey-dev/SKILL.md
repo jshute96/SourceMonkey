@@ -449,6 +449,7 @@ $R set debug true                                                # or flip it li
 ```sh
 $R menu                 # the tab's commands: M1, M2 ...
 $R menu 'Toggle dark'   # fire by label (or: menu M1)
+$R menu 'Run this script'  # run a @run-at context-menu script (again)
 $R values               # what the scripts stored
 $R get lastItem
 $R set units '"metric"' # JSON; running scripts' change listeners fire
@@ -465,6 +466,15 @@ $R start ... --values-file values.json         # seed from a JSON file
 - Stored values belong to the script and survive `update` and reloads.
   They live in the extension; `--values` seeds them as the script is
   pushed.
+
+### `@run-at context-menu` scripts
+
+- These don't run on page load. The run says the script is waiting to
+  be run, and `menu` lists `Run this script` first under it.
+- Fire that to run the script. Each fire runs it again on the same
+  page, so you can test what a second run does too.
+- A reload or navigation leaves it unrun again.
+- In a spec: `gm.runScript()`.
 
 ### Working from a saved page
 

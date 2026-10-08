@@ -58211,14 +58211,13 @@
       "*"
     ],
     "valid": {
-      "status": "invalid",
-      "error": "@run-at context-menu (run from the right-click menu) is not supported, so this script can't run (in the script, line 15)",
-      "date": "2026-10-01",
+      "status": "ok",
+      "date": "2026-10-07",
       "version": "5.7.0"
     },
     "test": {
       "status": "pass",
-      "date": "2026-09-29",
+      "date": "2026-10-07",
       "version": "5.7.0"
     },
     "tags": [
@@ -58229,6 +58228,11 @@
         "date": "2026-09-29",
         "version": "5.7.0",
         "text": "Tested on en.wikipedia.org/wiki/Machine_translation (sm-dev, @grant none, MAIN world).\n- SourceMonkey: @run-at context-menu is not supported and falls through to document-idle (documented), so the patch applies on every page load instead of on demand from the context menu. sm-dev reported 'run-at document-idle' with no mention of this.\n- Script: 1172 links were hidden (0x0 inline-block, translate=no) and each got a clone without href; 10 <br> fixers added; the success tip 'Website page translation patch applied' was shown.\n- Clicking a clone ('translate') navigated to its original link, en.wikipedia.org/wiki/Translation."
+      },
+      {
+        "date": "2026-10-07",
+        "version": "5.7.0",
+        "text": "Re-tested after manual-script support (`@run-at context-menu` now runs on request, from the popup's \"Run this script\" or sm-dev's `menu`): passes, now run as intended.\n- On en.wikipedia.org/wiki/Machine_translation it no longer runs on load: sm-dev reported it waiting to be run, and the page had no marked links and no tip.\n- After `menu M1` (Run this script): 1173 links hidden and marked `translate=no` with clones beside them, and the tip \"網站頁面翻譯補釘應用成功\" shown.\n- Clicking the first clone in the article (\"translate\") navigated to its original link, en.wikipedia.org/wiki/Translation.\n- Kept the run-at-context-menu tag: it describes the script, and the tag's description now says SourceMonkey runs these on request."
       }
     ]
   },
@@ -60814,9 +60818,11 @@
       "web.ewt360.com"
     ],
     "valid": {
-      "status": "invalid",
-      "error": "@run-at context-menu (run from the right-click menu) is not supported, so this script can't run (in the script, line 13)",
-      "date": "2026-10-01",
+      "status": "ok",
+      "warnings": [
+        "@icon https://www.google.com/s2/favicons?sz=64&domain=ewt360.com: The server returned HTTP 404 (in the script, line 10)"
+      ],
+      "date": "2026-10-07",
       "version": "1.0.0"
     }
   },

@@ -25,7 +25,8 @@ sm-dev [global options] <command> [args] [-- <command> ...]
   - Other messages and failures stay text, on stderr, with the usual
     exit code.
   - An empty list means nothing was found.
-  - A script's `state` on a tab: `running` or `not-running`; for a
+  - A script's `state` on a tab: `running`, `not-running`, or
+    `manual` (a `@run-at context-menu` script not run yet); for a
     SourceMonkey-managed script (E1, ...) also `kept-out` (the run
     keeps it out of its tabs), `not-started`, `error` (it threw),
     `refused` (Chrome refused it), `unexpected` (running though it

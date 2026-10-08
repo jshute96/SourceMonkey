@@ -30,6 +30,7 @@ import {
 import { urlMatchesScript } from '../url-match.js';
 import { resolveScriptWorld, type InjectionWorld } from '../script-world.js';
 import { grantedSubsystems, type ApiSubsystem } from '../gm-api-catalog.js';
+import { isManualScript } from '../script-build.js';
 
 export interface MatchedScript {
   id: string;
@@ -45,6 +46,9 @@ export interface MatchedScript {
   // A scratch script's sm-dev run, which pushed it: it runs only in
   // tabs that run's claim holds (sm-dev-link.ts).
   smDevRun?: string;
+  // A manual script (`@run-at context-menu`), which runs only on
+  // request. See docs/manual-scripts.md.
+  manual?: true;
 }
 
 const SCRIPT_PREFIX = 'script:';
@@ -132,6 +136,7 @@ function toEntry(script: StoredScript): CacheEntry | null {
     enabled: isScriptEnabled(script),
     local: isFileUrl(script.fileUrl),
     ...smDevRunField(script.fileUrl),
+    ...(isManualScript(script) ? { manual: true as const } : {}),
   };
 }
 
@@ -291,11 +296,20 @@ function notifyChange(change: CacheChange): void {
   }
 }
 
-export function findMatchesForUrl(url: string): MatchedScript[] {
+// The enabled scripts whose rules match `url`. Which kinds:
+//   - 'load' (the default): the ones that run on page load, so what a
+//     page is expected to run. Manual scripts are left out.
+//   - 'manual': only the manual ones, which run on request.
+//   - 'any': both, for "could this script be running here?".
+export type MatchKind = 'load' | 'manual' | 'any';
+
+export function findMatchesForUrl(url: string, kind: MatchKind = 'load'): MatchedScript[] {
   const out: MatchedScript[] = [];
   for (const entry of cache.values()) {
     if (!entry.enabled) continue;
     if (disabledCollections.has(entry.collectionId)) continue;
+    if (kind === 'load' && entry.manual) continue;
+    if (kind === 'manual' && !entry.manual) continue;
     if (urlMatchesScript(url, entry.matching)) {
       out.push({
         id: entry.id,
@@ -304,12 +318,19 @@ export function findMatchesForUrl(url: string): MatchedScript[] {
         collectionId: entry.collectionId,
         world: entry.world,
         ...(entry.smDevRun !== undefined ? { smDevRun: entry.smDevRun } : {}),
+        ...(entry.manual ? { manual: true as const } : {}),
       });
     }
   }
   // Stable display order for the tooltip.
   out.sort((a, b) => compareScriptNames(a.name, b.name));
   return out;
+}
+
+// Whether `id` is a manual script (`@run-at context-menu`). False for
+// an id the index doesn't hold.
+export function isManualScriptId(id: string): boolean {
+  return cache.get(id)?.manual === true;
 }
 
 // Every script whose rules match `url`, enabled or not — the popup

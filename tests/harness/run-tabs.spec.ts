@@ -858,3 +858,30 @@ test('--lang sets the languages of each tab, in a launched browser and in one co
     await shared.close();
   }
 });
+
+test('a manual script waits to be run, again after going back, and not in a tab without scripts', async ({ fixtureServer, scriptsDir }) => {
+  const base = fixtureServer.baseUrl;
+  const m = scriptsDir.write({
+    relativePath: 'm.user.js',
+    meta: { name: 'M', match: [`${base}/target.html`], runAt: 'context-menu' },
+    body: `console.log('[M] ran on ' + location.pathname);`,
+  });
+  // Each awaited result is built up, so the echoed command doesn't match it.
+  const lines = await driveCli([m, `${base}/target.html`], [
+    ['is waiting to be run', 'menu M1'],
+    ['[M] ran on /target.html', `eval location.href = "${base}/other.html", "aw" + "ay"`],
+    ['"away"', 'eval setTimeout(() => history.back(), 500), "go" + "ing"'],
+    // Back on target.html (a back/forward navigation), it's waiting again.
+    ['is waiting to be run', 'menu'],
+    ['M1: Run this script', `newtab --noscript ${base}/target.html`],
+    ['The page commands now act on T2', 'eval new Promise((r) => setTimeout(r, 1000)).then(() => "sett" + "led")'],
+    ['"settled"', 'menu T2'],
+    ['No menu commands', 'exit'],
+  ]);
+  const at = (text: string) => lines.findIndex((l) => l.includes(text));
+  // Waiting again once back on the page, with Run listed.
+  expect(lines.slice(at('"going"')).some((l) => l.includes('M1: Run this script'))).toBe(true);
+  // Nothing about it in the tab without scripts.
+  expect(lines.filter((l) => l.startsWith('[T2]') && l.includes('is waiting to be run'))).toEqual([]);
+  expect(lines.slice(at('"settled"')).some((l) => l.includes('No menu commands are registered on T2'))).toBe(true);
+});

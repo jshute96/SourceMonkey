@@ -592,18 +592,9 @@ the user body. This is the TM/VM pattern.
     (`unsupportedRunAtWarning`): Log tab, `sm-dev validate`, and
     sm-dev's warning lines when it loads the script.
 
-**Gap: `@run-at context-menu` is not supported.** In Tampermonkey
-(Chrome only) it means "don't run on load; add a right-click menu item
-that runs the script once on the current page", like a bookmarklet.
-
-- We have no such menu item, so the script is refused: `validateHeader`
-  stores it `invalid` (`CONTEXT_MENU_UNSUPPORTED`) and it never runs.
-- Not a `document-idle` fallback like other unknown values: that would
-  run an on-request action unprompted on every matching page load, and
-  these scripts usually `@match` all pages (TM ignores
-  `@include`/`@exclude` for them).
-- `backfillHeaderProblems` applies this to already-installed scripts
-  on extension update.
+**`@run-at context-menu` is a manual script**: never registered, and
+run on request from the popup, each time asked. See
+[manual-scripts.md](manual-scripts.md).
 
 Why not just pass `runAt` through to `chrome.userScripts.register`:
 

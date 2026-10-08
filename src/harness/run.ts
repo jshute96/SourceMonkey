@@ -26,7 +26,7 @@ import { fetchManager, fetchedVersion } from './manager-fetch.js';
 import { DEFAULT_MANAGER, MANAGERS, managerFlag, type ManagerName } from './managers.js';
 import { ExtensionLink, linkRunId, type ExtensionEvent } from './extension-link.js';
 import { ExternalRunScripts, externalControl, externalOff, externalOthers, openExternalManager, type ExternalManager } from './external-manager.js';
-import type { ErrorReport, PageLink, SkipReport, StartReport } from './host.js';
+import type { ErrorReport, ManualReport, PageLink, SkipReport, StartReport } from './host.js';
 import { attachPage, targetIdOf, type AttachOptions, type PageAttachment } from './page-watch.js';
 import { pageSays } from './page-commands.js';
 import { consoleSource, consoleText, decodeOwnRefs, formatConsoleArgs, isPreludeLine, pageErrorSource } from './page-output.js';
@@ -1697,6 +1697,7 @@ function wireHostOutput(host: ExtensionHost, emit: (fields: LogFields) => void, 
   // shows it.
   host.on('start', (r: StartReport) => event(r, 'started', `${r.name} started on ${r.url}`, ['sm']));
   host.on('skip', (r: SkipReport) => event(r, 'skipped', `${r.name} skipped on ${r.url}: ${r.reason}`, r.ruleMiss ? undefined : ['sm']));
+  host.on('manual', (r: ManualReport) => event(r, 'manual', `${r.name} is waiting to be run on ${r.url}, since it has @run-at context-menu. Use menu to run it.`));
   host.on('script-error', (r: ErrorReport) => {
     const frames = r.stack ? r.stack.split('\n').slice(1, 4).map((line) => `\n    ${decodeOwnRefs(line.trim())}`).join('') : '';
     event(r, 'threw', `${r.name} threw: ${decodeOwnRefs(r.message)}${frames}`, ['sm', 'script', 'page']);

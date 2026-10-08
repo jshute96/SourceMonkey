@@ -462,6 +462,19 @@ export class ExtensionLink {
     return result.ok;
   }
 
+  /**
+   * Runs a manual script (`@run-at context-menu`) in a tab, as its popup
+   * "Run this script" does. Throws with the extension's reason when it
+   * can't.
+   */
+  async runManualScript(tabId: number, scriptId: string): Promise<void> {
+    this.requireMinor(6, 'Running a manual script');
+    const result = await this.call(({ t, s }) =>
+      (self as unknown as { SourceMonkey: Api }).SourceMonkey.runManualScript(t, s),
+    { t: tabId, s: scriptId });
+    if (!result.ok) throw new Error(result.error ?? 'Internal error: SourceMonkey did not say why the script did not run');
+  }
+
   /** The collections and installed scripts, for the `collection` and `script` commands. */
   readonly manager: ManagerControl = managerControl(
     (fn, arg) => this.call(fn, arg),
@@ -610,6 +623,7 @@ interface Api {
   getScriptLog(scriptId: string): Promise<LogEntry[]>;
   writeGmValues(scriptId: string, writes: { key: string; value?: unknown; deleted?: boolean }[]): Promise<void>;
   fireActionContextMenuItem(tabId: number, scriptId: string, commandId: string): Promise<{ ok: boolean }>;
+  runManualScript(tabId: number, scriptId: string): Promise<{ ok: boolean; error?: string }>;
   scriptsOnTab(tabId: number): Promise<{ id: string; name: string; status: string; collection: string; number?: number }[]>;
   clickNotification(notificationId: string): boolean;
   answerConnectPrompt(promptId: string, choice: 'once' | 'cancel' | 'allow' | 'allow-all' | 'deny'): Promise<boolean>;

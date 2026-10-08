@@ -95,6 +95,11 @@ export interface TabMatchState {
   // was current (a failed GM_download, a style the page's CSP blocked,
   // ...). The popup shows them as Warning and the tooltip counts them.
   warnedIds?: string[];
+  // Manual scripts (`@run-at context-menu`) asked to run on this
+  // document, with how many times each was. They're never in `matches`,
+  // since nothing expects them to run, so this is what keeps their
+  // reports from reading as UNEXPECTED. See docs/manual-scripts.md.
+  manualRuns?: Record<string, number>;
 }
 
 export type RowStatus =
@@ -191,7 +196,10 @@ export function computeBadge(
     const name = actual?.name ?? expected?.name ?? id;
     let status: RowStatus;
     let message: string | undefined;
-    if (actual && stale.has(id)) {
+    // A manual script runs its current copy each time it's asked, so
+    // it's never stale, and it's expected once it has run.
+    const manual = state.manualRuns?.[id] !== undefined;
+    if (actual && stale.has(id) && !manual) {
       // Whether the wrapper reported started or errored, that report
       // came from the OLD content. RELOAD/purple is more actionable
       // than ERROR/red here — the on-disk fix may already address the
@@ -213,7 +221,7 @@ export function computeBadge(
       status = 'REJECTED';
     } else if (expected && !actual) {
       status = 'MISSING';
-    } else if (!expected && actual) {
+    } else if (!expected && actual && !manual) {
       status = 'UNEXPECTED';
     } else {
       status = 'OK';
@@ -387,18 +395,29 @@ export function noteScriptWarning(state: TabMatchState, scriptId: string): TabMa
 // Guard: an existing `error` entry is sticky for the same id — a later
 // sm:start (e.g. on retry / re-evaluation) shouldn't silently flip it
 // back to OK and hide the failure.
+//
+// Except for a manual script's `sm:start` (`manual`): each one is a new
+// run the person asked for, so it replaces the last run's outcome.
 export function applyScriptReport(
   state: TabMatchState,
   id: string,
   report: ActualStatus,
+  manual = false,
 ): TabMatchState {
-  if (report.state === 'started' && state.actual[id]?.state === 'error') {
+  if (!manual && report.state === 'started' && state.actual[id]?.state === 'error') {
     return state;
   }
   return {
     ...state,
     actual: { ...state.actual, [id]: report },
   };
+}
+
+// Pure: count a request to run manual script `id` on this document.
+// Recorded before the run is injected, so its reports find it there.
+export function noteManualRun(state: TabMatchState, id: string): TabMatchState {
+  const runs = state.manualRuns ?? {};
+  return { ...state, manualRuns: { ...runs, [id]: (runs[id] ?? 0) + 1 } };
 }
 
 // Pure: note that a wrapper in `world` reported from this document, and

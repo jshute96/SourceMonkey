@@ -135,6 +135,8 @@
       .pill.pending, .pill.still-running {
         background: var(--purple-tint); color: var(--purple-deep); border-color: var(--purple);
       }
+      /* A manual script not run yet: nothing wrong, nothing to do. */
+      .pill.not-run { background: #fff; color: var(--grey); border-color: #c8c8c8; }
 
       .commands { margin: 2px 0 1px 14px; display: grid; gap: 1px; }
       .commands button {
@@ -143,6 +145,7 @@
       }
       .commands button:hover { background: #eef2ff; }
       .commands button.disclose { color: var(--muted); justify-self: start; }
+      .commands button.run-script { font-weight: 600; }
 
       .menu {
         position: fixed; z-index: 10; min-width: 220px;

@@ -369,6 +369,8 @@ you can:
 
 - Turn scripts and collections on or off.
 - Run a script's own menu commands (`GM_registerMenuCommand`).
+- Run a manual script (`@run-at context-menu`), which runs only when
+  asked.
 - Open a script's page or its log.
 - Reload the page with no userscripts, with only one script, or
   without one. Handy for finding which script is breaking a page; the

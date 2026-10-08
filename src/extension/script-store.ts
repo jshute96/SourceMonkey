@@ -134,6 +134,7 @@ import {
   parseCheckKey,
   type ParseCheckMode,
   rederivedStartupLogs,
+  RETIRED_CONTEXT_MENU_UNSUPPORTED,
   type ScriptStatus,
   setScriptError,
   type StoredScript,
@@ -147,7 +148,7 @@ export {
   applyFiles,
   buildInitialInvalidEntry,
   buildScriptFromText,
-  CONTEXT_MENU_UNSUPPORTED,
+  RETIRED_CONTEXT_MENU_UNSUPPORTED,
   describeError,
   distillMatching,
   extractStartupLogs,
@@ -1883,11 +1884,11 @@ export async function backfillStartupLogs(): Promise<number> {
   return changed;
 }
 
-// Re-run all of `validateHeader` on stored `ok` rows, so a header check
-// added in an update (e.g. refusing `@run-at context-menu`) stops
-// scripts already installed rather than only new or changed ones. Same
-// reason as the backfills above: an unchanged script's row is never
-// rebuilt. Writes only rows that now fail; returns how many.
+// Re-run all of `validateHeader` on stored `ok` rows, so a header
+// check added in an update stops scripts already installed rather than
+// only new or changed ones. Same reason as the backfills above: an
+// unchanged script's row is never rebuilt. Writes only rows that now
+// fail; returns how many.
 //
 // Each flipped row gets its error in the Log here: the boot replay
 // runs on the same wake and may have read the row while it was still
@@ -1917,6 +1918,19 @@ export async function backfillHeaderProblems(): Promise<number> {
     if (entry) await appendScriptLog(row.id, { ...entry, source: 'extension-update' });
   }
   return flipped.length;
+}
+
+// The opposite of `backfillHeaderProblems`: ids of rows an older build
+// refused with a check that no longer exists (`@run-at context-menu`,
+// before manual scripts). The caller refreshes them; a refresh always
+// refetches an invalid row (see `fetchOrSkipInParallel`), and the
+// rebuild then also loads the `@require` / `@resource` files an invalid
+// row never got. Flipping the row to `ok` in place would skip those.
+export async function retiredHeaderProblemIds(): Promise<string[]> {
+  const scripts = await getAllScripts();
+  return scripts
+    .filter((s) => s.status === 'invalid' && s.errorMessage === RETIRED_CONTEXT_MENU_UNSUPPORTED)
+    .map((s) => s.id);
 }
 
 // Reorder the collections index by moving the given collection one

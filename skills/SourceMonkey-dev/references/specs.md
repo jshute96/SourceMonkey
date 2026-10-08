@@ -22,7 +22,8 @@ test('adds the button', async ({ page, loadUserscript, gm, reports }) => {
   package's build loaded. A repo's fixture file may connect to its own
   browser instead, which needs SourceMonkey loaded.
 - Call `loadUserscript` before the `page.goto` that should see it.
-- What you did by hand maps over: `menu` → `gm.fireMenu(label)`,
+- What you did by hand maps over: `menu` → `gm.fireMenu(label)`
+  (`menu 'Run this script'` → `gm.runScript()`),
   `values` / `get` / `set` → `gm.list()` / `gm.get()` / `gm.set()`,
   `--from-saved` → `serveHtml`, `match` →
   `loadUserscript(path, { url })` (throws on a miss).

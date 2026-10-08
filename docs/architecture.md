@@ -39,8 +39,9 @@ details live in the topic-specific docs linked below.
 - **Toolbar popup** (`src/popup.html` + `src/extension/popup.ts`, view
   built by `src/extension/popup-view.ts`) — "Active scripts": the
   scripts that match the current tab, by collection, with toggles,
-  statuses, menu commands and selective reloads. See
-  [status-popup.md](status-popup.md).
+  statuses, menu commands and selective reloads. It also runs manual
+  scripts (`@run-at context-menu`; see [manual-scripts.md](manual-scripts.md)).
+  See [status-popup.md](status-popup.md).
 - **Collections page** (`src/collections.html` + `src/extension/collections.ts`) — manage
   collections (directory, manifest, github-dir, or a "scripts"
   collection holding individually installed scripts — user-created, or

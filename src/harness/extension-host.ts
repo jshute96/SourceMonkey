@@ -20,7 +20,7 @@
 // - The run reports only on its own tabs: events from others, and Log
 //   entries made in them, are left out.
 
-import { SM_ABANDONED_MSG, SM_ERROR_MSG, SM_START_MSG, SM_SWAPPED_MSG } from '../runtime-messages.js';
+import { SM_ABANDONED_MSG, SM_ERROR_MSG, SM_MANUAL_MSG, SM_START_MSG, SM_SWAPPED_MSG } from '../runtime-messages.js';
 import { evalHookKey } from '../eval-hook.js';
 import { SKIP_REASON_SM_DEV } from '../sm-dev-protocol.js';
 import { remapStackText } from '../stack-link.js';
@@ -303,6 +303,13 @@ export class ExtensionHost extends HarnessHost {
     return id ? this.link.closeNotification(id) : false;
   }
 
+  override async runManualScript(page: PageLink, scriptId: string): Promise<void> {
+    const tabId = this.tabsByPage.get(page);
+    const id = this.extensionIds.get(scriptId);
+    if (tabId === undefined || !id) throw new Error('Internal error: sm-dev has no tab or script to run it in');
+    await this.link.runManualScript(tabId, id);
+  }
+
   override async fireMenuEntry(entry: MenuCommandRecord): Promise<boolean> {
     const page = this.pageOf(entry);
     const tabId = page && this.tabsByPage.get(page);
@@ -392,6 +399,8 @@ export class ExtensionHost extends HarnessHost {
       this.recordStart(state.page, fields);
     } else if (event.type === SM_ERROR_MSG) {
       this.recordError(state.page, { ...fields, message: event.message ?? '', stack: event.stack ?? '' });
+    } else if (event.type === SM_MANUAL_MSG) {
+      this.recordManual(state.page, fields);
     } else if (event.type === SM_ABANDONED_MSG) {
       // A tab with its scripts turned off (`--noscript`) skips them on
       // each load, as asked: nothing to say.

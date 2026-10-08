@@ -32,7 +32,7 @@ export interface UserscriptMeta {
   match?: string[];           // @match patterns
   include?: string[];         // @include patterns
   exclude?: string[];         // @exclude patterns
-  runAt?: 'document-start' | 'document-end' | 'document-idle';
+  runAt?: 'document-start' | 'document-end' | 'document-idle' | 'context-menu';
   grant?: string[];           // e.g. ['none'] — controls MAIN vs USER_SCRIPT world
   connect?: string[];         // @connect entries for GM_xmlhttpRequest gating
   injectInto?: 'page' | 'content' | 'auto';

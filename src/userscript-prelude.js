@@ -91,8 +91,9 @@
    *
    * For each script we maintain:
    *   cfg          : the {id, name, sourceUrl, runAt, loadedAt,
-   *                  matching?, needsGmValues, startupLogs?}
-   *                  passed in by the per-script config blob.
+   *                  matching?, needsGmValues, startupLogs?,
+   *                  manualRun?} passed in by the per-script config
+   *                  blob. A manual script's next run replaces it.
    *   matched      : did the in-page matcher accept this URL? Sync;
    *                  set during initScript.
    *   decision     : null|run|run-new|skip — settled by check-pending,
@@ -796,7 +797,10 @@
 
   function initScript(cfg) {
     if (!cfg || !cfg.id) return;
-    if (scripts[cfg.id]) return scripts[cfg.id];
+    if (scripts[cfg.id]) {
+      if (cfg.manualRun) return rerunManual(scripts[cfg.id], cfg);
+      return scripts[cfg.id];
+    }
     var entry = makeEntry(cfg);
     scripts[cfg.id] = entry;
     /* Matcher check first — if we don't match, mark inactive so the
@@ -814,6 +818,10 @@
        its focus. Not per-script — the flag inside is module-scoped. */
     installFocusSignal();
     emitStartupLogs(cfg);
+    if (cfg.manualRun) {
+      startManualRun(entry, cfg);
+      return entry;
+    }
     /* The two gates run CONCURRENTLY and the body starts at
        max(decision, run-at) — `flushPending` is the join, and it needs
        both `decision` and `runAtFired` regardless of which settled
@@ -880,6 +888,44 @@
       }
       flushPending(entry);
     });
+    return entry;
+  }
+
+  /* A manual script (`@run-at context-menu`), injected on request by
+     "Run this script" (see docs/manual-scripts.md). The request is the
+     decision, so there is no check-pending round trip and no @run-at
+     wait: the body runs as soon as the combined entry hands it over.
+     The worker sends the GM values snapshot along in the config. */
+  function startManualRun(entry, cfg) {
+    entry.runAtFired = true;
+    entry.decision = { action: "run" };
+    if (cfg.manualRun.gmValues) entry.decision.gmValues = cfg.manualRun.gmValues;
+  }
+
+  /* Another run of a manual script already run in this document. The
+     entry is reused rather than replaced: the async error listeners
+     installed for it read `entry.cfg`, so they report for the latest
+     run, and a new entry would add a second pair.
+
+     What the last run set up through the GM runtime is retired first,
+     so its menu commands and value listeners don't pile up. Whatever
+     it did to the page directly (timers, listeners, DOM) stays. */
+  function rerunManual(entry, cfg) {
+    try {
+      if (window.__SM_GM__ && typeof window.__SM_GM__.retireRun === "function") {
+        window.__SM_GM__.retireRun(cfg.id);
+      }
+    } catch (_e) {}
+    entry.cfg = cfg;
+    entry.matched = cfg.matching ? matchScript(location.href, cfg.matching) : true;
+    entry.pendingRun = null;
+    entry.runRegistered = false;
+    entry.replayLoad = false;
+    entry.loadedAtRun = cfg.loadedAt;
+    if (entry.matched) {
+      installAsyncListeners(entry);
+      startManualRun(entry, cfg);
+    }
     return entry;
   }
 

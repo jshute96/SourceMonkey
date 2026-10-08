@@ -797,6 +797,7 @@
     s = {
       cache: {},
       pending: [],     /* array of {key, value} or {key, value: DELETED_SENTINEL} */
+      initSeq: 0,      /* `writeSeq` as of the last `init` */
       debounceTimer: null,
       hardTimer: null,
       ready: false,
@@ -910,6 +911,7 @@
       try { console.info("[SourceMonkey] storage flush threw", scriptId, e && e.message); } catch (_e2) {}
     }
   }
+
 
   /* Force-flush every script's pending writes — wired into pagehide
      so a bfcache eviction or tab close doesn't lose buffered writes.
@@ -1132,11 +1134,16 @@
        initial-value snapshot from the sm:check-pending reply. Populates the
        per-script cache and flags it as ready. Also called by the
        prelude itself ahead of a reload-fast-path swap eval, which
-       doesn't run the wrap function. Calling init twice for the same
-       scriptId is idempotent — the second call replaces the cache —
-       and one path reaches it in normal operation: a swap primed the
-       cache, page CSP then refused the eval, and the baked-in body
-       runs its own init. */
+       doesn't run the wrap function. Calling init again for the same
+       scriptId replaces the cache with the new snapshot, except for the
+       keys the cache changed since the last init: this document's own
+       writes (which the worker may not have had when it took the
+       snapshot) and other tabs' broadcasts. Two paths reach it in
+       normal operation:
+       - a swap primed the cache, page CSP then refused the eval, and
+         the baked-in body runs its own init;
+       - a manual script's next run in the same document
+         (docs/manual-scripts.md), with a snapshot taken for it. */
     init: function (scriptId, values) {
       var s = ensureStore(scriptId);
       /* Defensive copy so the userscript can't mutate the values
@@ -1151,7 +1158,19 @@
          stored. Rows written before the codec existed are plain and
          pass through decodeValue unchanged. */
       for (var i = 0; i < keys.length; i++) copy[keys[i]] = decodeValue(values[keys[i]]);
+      /* Only a store already in use has any. `writeSeqByKey` counts
+         local writes and applied broadcasts alike. */
+      if (s.ready) {
+        var changed = _ObjectKeys(s.writeSeqByKey);
+        for (var j = 0; j < changed.length; j++) {
+          var key = changed[j];
+          if (s.writeSeqByKey[key] <= s.initSeq) continue;
+          if (_hasOwn.call(s.cache, key)) copy[key] = s.cache[key];
+          else delete copy[key];
+        }
+      }
       s.cache = copy;
+      s.initSeq = s.writeSeq;
       s.ready = true;
     },
     get: function (scriptId, key, defaultValue) {
@@ -2517,6 +2536,15 @@
       });
     },
   };
+  /* Drop every command `scriptId` registered, here and in the worker:
+     a manual script's earlier run, before its next one (`retireRun`). */
+  function retireMenuCommands(scriptId) {
+    var bucket = menuCommandsByScript[scriptId];
+    if (!bucket) return;
+    var ids = _ObjectKeys(bucket);
+    for (var i = 0; i < ids.length; i++) menu.unregister(scriptId, ids[i]);
+  }
+
   function dispatchMenuFire(scriptId, commandId) {
     var bucket = menuCommandsByScript[scriptId];
     if (!bucket) return;
@@ -2904,6 +2932,16 @@
     notification: notification,
     download: download,
     menu: menu,
+    /* Before a manual script's next run in this document (see
+       `rerunManual` in userscript-prelude.js): retire what its last
+       run set up here, so the new run's commands and listeners don't
+       sit beside the old ones. Its stored values stay, and so does
+       anything it did to the page itself. */
+    retireRun: function (scriptId) {
+      retireMenuCommands(scriptId);
+      var s = stores[scriptId];
+      if (s) s.listeners = null;
+    },
     urlchange: urlchange,
     windowControl: windowControl,
     clipboard: {

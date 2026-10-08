@@ -911,6 +911,9 @@ response, so it says so directly.
   tab when its last report there is a start rather than a skip.
 - Menu commands fire by record (`fireMenuEntry`), not by id, since two
   tabs can register the same custom id.
+- A manual script (`@run-at context-menu`) that can run on a tab's
+  document lists `Run this script` first among its commands, run or
+  not ([manual-scripts.md](manual-scripts.md#sm-dev)).
 - A script's default page (`defaultPageUrl` in `prepare.ts`) is the one
   `start` opens when given no URL; `open`, `newtab` and `--all` use the
   same one.
@@ -974,7 +977,8 @@ User-facing behavior is in [harness-guide.md](harness-guide.md).
   - connection prompts: `answerConnectPrompt(id, choice)` (below);
   - values and menus: `getGmValues`, `writeGmValues`,
     `fireActionContextMenuItem` (named for the context menu the
-    toolbar popup replaced);
+    toolbar popup replaced), and from 1.6 `runManualScript` for a
+    manual script (see [manual-scripts.md](manual-scripts.md#sm-dev));
   - claims: `watchForNamingNavigation` and `namedTab` (which tab is
     which, see [Naming the tab](#naming-the-tab)), `claimTab`,
     `renewRun`, `releaseRun`, `setTabScriptsOff` (below). `releaseRun`

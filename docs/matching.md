@@ -428,6 +428,9 @@ Click for details. Double-click for collections.
 - Lines use the singular for one (`1 script has errors.`).
 - Warnings take no color: a header warning shows on every load, so
   it would keep the badge off green for good.
+- A manual script ([manual-scripts.md](manual-scripts.md)) counts once
+  it has run, like any other. Before that it has no line: not run is
+  its normal state, and a page can match many.
 - Grey says nothing ran on purpose. In a tab an sm-dev run controls,
   where its claim kept some scripts out and the rest ran, it stays
   green.

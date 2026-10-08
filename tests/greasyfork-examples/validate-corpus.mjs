@@ -36,7 +36,7 @@ import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { CONTEXT_MENU_UNSUPPORTED, NO_MATCH_OR_INCLUDE, NO_NAME, SYNTAX_ERROR_PREFIX } from '../../lib/script-build.js';
+import { NO_MATCH_OR_INCLUDE, NO_NAME, SYNTAX_ERROR_PREFIX } from '../../lib/script-build.js';
 import { resolveScriptResource } from '../../lib/file-loader.js';
 import { distillRequires, distillResources, isFetchFailureMessage } from '../../lib/external-files.js';
 import { getValue, NO_METADATA_BLOCK, UNTERMINATED_METADATA_BLOCK } from '../../lib/userscript-header.js';
@@ -261,7 +261,6 @@ const HEADER_MESSAGES = new Set([
   UNTERMINATED_METADATA_BLOCK,
   NO_NAME,
   NO_MATCH_OR_INCLUDE,
-  CONTEXT_MENU_UNSUPPORTED,
 ]);
 
 // The URL behind a failing dependency line. `@require` names its ref

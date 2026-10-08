@@ -16,6 +16,22 @@ export const LISTED_BY_LOCATION =
   'This script is listed by a directory or manifest collection, so it stays there while its file does. Only a script in a container collection can be moved or uninstalled.';
 export const CONTAINER_TARGET_ONLY = 'Scripts can only be installed or moved into a container collection';
 
+/**
+ * Why a manual script (`@run-at context-menu`) can't be run on a tab
+ * now: `runManualScript`'s answers, which the popup logs and sm-dev
+ * prints after the script's name. See docs/manual-scripts.md.
+ */
+export const MANUAL_RUN_NOT_INSTALLED = 'This script is not installed';
+export const MANUAL_RUN_NOT_MANUAL =
+  'This script runs when a page loads. Only a script with @run-at context-menu is run on request.';
+export const MANUAL_RUN_SCRIPT_OFF = 'This script is turned off';
+export const MANUAL_RUN_COLLECTION_OFF = 'This script\'s collection is turned off';
+export const MANUAL_RUN_NOT_HERE = 'This script\'s @match and @include rules don\'t cover this page';
+export const MANUAL_RUN_PAGE = 'SourceMonkey can\'t run scripts on this page';
+export const MANUAL_RUN_TAB_GONE = 'The tab was closed';
+export const MANUAL_RUN_PAGE_CHANGED = 'The page changed before the script could run. Try again.';
+export const MANUAL_RUN_SM_DEV = 'The sm-dev run controlling this tab keeps this script out';
+
 /** The reason a skipped wrapper reports for a tab an sm-dev run controls. */
 export const SKIP_REASON_SM_DEV = 'tab controlled by sm-dev';
 
@@ -38,7 +54,9 @@ export const SKIP_REASON_SM_DEV = 'tab controlled by sm-dev';
 // 1.5: `managed`, the calls that change collections and installed
 //   scripts (`managed.setScriptEnabled` and the rest), and
 //   `managed.scriptDetails` / `managed.scriptText` (managed-changes.ts).
-export const SM_DEV_PROTOCOL = { major: 1, minor: 5 } as const;
+// 1.6: manual scripts (`@run-at context-menu`): `runManualScript`, and
+//   the `sm:manual` report for one waiting in a new document.
+export const SM_DEV_PROTOCOL = { major: 1, minor: 6 } as const;
 
 export interface ProtocolVersion {
   major: number;

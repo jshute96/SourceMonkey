@@ -8,6 +8,8 @@ import assert from 'node:assert/strict';
 import {
   IMPLICIT_UNSAFE_WINDOW_INFO,
   backfillHeaderProblems,
+  retiredHeaderProblemIds,
+  RETIRED_CONTEXT_MENU_UNSUPPORTED,
   backfillStartupLogs,
   backfillUsesUnsafeWindow,
   distillMatching,
@@ -23,7 +25,6 @@ import {
   loadStateLogEntry,
   rebuildCollection,
   sameStoredValue,
-  CONTEXT_MENU_UNSUPPORTED,
   NO_MATCH_OR_INCLUDE,
   NO_NAME,
 } from '../../dist/extension/script-store.js';
@@ -106,15 +107,14 @@ test('validateHeader complains about a missing @name', async () => {
   });
 });
 
-test('validateHeader refuses @run-at context-menu rather than running it on load', () => {
+test('validateHeader accepts @run-at context-menu (a manual script), with no run-at warning', () => {
   const header = parseHeader(`// ==UserScript==
 // @name X
 // @match https://e/*
 // @run-at  Context-Menu
 // ==/UserScript==
 `);
-  assert.deepEqual(validateHeader(header), { message: CONTEXT_MENU_UNSUPPORTED, line: 4 });
-  // An error, so not also a run-at warning.
+  assert.equal(validateHeader(header), null);
   assert.deepEqual(extractStartupLogs(header, 'x.user.js'), []);
 });
 
@@ -1327,15 +1327,14 @@ test('backfillUsesUnsafeWindow is idempotent', async () => {
 });
 
 test('backfillHeaderProblems marks an installed row invalid when a newer check refuses it', async () => {
+  // Stored `ok` by a build without the check: no @match or @include.
   const text = `// ==UserScript==
-// @name        On demand
-// @match       https://example.com/*
-// @run-at      context-menu
+// @name        Nowhere
 // ==/UserScript==
 `;
   const store = stubStorage([
     legacyRow({
-      id: 'menu',
+      id: 'nowhere',
       text,
       enabled: false,
       startupLogs: [{ level: 'warn', message: 'old warning' }],
@@ -1348,25 +1347,40 @@ test('backfillHeaderProblems marks an installed row invalid when a newer check r
     legacyRow({ id: 'broken', text, status: 'invalid', errorMessage: 'The file is empty' }),
   ]);
   assert.equal(await backfillHeaderProblems(), 1);
-  const menu = store['script:menu'];
-  assert.equal(menu.status, 'invalid');
-  assert.equal(menu.errorMessage, CONTEXT_MENU_UNSUPPORTED);
-  assert.equal(menu.errorLocation.line, 4);
+  const row = store['script:nowhere'];
+  assert.equal(row.status, 'invalid');
+  assert.equal(row.errorMessage, NO_MATCH_OR_INCLUDE);
+  assert.equal(row.errorLocation.line, 1);
   // A disabled script is still marked, and stays disabled.
-  assert.equal(menu.enabled, false);
+  assert.equal(row.enabled, false);
   // Same shape as a freshly built invalid row.
   for (const field of ['startupLogs', 'parseCheckedHash', 'usesUnsafeWindow', 'refreshError']) {
-    assert.equal(menu[field], undefined, field);
+    assert.equal(row[field], undefined, field);
   }
   // The error reaches the Log, so the INVALID badge isn't over a Log
   // that says nothing (or still holds the old warnings).
-  assert.deepEqual(store.session['log:menu'].map((e) => [e.level, e.state, e.message]), [
-    ['error', 'invalid', CONTEXT_MENU_UNSUPPORTED],
+  assert.deepEqual(store.session['log:nowhere'].map((e) => [e.level, e.state, e.message]), [
+    ['error', 'invalid', NO_MATCH_OR_INCLUDE],
   ]);
   assert.equal(store['script:plain'].status, 'ok');
   assert.equal(store['script:broken'].errorMessage, 'The file is empty');
   assert.equal(store.session['log:broken'], undefined);
   assert.equal(await backfillHeaderProblems(), 0);
+});
+
+test('retiredHeaderProblemIds names the rows an older build refused for @run-at context-menu', async () => {
+  const text = `// ==UserScript==
+// @name        On demand
+// @match       https://example.com/*
+// @run-at      context-menu
+// ==/UserScript==
+`;
+  stubStorage([
+    legacyRow({ id: 'menu', text, status: 'invalid', errorMessage: RETIRED_CONTEXT_MENU_UNSUPPORTED }),
+    legacyRow({ id: 'broken', text, status: 'invalid', errorMessage: 'The file is empty' }),
+    legacyRow({ id: 'plain', text: VALID_SCRIPT }),
+  ]);
+  assert.deepEqual(await retiredHeaderProblemIds(), ['menu']);
 });
 
 test('backfillStartupLogs gives an installed row the warnings a newer check adds', async () => {

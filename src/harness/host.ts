@@ -120,10 +120,18 @@ export interface SkipReport extends ScriptReport {
   ruleMiss?: true;
 }
 
+/**
+ * A manual script (`@run-at context-menu`) matched a new document,
+ * where it waits to be run rather than starting.
+ */
+export type ManualReport = ScriptReport;
+
 export interface HostReports {
   started: StartReport[];
   errors: ErrorReport[];
   skipped: SkipReport[];
+  /** Manual scripts waiting in a new document (`ManualReport`). */
+  manual: ManualReport[];
   /** Every `GM_xmlhttpRequest`, with its outcome once settled. */
   requests: XhrRecord[];
   /** Every `GM_openInTab`. */
@@ -150,6 +158,7 @@ export interface HostEventMap {
   start: [StartReport];
   'script-error': [ErrorReport];
   skip: [SkipReport];
+  manual: [ManualReport];
   'value-write': [{ scriptId: string; writes: WireWrite[] }];
   /** A `GM_xmlhttpRequest` settled; the record carries its outcome. */
   request: [XhrRecord];
@@ -199,8 +208,12 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
   // Node's listener limit, which prints a warning.
   private readonly reportWaiters = new Set<() => void>();
   readonly reports: HostReports = {
-    started: [], errors: [], skipped: [], requests: [], tabs: [], menuCommands: [], notifications: [], downloads: [], connectPrompts: [],
+    started: [], errors: [], skipped: [], manual: [], requests: [], tabs: [], menuCommands: [], notifications: [], downloads: [],
+    connectPrompts: [],
   };
+  // The manual scripts that match each page's current document, which
+  // can be run there.
+  private readonly manualByPage = new Map<PageLink, Set<string>>();
   // Each menu command's page; dropped when that page loads a new
   // document or goes away.
   private readonly menuOwners = new Map<MenuCommandRecord, PageLink>();
@@ -252,12 +265,13 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
 
   /**
    * Of `scriptIds`, the ones with no word from `page` since `since`:
-   * not yet started, skipped or thrown there.
+   * not yet started, skipped or thrown there, nor waiting to be run.
    */
   unreported(page: PageLink, scriptIds: readonly string[], since: number): string[] {
     // Nothing to wait for from a manager that never reports.
     if (!this.getsReports) return [];
-    const reported = (id: string): boolean => [this.reports.started, this.reports.skipped, this.reports.errors]
+    const { started, skipped, errors, manual } = this.reports;
+    const reported = (id: string): boolean => [started, skipped, errors, manual]
       .some((records) => records.some((r) => r.scriptId === id && r.at >= since && this.recordPages.get(r) === page));
     return scriptIds.filter((id) => !reported(id));
   }
@@ -316,9 +330,22 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
     this.forgetDocumentState(page);
   }
 
+  /**
+   * The manual scripts that can be run in `page`'s current document, at
+   * its URL now: one the page moved away from in place (pushState) can't.
+   */
+  manualScripts(page: PageLink): string[] {
+    const url = page.url();
+    return [...this.manualByPage.get(page) ?? []].filter((id) => {
+      const script = this.scripts.get(id);
+      return script !== undefined && explainMatch(script.matching, url).matches;
+    });
+  }
+
   // What belongs to one document of a page: its menu commands, which a
-  // new document registers again.
+  // new document registers again, and the manual scripts it matches.
   private forgetDocumentState(page: PageLink): void {
+    this.manualByPage.delete(page);
     for (const [record, owner] of this.menuOwners) {
       if (owner !== page) continue;
       this.menuOwners.delete(record);
@@ -439,6 +466,25 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
     this.notify('skip', report);
   }
 
+  /**
+   * A manual script can be run in `from`'s document, where it waits to
+   * be run. Once per document: the extension says it again on each
+   * navigation, a pushState included, and a back/forward restore
+   * (which `forgetDocumentState` has cleared it for).
+   */
+  protected recordManual(from: PageLink, fields: { scriptId: string; name: string; url: string }): void {
+    let set = this.manualByPage.get(from);
+    if (set?.has(fields.scriptId)) return;
+    if (!set) {
+      set = new Set();
+      this.manualByPage.set(from, set);
+    }
+    set.add(fields.scriptId);
+    const report: ManualReport = this.baseReport(from, fields);
+    this.reports.manual.push(report);
+    this.notify('manual', report);
+  }
+
   /** A script in `from` wrote values. */
   protected recordValueWrites(from: PageLink, scriptId: string, writes: WireWrite[]): void {
     if (!this.scripts.has(scriptId)) return;
@@ -495,6 +541,12 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
    */
   abstract fireMenuEntry(entry: MenuCommandRecord): Promise<boolean>;
 
+  /**
+   * Run a manual script in `page`, as its popup "Run this script" does.
+   * Throws with the reason when it can't.
+   */
+  abstract runManualScript(page: PageLink, scriptId: string): Promise<void>;
+
   /** Click a shown notification, which runs the script's `onclick`. */
   abstract clickNotification(requestId: string): Promise<boolean>;
 
@@ -525,7 +577,7 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
     } catch {
       // Dropped on purpose; see above.
     }
-    if (event === 'start' || event === 'skip' || event === 'script-error') {
+    if (event === 'start' || event === 'skip' || event === 'script-error' || event === 'manual') {
       for (const check of [...this.reportWaiters]) check();
     }
   }

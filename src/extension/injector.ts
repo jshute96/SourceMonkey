@@ -76,7 +76,8 @@ import {
   type StoredScript,
   type StoredCollection,
 } from './script-store.js';
-import { SUPPORTED_RUN_AT, getValue, getValues, hasTag, type ParsedHeader } from '../userscript-header.js';
+import { CONTEXT_MENU_RUN_AT, SUPPORTED_RUN_AT, getValue, getValues, hasTag, type ParsedHeader } from '../userscript-header.js';
+import { isManualScript } from '../script-build.js';
 import {
   WRAPPER_BRIDGE,
   WRAPPER_GM_RUNTIME,
@@ -194,10 +195,11 @@ export interface ActiveSpecs {
 // in `userscript-prelude.js`.
 //
 // Anything else (a typo) runs at `document-idle`; `extractStartupLogs`
-// warns about it. `@run-at context-menu` never gets here:
-// `validateHeader` refuses the script.
+// warns about it. `context-menu` passes through: a manual run's config
+// carries it, and the prelude then runs the body at once.
 export function normalizeDeclaredRunAt(value: string | undefined): string {
   const v = (value ?? '').trim().toLowerCase();
+  if (v === CONTEXT_MENU_RUN_AT) return v;
   return SUPPORTED_RUN_AT.includes(v) ? v : 'document-idle';
 }
 
@@ -259,6 +261,8 @@ interface ScriptCfgLiteral {
   mustAsk?: boolean;
   matching: { matches: string[]; includes: string[]; excludes: string[] } | null;
   startupLogs: ReadonlyArray<StartupLog>;
+  // See `RegistrationSpecOptions.manualRun`.
+  manualRun?: { gmValues?: Record<string, unknown> };
 }
 
 // Build the per-script config blob. Calls
@@ -280,6 +284,7 @@ export function buildConfigBlob(cfg: ScriptCfgLiteral): string {
     needsGmValues: cfg.needsGmValues,
   };
   if (cfg.mustAsk) wire.mustAsk = true;
+  if (cfg.manualRun) wire.manualRun = cfg.manualRun;
   if (cfg.matching) wire.matching = cfg.matching;
   if (cfg.startupLogs && cfg.startupLogs.length > 0) {
     // Level and message only. A `StartupLog` also carries the header
@@ -812,6 +817,11 @@ export interface RegistrationSpecOptions {
   // src/eval-hook.ts). A script in an sm-dev test collection gets its
   // run's without being asked; the person's own scripts never get one.
   evalHookKey?: string;
+  // Build for one on-request run of a manual script rather than a
+  // registration: the config carries the run decision, with the GM
+  // values snapshot a storage script seeds from (what a registered
+  // script gets from its check-pending answer).
+  manualRun?: { gmValues?: Record<string, unknown> };
 }
 
 export async function buildRegistrationSpec(
@@ -962,6 +972,7 @@ export async function buildRegistrationSpec(
     mustAsk: options.mustAsk === true || isScratchUrl(script.fileUrl),
     matching: needsWrapperFilter ? script.matching : null,
     startupLogs: script.startupLogs ?? [],
+    ...(options.manualRun ? { manualRun: options.manualRun } : {}),
   });
 
   // The whole user program — requires then body — as ONE entry
@@ -1000,7 +1011,8 @@ export async function buildRegistrationSpec(
 
 // Pure: would this script be registered right now? Both the script's
 // own enabled flag and its parent collection's flag must be true, and
-// the script must be `ok` — `invalid` scripts never run.
+// the script must be `ok` — `invalid` scripts never run. A manual
+// script never registers: it runs only on request (`isManualRunCandidate`).
 //
 // Shared with `runSync`'s parse re-verification, which spends a compile
 // round trip per row and so must ask about exactly the rows that are
@@ -1010,6 +1022,19 @@ export function isRegistrationCandidate(
   script: StoredScript,
   collections: Map<string, StoredCollection>,
 ): boolean {
+  return isRunnable(script, collections) && !isManualScript(script);
+}
+
+// Pure: could this manual script be run on request right now? The same
+// rules as registering one, apart from being manual.
+export function isManualRunCandidate(
+  script: StoredScript,
+  collections: Map<string, StoredCollection>,
+): boolean {
+  return isRunnable(script, collections) && isManualScript(script);
+}
+
+function isRunnable(script: StoredScript, collections: Map<string, StoredCollection>): boolean {
   if (script.status !== 'ok') return false;
   if (!isScriptEnabled(script)) return false;
   const collection = collections.get(script.collectionId);
@@ -1197,6 +1222,78 @@ const GM_RUNTIME_WORLDS: readonly InjectionWorld[] = ['USER_SCRIPT', 'MAIN'];
 // registrations can't share one.
 function gmRuntimeIdFor(world: InjectionWorld): string {
   return world === 'MAIN' ? GM_RUNTIME_MAIN_SCRIPT_ID : GM_RUNTIME_SCRIPT_ID;
+}
+
+// ---------- Manual runs ----------
+//
+// A manual script (`@run-at context-menu`) is never registered. Each
+// "Run this script" injects it into the tab's top frame with
+// `chrome.userScripts.execute`, built from the same pieces a
+// registration is, so it runs the same way. See docs/manual-scripts.md.
+
+export interface ManualRunInjection {
+  world: InjectionWorld;
+  js: { code: string }[];
+}
+
+// What one run injects, in order. The script's world may not have our
+// own pieces yet, since they're registered only where registered
+// scripts run, so they go first. Both are no-ops where already present.
+//   - The bridge, for a MAIN-world script (its reports and GM calls
+//     reach the worker through it).
+//   - The GM runtime, for a script that needs one.
+// Null when the script has nothing Chrome could match on.
+export async function buildManualRunInjections(
+  script: StoredScript,
+  scriptHandlerVersion: string,
+  logLabel: string,
+  gmValues: Record<string, unknown> | undefined,
+): Promise<ManualRunInjection[] | null> {
+  const spec = await buildRegistrationSpec(script, scriptHandlerVersion, logLabel, {
+    manualRun: gmValues !== undefined ? { gmValues } : {},
+  });
+  if (!spec) return null;
+  const world = (spec.world ?? 'USER_SCRIPT') as InjectionWorld;
+  const out: ManualRunInjection[] = [];
+  if (world === 'MAIN') {
+    out.push({ world: 'USER_SCRIPT', js: [{ code: WRAPPER_BRIDGE + `\n//# sourceURL=${BRIDGE_SOURCE_URL}\n` }] });
+  }
+  if (needsGmRuntime(script.header)) {
+    out.push({ world, js: [{ code: WRAPPER_GM_RUNTIME + `\n//# sourceURL=${GM_RUNTIME_SOURCE_URL}\n` }] });
+  }
+  out.push({ world, js: spec.js.map((j) => ({ code: (j as { code: string }).code })) });
+  return out;
+}
+
+// Chrome 135's `chrome.userScripts.execute`, which our @types/chrome
+// predates.
+interface UserScriptsExecute {
+  execute(injection: {
+    target: { tabId: number; frameIds?: number[]; documentIds?: string[] };
+    js: { code: string }[];
+    world?: InjectionWorld;
+    injectImmediately?: boolean;
+  }): Promise<unknown>;
+}
+
+// Inject a manual run into document `documentId` (the top frame's) of
+// `tabId`. Throws what Chrome says when it can't: a page it won't
+// inject into, or one that's gone (the tab closed or navigated).
+export async function executeManualRun(
+  tabId: number,
+  documentId: string,
+  injections: readonly ManualRunInjection[],
+): Promise<void> {
+  await ensureWorldConfigured();
+  const api = chrome.userScripts as unknown as UserScriptsExecute;
+  for (const injection of injections) {
+    await api.execute({
+      target: { tabId, documentIds: [documentId] },
+      js: injection.js,
+      world: injection.world,
+      injectImmediately: true,
+    });
+  }
 }
 
 // ---------- Runtime sync (uses chrome.userScripts) ----------

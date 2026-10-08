@@ -40,7 +40,7 @@ const is = (n: number) => (n === 1 ? 'is' : 'are');
 export function summarizeToolbar(view: PopupView, state: TabMatchState | null): ToolbarSummary {
   // An invalid script that isn't enabled is listed for reference only:
   // it wasn't going to run, so it's not this page's problem.
-  const rows: PopupRow[] = [...view.enabled, ...view.disabled]
+  const rows: PopupRow[] = [...view.enabled, ...view.manual, ...view.disabled]
     .flatMap((g) => g.rows)
     .filter((r) => r.status !== 'INVALID' || r.active);
   const count = (pred: (r: PopupRow) => boolean) => rows.filter(pred).length;
@@ -60,7 +60,12 @@ export function summarizeToolbar(view: PopupView, state: TabMatchState | null): 
   const unexpected = withStatus('UNEXPECTED');
   const warned = count((r) => r.warned);
   const skipped = withStatus('NOT_LOADED');
+  // Manual scripts not run here yet are the normal state, and can be
+  // many (an all-pages bookmarklet), so they get no line and no badge;
+  // one counts once it has run. They still keep "No scripts match"
+  // away, which would be untrue.
   const anyStatus = rows.some((r) => r.status !== null);
+  const anyBadged = rows.some((r) => r.status !== null && r.status !== 'NOT_RUN');
 
   const lines: string[] = [];
   if (!view.injectable) lines.push(POPUP_NOT_INJECTABLE);
@@ -83,7 +88,7 @@ export function summarizeToolbar(view: PopupView, state: TabMatchState | null): 
   // Warnings have none: a header warning would otherwise keep the badge
   // off green for good.
   let color: string | null = null;
-  if (anyStatus) {
+  if (anyBadged) {
     if (errors + rejected + invalid > 0) color = BADGE_RED;
     else if (updated + added + removed > 0) color = BADGE_PURPLE;
     else if (missing + unexpected > 0) color = BADGE_ORANGE;
@@ -97,6 +102,6 @@ export function summarizeToolbar(view: PopupView, state: TabMatchState | null): 
   // The rows the popup gives a status, so the count and the lines
   // agree: a script disabled or deleted since load that never started
   // has none, and one enabled since that hasn't run yet does.
-  const counted = count((r) => r.status !== null && (state === null || countsOnBadge(state, r.id)));
+  const counted = count((r) => r.status !== null && r.status !== 'NOT_RUN' && (state === null || countsOnBadge(state, r.id)));
   return { count: counted, color, title: [...head, ...lines, TOOLBAR_CLICK_HINT].join('\n') };
 }

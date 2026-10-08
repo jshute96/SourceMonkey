@@ -281,8 +281,15 @@ export function noConnectInfo(grant: string): string {
     + 'Add @connect for each host it contacts, or @connect * to allow any host.';
 }
 
+// A manual script (`@run-at context-menu`): it matches pages like any
+// other, but never runs on page load, only when the person asks for it
+// in the popup or sm-dev fires it. See docs/manual-scripts.md.
+export function isManualScript(script: Pick<StoredScript, 'header'>): boolean {
+  return isContextMenuRunAt(script.header);
+}
+
 // Said for a `@run-at` value we don't honor (a typo). `context-menu`
-// is refused instead: see `CONTEXT_MENU_UNSUPPORTED`.
+// isn't one: it makes the script manual (see `CONTEXT_MENU_RUN_AT`).
 export function unsupportedRunAtWarning(value: string): string {
   return `@run-at ${value} is not supported. The script runs at document-idle instead.`;
 }
@@ -451,7 +458,10 @@ export interface HeaderProblem {
 export const NO_NAME = 'No @name in the metadata block';
 export const NO_MATCH_OR_INCLUDE =
   'No @match or @include in the metadata block, so this script would never run on any page';
-export const CONTEXT_MENU_UNSUPPORTED =
+// No longer produced: manual scripts are supported now. Kept so
+// `retiredHeaderProblemIds` can find the rows an older build refused
+// with it.
+export const RETIRED_CONTEXT_MENU_UNSUPPORTED =
   '@run-at context-menu (run from the right-click menu) is not supported, so this script can\'t run';
 
 // Opens every parse-check verdict (`Syntax error: <what V8 said>`).
@@ -482,13 +492,6 @@ export function validateHeader(header: ParsedHeader | null): HeaderProblem | nul
   const includes = getValues(header, 'include');
   if (matches.length === 0 && includes.length === 0) {
     return { message: NO_MATCH_OR_INCLUDE, line };
-  }
-  // Refused rather than run at load: see `CONTEXT_MENU_RUN_AT`.
-  if (isContextMenuRunAt(header)) {
-    return {
-      message: CONTEXT_MENU_UNSUPPORTED,
-      line: headerTagLine(header, 'run-at', (getValue(header, 'run-at') ?? '').trim()) ?? line,
-    };
   }
   // Patterns Chrome's grammar refuses are dropped rather than run (see
   // `matchPatternProblem`), so a script whose every `@match` is one of

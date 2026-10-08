@@ -19,7 +19,6 @@ import {
   badScriptFilesOnDisk,
   locationPattern,
 } from '../../fixtures/bad-script-cases.mjs';
-import { CONTEXT_MENU_UNSUPPORTED } from '../../../dist/extension/script-store.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const CLI = path.join(REPO_ROOT, 'lib', 'harness', 'cli.js');
@@ -108,7 +107,7 @@ test('validate notes GM_xmlhttpRequest with no @connect, warns about an unsuppor
   assert.match(s.lines[1], /^warn: @run-at document-ready is not supported\. The script runs at document-idle instead\. .*, line 5\)$/);
 });
 
-test('validate calls @run-at context-menu invalid', (t) => {
+test('validate accepts @run-at context-menu, with no warning', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sm-validate-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'menu.user.js');
@@ -120,10 +119,10 @@ test('validate calls @run-at context-menu invalid', (t) => {
     '// ==/UserScript==',
   ].join('\n'));
   const { code, scripts } = validate(file);
-  assert.equal(code, 1);
+  assert.equal(code, 0);
   const s = scripts.get('menu.user.js');
-  assert.equal(s?.status, 'invalid');
-  assert.deepEqual(s.lines, [`${CONTEXT_MENU_UNSUPPORTED} (in menu.user.js, line 4)`]);
+  assert.equal(s?.status, 'ok');
+  assert.deepEqual(s.lines, []);
 });
 
 test('validate calls a script unchecked when the syntax check could not decide', (t) => {

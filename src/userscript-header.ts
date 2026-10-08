@@ -239,10 +239,10 @@ export function hasTag(header: ParsedHeader, tag: string): boolean {
   return header.tags.some((e) => e.tag === t);
 }
 
-// The `@run-at` values we honor. Anything else (a typo) runs at
-// `document-idle`: see `normalizeDeclaredRunAt` in injector.ts. The
-// exception is `context-menu`, which `validateHeader` rejects instead
-// (see `CONTEXT_MENU_RUN_AT`).
+// The `@run-at` values that pick a point in the page load. Anything
+// else (a typo) runs at `document-idle`: see `normalizeDeclaredRunAt`
+// in injector.ts. The exception is `context-menu`, which makes the
+// script manual instead (see `CONTEXT_MENU_RUN_AT`).
 export const SUPPORTED_RUN_AT: readonly string[] = [
   'document-start',
   'document-body',
@@ -252,8 +252,7 @@ export const SUPPORTED_RUN_AT: readonly string[] = [
 
 // The script's declared `@run-at` when it is one we don't honor, so
 // the caller can say it runs at `document-idle` instead. Undefined when
-// the tag is absent, blank, supported, or `context-menu` (an error,
-// not a fallback).
+// the tag is absent, blank, supported, or `context-menu`.
 export function unsupportedRunAt(header: ParsedHeader | null | undefined): string | undefined {
   if (!header) return undefined;
   const value = (getValue(header, 'run-at') ?? '').trim();
@@ -263,11 +262,17 @@ export function unsupportedRunAt(header: ParsedHeader | null | undefined): strin
 }
 
 // Tampermonkey's `@run-at context-menu`: don't run on page load, run
-// once from a right-click menu item instead. We have no such menu, and
-// running it on load would do an on-request action unprompted on every
-// matching page (often all pages), so the script is refused instead.
+// from a right-click menu item instead. We call these manual scripts:
+// they match pages as usual, but run only when the person picks "Run
+// this script" in the popup (or sm-dev fires it). See
+// docs/manual-scripts.md.
 export const CONTEXT_MENU_RUN_AT = 'context-menu';
 
-export function isContextMenuRunAt(header: ParsedHeader): boolean {
+// The command that runs a manual script now: first in its popup row,
+// and in sm-dev's `menu`.
+export const RUN_SCRIPT_LABEL = 'Run this script';
+
+export function isContextMenuRunAt(header: ParsedHeader | null | undefined): boolean {
+  if (!header) return false;
   return (getValue(header, 'run-at') ?? '').trim().toLowerCase() === CONTEXT_MENU_RUN_AT;
 }

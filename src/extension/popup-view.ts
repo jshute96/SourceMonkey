@@ -5,6 +5,7 @@
 // rendered as-is by src/extension/popup.ts. Kept free of chrome.* so the
 // rules can be unit tested. Design: docs/status-popup.md.
 
+import { RUN_SCRIPT_LABEL } from '../userscript-header.js';
 import { compareScriptNames } from '../script-display.js';
 import { comparePreferred, preferredCopy } from './copy-preference.js';
 import { skippedOnDocument, type BadgeRow, type RowStatus, type TabMatchState } from './tab-status.js';
@@ -19,7 +20,8 @@ import { skippedOnDocument, type BadgeRow, type RowStatus, type TabMatchState } 
 //     status outranks it.
 //   - INVALID: targets this page, but failed to load, so it can't run.
 //     A reload won't change that. Shown whether enabled or not.
-export type PopupStatus = RowStatus | 'PENDING' | 'STILL_RUNNING' | 'WARNING' | 'INVALID';
+//   - NOT_RUN: a manual script that hasn't been run on this page.
+export type PopupStatus = RowStatus | 'PENDING' | 'STILL_RUNNING' | 'WARNING' | 'INVALID' | 'NOT_RUN';
 
 export const POPUP_STATUS_LABELS: Record<PopupStatus, string> = {
   OK: 'Running',
@@ -33,6 +35,7 @@ export const POPUP_STATUS_LABELS: Record<PopupStatus, string> = {
   STILL_RUNNING: 'Still running',
   WARNING: 'Warning',
   INVALID: 'Invalid',
+  NOT_RUN: 'Not run',
 };
 
 // Every pill's tooltip ends with what a click does: a Reload to run
@@ -72,6 +75,8 @@ export interface PopupScriptInput {
   // Set when the script failed to load (`status: 'invalid'`): why, as
   // the script page words it.
   invalid?: string;
+  // A manual script (`@run-at context-menu`), run only on request.
+  manual?: boolean;
 }
 
 export interface PopupCollectionInput {
@@ -103,6 +108,9 @@ export interface PopupViewInput {
   // In collections-page order.
   collections: readonly PopupCollectionInput[];
   menuCommands: ReadonlyMap<string, readonly PopupMenuCommand[]>;
+  // The manual scripts that can be run on this page now (the worker's
+  // rules for a run: matching the URL, and an sm-dev claim allowing it).
+  manualRunnableIds?: ReadonlySet<string>;
   // Scripts to list whatever the one-row-per-identity rule says: the
   // rows an open popup already shows. Its layout stays put while it's
   // open, so a row mustn't vanish because another copy took over.
@@ -134,6 +142,11 @@ export interface PopupRow {
   // may turn them off (the checkbox tooltip says how to opt out).
   otherCopies: boolean;
   commands: PopupMenuCommand[];
+  // A manual script (`@run-at context-menu`), which no reload runs.
+  manual?: boolean;
+  // A manual script that can be run here now: the row's commands start
+  // with "Run this script".
+  runnable?: boolean;
 }
 
 export interface PopupGroup {
@@ -152,11 +165,16 @@ export interface PopupView {
   // run's choice.
   perScriptReload: boolean;
   enabled: PopupGroup[];
+  // Manual scripts (`@run-at context-menu`) that are on, or have run
+  // here: between Enabled and Disabled.
+  manual: PopupGroup[];
   disabled: PopupGroup[];
   // Every collection, in collections-page order: the popup's frozen
   // layout can hold a group the sections above no longer have.
   collections: PopupCollectionInput[];
 }
+
+export { RUN_SCRIPT_LABEL };
 
 // ---- Messages between the popup page and the service worker ----
 
@@ -166,6 +184,8 @@ export const POPUP_VIEW_MESSAGE = 'sm:popup-view';
 export const POPUP_RELOAD_MESSAGE = 'sm:popup-reload';
 // Popup → worker: run one of a script's menu commands.
 export const POPUP_COMMAND_MESSAGE = 'sm:popup-command';
+// Popup → worker: run a manual script now ("Run this script").
+export const POPUP_RUN_SCRIPT_MESSAGE = 'sm:popup-run-script';
 // Popup → worker: tick or untick a script's or a collection's box. The
 // worker writes it, so the popup needn't load the script store.
 export const POPUP_SET_ENABLED_MESSAGE = 'sm:popup-set-enabled';
@@ -202,6 +222,7 @@ export interface PopupReloadRequest { type: typeof POPUP_RELOAD_MESSAGE; tabId: 
 export interface PopupCommandRequest {
   type: typeof POPUP_COMMAND_MESSAGE; tabId: number; scriptId: string; commandId: string;
 }
+export interface PopupRunScriptRequest { type: typeof POPUP_RUN_SCRIPT_MESSAGE; tabId: number; scriptId: string }
 export interface PopupSetEnabledRequest {
   type: typeof POPUP_SET_ENABLED_MESSAGE; target: 'script' | 'collection'; id: string; enabled: boolean;
   // Ctrl/Cmd-clicked: change only this, leaving other copies alone.
@@ -223,7 +244,13 @@ const DEFAULT_TOOLTIPS: Record<PopupStatus, string> = {
   STILL_RUNNING: 'Disabled since this page loaded. It keeps running until a reload.',
   WARNING: 'Running on this page, with warnings',
   INVALID: 'The script failed to load, so it can\'t run',
+  NOT_RUN: `This script runs only when you choose ${RUN_SCRIPT_LABEL}`,
 };
+
+// A manual script's OK tooltip: how many times it was run here.
+export function manualRunsText(runs: number): string {
+  return runs === 1 ? 'Ran once on this page' : `Ran ${runs} times on this page`;
+}
 
 // STILL_RUNNING's tooltip for a script removed since the page loaded.
 const REMOVED_TOOLTIP = 'Removed since this page loaded. It keeps running until a reload.';
@@ -235,11 +262,13 @@ const MOVED_ONLY_TOOLTIP =
 
 // Why a NOT_LOADED script didn't run: which kind of reload, or the
 // sm-dev claim, kept it out.
+const SM_DEV_KEPT_OUT = 'Not run: the sm-dev run controlling this tab kept it out';
+
 function notLoadedReason(state: TabMatchState, nameOf: (id: string) => string): string {
   if (state.scriptsSkipped) return 'Not run: the page was reloaded with no userscripts';
   if (state.skipOnly !== undefined) return `Not run: the page was reloaded with only ${nameOf(state.skipOnly)}`;
   if (state.skipWithout !== undefined) return 'Not run: the page was reloaded without this script';
-  if (state.smDevAllow !== undefined) return 'Not run: the sm-dev run controlling this tab kept it out';
+  if (state.smDevAllow !== undefined) return SM_DEV_KEPT_OUT;
   return DEFAULT_TOOLTIPS.NOT_LOADED;
 }
 
@@ -285,6 +314,7 @@ export function buildPopupView(input: PopupViewInput): PopupView {
     banner: null,
     perScriptReload: !smDev && state != null,
     enabled: [],
+    manual: [],
     disabled: [],
     collections: [...input.collections],
   };
@@ -344,7 +374,11 @@ export function buildPopupView(input: PopupViewInput): PopupView {
   }
 
   const causes: BannerCauses = {};
-  const rowsByCollection = { enabled: new Map<string, PopupRow[]>(), disabled: new Map<string, PopupRow[]>() };
+  const rowsByCollection = {
+    enabled: new Map<string, PopupRow[]>(),
+    manual: new Map<string, PopupRow[]>(),
+    disabled: new Map<string, PopupRow[]>(),
+  };
   for (const { script: s, dup, otherCopies } of shown) {
     const active = isActive(s);
     const badge = badgeById.get(s.id);
@@ -356,6 +390,14 @@ export function buildPopupView(input: PopupViewInput): PopupView {
       // not PENDING, and no banner. Disabled ones say so too, so it's
       // clear that turning one on won't make it run.
       status = 'INVALID';
+    } else if (s.manual && active) {
+      // Nothing expects a manual script to run, so a reload has nothing
+      // to say about it: no PENDING, RELOAD or banner. In a tab an
+      // sm-dev run controls that keeps it out, it's Not loaded, as a
+      // script kept out of the load would be.
+      if (badge && (badge.status === 'OK' || badge.status === 'ERROR')) status = badge.status;
+      else if (smDev && !input.manualRunnableIds?.has(s.id)) status = 'NOT_LOADED';
+      else status = 'NOT_RUN';
     } else if (active) {
       status = badge?.status ?? (state ? 'PENDING' : null);
       // Matched now but not when the page loaded, and never reported:
@@ -389,12 +431,17 @@ export function buildPopupView(input: PopupViewInput): PopupView {
       let text = DEFAULT_TOOLTIPS[status];
       if (status === 'ERROR' && badge?.message) text = badge.message;
       if (status === 'REJECTED' && input.rejected[s.id]) text = input.rejected[s.id]!;
-      if (status === 'NOT_LOADED' && state) text = notLoadedReason(state, nameOf);
+      if (status === 'NOT_LOADED' && state) {
+        // A manual script isn't kept out by a reload mode, only by the claim.
+        text = s.manual ? SM_DEV_KEPT_OUT : notLoadedReason(state, nameOf);
+      }
       if (status === 'INVALID' && s.invalid) text = `${DEFAULT_TOOLTIPS.INVALID}: ${s.invalid}`;
       if (movedOnly) text = MOVED_ONLY_TOOLTIP;
       if (status === 'STILL_RUNNING' && s.enabled) {
         text = 'Its collection was disabled since this page loaded. It keeps running until a reload.';
       }
+      const runs = state?.manualRuns?.[s.id];
+      if (s.manual && status === 'OK' && runs) text = manualRunsText(runs);
       tooltip = `${text}\n${status === 'PENDING' ? POPUP_PILL_RELOAD_HINT : POPUP_PILL_CLICK_HINT}`;
     }
     const row: PopupRow = {
@@ -408,10 +455,15 @@ export function buildPopupView(input: PopupViewInput): PopupView {
       versionLine: dup && s.version ? `Version ${s.version}` : null,
       otherCopies,
       commands: active || isRunning(s.id) ? [...(input.menuCommands.get(s.id) ?? [])] : [],
+      ...(s.manual ? { manual: true } : {}),
+      ...(s.manual && active && s.invalid === undefined && input.manualRunnableIds?.has(s.id) ? { runnable: true } : {}),
     };
     // Anything running in the page is listed with the active scripts,
-    // even when it's disabled now (Still running) or unexpected.
-    const into = active || isRunning(s.id) ? rowsByCollection.enabled : rowsByCollection.disabled;
+    // even when it's disabled now (Still running) or unexpected. Manual
+    // scripts have their own section, by the same rule.
+    const into = !(active || isRunning(s.id))
+      ? rowsByCollection.disabled
+      : s.manual ? rowsByCollection.manual : rowsByCollection.enabled;
     const list = into.get(s.collectionId);
     if (list) list.push(row); else into.set(s.collectionId, [row]);
   }
@@ -424,6 +476,7 @@ export function buildPopupView(input: PopupViewInput): PopupView {
         rows: byColl.get(c.id)!.sort((a, b) => compareScriptNames(a.name, b.name)),
       }));
   view.enabled = toGroups(rowsByCollection.enabled);
+  view.manual = toGroups(rowsByCollection.manual);
   view.disabled = toGroups(rowsByCollection.disabled);
   if (removed.length > 0) {
     causes.removed = true;

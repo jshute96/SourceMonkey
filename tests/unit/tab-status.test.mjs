@@ -17,6 +17,7 @@ import {
   getDocState,
   markScriptStale,
   mergeMatches,
+  noteManualRun,
   setCurrentDoc,
   writeDocState,
   BADGE_GREEN,
@@ -589,4 +590,37 @@ test('getDocState / getCurrentState: lookups behave', () => {
   assert.equal(getDocState(null, 'd1'), null);
   assert.equal(getCurrentState(rec).url, 'https://b');
   assert.equal(getCurrentState(null), null);
+});
+
+// ---------- Manual scripts (`@run-at context-menu`) ----------
+
+test('computeBadge: a manual script that ran is OK, not UNEXPECTED, and counts once', () => {
+  let state = { documentId: DOC, url: 'https://x', matches: [], actual: {} };
+  state = noteManualRun(state, 'm');
+  state = applyScriptReport(state, 'm', { state: 'started', name: 'Manual' }, true);
+  state = noteManualRun(state, 'm');
+  state = applyScriptReport(state, 'm', { state: 'started', name: 'Manual' }, true);
+  assert.deepEqual(state.manualRuns, { m: 2 });
+  const view = computeBadge(state);
+  assert.equal(view.count, 1);
+  assert.deepEqual(view.rows.map((r) => `${r.name}|${r.status}`), ['Manual|OK']);
+});
+
+test('computeBadge: a manual script is never stale, since each run uses its current copy', () => {
+  const state = {
+    documentId: DOC, url: 'https://x', matches: [],
+    actual: { m: { state: 'started', name: 'Manual' } },
+    manualRuns: { m: 1 },
+    staleScriptIds: ['m'],
+  };
+  assert.deepEqual(computeBadge(state).rows.map((r) => r.status), ['OK']);
+});
+
+test('applyScriptReport: a manual run\'s start replaces the last run\'s error', () => {
+  const errored = {
+    documentId: DOC, url: 'https://x', matches: [],
+    actual: { m: { state: 'error', name: 'Manual', message: 'Boom' } },
+  };
+  assert.equal(applyScriptReport(errored, 'm', { state: 'started', name: 'Manual' }).actual.m.state, 'error');
+  assert.equal(applyScriptReport(errored, 'm', { state: 'started', name: 'Manual' }, true).actual.m.state, 'started');
 });

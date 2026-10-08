@@ -22,12 +22,14 @@ function state(extra = {}) {
   return { documentId: 'd1', url: URL_, matches: [], actual: {}, loadMatchIds: [], ...extra };
 }
 
-function view({ st = state(), scripts, collections = COLLS, matching, commands = new Map(), rejected = {}, keepIds, loadUrlMatchingIds, deletedIds }) {
+function view({ st = state(), scripts, collections = COLLS, matching, commands = new Map(), rejected = {}, keepIds, loadUrlMatchingIds, deletedIds, runnable }) {
   const badgeRows = st ? computeBadge(st, new Set(Object.keys(rejected))).rows : [];
   return buildPopupView({
     url: URL_, injectable: true, state: st, badgeRows, rejected,
     matchingIds: new Set(matching ?? scripts.map((s) => s.id)),
     scripts, collections, menuCommands: commands, keepIds, loadUrlMatchingIds, deletedIds,
+    // By default, every manual script can run here.
+    manualRunnableIds: new Set(runnable ?? scripts.filter((s) => s.manual).map((s) => s.id)),
   });
 }
 
@@ -352,4 +354,68 @@ test('a hidden script running in the page is not taken for a removed one', () =>
 
 test('the banner names both disabled and removed scripts', () => {
   assert.equal(bannerText({ disabled: true, removed: true }), 'Reload required: Scripts disabled and removed');
+});
+
+// ---- Manual scripts (`@run-at context-menu`) ----
+
+test('a manual script on the page is listed under Manual, not run, with Run this script', () => {
+  const v = view({
+    st: state(),
+    scripts: [script('man', 'A', { manual: true }), script('man-off', 'A', { manual: true, enabled: false })],
+  });
+  assert.deepEqual(v.enabled, []);
+  assert.deepEqual(names(v.manual), ['A: man=NOT_RUN']);
+  assert.equal(v.manual[0].rows[0].runnable, true);
+  // Turned off: in Disabled, with nothing to run.
+  assert.deepEqual(names(v.disabled), ['A: man-off=null']);
+  assert.equal(v.disabled[0].rows[0].runnable, undefined);
+  // Nothing expects it to run, so a reload has nothing to fix.
+  assert.equal(v.banner, null);
+});
+
+test('a manual script that ran shows its outcome, and how many times it ran', () => {
+  const v = view({
+    st: state({
+      actual: { man: { state: 'started', name: 'man' }, bad: { state: 'error', name: 'bad', message: 'Boom' } },
+      manualRuns: { man: 2, bad: 1 },
+    }),
+    scripts: [script('man', 'A', { manual: true }), script('bad', 'A', { manual: true })],
+    commands: new Map([['man', [{ commandId: 'c1', name: 'Clear' }]]]),
+  });
+  assert.deepEqual(names(v.manual), ['A: bad=ERROR, man=OK']);
+  const man = v.manual[0].rows.find((r) => r.id === 'man');
+  assert.match(man.tooltip, /^Ran 2 times on this page\n/);
+  assert.deepEqual(man.commands.map((c) => c.name), ['Clear']);
+  assert.equal(man.runnable, true);
+  assert.equal(v.banner, null);
+});
+
+test('a manual script turned off after it ran is still running, under Manual', () => {
+  const v = view({
+    st: state({ actual: { man: { state: 'started', name: 'man' } }, manualRuns: { man: 1 } }),
+    scripts: [script('man', 'A', { manual: true, enabled: false })],
+  });
+  assert.deepEqual(names(v.manual), ['A: man=STILL_RUNNING']);
+  assert.equal(v.manual[0].rows[0].runnable, undefined);
+});
+
+test('no Run this script where the worker wouldn\'t run it (an sm-dev tab, or a URL its rules miss)', () => {
+  const v = view({
+    st: state({ actual: { man: { state: 'started', name: 'man' } }, manualRuns: { man: 1 } }),
+    scripts: [script('man', 'A', { manual: true })],
+    runnable: [],
+  });
+  assert.deepEqual(names(v.manual), ['A: man=OK']);
+  assert.equal(v.manual[0].rows[0].runnable, undefined);
+});
+
+test('in a tab an sm-dev run controls, a manual script it keeps out is Not loaded, with no Run', () => {
+  const v = view({
+    st: state({ smDevAllow: null, smDevRun: 'r1' }),
+    scripts: [script('man', 'A', { manual: true })],
+    runnable: [],
+  });
+  assert.deepEqual(names(v.manual), ['A: man=NOT_LOADED']);
+  assert.match(v.manual[0].rows[0].tooltip, /^Not run: the sm-dev run controlling this tab kept it out\n/);
+  assert.equal(v.manual[0].rows[0].runnable, undefined);
 });
