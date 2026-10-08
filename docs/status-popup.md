@@ -108,11 +108,11 @@ From top to bottom:
   - Purple **reload banner**, matching the purple badge, with a Reload
     button. Wording by cause:
     - `Reload required: Enabled scripts changed` (enables, and disables
-      or deletes, since load)
+      or removals, since load)
     - `Reload required: Scripts enabled` (only enables)
-    - `Reload required: Scripts disabled or deleted` (both, no enables)
+    - `Reload required: Scripts disabled and removed` (both, no enables)
     - `Reload required: Scripts disabled` (only disables)
-    - `Reload required: Scripts deleted` (only deletes)
+    - `Reload required: Scripts removed` (only removals)
     - `Reload required: Scripts updated`
     - `Reload required: Some scripts haven't run on this page yet` (the
       page changed its URL in place; see Reload to run below)
@@ -160,16 +160,30 @@ by shown name (`compareScriptNames`).
   [script-identity.md](script-identity.md)), not per installed copy.
   - Every copy that is active, or still running in this document,
     gets a row; the inactive ones are hidden.
+  - **Anything running in the page is listed under Enabled**, even when
+    it is disabled now (`Still running`) or wasn't expected
+    (`Unexpected`).
+  - A script **removed** since the page loaded that still runs in it is
+    listed under Enabled, in a `Removed scripts` group of its own: it
+    has no collection left.
+    - Its row has its name, a `Still running` pill and its menu
+      commands, with no checkbox, links or ⋯ menu.
+    - The banner reads `Reload required: Scripts removed`.
   - With none of those, one copy stands for the script in Disabled:
-    one whose own box is ticked (so its collection is off), else the
-    first in collection order.
+    the one closest to running and most recently turned off
+    ([script-enablement.md](script-enablement.md#the-popups-copy)).
   - Two copies **both enabled** get two rows, each in its own
     collection's group, with a second line: `Version 1.4`.
   - Only copies whose rules match the page count: a disabled copy that
     doesn't match isn't considered.
+  - A script that failed to load (`invalid`) counts too, when its rules
+    match. The match index keeps those rules apart, for this list only
+    (`findAllMatchingIds`): it is never registered.
 - Left to right:
-  - **Checkbox**: enable / disable that copy, like the collections
-    page's (not exclusive: other copies are left alone). Raises the
+  - **Checkbox**: enable / disable that copy. Exclusive, like every
+    enable checkbox: turning it on turns the script's other running
+    copies off, unless Ctrl/Cmd-clicked
+    ([script-enablement.md](script-enablement.md)). Raises the
     reload banner; the row moves to the other section only when the
     popup is next opened (see
     [A layout that stays put](#a-layout-that-stays-put)).
@@ -236,16 +250,16 @@ page it affects:
   - Not over `Rejected`, which a reload doesn't cure.
   - Not in an sm-dev tab, where the run decides: there it's
     `Not loaded`.
-- **Still running** (purple outline, Disabled section): disabled since
+- **Still running** (purple outline, Enabled section): disabled since
   load, by its own box or its collection's, but still running in this
   document.
-  - Also a script deleted since load that is still running. It lists
-    under a `Deleted scripts` heading at the end of Disabled, with no
-    box, no script page link and no actions menu, since the script is
-    gone. Its `GM_registerMenuCommand` commands still show, and its
-    pill reloads the page.
 - Both turn the toolbar badge purple, as `Updated` does: a reload
   would change what runs.
+- **Invalid** (red): its rules match, but it failed to load, so it
+  can't run. Enabled or not, in either section.
+  - Its tooltip gives the load error.
+  - No reload banner: a reload won't run it.
+  - Red on the toolbar badge too, when the script is enabled.
 - Disabled rows otherwise show no pill.
 
 ### Warnings
@@ -274,6 +288,8 @@ Every pill has a tooltip:
     disabled.
 - A last line saying what a click does: `Click to reload the page.` on
   Reload to run, `Click to open the script log.` on the rest.
+  - None on a removed script's row: there is no script page left to
+    open, and its pill isn't a link.
 - The heading's `Collection off` badge gets one too: `This collection
   is disabled, so none of its scripts run`.
 
@@ -322,7 +338,11 @@ Within each section, scripts sit under a heading per collection.
   - A `Collection off` badge when the collection itself is off.
   - A **⋯ menu**: Collection details, Enable / Disable collection,
     Collection options (the edit dialog).
-- A collection that's off puts all its scripts under Disabled.
+    - Enable / Disable keeps one copy of each script running, as the
+      collections page's toggle does
+      ([script-enablement.md](script-enablement.md#turning-a-collection-on)).
+- A collection that's off puts its scripts under Disabled, except any
+  still running in the page.
   - Their rows are greyed, ticked boxes included: the box shows the
     script's own setting, which is kept but has no effect.
   - The box's tooltip adds a second line: `Script will not run because
@@ -343,7 +363,9 @@ Within each section, scripts sit under a heading per collection.
   - `sm:popup-reload` reloads with a `ReloadMode`.
   - `sm:popup-command` runs a menu command.
   - `sm:popup-set-enabled` ticks or unticks a script's or collection's
-    box (`setScriptEnabled`, `setCollectionEnabled` in the worker).
+    box, with `solo` for a Ctrl/Cmd-click (`setScriptEnabledExclusive`,
+    `setCollectionEnabledExclusive` in the worker; see
+    [script-enablement.md](script-enablement.md)).
 - **Closing**: over the port, the worker sends `sm:popup-close` when
   a double click takes the popup back, and the popup sends
   `sm:popup-closing` before it closes itself after an action.
@@ -369,8 +391,8 @@ Within each section, scripts sit under a heading per collection.
 - **Empty states**: `No scripts match this page.`, and on a page no
   script can run on (`chrome://`, `about:`): `SourceMonkey can't run
   scripts on this page.`
-- **Not listed**: a script deleted since it ran here, and an sm-dev
-  run's scratch script outside that run's tabs.
+- **Not listed**: a script removed since load that isn't running here,
+  and an sm-dev run's scratch script outside that run's tabs.
 
 ## Load time
 

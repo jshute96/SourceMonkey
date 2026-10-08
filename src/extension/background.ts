@@ -16,6 +16,7 @@
 // extension via `serviceWorker.evaluate(...)` — MV3 service workers
 // can't be triggered from a Playwright toolbar click.
 
+import { describeDiagnostic } from '../diagnostic-location.js';
 import {
   debugDumpCache,
   ensureLoaded,
@@ -144,6 +145,7 @@ import {
   type RefreshBatch,
   getScript,
   getScripts,
+  getEnablementTimes,
   isScriptEnabled,
   isCollectionEnabled,
   getCollection,
@@ -328,6 +330,7 @@ import {
   type ReloadMode,
 } from './popup-view.js';
 import { identityKey } from './script-identity.js';
+import { setCollectionEnabledExclusive, setScriptEnabledExclusive } from './script-enablement.js';
 import { scriptDisplayName } from '../script-display.js';
 
 interface SourceMonkeyApi {
@@ -429,6 +432,7 @@ interface SourceMonkeyApi {
   setCollectionLocalFiles: (id: string, localFiles: boolean) => Promise<StoredCollection | null>;
   setLocalRoots: (paths: string[]) => Promise<void>;
   setScriptEnabled: (id: string, enabled: boolean) => Promise<StoredScript | null>;
+  getEnablementTimes: () => Promise<Record<string, { activeSince?: number; inactiveSince?: number }>>;
   updateCollection: (id: string, mode: 'manual' | 'opportunistic') => Promise<unknown>;
   // `probe` mirrors the production signature: `'force'` is what a real
   // Refresh click passes, and several behaviors key off it (upstream
@@ -687,6 +691,7 @@ const api: SourceMonkeyApi = {
     _setLocalRootsForTests(roots);
   },
   setScriptEnabled,
+  getEnablementTimes,
   updateCollection,
   updateScript,
   updateAllCollections,
@@ -699,7 +704,8 @@ const api: SourceMonkeyApi = {
       popupViewForTab(tabId),
     ]);
     // The popup's rows, as `Name | STATUS`, for the ones with a status.
-    const rows = [...[...view.enabled, ...view.disabled].flatMap((g) => g.rows), ...view.deleted]
+    const rows = [...view.enabled, ...view.disabled]
+      .flatMap((g) => g.rows)
       .filter((r) => r.status !== null)
       .map((r) => `${r.name} | ${r.status}`);
     return { badgeText, badgeColor, title, rows, record };
@@ -1936,12 +1942,10 @@ async function buildTabView(
   const loadUrl = state?.loadUrl;
   const loadUrlMatchingIds = loadUrl && loadUrl !== url ? new Set(findAllMatchingIds(loadUrl)) : undefined;
   const ids = [...new Set([...matching, ...badgeRows.map((r) => r.id), ...keepIds])];
-  const [stored, collections] = await Promise.all([popupScriptInputs(ids), getCollections()]);
+  const [stored, collections, times] = await Promise.all([popupScriptInputs(ids), getCollections(), getEnablementTimes()]);
   // A scratch script runs only in its own run's tabs, so elsewhere it
   // isn't listed, as on the badge (`expectedMatches`).
   const listed = stored.filter((s) => s.run === null || s.run === state?.smDevRun);
-  const storedIds = new Set(stored.map((s) => s.input.id));
-  const deletedIds = new Set(badgeRows.map((r) => r.id).filter((id) => !storedIds.has(id)));
   const view = buildPopupView({
     url,
     injectable,
@@ -1949,7 +1953,11 @@ async function buildTabView(
     badgeRows,
     rejected,
     matchingIds: new Set(matching),
-    scripts: listed.map((s) => s.input),
+    scripts: listed.map((s) => ({
+      ...s.input,
+      activeSince: times[s.input.id]?.activeSince,
+      inactiveSince: times[s.input.id]?.inactiveSince,
+    })),
     collections: collections.map((c) => ({
       id: c.id,
       name: effectiveDisplayName(c),
@@ -1959,7 +1967,7 @@ async function buildTabView(
     menuCommands: getMenuCommandsForTab(tabId),
     keepIds: new Set(keepIds),
     loadUrlMatchingIds,
-    deletedIds,
+    hiddenIds: new Set(stored.filter((s) => !listed.includes(s)).map((s) => s.input.id)),
   });
   return view;
 }
@@ -1968,8 +1976,10 @@ async function buildTabView(
 // badge paint builds that view, and paints come with every script
 // report, so reading whole rows (bodies included) each time would be a
 // storage read per report. A write to a script's row drops its entry.
+// The copy's active times live in their own storage key, so they're
+// read per view rather than cached here.
 interface CachedPopupScript {
-  input: PopupScriptInput;
+  input: Omit<PopupScriptInput, 'activeSince' | 'inactiveSince'>;
   // The sm-dev run a scratch script belongs to, or null.
   run: string | null;
 }
@@ -2002,6 +2012,10 @@ async function popupScriptInputs(ids: readonly string[]): Promise<CachedPopupScr
           identity: identityKey(s.header ?? null),
           version: (s.header ? getValue(s.header, 'version')?.trim() : '') || null,
           headerWarnings: s.startupLogs?.some((l) => l.level === 'warn') ?? false,
+          location: s.fileUrl,
+          ...(s.status === 'invalid'
+            ? { invalid: s.errorMessage ? describeDiagnostic(s.errorMessage, s.errorLocation) : '' }
+            : {}),
         },
         run: scratchRunOf(s.fileUrl),
       });
@@ -2153,7 +2167,11 @@ function installPopupListener(): void {
         sendResponse(null);
         return undefined;
       }
-      const write = req.target === 'script' ? setScriptEnabled(req.id, req.enabled) : setCollectionEnabled(req.id, req.enabled);
+      // Exclusive, as every enable control is (docs/script-enablement.md).
+      const solo = req.solo === true;
+      const write = req.target === 'script'
+        ? setScriptEnabledExclusive(req.id, req.enabled, solo)
+        : setCollectionEnabledExclusive(req.id, req.enabled, solo);
       // `ok` tells the popup whether to put the box back.
       write.then(
         () => { try { sendResponse({ ok: true }); } catch { /* popup gone */ } },

@@ -157,7 +157,10 @@ own: change them only when asked to.
   on disk)`, and a collection's `Refresh pending: ...`. `script
   refresh` / `collection refresh` load it.
 - Installing, moving or enabling a script turns off its other running
-  copies, as SourceMonkey's viewer does, and lists each one. An
+  copies, as SourceMonkey does, and lists each one. Enabling a
+  collection does the same without listing them, and disabling it
+  turns back on what it turned off. A new file a `collection refresh`
+  finds lands disabled when its script already has an enabled copy. An
   enabled script in a disabled collection is said not to run.
 
 ## Tabs

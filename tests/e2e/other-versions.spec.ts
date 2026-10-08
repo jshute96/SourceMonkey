@@ -732,6 +732,9 @@ test.describe('other-versions panel', () => {
     // collection so there is something to disable before installing `b`.
     await sm.addCollection(write('other.user.js', 'Unrelated Script'));
     await sm.addCollection(dir.path);
+    // Adding the folder left only one of its two copies on; tick both,
+    // so the assertions below can tell a sweep from no sweep.
+    for (const s of await allScripts(sm)) await sm.setScriptEnabled(s.id, true);
     await sm.syncNow();
 
     const container = (await sm.getCollections()).find((s) => s.path !== dir.path)!;

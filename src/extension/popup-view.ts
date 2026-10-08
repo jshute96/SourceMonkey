@@ -6,17 +6,20 @@
 // rules can be unit tested. Design: docs/status-popup.md.
 
 import { compareScriptNames } from '../script-display.js';
+import { comparePreferred, preferredCopy } from './copy-preference.js';
 import { skippedOnDocument, type BadgeRow, type RowStatus, type TabMatchState } from './tab-status.js';
 
-// The badge's statuses, plus ones only the popup tells apart:
+// The badge's statuses, plus the ones only the popup shows:
 //   - PENDING: enabled since the page loaded; a reload would run it.
 //   - STILL_RUNNING: disabled since the page loaded (its own box or its
-//     collection's), or deleted since, but still running in this
+//     collection's), or removed since, but still running in this
 //     document.
 //   - WARNING: running (OK otherwise), with a warning: one its header
 //     earns on every load, or one it logged from this tab. Every other
 //     status outranks it.
-export type PopupStatus = RowStatus | 'PENDING' | 'STILL_RUNNING' | 'WARNING';
+//   - INVALID: targets this page, but failed to load, so it can't run.
+//     A reload won't change that. Shown whether enabled or not.
+export type PopupStatus = RowStatus | 'PENDING' | 'STILL_RUNNING' | 'WARNING' | 'INVALID';
 
 export const POPUP_STATUS_LABELS: Record<PopupStatus, string> = {
   OK: 'Running',
@@ -29,6 +32,7 @@ export const POPUP_STATUS_LABELS: Record<PopupStatus, string> = {
   PENDING: 'Reload to run',
   STILL_RUNNING: 'Still running',
   WARNING: 'Warning',
+  INVALID: 'Invalid',
 };
 
 // Every pill's tooltip ends with what a click does: a Reload to run
@@ -42,6 +46,10 @@ export const COLLECTION_OFF_LABEL = 'Collection off';
 export const COLLECTION_OFF_TOOLTIP = 'This collection is disabled, so none of its scripts run';
 export const POPUP_NO_SCRIPTS = 'No scripts match this page.';
 export const POPUP_NOT_INJECTABLE = 'SourceMonkey can\'t run scripts on this page.';
+// The group for scripts removed since the page loaded that still run in
+// it: no stored row or collection is left to list them under.
+export const REMOVED_GROUP_ID = 'sm:removed';
+export const REMOVED_GROUP_NAME = 'Removed scripts';
 
 // What the popup needs to know about one stored script.
 export interface PopupScriptInput {
@@ -55,6 +63,15 @@ export interface PopupScriptInput {
   version: string | null;
   // Its header earns a warning on every load (`startupLogs`).
   headerWarnings: boolean;
+  // `StoredScript.fileUrl` and the copy's active times (`enablementTimes`):
+  // what picks the copy shown for a script none of whose copies is
+  // active or running.
+  location: string;
+  activeSince?: number;
+  inactiveSince?: number;
+  // Set when the script failed to load (`status: 'invalid'`): why, as
+  // the script page words it.
+  invalid?: string;
 }
 
 export interface PopupCollectionInput {
@@ -94,9 +111,10 @@ export interface PopupViewInput {
   // document loaded at. Absent when the URL hasn't changed, or isn't
   // known.
   loadUrlMatchingIds?: ReadonlySet<string>;
-  // Scripts with a badge row that are no longer stored: deleted since
-  // they ran here.
-  deletedIds?: ReadonlySet<string>;
+  // Stored scripts not listed here at all: an sm-dev run's scratch
+  // scripts, outside that run's tabs. Not taken for removed ones when
+  // they show up in the tab's state.
+  hiddenIds?: ReadonlySet<string>;
 }
 
 export interface PopupRow {
@@ -112,6 +130,9 @@ export interface PopupRow {
   tooltip: string | null;
   // `Version X`, only when another copy of the script is active too.
   versionLine: string | null;
+  // Other copies of the script match this page, so turning this one on
+  // may turn them off (the checkbox tooltip says how to opt out).
+  otherCopies: boolean;
   commands: PopupMenuCommand[];
 }
 
@@ -132,9 +153,6 @@ export interface PopupView {
   perScriptReload: boolean;
   enabled: PopupGroup[];
   disabled: PopupGroup[];
-  // Scripts deleted since the page loaded that are still running in
-  // it, by name. Still running, since a reload would remove them.
-  deleted: PopupRow[];
   // Every collection, in collections-page order: the popup's frozen
   // layout can hold a group the sections above no longer have.
   collections: PopupCollectionInput[];
@@ -186,6 +204,8 @@ export interface PopupCommandRequest {
 }
 export interface PopupSetEnabledRequest {
   type: typeof POPUP_SET_ENABLED_MESSAGE; target: 'script' | 'collection'; id: string; enabled: boolean;
+  // Ctrl/Cmd-clicked: change only this, leaving other copies alone.
+  solo?: boolean;
 }
 export interface PopupChangedMessage { type: typeof POPUP_CHANGED_MESSAGE; tabId: number }
 export interface PopupCloseMessage { type: typeof POPUP_CLOSE_MESSAGE }
@@ -202,10 +222,11 @@ const DEFAULT_TOOLTIPS: Record<PopupStatus, string> = {
   PENDING: 'Enabled since this page loaded. Reload to run it.',
   STILL_RUNNING: 'Disabled since this page loaded. It keeps running until a reload.',
   WARNING: 'Running on this page, with warnings',
+  INVALID: 'The script failed to load, so it can\'t run',
 };
 
-// STILL_RUNNING's tooltip for a script deleted since the page loaded.
-const DELETED_TOOLTIP = 'Deleted since this page loaded. It keeps running until a reload.';
+// STILL_RUNNING's tooltip for a script removed since the page loaded.
+const REMOVED_TOOLTIP = 'Removed since this page loaded. It keeps running until a reload.';
 
 // PENDING's tooltip for a script that matches only the URL the page
 // moved to in place: Chrome injects at a document load, not on pushState.
@@ -227,7 +248,6 @@ export interface BannerCauses {
   updated?: boolean;
   enabled?: boolean;
   disabled?: boolean;
-  deleted?: boolean;
   // A reload may well settle these too: a script that should be running
   // isn't (MISSING), or one is running that shouldn't be (UNEXPECTED).
   // Both are common after the extension restarted under an open page,
@@ -236,15 +256,17 @@ export interface BannerCauses {
   unexpected?: boolean;
   // A script matches only the URL the page moved to in place.
   notYetRun?: boolean;
+  // A script removed since the page loaded still runs in it.
+  removed?: boolean;
 }
 
 // The reload banner's text, naming the most specific cause.
 export function bannerText(c: BannerCauses): string | null {
-  if (c.enabled && (c.disabled || c.deleted)) return 'Reload required: Enabled scripts changed';
+  if (c.enabled && (c.disabled || c.removed)) return 'Reload required: Enabled scripts changed';
   if (c.enabled) return 'Reload required: Scripts enabled';
-  if (c.disabled && c.deleted) return 'Reload required: Scripts disabled or deleted';
+  if (c.disabled && c.removed) return 'Reload required: Scripts disabled and removed';
   if (c.disabled) return 'Reload required: Scripts disabled';
-  if (c.deleted) return 'Reload required: Scripts deleted';
+  if (c.removed) return 'Reload required: Scripts removed';
   if (c.updated) return 'Reload required: Scripts updated';
   if (c.notYetRun) return 'Reload required: Some scripts haven\'t run on this page yet';
   if (c.missing && c.unexpected) return 'Reload required: Some scripts are missing or unexpected';
@@ -264,7 +286,6 @@ export function buildPopupView(input: PopupViewInput): PopupView {
     perScriptReload: !smDev && state != null,
     enabled: [],
     disabled: [],
-    deleted: [],
     collections: [...input.collections],
   };
   if (!input.injectable) return view;
@@ -282,41 +303,60 @@ export function buildPopupView(input: PopupViewInput): PopupView {
   const keep = input.keepIds ?? new Set<string>();
   const candidates = new Set<string>([...input.matchingIds, ...badgeById.keys(), ...keep]);
   const byIdentity = new Map<string, PopupScriptInput[]>();
+  // Scripts deleted since they ran that still run here: listed in a
+  // group of their own, since they have no collection left.
+  const removed: string[] = [];
   for (const id of candidates) {
     const s = scripts.get(id);
-    // A script deleted since it ran lists apart (`deleted` below).
-    if (!s || !collections.has(s.collectionId)) continue;
+    if (!s || !collections.has(s.collectionId)) {
+      if (isRunning(id) && !input.hiddenIds?.has(id)) removed.push(id);
+      continue;
+    }
     const key = s.identity ?? `id:${s.id}`;
     const list = byIdentity.get(key);
     if (list) list.push(s); else byIdentity.set(key, [s]);
   }
-  const collectionOrder = new Map(input.collections.map((c, i) => [c.id, i]));
-  const shown: { script: PopupScriptInput; dup: boolean }[] = [];
+  const shown: { script: PopupScriptInput; dup: boolean; otherCopies: boolean }[] = [];
   for (const copies of byIdentity.values()) {
+    const otherCopies = copies.length > 1;
     const live = copies.filter((s) => isActive(s) || isRunning(s.id));
     const kept = copies.filter((s) => keep.has(s.id) && !live.includes(s));
     if (live.length > 0 || kept.length > 0) {
       const activeCount = live.filter(isActive).length;
-      for (const s of [...live, ...kept]) shown.push({ script: s, dup: activeCount > 1 && isActive(s) });
+      for (const s of [...live, ...kept]) shown.push({ script: s, dup: activeCount > 1 && isActive(s), otherCopies });
       continue;
     }
-    // The representative: a copy whose own box is ticked (so its
-    // collection is what's off), else the first in collection order.
-    const pick = copies.slice().sort((a, b) =>
-      Number(b.enabled) - Number(a.enabled)
-      || (collectionOrder.get(a.collectionId)! - collectionOrder.get(b.collectionId)!))[0]!;
-    shown.push({ script: pick, dup: false });
+    // The representative: the copy closest to running and most likely
+    // to be turned back on (`comparePreferred`, docs/script-enablement.md).
+    const pick = preferredCopy(copies, (s) => {
+      const c = collections.get(s.collectionId)!;
+      return {
+        enabled: s.enabled,
+        collectionOn: c.enabled,
+        collectionName: c.name,
+        activeSince: s.activeSince,
+        inactiveSince: s.inactiveSince,
+        version: s.version,
+        location: s.location,
+      };
+    }, comparePreferred)!;
+    shown.push({ script: pick, dup: false, otherCopies });
   }
 
   const causes: BannerCauses = {};
   const rowsByCollection = { enabled: new Map<string, PopupRow[]>(), disabled: new Map<string, PopupRow[]>() };
-  for (const { script: s, dup } of shown) {
+  for (const { script: s, dup, otherCopies } of shown) {
     const active = isActive(s);
     const badge = badgeById.get(s.id);
     let status: PopupStatus | null = null;
     // PENDING only because the page changed its URL in place.
     let movedOnly = false;
-    if (active) {
+    if (s.invalid !== undefined && !isRunning(s.id)) {
+      // Never registered, so no badge row, and a reload won't run it:
+      // not PENDING, and no banner. Disabled ones say so too, so it's
+      // clear that turning one on won't make it run.
+      status = 'INVALID';
+    } else if (active) {
       status = badge?.status ?? (state ? 'PENDING' : null);
       // Matched now but not when the page loaded, and never reported:
       // enabled (or installed) since, or matching only the URL the page
@@ -350,6 +390,7 @@ export function buildPopupView(input: PopupViewInput): PopupView {
       if (status === 'ERROR' && badge?.message) text = badge.message;
       if (status === 'REJECTED' && input.rejected[s.id]) text = input.rejected[s.id]!;
       if (status === 'NOT_LOADED' && state) text = notLoadedReason(state, nameOf);
+      if (status === 'INVALID' && s.invalid) text = `${DEFAULT_TOOLTIPS.INVALID}: ${s.invalid}`;
       if (movedOnly) text = MOVED_ONLY_TOOLTIP;
       if (status === 'STILL_RUNNING' && s.enabled) {
         text = 'Its collection was disabled since this page loaded. It keeps running until a reload.';
@@ -365,9 +406,12 @@ export function buildPopupView(input: PopupViewInput): PopupView {
       warned,
       tooltip,
       versionLine: dup && s.version ? `Version ${s.version}` : null,
+      otherCopies,
       commands: active || isRunning(s.id) ? [...(input.menuCommands.get(s.id) ?? [])] : [],
     };
-    const into = active ? rowsByCollection.enabled : rowsByCollection.disabled;
+    // Anything running in the page is listed with the active scripts,
+    // even when it's disabled now (Still running) or unexpected.
+    const into = active || isRunning(s.id) ? rowsByCollection.enabled : rowsByCollection.disabled;
     const list = into.get(s.collectionId);
     if (list) list.push(row); else into.set(s.collectionId, [row]);
   }
@@ -381,23 +425,27 @@ export function buildPopupView(input: PopupViewInput): PopupView {
       }));
   view.enabled = toGroups(rowsByCollection.enabled);
   view.disabled = toGroups(rowsByCollection.disabled);
-  for (const id of input.deletedIds ?? []) {
-    const badge = badgeById.get(id);
-    if (!badge || !isRunning(id)) continue;
-    causes.deleted = true;
-    view.deleted.push({
-      id,
-      name: badge.name,
-      checked: false,
-      active: false,
-      status: 'STILL_RUNNING',
-      warned: false,
-      tooltip: `${DELETED_TOOLTIP}\n${POPUP_PILL_RELOAD_HINT}`,
-      versionLine: null,
-      commands: [...(input.menuCommands.get(id) ?? [])],
+  if (removed.length > 0) {
+    causes.removed = true;
+    const collection: PopupCollectionInput = { id: REMOVED_GROUP_ID, name: REMOVED_GROUP_NAME, path: '', enabled: true };
+    view.collections.push(collection);
+    view.enabled.push({
+      collection,
+      rows: removed.map((id): PopupRow => ({
+        id,
+        name: nameOf(id),
+        checked: false,
+        active: false,
+        status: 'STILL_RUNNING',
+        warned: false,
+        // No click hint: there is no script page left to open.
+        tooltip: REMOVED_TOOLTIP,
+        versionLine: null,
+        otherCopies: false,
+        commands: [...(input.menuCommands.get(id) ?? [])],
+      })).sort((a, b) => compareScriptNames(a.name, b.name)),
     });
   }
-  view.deleted.sort((a, b) => compareScriptNames(a.name, b.name));
   view.banner = bannerText(causes);
   return view;
 }

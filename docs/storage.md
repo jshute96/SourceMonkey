@@ -31,6 +31,7 @@ Key spaces in `chrome.storage.local`:
 | `"scratchSource:<url>"` | `ScratchSource` | The file a scratch script was read from (its `file://` URL, and its path as the run was given it), for sm-dev's `script list`; absent from an sm-dev before protocol 1.2. |
 | `"scriptNumbers"`      | `StickyNumbers`     | Each script's number, and the removed scripts' numbers held back from reuse (see [Sticky numbers](#sticky-numbers)). |
 | `"connectGrants:<scid>"` | `ConnectGrants` | The hosts the user allowed (or "all sites") or denied a script's `GM_xmlhttpRequest` beyond its `@connect` rules (see [connect-permissions.md](connect-permissions.md)). Removed with the script. |
+| `"enablementTimes"`    | `Record<scid, EnablementTimes>` | When each script last became active and went inactive (see [script-enablement.md](script-enablement.md#active-times)). One key, not fields on the rows, so a collection toggle doesn't rewrite every row. |
 | `"collectionNumbers"`  | `StickyNumbers`     | Each collection's number, and the removed collections' numbers held back from reuse (see [Sticky numbers](#sticky-numbers)). |
 
 Key spaces in `chrome.storage.session` — everything here is dropped on
@@ -869,14 +870,19 @@ content, no header) before the refresh that loads it — see
   [Vanished entries](#vanished-entries)); other files that went are
   the collection-level Refresh's to notice. A manifest entry is never
   dropped by this path — the manifest decides what it lists.
-- `setCollectionEnabled(id, enabled)` / `setScriptEnabled(id, enabled)` —
-  flip the per-collection / per-script `enabled` flag with a single-row
-  write. The match index picks up the change via `storage.onChanged`.
-- `setScriptsEnabled(updates)` — bulk variant: flips many scripts'
-  enabled flags in a **single** `chrome.storage.local.set` call.
-  Used by the collections page's bulk +/− toggle so 15 flips fire one
-  `storage.onChanged` event (and therefore one background re-sync)
-  instead of one per script.
+- `writeEnablement({ collection?, scripts?, started? })` — the one enable
+  write. Flips a collection's flag and scripts' flags in a **single**
+  `chrome.storage.local.set`, and stamps the active times (the
+  `enablementTimes` key) of every copy whose active state changed. Only
+  rows whose own flag changed are rewritten. See [script-enablement.md](script-enablement.md#active-times).
+  The match index picks up the change via `storage.onChanged`.
+- `setCollectionEnabled(id, enabled)` / `setScriptEnabled(id, enabled)` /
+  `setScriptsEnabled(updates)` — thin wrappers over it, touching
+  nothing else. The UI's toggles go through `script-enablement.ts`
+  instead, which keeps one copy of each script running.
+  - The bulk form exists so 15 flips fire one `storage.onChanged`
+    event (and therefore one background re-sync) instead of one per
+    script.
 
 ### Write serialization (`mutate`)
 
@@ -944,6 +950,8 @@ round-trip. Narrow enough to leave, written down so nobody widens them:
 - Two contexts both passing the same `addCollection` / `installScript`
   dedup check.
 - An enable toggle landing between a refresh's re-read and its write.
+- Two contexts rewriting `enablementTimes` at once, which drops one's
+  stamps (see [script-enablement.md](script-enablement.md#limitations)).
 
 ### Membership disagreements
 
@@ -1112,8 +1120,12 @@ collection**:
   `github` / `scratch`) after the name, since one such collection can
   mix them, and a trailing per-row remove button.
   - Header's first cell is a small `+` / `−` bulk-toggle button:
-    flips every script under this collection on (when not all are on) or
-    off (when all are on). Greyed when the collection itself is off.
+    turns the collection's scripts on (one copy per script, see
+    [script-enablement.md](script-enablement.md#enable-all)) or every
+    one off (once every script has a copy on). Greyed when the
+    collection itself is off.
+  - Every toggle on the page is exclusive, with a Ctrl/Cmd-click
+    opt-out ([script-enablement.md](script-enablement.md)).
   - First column of each row is a per-script enable toggle. When the
     collection is disabled, the script toggles are visually greyed and
     the checkbox itself is `disabled` (the underlying value is
@@ -1434,8 +1446,9 @@ on every interaction. Each user action mutates only the affected DOM:
   per-script toggle, and re-evaluates the bulk-toggle's symbol.
 - Per-script toggle → flips `.disabled` on that row + recomputes the
   bulk-toggle symbol.
-- Bulk +/− → one `setScriptsEnabled(updates)` write (one
-  `storage.onChanged`, one background re-sync), then flips every row.
+- Bulk +/− → one `setAllScriptsEnabled` write (one
+  `storage.onChanged`, one background re-sync), then repaints every
+  row's box from storage, since "Enable all" may leave a copy off.
 - Add directory, Remove, Refresh, Refresh All → write, then repaint
   from storage (see [Live repaint](#live-repaint-changes-from-any-origin)).
   The section list, the empty placeholder, and each row follow from what

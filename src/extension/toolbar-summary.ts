@@ -38,16 +38,21 @@ const has = (n: number) => (n === 1 ? 'has' : 'have');
 const is = (n: number) => (n === 1 ? 'is' : 'are');
 
 export function summarizeToolbar(view: PopupView, state: TabMatchState | null): ToolbarSummary {
-  const rows: PopupRow[] = [...[...view.enabled, ...view.disabled].flatMap((g) => g.rows), ...view.deleted];
+  // An invalid script that isn't enabled is listed for reference only:
+  // it wasn't going to run, so it's not this page's problem.
+  const rows: PopupRow[] = [...view.enabled, ...view.disabled]
+    .flatMap((g) => g.rows)
+    .filter((r) => r.status !== 'INVALID' || r.active);
   const count = (pred: (r: PopupRow) => boolean) => rows.filter(pred).length;
   const withStatus = (...statuses: string[]) => count((r) => r.status !== null && statuses.includes(r.status));
 
   const running = count((r) => state?.actual[r.id] != null);
   const errors = withStatus('ERROR');
   const rejected = withStatus('REJECTED');
+  const invalid = withStatus('INVALID');
   // What a reload would change, each its own line: updated on disk,
   // enabled since the page loaded (or matching only the URL it moved
-  // to), disabled or deleted since but still running.
+  // to), disabled or removed since but still running.
   const updated = withStatus('RELOAD');
   const added = withStatus('PENDING');
   const removed = withStatus('STILL_RUNNING');
@@ -64,6 +69,7 @@ export function summarizeToolbar(view: PopupView, state: TabMatchState | null): 
     if (running > 0) lines.push(`${scripts(running)} running.`);
     if (errors > 0) lines.push(`${scripts(errors)} ${has(errors)} errors.`);
     if (rejected > 0) lines.push(`Chrome rejected ${scripts(rejected)}.`);
+    if (invalid > 0) lines.push(`${scripts(invalid)} failed to load.`);
     if (updated > 0) lines.push(`Reload needed to update ${scripts(updated)}.`);
     if (added > 0) lines.push(`Reload needed to add ${scripts(added)}.`);
     if (removed > 0) lines.push(`Reload needed to remove ${scripts(removed)}.`);
@@ -78,7 +84,7 @@ export function summarizeToolbar(view: PopupView, state: TabMatchState | null): 
   // off green for good.
   let color: string | null = null;
   if (anyStatus) {
-    if (errors + rejected > 0) color = BADGE_RED;
+    if (errors + rejected + invalid > 0) color = BADGE_RED;
     else if (updated + added + removed > 0) color = BADGE_PURPLE;
     else if (missing + unexpected > 0) color = BADGE_ORANGE;
     // Grey says nothing ran: not for a tab where some scripts were kept

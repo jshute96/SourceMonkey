@@ -96,10 +96,6 @@
         color: var(--muted); border: 1px solid #c8c8c8; white-space: nowrap;
       }
       .group-head.off .collection-name, .group-head.off .collection-type-bubble { opacity: 0.6; }
-      .group-head.deleted { color: var(--muted); }
-      /* No box: line the name up with the other rows' names. */
-      .row.deleted .row-main { padding-left: 20px; }
-      .row.deleted .script-name:hover { text-decoration: none; }
 
       .row { padding: 4px 6px 4px 8px; border-bottom: 1px solid #f1ede7; }
       .row:last-child { border-bottom: none; }
@@ -130,7 +126,7 @@
       button.pill { height: auto; padding: 0; }
       .pill:hover { filter: brightness(0.92); }
       .pill.ok { background: var(--green); }
-      .pill.error, .pill.rejected { background: var(--red); }
+      .pill.error, .pill.rejected, .pill.invalid { background: var(--red); }
       .pill.reload { background: var(--purple); }
       .pill.missing, .pill.unexpected { background: var(--orange); }
       .pill.not-loaded { background: var(--grey); }

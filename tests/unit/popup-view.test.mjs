@@ -15,7 +15,7 @@ const COLLS = [
 ];
 
 function script(id, collectionId, extra = {}) {
-  return { id, name: id, collectionId, enabled: true, identity: null, version: null, headerWarnings: false, ...extra };
+  return { id, name: id, collectionId, enabled: true, identity: null, version: null, location: `/${collectionId}/${id}`, headerWarnings: false, ...extra };
 }
 
 function state(extra = {}) {
@@ -88,18 +88,53 @@ test('two active copies both show, each with its version', () => {
   assert.deepEqual(v.enabled.map((g) => g.rows[0].versionLine), ['Version 1.0', 'Version 2.0']);
 });
 
-test('with no copy running, one stands for the script: preferring one whose collection is off', () => {
+// With no copy running, the copy shown is the one closest to running
+// and most likely to be turned back on (docs/script-enablement.md).
+function shownCopy({ collections = COLLS, copies }) {
   const v = view({
     st: state(),
-    collections: [COLLS[0], { ...COLLS[1], enabled: false }],
+    collections,
+    scripts: copies.map(([id, coll, extra]) => script(id, coll, { identity: 'ns\u0000S', name: 'S', ...extra })),
+  });
+  assert.equal(v.disabled.length, 1);
+  assert.equal(v.disabled[0].rows.length, 1);
+  return v.disabled[0].rows[0].id;
+}
+
+test('with no copy running: one in an enabled collection before one ticked under a disabled collection', () => {
+  const collections = [COLLS[0], { ...COLLS[1], enabled: false }];
+  assert.equal(shownCopy({ collections, copies: [['s1', 'A', { enabled: false }], ['s2', 'B']] }), 's1');
+});
+
+test('with no copy running, under disabled collections: a ticked copy before an unticked one', () => {
+  const collections = [{ ...COLLS[0], enabled: false }, { ...COLLS[1], enabled: false }];
+  const id = shownCopy({ collections, copies: [['s1', 'A', { enabled: false, inactiveSince: 9 }], ['s2', 'B']] });
+  assert.equal(id, 's2');
+});
+
+test('with no copy running: the most recently stopped, then collection name', () => {
+  const off = { enabled: false };
+  assert.equal(shownCopy({ copies: [['s1', 'A', { ...off, inactiveSince: 1 }], ['s2', 'B', { ...off, inactiveSince: 2 }]] }), 's2');
+  assert.equal(shownCopy({ copies: [['s1', 'B', off], ['s2', 'A', off]] }), 's2');
+});
+
+test('with no copy running, in one collection: highest version, then location', () => {
+  const off = { enabled: false };
+  assert.equal(shownCopy({ copies: [['s1', 'A', { ...off, version: '1.10' }], ['s2', 'A', { ...off, version: '1.9' }]] }), 's1');
+  assert.equal(shownCopy({ copies: [['s1', 'A', { ...off, location: '/z' }], ['s2', 'A', { ...off, location: '/a' }]] }), 's2');
+});
+
+test('a row says whether other copies of its script match the page', () => {
+  const v = view({
+    st: state(),
     scripts: [
       script('s1', 'A', { identity: 'ns\u0000S', name: 'S', enabled: false }),
-      script('s2', 'B', { identity: 'ns\u0000S', name: 'S' }),
+      script('s2', 'B', { identity: 'ns\u0000S', name: 'S', enabled: false }),
+      script('t', 'A'),
     ],
   });
-  assert.deepEqual(names(v.disabled), ['B: S=null']);
-  assert.equal(v.disabled[0].rows[0].checked, true);
-  assert.equal(v.disabled[0].rows[0].active, false);
+  const rows = [...v.enabled, ...v.disabled].flatMap((g) => g.rows);
+  assert.deepEqual(rows.map((r) => [r.name, r.otherCopies]).sort(), [['S', true], ['t', false]]);
 });
 
 test('toggles since load: Reload to run, Still running, and the banner', () => {
@@ -107,13 +142,16 @@ test('toggles since load: Reload to run, Still running, and the banner', () => {
     st: state({ matches: [m('was')], actual: { was: { state: 'started', name: 'was' } }, loadMatchIds: ['was'] }),
     scripts: [script('was', 'A', { enabled: false }), script('now', 'A')],
   });
-  assert.deepEqual(names(v.enabled), ['A: now=PENDING']);
-  assert.deepEqual(names(v.disabled), ['A: was=STILL_RUNNING']);
+  // Still running in the page, so listed with the active scripts.
+  assert.deepEqual(names(v.enabled), ['A: now=PENDING, was=STILL_RUNNING']);
+  assert.deepEqual(v.disabled, []);
   assert.equal(v.banner, 'Reload required: Enabled scripts changed');
-  assert.match(v.disabled[0].rows[0].tooltip, /^Disabled since this page loaded/);
+  const was = v.enabled[0].rows.find((r) => r.id === 'was');
+  const now = v.enabled[0].rows.find((r) => r.id === 'now');
+  assert.match(was.tooltip, /^Disabled since this page loaded/);
   // A click on Reload to run reloads; the other pills open the Log.
-  assert.match(v.enabled[0].rows[0].tooltip, /\nClick to reload the page\.$/);
-  assert.match(v.disabled[0].rows[0].tooltip, /\nClick to open the script log\.$/);
+  assert.match(now.tooltip, /\nClick to reload the page\.$/);
+  assert.match(was.tooltip, /\nClick to open the script log\.$/);
 });
 
 test('a running script whose collection was turned off says so', () => {
@@ -122,8 +160,8 @@ test('a running script whose collection was turned off says so', () => {
     collections: [{ ...COLLS[0], enabled: false }],
     scripts: [script('s', 'A')],
   });
-  assert.equal(v.disabled[0].rows[0].status, 'STILL_RUNNING');
-  assert.match(v.disabled[0].rows[0].tooltip, /^Its collection was disabled/);
+  assert.equal(v.enabled[0].rows[0].status, 'STILL_RUNNING');
+  assert.match(v.enabled[0].rows[0].tooltip, /^Its collection was disabled/);
   assert.equal(v.banner, 'Reload required: Scripts disabled');
 });
 
@@ -264,25 +302,54 @@ test('a running script with a warning shows Warning; every other status outranks
   assert.match(rows.find((r) => r.name === 'tab').tooltip, /^Running on this page, with warnings\n/);
 });
 
-test('a script deleted since it ran is listed apart as Still running, and the banner says so', () => {
+test('an invalid script that targets the page shows as Invalid, with no banner', () => {
   const v = view({
-    st: state({
-      matches: [m('a'), m('gone')],
-      actual: { a: { state: 'started', name: 'a' }, gone: { state: 'started', name: 'Gone' } },
-      loadMatchIds: ['a', 'gone'],
-    }),
-    scripts: [script('a', 'A')],
-    commands: new Map([['gone', [{ commandId: 'c1', name: 'Do it' }]]]),
-    deletedIds: new Set(['gone']),
+    st: state(),
+    scripts: [script('bad', 'A', { invalid: 'The @require lib.js could not be loaded' }), script('off', 'A', { enabled: false, invalid: '' })],
   });
-  assert.deepEqual(names(v.enabled), ['A: a=OK']);
-  assert.deepEqual(v.deleted.map((r) => `${r.name}=${r.status}`), ['Gone=STILL_RUNNING']);
-  assert.match(v.deleted[0].tooltip, /^Deleted since this page loaded\. It keeps running until a reload\.\nClick to reload the page\.$/);
-  assert.deepEqual(v.deleted[0].commands.map((c) => c.name), ['Do it']);
-  assert.equal(v.banner, 'Reload required: Scripts deleted');
+  assert.deepEqual(names(v.enabled), ['A: bad=INVALID']);
+  assert.match(v.enabled[0].rows[0].tooltip, /failed to load, so it can't run: The @require lib\.js could not be loaded/);
+  // Disabled, it says Invalid too.
+  assert.deepEqual(names(v.disabled), ['A: off=INVALID']);
+  assert.equal(v.banner, null);
 });
 
-test('banner names deleted and disabled scripts together', () => {
-  assert.equal(bannerText({ disabled: true, deleted: true }), 'Reload required: Scripts disabled or deleted');
-  assert.equal(bannerText({ enabled: true, deleted: true }), 'Reload required: Enabled scripts changed');
+test('an unexpected script running in the page is listed with the active scripts', () => {
+  const v = view({
+    st: state({ actual: { u: { state: 'started', name: 'u' } } }),
+    scripts: [script('u', 'A', { enabled: false })],
+    matching: [],
+  });
+  assert.deepEqual(names(v.enabled), ['A: u=STILL_RUNNING']);
+});
+
+test('a script removed since the page loaded that still runs gets a group of its own', () => {
+  const v = view({
+    st: state({ actual: { gone: { state: 'started', name: 'Gone Script' } }, matches: [m('gone')], loadMatchIds: ['gone'] }),
+    scripts: [],
+    matching: [],
+  });
+  assert.deepEqual(names(v.enabled), ['sm:removed: Gone Script=STILL_RUNNING']);
+  assert.equal(v.enabled[0].collection.name, 'Removed scripts');
+  assert.match(v.enabled[0].rows[0].tooltip, /^Removed since this page loaded/);
+  assert.equal(v.banner, 'Reload required: Scripts removed');
+});
+
+test('a hidden script running in the page is not taken for a removed one', () => {
+  const v = view({
+    st: state({ actual: { scratch: { state: 'started', name: 'Scratch' } } }),
+    scripts: [],
+    matching: [],
+  });
+  assert.equal(v.enabled.length, 1);
+  const hidden = buildPopupView({
+    url: URL_, injectable: true, state: state({ actual: { scratch: { state: 'started', name: 'Scratch' } } }),
+    badgeRows: [], rejected: {}, matchingIds: new Set(), scripts: [], collections: COLLS,
+    menuCommands: new Map(), hiddenIds: new Set(['scratch']),
+  });
+  assert.deepEqual(hidden.enabled, []);
+});
+
+test('the banner names both disabled and removed scripts', () => {
+  assert.equal(bannerText({ disabled: true, removed: true }), 'Reload required: Scripts disabled and removed');
 });

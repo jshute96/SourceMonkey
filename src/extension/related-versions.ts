@@ -23,7 +23,6 @@ import { isContainerCollection, scriptAbsolutePath } from './directories.js';
 import {
   appendWithSlashBreaks,
   displayLocation,
-  ENABLE_TITLE,
   viewerUrl,
   type ScriptStatusView,
 } from '../script-display.js';
@@ -41,11 +40,12 @@ import { guardSelectOpeningClick } from './select-open-guard.js';
 import { setDeleteIcon } from './delete-icon.js';
 import { setGlyphButton } from './glyph.js';
 import { markFileChanges, scriptFileTag, tagLocalFile } from './file-changes.js';
+import { enableTitle, watchSoloModifier } from './solo-click.js';
 import {
   allRelatedRows,
   contentFingerprint,
   enableChanges,
-  otherRunningCopies,
+  otherActiveCopies,
   type InstallOption,
   type RelatedScript,
   type RelatedVersions,
@@ -56,63 +56,6 @@ import {
 // containers (or the not-yet-existing default), or "New collection…" —
 // which the caller answers by opening the create dialog first.
 export type InstallChoice = { option: InstallOption } | { newCollection: true };
-
-// What every enable checkbox says, and the tail it adds when clicking
-// it would sweep other copies. Shared so both surfaces say exactly the
-// same thing — the panel rows and the controls-row toggle are the same
-// control, and the hint is the only part of them that varies.
-//
-// Deliberately short, and deliberately fixed. Naming the copy would
-// repeat the Collection and Location cells an inch to the right, and
-// swapping to "Disable" when checked would make one control read two
-// ways for no gain.
-//
-// The hint names ONE key — the one this machine has. Only one of them
-// works here (on a Mac ctrl-click opens the context menu, so the
-// handler takes `metaKey` there and `ctrlKey` everywhere else), and a
-// message offering both would be telling half its readers about a
-// gesture their keyboard doesn't have. The docs say "Ctrl/Cmd" because
-// they describe every platform at once; the app knows which one it is
-// running on.
-const SOLO_HINT = ` (${isApplePlatform() ? 'Cmd' : 'Ctrl'}-click for multi-enable)`;
-
-// Resolved once, at module load — the platform can't change under us.
-// `userAgentData` is the supported spelling and is present in every
-// Chrome that can run this extension; `platform` is the fallback for a
-// non-Chrome host and for the tests' DOM stubs.
-function isApplePlatform(): boolean {
-  const data = (navigator as { userAgentData?: { platform?: string } }).userAgentData;
-  if (data?.platform) return data.platform === 'macOS';
-  return /mac|iphone|ipad/i.test(navigator.platform || '');
-}
-
-// Wording for an enable checkbox, hint included only when clicking it
-// would sweep other copies.
-export function enableTitle(sweepsOthers: boolean): string {
-  return sweepsOthers ? `${ENABLE_TITLE}${SOLO_HINT}` : ENABLE_TITLE;
-}
-
-// Wire a checkbox so its `change` handler can find out whether the
-// click that produced it carried the exclusive-opt-out modifier.
-// Returns a consume-once reader.
-//
-// Read from `click`, not `change`: `change` carries no modifier state.
-// Keyboard activation (space) fires a click too, so nothing is lost —
-// and `ctrlKey` is simply false there, which is the right default.
-// `metaKey` covers Cmd-click on a Mac, where ctrl-click is the context
-// menu. Consumed on read, so a later `change` that arrives without a
-// click in front of it can't inherit a modifier pressed once.
-export function watchSoloModifier(box: HTMLInputElement): () => boolean {
-  let solo = false;
-  box.addEventListener('click', (ev: MouseEvent) => {
-    solo = ev.ctrlKey || ev.metaKey;
-  });
-  return () => {
-    const was = solo;
-    solo = false;
-    return was;
-  };
-}
 
 export interface RelatedVersionsActions {
   // Apply every per-script enabled change a single click produced.
@@ -786,7 +729,7 @@ function enabledCell(
   // nothing else running there are no "others" to keep.
   label.title = collectionOff
     ? COLLECTION_OFF_TITLE
-    : enableTitle(otherRunningCopies(allRows, script.id).length > 0);
+    : enableTitle(otherActiveCopies(allRows, script.id).length > 0);
 
   // The screen-reader name carries what the tooltip drops. The checkbox
   // is the only content of its cell, so it has no accessible name from

@@ -376,16 +376,18 @@ Added by the popup's view (details in
 
 - `PENDING` — enabled or installed since the page loaded, or matching
   only the URL it moved to. A reload would run it.
-- `STILL_RUNNING` — disabled or deleted since the page loaded, but
+- `STILL_RUNNING` — disabled or removed since the page loaded, but
   still running.
 - `WARNING` — running, with a warning. Replaces `OK` only.
+- `INVALID` — its rules match, but it failed to load, so it can't
+  run. A reload won't change that.
 
 #### Badge
 
 - **Count** — the popup's rows that have a status, so it agrees with
   the lines below.
   - Scripts enabled since the page loaded count (`PENDING`).
-  - Ones disabled or deleted since that never started don't.
+  - Ones disabled or removed since that never started don't.
   - In a tab an sm-dev run controls, the scripts its claim kept out
     don't (`countsOnBadge`).
 - **Color** — red, purple, orange or grey, the first whose line
@@ -414,9 +416,10 @@ Click for details. Double-click for collections.
 | `N scripts running.` | Scripts that reported here, errored ones included | green `#2e7d32`, if no line below has a color |
 | `N scripts have errors.` | `ERROR` | red `#d32f2f` |
 | `Chrome rejected N scripts.` | `REJECTED` | red |
+| `N scripts failed to load.` | The popup's `INVALID`, for an enabled script | red |
 | `Reload needed to update N scripts.` | `RELOAD`: changed on disk since it ran | purple `#d500f9` |
 | `Reload needed to add N scripts.` | The popup's `PENDING`: enabled or installed since the page loaded, or matching only the URL it moved to | purple |
-| `Reload needed to remove N scripts.` | The popup's `STILL_RUNNING`: disabled or deleted since the page loaded | purple |
+| `Reload needed to remove N scripts.` | The popup's `STILL_RUNNING`: disabled or removed since the page loaded | purple |
 | `N expected scripts are not running.` | `MISSING` | orange `#f57c00` |
 | `N unexpected scripts are running.` | `UNEXPECTED` | orange |
 | `N scripts have warnings.` | Running with a warning (see [status-popup.md](status-popup.md#warnings)) | none |

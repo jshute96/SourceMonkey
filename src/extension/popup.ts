@@ -25,6 +25,7 @@ import {
   POPUP_STATUS_LABELS,
   POPUP_VIEW_MESSAGE,
   RELOAD_NO_SCRIPTS_LABEL,
+  REMOVED_GROUP_ID,
   type PopupChangedMessage,
   type PopupClosingMessage,
   type PopupCommandRequest,
@@ -41,6 +42,7 @@ import { SM_DEV_CONTROL_LABEL } from './tab-status.js';
 import { collectionAnchorId, EDIT_COLLECTION_HASH_PREFIX, makeCollectionTypeBubble } from './collection-display.js';
 import { installHomeLinkHandler, namedPageUrl, openExtensionTab, openNamedTab } from './page-links.js';
 import { touchesStructuralRows } from './structural-keys.js';
+import { enableTitle, watchSoloModifier } from './solo-click.js';
 import { ENABLE_TITLE, viewerUrl } from '../script-display.js';
 
 // The checkbox tooltip's second line under a disabled collection: the
@@ -221,12 +223,12 @@ function draw(v: PopupView | null): void {
     bannersEl.append(el('div', { class: 'banner-row reload' }, el('span', {}, v.banner), reload));
   }
   const { enabled, disabled } = arrange(v);
-  if (enabled.length === 0 && disabled.length === 0 && v.deleted.length === 0) {
+  if (enabled.length === 0 && disabled.length === 0) {
     scriptsEl.append(el('div', { class: 'empty-page' }, POPUP_NO_SCRIPTS));
     return;
   }
   renderSection('Enabled', enabled, 'No enabled scripts match this page.');
-  renderSection('Disabled', disabled, 'None', v.deleted);
+  renderSection('Disabled', disabled, 'None');
 }
 
 // ---------- A layout that stays put ----------
@@ -303,29 +305,15 @@ function arrange(v: PopupView): Record<SectionKey, PopupGroup[]> {
   return { enabled: build(layout.enabled), disabled: build(layout.disabled) };
 }
 
-function renderSection(title: string, groups: PopupGroup[], emptyText: string, deleted: PopupRow[] = []): void {
+function renderSection(title: string, groups: PopupGroup[], emptyText: string): void {
   const section = el('section', { class: 'script-section', 'data-section': title.toLowerCase() });
   section.append(el('div', { class: 'section-head' }, title));
-  if (groups.length === 0 && deleted.length === 0) section.append(el('div', { class: 'empty-note' }, emptyText));
+  if (groups.length === 0) section.append(el('div', { class: 'empty-note' }, emptyText));
   for (const group of groups) {
     section.append(groupHead(group));
     for (const row of group.rows) section.append(scriptRow(row, group));
   }
-  if (deleted.length > 0) {
-    section.append(el('div', { class: 'group-head deleted' }, el('span', {}, 'Deleted scripts')));
-    for (const row of deleted) section.append(deletedRow(row));
-  }
   scriptsEl.append(section);
-}
-
-// A script deleted since the page loaded, still running in it: no box
-// or page to open, since it's gone. Its pill reloads, which removes it.
-function deletedRow(row: PopupRow): HTMLElement {
-  const main = el('div', { class: 'row-main' }, el('span', { class: 'script-name' }, row.name));
-  if (row.status) main.append(reloadPill(row, row.status));
-  const out = el('div', { class: 'row off deleted', 'data-script-id': row.id }, main);
-  if (row.commands.length > 0) out.append(commandList(row));
-  return out;
 }
 
 // A pill whose click reloads the page, as the banner's Reload does.
@@ -342,6 +330,12 @@ function reloadPill(row: PopupRow, status: PopupStatus): HTMLElement {
 
 function groupHead(group: PopupGroup): HTMLElement {
   const c = group.collection;
+  // Scripts removed since the page loaded: a plain heading, with no
+  // collection to open or toggle.
+  if (c.id === REMOVED_GROUP_ID) {
+    return el('div', { class: 'group-head', 'data-collection-id': c.id },
+      el('span', { class: 'collection-name' }, c.name));
+  }
   const hash = collectionAnchorId(c.id);
   const name = el('a', {
     class: 'collection-name', href: namedPageUrl('collections', hash), target: '_blank',
@@ -377,14 +371,20 @@ function groupHead(group: PopupGroup): HTMLElement {
 const PILL_CLASSES: Record<PopupStatus, string> = {
   OK: 'ok', ERROR: 'error', REJECTED: 'rejected', RELOAD: 'reload', MISSING: 'missing',
   UNEXPECTED: 'unexpected', NOT_LOADED: 'not-loaded', PENDING: 'pending', STILL_RUNNING: 'still-running',
-  WARNING: 'warning',
+  WARNING: 'warning', INVALID: 'invalid',
 };
 
 function scriptRow(row: PopupRow, group: PopupGroup): HTMLElement {
-  const boxTitle = group.collection.enabled ? ENABLE_TITLE : `${ENABLE_TITLE}\n${SCRIPT_COLLECTION_OFF_HINT}`;
+  if (group.collection.id === REMOVED_GROUP_ID) return removedRow(row);
+  const boxTitle = group.collection.enabled
+    ? enableTitle(row.otherCopies)
+    : `${ENABLE_TITLE}\n${SCRIPT_COLLECTION_OFF_HINT}`;
   const box = el('input', { type: 'checkbox', title: boxTitle }) as HTMLInputElement;
   box.checked = row.checked;
-  box.addEventListener('change', () => quietly(setEnabled('script', row.id, box.checked)));
+  // Exclusive, as everywhere: turning it on turns the script's other
+  // active copies off, unless Ctrl/Cmd-clicked.
+  const takeSolo = watchSoloModifier(box);
+  box.addEventListener('change', () => quietly(setEnabled('script', row.id, box.checked, takeSolo())));
 
   const name = el('a', { class: 'script-name', href: viewerUrl(row.id), target: '_blank', title: 'Open the script page' }, row.name);
   name.addEventListener('click', (ev) => openPage(ev, viewerUrl(row.id)));
@@ -425,6 +425,20 @@ function scriptRow(row: PopupRow, group: PopupGroup): HTMLElement {
   const cls = 'row' + (row.active ? '' : ' off') + (row.checked && !group.collection.enabled ? ' muted' : '');
   const out = el('div', { class: cls, 'data-script-id': row.id }, main);
   if (row.versionLine) out.append(el('div', { class: 'version-line' }, row.versionLine));
+  if (row.commands.length > 0) out.append(commandList(row));
+  return out;
+}
+
+// A script removed since the page loaded that still runs in it: its
+// name, status and menu commands, with nothing to toggle or open.
+function removedRow(row: PopupRow): HTMLElement {
+  const main = el('div', { class: 'row-main' }, el('span', { class: 'script-name' }, row.name));
+  if (row.status) {
+    main.append(el('span', {
+      class: `pill ${PILL_CLASSES[row.status]}`, title: row.tooltip ?? '', 'data-status': row.status,
+    }, POPUP_STATUS_LABELS[row.status]));
+  }
+  const out = el('div', { class: 'row off', 'data-script-id': row.id }, main);
   if (row.commands.length > 0) out.append(commandList(row));
   return out;
 }
@@ -486,8 +500,12 @@ async function runCommand(scriptId: string, commandId: string): Promise<void> {
 // the storage change redraws the popup. When the write fails nothing
 // changes, so the view would match the one drawn and be skipped: forget
 // it, so the redraw puts the box back as stored.
-async function setEnabled(target: PopupSetEnabledRequest['target'], id: string, enabled: boolean): Promise<void> {
-  const req: PopupSetEnabledRequest = { type: POPUP_SET_ENABLED_MESSAGE, target, id, enabled };
+// `solo`: Ctrl/Cmd-clicked, so other copies are left alone
+// (docs/script-enablement.md).
+async function setEnabled(
+  target: PopupSetEnabledRequest['target'], id: string, enabled: boolean, solo = false,
+): Promise<void> {
+  const req: PopupSetEnabledRequest = { type: POPUP_SET_ENABLED_MESSAGE, target, id, enabled, solo };
   const reply = (await chrome.runtime.sendMessage(req)) as { ok?: boolean } | null;
   if (reply?.ok !== true) {
     drawnJson = null;

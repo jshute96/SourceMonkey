@@ -22,10 +22,11 @@ import { containerKindForSingleFileInput, isScratchUrl, isSmDevCollection, scrat
 import { manifestToProbe, pendingOnDisk, probeFiles, scriptFileTag } from './file-changes.js';
 import { loadAllValues } from './gm-values.js';
 import { turnOffOtherCopies } from './script-identity.js';
+import { setCollectionEnabledExclusive } from './script-enablement.js';
 import { managedCollection, managedScript } from './managed-items.js';
 import {
   canonicalLocation, getAllScripts, getCollection, getCollections, getCollectionWithScripts, getScript, installScript, moveScript,
-  removeScript, setCollectionEnabled, setCollectionOptions, setScriptEnabled, ALREADY_INSTALLED_IN_TARGET, COLLECTION_GONE, SCRIPT_GONE,
+  removeScript, setCollectionOptions, setScriptEnabled, ALREADY_INSTALLED_IN_TARGET, COLLECTION_GONE, SCRIPT_GONE,
   type StoredCollection,
 } from './script-store.js';
 import { updateCollection, updateScript } from './script-updater.js';
@@ -105,10 +106,13 @@ export function managedChanges(numbers: () => Promise<Numbers>) {
       return shownEnable(next, enabled);
     },
 
-    /** Turns a whole collection on or off. */
+    /**
+     * Turns a whole collection on or off, keeping one copy of each
+     * script running as the collections page's toggle does.
+     */
     async setCollectionEnabled(id: string, enabled: boolean): Promise<ManagedCollection> {
       await changeableCollection(id);
-      const next = await setCollectionEnabled(id, enabled);
+      const next = await setCollectionEnabledExclusive(id, enabled);
       if (!next) throw new Error(COLLECTION_GONE);
       return shownCollection(next);
     },

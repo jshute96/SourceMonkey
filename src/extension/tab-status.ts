@@ -119,7 +119,7 @@ export const BADGE_GREEN = '#2e7d32';
 // Red = at least one script reported an error.
 export const BADGE_RED = '#d32f2f';
 // Purple = a reload would change what runs: a running script changed
-// on disk, or a script was enabled, disabled or deleted since the page
+// on disk, or a script was enabled, disabled or removed since the page
 // loaded. Loses to RED (errors still matter most) but wins over ORANGE. Picked bright (≈ Material
 // purple-A400) so the badge reads as a vivid "something changed"
 // signal, not a muted/inactive color.
