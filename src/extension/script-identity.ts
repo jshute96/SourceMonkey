@@ -48,12 +48,12 @@ import {
   isSingleFileInput,
 } from './directories.js';
 import {
-  getAllScripts, getCollections, isScriptEnabled, isCollectionEnabled, writeEnablement, type StoredScript, type StoredCollection,
+  getAllScripts, getCollections, isScriptEnabled, isCollectionEnabled, writeEnablementFrom, type StoredScript, type StoredCollection,
 } from './script-store.js';
 import { CONTAINER_DISPLAY_NAMES, effectiveDisplayName } from './collection-display.js';
 import { getValues, type ParsedHeader } from '../userscript-header.js';
 import { identityKey, locationKey } from './script-keys.js';
-import { startPhaseTimer, type PhaseTimer } from '../phase-timing.js';
+import { startPhaseTimer } from '../phase-timing.js';
 
 // `identityKey` and `locationKey` live in script-keys.ts, so the store
 // can use them too; re-exported here, where the rest of the lookup is.
@@ -317,34 +317,44 @@ export async function turnOffOtherCopies(scriptId: string): Promise<StoredScript
   const timer = startPhaseTimer('turn off other copies');
   const [scripts, collections] = await Promise.all([getAllScripts(), getCollections()]);
   timer.mark('read all', `${scripts.length} scripts, ${collections.length} collections`);
-  const off = await planAndTurnOff(scriptId, scripts, collections, timer);
+  const copy = scripts.find((s) => s.id === scriptId);
+  const related = copy ? relatedRowsOf(scripts, collections, copy) : [];
+  let off: StoredScript[] = [];
+  // Skipped when this read shows nothing to turn off, the usual case
+  // after an install or a move, so it doesn't take the lock for nothing.
+  if (copy && otherActiveCopies(related, scriptId).length > 0) {
+    // Which copies are related comes from this read; which of them are
+    // active is decided again inside the write lock (`writeEnablementFrom`).
+    const scope = related.map((r) => r.script.id);
+    await writeEnablementFrom({ scriptIds: [scriptId, ...scope] }, (fresh) => {
+      const own = fresh.scripts.find((s) => s.id === scriptId);
+      if (!own) return null;
+      const rows = relatedRowsOf(fresh.scripts, fresh.collections, own);
+      const ownRow = rows.find((r) => r.script.id === scriptId);
+      if (!ownRow || !isActive(ownRow) || inRunCollection(ownRow)) return null;
+      const others = otherActiveCopies(rows, scriptId);
+      if (others.length === 0) return null;
+      off = others.map((r) => r.script);
+      // `started`: the copy became active in an earlier write, but it is
+      // stamped as becoming active now, the moment the copies it
+      // displaces go inactive (docs/script-enablement.md).
+      return { scripts: off.map((s) => ({ id: s.id, enabled: false })), started: [scriptId] };
+    }, timer);
+  }
+  timer.note(`${off.length} cop${off.length === 1 ? 'y' : 'ies'} turned off`);
   timer.done();
   return off;
 }
 
-async function planAndTurnOff(
-  scriptId: string,
+// Every copy related to `copy`, itself included. Compared by the STORED
+// row's location and header: what the rest of the store is compared
+// against, and for a github blob URL the resolved raw one.
+function relatedRowsOf(
   scripts: StoredScript[],
   collections: StoredCollection[],
-  timer: PhaseTimer,
-): Promise<StoredScript[]> {
-  const copy = scripts.find((s) => s.id === scriptId);
-  if (!copy) return [];
-  // The STORED row's location and header: what the rest of the store is
-  // compared against, and for a github blob URL the resolved raw one.
-  const related = findRelatedVersions({ scripts, collections, location: copy.fileUrl, header: copy.header ?? null });
-  const rows = allRelatedRows(related);
-  const own = rows.find((r) => r.script.id === scriptId);
-  if (!own || !isActive(own) || inRunCollection(own)) return [];
-  const off = new Set(otherActiveCopies(rows, scriptId).map((r) => r.script.id));
-  if (off.size === 0) return [];
-  // `started`: the copy became active in an earlier write, but it is
-  // stamped as becoming active now, the moment the copies it displaces
-  // go inactive (docs/script-enablement.md).
-  timer.mark('plan');
-  await writeEnablement({ scripts: [...off].map((id) => ({ id, enabled: false })), started: [scriptId] }, timer);
-  timer.note(`${off.size} cop${off.size === 1 ? 'y' : 'ies'} turned off`);
-  return rows.filter((r) => off.has(r.script.id)).map((r) => r.script);
+  copy: StoredScript,
+): RelatedScript[] {
+  return allRelatedRows(findRelatedVersions({ scripts, collections, location: copy.fileUrl, header: copy.header ?? null }));
 }
 
 // Every related row in one list, in the order the panel draws them.

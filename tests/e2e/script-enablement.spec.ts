@@ -218,6 +218,65 @@ test.describe('script enablement', () => {
     await page.close();
   });
 
+  test('two quick clicks on two copies leave only the second one on', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const one = await addFolder(sm, folder([{ path: 'a.user.js' }]));
+    const two = await addFolder(sm, folder([{ path: 'a.user.js' }]));
+    const a = await row(sm, one);
+    const b = await row(sm, two);
+    await sm.setScriptEnabled(a.id, false);
+    await sm.setScriptEnabled(b.id, false);
+    await sm.syncNow();
+
+    const page = await collectionsPage(extensionContext, extensionId);
+    // Both clicks in one task, so the second one starts before the first
+    // one's write lands. Planned from what each read up front, neither
+    // saw the other on, and both stayed on.
+    await page.evaluate((ids) => {
+      for (const id of ids) {
+        const cb = document.querySelector<HTMLInputElement>(`tr[data-script-id="${id}"] .toggle input`)!;
+        cb.checked = true;
+        cb.dispatchEvent(new Event('change'));
+      }
+    }, [a.id, b.id]);
+    await expect.poll(async () => (await row(sm, two)).enabled).toBe(true);
+    await expect.poll(async () => (await row(sm, one)).enabled).toBe(false);
+    await expect(scriptBox(page, a.id)).not.toBeChecked();
+    await expect(scriptBox(page, b.id)).toBeChecked();
+    await page.close();
+  });
+
+  test('the copy turned off unchecks as the clicked one settles, not after', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const one = await addFolder(sm, folder([{ path: 'a.user.js' }]));
+    const two = await addFolder(sm, folder([{ path: 'a.user.js' }]));
+    const a = await row(sm, one);
+    const b = await row(sm, two);
+    await sm.setScriptEnabled(a.id, true);
+    await sm.setScriptEnabled(b.id, false);
+    await sm.syncNow();
+
+    const page = await collectionsPage(extensionContext, extensionId);
+    // Watch both boxes from inside the page, so nothing is missed between
+    // two of Playwright's own reads: the first moment the clicked box's
+    // spinner is gone, the other box must already be unchecked.
+    const seen = page.evaluate(([aId, bId]) => new Promise<boolean>((resolve) => {
+      const label = document.querySelector(`tr[data-script-id="${bId}"] .toggle`)!;
+      const other = document.querySelector<HTMLInputElement>(`tr[data-script-id="${aId}"] .toggle input`)!;
+      let started = false;
+      new MutationObserver(() => {
+        const busy = !!label.querySelector('.busy-spinner');
+        if (busy) started = true;
+        else if (started) resolve(other.checked);
+      }).observe(label, { childList: true });
+    }), [a.id, b.id]);
+    await scriptBox(page, b.id).check();
+    expect(await seen).toBe(false);
+    await page.close();
+  });
+
   test('removing a script or a collection drops its active times', async ({ sm }) => {
     const one = await addFolder(sm, folder([{ path: 'a.user.js' }]));
     const two = await addFolder(sm, folder([{ path: 'a.user.js' }]));

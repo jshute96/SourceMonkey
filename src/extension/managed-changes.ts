@@ -112,7 +112,7 @@ export function managedChanges(numbers: () => Promise<Numbers>) {
      */
     async setCollectionEnabled(id: string, enabled: boolean): Promise<ManagedCollection> {
       await changeableCollection(id);
-      const next = await setCollectionEnabledExclusive(id, enabled);
+      const { collection: next } = await setCollectionEnabledExclusive(id, enabled);
       if (!next) throw new Error(COLLECTION_GONE);
       return shownCollection(next);
     },

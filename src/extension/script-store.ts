@@ -3334,63 +3334,127 @@ async function withoutTimes(ids: readonly string[]): Promise<Record<string, unkn
 export async function writeEnablement(
   w: EnablementWrite,
   timer?: PhaseTimer,
-): Promise<{ collection: StoredCollection | null; scripts: StoredScript[] }> {
+): Promise<EnablementResult> {
   const t = timer ?? startPhaseTimer('enablement write');
   const result = await mutate(async () => {
     t.mark('lock wait');
-    const at = nextEnablementStamp();
-    const toSet: Record<string, unknown> = {};
-    let collection: StoredCollection | null = null;
-    const scriptIds = new Set<string>([...(w.scripts ?? []).map((u) => u.id), ...(w.started ?? [])]);
-    if (w.collection) {
-      collection = (await getRaw<StoredCollection>(collectionKey(w.collection.id))) ?? null;
-      t.mark('read collection');
-      if (collection) {
-        // Its scripts' active state follows its flag, so they may need
-        // stamping even though none of their own flags change.
-        for (const sid of collection.scriptIds) scriptIds.add(sid);
-        collection = { ...collection, enabled: w.collection.enabled };
-        toSet[collectionKey(collection.id)] = collection;
-      }
-    }
-    const got = await getMany([...[...scriptIds].map(scriptKey), ENABLEMENT_TIMES_KEY]);
-    t.mark('read rows', () => storageSize(got));
-    const scripts = [...scriptIds]
-      .map((sid) => got[scriptKey(sid)] as StoredScript | undefined)
-      .filter((s): s is StoredScript => s != null);
-    const times: EnablementTimesMap = { ...(got[ENABLEMENT_TIMES_KEY] as EnablementTimesMap | undefined) };
-    // Each script's collection, before and after this write.
-    const collIds = [...new Set(scripts.map((s) => s.collectionId))];
-    const colls = await getMany(collIds.map(collectionKey));
-    t.mark('read collections', () => storageSize(colls));
-    const collOn = (cid: string, after: boolean): boolean => {
-      if (after && collection && cid === collection.id) return isCollectionEnabled(collection);
-      const c = colls[collectionKey(cid)] as StoredCollection | undefined;
-      return c ? isCollectionEnabled(c) : true;
-    };
-    const wanted = new Map((w.scripts ?? []).map((u) => [u.id, u.enabled]));
-    const started = new Set(w.started ?? []);
-    const written: StoredScript[] = [];
-    let timesChanged = false;
-    for (const script of scripts) {
-      const flag = wanted.get(script.id) ?? isScriptEnabled(script);
-      const wasActive = isScriptEnabled(script) && collOn(script.collectionId, false);
-      const nowActive = flag && collOn(script.collectionId, true);
-      if (stampTimes(times, script.id, wasActive, nowActive, at, started.has(script.id))) timesChanged = true;
-      if (script.enabled === flag) continue;
-      const next: StoredScript = { ...script, enabled: flag };
-      toSet[scriptKey(script.id)] = next;
-      written.push(next);
-    }
-    if (timesChanged) toSet[ENABLEMENT_TIMES_KEY] = times;
-    if (Object.keys(toSet).length > 0) {
-      await writeLocal(toSet);
-      t.mark('write', () => storageSize(toSet));
-    }
-    return { collection, scripts: written };
+    return applyEnablement(w, t);
   });
   if (!timer) t.done();
   return result;
+}
+
+// The collection as written (null when it's gone, or none was asked
+// for) and every script row whose flag the write changed.
+export interface EnablementResult {
+  collection: StoredCollection | null;
+  scripts: StoredScript[];
+}
+
+// The rows an enable plan is computed from (see `writeEnablementFrom`).
+export interface EnablementRows {
+  scripts: StoredScript[];
+  collections: StoredCollection[];
+  times: EnablementTimesMap;
+}
+
+// An enable write whose changes depend on the store: which other copies
+// are active, which ones a collection displaced. `plan` decides them
+// inside the lock, from `scriptIds` and `collectionIds` (plus each of
+// those scripts' collections) as they are at that moment, so a write
+// that landed while this one waited is part of what it sees. Planned
+// outside the lock, two quick clicks on two copies each saw the other
+// as off, and both stayed on.
+//
+// The caller picks the ids from a read made before the lock, and only
+// those are re-read: a full read here would hold the lock (and every
+// other write in this context) for as long as it takes. A copy that
+// appears between the two reads is missed, which needs an install in
+// another context at that moment.
+//
+// `plan` returning null writes nothing.
+export async function writeEnablementFrom(
+  scope: { scriptIds: Iterable<string>; collectionIds?: Iterable<string> },
+  plan: (rows: EnablementRows) => EnablementWrite | null,
+  timer?: PhaseTimer,
+): Promise<EnablementResult> {
+  const t = timer ?? startPhaseTimer('enablement write');
+  const result = await mutate(async () => {
+    t.mark('lock wait');
+    const ids = [...new Set(scope.scriptIds)];
+    const got = await getMany([...ids.map(scriptKey), ENABLEMENT_TIMES_KEY]);
+    const scripts = ids
+      .map((id) => got[scriptKey(id)] as StoredScript | undefined)
+      .filter((s): s is StoredScript => s != null);
+    const collIds = [...new Set([...(scope.collectionIds ?? []), ...scripts.map((s) => s.collectionId)])];
+    const colls = await getMany(collIds.map(collectionKey));
+    t.mark('re-read', () => storageSize({ ...got, ...colls }));
+    const w = plan({
+      scripts,
+      collections: collIds
+        .map((id) => colls[collectionKey(id)] as StoredCollection | undefined)
+        .filter((c): c is StoredCollection => c != null),
+      times: (got[ENABLEMENT_TIMES_KEY] as EnablementTimesMap | undefined) ?? {},
+    });
+    t.mark('plan');
+    return w ? applyEnablement(w, t) : { collection: null, scripts: [] };
+  });
+  if (!timer) t.done();
+  return result;
+}
+
+// The body of an enable write. Caller holds the lock.
+async function applyEnablement(w: EnablementWrite, t: PhaseTimer): Promise<EnablementResult> {
+  const at = nextEnablementStamp();
+  const toSet: Record<string, unknown> = {};
+  let collection: StoredCollection | null = null;
+  const scriptIds = new Set<string>([...(w.scripts ?? []).map((u) => u.id), ...(w.started ?? [])]);
+  if (w.collection) {
+    collection = (await getRaw<StoredCollection>(collectionKey(w.collection.id))) ?? null;
+    t.mark('read collection');
+    if (collection) {
+      // Its scripts' active state follows its flag, so they may need
+      // stamping even though none of their own flags change.
+      for (const sid of collection.scriptIds) scriptIds.add(sid);
+      collection = { ...collection, enabled: w.collection.enabled };
+      toSet[collectionKey(collection.id)] = collection;
+    }
+  }
+  const got = await getMany([...[...scriptIds].map(scriptKey), ENABLEMENT_TIMES_KEY]);
+  t.mark('read rows', () => storageSize(got));
+  const scripts = [...scriptIds]
+    .map((sid) => got[scriptKey(sid)] as StoredScript | undefined)
+    .filter((s): s is StoredScript => s != null);
+  const times: EnablementTimesMap = { ...(got[ENABLEMENT_TIMES_KEY] as EnablementTimesMap | undefined) };
+  // Each script's collection, before and after this write.
+  const collIds = [...new Set(scripts.map((s) => s.collectionId))];
+  const colls = await getMany(collIds.map(collectionKey));
+  t.mark('read collections', () => storageSize(colls));
+  const collOn = (cid: string, after: boolean): boolean => {
+    if (after && collection && cid === collection.id) return isCollectionEnabled(collection);
+    const c = colls[collectionKey(cid)] as StoredCollection | undefined;
+    return c ? isCollectionEnabled(c) : true;
+  };
+  const wanted = new Map((w.scripts ?? []).map((u) => [u.id, u.enabled]));
+  const started = new Set(w.started ?? []);
+  const written: StoredScript[] = [];
+  let timesChanged = false;
+  for (const script of scripts) {
+    const flag = wanted.get(script.id) ?? isScriptEnabled(script);
+    const wasActive = isScriptEnabled(script) && collOn(script.collectionId, false);
+    const nowActive = flag && collOn(script.collectionId, true);
+    if (stampTimes(times, script.id, wasActive, nowActive, at, started.has(script.id))) timesChanged = true;
+    if (script.enabled === flag) continue;
+    const next: StoredScript = { ...script, enabled: flag };
+    toSet[scriptKey(script.id)] = next;
+    written.push(next);
+  }
+  if (timesChanged) toSet[ENABLEMENT_TIMES_KEY] = times;
+  if (Object.keys(toSet).length > 0) {
+    await writeLocal(toSet);
+    t.mark('write', () => storageSize(toSet));
+  }
+  return { collection, scripts: written };
 }
 
 // The per-collection settings the collection dialog edits.

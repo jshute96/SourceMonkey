@@ -198,6 +198,7 @@ import { remapStackRef, type MappedSegment, type StackRef } from '../source-map.
 import { stackLayout } from '../composed-source.js';
 import { buildRequireSourceUrl, buildSourceUrl } from '../script-source-url.js';
 import { startPhaseTimer, type PhaseTimer } from '../phase-timing.js';
+import { enableWithin } from './script-enablement.js';
 import { CodeTabsView, type CodeTab } from './code-tabs.js';
 import { makeCopyButton } from './copy-button.js';
 import { markFileChanges, missingFiles, scriptFileTag } from './file-changes.js';
@@ -730,16 +731,18 @@ async function onToggleEnabled(enabled: boolean): Promise<void> {
   if (!scriptId) return;
   const solo = takeControlsRowSolo();
   let changes = enableChanges(scriptId, enabled, []);
+  let related: string[] | null = null;
   if (enabled && !solo) {
     try {
       const snapshot = await readStoreSnapshot();
       const script = snapshot.scripts.find((s) => s.id === scriptId);
-      const related = findRelatedVersions({
+      const rows = allRelatedRows(findRelatedVersions({
         ...snapshot,
         location: script?.fileUrl ?? '',
         header: script?.header ?? null,
-      });
-      changes = enableChanges(scriptId, enabled, allRelatedRows(related));
+      }));
+      changes = enableChanges(scriptId, enabled, rows);
+      related = rows.map((r) => r.script.id);
     } catch (err) {
       // Fails open: the copy the user actually clicked still gets
       // written, and the panel still shows whatever else is on.
@@ -752,7 +755,7 @@ async function onToggleEnabled(enabled: boolean): Promise<void> {
   // radio-button pair that flips one now and the other after a round
   // trip through storage reads as a bug.
   paintEnabledOptimistically(changes);
-  await applyEnableChanges(changes);
+  await applyEnableChanges(changes, related);
   const next = await getScript(scriptId);
   if (next) {
     render(next);
@@ -768,7 +771,23 @@ async function onToggleEnabled(enabled: boolean): Promise<void> {
 // rehydrated this page from a half-applied state — the user watched the
 // Enabled checkbox flip back and forth as the batch went through. It
 // also spares the background worker a registration sync per copy.
-async function applyEnableChanges(changes: readonly ScriptEnableChange[], timer?: PhaseTimer): Promise<void> {
+//
+// An enable that turns other copies off (`related` set) is planned
+// again inside the write lock, from those copies' stored state (see
+// `enableWithin`): `changes` was worked out from what this page last
+// drew, which a write that landed since has made stale.
+async function applyEnableChanges(
+  changes: readonly ScriptEnableChange[],
+  related: readonly string[] | null,
+  timer?: PhaseTimer,
+): Promise<void> {
+  const clicked = changes[0];
+  if (related && clicked?.enabled) {
+    const t = timer ?? startPhaseTimer('enable script');
+    await enableWithin(clicked.scriptId, [clicked.scriptId, ...related], t);
+    if (!timer) t.done();
+    return;
+  }
   await setScriptsEnabled(changes.map((c) => ({ id: c.scriptId, enabled: c.enabled })), timer);
 }
 
@@ -1312,7 +1331,7 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
 
   const actions: RelatedVersionsActions = {
     currentScriptId: args.currentScriptId,
-    setEnabled: async (changes) => {
+    setEnabled: async (changes, related) => {
       relatedVersionsMessage = '';
       // The clicked box has already flipped itself; this catches up the
       // rest of the batch — the other rows and the page's own toggle —
@@ -1323,7 +1342,7 @@ async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
       const timer = startPhaseTimer('versions table enable');
       let failure: unknown;
       try {
-        await applyEnableChanges(changes, timer);
+        await applyEnableChanges(changes, related, timer);
       } catch (err) {
         failure = err;
         timer.mark('write failed');

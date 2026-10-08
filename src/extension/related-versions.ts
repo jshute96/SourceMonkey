@@ -62,7 +62,12 @@ export interface RelatedVersionsActions {
   // Rejecting the promise reverts the clicked checkbox — the row is
   // showing stored state, so it must not keep a value the store
   // refused.
-  setEnabled(changes: readonly ScriptEnableChange[]): Promise<void>;
+  //
+  // `related` is every copy in the panel, for an enable that turns the
+  // others off: the write decides which of them to turn off from their
+  // stored state at that moment, and `changes` is only what the panel
+  // expects. Null for a click that changes only its own copy.
+  setEnabled(changes: readonly ScriptEnableChange[], related: readonly string[] | null): Promise<void>;
   // Refetch rows from their own collections. Installed: any row in the
   // panel; preview: same-location rows only (see `actionsCell`). Passed
   // every id at once by the "…all" control, so it is the same call as a
@@ -750,10 +755,11 @@ function enabledCell(
     const wanted = box.checked;
     // Only enabling is exclusive, and only without the opt-out
     // modifier.
-    const changes = enableChanges(script.id, wanted, takeSolo() ? [] : allRows);
+    const solo = takeSolo();
+    const changes = enableChanges(script.id, wanted, solo ? [] : allRows);
     box.disabled = true;
     void actions
-      .setEnabled(changes)
+      .setEnabled(changes, wanted && !solo ? allRows.map((r) => r.script.id) : null)
       // The store refused the write, so the box must not keep a value
       // that never landed. Rarely the thing the user actually sees: the
       // caller repaints from stored state on both paths, which replaces

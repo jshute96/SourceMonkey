@@ -50,6 +50,20 @@ In normal use, at most one copy of a script is active.
 - Adding a collection, and a refresh that finds a new file (see
   [New copies](#new-copies)).
 
+### Decided at write time
+
+Which copies to turn off is decided inside the store's write lock, from
+their stored state at that moment (`writeEnablementFrom` in
+`script-store.ts`).
+
+- Two quick clicks on two copies: the second one's write waits for the
+  first, sees that copy on, and turns it off.
+- Which copies are related comes from a full read made before the
+  lock. Only those copies are re-read inside it, since a full read
+  there would hold the lock too long.
+- The viewer's versions table passes every copy it shows, so a click
+  there turns off the copies it showed as turned off.
+
 ### A copy that can't run
 
 A copy that becomes active (an install, a local copy, a move, a
@@ -216,6 +230,12 @@ active or running on the page, it shows the first by
   page), so two contexts writing at the same moment can drop the
   other's stamps. A lost stamp only means a copy isn't brought back, or
   the popup offers a different copy.
+- **The lock covers one context.** Two enables of related copies from
+  different contexts at the same moment (the collections page and the
+  popup, say) can still both land.
+- **A copy that appears mid-write is missed.** One installed by another
+  context between an enable's full read and its write isn't turned
+  off.
 - **Stamps are strictly increasing per context, not across them.** The
   service worker and a page could stamp unrelated changes with the same
   time, which a restore would read as a displacement if those copies

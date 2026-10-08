@@ -906,6 +906,9 @@ silently reverting the user's choice.
   (and the collection's `displayName`) from the freshly re-read row and
   keeping the refresh-owned content. So an enable toggle that landed
   during the fetch is preserved, and I/O isn't serialized.
+- Enable writes decide which copies to change inside the lock
+  (`writeEnablementFrom`), from rows re-read there. See
+  [script-enablement.md](script-enablement.md#decided-at-write-time).
 - Non-reentrant: a `mutate()` block must not call another mutator. The
   orchestrators honor this — `addCollection` runs its dedup+seed write in
   the lock, then calls `refreshCollection` (which takes the lock for its own
@@ -1451,6 +1454,10 @@ on every interaction. Each user action mutates only the affected DOM:
 - Bulk +/− → one `setAllScriptsEnabled` write (one
   `storage.onChanged`, one background re-sync), then repaints every
   row's box from storage, since "Enable all" may leave a copy off.
+- Every enable toggle also updates each row its write changed elsewhere
+  on the page (the copies it turned off or brought back), from the
+  write's result. They change together with the clicked one, rather
+  than one repaint later.
 - Add directory, Remove, Refresh, Refresh All → write, then repaint
   from storage (see [Live repaint](#live-repaint-changes-from-any-origin)).
   The section list, the empty placeholder, and each row follow from what
@@ -1515,6 +1522,13 @@ have to be.
 - **Rows** are matched to the collection's scripts the same way: a `<tr>`
   that is still wanted is updated in place rather than recreated, so
   refresh highlights and in-flight toggles survive.
+- **A row this page wrote since the repaint read storage** keeps its
+  checkbox state (and a collection its toggle). The read can take
+  hundreds of ms on a large store, and drawing it would undo a click
+  that landed meanwhile.
+  - The click's handler has already drawn the row from the write's
+    result, so nothing is left wrong.
+  - A later repaint, which reads after the write, draws it again.
   - The exception is a collection crossing between "has scripts" and "has
     none", since a table and the empty message are different elements.
     That swap discards the block wholesale.

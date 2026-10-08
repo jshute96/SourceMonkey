@@ -229,9 +229,15 @@ the *other* rows.
   `storage.onChanged` is not enough: a preview has no such listener,
   and a batch that turns out to be a no-op writes nothing and fires no
   event.
-- **The whole batch is one write.** `setScriptsEnabled`, not a loop of
-  `setScriptEnabled`: the bulk call lands as a single
-  `chrome.storage.local.set` and fires one `storage.onChanged`. A loop
+- **The write decides again.** An enable that turns other copies off
+  goes through `enableWithin` (`script-enablement.ts`), given every
+  copy in the panel. Inside the store's write lock it turns off each of
+  those that is active in storage at that moment, since a write that
+  landed after the panel was drawn may have changed which (see
+  [script-enablement.md](script-enablement.md#decided-at-write-time)).
+- **The whole batch is one write**, not a loop of `setScriptEnabled`:
+  it lands as a single `chrome.storage.local.set` and fires one
+  `storage.onChanged`. A loop
   fired one per copy, and each one rehydrated the viewer from a
   half-applied state — the Enabled checkbox visibly flipped back and
   forth as the batch went through. It also spares the background worker

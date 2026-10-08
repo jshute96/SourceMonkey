@@ -259,9 +259,9 @@ Make a local copy of this script
    user had switched off would otherwise land them on a page with
    nothing running and no explanation.
 6. **Exclusive enable** (`soloRunningCopy`): the new row is enabled and
-   every other running copy is switched off through the existing
-   `enableChanges` + `setScriptsEnabled` batch — the "installing counts
-   as enabling" rule in [script-identity.md](script-identity.md).
+   every other running copy is switched off through
+   `turnOffOtherCopies`: the "installing counts as enabling" rule in
+   [script-identity.md](script-identity.md).
    Only when the new row landed `ok` and its collection is enabled.
 7. The viewer moves to the copy **in place** (`swapToScript`); the
    "Other versions" panel re-files with the new row highlighted.

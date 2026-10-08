@@ -69,7 +69,7 @@ import {
   collectionAnchorId,
   EDIT_COLLECTION_HASH_PREFIX,
 } from './collection-display.js';
-import { SCRIPT_PREFIX, touchesStructuralRows } from './structural-keys.js';
+import { COLLECTION_PREFIX, SCRIPT_PREFIX, touchesStructuralRows } from './structural-keys.js';
 import { openCollectionDialog, type CollectionDialogRequest } from './collection-dialog.js';
 import { onNamedTabFocus, openExtensionTab, openNamedTab } from './page-links.js';
 import { getValue } from '../userscript-header.js';
@@ -505,10 +505,64 @@ function repaintPage(): Promise<void> {
 async function repaintFromStorage(): Promise<void> {
   const timer = startPhaseTimer('collections page repaint');
   await repaintSections(timer);
+  // Rows this repaint read after their write are settled.
+  for (const [key, at] of writtenAt) if (at <= repaintReadAt) writtenAt.delete(key);
   timer.done();
 }
 
+// Enable writes this page made, numbered, and the number each row
+// (script id, or `collection:` + id) last had one land at. A repaint
+// notes the number before it reads storage, and leaves alone the
+// checkbox of any row written since: it reads for hundreds of ms on a
+// large store, so a click that lands meanwhile would otherwise be drawn
+// over with what the row was before it.
+//
+// Nothing is left stale by skipping: the handler has already drawn the
+// row from the write's result. The repaint that write's storage change
+// starts usually reads after it is noted and draws the row as well; if
+// it began first, the next repaint does, and clears the entry.
+let pageWrites = 0;
+let repaintReadAt = 0;
+const writtenAt = new Map<string, number>();
+
+function noteWritten(keys: Iterable<string>): void {
+  pageWrites++;
+  for (const key of keys) writtenAt.set(key, pageWrites);
+}
+
+function writtenSinceRead(key: string): boolean {
+  return (writtenAt.get(key) ?? 0) > repaintReadAt;
+}
+
+// Show an enable write on every row it changed: the copies it turned
+// off elsewhere on the page as well as the one clicked, together, so
+// two copies never both show as on while the repaint catches up.
+//
+// Applied under another click's spinner too. Writes on this page run in
+// order (the store's lock), and their handlers resume in that order, so
+// the last result applied is the last write.
+//
+// `also` is other rows the handler drew itself (the clicked one, a
+// collection's toggle), noted as written with these.
+function applyEnableResult(changed: readonly StoredScript[], also: readonly string[] = []): void {
+  noteWritten([...also, ...changed.map((s) => s.id)]);
+  const sections = new Set<HTMLElement>();
+  for (const script of changed) {
+    const row = collectionsEl.querySelector<HTMLTableRowElement>(`tr[data-script-id="${cssEscape(script.id)}"]`);
+    if (!row) continue;
+    const on = isScriptEnabled(script);
+    const cb = row.querySelector<HTMLInputElement>('.toggle input[type="checkbox"]');
+    if (cb) cb.checked = on;
+    const section = row.closest<HTMLElement>('.collection');
+    const collectionOn = section ? !section.classList.contains('disabled') : true;
+    row.classList.toggle('disabled', !collectionOn || !on);
+    if (section) sections.add(section);
+  }
+  for (const section of sections) refreshBulkToggle(section);
+}
+
 async function repaintSections(timer: PhaseTimer): Promise<void> {
+  repaintReadAt = pageWrites;
   const collections = await getCollections();
   timer.mark('read collections');
   // Ahead of the sections, so a page that just failed to save shows the
@@ -651,8 +705,11 @@ async function syncSectionFromStorage(
   collection: StoredCollection,
   scripts: readonly StoredScript[],
 ): Promise<void> {
-  const collectionOn = isCollectionEnabled(collection);
-  applyCollectionEnabledToDom(section, collectionOn);
+  // A toggle of this collection that landed after the repaint read
+  // storage already drew the section; the stored row is older than it.
+  const stale = writtenSinceRead(COLLECTION_PREFIX + collection.id);
+  const collectionOn = stale ? !section.classList.contains('disabled') : isCollectionEnabled(collection);
+  if (!stale) applyCollectionEnabledToDom(section, collectionOn);
 
   // The type bubble is derived from `collection.path`, which is the
   // collection's identity and never rewritten, so only the display name
@@ -854,7 +911,6 @@ function syncScriptRow(
 
   // A refresh can change `@name` / `@namespace`.
   row.dataset.identity = rowIdentity(script);
-  const scriptOn = isScriptEnabled(script);
   const label = row.querySelector<HTMLLabelElement>('.toggle');
   const cb = label?.querySelector<HTMLInputElement>('input[type="checkbox"]');
   // Skip the checkbox while THIS row's toggle is mid-flight (a
@@ -863,11 +919,18 @@ function syncScriptRow(
   // write must not re-enable it under the spinner; the handler's
   // `finally` restores the final state. Everything else (status, size)
   // still updates.
+  //
+  // `checked` is also skipped when a write from this page landed on the
+  // row after this repaint read storage: what it read is older than what
+  // the row shows (see `noteWritten`). `disabled` follows the collection,
+  // which that write didn't change.
   const busy = !!label?.querySelector('.busy-spinner');
+  const stale = writtenSinceRead(script.id);
   if (cb && !busy) {
-    cb.checked = scriptOn;
+    if (!stale) cb.checked = isScriptEnabled(script);
     cb.disabled = !collectionOn;
   }
+  const scriptOn = stale && cb ? cb.checked : isScriptEnabled(script);
   // Mirror applyCollectionEnabledToDom's label upkeep, spinner or not:
   // this is the parent collection's state, not the user's click, and
   // the restore in setToggleBusy reads `toggle-disabled` back to settle
@@ -2514,22 +2577,24 @@ async function onToggleCollection(
 ): Promise<void> {
   setToggleBusy(label, true);
   try {
-    await setCollectionEnabledExclusive(id, enabled, solo);
+    const written = await setCollectionEnabledExclusive(id, enabled, solo);
     const section = findSection(id);
     if (section) applyCollectionEnabledToDom(section, enabled);
+    applyEnableResult(written.scripts, [COLLECTION_PREFIX + id]);
   } finally {
     setToggleBusy(label, false);
   }
 }
 
 // Turning a script on turns its other running copies off, unless
-// Ctrl/Cmd-clicked (`solo`). Their rows repaint from the storage event.
+// Ctrl/Cmd-clicked (`solo`). Their rows change with this one's.
 async function onToggleScript(
   id: string, enabled: boolean, label: HTMLLabelElement, solo: boolean,
 ): Promise<void> {
   setToggleBusy(label, true);
   try {
-    await setScriptEnabledExclusive(id, enabled, solo);
+    const { changed } = await setScriptEnabledExclusive(id, enabled, solo);
+    applyEnableResult(changed, [id]);
     const row = label.closest('tr') as HTMLTableRowElement | null;
     const section = label.closest('.collection') as HTMLElement | null;
     if (row && section) {
@@ -2565,7 +2630,13 @@ async function onBulkToggleScripts(collectionId: string, btn: HTMLButtonElement,
     // syncRegistrations in the background SW. The old code wrote each
     // script's row individually, so a 15-script flip kicked off 15
     // full re-syncs of chrome.userScripts (each O(N)).
-    await setAllScriptsEnabled(collectionId, next, solo);
+    const changed = await setAllScriptsEnabled(collectionId, next, solo);
+    // Copies it turned off in other collections; this section's rows are
+    // drawn from storage below.
+    applyEnableResult(
+      changed.filter((s) => s.collectionId !== collectionId),
+      sectionScriptRows(section).map((row) => row.dataset.scriptId ?? ''),
+    );
 
     // Reflect the stored state in every row: "Enable all" may leave a
     // second copy of a script off.
