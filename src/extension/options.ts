@@ -1,8 +1,8 @@
 // Options page controller. Owns the actual configurable settings
 // (link capture, debug-logging gate, local-file-override search roots,
-// GitHub auth token). The per-collection management UI lives on
-// `collections.html` / `collections.ts`; a header link points users
-// back and forth.
+// GitHub auth token), plus a read-only storage-usage table. The
+// per-collection management UI lives on `collections.html` /
+// `collections.ts`; a header link points users back and forth.
 
 import {
   DEBUG_LOGGING_KEY,
@@ -21,6 +21,14 @@ import {
 } from '../local-file-overrides.js';
 import { fetchFileUrlText } from './directories.js';
 import { describeError, getCollections } from './script-store.js';
+import { timeStorageRead } from './storage-scan.js';
+import { formatQuota, formatStorageUsage } from '../script-display.js';
+import {
+  summarizeLocalStorage,
+  toWholeKb,
+  withRemainder,
+  type UsageRow,
+} from './storage-usage.js';
 import { collectionSupportsLocalFiles } from '../local-file-overrides.js';
 import { updateCollection } from './script-updater.js';
 import { isFileSchemeAccessAllowed, renderFileAccessBanner } from './file-access.js';
@@ -67,6 +75,94 @@ initBooleanSetting('debug-logging', DEBUG_LOGGING_KEY, false);
 initGithubTokenControls();
 initLocalRootControls();
 initDownloadsDirControls();
+initStorageUsage();
+
+// Read-only table of what is stored in `chrome.storage.local`, by
+// kind, against Chrome's quota. Each paint scans every row, so a burst
+// of writes (a refresh, a script spamming GM_setValue) is coalesced into
+// one repaint a second at most.
+function initStorageUsage(): void {
+  const table = document.getElementById('storage-usage') as HTMLTableElement | null;
+  const limit = document.getElementById('storage-limit');
+  if (!table || !limit) return;
+  const quota = chrome.storage.local.QUOTA_BYTES;
+  if (typeof quota === 'number' && quota > 0) {
+    limit.textContent = `Chrome limits each extension to ${formatQuota(quota)} of storage.`;
+    limit.hidden = false;
+  }
+  let pending = false;
+  // Paints can overlap (a slow full read, then a change); only the
+  // newest one may draw, so an older read finishing last can't put
+  // stale numbers back.
+  let latest = 0;
+  const paint = async (): Promise<void> => {
+    pending = false;
+    const mine = ++latest;
+    const usage = await readUsage();
+    if (mine === latest) table.replaceChildren(...usageRows(usage));
+  };
+  void paint();
+  chrome.storage.onChanged.addListener((_changes, areaName) => {
+    if (areaName !== 'local' || pending) return;
+    pending = true;
+    setTimeout(() => void paint(), 1000);
+  });
+}
+
+type Usage = { rows: UsageRow[]; used: number; quota: number } | { error: string };
+
+async function readUsage(): Promise<Usage> {
+  const quota = chrome.storage.local.QUOTA_BYTES;
+  if (typeof quota !== 'number' || quota <= 0) {
+    return { error: 'Chrome did not report its storage limit' };
+  }
+  try {
+    const [rows, used] = await Promise.all([
+      timeStorageRead('storage usage', () => chrome.storage.local.get(null)),
+      chrome.storage.local.getBytesInUse(null),
+    ]);
+    return { rows: withRemainder(summarizeLocalStorage(rows), used), used, quota };
+  } catch (err) {
+    return { error: `Could not read storage usage: ${describeError(err)}` };
+  }
+}
+
+const kbFormat = new Intl.NumberFormat();
+
+
+function usageRows(usage: Usage): HTMLTableRowElement[] {
+  const row = (
+    cells: Array<[string, string?, number?]>, className?: string,
+  ): HTMLTableRowElement => {
+    const tr = document.createElement('tr');
+    if (className) tr.className = className;
+    for (const [text, cls, span] of cells) {
+      const td = document.createElement('td');
+      td.textContent = text;
+      if (cls) td.className = cls;
+      if (span) td.colSpan = span;
+      tr.appendChild(td);
+    }
+    return tr;
+  };
+  if ('error' in usage) return [row([[usage.error]])];
+
+  // Whole KB throughout, so the column visibly adds up to the total.
+  const kb = toWholeKb(usage.rows, usage.used);
+  return [
+    // A row that rounds to nothing is left out rather than shown as 0.
+    ...usage.rows.flatMap((r, i) => kb[i] === 0 ? [] : [
+      row([[r.label], [r.count, 'num'], [`${kbFormat.format(kb[i])} KB`, 'num']]),
+    ]),
+    row([
+      ['Total'],
+      // Spans Count too: in the Size column alone, this longer text
+      // would set that column's width and open a wide gap before every
+      // size.
+      [formatStorageUsage(usage.used, usage.quota), 'num', 2],
+    ], 'total'),
+  ];
+}
 
 // The Downloads folder the local-copy feature learned (see
 // docs/local-copy.md). Editable for the one case the extension can't

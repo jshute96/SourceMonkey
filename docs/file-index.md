@@ -77,7 +77,7 @@ and `lib/`.
 | `src/markup-response.ts` | Detects an HTML page served where JavaScript was expected (Content-Type + leading `<`), and words the failure |
 | `src/collection-scan.ts` | Cycle-neutral scan primitives shared by `directories.ts` and `github-provider.ts` |
 | `src/script-build.ts` | Builds a script row from text: header parse and validation, matching, startup logs, `@require` loading, parse check |
-| `src/script-display.ts` | Pure display helpers: size/status formatting, the shared status view + viewer / preview / compare URLs, the script label and full source, slash-aware wrapping, name/path decoding, SRI-fragment strip, enable-toggle tooltip, pending-on-disk summary |
+| `src/script-display.ts` | Pure display helpers: size/status/storage-usage formatting, the shared status view + viewer / preview / compare URLs, the script label and full source, slash-aware wrapping, name/path decoding, SRI-fragment strip, enable-toggle tooltip, pending-on-disk summary |
 | `src/script-icon.ts` | A script's own `@icon`: which header tag declares it, and the size and type rules an icon file must meet |
 | `src/version-compare.ts` | Pure `@version` ordering (dotted segments, numeric-aware, prerelease tails) + the newer/older/same/edited verdict and the `-local` suffix |
 | `src/version-probe.ts` | Pure probe logic: pick the `@updateURL`/`@downloadURL` targets we don't load from, judge staleness + outdated verdict |
@@ -120,7 +120,7 @@ stay directly in `src/` so the extension's URLs have no folder in them.
 | `src/offscreen.html` | Offscreen document markup — hosts the sandboxed parse iframe |
 | `src/collections.html` | Collections page markup: header bar with Options / Refresh All, Add field, file-access banner slot, collection list |
 | `src/popup.html` | Toolbar popup markup ("Active scripts"): header bar with Open and a ⋯ menu, banner slot, script area |
-| `src/options.html` | Options page markup: header bar with the Collections link, settings list (link-capture toggle, debug-logging toggle), local search-roots box + file-access banner slot, Downloads-folder field, GitHub auth token |
+| `src/options.html` | Options page markup: header bar with the Collections link, settings list (link-capture toggle, debug-logging toggle), local search-roots box + file-access banner slot, Downloads-folder field, GitHub auth token, storage-usage table |
 | `src/userscript.html` | Userscript viewer markup: header bar, status box (banner + versions panel), controls row, install callout + preview actions, details panel, tab strip, code box, log pane |
 | `src/compare.html` | Compare page markup: header bar, the fields table slot, view controls, tab strip, diff box |
 | `src/connect-prompt.html` | Connection prompt window markup: the standard header bar, the script and site, and the one-time and kept choices |
@@ -156,7 +156,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/script-keys.ts` | The identity and location keys that say two rows are copies of one script, shared with the store |
 | `src/extension/copy-preference.ts` | Pure order between copies of a script: within one collection, and anywhere (the popup's shown copy) |
 | `src/extension/solo-click.ts` | Enable checkbox tooltip with its multi-enable hint, and the Ctrl/Cmd-click reader that opts out of the sweep |
-| `src/extension/options.ts` | Options page controller — boolean setting checkboxes, local search-roots box (parse + existence checks, refresh on save), Downloads-folder field, GitHub-token controls |
+| `src/extension/options.ts` | Options page controller — boolean setting checkboxes, local search-roots box (parse + existence checks, refresh on save), Downloads-folder field, GitHub-token controls, storage-usage table |
 | `src/extension/page-heading.ts` | Import-free module holding the viewer heading's vocabulary and DOM, and the early paint that names the header bar before the page's first paint |
 | `src/extension/page-links.ts` | Cross-page links between extension pages: the named Collections / Options tabs and the header bar's home link |
 | `src/extension/userscript.ts` | Userscript viewer controller — installed mode (`?script=`), preview mode (`?preview=`), in-page switching between copies, the Collection row's Move button, the controls row's Local copy / delete-copy buttons, live `storage` watchers, log pane |
@@ -197,6 +197,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/tab-status.ts` | Pure helpers for per-tab script status (expected ∪ actual classification), badge colors, and per-tab document LRU |
 | `src/extension/toolbar-summary.ts` | Pure: the toolbar badge's count and color and its tooltip's status lines, from the popup's view |
 | `src/extension/missing-scripts.ts` | Log warnings for scripts that matched a page but never started |
+| `src/extension/storage-usage.ts` | Sorts storage rows into the Options page's usage table: scripts, `@require`/`@resource` files, GM values, icons |
 | `src/extension/storage-scan.ts` | Wrapper for every full-namespace `storage.local.get(null)`, naming each scan and its cost under debug logging |
 | `src/extension/concurrency.ts` | Bounded fan-out helper plus the nested per-collection / per-script, probe, and directory-scan limits |
 | `src/extension/connect-grants.ts` | The user's answers about a script's undeclared `@connect` hosts: allowed (local storage) and denied (session) |
@@ -372,6 +373,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/directories.test.mjs` | Unit tests for the `file://` listing parser and path/URL helpers |
 | `tests/unit/github-provider.test.mjs` | Unit tests for the GitHub provider: URL parsing, blob→raw rewrite, default-branch resolution, Contents-API directory scanner |
 | `tests/unit/github-auth.test.mjs` | Unit tests for the GitHub auth helper: host-gated `Authorization` header, no token → no header, never leaks to non-GitHub hosts |
+| `tests/unit/storage-usage.test.mjs` | Storage-usage breakdown: script rows split into body / requires / resources, key grouping, remainder, whole-KB rounding |
 | `tests/unit/userscript-header.test.mjs` | Unit tests for the metadata-block parser + header/body splitter |
 | `tests/unit/script-store.test.mjs` | Unit tests for the pure helpers in the script store (merge, validate, build, compare) |
 | `tests/unit/script-updater.test.mjs` | Unit tests for the updater's rate-limit / concurrency gate, its Log-tab outcome entries, and the startup replay |
@@ -418,6 +420,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/preload-hints.spec.ts` | A fetched response's `Link: rel=preload` header reaches no extension page — both page-side readers hop to the service worker |
 | `tests/e2e/local-file-overrides.spec.ts` | End-to-end local stand-ins across `@require` / `@resource` / `@icon`: suffix matching, live re-read, fallback, opt-out, traversal, configured roots |
 | `tests/e2e/options-local-roots.spec.ts` | Options-page local-file-override roots box: hydration, saving, format complaints, missing-directory warnings |
+| `tests/e2e/options-storage-usage.spec.ts` | Options-page storage-usage table: per-kind rows, totals against Chrome's quota, repaint on change |
 | `tests/e2e/requires.spec.ts` | End-to-end `@require` coverage: file:// / HTTP relative path prefetch, `.js` suffix + traversal rejection, cross-script dedup, manual-vs-opportunistic refresh policy |
 | `tests/e2e/log-stack-mapping.spec.ts` | Log tab maps `err.stack` lines back to the `@require`/body they came from; clicks and the CSV export follow that mapping |
 | `tests/e2e/stack-lines.spec.ts` | The service worker's stack layout, which `sm-dev` maps with, sends a logged throw to the `@require` and script lines |

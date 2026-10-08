@@ -379,7 +379,7 @@ Both name the script the same way, pivoted for where they're read.
      has never loaded); in preview, the byte length of the fetched
      text.
      - Suffixed with what the script loads alongside itself, when it
-       loads anything: `12.4 KB (plus 2 @require files: 125 KB, 1
+       loads anything: `12 KB (plus 2 @require files: 125 KB, 1
        @resource file: 4 KB)`. The script's own bytes understate what a
        page pays to run it when the script pulls in a jQuery.
      - Counts entries that **actually loaded and reported a size**, not

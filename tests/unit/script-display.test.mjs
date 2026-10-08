@@ -10,6 +10,8 @@ import {
   displayLocation,
   effectiveScriptStatus,
   formatBytes,
+  formatQuota,
+  formatStorageUsage,
   formatScriptSize,
   formatScriptStatusLabel,
   leafName,
@@ -29,15 +31,25 @@ test('formatBytes: bytes under 1 KB', () => {
   assert.equal(formatBytes(1023), '1023 B');
 });
 
-test('formatBytes: kilobytes 1 KB through < 1 MB, one decimal', () => {
-  assert.equal(formatBytes(1024), '1.0 KB');
-  assert.equal(formatBytes(1536), '1.5 KB');
-  assert.equal(formatBytes(1024 * 1024 - 1), '1024.0 KB');
+test('formatBytes: kilobytes 1 KB through < 1 MB, whole KB', () => {
+  assert.equal(formatBytes(1024), '1 KB');
+  assert.equal(formatBytes(1536), '2 KB');
+  assert.equal(formatBytes(1024 * 1023), '1023 KB');
+  // Rounds up to 1024 KB, so it reads as MB instead.
+  assert.equal(formatBytes(1024 * 1024 - 1), '1.0 MB');
 });
 
 test('formatBytes: megabytes >= 1 MB, one decimal', () => {
   assert.equal(formatBytes(1024 * 1024), '1.0 MB');
   assert.equal(formatBytes(2 * 1024 * 1024 + 512 * 1024), '2.5 MB');
+});
+
+test('formatStorageUsage: MB on both sides, rounded down', () => {
+  const MB = 1024 * 1024;
+  assert.equal(formatStorageUsage(2 * MB, 10 * MB), '2.0 MB of 10 MB (20%)');
+  // Near the limit, never claims full while there is room.
+  assert.equal(formatStorageUsage(9.96 * MB, 10 * MB), '9.9 MB of 10 MB (99%)');
+  assert.equal(formatQuota(10.5 * MB), '10.5 MB');
 });
 
 // ---------- formatScriptSize ----------
@@ -50,7 +62,7 @@ test('formatScriptSize: null size → "—" (unknown)', () => {
 });
 
 test('formatScriptSize: ok status renders the byte count', () => {
-  assert.equal(formatScriptSize({ status: 'ok', size: 1234 }), '1.2 KB');
+  assert.equal(formatScriptSize({ status: 'ok', size: 1234 }), '1 KB');
 });
 
 test('formatScriptSize: zero-byte file renders "0 B", not MISSING', () => {

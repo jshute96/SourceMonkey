@@ -51,7 +51,8 @@ details live in the topic-specific docs linked below.
   [storage.md](storage.md).
 - **Options page** (`src/options.html` + `src/extension/options.ts`) — small
   settings page: `.user.js` link-capture toggle, debug-logging toggle,
-  local-file-override search roots, and GitHub auth token entry.
+  local-file-override search roots, Downloads folder, GitHub auth token
+  entry, and a read-only table of storage used, by kind, against Chrome's quota.
   Reached via the Options link at the top of the collections page.
 - **Debug icons page** (`src/debug/icons.html` + `src/extension/debug/icons.ts`) —
   inspects the cached site icons in `chrome.storage.local`, with per-row

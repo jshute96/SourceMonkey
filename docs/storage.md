@@ -713,6 +713,9 @@ The write in step 5 is the last thing that can fail, and the one failure
 - **Surfaced** on the collections page as a per-section message plus a
   page banner naming storage usage — see
   [diagnostics.md](diagnostics.md#refreshes-that-could-not-be-saved).
+- **Usage is also shown at all times** at the bottom of the Options
+  page, so a profile nearing the quota is visible before a write fails.
+  See [Storage usage table](#storage-usage-table).
 - **One collection failing doesn't stop the others.**
   `refreshAllCollections` records each failure and keeps going rather
   than rejecting at the first, because an exhausted quota fails *every*
@@ -723,6 +726,30 @@ The write in step 5 is the last thing that can fail, and the one failure
   cause and the fix, in one string, wherever the reason lands (Log
   entry, install callout, collection section). Other rejections pass
   through as worded.
+
+### Storage usage table
+
+The Options page's read-only breakdown of `chrome.storage.local`
+(`src/extension/storage-usage.ts`).
+
+- **Rows by kind**: scripts, `@require` and `@resource` files, GM
+  values, icons, scripts run by sm-dev, collections, other.
+- **Session storage isn't shown**: it holds only this session's logs
+  and tab state, with its own quota, and is nowhere near filling.
+- **Split script rows**: `@require` / `@resource` bodies are stored
+  inline in `script:` rows, so their JSON is subtracted from the row
+  and counted under their own kind.
+- **Sizes** are key + JSON value in UTF-8 bytes, which is how Chrome
+  charges. The total comes from `getBytesInUse`, and **Other** takes
+  the difference so the rows always add up.
+- **Rows in whole KB**, rounded by largest remainder so they sum
+  exactly to the total in KB. Rows that round to 0 are left out.
+- **Total in MB**, on both sides of "of" (`9.9 MB of 10 MB`): mixed
+  units read as over the limit at a glance. Rounded down, so it never
+  reads as full while there is room. The collections page's
+  storage-full banner uses the same wording (`formatStorageUsage`).
+- **Repaint** on any storage change, at most once a second, since each
+  paint reads every row.
 
 ### Write failure during an install: take the seed back out
 
@@ -1148,6 +1175,7 @@ collection**:
     a `"0 B"` for an empty file, and the prior size for `invalid` rows
     that retain their last-read body. Only rows that have
     never successfully loaded (`size == null`) render as `"—"`.
+    Right-aligned, in whole KB below 1 MB (`formatBytes`).
   - Status shows one of `OK | INVALID | WARNING | ERROR`
     (see [Displayed status](#displayed-status-ui-level) for the
     priority rules). The label is a link to the script viewer's Log
