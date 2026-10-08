@@ -191,10 +191,16 @@ test.describe('toolbar popup', () => {
     const before = await order();
     // Disable Alpha: it stays where it is (the layout holds while the
     // popup is open), greyed, still running until a reload.
-    await popup.locator('.row', { hasText: 'Alpha' }).locator('input[type="checkbox"]').uncheck();
+    const alphaBox = popup.locator('.row', { hasText: 'Alpha' }).locator('input[type="checkbox"]');
+    const boxTop = async () => (await alphaBox.boundingBox())!.y;
+    const topBefore = await boxTop();
+    await alphaBox.uncheck();
     await expect(popup.locator('section[data-section="enabled"] .row', { hasText: 'Alpha' }).locator('.pill')).toHaveText('Still running');
     await expect(popup.locator('.row', { hasText: 'Alpha' })).toHaveClass(/\boff\b/);
     await expect(popup.locator('.banner-row.reload')).toContainText('Reload required: Scripts disabled');
+    // The banner appears below the list, so the checkbox just clicked
+    // stays under the pointer.
+    expect(await boxTop()).toBe(topBefore);
 
     // Enable Beta as well: the banner says the mix changed.
     await popup.locator('.row', { hasText: 'Beta' }).locator('input[type="checkbox"]').check();

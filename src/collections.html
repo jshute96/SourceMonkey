@@ -220,6 +220,8 @@
          the chip and checkbox have nothing to strike through. */
       .script-table tr.row-removed .tombstone-name,
       .script-table tr.row-removed td.size-cell { text-decoration: line-through; }
+      /* Sizes line up on their units. */
+      .script-table .size-cell { text-align: right; font-variant-numeric: tabular-nums; }
       /* The favicon stays — it's what the eye finds the row by — but
          muted, so a dead row never draws attention ahead of a live one. */
       .script-table tr.row-removed .site-icon { filter: grayscale(1); opacity: 0.55; }

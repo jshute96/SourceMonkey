@@ -63,7 +63,7 @@ import { probeVersions } from './version-probe-fetch.js';
 import { mapWithConcurrency, PROBE_SCRIPTS_CONCURRENCY } from './concurrency.js';
 import { describeRefreshError, readRefreshErrors } from './refresh-error.js';
 import { getValue } from '../userscript-header.js';
-import { scriptOutdatedProbe } from '../script-display.js';
+import { formatBytes, scriptOutdatedProbe } from '../script-display.js';
 import { dlog } from '../debug-log.js';
 import { startPhaseTimer, resetPhaseTotals, reportPhaseTotals } from '../phase-timing.js';
 import { githubTokenLogSuffix } from '../github-auth.js';
@@ -1084,11 +1084,6 @@ function describe(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
-}
 
 // Convenience: kick off opportunistic checks for a batch of script IDs
 // without awaiting. Each id gates independently; ids whose check is

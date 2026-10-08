@@ -42,6 +42,12 @@
       }
       .root-problems { margin: 0.3em 0 0; padding-left: 1.2em; font-size: 0.85em; color: #b00020; }
       .root-problems li { margin: 0.2em 0; }
+      .storage-usage { margin: 0.5em 0 0; border-collapse: collapse; }
+      /* One gap between every pair of columns. */
+      .storage-usage td { padding: 2px 0 2px 2.5em; text-align: left; }
+      .storage-usage td:first-child { padding-left: 0; }
+      .storage-usage td.num { text-align: right; font-variant-numeric: tabular-nums; }
+      .storage-usage tr.total td { border-top: 1px solid #ddd; font-weight: 600; }
     </style>
   </head>
   <body>
@@ -172,6 +178,12 @@
             unless you set an expiry.
           </p>
         </details>
+      </div>
+
+      <div id="storage" class="settings-section">
+        <h2 class="settings-heading">Chrome storage usage</h2>
+        <p id="storage-limit" class="settings-hint" hidden></p>
+        <table id="storage-usage" class="storage-usage"></table>
       </div>
     </div>
 

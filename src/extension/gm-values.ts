@@ -37,7 +37,7 @@
 
 import { scanAllStorage, timeStorageRead } from './storage-scan.js';
 
-const VALUE_PREFIX = 'gmval:';
+export const VALUE_PREFIX = 'gmval:';
 
 // Compose / parse the storage key shape: `gmval:<scriptId>:<key>`.
 // `scriptId` is a UUID so no `:` in it; `key` may contain `:`. We

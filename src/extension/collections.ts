@@ -89,6 +89,7 @@ import {
   effectiveScriptStatus,
   ENABLE_TITLE,
   formatBytes,
+  formatStorageUsage,
   formatScriptSize,
   formatScriptStatusLabel,
   previewUrl,
@@ -1504,6 +1505,8 @@ async function renderScriptTable(collection: StoredCollection, collectionOn: boo
   for (const label of ['Name', 'Size', 'Status']) {
     const th = document.createElement('th');
     th.textContent = label;
+    // Right-aligned with its cells, so the numbers line up.
+    if (label === 'Size') th.className = 'size-cell';
     headRow.appendChild(th);
     if (label === 'Name' && inContainer) {
       // A scripts collection can mix local, web, and GitHub scripts,
@@ -2970,7 +2973,7 @@ async function buildStorageBanner(liveIds: ReadonlySet<string>): Promise<HTMLEle
     const detail = document.createElement('p');
     detail.className = 'banner-detail';
     detail.textContent =
-      `Using ${formatBytes(usage.used)} of ${formatBytes(usage.quota)}`;
+      `Using ${formatStorageUsage(usage.used, usage.quota)}`;
     div.appendChild(detail);
   }
 

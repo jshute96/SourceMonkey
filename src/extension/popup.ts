@@ -66,6 +66,7 @@ const tabParam = params.get('tab');
 const inPopup = tabParam === null || params.has('close');
 
 const bannersEl = document.getElementById('banners') as HTMLElement;
+const reloadBarEl = document.getElementById('reload-bar') as HTMLElement;
 const scriptsEl = document.getElementById('scripts') as HTMLElement;
 const pageMenuBtn = document.getElementById('page-menu') as HTMLButtonElement;
 
@@ -226,6 +227,7 @@ function render(v: PopupView | null): void {
 
 function draw(v: PopupView | null): void {
   bannersEl.replaceChildren();
+  reloadBarEl.replaceChildren();
   scriptsEl.replaceChildren();
   document.body.dataset.ready = 'true';
   if (!v || !v.injectable) {
@@ -236,7 +238,7 @@ function draw(v: PopupView | null): void {
   if (v.banner) {
     const reload = el('button', { type: 'button' }, 'Reload');
     reload.addEventListener('click', () => quietly(reloadPlain()));
-    bannersEl.append(el('div', { class: 'banner-row reload' }, el('span', {}, v.banner), reload));
+    reloadBarEl.append(el('div', { class: 'banner-row reload' }, el('span', {}, v.banner), reload));
   }
   const { enabled, manual, disabled } = arrange(v);
   if (enabled.length === 0 && manual.length === 0 && disabled.length === 0) {

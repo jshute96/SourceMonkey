@@ -39,9 +39,9 @@ const SM_DEV_CONTAINER_PREFIX = 'container:sm-dev:';
 // path, so the basename every label is cut from is the script's own
 // name rather than the whole URL.
 const SCRATCH_SCHEME = 'scratch:///';
-const SCRATCH_TEXT_KEY_PREFIX = 'scratch:';
-const SCRATCH_FILES_KEY_PREFIX = 'scratchFiles:';
-const SCRATCH_SOURCE_KEY_PREFIX = 'scratchSource:';
+export const SCRATCH_TEXT_KEY_PREFIX = 'scratch:';
+export const SCRATCH_FILES_KEY_PREFIX = 'scratchFiles:';
+export const SCRATCH_SOURCE_KEY_PREFIX = 'scratchSource:';
 
 // Kept to a URL path segment's safe characters.
 function safeSegment(text: string): string {

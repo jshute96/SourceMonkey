@@ -104,9 +104,24 @@ From top to bottom:
   - Icon and product name open the collections page, as on other pages.
   - An **Open** button on the right does the same, more visibly.
   - A **⋯ menu** in the corner for page-wide actions (below).
-- **Banner slot** (only when something applies):
-  - Purple **reload banner**, matching the purple badge, with a Reload
-    button. Wording by cause:
+- Cyan **sm-dev banner**, only when the page is under sm-dev's
+  control: `Page under sm-dev control`, replacing the menu's row of
+  that name.
+- **Script area**, one scroll region (see [Scrolling](#scrolling)):
+  - **Enabled** section.
+  - **Manual** section, only when it has rows: scripts with `@run-at
+    context-menu` (see [manual-scripts.md](manual-scripts.md#popup)).
+  - **Disabled** section.
+  - Each section groups its scripts under collection headings (see
+    [Collection groups](#collection-groups)).
+- Purple **reload banner** at the bottom, below the script area (only when a
+  reload is needed):
+  - Below the list, not above it: a toggle in the popup is what usually
+    makes it appear, and at the top it would push down the row just
+    clicked. At the bottom the popup just grows, or at full height the
+    list loses a row of view.
+  - Purple to match the purple badge, with a Reload button. Wording by
+    cause:
     - `Reload required: Page loaded before SourceMonkey started` (see
       Reload below)
     - `Reload required: Enabled scripts changed` (enables, and disables
@@ -129,22 +144,13 @@ From top to bottom:
           started (see [matching.md](matching.md#scripts-that-never-start)),
           or 20s after the page started loading, whichever comes first.
     - The first that applies wins, in that order.
-  - Cyan **sm-dev banner**, `Page under sm-dev control`, replacing the
-    menu's row of that name.
-  - Both can show at once, stacked, though rarely: sm-dev reloads its
+  - Shows alongside the sm-dev banner only rarely: sm-dev reloads its
     tabs itself when its own scripts change.
     - `Scripts updated`: an installed script the run let in changed
       outside the run (say, a collection refresh).
     - `Scripts disabled`: one the run let in was unticked.
     - Enabling never counts there: the run decides what loads in its
       tab, so a reload wouldn't run the newly enabled script.
-- **Script area**, one scroll region (see [Scrolling](#scrolling)):
-  - **Enabled** section.
-  - **Manual** section, only when it has rows: scripts with `@run-at
-    context-menu` (see [manual-scripts.md](manual-scripts.md#popup)).
-  - **Disabled** section.
-  - Each section groups its scripts under collection headings (see
-    [Collection groups](#collection-groups)).
 
 ### Page ⋯ menu
 
@@ -338,7 +344,7 @@ Every pill has a tooltip:
 
 ## Scrolling
 
-- Header and banners stay put; only the script area scrolls.
+- Header, sm-dev banner and reload banner stay put; only the script area scrolls.
 - **One scroll region for both sections**, with sticky section headings,
   rather than a scrollbar per section.
   - Two inner scrollbars fight for height: a long Enabled list squeezes
