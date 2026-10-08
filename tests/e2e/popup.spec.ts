@@ -118,7 +118,7 @@ test.describe('toolbar popup', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
-    await waitForTabState(sm, tabId, (s) => s.title.includes('Gamma | OK'), 'scripts ran');
+    await waitForTabState(sm, tabId, (s) => s.rows.includes('Gamma | OK'), 'scripts ran');
 
     const popup = await openPopup(extensionContext, extensionId, tabId);
     await expect(popup).toHaveTitle('SourceMonkey | Active scripts');
@@ -145,6 +145,44 @@ test.describe('toolbar popup', () => {
     await page.close();
   });
 
+  test('a script deleted while its page is open is listed as Still running, and a reload removes it', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker, extensionId,
+  }) => {
+    const d = dir();
+    const match = [`${fixtureServer.baseUrl}/*`];
+    d.write({ relativePath: 'keep.user.js', meta: { name: 'Keep', match }, body: `` });
+    d.write({ relativePath: 'gone.user.js', meta: { name: 'Gone', match }, body: `` });
+    await sm.addCollection(d.path);
+    await sm.syncNow();
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    const tabId = await activeTabId(getServiceWorker);
+    await waitForTabState(sm, tabId, (s) => s.rows.includes('Keep | OK') && s.rows.includes('Gone | OK'), 'both ran');
+
+    const gone = (await allScripts(sm)).find((s) => s.relativePath === 'gone.user.js')!;
+    await sm.removeScript(gone.id);
+    await sm.syncNow();
+    // Purple: a reload would remove it.
+    const snap = await waitForTabState(
+      sm, tabId,
+      (s) => s.rows.includes('Gone | STILL_RUNNING') && s.title.includes('\nReload needed to remove 1 script.\n'),
+      'Gone still running after its delete',
+    );
+    expect(snap.badgeColor).toEqual([0xd5, 0x00, 0xf9, 255]);
+
+    const popup = await openPopup(extensionContext, extensionId, tabId);
+    await expect(popup.locator('.banner-row.reload span')).toHaveText('Reload required: Scripts deleted');
+    const row = popup.locator('section[data-section="disabled"] .row.deleted', { hasText: 'Gone' });
+    await expect(popup.locator('.group-head.deleted')).toHaveText('Deleted scripts');
+    await expect(row.locator('.pill')).toHaveText('Still running');
+    await expect(row.locator('.pill')).toHaveAttribute('title', /^Deleted since this page loaded\. It keeps running until a reload\.\nClick to reload the page\.$/);
+    await row.locator('.pill').click();
+    await waitForTabState(sm, tabId, (s) => s.rows.join('\n') === 'Keep | OK', 'only Keep after the reload');
+    await expect(popup.locator('.row.deleted')).toHaveCount(0);
+    await popup.close();
+    await page.close();
+  });
+
   test('toggles word the reload banner and the pills', async ({
     extensionContext, fixtureServer, sm, getServiceWorker, extensionId,
   }) => {
@@ -152,7 +190,7 @@ test.describe('toolbar popup', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
-    await waitForTabState(sm, tabId, (s) => s.title.includes('Alpha | OK'), 'Alpha ran');
+    await waitForTabState(sm, tabId, (s) => s.rows.includes('Alpha | OK'), 'Alpha ran');
     const popup = await openPopup(extensionContext, extensionId, tabId);
 
     const order = () => popup.locator('.row .script-name').allTextContents();
@@ -263,7 +301,7 @@ test.describe('toolbar popup', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
-    await waitForTabState(sm, tabId, (s) => s.title.includes('Alpha | OK'), 'Alpha ran');
+    await waitForTabState(sm, tabId, (s) => s.rows.includes('Alpha | OK'), 'Alpha ran');
     await page.evaluate(() => { document.documentElement.dataset.alpha = 'stale'; });
     const popup = await openPopup(extensionContext, extensionId, tabId);
     await popup.locator('#page-menu').click();
@@ -307,7 +345,7 @@ test.describe('toolbar popup', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
-    await waitForTabState(sm, tabId, (s) => s.title.includes('Alpha | OK'), 'Alpha ran');
+    await waitForTabState(sm, tabId, (s) => s.rows.includes('Alpha | OK'), 'Alpha ran');
     const popup = await openPopup(extensionContext, extensionId, tabId);
     await popup.locator('#page-menu').click();
     await expect(popup.locator('.menu')).toBeVisible();
@@ -315,7 +353,7 @@ test.describe('toolbar popup', () => {
     // Logs; none of that is this popup's.
     const other = await extensionContext.newPage();
     await other.goto(`${fixtureServer.baseUrl}/target.html`);
-    await waitForTabState(sm, await activeTabId(getServiceWorker), (s) => s.title.includes('Alpha | OK'), 'other tab ran');
+    await waitForTabState(sm, await activeTabId(getServiceWorker), (s) => s.rows.includes('Alpha | OK'), 'other tab ran');
     await popup.waitForTimeout(300);
     await expect(popup.locator('.menu')).toBeVisible();
     await other.close();

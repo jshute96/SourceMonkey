@@ -1452,8 +1452,8 @@ For the report types (start / swapped / error) the SW:
 - Looks up the sender tab's state in `chrome.storage.session` and
   merges the report into the tab's `actual` map (script ID → `{state,
   name, message?}`).
-- Re-renders the toolbar badge — color + tooltip — from the union of
-  expected and actual entries. See
+- Re-renders the toolbar badge (color and tooltip) from the union of
+  expected and actual entries, via the popup's view. See
   [matching.md](matching.md#per-tab-badge--tooltip) for the
   classification rules.
 
@@ -1672,7 +1672,7 @@ an SW restart means no wrapper is waiting on us):
   reports, so purple can't stick around looking like the RELOAD state
   it deliberately mimics.
 - It's a paint-time override in `renderBadge`, not part of
-  `computeBadge`: it describes a swap in flight rather than the tab's
+  `summarizeToolbar`: it describes a swap in flight rather than the tab's
   expected/actual sets. RED still wins — an error the user must act on
   outranks a progress signal.
 - The flash records its `documentId`, and a commit for a different

@@ -58,7 +58,7 @@ test.describe('sm-dev tab claims', () => {
       expect(await ran(page, 'kept')).toBeNull();
     }
     // The badge shows the kept-out script as not loaded, not missing.
-    await waitForTabState(sm, tabId, (s) => s.title.includes('Kept | NOT LOADED') && s.title.includes('Allowed | OK'), 'Kept not loaded');
+    await waitForTabState(sm, tabId, (s) => s.rows.includes('Kept | NOT_LOADED') && s.rows.includes('Allowed | OK'), 'Kept not loaded');
     // And nothing lands in its Log for it: the person asked nothing of it.
     expect((await sm.getScriptLog(kept)).filter((e) => e.message.includes('Did not run'))).toEqual([]);
 
@@ -102,7 +102,7 @@ test.describe('sm-dev tab claims', () => {
     const tabId = await activeTabId(getServiceWorker);
     await sm.claimTab(tabId, 'R1', 60_000);
     await page.reload();
-    await waitForTabState(sm, tabId, (s) => s.title.includes('Kept | NOT LOADED') && hasBadgeColor(s, GREEN), 'green with Kept not loaded');
+    await waitForTabState(sm, tabId, (s) => s.rows.includes('Kept | NOT_LOADED') && hasBadgeColor(s, GREEN), 'green with Kept not loaded');
     // Counted: only the script the claim let run. And the popup and
     // tooltip say whose tab it is.
     expect((await sm.getTabState(tabId)).badgeText).toBe('1');
@@ -114,7 +114,7 @@ test.describe('sm-dev tab claims', () => {
     // script is gone with its test collection.
     await sm.releaseRun('R1');
     await page.reload();
-    await waitForTabState(sm, tabId, (s) => s.title.includes('Kept | OK') && s.badgeText === '1', 'Kept counted');
+    await waitForTabState(sm, tabId, (s) => s.rows.includes('Kept | OK') && s.badgeText === '1', 'Kept counted');
     expect((await sm.getPopupView(tabId)).smDev).toBe(false);
     expect((await sm.getPopupView(tabId)).perScriptReload).toBe(true);
     expect((await sm.getTabState(tabId)).title).not.toContain('sm-dev');
@@ -130,7 +130,7 @@ test.describe('sm-dev tab claims', () => {
     await sm.claimTab(tabId, 'R1', 60_000);
     await sm.setTabScriptsOff(tabId, true);
     await page.reload();
-    await waitForTabState(sm, tabId, (s) => s.title.includes('Allowed | NOT LOADED') && hasBadgeColor(s, GREY), 'all not loaded');
+    await waitForTabState(sm, tabId, (s) => s.rows.includes('Allowed | NOT_LOADED') && hasBadgeColor(s, GREY), 'all not loaded');
     expect(await ran(page, 'allowed')).toBeNull();
   });
 
@@ -200,7 +200,7 @@ test.describe('sm-dev tab claims', () => {
     const tabId = await activeTabId(getServiceWorker);
     await page.waitForTimeout(300);
     expect(await ran(page, 'mine')).toBeNull();
-    expect((await sm.getTabState(tabId)).title).not.toContain('Mine');
+    expect((await sm.getTabState(tabId)).rows.join('\n')).not.toContain('Mine');
     // Another run's tab: not run either.
     await sm.claimTab(tabId, 'R2', 60_000);
     await page.reload();
@@ -211,7 +211,7 @@ test.describe('sm-dev tab claims', () => {
     await sm.claimTab(tabId, 'R1', 60_000);
     await page.reload();
     await expect.poll(() => ran(page, 'mine')).toBe('ran');
-    await waitForTabState(sm, tabId, (s) => s.title.includes('Mine | OK'), 'Mine OK');
+    await waitForTabState(sm, tabId, (s) => s.rows.includes('Mine | OK'), 'Mine OK');
     // Its claim gone (the run still holding its test collection), nowhere again.
     await sm.renewRun('R1', 0);
     await page.waitForTimeout(10);
@@ -250,7 +250,7 @@ test.describe('sm-dev tab claims', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
-    await waitForTabState(sm, tabId, (s) => s.title.includes('Main | OK'), 'Main OK');
+    await waitForTabState(sm, tabId, (s) => s.rows.includes('Main | OK'), 'Main OK');
     // As the page could, forging a report for a script it made up.
     await page.evaluate(() => {
       document.dispatchEvent(new CustomEvent('sourcemonkey-bridge-sync', {
@@ -258,6 +258,6 @@ test.describe('sm-dev tab claims', () => {
       }));
     });
     await page.waitForTimeout(300);
-    expect((await sm.getTabState(tabId)).title).not.toContain('Stranger');
+    expect((await sm.getTabState(tabId)).rows.join('\n')).not.toContain('Stranger');
   });
 });

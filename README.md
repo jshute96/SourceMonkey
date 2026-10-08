@@ -316,7 +316,7 @@ To generate a manifest from a directory of userscripts, run
 
 Nothing polls on a timer. A script's source is re-checked at these
 moments, and any change is loaded immediately — the toolbar badge then
-turns purple with a "Reload to update" tooltip.
+turns purple, and its tooltip says a reload is needed.
 
 - **Loading a page** re-checks the scripts that run on it.
 - **Switching to a tab** re-checks the scripts on it that came from
@@ -352,11 +352,12 @@ Details: [docs/updates.md](docs/updates.md).
 
 As you browse, the toolbar icon shows how many scripts apply to the
 current page, colored by health: **green** all good, **orange**
-scripts missing or unexpected, **purple** a newer version is available
-(reload the page to update), **red** a script errored or Chrome refused to
-register it.
+scripts missing or unexpected, **purple** a reload is needed (a newer
+version is available, or scripts were turned on or off or deleted since
+the page loaded), **red** a script errored or Chrome refused to register it.
 
-Hovering the icon lists each script and its status.
+Hovering the icon sums up the page: how many scripts are running, and
+any errors, warnings or reloads needed.
 
 Clicking the icon opens the **Active scripts** popup: the scripts that
 match the page, grouped by collection, with their status. From there

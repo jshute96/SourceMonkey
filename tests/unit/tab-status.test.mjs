@@ -2,8 +2,9 @@
 //
 // The module owns the pure helpers behind the per-tab toolbar badge:
 // classifying each expected/actual script into OK/ERROR/MISSING/
-// UNEXPECTED, picking the badge color, and merging incoming wrapper
-// reports.
+// UNEXPECTED and merging incoming wrapper reports. The color and
+// tooltip come from toolbar-summary.ts; `badge` below runs the whole
+// chain, so the color rules are checked here against real statuses.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,7 +13,6 @@ import {
   applyScriptReport,
   clearScriptStale,
   computeBadge,
-  formatRowLabel,
   getCurrentState,
   getDocState,
   markScriptStale,
@@ -25,8 +25,9 @@ import {
   BADGE_PURPLE,
   BADGE_RED,
   MAX_DOCS_PER_TAB,
-  titleHead,
 } from '../../dist/extension/tab-status.js';
+import { buildPopupView } from '../../dist/extension/popup-view.js';
+import { summarizeToolbar } from '../../dist/extension/toolbar-summary.js';
 
 // Shared default — the tests below don't care about documentId, they
 // just need the state shape to be valid.
@@ -41,10 +42,32 @@ function expected(id, name = id) {
   };
 }
 
+// computeBadge's rows, with the badge count, color and tooltip the
+// worker would paint for them: every script stored, enabled, in one
+// enabled collection, and matching the page.
+function badge(state, rejected = new Set()) {
+  const computed = computeBadge(state, rejected);
+  const { rows } = computed;
+  const view = buildPopupView({
+    url: state.url,
+    injectable: true,
+    state,
+    badgeRows: rows,
+    rejected: Object.fromEntries([...rejected].map((id) => [id, 'Refused'])),
+    matchingIds: new Set(state.matches.map((m) => m.id)),
+    scripts: rows.map((r) => ({
+      id: r.id, name: r.name, collectionId: 'src-1', enabled: true, identity: null, version: null, headerWarnings: false,
+    })),
+    collections: [{ id: 'src-1', name: 'Src', path: '/src', enabled: true }],
+    menuCommands: new Map(),
+  });
+  return { rows, ...summarizeToolbar(view, state) };
+}
+
 // ---------- computeBadge: classification ----------
 
 test('computeBadge: expected + started → OK, GREEN', () => {
-  const view = computeBadge({
+  const view = badge({
     documentId: DOC, url: 'https://x',
     matches: [expected('a', 'Alpha'), expected('b', 'Beta')],
     actual: {
@@ -61,7 +84,7 @@ test('computeBadge: expected + started → OK, GREEN', () => {
 });
 
 test('computeBadge: expected but no report → MISSING, ORANGE', () => {
-  const view = computeBadge({
+  const view = badge({
     documentId: DOC, url: 'https://x',
     matches: [expected('a', 'Alpha'), expected('b', 'Beta')],
     actual: { a: { state: 'started', name: 'Alpha' } },
@@ -76,7 +99,7 @@ test('computeBadge: skipped document → NOT_LOADED, GREY', () => {
   // "Reload page with no userscripts": nothing reported because nothing
   // was asked to run. Grey says "on purpose", where MISSING's amber
   // would say "something's off".
-  const view = computeBadge({
+  const view = badge({
     documentId: DOC, url: 'https://x',
     matches: [expected('a', 'Alpha'), expected('b', 'Beta')],
     actual: {},
@@ -85,14 +108,14 @@ test('computeBadge: skipped document → NOT_LOADED, GREY', () => {
   assert.equal(view.count, 2);
   assert.equal(view.color, BADGE_GREY);
   assert.deepEqual(view.rows.map((r) => r.status), ['NOT_LOADED', 'NOT_LOADED']);
-  assert.match(view.title, /Alpha \| NOT LOADED/);
+  assert.match(view.title, /^2 scripts skipped on this load\.$/m);
 });
 
 test('computeBadge: an sm-dev claim keeps the rest out, and stays green when the allowed ones ran', () => {
   // A tab an sm-dev run controls: only `smDevAllow` may run; the rest
   // were told to skip, so NOT_LOADED, and the tab isn't greyed while
   // something did run.
-  const view = computeBadge({
+  const view = badge({
     documentId: DOC, url: 'https://x',
     matches: [expected('a', 'Alpha'), expected('b', 'Beta')],
     actual: { a: { state: 'started', name: 'Alpha' } },
@@ -103,7 +126,7 @@ test('computeBadge: an sm-dev claim keeps the rest out, and stays green when the
   // The tooltip says whose tab it is, as the action menu does.
   assert.equal(view.title.split('\n').slice(0, 2).join('\n'), 'SourceMonkey\nPage under sm-dev control');
   // Nothing allowed: nothing ran, so grey.
-  const none = computeBadge({
+  const none = badge({
     documentId: DOC, url: 'https://x',
     matches: [expected('a', 'Alpha')],
     actual: {},
@@ -111,15 +134,13 @@ test('computeBadge: an sm-dev claim keeps the rest out, and stays green when the
   });
   assert.equal(none.rows[0].status, 'NOT_LOADED');
   assert.equal(none.color, BADGE_GREY);
-  // An ordinary tab's tooltip has no such line.
-  assert.equal(titleHead(null), 'SourceMonkey');
-  assert.equal(titleHead({ documentId: DOC, url: 'https://x', matches: [], actual: {}, smDevAllow: null }), 'SourceMonkey\nPage under sm-dev control');
+  assert.match(none.title, /^Page under sm-dev control$/m);
 });
 
 test('computeBadge: NOT_LOADED beats REJECTED, but any real disagreement beats GREY', () => {
   // A refused registration didn't get to matter on a document where
   // nothing was going to run; an UNEXPECTED report still did.
-  const skipped = computeBadge({
+  const skipped = badge({
     documentId: DOC, url: 'https://x',
     matches: [expected('a', 'Alpha')],
     actual: {},
@@ -128,7 +149,7 @@ test('computeBadge: NOT_LOADED beats REJECTED, but any real disagreement beats G
   assert.equal(skipped.rows[0].status, 'NOT_LOADED');
   assert.equal(skipped.color, BADGE_GREY);
 
-  const mixed = computeBadge({
+  const mixed = badge({
     documentId: DOC, url: 'https://x',
     matches: [expected('a', 'Alpha')],
     actual: { z: { state: 'started', name: 'Zeta' } },
@@ -144,7 +165,7 @@ test('computeBadge: a refused registration → REJECTED, RED', () => {
   // REJECTED is settled — Chrome refused the spec, so nothing is
   // coming. Same word the collections page and viewer use, and red because
   // it is as final as a thrown error.
-  const view = computeBadge({
+  const view = badge({
     documentId: DOC, url: 'https://x',
     matches: [expected('a', 'Alpha'), expected('b', 'Beta')],
     actual: { a: { state: 'started', name: 'Alpha' } },
@@ -152,13 +173,13 @@ test('computeBadge: a refused registration → REJECTED, RED', () => {
   assert.equal(view.color, BADGE_RED);
   assert.equal(view.rows.find((r) => r.name === 'Beta').status, 'REJECTED');
   assert.equal(view.rows.find((r) => r.name === 'Alpha').status, 'OK');
-  assert.match(view.title, /Beta \| REJECTED/);
+  assert.match(view.title, /^Chrome rejected 1 script\.$/m);
 });
 
 test('computeBadge: rejection only refines the never-reported case', () => {
   // A script that DID report is described by its report, not by a
   // rejection record that must predate it.
-  const view = computeBadge({
+  const view = badge({
     documentId: DOC, url: 'https://x',
     matches: [expected('a', 'Alpha')],
     actual: { a: { state: 'started', name: 'Alpha' } },
@@ -170,7 +191,7 @@ test('computeBadge: rejection only refines the never-reported case', () => {
 test('computeBadge: an unrelated rejection leaves the tab alone', () => {
   // The map is global; a script refused elsewhere must not colour a tab
   // that never expected it.
-  const view = computeBadge({
+  const view = badge({
     documentId: DOC, url: 'https://x',
     matches: [expected('a', 'Alpha')],
     actual: { a: { state: 'started', name: 'Alpha' } },
@@ -180,7 +201,7 @@ test('computeBadge: an unrelated rejection leaves the tab alone', () => {
 });
 
 test('computeBadge: no rejection set → unchanged behavior', () => {
-  const view = computeBadge({
+  const view = badge({
     documentId: DOC, url: 'https://x',
     matches: [expected('a', 'Alpha')],
     actual: {},
@@ -190,7 +211,7 @@ test('computeBadge: no rejection set → unchanged behavior', () => {
 });
 
 test('computeBadge: actual without expected → UNEXPECTED, ORANGE', () => {
-  const view = computeBadge({
+  const view = badge({
     documentId: DOC, url: 'https://x',
     matches: [expected('a', 'Alpha')],
     actual: {
@@ -205,7 +226,7 @@ test('computeBadge: actual without expected → UNEXPECTED, ORANGE', () => {
 });
 
 test('computeBadge: any ERROR forces RED, even with MISSING/UNEXPECTED', () => {
-  const view = computeBadge({
+  const view = badge({
     documentId: DOC, url: 'https://x',
     matches: [expected('a', 'Alpha'), expected('b', 'Beta')],
     actual: {
@@ -222,7 +243,7 @@ test('computeBadge: any ERROR forces RED, even with MISSING/UNEXPECTED', () => {
 test('computeBadge: ERROR overrides expected/unexpected classification', () => {
   // An UNEXPECTED script that errored should still surface as ERROR
   // (the error matters more than whether we expected it).
-  const view = computeBadge({
+  const view = badge({
     documentId: DOC, url: 'https://x',
     matches: [],
     actual: { z: { state: 'error', name: 'Surprise', message: 'oops' } },
@@ -231,15 +252,15 @@ test('computeBadge: ERROR overrides expected/unexpected classification', () => {
   assert.equal(view.rows[0].status, 'ERROR');
 });
 
-test('computeBadge: empty state → count 0, GREEN, just header in title', () => {
-  const view = computeBadge({ documentId: DOC, url: 'https://x', matches: [], actual: {} });
+test('computeBadge: empty state → no badge, tooltip says nothing matches', () => {
+  const view = badge({ documentId: DOC, url: 'https://x', matches: [], actual: {} });
   assert.equal(view.count, 0);
-  assert.equal(view.color, BADGE_GREEN);
-  assert.equal(view.title, 'SourceMonkey');
+  assert.equal(view.color, null);
+  assert.equal(view.title, 'SourceMonkey\nNo scripts match this page.\nClick for details. Double-click for collections.');
 });
 
-test('computeBadge: rows sorted by name; tooltip is "NAME | STATUS" per row', () => {
-  const view = computeBadge({
+test('computeBadge: rows sorted by name', () => {
+  const view = badge({
     documentId: DOC, url: 'https://x',
     matches: [expected('c', 'Charlie'), expected('a', 'Alpha')],
     actual: {
@@ -248,8 +269,7 @@ test('computeBadge: rows sorted by name; tooltip is "NAME | STATUS" per row', ()
       b: { state: 'error', name: 'Bravo', message: 'x' },
     },
   });
-  assert.deepEqual(view.title.split('\n'), [
-    'SourceMonkey',
+  assert.deepEqual(view.rows.map((r) => `${r.name} | ${r.status}`), [
     'Alpha | MISSING',
     'Bravo | ERROR',
     'Charlie | OK',
@@ -257,7 +277,7 @@ test('computeBadge: rows sorted by name; tooltip is "NAME | STATUS" per row', ()
 });
 
 test('computeBadge: names sort like the collections page (case-blind, numeric)', () => {
-  const view = computeBadge({
+  const view = badge({
     documentId: DOC, url: 'https://x',
     matches: [expected('a', 'Item 10'), expected('b', 'beta'), expected('c', 'Item 9')],
     actual: {
@@ -266,18 +286,13 @@ test('computeBadge: names sort like the collections page (case-blind, numeric)',
       c: { state: 'started', name: 'Item 9' },
     },
   });
-  assert.deepEqual(view.title.split('\n'), [
-    'SourceMonkey',
-    'beta | OK',
-    'Item 9 | OK',
-    'Item 10 | OK',
-  ]);
+  assert.deepEqual(view.rows.map((r) => r.name), ['beta', 'Item 9', 'Item 10']);
 });
 
 test('computeBadge: prefers actual-side name over expected-side', () => {
   // The wrapper's reported name reflects what's actually running; use
   // it in preference to a possibly-stale name from the cache.
-  const view = computeBadge({
+  const view = badge({
     documentId: DOC, url: 'https://x',
     matches: [expected('a', 'OldName')],
     actual: { a: { state: 'started', name: 'NewName' } },
@@ -287,8 +302,8 @@ test('computeBadge: prefers actual-side name over expected-side', () => {
 
 // ---------- computeBadge: RELOAD / PURPLE ----------
 
-test('computeBadge: started + stale → RELOAD, PURPLE, tooltip says "Reload to update"', () => {
-  const view = computeBadge({
+test('computeBadge: started + stale → RELOAD, PURPLE, tooltip says a reload is needed', () => {
+  const view = badge({
     documentId: DOC, url: 'https://x',
     matches: [expected('a', 'Alpha'), expected('b', 'Beta')],
     actual: {
@@ -300,16 +315,14 @@ test('computeBadge: started + stale → RELOAD, PURPLE, tooltip says "Reload to 
   assert.equal(view.color, BADGE_PURPLE);
   const alpha = view.rows.find((r) => r.name === 'Alpha');
   assert.equal(alpha.status, 'RELOAD');
-  // The tooltip surfaces the verbose label, not the raw enum value.
-  assert.ok(view.title.includes('Alpha | Reload to update'), view.title);
-  assert.ok(view.title.includes('Beta | OK'), view.title);
+  assert.deepEqual(view.title.split('\n').slice(1, 3), ['2 scripts running.', 'Reload needed to update 1 script.']);
 });
 
 test('computeBadge: non-stale ERROR still beats RELOAD for color', () => {
   // Beta errored and its file on disk has NOT changed → row stays ERROR,
   // badge stays RED. Stale alpha is still RELOAD on its row but RED
   // wins for the overall color.
-  const view = computeBadge({
+  const view = badge({
     documentId: DOC, url: 'https://x',
     matches: [expected('a', 'Alpha'), expected('b', 'Beta')],
     actual: {
@@ -327,9 +340,9 @@ test('computeBadge: non-stale ERROR still beats RELOAD for color', () => {
 
 test('computeBadge: stale ERROR row becomes RELOAD', () => {
   // The error was from outdated content; the user's fix on disk may
-  // address it. We don't keep showing red — purple/Reload to update is
+  // address it. We don't keep showing red — purple (a reload) is
   // the more actionable signal.
-  const view = computeBadge({
+  const view = badge({
     documentId: DOC, url: 'https://x',
     matches: [expected('a', 'Alpha')],
     actual: { a: { state: 'error', name: 'Alpha', message: 'boom' } },
@@ -342,7 +355,7 @@ test('computeBadge: stale ERROR row becomes RELOAD', () => {
 test('computeBadge: stale id with no started report → not RELOAD (only running code reloads)', () => {
   // The wrapper hasn't reported for `a` yet, so there is no "running
   // code" to flag. The row stays MISSING; no RELOAD/purple.
-  const view = computeBadge({
+  const view = badge({
     documentId: DOC, url: 'https://x',
     matches: [expected('a', 'Alpha')],
     actual: {},
@@ -576,32 +589,4 @@ test('getDocState / getCurrentState: lookups behave', () => {
   assert.equal(getDocState(null, 'd1'), null);
   assert.equal(getCurrentState(rec).url, 'https://b');
   assert.equal(getCurrentState(null), null);
-});
-
-// ---------- formatRowLabel ----------
-
-test('formatRowLabel: OK / ERROR / MISSING / UNEXPECTED use the raw status enum', () => {
-  assert.equal(formatRowLabel({ id: 'a', name: 'Alpha', status: 'OK' }), 'Alpha | OK');
-  assert.equal(formatRowLabel({ id: 'b', name: 'Beta', status: 'ERROR' }), 'Beta | ERROR');
-  assert.equal(formatRowLabel({ id: 'c', name: 'Gamma', status: 'MISSING' }), 'Gamma | MISSING');
-  assert.equal(formatRowLabel({ id: 'd', name: 'Delta', status: 'UNEXPECTED' }), 'Delta | UNEXPECTED');
-});
-
-test('formatRowLabel: RELOAD is rendered as the verbose "Reload to update" label', () => {
-  // The tooltip says what to do, so the enum's raw name never shows.
-  assert.equal(formatRowLabel({ id: 'e', name: 'Echo', status: 'RELOAD' }), 'Echo | Reload to update');
-});
-
-test('formatRowLabel: NOT_LOADED is rendered with a space', () => {
-  assert.equal(formatRowLabel({ id: 'f', name: 'Fox', status: 'NOT_LOADED' }), 'Fox | NOT LOADED');
-});
-
-test('formatRowLabel: matches the tooltip line format byte-for-byte', () => {
-  const view = computeBadge({
-    documentId: DOC, url: 'https://x',
-    matches: [expected('a', 'Alpha')],
-    actual: { a: { state: 'started', name: 'Alpha' } },
-  });
-  const expectedLine = formatRowLabel(view.rows[0]);
-  assert.ok(view.title.split('\n').includes(expectedLine), view.title);
 });

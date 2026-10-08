@@ -92,13 +92,13 @@ test.describe('reload fast-path', () => {
     // swap decision, and waiting for the load event first would spend
     // part of that window.
     const navigated = page.reload();
-    // The tooltip separates the two purples: a swap that MISSED its
-    // window also paints purple, but as a stale `Reload to update`
-    // row. Asserting its absence keeps a missed window failing here
-    // rather than passing this wait and failing the title check.
+    // The rows separate the two purples: a swap that MISSED its
+    // window also paints purple, but with a stale `RELOAD` row.
+    // Asserting its absence keeps a missed window failing here rather
+    // than passing this wait and failing a later check.
     await waitForTabState(
       sm, tabId,
-      (s) => hasBadgeColor(s, PURPLE) && !s.title.includes('Reload to update'),
+      (s) => hasBadgeColor(s, PURPLE) && !s.rows.some((r) => r.endsWith('| RELOAD')),
       'purple while the swap lands',
     );
     await navigated;

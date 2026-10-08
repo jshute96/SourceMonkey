@@ -105,12 +105,12 @@ import {
   SM_DEV_MARKER_CYAN,
   clearScriptStale,
   computeBadge,
-  titleHead,
   getCurrentState,
   getDocState,
   markScriptStale,
   mergeMatches,
   notePageReport,
+  noteScriptWarning,
   setCurrentDoc,
   writeDocState,
   type ActualStatus,
@@ -118,6 +118,7 @@ import {
   type TabRecord,
 } from './tab-status.js';
 import { describeMissingScript, findMissingScripts } from './missing-scripts.js';
+import { summarizeToolbar } from './toolbar-summary.js';
 import {
   _resetUpdaterStateForTests,
   replayScriptLogsAtBoot,
@@ -320,6 +321,7 @@ import {
   type PopupClosingMessage,
   type PopupCommandRequest,
   type PopupReloadRequest,
+  type PopupScriptInput,
   type PopupSetEnabledRequest,
   type PopupView,
   type PopupViewRequest,
@@ -689,13 +691,18 @@ const api: SourceMonkeyApi = {
   updateScript,
   updateAllCollections,
   getTabState: async (tabId: number) => {
-    const [badgeText, badgeColor, title, record] = await Promise.all([
+    const [badgeText, badgeColor, title, record, view] = await Promise.all([
       chrome.action.getBadgeText({ tabId }),
       chrome.action.getBadgeBackgroundColor({ tabId }),
       chrome.action.getTitle({ tabId }),
       getTabRecord(tabId),
+      popupViewForTab(tabId),
     ]);
-    return { badgeText, badgeColor, title, record };
+    // The popup's rows, as `Name | STATUS`, for the ones with a status.
+    const rows = [...[...view.enabled, ...view.disabled].flatMap((g) => g.rows), ...view.deleted]
+      .filter((r) => r.status !== null)
+      .map((r) => `${r.name} | ${r.status}`);
+    return { badgeText, badgeColor, title, rows, record };
   },
   isCaptureEnabled,
   // Drains this script's in-flight appends before reading. Production
@@ -863,6 +870,7 @@ const api: SourceMonkeyApi = {
     // check off for every later test in this worker.
     parseCheckRuns = 0;
     resetParseCheckFailures();
+    popupScriptCache.clear();
     // Same reason: a retry from the previous test would otherwise
     // rate-limit the next one's out of existence.
     resetRejectionRetryGate();
@@ -960,7 +968,20 @@ const api: SourceMonkeyApi = {
 (self as unknown as { SourceMonkey: SourceMonkeyApi }).SourceMonkey = api;
 
 // sm-dev runs hear each Log entry as it is written (sm-dev-link.ts).
-onScriptLogEntry((scriptId, entry, fromReport) => emitSmDevEvent({ kind: 'log', scriptId, entry, ...(fromReport ? { fromReport } : {}) }));
+onScriptLogEntry((scriptId, entry, fromReport) => {
+  emitSmDevEvent({ kind: 'log', scriptId, entry, ...(fromReport ? { fromReport } : {}) });
+  // A warning from a tab marks the script Warning there. Not a
+  // load-state entry, which is about the script rather than this page,
+  // nor the wrapper's own (never started, skipped): those say it didn't
+  // run, and can arrive after the tab moved on to another page.
+  const tabId = entry.tabId;
+  if (
+    entry.level === 'warning' && tabId !== undefined && entry.state === undefined
+    && entry.source !== 'script-wrapper'
+  ) {
+    enqueueTabWork(tabId, () => noteTabWarning(tabId, scriptId));
+  }
+});
 // While any sm-dev claim is live, every wrapper waits for its
 // check-pending answer, so a claimed tab can still skip a script.
 onClaimsLiveChange(setMustAskForDecision);
@@ -1352,7 +1373,7 @@ async function smDevClaimFields(tabId: number, matches: MatchedScript[]): Promis
 
 // The matches a tab's badge expects. A scratch script runs only in its
 // own run's tabs (see handleCheckPending), so elsewhere it gets no row
-// at all. In its run's tabs it does, and shows NOT LOADED when the tab
+// at all. In its run's tabs it does, and shows NOT_LOADED when the tab
 // has its scripts off.
 function expectedMatches(matches: MatchedScript[], smDevRun: string | undefined): MatchedScript[] {
   return matches.filter((m) => m.smDevRun === undefined || m.smDevRun === smDevRun);
@@ -1470,6 +1491,7 @@ async function updateTabMatches(
     if (prev.missingChecked) state.missingChecked = true;
     if (prev.loadMatchIds) state.loadMatchIds = prev.loadMatchIds;
     if (prev.loadUrl) state.loadUrl = prev.loadUrl;
+    if (prev.warnedIds) state.warnedIds = prev.warnedIds;
   } else {
     state.loadMatchIds = incoming.map((m) => m.id);
     state.loadUrl = url;
@@ -1498,7 +1520,7 @@ async function updateTabMatches(
 }
 
 // The scripts Chrome is currently refusing to register, as a set for
-// the badge. Read per paint rather than cached: it changes rarely and
+// the badge rows. Read per call rather than cached: it changes rarely and
 // a stale copy would keep painting REJECTED after a fix landed.
 async function rejectedScriptIds(): Promise<ReadonlySet<string>> {
   return new Set(Object.keys(await readRejections()));
@@ -1508,21 +1530,21 @@ async function renderBadge(tabId: number, state: TabMatchState | null): Promise<
   // Each setX call can reject if the tab closed between our query and
   // here; swallow that rather than spamming the SW console.
   try {
-    if (!state || (state.matches.length === 0 && Object.keys(state.actual).length === 0)) {
+    // Summed up from the popup's view, so the two can't disagree.
+    const summary = summarizeToolbar(await buildTabView(tabId, state), state);
+    await chrome.action.setTitle({ tabId, title: summary.title });
+    if (summary.color === null) {
       await chrome.action.setBadgeText({ tabId, text: '' });
-      await chrome.action.setTitle({ tabId, title: titleHead(state) });
     } else {
-      const view = computeBadge(state, await rejectedScriptIds());
       // The reload flash is a paint-time override, not part of the
-      // computed view: it says "an update is landing right now", which
+      // summary: it says "an update is landing right now", which
       // is a property of the swap in flight rather than of the tab's
       // expected/actual sets. RED still wins — an error the user has
       // to act on outranks a transient progress signal.
-      const color = view.color !== BADGE_RED && isReloadFlashing(tabId)
-        ? BADGE_PURPLE : view.color;
-      await chrome.action.setBadgeText({ tabId, text: String(view.count) });
+      const color = summary.color !== BADGE_RED && isReloadFlashing(tabId)
+        ? BADGE_PURPLE : summary.color;
+      await chrome.action.setBadgeText({ tabId, text: String(summary.count) });
       await chrome.action.setBadgeBackgroundColor({ tabId, color });
-      await chrome.action.setTitle({ tabId, title: view.title });
     }
   } catch {
     /* tab probably closed; nothing useful to do */
@@ -1879,16 +1901,32 @@ async function popupViewForTab(
   // previous page's rows, so they're dropped.
   keepUrl?: string,
 ): Promise<PopupView> {
+  return buildTabView(tabId, undefined, keepIds, keepUrl);
+}
+
+// The popup's view of a tab. `stateIn` is the state a badge paint is for; undefined reads the
+// tab's current one.
+async function buildTabView(
+  tabId: number,
+  stateIn: TabMatchState | null | undefined,
+  keepIds: readonly string[] = [],
+  keepUrl?: string,
+): Promise<PopupView> {
   await ensureLoaded();
-  let url = '';
-  try {
-    url = (await chrome.tabs.get(tabId)).url ?? '';
-  } catch {
-    // The tab closed; shown as a page nothing runs on.
+  // A paint's state carries its document's URL. The tab's own can
+  // already be the next page's, mid-navigation.
+  let url = stateIn?.url ?? '';
+  if (!stateIn) {
+    try {
+      url = (await chrome.tabs.get(tabId)).url ?? '';
+    } catch {
+      // The tab closed; shown as a page nothing runs on.
+    }
   }
   const injectable = INJECTABLE_SCHEME.test(url);
   if (keepUrl !== url) keepIds = [];
-  const state = injectable ? getCurrentState(await getTabRecord(tabId)) : null;
+  const state = !injectable ? null
+    : stateIn !== undefined ? stateIn : getCurrentState(await getTabRecord(tabId));
   const rejected = await readRejections();
   const badgeRows = state ? computeBadge(state, new Set(Object.keys(rejected))).rows : [];
   const matching = injectable ? findAllMatchingIds(url) : [];
@@ -1898,28 +1936,20 @@ async function popupViewForTab(
   const loadUrl = state?.loadUrl;
   const loadUrlMatchingIds = loadUrl && loadUrl !== url ? new Set(findAllMatchingIds(loadUrl)) : undefined;
   const ids = [...new Set([...matching, ...badgeRows.map((r) => r.id), ...keepIds])];
-  const [stored, collections] = await Promise.all([getScripts(ids), getCollections()]);
+  const [stored, collections] = await Promise.all([popupScriptInputs(ids), getCollections()]);
   // A scratch script runs only in its own run's tabs, so elsewhere it
   // isn't listed, as on the badge (`expectedMatches`).
-  const listed = stored.filter((s) => {
-    const run = scratchRunOf(s.fileUrl);
-    return run === null || run === state?.smDevRun;
-  });
-  return buildPopupView({
+  const listed = stored.filter((s) => s.run === null || s.run === state?.smDevRun);
+  const storedIds = new Set(stored.map((s) => s.input.id));
+  const deletedIds = new Set(badgeRows.map((r) => r.id).filter((id) => !storedIds.has(id)));
+  const view = buildPopupView({
     url,
     injectable,
     state,
     badgeRows,
     rejected,
     matchingIds: new Set(matching),
-    scripts: listed.map((s) => ({
-      id: s.id,
-      name: scriptDisplayName(s),
-      collectionId: s.collectionId,
-      enabled: isScriptEnabled(s),
-      identity: identityKey(s.header ?? null),
-      version: (s.header ? getValue(s.header, 'version')?.trim() : '') || null,
-    })),
+    scripts: listed.map((s) => s.input),
     collections: collections.map((c) => ({
       id: c.id,
       name: effectiveDisplayName(c),
@@ -1929,6 +1959,58 @@ async function popupViewForTab(
     menuCommands: getMenuCommandsForTab(tabId),
     keepIds: new Set(keepIds),
     loadUrlMatchingIds,
+    deletedIds,
+  });
+  return view;
+}
+
+// What the popup's view needs of each stored script, cached by id. A
+// badge paint builds that view, and paints come with every script
+// report, so reading whole rows (bodies included) each time would be a
+// storage read per report. A write to a script's row drops its entry.
+interface CachedPopupScript {
+  input: PopupScriptInput;
+  // The sm-dev run a scratch script belongs to, or null.
+  run: string | null;
+}
+const popupScriptCache = new Map<string, CachedPopupScript>();
+// Bumped on every drop, so a read that started before a write doesn't
+// cache what it read: a deleted script would stay listed as stored.
+let popupScriptGeneration = 0;
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'local') return;
+  for (const key of Object.keys(changes)) {
+    if (!key.startsWith(SCRIPT_PREFIX)) continue;
+    popupScriptCache.delete(key.slice(SCRIPT_PREFIX.length));
+    popupScriptGeneration++;
+  }
+});
+
+async function popupScriptInputs(ids: readonly string[]): Promise<CachedPopupScript[]> {
+  const missing = ids.filter((id) => !popupScriptCache.has(id));
+  const fresh = new Map<string, CachedPopupScript>();
+  if (missing.length > 0) {
+    const generation = popupScriptGeneration;
+    for (const s of await getScripts(missing)) {
+      fresh.set(s.id, {
+        input: {
+          id: s.id,
+          name: scriptDisplayName(s),
+          collectionId: s.collectionId,
+          enabled: isScriptEnabled(s),
+          identity: identityKey(s.header ?? null),
+          version: (s.header ? getValue(s.header, 'version')?.trim() : '') || null,
+          headerWarnings: s.startupLogs?.some((l) => l.level === 'warn') ?? false,
+        },
+        run: scratchRunOf(s.fileUrl),
+      });
+    }
+    if (generation === popupScriptGeneration) for (const [id, entry] of fresh) popupScriptCache.set(id, entry);
+  }
+  return ids.flatMap((id) => {
+    const entry = fresh.get(id) ?? popupScriptCache.get(id);
+    return entry ? [entry] : [];
   });
 }
 
@@ -3235,6 +3317,19 @@ function noteReloadFlashReport(tabId: number, documentId: string, scriptId: stri
 function endReloadFlash(tabId: number): void {
   if (!dropReloadFlash(tabId)) return;
   repaintTabBadge(tabId);
+}
+
+// Record a warning `scriptId` logged from this tab on its current
+// document. A late one from the document before can land on the new
+// one; the next navigation clears it.
+async function noteTabWarning(tabId: number, scriptId: string): Promise<void> {
+  const record = await getTabRecord(tabId);
+  const current = record?.byDoc[record.currentDocId];
+  if (!record || !current) return;
+  const next = noteScriptWarning(current, scriptId);
+  if (next === current) return;
+  await setTabRecord(tabId, setCurrentDoc(record, record.currentDocId, next));
+  await renderBadge(tabId, next);
 }
 
 // Forget the flash without repainting. Separate from endReloadFlash

@@ -58,8 +58,8 @@ test.describe('reload with no userscripts', () => {
     const snap = await waitForTabState(
       sm, tabId,
       (s) => hasBadgeColor(s, GREY)
-        && s.title.includes('Early | NOT LOADED') && s.title.includes('Late | NOT LOADED'),
-      'grey + NOT LOADED after the skip reload',
+        && s.rows.includes('Early | NOT_LOADED') && s.rows.includes('Late | NOT_LOADED'),
+      'grey + NOT_LOADED after the skip reload',
     );
     expect(snap.badgeText).toBe('2');
 
@@ -80,7 +80,7 @@ test.describe('reload with no userscripts', () => {
     expect(await page.evaluate(() => document.documentElement.dataset.early)).toBe('ran');
     await waitForTabState(
       sm, tabId,
-      (s) => s.badgeText === '2' && hasBadgeColor(s, GREEN) && s.title.includes('Late | OK'),
+      (s) => s.badgeText === '2' && hasBadgeColor(s, GREEN) && s.rows.includes('Late | OK'),
       'green again after a plain reload',
     );
     await page.close();
@@ -106,7 +106,7 @@ test.describe('reload with no userscripts', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
-    await waitForTabState(sm, tabId, (s) => s.title.includes('One | OK') && s.title.includes('Two | OK'), 'both ran');
+    await waitForTabState(sm, tabId, (s) => s.rows.includes('One | OK') && s.rows.includes('Two | OK'), 'both ran');
     // Null while a reload is replacing the document, too.
     const ran = (key: string) => page.evaluate((k) => document.documentElement.dataset[k] ?? null, key).catch(() => null);
 
@@ -120,7 +120,7 @@ test.describe('reload with no userscripts', () => {
 
     await reload({ kind: 'only', scriptId: one.id });
     await expect.poll(() => ran('one')).toBe('ran');
-    await waitForTabState(sm, tabId, (s) => s.title.includes('One | OK') && s.title.includes('Two | NOT LOADED'), 'only One');
+    await waitForTabState(sm, tabId, (s) => s.rows.includes('One | OK') && s.rows.includes('Two | NOT_LOADED'), 'only One');
     expect(await ran('two')).toBeNull();
     // The popup says why Two didn't run.
     const kept = (await sm.getPopupView(tabId)).enabled.flatMap((g) => g.rows).find((r) => r.name === 'Two')!;
@@ -129,7 +129,7 @@ test.describe('reload with no userscripts', () => {
 
     await reload({ kind: 'without', scriptId: one.id });
     await expect.poll(() => ran('two')).toBe('ran');
-    await waitForTabState(sm, tabId, (s) => s.title.includes('One | NOT LOADED') && s.title.includes('Two | OK'), 'all but One');
+    await waitForTabState(sm, tabId, (s) => s.rows.includes('One | NOT_LOADED') && s.rows.includes('Two | OK'), 'all but One');
     expect(await ran('one')).toBeNull();
 
     // The skip is information in One's Log, as a skip asked for.

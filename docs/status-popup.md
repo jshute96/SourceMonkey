@@ -107,10 +107,12 @@ From top to bottom:
 - **Banner slot** (only when something applies):
   - Purple **reload banner**, matching the purple badge, with a Reload
     button. Wording by cause:
-    - `Reload required: Enabled scripts changed` (enables and disables
-      since load)
+    - `Reload required: Enabled scripts changed` (enables, and disables
+      or deletes, since load)
     - `Reload required: Scripts enabled` (only enables)
+    - `Reload required: Scripts disabled or deleted` (both, no enables)
     - `Reload required: Scripts disabled` (only disables)
+    - `Reload required: Scripts deleted` (only deletes)
     - `Reload required: Scripts updated`
     - `Reload required: Some scripts haven't run on this page yet` (the
       page changed its URL in place; see Reload to run below)
@@ -202,7 +204,7 @@ by shown name (`compareScriptNames`).
 
 ### Status pills
 
-Today's statuses (`RowStatus` in `src/extension/tab-status.ts`) as
+The badge's statuses (`RowStatus` in `src/extension/tab-status.ts`) as
 colored pills, using the badge colors.
 
 - Every pill is the same width, so the column lines up. That caps the
@@ -217,6 +219,7 @@ colored pills, using the badge colors.
 | `MISSING` | Missing | Orange | Expected on this page, but it hasn't started |
 | `UNEXPECTED` | Unexpected | Orange | Started on this page, but its rules don't match this page |
 | `NOT_LOADED` | Not loaded | Grey | Why it was kept out (below) |
+| `WARNING` | Warning | Amber outline | Running on this page, with warnings |
 
 New ones the popup needs, since a toggle now happens in front of the
 page it affects:
@@ -236,7 +239,30 @@ page it affects:
 - **Still running** (purple outline, Disabled section): disabled since
   load, by its own box or its collection's, but still running in this
   document.
+  - Also a script deleted since load that is still running. It lists
+    under a `Deleted scripts` heading at the end of Disabled, with no
+    box, no script page link and no actions menu, since the script is
+    gone. Its `GM_registerMenuCommand` commands still show, and its
+    pill reloads the page.
+- Both turn the toolbar badge purple, as `Updated` does: a reload
+  would change what runs.
 - Disabled rows otherwise show no pill.
+
+### Warnings
+
+- **Warning** (amber outline) replaces `Running` for a script that
+  started here with a warning. Every other status outranks it; the
+  row's `warned` flag still counts it in the tooltip.
+- A warning comes from either:
+  - Its header, on every load: the script's `startupLogs` hold a
+    `warn` (an unsupported `@grant`, a dropped `@match`, an `@icon`
+    problem, ...).
+  - A `warning` Log entry it made from this tab while this document
+    was current (a refused `GM_download`, a style the page's CSP
+    blocked, ...). Kept on the document's `warnedIds`.
+  - Not the wrapper's own warnings (never started, skipped): those
+    say it didn't run, and can arrive after the tab moved on.
+- It changes no badge color: see [matching.md](matching.md#tooltip).
 
 Every pill has a tooltip:
 

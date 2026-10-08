@@ -1386,7 +1386,7 @@ Terms used below:
 |---|---|
 | Toolbar icon | cyan **T** |
 | Tooltip and menu | `Page under sm-dev control` |
-| Badge rows | sm-dev's scripts: their status<br>managed scripts that match: `NOT LOADED` |
+| Script statuses (popup, tooltip lines) | sm-dev's scripts: their status<br>managed scripts that match: `NOT_LOADED` |
 | Badge count and color | sm-dev's scripts, colored by their status |
 | sm-dev `status` | `Backend:` line<br>sm-dev's scripts<br>managed scripts on the tab as E1, ... |
 
@@ -1441,11 +1441,12 @@ Terms used below:
   after "Reload page with no userscripts": nothing is wrong, they were
   told to skip.
 - The count is of the scripts the claim let run (`computeBadge` in
-  tab-status.ts). The badge stays green when the run's scripts ran,
+  tab-status.ts; the color is from `summarizeToolbar` in
+  toolbar-summary.ts). The badge stays green when the run's scripts ran,
   and is grey when nothing did (a tab with its scripts off included).
 - The toolbar popup opens with a `Page under sm-dev control` banner.
-  The icon's tooltip says it too, under `SourceMonkey` (`titleHead` in
-  tab-status.ts).
+  The icon's tooltip says it too, under `SourceMonkey`
+  (`summarizeToolbar` in toolbar-summary.ts).
 - The popup offers no "Reload page with no userscripts" there, nor its
   per-script forms: which scripts run in the tab is the run's choice
   (`reload --noscript`).

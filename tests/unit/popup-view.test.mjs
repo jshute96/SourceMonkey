@@ -15,19 +15,19 @@ const COLLS = [
 ];
 
 function script(id, collectionId, extra = {}) {
-  return { id, name: id, collectionId, enabled: true, identity: null, version: null, ...extra };
+  return { id, name: id, collectionId, enabled: true, identity: null, version: null, headerWarnings: false, ...extra };
 }
 
 function state(extra = {}) {
   return { documentId: 'd1', url: URL_, matches: [], actual: {}, loadMatchIds: [], ...extra };
 }
 
-function view({ st = state(), scripts, collections = COLLS, matching, commands = new Map(), rejected = {}, keepIds, loadUrlMatchingIds }) {
+function view({ st = state(), scripts, collections = COLLS, matching, commands = new Map(), rejected = {}, keepIds, loadUrlMatchingIds, deletedIds }) {
   const badgeRows = st ? computeBadge(st, new Set(Object.keys(rejected))).rows : [];
   return buildPopupView({
     url: URL_, injectable: true, state: st, badgeRows, rejected,
     matchingIds: new Set(matching ?? scripts.map((s) => s.id)),
-    scripts, collections, menuCommands: commands, keepIds, loadUrlMatchingIds,
+    scripts, collections, menuCommands: commands, keepIds, loadUrlMatchingIds, deletedIds,
   });
 }
 
@@ -237,4 +237,52 @@ test('a missing script raises the banner', () => {
   });
   assert.equal(v.enabled[0].rows[0].status, 'MISSING');
   assert.equal(v.banner, 'Reload required: Some scripts are missing');
+});
+
+test('a running script with a warning shows Warning; every other status outranks it', () => {
+  const v = view({
+    st: state({
+      matches: [m('hdr'), m('tab'), m('err'), m('quiet'), m('missing')],
+      actual: {
+        hdr: { state: 'started', name: 'hdr' },
+        tab: { state: 'started', name: 'tab' },
+        err: { state: 'error', name: 'err', message: 'boom' },
+        quiet: { state: 'started', name: 'quiet' },
+      },
+      loadMatchIds: ['hdr', 'tab', 'err', 'quiet', 'missing'],
+      warnedIds: ['tab', 'err', 'missing'],
+    }),
+    scripts: [
+      script('hdr', 'A', { headerWarnings: true }), script('tab', 'A'), script('err', 'A'),
+      script('quiet', 'A'), script('missing', 'A', { headerWarnings: true }),
+    ],
+  });
+  const rows = v.enabled[0].rows;
+  assert.deepEqual(rows.map((r) => `${r.name}=${r.status}${r.warned ? '+warned' : ''}`), [
+    'err=ERROR+warned', 'hdr=WARNING+warned', 'missing=MISSING', 'quiet=OK', 'tab=WARNING+warned',
+  ]);
+  assert.match(rows.find((r) => r.name === 'tab').tooltip, /^Running on this page, with warnings\n/);
+});
+
+test('a script deleted since it ran is listed apart as Still running, and the banner says so', () => {
+  const v = view({
+    st: state({
+      matches: [m('a'), m('gone')],
+      actual: { a: { state: 'started', name: 'a' }, gone: { state: 'started', name: 'Gone' } },
+      loadMatchIds: ['a', 'gone'],
+    }),
+    scripts: [script('a', 'A')],
+    commands: new Map([['gone', [{ commandId: 'c1', name: 'Do it' }]]]),
+    deletedIds: new Set(['gone']),
+  });
+  assert.deepEqual(names(v.enabled), ['A: a=OK']);
+  assert.deepEqual(v.deleted.map((r) => `${r.name}=${r.status}`), ['Gone=STILL_RUNNING']);
+  assert.match(v.deleted[0].tooltip, /^Deleted since this page loaded\. It keeps running until a reload\.\nClick to reload the page\.$/);
+  assert.deepEqual(v.deleted[0].commands.map((c) => c.name), ['Do it']);
+  assert.equal(v.banner, 'Reload required: Scripts deleted');
+});
+
+test('banner names deleted and disabled scripts together', () => {
+  assert.equal(bannerText({ disabled: true, deleted: true }), 'Reload required: Scripts disabled or deleted');
+  assert.equal(bannerText({ enabled: true, deleted: true }), 'Reload required: Enabled scripts changed');
 });

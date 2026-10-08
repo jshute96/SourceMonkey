@@ -234,7 +234,8 @@ tests:
   it too, so behaviours that key off a real click (upstream version
   probes, retrying a refused registration immediately) need `'force'`.
 - Inspection: `getTabState(tabId)` returns the current badge text,
-  background color, tooltip, and the structured `TabRecord` from
+  background color, tooltip, the popup's rows with a status
+  (`rows`, as `Name | STATUS`), and the structured `TabRecord` from
   session storage. `debugMatchIndex(url)` returns the matcher cache.
   `getRejections()` returns the registrations Chrome refused on the
   last attempt — what the UI renders as REJECTED.

@@ -1,5 +1,6 @@
 // End-to-end badge state: matching → green, error → red, post-update
-// stale → purple, collection disabled → empty. Exercises the real
+// stale or disabled since load → purple, collection disabled → empty,
+// and warnings in the tooltip and popup rows. Exercises the real
 // chrome.action surface, the chrome.webNavigation listener, and the
 // sm:start / sm:error pipeline from injected wrappers back to the SW.
 
@@ -32,22 +33,23 @@ test.describe('badge', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
 
-    // The title is part of the wait, not just the assertion — as it is
-    // in every other title check in this file. `getTabState` reads the
-    // badge text, color, and title as separate chrome.action calls, so a
-    // repaint landing between them returns a snapshot that mixes two
-    // states: green (settled) beside `MISSING` (the moment before). That
-    // pairing is impossible in the product — MISSING forces amber — so
-    // waiting on only the badge and asserting on the title is a race
-    // against the read, not against the state.
+    // The rows are part of the wait, not just the assertion — as they
+    // are in every other rows check in this file. `getTabState` reads the
+    // badge text, color, title and rows separately, so a repaint landing
+    // between them returns a snapshot that mixes two states: green
+    // (settled) beside `MISSING` (the moment before). That pairing is
+    // impossible in the product — MISSING forces amber — so waiting on
+    // only the badge and asserting on the rows is a race against the
+    // read, not against the state.
     const snap = await waitForTabState(
       sm,
       tabId,
-      (s) => s.badgeText === '1' && hasBadgeColor(s, GREEN) && s.title.includes('Hello | OK'),
-      'badge green=1 + OK title',
+      (s) => s.badgeText === '1' && hasBadgeColor(s, GREEN) && s.rows.includes('Hello | OK')
+        && s.title === 'SourceMonkey\n1 script running.\nClick for details. Double-click for collections.',
+      'badge green=1 + OK row + tooltip',
     );
     expect(snap.badgeText).toBe('1');
-    expect(snap.title).toContain('Hello | OK');
+    expect(snap.rows).toContain('Hello | OK');
     await page.close();
   });
 
@@ -66,17 +68,17 @@ test.describe('badge', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
 
-    // Wait on the tooltip as well as the colour: they are written from
-    // the same record but the colour can land first, and asserting on a
-    // title the wait never checked is a race (see the PURPLE case below,
+    // Wait on the rows as well as the colour: they are read from
+    // the same record but the colour can land first, and asserting on
+    // rows the wait never checked is a race (see the PURPLE case below,
     // which already does this).
     const snap = await waitForTabState(
       sm,
       tabId,
-      (s) => hasBadgeColor(s, RED) && s.title.includes('Boom | ERROR'),
+      (s) => hasBadgeColor(s, RED) && s.rows.includes('Boom | ERROR'),
       'badge red + ERROR tooltip',
     );
-    expect(snap.title).toContain('Boom | ERROR');
+    expect(snap.rows).toContain('Boom | ERROR');
     await page.close();
   });
 
@@ -110,10 +112,10 @@ test.describe('badge', () => {
     const snap = await waitForTabState(
       sm,
       tabId,
-      (s) => hasBadgeColor(s, PURPLE) && s.title.includes('Live | Reload to update'),
+      (s) => hasBadgeColor(s, PURPLE) && s.rows.includes('Live | RELOAD'),
       'purple + RELOAD title after update',
     );
-    expect(snap.title).toContain('Live | Reload to update');
+    expect(snap.rows).toContain('Live | RELOAD');
 
     // Reload the page → new wrapper runs the fresh body → back to green.
     // syncNow before reload so chrome.userScripts is registered with
@@ -183,10 +185,91 @@ test.describe('badge', () => {
     const snap = await waitForTabState(
       sm,
       tabId,
-      (s) => hasBadgeColor(s, ORANGE) && s.title.includes('Ghost | MISSING'),
+      (s) => hasBadgeColor(s, ORANGE) && s.rows.includes('Ghost | MISSING'),
       'orange + MISSING tooltip',
     );
-    expect(snap.title).toContain('Ghost | MISSING');
+    expect(snap.rows).toContain('Ghost | MISSING');
+    await page.close();
+  });
+
+  test('a script disabled since the page loaded turns the badge purple and says a reload is needed', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    for (const name of ['One', 'Two']) {
+      scriptsDir.write({
+        relativePath: `${name.toLowerCase()}.user.js`,
+        meta: { name, match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
+        body: `void 0;`,
+      });
+    }
+    const collection = await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    const tabId = await activeTabId(getServiceWorker);
+    await waitForTabState(sm, tabId, (s) => hasBadgeColor(s, GREEN) && s.title.includes('\n2 scripts running.\n'), 'both ran');
+
+    const two = (await sm.getCollectionWithScripts(collection!.id))!.scripts.find((x) => x.relativePath === 'two.user.js')!;
+    await sm.setScriptEnabled(two.id, false);
+    await sm.syncNow();
+    const snap = await waitForTabState(
+      sm, tabId,
+      (s) => hasBadgeColor(s, PURPLE) && s.rows.includes('Two | STILL_RUNNING'),
+      'purple with Two still running',
+    );
+    expect(snap.title.split('\n').slice(1, -1)).toEqual(['2 scripts running.', 'Reload needed to remove 1 script.']);
+    await page.close();
+  });
+
+  test('a header warning shows as Warning and a tooltip line, and leaves the badge green', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'warned.user.js',
+      meta: { name: 'Warned', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end', grant: ['GM_notARealApi'] },
+      body: `void 0;`,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    const tabId = await activeTabId(getServiceWorker);
+    const snap = await waitForTabState(
+      sm, tabId,
+      (s) => hasBadgeColor(s, GREEN) && s.rows.includes('Warned | WARNING')
+        && s.title.includes('\n1 script has warnings.\n'),
+      'green with a Warning row and tooltip line',
+    );
+    expect(snap.title.split('\n').slice(1, -1)).toEqual(['1 script running.', '1 script has warnings.']);
+    await page.close();
+  });
+
+  test('a warning a script logs from the tab marks it Warning there', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    // A refused download is logged as a warning with this tab's id.
+    scriptsDir.write({
+      relativePath: 'fetcher.user.js',
+      meta: { name: 'Fetcher', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end', grant: ['GM_download'] },
+      body: `GM_download({ url: 'file:///etc/passwd', name: 'x.txt' });`,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    const tabId = await activeTabId(getServiceWorker);
+    const snap = await waitForTabState(
+      sm, tabId,
+      // The tooltip is part of the wait: the rows are read live, and a
+      // warning changes no color, so only the title shows the repaint.
+      (s) => hasBadgeColor(s, GREEN) && s.rows.includes('Fetcher | WARNING')
+        && s.title.includes('\n1 script has warnings.\n'),
+      'green with a Warning row and tooltip line',
+    );
+    expect(snap.title).toContain('\n1 script has warnings.\n');
     await page.close();
   });
 });

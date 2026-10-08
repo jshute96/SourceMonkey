@@ -427,7 +427,7 @@ test.describe('injection', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
-    await waitForTabState(sm, tabId, (s) => s.title.includes('Main | OK'), 'Main OK');
+    await waitForTabState(sm, tabId, (s) => s.rows.includes('Main | OK'), 'Main OK');
     // The report a wrapper sends with no decision, over the page bridge
     // as a page-world one does. Chrome's own messages end in a period.
     await page.evaluate((scriptId) => {
@@ -438,7 +438,7 @@ test.describe('injection', () => {
         } }),
       }));
     }, id);
-    await waitForTabState(sm, tabId, (s) => s.title.includes('Main | ERROR'), 'Main ERROR');
+    await waitForTabState(sm, tabId, (s) => s.rows.includes('Main | ERROR'), 'Main ERROR');
     const entry = (await sm.getScriptLog(id)).find((e) => e.message.startsWith('Did not run on this page.'));
     expect(entry).toMatchObject({
       level: 'error',

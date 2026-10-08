@@ -6,10 +6,11 @@
 //   - `actual` — what injected wrappers have actually reported via
 //     sm:start / sm:error. Driven by chrome.runtime.onUserScriptMessage.
 //
-// The toolbar badge surfaces the union of those two sets, colored by
-// what's gone wrong (if anything), and the tooltip itemises each
-// script's status. Keeping the computation here (pure) makes it easy
-// to unit test without the chrome.* surface.
+// Each script in the union of those two sets gets a status here. The
+// toolbar badge's color and tooltip are summed up from the popup's
+// view of them (src/extension/toolbar-summary.ts). Keeping the
+// computation here (pure) makes it easy to unit test without the
+// chrome.* surface.
 
 import type { MatchedScript } from './match-index.js';
 import type { InjectionWorld } from '../script-world.js';
@@ -52,7 +53,7 @@ export interface TabMatchState {
   // True when this document was loaded via the popup's "Reload
   // page with no userscripts": the SW answered every wrapper's
   // check-pending with `skip`, so no `actual` report is coming. The
-  // badge shows the expected scripts as NOT LOADED (grey) instead of
+  // badge shows the expected scripts as NOT_LOADED (grey) instead of
   // MISSING (orange) — nothing is wrong, the user asked for this.
   // Dies with the document like everything else on this state.
   scriptsSkipped?: boolean;
@@ -64,7 +65,7 @@ export interface TabMatchState {
   skipWithout?: string;
   // Set when an sm-dev run controlled the tab as this document loaded
   // (sm-dev-link.ts): the script ids it let run, or null for none. The
-  // rest were told to skip, so they show as NOT LOADED too.
+  // rest were told to skip, so they show as NOT_LOADED too.
   smDevAllow?: string[] | null;
   // And the run that claimed it, whose own scripts the badge lists.
   smDevRun?: string;
@@ -90,6 +91,10 @@ export interface TabMatchState {
   // not in `loadMatchIds` was enabled since, or matches only the new
   // URL. Absent on records from before the field existed.
   loadUrl?: string;
+  // Scripts that logged a warning from this tab while this document
+  // was current (a failed GM_download, a style the page's CSP blocked,
+  // ...). The popup shows them as Warning and the tooltip counts them.
+  warnedIds?: string[];
 }
 
 export type RowStatus =
@@ -104,8 +109,6 @@ export interface BadgeRow {
 
 export interface BadgeView {
   count: number;          // size of the union — what the badge shows
-  color: string;          // background color for the badge
-  title: string;          // multi-line tooltip
   rows: BadgeRow[];       // sorted by name for stable display
 }
 
@@ -115,9 +118,9 @@ export const BADGE_ORANGE = '#f57c00';
 export const BADGE_GREEN = '#2e7d32';
 // Red = at least one script reported an error.
 export const BADGE_RED = '#d32f2f';
-// Purple = at least one running script's collection on disk has changed
-// and a reload would pick up the new version. Loses to RED (errors
-// still matter most) but wins over ORANGE. Picked bright (≈ Material
+// Purple = a reload would change what runs: a running script changed
+// on disk, or a script was enabled, disabled or deleted since the page
+// loaded. Loses to RED (errors still matter most) but wins over ORANGE. Picked bright (≈ Material
 // purple-A400) so the badge reads as a vivid "something changed"
 // signal, not a muted/inactive color.
 export const BADGE_PURPLE = '#d500f9';
@@ -125,6 +128,7 @@ export const BADGE_PURPLE = '#d500f9';
 // ran on purpose. Loses to every other color: an UNEXPECTED report on a
 // skipped document is still a disagreement worth orange.
 export const BADGE_GREY = '#757575';
+// Which color wins is decided in src/extension/toolbar-summary.ts.
 // The note a tab an sm-dev run controls carries, in the badge tooltip
 // and as the popup's banner.
 export const SM_DEV_CONTROL_LABEL = 'Page under sm-dev control';
@@ -134,14 +138,8 @@ export const SM_DEV_CONTROL_LABEL = 'Page under sm-dev control';
 // status.
 export const SM_DEV_MARKER_CYAN = '#00acc1';
 
-// Tooltip status string for RELOAD rows. Kept verbose because the
-// tooltip is the only place the user is told *what to do*.
-const RELOAD_LABEL = 'Reload to update';
-// Tooltip status string for NOT_LOADED rows — the enum's underscore
-// is not for display.
-const NOT_LOADED_LABEL = 'NOT LOADED';
-
-// Pure: derive the badge view from a tab's combined expected + actual.
+// Pure: derive each script's status from a tab's combined expected +
+// actual.
 //
 // Rules:
 //   - Per script, status is one of:
@@ -157,13 +155,7 @@ const NOT_LOADED_LABEL = 'NOT LOADED';
 //       UNEXPECTED — actual `started` but not in our expected set
 //       RELOAD     — a script that's started here, but its on-disk
 //                    content has changed since (would be OK otherwise)
-//   - Badge color:
-//       RED    if any script reported ERROR or is REJECTED
-//       PURPLE else, if any RELOAD row
-//       ORANGE else, if any MISSING or UNEXPECTED
-//       GREY   else, if any NOT_LOADED row
-//       GREEN  otherwise
-//   - Badge text is the size of the union of expected ∪ actual IDs.
+//   - The count is the size of the union of expected ∪ actual IDs.
 //
 // REJECTED is a refinement of MISSING, not a new axis: both mean
 // "expected here, never reported". MISSING is provisional — the wrapper
@@ -190,10 +182,6 @@ export function computeBadge(
     ...Object.keys(state.actual),
   ]);
 
-  let anyError = false;
-  let anyMismatch = false;
-  let anyReload = false;
-  let anySkipped = false;
   const rows: BadgeRow[] = [];
   for (const id of allIds) {
     const expected = expectedById.get(id);
@@ -210,29 +198,23 @@ export function computeBadge(
       // failure, and we'd rather nudge the user to reload than to
       // keep showing an outdated error.
       status = 'RELOAD';
-      anyReload = true;
     } else if (actual?.state === 'error') {
       status = 'ERROR';
       message = actual.message;
-      anyError = true;
     } else if (expected && !actual && skippedOnDocument(state, id)) {
       // Settled too, but by the user: the SW told every wrapper on this
       // document to skip, so "never reported" is the intended outcome.
       // Checked ahead of REJECTED — a refused registration didn't get
       // to matter on a document where nothing was going to run.
       status = 'NOT_LOADED';
-      anySkipped = true;
     } else if (expected && !actual && rejected.has(id)) {
       // Settled, not provisional: Chrome refused the registration, so
       // no wrapper is coming. Red, like an error.
       status = 'REJECTED';
-      anyError = true;
     } else if (expected && !actual) {
       status = 'MISSING';
-      anyMismatch = true;
     } else if (!expected && actual) {
       status = 'UNEXPECTED';
-      anyMismatch = true;
     } else {
       status = 'OK';
     }
@@ -240,30 +222,18 @@ export function computeBadge(
   }
   rows.sort((a, b) => compareScriptNames(a.name, b.name));
 
-  let color = BADGE_GREEN;
-  if (anyError) color = BADGE_RED;
-  else if (anyReload) color = BADGE_PURPLE;
-  else if (anyMismatch) color = BADGE_ORANGE;
-  // Grey says nothing ran: not for a tab where some scripts were kept
-  // out (an sm-dev claim) and the rest ran.
-  else if (anySkipped && !rows.some((r) => r.status === 'OK')) color = BADGE_GREY;
-
-  const title = [titleHead(state), ...rows.map((r) => formatRowLabel(r))].join('\n');
-
-  // In a tab an sm-dev run controls, the count is of the scripts its
-  // claim let run: the rest were kept out, not left out by a problem.
-  const count = state.smDevAllow === undefined || state.scriptsSkipped
-    ? allIds.size
-    : [...allIds].filter((id) => !skippedOnDocument(state, id) || state.actual[id]).length;
-  return { count, color, title, rows };
+  const count = [...allIds].filter((id) => countsOnBadge(state, id)).length;
+  return { count, rows };
 }
 
 /**
- * The tooltip's first lines: the extension's name, and in a tab an
- * sm-dev run controls, the same note the popup's banner shows.
+ * Whether the badge counts `id`. In a tab an sm-dev run controls, the
+ * count is of the scripts its claim let run: the rest were kept out,
+ * not left out by a problem.
  */
-export function titleHead(state: TabMatchState | null): string {
-  return state?.smDevAllow === undefined ? 'SourceMonkey' : `SourceMonkey\n${SM_DEV_CONTROL_LABEL}`;
+export function countsOnBadge(state: TabMatchState, id: string): boolean {
+  if (state.smDevAllow === undefined || state.scriptsSkipped) return true;
+  return !skippedOnDocument(state, id) || state.actual[id] != null;
 }
 
 /**
@@ -276,17 +246,6 @@ export function skippedOnDocument(state: TabMatchState, id: string): boolean {
   if (state.skipOnly !== undefined && state.skipOnly !== id) return true;
   if (state.skipWithout === id) return true;
   return state.smDevAllow !== undefined && !(state.smDevAllow?.includes(id) ?? false);
-}
-
-// The badge tooltip's "{name} | {status}" line.
-export function formatRowLabel(row: BadgeRow): string {
-  return `${row.name} | ${formatStatus(row.status)}`;
-}
-
-function formatStatus(s: RowStatus): string {
-  if (s === 'RELOAD') return RELOAD_LABEL;
-  if (s === 'NOT_LOADED') return NOT_LOADED_LABEL;
-  return s;
 }
 
 // ---------- Per-tab document history ----------
@@ -411,6 +370,15 @@ export function clearScriptStale(state: TabMatchState, scriptId: string): TabMat
     return rest;
   }
   return { ...state, staleScriptIds: next };
+}
+
+// Pure: note that `scriptId` logged a warning from this document.
+// Identity-returns when it already had one, so the caller can skip a
+// storage write.
+export function noteScriptWarning(state: TabMatchState, scriptId: string): TabMatchState {
+  const existing = state.warnedIds ?? [];
+  if (existing.includes(scriptId)) return state;
+  return { ...state, warnedIds: [...existing, scriptId] };
 }
 
 // Pure: merge an incoming wrapper report into the tab's `actual` map.

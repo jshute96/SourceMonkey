@@ -339,54 +339,98 @@ For each tab we:
 
 ### Badge view (expected ∪ actual)
 
-`src/extension/tab-status.ts` derives the badge from the combined state:
+- `computeBadge` (`src/extension/tab-status.ts`) gives each script in
+  the union of expected and actual a status.
+- The popup's view (`buildPopupView`) builds on those, adding the
+  statuses only it tells apart. See [status-popup.md](status-popup.md#status-pills).
+- `summarizeToolbar` (`src/extension/toolbar-summary.ts`) sums up the
+  popup's rows into the badge and its tooltip, so the icon and the
+  popup can't disagree.
 
-- **Count** — size of the union of expected and actual script IDs.
-- **Color**:
-  - **RED** (`#d32f2f`) — any script reported an error, or is one
-    Chrome refuses to register (see
-    [injection.md](injection.md#rejected-registrations)).
-  - **PURPLE** (`#d500f9`) — no errors, but at least one running
-    script's source file on disk has changed since the wrapper for
-    this document ran. Reload the page to pick up the new version.
-  - **ORANGE** (`#f57c00`) — no errors or stale rows, but the
-    expected set and the actual set diverge (MISSING or UNEXPECTED).
-  - **GREY** (`#757575`) — nothing else to report, and the user loaded
-    this document with "Reload page with no userscripts" (rows show
-    NOT LOADED). Nothing is wrong; nothing ran.
-    - Also in a tab an sm-dev run controls, for the scripts its claim
-      kept out, when no script ran there. See
-      [sm-dev-design.md](sm-dev-design.md#the-toolbar-badge-in-a-claimed-tab)
-      for that tab's count, icon marker, tooltip and menu row.
-  - **GREEN** (`#2e7d32`) — expected and actual line up exactly with
-    no errors.
-- **Tooltip** — `"SourceMonkey"` followed by one line per script,
-  formatted `"<name> | <STATUS>"`, sorted by name the same way as the
-  collections page (`compareScriptNames`). `<STATUS>` is one of:
-  - `OK` — expected and the wrapper sent `sm:start` with no error.
-  - `ERROR` — wrapper sent `sm:error` (regardless of expected).
-  - `REJECTED` — expected by the matcher, no `sm:start`, and Chrome
-    refused the registration, so none is coming. A refinement of
-    `MISSING`: both mean "expected here, never reported", but `MISSING`
-    is provisional (the wrapper may still be in flight) while this is
-    settled, which is why it takes the error colour. Same word the
-    collections page and the viewer use for the row.
-  - `NOT LOADED` — expected by the matcher, no `sm:start`, and none
-    is coming because the document was loaded with "Reload page with
-    no userscripts" (`scriptsSkipped` on the document's state), or
-    with one of its per-script forms. Also
-    a refinement of `MISSING`, settled by the user rather than by
-    Chrome, so it outranks `REJECTED` for the row and takes grey.
-  - `MISSING` — expected by the matcher but no `sm:start` yet.
-  - `UNEXPECTED` — wrapper sent `sm:start` but the matcher didn't
-    predict it (e.g. Chrome's matching disagrees with ours, or a race
-    against a script-store change).
-  - `Reload to update` — the script is running here but its collection
-    on disk has changed since. The verbose label is rendered in place
-    of the raw enum so the tooltip tells the user what to do.
-- **Toolbar popup** — a click on the icon opens the "Active scripts"
-  popup, which shows the same statuses as colored pills, plus the
-  toggles made since load. See [status-popup.md](status-popup.md).
+#### Script statuses
+
+From `computeBadge`:
+
+- `OK` — expected and the wrapper sent `sm:start` with no error.
+- `ERROR` — wrapper sent `sm:error` (regardless of expected).
+- `REJECTED` — expected by the matcher, no `sm:start`, and Chrome
+  refused the registration, so none is coming
+  (see [injection.md](injection.md#rejected-registrations)).
+  - A refinement of `MISSING`: both mean "expected here, never
+    reported".
+  - `MISSING` is provisional (the wrapper may still be in flight);
+    this is settled, which is why it takes the error color.
+- `NOT_LOADED` — expected, no `sm:start`, and none is coming because
+  the document was loaded with "Reload page with no userscripts"
+  (`scriptsSkipped`), or one of its per-script forms.
+  - Also a refinement of `MISSING`, settled by the user, so it
+    outranks `REJECTED`.
+- `MISSING` — expected by the matcher but no `sm:start` yet.
+- `UNEXPECTED` — wrapper sent `sm:start` but the matcher didn't
+  predict it (Chrome's matching disagrees with ours, or a race
+  against a script-store change).
+- `RELOAD` — running here, but its file on disk changed since.
+
+Added by the popup's view (details in
+[status-popup.md](status-popup.md#status-pills)):
+
+- `PENDING` — enabled or installed since the page loaded, or matching
+  only the URL it moved to. A reload would run it.
+- `STILL_RUNNING` — disabled or deleted since the page loaded, but
+  still running.
+- `WARNING` — running, with a warning. Replaces `OK` only.
+
+#### Badge
+
+- **Count** — the popup's rows that have a status, so it agrees with
+  the lines below.
+  - Scripts enabled since the page loaded count (`PENDING`).
+  - Ones disabled or deleted since that never started don't.
+  - In a tab an sm-dev run controls, the scripts its claim kept out
+    don't (`countsOnBadge`).
+- **Color** — red, purple, orange or grey, the first whose line
+  applies, else green.
+- **No badge** — when no script has a status here, or on a page
+  scripts can't run on (any scheme besides `http`, `https`, `file`,
+  `ftp`).
+
+#### Tooltip
+
+```
+SourceMonkey
+[Page under sm-dev control]
+<status lines>
+Click for details. Double-click for collections.
+```
+
+- The sm-dev line shows only in a tab an sm-dev run controls (see
+  [sm-dev-design.md](sm-dev-design.md#the-toolbar-badge-in-a-claimed-tab)).
+- Every status line that applies shows, in this order:
+
+| Status line | Shown when | Badge color |
+|---|---|---|
+| `SourceMonkey can't run scripts on this page.` | The scheme isn't one scripts run on. Only line. | none |
+| `No scripts match this page.` | No script has a status here. Only line. | none |
+| `N scripts running.` | Scripts that reported here, errored ones included | green `#2e7d32`, if no line below has a color |
+| `N scripts have errors.` | `ERROR` | red `#d32f2f` |
+| `Chrome rejected N scripts.` | `REJECTED` | red |
+| `Reload needed to update N scripts.` | `RELOAD`: changed on disk since it ran | purple `#d500f9` |
+| `Reload needed to add N scripts.` | The popup's `PENDING`: enabled or installed since the page loaded, or matching only the URL it moved to | purple |
+| `Reload needed to remove N scripts.` | The popup's `STILL_RUNNING`: disabled or deleted since the page loaded | purple |
+| `N expected scripts are not running.` | `MISSING` | orange `#f57c00` |
+| `N unexpected scripts are running.` | `UNEXPECTED` | orange |
+| `N scripts have warnings.` | Running with a warning (see [status-popup.md](status-popup.md#warnings)) | none |
+| `N scripts skipped on this load.` | `NOT_LOADED` | grey `#757575`, if no script is running |
+
+- Lines use the singular for one (`1 script has errors.`).
+- Warnings take no color: a header warning shows on every load, so
+  it would keep the badge off green for good.
+- Grey says nothing ran on purpose. In a tab an sm-dev run controls,
+  where its claim kept some scripts out and the rest ran, it stays
+  green.
+- Purple also flashes briefly while an update lands (see
+  [injection.md](injection.md#purple-flash-while-a-swap-lands)); the
+  tooltip doesn't change for that.
 
 ### Reload with no userscripts
 
@@ -430,7 +474,7 @@ Its per-script menus have two narrower forms:
 - **Badge** — `updateTabMatches` stamps `scriptsSkipped` (or
   `skipOnly` / `skipWithout`) on the fresh document's `TabMatchState` (persisted, so the badge survives a SW
   restart); a bfcache return keeps it while the document is still in
-  the per-tab LRU. Rows render `NOT LOADED` in grey.
+  the per-tab LRU. Its scripts are `NOT_LOADED`, in grey.
 - **Log** — each wrapper's `sm:abandoned` lands on its script's Log
   as `info` (not `warning`, the level for any other skip) with the
   reason `reload with no userscripts`, `reload with only another
@@ -460,7 +504,7 @@ why (`src/extension/missing-scripts.ts`):
     [injection.md](injection.md#no-decision).
 - **Which scripts**: those that matched when the document was first
   seen (`loadMatchIds`), with no report, and not already explained by
-  REJECTED or NOT LOADED.
+  REJECTED or NOT_LOADED.
   - Not ones that matched only a later pushState URL, or were installed
     after the document committed. Those are MISSING on the badge but
     were never going to be injected.
@@ -568,10 +612,10 @@ How it works:
 - The listener walks every persisted `tab:<tabId>` record's CURRENT
   doc. For each changed id with any actual report (`started` OR
   `error`), `markScriptStale` adds it to that doc's
-  `staleScriptIds`; `computeBadge` re-renders.
+  `staleScriptIds`, and the badge repaints.
 - A stale ERROR row promotes to RELOAD/purple — the error came from
   the OLD content, and the fix on disk may already address it, so
-  "Reload to update" is more actionable than continuing to show red.
+  a reload is more actionable than continuing to show red.
 - A new document load (new `documentId`) creates a fresh state, so
   reload naturally clears the stale flag. The wrapper for the new
   document runs the freshly-stored content.

@@ -338,6 +338,8 @@ export interface TabStateSnapshot {
   badgeText: string;
   badgeColor: unknown;     // RGBA tuple from chrome.action.getBadgeBackgroundColor
   title: string;
+  // The popup's rows with a status, as `Name | STATUS` (`Hello | OK`).
+  rows: string[];
   record: TabRecordLike | null;
 }
 

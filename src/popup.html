@@ -96,6 +96,10 @@
         color: var(--muted); border: 1px solid #c8c8c8; white-space: nowrap;
       }
       .group-head.off .collection-name, .group-head.off .collection-type-bubble { opacity: 0.6; }
+      .group-head.deleted { color: var(--muted); }
+      /* No box: line the name up with the other rows' names. */
+      .row.deleted .row-main { padding-left: 20px; }
+      .row.deleted .script-name:hover { text-decoration: none; }
 
       .row { padding: 4px 6px 4px 8px; border-bottom: 1px solid #f1ede7; }
       .row:last-child { border-bottom: none; }
@@ -130,6 +134,8 @@
       .pill.reload { background: var(--purple); }
       .pill.missing, .pill.unexpected { background: var(--orange); }
       .pill.not-loaded { background: var(--grey); }
+      /* Amber outline: a warning leaves the badge color alone, so it gets no solid color. */
+      .pill.warning { background: #fff8e1; color: #7a5800; border-color: #f9a825; }
       .pill.pending, .pill.still-running {
         background: var(--purple-tint); color: var(--purple-deep); border-color: var(--purple);
       }

@@ -221,12 +221,12 @@ function draw(v: PopupView | null): void {
     bannersEl.append(el('div', { class: 'banner-row reload' }, el('span', {}, v.banner), reload));
   }
   const { enabled, disabled } = arrange(v);
-  if (enabled.length === 0 && disabled.length === 0) {
+  if (enabled.length === 0 && disabled.length === 0 && v.deleted.length === 0) {
     scriptsEl.append(el('div', { class: 'empty-page' }, POPUP_NO_SCRIPTS));
     return;
   }
   renderSection('Enabled', enabled, 'No enabled scripts match this page.');
-  renderSection('Disabled', disabled, 'None');
+  renderSection('Disabled', disabled, 'None', v.deleted);
 }
 
 // ---------- A layout that stays put ----------
@@ -303,15 +303,41 @@ function arrange(v: PopupView): Record<SectionKey, PopupGroup[]> {
   return { enabled: build(layout.enabled), disabled: build(layout.disabled) };
 }
 
-function renderSection(title: string, groups: PopupGroup[], emptyText: string): void {
+function renderSection(title: string, groups: PopupGroup[], emptyText: string, deleted: PopupRow[] = []): void {
   const section = el('section', { class: 'script-section', 'data-section': title.toLowerCase() });
   section.append(el('div', { class: 'section-head' }, title));
-  if (groups.length === 0) section.append(el('div', { class: 'empty-note' }, emptyText));
+  if (groups.length === 0 && deleted.length === 0) section.append(el('div', { class: 'empty-note' }, emptyText));
   for (const group of groups) {
     section.append(groupHead(group));
     for (const row of group.rows) section.append(scriptRow(row, group));
   }
+  if (deleted.length > 0) {
+    section.append(el('div', { class: 'group-head deleted' }, el('span', {}, 'Deleted scripts')));
+    for (const row of deleted) section.append(deletedRow(row));
+  }
   scriptsEl.append(section);
+}
+
+// A script deleted since the page loaded, still running in it: no box
+// or page to open, since it's gone. Its pill reloads, which removes it.
+function deletedRow(row: PopupRow): HTMLElement {
+  const main = el('div', { class: 'row-main' }, el('span', { class: 'script-name' }, row.name));
+  if (row.status) main.append(reloadPill(row, row.status));
+  const out = el('div', { class: 'row off deleted', 'data-script-id': row.id }, main);
+  if (row.commands.length > 0) out.append(commandList(row));
+  return out;
+}
+
+// A pill whose click reloads the page, as the banner's Reload does.
+function reloadPill(row: PopupRow, status: PopupStatus): HTMLElement {
+  const pill = el('button', {
+    type: 'button',
+    class: `pill ${PILL_CLASSES[status]}`,
+    title: row.tooltip ?? '',
+    'data-status': status,
+  }, POPUP_STATUS_LABELS[status]);
+  pill.addEventListener('click', () => quietly(reloadPlain()));
+  return pill;
 }
 
 function groupHead(group: PopupGroup): HTMLElement {
@@ -351,6 +377,7 @@ function groupHead(group: PopupGroup): HTMLElement {
 const PILL_CLASSES: Record<PopupStatus, string> = {
   OK: 'ok', ERROR: 'error', REJECTED: 'rejected', RELOAD: 'reload', MISSING: 'missing',
   UNEXPECTED: 'unexpected', NOT_LOADED: 'not-loaded', PENDING: 'pending', STILL_RUNNING: 'still-running',
+  WARNING: 'warning',
 };
 
 function scriptRow(row: PopupRow, group: PopupGroup): HTMLElement {
@@ -364,15 +391,8 @@ function scriptRow(row: PopupRow, group: PopupGroup): HTMLElement {
 
   const main = el('div', { class: 'row-main' }, box, name);
   if (row.status === 'PENDING') {
-    // Reload to run: a click does just that, as the banner's Reload does.
-    const pill = el('button', {
-      type: 'button',
-      class: `pill ${PILL_CLASSES[row.status]}`,
-      title: row.tooltip ?? '',
-      'data-status': row.status,
-    }, POPUP_STATUS_LABELS[row.status]);
-    pill.addEventListener('click', () => quietly(reloadPlain()));
-    main.append(pill);
+    // Reload to run: a click does just that.
+    main.append(reloadPill(row, row.status));
   } else if (row.status) {
     const pill = el('a', {
       class: `pill ${PILL_CLASSES[row.status]}`,

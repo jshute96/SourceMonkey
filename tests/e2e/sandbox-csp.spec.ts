@@ -100,10 +100,10 @@ test.describe('CSP sandbox pages', () => {
       const snap = await waitForTabState(
         sm,
         tabId,
-        (s) => s.title.includes('ContentWorld | OK') && s.title.includes('MainWorld | MISSING'),
+        (s) => s.rows.includes('ContentWorld | OK') && s.rows.includes('MainWorld | MISSING'),
         'ContentWorld OK + MainWorld MISSING',
       );
-      expect(snap.title).toContain('MainWorld | MISSING');
+      expect(snap.rows).toContain('MainWorld | MISSING');
 
       const html = page.locator('html');
       await expect(html).toHaveAttribute('data-content-ran', '1');
@@ -138,7 +138,7 @@ test.describe('CSP sandbox pages', () => {
     await serveWithCsp(page, url, 'sandbox', 'html');
     await page.goto(url);
     const tabId = await activeTabId(getServiceWorker);
-    const snap = await waitForTabState(sm, tabId, (s) => s.title.includes('MainWorld | MISSING'), 'MainWorld MISSING');
+    const snap = await waitForTabState(sm, tabId, (s) => s.rows.includes('MainWorld | MISSING'), 'MainWorld MISSING');
 
     const warning = await waitForWarning(sm, scriptIdsByName(snap).MainWorld);
     expect(warning).toContain('The page may be blocking scripts in its own context');
@@ -161,7 +161,7 @@ test.describe('CSP sandbox pages', () => {
     await waitForTabState(
       sm,
       tabId,
-      (s) => s.title.includes('ContentWorld | OK') && s.title.includes('MainWorld | OK'),
+      (s) => s.rows.includes('ContentWorld | OK') && s.rows.includes('MainWorld | OK'),
       'both OK',
     );
     await expect(page.locator('html')).toHaveAttribute('data-main-ran', '1');

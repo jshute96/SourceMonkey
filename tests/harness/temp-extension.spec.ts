@@ -364,15 +364,18 @@ test('a run started with no scripts claims its tabs, so a script it loads runs a
       // kept out and the run's not listed as a stranger.
       browser = await chromium.connectOverCDP(launched.endpoint);
       const worker = await findExtensionWorker(browser.contexts()[0]);
-      const titles = await worker.evaluate(async () => {
-        const api = (self as unknown as { SourceMonkey: { getTabState(id: number): Promise<{ title: string } | null> } }).SourceMonkey;
+      const states = await worker.evaluate(async () => {
+        const api = (self as unknown as { SourceMonkey: { getTabState(id: number): Promise<{ title: string; rows: string[] } | null> } }).SourceMonkey;
         const tabs = await chrome.tabs.query({});
-        return Promise.all(tabs.filter((t) => t.url?.endsWith('/target.html')).map(async (t) => (await api.getTabState(t.id!))?.title ?? ''));
+        return Promise.all(tabs.filter((t) => t.url?.endsWith('/target.html')).map(async (t) => {
+          const state = await api.getTabState(t.id!);
+          return `${state?.title ?? ''}\n${state?.rows.join('\n') ?? ''}`;
+        }));
       });
       await browser.close();
-      const title = titles.join('\n');
+      const title = states.join('\n');
       expect(title, text).toContain('Page under sm-dev control');
-      expect(title).toContain('Other | NOT LOADED');
+      expect(title).toContain('Other | NOT_LOADED');
       expect(title).not.toContain('UNEXPECTED');
     }
   } finally {

@@ -78,7 +78,7 @@ test.describe('focus-triggered refresh', () => {
     await waitForTabState(
       sm,
       tabId,
-      (s) => hasBadgeColor(s, PURPLE) && s.title.includes('Live | Reload to update'),
+      (s) => hasBadgeColor(s, PURPLE) && s.rows.includes('Live | RELOAD'),
       'purple + RELOAD title after the tab regained focus',
     );
 
@@ -126,7 +126,7 @@ test.describe('focus-triggered refresh', () => {
     await waitForTabState(
       sm,
       tabId,
-      (s) => hasBadgeColor(s, PURPLE) && s.title.includes('Live | Reload to update'),
+      (s) => hasBadgeColor(s, PURPLE) && s.rows.includes('Live | RELOAD'),
       'purple + RELOAD title after the page reported focus',
     );
     await other.close();
