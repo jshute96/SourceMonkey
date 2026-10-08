@@ -485,10 +485,19 @@ async function rehydrateAfterStorageChange(): Promise<void> {
   const collection = await getCollection(script.collectionId);
   if (scriptId !== wanted) return;
   cacheCollection(collection);
-  await refreshLogId(wanted);
   await refreshConnectAnswers(wanted);
+  // One read of the whole store for both the log label and the versions
+  // table, rather than one each (each was measured at 200 to 400 ms on a
+  // 10 MB store). Read last, just before the paint, so a paint started
+  // during the awaits above can't have read later than it. Failing
+  // that, each reads for itself, as before.
+  const numbers = await readScriptNumbers();
+  const snapshot = await readStoreSnapshot().catch(() => undefined);
   if (scriptId !== wanted) return;
-  render(script);
+  if (snapshot) currentLogId = logIdOf(wanted, snapshot.scripts, numbers);
+  else await refreshLogId(wanted);
+  if (scriptId !== wanted) return;
+  render(script, snapshot);
   // render() wipes the flash overlay via `textContent =` and may
   // have clamped the tab index to 0 if a require disappeared.
   // Re-anchor highlight + URL without scrolling the code pane.
@@ -614,8 +623,11 @@ async function refreshConnectAnswers(id: string): Promise<void> {
 // can move `scriptId` on underneath them.
 async function refreshLogId(id: string): Promise<void> {
   const all = await getAllScripts();
-  const map = computeLogIds(all, numberMap(await readScriptNumbers()));
-  currentLogId = map.get(id) ?? '';
+  currentLogId = logIdOf(id, all, await readScriptNumbers());
+}
+
+function logIdOf(id: string, all: StoredScript[], numbers: Awaited<ReturnType<typeof readScriptNumbers>>): string {
+  return computeLogIds(all, numberMap(numbers)).get(id) ?? '';
 }
 
 async function onRefresh(): Promise<void> {
@@ -826,7 +838,9 @@ function paintEnabledOptimistically(changes: readonly ScriptEnableChange[]): voi
   }
 }
 
-function render(script: StoredScript): void {
+// `snapshot`, when the caller just read the store, is what the versions
+// table paints from instead of reading it again.
+function render(script: StoredScript, snapshot?: StoreSnapshot): void {
   currentScript = script;
   // A script is on screen, so no removal is pending; the next time a
   // row goes missing it is someone else's doing. See
@@ -940,7 +954,7 @@ function render(script: StoredScript): void {
     anchorScriptId: panelAnchorId,
     mode: 'installed',
     currentScriptId: script.id,
-  });
+  }, snapshot);
 
   tabsView.setTabs(storedTabs(script));
 
@@ -1289,10 +1303,13 @@ async function showSelectedScript(): Promise<void> {
 // `location` is the ABSOLUTE URL, not the stored `relativePath`: see
 // [docs/script-identity.md] for why the match can't use the relative
 // form.
-async function paintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
+//
+// `given` is a read the caller just made, used instead of a new one. Not
+// kept: `lastRelatedPaint` repaints read the store again.
+async function paintRelatedVersions(args: RelatedVersionsPaint, given?: StoreSnapshot): Promise<void> {
   const generation = ++relatedVersionsGeneration;
   lastRelatedPaint = args;
-  const snapshot = await readStoreSnapshot();
+  const snapshot = given ?? await readStoreSnapshot();
   // A later paint started while this one was reading storage, so this
   // result is already stale. Drop it rather than let two in-flight
   // reads race to paint last — the installed viewer repaints on every
@@ -1916,8 +1933,8 @@ versionsEl.addEventListener('focusout', () => {
 // A panel action is the user asking for this, so it repaints even with
 // the dropdown focused: by then the click that opened it has been
 // spent on the button that ran the action.
-function repaintRelatedVersions(args: RelatedVersionsPaint): Promise<void> {
-  return paintRelatedVersions(args).catch((err) => {
+function repaintRelatedVersions(args: RelatedVersionsPaint, snapshot?: StoreSnapshot): Promise<void> {
+  return paintRelatedVersions(args, snapshot).catch((err) => {
     // Emptied, not left as-is: the rows carry live buttons keyed to
     // script ids, and a failed re-read is exactly when those ids may
     // have stopped existing. Stale rows that still act would be worse

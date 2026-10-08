@@ -545,8 +545,8 @@ After any storage write, the collections page redraws and prints a
 
 - **read collections / banner**: the collection rows, and the "could
   not save" banner's check.
-- **read scripts**: each collection's script rows, one read per
-  collection, bodies included.
+- **read scripts**: every collection's script rows in one read,
+  bodies included.
 - **size**: asking Chrome how big those rows are.
 - **icons / paint**: cached favicons, then updating the rows.
 

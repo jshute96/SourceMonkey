@@ -38,6 +38,7 @@ import {
   getAllScripts,
   reconcileScriptMembership,
   getCollectionWithScripts,
+  getScripts,
   getCollections,
   isFirstRunComplete,
   isScriptEnabled,
@@ -571,19 +572,23 @@ async function repaintSections(timer: PhaseTimer): Promise<void> {
   // read rather than first.
   await syncStorageBanner(new Set(collections.map((s) => s.id)));
   timer.mark('banner');
-  // Read each collection's scripts ONCE, up front, and paint from that.
-  // The obvious shape — `getAllScripts()` then render each section —
-  // reads the whole store twice per pass: `getAllScripts` is a
-  // `storage.local.get(null)`, which drags back every script body, every
-  // prefetched `@require`, and the base64 favicon cache, and then each
-  // section re-reads its own scripts. A repaint runs on any structural
-  // write from anywhere, so that has to stay proportionate.
-  const scriptsByCollection = new Map<string, StoredScript[]>();
-  for (const collection of collections) {
-    scriptsByCollection.set(collection.id, (await getCollectionWithScripts(collection.id))?.scripts ?? []);
-  }
+  // Read every collection's scripts ONCE, up front, in one call, and
+  // paint from that.
+  //   - Not `getAllScripts()`: that is a `storage.local.get(null)`,
+  //     which also drags back every prefetched `@require`, every GM
+  //     value and the base64 favicon cache.
+  //   - Not one read per collection: two calls each, one after another,
+  //     for rows the collection list above already names.
+  // A repaint runs on any structural write from anywhere, so it has to
+  // stay proportionate.
+  const scripts = await getScripts(collections.flatMap((c) => c.scriptIds));
+  const byId = new Map(scripts.map((sc) => [sc.id, sc]));
+  const scriptsByCollection = new Map(collections.map((c) => [
+    c.id,
+    c.scriptIds.map((id) => byId.get(id)).filter((sc): sc is StoredScript => sc != null),
+  ]));
   const allScripts = [...scriptsByCollection.values()].flat();
-  timer.mark('read scripts', `${collections.length} reads, ${allScripts.length} scripts`);
+  timer.mark('read scripts', `${allScripts.length} scripts`);
   // Their size from Chrome rather than by serializing them here, which
   // on a store of several MB held this page's thread for tens of ms.
   // Only with debug logging on, since it is an extra storage call.
