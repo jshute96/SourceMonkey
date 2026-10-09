@@ -164,9 +164,6 @@ export function installRowCache(): void {
         // own are passed now too.
         apply(key, json, list[at].seq);
         list.splice(0, at + 1);
-        // A load in flight reads again: this may be a write from
-        // elsewhere that happens to match one of ours.
-        if (!rows) generation++;
       }
       if (list.length > 0) pending.set(key, list);
       else pending.delete(key);

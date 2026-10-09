@@ -36,6 +36,10 @@ details live in the topic-specific docs linked below.
   Opens the toolbar popup on a click and the collections page on a
   double click, watches tab navigation, and surfaces per-tab match
   counts via the action badge. See [matching.md](matching.md).
+  - **The only writer**: every storage write and registration runs
+    here. Extension pages read storage to paint, and ask the worker to
+    change anything (`worker-client.ts`, `worker-ops.ts`); it keeps the
+    rows in memory as it writes them. See [worker-writes.md](worker-writes.md).
 - **Toolbar popup** (`src/popup.html` + `src/extension/popup.ts`, view
   built by `src/extension/popup-view.ts`) — "Active scripts": the
   scripts that match the current tab, by collection, with toggles,

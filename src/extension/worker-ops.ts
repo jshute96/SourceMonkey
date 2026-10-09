@@ -26,7 +26,7 @@ import { GITHUB_AUTH_TOKEN_KEY } from '../github-auth.js';
 import { LOCAL_ROOTS_KEY } from '../local-file-overrides.js';
 import { INSTALL_CAPTURE_KEY } from './install-capture.js';
 import { DOWNLOADS_COPIES_KEY, registerLocalCopy } from './local-copy.js';
-import { deleteAllCachedIcons, deleteCachedIcon, refreshCachedIcon } from './site-icon.js';
+import { deleteAllCachedIcons, deleteCachedIcon, ensureCachedIcon, refreshCachedIcon } from './site-icon.js';
 import { startPhaseTimer } from '../phase-timing.js';
 import { WORKER_OP_PORT, type WorkerOpReply, type WorkerOpRequest } from './worker-client.js';
 
@@ -108,7 +108,9 @@ const WORKER_OPS = {
   // ---------- Local copy and site icons ----------
   // After the page has written the files: it alone can download.
   registerLocalCopy,
-  // Fetch and cache one icon row, answering its data URL.
+  // One icon row's data URL: cached if still usable, else fetched and
+  // cached. `refreshCachedIcon` always fetches (the debug icons page).
+  ensureCachedIcon,
   refreshCachedIcon,
   deleteCachedIcon,
   deleteAllCachedIcons,

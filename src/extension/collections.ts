@@ -155,13 +155,9 @@ import {
   renderFileAccessBanner,
 } from './file-access.js';
 
-// The page needs its own copy of the cached GitHub token — the SW's
-// cached value isn't reachable from here, and the page still decides
-// whether a URL is GitHub-authed (for the log-line suffix) and still
-// fetches locally when the read can't be handed to the worker. Listen
-// synchronously; bootstrap() awaits the initial load before any
-// refresh can fire so a `?refresh` query-param can't race against
-// hydration and run unauthenticated.
+// The page needs its own copy of the cached GitHub token for the reads
+// it still makes itself (the collection dialog's location probe).
+// Refreshes run in the worker, which waits for its own copy.
 installGithubAuthListener();
 const githubTokenReady = loadGithubAuthToken();
 
@@ -1123,9 +1119,7 @@ function forgetScriptsExcept(keep: ReadonlySet<string>): void {
 // Lets the docs/redirect-page.md deep link route here from anywhere
 // on the web (see docs/deep-link.md).
 async function bootstrap(): Promise<void> {
-  // Ensure the GitHub auth token is hydrated before any refresh fires.
-  // Otherwise a `?refresh` query-param can race the chrome.storage.local
-  // read and the first refresh-on-load runs unauthenticated.
+  // The GitHub auth token hydrated before anything here reads GitHub.
   // Released even if anything above the render throws: every repaint
   // waits on this, and the flow handlers await a repaint inside a `try`
   // whose `finally` resets their button — so a deferred left unresolved
@@ -1222,7 +1216,8 @@ async function seedDefaultCollectionsViaUi(): Promise<void> {
     addInput.value = '';
     console.log('[SourceMonkey] first run: seeding complete; marking firstRunComplete=true');
     // Caught here so a failure can't replace the outcome of the seeding
-    // above; the next load seeds again, and the add dedupes.
+    // above. The defaults are then not seeded again: seeding runs only
+    // with `?first_run`, which is gone from the URL by now.
     await markFirstRunComplete().catch((err: unknown) => {
       console.info('[SourceMonkey] could not record that first-run seeding is done:', describeError(err));
     });
@@ -1494,7 +1489,11 @@ async function renderCollectionSection(collection: StoredCollection): Promise<HT
   setDeleteIcon(removeBtn, 'record');
   removeBtn.title = 'Remove this collection';
   removeBtn.setAttribute('aria-label', 'Remove this collection');
-  removeBtn.addEventListener('click', () => void onRemoveCollection(collection.id, section, removeBtn));
+  removeBtn.addEventListener('click', () => {
+    onRemoveCollection(collection.id, section, removeBtn).catch((err: unknown) => {
+      console.info('[SourceMonkey] remove collection failed', describeError(err));
+    });
+  });
   buttons.appendChild(removeBtn);
 
   // None for an sm-dev test collection, which its run names.
@@ -2221,16 +2220,17 @@ async function onRemoveCollection(id: string, section: HTMLElement, btn: HTMLBut
   btn.disabled = true;
   try {
     await removeCollection(id);
-    // The repaint drops the section and, if that was the last collection,
-    // puts the empty placeholder back.
-    await repaintPage();
   } catch (err) {
     section.classList.remove('removing');
     btn.disabled = false;
     // Shown, not thrown: the click handler drops the promise, and a
     // rejection there lands in the extension's Errors panel.
     showPageError(`Could not remove the collection: ${describeError(err)}`);
+    return;
   }
+  // The repaint drops the section and, if that was the last collection,
+  // puts the empty placeholder back.
+  await repaintPage();
 }
 
 // Snapshot / refresh / repaint / highlight — the shape every refresh

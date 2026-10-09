@@ -1,41 +1,35 @@
 # The service worker as the only writer
 
-> **Status: in progress.** Stages 1 to 4 are done: every page write
-> runs in the worker. See [Stages](#stages).
+> **Status: done.** Every page write runs in the worker, and a page
+> that tries to write throws. See [Stages](#stages) and [Open](#open).
 
-Today every extension page (the collections page, the viewer, the
-Options page, the dialogs they open) writes `chrome.storage.local`
-itself, through the same store functions the service worker uses. This
-plan moves every write, and every `chrome.userScripts` registration
-call, into the service worker. Pages send requests and read storage to
-paint.
+Extension pages (the collections page, the viewer, the Options page,
+the dialogs they open) used to write `chrome.storage.local` themselves,
+through the same store functions the service worker uses. Now every
+write, and every `chrome.userScripts` registration call, runs in the
+service worker. Pages send requests and read storage to paint.
 
 ## Why
 
+What a page writing for itself cost, and what moving the writes bought:
+
 - **One lock instead of one per context.** `mutate()` serializes writes
   within a JS context only (see
-  [storage.md](storage.md#the-lock-is-per-context)). Races between a
-  page and the worker are guarded case by case, or accepted:
-  - the blob cleanup waits two checks `SWEEP_GRACE_MS` apart;
-  - pages ask the worker whether the format migration is done
-    (`storeFormatReady`'s page path);
-  - `pruneEnablementTimes` repairs times a removal in another context
-    raced back in;
-  - the injector expects registrations another context placed
-    (`unregisterIds`' fallback, `placeSpec`'s duplicate handling);
-  - the races storage.md lists as unguarded: a remove against a
-    refresh's write, two installs of one file, lost active-time stamps.
+  [storage.md](storage.md#one-lock-in-the-worker)). Races between a
+  page and the worker were guarded case by case, or accepted: a remove
+  against a refresh's write, two installs of one file, lost
+  active-time stamps.
 - **One cache that is right by construction.** With every write going
-  through it, the worker can keep every script and collection row in
+  through it, the worker keeps every script and collection row in
   memory, updated as it writes. Finding related copies on an enable
-  click then needs no storage read (today a read of every row, about
-  70 ms on a 326-script profile).
+  click needs no storage read (it was a read of every row, about 70 ms
+  on a 326-script profile).
 - **Long work survives the tab.** Refresh All, adding a collection and
-  installing run in the page that started them, and closing it stops
+  installing ran in the page that started them, and closing it stopped
   them part-way.
-- **One registration path.** A page's rejected-script retry builds
-  specs with its own `mustAskForDecision`, which is always null there,
-  so they can differ from the worker's while an sm-dev run is live.
+- **One registration path.** A page's rejected-script retry built
+  specs with its own `mustAskForDecision`, which was always null there,
+  so they could differ from the worker's while an sm-dev run was live.
 
 ## Rules
 
@@ -173,27 +167,46 @@ page: it writes nothing.
 - **Every page write call site changes**, though mostly to an import
   from the client module.
 
-## What gets simpler
+## What got simpler
 
-Once no page writes:
+Now that no page writes:
 
-- The cleanup deletes an unused blob on one check, inside the lock; the
-  grace period and `MISSING_BLOB_MESSAGE`'s race go.
-- `storeFormatReady`'s page path and `sm:storeFormatReady` go.
-- `pruneEnablementTimes`' cross-context repair, and the "install in
-  another context" caveat in `writeEnablementFrom`.
-- The injector's "another context placed it" handling, and the page
-  retry's `mustAsk` divergence.
-- The log write's local fallback.
-- Per-context dedupe maps (parse checks in flight, folder listings,
-  icon fetches) become one.
-- The worker's row cache can replace the tables it rebuilds from change
-  events (match index, log labels), as one source.
+- **Gone**:
+  - `storeFormatReady`'s page path and the `sm:storeFormatReady`
+    message.
+  - The log write's local fallback: a page's entry the worker didn't
+    take is dropped, with a console line.
+  - The page retry's `mustAsk` divergence: every retry runs in the
+    worker.
+  - The pages' parse checker for the store, and their own copies of the
+    in-flight maps (folder listings, icon fetches) for writes.
+- **Kept, with the reason updated**:
+  - The blob cleanup's grace period: not every write of a script row
+    takes the lock, so one could still reuse a blob a single check
+    found unused.
+  - The injector's handling of a registration it didn't expect: the
+    worker's record of what Chrome holds can still be wrong (a reset,
+    a stopped worker).
+  - `pruneEnablementTimes`, as a repair for times left from before.
+- **Not yet**: the worker's row cache could replace the tables it
+  rebuilds from change events (match index, log labels). See
+  [Open](#open).
 
 Not affected: re-reading inside the lock and merging concurrent edits
 (`preserveConcurrentEdits`), since fetches still run outside the lock;
 and the collections page's `writtenSinceRead`, since a write through the
 worker is still asynchronous to the page's repaint.
+
+## Enforcement
+
+- `assertWorkerContext` (`run-context.ts`) throws in a page. The
+  store's write funnels (`writeLocal`, `setLocal`, `removeLocal`), the
+  injector's registration lock, and the session writers
+  (`refresh-errors`, `injector-rejections`) call it.
+- `callWorker` refuses to run in the worker, where a port would reach
+  no listener: code there calls the store directly.
+- `tests/unit/page-writes.test.mjs` checks that no page-only module
+  imports a writer from where it is defined, or writes storage itself.
 
 ## Stages
 
@@ -216,11 +229,9 @@ worker is still asynchronous to the page's repaint.
    - Pages no longer install a parse checker for the store; the install
      preview keeps its own.
 4. **Done.** Local copy and site icons.
-5. **Enforce it**: `writeLocal`, `removeLocal` and the injector's
-   placement calls throw outside the worker, and a unit test checks
-   that no page bundle reaches them. Then remove what
-   [What gets simpler](#what-gets-simpler) lists, and update
-   storage.md, injection.md and architecture.md.
+5. **Done.** Enforce it ([Enforcement](#enforcement)), then remove
+   what [What got simpler](#what-got-simpler) lists, and update
+   storage.md, injection.md, script-log.md and architecture.md.
 
 Each stage leaves both kinds of writer working, so it can ship alone.
 
@@ -231,3 +242,5 @@ Each stage leaves both kinds of writer working, so it can ship alone.
   in the worker after an add is now easy; not done here.
 - **The registration sync, sticky numbers and the match index** read
   storage themselves. They could read the row cache too.
+- **The blob cleanup's grace period** could go once every write of a
+  script row takes the lock.

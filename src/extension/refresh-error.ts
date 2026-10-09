@@ -37,6 +37,8 @@
 // is small, the readers want all of it, and a single key means one
 // `storage.onChanged` event rather than a fan-out.
 
+import { assertWorkerContext } from '../run-context.js';
+
 // Session-storage key holding the whole `RefreshErrorMap`.
 export const REFRESH_ERRORS_KEY = 'refresh-errors';
 
@@ -108,6 +110,7 @@ export async function setRefreshError(
     const next = { ...prior };
     if (reason === null) delete next[collectionId];
     else next[collectionId] = reason;
+    assertWorkerContext('write storage');
     await chrome.storage.session.set({ [REFRESH_ERRORS_KEY]: next });
   } catch (err) {
     console.info('[SourceMonkey] could not record a refresh error', err);
@@ -127,6 +130,7 @@ export async function pruneRefreshErrors(liveIds: Iterable<string>): Promise<voi
       if (live.has(id)) next[id] = reason;
     }
     if (Object.keys(next).length === Object.keys(prior).length) return;
+    assertWorkerContext('write storage');
     await chrome.storage.session.set({ [REFRESH_ERRORS_KEY]: next });
   } catch (err) {
     console.info('[SourceMonkey] could not prune refresh errors', err);

@@ -55,8 +55,9 @@ export type ScriptRow = Omit<StoredScript, 'bodyText' | 'requires' | 'resources'
 
 // Shown on a script whose row points at a blob that isn't there (or
 // that this build can't decode). The cleanup that deletes unused blobs
-// could cause it, racing a write in another context; Refresh fetches
-// the file again, as for one that failed to load.
+// could cause it, racing a write that doesn't take the lock (see
+// `sweepUnusedBlobs`); Refresh fetches the file again, as for one that
+// failed to load.
 export const MISSING_BLOB_MESSAGE =
   'Part of the stored copy of this script is missing. Refresh the script to load it again.';
 

@@ -1229,17 +1229,50 @@ export async function deleteAllCachedIcons(): Promise<void> {
 // worker, which alone writes storage (docs/worker-writes.md). A page
 // asks it, and keeps its own in-flight and settled maps for painting.
 function fetchToCache(storageKey: string): Promise<string | null> {
-  if (isPageContext()) return callWorker('refreshCachedIcon', storageKey);
-  return fetchAndCacheByKey(storageKey) ?? Promise.resolve(null);
+  if (isPageContext()) return callWorker('ensureCachedIcon', storageKey);
+  return ensureCachedIcon(storageKey);
 }
 
 function fetchAndCacheByKey(storageKey: string): Promise<string | null> | null {
-  if (storageKey.startsWith(KEY_PREFIX)) return fetchAndCacheOriginIcon(storageKey.slice(KEY_PREFIX.length));
-  if (storageKey.startsWith(PATH_ICON_KEY_PREFIX)) {
-    return fetchAndCachePathIcon(storageKey.slice(PATH_ICON_KEY_PREFIX.length));
+  let fetchIt: (() => Promise<string | null>) | null = null;
+  if (storageKey.startsWith(KEY_PREFIX)) {
+    fetchIt = () => fetchAndCacheOriginIcon(storageKey.slice(KEY_PREFIX.length));
+  } else if (storageKey.startsWith(PATH_ICON_KEY_PREFIX)) {
+    fetchIt = () => fetchAndCachePathIcon(storageKey.slice(PATH_ICON_KEY_PREFIX.length));
+  } else if (storageKey.startsWith(URL_ICON_KEY_PREFIX)) {
+    fetchIt = () => fetchAndCacheUrlIcon(storageKey.slice(URL_ICON_KEY_PREFIX.length));
   }
-  if (storageKey.startsWith(URL_ICON_KEY_PREFIX)) return fetchAndCacheUrlIcon(storageKey.slice(URL_ICON_KEY_PREFIX.length));
-  return null;
+  return fetchIt ? withFetchSlot(fetchIt) : null;
+}
+
+// At most this many icon fetches at once. A page on a cold cache asks
+// for every icon it shows, and the worker also runs refreshes.
+const MAX_ICON_FETCHES = 6;
+let iconFetches = 0;
+const iconFetchQueue: (() => void)[] = [];
+
+async function withFetchSlot<T>(run: () => Promise<T>): Promise<T> {
+  if (iconFetches >= MAX_ICON_FETCHES) await new Promise<void>((go) => iconFetchQueue.push(go));
+  else iconFetches++;
+  try {
+    return await run();
+  } finally {
+    // A waiter takes this slot over; with none, it is freed.
+    const next = iconFetchQueue.shift();
+    if (next) next();
+    else iconFetches--;
+  }
+}
+
+// Worker side of a page's lookup: the cached row when it is still
+// usable (another page may have just fetched it), else a fetch, shared
+// with one already in flight for the key.
+export async function ensureCachedIcon(storageKey: string): Promise<string | null> {
+  const version = storageKey.startsWith(URL_ICON_KEY_PREFIX) ? undefined : DISCOVERED_ICON_CACHE_VERSION;
+  const row = (await chrome.storage.local.get(storageKey))[storageKey] as SiteIconEntry | undefined;
+  const cached = usableCacheHit(row, version);
+  if (cached) return cached.dataUrl;
+  return await refreshCachedIcon(storageKey);
 }
 
 // Worker side: refetch one cache row now, sharing a fetch already in

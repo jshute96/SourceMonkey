@@ -18,6 +18,7 @@
 // worker-ops.ts adapts any function whose own signature has them.
 
 import type { WorkerOpName, WorkerOps } from './worker-ops.js';
+import { isPageContext } from '../run-context.js';
 
 export const WORKER_OP_PORT = 'sm:op';
 
@@ -36,6 +37,9 @@ type Args<K extends WorkerOpName> = Parameters<WorkerOps[K]>;
 type Result<K extends WorkerOpName> = Awaited<ReturnType<WorkerOps[K]>>;
 
 export function callWorker<K extends WorkerOpName>(op: K, ...args: Args<K>): Promise<Result<K>> {
+  // A port the worker opens reaches no listener of its own: code running
+  // in the worker calls the store directly.
+  if (!isPageContext()) return Promise.reject(new Error(`Internal error: The background worker called its own ${op} through a port`));
   return new Promise((resolve, reject) => {
     const port = chrome.runtime.connect({ name: WORKER_OP_PORT });
     let settled = false;

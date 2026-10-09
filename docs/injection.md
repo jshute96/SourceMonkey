@@ -137,7 +137,7 @@ registered is **updated in place**.
    removes registrations (a script or collection turned off) reads no
    bodies.
 4. `unregister([...])` for scripts that left the set and that this
-   context believes Chrome holds.
+   worker believes Chrome holds.
 5. `chrome.userScripts.update([...])` for ids Chrome already holds,
    `register([...])` for genuinely new ones, and unregister+register for
    the narrow case `update` cannot express (see
@@ -145,7 +145,7 @@ registered is **updated in place**.
    applies a batch all-or-nothing, so a rejected batch falls back to
    per-spec calls and one bad script can't take down every other one.
 6. `unregister([...])` for the rest of the scripts that left the set,
-   which another context may have placed, and for any script Chrome
+   which Chrome may hold though this worker's record says not, and for any script Chrome
    just refused that it already held (see
    [Update, never unregister-then-register](#update-never-unregister-then-register)).
    Usually Chrome holds none of the former, which fails the batch call
@@ -163,7 +163,7 @@ their code** when only their patterns moved.
 - `update` keeps any property it isn't given, and the GM runtime's code
   is over 100 KB.
 - Their code is fixed when the extension is built.
-- Each context's first sync is a full one, which places them with code
+- Each worker's first sync is a full one, which places them with code
   (see [Startup is a full reconcile](#startup-is-a-full-reconcile)).
 
 #### Why wipe-and-replace was wrong, not just slow
@@ -192,7 +192,7 @@ Chrome retains registrations across service-worker restarts, and rows
 change while the worker is dead — so a fresh worker has nothing to diff
 against and a pure diff would strand stale registrations.
 
-- A sync is incremental only when this JS context holds a record of
+- A sync is incremental only when this worker holds a record of
   what it last registered. `src/extension/injector.ts` keeps one — ids, worlds
   and pattern shapes, every script's basename, log label and
   collection, and the collection rows. No script bodies, so it stays
@@ -381,13 +381,11 @@ A registration that is *staying* is replaced with
   above, or a pattern field `update` cannot apply.
 - **Removals do not consult our record of the set.** Every affected
   script that no longer wants a registration is dropped, whether or not
-  this context believes it has one — the collections page and the viewer
-  place registrations in *their* contexts, so a script the page-side
-  retry placed is one the worker's record has never heard of. Every
-  other wrong belief self-corrects because `placeSpec` has a second call
-  to disagree with it; removal has none, so it doesn't get to guess. An
-  unregister for an id nothing holds costs one refused call and is
-  swallowed.
+  this worker believes Chrome holds it: the record can be wrong (a
+  reset, a record lost with a stopped worker). Every other wrong belief
+  self-corrects because `placeSpec` has a second call to disagree with
+  it; removal has none, so it doesn't get to guess. An unregister for an
+  id nothing holds costs one refused call and is swallowed.
 
 ### One registration operation at a time
 
@@ -398,7 +396,9 @@ Two of them interleaving produces `Duplicate script ID '<id>'` against
 a script that is registered and *running*: one attempt listed the set,
 a second placed the script, and the first then offered the id again.
 
-- **Serialized per context.** Every operation that touches
+- **Serialized in the worker**, the only context that places
+  registrations ([worker-writes.md](worker-writes.md)); the lock throws
+  in a page. Every operation that touches
   `chrome.userScripts` — the sync, the targeted retry, the test
   surface's teardown — runs through one promise-chain lock in
   `src/extension/injector.ts`. Overlap used to be easy to hit: the SW-startup
@@ -413,17 +413,9 @@ a second placed the script, and the first then offered the id again.
   full. Callers arriving while one is *running* don't join it — that
   one's read already happened — but they still share a single new
   queued sync between them.
-- **Cross-context placement is still possible.** The lock is
-  per-JS-context and the collections page and viewer run the retry in
-  theirs, so a page-side registration can land mid-sync. Which spec is
-  newer isn't knowable from there and doesn't need to be — every
-  `script:*` / `collection:*` write schedules its own sync, so the set
-  converges on the last write. What matters is that the duplicate is
-  our sequencing and not something to badge the script for; `placeSpec`
-  is what absorbs it.
 - **A failed batch `unregister` falls back to one id at a time.**
   Chrome fails the whole call if any id in the list is unknown, which
-  usually means another context already dropped that one. Giving up
+  usually means the worker's record was wrong about that one. Giving up
   would leave scripts that are *not* wanted — disabled, deleted, newly
   INVALID — still injecting, since nothing replaces them any more.
 
@@ -496,13 +488,8 @@ rules and why it carries no location.
   - The floor limits **attempts**, not reporting. Every attempt that is
     refused still writes its row; the answer to a burst is to try less
     often, not to hide what happened.
-  - It's module state, and **per JS context**: the collections page and the
-    viewer import `script-updater.ts` directly, so their Refresh runs
-    the retry — and its own copy of the floor — in the page rather than
-    the worker. Each context rate-limits its own automatic retries.
-    Harmless, because a click bypasses the floor anyway and the
-    rejection map they all read is shared, but it is not one global
-    counter.
+  - It's module state in the worker, which runs every refresh, so it
+    is one counter for all of them.
   - `resetAllState` clears the worker's copy
     (`resetRejectionRetryGate`) — otherwise one e2e test's retry
     silently suppresses the next one's.

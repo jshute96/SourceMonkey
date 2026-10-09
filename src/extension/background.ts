@@ -169,7 +169,6 @@ import {
   forgetStoreMigrationForTests,
   sweepUnusedBlobsLocked,
   storeFormatReady,
-  STORE_FORMAT_READY_MESSAGE,
   _setCollectionWriteFailureForTests,
   markFirstRunComplete,
   removeCollection,
@@ -2319,17 +2318,6 @@ async function reloadNoScriptsFromMenu(tabId: number | null): Promise<void> {
     return;
   }
   await reloadTabWithMode(tabId, { kind: 'none' });
-}
-
-// A page's writes wait for the storage format migration, which only
-// this worker runs (`storeFormatReady` in script-store.ts).
-function installStoreFormatListener(): void {
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    const msg = message as { type?: unknown } | null;
-    if (msg?.type !== STORE_FORMAT_READY_MESSAGE || !fromExtensionPage(sender)) return undefined;
-    void storeFormatReady().then(() => { try { sendResponse(true); } catch { /* page gone */ } });
-    return true;
-  });
 }
 
 // ---------- Unused blob cleanup ----------
@@ -5239,8 +5227,7 @@ function installPageLogWriteListener(): void {
     void handleScriptLogWrite(msg as unknown as ScriptLogWriteRequest).then(
       () => { try { sendResponse(true); } catch { /* page gone */ } },
       (err) => {
-        // Anything but `true` sends the page to its own local write, so
-        // this failure costs the entry its ordering, not its existence.
+        // Anything but `true` tells the page the entry wasn't saved.
         console.info('[SourceMonkey] page log-write handler threw:', describeError(err));
         try { sendResponse(undefined); } catch { /* page gone */ }
       },
@@ -5581,9 +5568,8 @@ const compileParseChecker: ParseChecker = async (script) => {
 setParseChecker(compileParseChecker);
 
 // Move format 1 script rows to blobs, once (docs/storage.md#format-2-migration).
-// Writes in this worker wait for it; pages ask through the message below.
+// Writes wait for it.
 void storeFormatReady();
-installStoreFormatListener();
 installBlobSweep();
 void ensureLogIdsLoaded();
 // Number new scripts and collections before each registration sync

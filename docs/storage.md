@@ -159,14 +159,13 @@ The rows' `contentHash` fields stay change-detection tokens; the
 - **Unused blobs** (after a remove, or a refresh that replaced a body)
   are deleted by the service worker only (`sweepUnusedBlobs`):
   - A blob goes once it's unused on two checks at least
-    `SWEEP_GRACE_MS` (2 minutes) apart. Each context has its own write
-    lock (see [The lock is per context](#the-lock-is-per-context)), so
-    a single check could race a page saving a row that points at a
-    blob it found already stored.
-  - A check runs inside the worker's write lock
-    (`sweepUnusedBlobsLocked`), so no write in the worker lands between
-    it reading the rows and deleting. That closes the race for most
-    writes, since most run in the worker; the wait covers the pages'.
+    `SWEEP_GRACE_MS` (2 minutes) apart.
+  - A check runs inside the write lock (`sweepUnusedBlobsLocked`), so
+    no write under the lock lands between it reading the rows and
+    deleting. Only the worker writes
+    ([worker-writes.md](worker-writes.md)), but not every write of a
+    row takes the lock, so the wait stays: one could save a row
+    pointing at a blob it found already stored.
   - When each blob was first found unused is kept in session storage,
     since the worker is often stopped between checks.
   - **When it runs**: an alarm, set half a minute after a change that
@@ -246,16 +245,10 @@ them to blobs.
   migration below. Then it sets `storeFormat` to `2`.
 - **Reads don't wait**: they accept either format, so a format 1 row
   reads as it is.
-- **Writes and removes wait**, in every context. Otherwise a page could
-  save a row (an enable toggle, say) that the migration then overwrites
-  with the converted copy of what it read earlier.
-  - In the worker, they await the migration itself.
-  - A page finds `storeFormat` already `2`, or else sends
-    `sm:storeFormatReady` and waits for the worker's answer. The
-    message also wakes the worker, which migrates as it starts.
-  - The page asks twice before giving up: a worker stopped
-    mid-migration leaves the first message unanswered, and the second
-    wakes a new one.
+- **Writes and removes wait** for it. Otherwise a write (an enable
+  toggle, say) could be overwritten by the converted copy of the row
+  the migration read earlier. Only the worker writes, so they await the
+  migration itself.
 - **Batches**: rows convert in `set`s of a few dozen. Each `set`
   replaces its rows' inline bodies with blobs, so storage use barely
   moves within a call, and blobs ride in the same call as their rows.
@@ -1237,32 +1230,22 @@ silently reverting the user's choice.
     at, and a departed row is either already deleted or now owned by
     somewhere else.
 
-#### The lock is per context
+#### One lock, in the worker
 
-`mutateChain` is module state, so each JS context has its own: the
-service worker, the collections page, and the viewer.
+`mutateChain` is module state, so the lock covers one JS context. Only
+the service worker writes ([worker-writes.md](worker-writes.md)): the
+pages ask it, and `writeLocal` throws in a page. So every structural
+read-modify-write is under the same lock.
 
-- Pages call the mutators directly — a Remove click, a move, an enable
-  toggle — while the worker refreshes in the background. So a section is
-  atomic against other mutators **in the same context only**.
-- What actually survives a writer in the other context is **re-reading
-  inside the lock and merging**, not the lock itself: the
-  `preserveConcurrentEdits` fields, and the joined/departed reconcile
-  in `writeRefreshedCollection`.
-- Widening a critical section therefore buys nothing and costs
-  something — it can't exclude the other context, only give it a longer
-  window to interleave in.
+- Re-reading inside the lock and merging still matters: a refresh
+  fetches outside the lock, so the `preserveConcurrentEdits` fields and
+  the joined/departed reconcile in `writeRefreshedCollection` are what
+  keep a change made during the fetch.
+- Keep sections short: every write in the worker waits on them.
 
-Still unguarded, each needing an interleave inside one storage
-round-trip. Narrow enough to leave, written down so nobody widens them:
-
-- A page's `removeCollection` racing the worker's refresh write, which
-  would leave the collection's rows behind, referenced by nothing.
-- Two contexts both passing the same `addCollection` / `installScript`
-  dedup check.
-- An enable toggle landing between a refresh's re-read and its write.
-- Two contexts rewriting `enablementTimes` at once, which drops one's
-  stamps (see [script-enablement.md](script-enablement.md#limitations)).
+Still unguarded: a copy installed between an enable's pre-lock read
+and its lock is not among the copies it considers
+(`writeEnablementFrom`).
 
 ### Membership disagreements
 

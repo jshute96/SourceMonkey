@@ -203,34 +203,21 @@ export async function handleScriptLogWrite(req: ScriptLogWriteRequest): Promise<
   return enqueue(req.scriptId, () => removeEntries(req.scriptId));
 }
 
-// Page side. Falls back to writing locally unless the worker
-// ACKNOWLEDGED the write — a log line the user can see beats a lost one,
-// and the interleaving it risks is what happened on every write before
-// this relay existed.
+// Page side. Only the worker writes storage (docs/worker-writes.md), so
+// an entry the worker didn't ACKNOWLEDGE is dropped, and said so in
+// this page's console.
 //
 // The ack has to be READ, not just awaited: a message nothing handled,
 // and a handler that threw, both RESOLVE `sendMessage` (with
-// `undefined`); only an unreachable worker rejects it. So `true` — sent
-// by the listener once the write has landed — is the one answer that
-// means "don't write this yourself".
-//
-// The fallback can duplicate an entry: a port that closes after the
-// worker acted (the page navigating away mid-write) is indistinguishable
-// from one that was never there, so the write may already be persisted.
-// A doubled log line is the better failure of the two on offer. It can
-// also reorder: a fallen-back `resetsLogLevel` row isn't ordered against
-// relayed rows, so the reset could land after the rows it was meant to
-// precede and erase a fresh warning.
+// `undefined`); only an unreachable worker rejects it. So `true` (sent
+// by the listener once the write has landed) is the one answer that
+// means it was written.
 async function writeViaWorker(req: ScriptLogWriteRequest): Promise<void> {
   try {
     const ack = await chrome.runtime.sendMessage({ type: SCRIPT_LOG_WRITE_MESSAGE, ...req });
     if (ack === true) return;
   } catch { /* no receiving end */ }
-  if (req.op === 'append') {
-    await enqueue(req.scriptId, () => writeEntry(req.scriptId, req.input));
-    return;
-  }
-  await enqueue(req.scriptId, () => removeEntries(req.scriptId));
+  console.info(`[SourceMonkey] the background worker did not save a log ${req.op} for script ${req.scriptId}`);
 }
 
 // Shared read-modify-write body. Always called from inside `enqueue`.

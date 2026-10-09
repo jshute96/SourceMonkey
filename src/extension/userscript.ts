@@ -209,11 +209,10 @@ import {
 } from './connect-grants.js';
 import { installSelectAll } from './select-all.js';
 
-
-// Refresh (installed) and the preview fetch both run in the page
-// context, so the page needs its own copy of the cached GitHub token.
-// Both handlers await it before issuing a fetch so an early click
-// can't go out unauthenticated.
+// The preview's fetch runs in the page, so the page needs its own copy
+// of the cached GitHub token, and awaits it before fetching so an early
+// load can't go out unauthenticated. Refresh runs in the worker, which
+// waits for its own copy.
 installGithubAuthListener();
 const githubTokenReady = loadGithubAuthToken();
 
@@ -660,10 +659,6 @@ async function onRefresh(): Promise<void> {
 // and the page swapped to its successor), or has been rehydrated into
 // the not-found state.
 async function refreshShownScript(wanted: string): Promise<StoredScript | null> {
-  // Wait for the GitHub token cache to hydrate first; otherwise a
-  // very fast Refresh click can fire before chrome.storage.local
-  // has resolved and the fetch goes out unauthenticated.
-  await githubTokenReady;
   // Routed through the shared updater: if a background opportunistic
   // check is already in flight for this script, we wait for it
   // instead of starting a second fetch.
@@ -671,9 +666,9 @@ async function refreshShownScript(wanted: string): Promise<StoredScript | null> 
   // rather than waiting out the probe interval.
   // A local script's check can find its file gone and drop the row
   // itself (docs/file-changes.md) — the outcome the `deleted`
-  // chip's tooltip promised. The storage event for that removal
-  // reaches `rehydrateAfterStorageChange` before `updateScript`
-  // returns, so the wording it should paint is set in advance rather
+  // chip's tooltip promised. The storage event for that removal can
+  // reach `rehydrateAfterStorageChange` before or after the worker's
+  // answer, so the wording it should paint is set in advance rather
   // than after: otherwise the generic not-found line lands first,
   // and reads as a storage fault. `render` clears it again the
   // moment the check comes back with a row, which is the usual case.

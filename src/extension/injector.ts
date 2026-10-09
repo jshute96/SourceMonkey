@@ -121,6 +121,7 @@ import { computeLogIds, type LogIdInput } from './script-log-id.js';
 import { numberMap, numbersFrom, readScriptNumbers, SCRIPT_NUMBERS_KEY } from './sticky-numbers.js';
 import { scriptBasename, scriptDisplayName } from '../script-display.js';
 import { logScriptEvent } from './script-log.js';
+import { assertWorkerContext } from '../run-context.js';
 import {
   describeRejection,
   readRejections,
@@ -1716,13 +1717,17 @@ function gmRuntimeFingerprint(spec: RegistrationSpec): string {
 // storage) and after a refresh (the collection refresh's targeted retry
 // overlapping the sync its own storage writes triggered).
 //
-// So: one registration operation at a time per JS context. The queue is
+// So: one registration operation at a time, in the worker, the only
+// context that places registrations. The queue is
 // a promise chain rather than a flag because callers must be able to
 // await their own work; a rejected operation is isolated so it can't
 // break the ones behind it.
 let registrationLock: Promise<unknown> = Promise.resolve();
 
 function withRegistrationLock<T>(run: () => Promise<T>): Promise<T> {
+  // Every placement runs under this lock, so this is where a page that
+  // reached one is stopped (docs/worker-writes.md).
+  assertWorkerContext('change script registrations');
   // Same callback for fulfil and reject: the previous operation's
   // outcome is not ours to care about, only its completion. Called
   // through an arrow rather than passed directly so `run` can never be
@@ -1809,10 +1814,10 @@ async function ensureWorldConfigured(): Promise<void> {
 // in which a live script has no registration; see `placeSpecs`.
 //
 // Chrome fails the WHOLE `unregister` call when any single id in the
-// list is unknown, and an id can go missing before this call — an
-// extension page runs the retry path in its own context, where our lock
-// doesn't reach. So the batch failing is not evidence that the other
-// ids are gone; it usually means one of them already was.
+// list is unknown, and an id can go missing before this call: what this
+// worker believes Chrome holds can be wrong (a reset, a lost record).
+// So the batch failing is not evidence that the other ids are gone; it
+// usually means one of them already was.
 //
 // Neither of the obvious answers is safe on its own:
 //
@@ -2579,10 +2584,9 @@ export async function retryRejectedRegistrations(
 // "Duplicate script ID '<id>'" rather than replacing it, and there are
 // two ordinary ways it already knows one of ours:
 //
-//   - **Another context placed it.** The collections page and the viewer
-//     run `retryRejectedRegistrations` in their own JS context, so the
-//     lock in this module — which is per-context — cannot order a
-//     page-side retry against the SW's sync.
+//   - **Our record of what Chrome holds is wrong.** A reset, or a
+//     record lost with a stopped worker. (Pages used to place
+//     registrations too; only the worker does now, docs/worker-writes.md.)
 //   - **A stale rejection record.** We believe the id is unplaced, so
 //     we rebuild and re-offer it; Chrome disagrees.
 //
