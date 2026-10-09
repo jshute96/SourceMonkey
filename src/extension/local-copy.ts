@@ -30,10 +30,13 @@ import {
   describeError,
   getCollections,
   refreshCollection,
+  setScriptsEnabled,
+  withoutBodies,
+  type ScriptMeta,
   type StoredCollection,
   type StoredScript,
 } from './script-store.js';
-import { setScriptsEnabled, writeSetting } from './worker-client.js';
+import { callWorker } from './worker-client.js';
 import { joinFullSource, splitHeaderBody } from '../userscript-header.js';
 
 // ---------- The default collection and where Downloads is ----------
@@ -76,8 +79,10 @@ export function parseDownloadsCopiesSetting(raw: unknown): DownloadsCopiesSettin
   };
 }
 
-export async function writeDownloadsCopiesSetting(setting: DownloadsCopiesSetting): Promise<void> {
-  await writeSetting(DOWNLOADS_COPIES_KEY, setting);
+// Worker side (`ensureDownloadsCollection`). A page writes it through
+// worker-client.ts's `writeSetting`.
+async function writeDownloadsCopiesSetting(setting: DownloadsCopiesSetting): Promise<void> {
+  await chrome.storage.local.set({ [DOWNLOADS_COPIES_KEY]: setting });
 }
 
 // Where the copies go, as an absolute directory path.
@@ -495,7 +500,7 @@ export interface LocalCopyRequest {
 }
 
 export interface LocalCopyResult {
-  script: StoredScript;
+  script: ScriptMeta;
   collection: StoredCollection;
   // The absolute path the copy was written at.
   path: string;
@@ -549,15 +554,25 @@ export async function makeLocalCopy(request: LocalCopyRequest): Promise<LocalCop
     throw err;
   }
 
+  // The files are on disk; the worker, which alone writes storage,
+  // makes them a script (docs/worker-writes.md).
+  const registered = await callWorker('registerLocalCopy', downloadsDir, plan.fileName);
+  return { ...registered, path: written[0].path };
+}
+
+// Worker side of a local copy, once its files are on disk in the
+// copies directory under `downloadsDir`: the collection that holds
+// them, refreshed so it lists the copy, and the copy turned on.
+export async function registerLocalCopy(
+  downloadsDir: string,
+  fileName: string,
+): Promise<{ script: ScriptMeta; collection: StoredCollection }> {
   const collection = await ensureDownloadsCollection(downloadsDir);
   const refreshed = await refreshCollection(collection.id);
-  const row = refreshed?.scripts.find((s) => s.relativePath === plan.fileName);
+  const row = refreshed?.scripts.find((s) => s.relativePath === fileName);
   if (!row) throw new Error(COPY_NOT_FOUND_AFTER_REFRESH);
-  return {
-    script: await enableCopy(row),
-    collection: refreshed?.collection ?? collection,
-    path: written[0].path,
-  };
+  // Without its bodies: the page only needs which row it is.
+  return { script: withoutBodies(await enableCopy(row)), collection: refreshed?.collection ?? collection };
 }
 
 // One file, written and reported. Split out only so `makeLocalCopy`'s

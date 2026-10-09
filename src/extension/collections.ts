@@ -32,9 +32,9 @@ import { setGlyphButton, setGlyphButtonBusy } from './glyph.js';
 import type { DownloadsCopiesSetting } from './local-copy.js';
 import { deletableCopyPath, readCopiesSetting } from './local-delete.js';
 import {
-  addCollection,
   DEFAULT_COLLECTIONS,
   describeError,
+  needsDisplayName,
   getAllScriptMetas,
   getCollectionWithScriptMeta,
   getScriptMetas,
@@ -50,6 +50,7 @@ import {
   type StoredCollection,
 } from './script-store.js';
 import {
+  addCollection, updateAllCollections, updateCollection, updateScript,
   backfillCollectionDisplayNames, markFirstRunComplete, moveCollection, reconcileScriptMembership, removeCollection,
   removeScript, setAllScriptsEnabled, setCollectionEnabledExclusive, setScriptEnabledExclusive,
 } from './worker-client.js';
@@ -76,11 +77,6 @@ import { getValue } from '../userscript-header.js';
 import { describeDiagnostic } from '../diagnostic-location.js';
 import { installDebugLoggingListener, isDebugLoggingEnabled, loadDebugLoggingFlag } from '../debug-log.js';
 import { startPhaseTimer, type PhaseTimer } from '../phase-timing.js';
-import {
-  updateAllCollections,
-  updateCollection,
-  updateScript,
-} from './script-updater.js';
 import {
   appendWithSlashBreaks,
   compareScriptNames,
@@ -158,13 +154,6 @@ import {
   isFileSchemeAccessAllowed,
   renderFileAccessBanner,
 } from './file-access.js';
-import { installPageParseChecker } from './parse-check-client.js';
-
-// Add / Refresh / Refresh All run the load pipeline here in the page,
-// so this page needs its own parse checker — without one, a
-// page-driven refresh would clear an `invalid` verdict it never
-// re-derived. See src/extension/parse-check-client.ts.
-installPageParseChecker();
 
 // The page needs its own copy of the cached GitHub token — the SW's
 // cached value isn't reachable from here, and the page still decides
@@ -1232,7 +1221,11 @@ async function seedDefaultCollectionsViaUi(): Promise<void> {
     // failed add leaves the last attempted path sitting there.
     addInput.value = '';
     console.log('[SourceMonkey] first run: seeding complete; marking firstRunComplete=true');
-    await markFirstRunComplete();
+    // Caught here so a failure can't replace the outcome of the seeding
+    // above; the next load seeds again, and the add dedupes.
+    await markFirstRunComplete().catch((err: unknown) => {
+      console.info('[SourceMonkey] could not record that first-run seeding is done:', describeError(err));
+    });
   }
 }
 
@@ -1392,9 +1385,14 @@ async function render(): Promise<void> {
   // One-shot backfill so older collection rows (pre-displayName) pick
   // up an inferred label on first view after upgrade. Asked of the
   // worker only when a row has none.
-  if (collections.some((c) => !c.displayName?.trim())) {
-    await backfillCollectionDisplayNames();
-    collections = await getCollections();
+  if (collections.some(needsDisplayName)) {
+    try {
+      await backfillCollectionDisplayNames();
+      collections = await getCollections();
+    } catch (err) {
+      // Cosmetic: the sections draw with the names they have.
+      console.info('[SourceMonkey] display-name backfill failed', describeError(err));
+    }
   }
 
   // Last of the three banners, because it is the most situational: it
@@ -2229,7 +2227,9 @@ async function onRemoveCollection(id: string, section: HTMLElement, btn: HTMLBut
   } catch (err) {
     section.classList.remove('removing');
     btn.disabled = false;
-    throw err;
+    // Shown, not thrown: the click handler drops the promise, and a
+    // rejection there lands in the extension's Errors panel.
+    showPageError(`Could not remove the collection: ${describeError(err)}`);
   }
 }
 

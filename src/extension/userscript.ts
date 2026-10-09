@@ -27,9 +27,7 @@
 // See [docs/script-viewer.md] and [docs/install-capture.md].
 
 import {
-  addCollection,
   ALREADY_INSTALLED_IN_TARGET,
-  installScript,
   type InstallTarget,
   buildScriptFromText,
   describeError,
@@ -114,7 +112,6 @@ import {
   readRejections,
   type RejectionMap,
 } from './script-rejection.js';
-import { updateScript } from './script-updater.js';
 import {
   appendWithSlashBreaks,
   compareUrl,
@@ -182,7 +179,7 @@ import {
 } from '../github-auth.js';
 import { CAPTURED_PARAM, markInstallBypass } from './install-capture.js';
 import { isFileSchemeAccessAllowed, renderFileAccessBanner } from './file-access.js';
-import { checkScriptParses, installPageParseChecker } from './parse-check-client.js';
+import { checkScriptParses } from './parse-check-client.js';
 import {
   describeDiagnostic,
   locationLabel,
@@ -197,6 +194,7 @@ import { stackLayout } from '../composed-source.js';
 import { buildRequireSourceUrl, buildSourceUrl } from '../script-source-url.js';
 import { startPhaseTimer } from '../phase-timing.js';
 import {
+  addCollection, installScript, updateScript,
   clearScriptLog, enableWithin, forgetDeniedHost, removeScript, revokeConnectHost, setScriptEnabledExclusive,
   setScriptsEnabled, turnOffOtherCopies,
 } from './worker-client.js';
@@ -211,11 +209,6 @@ import {
 } from './connect-grants.js';
 import { installSelectAll } from './select-all.js';
 
-// Install and Refresh run the load pipeline here in the page, so this
-// page needs its own parse checker — without one, Install would store
-// an unparsable script as `ok` and Refresh would clear an `invalid`
-// verdict it never re-derived. See src/extension/parse-check-client.ts.
-installPageParseChecker();
 
 // Refresh (installed) and the preview fetch both run in the page
 // context, so the page needs its own copy of the cached GitHub token.
@@ -281,11 +274,11 @@ refreshBtn.addEventListener('click', () => void onRefresh());
 // ctrl/cmd-click opts out of the exclusive sweep here too.
 const takeControlsRowSolo = watchSoloModifier(enableCheckboxEl);
 enableCheckboxEl.addEventListener('change', () => {
-  onToggleEnabled(enableCheckboxEl.checked).catch(async (err: unknown) => {
+  onToggleEnabled(enableCheckboxEl.checked).catch((err: unknown) => {
     // Logged, not thrown: a dropped rejection lands in the extension's
     // Errors panel. The boxes go back to what is stored.
     console.info('[SourceMonkey] could not change whether this script is enabled:', describeError(err));
-    await rehydrateAfterStorageChange();
+    rehydrateAfterStorageChange().catch(() => undefined);
   });
 });
 
@@ -702,7 +695,9 @@ async function refreshShownScript(wanted: string): Promise<StoredScript | null> 
   if (successor) swappingAfterRemoval = true;
   let next: StoredScript | null;
   try {
-    next = await updateScript(wanted, 'manual', 'force');
+    // The worker says whether the row is still there; the page reads it
+    // itself, bodies and all, rather than have them sent back.
+    next = await updateScript(wanted, 'manual', 'force') ? (await getScript(wanted)) ?? null : null;
   } catch (err) {
     // No verdict, so no claim: a later removal by someone else must
     // not be painted as this refresh's doing.
@@ -736,6 +731,12 @@ async function refreshShownScript(wanted: string): Promise<StoredScript | null> 
   if (local && removedHereMessage === REMOVED_FILE_GONE) removedHereMessage = null;
   if (successor) swappingAfterRemoval = false;
   return next;
+}
+
+// A connection grant the worker couldn't change. The Connections list
+// redraws from storage, so it still shows what is saved.
+function logGrantFailure(err: unknown): void {
+  console.info('[SourceMonkey] could not change a connection permission:', describeError(err));
 }
 
 // The controls-row toggle. Same radio-button rule as the panel's rows:
@@ -919,8 +920,8 @@ function render(script: StoredScript, snapshot?: StoreSnapshot): void {
       connect: {
         grants: currentConnectAnswers,
         // The storage change repaints the row.
-        revoke: (host: string | null) => void revokeConnectHost(script.id, host),
-        forgetDenied: (host: string) => void forgetDeniedHost(script.id, host),
+        revoke: (host: string | null) => void revokeConnectHost(script.id, host).catch(logGrantFailure),
+        forgetDenied: (host: string) => void forgetDeniedHost(script.id, host).catch(logGrantFailure),
       },
     } : {}),
   });
@@ -3627,7 +3628,13 @@ function paintLog(entries: LogEntry[]): void {
   const clearBtn = document.createElement('button');
   clearBtn.type = 'button';
   clearBtn.textContent = 'Clear log';
-  clearBtn.addEventListener('click', () => void onClearLog());
+  clearBtn.addEventListener('click', () => {
+    onClearLog().catch((err: unknown) => {
+      // Logged, not thrown: a dropped rejection lands in the extension's
+      // Errors panel. The log stays as it was, and so does the pane.
+      console.info('[SourceMonkey] could not clear the log:', describeError(err));
+    });
+  });
 
   toolbar.append(saveBtn, copyBtn, clearBtn);
   logPaneEl.appendChild(toolbar);

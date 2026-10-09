@@ -12,7 +12,6 @@
 import { test, expect } from '../fixtures/extension';
 import { UserscriptServer, userscriptText } from '../fixtures/userscript-server';
 
-
 test.describe('page log writes go through the worker', () => {
   let server: UserscriptServer;
   test.beforeEach(async () => {

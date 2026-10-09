@@ -14,8 +14,8 @@
 //     drops the answer.
 //
 // Arguments and results cross as JSON: no Maps, Sets or functions, and
-// an `undefined` argument or array entry arrives as `null`. worker-ops.ts adapts any function whose
-// own signature has them.
+// an `undefined` argument or array entry arrives as `null`.
+// worker-ops.ts adapts any function whose own signature has them.
 
 import type { WorkerOpName, WorkerOps } from './worker-ops.js';
 
@@ -94,3 +94,15 @@ export const markFirstRunComplete = op('markFirstRunComplete');
 export const writeSetting = op('writeSetting');
 export const backfillCollectionDisplayNames = op('backfillCollectionDisplayNames');
 export const reconcileScriptMembership = op('reconcileScriptMembership');
+
+// ---------- Refresh, add, install ----------
+export const updateScript = op('updateScript');
+export const updateCollection = op('updateCollection');
+export const updateAllCollections = op('updateAllCollections');
+export const addCollection = op('addCollection');
+export const installScript = op('installScript');
+
+// ---------- Site icons (the debug icons page) ----------
+export const refreshCachedIcon = op('refreshCachedIcon');
+export const deleteCachedIcon = op('deleteCachedIcon');
+export const deleteAllCachedIcons = op('deleteAllCachedIcons');

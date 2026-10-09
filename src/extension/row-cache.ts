@@ -41,7 +41,8 @@ let nextSeq = 0;
 // Writes at or below this number were in storage when the cache loaded.
 let loadedAtSeq = 0;
 const applied = new Map<string, number>();
-// Writes started and not yet returned: a load waits for none.
+// Writes to cached keys started and not yet returned: a load waits for
+// none.
 let inFlight = 0;
 let idleWaiters: (() => void)[] = [];
 
@@ -52,6 +53,7 @@ let idleWaiters: (() => void)[] = [];
 interface Pending { json: string; seq: number; at: number }
 const pending = new Map<string, Pending[]>();
 const PENDING_TTL_MS = 30_000;
+const MAX_PENDING_PER_KEY = 16;
 const REMOVED = '\u0000removed';
 
 // Key order doesn't count: Chrome keeps an object's keys sorted, so a
@@ -84,11 +86,13 @@ function drop(reason: string): void {
 // Run one of this context's writes, `entries` being its cached keys and
 // their values (`REMOVED` for a removal).
 async function track(entries: [string, string][], write: () => Promise<void>): Promise<void> {
+  if (entries.length === 0) return await write();
   const now = Date.now();
   const mine = entries.map(([key, json]) => {
     const entry: Pending = { json, seq: ++nextSeq, at: now };
-    const list = pending.get(key) ?? [];
+    const list = (pending.get(key) ?? []).filter((p) => now - p.at < PENDING_TTL_MS);
     list.push(entry);
+    if (list.length > MAX_PENDING_PER_KEY) list.shift();
     pending.set(key, list);
     return [key, entry] as const;
   });
@@ -109,7 +113,6 @@ async function track(entries: [string, string][], write: () => Promise<void>): P
       for (const wake of waiters) wake();
     }
   }
-  if (mine.length === 0) return;
   generation++;
   for (const [key, entry] of mine) apply(key, entry.json, entry.seq);
 }
@@ -161,6 +164,9 @@ export function installRowCache(): void {
         // own are passed now too.
         apply(key, json, list[at].seq);
         list.splice(0, at + 1);
+        // A load in flight reads again: this may be a write from
+        // elsewhere that happens to match one of ours.
+        if (!rows) generation++;
       }
       if (list.length > 0) pending.set(key, list);
       else pending.delete(key);
@@ -218,11 +224,20 @@ export function cachedRows(keys: readonly string[]): { found: Record<string, unk
 // Every script row, as copies, loading the cache first if needed. Null
 // when the cache isn't on in this context.
 export async function cachedScriptRows(): Promise<Record<string, unknown> | null> {
+  return await cachedRowsWhere((key) => key.startsWith(SCRIPT_PREFIX));
+}
+
+// Every cached row (index, collections, scripts), as copies, likewise.
+export async function cachedStructuralRows(): Promise<Record<string, unknown> | null> {
+  return await cachedRowsWhere(() => true);
+}
+
+async function cachedRowsWhere(keep: (key: string) => boolean): Promise<Record<string, unknown> | null> {
   const all = await loaded();
   if (!all) return null;
   const out: Record<string, unknown> = {};
   for (const [key, value] of all) {
-    if (key.startsWith(SCRIPT_PREFIX)) out[key] = structuredClone(value);
+    if (keep(key)) out[key] = structuredClone(value);
   }
   return out;
 }

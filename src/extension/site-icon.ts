@@ -5,6 +5,8 @@ import { MAX_SITE_ICONS, representativeMatches, type MatchTarget } from '../matc
 import { renderGlyph } from './glyph.js';
 import { getValue } from '../userscript-header.js';
 import { iconRefFromHeader, isIconContentType, MAX_ICON_BYTES } from '../script-icon.js';
+import { isPageContext } from '../run-context.js';
+import { callWorker } from './worker-client.js';
 
 // Site-icon (favicon) extraction + cache. Used by the collections page
 // and userscript viewer to show a 16x16 icon per targeted site (up to
@@ -628,7 +630,7 @@ async function ensurePathIcon(pageUrl: string): Promise<string | null> {
   const racing = inflight.get(key);
   if (racing) return racing;
 
-  const p = remember(key, fetchAndCachePathIcon(pageUrl)).finally(() => {
+  const p = remember(key, fetchToCache(key)).finally(() => {
     inflight.delete(key);
   });
   inflight.set(key, p);
@@ -652,7 +654,7 @@ async function ensureOriginIcon(origin: string): Promise<string | null> {
   const racing = inflight.get(key);
   if (racing) return racing;
 
-  const p = remember(key, fetchAndCacheOriginIcon(origin)).finally(() => {
+  const p = remember(key, fetchToCache(key)).finally(() => {
     inflight.delete(key);
   });
   inflight.set(key, p);
@@ -725,7 +727,7 @@ async function ensureIconAt(url: string): Promise<string | null> {
   const racing = inflight.get(key);
   if (racing) return racing;
 
-  const p = remember(key, fetchAndCacheUrlIcon(url)).finally(() => {
+  const p = remember(key, fetchToCache(key)).finally(() => {
     inflight.delete(key);
   });
   inflight.set(key, p);
@@ -1223,20 +1225,32 @@ export async function deleteAllCachedIcons(): Promise<void> {
   }
 }
 
+// Fetch the icon a cache key names and store it under that key, in the
+// worker, which alone writes storage (docs/worker-writes.md). A page
+// asks it, and keeps its own in-flight and settled maps for painting.
+function fetchToCache(storageKey: string): Promise<string | null> {
+  if (isPageContext()) return callWorker('refreshCachedIcon', storageKey);
+  return fetchAndCacheByKey(storageKey) ?? Promise.resolve(null);
+}
+
+function fetchAndCacheByKey(storageKey: string): Promise<string | null> | null {
+  if (storageKey.startsWith(KEY_PREFIX)) return fetchAndCacheOriginIcon(storageKey.slice(KEY_PREFIX.length));
+  if (storageKey.startsWith(PATH_ICON_KEY_PREFIX)) {
+    return fetchAndCachePathIcon(storageKey.slice(PATH_ICON_KEY_PREFIX.length));
+  }
+  if (storageKey.startsWith(URL_ICON_KEY_PREFIX)) return fetchAndCacheUrlIcon(storageKey.slice(URL_ICON_KEY_PREFIX.length));
+  return null;
+}
+
+// Worker side: refetch one cache row now, sharing a fetch already in
+// flight for it. Pages reach it through `fetchToCache`, and the debug
+// icons page through worker-client.ts.
 export async function refreshCachedIcon(storageKey: string): Promise<string | null> {
   const pending = inflight.get(storageKey);
   if (pending) return pending;
 
-  let p: Promise<string | null>;
-  if (storageKey.startsWith(KEY_PREFIX)) {
-    p = fetchAndCacheOriginIcon(storageKey.slice(KEY_PREFIX.length));
-  } else if (storageKey.startsWith(PATH_ICON_KEY_PREFIX)) {
-    p = fetchAndCachePathIcon(storageKey.slice(PATH_ICON_KEY_PREFIX.length));
-  } else if (storageKey.startsWith(URL_ICON_KEY_PREFIX)) {
-    p = fetchAndCacheUrlIcon(storageKey.slice(URL_ICON_KEY_PREFIX.length));
-  } else {
-    return null;
-  }
+  const p = fetchAndCacheByKey(storageKey);
+  if (!p) return null;
 
   const wrapped = p.finally(() => {
     inflight.delete(storageKey);

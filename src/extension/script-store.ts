@@ -92,7 +92,7 @@ import {
 } from '../external-files.js';
 import { type LocalFileScope } from '../local-file-overrides.js';
 import { scanAllStorage, scanStorageRows } from './storage-scan.js';
-import { cachedRows, cachedScriptRows } from './row-cache.js';
+import { cachedRows, cachedScriptRows, cachedStructuralRows } from './row-cache.js';
 import { callWorker } from './worker-client.js';
 import { isPageContext } from '../run-context.js';
 import {
@@ -1023,8 +1023,19 @@ export function resetCollectionKeyMigrationForTests(): void {
 }
 
 async function migrateViaWorker(): Promise<void> {
-  const probe = await chrome.storage.local.get(LEGACY_INDEX_KEY);
-  if (LEGACY_INDEX_KEY in probe) await callWorker('ensureCollectionKeysMigrated');
+  if (await hasLegacyRows()) await callWorker('migrateCollectionKeys');
+}
+
+async function hasLegacyRows(): Promise<boolean> {
+  return LEGACY_INDEX_KEY in await chrome.storage.local.get(LEGACY_INDEX_KEY);
+}
+
+// The worker's answer to a page that found the old rows: the
+// migration, then a failure if the rows are still there, so the page
+// forgets its own memo and asks again on its next read.
+export async function migrateCollectionKeysForPage(): Promise<void> {
+  await ensureCollectionKeysMigrated();
+  if (await hasLegacyRows()) throw new Error('Internal error: Could not move the collections to their current storage keys');
 }
 
 async function migrateLegacyCollectionKeys(): Promise<void> {
@@ -1290,6 +1301,17 @@ export async function getCollectionWithScriptMeta(
 
 export async function getScript(scriptId: string): Promise<StoredScript | undefined> {
   return await getRaw<StoredScript>(scriptKey(scriptId));
+}
+
+// A full script as its row would read without the bodies, for a caller
+// that holds one and needs only the rest (an answer sent to a page).
+export function withoutBodies(script: StoredScript): ScriptMeta {
+  const { bodyText, requires, resources, ...rest } = script;
+  return {
+    ...rest,
+    ...(requires ? { requires: requires.map(({ source, ...r }) => r) } : {}),
+    ...(resources ? { resources: resources.map(({ bytesBase64, ...r }) => r) } : {}),
+  };
 }
 
 export async function getScriptMeta(scriptId: string): Promise<ScriptMeta | undefined> {
@@ -2023,11 +2045,17 @@ async function emitInitialLoadLog(script: StoredScript): Promise<void> {
 // collection index plus one bulk write iff anything was missing. The
 // pure-inference rules live in `collection-display.ts`; that module
 // only imports a TYPE from this file so the cycle is compile-time only.
+// A row with no name that one can be inferred for: a user-created
+// container infers none, so is left as it is.
+export function needsDisplayName(collection: StoredCollection): boolean {
+  return !collection.displayName?.trim() && inferDisplayName(collection.path) !== '';
+}
+
 export async function backfillCollectionDisplayNames(): Promise<void> {
   const collections = await getCollections();
   const toSet: Record<string, unknown> = {};
   for (const s of collections) {
-    if (s.displayName && s.displayName.trim()) continue;
+    if (!needsDisplayName(s)) continue;
     const next: StoredCollection = { ...s, displayName: inferDisplayName(s.path) };
     toSet[collectionKey(s.id)] = next;
   }
@@ -2262,7 +2290,7 @@ async function unreferencedScratchKeys(removed: readonly ScriptMeta[]): Promise<
 async function scanMembershipRows(): Promise<{
   collections: StoredCollection[]; scripts: ScriptMeta[];
 }> {
-  const all = await scanStorageRows('membership reconcile', (k) =>
+  const all = await cachedStructuralRows() ?? await scanStorageRows('membership reconcile', (k) =>
     k === COLLECTIONS_INDEX_KEY || k.startsWith(COLLECTION_PREFIX) || k.startsWith(SCRIPT_PREFIX));
   // Out of the scan rather than a second read, so the index and the rows
   // it filters are one snapshot. `ensureCollectionKeysMigrated` already

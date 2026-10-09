@@ -1,7 +1,7 @@
 # The service worker as the only writer
 
-> **Status: in progress.** Stages 1 and 2 are done: enable toggles and
-> the small writes run in the worker. See [Stages](#stages).
+> **Status: in progress.** Stages 1 to 4 are done: every page write
+> runs in the worker. See [Stages](#stages).
 
 Today every extension page (the collections page, the viewer, the
 Options page, the dialogs they open) writes `chrome.storage.local`
@@ -118,19 +118,27 @@ a real profile needs for local collections at all:
 the collection rows and the script rows (without bodies).
 
 - **Loaded** by the first read of every script row
-  (`getAllScriptMetas`), which would scan storage anyway. Until then,
-  point reads go to storage, so a worker that wakes for one row doesn't
-  read them all.
+  (`getAllScriptMetas`, the membership repair), which would scan
+  storage anyway. Until then, point reads go to storage, so a worker
+  that wakes for one row doesn't read them all.
 - **Read** by the store's row reads (`getRows`) for those keys. Other
   keys in the same read (`enablementTimes`) still come from storage.
 - **Kept current** by wrapping this context's `chrome.storage.local`
   `set`, `remove` and `clear`: whatever writes, the cache changes as
   storage does.
+  - Each write to a cached key gets a number. It lands in the cache at
+    its change event or when the call returns, whichever is first, so
+    the worker's other change listeners already read it.
+  - An older write never replaces a newer one.
+  - A load waits until no write to a cached key is in flight, so every
+    write numbered before it is in what it reads.
 - **Safety net**: a change event for a row this context didn't write
   drops the copy, and the next full read loads it again.
   - A write's own event is recognized by its value, compared without
     key order (Chrome sorts an object's keys).
-  - A load that overlapped a write tries again.
+  - A write that changes nothing gets no event, so what is waiting for
+    one expires after 30 s.
+  - A load that overlapped another context's write tries again.
 - **Copies out**: each read returns copies, so a caller that changes a
   row can't change the cache.
 
@@ -145,11 +153,11 @@ the collection rows and the script rows (without bodies).
 | Connect grants | viewer revoke / forget | Request |
 | Settings | Options booleans, local roots, GitHub token, downloads folder | Request; low risk, moved for one rule |
 | Refresh | collections Refresh, Refresh All, subsets, `?refresh_file`; viewer Refresh and versions update; Options local-roots Save | Port. Includes version probes and the rejection retry |
-| Add / install | collections Add field, first-run seeding, `?add=`, collection dialog; viewer preview Install | Port. Also gains the rejection retry and probes, which the direct `refreshCollection` path skips today |
-| Local copy | viewer Make a copy | Page does the downloads (blob URLs), then a port request to create the collection, refresh and enable |
-| Repairs on load | collections `render`: display-name backfill, membership repair | Request, or run in the worker at startup |
-| Legacy key migration | first store read in any context | Worker only, before anything else, like the format migration |
-| Site icon cache | icon rendering on collections, viewer, compare; debug icons page | Request to fetch-and-cache |
+| Add / install | collections Add field, first-run seeding, `?add=`, collection dialog; viewer preview Install | Port. Still without the rejection retry and probes, which the direct `refreshCollection` path skips (see [Open](#open)) |
+| Local copy | viewer Make a copy | Page does the downloads (blob URLs), then `registerLocalCopy`: create or find the collection, refresh, enable |
+| Repairs on load | collections `render`: display-name backfill, membership repair | Request: the backfill only when a row lacks a name, the repair without waiting |
+| Legacy key migration | first store read in any context | A page that finds the old index asks the worker, and waits |
+| Site icon cache | icon rendering on collections, viewer, compare; debug icons page | Request to fetch-and-cache (`refreshCachedIcon`); pages read cached rows themselves |
 
 The preview's parse check of a file not yet installed stays in the
 page: it writes nothing.
@@ -199,9 +207,15 @@ worker is still asynchronous to the page's repaint.
      waiting; the display-name backfill only when a row lacks a name.
    - A page that finds rows in the pre-rename spelling asks the worker
      to move them, and waits.
-3. **Long operations over ports**: refresh, add, install. The
-   collections page's highlights come from the port's result.
-4. **Local copy and site icons.**
+3. **Done.** Long operations: refresh, add, install, and creating a
+   location collection from the dialog (which adds and refreshes it).
+   - The collections page's highlights still come from its own reads
+     before and after: no result needs sending.
+   - The viewer's Refresh is told whether the row is still there, and
+     reads it itself.
+   - Pages no longer install a parse checker for the store; the install
+     preview keeps its own.
+4. **Done.** Local copy and site icons.
 5. **Enforce it**: `writeLocal`, `removeLocal` and the injector's
    placement calls throw outside the worker, and a unit test checks
    that no page bundle reaches them. Then remove what
@@ -209,3 +223,11 @@ worker is still asynchronous to the page's repaint.
    storage.md, injection.md and architecture.md.
 
 Each stage leaves both kinds of writer working, so it can ship alone.
+
+## Open
+
+- **Add and install skip the probes and the rejection retry** a
+  Refresh runs (`script-updater.ts`), as before the move. Running them
+  in the worker after an add is now easy; not done here.
+- **The registration sync, sticky numbers and the match index** read
+  storage themselves. They could read the row cache too.

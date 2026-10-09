@@ -21,7 +21,7 @@ import {
 } from '../local-file-overrides.js';
 import { fetchFileUrlText } from './directories.js';
 import { describeError, getCollections } from './script-store.js';
-import { writeSetting } from './worker-client.js';
+import { updateCollection, writeSetting } from './worker-client.js';
 import { timeStorageRead } from './storage-scan.js';
 import { formatQuota, formatStorageUsage } from '../script-display.js';
 import {
@@ -31,13 +31,11 @@ import {
   type UsageRow,
 } from './storage-usage.js';
 import { collectionSupportsLocalFiles } from '../local-file-overrides.js';
-import { updateCollection } from './script-updater.js';
 import { isFileSchemeAccessAllowed, renderFileAccessBanner } from './file-access.js';
 import {
   DOWNLOADS_COPIES_KEY,
   parseDownloadsCopiesSetting,
   readDownloadsCopiesSetting,
-  writeDownloadsCopiesSetting,
   type DownloadsCopiesSetting,
 } from './local-copy.js';
 import { installHomeLinkHandler, onNamedTabFocus, openNamedTab } from './page-links.js';
@@ -199,7 +197,7 @@ function initDownloadsDirControls(): void {
       status.className = 'token-status err';
       return;
     }
-    void writeDownloadsCopiesSetting({ downloadsDir: dir, collectionId: saved?.collectionId ?? null })
+    void writeSetting(DOWNLOADS_COPIES_KEY, { downloadsDir: dir, collectionId: saved?.collectionId ?? null })
       .then(() => {
         status.textContent = 'Saved';
         status.className = 'token-status ok';
@@ -227,8 +225,11 @@ function initBooleanSetting(elementId: string, key: string, defaultValue: boolea
     cb.checked = read(change.newValue);
   });
   cb.addEventListener('change', () => {
-    writeSetting(key, cb.checked).catch((err: unknown) => {
+    const wanted = cb.checked;
+    writeSetting(key, wanted).catch((err: unknown) => {
       console.info(`[SourceMonkey] could not save ${key}:`, describeError(err));
+      // Back to what is stored, unless another change has moved it since.
+      if (cb.checked === wanted) cb.checked = !wanted;
     });
   });
 }

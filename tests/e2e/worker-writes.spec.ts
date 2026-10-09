@@ -5,6 +5,7 @@
 //     reading no script rows from storage once that is loaded.
 //   - The row cache follows the worker's own writes, and drops what it
 //     holds when something else writes a row.
+//   - A page can change only the settings the worker lists.
 
 import type { Page, Worker } from '@playwright/test';
 
@@ -148,6 +149,25 @@ test.describe('worker writes', () => {
     await expect.poll(async () =>
       (await sm.getAllScriptMetas()).find((s) => s.id === a.id)!.relativePath).toBe('elsewhere.user.js');
     expect(await sm.rowCacheLoads()).toBe(loads + 1);
+    await page.close();
+  });
+
+  test('a page can change only the settings the worker lists', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    void sm;
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/options.html`);
+    const call = (key: string) => page.evaluate((k) => new Promise<string>((resolve) => {
+      const port = chrome.runtime.connect({ name: 'sm:op' });
+      port.onMessage.addListener((reply: { ok: boolean; error?: string }) => {
+        port.disconnect();
+        resolve(reply.ok ? 'ok' : reply.error!);
+      });
+      port.postMessage({ op: 'writeSetting', args: [k, true] });
+    }), key);
+    expect(await call('smDebugLogging')).toBe('ok');
+    expect(await call('firstRunComplete')).toContain('is not a setting a page may change');
     await page.close();
   });
 });

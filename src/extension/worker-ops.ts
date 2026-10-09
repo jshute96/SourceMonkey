@@ -8,7 +8,8 @@
 // bodies).
 
 import {
-  backfillCollectionDisplayNames, createCollection, describeError, ensureCollectionKeysMigrated, markFirstRunComplete,
+  addCollection, backfillCollectionDisplayNames, createCollection, describeError, installScript, markFirstRunComplete, migrateCollectionKeysForPage, withoutBodies,
+  type InstallTarget, type ScriptMeta, type StoredScript,
   moveCollection, moveScript, reconcileScriptMembership, removeCollection, removeScript, setCollectionOptions,
   setScriptsEnabled,
 } from './script-store.js';
@@ -16,13 +17,16 @@ import {
   enableWithin, setAllScriptsEnabled, setCollectionEnabledExclusive, setScriptEnabledExclusive,
 } from './script-enablement.js';
 import { turnOffOtherCopies } from './script-identity.js';
+import { updateAllCollections, updateCollection, updateScript, type UpdateMode } from './script-updater.js';
+import type { ProbePolicy } from '../version-probe.js';
 import { forgetDeniedHost, revokeConnectHost } from './connect-grants.js';
 import { clearScriptLog } from './script-log.js';
 import { DEBUG_LOGGING_KEY } from '../debug-log.js';
 import { GITHUB_AUTH_TOKEN_KEY } from '../github-auth.js';
 import { LOCAL_ROOTS_KEY } from '../local-file-overrides.js';
 import { INSTALL_CAPTURE_KEY } from './install-capture.js';
-import { DOWNLOADS_COPIES_KEY } from './local-copy.js';
+import { DOWNLOADS_COPIES_KEY, registerLocalCopy } from './local-copy.js';
+import { deleteAllCachedIcons, deleteCachedIcon, refreshCachedIcon } from './site-icon.js';
 import { startPhaseTimer } from '../phase-timing.js';
 import { WORKER_OP_PORT, type WorkerOpReply, type WorkerOpRequest } from './worker-client.js';
 
@@ -55,7 +59,11 @@ const WORKER_OPS = {
   removeScript,
   removeCollection,
   moveCollection,
-  moveScript,
+  // The moved row, without the bodies a refresh of it would carry.
+  async moveScript(scriptId: string, target: InstallTarget): Promise<ScriptMeta | null> {
+    const moved = await moveScript(scriptId, target);
+    return moved && 'bodyText' in moved ? withoutBodies(moved as StoredScript) : moved;
+  },
   createCollection,
   setCollectionOptions,
   revokeConnectHost,
@@ -77,7 +85,33 @@ const WORKER_OPS = {
   },
   // A page that finds rows in the old spelling waits for this before
   // reading.
-  ensureCollectionKeysMigrated,
+  migrateCollectionKeys: migrateCollectionKeysForPage,
+
+  // ---------- Refresh, add, install ----------
+  // The page reads storage for what changed, so these answer with no
+  // rows: a refresh's carry every body it loaded.
+  //
+  // Whether the script is still there afterwards: a refresh drops a
+  // row whose file is gone.
+  async updateScript(scriptId: string, mode: UpdateMode, probe?: ProbePolicy): Promise<boolean> {
+    return (await updateScript(scriptId, mode, probe)) !== null;
+  },
+  async updateCollection(collectionId: string, mode: UpdateMode, probe?: ProbePolicy): Promise<void> {
+    await updateCollection(collectionId, mode, probe);
+  },
+  async updateAllCollections(mode: UpdateMode, probe?: ProbePolicy): Promise<void> {
+    await updateAllCollections(mode, probe);
+  },
+  addCollection,
+  installScript,
+
+  // ---------- Local copy and site icons ----------
+  // After the page has written the files: it alone can download.
+  registerLocalCopy,
+  // Fetch and cache one icon row, answering its data URL.
+  refreshCachedIcon,
+  deleteCachedIcon,
+  deleteAllCachedIcons,
 };
 
 export type WorkerOps = typeof WORKER_OPS;
