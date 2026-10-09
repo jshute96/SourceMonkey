@@ -1,7 +1,7 @@
 # The service worker as the only writer
 
-> **Status: in progress.** Stage 1 is done: enable toggles run in the
-> worker, from its row cache. See [Stages](#stages).
+> **Status: in progress.** Stages 1 and 2 are done: enable toggles and
+> the small writes run in the worker. See [Stages](#stages).
 
 Today every extension page (the collections page, the viewer, the
 Options page, the dialogs they open) writes `chrome.storage.local`
@@ -191,8 +191,14 @@ worker is still asynchronous to the page's repaint.
 
 1. **Done.** Client module and port, then enable toggles: the hot
    path, and the worker cache for related copies.
-2. **Small writes**: remove, move, collection options, grants,
+2. **Done.** Small writes: remove, move, collection options, grants,
    settings, repairs on load, the legacy key migration.
+   - Settings go through one `writeSetting` operation, which accepts
+     only the keys Options and the local copy set.
+   - The collections page asks for the membership repair without
+     waiting; the display-name backfill only when a row lacks a name.
+   - A page that finds rows in the pre-rename spelling asks the worker
+     to move them, and waits.
 3. **Long operations over ports**: refresh, add, install. The
    collections page's highlights come from the port's result.
 4. **Local copy and site icons.**

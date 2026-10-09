@@ -1281,11 +1281,11 @@ means to represent. Two kinds:
 `reconcileScriptMembership()` repairs both, taking the script row's own
 `collectionId` as the authority: append where missing, drop where stale.
 
-- Finding a row nothing points at needs a whole-storage scan, so it has
-  no schedule of its own. The collections page runs it on every full
-  render, off the `getAllScripts()` scan it already makes for log IDs —
-  no extra reads, and it repairs the profile on the page where an
-  unlisted row is missing.
+- Finding a row nothing points at needs every row, so it has no
+  schedule of its own. The collections page asks the worker for it on
+  every full render, without waiting, so it repairs the profile on the
+  page where an unlisted row is missing. The worker reads the rows from
+  its row cache ([worker-writes.md](worker-writes.md#the-row-cache)).
 - A row whose collection is **gone** is reported, not repaired:
   `removeCollection` drops both together, so it shouldn't arise, and
   there is nowhere to put such a row back. (`script-identity.md` calls

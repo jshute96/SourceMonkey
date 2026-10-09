@@ -33,7 +33,7 @@ import {
   type StoredCollection,
   type StoredScript,
 } from './script-store.js';
-import { setScriptsEnabled } from './worker-client.js';
+import { setScriptsEnabled, writeSetting } from './worker-client.js';
 import { joinFullSource, splitHeaderBody } from '../userscript-header.js';
 
 // ---------- The default collection and where Downloads is ----------
@@ -77,7 +77,7 @@ export function parseDownloadsCopiesSetting(raw: unknown): DownloadsCopiesSettin
 }
 
 export async function writeDownloadsCopiesSetting(setting: DownloadsCopiesSetting): Promise<void> {
-  await chrome.storage.local.set({ [DOWNLOADS_COPIES_KEY]: setting });
+  await writeSetting(DOWNLOADS_COPIES_KEY, setting);
 }
 
 // Where the copies go, as an absolute directory path.

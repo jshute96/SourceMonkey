@@ -21,6 +21,7 @@ import {
 } from '../local-file-overrides.js';
 import { fetchFileUrlText } from './directories.js';
 import { describeError, getCollections } from './script-store.js';
+import { writeSetting } from './worker-client.js';
 import { timeStorageRead } from './storage-scan.js';
 import { formatQuota, formatStorageUsage } from '../script-display.js';
 import {
@@ -226,7 +227,9 @@ function initBooleanSetting(elementId: string, key: string, defaultValue: boolea
     cb.checked = read(change.newValue);
   });
   cb.addEventListener('change', () => {
-    void chrome.storage.local.set({ [key]: cb.checked });
+    writeSetting(key, cb.checked).catch((err: unknown) => {
+      console.info(`[SourceMonkey] could not save ${key}:`, describeError(err));
+    });
   });
 }
 
@@ -301,7 +304,7 @@ function initLocalRootControls(): void {
     box!.value = savedText;
     saveBtn!.disabled = true;
     try {
-      await chrome.storage.local.set({ [LOCAL_ROOTS_KEY]: roots });
+      await writeSetting(LOCAL_ROOTS_KEY, roots);
       // The roots only change what the NEXT refresh resolves to, so the
       // refresh is part of the save — same reasoning as the collection
       // dialog's local-overrides option, which refreshes its collection
@@ -479,7 +482,7 @@ function initGithubTokenControls(): void {
       setStatus('Enter a token, or use Clear to remove the saved one.', 'err');
       return;
     }
-    void chrome.storage.local.set({ [GITHUB_AUTH_TOKEN_KEY]: next }).then(() => {
+    void writeSetting(GITHUB_AUTH_TOKEN_KEY, next).then(() => {
       input.value = '';
       input.type = 'password';
       revealBtn.textContent = 'Show';
@@ -491,11 +494,11 @@ function initGithubTokenControls(): void {
       // but the explicit call here keeps the UI immediate.)
       storedToken = next;
       renderStatus();
-    });
+    }, (err: unknown) => setStatus(`Could not save the token: ${describeError(err)}`, 'err'));
   });
 
   clearBtn.addEventListener('click', () => {
-    void chrome.storage.local.remove(GITHUB_AUTH_TOKEN_KEY).then(() => {
+    void writeSetting(GITHUB_AUTH_TOKEN_KEY, null).then(() => {
       input.value = '';
       // Mirror Save's input reset so Show→Clear doesn't leave the
       // (now empty) field stuck in text mode with a "Hide" button.
@@ -503,7 +506,7 @@ function initGithubTokenControls(): void {
       revealBtn.textContent = 'Show';
       storedToken = '';
       renderStatus();
-    });
+    }, (err: unknown) => setStatus(`Could not remove the token: ${describeError(err)}`, 'err'));
   });
 
   // Allow Enter inside the input to save, so users don't have to mouse

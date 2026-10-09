@@ -33,11 +33,9 @@ import type { DownloadsCopiesSetting } from './local-copy.js';
 import { deletableCopyPath, readCopiesSetting } from './local-delete.js';
 import {
   addCollection,
-  backfillCollectionDisplayNames,
   DEFAULT_COLLECTIONS,
   describeError,
   getAllScriptMetas,
-  reconcileScriptMembership,
   getCollectionWithScriptMeta,
   getScriptMetas,
   getCollectionsById,
@@ -45,17 +43,16 @@ import {
   isFirstRunComplete,
   isScriptEnabled,
   isCollectionEnabled,
-  markFirstRunComplete,
-  moveCollection,
   readLocalStorageUsage,
-  removeScript,
-  removeCollection,
   localFileScope,
   STORAGE_NEARLY_FULL,
   type ScriptMeta,
   type StoredCollection,
 } from './script-store.js';
-import { setAllScriptsEnabled, setCollectionEnabledExclusive, setScriptEnabledExclusive } from './worker-client.js';
+import {
+  backfillCollectionDisplayNames, markFirstRunComplete, moveCollection, reconcileScriptMembership, removeCollection,
+  removeScript, setAllScriptsEnabled, setCollectionEnabledExclusive, setScriptEnabledExclusive,
+} from './worker-client.js';
 import { identityKey } from './script-identity.js';
 import { watchSoloModifier } from './solo-click.js';
 import {
@@ -565,9 +562,9 @@ function writtenSinceRead(key: string): boolean {
 // off elsewhere on the page as well as the one clicked, together, so
 // two copies never both show as on while the repaint catches up.
 //
-// Applied under another click's spinner too. Writes on this page run in
-// order (the store's lock), and their handlers resume in that order, so
-// the last result applied is the last write.
+// Applied under another click's spinner too. The worker runs the writes
+// in order (the store's lock) and answers each as it finishes, so the
+// last result applied is the last write.
 //
 // `also` is other rows the handler drew itself (the clicked one, a
 // collection's toggle), noted as written with these.
@@ -1375,11 +1372,6 @@ async function render(): Promise<void> {
   // in another tab can be what created the setting.
   currentCopiesSetting = await readCopiesSetting();
 
-  // One-shot backfill so older collection rows (pre-displayName) pick
-  // up an inferred label on first view after upgrade. Cheap no-op once
-  // every row carries a name.
-  await backfillCollectionDisplayNames();
-
   // Surface the file:// access state up-front. Without the toggle on
   // chrome://extensions, every fetch we try will fail.
   if (!(await isFileSchemeAccessAllowed())) {
@@ -1396,7 +1388,14 @@ async function render(): Promise<void> {
     bannerSlot.appendChild(renderUserScriptsBanner(userScriptsState.error));
   }
 
-  const collections = await getCollections();
+  let collections = await getCollections();
+  // One-shot backfill so older collection rows (pre-displayName) pick
+  // up an inferred label on first view after upgrade. Asked of the
+  // worker only when a row has none.
+  if (collections.some((c) => !c.displayName?.trim())) {
+    await backfillCollectionDisplayNames();
+    collections = await getCollections();
+  }
 
   // Last of the three banners, because it is the most situational: it
   // appears only once a refresh has actually failed to save, where the
@@ -1408,16 +1407,14 @@ async function render(): Promise<void> {
 
   const allScripts = await getAllScriptMetas();
   // Repair any collection whose `scriptIds` disagrees with the script
-  // rows themselves, off this scan — this is
-  // the page where the damage shows (a script that runs but is listed
-  // nowhere), and the only surface that already reads every row. The
-  // sections below re-read each collection, so they paint the repaired
-  // lists; failing is not worth abandoning the render over.
-  try {
-    await reconcileScriptMembership({ collections, scripts: allScripts });
-  } catch (err) {
+  // rows themselves. This is the page where the damage shows (a script
+  // that runs but is listed nowhere). The worker does it from its own
+  // read of the rows, and isn't waited for: a repair it writes repaints
+  // this page like any other change, and failing is not worth
+  // abandoning the render over.
+  reconcileScriptMembership().catch((err: unknown) => {
     console.info('[SourceMonkey] membership reconcile failed', err);
-  }
+  });
   if (collections.length === 0) {
     collectionsEl.appendChild(emptyPlaceholder());
     return;
@@ -1463,7 +1460,7 @@ async function renderCollectionSection(collection: StoredCollection): Promise<HT
   const enableLabel = makeToggle(
     collectionOn,
     false,
-    (next, label, solo) => void onToggleCollection(collection.id, next, label, solo),
+    (next, label, solo) => void onToggleCollection(collection.id, next, label, solo).catch(onEnableFailure),
     'Enable scripts under this collection',
   );
   enableLabel.classList.add('collection-toggle');
@@ -1597,7 +1594,7 @@ async function renderScriptTable(collection: StoredCollection, collectionOn: boo
   const bulkBtn = makeBulkToggle(
     allOn,
     !collectionOn,
-    (solo) => void onBulkToggleScripts(collection.id, bulkBtn, solo),
+    (solo) => void onBulkToggleScripts(collection.id, bulkBtn, solo).catch(onEnableFailure),
     bulkTitle(collectionOn, allOn),
   );
   bulkHead.appendChild(bulkBtn);
@@ -1669,7 +1666,7 @@ function renderScriptRow(
   toggleCell.appendChild(makeToggle(
     scriptOn,
     !collectionOn,    // disabled (greyed out) when the parent collection is off
-    (next, label, solo) => void onToggleScript(script.id, next, label, solo),
+    (next, label, solo) => void onToggleScript(script.id, next, label, solo).catch(onEnableFailure),
     collectionOn ? ENABLE_TITLE : COLLECTION_OFF_TITLE,
   ));
   tr.appendChild(toggleCell);
@@ -2694,6 +2691,14 @@ async function onToggleCollection(
   } finally {
     setToggleBusy(label, false);
   }
+}
+
+// An enable write that failed (in the worker, or reaching it): the
+// boxes go back to what is stored. Logged, not thrown: a rejection the
+// click handler drops would land in the extension's Errors panel.
+function onEnableFailure(err: unknown): void {
+  console.info('[SourceMonkey] could not change what is enabled:', describeError(err));
+  void repaintPage();
 }
 
 // Turning a script on turns its other running copies off, unless

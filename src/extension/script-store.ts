@@ -93,6 +93,8 @@ import {
 import { type LocalFileScope } from '../local-file-overrides.js';
 import { scanAllStorage, scanStorageRows } from './storage-scan.js';
 import { cachedRows, cachedScriptRows } from './row-cache.js';
+import { callWorker } from './worker-client.js';
+import { isPageContext } from '../run-context.js';
 import {
   blobKeysOf,
   clearMigrationFailureForTests,
@@ -994,8 +996,12 @@ let migrationPromise: Promise<void> | null = null;
 // `injector.ts`) rather than through here. `script-log-id.ts` reads
 // `script:*` rows directly too and deliberately does NOT await: script
 // keys don't move, and it reads only `relativePath`.
+//
+// Only the worker writes (docs/worker-writes.md): a page that finds the
+// old rows asks it to move them, and waits.
 export function ensureCollectionKeysMigrated(): Promise<void> {
-  migrationPromise ??= migrateLegacyCollectionKeys().catch((err: unknown) => {
+  const migrate = isPageContext() ? migrateViaWorker : migrateLegacyCollectionKeys;
+  migrationPromise ??= migrate().catch((err: unknown) => {
     // Never let a failed migration wedge every read behind it: clear the
     // memo so the next reader retries, and leave the old rows in place.
     console.info('[SourceMonkey] collection-key migration failed', err);
@@ -1014,6 +1020,11 @@ export function ensureCollectionKeysMigrated(): Promise<void> {
 // A test that seeds pre-rename rows has to open the page afterwards.
 export function resetCollectionKeyMigrationForTests(): void {
   migrationPromise = null;
+}
+
+async function migrateViaWorker(): Promise<void> {
+  const probe = await chrome.storage.local.get(LEGACY_INDEX_KEY);
+  if (LEGACY_INDEX_KEY in probe) await callWorker('ensureCollectionKeysMigrated');
 }
 
 async function migrateLegacyCollectionKeys(): Promise<void> {
@@ -2286,12 +2297,12 @@ async function scanMembershipRows(): Promise<{
 // never refreshed again, and one listed by a collection it doesn't name
 // shows up under a collection it doesn't belong to.
 //
-// Finding a row nothing points at needs a whole-storage scan, so this
-// does not run on a schedule of its own. The collections page — the
-// surface where an unlisted row is missing, and the one the user is
-// looking at when they notice — already scans the whole store on every
-// full render, and hands what it read to `prescanned` so this costs it
-// no extra reads.
+// Finding a row nothing points at needs every row, so this does not run
+// on a schedule of its own. The collections page (the surface where an
+// unlisted row is missing, and the one the user is looking at when they
+// notice) asks the worker for it on every full render, which reads the
+// rows from its row cache. `prescanned` is for a caller that already
+// has them.
 //
 // A row whose collection is GONE is left alone: `removeCollection`
 // drops both together so it shouldn't arise, there is nowhere to put

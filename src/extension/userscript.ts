@@ -42,7 +42,6 @@ import {
   hashSource,
   isScriptEnabled,
   isCollectionEnabled,
-  removeScript,
   validateHeader,
   type ScriptMeta,
   type StoredScript,
@@ -91,7 +90,6 @@ import {
   type StoredResource,
 } from '../external-files.js';
 import {
-  clearScriptLog,
   getAllMaxLogLevels,
   getMaxLogLevel,
   getScriptLog,
@@ -198,16 +196,17 @@ import { remapStackRef, type MappedSegment, type StackRef } from '../source-map.
 import { stackLayout } from '../composed-source.js';
 import { buildRequireSourceUrl, buildSourceUrl } from '../script-source-url.js';
 import { startPhaseTimer } from '../phase-timing.js';
-import { enableWithin, setScriptEnabledExclusive, setScriptsEnabled, turnOffOtherCopies } from './worker-client.js';
+import {
+  clearScriptLog, enableWithin, forgetDeniedHost, removeScript, revokeConnectHost, setScriptEnabledExclusive,
+  setScriptsEnabled, turnOffOtherCopies,
+} from './worker-client.js';
 import { CodeTabsView, type CodeTab } from './code-tabs.js';
 import { makeCopyButton } from './copy-button.js';
 import { markFileChanges, missingFiles, scriptFileTag } from './file-changes.js';
 import { renderDetails } from './script-details.js';
 import {
   connectGrantsKey,
-  forgetDeniedHost,
   getConnectGrants,
-  revokeConnectHost,
   type ConnectGrants,
 } from './connect-grants.js';
 import { installSelectAll } from './select-all.js';
@@ -281,7 +280,14 @@ refreshBtn.addEventListener('click', () => void onRefresh());
 // Same modifier wiring as a panel row's checkbox, from the same helper:
 // ctrl/cmd-click opts out of the exclusive sweep here too.
 const takeControlsRowSolo = watchSoloModifier(enableCheckboxEl);
-enableCheckboxEl.addEventListener('change', () => void onToggleEnabled(enableCheckboxEl.checked));
+enableCheckboxEl.addEventListener('change', () => {
+  onToggleEnabled(enableCheckboxEl.checked).catch(async (err: unknown) => {
+    // Logged, not thrown: a dropped rejection lands in the extension's
+    // Errors panel. The boxes go back to what is stored.
+    console.info('[SourceMonkey] could not change whether this script is enabled:', describeError(err));
+    await rehydrateAfterStorageChange();
+  });
+});
 
 // The Location row's copy button. One long-lived element, appendChild'd
 // into the dl on each render (appendChild moves it, so no duplication),
@@ -1337,6 +1343,7 @@ async function paintRelatedVersions(args: RelatedVersionsPaint, given?: StoreSna
       let failure: unknown;
       try {
         await applyEnableChanges(changes, related);
+        timer.mark('write');
       } catch (err) {
         failure = err;
         timer.mark('write failed');

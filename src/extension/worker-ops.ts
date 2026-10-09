@@ -7,14 +7,31 @@
 // JSON (a timer, a Map) or carry more than the page uses (script
 // bodies).
 
-import { describeError } from './script-store.js';
+import {
+  backfillCollectionDisplayNames, createCollection, describeError, ensureCollectionKeysMigrated, markFirstRunComplete,
+  moveCollection, moveScript, reconcileScriptMembership, removeCollection, removeScript, setCollectionOptions,
+  setScriptsEnabled,
+} from './script-store.js';
 import {
   enableWithin, setAllScriptsEnabled, setCollectionEnabledExclusive, setScriptEnabledExclusive,
 } from './script-enablement.js';
 import { turnOffOtherCopies } from './script-identity.js';
-import { setScriptsEnabled } from './script-store.js';
+import { forgetDeniedHost, revokeConnectHost } from './connect-grants.js';
+import { clearScriptLog } from './script-log.js';
+import { DEBUG_LOGGING_KEY } from '../debug-log.js';
+import { GITHUB_AUTH_TOKEN_KEY } from '../github-auth.js';
+import { LOCAL_ROOTS_KEY } from '../local-file-overrides.js';
+import { INSTALL_CAPTURE_KEY } from './install-capture.js';
+import { DOWNLOADS_COPIES_KEY } from './local-copy.js';
 import { startPhaseTimer } from '../phase-timing.js';
 import { WORKER_OP_PORT, type WorkerOpReply, type WorkerOpRequest } from './worker-client.js';
+
+// The settings a page may change: Options, and the local copy's
+// Downloads folder. Each a whole value, not a read-modify-write, so
+// writing it is all the worker does.
+const SETTING_KEYS: readonly string[] = [
+  INSTALL_CAPTURE_KEY, DEBUG_LOGGING_KEY, LOCAL_ROOTS_KEY, GITHUB_AUTH_TOKEN_KEY, DOWNLOADS_COPIES_KEY,
+];
 
 const WORKER_OPS = {
   // ---------- Enable toggles ----------
@@ -33,6 +50,34 @@ const WORKER_OPS = {
   async turnOffOtherCopies(scriptId: string): Promise<void> {
     await turnOffOtherCopies(scriptId);
   },
+
+  // ---------- Small writes ----------
+  removeScript,
+  removeCollection,
+  moveCollection,
+  moveScript,
+  createCollection,
+  setCollectionOptions,
+  revokeConnectHost,
+  forgetDeniedHost,
+  clearScriptLog,
+  markFirstRunComplete,
+  // `null` removes the setting.
+  async writeSetting(key: string, value: unknown): Promise<void> {
+    if (!SETTING_KEYS.includes(key)) throw new Error(`Internal error: ${key} is not a setting a page may change`);
+    if (value === null) await chrome.storage.local.remove(key);
+    else await chrome.storage.local.set({ [key]: value });
+  },
+
+  // ---------- Repairs the collections page asks for ----------
+  backfillCollectionDisplayNames,
+  // From the worker's own read of the rows, not the page's.
+  async reconcileScriptMembership(): Promise<number> {
+    return await reconcileScriptMembership();
+  },
+  // A page that finds rows in the old spelling waits for this before
+  // reading.
+  ensureCollectionKeysMigrated,
 };
 
 export type WorkerOps = typeof WORKER_OPS;

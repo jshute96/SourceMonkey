@@ -13,8 +13,8 @@
 //   - Closing the page doesn't stop the work: the worker carries on and
 //     drops the answer.
 //
-// Arguments and results cross as JSON: no Maps, Sets, functions, or
-// `undefined` array entries. worker-ops.ts adapts any function whose
+// Arguments and results cross as JSON: no Maps, Sets or functions, and
+// an `undefined` argument or array entry arrives as `null`. worker-ops.ts adapts any function whose
 // own signature has them.
 
 import type { WorkerOpName, WorkerOps } from './worker-ops.js';
@@ -28,8 +28,9 @@ export type WorkerOpRequest = { op: string; args: unknown[] } | { beat: true };
 export type WorkerOpReply = { ok: true; result: unknown } | { ok: false; error: string };
 
 // The worker went away mid-call: it crashed, or Chrome stopped it.
+// It may have saved the change first.
 export const WORKER_STOPPED =
-  'Internal error: SourceMonkey\'s background worker stopped before finishing this change';
+  'Internal error: SourceMonkey\'s background worker stopped before answering. The change may not have been saved.';
 
 type Args<K extends WorkerOpName> = Parameters<WorkerOps[K]>;
 type Result<K extends WorkerOpName> = Awaited<ReturnType<WorkerOps[K]>>;
@@ -61,8 +62,14 @@ export function callWorker<K extends WorkerOpName>(op: K, ...args: Args<K>): Pro
   });
 }
 
+// Trailing `undefined` arguments are left off, so the worker's default
+// parameters apply: JSON would send them as `null`.
 function op<K extends WorkerOpName>(name: K): (...args: Args<K>) => Promise<Result<K>> {
-  return (...args) => callWorker(name, ...args);
+  return (...args) => {
+    let n = args.length;
+    while (n > 0 && args[n - 1] === undefined) n--;
+    return callWorker(name, ...(args.slice(0, n) as Args<K>));
+  };
 }
 
 // ---------- Enable toggles ----------
@@ -72,3 +79,18 @@ export const setAllScriptsEnabled = op('setAllScriptsEnabled');
 export const enableWithin = op('enableWithin');
 export const setScriptsEnabled = op('setScriptsEnabled');
 export const turnOffOtherCopies = op('turnOffOtherCopies');
+
+// ---------- Small writes ----------
+export const removeScript = op('removeScript');
+export const removeCollection = op('removeCollection');
+export const moveCollection = op('moveCollection');
+export const moveScript = op('moveScript');
+export const createCollection = op('createCollection');
+export const setCollectionOptions = op('setCollectionOptions');
+export const revokeConnectHost = op('revokeConnectHost');
+export const forgetDeniedHost = op('forgetDeniedHost');
+export const clearScriptLog = op('clearScriptLog');
+export const markFirstRunComplete = op('markFirstRunComplete');
+export const writeSetting = op('writeSetting');
+export const backfillCollectionDisplayNames = op('backfillCollectionDisplayNames');
+export const reconcileScriptMembership = op('reconcileScriptMembership');

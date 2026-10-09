@@ -16,11 +16,11 @@
 
 import {
   describeError,
-  moveScript,
   ALREADY_INSTALLED_IN_TARGET,
   type InstallTarget,
   type ScriptMeta,
 } from './script-store.js';
+import { moveScript } from './worker-client.js';
 import {
   buildInstallSelect,
   installChoiceBlocked,

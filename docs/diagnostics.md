@@ -510,10 +510,10 @@ too.
 
 | Line | Printed by |
 |------|------------|
-| `enable script` / `disable script` | a script checkbox (collections page, popup, sm-dev) |
+| `enable script` / `disable script` | a script checkbox (collections page, viewer, popup, sm-dev), and an enable in the viewer's versions table |
 | `enable collection` / `disable collection` | a collection checkbox |
 | `enable all` / `disable all` | the collections page's bulk toggle |
-| `versions table enable` | a checkbox in the viewer's versions table |
+| `versions table enable` | a checkbox in the viewer's versions table, in the page: the round trip to the worker (`write`), then the redraw |
 | `turn off other copies` | an install or move that displaces other copies |
 | `enablement write` | any other enable write (only the write's own steps) |
 
