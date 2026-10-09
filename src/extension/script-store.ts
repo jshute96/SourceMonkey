@@ -92,6 +92,18 @@ import {
 } from '../external-files.js';
 import { type LocalFileScope } from '../local-file-overrides.js';
 import { scanAllStorage } from './storage-scan.js';
+import {
+  clearMigrationFailureForTests,
+  fromStorage,
+  hydrateScriptRows,
+  migrateToBlobs,
+  STORE_FORMAT,
+  STORE_FORMAT_KEY,
+  sweepUnusedBlobs,
+  withBlobs,
+  type ScriptRow,
+  type SweepResult,
+} from './script-blobs.js';
 import { sameScript } from './script-keys.js';
 import { compareInCollection, preferredCopy } from './copy-preference.js';
 import { wipeScriptValues } from './gm-values.js';
@@ -1003,7 +1015,7 @@ async function migrateLegacyCollectionKeys(): Promise<void> {
   // Write the new rows before dropping the old ones: an interrupted
   // migration then leaves both spellings present, and the re-run is a
   // no-op over the rows it already moved.
-  await writeLocal(toSet);
+  await setLocal(toSet);
   await chrome.storage.local.remove(toRemove);
   console.log(
     `[SourceMonkey] migrated ${toRemove.length - 1} collections and `
@@ -1011,16 +1023,109 @@ async function migrateLegacyCollectionKeys(): Promise<void> {
   );
 }
 
+// Script rows come back as full scripts, their bodies read from their
+// blobs (script-blobs.ts). Readers that want only the small rows read
+// `chrome.storage.local` themselves.
 async function getRaw<T>(key: string): Promise<T | undefined> {
-  await ensureCollectionKeysMigrated();
-  const result = await chrome.storage.local.get(key);
-  return result[key] as T | undefined;
+  return (await getMany([key]))[key] as T | undefined;
 }
 
 async function getMany(keys: string[]): Promise<Record<string, unknown>> {
   if (keys.length === 0) return {};
   await ensureCollectionKeysMigrated();
-  return await chrome.storage.local.get(keys);
+  return await hydrateScriptRows(await chrome.storage.local.get(keys));
+}
+
+// ---------- Storage format ----------
+//
+// Format 2 keeps bodies out of the script rows (docs/storage.md#content-blobs).
+// The service worker moves format 1 rows over once, at startup
+// (`migrateToBlobs`). Reads take either format, so only writes wait for
+// it: a page's write made while the worker is still converting could
+// otherwise be overwritten by the converted copy of the row it read.
+
+let storeFormatPromise: Promise<void> | null = null;
+
+// Message a page sends to wait for the worker's migration.
+export const STORE_FORMAT_READY_MESSAGE = 'sm:storeFormatReady';
+
+function isServiceWorker(): boolean {
+  return 'ServiceWorkerGlobalScope' in globalThis;
+}
+
+// Resolves once this context may write script rows. Never rejects, so
+// a failure can't wedge every write behind it:
+//   - The worker's failed migration is logged and tried again in the
+//     next browser session (`migrateToBlobs`). Writes carry on
+//     meanwhile, in format 2, as they always do.
+//   - A page that couldn't get an answer from the worker asks again
+//     before its next write.
+export function storeFormatReady(): Promise<void> {
+  if (storeFormatPromise) return storeFormatPromise;
+  const worker = isServiceWorker();
+  const ready = (worker ? migrateStore() : waitForWorker()).catch((err: unknown) => {
+    if (worker) {
+      console.info('[SourceMonkey] storage format migration failed:', describeError(err));
+    } else {
+      console.info('[SourceMonkey] could not confirm the storage format with the service worker:', describeError(err));
+      if (storeFormatPromise === ready) storeFormatPromise = null;
+    }
+  });
+  storeFormatPromise = ready;
+  return ready;
+}
+
+async function migrateStore(): Promise<void> {
+  // The old key spelling first: it moves rows the blob migration reads.
+  await ensureCollectionKeysMigrated();
+  await migrateToBlobs();
+}
+
+async function waitForWorker(): Promise<void> {
+  const format = (await chrome.storage.local.get(STORE_FORMAT_KEY))[STORE_FORMAT_KEY];
+  if (typeof format === 'number' && format >= STORE_FORMAT) return;
+  // Waking the worker is part of the point: it migrates as it starts.
+  // Asked twice: a worker stopped mid-migration closes the first
+  // message's channel unanswered, and the second wakes a new one, which
+  // finishes the migration before answering.
+  try {
+    await chrome.runtime.sendMessage({ type: STORE_FORMAT_READY_MESSAGE });
+  } catch {
+    await chrome.runtime.sendMessage({ type: STORE_FORMAT_READY_MESSAGE });
+  }
+}
+
+// One unused-blob check (`sweepUnusedBlobs`), inside this context's
+// write lock. A write here then can't land between the check reading
+// the rows and deleting what they don't use: one that found a blob
+// still stored, and so didn't write it again, would be left pointing at
+// nothing. Only the service worker sweeps, and most writes run there.
+export function sweepUnusedBlobsLocked(now?: number): Promise<SweepResult> {
+  return mutate(async () => {
+    await storeFormatReady();
+    return await sweepUnusedBlobs(now);
+  });
+}
+
+// Test-only: run the migration again, as a worker start would. For
+// tests that seed format 1 rows.
+export async function rerunStoreMigrationForTests(): Promise<void> {
+  await forgetStoreMigrationForTests();
+  await storeFormatReady();
+}
+
+// Test-only: as a worker just started, before anything asked for the
+// format. The next write here, or a page's message, runs the migration.
+export async function forgetStoreMigrationForTests(): Promise<void> {
+  storeFormatPromise = null;
+  await clearMigrationFailureForTests();
+}
+
+// Only for the test surface's `resetAllState`, which wipes storage: the
+// worker records the empty profile as format 2 again, so pages opened
+// afterwards needn't ask it.
+export async function markStoreFormatForTests(): Promise<void> {
+  await chrome.storage.local.set({ [STORE_FORMAT_KEY]: STORE_FORMAT });
 }
 
 async function readCollectionIndex(): Promise<string[]> {
@@ -1125,11 +1230,11 @@ export async function getScripts(scriptIds: readonly string[]): Promise<StoredSc
 export async function getAllScripts(): Promise<StoredScript[]> {
   await ensureCollectionKeysMigrated();
   const all = await scanAllStorage('all scripts');
-  const out: StoredScript[] = [];
+  const rows: ScriptRow[] = [];
   for (const [key, value] of Object.entries(all)) {
-    if (key.startsWith('script:')) out.push(value as StoredScript);
+    if (key.startsWith('script:')) rows.push(value as ScriptRow);
   }
-  return out;
+  return await fromStorage(rows, all);
 }
 
 export async function getCollection(id: string): Promise<StoredCollection | undefined> {
@@ -1440,7 +1545,7 @@ export async function writeRunScript(args: RunScriptArgs): Promise<WriteRunScrip
     ...(source ? { [scratchSourceKey(url)]: source } : {}),
   });
   const stale = [...(hasFiles ? [] : [scratchFilesKey(url)]), ...(source ? [] : [scratchSourceKey(url)])];
-  if (stale.length > 0) await chrome.storage.local.remove(stale);
+  if (stale.length > 0) await removeLocal(stale);
   const container = (await getCollections()).find((c) => c.path === smDevContainerPath(args.run));
   let scriptId: string | undefined;
   let collectionId: string | undefined;
@@ -1462,7 +1567,7 @@ export async function writeRunScript(args: RunScriptArgs): Promise<WriteRunScrip
       result = await installScript(url, { smDevRun: args.run });
     } catch (err) {
       // The install took its seed back out; the text rows go with it.
-      await chrome.storage.local.remove([scratchTextKey(url), scratchFilesKey(url), scratchSourceKey(url)]);
+      await removeLocal([scratchTextKey(url), scratchFilesKey(url), scratchSourceKey(url)]);
       throw err;
     }
     if (!result) throw new Error('Internal error: the scratch script was neither installed nor found');
@@ -1673,7 +1778,7 @@ async function unseedScript(
       // the pair only splits if the worker dies between them — leaving
       // an unlisted row, which `reconcileScriptMembership` re-lists.
       if (Object.keys(toSet).length > 0) await writeLocal(toSet);
-      await chrome.storage.local.remove(toRemove);
+      await removeLocal(toRemove);
       if (dropContainer) await setRefreshError(containerId, null);
     });
   } catch (err) {
@@ -1971,7 +2076,7 @@ export async function removeCollection(id: string): Promise<void> {
       ...await unreferencedScratchKeys(removed),
     ];
     await writeLocal({ [COLLECTIONS_INDEX_KEY]: next, ...await withoutTimes(scriptIds) });
-    await chrome.storage.local.remove(removeKeys);
+    await removeLocal(removeKeys);
     return next;
   });
   // Session-storage bookkeeping, so a removed collection can't leave a
@@ -2000,7 +2105,7 @@ export async function removeScript(id: string): Promise<void> {
       }
     }
     if (Object.keys(toSet).length > 0) await writeLocal(toSet);
-    await chrome.storage.local.remove([
+    await removeLocal([
       scriptKey(id), connectGrantsKey(id), ...await unreferencedScratchKeys([script]),
     ]);
   });
@@ -2490,7 +2595,7 @@ export async function refreshCollection(
       }
       await writeLocal(toSet);
       if (droppedIds.length > 0) {
-        await chrome.storage.local.remove([...droppedIds.map(scriptKey), ...droppedIds.map(connectGrantsKey)]);
+        await removeLocal([...droppedIds.map(scriptKey), ...droppedIds.map(connectGrantsKey)]);
       }
 
       return { collection: nextCollection, scripts: finalScripts, droppedIds };
@@ -3199,12 +3304,31 @@ export function storageFullMessage(): string {
 // an out-of-quota rejection reads the same wherever it surfaces — the
 // install callout, a Log entry, the collections banner. Any other
 // rejection is passed through as Chrome worded it.
+//
+// Script rows are written in format 2: a full script splits into its
+// small row plus the blobs it points at, in this same `set`.
 async function writeLocal(items: Record<string, unknown>): Promise<void> {
+  await storeFormatReady();
+  await setLocal(await withBlobs(items));
+}
+
+// `writeLocal` without the format handling, for the key-rename
+// migration, which runs before the format migration and writes rows as
+// it read them.
+async function setLocal(items: Record<string, unknown>): Promise<void> {
   try {
     await chrome.storage.local.set(items);
   } catch (err) {
     throw translateStorageError(err);
   }
+}
+
+// Every script-row removal in this module, so none lands while the
+// worker is still converting rows (a converted copy would bring the row
+// back). The blobs stay; see docs/storage.md#writing-and-cleanup.
+async function removeLocal(keys: string | string[]): Promise<void> {
+  await storeFormatReady();
+  await chrome.storage.local.remove(keys);
 }
 
 // Chrome's error rides along as `cause` for DevTools; `describeError`

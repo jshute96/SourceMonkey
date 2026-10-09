@@ -66,6 +66,7 @@
 // an answer at render time, and an SW that has been evicted since the
 // last sync would have nothing to report.
 
+import { fromStorage, hydrateScriptRows, type ScriptRow } from './script-blobs.js';
 import {
   describeError,
   ensureCollectionKeysMigrated,
@@ -1313,15 +1314,18 @@ async function readAll(): Promise<{ scripts: StoredScript[]; collections: Map<st
   // moved before anything reads the structural rows directly.
   await ensureCollectionKeysMigrated();
   const all = await scanAllStorage('registration sync');
-  const scripts: StoredScript[] = [];
+  const rows: ScriptRow[] = [];
   const collections = new Map<string, StoredCollection>();
   for (const [k, v] of Object.entries(all)) {
-    if (k.startsWith(SCRIPT_PREFIX)) scripts.push(v as StoredScript);
+    if (k.startsWith(SCRIPT_PREFIX)) rows.push(v as ScriptRow);
     else if (k.startsWith(COLLECTION_PREFIX)) {
       const s = v as StoredCollection;
       collections.set(s.id, s);
     }
   }
+  // Specs carry the code, so the bodies come back with the rows; the
+  // scan already read the blobs.
+  const scripts = await fromStorage(rows, all);
   return { scripts, collections, numbers: numberMap(numbersFrom(all[SCRIPT_NUMBERS_KEY])) };
 }
 
@@ -1553,7 +1557,8 @@ async function placedPatterns(id: string): Promise<PlacedPatterns | undefined> {
   }
 }
 
-// Read just the rows named, rather than the whole store.
+// Read just the rows named, rather than the whole store. Script rows
+// come back as full scripts, with their bodies.
 async function readRows(
   scriptIds: Iterable<string>,
   collectionIds: Iterable<string>,
@@ -1564,7 +1569,7 @@ async function readRows(
     ...[...collectionIds].map((id) => COLLECTION_PREFIX + id),
   ];
   if (keys.length === 0) return {};
-  return await chrome.storage.local.get(keys) as Record<string, unknown>;
+  return await hydrateScriptRows(await chrome.storage.local.get(keys));
 }
 
 // The placements for user scripts only — our own registrations are the

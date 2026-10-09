@@ -40,27 +40,27 @@ So `https://cdn.example.com/jquery.js?v=3` is fine; `lib.json` or
 
 ## Storage
 
-Each `StoredScript` carries an inline `requires?: StoredRequire[]`
-array — declaration order, deduplicated by canonical URL.
+Each `StoredScript` carries a `requires?: StoredRequire[]` array —
+declaration order, deduplicated by canonical URL. The bodies themselves
+are [content blobs](storage.md#content-blobs) (format 2; see the status
+note there).
 
 Per-entry fields:
 
 - `ref` — verbatim from the `@require` line (trimmed).
 - `url` — canonical resolved URL. Dedup key.
-- `source` — fetched JS text.
-- `size` — UTF-8 byte length of `source`.
-- `contentHash` — SHA-256 of `source`. Drives the unchanged-content
-  short-circuit so unchanged bytes preserve `loadedAt`.
+- `blobRef` — `{hash, size}` of the stored JS text: the hash is the
+  key of its blob. Two scripts requiring the same bytes share one blob.
+- `size` — byte length of the fetched file.
+- `contentHash` — SHA-256 of the fetched bytes. Drives the
+  unchanged-content short-circuit so unchanged bytes preserve
+  `loadedAt`. Not always equal to `blobRef.hash`: decoding drops a
+  leading byte-order mark.
 - `loadedAt` — epoch ms; bumps only on a true content change.
 - `httpEtag?`, `httpLastModified?` — captured from the last HTTP
   fetch. Not yet round-tripped to the byte fetcher — see TODO.
 - `localUrl?` — the local file read instead of `url`, when one stood
   in. See [local-file-overrides.md](local-file-overrides.md#storage).
-
-Storage layout today: every script stores its own copy of every
-required file, so two scripts requiring jQuery store jQuery twice.
-Shared (content-addressed) storage is a planned follow-up — see
-[TODO.md](../TODO.md).
 
 ## Refresh policy
 

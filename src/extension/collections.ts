@@ -25,6 +25,7 @@
 // write is in flight. The repaint is careful not to overwrite a control
 // whose spinner is up.
 
+import { storedBytesOf } from './script-blobs.js';
 import { openDeleteDialog } from './delete-dialog.js';
 import { setDeleteIcon } from './delete-icon.js';
 import { setGlyphButton, setGlyphButtonBusy } from './glyph.js';
@@ -70,7 +71,7 @@ import {
   collectionAnchorId,
   EDIT_COLLECTION_HASH_PREFIX,
 } from './collection-display.js';
-import { COLLECTION_PREFIX, SCRIPT_PREFIX, touchesStructuralRows } from './structural-keys.js';
+import { COLLECTION_PREFIX, touchesStructuralRows } from './structural-keys.js';
 import { openCollectionDialog, type CollectionDialogRequest } from './collection-dialog.js';
 import { onNamedTabFocus, openExtensionTab, openNamedTab } from './page-links.js';
 import { getValue } from '../userscript-header.js';
@@ -592,9 +593,10 @@ async function repaintSections(timer: PhaseTimer): Promise<void> {
   timer.mark('read scripts', `${allScripts.length} scripts`);
   // Their size from Chrome rather than by serializing them here, which
   // on a store of several MB held this page's thread for tens of ms.
-  // Only with debug logging on, since it is an extra storage call.
+  // Bodies included, since the read above loaded them. Only with debug
+  // logging on, since it is an extra storage call.
   if (isDebugLoggingEnabled()) {
-    const bytes = await chrome.storage.local.getBytesInUse(allScripts.map((s) => SCRIPT_PREFIX + s.id));
+    const bytes = await storedBytesOf(allScripts.map((s) => s.id));
     timer.mark('size', formatBytes(bytes));
   }
   // Cached favicons first, so rows draw with their real icons rather

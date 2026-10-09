@@ -1411,13 +1411,16 @@ with a trade-off worth recording:
 
 ## `@require` follow-ups
 
-- **Shared storage of common require files.** Today each script stores
-  its own copy of every required file inline on its `StoredScript`
-  row. Five scripts requiring jQuery = jQuery stored five times. Move
-  to a content-addressed `require:<sha256>` row keyed by `contentHash`,
-  with each `StoredScript.requires[i]` holding only `{ ref, url,
-  contentHash, validators, loadedAt }`. Add a sweeper that drops a
-  `require:<hash>` row when its refcount across scripts hits zero.
+- **Storage format 2 follow-ups.** Bodies now live in shared
+  `blob:<sha256>` rows ([storage.md](docs/storage.md#content-blobs)),
+  but the store still reads every blob back. Next:
+  - Readers that need only the small rows (enable checks, page
+    repaints, the popup) read only those.
+  - Registration skips the code on an enable flip, when the code hash
+    matches what's registered.
+  - The Options page usage table sizes blobs from the refs and
+    `getBytesInUse`, without reading them.
+  - Compression of large blobs, as a new `encoding`.
 - **UI surface for prefetched requires.** The viewer now shows one
   tab per require with its full source, but the collections page row and
   the viewer's details panel still don't expose require state. Add a

@@ -581,7 +581,8 @@ test.describe('update probes', () => {
       const got = await chrome.storage.local.get(key);
       const row = got[key] as Record<string, unknown>;
       await chrome.storage.local.set({
-        [key]: { ...row, bodyText: 'console.log("edited");', contentHash: 'changed' },
+        // An inline body, which reads as it is in place of the row's blob.
+        [key]: { ...row, bodyBlobRef: undefined, bodyText: 'console.log("edited");', contentHash: 'changed' },
       });
     }, scriptId);
     await settle();

@@ -1276,14 +1276,20 @@ function legacyRow(over = {}) {
 
 // `store.session` holds what the Log writes (`log:<id>` and friends).
 function stubStorage(rows) {
-  const store = Object.fromEntries(rows.map((r) => [`script:${r.id}`, r]));
+  // Already storage format 2, so writes don't wait on a migration.
+  const store = { storeFormat: 2, ...Object.fromEntries(rows.map((r) => [`script:${r.id}`, r])) };
   const session = {};
   Object.defineProperty(store, 'session', { value: session });
   globalThis.chrome = {
     storage: {
       local: {
-        get: async (key) => (key === null ? { ...store } : {}),
+        get: async (keys) => {
+          if (keys === null) return { ...store };
+          const list = typeof keys === 'string' ? [keys] : keys;
+          return Object.fromEntries(list.filter((k) => k in store).map((k) => [k, store[k]]));
+        },
         set: async (obj) => { Object.assign(store, obj); },
+        getKeys: async () => Object.keys(store),
       },
       session: {
         get: async (keys) => Object.fromEntries(keys.filter((k) => k in session).map((k) => [k, session[k]])),

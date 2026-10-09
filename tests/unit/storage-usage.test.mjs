@@ -75,3 +75,52 @@ test('toWholeKb takes back an excess from the largest rows', () => {
   assert.equal(kb.reduce((a, b) => a + b, 0), 8);
   assert.deepEqual(kb, [5, 2, 1]);
 });
+
+test('counts shared blobs once, under the kind that points at them', () => {
+  const body = { encoding: 'text', data: 'x'.repeat(100) };
+  const lib = { encoding: 'text', data: 'y'.repeat(50) };
+  const stray = { encoding: 'text', data: 'z' };
+  const row = (id) => ({ id, bodyBlobRef: { hash: 'b1', size: 100 }, requires: [{ url: 'u', blobRef: { hash: 'r1', size: 50 } }] });
+  const rows = byLabel(summarizeLocalStorage({
+    'script:1': row('1'),
+    'script:2': row('2'),
+    'blob:b1': body,
+    'blob:r1': lib,
+    'blob:zz': stray,
+  }));
+  assert.equal(rows['Scripts'].count, '2 scripts (1 unique)');
+  assert.equal(rows['Scripts'].bytes, bytes('script:1', row('1')) + bytes('script:2', row('2')) + bytes('blob:b1', body));
+  assert.equal(rows['@require files'].count, '2 files (1 unique)');
+  assert.equal(rows['@require files'].bytes, bytes('blob:r1', lib));
+  assert.equal(rows['Stored files no script uses'].count, '1 file');
+  assert.equal(rows['Stored files no script uses'].bytes, bytes('blob:zz', stray));
+});
+
+test('unique counts ignore files not stored as blobs, and count each kind\'s own blobs', () => {
+  const shared = { encoding: 'text', data: 'ABC' };
+  const rows = byLabel(summarizeLocalStorage({
+    // Never loaded: no body blob.
+    'script:1': { id: '1' },
+    'script:2': { id: '2', bodyBlobRef: { hash: 'b2', size: 1 } },
+    'script:3': { id: '3', bodyBlobRef: { hash: 'b3', size: 1 } },
+    // Format 1: inline body and require.
+    'script:4': { id: '4', bodyText: 'x', requires: [{ url: 'u', source: 'y' }] },
+    // One blob used as both a require and a resource.
+    'script:5': {
+      id: '5',
+      bodyBlobRef: { hash: 'b3', size: 1 },
+      requires: [{ url: 'r', blobRef: { hash: 's', size: 3 } }],
+      resources: [{ name: 'n', blobRef: { hash: 's', size: 3 } }],
+    },
+    'blob:b2': { encoding: 'text', data: '2' },
+    'blob:b3': { encoding: 'text', data: '3' },
+    'blob:s': shared,
+  }));
+  // Scripts 2, 3, 5 have bodies in blobs, 3 and 5 sharing; 1 and 4 count as unique.
+  assert.equal(rows['Scripts'].count, '5 scripts (4 unique)');
+  // The inline require and the blob one: nothing shared.
+  assert.equal(rows['@require files'].count, '2 files');
+  assert.equal(rows['@resource files'].count, '1 file');
+  // The shared blob is sized once, under the require that claimed it.
+  assert.equal(rows['@resource files'].bytes, 0);
+});

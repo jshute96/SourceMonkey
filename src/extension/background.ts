@@ -16,6 +16,7 @@
 // extension via `serviceWorker.evaluate(...)` — MV3 service workers
 // can't be triggered from a Playwright toolbar click.
 
+import { droppedBlobRefs, hasSweepCandidates, SWEEP_GRACE_MS, type SweepResult } from './script-blobs.js';
 import { describeDiagnostic } from '../diagnostic-location.js';
 import {
   debugDumpCache,
@@ -160,6 +161,12 @@ import {
   getCollectionWithScripts,
   isFirstRunComplete,
   resetCollectionKeyMigrationForTests,
+  markStoreFormatForTests,
+  rerunStoreMigrationForTests,
+  forgetStoreMigrationForTests,
+  sweepUnusedBlobsLocked,
+  storeFormatReady,
+  STORE_FORMAT_READY_MESSAGE,
   _setCollectionWriteFailureForTests,
   markFirstRunComplete,
   removeCollection,
@@ -479,6 +486,15 @@ interface SourceMonkeyApi {
   // Wipe local + session storage and unregister every userscript so
   // each test starts clean.
   resetAllState: () => Promise<void>;
+  // Run the storage format migration again, as a worker start would,
+  // for a test that seeded format 1 rows.
+  rerunStoreMigration: () => Promise<void>;
+  // As a worker just started: the next write, or a page's message, runs
+  // the migration.
+  forgetStoreMigration: () => Promise<void>;
+  // One unused-blob check, as the cleanup alarm runs it; `now` lets a
+  // test step past the wait between checks.
+  sweepUnusedBlobs: (now?: number) => Promise<SweepResult>;
   // Forget when each script/collection was last checked, so the next
   // check isn't skipped by `UPDATE_MIN_INTERVAL_MS`. A test that drives
   // two opportunistic checks of the same script — a navigation and then
@@ -892,6 +908,9 @@ const api: SourceMonkeyApi = {
   syncNow: () => syncNowForTests(),
   replayScriptLogsAtBoot,
   clearUpdateRateLimit: () => { _resetUpdaterStateForTests(); },
+  rerunStoreMigration: () => rerunStoreMigrationForTests(),
+  forgetStoreMigration: () => forgetStoreMigrationForTests(),
+  sweepUnusedBlobs: (now?: number) => sweepUnusedBlobsLocked(now),
   resetAllState: async () => {
     // The parse check re-enables itself: its off-switch lives in the
     // session storage cleared below, precisely so no context has to
@@ -949,10 +968,15 @@ const api: SourceMonkeyApi = {
     await resetSmDevLinkForTests();
     realSweepsPaused = false;
     await chrome.alarms.clear(RUN_SWEEP_ALARM);
+    await chrome.alarms.clear(BLOB_SWEEP_ALARM);
+    realBlobSweepsPaused = true;
     // The legacy-key migration memo describes the profile we just
     // wiped, so drop it — otherwise a test that seeds pre-rename rows
     // would find nothing willing to move them.
     resetCollectionKeyMigrationForTests();
+    // The empty profile is format 2 (docs/storage.md#format-2-migration),
+    // so a page opened next needn't ask this worker about it.
+    await markStoreFormatForTests();
     // The clear above fires `storage.onChanged`, which would reset the
     // cached roots — but not necessarily before the next test's first
     // call. Drop them synchronously so a reset is a clean slate the
@@ -2280,6 +2304,76 @@ async function reloadNoScriptsFromMenu(tabId: number | null): Promise<void> {
     return;
   }
   await reloadTabWithMode(tabId, { kind: 'none' });
+}
+
+// A page's writes wait for the storage format migration, which only
+// this worker runs (`storeFormatReady` in script-store.ts).
+function installStoreFormatListener(): void {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    const msg = message as { type?: unknown } | null;
+    if (msg?.type !== STORE_FORMAT_READY_MESSAGE || !fromExtensionPage(sender)) return undefined;
+    void storeFormatReady().then(() => { try { sendResponse(true); } catch { /* page gone */ } });
+    return true;
+  });
+}
+
+// ---------- Unused blob cleanup ----------
+// See docs/storage.md#writing-and-cleanup. A change that leaves a blob
+// unused starts a check soon; a check that finds unused blobs not yet
+// old enough to delete runs another once they are.
+const BLOB_SWEEP_ALARM = 'sm-blob-sweep';
+const BLOB_SWEEP_SOON_MINUTES = 0.5;
+
+// Set by `resetAllState`: tests run the checks themselves, at simulated
+// times (`sweepUnusedBlobs` on the test surface), and a real one firing
+// mid-test would record or delete blobs under them.
+let realBlobSweepsPaused = false;
+
+// An alarm already set stands: whichever check it runs sees this change
+// too.
+function scheduleBlobSweep(delayInMinutes: number): void {
+  void (async () => {
+    if (await chrome.alarms.get(BLOB_SWEEP_ALARM)) return;
+    await chrome.alarms.create(BLOB_SWEEP_ALARM, { delayInMinutes });
+  })().catch((err: unknown) => {
+    console.info('[SourceMonkey] could not schedule removing unused stored files:', describeError(err));
+  });
+}
+
+// A removal is always logged; the check itself only with debug logging on.
+async function runBlobSweep(): Promise<void> {
+  if (realBlobSweepsPaused) return;
+  const { checked, removed, waiting } = await sweepUnusedBlobsLocked();
+  if (removed > 0) console.info(`[SourceMonkey] removed ${removed} stored file(s) no script uses`);
+  const next = waiting > 0 ? ` (next check in ${SWEEP_GRACE_MS / 60_000} min)` : '';
+  dlog(`[SourceMonkey] unused stored files: checked ${checked}, removed ${removed}, ${waiting} waiting${next}`);
+  if (waiting > 0) scheduleBlobSweep(SWEEP_GRACE_MS / 60_000);
+}
+
+function installBlobSweep(): void {
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'local') return;
+    for (const [key, change] of Object.entries(changes)) {
+      if (key.startsWith(SCRIPT_PREFIX) && droppedBlobRefs(change.oldValue, change.newValue)) {
+        scheduleBlobSweep(BLOB_SWEEP_SOON_MINUTES);
+        return;
+      }
+    }
+  });
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name !== BLOB_SWEEP_ALARM) return;
+    runBlobSweep().catch((err: unknown) => {
+      console.info('[SourceMonkey] could not remove unused stored files:', describeError(err));
+    });
+  });
+  // At startup only if a check is pending (blobs an earlier check found
+  // unused), in case its alarm is gone. Usually it isn't, and the alarm
+  // already set stands. Setting one
+  // on every start would make each start (or the alarm's own wake) buy
+  // another wake half a minute later.
+  void hasSweepCandidates().then((pending) => {
+    if (pending) scheduleBlobSweep(BLOB_SWEEP_SOON_MINUTES);
+  }, () => undefined);
 }
 
 // The popup's requests. Only from our own pages, like the other page
@@ -5468,6 +5562,11 @@ const compileParseChecker: ParseChecker = async (script) => {
 };
 setParseChecker(compileParseChecker);
 
+// Move format 1 script rows to blobs, once (docs/storage.md#format-2-migration).
+// Writes in this worker wait for it; pages ask through the message below.
+void storeFormatReady();
+installStoreFormatListener();
+installBlobSweep();
 void ensureLogIdsLoaded();
 // Number new scripts and collections before each registration sync
 // registers them, and reconcile the numbers at startup (see

@@ -14,13 +14,22 @@ Related modules:
 
 ## Schema
 
+> **Status: format 2 storage is in; its follow-ups aren't yet.** Rows
+> and blobs are stored as described here, but the store's reads still
+> return full scripts, reading every blob (`fromStorage` in
+> `src/extension/script-blobs.ts`). Next: readers that need only the
+> rows read only the rows, and registration skips the code on an
+> enable flip. Remove this note when those land.
+
 Key spaces in `chrome.storage.local`:
 
 | Key                    | Type                | Purpose |
 |------------------------|---------------------|---------|
 | `"collections"`         | `string[]`          | Index of collection IDs in display order. |
 | `"collection:<cid>"`    | `StoredCollection`  | Per-collection metadata. |
-| `"script:<scid>"`      | `StoredScript`      | Per-file content, parsed header, status. |
+| `"script:<scid>"`      | `StoredScript`      | Per-file header text, parsed header, status, and the hashes of its bodies. No bodies. |
+| `"blob:<sha256>"`      | `StoredBlob`        | One stored body (a script body, `@require` or `@resource`), shared by every row whose body has the same bytes (see [Content blobs](#content-blobs)). |
+| `"storeFormat"`        | `number`            | Storage format version, `2` once bodies moved to blobs. Absent means format 1 (see [Format 2 migration](#format-2-migration)). |
 | `"pathIcon:<pageUrl>"` | `SiteIconEntry`     | Per-page-URL favicon hit (deep-page HTML discovery; see [site-icons.md](site-icons.md)). |
 | `"siteIcon:<orig>"`    | `SiteIconEntry`     | Origin-level favicon fallback for an `https://host` (see [site-icons.md](site-icons.md)). |
 | `"iconUrl:<url>"`      | `SiteIconEntry`     | Cached `@icon`-declared icon, keyed by header URL (see [site-icons.md](site-icons.md)). |
@@ -47,6 +56,200 @@ browsing session, not the user's configuration.
 | `"smDevClaims"`          | `Record<tabId, SmDevClaim>` | sm-dev's tab claims: the run that controls each tab, and its lease (see [sm-dev-design.md](sm-dev-design.md#tab-claims)). |
 | `"smDevRuns"`            | `Record<runId, number>` | When each sm-dev run's lease runs out, for removing a crashed run's test collection (see [sm-dev-design.md](sm-dev-design.md#test-collections)). |
 | `"smDevLastSweep"`       | `number`                | When the test collections were last checked, to tell a gap (the computer slept) from runs gone. |
+
+### Storage format versions
+
+`storeFormat` names the layout of the script rows. Only the rows'
+bodies differ between versions; every other key is the same.
+
+| Version | `storeFormat` | Script bodies |
+|---------|---------------|---------------|
+| 1 | absent | Inline on each `script:` row: `bodyText`, `requires[i].source`, `resources[i].bytesBase64`. Each row carries its own copy. |
+| 2 | `2` | In shared `blob:<sha256>` rows (see [Content blobs](#content-blobs)). The row holds `bodyBlobRef`, and each require or resource entry a `blobRef`. |
+
+- **Current**: format 2. All writes produce it, whatever `storeFormat`
+  says.
+- **Reads accept both**, per body, so a format 1 row left behind (see
+  [Format 2 migration](#format-2-migration)) still reads normally.
+- **A new version** bumps `STORE_FORMAT` in
+  `src/extension/script-blobs.ts`, adds a row here, and gets its own
+  migration section.
+
+### Content blobs
+
+Script rows hold no bodies. Each body is a `blob:<sha256>` row, and the
+script row points at it by hash.
+
+- **Why**:
+  - Most readers (enable checks, URL matching, the popup, page
+    repaints) need only the rows. Without bodies, reading all rows is
+    small.
+  - A write that changes only metadata (the `enabled` flag, a version
+    check, a parse verdict, a move) rewrites a small row, not the
+    bodies.
+  - Change events (`storage.onChanged`) carry the old and new row to
+    every open context, so they get small too.
+  - Identical bytes are stored once: copies of a script whose headers
+    differ (a local copy with its changed `@version`, say), and
+    libraries several scripts `@require`.
+- **What goes in a blob**: a script's `bodyText`, each `@require`
+  body, each `@resource` body.
+  - Not the header: `leadingText` and `headerText` stay on the row.
+    They're small and rarely identical, so sharing them buys nothing.
+
+#### `StoredBlob` and `BlobRef`
+
+```ts
+// The stored body, at `blob:<hash>`.
+interface StoredBlob {
+  encoding: 'text' | 'base64';
+  data: string;
+}
+
+// What a row holds to point at one.
+interface BlobRef {
+  hash: string;   // SHA-256 hex: the blob's key, minus `blob:`
+  size: number;   // byte length of the content, not of what's stored
+}
+```
+
+- **Key**: the SHA-256 hex of the exact bytes the blob decodes to:
+  - `text`: the UTF-8 bytes of `data`.
+  - `base64`: the bytes `data` decodes to.
+  - SHA-256 collisions are treated as impossible; there's no
+    collision handling.
+- **Form is per blob, not per use.** Readers accept either `encoding`: a
+  text reader decodes a `base64` blob as UTF-8, and a resource reader
+  encodes a `text` blob to bytes. So a require and a resource with the
+  same bytes can share a key, whichever was written first.
+  - Writers use `text` for script bodies and requires (no base64
+    growth) and `base64` for resources.
+- **New `encoding` values** (compression, say) need no migration: readers
+  learn the value first, then writers start using it. Old and new
+  blobs can coexist.
+- **Sizes are on the refs**, so rows know every body's size without
+  reading a blob. `BlobRef.size` is the content's size; what a blob
+  actually costs in storage (after any compression) comes from
+  `getBytesInUse` on its key, which doesn't read the value either.
+- **No reference count** in the blob. Cleanup finds unused blobs by
+  scanning the rows.
+
+#### Not the `contentHash`
+
+The rows' `contentHash` fields stay change-detection tokens; the
+`BlobRef` hashes are separate fields.
+
+- A script's `contentHash` covers the whole file, header included.
+  Its blob holds only the body.
+- A file entry's `contentHash` is of the fetched bytes. A require is
+  stored as decoded text, and `TextDecoder` drops a leading byte-order
+  mark, so the stored bytes can differ.
+
+#### Writing and cleanup
+
+- **All writes go through `writeLocal`** in `script-store.ts`, which
+  splits each full script into its row plus blobs (`withBlobs`).
+- **The blobs and the row go out in one `set`**, which Chrome applies
+  as a unit, so no reader sees a row before its blobs.
+- **A blob already stored isn't written again**: same key, same bytes.
+  `withBlobs` checks the stored keys (`getKeys`, which reads no values).
+- **An unchanged body isn't hashed again**: `fromStorage` remembers
+  each body's ref by the object it built, so writing that object back
+  reuses it.
+  - Require and resource entries survive the `{...script}` copies the
+    store's writers make, so theirs are reused on most writes.
+  - A script's own body often isn't, and is hashed again. That's fast
+    next to resources, which would need base64 decoding first.
+- **Unused blobs** (after a remove, or a refresh that replaced a body)
+  are deleted by the service worker only (`sweepUnusedBlobs`):
+  - A blob goes once it's unused on two checks at least
+    `SWEEP_GRACE_MS` (2 minutes) apart. Each context has its own write
+    lock (see [The lock is per context](#the-lock-is-per-context)), so
+    a single check could race a page saving a row that points at a
+    blob it found already stored.
+  - A check runs inside the worker's write lock
+    (`sweepUnusedBlobsLocked`), so no write in the worker lands between
+    it reading the rows and deleting. That closes the race for most
+    writes, since most run in the worker; the wait covers the pages'.
+  - When each blob was first found unused is kept in session storage,
+    since the worker is often stopped between checks.
+  - **When it runs**: an alarm, set half a minute after a change that
+    leaves a row's blob unused by it (`droppedBlobRefs`). A check that
+    finds unused blobs not old enough yet sets another for when they
+    will be.
+    - At worker start, only if a check is pending (`hasSweepCandidates`).
+      An alarm on every start would buy each start, including the
+      alarm's own wake, another wake half a minute later.
+    - Not in tests: `resetAllState` pauses the alarm's checks, and tests
+      run them at simulated times through the test surface.
+  - A check reads the keys and the small rows, never a blob.
+  - **Logging**: a removal is always logged (`removed N stored file(s)
+    no script uses`); each check's counts, and when the next one runs,
+    only with debug logging on.
+- **A row whose blob is missing**, or in an encoding this build
+  doesn't know, reads as an `invalid` script (`MISSING_BLOB_MESSAGE`),
+  never a crash.
+  - The next refresh repairs it because the row is `invalid`, and an
+    invalid row is always fetched again.
+  - As a backstop, a missing body also drops the row's validators
+    (`contentHash`, `fsMtime`, the HTTP ones), and a missing `@require`
+    / `@resource` drops that entry, which a refresh fetches like a new
+    one.
+  - Only readers that load bodies see this. The match index reads the
+    small rows, so until a refresh rewrites the row it still counts the
+    script as one that should run.
+
+### Format 2 migration
+
+Format 1 stored bodies inline on the script rows. The migration moves
+them to blobs.
+
+- **What moves**, per script row:
+  - `bodyText` → a blob; the row gets `bodyBlobRef`.
+  - each `requires[i].source` → a blob; the entry gets `blobRef`.
+  - each `resources[i].bytesBase64` → a blob; the entry gets `blobRef`.
+- **Who runs it**: the service worker, at startup (`migrateToBlobs`,
+  via `storeFormatReady` in `script-store.ts`), after the key-rename
+  migration below. Then it sets `storeFormat` to `2`.
+- **Reads don't wait**: they accept either format, so a format 1 row
+  reads as it is.
+- **Writes and removes wait**, in every context. Otherwise a page could
+  save a row (an enable toggle, say) that the migration then overwrites
+  with the converted copy of what it read earlier.
+  - In the worker, they await the migration itself.
+  - A page finds `storeFormat` already `2`, or else sends
+    `sm:storeFormatReady` and waits for the worker's answer. The
+    message also wakes the worker, which migrates as it starts.
+  - The page asks twice before giving up: a worker stopped
+    mid-migration leaves the first message unanswered, and the second
+    wakes a new one.
+- **Batches**: rows convert in `set`s of a few dozen. Each `set`
+  replaces its rows' inline bodies with blobs, so storage use barely
+  moves within a call, and blobs ride in the same call as their rows.
+- **Re-running is safe**: converted rows are skipped, so an interrupted
+  run finishes on the next worker start.
+- **A failed run** (storage full, say) is logged and leaves the rest in
+  format 1. Writes go on in format 2 meanwhile.
+  - It isn't retried until the next browser session (a flag in session
+    storage), so a store too full to convert isn't rescanned on every
+    worker wake.
+  - A page that gets no answer even the second time logs that, and asks
+    again before its next write. The write it was about to make goes
+    ahead unguarded.
+- **Logging**, in the worker's console:
+  - A run that moves anything always logs: how many scripts it's
+    moving, then how many it moved, the blobs it wrote, and how long
+    it took. A failed run says how far it got.
+  - Skipping a retry after a failure this session is always logged.
+  - Finding nothing to move (format 2 already in place at a worker
+    start, or a new profile) only with debug logging on.
+- **Format 1 rows after format 2**: the key-rename migration below runs
+  in every context and writes rows as it read them, so it could put
+  back a format 1 row after `storeFormat` is `2`. Tests write such rows
+  too. Readers handle them, and the next write of the row converts it.
+  - The blobs the migration wrote for such a row are then unused, and
+    cleanup deletes them.
+- **No way back**: an older build can't read format 2.
 
 ### Legacy key migration (temporary)
 
@@ -193,7 +396,12 @@ keys would look like a wiped profile.
   `If-None-Match` / `If-Modified-Since` so the server can answer 304
   instead of resending the body. (http(s):// collections only; see
   [http-collections.md](http-collections.md).)
-- `headerText`, `bodyText` — raw split of the file.
+- `leadingText?`, `headerText` — the file up to the end of its
+  metadata block: any text before it, then the block itself.
+- `bodyBlobRef?` — `BlobRef` to the body (everything after the metadata
+  block): its hash, the key of its [blob](#content-blobs), and its
+  size. Joined with the two fields above, the body gives back the exact
+  file. Absent only on rows that have never successfully loaded.
 - `header` — `ParsedHeader | null` (see [script-viewer.md](script-viewer.md)).
 - `matching` — `{matches, excludes, includes}` distilled from the
   header (used eventually by injection).
@@ -201,11 +409,15 @@ keys would look like a wiped profile.
 - `enabled` — user-controlled per-script toggle. Preserved across
   refreshes; a script's effective enabled state is
   `collection.enabled && script.enabled`.
-- `requires?` — prefetched `@require` bodies, inline as an array of
-  `StoredRequire` rows (`{ref, url, source, size, contentHash,
+- `requires?` — prefetched `@require` files, as an array of
+  `StoredRequire` entries (`{ref, url, blobRef, size, contentHash,
   loadedAt, httpEtag?, httpLastModified?}`) in declaration order,
-  deduped by canonical URL. Absent when the script declares no
-  `@require`. See [requires.md](requires.md).
+  deduped by canonical URL. Each body is a [blob](#content-blobs).
+  Absent when the script declares no `@require`. See
+  [requires.md](requires.md).
+- `resources?` — prefetched `@resource` files, as `StoredResource`
+  entries with their bodies in blobs the same way. See
+  [resources.md](resources.md#storage-shape).
 - `iconCheck?` — what the last check of the script's `@icon` found:
   `{ref, local?, message?}`, with `message` set when the icon can't be
   shown. Kept so a background refresh needn't download the icon again.
@@ -247,7 +459,7 @@ update-probe verdict to render the Status column.
   `script-store.ts`), a syntax error, a fetch failure, or a dependency
   that wouldn't load. The content-derived ones also carry an
   `errorLocation` — see [diagnostics.md](diagnostics.md).
-On invalid we **preserve the prior content** (headerText, bodyText,
+On invalid we **preserve the prior content** (headerText, bodyBlobRef,
 parsed header, matching). The viewer keeps working. The injector runs
 the script if and only if `enabled` is true and `status` is `ok` —
 `invalid` rows never inject (the current parse result is bad, so the
@@ -736,9 +948,21 @@ The Options page's read-only breakdown of `chrome.storage.local`
   values, icons, scripts run by sm-dev, collections, other.
 - **Session storage isn't shown**: it holds only this session's logs
   and tab state, with its own quota, and is nowhere near filling.
-- **Split script rows**: `@require` / `@resource` bodies are stored
-  inline in `script:` rows, so their JSON is subtracted from the row
-  and counted under their own kind.
+- **Blobs by kind**: each `blob:` row counts once, under the kind of
+  the first row found pointing at it (a script body, a `@require`, a
+  `@resource`).
+  - The count says `(N unique)` when sharing stores fewer bodies than
+    there are files: `12 files (9 unique)`.
+  - Files not stored as blobs (never loaded, or not yet migrated) count
+    as unique, so they can't make the count look like sharing. Each
+    kind counts its own distinct blobs, even one shared with another
+    kind.
+  - A blob nothing points at (left by a remove or a replaced body,
+    until cleanup deletes it) counts under **Stored files no script
+    uses**.
+  - A format 1 row not yet migrated carries its `@require` /
+    `@resource` bodies inline, so their JSON is subtracted from the row
+    and counted under their own kind.
 - **Sizes** are key + JSON value in UTF-8 bytes, which is how Chrome
   charges. The total comes from `getBytesInUse`, and **Other** takes
   the difference so the rows always add up.
@@ -750,6 +974,16 @@ The Options page's read-only breakdown of `chrome.storage.local`
   storage-full banner uses the same wording (`formatStorageUsage`).
 - **Repaint** on any storage change, at most once a second, since each
   paint reads every row.
+
+#### Later: without reading every row
+
+The page still reads the whole store. Each `BlobRef` carries its hash
+and size, so a later version could skip the blobs:
+
+- **Per kind**, from the refs on the rows: files and size as if
+  nothing were shared, and the unique count and size.
+- **Stored bodies**: the real cost of all `blob:` rows, from `getKeys`
+  and `getBytesInUse` on those keys, which read no values.
 
 ### Write failure during an install: take the seed back out
 

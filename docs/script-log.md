@@ -777,9 +777,9 @@ Behavior:
 - Entries older than the current `loadedAt` carry a tooltip saying so,
   so a line that doesn't match reads as expected rather than as a bug.
 - The previous layout cannot be recovered to do better. A refresh
-  overwrites `bodyText` and every `requires[].source` in place on the
-  same row, and a `LogEntry` stores only timestamp / level / source /
-  tabId / message.
+  points the row at the new body and `@require` blobs, keeping no
+  reference to the old ones (which cleanup may delete), and a
+  `LogEntry` stores only timestamp / level / source / tabId / message.
 - The staleness signal is not airtight: a tab still running the
   previous body can log an entry with a fresh timestamp, which reads as
   current. Closing that would need the wrapper to stamp each report

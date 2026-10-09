@@ -72,6 +72,9 @@ details live in the topic-specific docs linked below.
   - Building one script row from its text (header, matching,
     `@require` loading, parse check) is in `src/script-build.ts`, which
     touches no storage, so the harness runs it under Node.
+  - Script bodies are stored apart from the rows, in shared
+    `blob:<sha256>` rows (`src/extension/script-blobs.ts`; see
+    [storage.md](storage.md#content-blobs)).
 - **Script updater** (`src/extension/script-updater.ts`) — the single entry
   point every refresh path goes through. Manual Refresh buttons call
   it synchronously; the background SW calls it opportunistically when

@@ -94,6 +94,12 @@ export interface SmApi {
   // mark the open pages as loaded before the extension started.
   simulateExtensionStart(): Promise<void>;
   resetAllState(): Promise<void>;
+  // Run the storage format migration again, as a worker start would.
+  rerunStoreMigration(): Promise<void>;
+  // As a worker just started: the next write, or a page's message, runs it.
+  forgetStoreMigration(): Promise<void>;
+  // One unused-blob check; `now` steps past the wait between checks.
+  sweepUnusedBlobs(now?: number): Promise<{ checked: number; removed: number; waiting: number }>;
   // Forget when each script was last checked, so the next
   // opportunistic check isn't skipped by `UPDATE_MIN_INTERVAL_MS`.
   // Needed by tests that drive two checks of the same script inside

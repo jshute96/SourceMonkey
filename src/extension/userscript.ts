@@ -3765,9 +3765,9 @@ function resolveLogRef(ref: StackRef, timestamp: number): ResolvedRef {
   // The tooltip says the entry is older than the body it was mapped
   // against, so a mismatch reads as expected rather than as a bug.
   //
-  // The old layout cannot be recovered to do better: a refresh
-  // overwrites `bodyText` and every `requires[].source` in place, and
-  // a `LogEntry` stores no layout of its own.
+  // The old layout cannot be recovered to do better: a refresh points
+  // the row at the new body and `@require` blobs, keeping no reference
+  // to the old ones, and a `LogEntry` stores no layout of its own.
   //
   // The staleness signal is not airtight either: an already-open tab
   // still running the previous body can log an entry with a fresh

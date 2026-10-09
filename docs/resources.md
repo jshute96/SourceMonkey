@@ -38,8 +38,10 @@ disk next to the script — same rule and same gate as `@require`; see
 
 ## Storage shape
 
-Each `StoredScript` carries an inline `resources?: StoredResource[]`
-array — declaration order, deduplicated by name.
+Each `StoredScript` carries a `resources?: StoredResource[]` array —
+declaration order, deduplicated by name. The bodies themselves are
+[content blobs](storage.md#content-blobs) (format 2; see the status
+note there).
 
 Per-entry fields:
 
@@ -49,8 +51,11 @@ Per-entry fields:
   see [supported-headers.md](supported-headers.md).
 - `ref` — verbatim from the metadata line.
 - `url` — canonical resolved URL.
-- `bytesBase64` — body bytes, base64-encoded for JSON-friendly
-  storage in `chrome.storage.local`.
+- `blobRef` — `{hash, size}` of the body bytes: the hash is the key of
+  its blob. Written
+  as base64 for JSON-friendly storage in `chrome.storage.local`, but a
+  blob first written as text (by a `@require` with the same bytes) is
+  read back as bytes just the same.
 - `contentType` — server-reported Content-Type (lowercased), or `''`
   when unavailable (file:// XHR often omits it).
 - `size`, `contentHash`, `loadedAt`, `httpEtag?`, `httpLastModified?`,

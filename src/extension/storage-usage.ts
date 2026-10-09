@@ -12,6 +12,7 @@
 // logs and tab state, has its own quota, and is nowhere near filling.
 
 import { COLLECTION_PREFIX, COLLECTIONS_INDEX_KEY, SCRIPT_PREFIX } from './structural-keys.js';
+import { BLOB_PREFIX } from './script-blobs.js';
 import { VALUE_PREFIX as GM_VALUE_PREFIX } from './gm-values.js';
 import { isIconCacheKey } from './site-icon.js';
 import {
@@ -37,6 +38,8 @@ function rowBytes(key: string, value: unknown): number {
   return encoder.encode(key).length + jsonBytes(value);
 }
 
+type Kind = 'script' | 'require' | 'resource';
+
 function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
 }
@@ -50,9 +53,14 @@ function startsWithAny(key: string, prefixes: readonly string[]): boolean {
   return prefixes.some((p) => key.startsWith(p));
 }
 
-// `chrome.storage.local`. A script row carries its `@require` and
-// `@resource` bodies inline, so those are split out of the row rather
-// than counted as script text.
+// `chrome.storage.local`. Bodies live in shared `blob:` rows
+// (docs/storage.md#content-blobs); each is counted once, under the kind
+// of the first row found pointing at it: a script body, a `@require`,
+// or a `@resource`. A blob nothing points at (left by a remove, or a
+// refresh that replaced a body, until cleanup deletes it)
+// gets its own row. A format 1 row, not yet migrated, carries its
+// `@require` / `@resource` bodies inline, so those are split out of the
+// row instead.
 export function summarizeLocalStorage(rows: Record<string, unknown>): UsageRow[] {
   let scripts = 0, scriptBytes = 0;
   let requires = 0, requireBytes = 0;
@@ -63,21 +71,51 @@ export function summarizeLocalStorage(rows: Record<string, unknown>): UsageRow[]
   let scratch = 0, scratchBytes = 0;
   let collections = 0, collectionBytes = 0;
   let otherBytes = 0;
+  // Blob key → the kind whose size it counts under (the first found).
+  const claimed = new Map<string, Kind>();
+  // Per kind: files stored as blobs, and their distinct blobs. A blob
+  // shared across kinds is distinct in each, though sized under one.
+  const withRef = { script: 0, require: 0, resource: 0 };
+  const distinct = { script: new Set<string>(), require: new Set<string>(), resource: new Set<string>() };
+  const claim = (ref: unknown, kind: Kind) => {
+    const hash = (ref as { hash?: unknown } | undefined)?.hash;
+    if (typeof hash !== 'string') return;
+    const key = BLOB_PREFIX + hash;
+    withRef[kind]++;
+    distinct[kind].add(key);
+    if (!claimed.has(key)) claimed.set(key, kind);
+  };
 
   for (const [key, value] of Object.entries(rows)) {
+    if (!key.startsWith(SCRIPT_PREFIX)) continue;
+    const row = (value ?? {}) as { bodyBlobRef?: unknown; requires?: unknown[]; resources?: unknown[] };
+    const req = Array.isArray(row.requires) ? row.requires as { source?: unknown; blobRef?: unknown }[] : [];
+    const res = Array.isArray(row.resources) ? row.resources as { bytesBase64?: unknown; blobRef?: unknown }[] : [];
+    const inlineReq = req.filter((r) => typeof r.source === 'string');
+    const inlineRes = res.filter((r) => typeof r.bytesBase64 === 'string');
+    const reqBytes = inlineReq.length ? jsonBytes(inlineReq) : 0;
+    const resBytes = inlineRes.length ? jsonBytes(inlineRes) : 0;
+    scripts++;
+    scriptBytes += rowBytes(key, value) - reqBytes - resBytes;
+    requires += req.length;
+    requireBytes += reqBytes;
+    resources += res.length;
+    resourceBytes += resBytes;
+    claim(row.bodyBlobRef, 'script');
+    for (const r of req) claim(r.blobRef, 'require');
+    for (const r of res) claim(r.blobRef, 'resource');
+  }
+
+  let unused = 0, unusedBytes = 0;
+  for (const [key, value] of Object.entries(rows)) {
+    if (key.startsWith(SCRIPT_PREFIX)) continue;
     const bytes = rowBytes(key, value);
-    if (key.startsWith(SCRIPT_PREFIX)) {
-      const row = (value ?? {}) as { requires?: unknown[]; resources?: unknown[] };
-      const req = Array.isArray(row.requires) ? row.requires : [];
-      const res = Array.isArray(row.resources) ? row.resources : [];
-      const reqBytes = req.length ? jsonBytes(req) : 0;
-      const resBytes = res.length ? jsonBytes(res) : 0;
-      scripts++;
-      scriptBytes += bytes - reqBytes - resBytes;
-      requires += req.length;
-      requireBytes += reqBytes;
-      resources += res.length;
-      resourceBytes += resBytes;
+    if (key.startsWith(BLOB_PREFIX)) {
+      const kind = claimed.get(key);
+      if (kind === 'script') scriptBytes += bytes;
+      else if (kind === 'require') requireBytes += bytes;
+      else if (kind === 'resource') resourceBytes += bytes;
+      else { unused++; unusedBytes += bytes; }
     } else if (isIconCacheKey(key)) {
       icons++;
       iconBytes += bytes;
@@ -99,10 +137,18 @@ export function summarizeLocalStorage(rows: Record<string, unknown>): UsageRow[]
     }
   }
 
+  // "(N unique)" when files stored as blobs share some. A file not
+  // stored as a blob (never loaded, or not yet migrated) counts as
+  // unique, so it can't make the count look like sharing.
+  const total: Record<Kind, number> = { script: scripts, require: requires, resource: resources };
+  const withUnique = (text: string, kind: Kind) => {
+    const unique = total[kind] - (withRef[kind] - distinct[kind].size);
+    return unique < total[kind] ? `${text} (${unique} unique)` : text;
+  };
   return [
-    { label: 'Scripts', count: plural(scripts, 'script'), bytes: scriptBytes },
-    { label: '@require files', count: plural(requires, 'file'), bytes: requireBytes },
-    { label: '@resource files', count: plural(resources, 'file'), bytes: resourceBytes },
+    { label: 'Scripts', count: withUnique(plural(scripts, 'script'), 'script'), bytes: scriptBytes },
+    { label: '@require files', count: withUnique(plural(requires, 'file'), 'require'), bytes: requireBytes },
+    { label: '@resource files', count: withUnique(plural(resources, 'file'), 'resource'), bytes: resourceBytes },
     {
       label: 'Script values (GM_setValue)',
       count: `${plural(values, 'value')} in ${plural(valueScripts.size, 'script')}`,
@@ -111,6 +157,7 @@ export function summarizeLocalStorage(rows: Record<string, unknown>): UsageRow[]
     { label: 'Site and script icons', count: plural(icons, 'icon'), bytes: iconBytes },
     { label: 'Scripts run by sm-dev', count: plural(scratch, 'script'), bytes: scratchBytes },
     { label: 'Collections', count: plural(collections, 'collection'), bytes: collectionBytes },
+    { label: 'Stored files no script uses', count: plural(unused, 'file'), bytes: unusedBytes },
     { label: 'Other', count: '', bytes: otherBytes },
   ];
 }

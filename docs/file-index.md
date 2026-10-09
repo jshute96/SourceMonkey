@@ -153,6 +153,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/popup.ts` | Toolbar popup controller: renders the worker's view, toggles scripts and collections, menus, menu commands, reloads |
 | `src/extension/popup-view.ts` | Pure model of the toolbar popup: rows by collection, statuses, tooltips, reload banner; popup ↔ worker messages |
 | `src/extension/script-enablement.ts` | Enable toggles that keep one copy of each script active, restore displaced copies, and run Enable all |
+| `src/extension/script-blobs.ts` | Storage format 2: splits script rows from their bodies in shared `blob:<sha256>` rows, reads them back, migrates format 1, deletes unused blobs |
 | `src/extension/script-keys.ts` | The identity and location keys that say two rows are copies of one script, shared with the store |
 | `src/extension/copy-preference.ts` | Pure order between copies of a script: within one collection, and anywhere (the popup's shown copy) |
 | `src/extension/solo-click.ts` | Enable checkbox tooltip with its multi-enable hint, and the Ctrl/Cmd-click reader that opts out of the sweep |
@@ -185,7 +186,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/file-access.ts` | "Allow access to file URLs" probe plus the shared "File access is disabled." banner and its chrome://extensions link |
 | `src/extension/github-provider.ts` | GitHub-only provider integration: URL parsing, default-branch resolution, blob→raw rewrite, Contents-API recursive dir scanner, per-script raw/display URL builders |
 | `src/extension/structural-keys.ts` | Storage key layout of the collection index, collection and script rows, and `touchesStructuralRows` |
-| `src/extension/script-store.ts` | Persistent userscript store (chrome.storage.local) plus load/refresh pipeline, addCollection / createCollection / installScript / moveScript / setCollectionOptions / probeCollectionLocation, refreshAllCollections, the enable write that stamps active times, membership reconcile, first-run flag + DEFAULT_COLLECTIONS, legacy `source:*` key migration |
+| `src/extension/script-store.ts` | Persistent userscript store (chrome.storage.local) plus load/refresh pipeline, addCollection / createCollection / installScript / moveScript / setCollectionOptions / probeCollectionLocation, refreshAllCollections, the enable write that stamps active times, membership reconcile, first-run flag + DEFAULT_COLLECTIONS, legacy `source:*` key migration, the storage format gate |
 | `src/extension/script-updater.ts` | Single entry point for refresh; rate-limits opportunistic background checks, and mirrors every load/refresh outcome into the per-script Log |
 | `src/extension/version-probe-fetch.ts` | Fetching half of update probes — reads a probe URL's `@version`, with bounded size, timeout, and fan-out |
 | `src/extension/collection-display.ts` | Collection-display helpers: bubble key (kind + scheme) and its tooltip, per-row scheme chip, display-name inference, name-in-use + reserved-name checks, manifest flag, anchor id, disabled-collection tooltip |
@@ -197,7 +198,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/tab-status.ts` | Pure helpers for per-tab script status (expected ∪ actual classification), badge colors, and per-tab document LRU |
 | `src/extension/toolbar-summary.ts` | Pure: the toolbar badge's count and color and its tooltip's status lines, from the popup's view |
 | `src/extension/missing-scripts.ts` | Log warnings for scripts that matched a page but never started |
-| `src/extension/storage-usage.ts` | Sorts storage rows into the Options page's usage table: scripts, `@require`/`@resource` files, GM values, icons |
+| `src/extension/storage-usage.ts` | Sorts storage rows into the Options page's usage table: scripts, `@require`/`@resource` files, shared bodies, GM values, icons |
 | `src/extension/storage-scan.ts` | Wrapper for every full-namespace `storage.local.get(null)`, naming each scan and its cost under debug logging |
 | `src/extension/concurrency.ts` | Bounded fan-out helper plus the nested per-collection / per-script, probe, and directory-scan limits |
 | `src/extension/connect-grants.ts` | The user's answers about a script's undeclared `@connect` hosts: allowed (local storage) and denied (session) |
@@ -329,6 +330,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/sandbox-csp.spec.ts` | Pages sent with a CSP `sandbox` header: MAIN-world scripts skipped, USER_SCRIPT-world ones run, the Log hint |
 | `tests/e2e/reload-without-scripts.spec.ts` | "Reload page with no userscripts" and its per-script forms: one-shot skips, grey NOT_LOADED badge, info Log entries |
 | `tests/e2e/popup.spec.ts` | The toolbar popup: rows by collection, toggles, removed scripts and the reload banner, exclusive checkbox and shown copy, collection menu, menu commands, single vs double click |
+| `tests/e2e/script-blobs.spec.ts` | Storage format 2 end to end: shared bodies and requires stored once, format 1 rows migrated and still running, replaced bodies cleaned up |
 | `tests/e2e/script-enablement.spec.ts` | One active copy per script: toggles, collection on / off restores, adding a collection, new copies, Enable all |
 | `tests/e2e/focus-refresh.spec.ts` | Focus-triggered refresh: a tab switch or a page's own focus report picks up a local edit; http scripts stay unfetched |
 | `tests/e2e/document-start-early.spec.ts` | A document-start script runs before the page's first inline script; a live sm-dev claim makes every script ask |
@@ -373,7 +375,8 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/directories.test.mjs` | Unit tests for the `file://` listing parser and path/URL helpers |
 | `tests/unit/github-provider.test.mjs` | Unit tests for the GitHub provider: URL parsing, blob→raw rewrite, default-branch resolution, Contents-API directory scanner |
 | `tests/unit/github-auth.test.mjs` | Unit tests for the GitHub auth helper: host-gated `Authorization` header, no token → no header, never leaks to non-GitHub hosts |
-| `tests/unit/storage-usage.test.mjs` | Storage-usage breakdown: script rows split into body / requires / resources, key grouping, remainder, whole-KB rounding |
+| `tests/unit/storage-usage.test.mjs` | Storage-usage breakdown: blobs counted once by kind, format 1 rows split, key grouping, remainder, whole-KB rounding |
+| `tests/unit/script-blobs.test.mjs` | Storage format 2: rows to blobs and back, shared bytes, missing blobs, writes skipping stored blobs, the migration and its retries, cleanup timing |
 | `tests/unit/userscript-header.test.mjs` | Unit tests for the metadata-block parser + header/body splitter |
 | `tests/unit/script-store.test.mjs` | Unit tests for the pure helpers in the script store (merge, validate, build, compare) |
 | `tests/unit/script-updater.test.mjs` | Unit tests for the updater's rate-limit / concurrency gate, its Log-tab outcome entries, and the startup replay |
