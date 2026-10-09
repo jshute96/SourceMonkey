@@ -211,12 +211,12 @@ The rows' `contentHash` fields stay change-detection tokens; the
   probes, moves and removals work on rows this way.
 - **Reading every row** lists the keys and reads only the wanted ones
   (`scanStorageRows`), rather than a `get(null)` that returns every
-  blob and GM value too. The match index, the log label table, the
-  registration sync, the enable toggles' search for related copies,
-  and the collections page do this.
-- **In the worker**, the store reads collection and script rows, and
-  the active times, from its row cache once something has loaded it
-  ([worker-writes.md](worker-writes.md#the-row-cache)).
+  blob and GM value too. The collections page does this, and so does
+  the worker's row cache when it loads.
+- **In the worker**, the store, the registration sync, the match index,
+  the log label table and sticky numbers read collection and script
+  rows, and the active times, from the row cache, and related copies
+  come from its indexes ([worker-writes.md](worker-writes.md#the-row-cache)).
 - **Who reads bodies**:
   - The viewer, for the script on screen, and the compare page.
   - Refresh, for the copy it starts from, whose bodies it reuses when

@@ -89,6 +89,7 @@ import {
 import { grantedSubsystems, resolveGrants } from '../gm-api-catalog.js';
 import { resolveScriptWorld, type InjectionWorld } from '../script-world.js';
 import { scanStorageRows } from './storage-scan.js';
+import { cachedRows, sharedRows } from './row-cache.js';
 import { isScratchUrl, scratchRunOf } from './directories.js';
 import { evalHookKey, withEvalHook } from '../eval-hook.js';
 import { canonicalMatchPatterns, hostEndsInTld, matchPatternProblem, tldCoarseGlob } from '../url-match.js';
@@ -1318,8 +1319,13 @@ async function readAll(): Promise<{ scripts: ScriptMeta[]; collections: Map<stri
   // See match-index's loadAll: the pre-rename key spelling has to be
   // moved before anything reads the structural rows directly.
   await ensureCollectionKeysMigrated();
-  const all = await scanStorageRows('registration sync', (k) =>
-    k.startsWith(SCRIPT_PREFIX) || k.startsWith(COLLECTION_PREFIX) || k === SCRIPT_NUMBERS_KEY);
+  // From the worker's row cache (frozen rows, read only), with the
+  // numbers row, which it doesn't keep, read beside it.
+  const isRow = (k: string): boolean => k.startsWith(SCRIPT_PREFIX) || k.startsWith(COLLECTION_PREFIX);
+  const cached = await sharedRows(isRow);
+  const all = cached
+    ? { ...cached, ...await chrome.storage.local.get(SCRIPT_NUMBERS_KEY) }
+    : await scanStorageRows('registration sync', (k) => isRow(k) || k === SCRIPT_NUMBERS_KEY);
   const scripts: ScriptMeta[] = [];
   const collections = new Map<string, StoredCollection>();
   for (const [k, v] of Object.entries(all)) {
@@ -1600,6 +1606,8 @@ async function readRows(
     ...[...collectionIds].map((id) => COLLECTION_PREFIX + id),
   ];
   if (keys.length === 0) return {};
+  const cached = cachedRows(keys);
+  if (cached) return cached.found;
   return await chrome.storage.local.get(keys);
 }
 

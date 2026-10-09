@@ -12,6 +12,7 @@
 // - A removed item's number is held back for a while before reuse, so an
 //   id someone saw a moment ago never names a different item.
 
+import { sharedRows } from './row-cache.js';
 import { assertWorkerContext } from '../run-context.js';
 import { isSmDevCollection } from './directories.js';
 import { ensureCollectionKeysMigrated, type StoredCollection } from './script-store.js';
@@ -153,18 +154,25 @@ let assigning: Promise<AllNumbers | null> = Promise.resolve(null);
  * other. Service worker only: it is the rows' one writer.
  *
  * Runs before every registration sync, so it reads only what it needs:
- * the keys, the small collection rows and the numbers rows, never the
- * script rows with their bodies.
+ * which scripts and collections exist (from the worker's row cache,
+ * else the keys and the collection rows) and the numbers rows.
  */
 export function assignNumbers(): Promise<AllNumbers | null> {
   const run = assigning.then(async () => {
     // Collection rows may still be under their old key spelling.
     await ensureCollectionKeysMigrated();
-    const keys = await chrome.storage.local.getKeys();
+    // Which scripts and collections exist: from the worker's row cache
+    // when it's on (frozen rows, read only), else from storage.
+    const isRow = (k: string): boolean => k.startsWith('script:') || k.startsWith('collection:');
+    const cached = await sharedRows(isRow);
+    const keys = cached ? Object.keys(cached) : await chrome.storage.local.getKeys();
     const scriptIds = keys.filter((k) => k.startsWith('script:')).map((k) => k.slice('script:'.length));
-    const got = await chrome.storage.local.get([
-      ...keys.filter((k) => k.startsWith('collection:')), SCRIPT_NUMBERS_KEY, COLLECTION_NUMBERS_KEY,
-    ]);
+    const got = {
+      ...(cached ? Object.fromEntries(Object.entries(cached).filter(([k]) => k.startsWith('collection:'))) : {}),
+      ...await chrome.storage.local.get([
+        ...(cached ? [] : keys.filter((k) => k.startsWith('collection:'))), SCRIPT_NUMBERS_KEY, COLLECTION_NUMBERS_KEY,
+      ]),
+    };
     const collections = Object.entries(got)
       .filter(([k]) => k.startsWith('collection:'))
       .map(([, v]) => v as StoredCollection);

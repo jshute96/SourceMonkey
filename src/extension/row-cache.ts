@@ -12,14 +12,19 @@
 //     from anywhere else) drops the copy, and the next full read loads
 //     it again from storage.
 //
-// Loaded only by a read that wants every row anyway (`cachedScriptRows`,
-// `allCachedRows`). A point read before then goes to storage, so a
-// worker that wakes for one row doesn't pay for all of them.
+// Loaded by the first read that wants every row: at a worker start, the
+// match index, the log labels, sticky numbers or the registration sync,
+// which share the one load. A point read before then goes to storage.
 //
-// Rows go out as copies, and are stored as the JSON storage would keep,
-// so a caller that changes a row it read can't change the cache.
+// Rows are stored frozen, as the JSON storage would keep. Most reads hand
+// out copies, which a caller may change. `sharedRows` hands out the
+// frozen rows themselves, for the worker's own readers that only read
+// (the registration sync, the match index, the log labels, the
+// numbers): a change to one throws, so it can't reach the cache.
 
 import { ENABLEMENT_TIMES_KEY, isStructuralKey, SCRIPT_PREFIX } from './structural-keys.js';
+import { identityKey, locationKey } from './script-keys.js';
+import type { ParsedHeader } from '../userscript-header.js';
 import { scanStorageRows } from './storage-scan.js';
 import { dlog } from '../debug-log.js';
 
@@ -76,8 +81,12 @@ function stableJson(value: unknown): string {
 
 function apply(key: string, json: string, seq: number): void {
   if (!rows || seq <= loadedAtSeq || seq <= (applied.get(key) ?? 0)) return;
+  unindex(key);
   if (json === REMOVED) rows.delete(key);
-  else rows.set(key, JSON.parse(json));
+  else {
+    rows.set(key, deepFreeze(JSON.parse(json)));
+    index(key);
+  }
   applied.set(key, seq);
 }
 
@@ -85,7 +94,89 @@ function drop(reason: string): void {
   if (rows) dlog(`[SourceMonkey] row cache dropped: ${reason}`);
   rows = null;
   applied.clear();
+  byLocation.clear();
+  byIdentity.clear();
+  byCollection.clear();
   generation++;
+}
+
+// ---------- Indexes ----------
+//
+// Script ids by the two keys that make copies of one script related
+// (script-identity.ts): the canonical location, and `@namespace` +
+// `@name`. Kept with the rows, so they change exactly when a row does.
+
+const byLocation = new Map<string, Set<string>>();
+const byIdentity = new Map<string, Set<string>>();
+// And by the collection each row names (`collectionId`), which isn't
+// always one that lists it (see `reconcileScriptMembership`).
+const byCollection = new Map<string, Set<string>>();
+
+type IndexedRow = { id?: string; fileUrl?: string; header?: ParsedHeader | null; collectionId?: string };
+
+function keysOf(row: IndexedRow): { location: string | null; identity: string | null } {
+  return {
+    location: typeof row.fileUrl === 'string' ? locationKey(row.fileUrl) : null,
+    identity: identityKey(row.header ?? null),
+  };
+}
+
+function addTo(map: Map<string, Set<string>>, key: string | null, id: string): void {
+  if (key === null) return;
+  let ids = map.get(key);
+  if (!ids) map.set(key, ids = new Set());
+  ids.add(id);
+}
+
+function removeFrom(map: Map<string, Set<string>>, key: string | null, id: string): void {
+  if (key === null) return;
+  const ids = map.get(key);
+  if (!ids) return;
+  ids.delete(id);
+  if (ids.size === 0) map.delete(key);
+}
+
+function index(key: string): void {
+  if (!key.startsWith(SCRIPT_PREFIX)) return;
+  const row = rows?.get(key) as IndexedRow | undefined;
+  if (!row?.id) return;
+  const { location, identity } = keysOf(row);
+  addTo(byLocation, location, row.id);
+  addTo(byIdentity, identity, row.id);
+  addTo(byCollection, row.collectionId ?? null, row.id);
+}
+
+function unindex(key: string): void {
+  if (!key.startsWith(SCRIPT_PREFIX)) return;
+  const row = rows?.get(key) as IndexedRow | undefined;
+  if (!row?.id) return;
+  const { location, identity } = keysOf(row);
+  removeFrom(byLocation, location, row.id);
+  removeFrom(byIdentity, identity, row.id);
+  removeFrom(byCollection, row.collectionId ?? null, row.id);
+}
+
+// The ids of every script row naming collection `id`, loading the cache
+// first if needed. Null when the cache isn't on in this context.
+export async function scriptIdsInCollection(id: string): Promise<string[] | null> {
+  if (!(await loaded())) return null;
+  return [...(byCollection.get(id) ?? [])];
+}
+
+// The ids of every stored copy related to any of `scripts` (the same
+// location, or the same `@namespace` + `@name`), themselves included,
+// loading the cache first if needed. Null when the cache isn't on in
+// this context: the caller scans the rows itself.
+export async function relatedScriptIds(scripts: readonly IndexedRow[]): Promise<Set<string> | null> {
+  if (!(await loaded())) return null;
+  const out = new Set<string>();
+  for (const script of scripts) {
+    if (script.id) out.add(script.id);
+    const { location, identity } = keysOf(script);
+    for (const id of (location !== null && byLocation.get(location)) || []) out.add(id);
+    for (const id of (identity !== null && byIdentity.get(identity)) || []) out.add(id);
+  }
+  return out;
 }
 
 // Run one of this context's writes, `entries` being its cached keys and
@@ -205,7 +296,11 @@ async function loaded(): Promise<Map<string, unknown> | null> {
         loads++;
         const read = await scanStorageRows('row cache', isCachedKey);
         if (generation !== start) continue;
-        rows = new Map(Object.entries(read));
+        rows = new Map(Object.entries(read).map(([k, v]) => [k, deepFreeze(v)]));
+        byLocation.clear();
+        byIdentity.clear();
+        byCollection.clear();
+        for (const key of rows.keys()) index(key);
         loadedAtSeq = startSeq;
         applied.clear();
         return rows;
@@ -252,6 +347,25 @@ async function cachedRowsWhere(keep: (key: string) => boolean): Promise<Record<s
     if (keep(key)) out[key] = structuredClone(value);
   }
   return out;
+}
+
+// Every cached row whose key `keep` accepts, the frozen rows themselves
+// rather than copies, loading the cache first if needed. Null when the
+// cache isn't on in this context: the caller reads storage then.
+export async function sharedRows(keep: (key: string) => boolean): Promise<Record<string, unknown> | null> {
+  const all = await loaded();
+  if (!all) return null;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of all) if (keep(key)) out[key] = value;
+  return out;
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const v of Object.values(value)) deepFreeze(v);
+  }
+  return value;
 }
 
 export function rowCacheLoadsForTests(): number {

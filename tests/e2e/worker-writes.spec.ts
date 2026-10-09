@@ -5,7 +5,8 @@
 //     reading no script rows or active times from storage once that is
 //     loaded.
 //   - The row cache follows the worker's own writes, and drops what it
-//     holds when something else writes a row.
+//     holds when something else writes a row. Its related-copy indexes
+//     follow a refresh that renames a script.
 //   - A page can change only the settings the worker lists.
 //   - The worker refuses to write a script row outside the store's lock,
 //     and the extension-update backfills write under it.
@@ -107,12 +108,12 @@ test.describe('worker writes', () => {
     await recordWorkerReads(sw);
 
     // What a click reads, up to the registration sync it starts. The sync
-    // reads storage itself and starts with a key listing, which also
-    // shows the recorder saw the worker's reads at all.
+    // starts by reading the numbers rows, which the row cache doesn't
+    // keep: seeing it also shows the recorder saw the worker's reads.
     const clickReads = async (): Promise<string[]> => {
       await sm.syncNow();
       const reads = await takeWorkerReads(sw);
-      const sync = reads.indexOf('(keys)');
+      const sync = reads.indexOf('scriptNumbers');
       expect(sync).toBeGreaterThanOrEqual(0);
       return reads.slice(0, sync);
     };
@@ -210,5 +211,41 @@ test.describe('worker writes', () => {
 
     expect(await sm.backfillUsesUnsafeWindow()).toBe(1);
     expect((await sm.getAllScriptMetas()).find((s) => s.id === a.id)!.usesUnsafeWindow).toBe(true);
+  });
+
+  test('the related-copy index follows a refresh that renames a script', async ({ sm }) => {
+    await sm.setParseCheckEnabled(false);
+    const dirA = ScriptsDir.create();
+    const dirB = ScriptsDir.create();
+    dirs.push(dirA, dirB);
+    const write = (d: ScriptsDir, name: string) => d.write({
+      relativePath: 'a.user.js', meta: { name, match: ['https://example.com/*'] }, body: 'void 0;',
+    });
+    write(dirA, 'Shared Script');
+    write(dirB, 'Shared Script');
+    const ca = await sm.addCollection(dirA.path);
+    const cb = await sm.addCollection(dirB.path);
+    const [a] = (await sm.getCollectionWithScripts(ca!.id))!.scripts;
+    const [b] = (await sm.getCollectionWithScripts(cb!.id))!.scripts;
+    await sm.getAllScriptMetas();
+    const enabled = async (id: string) => (await sm.getAllScriptMetas()).find((s) => s.id === id)!.enabled;
+
+    // B renamed: no longer a copy of A, so turning A on leaves it on.
+    write(dirB, 'Another Script');
+    await sm.updateCollection(cb!.id, 'manual');
+    await sm.setScriptEnabled(a.id, false);
+    await sm.setScriptEnabled(b.id, true);
+    await sm.setScriptEnabledExclusive(a.id, true);
+    expect(await enabled(b.id)).toBe(true);
+
+    // Renamed back: a copy again, so turning A on turns it off. B is
+    // turned on after the refresh, which may itself have turned it off.
+    write(dirB, 'Shared Script');
+    await sm.updateCollection(cb!.id, 'manual');
+    await sm.setScriptEnabled(a.id, false);
+    await sm.setScriptEnabled(b.id, true);
+    expect(await enabled(b.id)).toBe(true);
+    await sm.setScriptEnabledExclusive(a.id, true);
+    expect(await enabled(b.id)).toBe(false);
   });
 });

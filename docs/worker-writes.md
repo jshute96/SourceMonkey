@@ -111,13 +111,27 @@ a real profile needs for local collections at all:
 `row-cache.ts`: the worker's in-memory copy of the collection index,
 the collection rows, the script rows (without bodies), and the active
 times (`enablementTimes`), which every enable re-reads inside its lock.
+It's the one copy of those rows in the worker; the match index and the
+log labels keep tables derived from them.
 
-- **Loaded** by the first read of every script row
-  (`getAllScriptMetas`, the membership repair), which would scan
-  storage anyway. Until then, point reads go to storage, so a worker
-  that wakes for one row doesn't read them all.
-- **Read** by the store's row reads (`getRows`) for those keys. Other
-  keys in the same read still come from storage.
+- **Loaded** by the first read that wants every row. At a worker start
+  that is the match index, the log labels, sticky numbers or the
+  registration sync,
+  which load it with one scan between them instead of a scan each.
+  Until then, point reads go to storage.
+- **Read** by:
+  - the store's row reads (`getRows`) for those keys; other keys in the
+    same read still come from storage;
+  - the registration sync, the match index, the log label table and
+    sticky numbers (`sharedRows`), which used to scan storage
+    themselves. They get the cached rows themselves, frozen, not
+    copies: they only read, and a change would throw.
+- **Indexes**: script ids by canonical location and by `@namespace` +
+  `@name`, updated with the rows. Finding a copy's related copies
+  (`relatedCopyIds`) is a lookup, so an enable reads only those copies'
+  rows, not every row.
+- **Derived tables stay separate**: the match index and the log labels
+  keep their own tables, updated from change events as before.
 - **Kept current** by wrapping this context's `chrome.storage.local`
   `set`, `remove` and `clear`: whatever writes, the cache changes as
   storage does.
@@ -134,8 +148,9 @@ times (`enablementTimes`), which every enable re-reads inside its lock.
   - A write that changes nothing gets no event, so what is waiting for
     one expires after 30 s.
   - A load that overlapped another context's write tries again.
-- **Copies out**: each read returns copies, so a caller that changes a
-  row can't change the cache.
+- **Copies out**: the store's reads return copies, so a caller that
+  changes a row can't change the cache; `sharedRows` returns the frozen
+  rows.
 
 ## What moves
 
@@ -190,9 +205,11 @@ Now that no page writes:
     worker's record of what Chrome holds can still be wrong (a reset,
     a stopped worker).
   - `pruneEnablementTimes`, as a repair for times left from before.
-- **Not yet**: the worker's row cache could replace the tables it
-  rebuilds from change events (match index, log labels). See
-  [Open](#open).
+- **One copy of the rows**: the registration sync, the match index,
+  the log labels and sticky numbers read the row cache instead of
+  scanning storage, and related copies come from its indexes. The match
+  index and log labels still keep their own derived tables, updated
+  from change events.
 
 Not affected: re-reading inside the lock and merging concurrent edits
 (`preserveConcurrentEdits`), since fetches still run outside the lock;
@@ -246,5 +263,3 @@ Each stage leaves both kinds of writer working, so it can ship alone.
   single-script install does run the version check, without waiting
   (`probeInstalledScript`); a whole-collection add leaves it to its
   first Refresh.
-- **The registration sync, sticky numbers and the match index** read
-  storage themselves. They could read the row cache too.

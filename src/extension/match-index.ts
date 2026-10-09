@@ -18,6 +18,7 @@
 import { isFileUrl, scratchRunOf } from './directories.js';
 import { compareScriptNames, scriptDisplayName } from '../script-display.js';
 import { scanStorageRows } from './storage-scan.js';
+import { sharedRows } from './row-cache.js';
 import {
   ensureCollectionKeysMigrated,
   isScriptEnabled,
@@ -94,8 +95,9 @@ async function loadAll(): Promise<void> {
   // Before the read, not after: a profile still on the pre-rename key
   // spelling would otherwise load an empty cache and inject nothing.
   await ensureCollectionKeysMigrated();
-  const all = await scanStorageRows('match index', (k) =>
-    k.startsWith(SCRIPT_PREFIX) || k.startsWith(COLLECTION_PREFIX));
+  const isRow = (k: string): boolean => k.startsWith(SCRIPT_PREFIX) || k.startsWith(COLLECTION_PREFIX);
+  // From the worker's row cache when it's on (frozen rows, read only).
+  const all = (await sharedRows(isRow)) ?? await scanStorageRows('match index', isRow);
   const nextCache = new Map<string, CacheEntry>();
   const nextInvalid = new Map<string, ScriptMatching>();
   const nextDisabled = new Set<string>();

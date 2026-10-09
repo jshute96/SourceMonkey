@@ -509,6 +509,8 @@ interface SourceMonkeyApi {
   // The extension-update backfill of `usesUnsafeWindow`; how many rows
   // it changed.
   backfillUsesUnsafeWindow: () => Promise<number>;
+  // An enable click: turning a copy on turns its other active copies off.
+  setScriptEnabledExclusive: (id: string, enabled: boolean) => Promise<void>;
   // Drop this worker's record of the registration set, as a fresh
   // worker has none: the next sync is a full one.
   forgetRegistrationState: () => void;
@@ -933,6 +935,7 @@ const api: SourceMonkeyApi = {
   sweepUnusedBlobs: async () => (await sweepUnusedBlobsLocked())!,
   seedStorage: seedStorageForTests,
   backfillUsesUnsafeWindow,
+  setScriptEnabledExclusive: async (id, enabled) => { await setScriptEnabledExclusive(id, enabled); },
   resetAllState: async () => {
     // The parse check re-enables itself: its off-switch lives in the
     // session storage cleared below, precisely so no context has to

@@ -58,9 +58,9 @@ their stored state at that moment (`writeEnablementFrom` in
 
 - Two quick clicks on two copies: the second one's write waits for the
   first, sees that copy on, and turns it off.
-- Which copies are related comes from a full read made before the
-  lock. Only those copies are re-read inside it, since a full read
-  there would hold the lock too long.
+- Which copies are related comes from the worker's index of the rows
+  (by location and by `@namespace` + `@name`), looked up before the
+  lock. Only those copies are re-read inside it.
 - The viewer's versions table passes every copy it shows, so a click
   there turns off the copies it showed as turned off.
 
@@ -226,7 +226,7 @@ active or running on the page, it shows the first by
 - **Moving a copy out of an enabled collection** into a disabled one
   doesn't stamp `inactiveSince`.
 - **A copy that appears mid-write is missed.** One installed between
-  an enable's full read and its lock isn't turned off.
+  an enable's lookup of related copies and its lock isn't turned off.
 - Every enable runs in the service worker, under the store's one lock
   ([worker-writes.md](worker-writes.md)), so enables from different
   pages no longer race, and the active-time stamps come from one

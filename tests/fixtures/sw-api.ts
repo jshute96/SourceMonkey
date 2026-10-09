@@ -81,6 +81,7 @@ export interface SmApi {
   // Write rows straight into storage, under the store's write lock.
   seedStorage(items: Record<string, unknown>): Promise<void>;
   backfillUsesUnsafeWindow(): Promise<number>;
+  setScriptEnabledExclusive(id: string, enabled: boolean): Promise<void>;
   getAllScriptMetas(): Promise<StoredScriptLike[]>;
   rowCacheLoads(): Promise<number>;
   updateCollection(id: string, mode: Mode): Promise<unknown>;

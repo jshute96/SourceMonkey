@@ -520,17 +520,18 @@ too.
 The shape of a line (numbers illustrative):
 
 ```
-timing: enable script: total 480ms (read all 410 [12 scripts,
-  3 collections], plan 0.4, lock wait 0.1, read rows 6.1
-  [3 keys, 41.0 KB], read collections 1.2 [1 key, 0.4 KB], write 9.8
-  [3 keys, 40.6 KB]); 2 change(s)
+timing: enable script: total 24ms (find copies 0.3 [3 script(s)],
+  lock wait 0.1, re-read 0.5 [4 keys, 9 KB], plan 0.4, read rows 0.3
+  [3 keys, 9 KB], read collections 0.1 [1 key, 0.4 KB], write 9.8
+  [3 keys, 9 KB]); 2 change(s)
 ```
 
-- **read all**: every script, collection and active time, which
-  enabling needs to find a script's other copies. They come from the
-  worker's row cache ([worker-writes.md](worker-writes.md#the-row-cache)).
-  The first read after the worker starts loads it with a scan, whose
-  `storage scan (row cache)` line has the size.
+- **find copies**: which copies are related to the ones being changed
+  (the same location, or `@namespace` + `@name`). From the worker's
+  index over its row cache ([worker-writes.md](worker-writes.md#the-row-cache));
+  where there is none, a read of every row.
+- **read collection** (collection toggles and Enable all): the
+  collection and its scripts' rows.
 - **plan**: working out which copies to change.
 - **lock wait**: waiting behind other storage writes in the worker.
 - **re-read**: the related copies, their collections and the active
@@ -571,6 +572,8 @@ The `registration sync` line that follows has these steps:
   seen); the log labels, and any rows a label change moved; the bodies
   of those that will be registered; and what Chrome is given to
   register.
+  - Rows come from the worker's row cache once it's loaded; bodies
+    still come from storage.
   - The labels use the script numbers the worker assigned just before
     the sync. A sync in an extension page reads them instead, shown as
     `read numbers`.
@@ -692,9 +695,10 @@ rows, so measuring it costs this thread nothing.
 - The line names the caller, because that is the part a reader needs:
   `all scripts`, `key migration`, `blob migration`, `gm value wipe`.
 - The same line also reports the narrow reads of every script row
-  (`scanStorageRows`): `match index`, `registration sync`,
-  `log id table`, `membership reconcile`, `new copies`,
-  `all script rows`, and the extension-update backfills
+  (`scanStorageRows`): `row cache` (the worker's, which the match index,
+  log labels, numbers, registration sync and membership repair read
+  once loaded), `new copies`, `all script rows` (pages, and the worker
+  before its cache is on), and the extension-update backfills
   (`startup log backfill`, `header check backfill`,
   `retired header check`). These list the keys and read only the rows, so
   they skip the bodies and GM values.
