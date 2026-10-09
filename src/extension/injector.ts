@@ -2064,30 +2064,40 @@ async function runFullSync(assigned: ReadonlyMap<string, number> | null): Promis
   const specs = orderWithOwnSpecs(
     userSpecs,
     ownSpecsFor(placementsForSpecs(userSpecs, active.gmRuntime)),
-    // Empty rather than `present`: a full sync re-places the bridge and
-    // the GM runtime even when Chrome already holds them, because their
-    // code ships with the extension and an update changes it. Skipping
-    // them would also drop them — the removal list is everything Chrome
-    // holds that this spec list doesn't name.
+    // Empty rather than `present`: the bridge and the GM runtime stay in
+    // the spec list even when Chrome already holds them, since the
+    // removal list is everything Chrome holds that the list doesn't
+    // name. Whether each is sent again is `inPlace`'s call: their code
+    // ships with the extension, so an update changes it.
     new Set(),
   );
   const wanted = new Set(specs.map((s) => s.id));
   // Most of a full sync re-places what Chrome already holds, from rows
-  // that haven't changed since. Where the code is the same, the update
-  // leaves it out (see `withoutCode`).
+  // that haven't changed since. One held exactly as specified gets no
+  // call at all; where only the code is the same, the update leaves it
+  // out (see `withoutCode`).
+  // Unless Chrome's order has a helper behind a user script: then
+  // everything is placed again, helpers first, which restores it (see
+  // `retryRefusedOwnSpecs`).
+  const inPlace = helpersFirst(held) ? sameRegistrations(specs, held) : new Set<string>();
   const codeInPlace = sameCode(specs, held);
+  const removeIds = [...present.keys()].filter((id) => !wanted.has(id));
   const applied = await applyPlan({
     specs,
-    removeIds: [...present.keys()].filter((id) => !wanted.has(id)),
+    removeIds,
     present,
     codeInPlace,
+    inPlace,
     // The whole set was rebuilt, so the rejection map is rewritten
     // wholesale — a script that has since been disabled, deleted or
     // flipped to INVALID stops being REJECTED instead of stranding a
     // badge nobody can clear.
     owned: 'all',
   }, timer);
-  timer.note(`full; ${specs.length} specs (${codeInPlace.size} with code in place), ${scripts.length} stored scripts`);
+  timer.note(
+    `full; ${specs.length} specs (${inPlace.size} in place, ${codeInPlace.size - inPlace.size} more with code in place), `
+    + `${removeIds.length} dropped, ${scripts.length} stored scripts`,
+  );
   timer.done();
   const registered = placementsOf(specs, applied, active.gmRuntime);
   const gmRuntimeScopes = ownFingerprints(specs);
@@ -2360,7 +2370,7 @@ function ownFingerprints(specs: readonly RegistrationSpec[]): Map<string, string
 // The retried spec lands after the user scripts in Chrome's order.
 // That is survivable: a script's body only touches `__SM_GM__` after
 // its async check-pending decision, by which point the runtime has
-// run too; the next full sync restores the order.
+// run too; the next full sync restores the order (`helpersFirst`).
 async function retryRefusedOwnSpecs(
   applied: AppliedPlan,
   registered: Map<string, Placement>,
@@ -2690,6 +2700,33 @@ function sameCode(
   return new Set(specs.filter((spec) => code.get(spec.id) === JSON.stringify(spec.js)).map((spec) => spec.id));
 }
 
+// Whether every one of our own registrations comes before every user
+// script in Chrome's list, the order the sync places them in.
+function helpersFirst(held: readonly chrome.userScripts.RegisteredUserScript[]): boolean {
+  const firstUser = held.findIndex((s) => isUserScriptId(s.id));
+  return firstUser < 0 || held.slice(firstUser).every((s) => isUserScriptId(s.id));
+}
+
+// The specs Chrome holds exactly as given: the same code and every
+// setting. Fields left out compare as Chrome's defaults, and pattern
+// lists as sets. A difference this misses only costs an update, so it
+// errs toward "different".
+function sameRegistrations(
+  specs: readonly RegistrationSpec[],
+  held: readonly chrome.userScripts.RegisteredUserScript[],
+): Set<string> {
+  const byId = new Map(held.map((s) => [s.id, registrationKey(s)] as const));
+  return new Set(specs.filter((spec) => byId.get(spec.id) === registrationKey(spec)).map((spec) => spec.id));
+}
+
+function registrationKey(s: chrome.userScripts.RegisteredUserScript): string {
+  const set = (v: readonly string[] | undefined): string[] => [...new Set(v ?? [])].sort();
+  return JSON.stringify([
+    s.js, set(s.matches), set(s.excludeMatches), set(s.includeGlobs), set(s.excludeGlobs),
+    s.runAt ?? 'document_idle', s.allFrames ?? false, s.world ?? 'USER_SCRIPT', (s as { worldId?: string }).worldId ?? '',
+  ]);
+}
+
 // An update that changes only the patterns. `update` keeps any property
 // it isn't given, and our helpers' code (the GM runtime's is over
 // 100 KB) would otherwise go to Chrome again on a toggle that moved one
@@ -2822,6 +2859,10 @@ interface RegistrationPlan {
   // the code out: our own helpers when only their patterns moved (see
   // `withoutCode`).
   codeInPlace?: ReadonlySet<string>;
+  // Ids Chrome already holds exactly as specified, code and every
+  // setting (`sameRegistrations`): counted as placed without a call. A
+  // full sync on a new worker finds most of the set this way.
+  inPlace?: ReadonlySet<string>;
 }
 
 interface AppliedPlan {
@@ -2859,7 +2900,11 @@ async function applyPlan(plan: RegistrationPlan, timer?: PhaseTimer): Promise<Ap
   const [held, unsure] = partition(plan.removeIds, (id) => plan.present.has(id));
   await unregisterIds(held);
   timer?.mark('unregister');
-  const { placed, refused } = await placeSpecs(plan.specs, plan.present, plan.codeInPlace);
+  const inPlace = plan.inPlace ?? new Set<string>();
+  const sent = await placeSpecs(plan.specs.filter((s) => !inPlace.has(s.id)), plan.present, plan.codeInPlace);
+  const refused = sent.refused;
+  const placedNow = new Set(sent.placed);
+  const placed = plan.specs.map((s) => s.id).filter((id) => inPlace.has(id) || placedNow.has(id));
   timer?.mark('register');
   // A spec Chrome refuses for an id it already holds leaves the
   // PREVIOUS registration in place, so the script would keep injecting

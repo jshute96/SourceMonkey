@@ -5553,6 +5553,10 @@ installSwTeardownHandler();
 // wrapping them (row-cache.ts), and the store checks each one writes
 // script rows under its lock.
 installRowCache(checkScriptRowWrite);
+// The debug-logging setting, read before anything is timed: a read
+// started before it is requested isn't timed at all
+// (`timeStorageRead`).
+void loadDebugLoggingFlag();
 // Log-ID listener and its initial load come first so subsequent
 // startup paths (sm:start arriving from a pre-existing wrapper, the
 // first navigation-driven log line) can hit the populated map. The
@@ -5630,7 +5634,6 @@ void ensureLoaded();
 // full sync. Registrations then say whether the wrappers must ask.
 // A sync that lands before it builds them as asking (see
 // `mustAskForDecision`).
-void loadDebugLoggingFlag();
 // Kicked off here so the read is already in flight by the time the
 // first refresh awaits `localRootsReady()`.
 void loadLocalRootsSetting();

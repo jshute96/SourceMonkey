@@ -577,9 +577,9 @@ The `registration sync` line that follows has these steps:
   - The labels use the script numbers the worker assigned just before
     the sync. A sync in an extension page reads them instead, shown as
     `read numbers`.
-  - A full sync reads rows and bodies under `read`, and its note says
-    how many specs went without their code, since Chrome already held
-    it.
+  - A full sync reads rows and bodies under `read`. Its note says how
+    many specs Chrome already held exactly (no call), how many more went
+    without their code, and how many registrations it dropped.
 - **list** (full syncs only): asking Chrome which registrations it
   holds.
 - **unregister / register**: the `chrome.userScripts` calls, removals

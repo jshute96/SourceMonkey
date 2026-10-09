@@ -209,11 +209,16 @@ against and a pure diff would strand stale registrations.
   dropped. **Still not a wipe** — a script that survives the restart is
   never unregistered.
   - Bodies are read only for the scripts it registers.
-  - `getScripts()` returns each registration's code too. An update
-    whose code is exactly what Chrome holds leaves it out
-    (`sameCode`), so a worker start re-sends only code that changed
-    while it was gone. Chrome stores code it's sent and passes it on to
-    renderers, which was most of a sync's register time.
+  - `getScripts()` returns each registration's code and settings too.
+    A spec Chrome already holds exactly (code, patterns, world, run
+    time: `sameRegistrations`) gets no call at all, so a worker start
+    with nothing changed sends Chrome nothing. Every call costs about
+    the same however little it carries (Chrome saves the set and sends
+    it to every renderer), so skipping them is most of a start's sync.
+  - An update whose code alone is what Chrome holds leaves the code out
+    (`sameCode`). For our helpers that is a pattern change; a user
+    script's code carries its own patterns, so its code changes with
+    them.
 - The record is dropped whenever it stops being trustworthy: a sync
   that throws part-way, and `unregisterAllRegistrations` (the test
   surface's teardown). The next sync then reconciles fully, which also
@@ -1107,6 +1112,11 @@ Mechanics:
   which exclude the refused script, whose row reads REJECTED — and
   offered again (`retryRefusedOwnSpecs`). Not `<all_urls>`: a bad
   pattern in one script must not put our code on every page.
+  - Chrome moves an updated registration to the end of its list, so a
+    helper updated alone (a retry, a pattern change) lands behind the
+    user scripts. A full sync that finds one there places everything
+    again, helpers first (`helpersFirst`); otherwise it skips what
+    Chrome already holds.
 
 Trust model:
 

@@ -3157,24 +3157,31 @@ test('syncRegistrations: a full sync reads only the bodies of scripts it registe
   assert.deepEqual([...reads], ['blob:hash-a-6']);
 });
 
-test('syncRegistrations: a full sync leaves out code Chrome already holds', async (t) => {
+test('syncRegistrations: a full sync sends nothing for what Chrome holds, and leaves out code it holds', async (t) => {
   t.after(resetUserScriptStubs);
   sessionStore.clear();
   localStore.clear();
   forgetRegistrationState();
-  seedStore('a');
-  seedStore('b');
+  seedStore('a', { grants: ['GM_getValue'] });
+  seedStore('b', { grants: ['GM_getValue'] });
   const chrome_ = fakeRegistrationSet();
   await syncRegistrations();
 
-  // A fresh worker, after `b` changed while the last one was gone.
+  // A fresh worker, after `b` changed while the last one was gone: new
+  // code, on a new site, which the GM runtime's patterns follow.
   forgetRegistrationState();
-  localStore.set('script:b', { ...localStore.get('script:b'), bodyText: 'changed();' });
+  localStore.set('script:b', {
+    ...localStore.get('script:b'),
+    bodyText: 'changed();',
+    matching: { matches: ['https://f/*'], includes: [], excludes: [] },
+  });
   chrome_.reset();
   await syncRegistrations();
-  assert.equal(chrome_.sentUpdate('a').js, undefined, 'unchanged code is not sent again');
-  assert.equal(chrome_.sentUpdate(BRIDGE_SCRIPT_ID).js, undefined, 'nor our own');
-  assert.ok(chrome_.sentUpdate('b').js.some((c) => c.code.includes('changed();')), 'changed code is');
+  assert.equal(chrome_.sentUpdate('a'), undefined, 'held exactly as specified: no call');
+  assert.equal(chrome_.sentUpdate(BRIDGE_SCRIPT_ID), undefined, 'nor for our own');
+  assert.ok(chrome_.sentUpdate('b').js.some((c) => c.code.includes('changed();')), 'changed code is sent');
+  assert.equal('js' in chrome_.sentUpdate(GM_RUNTIME_SCRIPT_ID), false, 'new patterns, same code: no code');
+  assert.ok(chrome_.spec(GM_RUNTIME_SCRIPT_ID).matches.includes('https://f/*'));
   assert.ok(chrome_.spec('a').js.length > 0, 'Chrome keeps the code it had');
 });
 
@@ -3202,28 +3209,59 @@ test('syncRegistrations: a script whose body is missing is not registered, and i
   assert.equal(localStore.get('script:b').status, 'invalid');
 });
 
-test('syncRegistrations: the one-at-a-time fallback leaves out unchanged code too', async (t) => {
+test('syncRegistrations: a full sync places everything again when a helper is behind a user script', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a', { grants: ['GM_getValue'] });
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+  const order = async () => (await userScripts.getScripts()).map((s) => s.id);
+  assert.ok((await order()).indexOf(GM_RUNTIME_SCRIPT_ID) < (await order()).indexOf('a'));
+
+  // An update moves a registration to the end of Chrome's list.
+  const runtime = (await userScripts.getScripts({ ids: [GM_RUNTIME_SCRIPT_ID] }))[0];
+  await userScripts.update([{ id: runtime.id, matches: runtime.matches }]);
+  assert.ok((await order()).indexOf(GM_RUNTIME_SCRIPT_ID) > (await order()).indexOf('a'));
+
+  forgetRegistrationState();
+  chrome_.reset();
+  await syncRegistrations();
+  assert.ok(chrome_.sentUpdate('a'), 'held as specified, but placed again');
+  assert.ok((await order()).indexOf(GM_RUNTIME_SCRIPT_ID) < (await order()).indexOf('a'), 'helpers first again');
+});
+
+test('syncRegistrations: the one-at-a-time fallback sends nothing for what Chrome holds', async (t) => {
   t.after(resetUserScriptStubs);
   sessionStore.clear();
   localStore.clear();
   forgetRegistrationState();
   seedStore('a');
   seedStore('b');
+  seedStore('c');
   const chrome_ = fakeRegistrationSet();
   await syncRegistrations();
 
   // A batch refused as a whole, as one bad spec would make it.
   const update = userScripts.update;
+  let refusedBatches = 0;
   userScripts.update = async (batch) => {
-    if (batch.length > 1) throw new Error('refused');
+    if (batch.length > 1) {
+      refusedBatches++;
+      throw new Error('refused');
+    }
     return update(batch);
   };
   forgetRegistrationState();
   localStore.set('script:b', { ...localStore.get('script:b'), bodyText: 'changed();' });
+  localStore.set('script:c', { ...localStore.get('script:c'), bodyText: 'other();' });
   chrome_.reset();
   await syncRegistrations();
-  assert.equal(chrome_.sentUpdate('a').js, undefined);
+  assert.ok(refusedBatches > 0, 'the batch went one at a time');
+  assert.equal(chrome_.sentUpdate('a'), undefined, 'held as specified: no call');
   assert.ok(chrome_.sentUpdate('b').js.some((c) => c.code.includes('changed();')));
+  assert.ok(chrome_.sentUpdate('c').js.some((c) => c.code.includes('other();')));
 });
 
 test('syncRegistrations: an incremental sync takes the numbers beforeSync assigned, without reading them', async (t) => {
