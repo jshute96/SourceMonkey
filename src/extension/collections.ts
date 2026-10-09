@@ -55,7 +55,7 @@ import {
   type ScriptMeta,
   type StoredCollection,
 } from './script-store.js';
-import { setAllScriptsEnabled, setCollectionEnabledExclusive, setScriptEnabledExclusive } from './script-enablement.js';
+import { setAllScriptsEnabled, setCollectionEnabledExclusive, setScriptEnabledExclusive } from './worker-client.js';
 import { identityKey } from './script-identity.js';
 import { watchSoloModifier } from './solo-click.js';
 import {

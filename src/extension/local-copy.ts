@@ -30,10 +30,10 @@ import {
   describeError,
   getCollections,
   refreshCollection,
-  setScriptsEnabled,
   type StoredCollection,
   type StoredScript,
 } from './script-store.js';
+import { setScriptsEnabled } from './worker-client.js';
 import { joinFullSource, splitHeaderBody } from '../userscript-header.js';
 
 // ---------- The default collection and where Downloads is ----------

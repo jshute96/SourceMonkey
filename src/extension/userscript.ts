@@ -43,7 +43,6 @@ import {
   isScriptEnabled,
   isCollectionEnabled,
   removeScript,
-  setScriptsEnabled,
   validateHeader,
   type ScriptMeta,
   type StoredScript,
@@ -58,7 +57,6 @@ import {
   installOptionsFor,
   locationKey,
   otherActiveCopies,
-  turnOffOtherCopies,
   type InstallOption,
   type RelatedScript,
   type RelatedVersions,
@@ -199,8 +197,8 @@ import { displayRefText, parseStackRefs } from '../stack-link.js';
 import { remapStackRef, type MappedSegment, type StackRef } from '../source-map.js';
 import { stackLayout } from '../composed-source.js';
 import { buildRequireSourceUrl, buildSourceUrl } from '../script-source-url.js';
-import { startPhaseTimer, type PhaseTimer } from '../phase-timing.js';
-import { enableWithin } from './script-enablement.js';
+import { startPhaseTimer } from '../phase-timing.js';
+import { enableWithin, setScriptEnabledExclusive, setScriptsEnabled, turnOffOtherCopies } from './worker-client.js';
 import { CodeTabsView, type CodeTab } from './code-tabs.js';
 import { makeCopyButton } from './copy-button.js';
 import { markFileChanges, missingFiles, scriptFileTag } from './file-changes.js';
@@ -738,38 +736,18 @@ async function refreshShownScript(wanted: string): Promise<StoredScript | null> 
 // enabling this copy turns off every other copy that is running, since
 // two enabled copies of one script both register and both run.
 //
-// It has to read the related rows itself — unlike a panel row, this
-// checkbox has no table around it to take them from — but the rule
-// applied to them is the shared one, so the two controls can't drift.
+// The worker finds the related copies and applies the rule
+// (`setScriptEnabledExclusive`), from its row cache. The panel's rows,
+// as last drawn, only say which boxes to flip before the write lands.
 async function onToggleEnabled(enabled: boolean): Promise<void> {
   if (!scriptId) return;
   const solo = takeControlsRowSolo();
-  let changes = enableChanges(scriptId, enabled, []);
-  let related: string[] | null = null;
-  if (enabled && !solo) {
-    try {
-      const snapshot = await readStoreSnapshot();
-      const script = snapshot.scripts.find((s) => s.id === scriptId);
-      const rows = allRelatedRows(findRelatedVersions({
-        ...snapshot,
-        location: script?.fileUrl ?? '',
-        header: script?.header ?? null,
-      }));
-      changes = enableChanges(scriptId, enabled, rows);
-      related = rows.map((r) => r.script.id);
-    } catch (err) {
-      // Fails open: the copy the user actually clicked still gets
-      // written, and the panel still shows whatever else is on.
-      // Blocking the toggle on a lookup it only needs for the OTHER
-      // rows would be worse than under-applying the sweep.
-      dlog(`[SourceMonkey] exclusive-enable lookup skipped: ${describeError(err)}`);
-    }
-  }
+  const changes = enableChanges(scriptId, enabled, enabled && !solo ? lastRelatedRows : []);
   // Before the awaits: both checkboxes are showing an intent, and a
   // radio-button pair that flips one now and the other after a round
   // trip through storage reads as a bug.
   paintEnabledOptimistically(changes);
-  await applyEnableChanges(changes, related);
+  await setScriptEnabledExclusive(scriptId, enabled, solo);
   const next = await getScript(scriptId);
   if (next) {
     render(next);
@@ -777,7 +755,7 @@ async function onToggleEnabled(enabled: boolean): Promise<void> {
   }
 }
 
-// Write one click's worth of enable changes.
+// Write one click's worth of enable changes from the versions table.
 //
 // `setScriptsEnabled`, not a loop of `setScriptEnabled`: the bulk call
 // lands as ONE `chrome.storage.local.set`, so it fires one
@@ -793,16 +771,13 @@ async function onToggleEnabled(enabled: boolean): Promise<void> {
 async function applyEnableChanges(
   changes: readonly ScriptEnableChange[],
   related: readonly string[] | null,
-  timer?: PhaseTimer,
 ): Promise<void> {
   const clicked = changes[0];
   if (related && clicked?.enabled) {
-    const t = timer ?? startPhaseTimer('enable script');
-    await enableWithin(clicked.scriptId, [clicked.scriptId, ...related], t);
-    if (!timer) t.done();
+    await enableWithin(clicked.scriptId, [clicked.scriptId, ...related]);
     return;
   }
-  await setScriptsEnabled(changes.map((c) => ({ id: c.scriptId, enabled: c.enabled })), timer);
+  await setScriptsEnabled(changes.map((c) => ({ id: c.scriptId, enabled: c.enabled })));
 }
 
 // One write, so one failure — there is no half-applied batch to
@@ -1361,7 +1336,7 @@ async function paintRelatedVersions(args: RelatedVersionsPaint, given?: StoreSna
       const timer = startPhaseTimer('versions table enable');
       let failure: unknown;
       try {
-        await applyEnableChanges(changes, related, timer);
+        await applyEnableChanges(changes, related);
       } catch (err) {
         failure = err;
         timer.mark('write failed');

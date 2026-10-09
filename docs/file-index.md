@@ -200,6 +200,9 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/missing-scripts.ts` | Log warnings for scripts that matched a page but never started |
 | `src/extension/storage-usage.ts` | Sorts storage rows into the Options page's usage table: scripts, `@require`/`@resource` files, shared bodies, GM values, icons |
 | `src/extension/storage-scan.ts` | Whole-store reads (`get(null)`, or only the rows a caller wants), naming each and its cost under debug logging |
+| `src/extension/row-cache.ts` | The worker's in-memory copy of the collection and script rows, kept current by wrapping its storage writes |
+| `src/extension/worker-client.ts` | Page side of the worker's operations: each page write, sent to the worker over a port |
+| `src/extension/worker-ops.ts` | Worker side of those operations: the table of what pages may ask it to run, and the port listener |
 | `src/extension/concurrency.ts` | Bounded fan-out helper plus the nested per-collection / per-script, probe, and directory-scan limits |
 | `src/extension/connect-grants.ts` | The user's answers about a script's undeclared `@connect` hosts: allowed (local storage) and denied (session) |
 | `src/extension/connect-prompt.ts` | Connection prompt, worker side: opens the window, holds requests on its answer, saves it, reports to sm-dev |

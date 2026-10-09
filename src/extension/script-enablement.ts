@@ -2,9 +2,9 @@
 // flag and its collection's both on, so it fires on the pages it
 // matches.
 //
-// The collections page's and the toolbar popup's enable controls, and
-// sm-dev's `collection enable`, go through here, so they apply the same
-// rules:
+// The collections page's, the viewer's and the toolbar popup's enable
+// controls, and sm-dev's `collection enable`, go through here, all in
+// the service worker (worker-ops.ts), so they apply the same rules:
 //   - Turning a copy on turns its other active copies off.
 //   - Turning a collection on does the same for each copy it activates.
 //   - Turning a collection off brings back the copies its own copies
@@ -12,14 +12,16 @@
 //   - "Enable all" in a collection turns on one copy per script.
 // Ctrl/Cmd-click (`solo`) opts out and changes only what was clicked.
 //
-// Each one reads every script row to find which copies are related, then
-// decides which of those to change inside the write lock, from their
-// stored state at that moment (`writeEnablementFrom`).
+// Each one reads every script row to find which copies are related (from
+// the worker's row cache, row-cache.ts), then decides which of those to
+// change inside the write lock, from their stored state at that moment
+// (`writeEnablementFrom`).
 //
 // The viewer works out the same single-script rule through
 // `enableChanges` (script-identity.ts) itself, to paint its rows before
-// the write lands, then writes through `enableWithin` here. Installs,
-// moves and sm-dev's `script enable` use `turnOffOtherCopies` there.
+// the write lands. Its versions table writes through `enableWithin`
+// here. Installs, moves and sm-dev's `script enable` use
+// `turnOffOtherCopies` there.
 //
 // Design: docs/script-enablement.md.
 

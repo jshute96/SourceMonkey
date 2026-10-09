@@ -78,6 +78,8 @@ export interface SmApi {
   setScriptEnabled(id: string, enabled: boolean): Promise<unknown>;
   // When each script last became active / went inactive (script-enablement.md).
   getEnablementTimes(): Promise<Record<string, { activeSince?: number; inactiveSince?: number }>>;
+  getAllScriptMetas(): Promise<StoredScriptLike[]>;
+  rowCacheLoads(): Promise<number>;
   updateCollection(id: string, mode: Mode): Promise<unknown>;
   // `probe: 'force'` is what a genuine Refresh click passes. Pass it
   // when a test is modelling a click rather than a background check —

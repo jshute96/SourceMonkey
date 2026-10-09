@@ -16,6 +16,8 @@
 // extension via `serviceWorker.evaluate(...)` — MV3 service workers
 // can't be triggered from a Playwright toolbar click.
 
+import { installRowCache, rowCacheLoadsForTests } from './row-cache.js';
+import { installWorkerOps } from './worker-ops.js';
 import { droppedBlobRefs, hasSweepCandidates, SWEEP_GRACE_MS, type SweepResult } from './script-blobs.js';
 import { describeDiagnostic } from '../diagnostic-location.js';
 import {
@@ -455,6 +457,11 @@ interface SourceMonkeyApi {
   setLocalRoots: (paths: string[]) => Promise<void>;
   setScriptEnabled: (id: string, enabled: boolean) => Promise<ScriptMeta | null>;
   getEnablementTimes: () => Promise<Record<string, { activeSince?: number; inactiveSince?: number }>>;
+  // Every script row without bodies, from the worker's row cache once
+  // it is loaded (row-cache.ts); loads it.
+  getAllScriptMetas: () => Promise<ScriptMeta[]>;
+  // How many times the row cache was read from storage.
+  rowCacheLoads: () => number;
   updateCollection: (id: string, mode: 'manual' | 'opportunistic') => Promise<unknown>;
   // `probe` mirrors the production signature: `'force'` is what a real
   // Refresh click passes, and several behaviors key off it (upstream
@@ -732,6 +739,8 @@ const api: SourceMonkeyApi = {
   },
   setScriptEnabled,
   getEnablementTimes,
+  getAllScriptMetas: () => getAllScriptMetas(),
+  rowCacheLoads: rowCacheLoadsForTests,
   updateCollection,
   updateScript,
   updateAllCollections,
@@ -5537,6 +5546,9 @@ async function recordScriptReport(
 // First, so the startup reads below can't leak a teardown rejection
 // into the Errors panel if the SW is killed while they're in flight.
 installSwTeardownHandler();
+// Before anything writes: the row cache sees this worker's writes by
+// wrapping them (row-cache.ts).
+installRowCache();
 // Log-ID listener and its initial load come first so subsequent
 // startup paths (sm:start arriving from a pre-existing wrapper, the
 // first navigation-driven log line) can hit the populated map. The
@@ -5605,6 +5617,7 @@ installGithubAuthListener();
 installNotificationListeners();
 installDownloadListeners();
 installPopupListener();
+installWorkerOps(fromExtensionPage);
 // Kick off the initial cache load so the very first navigation doesn't
 // pay the read-everything cost on the critical path. The injector sync
 // runs in parallel so registrations are in place ASAP after SW startup.

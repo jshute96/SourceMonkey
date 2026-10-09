@@ -1,0 +1,74 @@
+// Page side of the worker's operations: every write an extension page
+// makes goes through here, to run in the service worker
+// (docs/worker-writes.md). Each export has the name and arguments of the
+// worker function it runs, so a call site only changes its import.
+//
+// One port per call:
+//   - The page sends the operation's name and arguments, then a
+//     heartbeat while it waits. A port's messages keep the worker alive,
+//     which a long refresh needs (Chrome stops an idle worker after
+//     30 s).
+//   - The worker answers once, with the result or the error's message,
+//     which is thrown here as a new Error with that message.
+//   - Closing the page doesn't stop the work: the worker carries on and
+//     drops the answer.
+//
+// Arguments and results cross as JSON: no Maps, Sets, functions, or
+// `undefined` array entries. worker-ops.ts adapts any function whose
+// own signature has them.
+
+import type { WorkerOpName, WorkerOps } from './worker-ops.js';
+
+export const WORKER_OP_PORT = 'sm:op';
+
+// Under Chrome's 30 s idle limit, with room to spare.
+export const WORKER_OP_HEARTBEAT_MS = 20_000;
+
+export type WorkerOpRequest = { op: string; args: unknown[] } | { beat: true };
+export type WorkerOpReply = { ok: true; result: unknown } | { ok: false; error: string };
+
+// The worker went away mid-call: it crashed, or Chrome stopped it.
+export const WORKER_STOPPED =
+  'Internal error: SourceMonkey\'s background worker stopped before finishing this change';
+
+type Args<K extends WorkerOpName> = Parameters<WorkerOps[K]>;
+type Result<K extends WorkerOpName> = Awaited<ReturnType<WorkerOps[K]>>;
+
+export function callWorker<K extends WorkerOpName>(op: K, ...args: Args<K>): Promise<Result<K>> {
+  return new Promise((resolve, reject) => {
+    const port = chrome.runtime.connect({ name: WORKER_OP_PORT });
+    let settled = false;
+    const beat = setInterval(() => {
+      try { port.postMessage({ beat: true } satisfies WorkerOpRequest); } catch { /* port gone */ }
+    }, WORKER_OP_HEARTBEAT_MS);
+    const finish = (): void => {
+      settled = true;
+      clearInterval(beat);
+      try { port.disconnect(); } catch { /* already gone */ }
+    };
+    port.onMessage.addListener((message: WorkerOpReply) => {
+      if (settled) return;
+      finish();
+      if (message.ok) resolve(message.result as Result<K>);
+      else reject(new Error(message.error));
+    });
+    port.onDisconnect.addListener(() => {
+      if (settled) return;
+      finish();
+      reject(new Error(WORKER_STOPPED));
+    });
+    port.postMessage({ op, args } satisfies WorkerOpRequest);
+  });
+}
+
+function op<K extends WorkerOpName>(name: K): (...args: Args<K>) => Promise<Result<K>> {
+  return (...args) => callWorker(name, ...args);
+}
+
+// ---------- Enable toggles ----------
+export const setScriptEnabledExclusive = op('setScriptEnabledExclusive');
+export const setCollectionEnabledExclusive = op('setCollectionEnabledExclusive');
+export const setAllScriptsEnabled = op('setAllScriptsEnabled');
+export const enableWithin = op('enableWithin');
+export const setScriptsEnabled = op('setScriptsEnabled');
+export const turnOffOtherCopies = op('turnOffOtherCopies');

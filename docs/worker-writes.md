@@ -1,7 +1,7 @@
 # The service worker as the only writer
 
-> **Status: proposed, not implemented.** A plan for review. Nothing
-> below has moved yet.
+> **Status: in progress.** Stage 1 is done: enable toggles run in the
+> worker, from its row cache. See [Stages](#stages).
 
 Today every extension page (the collections page, the viewer, the
 Options page, the dialogs they open) writes `chrome.storage.local`
@@ -92,23 +92,47 @@ a real profile needs for local collections at all:
 
 ## The message API
 
-- **One request message**, `sm:store`, with an operation name and its
-  arguments; the reply is `{ ok: true, result }` or
-  `{ ok: false, error }`, the error being the message the store threw.
-  - Same shape as the existing relays (`POPUP_SET_ENABLED_MESSAGE`,
-    `SCRIPT_LOG_WRITE_MESSAGE`): type check, `fromExtensionPage`,
-    `sendResponse` in a try/catch, `return true`.
-  - A page-side client module exports the same function names the pages
-    call now (`setScriptEnabledExclusive`, `removeScript`, …), so call
-    sites barely change.
-- **Long operations over a port** (refresh, add collection, install,
-  local copy): progress events, then the result the page needs, e.g.
-  the rows `refreshAndHighlight` draws its highlights from. The page's
-  heartbeat on the port keeps the worker alive.
-- **The worker side** reuses `managed-changes.ts`, which already wraps
-  enable, refresh, install, uninstall, move and rename for sm-dev.
-  Missing there: add and remove collection, refresh all, collection
-  options beyond the name, local copy, settings, connect grants, icons.
+- **One port per call** (`worker-client.ts`, `worker-ops.ts`).
+  - The page opens a port named `sm:op`, sends the operation's name and
+    arguments, and while it waits, a heartbeat every 20 s. Those keep
+    the worker alive through a long refresh.
+  - The worker answers once: `{ ok: true, result }` or
+    `{ ok: false, error }`, the error being the message the operation
+    threw, which the page throws again.
+  - The worker starts the work and returns from the port's handler at
+    once. A page that closes doesn't stop it; the answer is dropped.
+  - Only our own pages may connect (`fromExtensionPage`), as for every
+    page relay.
+- **The client exports the worker functions' own names**
+  (`setScriptEnabledExclusive`, `removeScript`, …), so a call site
+  changes only its import.
+- **Arguments and results cross as JSON.** The worker's table
+  (`WORKER_OPS`) adapts a function whose signature has a timer, a Map,
+  or script bodies the page doesn't need.
+- No progress events: no page shows a refresh's progress. A page reads
+  storage for the outcome, as before.
+
+## The row cache
+
+`row-cache.ts`: the worker's in-memory copy of the collection index,
+the collection rows and the script rows (without bodies).
+
+- **Loaded** by the first read of every script row
+  (`getAllScriptMetas`), which would scan storage anyway. Until then,
+  point reads go to storage, so a worker that wakes for one row doesn't
+  read them all.
+- **Read** by the store's row reads (`getRows`) for those keys. Other
+  keys in the same read (`enablementTimes`) still come from storage.
+- **Kept current** by wrapping this context's `chrome.storage.local`
+  `set`, `remove` and `clear`: whatever writes, the cache changes as
+  storage does.
+- **Safety net**: a change event for a row this context didn't write
+  drops the copy, and the next full read loads it again.
+  - A write's own event is recognized by its value, compared without
+    key order (Chrome sorts an object's keys).
+  - A load that overlapped a write tries again.
+- **Copies out**: each read returns copies, so a caller that changes a
+  row can't change the cache.
 
 ## What moves
 
@@ -165,8 +189,8 @@ worker is still asynchronous to the page's repaint.
 
 ## Stages
 
-1. **Client module and request message**, then enable toggles: the
-   hot path, and the worker cache for related copies.
+1. **Done.** Client module and port, then enable toggles: the hot
+   path, and the worker cache for related copies.
 2. **Small writes**: remove, move, collection options, grants,
    settings, repairs on load, the legacy key migration.
 3. **Long operations over ports**: refresh, add, install. The

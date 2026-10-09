@@ -503,9 +503,10 @@ If they come back, that suppression is the first place to look.
 ## Measuring an enable click
 
 With **Options → Debug logging** on, each enable or disable prints one
-line in the console of the context that saved it: the page for the
-collections page and the viewer, the service worker for the popup and
-sm-dev. The service worker's `registration sync` line follows.
+line in the service worker's console, which saves them all
+([worker-writes.md](worker-writes.md)). The `registration sync` line
+follows. The viewer's versions table prints its own line in the page
+too.
 
 | Line | Printed by |
 |------|------------|
@@ -526,17 +527,18 @@ timing: enable script: total 480ms (read all 410 [12 scripts,
 ```
 
 - **read all**: every script, collection and active time, which
-  enabling needs to find a script's other copies. The scripts come
-  from a full scan, whose `storage scan` line has the size.
+  enabling needs to find a script's other copies. They come from the
+  worker's row cache ([worker-writes.md](worker-writes.md#the-row-cache)).
+  The first read after the worker starts loads it with a scan, whose
+  `storage scan (row cache)` line has the size.
 - **plan**: working out which copies to change.
-- **lock wait**: waiting behind other storage writes in the same page
-  or worker.
+- **lock wait**: waiting behind other storage writes in the worker.
 - **read rows / read collections**: the rows the write changes,
   re-read inside the lock. `read collection` is the toggled collection.
 - **write**: the one storage write. Every changed script row is
   written whole, body included.
-- **repaint** (`versions table enable` only): the table redraw the
-  checkbox stays grey for.
+- **repaint** (`versions table enable`, in the page): the table redraw
+  the checkbox stays grey for.
 - Sizes are JSON lengths, roughly what Chrome stores and copies.
   Computing them is left out of the step times.
 

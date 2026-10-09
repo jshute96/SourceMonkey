@@ -92,6 +92,7 @@ import {
 } from '../external-files.js';
 import { type LocalFileScope } from '../local-file-overrides.js';
 import { scanAllStorage, scanStorageRows } from './storage-scan.js';
+import { cachedRows, cachedScriptRows } from './row-cache.js';
 import {
   blobKeysOf,
   clearMigrationFailureForTests,
@@ -1077,10 +1078,15 @@ async function getMany(keys: string[]): Promise<Record<string, unknown>> {
 // Rows as stored. A script row written back from here with a field
 // changed keeps its bodies (its blob refs) as they are, and the write
 // hashes nothing.
+//
+// In the worker, from its row cache when that is loaded (row-cache.ts).
 async function getRows(keys: string[]): Promise<Record<string, unknown>> {
   if (keys.length === 0) return {};
   await ensureCollectionKeysMigrated();
-  return await chrome.storage.local.get(keys);
+  const cached = cachedRows(keys);
+  if (!cached) return await chrome.storage.local.get(keys);
+  if (cached.rest.length === 0) return cached.found;
+  return { ...await chrome.storage.local.get(cached.rest), ...cached.found };
 }
 
 async function getRow<T>(key: string): Promise<T | undefined> {
@@ -1290,9 +1296,12 @@ export async function getScriptMetas(scriptIds: readonly string[]): Promise<Scri
 
 // Every stored script without its bodies (across all collections,
 // regardless of status): only the script rows are read.
+//
+// In the worker, from its row cache, which this loads (row-cache.ts).
 export async function getAllScriptMetas(reason = 'all script rows'): Promise<ScriptMeta[]> {
   await ensureCollectionKeysMigrated();
-  const rows = await scanStorageRows(reason, (k) => k.startsWith(SCRIPT_PREFIX));
+  const rows = await cachedScriptRows()
+    ?? await scanStorageRows(reason, (k) => k.startsWith(SCRIPT_PREFIX));
   return Object.values(rows) as ScriptMeta[];
 }
 
