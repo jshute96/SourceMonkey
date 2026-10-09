@@ -151,12 +151,13 @@ import {
   resetCollectionRowReads,
   type RefreshBatch,
   getScript,
-  getScripts,
+  getScriptMeta,
+  getScriptMetas,
   getEnablementTimes,
   isScriptEnabled,
   isCollectionEnabled,
   getCollection,
-  getAllScripts,
+  getAllScriptMetas,
   getCollections,
   getCollectionWithScripts,
   isFirstRunComplete,
@@ -194,6 +195,7 @@ import {
   retiredHeaderProblemIds,
   verifyParseChecks,
   backfillUsesUnsafeWindow,
+  type ScriptMeta,
   type StoredScript,
   type StoredCollection,
   setParseChecker,
@@ -437,7 +439,7 @@ interface SourceMonkeyApi {
   // Whether the tab's toolbar icon has the sm-dev marker drawn on it.
   // Chrome can't read an action's icon back, so tests ask this.
   isSmDevMarked: (tabId: number) => boolean;
-  moveScript: (scriptId: string, target: InstallTarget) => Promise<StoredScript | null>;
+  moveScript: (scriptId: string, target: InstallTarget) => Promise<ScriptMeta | null>;
   // Remove one installed script row (a container copy), as the viewer's
   // trash can does.
   removeScript: (scriptId: string) => Promise<void>;
@@ -451,7 +453,7 @@ interface SourceMonkeyApi {
   setCollectionEnabled: (id: string, enabled: boolean) => Promise<StoredCollection | null>;
   setCollectionLocalFiles: (id: string, localFiles: boolean) => Promise<StoredCollection | null>;
   setLocalRoots: (paths: string[]) => Promise<void>;
-  setScriptEnabled: (id: string, enabled: boolean) => Promise<StoredScript | null>;
+  setScriptEnabled: (id: string, enabled: boolean) => Promise<ScriptMeta | null>;
   getEnablementTimes: () => Promise<Record<string, { activeSince?: number; inactiveSince?: number }>>;
   updateCollection: (id: string, mode: 'manual' | 'opportunistic') => Promise<unknown>;
   // `probe` mirrors the production signature: `'force'` is what a real
@@ -495,6 +497,9 @@ interface SourceMonkeyApi {
   // One unused-blob check, as the cleanup alarm runs it; `now` lets a
   // test step past the wait between checks.
   sweepUnusedBlobs: (now?: number) => Promise<SweepResult>;
+  // Drop this worker's record of the registration set, as a fresh
+  // worker has none: the next sync is a full one.
+  forgetRegistrationState: () => void;
   // Forget when each script/collection was last checked, so the next
   // check isn't skipped by `UPDATE_MIN_INTERVAL_MS`. A test that drives
   // two opportunistic checks of the same script — a navigation and then
@@ -688,7 +693,7 @@ const api: SourceMonkeyApi = {
   },
   managedScripts: async () => {
     const numbers = (await assignAllNumbers()).scripts.byId;
-    const scripts = await getAllScripts();
+    const scripts = await getAllScriptMetas();
     // Where each run's script came from, by its scratch URL.
     const scratch = scripts.map((s) => s.fileUrl).filter(isScratchUrl);
     const got = await chrome.storage.local.get(scratch.map(scratchSourceKey));
@@ -881,7 +886,7 @@ const api: SourceMonkeyApi = {
     // Numbered first, so a script added a moment ago has its number.
     const numbers = (await assignAllNumbers()).scripts.byId;
     return Promise.all(view.rows.map(async (row) => {
-      const script = await getScript(row.id);
+      const script = await getScriptMeta(row.id);
       const collection = script ? await getCollection(script.collectionId) : undefined;
       const number = numbers[row.id];
       return {
@@ -909,6 +914,7 @@ const api: SourceMonkeyApi = {
   replayScriptLogsAtBoot,
   clearUpdateRateLimit: () => { _resetUpdaterStateForTests(); },
   rerunStoreMigration: () => rerunStoreMigrationForTests(),
+  forgetRegistrationState,
   forgetStoreMigration: () => forgetStoreMigrationForTests(),
   sweepUnusedBlobs: (now?: number) => sweepUnusedBlobsLocked(now),
   resetAllState: async () => {
@@ -2154,7 +2160,7 @@ async function popupScriptInputs(ids: readonly string[]): Promise<CachedPopupScr
   const fresh = new Map<string, CachedPopupScript>();
   if (missing.length > 0) {
     const generation = popupScriptGeneration;
-    for (const s of await getScripts(missing)) {
+    for (const s of await getScriptMetas(missing)) {
       fresh.set(s.id, {
         input: {
           id: s.id,
@@ -2569,7 +2575,7 @@ async function runManualScript(tabId: number, scriptId: string): Promise<ManualR
 // Why stored script `scriptId` can't be run as a manual script now,
 // going by its row alone, or null when it can.
 async function manualScriptRefusal(scriptId: string): Promise<string | null> {
-  const script = await getScript(scriptId);
+  const script = await getScriptMeta(scriptId);
   if (!script) return MANUAL_RUN_NOT_INSTALLED;
   if (!isManualScript(script)) return MANUAL_RUN_NOT_MANUAL;
   if (script.status !== 'ok') {
@@ -3416,7 +3422,7 @@ async function handleCheckPending(
   //   (a page's forgery over the bridge) runs nothing either way.
   // - A scratch script is sm-dev's: it runs only in the tabs of the run
   //   that pushed it. Nowhere else, a run's tabs or not.
-  const script = await getScript(payload.id);
+  const script = await getScriptMeta(payload.id);
   const scriptRun = script ? scratchRunOf(script.fileUrl) : null;
   if (script && (claim ? !claimAllows(claim, scriptRun) : scriptRun !== null)) {
     return { action: 'skip', reason: SKIP_REASON_SM_DEV };
@@ -3430,7 +3436,7 @@ async function handleCheckPending(
   if (skipReason) return { action: 'skip', reason: skipReason };
   // The frame's own URL (sender.url), not the one in the payload.
   if (payload.tld === true) {
-    const script = await getScript(payload.id);
+    const script = await getScriptMeta(payload.id);
     const url = sender.url ?? payload.url ?? '';
     if (!script || !urlMatchesScript(url, script.matching)) {
       return { action: 'skip', reason: SKIP_REASON_NO_MATCH };
@@ -3962,7 +3968,7 @@ async function loadConnectPolicy(
   tabId: number,
 ): Promise<{ reason: string } | { check: ConnectCheck }> {
   try {
-    const script = await getScript(scriptId);
+    const script = await getScriptMeta(scriptId);
     // Two different failures, and only the second is ours. A script
     // removed while a page it was running on is still open is a real
     // race the user can act on, so it says what happened and how to
@@ -5323,7 +5329,7 @@ async function recordScriptReport(
   // The page-world bridge relays any report the page sends, including
   // one about a script the extension never registered (a forgery).
   // Those aren't ours to show (they'd read as UNEXPECTED) or to log.
-  if (payload.__viaBridge && !(await getScript(id))) return;
+  if (payload.__viaBridge && !(await getScriptMeta(id))) return;
   const name = String(payload.name ?? id);
   // sender.url is the document URL where the wrapper sent from; prefer
   // it over payload.url because Chrome sets it.
@@ -5464,7 +5470,7 @@ async function recordScriptReport(
   // stored.loadedAt that matches the payload.loadedAt is expected and
   // does NOT make this report stale. Skip the check for that branch.
   if (wrapperLoadedAt != null && type !== SM_SWAPPED_MSG && !manual) {
-    const stored = await getScript(id);
+    const stored = await getScriptMeta(id);
     if (stored && stored.loadedAt > wrapperLoadedAt) {
       isStale = true;
       console.log(

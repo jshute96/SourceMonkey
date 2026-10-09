@@ -15,7 +15,7 @@
 // Both directions take each body as it finds it: one already inline (a
 // format 1 row, or a full script handed to a write) stays as it is.
 
-import type { StoredScript } from '../script-build.js';
+import type { ScriptMeta, StoredScript } from '../script-build.js';
 import type { StoredRequire, StoredResource } from '../external-files.js';
 import { base64ToBytes, bytesToBase64, sha256Hex } from '../bytes.js';
 import { SCRIPT_PREFIX } from './structural-keys.js';
@@ -171,15 +171,15 @@ export function blobKeysOf(value: unknown): string[] {
 // say; dropping them (or the file entry, which a refresh then fetches
 // like a new one) is a backstop for that.
 //
-// Only readers that load bodies see this. The match index reads the
-// small rows, so it still counts such a script as one that should run
-// until a refresh rewrites the row.
+// Only readers that load bodies see this. The registration sync is one,
+// and it saves the row this way (`markMissingBlobs`), so the readers of
+// small rows (pages, the match index) see it from then on.
 //
-// A write of the object built here (an enable toggle, say) stores it as
-// it is: an invalid row with an empty body. That's consistent, and the
-// refresh repairs it the same way.
-function withMissingBlob(script: StoredScript, bodyMissing: boolean): StoredScript {
-  const out: StoredScript = { ...script, status: 'invalid', errorMessage: MISSING_BLOB_MESSAGE };
+// A write of a full script built here stores it as it is: an invalid
+// row with an empty body. That's consistent, and the refresh repairs it
+// the same way.
+function withMissingBlob<T extends ScriptMeta>(script: T, bodyMissing: boolean): T {
+  const out: T = { ...script, status: 'invalid', errorMessage: MISSING_BLOB_MESSAGE };
   delete out.errorLocation;
   if (bodyMissing) {
     delete out.contentHash;
@@ -237,6 +237,29 @@ function hydrate(row: ScriptRow, blobs: Record<string, unknown>): StoredScript {
   return missing ? withMissingBlob(script, bodyMissing) : script;
 }
 
+// A stored row as reading it shows when a blob it points at is missing
+// or unreadable (see `withMissingBlob`), for saving it that way; null
+// when all of its blobs are there. `blobs` holds what's stored under
+// the row's blob keys. Bodies inline on the row (format 1) count as
+// there.
+export function markMissingBlobs(row: ScriptRow, blobs: Record<string, unknown>): ScriptRow | null {
+  const there = (ref: BlobRef | undefined): boolean => {
+    if (!ref) return true;
+    const blob = blobs[blobKey(ref.hash)] as StoredBlob | undefined;
+    return blob?.encoding === 'text' || blob?.encoding === 'base64';
+  };
+  const bodyMissing = typeof (row as { bodyText?: unknown }).bodyText !== 'string' && !there(row.bodyBlobRef);
+  const requires = row.requires?.filter((r) => there(r.blobRef));
+  const resources = row.resources?.filter((r) => there(r.blobRef));
+  if (!bodyMissing && requires?.length === row.requires?.length && resources?.length === row.resources?.length) {
+    return null;
+  }
+  const out = withMissingBlob({ ...row }, bodyMissing);
+  if (requires) out.requires = requires;
+  if (resources) out.resources = resources;
+  return out;
+}
+
 // Small rows → full scripts. `have` is blobs the caller already read
 // (a whole-store scan has them all); the rest are read in one call.
 export async function fromStorage(
@@ -273,15 +296,12 @@ export async function withBlobs(items: Record<string, unknown>): Promise<Record<
   return out;
 }
 
-// What the given scripts take in storage, bodies included, as Chrome
-// counts it. For debug timing lines; reads the small rows to find the
-// blobs, never the blobs.
-export async function storedBytesOf(scriptIds: readonly string[]): Promise<number> {
-  const keys = scriptIds.map((id) => SCRIPT_PREFIX + id);
-  if (keys.length === 0) return 0;
-  const rows = await chrome.storage.local.get(keys);
-  const blobs = new Set(Object.values(rows).flatMap(blobKeysOf));
-  return await chrome.storage.local.getBytesInUse([...keys, ...blobs]);
+// What the given scripts' rows take in storage, without their bodies,
+// as Chrome counts it: what a metadata read of them loads. For debug
+// timing lines.
+export async function scriptRowBytes(scriptIds: readonly string[]): Promise<number> {
+  if (scriptIds.length === 0) return 0;
+  return await chrome.storage.local.getBytesInUse(scriptIds.map((id) => SCRIPT_PREFIX + id));
 }
 
 // ---------- Migration from format 1 ----------

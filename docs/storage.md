@@ -14,13 +14,6 @@ Related modules:
 
 ## Schema
 
-> **Status: format 2 storage is in; its follow-ups aren't yet.** Rows
-> and blobs are stored as described here, but the store's reads still
-> return full scripts, reading every blob (`fromStorage` in
-> `src/extension/script-blobs.ts`). Next: readers that need only the
-> rows read only the rows, and registration skips the code on an
-> enable flip. Remove this note when those land.
-
 Key spaces in `chrome.storage.local`:
 
 | Key                    | Type                | Purpose |
@@ -195,9 +188,41 @@ The rows' `contentHash` fields stay change-detection tokens; the
     (`contentHash`, `fsMtime`, the HTTP ones), and a missing `@require`
     / `@resource` drops that entry, which a refresh fetches like a new
     one.
-  - Only readers that load bodies see this. The match index reads the
-    small rows, so until a refresh rewrites the row it still counts the
-    script as one that should run.
+  - Only readers that load bodies see this (see
+    [Reading without the bodies](#reading-without-the-bodies)). The
+    registration sync is one: it leaves such a script unregistered,
+    saves its row as `invalid` with this message, and writes it to the
+    script's Log. The collections page, the popup and the match index
+    read only rows, so they see it from then on.
+
+#### Reading without the bodies
+
+- **Two kinds of store read**:
+  - `getScript`, `getCollectionWithScripts`, `getAllScripts` return
+    full scripts (`StoredScript`), reading their blobs.
+  - `getScriptMeta`, `getScriptMetas`, `getCollectionWithScriptMeta`,
+    `getAllScriptMetas` return the rows as stored, typed `ScriptMeta`
+    (a `StoredScript` without `bodyText`, require `source` or resource
+    `bytesBase64`). The type checker flags any use of a body.
+- **Writing a row back** with a field changed keeps its blob refs, so
+  the write hashes and stores no body. The enable writes, version
+  probes, moves and removals work on rows this way.
+- **Reading every row** lists the keys and reads only the wanted ones
+  (`scanStorageRows`), rather than a `get(null)` that returns every
+  blob and GM value too. The match index, the log label table, the
+  registration sync, the enable toggles' search for related copies,
+  and the collections page do this.
+- **Who reads bodies**:
+  - The viewer, for the script on screen, and the compare page.
+  - Refresh, which reuses the stored body when the file hasn't changed.
+  - The registration sync, for the scripts it registers only (see
+    [The sync is incremental](injection.md#the-sync-is-incremental)).
+    It saves a row whose blob it found missing as `invalid`
+    (`recordMissingBlobs`), and logs it.
+  - The parse check, which records its verdict on the full row it
+    hands back for registering (`verifyParseChecks`).
+  - Running a manual script, sm-dev's `script print`, and the
+    extension-update backfill of `usesUnsafeWindow`.
 
 ### Format 2 migration
 
@@ -975,9 +1000,9 @@ The Options page's read-only breakdown of `chrome.storage.local`
 - **Repaint** on any storage change, at most once a second, since each
   paint reads every row.
 
-#### Later: without reading every row
+#### Later: without reading every blob
 
-The page still reads the whole store. Each `BlobRef` carries its hash
+The table still reads the whole store. Each `BlobRef` carries its hash
 and size, so a later version could skip the blobs:
 
 - **Per kind**, from the refs on the rows: files and size as if
@@ -1802,12 +1827,11 @@ have to be.
   Both discard and recreate their contents, which would drop focus off
   a link the user had tabbed to; the Name cell would also re-run the
   favicon fetch and flash the globe placeholder.
-- **Reads are proportionate.** One pass reads the collection index and each
-  collection's scripts once, and paints from those rows.
-  Going through `getAllScripts()` instead would mean a
-  `storage.local.get(null)` per pass — every script body, every
-  prefetched `@require`, and the base64 favicon cache — on top of the
-  per-section reads.
+- **Reads are proportionate.** One pass reads the collection index and
+  each collection's script rows once, without their bodies
+  (`getScriptMetas`), and paints from those rows. A
+  `storage.local.get(null)` per pass would also return every body,
+  every GM value and the base64 favicon cache.
 - **`data-script-*` datasets** are written by `applyScriptRowDatasets`,
   shared with the initial render so the two cannot disagree — notably
   about the `(in <file>, line N)` the hover text depends on. Fields that

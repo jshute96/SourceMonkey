@@ -11,6 +11,7 @@ import {
   hasSweepCandidates,
   hasInlineBodies,
   hydrateScriptRows,
+  markMissingBlobs,
   migrateToBlobs,
   MIGRATE_BATCH,
   MISSING_BLOB_MESSAGE,
@@ -155,6 +156,35 @@ test('a missing blob makes the script invalid and drops what would skip the refe
   assert.equal(back2.status, 'invalid');
   assert.equal(back2.requires.length, 0);
   assert.equal(back2.contentHash, 'c');
+});
+
+test('markMissingBlobs saves a row the way reading it shows a missing blob', async () => {
+  const blobs = new Map();
+  const row = await toStorage(script({ contentHash: 'c', httpEtag: 'e', requires: [req('lib();')] }), blobs);
+  const all = Object.fromEntries(blobs);
+  assert.equal(markMissingBlobs(row, all), null, 'nothing missing, nothing to save');
+
+  const noBody = { ...all };
+  delete noBody[`blob:${row.bodyBlobRef.hash}`];
+  const marked = markMissingBlobs(row, noBody);
+  assert.equal(marked.status, 'invalid');
+  assert.equal(marked.errorMessage, MISSING_BLOB_MESSAGE);
+  assert.equal(marked.contentHash, undefined);
+  assert.equal(marked.httpEtag, undefined);
+  assert.equal(marked.requires.length, 1);
+  assert.equal(hasInlineBodies(marked), false, 'still a small row');
+
+  const noLib = { ...all };
+  delete noLib[`blob:${row.requires[0].blobRef.hash}`];
+  const marked2 = markMissingBlobs(row, noLib);
+  assert.equal(marked2.status, 'invalid');
+  assert.equal(marked2.requires.length, 0);
+  assert.equal(marked2.contentHash, 'c');
+
+  const unknown = { ...all, [`blob:${row.bodyBlobRef.hash}`]: { encoding: 'zstd', data: '' } };
+  assert.equal(markMissingBlobs(row, unknown).status, 'invalid', 'an unknown encoding counts as missing');
+
+  assert.equal(markMissingBlobs(script(), {}), null, 'a body inline on the row is there');
 });
 
 test('withBlobs writes only blobs not already stored, and leaves other keys alone', async () => {

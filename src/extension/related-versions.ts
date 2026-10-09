@@ -26,7 +26,7 @@ import {
   viewerUrl,
   type ScriptStatusView,
 } from '../script-display.js';
-import { isScriptEnabled, isCollectionEnabled, type StoredScript, type StoredCollection } from './script-store.js';
+import { isScriptEnabled, isCollectionEnabled, type ScriptMeta, type StoredCollection } from './script-store.js';
 import {
   COLLECTION_OFF_TITLE,
   effectiveDisplayName,
@@ -111,7 +111,7 @@ export interface RelatedVersionsModel extends RelatedVersions {
   // script-display.ts). Built by the caller because only it knows
   // whether the base is a stored script or a preview's location. With
   // no builder the verdict is the plain word.
-  compareHref?: (other: StoredScript) => string;
+  compareHref?: (other: ScriptMeta) => string;
   // `@version` of the script on screen, used to fill the Version cell
   // of the install-offer row. Without it that one row
   // would read as version-less next to copies that all show one,
@@ -138,7 +138,7 @@ export interface RelatedVersionsModel extends RelatedVersions {
   // directory collection: the reason that button is normally dead
   // there is that the collection's next scan would bring the row
   // straight back, and deleting the file is exactly what stops it.
-  canDeleteFile?: (script: StoredScript, collection: StoredCollection | null) => boolean;
+  canDeleteFile?: (script: ScriptMeta, collection: StoredCollection | null) => boolean;
   // A failure from one of the panel's own actions, shown inside the
   // panel. It cannot use the page's `#message` bar: that bar is
   // rewritten from the current script's stored state on every
@@ -921,7 +921,7 @@ function statusCell(scriptId: string, status: ScriptStatusView | undefined): HTM
   return td;
 }
 
-function versionCell(script: StoredScript): HTMLTableCellElement {
+function versionCell(script: ScriptMeta): HTMLTableCellElement {
   const v = script.header ? getValue(script.header, 'version') : undefined;
   return versionCellFor(v, 'This copy declares no @version');
 }
@@ -951,7 +951,7 @@ function versionCellFor(version: string | undefined, noneTitle: string): HTMLTab
 // a local file edited since it was read still says Same until it is
 // refreshed, and the Location cell's `modified` chip is what says so.
 function contentCell(
-  script: StoredScript | undefined,
+  script: ScriptMeta | undefined,
   model: RelatedVersionsModel,
 ): HTMLTableCellElement {
   const { mode } = model;

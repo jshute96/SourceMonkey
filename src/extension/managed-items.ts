@@ -5,7 +5,7 @@
 
 import { collectionKind } from '../file-locations.js';
 import { scriptDisplayName } from '../script-display.js';
-import type { StoredScript } from '../script-build.js';
+import type { ScriptMeta } from '../script-build.js';
 import type { ManagedCollection, ManagedScript } from '../sm-dev-protocol.js';
 import { getValue } from '../userscript-header.js';
 import { effectiveDisplayName } from './collection-display.js';
@@ -28,7 +28,7 @@ export function managedCollection(collection: StoredCollection, number: number |
   };
 }
 
-export function managedScript(script: StoredScript, number: number | undefined, source?: ScratchSource): ManagedScript {
+export function managedScript(script: ScriptMeta, number: number | undefined, source?: ScratchSource): ManagedScript {
   const header = (tag: string): string | undefined => (script.header ? getValue(script.header, tag)?.trim() : undefined) || undefined;
   const namespace = header('namespace');
   const version = header('version');
@@ -50,7 +50,7 @@ export function managedScript(script: StoredScript, number: number | undefined, 
 
 /** The installed scripts, each collection's in its own order, runs' test collections' too. */
 export function managedScripts(
-  collections: readonly StoredCollection[], scripts: readonly StoredScript[], numbers: Record<string, number>,
+  collections: readonly StoredCollection[], scripts: readonly ScriptMeta[], numbers: Record<string, number>,
   sources: Record<string, ScratchSource> = {},
 ): ManagedScript[] {
   const byId = new Map(scripts.map((s) => [s.id, s]));

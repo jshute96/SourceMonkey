@@ -179,12 +179,10 @@ of a 500 ms budget, the decision lands at ~243 ms. What remains:
   inside the window by every storage-granting script. A per-script
   in-memory value cache in the SW (invalidated by `gmval:` writes)
   would remove it — see the GM storage note below.
-- **The remaining `get(null)` scans are still full-namespace** —
-  `match index`, `registration sync`, `all scripts`, `log id table`.
-  They measured 129–193 ms each on a 266-row profile. Unlike the GM
-  snapshot they genuinely want script rows, so narrowing them means a
-  storage-layout change (bodies in their own rows), not a `getKeys()`
-  swap.
+- **The script-row scans are narrow now** — `match index`,
+  `registration sync`, `log id table` list the keys and read only the
+  rows, without bodies (storage format 2). They measured 129–193 ms
+  each as `get(null)` scans on a 266-row profile; worth re-measuring.
 - **`build-specs` costs ~320 ms on the sync right after a swap**, 2 ms
   on the next. That is the deferred parse check landing in
   `revalidateCandidates` — expected, and off the user-visible path, but
@@ -1411,16 +1409,23 @@ with a trade-off worth recording:
 
 ## `@require` follow-ups
 
-- **Storage format 2 follow-ups.** Bodies now live in shared
+- **Storage format 2 follow-ups.** Bodies live in shared
   `blob:<sha256>` rows ([storage.md](docs/storage.md#content-blobs)),
-  but the store still reads every blob back. Next:
-  - Readers that need only the small rows (enable checks, page
-    repaints, the popup) read only those.
-  - Registration skips the code on an enable flip, when the code hash
-    matches what's registered.
+  and readers that need only the rows skip them. Still open:
   - The Options page usage table sizes blobs from the refs and
     `getBytesInUse`, without reading them.
   - Compression of large blobs, as a new `encoding`.
+  - Refresh re-reads each refreshed row with its bodies inside the
+    write lock, to compare against what it rebuilt. Comparing small
+    rows would need the rebuilt row's refs first (`toStorage`).
+  - An incremental sync re-sends a registered script's code even when
+    it didn't change (a row edit that moved only its patterns, say).
+    The full sync compares against `getScripts()`; an incremental one
+    would need each placement's code hash kept in its record.
+  - A missing blob shows on the pages once a registration sync reads
+    the script (each worker start, or a change to its row) and saves it
+    `invalid`. Until then they show it as it was. Checking the blob
+    keys (`getKeys`) on a repaint would catch it sooner.
 - **UI surface for prefetched requires.** The viewer now shows one
   tab per require with its full source, but the collections page row and
   the viewer's details panel still don't expose require state. Add a

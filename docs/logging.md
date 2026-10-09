@@ -45,7 +45,7 @@ refers to it: its basename and its script number.
   `script-display.ts`), used by the injector and the viewer, and
   unit-tested directly.
 - SW runtime: a `Map<id, {id, relativePath}>` and the script numbers,
-  populated by one `chrome.storage.local.get(null)` scan at SW startup
+  populated by one read of the script rows at SW startup
   (`ensureLogIdsLoaded`) and kept fresh by `storage.onChanged`
   (`installScriptLogIdListener`), including the `scriptNumbers` row.
 - Sync getter: `getScriptLogLabel(id)` returns the log ID, or the

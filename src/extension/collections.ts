@@ -25,7 +25,7 @@
 // write is in flight. The repaint is careful not to overwrite a control
 // whose spinner is up.
 
-import { storedBytesOf } from './script-blobs.js';
+import { scriptRowBytes } from './script-blobs.js';
 import { openDeleteDialog } from './delete-dialog.js';
 import { setDeleteIcon } from './delete-icon.js';
 import { setGlyphButton, setGlyphButtonBusy } from './glyph.js';
@@ -36,10 +36,10 @@ import {
   backfillCollectionDisplayNames,
   DEFAULT_COLLECTIONS,
   describeError,
-  getAllScripts,
+  getAllScriptMetas,
   reconcileScriptMembership,
-  getCollectionWithScripts,
-  getScripts,
+  getCollectionWithScriptMeta,
+  getScriptMetas,
   getCollections,
   isFirstRunComplete,
   isScriptEnabled,
@@ -51,7 +51,7 @@ import {
   removeCollection,
   localFileScope,
   STORAGE_NEARLY_FULL,
-  type StoredScript,
+  type ScriptMeta,
   type StoredCollection,
 } from './script-store.js';
 import { setAllScriptsEnabled, setCollectionEnabledExclusive, setScriptEnabledExclusive } from './script-enablement.js';
@@ -339,14 +339,14 @@ let currentRefreshErrors: RefreshErrorMap = {};
 
 // For the Status column: after a storage.session change for one or
 // more `loglevel:` rows, walk every rendered script row and rewrite its
-// status cell content + class to reflect the latest effective status. Pulls the StoredScript.status
+// status cell content + class to reflect the latest effective status. Pulls the ScriptMeta.status
 // off the row's data-script-status attribute so we don't have to refetch.
 function applyStatusCellsToDom(): void {
   for (const row of document.querySelectorAll<HTMLTableRowElement>(
     '.script-table tr[data-script-id]',
   )) {
     const id = row.dataset.scriptId;
-    const storedStatus = row.dataset.scriptStatus as StoredScript['status'] | undefined;
+    const storedStatus = row.dataset.scriptStatus as ScriptMeta['status'] | undefined;
     if (!id || !storedStatus) continue;
     const cell = row.querySelector<HTMLTableCellElement>('td.status-cell');
     if (!cell) continue;
@@ -370,7 +370,7 @@ function applyStatusCellsToDom(): void {
 // FAILED long after the refresh started succeeding again.
 function applyScriptRowDatasets(
   row: HTMLTableRowElement,
-  script: StoredScript,
+  script: ScriptMeta,
 ): { errorMessage: string | undefined } {
   row.dataset.scriptStatus = script.status;
   const errorMessage = script.errorMessage
@@ -398,7 +398,7 @@ const statusCellKeys = new Map<string, string>();
 
 function statusCellKey(
   scriptId: string,
-  storedStatus: StoredScript['status'],
+  storedStatus: ScriptMeta['status'],
   errorMessage: string | undefined,
   refreshError: string | undefined,
 ): string {
@@ -419,7 +419,7 @@ function statusCellKey(
 function paintStatusCell(
   cell: HTMLTableCellElement,
   scriptId: string,
-  storedStatus: StoredScript['status'],
+  storedStatus: ScriptMeta['status'],
   errorMessage: string | undefined,
   refreshError: string | undefined,
 ): void {
@@ -547,7 +547,7 @@ function writtenSinceRead(key: string): boolean {
 //
 // `also` is other rows the handler drew itself (the clicked one, a
 // collection's toggle), noted as written with these.
-function applyEnableResult(changed: readonly StoredScript[], also: readonly string[] = []): void {
+function applyEnableResult(changed: readonly ScriptMeta[], also: readonly string[] = []): void {
   noteWritten([...also, ...changed.map((s) => s.id)]);
   const sections = new Set<HTMLElement>();
   for (const script of changed) {
@@ -574,29 +574,28 @@ async function repaintSections(timer: PhaseTimer): Promise<void> {
   // read rather than first.
   await syncStorageBanner(new Set(collections.map((s) => s.id)));
   timer.mark('banner');
-  // Read every collection's scripts ONCE, up front, in one call, and
-  // paint from that.
-  //   - Not `getAllScripts()`: that is a `storage.local.get(null)`,
-  //     which also drags back every prefetched `@require`, every GM
-  //     value and the base64 favicon cache.
-  //   - Not one read per collection: two calls each, one after another,
-  //     for rows the collection list above already names.
+  // Read every collection's script rows ONCE, up front, in one call,
+  // and paint from that.
+  //   - Without their bodies, which the rows don't show.
+  //   - Not `getAllScriptMetas()`: that lists every key first, for rows
+  //     the collection list above already names.
+  //   - Not one read per collection: two calls each, one after another.
   // A repaint runs on any structural write from anywhere, so it has to
   // stay proportionate.
-  const scripts = await getScripts(collections.flatMap((c) => c.scriptIds));
+  const scripts = await getScriptMetas(collections.flatMap((c) => c.scriptIds));
   const byId = new Map(scripts.map((sc) => [sc.id, sc]));
   const scriptsByCollection = new Map(collections.map((c) => [
     c.id,
-    c.scriptIds.map((id) => byId.get(id)).filter((sc): sc is StoredScript => sc != null),
+    c.scriptIds.map((id) => byId.get(id)).filter((sc): sc is ScriptMeta => sc != null),
   ]));
   const allScripts = [...scriptsByCollection.values()].flat();
   timer.mark('read scripts', `${allScripts.length} scripts`);
   // Their size from Chrome rather than by serializing them here, which
   // on a store of several MB held this page's thread for tens of ms.
-  // Bodies included, since the read above loaded them. Only with debug
+  // The rows only, which is what the read above loaded. Only with debug
   // logging on, since it is an extra storage call.
   if (isDebugLoggingEnabled()) {
-    const bytes = await storedBytesOf(allScripts.map((s) => s.id));
+    const bytes = await scriptRowBytes(allScripts.map((s) => s.id));
     timer.mark('size', formatBytes(bytes));
   }
   // Cached favicons first, so rows draw with their real icons rather
@@ -711,7 +710,7 @@ function syncManifestStatDataset(section: HTMLElement, collection: StoredCollect
 async function syncSectionFromStorage(
   section: HTMLElement,
   collection: StoredCollection,
-  scripts: readonly StoredScript[],
+  scripts: readonly ScriptMeta[],
 ): Promise<void> {
   // A toggle of this collection that landed after the repaint read
   // storage already drew the section; the stored row is older than it.
@@ -793,7 +792,7 @@ async function syncScriptRowsFromStorage(
   section: HTMLElement,
   collection: StoredCollection,
   collectionOn: boolean,
-  scripts: readonly StoredScript[],
+  scripts: readonly ScriptMeta[],
 ): Promise<void> {
   const localFiles = localFileScope(collection);
   scripts = sortedByShownName(scripts, isContainerCollection(collection.path));
@@ -867,7 +866,7 @@ async function syncScriptRowsFromStorage(
 // cell to REFRESH FAILED.
 function syncScriptRow(
   row: HTMLTableRowElement,
-  script: StoredScript,
+  script: ScriptMeta,
   collectionOn: boolean,
   collectionPath: string,
   localFiles: LocalFileScope,
@@ -970,7 +969,7 @@ function sameNodeList(current: readonly Element[], wanted: readonly Element[]): 
 // one that would only flash its favicon for nothing.
 const nameCellKeys = new Map<string, string>();
 
-function nameCellKey(script: StoredScript, localFiles: LocalFileScope): string {
+function nameCellKey(script: ScriptMeta, localFiles: LocalFileScope): string {
   return JSON.stringify([
     script.relativePath,
     script.fileUrl,
@@ -1198,8 +1197,8 @@ async function handleAddParam(raw: string): Promise<void> {
 // `refresh-targets` selectors read. One storage scan for all the
 // scripts rather than a per-collection read.
 async function readCollectionScripts(): Promise<CollectionScripts[]> {
-  const [collections, scripts] = await Promise.all([getCollections(), getAllScripts()]);
-  const byCollection = new Map<string, StoredScript[]>();
+  const [collections, scripts] = await Promise.all([getCollections(), getAllScriptMetas()]);
+  const byCollection = new Map<string, ScriptMeta[]>();
   for (const script of scripts) {
     const list = byCollection.get(script.collectionId);
     if (list) list.push(script);
@@ -1307,7 +1306,7 @@ async function render(): Promise<void> {
   // that the repaint calls too.
   await syncStorageBanner(new Set(collections.map((s) => s.id)));
 
-  const allScripts = await getAllScripts();
+  const allScripts = await getAllScriptMetas();
   // Repair any collection whose `scriptIds` disagrees with the script
   // rows themselves, off this scan — this is
   // the page where the damage shows (a script that runs but is listed
@@ -1471,7 +1470,7 @@ async function renderScriptBlock(
 }
 
 async function renderScriptTable(collection: StoredCollection, collectionOn: boolean): Promise<HTMLElement> {
-  const data = await getCollectionWithScripts(collection.id);
+  const data = await getCollectionWithScriptMeta(collection.id);
   const inContainer = isContainerCollection(collection.path);
   const scripts = sortedByShownName(data?.scripts ?? [], inContainer);
   const localFiles = localFileScope(collection);
@@ -1544,7 +1543,7 @@ async function renderScriptTable(collection: StoredCollection, collectionOn: boo
 }
 
 function renderScriptRow(
-  script: StoredScript,
+  script: ScriptMeta,
   collectionOn: boolean,
   collectionPath: string,
   localFiles: LocalFileScope,
@@ -1672,7 +1671,7 @@ function fitIconColumns(table: HTMLTableElement, settling: readonly Promise<unkn
 // section happens to be rebuilt for an unrelated reason.
 function fillNameCell(
   nameCell: HTMLTableCellElement,
-  script: StoredScript,
+  script: ScriptMeta,
   collectionPath: string,
   // Where this script's collection allows local file overrides to come
   // from. Threaded alongside the path — both are per-collection facts
@@ -1731,7 +1730,7 @@ function fillNameCell(
 //
 // Only the column shortens. The tooltip below always gives the location
 // in full, which is the point of having it there.
-function nameCellText(script: StoredScript, inContainer: boolean): string {
+function nameCellText(script: ScriptMeta, inContainer: boolean): string {
   const location = inContainer
     ? scriptBasename(script.relativePath)
     : displayLocation(script.relativePath);
@@ -1742,7 +1741,7 @@ function nameCellText(script: StoredScript, inContainer: boolean): string {
 // order: that order is scan or install order, which nothing on the page
 // reveals. Ties (two scripts with the same `@name`) fall back to the
 // location so the order stays stable across repaints.
-function sortedByShownName(scripts: readonly StoredScript[], inContainer: boolean): StoredScript[] {
+function sortedByShownName(scripts: readonly ScriptMeta[], inContainer: boolean): ScriptMeta[] {
   return scripts
     .map((script) => ({ script, name: nameCellText(script, inContainer) }))
     .sort((a, b) => compareScriptNames(a.name, b.name)
@@ -1754,7 +1753,7 @@ function sortedByShownName(scripts: readonly StoredScript[], inContainer: boolea
 // longer shows it, and it's what tells two same-named scripts apart —
 // then a blank line, then the parsed `@description`, or "No description"
 // when the script declares none.
-function nameCellTooltip(script: StoredScript): string {
+function nameCellTooltip(script: ScriptMeta): string {
   const desc = script.header ? getValue(script.header, 'description') : undefined;
   return `${displayLocation(script.relativePath)}\n\n${desc?.trim() || 'No description'}`;
 }
@@ -1763,7 +1762,7 @@ function nameCellTooltip(script: StoredScript): string {
 // delete — which takes its collection as well as the row (see
 // `deletableCopyPath`). Reads the setting the render seeded, so it can
 // be asked while a row is being built.
-function isDeletableCopy(script: StoredScript, collectionPath: string | undefined): boolean {
+function isDeletableCopy(script: ScriptMeta, collectionPath: string | undefined): boolean {
   const collection = collectionPath === undefined ? null : { path: collectionPath };
   return deletableCopyPath(script, collection, currentCopiesSetting) !== null;
 }
@@ -1772,7 +1771,7 @@ function isDeletableCopy(script: StoredScript, collectionPath: string | undefine
 // deletes the file — hence the badged glyph and the red resting colour
 // (src/extension/delete-icon.ts). The dialog says so too, names the path, and
 // offers the dependency files that came with it (src/extension/delete-dialog.ts).
-function makeDeleteCopyButton(script: StoredScript): HTMLButtonElement {
+function makeDeleteCopyButton(script: ScriptMeta): HTMLButtonElement {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'remove-script';
@@ -1783,7 +1782,7 @@ function makeDeleteCopyButton(script: StoredScript): HTMLButtonElement {
   return btn;
 }
 
-async function onDeleteCopy(script: StoredScript, btn: HTMLButtonElement): Promise<void> {
+async function onDeleteCopy(script: ScriptMeta, btn: HTMLButtonElement): Promise<void> {
   const result = await openDeleteDialog({ script });
   if (!result) return;
   showPageError(null);
@@ -1956,7 +1955,7 @@ async function onAddViaDialog(rawPath: string, jump: boolean): Promise<boolean> 
 async function onEditCollection(id: string): Promise<void> {
   // Re-read rather than trust the rendered row: the name may have been
   // changed from another tab since this section was painted.
-  const data = await getCollectionWithScripts(id);
+  const data = await getCollectionWithScriptMeta(id);
   if (!data) return;
   const outcome = await openCollectionDialog({ mode: 'edit', collection: data.collection });
   if (!outcome) return;
@@ -2109,7 +2108,7 @@ async function onRemoveCollection(id: string, section: HTMLElement, btn: HTMLBut
   // removing a script while the dialog is open could leave the number
   // slightly stale. The window is short and the error bounded; not
   // worth a re-read.
-  const data = await getCollectionWithScripts(id);
+  const data = await getCollectionWithScriptMeta(id);
   if (!data) {
     // Collection row has been removed elsewhere (e.g. another tab).
     // Nothing to remove from the store; drop the orphan section.
@@ -2160,9 +2159,9 @@ async function refreshAndHighlight(
   try {
     // Snapshot the prior scripts so we can highlight rows that
     // actually changed after the refresh lands.
-    const priors = new Map<string, StoredScript[]>();
+    const priors = new Map<string, ScriptMeta[]>();
     await Promise.all(collectionIds.map(async (id) => {
-      const before = await getCollectionWithScripts(id);
+      const before = await getCollectionWithScriptMeta(id);
       priors.set(id, before?.scripts ?? []);
     }));
     await run();
@@ -2170,7 +2169,7 @@ async function refreshAndHighlight(
     for (const id of collectionIds) {
       const section = findSection(id);
       if (!section) continue;
-      const after = await getCollectionWithScripts(id);
+      const after = await getCollectionWithScriptMeta(id);
       applyChangeHighlights(
         section,
         priors.get(id) ?? [],
@@ -2303,8 +2302,8 @@ async function onRefreshSubset(targets: RefreshTargets): Promise<void> {
 //                            optimization, OR genuine no-op)
 function applyChangeHighlights(
   section: HTMLElement,
-  prior: StoredScript[],
-  next: StoredScript[],
+  prior: ScriptMeta[],
+  next: ScriptMeta[],
   // The collection's local-file scope, so a ghost resolves its favicon
   // exactly as the live row did — including an `@icon` that points at a
   // file on disk.
@@ -2340,8 +2339,8 @@ interface RowChange {
 }
 
 function classifyChange(
-  prior: StoredScript | undefined,
-  next: StoredScript,
+  prior: ScriptMeta | undefined,
+  next: ScriptMeta,
 ): RowChange | null {
   const failed = next.status !== 'ok';
   if (!prior) return { kind: 'added', failed };
@@ -2391,7 +2390,7 @@ function classifyChange(
 // on the hover text would be wrong.
 function addTombstones(
   section: HTMLElement,
-  prior: readonly StoredScript[],
+  prior: readonly ScriptMeta[],
   survivingIds: ReadonlySet<string>,
   localFiles: LocalFileScope,
 ): void {
@@ -2420,7 +2419,7 @@ function addTombstones(
 }
 
 function renderTombstoneRow(
-  script: StoredScript,
+  script: ScriptMeta,
   anchorId: string,
   inContainer: boolean,
   withActions: boolean,
@@ -2651,7 +2650,7 @@ async function onBulkToggleScripts(collectionId: string, btn: HTMLButtonElement,
     // Reflect the stored state in every row: "Enable all" may leave a
     // second copy of a script off.
     const collectionOn = !section.classList.contains('disabled');
-    const data = await getCollectionWithScripts(collectionId);
+    const data = await getCollectionWithScriptMeta(collectionId);
     const on = new Map((data?.scripts ?? []).map((s) => [s.id, isScriptEnabled(s)]));
     for (const row of sectionScriptRows(section)) {
       const enabled = on.get(row.dataset.scriptId ?? '') ?? false;
@@ -2685,7 +2684,7 @@ function allScriptsOn(section: HTMLElement): boolean {
 
 // The identity a row is grouped by for `allOnByIdentity`: a script
 // without `@name` stands alone.
-function rowIdentity(script: StoredScript): string {
+function rowIdentity(script: ScriptMeta): string {
   return identityKey(script.header ?? null) ?? `id:${script.id}`;
 }
 

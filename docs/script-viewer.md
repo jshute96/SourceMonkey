@@ -516,9 +516,9 @@ failure in its own error slot.
   pre-selected, so Move is greyed until a destination is picked — see
   [script-identity.md](script-identity.md#the-same-dropdown-for-a-move).
   It comes from the last "Other versions" paint, not a fresh store
-  read: `readStoreSnapshot` is a `storage.local.get(null)` over every
-  row in the store, which is a visible pause on a click, and the panel
-  below has already paid it. `moveScript` re-checks under the write
+  read: `readStoreSnapshot` reads every script row in the store,
+  which can be a visible pause on a click, and the panel below has
+  already paid it. `moveScript` re-checks under the write
   lock, so a stale entry costs a message, never a bad move.
 - **A destination that already holds this script** is disabled too,
   marked *(already installed)*. No message goes with either case: the

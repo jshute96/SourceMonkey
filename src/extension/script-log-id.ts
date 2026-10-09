@@ -22,7 +22,7 @@
 
 import { scriptBasename } from '../script-display.js';
 import { numberMap, numbersFrom, SCRIPT_NUMBERS_KEY } from './sticky-numbers.js';
-import { scanAllStorage } from './storage-scan.js';
+import { scanStorageRows } from './storage-scan.js';
 import type { StoredScript } from '../script-build.js';
 
 export interface LogIdInput {
@@ -84,7 +84,8 @@ export function ensureLogIdsLoaded(): Promise<void> {
 }
 
 async function loadAll(): Promise<void> {
-  const all = await scanAllStorage('log id table');
+  const all = await scanStorageRows('log id table', (k) =>
+    k.startsWith(SCRIPT_PREFIX) || k === SCRIPT_NUMBERS_KEY);
   const next = new Map<string, LogIdInput>();
   for (const [key, value] of Object.entries(all)) {
     if (!key.startsWith(SCRIPT_PREFIX)) continue;

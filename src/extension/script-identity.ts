@@ -48,7 +48,7 @@ import {
   isSingleFileInput,
 } from './directories.js';
 import {
-  getAllScripts, getCollections, isScriptEnabled, isCollectionEnabled, writeEnablementFrom, type StoredScript, type StoredCollection,
+  getAllScriptMetas, getCollections, isScriptEnabled, isCollectionEnabled, writeEnablementFrom, type ScriptMeta, type StoredCollection,
 } from './script-store.js';
 import { CONTAINER_DISPLAY_NAMES, effectiveDisplayName } from './collection-display.js';
 import { getValues, type ParsedHeader } from '../userscript-header.js';
@@ -63,7 +63,7 @@ export { identityKey, locationKey } from './script-keys.js';
 // with the collection that holds it so the UI can render both without a
 // second lookup.
 export interface RelatedScript {
-  script: StoredScript;
+  script: ScriptMeta;
   // `null` only if the row's `collectionId` dangles — shouldn't happen,
   // but the renderer must not crash on a partially-written store.
   collection: StoredCollection | null;
@@ -122,7 +122,7 @@ export interface InstallOption {
 }
 
 export interface RelatedVersionsQuery {
-  scripts: readonly StoredScript[];
+  scripts: readonly ScriptMeta[];
   collections: readonly StoredCollection[];
   // The **absolute** location of the script under consideration:
   // a stored row's `fileUrl`, or the URL/path a preview was opened
@@ -313,13 +313,13 @@ function inRunCollection(rel: RelatedScript): boolean {
 // another click.
 //
 // A run's test collection is left out both ways, as by `enableChanges`.
-export async function turnOffOtherCopies(scriptId: string): Promise<StoredScript[]> {
+export async function turnOffOtherCopies(scriptId: string): Promise<ScriptMeta[]> {
   const timer = startPhaseTimer('turn off other copies');
-  const [scripts, collections] = await Promise.all([getAllScripts(), getCollections()]);
+  const [scripts, collections] = await Promise.all([getAllScriptMetas(), getCollections()]);
   timer.mark('read all', `${scripts.length} scripts, ${collections.length} collections`);
   const copy = scripts.find((s) => s.id === scriptId);
   const related = copy ? relatedRowsOf(scripts, collections, copy) : [];
-  let off: StoredScript[] = [];
+  let off: ScriptMeta[] = [];
   // Skipped when this read shows nothing to turn off, the usual case
   // after an install or a move, so it doesn't take the lock for nothing.
   if (copy && otherActiveCopies(related, scriptId).length > 0) {
@@ -350,9 +350,9 @@ export async function turnOffOtherCopies(scriptId: string): Promise<StoredScript
 // row's location and header: what the rest of the store is compared
 // against, and for a github blob URL the resolved raw one.
 function relatedRowsOf(
-  scripts: StoredScript[],
+  scripts: ScriptMeta[],
   collections: StoredCollection[],
-  copy: StoredScript,
+  copy: ScriptMeta,
 ): RelatedScript[] {
   return allRelatedRows(findRelatedVersions({ scripts, collections, location: copy.fileUrl, header: copy.header ?? null }));
 }

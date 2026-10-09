@@ -32,13 +32,13 @@ import {
   parentDir,
 } from '../file-locations.js';
 import { inferCollectionType } from './collection-display.js';
-import type { StoredCollection, StoredScript } from './script-store.js';
+import type { StoredCollection, ScriptMeta } from './script-store.js';
 
 // A collection plus the script rows it holds — what the selectors need
-// to see, and what `getCollectionWithScripts` already returns.
+// to see, and what `getCollectionWithScriptMeta` already returns.
 export interface CollectionScripts {
   collection: StoredCollection;
-  scripts: readonly StoredScript[];
+  scripts: readonly ScriptMeta[];
 }
 
 // One individually-selected script row: its id, plus the collection
@@ -158,7 +158,7 @@ export function pathRefreshTargets(
 // True when a stored row's file is the target or lives under it. Only
 // local rows can match — a container holds http(s) and GitHub scripts
 // alongside the local ones.
-function scriptMatchesPath(script: StoredScript, target: string): boolean {
+function scriptMatchesPath(script: ScriptMeta, target: string): boolean {
   if (!isFileUrl(script.fileUrl)) return false;
   return isAtOrUnder(toFsPath(script.fileUrl), target);
 }

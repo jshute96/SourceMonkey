@@ -129,9 +129,13 @@ registered is **updated in place**.
 
 1. Expand the scope — a collection row that appeared, went away, or
    flipped its enabled flag moves every script under it.
-2. `chrome.storage.local.get([...])` for just those rows. Not
-   `get(null)`, which pulls every script body and the favicon cache.
-3. Rebuild specs for those scripts only.
+2. `chrome.storage.local.get([...])` for just those rows, without
+   their bodies. Not `get(null)`, which pulls every script body and the
+   favicon cache.
+3. Read the bodies of the scripts among them that will be registered
+   (`withBodies`), and rebuild specs for those only. A sync that only
+   removes registrations (a script or collection turned off) reads no
+   bodies.
 4. `unregister([...])` for scripts that left the set and that this
    context believes Chrome holds.
 5. `chrome.userScripts.update([...])` for ids Chrome already holds,
@@ -198,18 +202,25 @@ against and a pure diff would strand stale registrations.
     `main.user.js#1`), and the label is baked into the registered
     `//# sourceURL=` directives. Every script whose label just moved is
     rebuilt too, however untouched its own row is.
-- With no record, the sync reads everything, rebuilds every spec, and
-  reconciles against `chrome.userScripts.getScripts()`: everything
-  wanted is updated or registered, and only ids Chrome holds that
-  storage no longer wants are dropped. **Still not a wipe** — a script
-  that survives the restart is never unregistered.
+- With no record, the sync reads every script and collection row,
+  rebuilds every spec, and reconciles against
+  `chrome.userScripts.getScripts()`: everything wanted is updated or
+  registered, and only ids Chrome holds that storage no longer wants are
+  dropped. **Still not a wipe** — a script that survives the restart is
+  never unregistered.
+  - Bodies are read only for the scripts it registers.
+  - `getScripts()` returns each registration's code too. An update
+    whose code is exactly what Chrome holds leaves it out
+    (`sameCode`), so a worker start re-sends only code that changed
+    while it was gone. Chrome stores code it's sent and passes it on to
+    renderers, which was most of a sync's register time.
 - The record is dropped whenever it stops being trustworthy: a sync
   that throws part-way, and `unregisterAllRegistrations` (the test
   surface's teardown). The next sync then reconciles fully, which also
   covers whatever ids the failed sync consumed.
 - A full reconcile also re-places the bridge and GM-runtime
   registrations, whose code ships with the extension and changes on
-  update.
+  update. The same code comparison applies to them.
 
 #### What an incremental sync must not disturb
 

@@ -210,6 +210,19 @@ export interface StoredScript {
   versionProbes?: VersionProbe[];
 }
 
+// A stored script without its bodies (`bodyText`, each `@require`'s
+// source, each `@resource`'s bytes): what the store's metadata reads
+// return, without reading the blobs the bodies are kept in (see
+// docs/storage.md#content-blobs). A full `StoredScript` is one too, so
+// code that needs only the metadata takes this.
+//
+// What such a read returns is the row as stored, so writing it back
+// with a field changed keeps its bodies as they are.
+export type ScriptMeta = Omit<StoredScript, 'bodyText' | 'requires' | 'resources'> & {
+  requires?: Omit<StoredRequire, 'source'>[];
+  resources?: Omit<StoredResource, 'bytesBase64'>[];
+};
+
 // ---------- Pure helpers (exported for unit tests) ----------
 
 // What the orchestrator hands back from each per-file load attempt.
@@ -657,7 +670,7 @@ export function applyFetchError(
 // surfaces that renders it — these rows are persisted and reloaded, and
 // a click target is not the place to discover a malformed line number.
 export function setScriptError(
-  entry: StoredScript,
+  entry: Pick<StoredScript, 'errorMessage' | 'errorLocation'>,
   message: string | undefined,
   location: DiagnosticLocation | undefined,
 ): void {

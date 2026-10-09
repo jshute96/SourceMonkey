@@ -21,8 +21,8 @@ import {
 } from './local-delete.js';
 import {
   describeError,
-  getCollectionWithScripts,
-  type StoredScript,
+  getCollectionWithScriptMeta,
+  type ScriptMeta,
 } from './script-store.js';
 import { dlog } from '../debug-log.js';
 import { makeCopyButton } from './copy-button.js';
@@ -30,7 +30,7 @@ import { missingFiles } from './file-changes.js';
 import { isFileSchemeAccessAllowed } from './file-access.js';
 
 export interface DeleteDialogRequest {
-  script: StoredScript;
+  script: ScriptMeta;
 }
 
 export interface DeleteDialogResult {
@@ -410,7 +410,7 @@ function planPaths(plan: CopyDeletePlan): string[] {
 }
 
 // Everything the dialog needs, read once the dialog is up.
-async function openPlan(script: StoredScript): Promise<{
+async function openPlan(script: ScriptMeta): Promise<{
   plan: DeletePlan;
   copiesDir: string;
   collectionName: string;
@@ -418,7 +418,7 @@ async function openPlan(script: StoredScript): Promise<{
   const setting = await readDownloadsCopiesSetting();
   if (!setting) throw new Error(NOT_A_LOCAL_COPY);
   const copiesDir = downloadsCopiesDir(setting.downloadsDir);
-  const prior = await getCollectionWithScripts(script.collectionId);
+  const prior = await getCollectionWithScriptMeta(script.collectionId);
   // The STORED row, not the snapshot the button closed over: a button
   // painted once outlives any number of refreshes, so its copy of the
   // row can name `@require`s the script no longer has — and can still

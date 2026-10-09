@@ -100,6 +100,8 @@ export interface SmApi {
   forgetStoreMigration(): Promise<void>;
   // One unused-blob check; `now` steps past the wait between checks.
   sweepUnusedBlobs(now?: number): Promise<{ checked: number; removed: number; waiting: number }>;
+  // As a fresh worker: the next sync is a full one.
+  forgetRegistrationState(): Promise<void>;
   // Forget when each script was last checked, so the next
   // opportunistic check isn't skipped by `UPDATE_MIN_INTERVAL_MS`.
   // Needed by tests that drive two checks of the same script inside

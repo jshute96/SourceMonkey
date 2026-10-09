@@ -91,11 +91,13 @@ import {
   type PushedFile,
 } from '../external-files.js';
 import { type LocalFileScope } from '../local-file-overrides.js';
-import { scanAllStorage } from './storage-scan.js';
+import { scanAllStorage, scanStorageRows } from './storage-scan.js';
 import {
+  blobKeysOf,
   clearMigrationFailureForTests,
   fromStorage,
   hydrateScriptRows,
+  markMissingBlobs,
   migrateToBlobs,
   STORE_FORMAT,
   STORE_FORMAT_KEY,
@@ -147,6 +149,7 @@ import {
   type ParseCheckMode,
   rederivedStartupLogs,
   RETIRED_CONTEXT_MENU_UNSUPPORTED,
+  type ScriptMeta,
   type ScriptStatus,
   setScriptError,
   type StoredScript,
@@ -182,6 +185,7 @@ export type {
   ParseChecker,
   ParseCheckMode,
   ScriptMatching,
+  ScriptMeta,
   ScriptStatus,
   StartupLog,
   StoredScript,
@@ -262,8 +266,8 @@ export function loadStateLogEntry(
 const refText = (ref: string): string => displayLocation(stripSriFragment(ref));
 
 export function localFileLogMessages(
-  prior: StoredScript | undefined,
-  next: StoredScript,
+  prior: ScriptMeta | undefined,
+  next: ScriptMeta,
 ): { level: LogLevel; message: string }[] {
   const out: { level: LogLevel; message: string }[] = [];
   // Keyed by KIND + declared URL. The URL alone would collide: a
@@ -365,7 +369,7 @@ export function localFileScope(collection: StoredCollection): LocalFileScope {
 export function isCollectionEnabled(collection: StoredCollection): boolean {
   return collection.enabled !== false;
 }
-export function isScriptEnabled(script: StoredScript): boolean {
+export function isScriptEnabled(script: ScriptMeta): boolean {
   return script.enabled !== false;
 }
 
@@ -547,6 +551,39 @@ async function runOwnParseChecks(
   for (const row of flipped) {
     const entry = loadStateLogEntry(row);
     if (entry) void appendScriptLog(row.id, { ...entry, source: 'parser' });
+  }
+}
+
+// Save as `invalid` the rows among `ids` that point at a blob that isn't
+// there, and say so in each one's Log. The registration sync calls this
+// for the candidates it found that way: it's the one body reader that
+// runs on its own, and without the write the pages, which read only the
+// rows, would show the script as fine while it no longer runs.
+//
+// Decided again inside the lock from the rows and blobs stored then, so
+// a refresh that repaired a row since isn't undone. A row already
+// `invalid` is left alone.
+export async function recordMissingBlobs(ids: readonly string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const flipped: ScriptMeta[] = [];
+  await mutate(async () => {
+    const rows = await getRows(ids.map(scriptKey));
+    const keys = [...new Set(Object.values(rows).flatMap(blobKeysOf))];
+    const blobs = keys.length > 0 ? await chrome.storage.local.get(keys) : {};
+    const toSet: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(rows)) {
+      const row = value as ScriptRow;
+      if (row.status !== 'ok') continue;
+      const marked = markMissingBlobs(row, blobs);
+      if (!marked) continue;
+      toSet[key] = marked;
+      flipped.push(marked);
+    }
+    if (flipped.length > 0) await writeLocal(toSet);
+  });
+  for (const row of flipped) {
+    const entry = loadStateLogEntry(row);
+    if (entry) void appendScriptLog(row.id, { ...entry, source: 'storage' });
   }
 }
 
@@ -1024,16 +1061,27 @@ async function migrateLegacyCollectionKeys(): Promise<void> {
 }
 
 // Script rows come back as full scripts, their bodies read from their
-// blobs (script-blobs.ts). Readers that want only the small rows read
-// `chrome.storage.local` themselves.
+// blobs (script-blobs.ts). `getRows` reads them as stored, without the
+// bodies (`ScriptMeta`), for code that doesn't need them.
 async function getRaw<T>(key: string): Promise<T | undefined> {
   return (await getMany([key]))[key] as T | undefined;
 }
 
 async function getMany(keys: string[]): Promise<Record<string, unknown>> {
+  return await hydrateScriptRows(await getRows(keys));
+}
+
+// Rows as stored. A script row written back from here with a field
+// changed keeps its bodies (its blob refs) as they are, and the write
+// hashes nothing.
+async function getRows(keys: string[]): Promise<Record<string, unknown>> {
   if (keys.length === 0) return {};
   await ensureCollectionKeysMigrated();
-  return await hydrateScriptRows(await chrome.storage.local.get(keys));
+  return await chrome.storage.local.get(keys);
+}
+
+async function getRow<T>(key: string): Promise<T | undefined> {
+  return (await getRows([key]))[key] as T | undefined;
 }
 
 // ---------- Storage format ----------
@@ -1211,22 +1259,44 @@ export async function getCollectionWithScripts(
   return { collection, scripts };
 }
 
+// Same as `getCollectionWithScripts`, without the scripts' bodies.
+export async function getCollectionWithScriptMeta(
+  id: string,
+): Promise<{ collection: StoredCollection; scripts: ScriptMeta[] } | null> {
+  const collection = await getRow<StoredCollection>(collectionKey(id));
+  if (!collection) return null;
+  return { collection, scripts: await getScriptMetas(collection.scriptIds) };
+}
+
 export async function getScript(scriptId: string): Promise<StoredScript | undefined> {
   return await getRaw<StoredScript>(scriptKey(scriptId));
 }
 
-// Read several scripts in one storage call. Missing ids are left out.
-export async function getScripts(scriptIds: readonly string[]): Promise<StoredScript[]> {
-  const got = await getMany(scriptIds.map(scriptKey));
+export async function getScriptMeta(scriptId: string): Promise<ScriptMeta | undefined> {
+  return await getRow<ScriptMeta>(scriptKey(scriptId));
+}
+
+// Read several scripts' rows, without their bodies, in one storage
+// call. Missing ids are left out.
+export async function getScriptMetas(scriptIds: readonly string[]): Promise<ScriptMeta[]> {
+  const got = await getRows(scriptIds.map(scriptKey));
   return scriptIds
-    .map((id) => got[scriptKey(id)] as StoredScript | undefined)
-    .filter((s): s is StoredScript => s != null);
+    .map((id) => got[scriptKey(id)] as ScriptMeta | undefined)
+    .filter((s): s is ScriptMeta => s != null);
+}
+
+// Every stored script without its bodies (across all collections,
+// regardless of status): only the script rows are read.
+export async function getAllScriptMetas(reason = 'all script rows'): Promise<ScriptMeta[]> {
+  await ensureCollectionKeysMigrated();
+  const rows = await scanStorageRows(reason, (k) => k.startsWith(SCRIPT_PREFIX));
+  return Object.values(rows) as ScriptMeta[];
 }
 
 // Read every stored script (across all collections, regardless of
-// status). One `get(null)` scan rather than N per-collection reads;
-// used by the collections page + viewer to compute global log IDs in
-// one pass.
+// status), bodies included. One `get(null)` scan rather than N
+// per-collection reads. Prefer `getAllScriptMetas` unless the bodies
+// are needed.
 export async function getAllScripts(): Promise<StoredScript[]> {
   await ensureCollectionKeysMigrated();
   const all = await scanAllStorage('all scripts');
@@ -1551,9 +1621,9 @@ export async function writeRunScript(args: RunScriptArgs): Promise<WriteRunScrip
   let collectionId: string | undefined;
   let replaced = false;
   if (container) {
-    const rows = await getMany(container.scriptIds.map(scriptKey));
+    const rows = await getRows(container.scriptIds.map(scriptKey));
     for (const sid of container.scriptIds) {
-      const row = rows[scriptKey(sid)] as StoredScript | undefined;
+      const row = rows[scriptKey(sid)] as ScriptMeta | undefined;
       if (row?.relativePath === url) {
         scriptId = sid;
         collectionId = container.id;
@@ -1621,9 +1691,9 @@ async function containerHoldsLocation(
   container: StoredCollection,
   canonicalPath: string,
 ): Promise<boolean> {
-  const rows = await getMany(container.scriptIds.map(scriptKey));
+  const rows = await getRows(container.scriptIds.map(scriptKey));
   for (const sid of container.scriptIds) {
-    const s = rows[scriptKey(sid)] as StoredScript | undefined;
+    const s = rows[scriptKey(sid)] as ScriptMeta | undefined;
     if (s && canonicalCollectionInput(s.relativePath) === canonicalPath) return true;
   }
   return false;
@@ -1826,9 +1896,9 @@ export const SM_DEV_COLLECTION_LOCKED =
 export async function moveScript(
   scriptId: string,
   target: InstallTarget,
-): Promise<StoredScript | null> {
+): Promise<ScriptMeta | null> {
   const moved = await mutate(async () => {
-    const script = await getRaw<StoredScript>(scriptKey(scriptId));
+    const script = await getRow<ScriptMeta>(scriptKey(scriptId));
     if (!script) throw new Error(SCRIPT_GONE);
     const source = await getRaw<StoredCollection>(collectionKey(script.collectionId));
     if (!source || !isContainerCollection(source.path)) throw new Error(NOT_A_MOVABLE_SCRIPT);
@@ -1859,7 +1929,7 @@ export async function moveScript(
     const nextDest: StoredCollection = dest
       ? { ...dest, scriptIds: [...dest.scriptIds, scriptId] }
       : newContainerRow(destId, destPath, [scriptId]);
-    const nextScript: StoredScript = { ...script, collectionId: destId };
+    const nextScript: ScriptMeta = { ...script, collectionId: destId };
     // One set call: a SW restart between writes must never leave the
     // row listed by both collections, or by neither.
     const toSet: Record<string, unknown> = {
@@ -1973,13 +2043,13 @@ export async function backfillUsesUnsafeWindow(): Promise<number> {
 // is never rebuilt. Runs after that backfill, so `usesUnsafeWindow` is
 // current. Writes only rows whose logs changed; returns how many.
 export async function backfillStartupLogs(): Promise<number> {
-  const scripts = await getAllScripts();
+  const scripts = await getAllScriptMetas('startup log backfill');
   const toSet: Record<string, unknown> = {};
   for (const script of scripts) {
     if (script.status !== 'ok') continue;
     const logs = rederivedStartupLogs(script, script.usesUnsafeWindow === true);
     if (JSON.stringify(logs) === JSON.stringify(script.startupLogs ?? [])) continue;
-    const next: StoredScript = { ...script };
+    const next: ScriptMeta = { ...script };
     if (logs.length > 0) next.startupLogs = logs;
     else delete next.startupLogs;
     toSet[scriptKey(script.id)] = next;
@@ -1999,13 +2069,13 @@ export async function backfillStartupLogs(): Promise<number> {
 // runs on the same wake and may have read the row while it was still
 // `ok`, which would leave an INVALID badge over a Log that says nothing.
 export async function backfillHeaderProblems(): Promise<number> {
-  const scripts = await getAllScripts();
+  const scripts = await getAllScriptMetas('header check backfill');
   const toSet: Record<string, unknown> = {};
   for (const script of scripts) {
     if (script.status !== 'ok') continue;
     const problem = validateHeader(script.header);
     if (!problem) continue;
-    const next: StoredScript = { ...script, status: 'invalid' };
+    const next: ScriptMeta = { ...script, status: 'invalid' };
     setScriptError(next, problem.message, locationIn(script.relativePath, problem.line));
     // Same shape as a freshly built invalid row (see
     // `buildScriptFromText`): no startup logs, parse verdict or world
@@ -2016,7 +2086,7 @@ export async function backfillHeaderProblems(): Promise<number> {
     delete next.refreshError;
     toSet[scriptKey(script.id)] = next;
   }
-  const flipped = Object.values(toSet) as StoredScript[];
+  const flipped = Object.values(toSet) as ScriptMeta[];
   if (flipped.length > 0) await writeLocal(toSet);
   for (const row of flipped) {
     const entry = loadStateLogEntry(row);
@@ -2032,7 +2102,7 @@ export async function backfillHeaderProblems(): Promise<number> {
 // rebuild then also loads the `@require` / `@resource` files an invalid
 // row never got. Flipping the row to `ok` in place would skip those.
 export async function retiredHeaderProblemIds(): Promise<string[]> {
-  const scripts = await getAllScripts();
+  const scripts = await getAllScriptMetas('retired header check');
   return scripts
     .filter((s) => s.status === 'invalid' && s.errorMessage === RETIRED_CONTEXT_MENU_UNSUPPORTED)
     .map((s) => s.id);
@@ -2066,9 +2136,9 @@ export async function removeCollection(id: string): Promise<void> {
     const ids = await readCollectionIndex();
     const next = ids.filter((sid) => sid !== id);
     const scriptIds = collection?.scriptIds ?? [];
-    const rows = await getMany(scriptIds.map(scriptKey));
-    const removed = scriptIds.map((sid) => rows[scriptKey(sid)] as StoredScript | undefined)
-      .filter((r): r is StoredScript => r !== undefined);
+    const rows = await getRows(scriptIds.map(scriptKey));
+    const removed = scriptIds.map((sid) => rows[scriptKey(sid)] as ScriptMeta | undefined)
+      .filter((r): r is ScriptMeta => r !== undefined);
     const removeKeys = [
       collectionKey(id),
       ...scriptIds.map(scriptKey),
@@ -2094,7 +2164,7 @@ export async function removeCollection(id: string): Promise<void> {
 // because it only adds entries the scan currently reports.
 export async function removeScript(id: string): Promise<void> {
   await mutate(async () => {
-    const script = await getRaw<StoredScript>(scriptKey(id));
+    const script = await getRow<ScriptMeta>(scriptKey(id));
     if (!script) return;
     const collection = await getRaw<StoredCollection>(collectionKey(script.collectionId));
     const toSet: Record<string, unknown> = await withoutTimes([id]);
@@ -2123,7 +2193,7 @@ export async function removeScript(id: string): Promise<void> {
 // removed, and otherwise only the container collections' rows: a
 // scratch script can only be moved into another container. Call
 // inside `mutate`, before the rows are deleted.
-async function unreferencedScratchKeys(removed: readonly StoredScript[]): Promise<string[]> {
+async function unreferencedScratchKeys(removed: readonly ScriptMeta[]): Promise<string[]> {
   const urls = new Set(removed.map((r) => r.relativePath).filter(isScratchUrl));
   if (urls.size === 0) return [];
   const removedIds = new Set(removed.map((r) => r.id));
@@ -2134,9 +2204,9 @@ async function unreferencedScratchKeys(removed: readonly StoredScript[]): Promis
     if (!c || !isContainerCollection(c.path)) continue;
     for (const sid of c.scriptIds) if (!removedIds.has(sid)) others.push(sid);
   }
-  const rows = await getMany(others.map(scriptKey));
+  const rows = await getRows(others.map(scriptKey));
   for (const value of Object.values(rows)) {
-    urls.delete((value as StoredScript).relativePath);
+    urls.delete((value as ScriptMeta).relativePath);
   }
   return [...urls].flatMap((url) => [scratchTextKey(url), scratchFilesKey(url), scratchSourceKey(url)]);
 }
@@ -2159,23 +2229,24 @@ async function unreferencedScratchKeys(removed: readonly StoredScript[]): Promis
 // leaving one row of garbage beats writing to a collection we've just
 // decided isn't real.
 async function scanMembershipRows(): Promise<{
-  collections: StoredCollection[]; scripts: StoredScript[];
+  collections: StoredCollection[]; scripts: ScriptMeta[];
 }> {
-  const all = await scanAllStorage('membership reconcile');
+  const all = await scanStorageRows('membership reconcile', (k) =>
+    k === COLLECTIONS_INDEX_KEY || k.startsWith(COLLECTION_PREFIX) || k.startsWith(SCRIPT_PREFIX));
   // Out of the scan rather than a second read, so the index and the rows
   // it filters are one snapshot. `ensureCollectionKeysMigrated` already
   // ran, so this is the post-rename spelling.
   const index = all[COLLECTIONS_INDEX_KEY];
   const indexed = new Set(Array.isArray(index) ? index as string[] : []);
   const collections: StoredCollection[] = [];
-  const scripts: StoredScript[] = [];
+  const scripts: ScriptMeta[] = [];
   for (const [key, value] of Object.entries(all)) {
     if (key.startsWith(COLLECTION_PREFIX)) {
       if (indexed.has(key.slice(COLLECTION_PREFIX.length))) {
         collections.push(value as StoredCollection);
       }
     } else if (key.startsWith(SCRIPT_PREFIX)) {
-      scripts.push(value as StoredScript);
+      scripts.push(value as ScriptMeta);
     }
   }
   return { collections, scripts };
@@ -2207,7 +2278,7 @@ async function scanMembershipRows(): Promise<{
 // such a row back, and quietly deleting a user's script on a hunch is
 // worse than leaving an inert row.
 export async function reconcileScriptMembership(
-  prescanned?: { collections: readonly StoredCollection[]; scripts: readonly StoredScript[] },
+  prescanned?: { collections: readonly StoredCollection[]; scripts: readonly ScriptMeta[] },
 ): Promise<number> {
   await ensureCollectionKeysMigrated();
   // Only the caller that has no rows in hand pays for the scan.
@@ -2265,9 +2336,9 @@ export async function reconcileScriptMembership(
     const cids = new Set([...toAdd.keys(), ...toDrop.keys()]);
     const sids = new Set([...toAdd.values(), ...toDrop.values()].flat());
     const collections = await getMany([...cids].map(collectionKey));
-    const scripts = await getMany([...sids].map(scriptKey));
+    const scripts = await getRows([...sids].map(scriptKey));
     const ownerOf = (sid: string): string | undefined =>
-      (scripts[scriptKey(sid)] as StoredScript | undefined)?.collectionId;
+      (scripts[scriptKey(sid)] as ScriptMeta | undefined)?.collectionId;
 
     const toSet: Record<string, unknown> = {};
     let moved = 0;
@@ -2606,11 +2677,10 @@ export async function refreshCollection(
 // The ids of stored rows in other collections that are copies of one of
 // `newRows` (`sameScript`). One full scan, run before the refresh's lock.
 async function possibleRivals(collectionId: string, newRows: readonly StoredScript[]): Promise<string[]> {
-  const all = await scanAllStorage('new copies');
+  const all = await scanStorageRows('new copies', (k) => k.startsWith(SCRIPT_PREFIX));
   const out: string[] = [];
-  for (const [key, value] of Object.entries(all)) {
-    if (!key.startsWith(SCRIPT_PREFIX)) continue;
-    const row = value as StoredScript;
+  for (const value of Object.values(all)) {
+    const row = value as ScriptMeta;
     if (row.collectionId !== collectionId && newRows.some((n) => sameScript(n, row))) out.push(row.id);
   }
   return out;
@@ -2643,7 +2713,7 @@ async function settleNewCopies(
   adding: boolean,
 ): Promise<Record<string, unknown>> {
   const out: Record<string, unknown> = {};
-  const got = await getMany([...rivalIds.map(scriptKey), ENABLEMENT_TIMES_KEY]);
+  const got = await getRows([...rivalIds.map(scriptKey), ENABLEMENT_TIMES_KEY]);
   const times: EnablementTimesMap = { ...(got[ENABLEMENT_TIMES_KEY] as EnablementTimesMap | undefined) };
   let timesChanged = false;
   for (const sid of droppedIds) {
@@ -2655,8 +2725,8 @@ async function settleNewCopies(
   // Re-read inside the lock: a rival moved into this collection since
   // the scan is one of `finalScripts` now, or not listed at all.
   const others = rivalIds
-    .map((sid) => got[scriptKey(sid)] as StoredScript | undefined)
-    .filter((r): r is StoredScript => r !== undefined && r.collectionId !== collection.id);
+    .map((sid) => got[scriptKey(sid)] as ScriptMeta | undefined)
+    .filter((r): r is ScriptMeta => r !== undefined && r.collectionId !== collection.id);
   const collIds = [...new Set(others.map((r) => r.collectionId))];
   const gotColls = await getMany(collIds.map(collectionKey));
   const collections = new Map<string, StoredCollection>([[collection.id, collection]]);
@@ -2665,7 +2735,7 @@ async function settleNewCopies(
     if (c) collections.set(cid, c);
   }
   const counts = (c: StoredCollection | undefined) => !c || !isSmDevCollection(c.path);
-  const isActive = (row: StoredScript) => {
+  const isActive = (row: ScriptMeta) => {
     const c = collections.get(row.collectionId);
     return isScriptEnabled(row) && (c ? isCollectionEnabled(c) : true);
   };
@@ -3071,8 +3141,8 @@ export async function refreshScript(
 //     what covers the single-script path.)
 function preserveConcurrentEdits(
   next: StoredScript,
-  prior: StoredScript | undefined,
-  cur: StoredScript | undefined,
+  prior: ScriptMeta | undefined,
+  cur: ScriptMeta | undefined,
 ): StoredScript {
   if (!cur) return next;
   const out: StoredScript = { ...next };
@@ -3423,7 +3493,7 @@ async function pruneEnablementTimes(live: ReadonlySet<string>): Promise<void> {
   const stale = Object.keys(await getEnablementTimes()).filter((id) => !live.has(id));
   if (stale.length === 0) return;
   await mutate(async () => {
-    const got = await getMany([...stale.map(scriptKey), ENABLEMENT_TIMES_KEY]);
+    const got = await getRows([...stale.map(scriptKey), ENABLEMENT_TIMES_KEY]);
     const times = { ...(got[ENABLEMENT_TIMES_KEY] as EnablementTimesMap | undefined) };
     const gone = stale.filter((id) => !got[scriptKey(id)] && times[id]);
     if (gone.length === 0) return;
@@ -3472,12 +3542,12 @@ export async function writeEnablement(
 // for) and every script row whose flag the write changed.
 export interface EnablementResult {
   collection: StoredCollection | null;
-  scripts: StoredScript[];
+  scripts: ScriptMeta[];
 }
 
 // The rows an enable plan is computed from (see `writeEnablementFrom`).
 export interface EnablementRows {
-  scripts: StoredScript[];
+  scripts: ScriptMeta[];
   collections: StoredCollection[];
   times: EnablementTimesMap;
 }
@@ -3506,12 +3576,12 @@ export async function writeEnablementFrom(
   const result = await mutate(async () => {
     t.mark('lock wait');
     const ids = [...new Set(scope.scriptIds)];
-    const got = await getMany([...ids.map(scriptKey), ENABLEMENT_TIMES_KEY]);
+    const got = await getRows([...ids.map(scriptKey), ENABLEMENT_TIMES_KEY]);
     const scripts = ids
-      .map((id) => got[scriptKey(id)] as StoredScript | undefined)
-      .filter((s): s is StoredScript => s != null);
+      .map((id) => got[scriptKey(id)] as ScriptMeta | undefined)
+      .filter((s): s is ScriptMeta => s != null);
     const collIds = [...new Set([...(scope.collectionIds ?? []), ...scripts.map((s) => s.collectionId)])];
-    const colls = await getMany(collIds.map(collectionKey));
+    const colls = await getRows(collIds.map(collectionKey));
     t.mark('re-read', () => storageSize({ ...got, ...colls }));
     const w = plan({
       scripts,
@@ -3534,7 +3604,7 @@ async function applyEnablement(w: EnablementWrite, t: PhaseTimer): Promise<Enabl
   let collection: StoredCollection | null = null;
   const scriptIds = new Set<string>([...(w.scripts ?? []).map((u) => u.id), ...(w.started ?? [])]);
   if (w.collection) {
-    collection = (await getRaw<StoredCollection>(collectionKey(w.collection.id))) ?? null;
+    collection = (await getRow<StoredCollection>(collectionKey(w.collection.id))) ?? null;
     t.mark('read collection');
     if (collection) {
       // Its scripts' active state follows its flag, so they may need
@@ -3544,15 +3614,17 @@ async function applyEnablement(w: EnablementWrite, t: PhaseTimer): Promise<Enabl
       toSet[collectionKey(collection.id)] = collection;
     }
   }
-  const got = await getMany([...[...scriptIds].map(scriptKey), ENABLEMENT_TIMES_KEY]);
+  // The rows as stored: an enable change rewrites a script's small row
+  // and leaves its bodies alone.
+  const got = await getRows([...[...scriptIds].map(scriptKey), ENABLEMENT_TIMES_KEY]);
   t.mark('read rows', () => storageSize(got));
   const scripts = [...scriptIds]
-    .map((sid) => got[scriptKey(sid)] as StoredScript | undefined)
-    .filter((s): s is StoredScript => s != null);
+    .map((sid) => got[scriptKey(sid)] as ScriptMeta | undefined)
+    .filter((s): s is ScriptMeta => s != null);
   const times: EnablementTimesMap = { ...(got[ENABLEMENT_TIMES_KEY] as EnablementTimesMap | undefined) };
   // Each script's collection, before and after this write.
   const collIds = [...new Set(scripts.map((s) => s.collectionId))];
-  const colls = await getMany(collIds.map(collectionKey));
+  const colls = await getRows(collIds.map(collectionKey));
   t.mark('read collections', () => storageSize(colls));
   const collOn = (cid: string, after: boolean): boolean => {
     if (after && collection && cid === collection.id) return isCollectionEnabled(collection);
@@ -3561,7 +3633,7 @@ async function applyEnablement(w: EnablementWrite, t: PhaseTimer): Promise<Enabl
   };
   const wanted = new Map((w.scripts ?? []).map((u) => [u.id, u.enabled]));
   const started = new Set(w.started ?? []);
-  const written: StoredScript[] = [];
+  const written: ScriptMeta[] = [];
   let timesChanged = false;
   for (const script of scripts) {
     const flag = wanted.get(script.id) ?? isScriptEnabled(script);
@@ -3569,7 +3641,7 @@ async function applyEnablement(w: EnablementWrite, t: PhaseTimer): Promise<Enabl
     const nowActive = flag && collOn(script.collectionId, true);
     if (stampTimes(times, script.id, wasActive, nowActive, at, started.has(script.id))) timesChanged = true;
     if (script.enabled === flag) continue;
-    const next: StoredScript = { ...script, enabled: flag };
+    const next: ScriptMeta = { ...script, enabled: flag };
     toSet[scriptKey(script.id)] = next;
     written.push(next);
   }
@@ -3649,12 +3721,12 @@ export async function setCollectionLocalFiles(
 export async function setVersionProbes(
   id: string,
   probes: VersionProbe[],
-): Promise<StoredScript | null> {
+): Promise<ScriptMeta | null> {
   return mutate(async () => {
-    const script = await getRaw<StoredScript>(scriptKey(id));
+    const script = await getRow<ScriptMeta>(scriptKey(id));
     if (!script) return null;
     if (probes.length === 0 && !script.versionProbes) return script;
-    const next: StoredScript = { ...script };
+    const next: ScriptMeta = { ...script };
     if (probes.length > 0) next.versionProbes = probes;
     else delete next.versionProbes;
     await writeLocal({ [scriptKey(id)]: next });
@@ -3665,9 +3737,9 @@ export async function setVersionProbes(
 export async function setScriptEnabled(
   id: string,
   enabled: boolean,
-): Promise<StoredScript | null> {
+): Promise<ScriptMeta | null> {
   const { scripts } = await writeEnablement({ scripts: [{ id, enabled }] });
-  return scripts[0] ?? (await getScript(id)) ?? null;
+  return scripts[0] ?? (await getScriptMeta(id)) ?? null;
 }
 
 // Flip many scripts' enabled flags in a single storage write. This is

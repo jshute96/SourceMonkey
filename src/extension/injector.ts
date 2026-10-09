@@ -66,13 +66,15 @@
 // an answer at render time, and an SW that has been evicted since the
 // last sync would have nothing to report.
 
-import { fromStorage, hydrateScriptRows, type ScriptRow } from './script-blobs.js';
+import { fromStorage, MISSING_BLOB_MESSAGE, type ScriptRow } from './script-blobs.js';
 import {
   describeError,
   ensureCollectionKeysMigrated,
   isScriptEnabled,
   isCollectionEnabled,
+  recordMissingBlobs,
   verifyParseChecks,
+  type ScriptMeta,
   type StartupLog,
   type StoredScript,
   type StoredCollection,
@@ -86,7 +88,7 @@ import {
 } from '../generated-wrappers.js';
 import { grantedSubsystems, resolveGrants } from '../gm-api-catalog.js';
 import { resolveScriptWorld, type InjectionWorld } from '../script-world.js';
-import { scanAllStorage } from './storage-scan.js';
+import { scanStorageRows } from './storage-scan.js';
 import { isScratchUrl, scratchRunOf } from './directories.js';
 import { evalHookKey, withEvalHook } from '../eval-hook.js';
 import { canonicalMatchPatterns, hostEndsInTld, matchPatternProblem, tldCoarseGlob } from '../url-match.js';
@@ -1020,7 +1022,7 @@ export async function buildRegistrationSpec(
 // about to be registered — one predicate, so "eligible" can't come to
 // mean two different things.
 export function isRegistrationCandidate(
-  script: StoredScript,
+  script: ScriptMeta,
   collections: Map<string, StoredCollection>,
 ): boolean {
   return isRunnable(script, collections) && !isManualScript(script);
@@ -1029,13 +1031,13 @@ export function isRegistrationCandidate(
 // Pure: could this manual script be run on request right now? The same
 // rules as registering one, apart from being manual.
 export function isManualRunCandidate(
-  script: StoredScript,
+  script: ScriptMeta,
   collections: Map<string, StoredCollection>,
 ): boolean {
   return isRunnable(script, collections) && isManualScript(script);
 }
 
-function isRunnable(script: StoredScript, collections: Map<string, StoredCollection>): boolean {
+function isRunnable(script: ScriptMeta, collections: Map<string, StoredCollection>): boolean {
   if (script.status !== 'ok') return false;
   if (!isScriptEnabled(script)) return false;
   const collection = collections.get(script.collectionId);
@@ -1309,24 +1311,52 @@ export function isUserScriptsAvailable(): boolean {
   return typeof chrome !== 'undefined' && (chrome as { userScripts?: unknown }).userScripts != null;
 }
 
-async function readAll(): Promise<{ scripts: StoredScript[]; collections: Map<string, StoredCollection>; numbers: Map<string, number> }> {
+// Every script and collection row, without the scripts' bodies: those
+// are read by `withBodies`, for the scripts that get a spec.
+async function readAll(): Promise<{ scripts: ScriptMeta[]; collections: Map<string, StoredCollection>; numbers: Map<string, number> }> {
   // See match-index's loadAll: the pre-rename key spelling has to be
   // moved before anything reads the structural rows directly.
   await ensureCollectionKeysMigrated();
-  const all = await scanAllStorage('registration sync');
-  const rows: ScriptRow[] = [];
+  const all = await scanStorageRows('registration sync', (k) =>
+    k.startsWith(SCRIPT_PREFIX) || k.startsWith(COLLECTION_PREFIX) || k === SCRIPT_NUMBERS_KEY);
+  const scripts: ScriptMeta[] = [];
   const collections = new Map<string, StoredCollection>();
   for (const [k, v] of Object.entries(all)) {
-    if (k.startsWith(SCRIPT_PREFIX)) rows.push(v as ScriptRow);
+    if (k.startsWith(SCRIPT_PREFIX)) scripts.push(v as ScriptMeta);
     else if (k.startsWith(COLLECTION_PREFIX)) {
       const s = v as StoredCollection;
       collections.set(s.id, s);
     }
   }
-  // Specs carry the code, so the bodies come back with the rows; the
-  // scan already read the blobs.
-  const scripts = await fromStorage(rows, all);
   return { scripts, collections, numbers: numberMap(numbersFrom(all[SCRIPT_NUMBERS_KEY])) };
+}
+
+// The rows among `rows` that would be registered, with their bodies:
+// a spec carries the code, and nothing else in a sync needs it. A row
+// that isn't a candidate (disabled, invalid, manual, or under a
+// disabled collection) is left out without reading its bodies, so a
+// sync that only removes registrations reads none.
+//
+// A candidate whose blob is missing comes back `invalid`
+// (`MISSING_BLOB_MESSAGE`), so `collectActiveSpecs` skips it, and its
+// row is saved that way (`recordMissingBlobs`) for the readers that
+// don't load bodies. That write's change event then syncs it again,
+// as a row that's no longer a candidate.
+async function withBodies(
+  rows: readonly ScriptMeta[],
+  collections: Map<string, StoredCollection>,
+): Promise<StoredScript[]> {
+  const scripts = await fromStorage(rows.filter((s) => isRegistrationCandidate(s, collections)) as ScriptRow[]);
+  const missing = scripts.filter((s) => s.status === 'invalid' && s.errorMessage === MISSING_BLOB_MESSAGE);
+  if (missing.length > 0) {
+    console.info(`[SourceMonkey] not registering ${missing.map((s) => s.relativePath).join(', ')}: ${MISSING_BLOB_MESSAGE}`);
+    try {
+      await recordMissingBlobs(missing.map((s) => s.id));
+    } catch (err) {
+      console.info('[SourceMonkey] could not save the missing-file state:', describeError(err));
+    }
+  }
+  return scripts;
 }
 
 // ---------- What the last sync left behind ----------
@@ -1558,7 +1588,7 @@ async function placedPatterns(id: string): Promise<PlacedPatterns | undefined> {
 }
 
 // Read just the rows named, rather than the whole store. Script rows
-// come back as full scripts, with their bodies.
+// come back without their bodies (see `withBodies`).
 async function readRows(
   scriptIds: Iterable<string>,
   collectionIds: Iterable<string>,
@@ -1569,7 +1599,7 @@ async function readRows(
     ...[...collectionIds].map((id) => COLLECTION_PREFIX + id),
   ];
   if (keys.length === 0) return {};
-  return await hydrateScriptRows(await chrome.storage.local.get(keys));
+  return await chrome.storage.local.get(keys);
 }
 
 // The placements for user scripts only — our own registrations are the
@@ -1992,9 +2022,10 @@ async function runSync(scope: SyncScope | undefined): Promise<void> {
 async function runFullSync(): Promise<RegistrationState> {
   const timer = startPhaseTimer('registration sync');
   const { scripts, collections, numbers } = await readAll();
+  const candidates = await withBodies(scripts, collections);
   timer.mark('read');
   const handlerVersion = chrome.runtime.getManifest().version;
-  const effective = await revalidateCandidates(scripts, collections);
+  const effective = await revalidateCandidates(candidates, collections);
   const logIds = computeLogIds(scripts.map((s): LogIdInput => ({
     id: s.id, relativePath: s.relativePath,
   })), numbers);
@@ -2006,9 +2037,8 @@ async function runFullSync(): Promise<RegistrationState> {
   timer.mark('build-specs');
   // Chrome's own list, patterns included — the authority on both what
   // is there and what shape it is in.
-  const present = new Map(
-    (await chrome.userScripts.getScripts()).map((s) => [s.id, patternsOf(s)] as const),
-  );
+  const held = await chrome.userScripts.getScripts();
+  const present = new Map(held.map((s) => [s.id, patternsOf(s)] as const));
   timer.mark('list');
   const specs = orderWithOwnSpecs(
     userSpecs,
@@ -2021,17 +2051,22 @@ async function runFullSync(): Promise<RegistrationState> {
     new Set(),
   );
   const wanted = new Set(specs.map((s) => s.id));
+  // Most of a full sync re-places what Chrome already holds, from rows
+  // that haven't changed since. Where the code is the same, the update
+  // leaves it out (see `withoutCode`).
+  const codeInPlace = sameCode(specs, held);
   const applied = await applyPlan({
     specs,
     removeIds: [...present.keys()].filter((id) => !wanted.has(id)),
     present,
+    codeInPlace,
     // The whole set was rebuilt, so the rejection map is rewritten
     // wholesale — a script that has since been disabled, deleted or
     // flipped to INVALID stops being REJECTED instead of stranding a
     // badge nobody can clear.
     owned: 'all',
   }, timer);
-  timer.note(`full; ${specs.length} specs, ${scripts.length} stored scripts`);
+  timer.note(`full; ${specs.length} specs (${codeInPlace.size} with code in place), ${scripts.length} stored scripts`);
   timer.done();
   const registered = placementsOf(specs, applied, active.gmRuntime);
   const gmRuntimeScopes = ownFingerprints(specs);
@@ -2075,9 +2110,9 @@ async function runIncrementalSync(scope: SyncScope, state: RegistrationState): P
     if (row) state.collections.set(id, row);
     else state.collections.delete(id);
   }
-  const scripts: StoredScript[] = [];
+  const scripts: ScriptMeta[] = [];
   for (const id of affected) {
-    const row = rows[SCRIPT_PREFIX + id] as StoredScript | undefined;
+    const row = rows[SCRIPT_PREFIX + id] as ScriptMeta | undefined;
     if (!row) { state.scriptIndex.delete(id); continue; }
     scripts.push(row);
     state.scriptIndex.set(id, {
@@ -2121,7 +2156,7 @@ async function runIncrementalSync(scope: SyncScope, state: RegistrationState): P
   if (renamed.length > 0) {
     const extra = await readRows(renamed, []);
     for (const id of renamed) {
-      const row = extra[SCRIPT_PREFIX + id] as StoredScript | undefined;
+      const row = extra[SCRIPT_PREFIX + id] as ScriptMeta | undefined;
       if (!row) {
         const stale = state.labels.get(id);
         if (stale !== undefined) nextLabels.set(id, stale);
@@ -2131,8 +2166,11 @@ async function runIncrementalSync(scope: SyncScope, state: RegistrationState): P
       affected.add(id);
     }
   }
+  timer.mark('labels');
   const handlerVersion = chrome.runtime.getManifest().version;
-  const effective = await revalidateCandidates(scripts, state.collections);
+  const candidates = await withBodies(scripts, state.collections);
+  timer.mark('read bodies');
+  const effective = await revalidateCandidates(candidates, state.collections);
   const active = await collectActiveSpecs(
     effective, state.collections, handlerVersion, logIds,
   );
@@ -2610,6 +2648,15 @@ async function placeSpec(
   await chrome.userScripts.update([spec]);
 }
 
+// The specs whose code is exactly what Chrome holds under their id.
+function sameCode(
+  specs: readonly RegistrationSpec[],
+  held: readonly chrome.userScripts.RegisteredUserScript[],
+): Set<string> {
+  const code = new Map(held.map((s) => [s.id, JSON.stringify(s.js)] as const));
+  return new Set(specs.filter((spec) => code.get(spec.id) === JSON.stringify(spec.js)).map((spec) => spec.id));
+}
+
 // An update that changes only the patterns. `update` keeps any property
 // it isn't given, and our helpers' code (the GM runtime's is over
 // 100 KB) would otherwise go to Chrome again on a toggle that moved one
@@ -2698,7 +2745,9 @@ async function placeSpecs(
       else existing.push(spec);
     }
     try {
-      if (existing.length > 0) await chrome.userScripts.update(existing);
+      if (existing.length > 0) {
+        await chrome.userScripts.update(existing.map((spec) => (codeInPlace.has(spec.id) ? withoutCode(spec) : spec)));
+      }
       if (fresh.length > 0) await chrome.userScripts.register(fresh);
       for (const spec of replace) {
         await replaceRegistration(spec);
@@ -2830,6 +2879,8 @@ async function reregisterScripts(ids: readonly string[]): Promise<void> {
   const { scripts, collections, numbers } = await readAll();
   const handlerVersion = chrome.runtime.getManifest().version;
   const wanted = new Set(ids);
+  // Bodies for the scripts being retried only.
+  const candidates = await withBodies(scripts.filter((s) => wanted.has(s.id)), collections);
   // Built through collectActiveSpecs rather than buildRegistrationSpec
   // directly so the retry can't drift from the sync on eligibility or
   // on log labels.
@@ -2838,8 +2889,8 @@ async function reregisterScripts(ids: readonly string[]): Promise<void> {
   // set — a targeted retry re-offers the refused script, not the
   // scaffolding already installed around it.
   const logIds = computeLogIds(scripts.map((s): LogIdInput => ({ id: s.id, relativePath: s.relativePath })), numbers);
-  const active = await collectActiveSpecs(scripts, collections, handlerVersion, logIds);
-  const specs = active.specs.filter((s) => wanted.has(s.id));
+  const active = await collectActiveSpecs(candidates, collections, handlerVersion, logIds);
+  const specs = active.specs;
   // `owned: wanted` is what makes this targeted: the rejection map is
   // re-read inside `applyPlan` and only these ids are touched, so a full
   // sync that landed while we were registering keeps every other entry.

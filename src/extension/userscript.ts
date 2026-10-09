@@ -34,7 +34,8 @@ import {
   buildScriptFromText,
   describeError,
   distillMatching,
-  getAllScripts,
+  getAllScriptMetas,
+  getScriptMeta,
   getScript,
   getCollection,
   getCollections,
@@ -44,6 +45,7 @@ import {
   removeScript,
   setScriptsEnabled,
   validateHeader,
+  type ScriptMeta,
   type StoredScript,
   localFileScope,
   type StoredCollection,
@@ -622,11 +624,11 @@ async function refreshConnectAnswers(id: string): Promise<void> {
 // id they captured before their first await, and an in-page navigation
 // can move `scriptId` on underneath them.
 async function refreshLogId(id: string): Promise<void> {
-  const all = await getAllScripts();
+  const all = await getAllScriptMetas();
   currentLogId = logIdOf(id, all, await readScriptNumbers());
 }
 
-function logIdOf(id: string, all: StoredScript[], numbers: Awaited<ReturnType<typeof readScriptNumbers>>): string {
+function logIdOf(id: string, all: ScriptMeta[], numbers: Awaited<ReturnType<typeof readScriptNumbers>>): string {
   return computeLogIds(all, numberMap(numbers)).get(id) ?? '';
 }
 
@@ -809,7 +811,7 @@ async function applyEnableChanges(
 // rows.
 function describeEnableFailure(
   changes: readonly ScriptEnableChange[],
-  scripts: readonly StoredScript[],
+  scripts: readonly ScriptMeta[],
   err: unknown,
 ): string {
   if (changes.length === 1) {
@@ -1626,7 +1628,7 @@ async function survivingRowAfter(
   if (at < 0) return undefined;
   for (let step = 1; step < rows.length; step++) {
     const candidate = rows[(at + step) % rows.length].script.id;
-    if (await getScript(candidate)) return candidate;
+    if (await getScriptMeta(candidate)) return candidate;
   }
   return undefined;
 }
@@ -1642,7 +1644,7 @@ async function survivingRowAfter(
 // page is showing.
 function resolveAnchor(
   args: RelatedVersionsPaint,
-  scripts: readonly StoredScript[],
+  scripts: readonly ScriptMeta[],
 ): { location: string; header: ParsedHeader | null } {
   if (!args.anchorScriptId) return { location: args.location, header: args.header };
   const anchor = scripts.find((s) => s.id === args.anchorScriptId);
@@ -1756,7 +1758,7 @@ async function afterPanelAction(args: RelatedVersionsPaint): Promise<void> {
 // display name is what the failing row shows in its Collection cell, so
 // that is what the user scans for; the location disambiguates two
 // copies under one collection.
-function describeRelatedScript(scripts: readonly StoredScript[], id: string): string {
+function describeRelatedScript(scripts: readonly ScriptMeta[], id: string): string {
   const script = scripts.find((s) => s.id === id);
   return script ? displayLocation(script.relativePath) : 'this copy';
 }
@@ -2872,12 +2874,12 @@ async function findRelatedHere(): Promise<RelatedVersions> {
 }
 
 interface StoreSnapshot {
-  scripts: StoredScript[];
+  scripts: ScriptMeta[];
   collections: StoredCollection[];
 }
 
 async function readStoreSnapshot(): Promise<StoreSnapshot> {
-  const [scripts, collections] = await Promise.all([getAllScripts(), getCollections()]);
+  const [scripts, collections] = await Promise.all([getAllScriptMetas(), getCollections()]);
   return { scripts, collections };
 }
 

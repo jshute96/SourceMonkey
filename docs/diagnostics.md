@@ -546,14 +546,18 @@ After any storage write, the collections page redraws and prints a
 - **read collections / banner**: the collection rows, and the "could
   not save" banner's check.
 - **read scripts**: every collection's script rows in one read,
-  bodies included.
+  without their bodies.
 - **size**: asking Chrome how big those rows are.
 - **icons / paint**: cached favicons, then updating the rows.
 
 The `registration sync` line that follows has these steps:
 
-- **read / build-specs**: the changed rows, turned into what Chrome is
-  given to register.
+- **read / labels / read bodies / build-specs**: the changed rows;
+  the log labels, and any rows a label change moved; the bodies of
+  those that will be registered; and what Chrome is given to register.
+  A full sync reads rows and bodies under `read`, and its note says
+  how many specs went without their code, since Chrome already held
+  it.
 - **list** (full syncs only): asking Chrome which registrations it
   holds.
 - **unregister / register**: the `chrome.userScripts` calls, removals
@@ -667,8 +671,14 @@ rows, so measuring it costs this thread nothing.
   it does, unrelated pending callbacks in that context wait. So a scan
   inflates phases that have nothing to do with it.
 - The line names the caller, because that is the part a reader needs:
-  `match index`, `registration sync`, `all scripts`, `log id table`,
-  `key migration`, `gm value wipe`.
+  `all scripts`, `key migration`, `blob migration`, `gm value wipe`.
+- The same line also reports the narrow reads of every script row
+  (`scanStorageRows`): `match index`, `registration sync`,
+  `log id table`, `membership reconcile`, `new copies`,
+  `all script rows`, and the extension-update backfills
+  (`startup log backfill`, `header check backfill`,
+  `retired header check`). These list the keys and read only the rows, so
+  they skip the bodies and GM values.
 - Measured on a 266-row profile, a scan costs **129–193 ms** whoever
   asks. That is the unit to price any new one against.
 

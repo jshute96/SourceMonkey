@@ -12,7 +12,7 @@
 //   - "Enable all" in a collection turns on one copy per script.
 // Ctrl/Cmd-click (`solo`) opts out and changes only what was clicked.
 //
-// Each one reads the whole store to find which copies are related, then
+// Each one reads every script row to find which copies are related, then
 // decides which of those to change inside the write lock, from their
 // stored state at that moment (`writeEnablementFrom`).
 //
@@ -25,9 +25,9 @@
 
 import { isSmDevCollection } from './directories.js';
 import {
-  getAllScripts, getCollections, isCollectionEnabled, isScriptEnabled,
+  getAllScriptMetas, getCollections, isCollectionEnabled, isScriptEnabled,
   writeEnablement, writeEnablementFrom, type EnablementResult, type EnablementRows, type EnablementTimes,
-  type EnablementTimesMap, type StoredCollection, type StoredScript,
+  type EnablementTimesMap, type StoredCollection, type ScriptMeta,
 } from './script-store.js';
 import {
   allRelatedRows, enableChanges, findRelatedVersions, isActive, otherActiveCopies,
@@ -39,22 +39,23 @@ import { effectiveDisplayName } from './collection-display.js';
 import { getValue } from '../userscript-header.js';
 import { startPhaseTimer, type PhaseTimer } from '../phase-timing.js';
 
-// What the read before the lock returns. Each enable below reads the
-// whole store first, to find which copies are related, then plans from
+// What the read before the lock returns. Each enable below reads every
+// script row first, to find which copies are related, then plans from
 // those copies re-read inside the write lock (`writeEnablementFrom`).
 type Scan = Pick<EnablementRows, 'scripts' | 'collections'>;
 
 // Marked on `timer` as `read all`, with what it returned. No size: the
-// script rows come from a scan of all storage, whose own line has it.
+// script rows come from a scan (`all script rows`), whose own line has
+// it.
 async function scan(timer: PhaseTimer): Promise<Scan> {
-  const [scripts, collections] = await Promise.all([getAllScripts(), getCollections()]);
+  const [scripts, collections] = await Promise.all([getAllScriptMetas(), getCollections()]);
   timer.mark('read all', `${scripts.length} scripts, ${collections.length} collections`);
   return { scripts, collections };
 }
 
 // Every installed copy related to `script` (same location or same
 // `@namespace` + `@name`), itself included.
-function relatedRows(snap: Scan, script: StoredScript): RelatedScript[] {
+function relatedRows(snap: Scan, script: ScriptMeta): RelatedScript[] {
   return allRelatedRows(findRelatedVersions({
     ...snap, location: script.fileUrl, header: script.header ?? null,
   }));
@@ -62,7 +63,7 @@ function relatedRows(snap: Scan, script: StoredScript): RelatedScript[] {
 
 // What `copy-preference.ts` orders a copy by.
 export function copyFacts(
-  script: StoredScript,
+  script: ScriptMeta,
   collection: StoredCollection | undefined,
   times: EnablementTimes | undefined,
 ): CopyFacts {
@@ -78,7 +79,7 @@ export function copyFacts(
 }
 
 // The ids of `scripts` and every copy related to any of them.
-function relatedIds(snap: Scan, scripts: readonly StoredScript[]): Set<string> {
+function relatedIds(snap: Scan, scripts: readonly ScriptMeta[]): Set<string> {
   const ids = new Set<string>();
   for (const script of scripts) {
     ids.add(script.id);
@@ -98,15 +99,15 @@ export async function setScriptEnabledExclusive(
   id: string,
   enabled: boolean,
   solo = false,
-): Promise<{ script: StoredScript | null; changed: StoredScript[] }> {
+): Promise<{ script: ScriptMeta | null; changed: ScriptMeta[] }> {
   const timer = startPhaseTimer(enabled ? 'enable script' : 'disable script');
-  let written: EnablementResult & { clicked: StoredScript | null };
+  let written: EnablementResult & { clicked: ScriptMeta | null };
   if (enabled && !solo) {
     const snap = await scan(timer);
     const script = snap.scripts.find((s) => s.id === id);
     written = await enableWithin(id, script ? relatedIds(snap, [script]) : [id], timer);
   } else {
-    let clicked: StoredScript | null = null;
+    let clicked: ScriptMeta | null = null;
     const result = await writeEnablementFrom({ scriptIds: [id] }, (fresh) => {
       clicked = fresh.scripts.find((s) => s.id === id) ?? null;
       return { scripts: [{ id, enabled }] };
@@ -136,9 +137,9 @@ export async function enableWithin(
   id: string,
   scope: Iterable<string>,
   timer: PhaseTimer,
-): Promise<EnablementResult & { clicked: StoredScript | null }> {
+): Promise<EnablementResult & { clicked: ScriptMeta | null }> {
   let count = 0;
-  let clicked: StoredScript | null = null;
+  let clicked: ScriptMeta | null = null;
   const written = await writeEnablementFrom({ scriptIds: scope }, (fresh) => {
     let changes = [{ id, enabled: true }];
     const script = fresh.scripts.find((s) => s.id === id);
@@ -212,7 +213,7 @@ export async function setCollectionEnabledExclusive(
 // The copies outside the collection that `starting` (its copies about to
 // become active) switch off. One that landed `invalid` does too, as
 // `turnOffOtherCopies` explains.
-function displacedBy(snap: Scan, starting: readonly StoredScript[]): { id: string; enabled: boolean }[] {
+function displacedBy(snap: Scan, starting: readonly ScriptMeta[]): { id: string; enabled: boolean }[] {
   const off = new Set<string>();
   const startingCollections = new Set(starting.map((s) => s.collectionId));
   for (const script of starting) {
@@ -228,7 +229,7 @@ function displacedBy(snap: Scan, starting: readonly StoredScript[]): { id: strin
 function restoredFor(
   snap: EnablementRows,
   id: string,
-  stopping: readonly StoredScript[],
+  stopping: readonly ScriptMeta[],
 ): { id: string; enabled: boolean }[] {
   const on = new Set<string>();
   for (const script of stopping) {
@@ -262,7 +263,7 @@ export async function setAllScriptsEnabled(
   collectionId: string,
   enabled: boolean,
   solo = false,
-): Promise<StoredScript[]> {
+): Promise<ScriptMeta[]> {
   const timer = startPhaseTimer(enabled ? 'enable all' : 'disable all');
   const snap = await scan(timer);
   const collection = snap.collections.find((c) => c.id === collectionId);
@@ -323,7 +324,7 @@ function enableAllWrite(
 // `compareInCollection` among each copy and the copies it shares a
 // location or `@namespace` + `@name` with (`sameScript`).
 export function pickOnePerScript(
-  scripts: readonly StoredScript[],
+  scripts: readonly ScriptMeta[],
   collection: StoredCollection,
   times: EnablementTimesMap,
 ): Set<string> {

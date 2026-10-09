@@ -17,14 +17,14 @@
 
 import { isFileUrl, scratchRunOf } from './directories.js';
 import { compareScriptNames, scriptDisplayName } from '../script-display.js';
-import { scanAllStorage } from './storage-scan.js';
+import { scanStorageRows } from './storage-scan.js';
 import {
   ensureCollectionKeysMigrated,
   isScriptEnabled,
   isCollectionEnabled,
   sameStoredValue,
   type ScriptMatching,
-  type StoredScript,
+  type ScriptMeta,
   type StoredCollection,
 } from './script-store.js';
 import { urlMatchesScript } from '../url-match.js';
@@ -94,13 +94,14 @@ async function loadAll(): Promise<void> {
   // Before the read, not after: a profile still on the pre-rename key
   // spelling would otherwise load an empty cache and inject nothing.
   await ensureCollectionKeysMigrated();
-  const all = await scanAllStorage('match index');
+  const all = await scanStorageRows('match index', (k) =>
+    k.startsWith(SCRIPT_PREFIX) || k.startsWith(COLLECTION_PREFIX));
   const nextCache = new Map<string, CacheEntry>();
   const nextInvalid = new Map<string, ScriptMatching>();
   const nextDisabled = new Set<string>();
   for (const [key, value] of Object.entries(all)) {
     if (key.startsWith(SCRIPT_PREFIX)) {
-      const script = value as StoredScript;
+      const script = value as ScriptMeta;
       const entry = toEntry(script);
       if (entry) nextCache.set(entry.id, entry);
       else if (script.status === 'invalid' && script.matching) nextInvalid.set(script.id, script.matching);
@@ -121,7 +122,7 @@ async function loadAll(): Promise<void> {
   for (const changes of buffered) applyStorageChanges(changes);
 }
 
-function toEntry(script: StoredScript): CacheEntry | null {
+function toEntry(script: ScriptMeta): CacheEntry | null {
   // Only `ok` scripts participate. `invalid` rows never do — their
   // header may be unparsed or the file failed validation.
   if (script.status !== 'ok') return null;
@@ -191,8 +192,8 @@ function applyStorageChanges(changes: { [key: string]: chrome.storage.StorageCha
       // listeners, not from `onCacheChanged`, so the badge still
       // updates the moment a probe lands.
       if (onlyProbesChanged(
-        change.oldValue as StoredScript | undefined,
-        change.newValue as StoredScript | undefined,
+        change.oldValue as ScriptMeta | undefined,
+        change.newValue as ScriptMeta | undefined,
       )) {
         continue;
       }
@@ -203,7 +204,7 @@ function applyStorageChanges(changes: { [key: string]: chrome.storage.StorageCha
         cache.delete(id);
         continue;
       }
-      const script = change.newValue as StoredScript;
+      const script = change.newValue as ScriptMeta;
       const entry = toEntry(script);
       if (entry) cache.set(id, entry);
       else cache.delete(id);
@@ -255,8 +256,8 @@ function applyStorageChanges(changes: { [key: string]: chrome.storage.StorageCha
 //
 // Exported for unit tests.
 export function onlyProbesChanged(
-  before: StoredScript | undefined,
-  after: StoredScript | undefined,
+  before: ScriptMeta | undefined,
+  after: ScriptMeta | undefined,
 ): boolean {
   // A creation or a deletion is never "just a probe update".
   if (!before || !after) return false;

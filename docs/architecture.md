@@ -74,7 +74,8 @@ details live in the topic-specific docs linked below.
     touches no storage, so the harness runs it under Node.
   - Script bodies are stored apart from the rows, in shared
     `blob:<sha256>` rows (`src/extension/script-blobs.ts`; see
-    [storage.md](storage.md#content-blobs)).
+    [storage.md](storage.md#content-blobs)). Readers that need only
+    the rows (`ScriptMeta`) don't read them.
 - **Script updater** (`src/extension/script-updater.ts`) — the single entry
   point every refresh path goes through. Manual Refresh buttons call
   it synchronously; the background SW calls it opportunistically when

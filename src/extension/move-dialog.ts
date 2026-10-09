@@ -19,7 +19,7 @@ import {
   moveScript,
   ALREADY_INSTALLED_IN_TARGET,
   type InstallTarget,
-  type StoredScript,
+  type ScriptMeta,
 } from './script-store.js';
 import {
   buildInstallSelect,
@@ -96,7 +96,7 @@ function buildDialog(): DialogElements {
 
 // Open the dialog and resolve with the moved script row, or null when
 // it was dismissed or nothing was moved.
-export function openMoveDialog(request: MoveDialogRequest): Promise<StoredScript | null> {
+export function openMoveDialog(request: MoveDialogRequest): Promise<ScriptMeta | null> {
   if (!elements) elements = buildDialog();
   const ui = elements;
   if (dialogInFlight) return Promise.resolve(null);
@@ -121,7 +121,7 @@ export function openMoveDialog(request: MoveDialogRequest): Promise<StoredScript
 function runDialog(
   ui: DialogElements,
   request: MoveDialogRequest,
-  resolve: (moved: StoredScript | null) => void,
+  resolve: (moved: ScriptMeta | null) => void,
 ): void {
   const { options } = request;
   let settled = false;
@@ -136,7 +136,7 @@ function runDialog(
   // until the selection moves off it, so a second click can't repeat
   // the same refusal.
   let refusedValue: string | null = null;
-  const finish = (moved: StoredScript | null): void => {
+  const finish = (moved: ScriptMeta | null): void => {
     if (settled) return;
     settled = true;
     if (ui.dialog.open) ui.dialog.close();

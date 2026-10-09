@@ -155,11 +155,12 @@ globalThis.chrome = globalThis.chrome ?? {
         if (key === null || key === undefined) {
           return Object.fromEntries(localStore);
         }
-        if (typeof key === 'string') {
-          return localStore.has(key) ? { [key]: localStore.get(key) } : {};
-        }
-        return {};
+        const keys = Array.isArray(key) ? key : [key];
+        const out = {};
+        for (const k of keys) if (localStore.has(k)) out[k] = localStore.get(k);
+        return out;
       },
+      getKeys: async () => [...localStore.keys()],
       set: async (obj) => { for (const [k, v] of Object.entries(obj)) localStore.set(k, v); },
     },
     session: {

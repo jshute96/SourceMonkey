@@ -51,6 +51,7 @@ globalThis.chrome = globalThis.chrome ?? {
         for (const k of keys) if (localStore.has(k)) out[k] = localStore.get(k);
         return out;
       },
+      getKeys: async () => [...localStore.keys()],
       set: async (obj) => { for (const [k, v] of Object.entries(obj)) localStore.set(k, v); },
     },
     session: {
@@ -95,6 +96,7 @@ import {
   stackLayout,
 } from '../../dist/composed-source.js';
 import { remapStackRef } from '../../dist/source-map.js';
+import { MISSING_BLOB_MESSAGE } from '../../dist/extension/script-blobs.js';
 import { remapStackText } from '../../dist/stack-link.js';
 import { buildRequireSourceUrl, buildSourceUrl } from '../../dist/script-source-url.js';
 import { WRAPPER_BRIDGE, WRAPPER_PRELUDE } from '../../dist/generated-wrappers.js';
@@ -2593,17 +2595,26 @@ function fakeRegistrationSet(initial = []) {
   };
 }
 
-// Count `chrome.storage.local.get(null)` calls — the read that pulled
-// every script body and the favicon cache into memory on every sync.
+// Count whole-store reads: a `chrome.storage.local.get(null)`, or the
+// key listing a full sync starts from to read every script row (but no
+// bodies). A scoped sync reads only the rows it names.
 function countFullReads() {
   const inner = chrome.storage.local.get;
+  const innerKeys = chrome.storage.local.getKeys;
   const seen = { full: 0, keyed: 0 };
   chrome.storage.local.get = async (key) => {
     if (key === null || key === undefined) seen.full++;
     else seen.keyed++;
     return inner(key);
   };
-  seen.restore = () => { chrome.storage.local.get = inner; };
+  chrome.storage.local.getKeys = async () => {
+    seen.full++;
+    return innerKeys();
+  };
+  seen.restore = () => {
+    chrome.storage.local.get = inner;
+    chrome.storage.local.getKeys = innerKeys;
+  };
   return seen;
 }
 
@@ -3082,4 +3093,134 @@ test('collectActiveSpecs: before the SW knows the sm-dev claims, every script as
   const collections = new Map([['collection-1', { id: 'collection-1', enabled: true }]]);
   const { specs } = await collectActiveSpecs([makeScript()], collections);
   assert.match(specs[0].js[0].code, /"mustAsk":true/);
+});
+
+// A row in storage format 2: its body in a `blob:` row (script-blobs.ts).
+function seedBlobRow(scriptId, body) {
+  seedStore(scriptId);
+  const { bodyText: _body, ...row } = localStore.get(`script:${scriptId}`);
+  const hash = `hash-${scriptId}-${body.length}`;
+  localStore.set(`script:${scriptId}`, { ...row, bodyBlobRef: { hash, size: body.length } });
+  localStore.set(`blob:${hash}`, { encoding: 'text', data: body });
+}
+
+// The `blob:` keys every `chrome.storage.local.get` asked for.
+function recordBlobReads() {
+  const inner = chrome.storage.local.get;
+  const keys = [];
+  chrome.storage.local.get = async (key) => {
+    if (key == null) keys.push('(everything)');
+    else for (const k of Array.isArray(key) ? key : [key]) if (k.startsWith('blob:')) keys.push(k);
+    return inner(key);
+  };
+  keys.restore = () => { chrome.storage.local.get = inner; };
+  return keys;
+}
+
+test('syncRegistrations: a sync that only drops a script reads no bodies', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedBlobRow('a', 'one();');
+  seedBlobRow('b', 'two();');
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+  assert.ok(chrome_.spec('a').js.some((c) => c.code.includes('one();')), 'the body came from its blob');
+
+  const reads = recordBlobReads();
+  t.after(reads.restore);
+  localStore.set('script:a', { ...localStore.get('script:a'), enabled: false });
+  await syncRegistrations({ scriptIds: ['a'], collectionIds: [] });
+  assert.deepEqual(chrome_.ids(), ['b', BRIDGE_SCRIPT_ID].sort());
+  assert.deepEqual([...reads], [], 'a disabled script needs no code');
+
+  localStore.set('script:a', { ...localStore.get('script:a'), enabled: true });
+  await syncRegistrations({ scriptIds: ['a'], collectionIds: [] });
+  assert.deepEqual(chrome_.ids(), ['a', 'b', BRIDGE_SCRIPT_ID].sort());
+  assert.deepEqual([...reads], ['blob:hash-a-6'], 'enabling it reads its own body only');
+});
+
+test('syncRegistrations: a full sync reads only the bodies of scripts it registers', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedBlobRow('a', 'one();');
+  seedBlobRow('b', 'two();');
+  localStore.set('script:b', { ...localStore.get('script:b'), enabled: false });
+  fakeRegistrationSet();
+  const reads = recordBlobReads();
+  t.after(reads.restore);
+  await syncRegistrations();
+  assert.deepEqual([...reads], ['blob:hash-a-6']);
+});
+
+test('syncRegistrations: a full sync leaves out code Chrome already holds', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a');
+  seedStore('b');
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+
+  // A fresh worker, after `b` changed while the last one was gone.
+  forgetRegistrationState();
+  localStore.set('script:b', { ...localStore.get('script:b'), bodyText: 'changed();' });
+  chrome_.reset();
+  await syncRegistrations();
+  assert.equal(chrome_.sentUpdate('a').js, undefined, 'unchanged code is not sent again');
+  assert.equal(chrome_.sentUpdate(BRIDGE_SCRIPT_ID).js, undefined, 'nor our own');
+  assert.ok(chrome_.sentUpdate('b').js.some((c) => c.code.includes('changed();')), 'changed code is');
+  assert.ok(chrome_.spec('a').js.length > 0, 'Chrome keeps the code it had');
+});
+
+test('syncRegistrations: a script whose body is missing is not registered, and is saved invalid', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  localStore.set('storeFormat', 2);
+  seedBlobRow('a', 'one();');
+  seedBlobRow('b', 'two();');
+  localStore.delete('blob:hash-a-6');
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+  assert.deepEqual(chrome_.ids(), ['b', BRIDGE_SCRIPT_ID].sort(), 'a full sync skips it');
+  const row = localStore.get('script:a');
+  assert.equal(row.status, 'invalid');
+  assert.equal(row.errorMessage, MISSING_BLOB_MESSAGE);
+  assert.equal(row.bodyText, undefined, 'saved as a small row');
+
+  // An incremental sync, for a body lost while the script ran.
+  localStore.delete('blob:hash-b-6');
+  await syncRegistrations({ scriptIds: ['b'], collectionIds: [] });
+  assert.deepEqual(chrome_.ids(), [], 'an incremental sync drops it');
+  assert.equal(localStore.get('script:b').status, 'invalid');
+});
+
+test('syncRegistrations: the one-at-a-time fallback leaves out unchanged code too', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a');
+  seedStore('b');
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+
+  // A batch refused as a whole, as one bad spec would make it.
+  const update = userScripts.update;
+  userScripts.update = async (batch) => {
+    if (batch.length > 1) throw new Error('refused');
+    return update(batch);
+  };
+  forgetRegistrationState();
+  localStore.set('script:b', { ...localStore.get('script:b'), bodyText: 'changed();' });
+  chrome_.reset();
+  await syncRegistrations();
+  assert.equal(chrome_.sentUpdate('a').js, undefined);
+  assert.ok(chrome_.sentUpdate('b').js.some((c) => c.code.includes('changed();')));
 });

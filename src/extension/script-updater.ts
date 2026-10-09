@@ -34,10 +34,10 @@
 // imagined) triggers the same propagation.
 
 import {
-  getAllScripts,
-  getScript,
+  getAllScriptMetas,
+  getScriptMeta,
   getCollections,
-  getCollectionWithScripts,
+  getCollectionWithScriptMeta,
   loadStateLogEntry,
   localFileLogMessages,
   refreshAllCollections,
@@ -47,6 +47,7 @@ import {
   setVersionProbes,
   type ParseCheckMode,
   type RefreshBatch,
+  type ScriptMeta,
   type StartupLog,
   type StoredScript,
   type StoredCollection,
@@ -276,7 +277,7 @@ async function runScriptCheck(
   parseCheck: ParseCheckMode = 'await',
   batch?: RefreshBatch,
 ): Promise<StoredScript | null> {
-  const prior = await getScript(scriptId);
+  const prior = await getScriptMeta(scriptId);
   const label = getScriptLogLabel(scriptId);
   // Manual checks fire on a deliberate user click and are infrequent;
   // their start + "no change" outcome stays at console.log so the user
@@ -346,7 +347,7 @@ async function runCollectionCheck(
   mode: UpdateMode,
   probe: ProbePolicy,
 ): Promise<{ collection: StoredCollection; scripts: StoredScript[] } | null> {
-  const priorData = await getCollectionWithScripts(collectionId);
+  const priorData = await getCollectionWithScriptMeta(collectionId);
   const prior: SourceSnapshot | undefined = priorData
     ? { collection: priorData.collection, scripts: new Map(priorData.scripts.map((s) => [s.id, s])) }
     : undefined;
@@ -629,7 +630,7 @@ function logUpToDateAgain(scriptId: string, loadedVersion: string | undefined): 
 
 interface SourceSnapshot {
   collection: StoredCollection;
-  scripts: Map<string, StoredScript>;
+  scripts: Map<string, ScriptMeta>;
 }
 
 // Pre-refresh state per collection: the collection row (for its
@@ -638,7 +639,7 @@ interface SourceSnapshot {
 async function snapshotAllCollectionScripts(): Promise<Map<string, SourceSnapshot>> {
   const collections = await getCollections();
   const entries = await Promise.all(collections.map(async (s) => {
-    const data = await getCollectionWithScripts(s.id);
+    const data = await getCollectionWithScriptMeta(s.id);
     const scripts = new Map((data?.scripts ?? []).map((sc) => [sc.id, sc]));
     return [s.id, { collection: s, scripts }] as const;
   }));
@@ -649,7 +650,7 @@ async function snapshotAllCollectionScripts(): Promise<Map<string, SourceSnapsho
 
 function logScriptOutcome(
   label: string,
-  prior: StoredScript | undefined,
+  prior: ScriptMeta | undefined,
   next: StoredScript | null,
   mode: UpdateMode,
 ): void {
@@ -718,7 +719,7 @@ function logScriptOutcome(
 // whole chrome.storage pipeline stubbed to reach it.
 export function emitScriptOutcomeLog(
   scriptId: string,
-  prior: StoredScript | undefined,
+  prior: ScriptMeta | undefined,
   next: StoredScript | null,
   mode: UpdateMode,
 ): void {
@@ -836,7 +837,7 @@ export function emitScriptOutcomeLog(
 // `updateCollection` / `updateAllCollections` callers in
 // collections.ts), so the user asked for each repeat.
 function logCollectionEventToScripts(
-  scripts: readonly StoredScript[],
+  scripts: readonly ScriptMeta[],
   mode: UpdateMode,
   message: string,
 ): void {
@@ -873,7 +874,7 @@ const NO_CHANGE_MESSAGE = 'Checked for updates and found no change';
 // healthy-and-unchanged case, whose whole outcome is the one
 // self-describing `NO_CHANGE_MESSAGE` row.
 function hasReportableOutcome(
-  prior: StoredScript | undefined,
+  prior: ScriptMeta | undefined,
   next: StoredScript,
 ): boolean {
   if (loadStateLogEntry(next)) return true;
@@ -889,7 +890,7 @@ function hasReportableOutcome(
 // Keyed off the prior row's state so the line names what recovered —
 // a bare "ok again" wouldn't tell the user whether the file came back,
 // the parse started succeeding, or the server did.
-function recoveryMessage(prior: StoredScript): string {
+function recoveryMessage(prior: ScriptMeta): string {
   if (prior.status === 'invalid') return 'Loads cleanly again (was invalid)';
   return 'Refresh succeeded again (collection is reachable)';
 }
@@ -961,11 +962,11 @@ export async function replayScriptLogsAtBoot(): Promise<void> {
   const got = await chrome.storage.session.get(BOOT_REPLAY_SENTINEL_KEY);
   if (got[BOOT_REPLAY_SENTINEL_KEY]) return;
 
-  // Single chrome.storage.local.get(null) scan via getAllScripts —
+  // One read of the script rows (no bodies) via getAllScriptMetas —
   // cheaper than per-collection reads when most scripts won't have
   // anything to replay anyway. Per-script work runs concurrently;
   // `appendScriptLog`'s own queue keeps each script's appends ordered.
-  const scripts = await getAllScripts();
+  const scripts = await getAllScriptMetas();
   await Promise.all(scripts.map(async (script) => {
     await ensureLoadStateInLogTab(script);
     await ensureOutdatedInLogTab(script);
@@ -986,7 +987,7 @@ export async function replayScriptLogsAtBoot(): Promise<void> {
 // Plain append. The session sentinel already makes this run once per
 // Chrome session, which is the only thing keeping the volume down that
 // needs to.
-async function ensureLoadStateInLogTab(script: StoredScript): Promise<void> {
+async function ensureLoadStateInLogTab(script: ScriptMeta): Promise<void> {
   const entry = loadStateLogEntry(script);
   if (!entry) return;
   await appendScriptLog(script.id, { ...entry, source: 'extension-startup' });
@@ -1000,7 +1001,7 @@ async function ensureLoadStateInLogTab(script: StoredScript): Promise<void> {
 // row keeps its stale probes but isn't running, so "(running <v>)"
 // would be false and the line would land after — and appear to
 // override — the load-state line the row actually deserves.
-async function ensureOutdatedInLogTab(script: StoredScript): Promise<void> {
+async function ensureOutdatedInLogTab(script: ScriptMeta): Promise<void> {
   if (script.status !== 'ok') return;
   const probe = scriptOutdatedProbe(script);
   if (!probe) return;
@@ -1014,7 +1015,7 @@ async function ensureOutdatedInLogTab(script: StoredScript): Promise<void> {
 // replay can leave a duplicate pair of rows — bounded to once per
 // script per Chrome session, and a visible duplicate is a cheaper
 // problem than a rule that has to explain when a line is dropped.
-async function ensureStartupLogsInLogTab(script: StoredScript): Promise<void> {
+async function ensureStartupLogsInLogTab(script: ScriptMeta): Promise<void> {
   for (const sl of script.startupLogs ?? []) {
     await appendScriptLog(script.id, startupLogEntry(sl));
   }
@@ -1053,7 +1054,7 @@ export function summarizeCollectionOutcome(
   if (prior?.collection.scanError) {
     logCollectionEventToScripts(nextScripts, mode, 'This collection is readable again');
   }
-  const priorBy = prior?.scripts ?? new Map<string, StoredScript>();
+  const priorBy = prior?.scripts ?? new Map<string, ScriptMeta>();
   let changed = 0;
   let added = 0;
   let unchanged = 0;

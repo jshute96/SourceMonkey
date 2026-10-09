@@ -1,4 +1,6 @@
-// Full-namespace `chrome.storage.local.get(null)` reads, in one place.
+// Whole-store reads, in one place: `chrome.storage.local.get(null)`
+// (`scanAllStorage`), and the narrower read of only the rows a caller
+// wants (`scanStorageRows`), which most callers use now.
 //
 // A `get(null)` returns EVERY row the extension owns — every script
 // body, every `@require`/`@resource` payload, every `gmval:` row — even
@@ -34,6 +36,20 @@ import { formatBytes } from '../script-display.js';
 // time, and the caller is the thing a reader needs to identify.
 export async function scanAllStorage(reason: string): Promise<Record<string, unknown>> {
   return timeStorageRead(reason, () => chrome.storage.local.get(null));
+}
+
+// The rows whose keys `keep` accepts, and nothing else: no script
+// bodies (each in its own `blob:` row) and no GM values. Lists the keys,
+// then reads the wanted ones, which costs far less than a `get(null)`
+// once the rest is megabytes.
+export async function scanStorageRows(
+  reason: string,
+  keep: (key: string) => boolean,
+): Promise<Record<string, unknown>> {
+  return timeStorageRead(reason, async () => {
+    const keys = (await chrome.storage.local.getKeys()).filter(keep);
+    return keys.length > 0 ? await chrome.storage.local.get(keys) : {};
+  });
 }
 
 // Same line for a read that is deliberately NARROW, so a caller that

@@ -11,7 +11,7 @@
 //   shows as it is.
 
 import { canonicalCollectionInput, containerPath, isContainerCollection } from '../file-locations.js';
-import type { StoredScript } from '../script-build.js';
+import type { ScriptMeta } from '../script-build.js';
 import {
   CONTAINER_TARGET_ONLY, LISTED_BY_LOCATION, RUN_COLLECTION_LOCKED,
   type CollectionRefresh, type ManagedCollection, type ManagedFile, type ManagedOnDisk, type ManagedScript, type ManagedScriptDetails,
@@ -25,7 +25,7 @@ import { turnOffOtherCopies } from './script-identity.js';
 import { setCollectionEnabledExclusive } from './script-enablement.js';
 import { managedCollection, managedScript } from './managed-items.js';
 import {
-  canonicalLocation, getAllScripts, getCollection, getCollections, getCollectionWithScripts, getScript, installScript, moveScript,
+  canonicalLocation, getAllScriptMetas, getCollection, getCollections, getCollectionWithScriptMeta, getScript, getScriptMeta, installScript, moveScript,
   removeScript, setCollectionOptions, setScriptEnabled, ALREADY_INSTALLED_IN_TARGET, COLLECTION_GONE, SCRIPT_GONE,
   type StoredCollection,
 } from './script-store.js';
@@ -37,8 +37,8 @@ export interface Numbers {
   collections: Record<string, number>;
 }
 
-async function scriptRow(id: string): Promise<StoredScript> {
-  const script = await getScript(id);
+async function scriptRow(id: string): Promise<ScriptMeta> {
+  const script = await getScriptMeta(id);
   if (!script) throw new Error(SCRIPT_GONE);
   return script;
 }
@@ -65,7 +65,7 @@ async function targetContainer(id: string): Promise<StoredCollection> {
 
 // A script in a container collection, for a move or uninstall. A run's
 // scripts are refused as their collection is.
-async function containerScript(id: string): Promise<StoredScript> {
+async function containerScript(id: string): Promise<ScriptMeta> {
   const script = await scriptRow(id);
   const collection = await collectionRow(script.collectionId);
   if (isSmDevCollection(collection.path)) throw new Error(RUN_COLLECTION_LOCKED);
@@ -76,14 +76,14 @@ async function containerScript(id: string): Promise<StoredScript> {
 /** The calls, with `numbers` to name what they return by. */
 export function managedChanges(numbers: () => Promise<Numbers>) {
   // `known`: the numbers, when the caller has them already.
-  const shownScript = async (script: StoredScript, known?: Numbers): Promise<ManagedScript> => {
+  const shownScript = async (script: ScriptMeta, known?: Numbers): Promise<ManagedScript> => {
     // A run's script: the file it was read from, as `managedScripts` gives it.
     const key = isScratchUrl(script.fileUrl) ? scratchSourceKey(script.fileUrl) : null;
     const source = key === null ? undefined : (await chrome.storage.local.get(key))[key] as ScratchSource | undefined;
     return managedScript(script, (known ?? await numbers()).scripts[script.id], source);
   };
   // `sweep`: it may have started running, so its other copies go off.
-  const shownEnable = async (script: StoredScript, sweep: boolean): Promise<ScriptEnable> => {
+  const shownEnable = async (script: ScriptMeta, sweep: boolean): Promise<ScriptEnable> => {
     const turnedOff = sweep ? await turnOffOtherCopies(script.id) : [];
     const known = await numbers();
     return {
@@ -132,7 +132,7 @@ export function managedChanges(numbers: () => Promise<Numbers>) {
     /** Re-reads a collection from its location, as its Refresh button does. */
     async refreshCollection(id: string): Promise<CollectionRefresh> {
       await changeableCollection(id);
-      const before = await getCollectionWithScripts(id);
+      const before = await getCollectionWithScriptMeta(id);
       if (!before) throw new Error(COLLECTION_GONE);
       // Before the refresh: a removed script's number is retired after it.
       const numbersBefore = await numbers();
@@ -164,13 +164,13 @@ export function managedChanges(numbers: () => Promise<Numbers>) {
         const canonical = await canonicalLocation(location);
         const path = collectionId === null ? containerPath(containerKindForSingleFileInput(canonical)) : null;
         const container = (await getCollections()).find((c) => (path !== null ? c.path === path : c.id === collectionId));
-        const rows = container ? (await getCollectionWithScripts(container.id))?.scripts ?? [] : [];
+        const rows = container ? (await getCollectionWithScriptMeta(container.id))?.scripts ?? [] : [];
         const found = rows.find((s) => canonicalCollectionInput(s.relativePath) === canonical);
         if (!found) throw new Error(SCRIPT_GONE);
         return { script: await shownScript(found), turnedOff: [], already: true };
       }
       const id = result.kind === 'existingContainer' ? result.scriptId : result.collection.scriptIds[0];
-      const installed = await getScript(id);
+      const installed = await getScriptMeta(id);
       if (!installed) throw new Error(SCRIPT_GONE);
       return shownEnable(installed, true);
     },
@@ -206,7 +206,7 @@ export function managedChanges(numbers: () => Promise<Numbers>) {
 
     /** A script in full, for `script show`; null for none. */
     async scriptDetails(id: string): Promise<ManagedScriptDetails | null> {
-      const script = await getScript(id);
+      const script = await getScriptMeta(id);
       if (!script) return null;
       const header = script.header;
       const tag = (name: string): string | undefined => (header ? getValue(header, name)?.trim() : undefined) || undefined;
@@ -247,7 +247,7 @@ export function managedChanges(numbers: () => Promise<Numbers>) {
      * it was loaded, and what a refresh of a collection would load.
      */
     async onDisk(): Promise<ManagedOnDisk> {
-      const [collections, scripts] = await Promise.all([getCollections(), getAllScripts()]);
+      const [collections, scripts] = await Promise.all([getCollections(), getAllScriptMetas()]);
       const byId = new Map(collections.map((c) => [c.id, c]));
       const tagged = scripts.flatMap((script) => {
         const collection = byId.get(script.collectionId);

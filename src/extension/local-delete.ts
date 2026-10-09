@@ -13,7 +13,7 @@ import { locationFsPath } from '../file-locations.js';
 import {
   describeError,
   type StoredCollection,
-  type StoredScript,
+  type ScriptMeta,
 } from './script-store.js';
 import { dlog } from '../debug-log.js';
 import {
@@ -58,7 +58,7 @@ export async function readCopiesSetting(): Promise<DownloadsCopiesSetting | null
 // mess (see TODO.md).
 //
 export function deletableCopyPath(
-  script: Pick<StoredScript, 'fileUrl'>,
+  script: Pick<ScriptMeta, 'fileUrl'>,
   collection: Pick<StoredCollection, 'path'> | null | undefined,
   setting: DownloadsCopiesSetting | null,
 ): string | null {
@@ -112,8 +112,8 @@ export interface CopyDeletePlan {
 // and its collection root (see local-file-overrides.md), so a file
 // under the copies directory is invisible to a script outside it.
 export function copyDeletePlan(
-  script: StoredScript,
-  siblings: readonly StoredScript[],
+  script: ScriptMeta,
+  siblings: readonly ScriptMeta[],
   copiesDir: string,
 ): CopyDeletePlan {
   // Which files another script in the collection is loading. Only
@@ -149,7 +149,7 @@ export function copyDeletePlan(
 // `localUrl` is the authority: it is what the load pipeline actually
 // read, so this lists files in use rather than paths a copy might once
 // have written. Deduped by path — one file can serve two declarations.
-function localDependencyPaths(script: StoredScript, copiesDir: string): Map<string, string> {
+function localDependencyPaths(script: ScriptMeta, copiesDir: string): Map<string, string> {
   const out = new Map<string, string>();
   for (const file of [...(script.requires ?? []), ...(script.resources ?? [])]) {
     if (!file.localUrl) continue;
