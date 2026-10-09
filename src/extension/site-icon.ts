@@ -5,7 +5,7 @@ import { MAX_SITE_ICONS, representativeMatches, type MatchTarget } from '../matc
 import { renderGlyph } from './glyph.js';
 import { getValue } from '../userscript-header.js';
 import { iconRefFromHeader, isIconContentType, MAX_ICON_BYTES } from '../script-icon.js';
-import { isPageContext } from '../run-context.js';
+import { assertWorkerContext, isPageContext } from '../run-context.js';
 import { callWorker } from './worker-client.js';
 
 // Site-icon (favicon) extraction + cache. Used by the collections page
@@ -143,6 +143,7 @@ export async function loadSiteIcons(
 }
 
 async function storeSiteIcon(origin: string, entry: SiteIconEntry): Promise<void> {
+  assertWorkerContext('write storage');
   await chrome.storage.local.set({
     [siteIconKey(origin)]: { ...entry, v: DISCOVERED_ICON_CACHE_VERSION },
   });
@@ -154,6 +155,7 @@ async function loadPathIcon(pageUrl: string): Promise<SiteIconEntry | undefined>
 }
 
 async function storePathIcon(pageUrl: string, entry: SiteIconEntry): Promise<void> {
+  assertWorkerContext('write storage');
   await chrome.storage.local.set({
     [pathIconKey(pageUrl)]: { ...entry, v: DISCOVERED_ICON_CACHE_VERSION },
   });
@@ -165,6 +167,7 @@ async function loadUrlIcon(url: string): Promise<SiteIconEntry | undefined> {
 }
 
 async function storeUrlIcon(url: string, entry: SiteIconEntry): Promise<void> {
+  assertWorkerContext('write storage');
   await chrome.storage.local.set({ [urlIconKey(url)]: entry });
 }
 
@@ -1215,10 +1218,12 @@ export async function listCachedIcons(now: number = Date.now()): Promise<CachedI
 }
 
 export async function deleteCachedIcon(storageKey: string): Promise<void> {
+  assertWorkerContext('write storage');
   await chrome.storage.local.remove(storageKey);
 }
 
 export async function deleteAllCachedIcons(): Promise<void> {
+  assertWorkerContext('write storage');
   const keys = (await chrome.storage.local.getKeys()).filter(isIconCacheKey);
   if (keys.length > 0) {
     await chrome.storage.local.remove(keys);
@@ -1230,7 +1235,9 @@ export async function deleteAllCachedIcons(): Promise<void> {
 // asks it, and keeps its own in-flight and settled maps for painting.
 function fetchToCache(storageKey: string): Promise<string | null> {
   if (isPageContext()) return callWorker('ensureCachedIcon', storageKey);
-  return ensureCachedIcon(storageKey);
+  // Not `ensureCachedIcon`: the caller has already put this fetch in
+  // `inflight` under the key, which `refreshCachedIcon` would then wait on.
+  return fetchAndCacheByKey(storageKey) ?? Promise.resolve(null);
 }
 
 function fetchAndCacheByKey(storageKey: string): Promise<string | null> | null {
@@ -1246,7 +1253,7 @@ function fetchAndCacheByKey(storageKey: string): Promise<string | null> | null {
 }
 
 // At most this many icon fetches at once. A page on a cold cache asks
-// for every icon it shows, and the worker also runs refreshes.
+// for every icon it shows, all at once.
 const MAX_ICON_FETCHES = 6;
 let iconFetches = 0;
 const iconFetchQueue: (() => void)[] = [];

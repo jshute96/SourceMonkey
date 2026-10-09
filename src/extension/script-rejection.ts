@@ -98,8 +98,8 @@ export async function readRejections(): Promise<RejectionMap> {
 // is a fact about this sync. See `registerWithFallback`.
 export async function writeRejections(prior: RejectionMap, next: RejectionMap): Promise<void> {
   if (sameRejections(prior, next)) return;
+  assertWorkerContext('write storage');
   try {
-    assertWorkerContext('write storage');
     await chrome.storage.session.set({ [REJECTIONS_KEY]: next });
   } catch { /* best-effort: the badge isn't load-bearing */ }
 }

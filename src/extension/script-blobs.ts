@@ -15,6 +15,7 @@
 // Both directions take each body as it finds it: one already inline (a
 // format 1 row, or a full script handed to a write) stays as it is.
 
+import { assertWorkerContext } from '../run-context.js';
 import type { ScriptMeta, StoredScript } from '../script-build.js';
 import type { StoredRequire, StoredResource } from '../external-files.js';
 import { base64ToBytes, bytesToBase64, sha256Hex } from '../bytes.js';
@@ -384,6 +385,7 @@ export async function migrateToBlobs(): Promise<void> {
         stored.add(k);
         fresh++;
       }
+      assertWorkerContext('write storage');
       await chrome.storage.local.set(items);
       moved += batch.length;
       written += fresh;
@@ -457,6 +459,7 @@ export async function sweepUnusedBlobs(now = Date.now()): Promise<SweepResult> {
     if (since !== undefined && now - since >= SWEEP_GRACE_MS) remove.push(k);
     else next[k] = since ?? now;
   }
+  assertWorkerContext('write storage');
   if (remove.length > 0) await chrome.storage.local.remove(remove);
   // Unchanged most of the time; a write would still fire
   // `storage.onChanged` in every open page.

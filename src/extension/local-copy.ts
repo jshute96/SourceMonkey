@@ -10,6 +10,7 @@
 // See docs/local-copy.md.
 
 import { base64ToBytes } from '../bytes.js';
+import { assertWorkerContext } from '../run-context.js';
 import { MAX_SCAN_DEPTH } from '../collection-scan.js';
 import { collectionNameInUse } from './collection-display.js';
 import {
@@ -82,6 +83,7 @@ export function parseDownloadsCopiesSetting(raw: unknown): DownloadsCopiesSettin
 // Worker side (`ensureDownloadsCollection`). A page writes it through
 // worker-client.ts's `writeSetting`.
 async function writeDownloadsCopiesSetting(setting: DownloadsCopiesSetting): Promise<void> {
+  assertWorkerContext('write storage');
   await chrome.storage.local.set({ [DOWNLOADS_COPIES_KEY]: setting });
 }
 

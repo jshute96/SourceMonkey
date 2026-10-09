@@ -2206,11 +2206,9 @@ async function runIncrementalSync(
 
   const wanted = new Set(userSpecs.map((s) => s.id));
   // Every affected script that no longer wants a registration, whether
-  // or not WE believe it has one. The belief is this context's, and the
-  // collections page and the viewer place registrations in theirs — so
-  // a script the page-side retry placed is one this record has never
-  // heard of, and guarding on the record would leave it injecting after
-  // the user disabled or deleted it.
+  // or not WE believe it has one. The belief can be wrong (a reset, a
+  // record lost with a stopped worker), and guarding on it would leave
+  // such a script injecting after the user disabled or deleted it.
   //
   // A wrong belief about *presence* self-corrects everywhere else,
   // because `placeSpec` has a second call that disagrees with it (a
@@ -2576,9 +2574,10 @@ export async function retryRejectedRegistrations(
 // false, `update` succeeds, and no second call ever disagrees — so
 // Chrome can hold globs neither the record nor the header describes
 // until the next full reconcile rebuilds `present` from `getScripts`.
-// Bounded by the worker's life, and it takes another context placing a
-// different glob set for the same id with no storage write behind it,
-// so we live with it rather than spending a round trip per spec.
+// Bounded by the worker's life, and it takes something other than this
+// worker's syncs placing a different glob set for the same id with no
+// storage write behind it, so we live with it rather than spending a
+// round trip per spec.
 //
 // Chrome answers a `register` for an id it already knows with
 // "Duplicate script ID '<id>'" rather than replacing it, and there are
@@ -2845,7 +2844,7 @@ async function applyPlan(plan: RegistrationPlan, timer?: PhaseTimer): Promise<Ap
   // (see `placeSpec` on why that would be wrong).
   //
   // Only the ids we believe Chrome holds, which covers the old copy in a
-  // swap. The rest are dropped in case another context placed them, and
+  // swap. The rest are dropped in case our record is wrong about them, and
   // usually Chrome holds none of them: that fails the batch call, and
   // the one-at-a-time fallback in `unregisterIds` would hold up the
   // registering.
@@ -2897,10 +2896,8 @@ async function applyPlan(plan: RegistrationPlan, timer?: PhaseTimer): Promise<Ap
 // registration lock.
 async function reregisterScripts(ids: readonly string[]): Promise<void> {
   // Same precondition as the sync: `configureWorld` must precede
-  // `register`. Guarded and idempotent, and `worldConfigured` is
-  // per-JS-context — the collections page and the viewer reach this
-  // without ever running a sync — so the retry can't assume someone
-  // else did it.
+  // `register`. Guarded and idempotent: a retry can run before this
+  // worker's first sync has configured it.
   await ensureWorldConfigured();
   const { scripts, collections, numbers } = await readAll();
   const handlerVersion = chrome.runtime.getManifest().version;

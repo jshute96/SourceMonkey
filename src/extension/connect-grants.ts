@@ -12,6 +12,8 @@
 // Hosts are `URL.hostname`s, lowercased: one host each, no subdomains,
 // any port (as `@connect` matches hosts).
 
+import { assertWorkerContext } from '../run-context.js';
+
 // The prompt window's page, and what it sends the worker: the answer,
 // and while it waits, a message every so often so the worker isn't
 // stopped for being idle (pending work alone doesn't count) and lose
@@ -124,6 +126,7 @@ function change(scriptId: string, edit: (grants: ConnectGrants) => void): Promis
     edit(grants);
     if (grants.denied?.length === 0) delete grants.denied;
     const key = connectGrantsKey(scriptId);
+    assertWorkerContext('write storage');
     if (grants.hosts.length === 0 && !grants.allHosts && !grants.denied) await chrome.storage.local.remove(key);
     else await chrome.storage.local.set({ [key]: grants });
   });

@@ -1216,8 +1216,9 @@ async function seedDefaultCollectionsViaUi(): Promise<void> {
     addInput.value = '';
     console.log('[SourceMonkey] first run: seeding complete; marking firstRunComplete=true');
     // Caught here so a failure can't replace the outcome of the seeding
-    // above. The defaults are then not seeded again: seeding runs only
-    // with `?first_run`, which is gone from the URL by now.
+    // above. With the flag unset, a later install event opens the page
+    // with `?first_run` again, and the add dedupes what is already
+    // there.
     await markFirstRunComplete().catch((err: unknown) => {
       console.info('[SourceMonkey] could not record that first-run seeding is done:', describeError(err));
     });
@@ -2223,8 +2224,7 @@ async function onRemoveCollection(id: string, section: HTMLElement, btn: HTMLBut
   } catch (err) {
     section.classList.remove('removing');
     btn.disabled = false;
-    // Shown, not thrown: the click handler drops the promise, and a
-    // rejection there lands in the extension's Errors panel.
+    // On the page, where the user is looking, rather than the console.
     showPageError(`Could not remove the collection: ${describeError(err)}`);
     return;
   }

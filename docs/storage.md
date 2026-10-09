@@ -269,10 +269,9 @@ them to blobs.
   - Skipping a retry after a failure this session is always logged.
   - Finding nothing to move (format 2 already in place at a worker
     start, or a new profile) only with debug logging on.
-- **Format 1 rows after format 2**: the key-rename migration below runs
-  in every context and writes rows as it read them, so it could put
-  back a format 1 row after `storeFormat` is `2`. Tests write such rows
-  too. Readers handle them, and the next write of the row converts it.
+- **Format 1 rows after format 2**: the key-rename migration below
+  writes rows as it read them, so it could put back a format 1 row
+  after `storeFormat` is `2`. Tests write such rows too. Readers handle them, and the next write of the row converts it.
   - The blobs the migration wrote for such a row are then unused, and
     cleanup deletes them.
 - **No way back**: an older build can't read format 2.
@@ -290,6 +289,9 @@ keys would look like a wiped profile.
   on the first storage read in each JS context, memoized. A cheap
   `get("sources")` probe gates the full `get(null)`, so a migrated
   profile pays one small read per context and no more.
+  - Only the worker moves rows. A page whose probe finds the old index
+    asks it (`migrateCollectionKeysForPage`) and waits; that re-checks
+    once in case the worker's memo predates the rows.
 - **Ordering**: new rows are written before the old ones are removed, so
   an interrupted run leaves both spellings and the retry is a no-op over
   what it already moved. A failed run clears the memo instead of wedging
@@ -1297,7 +1299,7 @@ materialising silently.
     a user naming a collection and wrong for seeding: a fresh install
     would put up a modal per default and wait. `seedCollection` is the
     plain route — no dialog, no preview hand-off, no scroll.
-- **Run-once.** The page writes `"firstRunComplete"` after seeding;
+- **Run-once.** The page asks the worker to set `"firstRunComplete"` after seeding;
   once set, neither the SW open nor the page seed fires again —
   including after the user deletes the seeded collections.
 - **Reset behavior.** The test-surface `resetAllState()` sets

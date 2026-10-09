@@ -225,20 +225,11 @@ active or running on the page, it shows the first by
   does a move into an enabled collection.
 - **Moving a copy out of an enabled collection** into a disabled one
   doesn't stamp `inactiveSince`.
-- **`enablementTimes` is one key that every context rewrites whole.**
-  The store's lock covers one context (the service worker, or one
-  page), so two contexts writing at the same moment can drop the
-  other's stamps. A lost stamp only means a copy isn't brought back, or
-  the popup offers a different copy.
-- **The lock covers one context.** Two enables of related copies from
-  different contexts at the same moment (the collections page and the
-  popup, say) can still both land.
-- **A copy that appears mid-write is missed.** One installed by another
-  context between an enable's full read and its write isn't turned
-  off.
-- **Stamps are strictly increasing per context, not across them.** The
-  service worker and a page could stamp unrelated changes with the same
-  time, which a restore would read as a displacement if those copies
-  are related. Very unlikely.
+- **A copy that appears mid-write is missed.** One installed between
+  an enable's full read and its lock isn't turned off.
+- Every enable runs in the service worker, under the store's one lock
+  ([worker-writes.md](worker-writes.md)), so enables from different
+  pages no longer race, and the active-time stamps come from one
+  context.
 - **The collections page's tooltips don't mention Ctrl/Cmd-click.** The
   viewer and the popup do, where other copies match the page.

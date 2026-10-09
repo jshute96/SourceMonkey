@@ -1030,11 +1030,13 @@ async function hasLegacyRows(): Promise<boolean> {
 // migration, then a failure if the rows are still there, so the page
 // forgets its own memo and asks again on its next read.
 export async function migrateCollectionKeysForPage(): Promise<void> {
-  await ensureCollectionKeysMigrated();
+  const first = ensureCollectionKeysMigrated();
+  await first;
   // This worker's memo may predate the rows (old data restored since it
-  // checked): look again, once.
+  // checked): look again, once. Only the first page to ask resets it;
+  // another one asking meanwhile shares the new run.
   if (await hasLegacyRows()) {
-    migrationPromise = null;
+    if (migrationPromise === first) migrationPromise = null;
     await ensureCollectionKeysMigrated();
   }
   if (await hasLegacyRows()) throw new Error('Internal error: Could not move the collections to their current storage keys');
@@ -2015,10 +2017,11 @@ export function needsDisplayName(collection: StoredCollection): boolean {
 }
 
 // Fill in `displayName` on any collection row that doesn't have one
-// yet. The collections page asks for it at boot when a row needs one. Cheap — one read of the
-// collection index plus one bulk write iff anything was missing. The
-// pure-inference rules live in `collection-display.ts`; that module
-// only imports a TYPE from this file so the cycle is compile-time only.
+// yet. The collections page asks for it at boot when a row needs one.
+// Cheap: one read of the collection index plus one bulk write iff
+// anything was missing. The pure-inference rules live in
+// `collection-display.ts`; that module only imports a TYPE from this
+// file so the cycle is compile-time only.
 export async function backfillCollectionDisplayNames(): Promise<void> {
   const collections = await getCollections();
   const toSet: Record<string, unknown> = {};

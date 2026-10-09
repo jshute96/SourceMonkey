@@ -103,6 +103,7 @@ export async function setRefreshError(
   collectionId: string,
   reason: string | null,
 ): Promise<void> {
+  assertWorkerContext('write storage');
   try {
     const prior = await readRefreshErrors();
     if (reason === null && !(collectionId in prior)) return;
@@ -110,7 +111,6 @@ export async function setRefreshError(
     const next = { ...prior };
     if (reason === null) delete next[collectionId];
     else next[collectionId] = reason;
-    assertWorkerContext('write storage');
     await chrome.storage.session.set({ [REFRESH_ERRORS_KEY]: next });
   } catch (err) {
     console.info('[SourceMonkey] could not record a refresh error', err);
@@ -122,6 +122,7 @@ export async function setRefreshError(
 // page. Called after a removal rather than on a timer; `liveIds` is the
 // authoritative set.
 export async function pruneRefreshErrors(liveIds: Iterable<string>): Promise<void> {
+  assertWorkerContext('write storage');
   try {
     const prior = await readRefreshErrors();
     const live = new Set(liveIds);
@@ -130,7 +131,6 @@ export async function pruneRefreshErrors(liveIds: Iterable<string>): Promise<voi
       if (live.has(id)) next[id] = reason;
     }
     if (Object.keys(next).length === Object.keys(prior).length) return;
-    assertWorkerContext('write storage');
     await chrome.storage.session.set({ [REFRESH_ERRORS_KEY]: next });
   } catch (err) {
     console.info('[SourceMonkey] could not prune refresh errors', err);

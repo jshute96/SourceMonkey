@@ -10,17 +10,28 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const src = path.join(root, 'src');
 
-const PAGE_ENTRIES = [
-  'extension/collections.ts', 'extension/userscript.ts', 'extension/options.ts', 'extension/compare.ts',
-  'extension/popup.ts', 'extension/debug/icons.ts', 'extension/connect-prompt-page.ts', 'extension/page-heading.ts',
-];
+// Every module an HTML page loads with `<script src>`: the pages, plus
+// the offscreen document and the parse sandbox, which have a `document`
+// too.
+function pageEntries() {
+  const out = [];
+  for (const entry of readdirSync(src, { recursive: true })) {
+    const rel = String(entry).split(path.sep).join('/');
+    if (!rel.endsWith('.html')) continue;
+    for (const m of read(rel).matchAll(/<script[^>]*\ssrc="([^"]+\.js)"/g)) {
+      const target = path.posix.normalize(path.posix.join(path.posix.dirname(rel), m[1])).replace(/\.js$/, '.ts');
+      if (target.startsWith('extension/')) out.push(target);
+    }
+  }
+  return out;
+}
 const WORKER_ENTRY = 'extension/background.ts';
 
 // The writers, by the module that defines them (relative to
@@ -32,14 +43,14 @@ const WRITERS = {
     'setCollectionLocalFiles', 'markFirstRunComplete', 'backfillCollectionDisplayNames',
     'reconcileScriptMembership', 'refreshCollection', 'refreshScript', 'refreshAllCollections',
     'writeEnablement', 'writeEnablementFrom', 'writeRunScript', 'removeSmDevCollection', 'setVersionProbes',
-    'verifyParseChecks', 'recordMissingBlobs',
+    'verifyParseChecks', 'recordMissingBlobs', 'migrateCollectionKeysForPage',
   ],
   'script-updater': ['updateScript', 'updateCollection', 'updateAllCollections'],
   'script-enablement': ['setScriptEnabledExclusive', 'setCollectionEnabledExclusive', 'setAllScriptsEnabled', 'enableWithin'],
   'script-identity': ['turnOffOtherCopies'],
   'connect-grants': ['revokeConnectHost', 'forgetDeniedHost'],
   'script-log': ['clearScriptLog'],
-  'site-icon': ['refreshCachedIcon', 'deleteCachedIcon', 'deleteAllCachedIcons'],
+  'site-icon': ['ensureCachedIcon', 'refreshCachedIcon', 'deleteCachedIcon', 'deleteAllCachedIcons'],
   'local-copy': ['registerLocalCopy'],
   'injector': ['syncRegistrations', 'retryRejectedRegistrations', 'unregisterAllRegistrations', 'registerWithFallback'],
 };
@@ -54,16 +65,22 @@ function read(rel) {
   }
 }
 
-// Runtime imports only: `import type` is erased.
+// Runtime imports only: `import type` is erased. `names` is null for
+// a namespace import (`import * as`), which could reach any export.
 function imports(rel) {
   const out = [];
-  for (const m of read(rel).matchAll(/^(?:import|export)\s+(?!type\b)([^;]*?)\s+from\s+'(\.[^']+)'/gms)) {
-    const target = path.posix.normalize(path.posix.join(path.posix.dirname(rel), m[2])).replace(/\.js$/, '.ts');
-    const names = (m[1].match(/\{([^}]*)\}/)?.[1] ?? '')
+  const text = read(rel);
+  const resolve = (spec) => path.posix.normalize(path.posix.join(path.posix.dirname(rel), spec)).replace(/\.js$/, '.ts');
+  for (const m of text.matchAll(/^(?:import|export)\s+(?!type\b)([^;]*?)\s+from\s+'(\.[^']+)'/gms)) {
+    const names = /\*\s+as\s/.test(m[1]) ? null : (m[1].match(/\{([^}]*)\}/)?.[1] ?? '')
+      .replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')
       .split(',').map((n) => n.trim()).filter((n) => n && !n.startsWith('type '))
       .map((n) => n.split(/\s+as\s+/)[0]);
-    out.push({ target, names });
+    out.push({ target: resolve(m[2]), names });
   }
+  // Side-effect imports and dynamic `import()`: followed, no names.
+  for (const m of text.matchAll(/^import\s+'(\.[^']+)'/gm)) out.push({ target: resolve(m[1]), names: [] });
+  for (const m of text.matchAll(/\bimport\(\s*'(\.[^']+)'\s*\)/g)) out.push({ target: resolve(m[1]), names: null });
   return out;
 }
 
@@ -79,10 +96,11 @@ function reach(entries) {
 }
 
 const worker = reach([WORKER_ENTRY]);
-const pageOnly = [...reach(PAGE_ENTRIES)].filter((rel) => !worker.has(rel));
+const pageOnly = [...reach(pageEntries())].filter((rel) => !worker.has(rel));
 
 test('page-only modules exist to check', () => {
   assert.ok(pageOnly.includes('extension/collections.ts'));
+  assert.ok(pageOnly.includes('extension/offscreen.ts'));
 });
 
 test('no page-only module imports a writer from where it is defined', () => {
@@ -90,7 +108,8 @@ test('no page-only module imports a writer from where it is defined', () => {
   for (const rel of pageOnly) {
     for (const { target, names } of imports(rel)) {
       const writers = WRITERS[target.replace(/^extension\//, '').replace(/\.ts$/, '')] ?? [];
-      for (const name of names) if (writers.includes(name)) found.push(`${rel}: ${name} from ${target}`);
+      if (names === null && writers.length > 0) found.push(`${rel}: every export of ${target}`);
+      for (const name of names ?? []) if (writers.includes(name)) found.push(`${rel}: ${name} from ${target}`);
     }
   }
   assert.deepEqual(found, [], 'Import these from worker-client.ts instead.');

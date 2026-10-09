@@ -12,6 +12,7 @@
 // - A removed item's number is held back for a while before reuse, so an
 //   id someone saw a moment ago never names a different item.
 
+import { assertWorkerContext } from '../run-context.js';
 import { isSmDevCollection } from './directories.js';
 import { ensureCollectionKeysMigrated, type StoredCollection } from './script-store.js';
 
@@ -173,6 +174,7 @@ export function assignNumbers(): Promise<AllNumbers | null> {
     const writes: Record<string, StickyNumbers> = {};
     if (scripts.changed) writes[SCRIPT_NUMBERS_KEY] = scripts.numbers;
     if (colls.changed) writes[COLLECTION_NUMBERS_KEY] = colls.numbers;
+    assertWorkerContext('write storage');
     if (Object.keys(writes).length) await chrome.storage.local.set(writes);
     return { scripts: scripts.numbers, collections: colls.numbers };
   });
