@@ -92,7 +92,7 @@ import {
 } from '../external-files.js';
 import { type LocalFileScope } from '../local-file-overrides.js';
 import { scanAllStorage, scanStorageRows } from './storage-scan.js';
-import { cachedRows, cachedScriptRows, cachedStructuralRows } from './row-cache.js';
+import { cachedRows, cachedScriptRows, allCachedRows } from './row-cache.js';
 import { callWorker } from './worker-client.js';
 import { assertWorkerContext, isPageContext } from '../run-context.js';
 import {
@@ -138,7 +138,9 @@ import {
   PARSE_RECHECK_CONCURRENCY,
 } from './concurrency.js';
 import { dlog } from '../debug-log.js';
-import { COLLECTIONS_INDEX_KEY, COLLECTION_PREFIX, SCRIPT_PREFIX, collectionKey, scriptKey } from './structural-keys.js';
+import {
+  COLLECTIONS_INDEX_KEY, COLLECTION_PREFIX, ENABLEMENT_TIMES_KEY, SCRIPT_PREFIX, collectionKey, scriptKey,
+} from './structural-keys.js';
 import { startPhaseTimer, storageSize, timePhase, formatMs, timingNow, type PhaseTimer } from '../phase-timing.js';
 import {
   applyFetchError,
@@ -2261,7 +2263,7 @@ async function unreferencedScratchKeys(removed: readonly ScriptMeta[]): Promise<
 async function scanMembershipRows(): Promise<{
   collections: StoredCollection[]; scripts: ScriptMeta[];
 }> {
-  const all = await cachedStructuralRows() ?? await scanStorageRows('membership reconcile', (k) =>
+  const all = await allCachedRows() ?? await scanStorageRows('membership reconcile', (k) =>
     k === COLLECTIONS_INDEX_KEY || k.startsWith(COLLECTION_PREFIX) || k.startsWith(SCRIPT_PREFIX));
   // Out of the scan rather than a second read, so the index and the rows
   // it filters are one snapshot. `ensureCollectionKeysMigrated` already
@@ -3496,7 +3498,7 @@ export interface EnablementWrite {
 // changes the times of every copy under it, and stamping them on the
 // rows would rewrite each full row (bodies and all). See
 // [docs/script-enablement.md](../../docs/script-enablement.md#active-times).
-export const ENABLEMENT_TIMES_KEY = 'enablementTimes';
+export { ENABLEMENT_TIMES_KEY };
 
 export interface EnablementTimes {
   activeSince?: number;

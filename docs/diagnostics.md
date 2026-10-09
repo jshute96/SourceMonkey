@@ -533,10 +533,13 @@ timing: enable script: total 480ms (read all 410 [12 scripts,
   `storage scan (row cache)` line has the size.
 - **plan**: working out which copies to change.
 - **lock wait**: waiting behind other storage writes in the worker.
+- **re-read**: the related copies, their collections and the active
+  times, read inside the lock to plan from. From the worker's row
+  cache, so it stays small even while a sync is reading storage.
 - **read rows / read collections**: the rows the write changes,
   re-read inside the lock. `read collection` is the toggled collection.
 - **write**: the one storage write. Every changed script row is
-  written whole, body included.
+  written whole; its bodies stay in their blobs.
 - **repaint** (`versions table enable`, in the page): the table redraw
   the checkbox stays grey for.
 - Sizes are JSON lengths, roughly what Chrome stores and copies.

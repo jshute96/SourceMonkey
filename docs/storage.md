@@ -214,8 +214,8 @@ The rows' `contentHash` fields stay change-detection tokens; the
   blob and GM value too. The match index, the log label table, the
   registration sync, the enable toggles' search for related copies,
   and the collections page do this.
-- **In the worker**, the store reads collection and script rows from
-  its row cache once something has loaded it
+- **In the worker**, the store reads collection and script rows, and
+  the active times, from its row cache once something has loaded it
   ([worker-writes.md](worker-writes.md#the-row-cache)).
 - **Who reads bodies**:
   - The viewer, for the script on screen, and the compare page.

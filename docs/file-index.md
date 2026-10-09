@@ -185,7 +185,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/location-kinds.ts` | Pure location naming: a script location's scheme kind, scratch-script URLs and keys, sm-dev collection paths |
 | `src/extension/file-access.ts` | "Allow access to file URLs" probe plus the shared "File access is disabled." banner and its chrome://extensions link |
 | `src/extension/github-provider.ts` | GitHub-only provider integration: URL parsing, default-branch resolution, blob→raw rewrite, Contents-API recursive dir scanner, per-script raw/display URL builders |
-| `src/extension/structural-keys.ts` | Storage key layout of the collection index, collection and script rows, and `touchesStructuralRows` |
+| `src/extension/structural-keys.ts` | Storage key layout of the collection index, collection and script rows, `touchesStructuralRows`, the active-times key |
 | `src/extension/script-store.ts` | Persistent userscript store (chrome.storage.local) plus load/refresh pipeline, addCollection / createCollection / installScript / moveScript / setCollectionOptions / probeCollectionLocation, refreshAllCollections, the enable write that stamps active times, membership reconcile, first-run flag + DEFAULT_COLLECTIONS, legacy `source:*` key migration, the storage format gate |
 | `src/extension/script-updater.ts` | Single entry point for refresh; rate-limits opportunistic background checks, and mirrors every load/refresh outcome into the per-script Log |
 | `src/extension/version-probe-fetch.ts` | Fetching half of update probes — reads a probe URL's `@version`, with bounded size, timeout, and fan-out |
@@ -200,7 +200,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/missing-scripts.ts` | Log warnings for scripts that matched a page but never started |
 | `src/extension/storage-usage.ts` | Sorts storage rows into the Options page's usage table: scripts, `@require`/`@resource` files, shared bodies, GM values, icons |
 | `src/extension/storage-scan.ts` | Whole-store reads (`get(null)`, or only the rows a caller wants), naming each and its cost under debug logging |
-| `src/extension/row-cache.ts` | The worker's in-memory copy of the collection and script rows, kept current by wrapping its storage writes |
+| `src/extension/row-cache.ts` | The worker's in-memory copy of the collection and script rows and active times, kept current by wrapping its writes |
 | `src/extension/worker-client.ts` | Page side of the worker's operations: each page write, sent to the worker over a port |
 | `src/extension/worker-ops.ts` | Worker side of those operations: the table of what pages may ask it to run, and the port listener |
 | `src/extension/concurrency.ts` | Bounded fan-out helper plus the nested per-collection / per-script, probe, and directory-scan limits |

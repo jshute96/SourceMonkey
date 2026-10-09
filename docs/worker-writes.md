@@ -109,14 +109,15 @@ a real profile needs for local collections at all:
 ## The row cache
 
 `row-cache.ts`: the worker's in-memory copy of the collection index,
-the collection rows and the script rows (without bodies).
+the collection rows, the script rows (without bodies), and the active
+times (`enablementTimes`), which every enable re-reads inside its lock.
 
 - **Loaded** by the first read of every script row
   (`getAllScriptMetas`, the membership repair), which would scan
   storage anyway. Until then, point reads go to storage, so a worker
   that wakes for one row doesn't read them all.
 - **Read** by the store's row reads (`getRows`) for those keys. Other
-  keys in the same read (`enablementTimes`) still come from storage.
+  keys in the same read still come from storage.
 - **Kept current** by wrapping this context's `chrome.storage.local`
   `set`, `remove` and `clear`: whatever writes, the cache changes as
   storage does.

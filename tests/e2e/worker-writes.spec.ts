@@ -2,7 +2,8 @@
 //
 //   - A page's enable click runs in the worker: the page writes nothing
 //     itself, and the worker finds the related copies from its row cache,
-//     reading no script rows from storage once that is loaded.
+//     reading no script rows or active times from storage once that is
+//     loaded.
 //   - The row cache follows the worker's own writes, and drops what it
 //     holds when something else writes a row.
 //   - A page can change only the settings the worker lists.
@@ -100,29 +101,31 @@ test.describe('worker writes', () => {
     const sw = await getServiceWorker();
     // Loaded now, so the clicks below find it loaded.
     await sm.getAllScriptMetas();
+    const loads = await sm.rowCacheLoads();
     await recordWorkerReads(sw);
 
-    // What a click reads, up to the registration sync it starts: that
-    // reads storage itself, and starts with a key listing.
+    // What a click reads, up to the registration sync it starts. The sync
+    // reads storage itself and starts with a key listing, which also
+    // shows the recorder saw the worker's reads at all.
     const clickReads = async (): Promise<string[]> => {
+      await sm.syncNow();
       const reads = await takeWorkerReads(sw);
       const sync = reads.indexOf('(keys)');
-      return sync < 0 ? reads : reads.slice(0, sync);
+      expect(sync).toBeGreaterThanOrEqual(0);
+      return reads.slice(0, sync);
     };
     await box(b.id).check();
     await expect(box(a.id)).not.toBeChecked();
-    let reads = await clickReads();
-    expect(reads).toContain('enablementTimes');
-    expect(reads.filter((k) => k.startsWith('script:'))).toEqual([]);
+    expect((await clickReads()).filter((k) => k.startsWith('script:') || k === 'enablementTimes')).toEqual([]);
 
-    await sm.syncNow();
-    await takeWorkerReads(sw);
     await box(a.id).check();
     await expect(box(b.id)).not.toBeChecked();
-    reads = await clickReads();
-    expect(reads).toContain('enablementTimes');
-    expect(reads.filter((k) => k.startsWith('script:'))).toEqual([]);
+    expect((await clickReads()).filter((k) => k.startsWith('script:') || k === 'enablementTimes')).toEqual([]);
+    expect(await sm.rowCacheLoads()).toBe(loads);
     expect(await page.evaluate(() => window.__smPageWrites)).toEqual([]);
+    // The active times the worker planned from are the ones stored.
+    const stored = await page.evaluate(async () => (await chrome.storage.local.get('enablementTimes')).enablementTimes);
+    expect(await sm.getEnablementTimes()).toEqual(stored);
     await page.close();
   });
 

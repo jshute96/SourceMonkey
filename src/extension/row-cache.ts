@@ -1,7 +1,8 @@
 // The service worker's copy of the structural rows (the collection
-// index, collection rows, script rows), so a lookup across every script
-// (finding a copy's related copies on an enable click, say) reads memory
-// instead of storage. See docs/worker-writes.md#the-row-cache.
+// index, collection rows, script rows) and the active times, so a lookup
+// across every script (finding a copy's related copies on an enable
+// click, say) reads memory instead of storage. See
+// docs/worker-writes.md#the-row-cache.
 //
 // Right by construction, not by expiry:
 //   - Only the worker writes these rows (docs/worker-writes.md#rules),
@@ -11,18 +12,22 @@
 //     from anywhere else) drops the copy, and the next full read loads
 //     it again from storage.
 //
-// Loaded only by a read that wants every script row anyway
-// (`cachedScriptRows`). A point read before then goes to storage, so a
+// Loaded only by a read that wants every row anyway (`cachedScriptRows`,
+// `allCachedRows`). A point read before then goes to storage, so a
 // worker that wakes for one row doesn't pay for all of them.
 //
 // Rows go out as copies, and are stored as the JSON storage would keep,
 // so a caller that changes a row it read can't change the cache.
 
-import { isStructuralKey, SCRIPT_PREFIX } from './structural-keys.js';
+import { ENABLEMENT_TIMES_KEY, isStructuralKey, SCRIPT_PREFIX } from './structural-keys.js';
 import { scanStorageRows } from './storage-scan.js';
 import { dlog } from '../debug-log.js';
 
-const isCachedKey = isStructuralKey;
+// The active times too: every enable re-reads them inside its lock,
+// and from storage that read waits behind whatever else is reading it.
+function isCachedKey(key: string): boolean {
+  return isStructuralKey(key) || key === ENABLEMENT_TIMES_KEY;
+}
 
 let installed = false;
 let rows: Map<string, unknown> | null = null;
@@ -224,8 +229,9 @@ export async function cachedScriptRows(): Promise<Record<string, unknown> | null
   return await cachedRowsWhere((key) => key.startsWith(SCRIPT_PREFIX));
 }
 
-// Every cached row (index, collections, scripts), as copies, likewise.
-export async function cachedStructuralRows(): Promise<Record<string, unknown> | null> {
+// Every cached row (index, collections, scripts, active times), as
+// copies, likewise.
+export async function allCachedRows(): Promise<Record<string, unknown> | null> {
   return await cachedRowsWhere(() => true);
 }
 
