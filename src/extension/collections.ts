@@ -40,6 +40,7 @@ import {
   reconcileScriptMembership,
   getCollectionWithScriptMeta,
   getScriptMetas,
+  getCollectionsById,
   getCollections,
   isFirstRunComplete,
   isScriptEnabled,
@@ -71,7 +72,7 @@ import {
   collectionAnchorId,
   EDIT_COLLECTION_HASH_PREFIX,
 } from './collection-display.js';
-import { COLLECTION_PREFIX, touchesStructuralRows } from './structural-keys.js';
+import { COLLECTION_PREFIX, SCRIPT_PREFIX, touchesStructuralRows } from './structural-keys.js';
 import { openCollectionDialog, type CollectionDialogRequest } from './collection-dialog.js';
 import { onNamedTabFocus, openExtensionTab, openNamedTab } from './page-links.js';
 import { getValue } from '../userscript-header.js';
@@ -296,14 +297,18 @@ void loadDebugLoggingFlag();
 // script that recovered elsewhere kept a stale badge until a manual
 // reload (issue #10).
 //
-// The change event is treated as a bare "something you display moved"
-// signal — what it says changed is ignored. The repaint re-reads storage
-// and makes the DOM match, which is idempotent by construction: no
-// snapshot to go stale, no per-key handler to keep in step with the
-// store, and any number of events collapse into one pass.
+// The change event is treated as a "something you display moved" signal:
+// only which keys changed is used, never the values it carries. The
+// repaint re-reads storage and makes the DOM match, which is idempotent
+// by construction: no snapshot to go stale, no per-key handler to keep
+// in step with the store, and any number of events collapse into one
+// pass. The keys narrow which rows it re-reads (`repaintScriptRows`).
 if (chrome.storage?.local?.onChanged) {
   chrome.storage.local.onChanged.addListener((changes) => {
-    if (touchesStructuralRows(Object.keys(changes))) void repaintPage();
+    // Only the keys the page draws from; an enable write's active times
+    // ride along in the same event.
+    const keys = Object.keys(changes).filter((key) => touchesStructuralRows([key]));
+    if (keys.length > 0) void repaintPage(keys);
   });
 }
 
@@ -469,6 +474,10 @@ function paintStatusCell(
 // change event carries a snapshot, and a snapshot acted on later is a
 // lie about the present.
 let pageDirty = false;
+// The changed keys the pending repaint has to cover, or null for all of
+// them. Lets a change to a few script rows repaint just those rows (see
+// `repaintScriptRows`).
+let dirtyKeys: Set<string> | null = new Set();
 let repaintChain: Promise<void> = Promise.resolve();
 
 // Mark the page stale and resolve once a repaint has covered it. Passes
@@ -480,8 +489,13 @@ let repaintChain: Promise<void> = Promise.resolve();
 //
 // Deliberately not debounced. The repaint is cheap, and a delay would
 // only put lag between a user's click and the page agreeing with it.
-function repaintPage(): Promise<void> {
+//
+// `keys`: the storage keys that changed, when the caller knows them.
+// Without them the pass repaints everything.
+function repaintPage(keys?: readonly string[]): Promise<void> {
   pageDirty = true;
+  if (!keys) dirtyKeys = null;
+  else if (dirtyKeys) for (const key of keys) dirtyKeys.add(key);
   repaintChain = repaintChain
     .then(async () => {
       // Waited before the flag is read, not after, so everything that
@@ -490,7 +504,9 @@ function repaintPage(): Promise<void> {
       await initialRenderDone;
       if (!pageDirty) return;
       pageDirty = false;
-      await repaintFromStorage();
+      const changed = dirtyKeys;
+      dirtyKeys = new Set();
+      await repaintFromStorage(changed);
     })
     .catch((err: unknown) => {
       // Nothing here is worth failing the page over, but an unhandled
@@ -503,11 +519,19 @@ function repaintPage(): Promise<void> {
 
 // Make the rendered sections match the stored collections: drop the ones
 // that are gone, build the ones that appeared, update the rest in place,
-// and re-seat them into index order. Existing elements are reused so
-// refresh highlights, in-flight spinners, and focus survive.
-async function repaintFromStorage(): Promise<void> {
+// and re-seat them into index order (`repaintSections`), or, when only
+// script rows changed, update just those rows (`repaintScriptRows`).
+// Existing elements are reused so refresh highlights, in-flight
+// spinners, and focus survive.
+//
+// `changed` is the keys that changed since the last pass, or null when
+// unknown. A change to script rows only repaints those rows; anything
+// else, or a change those rows can't take in place, repaints all.
+async function repaintFromStorage(changed: ReadonlySet<string> | null): Promise<void> {
   const timer = startPhaseTimer('collections page repaint');
-  await repaintSections(timer);
+  const rows = changed ? await repaintScriptRows(changed, timer) : null;
+  if (rows === null) await repaintSections(timer);
+  timer.note(rows === null ? 'all rows' : `${rows} row(s)`);
   // Rows this repaint read after their write are settled.
   for (const [key, at] of writtenAt) if (at <= repaintReadAt) writtenAt.delete(key);
   timer.done();
@@ -562,6 +586,73 @@ function applyEnableResult(changed: readonly ScriptMeta[], also: readonly string
     if (section) sections.add(section);
   }
   for (const section of sections) refreshBulkToggle(section);
+}
+
+// Repaint only the rows of the scripts in `changed`, when that's all
+// that changed: an enable toggle, a version probe, a refresh of a few
+// scripts. Those rows are read again from storage, as the full repaint
+// reads every row, rather than taken from the change event.
+//
+// Returns how many rows it repainted, or null, having changed nothing,
+// when the change needs the full repaint:
+//   - a collection row or the collection list changed;
+//   - a script appeared, went, or moved to another collection (those
+//     write the collection rows too, so this is a backstop);
+//   - a row's shown name changed, which can move it in the section's
+//     name order.
+async function repaintScriptRows(changed: ReadonlySet<string>, timer: PhaseTimer): Promise<number | null> {
+  const ids: string[] = [];
+  for (const key of changed) {
+    if (!key.startsWith(SCRIPT_PREFIX)) return null;
+    ids.push(key.slice(SCRIPT_PREFIX.length));
+  }
+  repaintReadAt = pageWrites;
+  const scripts = await getScriptMetas(ids);
+  timer.mark('read scripts', `${scripts.length} scripts`);
+  if (scripts.length !== ids.length) return null;
+  const placed: { row: HTMLTableRowElement; section: HTMLElement; script: ScriptMeta }[] = [];
+  for (const script of scripts) {
+    const row = collectionsEl.querySelector<HTMLTableRowElement>(`tr[data-script-id="${cssEscape(script.id)}"]`);
+    const section = row?.closest<HTMLElement>('section.collection');
+    if (!row || !section || section.dataset.collectionId !== script.collectionId) return null;
+    placed.push({ row, section, script });
+  }
+  const collectionIds = [...new Set(scripts.map((s) => s.collectionId))];
+  const collections = new Map((await getCollectionsById(collectionIds)).map((c) => [c.id, c] as const));
+  timer.mark('read collections');
+  if (collections.size !== collectionIds.length) return null;
+  if (placed.some(({ script }) => shownNames.get(script.id)
+    !== nameCellText(script, isContainerCollection(collections.get(script.collectionId)!.path)))) {
+    return null;
+  }
+  // As the full repaint does, so a rebuilt Name cell draws its icon
+  // straight away.
+  await preloadSiteIcons(scripts);
+  timer.mark('icons');
+  const sections = new Set<HTMLElement>();
+  const settling = new Map<HTMLTableElement, Promise<unknown>[]>();
+  for (const { row, section, script } of placed) {
+    const collection = collections.get(script.collectionId)!;
+    // Same rule as `syncSectionFromStorage`: a toggle of the collection
+    // this page made after the read already drew the section.
+    const collectionOn = writtenSinceRead(COLLECTION_PREFIX + collection.id)
+      ? !section.classList.contains('disabled')
+      : isCollectionEnabled(collection);
+    const repainted = syncScriptRow(row, script, collectionOn, collection.path, localFileScope(collection));
+    const table = row.closest('table');
+    if (repainted && table) settling.set(table, [...(settling.get(table) ?? []), repainted]);
+    sections.add(section);
+  }
+  // A rebuilt Name cell may need a different icon column width.
+  for (const [table, pending] of settling) fitIconColumns(table, pending);
+  for (const section of sections) refreshBulkToggle(section);
+  // Its usage figure moves with any write, while it's up.
+  const liveIds = [...collectionsEl.querySelectorAll<HTMLElement>('section.collection')]
+    .map((s) => s.dataset.collectionId ?? '');
+  await syncStorageBanner(new Set(liveIds));
+  markDiskChanges();
+  timer.mark('paint');
+  return placed.length;
 }
 
 async function repaintSections(timer: PhaseTimer): Promise<void> {
@@ -969,6 +1060,12 @@ function sameNodeList(current: readonly Element[], wanted: readonly Element[]): 
 // one that would only flash its favicon for nothing.
 const nameCellKeys = new Map<string, string>();
 
+// The name each row was last drawn with, which sets its place in the
+// section (`sortedByShownName`). A repaint of only some rows can't
+// re-sort the section, so it hands one whose name moved to the full
+// repaint.
+const shownNames = new Map<string, string>();
+
 function nameCellKey(script: ScriptMeta, localFiles: LocalFileScope): string {
   return JSON.stringify([
     script.relativePath,
@@ -1006,6 +1103,9 @@ function nameCellKey(script: ScriptMeta, localFiles: LocalFileScope): string {
 function forgetScriptsExcept(keep: ReadonlySet<string>): void {
   for (const id of [...nameCellKeys.keys()]) {
     if (!keep.has(id)) nameCellKeys.delete(id);
+  }
+  for (const id of [...shownNames.keys()]) {
+    if (!keep.has(id)) shownNames.delete(id);
   }
   for (const id of [...currentOutdated.keys()]) {
     if (!keep.has(id)) currentOutdated.delete(id);
@@ -1714,6 +1814,7 @@ function fillNameCell(
   // Record what this cell was drawn from, so the next repaint can skip
   // it unless one of those inputs moved.
   nameCellKeys.set(script.id, nameCellKey(script, localFiles));
+  shownNames.set(script.id, nameCellText(script, inContainer));
   return iconCount;
 }
 

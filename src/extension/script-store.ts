@@ -97,7 +97,10 @@ import {
   clearMigrationFailureForTests,
   fromStorage,
   hydrateScriptRows,
+  carryBodyRef,
   markMissingBlobs,
+  newBlobItems,
+  storedForm,
   migrateToBlobs,
   STORE_FORMAT,
   STORE_FORMAT_KEY,
@@ -1305,6 +1308,14 @@ export async function getAllScripts(): Promise<StoredScript[]> {
     if (key.startsWith('script:')) rows.push(value as ScriptRow);
   }
   return await fromStorage(rows, all);
+}
+
+// Several collection rows in one storage call. Missing ids are left out.
+export async function getCollectionsById(ids: readonly string[]): Promise<StoredCollection[]> {
+  const got = await getRows(ids.map(collectionKey));
+  return ids
+    .map((id) => got[collectionKey(id)] as StoredCollection | undefined)
+    .filter((c): c is StoredCollection => c != null);
 }
 
 export async function getCollection(id: string): Promise<StoredCollection | undefined> {
@@ -2565,7 +2576,8 @@ export async function refreshCollection(
         // rather than resurrect a deleted collection row.
         return null;
       }
-      const curScripts = await getMany(scripts.map((s) => scriptKey(s.id)));
+      // Without their bodies: see `changedScriptRows`.
+      const curScripts = await getRows(scripts.map((s) => scriptKey(s.id)));
       const priorIds = new Set(existingScripts.map((s) => s.id));
 
       // Membership moves under us in both directions, and the freshly
@@ -2583,7 +2595,7 @@ export async function refreshCollection(
       // what's wrong here is that the row belongs to someone else now.
       const departed = new Set<string>();
       for (const s of scripts) {
-        const cur = curScripts[scriptKey(s.id)] as StoredScript | undefined;
+        const cur = curScripts[scriptKey(s.id)] as ScriptMeta | undefined;
         // A row the scan found for the first time has no stored
         // counterpart yet — that's a new script, not a departure.
         if (!cur) {
@@ -2596,7 +2608,7 @@ export async function refreshCollection(
       const finalScripts = kept.map((s) => preserveConcurrentEdits(
         s,
         priorById.get(s.id),
-        curScripts[scriptKey(s.id)] as StoredScript | undefined,
+        curScripts[scriptKey(s.id)] as ScriptMeta | undefined,
       ));
 
       // JOINED during the fetch — an `installScript` / `moveScript`
@@ -2655,9 +2667,9 @@ export async function refreshCollection(
           nextCollection, finalScripts, newIds, droppedIds, rivalIds, opts.adding === true,
         ));
       }
-      const changed = changedScriptRows(finalScripts, curScripts);
-      for (const s of changed) toSet[scriptKey(s.id)] = s;
-      timer.note(`rows written: ${changed.length}`);
+      const changed = await changedScriptRows(finalScripts, curScripts, (sid) => priorById.get(sid));
+      Object.assign(toSet, changed.items);
+      timer.note(`rows written: ${changed.count}`);
       // Placed where a real quota rejection lands — after everything was
       // fetched and reconciled, with nothing written — so the test
       // exercises the same state the production failure produces.
@@ -3070,7 +3082,8 @@ export async function refreshScript(
   // during the fetch (an enable toggle, an update probe) aren't
   // reverted by values captured before them.
   const written = await mutate(async () => {
-    const cur = await getRaw<StoredScript>(scriptKey(scriptId));
+    // Without its bodies: see `changedScriptRows`.
+    const cur = await getRow<ScriptMeta>(scriptKey(scriptId));
     // The row is gone. We read it at the top of this function, so its
     // absence now means something deleted it while we were fetching —
     // `removeCollection` (which drops the collection row and every
@@ -3092,9 +3105,8 @@ export async function refreshScript(
     // opportunistic path, so it runs on navigations rather than clicks.
     // There's no collection row here to carry a "we checked" timestamp,
     // and that's fine: nothing reads a per-script one.
-    if (!sameStoredValue(merged, cur)) {
-      await writeLocal({ [scriptKey(scriptId)]: merged });
-    }
+    const changed = await changedScriptRows([merged], { [scriptKey(scriptId)]: cur }, () => prior);
+    if (changed.count > 0) await writeLocal(changed.items);
     return merged;
   });
   timer.mark('write');
@@ -3153,14 +3165,20 @@ function preserveConcurrentEdits(
   return out;
 }
 
-// Which of `finalScripts` actually differ from what's already stored.
+// The writes for those of `finalScripts` that actually differ from
+// what's already stored, or point at a blob that isn't stored: each
+// one's small row, plus the blobs not yet stored.
 //
 // Every refresh path rebuilds a full row per script — including the ones
 // that took the size+mtime / 304 skip and came back byte-identical — so
 // without this a refresh of N scripts writes N rows to answer a question
-// about one. The rows are not small: a `@resource` rides in the row as
-// base64, so re-persisting an unchanged script means re-serializing its
-// payloads too.
+// about one.
+//
+// Compared in stored form (`storedForm`): the rebuilt script's small row
+// against the stored row, read without its bodies. A body that didn't
+// change has the same hash, so the comparison needs no blob read, and
+// the write that follows doesn't hash the body again. A format 1 row
+// (bodies inline) never compares equal, so it's rewritten in format 2.
 //
 // Chrome already declines to fire `storage.onChanged` for a `set` whose
 // value matches what's stored (the behavior `retryRejectedRegistrations`
@@ -3174,13 +3192,29 @@ function preserveConcurrentEdits(
 // Takes the rows as read inside the write lock, never the pre-fetch
 // snapshot — comparing against a stale read would skip a write that a
 // concurrent edit had made necessary.
-function changedScriptRows(
+//
+// `priorOf` gives the copy each refresh started from, read with its
+// bodies: a body unchanged from it reuses its hash (`carryBodyRef`).
+async function changedScriptRows(
   finalScripts: readonly StoredScript[],
   curByKey: Record<string, unknown>,
-): StoredScript[] {
-  return finalScripts.filter(
-    (s) => !sameStoredValue(s, curByKey[scriptKey(s.id)]),
-  );
+  priorOf: (id: string) => StoredScript | undefined,
+): Promise<{ count: number; items: Record<string, unknown> }> {
+  if (finalScripts.length === 0) return { count: 0, items: {} };
+  const stored = new Set(await chrome.storage.local.getKeys());
+  const items: Record<string, unknown> = {};
+  let count = 0;
+  for (const s of finalScripts) {
+    carryBodyRef(priorOf(s.id), s);
+    const form = await storedForm(s);
+    const absent = newBlobItems(form.blobs, stored);
+    // An equal row whose blob is gone still gets written: the refresh
+    // that just fetched the body again is what puts the blob back.
+    if (Object.keys(absent).length === 0 && sameStoredValue(form.row, curByKey[scriptKey(s.id)])) continue;
+    Object.assign(items, { [scriptKey(s.id)]: form.row }, absent);
+    count++;
+  }
+  return { count, items };
 }
 
 // Structural equality over the JSON shapes `chrome.storage.local` round-

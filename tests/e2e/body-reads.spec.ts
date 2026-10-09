@@ -5,6 +5,10 @@
 //   - Turning it back on reads its own bodies only, to register it.
 //   - A full sync (a fresh worker's) leaves out of its updates the code
 //     Chrome already holds, and the script still runs.
+//   - A refresh that finds nothing new reads each body once, for the
+//     copy it started from, and writes no script row or blob.
+//   - A refresh puts back a body or a `@require` whose blob went
+//     missing, though the row it rebuilds is the same as the stored one.
 
 import path from 'node:path';
 import fs from 'node:fs';
@@ -18,6 +22,7 @@ type Raw = Record<string, unknown>;
 
 declare const self: {
   __smBlobReads?: string[];
+  __smWrites?: string[];
   __smUpdates?: { id: string; withCode: boolean }[];
   __smRestore?: (() => void)[];
 };
@@ -44,6 +49,22 @@ async function recordBlobReads(sw: Worker): Promise<void> {
       if (key == null) reads.push('(everything)');
       else for (const k of Array.isArray(key) ? key : [key]) if (k.startsWith('blob:')) reads.push(k);
       return inner(key as string[]);
+    };
+  });
+}
+
+// Start recording the keys the worker writes.
+async function recordWrites(sw: Worker): Promise<void> {
+  await sw.evaluate(() => {
+    const writes: string[] = [];
+    self.__smWrites = writes;
+    const area = chrome.storage.local as { set: unknown };
+    const original = area.set;
+    (self.__smRestore ??= []).push(() => { area.set = original; });
+    const inner = chrome.storage.local.set.bind(chrome.storage.local);
+    area.set = (items: Record<string, unknown>) => {
+      writes.push(...Object.keys(items));
+      return inner(items);
     };
   });
 }
@@ -147,5 +168,88 @@ test.describe('body reads', () => {
     await expect(page.locator('#target')).toHaveAttribute('data-a', 'lib');
     await expect(page.locator('#target')).toHaveAttribute('data-b', 'lib');
     await page.close();
+  });
+
+  test('a refresh that finds nothing new reads each body once and writes no script row', async ({
+    sm, getServiceWorker, fixtureServer,
+  }) => {
+    await sm.setParseCheckEnabled(false);
+    writeScripts(`${fixtureServer.baseUrl}/target.html`);
+    const collection = await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const sw = await getServiceWorker();
+    const stored = await sw.evaluate(async () => chrome.storage.local.getKeys());
+    const blobKeys = stored.filter((k) => k.startsWith('blob:'));
+    await recordBlobReads(sw);
+    await recordWrites(sw);
+    await sm.updateCollection(collection!.id, 'manual');
+
+    const reads = await blobReads(sw);
+    expect(reads.sort()).toEqual([...blobKeys].sort());
+    const writes = await sw.evaluate(() => self.__smWrites ?? []);
+    expect(writes.filter((k) => k.startsWith('script:') || k.startsWith('blob:'))).toEqual([]);
+
+    // The same for one script's refresh.
+    const [a] = (await sm.getCollectionWithScripts(collection!.id))!.scripts;
+    await sw.evaluate(() => { self.__smBlobReads!.length = 0; self.__smWrites!.length = 0; });
+    await sm.updateScript(a.id, 'opportunistic');
+    const aRow = (await sw.evaluate(async (key: string) => chrome.storage.local.get(key), `script:${a.id}`) as Raw)[`script:${a.id}`] as Raw;
+    const aKeys = [
+      `blob:${(aRow.bodyBlobRef as { hash: string }).hash}`,
+      ...(aRow.requires as { blobRef: { hash: string } }[]).map((r) => `blob:${r.blobRef.hash}`),
+    ];
+    expect((await blobReads(sw)).sort()).toEqual(aKeys.sort());
+    const scriptWrites = await sw.evaluate(() => self.__smWrites ?? []);
+    expect(scriptWrites.filter((k) => k.startsWith('script:') || k.startsWith('blob:'))).toEqual([]);
+  });
+
+  test('a refresh puts back a body whose blob went missing', async ({
+    sm, getServiceWorker, fixtureServer,
+  }) => {
+    // Settled first, so no sync or parse check reads the script after
+    // its blob goes and saves it `invalid`: the row the refresh compares
+    // against has to be the same `ok` row it rebuilds.
+    await sm.setParseCheckEnabled(false);
+    writeScripts(`${fixtureServer.baseUrl}/target.html`);
+    const collection = await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+    const [a] = (await sm.getCollectionWithScripts(collection!.id))!.scripts;
+    const sw = await getServiceWorker();
+    const key = `script:${a.id}`;
+    const readRow = async () => (await sw.evaluate(async (k: string) => chrome.storage.local.get(k), key) as Raw)[key] as Raw;
+    const row = await readRow();
+    const blob = `blob:${(row.bodyBlobRef as { hash: string }).hash}`;
+    await sw.evaluate(async (k: string) => chrome.storage.local.remove(k), blob);
+    expect((await readRow()).status).toBe('ok');
+
+    await sm.updateScript(a.id, 'manual');
+    const keys = await sw.evaluate(async () => chrome.storage.local.getKeys());
+    expect(keys).toContain(blob);
+    const back = (await sm.getCollectionWithScripts(collection!.id))!.scripts.find((s) => s.id === a.id)!;
+    expect(back.status).toBe('ok');
+    expect(back.bodyText).toContain('dataset.a');
+  });
+
+  test('a refresh puts back a @require whose blob went missing', async ({
+    sm, getServiceWorker, fixtureServer,
+  }) => {
+    await sm.setParseCheckEnabled(false);
+    writeScripts(`${fixtureServer.baseUrl}/target.html`);
+    const collection = await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+    const [a] = (await sm.getCollectionWithScripts(collection!.id))!.scripts;
+    const sw = await getServiceWorker();
+    const key = `script:${a.id}`;
+    const row = (await sw.evaluate(async (k: string) => chrome.storage.local.get(k), key) as Raw)[key] as Raw;
+    const blob = `blob:${(row.requires as { blobRef: { hash: string } }[])[0].blobRef.hash}`;
+    await sw.evaluate(async (k: string) => chrome.storage.local.remove(k), blob);
+
+    // The cheapest refresh: the one a navigation starts.
+    await sm.updateScript(a.id, 'opportunistic');
+    expect(await sw.evaluate(async () => chrome.storage.local.getKeys())).toContain(blob);
+    const back = (await sm.getCollectionWithScripts(collection!.id))!.scripts.find((s) => s.id === a.id)!;
+    expect(back.status).toBe('ok');
+    expect(back.requires?.[0]?.source).toBe('window.__smLib = "lib";');
   });
 });

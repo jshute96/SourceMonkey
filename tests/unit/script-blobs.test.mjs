@@ -6,6 +6,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  carryBodyRef,
   droppedBlobRefs,
   fromStorage,
   hasSweepCandidates,
@@ -16,6 +17,7 @@ import {
   MIGRATE_BATCH,
   MISSING_BLOB_MESSAGE,
   STORE_FORMAT_KEY,
+  storedForm,
   sweepUnusedBlobs,
   SWEEP_GRACE_MS,
   toStorage,
@@ -356,6 +358,22 @@ test('writing back what was read reuses the file entries\' hashes, and rewrites 
   delete store[libKey];
   out = await withBlobs({ 'script:a': copy });
   assert.deepEqual(out[libKey], { encoding: 'text', data: 'lib();' });
+});
+
+test('carryBodyRef lets a rebuilt script with the same body skip hashing it', async () => {
+  Object.assign(store, await withBlobs({ 'script:a': script({ id: 'a' }) }));
+  const [read] = await fromStorage([store['script:a']]);
+  const rebuilt = { ...read, loadedAt: 2 };
+  carryBodyRef(read, rebuilt);
+  let form;
+  assert.equal(await countDigests(async () => { form = await storedForm(rebuilt); }), 0);
+  assert.deepEqual(form.row.bodyBlobRef, store['script:a'].bodyBlobRef);
+
+  // A different body is hashed after all.
+  const changed = { ...read, bodyText: 'other();' };
+  carryBodyRef(read, changed);
+  const other = await storedForm(changed);
+  assert.equal(other.row.bodyBlobRef.hash, await sha256Hex('other();'));
 });
 
 test('an entry changed after it was read is hashed again', async () => {

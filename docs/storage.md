@@ -153,6 +153,9 @@ The rows' `contentHash` fields stay change-detection tokens; the
     store's writers make, so theirs are reused on most writes.
   - A script's own body often isn't, and is hashed again. That's fast
     next to resources, which would need base64 decoding first.
+  - A refresh carries the ref from the copy it started from to the
+    script it rebuilt, when the body text is the same (`carryBodyRef`),
+    so an unchanged body isn't hashed on every refresh.
 - **Unused blobs** (after a remove, or a refresh that replaced a body)
   are deleted by the service worker only (`sweepUnusedBlobs`):
   - A blob goes once it's unused on two checks at least
@@ -214,7 +217,9 @@ The rows' `contentHash` fields stay change-detection tokens; the
   and the collections page do this.
 - **Who reads bodies**:
   - The viewer, for the script on screen, and the compare page.
-  - Refresh, which reuses the stored body when the file hasn't changed.
+  - Refresh, for the copy it starts from, whose bodies it reuses when
+    the file hasn't changed. Its re-read inside the write lock is of
+    rows only (see [Only changed rows are written](#only-changed-rows-are-written)).
   - The registration sync, for the scripts it registers only (see
     [The sync is incremental](injection.md#the-sync-is-incremental)).
     It saves a row whose blob it found missing as `invalid`
@@ -850,7 +855,8 @@ write only the difference:
   `refreshAllCollections` and `addCollection` delegate to it, so they
   are covered too.
 - **`refreshScript`** — the opportunistic per-navigation path, where
-  this matters most — compares its single merged row directly.
+  this matters most — runs its single merged row through the same
+  helper.
 
 Why it's shaped this way:
 
@@ -860,6 +866,18 @@ Why it's shaped this way:
 - **The collection row is always written.** `lastRefreshedAt` moved, and
   that timestamp is the record of the check having happened at all.
   Scripts have no equivalent field, and nothing looks for one.
+- **Rows are compared in stored form, without bodies.** The rebuilt
+  script becomes its small row plus blobs (`storedForm`), and the row
+  is compared with the stored row, read without its bodies.
+  - An unchanged body has the same hash, so the comparison reads no
+    blob. Only the copy the refresh started from loads bodies, to reuse
+    them when the file hasn't changed.
+  - A changed row is written as that small row, with only the blobs not
+    yet stored, so the body isn't hashed twice.
+  - A row that compares equal but points at a blob that isn't stored is
+    written too, with that blob: a refresh is how a missing body comes
+    back.
+  - A format 1 row never compares equal, so it's rewritten in format 2.
 - **Rows are compared with `sameStoredValue`** — structural equality
   over the JSON shapes storage round-trips.
   - Key order is not significant. A rebuilt row's order comes from the
@@ -873,8 +891,7 @@ Why it's shaped this way:
   the behavior the rejection retry is built around (see
   [injection.md](injection.md#rejected-registrations)).
   - What this drops is the serialize-and-store cost paid before Chrome
-    gets far enough to compare. Not small: a `@resource` rides in the
-    row as base64.
+    gets far enough to compare.
 - **What a refresh *reports* is unnarrowed.** Both paths still return
   every row, so the outcome summary, the Log entries, the update probes,
   and the collections page's changed-row highlights all see the full
@@ -1777,8 +1794,9 @@ manual reload.
 
 #### The event is only a hint
 
-What the event says changed is ignored. It sets a dirty flag; the
-repaint then re-reads storage and makes the DOM match it.
+The values the event carries are ignored. It sets a dirty flag and adds
+its keys to the set the next pass covers; the repaint then re-reads
+storage and makes the DOM match it.
 
 - **Idempotent by construction.** Running it twice changes nothing, and
   running it after a burst lands on the final state.
@@ -1795,6 +1813,24 @@ nothing to do.
 Awaiting `repaintPage()` is therefore enough for a caller to know the
 DOM matches storage as of its own call — which is how the flow handlers
 below sequence their own work.
+
+#### Only the rows that changed
+
+When every changed key is a `script:` row, the pass re-reads just those
+rows and their collections, and updates those rows in place
+(`repaintScriptRows`). An enable toggle then reads two or three rows,
+not every one.
+
+It falls back to the full repaint, having changed nothing, when:
+
+- a collection row or the collection list changed;
+- a changed script isn't on the page, is gone, or names another
+  collection than the section showing it;
+- a row's shown name would change, which can move it in the section's
+  name order. Its other Name cell inputs (icon, tooltip, the file's
+  size and mtime) are redrawn in place.
+
+A caller that awaits `repaintPage()` without keys gets the full one.
 
 #### What a repaint touches
 
@@ -1827,9 +1863,10 @@ have to be.
   Both discard and recreate their contents, which would drop focus off
   a link the user had tabbed to; the Name cell would also re-run the
   favicon fetch and flash the globe placeholder.
-- **Reads are proportionate.** One pass reads the collection index and
-  each collection's script rows once, without their bodies
-  (`getScriptMetas`), and paints from those rows. A
+- **Reads are proportionate.** A full pass reads the collection index
+  and each collection's script rows once, without their bodies
+  (`getScriptMetas`), and paints from those rows. A pass for a few
+  script rows reads only those (see above). A
   `storage.local.get(null)` per pass would also return every body,
   every GM value and the base64 favicon cache.
 - **`data-script-*` datasets** are written by `applyScriptRowDatasets`,

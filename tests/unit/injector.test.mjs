@@ -2396,6 +2396,7 @@ test('retryRejectedRegistrations: a caller is never dropped for arriving late', 
 const {
   syncRegistrations,
   forgetRegistrationState,
+  setBeforeSync,
   _forgetRegistrationForTests,
 } = await import('../../dist/extension/injector.js');
 
@@ -3223,4 +3224,28 @@ test('syncRegistrations: the one-at-a-time fallback leaves out unchanged code to
   await syncRegistrations();
   assert.equal(chrome_.sentUpdate('a').js, undefined);
   assert.ok(chrome_.sentUpdate('b').js.some((c) => c.code.includes('changed();')));
+});
+
+test('syncRegistrations: an incremental sync takes the numbers beforeSync assigned, without reading them', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a');
+  const chrome_ = fakeRegistrationSet();
+  setBeforeSync(async () => new Map([['a', 7]]));
+  t.after(() => setBeforeSync(null));
+  await syncRegistrations();
+
+  const inner = chrome.storage.local.get;
+  const asked = [];
+  chrome.storage.local.get = async (key) => {
+    asked.push(...(Array.isArray(key) ? key : [key]));
+    return inner(key);
+  };
+  t.after(() => { chrome.storage.local.get = inner; });
+  localStore.set('script:a', { ...localStore.get('script:a'), bodyText: 'changed();' });
+  await syncRegistrations({ scriptIds: ['a'], collectionIds: [] });
+  assert.equal(asked.includes('scriptNumbers'), false, 'the numbers are not read again');
+  assert.ok(chrome_.spec('a').js.some((c) => c.code.includes('bad-a%23E7/')), 'the label carries the number');
 });

@@ -1415,9 +1415,10 @@ with a trade-off worth recording:
   - The Options page usage table sizes blobs from the refs and
     `getBytesInUse`, without reading them.
   - Compression of large blobs, as a new `encoding`.
-  - Refresh re-reads each refreshed row with its bodies inside the
-    write lock, to compare against what it rebuilt. Comparing small
-    rows would need the rebuilt row's refs first (`toStorage`).
+  - Refresh still reads the bodies of the copy it starts from, to
+    reuse them when the file hasn't changed. Reading them only on that
+    outcome would need the rebuild to take the row and load bodies on
+    demand.
   - An incremental sync re-sends a registered script's code even when
     it didn't change (a row edit that moved only its patterns, say).
     The full sync compares against `getScripts()`; an incremental one

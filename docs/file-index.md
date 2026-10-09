@@ -330,7 +330,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/sandbox-csp.spec.ts` | Pages sent with a CSP `sandbox` header: MAIN-world scripts skipped, USER_SCRIPT-world ones run, the Log hint |
 | `tests/e2e/reload-without-scripts.spec.ts` | "Reload page with no userscripts" and its per-script forms: one-shot skips, grey NOT_LOADED badge, info Log entries |
 | `tests/e2e/popup.spec.ts` | The toolbar popup: rows by collection, toggles, removed scripts and the reload banner, exclusive checkbox and shown copy, collection menu, menu commands, single vs double click |
-| `tests/e2e/body-reads.spec.ts` | Which reads load script bodies: enable toggles and their sync read none; a full sync leaves out code Chrome holds |
+| `tests/e2e/body-reads.spec.ts` | Which reads load script bodies: enable toggles read none, unchanged refreshes one copy; full syncs skip held code |
 | `tests/e2e/script-blobs.spec.ts` | Storage format 2 end to end: shared bodies and requires stored once, format 1 rows migrated and still running, replaced bodies cleaned up |
 | `tests/e2e/script-enablement.spec.ts` | One active copy per script: toggles, collection on / off restores, adding a collection, new copies, Enable all |
 | `tests/e2e/focus-refresh.spec.ts` | Focus-triggered refresh: a tab switch or a page's own focus report picks up a local edit; http scripts stay unfetched |
@@ -342,6 +342,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/layout-metrics.spec.ts` | Guards the whole-pixel vertical metrics behind uniform checkbox rendering on collections, viewer, and Options |
 | `tests/e2e/live-updates.spec.ts` | Live watchers: collections page + viewer follow `storage.local` writes from another origin without a reload (issue #10) |
 | `tests/e2e/refresh-highlights.spec.ts` | After a refresh: new vs updated rows, red over either when broken, and the inert ghost a dropped script leaves |
+| `tests/e2e/repaint-rows.spec.ts` | Collections page repaints only changed script rows; collection changes and renames repaint all |
 | `tests/e2e/container-collections.spec.ts` | Container-collection lifecycle: auto-create / reuse on add, duplicate rejection, refresh refetches every child |
 | `tests/e2e/collection-dialog.spec.ts` | The collection dialog from the collections page: Add-field routing, inferred type / name, readability probe, live refusals, Edit rename and options, scheme chips |
 | `tests/e2e/install-target.spec.ts` | The install page's "Install into" dropdown: groups and order, renamed / missing default, install into a chosen or new collection, second copy of one URL |

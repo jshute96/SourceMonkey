@@ -75,6 +75,14 @@ type Blobs = Map<string, StoredBlob>;
 // is hashed again then.
 const knownRefs = new WeakMap<object, { data: string; ref: BlobRef }>();
 
+// Lets `to` reuse the body ref `from` was read with, when its body is
+// the same text: a refresh rebuilds a new script object whose body came
+// from the copy it started from, and would otherwise hash it again.
+export function carryBodyRef(from: object | undefined, to: StoredScript): void {
+  const known = from ? knownRefs.get(from) : undefined;
+  if (known && known.data === to.bodyText) knownRefs.set(to, known);
+}
+
 function reuse(owner: object, data: string, encoding: StoredBlob['encoding'], blobs: Blobs): BlobRef | null {
   const known = knownRefs.get(owner);
   if (known?.data !== data) return null;
@@ -291,7 +299,27 @@ export async function withBlobs(items: Record<string, unknown>): Promise<Record<
   const blobs: Blobs = new Map();
   const out: Record<string, unknown> = { ...items };
   for (const k of keys) out[k] = await toStorage(items[k] as StoredScript, blobs);
-  const stored = new Set(await chrome.storage.local.getKeys());
+  return { ...out, ...newBlobItems(blobs, new Set(await chrome.storage.local.getKeys())) };
+}
+
+// A full script's stored form: its small row, and the blobs it points
+// at. For a writer that compares the row with what's stored before
+// deciding to write: it then writes the row and the blobs not yet
+// stored, rather than the full script, which `withBlobs` would hash
+// again.
+export async function storedForm(script: StoredScript): Promise<{ row: ScriptRow; blobs: Blobs }> {
+  const blobs: Blobs = new Map();
+  return { row: await toStorage(script, blobs), blobs };
+}
+
+// The blobs among `blobs` whose keys aren't in `stored` (the keys in
+// storage), as items for a `set`. A stored one has the same bytes under
+// the same key, so it isn't written again.
+export function newBlobItems(
+  blobs: ReadonlyMap<string, StoredBlob>,
+  stored: ReadonlySet<string>,
+): Record<string, StoredBlob> {
+  const out: Record<string, StoredBlob> = {};
   for (const [k, blob] of blobs) if (!stored.has(k)) out[k] = blob;
   return out;
 }

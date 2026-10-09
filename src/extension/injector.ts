@@ -1934,9 +1934,14 @@ async function revalidateCandidates(
 // Run at the start of each sync, before anything is read: the service
 // worker numbers new scripts here (`assignNumbers`), so a script
 // is registered under its numbered label from the start. Unset in pages.
-let beforeSync: (() => Promise<void>) | null = null;
+//
+// Resolves to the script numbers by id, as just assigned, so the sync
+// takes them from here rather than reading them again. The worker is the
+// numbers' only writer, and this runs inside the registration lock, so
+// nothing renumbers a script while the sync uses them.
+let beforeSync: (() => Promise<ReadonlyMap<string, number>>) | null = null;
 
-export function setBeforeSync(hook: () => Promise<void>): void {
+export function setBeforeSync(hook: (() => Promise<ReadonlyMap<string, number>>) | null): void {
   beforeSync = hook;
 }
 
@@ -1984,17 +1989,17 @@ async function runSync(scope: SyncScope | undefined): Promise<void> {
   const state = fullSyncNeeded ? null : syncState;
   fullSyncNeeded = false;
   try {
-    await beforeSync?.();
+    const numbers = (await beforeSync?.()) ?? null;
     await ensureWorldConfigured();
     // A scope is only actionable against a record of what we last left
     // registered. Without one — a fresh service worker, or a sync that
     // failed part-way and dropped it — the only safe answer is to
     // reconcile against Chrome's own list.
     if (scope && state) {
-      await runIncrementalSync(scope, state);
+      await runIncrementalSync(scope, state, numbers);
       lastSyncKind = 'incremental';
     } else {
-      syncState = await runFullSync();
+      syncState = await runFullSync(numbers);
       lastSyncKind = 'full';
     }
   } catch (err) {
@@ -2019,9 +2024,12 @@ async function runSync(scope: SyncScope | undefined): Promise<void> {
 // It is still not a wipe: everything that should stay registered is
 // updated in place, and the only unregisters are for ids Chrome holds
 // that storage no longer wants.
-async function runFullSync(): Promise<RegistrationState> {
+async function runFullSync(assigned: ReadonlyMap<string, number> | null): Promise<RegistrationState> {
   const timer = startPhaseTimer('registration sync');
-  const { scripts, collections, numbers } = await readAll();
+  const all = await readAll();
+  const { scripts, collections } = all;
+  // As in `runIncrementalSync`: the numbers just assigned, when there are.
+  const numbers = assigned ?? all.numbers;
   const candidates = await withBodies(scripts, collections);
   timer.mark('read');
   const handlerVersion = chrome.runtime.getManifest().version;
@@ -2092,7 +2100,14 @@ async function runFullSync(): Promise<RegistrationState> {
 //
 // Mutates `state` in place as it goes; the caller drops the whole record
 // if this throws.
-async function runIncrementalSync(scope: SyncScope, state: RegistrationState): Promise<void> {
+//
+// `assigned`: the script numbers `beforeSync` just assigned, or null in
+// a page, which reads them.
+async function runIncrementalSync(
+  scope: SyncScope,
+  state: RegistrationState,
+  assigned: ReadonlyMap<string, number> | null,
+): Promise<void> {
   const timer = startPhaseTimer('registration sync');
   // A collection row that appeared, went away, or flipped its enabled
   // flag moves every script under it.
@@ -2134,11 +2149,18 @@ async function runIncrementalSync(scope: SyncScope, state: RegistrationState): P
     }
   }
   // Labels come from the whole index rather than from the handful of
-  // rows this sync read, and from the script numbers, read fresh:
-  // `beforeSync` may have just numbered a script this sync didn't read.
+  // rows this sync read, and from the script numbers as `beforeSync`
+  // just assigned them: it may have just numbered a script this sync
+  // didn't read.
+  if (unseen.length > 0) timer.mark('read collections');
+  let numbers = assigned;
+  if (!numbers) {
+    numbers = numberMap(await readScriptNumbers());
+    timer.mark('read numbers');
+  }
   const logIds = computeLogIds([...state.scriptIndex].map(([id, info]): LogIdInput => ({
     id, relativePath: info.relativePath,
-  })), numberMap(await readScriptNumbers()));
+  })), numbers);
   // A script being numbered, or an unnumbered one arriving or leaving
   // (which can renumber its basename's `#N` group), changes labels —
   // and the label is baked into the registered `//# sourceURL=`

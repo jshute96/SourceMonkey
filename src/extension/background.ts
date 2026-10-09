@@ -5583,7 +5583,7 @@ async function assignAllNumbers(): Promise<AllNumbers> {
   if (numbers) noteScriptNumbers(numberMap(numbers.scripts));
   return numbers ?? await readNumbers();
 }
-setBeforeSync(async () => { await assignAllNumbers(); });
+setBeforeSync(async () => numberMap((await assignAllNumbers()).scripts));
 void assignAllNumbers();
 installStorageListener();
 installStaleScriptListener();

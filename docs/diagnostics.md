@@ -541,23 +541,37 @@ timing: enable script: total 480ms (read all 410 [12 scripts,
   Computing them is left out of the step times.
 
 After any storage write, the collections page redraws and prints a
-`collections page repaint` line:
+`collections page repaint` line. Its note says which kind of pass ran.
 
-- **read collections / banner**: the collection rows, and the "could
-  not save" banner's check.
-- **read scripts**: every collection's script rows in one read,
-  without their bodies.
-- **size**: asking Chrome how big those rows are.
-- **icons / paint**: cached favicons, then updating the rows.
+- **`N row(s)`**: only script rows changed, so only those are redrawn.
+  - **read scripts**: those rows.
+  - **read collections**: their collections' rows.
+  - **icons / paint**: cached favicons for them, then updating those
+    rows and the "could not save" banner.
+- **`all rows`**: anything else, or a change those rows can't take in
+  place (see `repaintScriptRows`).
+  - **read collections / banner**: the collection rows, and the "could
+    not save" banner's check.
+  - **read scripts**: every collection's script rows in one read,
+    without their bodies.
+  - **size**: asking Chrome how big those rows are.
+  - **icons / paint**: cached favicons, then updating the rows.
+  - A pass that started as a rows-only one and found it couldn't shows
+    its own `read scripts`, and maybe `read collections`, first.
 
 The `registration sync` line that follows has these steps:
 
-- **read / labels / read bodies / build-specs**: the changed rows;
-  the log labels, and any rows a label change moved; the bodies of
-  those that will be registered; and what Chrome is given to register.
-  A full sync reads rows and bodies under `read`, and its note says
-  how many specs went without their code, since Chrome already held
-  it.
+- **read / labels / read bodies / build-specs**: the changed rows
+  (and, as `read collections`, any collection rows the sync hadn't
+  seen); the log labels, and any rows a label change moved; the bodies
+  of those that will be registered; and what Chrome is given to
+  register.
+  - The labels use the script numbers the worker assigned just before
+    the sync. A sync in an extension page reads them instead, shown as
+    `read numbers`.
+  - A full sync reads rows and bodies under `read`, and its note says
+    how many specs went without their code, since Chrome already held
+    it.
 - **list** (full syncs only): asking Chrome which registrations it
   holds.
 - **unregister / register**: the `chrome.userScripts` calls, removals
