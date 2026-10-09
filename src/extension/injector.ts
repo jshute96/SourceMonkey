@@ -2026,8 +2026,8 @@ export function syncRegistrations(scope?: SyncScope): Promise<void> {
 //     not a record write each. Every session write reaches every open
 //     extension page's listener.
 // - Taken only when made by this extension version, with the "must ask"
-//   setting the specs were built with, and when Chrome still holds
-//   exactly the ids it names.
+//   setting the specs were built with, and when Chrome still holds our
+//   helpers as it last placed them (`stillHeld`).
 // - The changed rows: those whose fingerprint differs from the one the
 //   record kept, or that appeared or went away.
 
@@ -2073,19 +2073,20 @@ function noteFingerprint(state: RegistrationState, key: string, fingerprint: str
 
 // What a sync reads of a script row: all of it except `versionProbes`,
 // which a probe rewrites without the sync (`onlyProbesChanged`).
+//
+// Plain JSON, without sorting keys: rows come from the row cache or from
+// storage, both of which keep an object's keys sorted (they can differ
+// only for keys mixing unusual characters, none of ours). A row whose
+// keys came in another order would only read as changed, and be synced
+// again.
 function scriptFingerprint(row: ScriptMeta): string {
-  return hashText(JSON.stringify({ ...row, versionProbes: undefined }, sortedKeys));
+  return hashText(JSON.stringify({ ...row, versionProbes: undefined }));
 }
 
 // What a sync reads of a collection row: whether it is enabled. A
 // refresh rewrites the rest without a sync.
 function collectionFingerprint(row: StoredCollection): string {
   return isCollectionEnabled(row) ? 'on' : 'off';
-}
-
-function sortedKeys(_key: string, v: unknown): unknown {
-  if (!v || typeof v !== 'object' || Array.isArray(v)) return v;
-  return Object.fromEntries(Object.keys(v).sort().map((k) => [k, (v as Record<string, unknown>)[k]]));
 }
 
 // Two 32-bit FNV-1a-style hashes and the length: not for security, only
@@ -2156,6 +2157,26 @@ function dropRecord(): void {
   void chrome.storage.session.remove(SYNC_RECORD_KEY).catch(() => undefined);
 }
 
+// Whether Chrome still holds the record's last registration: our own
+// helpers, with the patterns the record last gave them (their code ships
+// with the extension, and the record is from this version). Not every
+// registration: there is no ids-only call, and each one comes back with
+// its code. Losing the helpers is what a wipe of the set would show.
+// With no helpers, one user script stands in; with nothing registered,
+// Chrome must hold nothing.
+async function stillHeld(
+  registered: ReadonlyMap<string, Placement>,
+  ownScopes: ReadonlyMap<string, string>,
+): Promise<boolean> {
+  const ids = [...registered.keys()];
+  if (ids.length === 0) return (await chrome.userScripts.getScripts()).length === 0;
+  const own = ids.filter((id) => !isUserScriptId(id));
+  const asked = own.length > 0 ? own : ids.slice(0, 1);
+  const held = new Map((await chrome.userScripts.getScripts({ ids: asked })).map((s) => [s.id, s] as const));
+  return asked.every((id) => held.has(id))
+    && own.every((id) => ownScopes.get(id) === gmRuntimeFingerprint(held.get(id)!));
+}
+
 // The last worker's record and the rows that changed since, or null when
 // there is none this worker can take.
 async function restoreRecord(): Promise<{ state: RegistrationState; scope: SyncScope } | null> {
@@ -2173,15 +2194,14 @@ async function restoreRecord(): Promise<{ state: RegistrationState; scope: SyncS
     timer.done();
     return null;
   }
-  // No ids-only call exists: this hands back every registration's code.
-  const held = new Set((await chrome.userScripts.getScripts()).map((s) => s.id));
-  timer.mark('list');
   const registered = new Map(record.registered);
-  if (held.size !== registered.size || [...registered.keys()].some((id) => !held.has(id))) {
-    timer.note('not taken: Chrome holds other ids');
+  if (!(await stillHeld(registered, new Map(record.gmRuntimeScopes)))) {
+    timer.mark('list');
+    timer.note('not taken: Chrome no longer holds the helpers it names');
     timer.done();
     return null;
   }
+  timer.mark('list');
 
   await ensureCollectionKeysMigrated();
   const isRow = (k: string): boolean => k.startsWith(SCRIPT_PREFIX) || k.startsWith(COLLECTION_PREFIX);

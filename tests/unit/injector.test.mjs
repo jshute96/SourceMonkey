@@ -3240,7 +3240,7 @@ test('syncRegistrations: a new worker takes the last record and syncs only the r
   assert.ok(chrome_.sentUpdate('b').js.some((c) => c.code.includes('changed();')));
 });
 
-test('syncRegistrations: a new worker reconciles in full when Chrome no longer holds what the record says', async (t) => {
+test('syncRegistrations: a new worker reconciles in full when the registration set was wiped', async (t) => {
   t.after(resetUserScriptStubs);
   // Known, as once the claims load: a record is only taken then.
   _setMustAskForTests(false);
@@ -3253,10 +3253,51 @@ test('syncRegistrations: a new worker reconciles in full when Chrome no longer h
   await syncRegistrations();
 
   await forgetRegistrationStateAsNewWorkerForTests();
-  await userScripts.unregister({ ids: ['a'] });
+  // The whole set wiped while no worker ran.
+  await userScripts.unregister({ ids: (await userScripts.getScripts()).map((s) => s.id) });
   await syncRegistrations();
   assert.equal(lastSyncKindForTests(), 'full');
   assert.ok((await userScripts.getScripts()).some((s) => s.id === 'a'), 'registered again');
+});
+
+test('syncRegistrations: with nothing registered, a record is taken only while Chrome holds nothing', async (t) => {
+  t.after(resetUserScriptStubs);
+  _setMustAskForTests(false);
+  t.after(() => _setMustAskForTests(null));
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a');
+  localStore.set('script:a', { ...localStore.get('script:a'), enabled: false });
+  fakeRegistrationSet();
+  await syncRegistrations();
+  assert.deepEqual(await userScripts.getScripts(), []);
+  await forgetRegistrationStateAsNewWorkerForTests();
+  await syncRegistrations();
+  assert.equal(lastSyncKindForTests(), 'incremental', 'taken');
+
+  // Something registered that the record doesn't know of.
+  await forgetRegistrationStateAsNewWorkerForTests();
+  await userScripts.register([{ id: 'stray', matches: ['https://x/*'], js: [{ code: '' }] }]);
+  await syncRegistrations();
+  assert.equal(lastSyncKindForTests(), 'full', 'not taken');
+});
+
+test('syncRegistrations: a new worker reconciles in full when a helper holds other patterns', async (t) => {
+  t.after(resetUserScriptStubs);
+  // Known, as once the claims load: a record is only taken then.
+  _setMustAskForTests(false);
+  t.after(() => _setMustAskForTests(null));
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a', { grants: ['GM_getValue'] });
+  fakeRegistrationSet();
+  await syncRegistrations();
+  await forgetRegistrationStateAsNewWorkerForTests();
+  await userScripts.update([{ id: GM_RUNTIME_SCRIPT_ID, matches: ['https://elsewhere/*'] }]);
+  await syncRegistrations();
+  assert.equal(lastSyncKindForTests(), 'full');
 });
 
 test('syncRegistrations: a new worker reconciles in full when the record may be stale', async (t) => {

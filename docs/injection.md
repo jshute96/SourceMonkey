@@ -211,8 +211,16 @@ nothing: that would strand stale registrations.
       enabled, the one field the sync reads.
   - Taken only when made by this extension version, with the "must ask"
     setting the specs were built with (so not before the claims load),
-    and when Chrome still holds exactly the ids it names. Checking that
-    is a `getScripts()`, which returns every registration's code too.
+    and when Chrome still holds our helpers with the patterns the
+    record last gave them (`stillHeld`). Only the helpers: there is no
+    ids-only call, and asking for every registration returns all their
+    code. A wipe of the set takes the helpers too. With no helpers, one
+    user script is checked instead.
+    - Not caught: a single user script dropped while the helpers stay.
+      Only our own syncs drop one, and they save the record after.
+  - A script row's fingerprint is its JSON, keys in the order the row
+    cache and storage keep them (sorted). A row read in another order
+    would only be synced again.
   - Collections are kept as their enabled flag only, the one field the
     sync reads, to keep the record small.
   - Removed when it's dropped on purpose (`forgetRegistrationState`,
