@@ -948,10 +948,23 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
 //   - Keep sections short: every write in the worker waits on them.
 //
 // See docs/storage.md#one-lock-in-the-worker.
+// A section's writes must be awaited before it returns: the blob cleanup
+// relies on no script row landing outside a section
+// (`checkScriptRowWrite`), and a write left running would land after.
 let mutateChain: Promise<unknown> = Promise.resolve();
+// Whether a section is running: what `checkScriptRowWrite` asks.
+let sectionsRunning = 0;
 function mutate<T>(fn: () => Promise<T>): Promise<T> {
+  const section = async (): Promise<T> => {
+    sectionsRunning++;
+    try {
+      return await fn();
+    } finally {
+      sectionsRunning--;
+    }
+  };
   // Run after the prior section settles, regardless of its outcome.
-  const run = mutateChain.then(fn, fn);
+  const run = mutateChain.then(section, section);
   // Advance the chain, swallowing the result so one section's rejection
   // doesn't reject the next waiter's gate (the rejection still
   // propagates to THIS caller via `run`).
@@ -998,7 +1011,7 @@ let migrationPromise: Promise<void> | null = null;
 // Only the worker writes (docs/worker-writes.md): a page that finds the
 // old rows asks it to move them, and waits.
 export function ensureCollectionKeysMigrated(): Promise<void> {
-  const migrate = isPageContext() ? migrateViaWorker : migrateLegacyCollectionKeys;
+  const migrate = isPageContext() ? migrateViaWorker : () => asMigration(migrateLegacyCollectionKeys);
   migrationPromise ??= migrate().catch((err: unknown) => {
     // Never let a failed migration wedge every read behind it: clear the
     // memo so the next reader retries, and leave the old rows in place.
@@ -1144,19 +1157,57 @@ export function storeFormatReady(): Promise<void> {
 async function migrateStore(): Promise<void> {
   // The old key spelling first: it moves rows the blob migration reads.
   await ensureCollectionKeysMigrated();
-  await migrateToBlobs();
+  await asMigration(migrateToBlobs);
 }
 
-// One unused-blob check (`sweepUnusedBlobs`), inside this context's
-// write lock. A write here then can't land between the check reading
-// the rows and deleting what they don't use: one that found a blob
-// still stored, and so didn't write it again, would be left pointing at
-// nothing. Only the service worker sweeps, and most writes run there.
-export function sweepUnusedBlobsLocked(now?: number): Promise<SweepResult> {
+// One unused-blob check (`sweepUnusedBlobs`), inside the write lock. A
+// write of a script row can't land between the check reading the rows
+// and deleting what they don't use: every one takes the lock too
+// (`checkScriptRowWrite`). One that found a blob still stored, and so
+// didn't write it again, would otherwise be left pointing at nothing.
+//
+// `started`: called once the check holds the lock; false skips the check
+// (null result).
+export function sweepUnusedBlobsLocked(started?: () => boolean): Promise<SweepResult | null> {
   return mutate(async () => {
+    if (started && !started()) return null;
     await storeFormatReady();
-    return await sweepUnusedBlobs(now);
+    return await sweepUnusedBlobs((await cachedScriptRows()) ?? undefined);
   });
+}
+
+// For the test surface: rows a test writes straight into storage, under
+// the lock like every other write of a script row
+// (`checkScriptRowWrite`).
+export function seedStorageForTests(items: Record<string, unknown>): Promise<void> {
+  return mutate(() => chrome.storage.local.set(items));
+}
+
+// The migrations write script rows outside the lock: they run before
+// any write that takes it (`storeFormatReady`), and the cleanup waits
+// for them the same way. While one runs, every script-row write is let
+// through, so a legacy-key migration started mid-session (a page found
+// old rows) widens the check for its length. Rare: old rows restored
+// into a running profile.
+let migrationsRunning = 0;
+async function asMigration<T>(run: () => Promise<T>): Promise<T> {
+  migrationsRunning++;
+  try {
+    return await run();
+  } finally {
+    migrationsRunning--;
+  }
+}
+
+// The worker's wrapped write calls this before every write (row-cache.ts):
+// a script row written outside the lock could race the blob cleanup.
+// A bug, so it throws. It sees whether SOME section is running, not
+// whether this write is in it: a write outside the lock made while a
+// section runs passes, so this catches most mistakes, not all.
+export function checkScriptRowWrite(keys: readonly string[]): void {
+  if (sectionsRunning > 0 || migrationsRunning > 0) return;
+  const row = keys.find((k) => k.startsWith(SCRIPT_PREFIX));
+  if (row) throw new Error(`Internal error: ${row} was written outside the store's write lock`);
 }
 
 // Test-only: run the migration again, as a worker start would. For
@@ -2052,21 +2103,29 @@ export async function backfillCollectionDisplayNames(): Promise<void> {
 // and error rows (which never run), are skipped. `startupLogs` is
 // re-derived for the rows that change so the row stays self-consistent
 // with what the injector will do with it.
+//
+// The backfills read and write inside the write lock, as every write of
+// a script row must (`checkScriptRowWrite`): a row removed between the
+// read and the write would otherwise come back, pointing at blobs the
+// cleanup has deleted. They run once per extension update, so holding
+// the lock for a full read costs nothing that matters.
 export async function backfillUsesUnsafeWindow(): Promise<number> {
-  const scripts = await getAllScripts();
-  const toSet: Record<string, unknown> = {};
-  for (const script of scripts) {
-    if (script.status !== 'ok' || script.usesUnsafeWindow === true) continue;
-    if (!sourceUsesUnsafeWindow(script.bodyText)) continue;
-    const next: StoredScript = { ...script, usesUnsafeWindow: true };
-    const logs = rederivedStartupLogs(script, true);
-    if (logs.length > 0) next.startupLogs = logs;
-    else delete next.startupLogs;
-    toSet[scriptKey(script.id)] = next;
-  }
-  const changed = Object.keys(toSet).length;
-  if (changed > 0) await writeLocal(toSet);
-  return changed;
+  return mutate(async () => {
+    const scripts = await getAllScripts();
+    const toSet: Record<string, unknown> = {};
+    for (const script of scripts) {
+      if (script.status !== 'ok' || script.usesUnsafeWindow === true) continue;
+      if (!sourceUsesUnsafeWindow(script.bodyText)) continue;
+      const next: StoredScript = { ...script, usesUnsafeWindow: true };
+      const logs = rederivedStartupLogs(script, true);
+      if (logs.length > 0) next.startupLogs = logs;
+      else delete next.startupLogs;
+      toSet[scriptKey(script.id)] = next;
+    }
+    const changed = Object.keys(toSet).length;
+    if (changed > 0) await writeLocal(toSet);
+    return changed;
+  });
 }
 
 // Re-derive `startupLogs` on stored rows, so a new parse-time check
@@ -2075,20 +2134,22 @@ export async function backfillUsesUnsafeWindow(): Promise<number> {
 // is never rebuilt. Runs after that backfill, so `usesUnsafeWindow` is
 // current. Writes only rows whose logs changed; returns how many.
 export async function backfillStartupLogs(): Promise<number> {
-  const scripts = await getAllScriptMetas('startup log backfill');
-  const toSet: Record<string, unknown> = {};
-  for (const script of scripts) {
-    if (script.status !== 'ok') continue;
-    const logs = rederivedStartupLogs(script, script.usesUnsafeWindow === true);
-    if (JSON.stringify(logs) === JSON.stringify(script.startupLogs ?? [])) continue;
-    const next: ScriptMeta = { ...script };
-    if (logs.length > 0) next.startupLogs = logs;
-    else delete next.startupLogs;
-    toSet[scriptKey(script.id)] = next;
-  }
-  const changed = Object.keys(toSet).length;
-  if (changed > 0) await writeLocal(toSet);
-  return changed;
+  return mutate(async () => {
+    const scripts = await getAllScriptMetas('startup log backfill');
+    const toSet: Record<string, unknown> = {};
+    for (const script of scripts) {
+      if (script.status !== 'ok') continue;
+      const logs = rederivedStartupLogs(script, script.usesUnsafeWindow === true);
+      if (JSON.stringify(logs) === JSON.stringify(script.startupLogs ?? [])) continue;
+      const next: ScriptMeta = { ...script };
+      if (logs.length > 0) next.startupLogs = logs;
+      else delete next.startupLogs;
+      toSet[scriptKey(script.id)] = next;
+    }
+    const changed = Object.keys(toSet).length;
+    if (changed > 0) await writeLocal(toSet);
+    return changed;
+  });
 }
 
 // Re-run all of `validateHeader` on stored `ok` rows, so a header
@@ -2101,25 +2162,29 @@ export async function backfillStartupLogs(): Promise<number> {
 // runs on the same wake and may have read the row while it was still
 // `ok`, which would leave an INVALID badge over a Log that says nothing.
 export async function backfillHeaderProblems(): Promise<number> {
-  const scripts = await getAllScriptMetas('header check backfill');
-  const toSet: Record<string, unknown> = {};
-  for (const script of scripts) {
-    if (script.status !== 'ok') continue;
-    const problem = validateHeader(script.header);
-    if (!problem) continue;
-    const next: ScriptMeta = { ...script, status: 'invalid' };
-    setScriptError(next, problem.message, locationIn(script.relativePath, problem.line));
-    // Same shape as a freshly built invalid row (see
-    // `buildScriptFromText`): no startup logs, parse verdict or world
-    // flag, and no stale refresh failure competing with the error.
-    delete next.startupLogs;
-    delete next.parseCheckedHash;
-    delete next.usesUnsafeWindow;
-    delete next.refreshError;
-    toSet[scriptKey(script.id)] = next;
-  }
-  const flipped = Object.values(toSet) as ScriptMeta[];
-  if (flipped.length > 0) await writeLocal(toSet);
+  const flipped = await mutate(async () => {
+    const scripts = await getAllScriptMetas('header check backfill');
+    const toSet: Record<string, unknown> = {};
+    for (const script of scripts) {
+      if (script.status !== 'ok') continue;
+      const problem = validateHeader(script.header);
+      if (!problem) continue;
+      const next: ScriptMeta = { ...script, status: 'invalid' };
+      setScriptError(next, problem.message, locationIn(script.relativePath, problem.line));
+      // Same shape as a freshly built invalid row (see
+      // `buildScriptFromText`): no startup logs, parse verdict or world
+      // flag, and no stale refresh failure competing with the error.
+      delete next.startupLogs;
+      delete next.parseCheckedHash;
+      delete next.usesUnsafeWindow;
+      delete next.refreshError;
+      toSet[scriptKey(script.id)] = next;
+    }
+    const rows = Object.values(toSet) as ScriptMeta[];
+    if (rows.length > 0) await writeLocal(toSet);
+    return rows;
+  });
+  // Outside the lock: the Log has its own queue.
   for (const row of flipped) {
     const entry = loadStateLogEntry(row);
     if (entry) await appendScriptLog(row.id, { ...entry, source: 'extension-update' });

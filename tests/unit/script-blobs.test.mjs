@@ -9,7 +9,6 @@ import {
   carryBodyRef,
   droppedBlobRefs,
   fromStorage,
-  hasSweepCandidates,
   hasInlineBodies,
   hydrateScriptRows,
   markMissingBlobs,
@@ -19,7 +18,6 @@ import {
   STORE_FORMAT_KEY,
   storedForm,
   sweepUnusedBlobs,
-  SWEEP_GRACE_MS,
   toStorage,
   withBlobs,
 } from '../../dist/extension/script-blobs.js';
@@ -296,29 +294,24 @@ test('a failed migration stops for the session, and a later run finishes it', as
   assert.deepEqual(back.map((s) => s.bodyText).sort(), [...Array(MIGRATE_BATCH * 2).keys()].map((i) => `body${i}();`).sort());
 });
 
-test('cleanup deletes a blob only once two checks a wait apart found it unused', async () => {
+test('cleanup deletes a blob no row points at, on the first check', async () => {
   Object.assign(store, await withBlobs({ 'script:a': script({ id: 'a' }), 'script:b': script({ id: 'b', bodyText: 'other();' }) }));
   const bKey = `blob:${store['script:b'].bodyBlobRef.hash}`;
   delete store['script:b'];
 
-  const t0 = 1_000_000;
-  assert.deepEqual(await sweepUnusedBlobs(t0), { checked: 2, removed: 0, waiting: 1 });
-  assert.ok(bKey in store);
-  // Too soon.
-  assert.deepEqual(await sweepUnusedBlobs(t0 + SWEEP_GRACE_MS - 1), { checked: 2, removed: 0, waiting: 1 });
-  assert.deepEqual(await sweepUnusedBlobs(t0 + SWEEP_GRACE_MS), { checked: 2, removed: 1, waiting: 0 });
+  assert.deepEqual(await sweepUnusedBlobs(), { checked: 2, removed: 1 });
   assert.ok(!(bKey in store));
   // The blob still in use stays.
   assert.ok(`blob:${store['script:a'].bodyBlobRef.hash}` in store);
+  assert.deepEqual(await sweepUnusedBlobs(), { checked: 1, removed: 0 });
 });
 
-test('cleanup keeps a blob a row points at again before the second check', async () => {
+test('cleanup reads the rows it is given instead of storage', async () => {
   Object.assign(store, await withBlobs({ 'script:a': script({ id: 'a' }) }));
   const row = store['script:a'];
   delete store['script:a'];
-  await sweepUnusedBlobs(0);
-  store['script:b'] = { ...row, id: 'b' };
-  assert.deepEqual(await sweepUnusedBlobs(SWEEP_GRACE_MS), { checked: 1, removed: 0, waiting: 0 });
+  // A row the caller holds still points at the blob, so it stays.
+  assert.deepEqual(await sweepUnusedBlobs({ 'script:a': row }), { checked: 1, removed: 0 });
   assert.equal(Object.keys(store).filter((k) => k.startsWith('blob:')).length, 1);
 });
 
@@ -384,12 +377,3 @@ test('an entry changed after it was read is hashed again', async () => {
   assert.equal(out['script:a'].requires[0].blobRef.hash, await sha256Hex('changed();'));
 });
 
-test('hasSweepCandidates is true only while unused blobs wait', async () => {
-  assert.equal(await hasSweepCandidates(), false);
-  Object.assign(store, await withBlobs({ 'script:a': script({ id: 'a' }) }));
-  delete store['script:a'];
-  await sweepUnusedBlobs(0);
-  assert.equal(await hasSweepCandidates(), true);
-  await sweepUnusedBlobs(SWEEP_GRACE_MS);
-  assert.equal(await hasSweepCandidates(), false);
-});

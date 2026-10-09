@@ -9,7 +9,7 @@
 
 import {
   addCollection, backfillCollectionDisplayNames, createCollection, describeError, installScript, markFirstRunComplete, migrateCollectionKeysForPage, withoutBodies,
-  type InstallTarget, type ScriptMeta, type StoredScript,
+  type AddCollectionResult, type InstallTarget, type ScriptMeta, type StoredScript,
   moveCollection, moveScript, reconcileScriptMembership, removeCollection, removeScript, setCollectionOptions,
   setScriptsEnabled,
 } from './script-store.js';
@@ -17,7 +17,9 @@ import {
   enableWithin, setAllScriptsEnabled, setCollectionEnabledExclusive, setScriptEnabledExclusive,
 } from './script-enablement.js';
 import { turnOffOtherCopies } from './script-identity.js';
-import { updateAllCollections, updateCollection, updateScript, type UpdateMode } from './script-updater.js';
+import {
+  probeInstalledScript, updateAllCollections, updateCollection, updateScript, type UpdateMode,
+} from './script-updater.js';
 import type { ProbePolicy } from '../version-probe.js';
 import { forgetDeniedHost, revokeConnectHost } from './connect-grants.js';
 import { clearScriptLog } from './script-log.js';
@@ -102,8 +104,18 @@ const WORKER_OPS = {
   async updateAllCollections(mode: UpdateMode, probe?: ProbePolicy): Promise<void> {
     await updateAllCollections(mode, probe);
   },
-  addCollection,
-  installScript,
+  // A single script installed (or a `.user.js` added) is checked for a
+  // newer version at once, without the page waiting for it.
+  async addCollection(rawPath: string): Promise<AddCollectionResult> {
+    const result = await addCollection(rawPath);
+    probeInstalledScript(result);
+    return result;
+  },
+  async installScript(rawLocation: string, target: InstallTarget): Promise<AddCollectionResult> {
+    const result = await installScript(rawLocation, target);
+    probeInstalledScript(result);
+    return result;
+  },
 
   // ---------- Local copy and site icons ----------
   // After the page has written the files: it alone can download.

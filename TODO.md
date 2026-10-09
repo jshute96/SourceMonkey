@@ -1131,10 +1131,10 @@ during cumulative review of the GM_* phases:
 
 ## Concurrency — accepted races
 
-The write mutex in `script-store.ts` is per JS context. The interleaves
-that leaves are catalogued in
-[docs/storage.md](docs/storage.md#the-lock-is-per-context) rather than
-here — they are decisions, not proposals.
+The write mutex in `script-store.ts` covers every write of a script row
+(`checkScriptRowWrite`); only the service worker writes at all. What it still leaves open is catalogued in
+[docs/storage.md](docs/storage.md#one-lock-in-the-worker) rather than
+here: those are decisions, not proposals.
 
 One thing does have a concrete fix we chose not to make:
 
@@ -1153,18 +1153,44 @@ One thing does have a concrete fix we chose not to make:
     is a diagnostic message rather than any state. Worth doing if the
     banner ever becomes load-bearing, or alongside any other change to
     that module.
-- **Enable toggles plan their changes before taking the lock.**
-  `src/extension/script-enablement.ts` reads the store, works out which
-  copies to turn on and off, then calls `writeEnablement`, which takes
-  the lock. See [docs/script-enablement.md](docs/script-enablement.md).
-  - Two quick clicks on one page (A on, then B on) can each plan from a
-    store where neither is active, so both end up active.
-  - A collection removed between the read and the write still has its
-    displaced copies turned off, with nothing coming on.
-  - The fix: `writeEnablement` takes a planner callback and runs it on
-    a snapshot read inside the lock. It costs a full store read under
-    the lock per click, and touches every caller of the toggles.
-  - Left for its own change.
+
+## Worker writes — performance follow-ups
+
+Set aside while moving every write into the service worker
+([docs/worker-writes.md](docs/worker-writes.md#open)), from timings on a
+326-script profile.
+
+- **Row-cache reads copy every row.** Each read returns copies so a
+  caller can't change the cache; a full read of 326 rows costs 10–30 ms
+  of each enable's `read all`. Freezing the cached rows and handing them
+  out would cost nothing, but every caller that edits a row it read has
+  to be checked first. Indexes over the cache would make most full
+  reads unnecessary anyway.
+- **Cache recently used script bodies in the worker.** The sync's `read
+  bodies` takes ~5 ms alone but 60–180 ms while other storage work runs,
+  and it is part of what makes enables wait during a sync. A size-capped
+  blob cache, kept current the way the row cache is, would remove those
+  reads.
+- **Re-registering the GM runtime and bridge on pattern changes.** A
+  sync that changes a helper's patterns re-registers it, 200–430 ms, and
+  storage reads in pages stall meanwhile.
+  - Identical patterns already de-dupe (`applyScope` keeps a set), but a
+    pattern covered by another (`https://a.com/foo/*` beside
+    `https://a.com/*`) still changes the set.
+  - Options: per-origin patterns, so a second script on a covered site
+    changes nothing; or `<all_urls>`, which `buildGmRuntimeSpecs`
+    argues against (a page-visible `window.__SM_GM__` on every site is a
+    fingerprint and an attack surface).
+- **Minify the injected helpers properly.** The build only strips
+  comments and whitespace (`minifyForInjection`): the GM runtime goes
+  from 131 KB to 55 KB. A real minifier (esbuild or terser) might reach
+  25–30 KB.
+  - Measure first: Chrome's `register` time against helper size, and
+    page parse time where it's injected.
+  - Renamed identifiers make the runtime's own stack traces harder to
+    read; a source map would cover that.
+- **Audit what's in `wrapper-gm-runtime.js`** for code no current API
+  needs.
 
 ## Storage-key migration — remove after 2026-09-01
 

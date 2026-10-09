@@ -181,10 +181,11 @@ Now that no page writes:
     worker.
   - The pages' parse checker for the store, and their own copies of the
     in-flight maps (folder listings, icon fetches) for writes.
+  - The blob cleanup's two checks 2 minutes apart: a blob goes on the
+    first check that finds it unused, run as soon as a change leaves
+    one. Every script-row write takes the lock the check runs in, which
+    the worker's wrapped write checks (`checkScriptRowWrite`).
 - **Kept, with the reason updated**:
-  - The blob cleanup's grace period: not every write of a script row
-    takes the lock, so one could still reuse a blob a single check
-    found unused.
   - The injector's handling of a registration it didn't expect: the
     worker's record of what Chrome holds can still be wrong (a reset,
     a stopped worker).
@@ -206,6 +207,9 @@ worker is still asynchronous to the page's repaint.
   (`refresh-errors`, `injector-rejections`) call it.
 - `callWorker` refuses to run in the worker, where a port would reach
   no listener: code there calls the store directly.
+- The worker's wrapped `set` refuses a script row written outside the
+  store's lock (`checkScriptRowWrite`), which the blob cleanup relies
+  on. Tests that seed rows use `seedStorage` on the test surface.
 - `tests/unit/page-writes.test.mjs` checks that no page-only module
   imports a writer from where it is defined, or writes storage itself.
 
@@ -238,10 +242,9 @@ Each stage leaves both kinds of writer working, so it can ship alone.
 
 ## Open
 
-- **Add and install skip the probes and the rejection retry** a
-  Refresh runs (`script-updater.ts`), as before the move. Running them
-  in the worker after an add is now easy; not done here.
+- **Add and install skip the rejection retry** a Refresh runs. A
+  single-script install does run the version check, without waiting
+  (`probeInstalledScript`); a whole-collection add leaves it to its
+  first Refresh.
 - **The registration sync, sticky numbers and the match index** read
   storage themselves. They could read the row cache too.
-- **The blob cleanup's grace period** could go once every write of a
-  script row takes the lock.

@@ -158,29 +158,29 @@ The rows' `contentHash` fields stay change-detection tokens; the
     so an unchanged body isn't hashed on every refresh.
 - **Unused blobs** (after a remove, or a refresh that replaced a body)
   are deleted by the service worker only (`sweepUnusedBlobs`):
-  - A blob goes once it's unused on two checks at least
-    `SWEEP_GRACE_MS` (2 minutes) apart.
-  - A check runs inside the write lock (`sweepUnusedBlobsLocked`), so
-    no write under the lock lands between it reading the rows and
-    deleting. Only the worker writes
-    ([worker-writes.md](worker-writes.md)), but not every write of a
-    row takes the lock, so the wait stays: one could save a row
-    pointing at a blob it found already stored.
-  - When each blob was first found unused is kept in session storage,
-    since the worker is often stopped between checks.
-  - **When it runs**: an alarm, set half a minute after a change that
-    leaves a row's blob unused by it (`droppedBlobRefs`). A check that
-    finds unused blobs not old enough yet sets another for when they
-    will be.
-    - At worker start, only if a check is pending (`hasSweepCandidates`).
-      An alarm on every start would buy each start, including the
-      alarm's own wake, another wake half a minute later.
-    - Not in tests: `resetAllState` pauses the alarm's checks, and tests
-      run them at simulated times through the test surface.
-  - A check reads the keys and the small rows, never a blob.
+  - A blob goes on the first check that finds no script row using it.
+  - A check runs inside the write lock (`sweepUnusedBlobsLocked`), and
+    so does every write of a script row: the worker's wrapped `set`
+    refuses one made outside it (`checkScriptRowWrite`), apart from the
+    migrations, which the check waits for anyway. So no write lands
+    between a check reading the rows and deleting: one that found a
+    blob already stored, and so didn't write it again, would otherwise
+    be left pointing at nothing.
+    - The guard sees whether some section of the lock is running, not
+      whether the write is in it, so it catches most mistakes, not all.
+  - **When it runs**: at once, after a change that leaves a row's blob
+    unused by it (`droppedBlobRefs`), so a removal frees its space
+    right away. That matters most near the storage quota.
+    - Changes that land while a check waits for the lock share it.
+    - An alarm set at the same time (half a minute) is the backstop for
+      a worker stopped before the check ran; a check that finishes
+      clears it.
+    - Not in tests: `resetAllState` pauses them, and tests run checks
+      through the test surface.
+  - A check reads the keys and the small rows (from the row cache when
+    it's loaded), never a blob.
   - **Logging**: a removal is always logged (`removed N stored file(s)
-    no script uses`); each check's counts, and when the next one runs,
-    only with debug logging on.
+    no script uses`); each check's counts only with debug logging on.
 - **A row whose blob is missing**, or in an encoding this build
   doesn't know, reads as an `invalid` script (`MISSING_BLOB_MESSAGE`),
   never a crash.

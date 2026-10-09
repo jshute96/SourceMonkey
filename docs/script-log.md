@@ -201,7 +201,9 @@ made in one JS context.
   - The worker answers `true` once it has written the entry. A handler
     that threw resolves the message rather than rejecting it, so the
     ack has to be read, not just awaited.
-  - With no `true`, the page drops the entry and says so in its own
+  - With no `true`, the page sends it once more: a worker stopped
+    mid-message leaves the first unanswered, and the second wakes a new
+    one. With no `true` again, it drops the entry and says so in its own
     console.
 
 ## Status column promotion

@@ -45,6 +45,7 @@ import {
   refreshCollection,
   createRefreshBatch,
   setVersionProbes,
+  type AddCollectionResult,
   type ParseCheckMode,
   type RefreshBatch,
   type ScriptMeta,
@@ -60,6 +61,7 @@ import {
   type ProbePolicy,
   type VersionProbe,
 } from '../version-probe.js';
+import { isContainerCollection } from './directories.js';
 import { probeVersions } from './version-probe-fetch.js';
 import { mapWithConcurrency, PROBE_SCRIPTS_CONCURRENCY } from './concurrency.js';
 import { describeRefreshError, readRefreshErrors } from './refresh-error.js';
@@ -527,7 +529,7 @@ async function runAllCollectionsCheck(
 // current when it stops) but not by the per-script one, which sits on
 // the navigation hot path — see runScriptCheck.
 async function runVersionProbes(
-  scripts: readonly StoredScript[],
+  scripts: readonly ScriptMeta[],
   probe: ProbePolicy,
 ): Promise<void> {
   // Bounded for the same reason the refresh fan-out is (see
@@ -542,8 +544,26 @@ async function runVersionProbes(
     }));
 }
 
+// After a single-script install: check for a newer version at once, so
+// an install of an already-outdated copy says so without waiting for a
+// Refresh. Not awaited by the install, like the per-script refresh's:
+// the result lands on the row, and the pages repaint from it. A whole
+// collection added at once isn't probed here; its first Refresh does.
+export function probeInstalledScript(result: AddCollectionResult): void {
+  const id = result?.kind === 'existingContainer' ? result.scriptId
+    : result && isContainerCollection(result.collection.path) ? result.collection.scriptIds[0]
+      : undefined;
+  if (!id) return;
+  void (async () => {
+    const script = await getScriptMeta(id);
+    if (script) await runVersionProbes([script], 'force');
+  })().catch(() => {
+    // An annotation, as in `runVersionProbes`: the install stands.
+  });
+}
+
 async function probeOneScript(
-  script: StoredScript,
+  script: ScriptMeta,
   policy: ProbePolicy,
 ): Promise<void> {
   // Only rows that are actually running get probed. An `invalid` row's

@@ -127,7 +127,11 @@ async function track(entries: [string, string][], write: () => Promise<void>): P
 // then runs before the worker's others, so they read the cache as
 // storage now is. Nothing else turns the cache on, so pages and unit
 // tests read storage as before.
-export function installRowCache(): void {
+//
+// `checkWrite` sees the keys of every `set` first, and throws to refuse
+// it: the store's check that script rows are written under its lock
+// (`checkScriptRowWrite`).
+export function installRowCache(checkWrite: (keys: readonly string[]) => void = () => undefined): void {
   if (installed) return;
   installed = true;
   const area = chrome.storage.local;
@@ -136,6 +140,11 @@ export function installRowCache(): void {
   const clear = area.clear.bind(area);
 
   area.set = ((items: Record<string, unknown>) => {
+    try {
+      checkWrite(Object.keys(items));
+    } catch (err) {
+      return Promise.reject(err);
+    }
     // A key set to `undefined` is left as it is by Chrome.
     const entries = Object.entries(items)
       .filter(([key, value]) => isCachedKey(key) && value !== undefined)

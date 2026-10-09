@@ -7,6 +7,8 @@
 //   - The row cache follows the worker's own writes, and drops what it
 //     holds when something else writes a row.
 //   - A page can change only the settings the worker lists.
+//   - The worker refuses to write a script row outside the store's lock,
+//     and the extension-update backfills write under it.
 
 import type { Page, Worker } from '@playwright/test';
 
@@ -172,5 +174,41 @@ test.describe('worker writes', () => {
     expect(await call('smDebugLogging')).toBe('ok');
     expect(await call('firstRunComplete')).toContain('is not a setting a page may change');
     await page.close();
+  });
+
+  test('the worker refuses to write a script row outside the store\'s lock', async ({
+    sm, getServiceWorker,
+  }) => {
+    const sw = await getServiceWorker();
+    const outside = await sw.evaluate(() => chrome.storage.local.set({ 'script:unlocked': { id: 'unlocked' } })
+      .then(() => 'written', (err: Error) => err.message));
+    expect(outside).toContain('was written outside the store\'s write lock');
+    // Other keys, and the same row under the lock, are fine.
+    await sw.evaluate(() => chrome.storage.local.set({ 'gmval:x:y': 1 }));
+    await sm.seedStorage({ 'script:unlocked': { id: 'unlocked' } });
+  });
+
+  test('an extension-update backfill writes its rows under the lock', async ({
+    sm, getServiceWorker,
+  }) => {
+    const dir = ScriptsDir.create();
+    dirs.push(dir);
+    dir.write({
+      relativePath: 'a.user.js',
+      meta: { name: 'Uses unsafeWindow', match: ['https://example.com/*'] },
+      body: 'unsafeWindow.x = 1;',
+    });
+    const collection = await sm.addCollection(dir.path);
+    const [a] = (await sm.getCollectionWithScripts(collection!.id))!.scripts;
+    expect(a.usesUnsafeWindow).toBe(true);
+    // As a row written before the flag existed.
+    const sw = await getServiceWorker();
+    const key = `script:${a.id}`;
+    const row = (await sw.evaluate(async (k: string) => chrome.storage.local.get(k), key))[key] as Record<string, unknown>;
+    const { usesUnsafeWindow: _, ...old } = row;
+    await sm.seedStorage({ [key]: old });
+
+    expect(await sm.backfillUsesUnsafeWindow()).toBe(1);
+    expect((await sm.getAllScriptMetas()).find((s) => s.id === a.id)!.usesUnsafeWindow).toBe(true);
   });
 });

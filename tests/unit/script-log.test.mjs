@@ -47,7 +47,7 @@ globalThis.chrome = {
     sendMessage: async (msg) => {
       sent.push(msg);
       if (sendFails) throw new Error('Could not establish connection');
-      return sendReply;
+      return sendReplies.length > 0 ? sendReplies.shift() : sendReply;
     },
   },
 };
@@ -59,6 +59,8 @@ let sendFails = false;
 // threw — which is why the page has to read the reply, not just await
 // it.
 let sendReply = true;
+// Answers for the next messages, in order, before `sendReply`.
+let sendReplies = [];
 
 // The module decides where to write by asking whether it is running in
 // a page (`document` exists) or the service worker (it doesn't). Node
@@ -95,6 +97,7 @@ beforeEach(() => {
   sent = [];
   sendFails = false;
   sendReply = true;
+  sendReplies = [];
 });
 
 test('appendScriptLog persists an entry and getScriptLog returns it', async () => {
@@ -381,8 +384,19 @@ test('a page does not write when the worker answers without an ack', async () =>
   await asPage(() => appendScriptLog('s1', {
     level: 'info', source: 'add', message: 'unacked',
   }));
-  assert.equal(sent.length, 1);
+  // Sent twice: once, and once more after no ack.
+  assert.equal(sent.length, 2);
   assert.deepEqual(await getScriptLog('s1'), []);
+});
+
+test('a page sends an entry once more when the first goes unanswered', async () => {
+  // The worker stopped mid-message; the second one reaches a new one.
+  sendReplies = [undefined];
+  await asPage(() => appendScriptLog('s1', {
+    level: 'info', source: 'add', message: 'second try',
+  }));
+  assert.equal(sent.length, 2);
+  assert.deepEqual(sent[0], sent[1]);
 });
 
 test('an unacked clear leaves the log as it was', async () => {

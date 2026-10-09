@@ -203,20 +203,25 @@ export async function handleScriptLogWrite(req: ScriptLogWriteRequest): Promise<
   return enqueue(req.scriptId, () => removeEntries(req.scriptId));
 }
 
-// Page side. Only the worker writes storage (docs/worker-writes.md), so
-// an entry the worker didn't ACKNOWLEDGE is dropped, and said so in
-// this page's console.
+// Page side. Only the worker writes storage (docs/worker-writes.md).
+// An entry the worker didn't ACKNOWLEDGE is sent once more: a worker
+// stopped mid-message closes the channel unanswered, and the second
+// message wakes a new one. Then it is dropped, and said so in this
+// page's console.
 //
 // The ack has to be READ, not just awaited: a message nothing handled,
 // and a handler that threw, both RESOLVE `sendMessage` (with
 // `undefined`); only an unreachable worker rejects it. So `true` (sent
 // by the listener once the write has landed) is the one answer that
-// means it was written.
+// means it was written. A retry after a write that landed unacknowledged
+// can log the entry twice, which beats losing it.
 async function writeViaWorker(req: ScriptLogWriteRequest): Promise<void> {
-  try {
-    const ack = await chrome.runtime.sendMessage({ type: SCRIPT_LOG_WRITE_MESSAGE, ...req });
-    if (ack === true) return;
-  } catch { /* no receiving end */ }
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const ack = await chrome.runtime.sendMessage({ type: SCRIPT_LOG_WRITE_MESSAGE, ...req });
+      if (ack === true) return;
+    } catch { /* no receiving end */ }
+  }
   console.info(`[SourceMonkey] the background worker did not save a log ${req.op} for script ${req.scriptId}`);
 }
 

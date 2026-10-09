@@ -200,7 +200,7 @@ test.describe('.user.js capture for local files', () => {
       const key = `script:${id}`;
       const got = await chrome.storage.local.get(key);
       got[key].relativePath = oldSpelling;
-      await chrome.storage.local.set({ [key]: got[key] });
+      await (self as unknown as { SourceMonkey: { seedStorage(items: Record<string, unknown>): Promise<void> } }).SourceMonkey.seedStorage({ [key]: got[key] });
     }, [before!.scripts[0].id, url]);
 
     const page = await extensionContext.newPage();

@@ -18,7 +18,7 @@
 
 import { installRowCache, rowCacheLoadsForTests } from './row-cache.js';
 import { installWorkerOps } from './worker-ops.js';
-import { droppedBlobRefs, hasSweepCandidates, SWEEP_GRACE_MS, type SweepResult } from './script-blobs.js';
+import { droppedBlobRefs, type SweepResult } from './script-blobs.js';
 import { describeDiagnostic } from '../diagnostic-location.js';
 import {
   debugDumpCache,
@@ -168,6 +168,8 @@ import {
   rerunStoreMigrationForTests,
   forgetStoreMigrationForTests,
   sweepUnusedBlobsLocked,
+  checkScriptRowWrite,
+  seedStorageForTests,
   storeFormatReady,
   _setCollectionWriteFailureForTests,
   markFirstRunComplete,
@@ -497,12 +499,16 @@ interface SourceMonkeyApi {
   // Run the storage format migration again, as a worker start would,
   // for a test that seeded format 1 rows.
   rerunStoreMigration: () => Promise<void>;
-  // As a worker just started: the next write, or a page's message, runs
-  // the migration.
+  // As a worker just started: the next write runs the migration.
   forgetStoreMigration: () => Promise<void>;
-  // One unused-blob check, as the cleanup alarm runs it; `now` lets a
-  // test step past the wait between checks.
-  sweepUnusedBlobs: (now?: number) => Promise<SweepResult>;
+  // One unused-blob check, as a change that drops a blob runs it.
+  sweepUnusedBlobs: () => Promise<SweepResult>;
+  // Write rows straight into storage, under the store's lock: script rows
+  // written outside it are refused (`checkScriptRowWrite`).
+  seedStorage: (items: Record<string, unknown>) => Promise<void>;
+  // The extension-update backfill of `usesUnsafeWindow`; how many rows
+  // it changed.
+  backfillUsesUnsafeWindow: () => Promise<number>;
   // Drop this worker's record of the registration set, as a fresh
   // worker has none: the next sync is a full one.
   forgetRegistrationState: () => void;
@@ -924,7 +930,9 @@ const api: SourceMonkeyApi = {
   rerunStoreMigration: () => rerunStoreMigrationForTests(),
   forgetRegistrationState,
   forgetStoreMigration: () => forgetStoreMigrationForTests(),
-  sweepUnusedBlobs: (now?: number) => sweepUnusedBlobsLocked(now),
+  sweepUnusedBlobs: async () => (await sweepUnusedBlobsLocked())!,
+  seedStorage: seedStorageForTests,
+  backfillUsesUnsafeWindow,
   resetAllState: async () => {
     // The parse check re-enables itself: its off-switch lives in the
     // session storage cleared below, precisely so no context has to
@@ -2322,35 +2330,48 @@ async function reloadNoScriptsFromMenu(tabId: number | null): Promise<void> {
 
 // ---------- Unused blob cleanup ----------
 // See docs/storage.md#writing-and-cleanup. A change that leaves a blob
-// unused starts a check soon; a check that finds unused blobs not yet
-// old enough to delete runs another once they are.
+// unused runs a check at once, so a removal frees its space right away
+// (which matters most near the storage quota). An alarm set at the same
+// time is the backstop for a worker stopped before the check ran; a
+// check that finishes clears it.
 const BLOB_SWEEP_ALARM = 'sm-blob-sweep';
-const BLOB_SWEEP_SOON_MINUTES = 0.5;
+const BLOB_SWEEP_BACKSTOP_MINUTES = 0.5;
 
-// Set by `resetAllState`: tests run the checks themselves, at simulated
-// times (`sweepUnusedBlobs` on the test surface), and a real one firing
-// mid-test would record or delete blobs under them.
+// Set by `resetAllState`: tests run the checks themselves
+// (`sweepUnusedBlobs` on the test surface), and a real one running
+// mid-test would delete blobs under them.
 let realBlobSweepsPaused = false;
 
-// An alarm already set stands: whichever check it runs sees this change
-// too.
-function scheduleBlobSweep(delayInMinutes: number): void {
-  void (async () => {
-    if (await chrome.alarms.get(BLOB_SWEEP_ALARM)) return;
-    await chrome.alarms.create(BLOB_SWEEP_ALARM, { delayInMinutes });
-  })().catch((err: unknown) => {
+// A check queued and not yet started: a burst of changes needs one.
+let blobSweepQueued = false;
+
+function requestBlobSweep(): void {
+  if (realBlobSweepsPaused || blobSweepQueued) return;
+  blobSweepQueued = true;
+  void chrome.alarms.create(BLOB_SWEEP_ALARM, { delayInMinutes: BLOB_SWEEP_BACKSTOP_MINUTES }).catch((err: unknown) => {
     console.info('[SourceMonkey] could not schedule removing unused stored files:', describeError(err));
+  });
+  runBlobSweep().catch((err: unknown) => {
+    console.info('[SourceMonkey] could not remove unused stored files:', describeError(err));
   });
 }
 
 // A removal is always logged; the check itself only with debug logging on.
 async function runBlobSweep(): Promise<void> {
   if (realBlobSweepsPaused) return;
-  const { checked, removed, waiting } = await sweepUnusedBlobsLocked();
+  // Taken inside the lock, so a change that lands while this one waits
+  // for it queues its own check, which then sees that change. Paused
+  // checked again there: a test reset may have come in between.
+  const result = await sweepUnusedBlobsLocked(() => {
+    blobSweepQueued = false;
+    return !realBlobSweepsPaused;
+  });
+  if (!result) return;
+  const { checked, removed } = result;
   if (removed > 0) console.info(`[SourceMonkey] removed ${removed} stored file(s) no script uses`);
-  const next = waiting > 0 ? ` (next check in ${SWEEP_GRACE_MS / 60_000} min)` : '';
-  dlog(`[SourceMonkey] unused stored files: checked ${checked}, removed ${removed}, ${waiting} waiting${next}`);
-  if (waiting > 0) scheduleBlobSweep(SWEEP_GRACE_MS / 60_000);
+  dlog(`[SourceMonkey] unused stored files: checked ${checked}, removed ${removed}`);
+  // Not while another check is queued: its backstop is the same alarm.
+  if (!blobSweepQueued) await chrome.alarms.clear(BLOB_SWEEP_ALARM);
 }
 
 function installBlobSweep(): void {
@@ -2358,7 +2379,7 @@ function installBlobSweep(): void {
     if (areaName !== 'local') return;
     for (const [key, change] of Object.entries(changes)) {
       if (key.startsWith(SCRIPT_PREFIX) && droppedBlobRefs(change.oldValue, change.newValue)) {
-        scheduleBlobSweep(BLOB_SWEEP_SOON_MINUTES);
+        requestBlobSweep();
         return;
       }
     }
@@ -2369,14 +2390,6 @@ function installBlobSweep(): void {
       console.info('[SourceMonkey] could not remove unused stored files:', describeError(err));
     });
   });
-  // At startup only if a check is pending (blobs an earlier check found
-  // unused), in case its alarm is gone. Usually it isn't, and the alarm
-  // already set stands. Setting one
-  // on every start would make each start (or the alarm's own wake) buy
-  // another wake half a minute later.
-  void hasSweepCandidates().then((pending) => {
-    if (pending) scheduleBlobSweep(BLOB_SWEEP_SOON_MINUTES);
-  }, () => undefined);
 }
 
 // The popup's requests. Only from our own pages, like the other page
@@ -5534,8 +5547,9 @@ async function recordScriptReport(
 // into the Errors panel if the SW is killed while they're in flight.
 installSwTeardownHandler();
 // Before anything writes: the row cache sees this worker's writes by
-// wrapping them (row-cache.ts).
-installRowCache();
+// wrapping them (row-cache.ts), and the store checks each one writes
+// script rows under its lock.
+installRowCache(checkScriptRowWrite);
 // Log-ID listener and its initial load come first so subsequent
 // startup paths (sm:start arriving from a pre-existing wrapper, the
 // first navigation-driven log line) can hit the populated map. The

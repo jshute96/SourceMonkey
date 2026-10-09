@@ -421,7 +421,7 @@ test.describe('legacy source:* key migration', () => {
     const sw = await getServiceWorker();
     // Write the old spelling straight into storage, bypassing the store.
     await sw.evaluate(async () => {
-      await chrome.storage.local.set({
+      await (self as unknown as { SourceMonkey: { seedStorage(items: Record<string, unknown>): Promise<void> } }).SourceMonkey.seedStorage({
         sources: ['c1'],
         'source:c1': {
           id: 'c1',
