@@ -2396,6 +2396,9 @@ test('retryRejectedRegistrations: a caller is never dropped for arriving late', 
 const {
   syncRegistrations,
   forgetRegistrationState,
+  forgetRegistrationStateAsNewWorkerForTests,
+  _setMustAskForTests,
+  lastSyncKindForTests,
   setBeforeSync,
   _forgetRegistrationForTests,
 } = await import('../../dist/extension/injector.js');
@@ -3207,6 +3210,107 @@ test('syncRegistrations: a script whose body is missing is not registered, and i
   await syncRegistrations({ scriptIds: ['b'], collectionIds: [] });
   assert.deepEqual(chrome_.ids(), [], 'an incremental sync drops it');
   assert.equal(localStore.get('script:b').status, 'invalid');
+});
+
+test('syncRegistrations: a new worker takes the last record and syncs only the rows that changed', async (t) => {
+  t.after(resetUserScriptStubs);
+  // Known, as once the claims load: a record is only taken then.
+  _setMustAskForTests(false);
+  t.after(() => _setMustAskForTests(null));
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a');
+  seedStore('b');
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+  assert.ok(sessionStore.has('registrationRecordStale'), 'marked stale until saved');
+
+  // The worker stopped; `b` changed before the next one started.
+  await forgetRegistrationStateAsNewWorkerForTests();
+  assert.ok(sessionStore.has('registrationRecord'), 'the record was saved');
+  assert.ok(!sessionStore.has('registrationRecordStale'), 'and the marker cleared');
+  localStore.set('script:b', { ...localStore.get('script:b'), bodyText: 'changed();' });
+  // A probe-only write is not a change the sync reads.
+  localStore.set('script:a', { ...localStore.get('script:a'), versionProbes: [{ url: 'u', version: '2' }] });
+  chrome_.reset();
+  await syncRegistrations();
+  assert.equal(lastSyncKindForTests(), 'incremental');
+  assert.equal(chrome_.sentUpdate('a'), undefined, 'unchanged: not touched');
+  assert.ok(chrome_.sentUpdate('b').js.some((c) => c.code.includes('changed();')));
+});
+
+test('syncRegistrations: a new worker reconciles in full when Chrome no longer holds what the record says', async (t) => {
+  t.after(resetUserScriptStubs);
+  // Known, as once the claims load: a record is only taken then.
+  _setMustAskForTests(false);
+  t.after(() => _setMustAskForTests(null));
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a');
+  fakeRegistrationSet();
+  await syncRegistrations();
+
+  await forgetRegistrationStateAsNewWorkerForTests();
+  await userScripts.unregister({ ids: ['a'] });
+  await syncRegistrations();
+  assert.equal(lastSyncKindForTests(), 'full');
+  assert.ok((await userScripts.getScripts()).some((s) => s.id === 'a'), 'registered again');
+});
+
+test('syncRegistrations: a new worker reconciles in full when the record may be stale', async (t) => {
+  t.after(resetUserScriptStubs);
+  // Known, as once the claims load: a record is only taken then.
+  _setMustAskForTests(false);
+  t.after(() => _setMustAskForTests(null));
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a');
+  fakeRegistrationSet();
+  await syncRegistrations();
+  await forgetRegistrationStateAsNewWorkerForTests();
+  // A worker that changed Chrome's set and stopped before saving.
+  sessionStore.set('registrationRecordStale', true);
+  await syncRegistrations();
+  assert.equal(lastSyncKindForTests(), 'full');
+});
+
+test('syncRegistrations: a collection turned off while no worker ran drops its scripts on restore', async (t) => {
+  t.after(resetUserScriptStubs);
+  // Known, as once the claims load: a record is only taken then.
+  _setMustAskForTests(false);
+  t.after(() => _setMustAskForTests(null));
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a');
+  seedStore('b');
+  fakeRegistrationSet();
+  await syncRegistrations();
+  await forgetRegistrationStateAsNewWorkerForTests();
+  localStore.set('collection:src-1', { ...localStore.get('collection:src-1'), enabled: false });
+  await syncRegistrations();
+  assert.equal(lastSyncKindForTests(), 'incremental');
+  const ids = (await userScripts.getScripts()).map((s) => s.id);
+  assert.ok(!ids.includes('a') && !ids.includes('b'), 'both unregistered');
+});
+
+test('syncRegistrations: a record is not taken after the state was forgotten on purpose', async (t) => {
+  t.after(resetUserScriptStubs);
+  // Known, as once the claims load: a record is only taken then.
+  _setMustAskForTests(false);
+  t.after(() => _setMustAskForTests(null));
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a');
+  fakeRegistrationSet();
+  await syncRegistrations();
+  forgetRegistrationState();
+  await syncRegistrations();
+  assert.equal(lastSyncKindForTests(), 'full');
 });
 
 test('syncRegistrations: a full sync places everything again when a helper is behind a user script', async (t) => {

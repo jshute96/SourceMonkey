@@ -88,7 +88,7 @@ fails.
 
 - **On SW startup** — `syncRegistrations()` runs with no scope, in
   parallel with the match-index load. See
-  [Startup is a full reconcile](#startup-is-a-full-reconcile).
+  [Startup: the record, or a full reconcile](#startup-the-record-or-a-full-reconcile).
 - **On every cache change** — the match-index already fires
   `onCacheChanged` for `script:*` / `collection:*` mutations, naming
   the rows that moved. The SW subscribes a second listener that
@@ -163,8 +163,9 @@ their code** when only their patterns moved.
 - `update` keeps any property it isn't given, and the GM runtime's code
   is over 100 KB.
 - Their code is fixed when the extension is built.
-- Each worker's first sync is a full one, which places them with code
-  (see [Startup is a full reconcile](#startup-is-a-full-reconcile)).
+- A worker's first sync places them with code: a full one does, and a
+  record is taken only from a worker of the same version, whose first
+  sync did (see [Startup: the record, or a full reconcile](#startup-the-record-or-a-full-reconcile)).
 
 #### Why wipe-and-replace was wrong, not just slow
 
@@ -186,11 +187,39 @@ their code** when only their patterns moved.
   cannot express. See
   [Update, never unregister-then-register](#update-never-unregister-then-register).
 
-#### Startup is a full reconcile
+#### Startup: the record, or a full reconcile
 
 Chrome retains registrations across service-worker restarts, and rows
-change while the worker is dead — so a fresh worker has nothing to diff
-against and a pure diff would strand stale registrations.
+change while the worker is dead — so a fresh worker can't diff against
+nothing: that would strand stale registrations.
+
+- **The last worker's record, when it left one.** The sync's record is
+  saved in session storage, which outlives a stopped worker but not a
+  browser or extension restart. A new worker's first sync takes it, and
+  syncs incrementally only the rows that changed since (`restoreRecord`
+  in `src/extension/injector.ts`):
+  - Saved once syncs have been quiet for two seconds, not after each
+    one: every session write reaches every open extension page. A small
+    marker written before a sync changes Chrome's set says the saved
+    record may be stale until then; a worker that finds it reconciles
+    in full.
+  - The record also keeps a fingerprint of each script and collection
+    row as the syncs read it. A row whose fingerprint differs, or that
+    appeared or went away, is in the scope.
+    - A script's fingerprint leaves out `versionProbes`, which a probe
+      rewrites without a sync; a collection's is only whether it is
+      enabled, the one field the sync reads.
+  - Taken only when made by this extension version, with the "must ask"
+    setting the specs were built with (so not before the claims load),
+    and when Chrome still holds exactly the ids it names. Checking that
+    is a `getScripts()`, which returns every registration's code too.
+  - Collections are kept as their enabled flag only, the one field the
+    sync reads, to keep the record small.
+  - Removed when it's dropped on purpose (`forgetRegistrationState`,
+    `unregisterAllRegistrations`).
+  - Its own timing line, `registration record`, says whether it was
+    taken and, if not, why.
+- **Otherwise, a full reconcile**, below.
 
 - A sync is incremental only when this worker holds a record of
   what it last registered. `src/extension/injector.ts` keeps one — ids, worlds

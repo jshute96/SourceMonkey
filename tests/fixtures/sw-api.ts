@@ -106,7 +106,8 @@ export interface SmApi {
   forgetStoreMigration(): Promise<void>;
   // One unused-blob check.
   sweepUnusedBlobs(): Promise<{ checked: number; removed: number }>;
-  // As a fresh worker: the next sync is a full one.
+  // Forget the record of what Chrome holds, the session copy too: the
+  // next sync is a full one.
   forgetRegistrationState(): Promise<void>;
   // Forget when each script was last checked, so the next
   // opportunistic check isn't skipped by `UPDATE_MIN_INTERVAL_MS`.

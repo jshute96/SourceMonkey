@@ -1387,11 +1387,12 @@ async function withBodies(
 // None of it includes a script body — the expensive part of a full read
 // — so this stays small next to the `get(null)` it replaces.
 //
-// Null until a full sync has run in THIS JS context, which is what
-// makes the state safe to trust: the service worker is evicted freely
-// and rows change while it's dead, so a fresh worker's first sync is
-// always a full reconcile against `chrome.userScripts.getScripts()`. A
-// sync that fails part-way drops the state for the same reason.
+// Null until a sync has run in THIS JS context, which is what makes the
+// state safe to trust: the service worker is evicted freely and rows
+// change while it's dead, so a fresh worker's first sync is a full
+// reconcile against `chrome.userScripts.getScripts()`, unless it takes
+// the last worker's record (`restoreRecord`). A sync that fails part-way
+// drops the state for the same reason.
 // What we last placed under one registration id.
 interface Placement {
   world: InjectionWorld;
@@ -1427,6 +1428,14 @@ interface RegistrationState {
   // though its own row never moved.
   labels: Map<string, string>;
   collections: Map<string, StoredCollection>;
+  // A fingerprint of each script and collection row as the syncs that
+  // placed it read it, keyed by storage key: what a worker started later
+  // compares the rows with, to find the ones that changed while no
+  // worker was watching (see `restoreRecord`).
+  fingerprints: Map<string, string>;
+  // The "must ask" setting the registered specs were built with: what
+  // the session record has to match to be taken.
+  mustAsk: boolean;
 }
 let syncState: RegistrationState | null = null;
 
@@ -1483,6 +1492,29 @@ export function setMustAskForDecision(on: boolean): Promise<void> {
 export function forgetRegistrationState(): void {
   syncState = null;
   lastSyncKind = null;
+  // The next sync reconciles in full, in this worker or the next: the
+  // session record goes too.
+  dropRecord();
+}
+
+// Test-only: set the "must ask" setting without a sync, or back to
+// unknown (null), as before the claims load.
+export function _setMustAskForTests(on: boolean | null): void {
+  mustAskForDecision = on;
+}
+
+// Test-only: as a worker just started, which has no record in memory
+// and may take the one in session storage. Waits for a pending save.
+export async function forgetRegistrationStateAsNewWorkerForTests(): Promise<void> {
+  if (recordSaveTimer !== null) {
+    clearTimeout(recordSaveTimer);
+    recordSaveTimer = null;
+    await withRegistrationLock(saveRecord);
+  }
+  syncState = null;
+  lastSyncKind = null;
+  mayRestoreRecord = true;
+  recordMarkedStale = false;
 }
 
 // Which path the last sync took. Test-only, and the only way to tell
@@ -1880,8 +1912,9 @@ export async function unregisterAllRegistrations(): Promise<void> {
     await unregisterAll();
     // Our record of Chrome's set is now a lie, and an incremental sync
     // built on it would leave every script unregistered. Forget it, so
-    // the next sync is a full reconcile.
+    // the next sync is a full reconcile. The session copy too.
     syncState = null;
+    dropRecord();
   });
 }
 
@@ -1974,6 +2007,217 @@ export function syncRegistrations(scope?: SyncScope): Promise<void> {
   return sync;
 }
 
+// ---------- The record across worker restarts ----------
+//
+// A worker that starts with no record of what Chrome holds has to
+// reconcile in full: read every row and body, build every spec, and
+// compare them with Chrome's. Within one browser session the last
+// worker's record says the same thing, so it is kept in session storage
+// (which outlives a stopped worker, not a browser or extension restart)
+// and a new worker picks it up, syncing only the rows that changed since
+// (docs/injection.md#startup-the-record-or-a-full-reconcile).
+//
+// - A small marker (`SYNC_DIRTY_KEY`) is written before anything changes
+//   Chrome's set, if it isn't there already. The record is saved once
+//   syncs have been quiet for a moment (`RECORD_SAVE_DELAY_MS`), and the
+//   marker removed with it. A worker that finds the marker reconciles in
+//   full: the record may not describe what Chrome holds.
+//   - So a burst of syncs costs one marker write and one record write,
+//     not a record write each. Every session write reaches every open
+//     extension page's listener.
+// - Taken only when made by this extension version, with the "must ask"
+//   setting the specs were built with, and when Chrome still holds
+//   exactly the ids it names.
+// - The changed rows: those whose fingerprint differs from the one the
+//   record kept, or that appeared or went away.
+
+const SYNC_RECORD_KEY = 'registrationRecord';
+const SYNC_DIRTY_KEY = 'registrationRecordStale';
+const RECORD_SAVE_DELAY_MS = 2_000;
+
+// A caller's scope plus the restored record's. No caller scope means the
+// caller asked for no particular rows (a worker's first sync), so the
+// record's alone.
+function mergeScopes(a: SyncScope | undefined, b: SyncScope): SyncScope {
+  if (!a) return b;
+  return {
+    scriptIds: [...new Set([...a.scriptIds, ...b.scriptIds])],
+    collectionIds: [...new Set([...a.collectionIds, ...b.collectionIds])],
+  };
+}
+
+interface SyncRecord {
+  version: string;
+  mustAsk: boolean;
+  registered: [string, Placement][];
+  gmRuntimeScopes: [string, string][];
+  scriptIndex: [string, { relativePath: string; collectionId: string }][];
+  labels: [string, string][];
+  // Collection id and whether it's enabled: all the sync reads of one.
+  collections: [string, boolean][];
+  fingerprints: [string, string][];
+}
+
+// False once this worker has synced, or its record was dropped on
+// purpose: a record is only for a worker's first sync.
+let mayRestoreRecord = true;
+// Whether the session marker says the saved record may be stale: set
+// before this worker changes Chrome's set, cleared when it saves.
+let recordMarkedStale = false;
+let recordSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function noteFingerprint(state: RegistrationState, key: string, fingerprint: string | undefined): void {
+  if (fingerprint === undefined) state.fingerprints.delete(key);
+  else state.fingerprints.set(key, fingerprint);
+}
+
+// What a sync reads of a script row: all of it except `versionProbes`,
+// which a probe rewrites without the sync (`onlyProbesChanged`).
+function scriptFingerprint(row: ScriptMeta): string {
+  return hashText(JSON.stringify({ ...row, versionProbes: undefined }, sortedKeys));
+}
+
+// What a sync reads of a collection row: whether it is enabled. A
+// refresh rewrites the rest without a sync.
+function collectionFingerprint(row: StoredCollection): string {
+  return isCollectionEnabled(row) ? 'on' : 'off';
+}
+
+function sortedKeys(_key: string, v: unknown): unknown {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return v;
+  return Object.fromEntries(Object.keys(v).sort().map((k) => [k, (v as Record<string, unknown>)[k]]));
+}
+
+// Two 32-bit FNV-1a-style hashes and the length: not for security, only
+// to tell a changed row from the same one.
+function hashText(text: string): string {
+  let a = 0x811c9dc5;
+  let b = 0x01000193;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    a = Math.imul(a ^ c, 0x01000193);
+    b = Math.imul(b ^ c, 0x01000193) ^ (b >>> 13);
+  }
+  return `${text.length}:${(a >>> 0).toString(36)}:${(b >>> 0).toString(36)}`;
+}
+
+// Before this worker changes Chrome's set. A failure is logged and the
+// change goes ahead: the saved record is removed instead, and if that
+// fails too, a worker stopped before the next save may take a stale one.
+async function markRecordStale(): Promise<void> {
+  if (recordMarkedStale) return;
+  try {
+    await chrome.storage.session.set({ [SYNC_DIRTY_KEY]: true });
+    recordMarkedStale = true;
+  } catch (err) {
+    console.info('[SourceMonkey] could not mark the registration record stale:', describeError(err));
+    await chrome.storage.session.remove(SYNC_RECORD_KEY).catch(() => undefined);
+  }
+}
+
+function scheduleRecordSave(): void {
+  if (recordSaveTimer !== null) clearTimeout(recordSaveTimer);
+  recordSaveTimer = setTimeout(() => {
+    recordSaveTimer = null;
+    // Under the registration lock, so no sync changes the set meanwhile.
+    void withRegistrationLock(saveRecord).catch((err: unknown) => {
+      // The marker stays, so the next worker reconciles in full.
+      console.info('[SourceMonkey] could not save the registration record:', describeError(err));
+    });
+  }, RECORD_SAVE_DELAY_MS);
+}
+
+async function saveRecord(): Promise<void> {
+  const state = syncState;
+  if (!state || !recordMarkedStale) return;
+  const record: SyncRecord = {
+    version: chrome.runtime.getManifest().version,
+    mustAsk: state.mustAsk,
+    registered: [...state.registered],
+    gmRuntimeScopes: [...state.gmRuntimeScopes],
+    scriptIndex: [...state.scriptIndex],
+    labels: [...state.labels],
+    collections: [...state.collections].map(([id, c]) => [id, isCollectionEnabled(c)]),
+    fingerprints: [...state.fingerprints],
+  };
+  await chrome.storage.session.set({ [SYNC_RECORD_KEY]: record });
+  await chrome.storage.session.remove(SYNC_DIRTY_KEY);
+  recordMarkedStale = false;
+}
+
+// When this worker can't vouch for the saved record any more.
+function dropRecord(): void {
+  mayRestoreRecord = false;
+  // Written again before the next change: the marker may have gone with
+  // the storage it was in (a test reset).
+  recordMarkedStale = false;
+  if (recordSaveTimer !== null) clearTimeout(recordSaveTimer);
+  recordSaveTimer = null;
+  void chrome.storage.session.remove(SYNC_RECORD_KEY).catch(() => undefined);
+}
+
+// The last worker's record and the rows that changed since, or null when
+// there is none this worker can take.
+async function restoreRecord(): Promise<{ state: RegistrationState; scope: SyncScope } | null> {
+  const timer = startPhaseTimer('registration record');
+  const got = await chrome.storage.session.get([SYNC_RECORD_KEY, SYNC_DIRTY_KEY]);
+  const record = got[SYNC_RECORD_KEY] as SyncRecord | undefined;
+  const why = !record || !Array.isArray(record.fingerprints) ? 'none saved'
+    : got[SYNC_DIRTY_KEY] ? 'may be stale'
+      : record.version !== chrome.runtime.getManifest().version ? 'another version'
+        : record.mustAsk !== (mustAskForDecision ?? true) ? 'built to ask differently'
+          : null;
+  timer.mark('read');
+  if (why || !record) {
+    timer.note(`not taken: ${why}`);
+    timer.done();
+    return null;
+  }
+  // No ids-only call exists: this hands back every registration's code.
+  const held = new Set((await chrome.userScripts.getScripts()).map((s) => s.id));
+  timer.mark('list');
+  const registered = new Map(record.registered);
+  if (held.size !== registered.size || [...registered.keys()].some((id) => !held.has(id))) {
+    timer.note('not taken: Chrome holds other ids');
+    timer.done();
+    return null;
+  }
+
+  await ensureCollectionKeysMigrated();
+  const isRow = (k: string): boolean => k.startsWith(SCRIPT_PREFIX) || k.startsWith(COLLECTION_PREFIX);
+  const rows = (await sharedRows(isRow)) ?? await scanStorageRows('registration record', isRow);
+  const kept = new Map(record.fingerprints);
+  const scriptIds = new Set<string>();
+  const collectionIds = new Set<string>();
+  const changed = (key: string): void => {
+    if (key.startsWith(SCRIPT_PREFIX)) scriptIds.add(key.slice(SCRIPT_PREFIX.length));
+    else collectionIds.add(key.slice(COLLECTION_PREFIX.length));
+  };
+  for (const [key, row] of Object.entries(rows)) {
+    const now = key.startsWith(SCRIPT_PREFIX)
+      ? scriptFingerprint(row as ScriptMeta)
+      : collectionFingerprint(row as StoredCollection);
+    if (kept.get(key) !== now) changed(key);
+  }
+  for (const key of kept.keys()) if (!(key in rows)) changed(key);
+  timer.mark('compare');
+  timer.note(`taken; ${scriptIds.size} script(s) and ${collectionIds.size} collection(s) changed`);
+  timer.done();
+  return {
+    state: {
+      registered,
+      gmRuntimeScopes: new Map(record.gmRuntimeScopes),
+      scriptIndex: new Map(record.scriptIndex),
+      labels: new Map(record.labels),
+      // Only what the sync reads of a collection: `isRunnable`.
+      collections: new Map(record.collections.map(([id, enabled]) => [id, { id, enabled } as StoredCollection])),
+      fingerprints: kept,
+      mustAsk: record.mustAsk,
+    },
+    scope: { scriptIds: [...scriptIds], collectionIds: [...collectionIds] },
+  };
+}
+
 async function runSync(scope: SyncScope | undefined): Promise<void> {
   if (!isUserScriptsAvailable()) {
     // Nothing to register into. Not stored anywhere — the collections
@@ -1997,13 +2241,31 @@ async function runSync(scope: SyncScope | undefined): Promise<void> {
     // if the API comes back, what Chrome holds is not something this
     // context can still claim to know.
     syncState = null;
+    dropRecord();
     return;
   }
-  const state = fullSyncNeeded ? null : syncState;
+  let state = fullSyncNeeded ? null : syncState;
   fullSyncNeeded = false;
   try {
     const numbers = (await beforeSync?.()) ?? null;
     await ensureWorldConfigured();
+    // A worker's first sync: the last worker's record, if this one can
+    // take it, stands in for a full reconcile. Not before the claims are
+    // known: until then specs are built as asking, which a record made
+    // without a live claim won't match.
+    if (!syncState && mayRestoreRecord && mustAskForDecision !== null) {
+      mayRestoreRecord = false;
+      const restored = await restoreRecord().catch((err: unknown) => {
+        console.info('[SourceMonkey] could not read the last registration record:', describeError(err));
+        return null;
+      });
+      if (restored) {
+        state = syncState = restored.state;
+        scope = mergeScopes(scope, restored.scope);
+      }
+    }
+    if (mustAskForDecision !== null) mayRestoreRecord = false;
+    await markRecordStale();
     // A scope is only actionable against a record of what we last left
     // registered. Without one — a fresh service worker, or a sync that
     // failed part-way and dropped it — the only safe answer is to
@@ -2015,6 +2277,7 @@ async function runSync(scope: SyncScope | undefined): Promise<void> {
       syncState = await runFullSync(numbers);
       lastSyncKind = 'full';
     }
+    scheduleRecordSave();
   } catch (err) {
     console.info('[SourceMonkey] userScripts sync failed:', describeError(err));
     // We no longer know what Chrome holds, so the next sync starts over
@@ -2028,8 +2291,9 @@ async function runSync(scope: SyncScope | undefined): Promise<void> {
 // Rebuild EVERY registration and reconcile the result against what
 // Chrome currently holds.
 //
-// Runs at service-worker startup and whenever this context has no
-// trustworthy record of the registration set. Chrome retains
+// Runs whenever this context has no trustworthy record of the
+// registration set: at service-worker startup unless the last worker's
+// record was taken (`restoreRecord`). Chrome retains
 // registrations across SW restarts and rows change while the worker is
 // dead, so the post-startup set has to be proven equal to storage
 // rather than diffed against nothing.
@@ -2039,6 +2303,8 @@ async function runSync(scope: SyncScope | undefined): Promise<void> {
 // that storage no longer wants.
 async function runFullSync(assigned: ReadonlyMap<string, number> | null): Promise<RegistrationState> {
   const timer = startPhaseTimer('registration sync');
+  // As the specs below are built with it.
+  const mustAsk = mustAskForDecision ?? true;
   const all = await readAll();
   const { scripts, collections } = all;
   // As in `runIncrementalSync`: the numbers just assigned, when there are.
@@ -2082,6 +2348,7 @@ async function runFullSync(assigned: ReadonlyMap<string, number> | null): Promis
   const inPlace = helpersFirst(held) ? sameRegistrations(specs, held) : new Set<string>();
   const codeInPlace = sameCode(specs, held);
   const removeIds = [...present.keys()].filter((id) => !wanted.has(id));
+  timer.mark('compare');
   const applied = await applyPlan({
     specs,
     removeIds,
@@ -2102,7 +2369,7 @@ async function runFullSync(assigned: ReadonlyMap<string, number> | null): Promis
   const registered = placementsOf(specs, applied, active.gmRuntime);
   const gmRuntimeScopes = ownFingerprints(specs);
   await retryRefusedOwnSpecs(applied, registered, gmRuntimeScopes, present);
-  reportSyncResult(specs, applied.placed);
+  reportSyncResult(specs, applied.placed, inPlace);
   return {
     registered,
     gmRuntimeScopes,
@@ -2111,6 +2378,11 @@ async function runFullSync(assigned: ReadonlyMap<string, number> | null): Promis
     ])),
     labels: logIds,
     collections,
+    fingerprints: new Map([
+      ...scripts.map((s) => [SCRIPT_PREFIX + s.id, scriptFingerprint(s)] as const),
+      ...[...collections.values()].map((c) => [COLLECTION_PREFIX + c.id, collectionFingerprint(c)] as const),
+    ]),
+    mustAsk,
   };
 }
 
@@ -2147,10 +2419,12 @@ async function runIncrementalSync(
     const row = rows[COLLECTION_PREFIX + id] as StoredCollection | undefined;
     if (row) state.collections.set(id, row);
     else state.collections.delete(id);
+    noteFingerprint(state, COLLECTION_PREFIX + id, row && collectionFingerprint(row));
   }
   const scripts: ScriptMeta[] = [];
   for (const id of affected) {
     const row = rows[SCRIPT_PREFIX + id] as ScriptMeta | undefined;
+    noteFingerprint(state, SCRIPT_PREFIX + id, row && scriptFingerprint(row));
     if (!row) { state.scriptIndex.delete(id); continue; }
     scripts.push(row);
     state.scriptIndex.set(id, {
@@ -2169,6 +2443,7 @@ async function runIncrementalSync(
     for (const id of unseen) {
       const row = extra[COLLECTION_PREFIX + id] as StoredCollection | undefined;
       if (row) state.collections.set(id, row);
+      noteFingerprint(state, COLLECTION_PREFIX + id, row && collectionFingerprint(row));
     }
   }
   // Labels come from the whole index rather than from the handful of
@@ -2209,6 +2484,7 @@ async function runIncrementalSync(
       }
       scripts.push(row);
       affected.add(id);
+      noteFingerprint(state, SCRIPT_PREFIX + id, scriptFingerprint(row));
     }
   }
   timer.mark('labels');
@@ -2274,8 +2550,9 @@ async function runIncrementalSync(
     present,
     // An own spec offered here that Chrome holds is one whose patterns
     // moved. Its code is fixed when the extension is built, and this
-    // context's first sync was a full one, which placed it with this
-    // code. Only the specs being offered: the rest aren't sent at all.
+    // worker's first sync placed it with this code: a full one did, and
+    // a taken record comes only from a worker of the same version, whose
+    // first sync did. Only the specs being offered: the rest aren't sent.
     codeInPlace: new Set(specs.filter((spec) => !isUserScriptId(spec.id) && present.has(spec.id)).map((spec) => spec.id)),
     // Only the rows this sync considered. An id it never looked at
     // keeps whatever the map already says: dropping those would clear a
@@ -2410,7 +2687,13 @@ function placementsOf(
   return out;
 }
 
-function reportSyncResult(specs: readonly RegistrationSpec[], placed: readonly string[]): void {
+// `held`: specs Chrome already held exactly, counted as placed but not
+// sent (a full sync's `inPlace`).
+function reportSyncResult(
+  specs: readonly RegistrationSpec[],
+  placed: readonly string[],
+  held: ReadonlySet<string> = new Set(),
+): void {
   // A sync whose scope turned out to hold nothing offered nothing, and
   // "registered 0 userscript(s)" would read as though it had emptied
   // the set. Say nothing instead.
@@ -2436,10 +2719,14 @@ function reportSyncResult(specs: readonly RegistrationSpec[], placed: readonly s
     ...(failed > 0 ? [`${failed} userscript(s) rejected by chrome.userScripts (see per-script errors)`] : []),
     ...(refusedHelpers.length > 0 ? [`helper(s) refused by chrome.userScripts: ${refusedHelpers.join(', ')}`] : []),
   ];
+  // How many of those went to Chrome, when some it already held.
+  const sent = held.size > 0
+    ? ` (${placed.filter((id) => !held.has(id)).length} registration(s) sent, ${held.size} already held)`
+    : '';
   if (problems.length > 0) {
-    console.info(`[SourceMonkey] registered ${what}; ${problems.join('; ')}`);
+    console.info(`[SourceMonkey] in place: ${what}${sent}; ${problems.join('; ')}`);
   } else {
-    console.log(`[SourceMonkey] registered ${what} with chrome.userScripts`);
+    console.log(`[SourceMonkey] in place with chrome.userScripts: ${what}${sent}`);
   }
 }
 
@@ -2696,8 +2983,20 @@ function sameCode(
   specs: readonly RegistrationSpec[],
   held: readonly chrome.userScripts.RegisteredUserScript[],
 ): Set<string> {
-  const code = new Map(held.map((s) => [s.id, JSON.stringify(s.js)] as const));
-  return new Set(specs.filter((spec) => code.get(spec.id) === JSON.stringify(spec.js)).map((spec) => spec.id));
+  const byId = new Map(held.map((s) => [s.id, s] as const));
+  return new Set(specs.filter((spec) => {
+    const h = byId.get(spec.id);
+    return h !== undefined && sameJs(spec.js, h.js);
+  }).map((spec) => spec.id));
+}
+
+// Compared field by field, not as JSON: the code runs to megabytes, and
+// a string `===` compares it in place, where JSON would copy and escape
+// it first.
+function sameJs(a: RegistrationSpec['js'] | undefined, b: RegistrationSpec['js'] | undefined): boolean {
+  const x = a ?? [];
+  const y = b ?? [];
+  return x.length === y.length && x.every((part, i) => part.code === y[i].code && part.file === y[i].file);
 }
 
 // Whether every one of our own registrations comes before every user
@@ -2715,16 +3014,24 @@ function sameRegistrations(
   specs: readonly RegistrationSpec[],
   held: readonly chrome.userScripts.RegisteredUserScript[],
 ): Set<string> {
-  const byId = new Map(held.map((s) => [s.id, registrationKey(s)] as const));
-  return new Set(specs.filter((spec) => byId.get(spec.id) === registrationKey(spec)).map((spec) => spec.id));
+  const byId = new Map(held.map((s) => [s.id, s] as const));
+  return new Set(specs.filter((spec) => {
+    const h = byId.get(spec.id);
+    return h !== undefined && sameSettings(spec, h) && sameJs(spec.js, h.js);
+  }).map((spec) => spec.id));
 }
 
-function registrationKey(s: chrome.userScripts.RegisteredUserScript): string {
-  const set = (v: readonly string[] | undefined): string[] => [...new Set(v ?? [])].sort();
-  return JSON.stringify([
-    s.js, set(s.matches), set(s.excludeMatches), set(s.includeGlobs), set(s.excludeGlobs),
-    s.runAt ?? 'document_idle', s.allFrames ?? false, s.world ?? 'USER_SCRIPT', (s as { worldId?: string }).worldId ?? '',
-  ]);
+function sameSettings(a: chrome.userScripts.RegisteredUserScript, b: chrome.userScripts.RegisteredUserScript): boolean {
+  const set = (v: readonly string[] | undefined): string => JSON.stringify([...new Set(v ?? [])].sort());
+  const worldId = (s: object): string => (s as { worldId?: string }).worldId ?? '';
+  return set(a.matches) === set(b.matches)
+    && set(a.excludeMatches) === set(b.excludeMatches)
+    && set(a.includeGlobs) === set(b.includeGlobs)
+    && set(a.excludeGlobs) === set(b.excludeGlobs)
+    && (a.runAt ?? 'document_idle') === (b.runAt ?? 'document_idle')
+    && (a.allFrames ?? false) === (b.allFrames ?? false)
+    && (a.world ?? 'USER_SCRIPT') === (b.world ?? 'USER_SCRIPT')
+    && worldId(a) === worldId(b);
 }
 
 // An update that changes only the patterns. `update` keeps any property
@@ -2976,9 +3283,11 @@ async function reregisterScripts(ids: readonly string[]): Promise<void> {
   //
   // `present` is empty because a rejected script is by definition not
   // registered. When that's wrong, `placeSpec`'s fallback covers it.
+  await markRecordStale();
   const applied = await applyPlan({
     specs, removeIds: [], present: new Map(), owned: wanted,
   });
+  scheduleRecordSave();
   for (const id of applied.placed) {
     dlog(`[SourceMonkey] script ${id} registered on retry`);
     // Keep this context's record of the registration set honest, so a

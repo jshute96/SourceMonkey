@@ -582,6 +582,8 @@ The `registration sync` line that follows has these steps:
     without their code, and how many registrations it dropped.
 - **list** (full syncs only): asking Chrome which registrations it
   holds.
+- **compare** (full syncs only): which of them Chrome already holds
+  exactly, or with the same code.
 - **unregister / register**: the `chrome.userScripts` calls, removals
   first.
 - **unregister after** (only when needed): removals Chrome may not hold,
@@ -589,6 +591,17 @@ The `registration sync` line that follows has these steps:
 - **read rejections / write rejections**: the list of scripts Chrome
   refused, which shows them as REJECTED. It is read alongside the
   calls above, so `read rejections` is only the wait left after them.
+
+Around the steps:
+
+- A worker's first sync is incremental when it took the last worker's
+  record ([injection.md](injection.md#startup-the-record-or-a-full-reconcile)):
+  its scope is the rows that changed while no worker ran. A
+  `registration record` line before it says whether the record was
+  taken, and if not, why.
+- The console line after a sync names what is in place with
+  `chrome.userScripts`; after a full sync, how many registrations were
+  sent and how many Chrome already held.
 
 ## Measuring a missed reload swap
 
